@@ -32,7 +32,19 @@ const SESSION_STATUS_MAP: Record<string, StatusConfig> = {
     icon: Circle,
     className: 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900 dark:text-green-100',
   },
+  session_started: {
+    label: 'Active',
+    variant: 'default',
+    icon: Circle,
+    className: 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900 dark:text-green-100',
+  },
   completed: {
+    label: 'Completed',
+    variant: 'secondary',
+    icon: CheckCircle,
+    className: 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900 dark:text-blue-100',
+  },
+  session_completed: {
     label: 'Completed',
     variant: 'secondary',
     icon: CheckCircle,
@@ -44,14 +56,38 @@ const SESSION_STATUS_MAP: Record<string, StatusConfig> = {
     icon: XCircle,
     className: 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900 dark:text-red-100',
   },
+  canceled: {
+    label: 'Canceled',
+    variant: 'secondary',
+    icon: XCircle,
+    className: 'bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-800 dark:text-gray-200',
+  },
   pending: {
-    label: 'Pending',
+    label: 'Connected / Waiting',
+    variant: 'outline',
+    icon: Circle,
+    className: 'bg-green-50 text-green-800 border-green-300 dark:bg-green-950 dark:text-green-200',
+  },
+  launch_requested: {
+    label: 'Connecting…',
     variant: 'outline',
     icon: Clock,
-    className: 'bg-yellow-50 text-yellow-800 border-yellow-200 dark:bg-yellow-900 dark:text-yellow-100',
+    className: 'bg-orange-50 text-orange-800 border-orange-200 dark:bg-orange-900 dark:text-orange-100',
+  },
+  launcher_acknowledged: {
+    label: 'Connecting…',
+    variant: 'outline',
+    icon: Clock,
+    className: 'bg-orange-50 text-orange-800 border-orange-200 dark:bg-orange-900 dark:text-orange-100',
+  },
+  client_opened: {
+    label: 'Connecting…',
+    variant: 'outline',
+    icon: Clock,
+    className: 'bg-orange-50 text-orange-800 border-orange-200 dark:bg-orange-900 dark:text-orange-100',
   },
   connecting: {
-    label: 'Connecting',
+    label: 'Connecting…',
     variant: 'outline',
     icon: Clock,
     className: 'bg-orange-50 text-orange-800 border-orange-200 dark:bg-orange-900 dark:text-orange-100',
@@ -79,6 +115,7 @@ export function SessionStatusBadge({ status, className }: SessionStatusBadgeProp
   };
 
   const Icon = config.icon;
+  const isPulse = normalizedStatus === 'pending';
 
   return (
     <span
@@ -88,7 +125,7 @@ export function SessionStatusBadge({ status, className }: SessionStatusBadgeProp
         className,
       )}
     >
-      <Icon className="h-3 w-3" aria-hidden="true" />
+      <Icon className={cn('h-3 w-3', isPulse && 'animate-pulse')} aria-hidden="true" />
       {config.label}
     </span>
   );

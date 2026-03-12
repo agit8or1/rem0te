@@ -54,6 +54,19 @@ export class EndpointsService {
     return this.decryptPassword(node.permanentPassword);
   }
 
+  async findConnected(tenantId: string) {
+    return this.prisma.endpoint.findMany({
+      where: { tenantId, isOnline: true, status: 'ACTIVE' },
+      orderBy: { lastSeenAt: 'desc' },
+      include: {
+        customer: { select: { id: true, name: true } },
+        site: { select: { id: true, name: true } },
+        rustdeskNode: { select: { rustdeskId: true, lastSeenAt: true } },
+        tags: true,
+      },
+    });
+  }
+
   async findAll(tenantId: string, params: {
     search?: string; customerId?: string; status?: string;
     tag?: string; platform?: string; page?: number; limit?: number;

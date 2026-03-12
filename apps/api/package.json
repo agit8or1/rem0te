@@ -1,6 +1,6 @@
 {
   "name": "api",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "nest start --watch",
@@ -17,6 +17,7 @@
     "@nestjs/jwt": "^11.0.0",
     "@nestjs/passport": "^11.0.0",
     "@nestjs/platform-express": "^11.1.16",
+    "@nestjs/schedule": "^6.1.1",
     "@nestjs/throttler": "^6.5.0",
     "@prisma/client": "^5.14.0",
     "@types/multer": "^2.1.0",

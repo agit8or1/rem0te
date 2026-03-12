@@ -23,6 +23,7 @@ import {
   Star,
   Users,
   Globe,
+  MonitorCheck,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -39,11 +40,12 @@ import { useTheme } from '@/lib/theme-provider';
 
 const NAV_ITEMS = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/audit', label: 'Audit Log', icon: FileText },
-  { href: '/connect', label: 'Connect', icon: Link2 },
-  { href: '/help', label: 'Help & Docs', icon: HelpCircle },
-  { href: '/quickstart', label: 'Quick Start', icon: Sparkles },
+  { href: '/endpoints', label: 'Enrolled Clients', icon: MonitorCheck },
   { href: '/sessions', label: 'Sessions', icon: PlayCircle },
+  { href: '/connect', label: 'Connect', icon: Link2 },
+  { href: '/audit', label: 'Audit Log', icon: FileText },
+  { href: '/quickstart', label: 'Quick Start', icon: Sparkles },
+  { href: '/help', label: 'Help & Docs', icon: HelpCircle },
   { href: '/settings', label: 'Settings', icon: Settings },
   // Downloads conditionally rendered at bottom of this list
 ];
@@ -68,7 +70,11 @@ export function Sidebar() {
 
   const tenant = tenantData as Record<string, unknown> | undefined;
   const settings = tenant?.settings as Record<string, unknown> | undefined;
+  const branding = tenant?.branding as Record<string, unknown> | null | undefined;
   const showDownloadPage = settings?.showDownloadPage !== false; // default true
+  const portalTitle = (branding?.portalTitle as string | null) || 'Rem0te';
+  const logoUrl = branding?.logoUrl as string | null | undefined;
+  const accentColor = branding?.accentColor as string | null | undefined;
 
   async function handleLogout() {
     try {
@@ -144,10 +150,24 @@ export function Sidebar() {
 
   return (
     <aside className="flex h-screen w-60 flex-col border-r bg-background">
-      {/* Logo */}
-      <div className="flex h-14 items-center gap-2 border-b px-4">
-        <Shield className="h-5 w-5 text-primary" />
-        <span className="font-semibold text-sm">Rem0te</span>
+      {/* Logo / branding */}
+      <div
+        className="flex h-14 items-center gap-2 border-b px-4"
+        style={accentColor ? { backgroundColor: accentColor } : undefined}
+      >
+        {logoUrl ? (
+          <img
+            src={logoUrl}
+            alt={portalTitle}
+            className="h-7 w-auto max-w-[100px] object-contain"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+          />
+        ) : (
+          <Shield className={`h-5 w-5 ${accentColor ? 'text-white' : 'text-primary'}`} />
+        )}
+        <span className={`font-semibold text-sm truncate ${accentColor ? 'text-white' : ''}`}>
+          {portalTitle}
+        </span>
       </div>
 
       {/* Nav */}

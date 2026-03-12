@@ -15,6 +15,12 @@ import type { JwtPayload } from '../auth/strategies/jwt.strategy';
 export class EndpointsController {
   constructor(private readonly svc: EndpointsService) {}
 
+  @Get('connected')
+  @RequirePermissions('endpoints:read')
+  async connected(@CurrentUser() u: JwtPayload) {
+    return { success: true, data: await this.svc.findConnected(u.tenantId!) };
+  }
+
   @Get()
   @RequirePermissions('endpoints:read')
   async list(@CurrentUser() u: JwtPayload, @Query() q: Record<string, string>) {

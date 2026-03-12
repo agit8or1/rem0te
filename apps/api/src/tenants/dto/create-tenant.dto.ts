@@ -81,7 +81,7 @@ export class UpdateBrandingDto {
   portalTitle?: string;
 
   @IsOptional()
-  @IsUrl({ require_protocol: false })
+  @IsString()
   logoUrl?: string;
 
   @IsOptional()

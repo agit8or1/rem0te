@@ -23,6 +23,20 @@ export class PublicController {
     return settings;
   }
 
+  private async getBranding() {
+    return this.prisma.tenantBranding.findFirst({
+      select: {
+        portalTitle: true,
+        logoUrl: true,
+        accentColor: true,
+        supportEmail: true,
+        supportPhone: true,
+        footerText: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
   private buildConfigString(host: string, key: string | null): string {
     return Buffer.from(JSON.stringify({ host, relay: host, key: key ?? '', api: '' })).toString('base64');
   }
@@ -65,7 +79,7 @@ export class PublicController {
   @Get('rustdesk-config')
   @Public()
   async getRustdeskConfig() {
-    const settings = await this.getSettings();
+    const [settings, branding] = await Promise.all([this.getSettings(), this.getBranding()]);
     const host = settings?.rustdeskRelayHost ?? null;
     const key = settings?.rustdeskPublicKey ?? null;
     const port = settings?.rustdeskRelayPort ?? null;
@@ -80,6 +94,7 @@ export class PublicController {
         configString,
         configured: !!host,
         showDownloadPage: settings?.showDownloadPage ?? true,
+        branding: branding ?? null,
       },
     };
   }
@@ -154,6 +169,10 @@ $PUB_KEY   = "${keyVal}"
 $INSTALLER = "$env:TEMP\\rustdesk-setup.exe"
 $RDEXE     = "C:\\Program Files\\RustDesk\\rustdesk.exe"
 
+# Generate a permanent password for this device (replaces the rotating one-time password)
+$chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789'
+$PERM_PW = -join (1..12 | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
+
 Write-Host ""
 Write-Host "  Reboot Remote — Installing RustDesk remote support client" -ForegroundColor Cyan
 Write-Host ""
@@ -210,6 +229,7 @@ custom-rendezvous-server = '${hostVal}'
 relay-server = '${hostVal}'
 api-server = ''
 key = '${keyVal}'
+verification-method = 'use-permanent-password'
 "@
 
 # Build list of ALL config paths to write
@@ -241,9 +261,13 @@ foreach ($d in $cfgDirs) {
 }
 
 # [4/4] Start the service — config is now locked in place before first read
-Write-Host "[4/4] Starting RustDesk service..." -ForegroundColor Yellow
+Write-Host "[4/4] Starting RustDesk service and setting permanent password..." -ForegroundColor Yellow
 Start-Service -Name "RustDesk" -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 5
+
+# Set the permanent password so it never rotates
+& "$RDEXE" --password "$PERM_PW" 2>$null | Out-Null
+Start-Sleep -Seconds 2
 
 # Read the assigned RustDesk ID from any available config
 $rdId = ""
@@ -267,9 +291,11 @@ Write-Host "  RustDesk installed and running as service!" -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Green
 if ($rdId) {
     Write-Host ""
-    Write-Host "  Your device ID:  $rdId" -ForegroundColor Cyan
+    Write-Host "  Device ID:         $rdId" -ForegroundColor Cyan
+    Write-Host "  Permanent password: $PERM_PW" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  Share this ID with your support technician." -ForegroundColor White
+    Write-Host "  IMPORTANT: Save this password in your remote management portal." -ForegroundColor Yellow
+    Write-Host "  The one-time rotating password has been DISABLED on this device." -ForegroundColor Yellow
 }
 if ($HOST_ADDR) {
     Write-Host ""
@@ -297,6 +323,9 @@ HOST_ADDR="${hostVal}"
 PUB_KEY="${keyVal}"
 
 RED='\\033[0;31m'; GREEN='\\033[0;32m'; YELLOW='\\033[1;33m'; CYAN='\\033[0;36m'; NC='\\033[0m'
+
+# Generate a permanent password for this device
+PERM_PW=$(LC_ALL=C tr -dc 'A-Za-z2-9' < /dev/urandom | head -c 12)
 
 [ "$EUID" -eq 0 ] || { echo -e "\${RED}ERROR: Run as root: sudo bash\${NC}"; exit 1; }
 
@@ -333,7 +362,8 @@ serial = 2
 custom-rendezvous-server = '\${HOST_ADDR}'
 relay-server = '\${HOST_ADDR}'
 api-server = ''
-key = '\${PUB_KEY}'"
+key = '\${PUB_KEY}'
+verification-method = 'use-permanent-password'"
 
 # Write to all known config locations
 for CFG_DIR in \\
@@ -351,6 +381,10 @@ systemctl enable rustdesk 2>/dev/null || true
 systemctl restart rustdesk 2>/dev/null || true
 sleep 3
 
+# Set the permanent password (disables one-time rotating password)
+rustdesk --password "\${PERM_PW}" 2>/dev/null || true
+sleep 1
+
 # Try to read RustDesk ID
 RD_ID=""
 for CFG_FILE in "/root/.config/rustdesk/RustDesk.toml" "/var/lib/rustdesk/RustDesk.toml" "/root/.config/rustdesk/RustDesk2.toml"; do
@@ -364,12 +398,17 @@ echo ""
 echo -e "\${GREEN}=============================================\${NC}"
 echo -e "\${GREEN}  RustDesk installed and running as service!\${NC}"
 echo -e "\${GREEN}=============================================\${NC}"
-[ -n "\${RD_ID}" ] && echo -e "\${CYAN}  Device ID: \${RD_ID}\${NC}"
+if [ -n "\${RD_ID}" ]; then
+  echo -e "\${CYAN}  Device ID:          \${RD_ID}\${NC}"
+  echo -e "\${CYAN}  Permanent password: \${PERM_PW}\${NC}"
+  echo ""
+  echo -e "\${YELLOW}  IMPORTANT: Save this password in your remote management portal.\${NC}"
+  echo -e "\${YELLOW}  The one-time rotating password has been DISABLED on this device.\${NC}"
+fi
 [ -n "\${HOST_ADDR}" ] && echo "  Connected to server: \${HOST_ADDR}"
 echo ""
 echo "  The service starts automatically on boot."
 echo "  Re-run this script at any time to update server settings."
-echo "  Share the device ID with your support technician."
 echo ""
 `;
   }
@@ -386,6 +425,9 @@ set -euo pipefail
 VERSION="${version}"
 HOST_ADDR="${hostVal}"
 PUB_KEY="${keyVal}"
+
+# Generate a permanent password for this device
+PERM_PW=$(LC_ALL=C tr -dc 'A-Za-z2-9' < /dev/urandom | head -c 12)
 
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && DMGFILE="rustdesk-\${VERSION}-aarch64.dmg" || DMGFILE="rustdesk-\${VERSION}-x86_64.dmg"
@@ -425,7 +467,8 @@ serial = 2
 custom-rendezvous-server = '\${HOST_ADDR}'
 relay-server = '\${HOST_ADDR}'
 api-server = ''
-key = '\${PUB_KEY}'"
+key = '\${PUB_KEY}'
+verification-method = 'use-permanent-password'"
 
 # Write to all known macOS config paths
 for CFG_DIR in \\
@@ -437,9 +480,13 @@ for CFG_DIR in \\
     echo "  Wrote: \${CFG_DIR}/RustDesk2.toml" || true
 done
 
-# Launch the app briefly to initialize ID
+# Launch the app briefly to initialize ID and apply password
 open "\${RDAPP}"
 sleep 5
+
+# Set the permanent password (disables one-time rotating password)
+"\${RDAPP}/Contents/MacOS/rustdesk" --password "\${PERM_PW}" 2>/dev/null || true
+sleep 1
 
 # Read ID from config
 RD_ID=""
@@ -455,13 +502,18 @@ echo ""
 echo "============================================="
 echo "  RustDesk installed and configured!"
 echo "============================================="
-[ -n "\${RD_ID}" ] && echo "  Device ID: \${RD_ID}"
+if [ -n "\${RD_ID}" ]; then
+  echo "  Device ID:          \${RD_ID}"
+  echo "  Permanent password: \${PERM_PW}"
+  echo ""
+  echo "  IMPORTANT: Save this password in your remote management portal."
+  echo "  The one-time rotating password has been DISABLED on this device."
+fi
 [ -n "\${HOST_ADDR}" ] && echo "  Connected to server: \${HOST_ADDR}"
 echo ""
 echo "  Note: On macOS, RustDesk does not auto-start as a system service."
 echo "  Enable 'Start on Login' in RustDesk settings for permanent access."
 echo "  Re-run this script at any time to update server settings."
-echo "  Share the device ID with your support technician."
 echo ""
 `;
   }

@@ -343,143 +343,150 @@ type AccessMember = {
   createdAt: string;
 };
 
-function EditUserDialog({ member, onClose }: { member: AccessMember; onClose: () => void }) {
-  const { toast } = useToast();
-  const qc = useQueryClient();
-  const [firstName, setFirstName] = useState(member.user.firstName);
-  const [lastName,  setLastName]  = useState(member.user.lastName);
-  const [email,     setEmail]     = useState(member.user.email);
-
-  const mutation = useMutation({
-    mutationFn: () => usersApi.updateProfile(member.user.id, { firstName, lastName, email }),
-    onSuccess: () => {
-      toast({ title: 'User updated' });
-      qc.invalidateQueries({ queryKey: ['members'] });
-      onClose();
-    },
-    onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Update failed';
-      toast({ title: 'Error', description: msg, variant: 'destructive' });
-    },
-  });
-
-  return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent aria-describedby={undefined}>
-        <DialogHeader><DialogTitle>Edit User</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>First Name</Label>
-              <Input value={firstName} onChange={e => setFirstName(e.target.value)} />
-            </div>
-            <div className="space-y-1">
-              <Label>Last Name</Label>
-              <Input value={lastName} onChange={e => setLastName(e.target.value)} />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <Label>Email</Label>
-            <Input type="email" value={email} onChange={e => setEmail(e.target.value)} />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
-            {mutation.isPending ? 'Saving…' : 'Save Changes'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ResetPasswordDialog({ member, onClose }: { member: AccessMember; onClose: () => void }) {
-  const { toast } = useToast();
-  const [password, setPassword] = useState('');
-  const [confirm,  setConfirm]  = useState('');
-
-  const mutation = useMutation({
-    mutationFn: () => usersApi.resetPassword(member.user.id, password),
-    onSuccess: () => { toast({ title: 'Password reset' }); onClose(); },
-    onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
-      toast({ title: 'Error', description: msg, variant: 'destructive' });
-    },
-  });
-
-  const mismatch = password !== confirm && confirm.length > 0;
-  const valid = password.length >= 8 && password === confirm;
-
-  return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent aria-describedby={undefined}>
-        <DialogHeader><DialogTitle>Reset Password</DialogTitle></DialogHeader>
-        <p className="text-sm text-muted-foreground">Set a new password for <span className="font-medium">{member.user.email}</span>.</p>
-        <div className="space-y-3">
-          <div className="space-y-1">
-            <Label>New Password</Label>
-            <Input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Minimum 8 characters" />
-          </div>
-          <div className="space-y-1">
-            <Label>Confirm Password</Label>
-            <Input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} />
-            {mismatch && <p className="text-xs text-destructive">Passwords do not match</p>}
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => mutation.mutate()} disabled={!valid || mutation.isPending}>
-            {mutation.isPending ? 'Resetting…' : 'Reset Password'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ChangeRoleDialog({ member, roles, myRoleType, onClose }: {
-  member: AccessMember; roles: { id: string; name: string; type: string }[]; myRoleType: string; onClose: () => void;
+function EditUserDialog({ member, roles, myRoleType, isPlatformAdmin, isSelf, onClose }: {
+  member: AccessMember;
+  roles: { id: string; name: string; type: string }[];
+  myRoleType: string;
+  isPlatformAdmin: boolean;
+  isSelf: boolean;
+  onClose: () => void;
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [roleId, setRoleId] = useState(member.role?.id ?? '');
 
-  const myPriority = ROLE_PRIORITY_ACCESS[myRoleType] ?? 0;
-  const assignableRoles = roles.filter(r => (ROLE_PRIORITY_ACCESS[r.type] ?? 0) < myPriority);
+  const [firstName, setFirstName] = useState(member.user.firstName);
+  const [lastName,  setLastName]  = useState(member.user.lastName);
+  const [email,     setEmail]     = useState(member.user.email);
+  const [roleId,    setRoleId]    = useState(member.role?.id ?? '');
+  const [password,  setPassword]  = useState('');
+  const [confirm,   setConfirm]   = useState('');
 
-  const mutation = useMutation({
-    mutationFn: () => usersApi.changeRole(member.user.id, roleId),
-    onSuccess: () => {
-      toast({ title: 'Role updated' });
-      qc.invalidateQueries({ queryKey: ['members'] });
-      onClose();
-    },
+  const myPriority = isPlatformAdmin ? 999 : (ROLE_PRIORITY_ACCESS[myRoleType] ?? 0);
+  const assignableRoles = isPlatformAdmin
+    ? roles
+    : roles.filter(r => (ROLE_PRIORITY_ACCESS[r.type] ?? 0) < myPriority);
+
+  const profileMutation = useMutation({
+    mutationFn: () => usersApi.updateProfile(member.user.id, { firstName, lastName, email }),
+    onSuccess: () => { toast({ title: 'Profile updated' }); qc.invalidateQueries({ queryKey: ['members'] }); },
     onError: (e: unknown) => {
       const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
       toast({ title: 'Error', description: msg, variant: 'destructive' });
     },
   });
 
+  const roleMutation = useMutation({
+    mutationFn: () => usersApi.changeRole(member.user.id, roleId),
+    onSuccess: () => { toast({ title: 'Role updated' }); qc.invalidateQueries({ queryKey: ['members'] }); },
+    onError: (e: unknown) => {
+      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
+      toast({ title: 'Error', description: msg, variant: 'destructive' });
+    },
+  });
+
+  const passwordMutation = useMutation({
+    mutationFn: () => usersApi.resetPassword(member.user.id, password),
+    onSuccess: () => { toast({ title: 'Password reset' }); setPassword(''); setConfirm(''); },
+    onError: (e: unknown) => {
+      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
+      toast({ title: 'Error', description: msg, variant: 'destructive' });
+    },
+  });
+
+  const mfaMutation = useMutation({
+    mutationFn: () => usersApi.resetMfa(member.user.id),
+    onSuccess: () => { toast({ title: 'MFA reset' }); qc.invalidateQueries({ queryKey: ['members'] }); },
+    onError: (e: unknown) => {
+      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
+      toast({ title: 'Error', description: msg, variant: 'destructive' });
+    },
+  });
+
+  const pwMismatch = password !== confirm && confirm.length > 0;
+  const pwValid = password.length >= 8 && password === confirm;
+  const hasMfa = (member.user.mfaMethods?.length ?? 0) > 0;
+  const roleChanged = roleId !== (member.role?.id ?? '');
+
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent aria-describedby={undefined}>
-        <DialogHeader><DialogTitle>Change Role</DialogTitle></DialogHeader>
-        <p className="text-sm text-muted-foreground">{member.user.email}</p>
-        <div className="space-y-1">
-          <Label>Role</Label>
-          <Select value={roleId} onValueChange={setRoleId}>
-            <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
-            <SelectContent>
-              {assignableRoles.map(r => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
+      <DialogContent className="max-w-md" aria-describedby={undefined}>
+        <DialogHeader>
+          <DialogTitle>Edit User</DialogTitle>
+          <DialogDescription className="text-xs">{member.user.email}</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-5">
+          {/* Profile */}
+          <div className="space-y-3">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Profile</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>First Name</Label>
+                <Input value={firstName} onChange={e => setFirstName(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label>Last Name</Label>
+                <Input value={lastName} onChange={e => setLastName(e.target.value)} />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label>Email</Label>
+              <Input type="email" value={email} onChange={e => setEmail(e.target.value)} />
+            </div>
+            <Button size="sm" onClick={() => profileMutation.mutate()} disabled={profileMutation.isPending}>
+              {profileMutation.isPending ? 'Saving…' : 'Save Profile'}
+            </Button>
+          </div>
+
+          {/* Role / Permissions */}
+          {!isSelf && assignableRoles.length > 0 && (
+            <div className="space-y-3 border-t pt-4">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Role & Permissions</p>
+              <div className="space-y-1">
+                <Label>Role</Label>
+                <Select value={roleId} onValueChange={setRoleId}>
+                  <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
+                  <SelectContent>
+                    {assignableRoles.map(r => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button size="sm" onClick={() => roleMutation.mutate()} disabled={!roleId || !roleChanged || roleMutation.isPending}>
+                {roleMutation.isPending ? 'Updating…' : 'Update Role'}
+              </Button>
+            </div>
+          )}
+
+          {/* Password Reset */}
+          <div className="space-y-3 border-t pt-4">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Reset Password</p>
+            <div className="space-y-2">
+              <Input type="password" placeholder="New password (min 8 chars)" value={password} onChange={e => setPassword(e.target.value)} />
+              <Input type="password" placeholder="Confirm password" value={confirm} onChange={e => setConfirm(e.target.value)} />
+              {pwMismatch && <p className="text-xs text-destructive">Passwords do not match</p>}
+            </div>
+            <Button size="sm" variant="outline" onClick={() => passwordMutation.mutate()} disabled={!pwValid || passwordMutation.isPending}>
+              {passwordMutation.isPending ? 'Resetting…' : 'Reset Password'}
+            </Button>
+          </div>
+
+          {/* MFA */}
+          {hasMfa && (
+            <div className="border-t pt-4 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">MFA</p>
+                <p className="text-xs text-muted-foreground mt-0.5">MFA is currently enabled for this user.</p>
+              </div>
+              <Button size="sm" variant="outline" className="text-orange-600 border-orange-300"
+                onClick={() => mfaMutation.mutate()} disabled={mfaMutation.isPending}>
+                {mfaMutation.isPending ? 'Resetting…' : 'Reset MFA'}
+              </Button>
+            </div>
+          )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => mutation.mutate()} disabled={!roleId || mutation.isPending}>
-            {mutation.isPending ? 'Saving…' : 'Update Role'}
-          </Button>
+
+        <DialogFooter className="pt-2">
+          <Button variant="outline" onClick={onClose}>Close</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -495,8 +502,6 @@ function TechniciansTab({ tenantId, myUserId, myRoleType, isPlatformAdmin }: {
   const [inviteEmail,   setInviteEmail]   = useState('');
   const [inviteRoleId,  setInviteRoleId]  = useState('');
   const [editingMember, setEditingMember] = useState<AccessMember | null>(null);
-  const [resetPwMember, setResetPwMember] = useState<AccessMember | null>(null);
-  const [changeRoleMbr, setChangeRoleMbr] = useState<AccessMember | null>(null);
 
   const { data: members, isLoading } = useQuery({
     queryKey: ['members', tenantId],
@@ -564,8 +569,8 @@ function TechniciansTab({ tenantId, myUserId, myRoleType, isPlatformAdmin }: {
   const myPriority = ROLE_PRIORITY_ACCESS[myRoleType] ?? 0;
 
   function canActOn(m: AccessMember) {
-    if (m.user.id === myUserId) return false;
     if (isPlatformAdmin) return true;
+    if (m.user.id === myUserId) return false;
     const targetP = ROLE_PRIORITY_ACCESS[m.role?.type ?? ''] ?? 0;
     return myPriority > 0 && targetP < myPriority;
   }
@@ -641,13 +646,7 @@ function TechniciansTab({ tenantId, myUserId, myRoleType, isPlatformAdmin }: {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => setEditingMember(m)}>
-                              <Pencil className="h-3.5 w-3.5 mr-2" /> Edit Profile
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => setResetPwMember(m)}>
-                              <KeyRound className="h-3.5 w-3.5 mr-2" /> Reset Password
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => setChangeRoleMbr(m)}>
-                              <Shield className="h-3.5 w-3.5 mr-2" /> Change Role
+                              <Pencil className="h-3.5 w-3.5 mr-2" /> Edit User
                             </DropdownMenuItem>
                             {hasMfa && (
                               <DropdownMenuItem
@@ -716,9 +715,16 @@ function TechniciansTab({ tenantId, myUserId, myRoleType, isPlatformAdmin }: {
         </DialogContent>
       </Dialog>
 
-      {editingMember  && <EditUserDialog    member={editingMember}  onClose={() => setEditingMember(null)} />}
-      {resetPwMember  && <ResetPasswordDialog member={resetPwMember} onClose={() => setResetPwMember(null)} />}
-      {changeRoleMbr  && <ChangeRoleDialog member={changeRoleMbr} roles={roleList} myRoleType={myRoleType} onClose={() => setChangeRoleMbr(null)} />}
+      {editingMember && (
+        <EditUserDialog
+          member={editingMember}
+          roles={roleList}
+          myRoleType={myRoleType}
+          isPlatformAdmin={isPlatformAdmin}
+          isSelf={editingMember.user.id === myUserId}
+          onClose={() => setEditingMember(null)}
+        />
+      )}
     </div>
   );
 }

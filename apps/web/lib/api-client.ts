@@ -55,6 +55,7 @@ export const dashboardApi = {
 
 // ─── Endpoints ───────────────────────────────────────────────────────────────
 export const endpointsApi = {
+  connected: () => api.get('/endpoints/connected'),
   list: (params?: Record<string, string>) =>
     api.get('/endpoints', { params }),
   get: (id: string) => api.get(`/endpoints/${id}`),

@@ -4,20 +4,33 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
-import { randomBytes } from 'crypto';
+import { randomBytes, createCipheriv, createDecipheriv } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { ConfigService } from '@nestjs/config';
 import { CreateClaimTokenDto, ClaimEndpointDto } from './dto/enrollment.dto';
 
 @Injectable()
 export class EnrollmentService {
   private readonly logger = new Logger(EnrollmentService.name);
   private readonly tokenTtlHours = 24;
+  private readonly encKey: Buffer;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-  ) {}
+    private readonly config: ConfigService,
+  ) {
+    this.encKey = Buffer.from(this.config.get<string>('ENCRYPTION_KEY', '0'.repeat(64)), 'hex');
+  }
+
+  private encryptPassword(text: string): string {
+    const iv = randomBytes(16);
+    const cipher = createCipheriv('aes-256-gcm', this.encKey, iv);
+    const enc = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return `${iv.toString('hex')}:${tag.toString('hex')}:${enc.toString('hex')}`;
+  }
 
   async createClaimToken(
     tenantId: string,
@@ -122,6 +135,8 @@ export class EnrollmentService {
       });
     }
 
+    const encryptedPassword = dto.password ? this.encryptPassword(dto.password) : undefined;
+
     // Upsert RustdeskNode — the join between endpoint and RustDesk ID
     await this.prisma.rustdeskNode.upsert({
       where: { endpointId: endpoint.id },
@@ -132,12 +147,14 @@ export class EnrollmentService {
         hostname: dto.hostname ?? null,
         platform: dto.platform ?? null,
         lastSeenAt: new Date(),
+        ...(encryptedPassword ? { permanentPassword: encryptedPassword } : {}),
       },
       update: {
         rustdeskId: dto.rustdeskId,
         hostname: dto.hostname ?? undefined,
         platform: dto.platform ?? undefined,
         lastSeenAt: new Date(),
+        ...(encryptedPassword ? { permanentPassword: encryptedPassword } : {}),
       },
     });
 
@@ -161,6 +178,52 @@ export class EnrollmentService {
     });
 
     return { endpoint, tenantId: record.tenantId };
+  }
+
+  async heartbeat(dto: { rustdeskId: string; hostname?: string; platform?: string; osVersion?: string; agentVersion?: string; ipAddress?: string }) {
+    const node = await this.prisma.rustdeskNode.findFirst({
+      where: { rustdeskId: dto.rustdeskId },
+    });
+    if (!node) return { found: false };
+
+    await this.prisma.rustdeskNode.update({
+      where: { id: node.id },
+      data: {
+        lastSeenAt: new Date(),
+        ...(dto.hostname !== undefined && { hostname: dto.hostname }),
+        ...(dto.platform !== undefined && { platform: dto.platform }),
+      },
+    });
+
+    const updateData: Record<string, unknown> = {
+      lastSeenAt: new Date(),
+      isOnline: true,
+      ...(dto.hostname !== undefined && { hostname: dto.hostname }),
+      ...(dto.platform !== undefined && { platform: dto.platform }),
+      ...(dto.osVersion !== undefined && { osVersion: dto.osVersion }),
+      ...(dto.ipAddress !== undefined && { ipAddress: dto.ipAddress }),
+    };
+
+    await this.prisma.endpoint.update({
+      where: { id: node.endpointId },
+      data: updateData,
+    });
+
+    return { found: true, endpointId: node.endpointId };
+  }
+
+  async markStaleEndpointsOffline(thresholdMinutes = 10) {
+    const cutoff = new Date(Date.now() - thresholdMinutes * 60 * 1000);
+    const result = await this.prisma.endpoint.updateMany({
+      where: {
+        isOnline: true,
+        lastSeenAt: { lt: cutoff },
+      },
+      data: { isOnline: false },
+    });
+    if (result.count > 0) {
+      this.logger.log(`Marked ${result.count} stale endpoint(s) offline`);
+    }
   }
 
   async revokeClaimToken(tenantId: string, tokenId: string) {

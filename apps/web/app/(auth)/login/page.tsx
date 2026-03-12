@@ -8,7 +8,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Download } from 'lucide-react';
+import { Download, Shield } from 'lucide-react';
+
+interface Branding {
+  portalTitle?: string | null;
+  logoUrl?: string | null;
+  accentColor?: string | null;
+  footerText?: string | null;
+}
 
 function LoginForm() {
   const router = useRouter();
@@ -34,7 +41,6 @@ function LoginForm() {
         return;
       }
 
-      // Check if customer portal user
       const meRes = await authApi.me().catch(() => null);
       const me = meRes?.data?.data;
       if (me?.roleType === 'CUSTOMER') {
@@ -87,20 +93,50 @@ function LoginForm() {
 
 export default function LoginPage() {
   const [showDownload, setShowDownload] = useState(false);
+  const [branding, setBranding] = useState<Branding | null>(null);
 
   useEffect(() => {
     fetch('/api/v1/public/rustdesk-config')
       .then(r => r.json())
-      .then(d => { if (d.data?.showDownloadPage !== false) setShowDownload(true); })
+      .then(d => {
+        if (d.data?.showDownloadPage !== false) setShowDownload(true);
+        if (d.data?.branding) setBranding(d.data.branding);
+      })
       .catch(() => null);
   }, []);
 
+  const title = branding?.portalTitle || 'Rem0te';
+  const accentColor = branding?.accentColor || null;
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-muted/40 px-4">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-muted/40 px-4">
       <div className="w-full max-w-sm space-y-4">
         <Card>
-          <CardHeader className="space-y-1">
-            <CardTitle className="text-2xl font-bold">Reboot Remote</CardTitle>
+          <CardHeader className="space-y-3 pb-4">
+            {/* Logo / branding header */}
+            {(branding?.logoUrl || accentColor) ? (
+              <div
+                className="rounded-md px-4 py-3 flex items-center gap-3 -mx-1"
+                style={{ backgroundColor: accentColor ?? '#3B82F6' }}
+              >
+                {branding?.logoUrl ? (
+                  <img
+                    src={branding.logoUrl}
+                    alt={title}
+                    className="h-8 w-auto max-w-[120px] object-contain"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                  />
+                ) : (
+                  <Shield className="h-6 w-6 text-white" />
+                )}
+                <span className="text-white font-semibold">{title}</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Shield className="h-6 w-6 text-primary" />
+                <CardTitle className="text-2xl font-bold">{title}</CardTitle>
+              </div>
+            )}
             <CardDescription>Sign in to your account</CardDescription>
           </CardHeader>
           <CardContent>
@@ -109,6 +145,10 @@ export default function LoginPage() {
             </Suspense>
           </CardContent>
         </Card>
+
+        {branding?.footerText && (
+          <p className="text-center text-xs text-muted-foreground">{branding.footerText}</p>
+        )}
 
         {showDownload && (
           <div className="text-center">

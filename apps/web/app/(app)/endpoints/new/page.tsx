@@ -75,7 +75,7 @@ export default function NewEndpointPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-2xl">
-      <PageHeader title="Add Endpoint" description="Register a new device" />
+      <PageHeader title="Enroll Client" description="Register a permanently installed remote device" />
 
       <Card>
         <CardHeader>

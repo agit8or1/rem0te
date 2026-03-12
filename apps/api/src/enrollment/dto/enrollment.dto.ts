@@ -18,6 +18,31 @@ export class CreateClaimTokenDto {
   description?: string;
 }
 
+export class HeartbeatDto {
+  @IsString()
+  rustdeskId!: string;
+
+  @IsOptional()
+  @IsString()
+  hostname?: string;
+
+  @IsOptional()
+  @IsString()
+  platform?: string;
+
+  @IsOptional()
+  @IsString()
+  osVersion?: string;
+
+  @IsOptional()
+  @IsString()
+  agentVersion?: string;
+
+  @IsOptional()
+  @IsIP()
+  ipAddress?: string;
+}
+
 export class ClaimEndpointDto {
   @IsString()
   token!: string;
@@ -40,4 +65,8 @@ export class ClaimEndpointDto {
   @IsOptional()
   @IsString()
   agentVersion?: string;
+
+  @IsOptional()
+  @IsString()
+  password?: string;
 }

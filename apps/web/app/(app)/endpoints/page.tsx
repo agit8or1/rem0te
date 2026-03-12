@@ -26,11 +26,11 @@ export default function EndpointsPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <PageHeader title="Endpoints" description="Manage your remote devices">
+      <PageHeader title="Enrolled Clients" description="Permanently enrolled remote devices — installed via the enrollment script">
         <Link href="/endpoints/new">
           <Button size="sm">
             <Plus className="h-4 w-4 mr-2" />
-            Add Endpoint
+            Enroll Client
           </Button>
         </Link>
       </PageHeader>
