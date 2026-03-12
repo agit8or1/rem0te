@@ -144,6 +144,13 @@ export const tenantsApi = {
   update: (id: string, data: Record<string, unknown>) => api.patch(`/tenants/${id}`, data),
   updateBranding: (id: string, data: Record<string, unknown>) =>
     api.patch(`/tenants/${id}/branding`, data),
+  uploadLogo: (id: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post(`/tenants/${id}/branding/logo`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
   updateSettings: (id: string, data: Record<string, unknown>) =>
     api.patch(`/tenants/${id}/settings`, data),
   listMembers: (id: string) => api.get(`/tenants/${id}/members`),

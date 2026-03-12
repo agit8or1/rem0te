@@ -1,13 +1,20 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
   Param,
   Patch,
   Post,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
   ForbiddenException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import * as path from 'path';
+import * as fs from 'fs';
 import { TenantsService } from './tenants.service';
 import {
   CreateTenantDto,
@@ -20,6 +27,9 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
+
+const UPLOAD_DIR = '/opt/reboot-remote/uploads/logos';
+const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
 
 @Controller('tenants')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -59,6 +69,37 @@ export class TenantsController {
   ) {
     const data = await this.tenantsService.update(id, user.sub, dto);
     return { success: true, data };
+  }
+
+  @Post(':id/branding/logo')
+  @RequirePermissions('branding:write')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (_req, _file, cb) => {
+          fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+          cb(null, UPLOAD_DIR);
+        },
+        filename: (_req, file, cb) => {
+          const ext = path.extname(file.originalname).toLowerCase() || '.png';
+          cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+        },
+      }),
+      fileFilter: (_req, file, cb) => {
+        cb(null, ALLOWED_MIME.includes(file.mimetype));
+      },
+      limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
+    }),
+  )
+  async uploadLogo(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!user.isPlatformAdmin && user.tenantId !== id) throw new ForbiddenException();
+    if (!file) throw new BadRequestException('No valid image file provided (JPEG/PNG/GIF/WebP/SVG, max 2 MB)');
+    const url = `/uploads/logos/${file.filename}`;
+    return { success: true, data: { url } };
   }
 
   @Patch(':id/branding')

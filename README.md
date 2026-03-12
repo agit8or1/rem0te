@@ -10,6 +10,22 @@
 
 ---
 
+## Screenshots
+
+| Dashboard | Connect |
+|-----------|---------|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Connect](docs/screenshots/connect.png) |
+
+| Settings | Security |
+|----------|----------|
+| ![Settings](docs/screenshots/settings.png) | ![Security](docs/screenshots/security.png) |
+
+| About & Updates | Branding |
+|-----------------|----------|
+| ![About](docs/screenshots/about.png) | ![Branding](docs/screenshots/settings-branding.png) |
+
+---
+
 ## What is Rem0te?
 
 Rem0te wraps the open-source RustDesk server (`hbbs` + `hbbr`) with a full multi-tenant management layer. Support teams get a polished dashboard to manage customers, devices, sessions, and permissions — without touching RustDesk internals.
