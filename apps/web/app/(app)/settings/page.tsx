@@ -49,6 +49,15 @@ export default function SettingsPage() {
   const [showDownloadPage, setShowDownloadPage] = useState(true);
   const [allowCustomerPortal, setAllowCustomerPortal] = useState(false);
 
+  const [branding, setBranding] = useState({
+    portalTitle: '',
+    logoUrl: '',
+    accentColor: '#3B82F6',
+    supportEmail: '',
+    supportPhone: '',
+    footerText: '',
+  });
+
   useEffect(() => {
     if (tenant) {
       const t = tenant as Record<string, unknown>;
@@ -62,6 +71,17 @@ export default function SettingsPage() {
         setRustdeskPublicKey((settings.rustdeskPublicKey as string) ?? '');
         setShowDownloadPage((settings.showDownloadPage as boolean) ?? true);
         setAllowCustomerPortal((settings.allowCustomerPortal as boolean) ?? false);
+      }
+      const b = t.branding as Record<string, unknown> | null;
+      if (b) {
+        setBranding({
+          portalTitle: (b.portalTitle as string) ?? '',
+          logoUrl: (b.logoUrl as string) ?? '',
+          accentColor: (b.accentColor as string) ?? '#3B82F6',
+          supportEmail: (b.supportEmail as string) ?? '',
+          supportPhone: (b.supportPhone as string) ?? '',
+          footerText: (b.footerText as string) ?? '',
+        });
       }
     }
   }, [tenant]);
@@ -93,19 +113,33 @@ export default function SettingsPage() {
     onError: () => toast({ title: 'Error', variant: 'destructive' }),
   });
 
+  const updateBrandingMutation = useMutation({
+    mutationFn: () =>
+      tenantsApi.updateBranding(tenantId, {
+        portalTitle: branding.portalTitle || undefined,
+        logoUrl: branding.logoUrl || null,
+        accentColor: branding.accentColor || undefined,
+        supportEmail: branding.supportEmail || null,
+        supportPhone: branding.supportPhone || null,
+        footerText: branding.footerText || null,
+      }),
+    onSuccess: () => {
+      toast({ title: 'Branding saved' });
+      qc.invalidateQueries({ queryKey: ['tenant'] });
+    },
+    onError: () => toast({ title: 'Error', variant: 'destructive' }),
+  });
+
   return (
-    <div className="p-6 space-y-6 max-w-2xl">
-      <PageHeader title="Settings" description="Configure your tenant">
-        <Link href="/settings/branding">
-          <Button variant="outline" size="sm">Branding</Button>
-        </Link>
-      </PageHeader>
+    <div className="p-6 space-y-6 max-w-4xl">
+      <PageHeader title="Settings" description="Configure your tenant" />
 
       <Tabs defaultValue="general">
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="rustdesk">RustDesk</TabsTrigger>
+          <TabsTrigger value="branding">Branding</TabsTrigger>
           <TabsTrigger value="network">Network / Ports</TabsTrigger>
           <TabsTrigger value="access">Access Control</TabsTrigger>
         </TabsList>
@@ -270,6 +304,125 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="branding" className="mt-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <Card>
+              <CardHeader><CardTitle className="text-sm">Brand Settings</CardTitle></CardHeader>
+              <CardContent>
+                <form
+                  onSubmit={(e: FormEvent) => { e.preventDefault(); updateBrandingMutation.mutate(); }}
+                  className="space-y-4"
+                >
+                  <div className="space-y-2">
+                    <Label htmlFor="portal-title">Portal Title</Label>
+                    <Input
+                      id="portal-title"
+                      value={branding.portalTitle}
+                      onChange={(e) => setBranding((b) => ({ ...b, portalTitle: e.target.value }))}
+                      placeholder="My Support Portal"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="logo-url">Logo URL</Label>
+                    <Input
+                      id="logo-url"
+                      type="url"
+                      value={branding.logoUrl}
+                      onChange={(e) => setBranding((b) => ({ ...b, logoUrl: e.target.value }))}
+                      placeholder="https://example.com/logo.png"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="accent-color">Accent Color</Label>
+                    <div className="flex gap-2">
+                      <input
+                        type="color"
+                        value={branding.accentColor}
+                        onChange={(e) => setBranding((b) => ({ ...b, accentColor: e.target.value }))}
+                        className="h-10 w-12 rounded border cursor-pointer"
+                      />
+                      <Input
+                        value={branding.accentColor}
+                        onChange={(e) => setBranding((b) => ({ ...b, accentColor: e.target.value }))}
+                        placeholder="#3B82F6"
+                        maxLength={7}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="support-email">Support Email</Label>
+                    <Input
+                      id="support-email"
+                      type="email"
+                      value={branding.supportEmail}
+                      onChange={(e) => setBranding((b) => ({ ...b, supportEmail: e.target.value }))}
+                      placeholder="support@example.com"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="support-phone">Support Phone</Label>
+                    <Input
+                      id="support-phone"
+                      value={branding.supportPhone}
+                      onChange={(e) => setBranding((b) => ({ ...b, supportPhone: e.target.value }))}
+                      placeholder="+1-555-0100"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="footer-text">Footer Text</Label>
+                    <Input
+                      id="footer-text"
+                      value={branding.footerText}
+                      onChange={(e) => setBranding((b) => ({ ...b, footerText: e.target.value }))}
+                      placeholder="© 2025 My MSP. All rights reserved."
+                    />
+                  </div>
+                  <Button type="submit" disabled={updateBrandingMutation.isPending}>
+                    {updateBrandingMutation.isPending ? 'Saving…' : 'Save Branding'}
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader><CardTitle className="text-sm">Preview</CardTitle></CardHeader>
+              <CardContent>
+                <div className="rounded-lg border overflow-hidden">
+                  <div
+                    className="px-4 py-3 flex items-center gap-3"
+                    style={{ backgroundColor: branding.accentColor }}
+                  >
+                    {branding.logoUrl && (
+                      <img
+                        src={branding.logoUrl}
+                        alt="Logo"
+                        className="h-8 w-auto object-contain"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                      />
+                    )}
+                    <span className="text-white font-semibold text-sm">
+                      {branding.portalTitle || 'Support Portal'}
+                    </span>
+                  </div>
+                  <div className="p-4 bg-background">
+                    <p className="text-sm text-muted-foreground">Portal content preview</p>
+                    {branding.supportEmail && (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Support: {branding.supportEmail}
+                      </p>
+                    )}
+                  </div>
+                  {branding.footerText && (
+                    <div className="px-4 py-2 bg-muted text-xs text-muted-foreground border-t">
+                      {branding.footerText}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
         <TabsContent value="network" className="mt-4 space-y-4">
           <Card>
             <CardHeader>
@@ -277,7 +430,7 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                The following ports must be open on your server&apos;s firewall / security group for Reboot Remote
+                The following ports must be open on your server&apos;s firewall / security group for Rem0te
                 to function correctly.
               </p>
               <div className="overflow-auto rounded-lg border">

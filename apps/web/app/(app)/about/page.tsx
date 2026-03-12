@@ -290,6 +290,10 @@ export default function AboutPage() {
           </div>
 
           <div className="pt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
+            <a href="https://mspreboot.com" target="_blank" rel="noopener noreferrer"
+               className="flex items-center gap-1 underline hover:text-foreground">
+              <ExternalLink className="h-3 w-3" /> mspreboot.com
+            </a>
             <a href="https://github.com/agit8or1/rem0te" target="_blank" rel="noopener noreferrer"
                className="flex items-center gap-1 underline hover:text-foreground">
               <ExternalLink className="h-3 w-3" /> GitHub
@@ -306,6 +310,24 @@ export default function AboutPage() {
                className="flex items-center gap-1 underline hover:text-foreground">
               <ExternalLink className="h-3 w-3" /> RustDesk
             </a>
+          </div>
+
+          <div className="pt-2 border-t space-y-1">
+            <p className="text-xs font-medium text-foreground">Support this project</p>
+            <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+              <a href="https://github.com/sponsors/agit8or1" target="_blank" rel="noopener noreferrer"
+                 className="flex items-center gap-1 underline hover:text-foreground">
+                <ExternalLink className="h-3 w-3" /> GitHub Sponsors
+              </a>
+              <a href="https://ko-fi.com/agit8or1" target="_blank" rel="noopener noreferrer"
+                 className="flex items-center gap-1 underline hover:text-foreground">
+                <ExternalLink className="h-3 w-3" /> Ko-fi
+              </a>
+              <a href="https://www.buymeacoffee.com/agit8or1" target="_blank" rel="noopener noreferrer"
+                 className="flex items-center gap-1 underline hover:text-foreground">
+                <ExternalLink className="h-3 w-3" /> Buy Me a Coffee
+              </a>
+            </div>
           </div>
         </CardContent>
       </Card>

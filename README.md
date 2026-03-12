@@ -6,6 +6,7 @@
 [![Version](https://img.shields.io/github/v/release/agit8or1/rem0te)](https://github.com/agit8or1/rem0te/releases)
 [![Issues](https://img.shields.io/github/issues/agit8or1/rem0te)](https://github.com/agit8or1/rem0te/issues)
 [![License](https://img.shields.io/github/license/agit8or1/rem0te)](LICENSE)
+[![Website](https://img.shields.io/badge/website-mspreboot.com-blue)](https://mspreboot.com)
 
 ---
 
@@ -78,6 +79,17 @@ Issues, ideas, and pull requests are welcome.
 This project is overseen by **Luna**, a German Shepherd Dog of exceptional intelligence and discerning taste in remote support software. All major decisions are reviewed by Luna before merging.
 
 🐾
+
+---
+
+## Support This Project
+
+If Rem0te saves you time, consider supporting its development:
+
+- ⭐ [Star on GitHub](https://github.com/agit8or1/rem0te)
+- 💖 [GitHub Sponsors](https://github.com/sponsors/agit8or1)
+- ☕ [Buy Me a Coffee](https://www.buymeacoffee.com/agit8or1)
+- 🍵 [Ko-fi](https://ko-fi.com/agit8or1)
 
 ---
 
