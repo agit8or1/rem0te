@@ -441,12 +441,13 @@ model RustdeskNode {
   endpointId String   @unique
   endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
 
-  rustdeskId String
-  lastSeenAt DateTime?
-  platform   String?
-  version    String?
-  hostname   String?
-  publicKey  String?
+  rustdeskId        String
+  lastSeenAt        DateTime?
+  platform          String?
+  version           String?
+  hostname          String?
+  publicKey         String?
+  permanentPassword String?   // AES-256-GCM encrypted, same format as TOTP secrets
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import {
   MonitorPlay, Wifi, UserPlus, Monitor, Search, ExternalLink, Loader2,
-  ChevronDown, Clock, Infinity,
+  ChevronDown, Clock, Infinity, KeyRound, X,
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -29,6 +29,9 @@ function MyDevicesTab() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [connecting, setConnecting] = useState<string | null>(null);
+  const [passwordModal, setPasswordModal] = useState<{ id: string; name: string } | null>(null);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [savingPassword, setSavingPassword] = useState(false);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['endpoints-devices', search],
@@ -54,8 +57,19 @@ function MyDevicesTab() {
       await sessionsApi.create({ endpointId: ep.id as string });
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
       if (oneTime) {
-        // Archive the endpoint after launching so it doesn't remain in My Devices
         endpointsApi.archive(ep.id as string).catch(() => null);
+      }
+      // If endpoint has a stored password, copy it to clipboard before launching
+      const hasPassword = !!(ep.rustdeskNode as Record<string, unknown> | undefined)?.permanentPassword;
+      if (hasPassword) {
+        try {
+          const res = await endpointsApi.getPassword(ep.id as string);
+          const pw: string | null = res.data?.data?.password;
+          if (pw) {
+            await navigator.clipboard.writeText(pw);
+            toast({ title: 'Password copied', description: 'Paste it in RustDesk when prompted.' });
+          }
+        } catch { /* clipboard may not be available */ }
       }
       window.location.href = `rustdesk://connection/new/${rustdeskId}`;
     } catch {
@@ -63,6 +77,32 @@ function MyDevicesTab() {
     } finally {
       setConnecting(null);
     }
+  }
+
+  async function savePassword() {
+    if (!passwordModal) return;
+    setSavingPassword(true);
+    try {
+      await endpointsApi.setPassword(passwordModal.id, passwordInput || null);
+      toast({ title: passwordInput ? 'Password saved' : 'Password removed' });
+      queryClient.invalidateQueries({ queryKey: ['endpoints-devices'] });
+      setPasswordModal(null);
+      setPasswordInput('');
+    } catch {
+      toast({ title: 'Failed to save password', variant: 'destructive' });
+    } finally {
+      setSavingPassword(false);
+    }
+  }
+
+  async function openPasswordModal(ep: Record<string, unknown>) {
+    setPasswordInput('');
+    setPasswordModal({ id: ep.id as string, name: ep.name as string });
+    // Pre-fill with existing password if set
+    try {
+      const res = await endpointsApi.getPassword(ep.id as string);
+      if (res.data?.data?.password) setPasswordInput(res.data.data.password);
+    } catch { /* ignore */ }
   }
 
   if (isLoading) {
@@ -115,15 +155,22 @@ function MyDevicesTab() {
             <tbody className="divide-y">
               {endpoints.map((ep) => {
                 const isOnline = ep.isOnline as boolean;
-                const rustdeskId = (ep.rustdeskNode as Record<string, unknown> | undefined)?.rustdeskId as string | undefined;
+                const rustdeskNode = ep.rustdeskNode as Record<string, unknown> | undefined;
+                const rustdeskId = rustdeskNode?.rustdeskId as string | undefined;
+                const hasPassword = !!rustdeskNode?.permanentPassword;
                 const customer = ep.customer as { name?: string } | null;
                 const isConnecting = connecting === (ep.id as string);
                 return (
                   <tr key={ep.id as string} className={cn('hover:bg-muted/30', !isOnline && 'opacity-60')}>
                     <td className="px-4 py-3">
-                      <Link href={`/endpoints/${ep.id as string}`} className="font-medium hover:underline">
-                        {ep.name as string}
-                      </Link>
+                      <div className="flex items-center gap-1.5">
+                        <Link href={`/endpoints/${ep.id as string}`} className="font-medium hover:underline">
+                          {ep.name as string}
+                        </Link>
+                        {hasPassword && (
+                          <KeyRound className="h-3 w-3 text-muted-foreground" />
+                        )}
+                      </div>
                       {ep.hostname ? (
                         <p className="text-xs text-muted-foreground">{ep.hostname as string}</p>
                       ) : null}
@@ -177,6 +224,10 @@ function MyDevicesTab() {
                                 <Clock className="h-3.5 w-3.5 mr-2" />
                                 Connect once (remove after)
                               </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openPasswordModal(ep)}>
+                                <KeyRound className="h-3.5 w-3.5 mr-2" />
+                                {hasPassword ? 'Change password' : 'Set password'}
+                              </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>
@@ -189,6 +240,45 @@ function MyDevicesTab() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Password modal */}
+      {passwordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-background rounded-lg border shadow-xl w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-sm flex items-center gap-2">
+                <KeyRound className="h-4 w-4" />
+                RustDesk Password — {passwordModal.name}
+              </h3>
+              <button onClick={() => setPasswordModal(null)} className="text-muted-foreground hover:text-foreground">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Store the permanent password set on this device in RustDesk. It will be copied to your clipboard automatically when you connect.
+            </p>
+            <Input
+              type="password"
+              placeholder="Enter RustDesk password…"
+              value={passwordInput}
+              onChange={(e) => setPasswordInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && savePassword()}
+              autoFocus
+            />
+            <div className="flex gap-2 justify-end">
+              {passwordInput === '' && (
+                <Button variant="destructive" size="sm" onClick={() => { setPasswordInput(''); savePassword(); }} disabled={savingPassword}>
+                  Remove password
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={() => setPasswordModal(null)}>Cancel</Button>
+              <Button size="sm" onClick={savePassword} disabled={savingPassword}>
+                {savingPassword ? 'Saving…' : 'Save'}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

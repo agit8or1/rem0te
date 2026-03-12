@@ -1,16 +1,58 @@
 import {
   Injectable, NotFoundException, ConflictException,
 } from '@nestjs/common';
+import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { ConfigService } from '@nestjs/config';
 import type { CreateEndpointDto, UpdateEndpointDto } from './dto/create-endpoint.dto';
 
 @Injectable()
 export class EndpointsService {
+  private readonly encKey: Buffer;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-  ) {}
+    private readonly config: ConfigService,
+  ) {
+    this.encKey = Buffer.from(this.config.get<string>('ENCRYPTION_KEY', '0'.repeat(64)), 'hex');
+  }
+
+  private encryptPassword(text: string): string {
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-gcm', this.encKey, iv);
+    const enc = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return `${iv.toString('hex')}:${tag.toString('hex')}:${enc.toString('hex')}`;
+  }
+
+  private decryptPassword(data: string): string {
+    const [ivHex, tagHex, encHex] = data.split(':');
+    const iv = Buffer.from(ivHex, 'hex');
+    const tag = Buffer.from(tagHex, 'hex');
+    const enc = Buffer.from(encHex, 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', this.encKey, iv);
+    decipher.setAuthTag(tag);
+    return decipher.update(enc).toString('utf8') + decipher.final('utf8');
+  }
+
+  async setPassword(tenantId: string, id: string, password: string | null): Promise<void> {
+    await this.assertOwnership(tenantId, id);
+    const node = await this.prisma.rustdeskNode.findUnique({ where: { endpointId: id } });
+    if (!node) throw new NotFoundException('No RustDesk node linked to this endpoint');
+    await this.prisma.rustdeskNode.update({
+      where: { endpointId: id },
+      data: { permanentPassword: password ? this.encryptPassword(password) : null },
+    });
+  }
+
+  async getPassword(tenantId: string, id: string): Promise<string | null> {
+    await this.assertOwnership(tenantId, id);
+    const node = await this.prisma.rustdeskNode.findUnique({ where: { endpointId: id }, select: { permanentPassword: true } });
+    if (!node?.permanentPassword) return null;
+    return this.decryptPassword(node.permanentPassword);
+  }
 
   async findAll(tenantId: string, params: {
     search?: string; customerId?: string; status?: string;
@@ -45,7 +87,7 @@ export class EndpointsService {
         include: {
           customer: { select: { id: true, name: true } },
           site: { select: { id: true, name: true } },
-          rustdeskNode: { select: { rustdeskId: true, lastSeenAt: true } },
+          rustdeskNode: { select: { rustdeskId: true, lastSeenAt: true, permanentPassword: true } },
           tags: true,
           aliases: { where: { isPrimary: true }, take: 1 },
           enrollment: { select: { status: true } },

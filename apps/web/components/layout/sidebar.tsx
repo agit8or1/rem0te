@@ -20,7 +20,17 @@ import {
   Info,
   UserCircle,
   Heart,
+  Star,
+  Users,
+  Globe,
 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { authApi, tenantsApi } from '@/lib/api-client';
 import { useRouter } from 'next/navigation';
@@ -77,6 +87,40 @@ export function Sidebar() {
   const ThemeIcon = theme === 'light' ? Sun : theme === 'dark' ? Moon : Monitor;
   const themeLabel = theme === 'light' ? 'Light' : theme === 'dark' ? 'Dark' : 'System';
 
+  function supportMenu() {
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors">
+            <Heart className="h-4 w-4 text-red-500 fill-red-500" />
+            Support Rem0te
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="right" align="end" className="w-52">
+          <DropdownMenuItem asChild>
+            <a href="https://github.com/agit8or1/rem0te" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
+              <Star className="h-4 w-4 text-yellow-500" />
+              Star on GitHub
+            </a>
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <a href="https://github.com/sponsors/agit8or1" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
+              <Users className="h-4 w-4 text-primary" />
+              Sponsors Page
+            </a>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem asChild>
+            <a href="https://mspreboot.com" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
+              <Globe className="h-4 w-4 text-muted-foreground" />
+              mspreboot.com
+            </a>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+
   function navLink(href: string, label: string, Icon: React.ComponentType<{ className?: string }>, external = false) {
     const active = !external && (pathname === href || (href !== '/settings' && pathname.startsWith(`${href}/`)));
     const linkProps = external ? { target: '_blank', rel: 'noopener noreferrer' } : {};
@@ -117,7 +161,7 @@ export function Sidebar() {
       <div className="border-t p-2 space-y-1">
         {navLink('/account', 'My Account', UserCircle)}
         {navLink('/about', 'About', Info)}
-        {navLink('https://github.com/sponsors/agit8or1', 'Support Rem0te', Heart, true)}
+        {supportMenu()}
         <button
           onClick={cycleTheme}
           className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, useRef, FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authApi, tenantsApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
@@ -57,6 +57,8 @@ export default function SettingsPage() {
     supportPhone: '',
     footerText: '',
   });
+  const [logoUploading, setLogoUploading] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (tenant) {
@@ -112,6 +114,23 @@ export default function SettingsPage() {
     },
     onError: () => toast({ title: 'Error', variant: 'destructive' }),
   });
+
+  async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !tenantId) return;
+    setLogoUploading(true);
+    try {
+      const res = await tenantsApi.uploadLogo(tenantId, file);
+      const url: string = res.data?.data?.url;
+      if (url) setBranding((b) => ({ ...b, logoUrl: url }));
+      toast({ title: 'Logo uploaded' });
+    } catch {
+      toast({ title: 'Upload failed', variant: 'destructive' });
+    } finally {
+      setLogoUploading(false);
+      if (logoInputRef.current) logoInputRef.current.value = '';
+    }
+  }
 
   const updateBrandingMutation = useMutation({
     mutationFn: () =>
@@ -323,14 +342,45 @@ export default function SettingsPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="logo-url">Logo URL</Label>
-                    <Input
-                      id="logo-url"
-                      type="url"
-                      value={branding.logoUrl}
-                      onChange={(e) => setBranding((b) => ({ ...b, logoUrl: e.target.value }))}
-                      placeholder="https://example.com/logo.png"
+                    <Label>Logo</Label>
+                    <div className="flex items-center gap-3">
+                      {branding.logoUrl && (
+                        <img
+                          src={branding.logoUrl}
+                          alt="Current logo"
+                          className="h-10 w-auto max-w-[80px] object-contain rounded border bg-muted p-1"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                        />
+                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={logoUploading}
+                        onClick={() => logoInputRef.current?.click()}
+                      >
+                        {logoUploading ? 'Uploading…' : branding.logoUrl ? 'Replace logo' : 'Upload logo'}
+                      </Button>
+                      {branding.logoUrl && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-muted-foreground"
+                          onClick={() => setBranding((b) => ({ ...b, logoUrl: '' }))}
+                        >
+                          Remove
+                        </Button>
+                      )}
+                    </div>
+                    <input
+                      ref={logoInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml"
+                      className="hidden"
+                      onChange={handleLogoUpload}
                     />
+                    <p className="text-xs text-muted-foreground">JPEG, PNG, GIF, WebP or SVG — max 2 MB. Will be resized as needed.</p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="accent-color">Accent Color</Label>

@@ -189,26 +189,24 @@ export default function DashboardPage() {
             </Card>
           </div>
 
-          {/* Recent Activity */}
+          {/* Recent Activity — compact */}
           {data?.activity?.recent?.length ? (
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Recent Activity</CardTitle>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Recent Activity</CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="divide-y">
+              <CardContent className="pt-0">
+                <div className="space-y-0.5">
                   {(data.activity.recent as Record<string, unknown>[]).slice(0, 8).map(
                     (log: Record<string, unknown>) => (
-                      <div key={log.id as string} className="py-2.5 flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <Badge variant="secondary" className="text-xs shrink-0">
-                            {(log.action as string).replace(/_/g, ' ')}
-                          </Badge>
-                          <span className="text-xs text-muted-foreground truncate">
-                            {(log.actor as { email?: string } | null)?.email ?? 'System'}
-                          </span>
-                        </div>
-                        <span className="text-xs text-muted-foreground shrink-0">
+                      <div key={log.id as string} className="flex items-center gap-2 py-1 text-xs">
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">
+                          {(log.action as string).replace(/_/g, ' ')}
+                        </Badge>
+                        <span className="text-muted-foreground truncate flex-1">
+                          {(log.actor as { email?: string } | null)?.email ?? 'System'}
+                        </span>
+                        <span className="text-muted-foreground/70 shrink-0">
                           {formatDate(log.createdAt as string)}
                         </span>
                       </div>

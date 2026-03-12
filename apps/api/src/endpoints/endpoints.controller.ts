@@ -79,4 +79,23 @@ export class EndpointsController {
     await this.svc.removeAlias(u.tenantId!, id, aliasId);
     return { success: true };
   }
+
+  @Get(':id/password')
+  @RequirePermissions('endpoints:read')
+  async getPassword(@CurrentUser() u: JwtPayload, @Param('id') id: string) {
+    const password = await this.svc.getPassword(u.tenantId!, id);
+    return { success: true, data: { hasPassword: password !== null, password } };
+  }
+
+  @Patch(':id/password')
+  @RequirePermissions('endpoints:write')
+  @HttpCode(HttpStatus.OK)
+  async setPassword(
+    @CurrentUser() u: JwtPayload,
+    @Param('id') id: string,
+    @Body('password') password: string | null,
+  ) {
+    await this.svc.setPassword(u.tenantId!, id, password ?? null);
+    return { success: true };
+  }
 }
