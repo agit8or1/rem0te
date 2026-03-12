@@ -1,0 +1,27 @@
+your-domain.example.com {
+    # Web frontend
+    handle /* {
+        reverse_proxy localhost:3000
+    }
+
+    # API backend
+    handle /api/* {
+        reverse_proxy localhost:3001
+    }
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        -Server
+    }
+
+    encode gzip
+
+    log {
+        output file /var/log/caddy/reboot-remote.log
+        format json
+    }
+}

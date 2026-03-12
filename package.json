@@ -1,0 +1,16 @@
+{
+  "name": "reboot-remote",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @reboot-remote/api dev & pnpm --filter @reboot-remote/web dev",
+    "build": "pnpm --filter @reboot-remote/api build && pnpm --filter @reboot-remote/web build",
+    "db:migrate": "pnpm --filter @reboot-remote/api exec prisma migrate deploy",
+    "db:generate": "pnpm --filter @reboot-remote/api exec prisma generate",
+    "db:seed": "pnpm --filter @reboot-remote/api exec prisma db seed",
+    "db:studio": "pnpm --filter @reboot-remote/api exec prisma studio"
+  },
+  "devDependencies": {
+    "typescript": "^5"
+  }
+}

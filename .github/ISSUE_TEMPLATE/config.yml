@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Community Discussions
+    url: https://github.com/agit8or1/rem0te/discussions
+    about: Questions, ideas, and show-and-tell — Luna moderates
+  - name: 📖 Documentation
+    url: https://github.com/agit8or1/rem0te/wiki
+    about: Setup guides and API reference

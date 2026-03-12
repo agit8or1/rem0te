@@ -1,0 +1,31 @@
+[Unit]
+Description=Reboot Remote Web Frontend
+After=network.target reboot-remote-api.service
+Wants=reboot-remote-api.service
+
+[Service]
+Type=simple
+User=reboot
+Group=reboot
+WorkingDirectory=/opt/reboot-remote/web/standalone/apps/web
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=reboot-remote-web
+
+Environment=NODE_ENV=production
+Environment=PORT=3000
+EnvironmentFile=/etc/reboot-remote/web.env
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/reboot-remote/web/standalone/apps/web
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

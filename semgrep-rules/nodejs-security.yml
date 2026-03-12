@@ -1,0 +1,77 @@
+rules:
+  - id: no-eval
+    patterns:
+      - pattern: eval(...)
+    message: "Avoid eval() — can execute arbitrary code"
+    languages: [javascript, typescript]
+    severity: ERROR
+
+  - id: no-new-function
+    patterns:
+      - pattern: new Function(...)
+    message: "Avoid new Function() — similar risk to eval()"
+    languages: [javascript, typescript]
+    severity: WARNING
+
+  - id: child-process-exec-dynamic
+    patterns:
+      - pattern: exec($CMD, ...)
+      - pattern: execSync($CMD, ...)
+    message: "Shell exec with dynamic input risks command injection — prefer execFile or spawnSync with args array"
+    languages: [javascript, typescript]
+    severity: WARNING
+
+  - id: hardcoded-password
+    patterns:
+      - pattern: |
+          const password = "..."
+    message: "Possible hardcoded password"
+    languages: [javascript, typescript]
+    severity: WARNING
+
+  - id: hardcoded-secret
+    patterns:
+      - pattern: |
+          const secret = "..."
+    message: "Possible hardcoded secret"
+    languages: [javascript, typescript]
+    severity: WARNING
+
+  - id: weak-crypto-md5
+    patterns:
+      - pattern: crypto.createHash("md5")
+    message: "MD5 is cryptographically broken — use SHA-256 or stronger"
+    languages: [javascript, typescript]
+    severity: WARNING
+
+  - id: weak-crypto-sha1
+    patterns:
+      - pattern: crypto.createHash("sha1")
+    message: "SHA-1 is weak for security use — use SHA-256 or stronger"
+    languages: [javascript, typescript]
+    severity: WARNING
+
+  - id: no-disable-tls-validation
+    patterns:
+      - pattern: |
+          {rejectUnauthorized: false}
+    message: "Disabling TLS certificate validation is insecure"
+    languages: [javascript, typescript]
+    severity: ERROR
+
+  - id: prototype-pollution
+    patterns:
+      - pattern: |
+          $OBJ["__proto__"] = ...
+      - pattern: |
+          $OBJ.constructor.prototype = ...
+    message: "Potential prototype pollution"
+    languages: [javascript, typescript]
+    severity: ERROR
+
+  - id: regex-dos
+    patterns:
+      - pattern: new RegExp($INPUT, ...)
+    message: "Dynamic regex from user input may cause ReDoS — validate input or use a safe regex library"
+    languages: [javascript, typescript]
+    severity: WARNING

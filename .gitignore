@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.next/
+*.env
+*.env.local
+.env.*
+!.env.example
+prisma/migrations/dev.db
+*.db
+*.db-journal
+*.log
+.DS_Store
+*.tsbuildinfo
+src-tauri/target/

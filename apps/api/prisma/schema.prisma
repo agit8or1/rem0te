@@ -1,0 +1,751 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+  DELETED
+}
+
+enum MfaMethodType {
+  TOTP
+  RECOVERY_CODE
+  WEBAUTHN
+}
+
+enum RoleType {
+  PLATFORM_ADMIN
+  TENANT_OWNER
+  TENANT_ADMIN
+  TECHNICIAN
+  BILLING_ADMIN
+  READ_ONLY
+  CUSTOMER
+}
+
+enum EndpointStatus {
+  ACTIVE
+  OFFLINE
+  ARCHIVED
+  PENDING_ENROLLMENT
+}
+
+enum EnrollmentStatus {
+  PENDING
+  CLAIMED
+  ACTIVE
+  REVOKED
+}
+
+enum SessionStatus {
+  PENDING
+  LAUNCH_REQUESTED
+  LAUNCHER_ACKNOWLEDGED
+  CLIENT_OPENED
+  SESSION_STARTED
+  SESSION_COMPLETED
+  FAILED
+  CANCELED
+}
+
+enum NoteVisibility {
+  INTERNAL
+  CUSTOMER_VISIBLE
+}
+
+enum ActivityAction {
+  LOGIN_SUCCESS
+  LOGIN_FAILURE
+  LOGOUT
+  MFA_ENROLLED
+  MFA_RESET
+  MFA_VERIFIED
+  RECOVERY_CODE_USED
+  PASSWORD_CHANGED
+  USER_CREATED
+  USER_UPDATED
+  USER_SUSPENDED
+  USER_DELETED
+  USER_INVITED
+  ROLE_ASSIGNED
+  ROLE_REVOKED
+  ROLE_CHANGED
+  CUSTOMER_CREATED
+  CUSTOMER_UPDATED
+  CUSTOMER_ARCHIVED
+  SITE_CREATED
+  SITE_UPDATED
+  SITE_DELETED
+  ENDPOINT_CREATED
+  ENDPOINT_UPDATED
+  ENDPOINT_ARCHIVED
+  ENDPOINT_CLAIMED
+  ENDPOINT_ENROLLED
+  ENDPOINT_UNASSIGNED
+  SESSION_LAUNCHED
+  SESSION_COMPLETED
+  SESSION_CANCELED
+  LAUNCHER_TOKEN_ISSUED
+  LAUNCHER_TOKEN_USED
+  NOTE_CREATED
+  NOTE_UPDATED
+  NOTE_DELETED
+  BRANDING_UPDATED
+  SETTINGS_UPDATED
+  API_KEY_CREATED
+  API_KEY_REVOKED
+  TENANT_CREATED
+  TENANT_UPDATED
+  CLAIM_TOKEN_CREATED
+  INVITATION_SENT
+}
+
+// ─── Tenant ───────────────────────────────────────────────────────────────────
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  settings          TenantSettings?
+  branding          TenantBranding?
+  memberships       Membership[]
+  customers         Customer[]
+  endpoints         Endpoint[]
+  endpointGroups    EndpointGroup[]
+  apiKeys           ApiKey[]
+  invitations       Invitation[]
+  savedViews        SavedView[]
+  policies          TenantPolicy[]
+  activityLogs      ActivityLog[]
+  rustdeskNodes     RustdeskNode[]
+  roles             Role[]
+  deviceClaimTokens DeviceClaimToken[]
+  launcherTokens    LauncherToken[]
+  supportSessions   SupportSession[]
+
+  @@index([slug])
+}
+
+model TenantSettings {
+  id       String @id @default(cuid())
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  requireMfa             Boolean @default(false)
+  allowPasswordReset     Boolean @default(true)
+  sessionTimeoutMinutes  Int     @default(480)
+  maxSessionsPerUser     Int     @default(5)
+  passwordMinLength      Int     @default(12)
+  passwordRequireMixed   Boolean @default(true)
+  passwordRequireSpecial Boolean @default(true)
+
+  rustdeskRelayHost String?
+  rustdeskRelayPort Int?
+  rustdeskPublicKey String?
+
+  showDownloadPage    Boolean @default(true)
+  allowCustomerPortal Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TenantBranding {
+  id       String @id @default(cuid())
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  portalTitle  String  @default("Remote Support Portal")
+  logoUrl      String?
+  faviconUrl   String?
+  accentColor  String  @default("#3B82F6")
+  supportEmail String?
+  supportPhone String?
+  footerText   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── User ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id              String     @id @default(cuid())
+  email           String     @unique
+  passwordHash    String
+  firstName       String
+  lastName        String
+  status          UserStatus @default(ACTIVE)
+  emailVerifiedAt DateTime?
+  isPlatformAdmin Boolean    @default(false)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  mfaMethods        UserMfaMethod[]
+  memberships       Membership[]
+  activityLogs      ActivityLog[]
+  notes             Note[]
+  noteComments      NoteComment[]
+  technicianDevices TechnicianDevice[]
+  launcherTokens    LauncherToken[]
+  supportSessions   SupportSession[]
+  invitationsSent   Invitation[]
+
+  @@index([email])
+}
+
+model UserMfaMethod {
+  id       String        @id @default(cuid())
+  userId   String
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type     MfaMethodType
+  isActive Boolean       @default(true)
+
+  totpSecret   String?
+  codeHash     String?
+  usedAt       DateTime?
+  credentialId String?
+  publicKey    Bytes?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([type])
+}
+
+// ─── RBAC ─────────────────────────────────────────────────────────────────────
+
+model Role {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  type        RoleType
+  description String?
+  isSystem    Boolean  @default(false)
+
+  memberships     Membership[]
+  rolePermissions RolePermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model Permission {
+  id          String @id @default(cuid())
+  resource    String
+  action      String
+  description String?
+
+  rolePermissions RolePermission[]
+
+  @@unique([resource, action])
+}
+
+model RolePermission {
+  id           String     @id @default(cuid())
+  roleId       String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+}
+
+model Membership {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  roleId     String
+  role       Role      @relation(fields: [roleId], references: [id])
+  isActive   Boolean   @default(true)
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, tenantId])
+  @@index([tenantId])
+  @@index([userId])
+}
+
+// ─── Customers & Sites ────────────────────────────────────────────────────────
+
+model Customer {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name       String
+  code       String?
+  domain     String?
+  email      String?
+  phone      String?
+  address    String?
+  city       String?
+  state      String?
+  country    String?
+  postalCode String?
+  notes      String?
+  isActive   Boolean @default(true)
+  isArchived Boolean @default(false)
+
+  sites        Site[]
+  endpoints    Endpoint[]
+  noteRels     Note[]
+  portalUsers  Membership[]
+
+  portalEnabled Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, name])
+}
+
+model Site {
+  id         String   @id @default(cuid())
+  tenantId   String
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  name         String
+  address      String?
+  city         String?
+  state        String?
+  country      String?
+  postalCode   String?
+  timezone     String?
+  notes        String?
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+  isActive     Boolean @default(true)
+
+  endpoints Endpoint[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([tenantId])
+}
+
+// ─── Endpoints ────────────────────────────────────────────────────────────────
+
+model Endpoint {
+  id              String         @id @default(cuid())
+  tenantId        String
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId      String?
+  customer        Customer?      @relation(fields: [customerId], references: [id])
+  siteId          String?
+  site            Site?          @relation(fields: [siteId], references: [id])
+  endpointGroupId String?
+  endpointGroup   EndpointGroup? @relation(fields: [endpointGroupId], references: [id])
+
+  name         String
+  description  String?
+  status       EndpointStatus @default(PENDING_ENROLLMENT)
+  hostname     String?
+  platform     String?
+  osVersion    String?
+  ipAddress    String?
+  macAddress   String?
+  serialNumber String?
+
+  isManaged  Boolean   @default(false)
+  isOnline   Boolean   @default(false)
+  lastSeenAt DateTime?
+
+  rustdeskNode      RustdeskNode?
+  enrollment        EndpointEnrollment?
+  aliases           EndpointAlias[]
+  tags              EndpointTag[]
+  noteRels          Note[]
+  supportSessions   SupportSession[]
+  deviceClaimTokens DeviceClaimToken[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([customerId])
+  @@index([status])
+  @@index([tenantId, status])
+}
+
+model EndpointGroup {
+  id          String  @id @default(cuid())
+  tenantId    String
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+
+  endpoints Endpoint[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, name])
+}
+
+model EndpointTag {
+  id         String   @id @default(cuid())
+  endpointId String
+  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  tag        String
+
+  @@unique([endpointId, tag])
+  @@index([tag])
+}
+
+model EndpointAlias {
+  id         String   @id @default(cuid())
+  endpointId String
+  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  alias      String
+  isPrimary  Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@unique([endpointId, alias])
+  @@index([alias])
+}
+
+model RustdeskNode {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  endpointId String   @unique
+  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  rustdeskId String
+  lastSeenAt DateTime?
+  platform   String?
+  version    String?
+  hostname   String?
+  publicKey  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, rustdeskId])
+  @@index([rustdeskId])
+}
+
+model DeviceClaimToken {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  endpointId String?
+  endpoint   Endpoint? @relation(fields: [endpointId], references: [id])
+
+  token        String    @unique
+  expiresAt    DateTime
+  claimedAt    DateTime?
+  claimedByIp  String?
+
+  customerName String?
+  siteName     String?
+  description  String?
+
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([tenantId])
+}
+
+model EndpointEnrollment {
+  id         String           @id @default(cuid())
+  endpointId String           @unique
+  endpoint   Endpoint         @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  status     EnrollmentStatus @default(PENDING)
+
+  enrolledAt          DateTime?
+  revokedAt           DateTime?
+  revokedBy           String?
+  enrollmentIp        String?
+  enrollmentUserAgent String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Technician Devices & Launcher ───────────────────────────────────────────
+
+model TechnicianDevice {
+  id          String  @id @default(cuid())
+  userId      String
+  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  platform    String
+  fingerprint String  @unique
+  isActive    Boolean @default(true)
+  lastSeenAt  DateTime?
+
+  launcherTokens LauncherToken[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model LauncherToken {
+  id                 String            @id @default(cuid())
+  tenantId           String
+  tenant             Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId             String
+  user               User              @relation(fields: [userId], references: [id])
+  technicianDeviceId String?
+  technicianDevice   TechnicianDevice? @relation(fields: [technicianDeviceId], references: [id])
+  supportSessionId   String?           @unique
+  supportSession     SupportSession?   @relation(fields: [supportSessionId], references: [id])
+
+  token            String    @unique
+  expiresAt        DateTime
+  usedAt           DateTime?
+  revokedAt        DateTime?
+  targetEndpointId String?
+  targetRustdeskId String?
+  targetAlias      String?
+
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+}
+
+// ─── Support Sessions ─────────────────────────────────────────────────────────
+
+model SupportSession {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  technicianId String
+  technician   User      @relation(fields: [technicianId], references: [id])
+  endpointId   String?
+  endpoint     Endpoint? @relation(fields: [endpointId], references: [id])
+
+  contactName      String?
+  contactEmail     String?
+  isAdHoc          Boolean @default(false)
+  adHocRustdeskId  String?
+  issueDescription String?
+
+  status      SessionStatus @default(PENDING)
+  startedAt   DateTime?
+  completedAt DateTime?
+  duration    Int?
+
+  notes       String?
+  disposition String?
+
+  events        SupportSessionEvent[]
+  launcherToken LauncherToken?
+  noteRels      Note[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([technicianId])
+  @@index([endpointId])
+  @@index([status])
+  @@index([tenantId, createdAt])
+}
+
+model SupportSessionEvent {
+  id               String         @id @default(cuid())
+  supportSessionId String
+  supportSession   SupportSession @relation(fields: [supportSessionId], references: [id], onDelete: Cascade)
+
+  event     String
+  metadata  Json?
+  timestamp DateTime @default(now())
+
+  @@index([supportSessionId])
+}
+
+// ─── Notes ────────────────────────────────────────────────────────────────────
+
+model Note {
+  id       String         @id @default(cuid())
+  tenantId String
+  authorId String
+  author   User           @relation(fields: [authorId], references: [id])
+
+  endpointId String?
+  endpoint   Endpoint?       @relation(fields: [endpointId], references: [id])
+  customerId String?
+  customer   Customer?       @relation(fields: [customerId], references: [id])
+  sessionId  String?
+  session    SupportSession? @relation(fields: [sessionId], references: [id])
+
+  content    String
+  visibility NoteVisibility @default(INTERNAL)
+  isPinned   Boolean        @default(false)
+
+  comments NoteComment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([endpointId])
+  @@index([customerId])
+  @@index([tenantId])
+}
+
+model NoteComment {
+  id       String @id @default(cuid())
+  noteId   String
+  note     Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+  content  String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([noteId])
+}
+
+// ─── Activity Log ─────────────────────────────────────────────────────────────
+
+model ActivityLog {
+  id         String          @id @default(cuid())
+  tenantId   String?
+  tenant     Tenant?         @relation(fields: [tenantId], references: [id])
+  actorId    String?
+  actor      User?           @relation(fields: [actorId], references: [id])
+  actorIp    String?
+  actorAgent String?
+  action     ActivityAction
+  resource   String?
+  resourceId String?
+  metadata   Json?
+  createdAt  DateTime        @default(now())
+
+  @@index([tenantId])
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([tenantId, createdAt])
+}
+
+// ─── API Keys ─────────────────────────────────────────────────────────────────
+
+model ApiKey {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdById String
+  name        String
+  keyHash     String    @unique
+  keyPrefix   String
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  scopes      String[]
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([keyHash])
+}
+
+// ─── Invitations ─────────────────────────────────────────────────────────────
+
+model Invitation {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invitedById String
+  invitedBy   User      @relation(fields: [invitedById], references: [id])
+  email       String
+  roleId      String?
+  token       String    @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([token])
+}
+
+// ─── Saved Views ──────────────────────────────────────────────────────────────
+
+model SavedView {
+  id        String  @id @default(cuid())
+  tenantId  String
+  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String?
+  name      String
+  resource  String
+  filters   Json
+  columns   String[]
+  sortField String?
+  sortDir   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+// ─── Platform Security Config ────────────────────────────────────────────────
+
+model PlatformSecurityConfig {
+  id String @id @default(cuid())
+
+  geoipBlockEnabled  Boolean  @default(false)
+  ipAllowlistEnabled Boolean  @default(false)
+  blockedCountries   String[]
+  blockedIpRanges    String[]
+  allowedIpRanges    String[]
+  maxLoginAttempts   Int      @default(5)
+  lockoutMinutes     Int      @default(15)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Tenant Policies ─────────────────────────────────────────────────────────
+
+model TenantPolicy {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name     String
+  resource String
+  rules    Json
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+}
