@@ -18,8 +18,8 @@ export class UpdateService {
   private readonly logger = new Logger(UpdateService.name);
   private readonly repoOwner = 'agit8or1';
   private readonly repoName = 'rem0te';
-  private readonly versionFile = path.join(process.cwd(), '..', '..', 'version.json');
-  private readonly projectRoot = path.join(process.cwd(), '..', '..');
+  private readonly versionFile = process.env.VERSION_FILE ?? path.join(process.cwd(), '..', '..', 'version.json');
+  private readonly projectRoot = process.env.PROJECT_ROOT ?? path.join(process.cwd(), '..', '..');
 
   private activeUpdate: Subject<UpdateProgress> | null = null;
 
