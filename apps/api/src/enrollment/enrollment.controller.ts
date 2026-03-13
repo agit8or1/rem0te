@@ -2,6 +2,7 @@ import {
   Controller, Get, Post, Delete, Param, Body, Req,
   UseGuards, HttpCode, HttpStatus, OnModuleInit, OnModuleDestroy, Logger,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { EnrollmentService } from './enrollment.service';
 import { CreateClaimTokenDto, ClaimEndpointDto, HeartbeatDto } from './dto/enrollment.dto';
@@ -68,6 +69,7 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   // Public endpoint — called by the agent installer on the managed device
   @Post('claim')
   @Public()
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   async claimEndpoint(@Body() dto: ClaimEndpointDto, @Req() req: Request) {
     const ip = req.ip ?? req.socket?.remoteAddress;
@@ -78,6 +80,7 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   // Public endpoint — called periodically by the agent to indicate online status
   @Post('heartbeat')
   @Public()
+  @Throttle({ default: { limit: 60, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   async heartbeat(@Body() dto: HeartbeatDto, @Req() req: Request) {
     const ip = req.ip ?? req.socket?.remoteAddress;

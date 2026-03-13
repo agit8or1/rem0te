@@ -87,7 +87,7 @@ export class EndpointsController {
   }
 
   @Get(':id/password')
-  @RequirePermissions('endpoints:read')
+  @RequirePermissions('endpoints:write')
   async getPassword(@CurrentUser() u: JwtPayload, @Param('id') id: string) {
     const password = await this.svc.getPassword(u.tenantId!, id);
     return { success: true, data: { hasPassword: password !== null, password } };

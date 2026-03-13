@@ -397,7 +397,7 @@ cat > /etc/sudoers.d/reboot-remote << 'EOF'
 reboot ALL=(ALL) NOPASSWD: /usr/bin/fail2ban-client
 reboot ALL=(ALL) NOPASSWD: /usr/bin/apt-get update *
 reboot ALL=(ALL) NOPASSWD: /usr/bin/apt-get upgrade *
-reboot ALL=(ALL) NOPASSWD: /usr/bin/apt-get install *
+reboot ALL=(ALL) NOPASSWD: /usr/bin/apt-get install -y fail2ban
 reboot ALL=(ALL) NOPASSWD: /usr/bin/systemctl enable fail2ban
 reboot ALL=(ALL) NOPASSWD: /usr/bin/systemctl start fail2ban
 reboot ALL=(ALL) NOPASSWD: /usr/bin/caddy reload *

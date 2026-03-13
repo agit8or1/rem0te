@@ -12,17 +12,25 @@
 
 ## Screenshots
 
-| Dashboard | Connect |
-|-----------|---------|
-| ![Dashboard](docs/screenshots/dashboard.png) | ![Connect](docs/screenshots/connect.png) |
+| Dashboard | Enrolled Clients |
+|-----------|-----------------|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Enrolled Clients](docs/screenshots/enrolled-clients.png) |
 
-| Settings | Security |
+| Sessions | Connect |
+|----------|---------|
+| ![Sessions](docs/screenshots/sessions.png) | ![Connect](docs/screenshots/connect.png) |
+
+| Settings | Branding |
 |----------|----------|
-| ![Settings](docs/screenshots/settings.png) | ![Security](docs/screenshots/security.png) |
+| ![Settings](docs/screenshots/settings.png) | ![Branding](docs/screenshots/settings-branding.png) |
 
-| About & Updates | Branding |
-|-----------------|----------|
-| ![About](docs/screenshots/about.png) | ![Branding](docs/screenshots/settings-branding.png) |
+| Security | Unassigned Devices |
+|----------|--------------------|
+| ![Security](docs/screenshots/security.png) | ![Unassigned Devices](docs/screenshots/unassigned-devices.png) |
+
+| Audit Log | About & Updates |
+|-----------|-----------------|
+| ![Audit Log](docs/screenshots/audit.png) | ![About](docs/screenshots/about.png) |
 
 ---
 
@@ -31,7 +39,11 @@
 Rem0te wraps the open-source RustDesk server (`hbbs` + `hbbr`) with a full multi-tenant management layer. Support teams get a polished dashboard to manage customers, devices, sessions, and permissions — without touching RustDesk internals.
 
 **Key features:**
-- 🖥️ **Permanent on-demand connections** — enroll devices once, connect any time with one click
+- 🖥️ **Enrolled Clients** — permanently enroll devices with a one-liner install script; connect any time with one click
+- 🔗 **Tenant enrollment links** — generate per-tenant script URLs that auto-assign devices on install
+- 📡 **Connected sessions view** — real-time view of active sessions and online enrolled devices
+- 🔒 **Permanent passwords** — install scripts set a fixed device password and disable one-time rotation
+- 🕵️ **Unassigned device pool** — devices without a tenant link land in a platform-admin-only queue for manual assignment
 - 👥 **Multi-tenant** — separate workspaces per organisation, full role hierarchy
 - 🔐 **MFA / TOTP** — with recovery codes
 - 👤 **Customer portal** — self-service support requests for end users

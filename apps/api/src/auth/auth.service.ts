@@ -217,7 +217,7 @@ export class AuthService {
   }
 
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
-    if (!newPassword || newPassword.length < 8) throw new BadRequestException('Password must be at least 8 characters');
+    if (!newPassword || newPassword.length < 12) throw new BadRequestException('Password must be at least 12 characters');
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('User not found');
     if (!user.passwordHash) throw new BadRequestException('No password set on this account');

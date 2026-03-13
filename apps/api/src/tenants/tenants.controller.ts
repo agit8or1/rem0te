@@ -15,6 +15,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import * as path from 'path';
 import * as fs from 'fs';
+import { randomBytes } from 'crypto';
 import { TenantsService } from './tenants.service';
 import {
   CreateTenantDto,
@@ -67,6 +68,7 @@ export class TenantsController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateTenantDto,
   ) {
+    if (!user.isPlatformAdmin && user.tenantId !== id) throw new ForbiddenException('Access denied');
     const data = await this.tenantsService.update(id, user.sub, dto);
     return { success: true, data };
   }
@@ -82,7 +84,7 @@ export class TenantsController {
         },
         filename: (_req, file, cb) => {
           const ext = path.extname(file.originalname).toLowerCase() || '.png';
-          cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+          cb(null, `${Date.now()}-${randomBytes(16).toString('hex')}${ext}`);
         },
       }),
       fileFilter: (_req, file, cb) => {
@@ -109,6 +111,7 @@ export class TenantsController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateBrandingDto,
   ) {
+    if (!user.isPlatformAdmin && user.tenantId !== id) throw new ForbiddenException('Access denied');
     const data = await this.tenantsService.updateBranding(id, user.sub, dto);
     return { success: true, data };
   }
@@ -120,13 +123,15 @@ export class TenantsController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateSettingsDto,
   ) {
+    if (!user.isPlatformAdmin && user.tenantId !== id) throw new ForbiddenException('Access denied');
     const data = await this.tenantsService.updateSettings(id, user.sub, dto);
     return { success: true, data };
   }
 
   @Get(':id/members')
   @RequirePermissions('users:read')
-  async getMembers(@Param('id') id: string) {
+  async getMembers(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    if (!user.isPlatformAdmin && user.tenantId !== id) throw new ForbiddenException('Access denied');
     const data = await this.tenantsService.getMembers(id);
     return { success: true, data };
   }
@@ -139,13 +144,15 @@ export class TenantsController {
     @CurrentUser() user: JwtPayload,
     @Body('roleId') roleId: string,
   ) {
+    if (!user.isPlatformAdmin && user.tenantId !== id) throw new ForbiddenException('Access denied');
     const data = await this.tenantsService.assignRole(id, userId, roleId, user.sub);
     return { success: true, data };
   }
 
   @Get(':id/roles')
   @RequirePermissions('users:read')
-  async listRoles(@Param('id') id: string) {
+  async listRoles(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    if (!user.isPlatformAdmin && user.tenantId !== id) throw new ForbiddenException('Access denied');
     const data = await this.tenantsService.listRoles(id);
     return { success: true, data };
   }
@@ -158,6 +165,7 @@ export class TenantsController {
     @Body('email') email: string,
     @Body('roleId') roleId: string,
   ) {
+    if (!user.isPlatformAdmin && user.tenantId !== id) throw new ForbiddenException('Access denied');
     const data = await this.tenantsService.inviteMember(id, user.sub, email, roleId);
     return { success: true, data };
   }

@@ -100,7 +100,7 @@ export class EndpointsService {
         include: {
           customer: { select: { id: true, name: true } },
           site: { select: { id: true, name: true } },
-          rustdeskNode: { select: { rustdeskId: true, lastSeenAt: true, permanentPassword: true } },
+          rustdeskNode: { select: { rustdeskId: true, lastSeenAt: true } },
           tags: true,
           aliases: { where: { isPrimary: true }, take: 1 },
           enrollment: { select: { status: true } },

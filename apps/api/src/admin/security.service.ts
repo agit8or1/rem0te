@@ -588,8 +588,8 @@ export default [
       for (const domain of domains) {
         try {
           const sClient = await this.runAsync(
-            'bash',
-            ['-c', `echo | openssl s_client -connect ${domain}:443 -servername ${domain} 2>/dev/null`],
+            'sh',
+            ['-c', 'echo | openssl s_client -connect "$1:443" -servername "$1" 2>/dev/null', '--', domain],
             { timeout: 8000 },
           );
           if (!sClient.stdout.includes('BEGIN CERTIFICATE')) continue;

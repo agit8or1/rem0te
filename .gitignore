@@ -9,6 +9,9 @@ prisma/migrations/dev.db
 *.db
 *.db-journal
 *.log
+*.bak
+.env
 .DS_Store
 *.tsbuildinfo
+/tmp/
 src-tauri/target/

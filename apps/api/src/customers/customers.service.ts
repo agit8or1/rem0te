@@ -159,7 +159,7 @@ export class CustomersService {
     // Find or create user
     let user = await this.prisma.user.findUnique({ where: { email: email.toLowerCase() } });
     if (!user) {
-      const hash = await argon2.hash(Math.random().toString(36), { type: argon2.argon2id });
+      const hash = await argon2.hash(randomBytes(32).toString('hex'), { type: argon2.argon2id });
       user = await this.prisma.user.create({
         data: {
           email: email.toLowerCase(),
