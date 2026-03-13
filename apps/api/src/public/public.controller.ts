@@ -260,14 +260,16 @@ foreach ($d in $cfgDirs) {
     }
 }
 
-# [4/4] Start the service — config is now locked in place before first read
-Write-Host "[4/4] Starting RustDesk service and setting permanent password..." -ForegroundColor Yellow
-Start-Service -Name "RustDesk" -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 5
+# [4/4] Set permanent password (service still stopped) then start
+Write-Host "[4/4] Setting permanent password and starting RustDesk service..." -ForegroundColor Yellow
 
-# Set the permanent password so it never rotates
+# Set password BEFORE starting the service so it is already in the config on first read.
+# With the service stopped this writes directly to the TOML file instead of going via IPC.
 & "$RDEXE" --password "$PERM_PW" 2>$null | Out-Null
 Start-Sleep -Seconds 2
+
+Start-Service -Name "RustDesk" -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 5
 
 # Read the assigned RustDesk ID from any available config
 $rdId = ""
@@ -376,14 +378,16 @@ for CFG_DIR in \\
     echo "  Wrote: \${CFG_DIR}/RustDesk2.toml" || true
 done
 
-echo -e "\${YELLOW}[4/4] Enabling and starting RustDesk service...\${NC}"
+echo -e "\${YELLOW}[4/4] Setting permanent password and starting service...\${NC}"
+
+# Set the permanent password BEFORE starting the service so it is in the config
+# on first read. Running this with the service stopped writes directly to the file.
+rustdesk --password "\${PERM_PW}" 2>/dev/null || true
+sleep 1
+
 systemctl enable rustdesk 2>/dev/null || true
 systemctl restart rustdesk 2>/dev/null || true
 sleep 3
-
-# Set the permanent password (disables one-time rotating password)
-rustdesk --password "\${PERM_PW}" 2>/dev/null || true
-sleep 1
 
 # Try to read RustDesk ID
 RD_ID=""
@@ -480,13 +484,13 @@ for CFG_DIR in \\
     echo "  Wrote: \${CFG_DIR}/RustDesk2.toml" || true
 done
 
-# Launch the app briefly to initialize ID and apply password
-open "\${RDAPP}"
-sleep 5
-
-# Set the permanent password (disables one-time rotating password)
+# Set the permanent password BEFORE launching so it is in the config on first read
 "\${RDAPP}/Contents/MacOS/rustdesk" --password "\${PERM_PW}" 2>/dev/null || true
 sleep 1
+
+# Launch the app to initialize ID
+open "\${RDAPP}"
+sleep 5
 
 # Read ID from config
 RD_ID=""
