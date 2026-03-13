@@ -4,7 +4,7 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
-import { randomBytes, createCipheriv, createDecipheriv } from 'crypto';
+import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { ConfigService } from '@nestjs/config';
@@ -46,12 +46,13 @@ export class EnrollmentService {
     }
 
     const token = randomBytes(32).toString('hex');
+    const tokenHash = createHash('sha256').update(token).digest('hex');
     const expiresAt = new Date(Date.now() + this.tokenTtlHours * 60 * 60 * 1000);
 
     const record = await this.prisma.deviceClaimToken.create({
       data: {
         tenantId,
-        token,
+        token: tokenHash,
         expiresAt,
         endpointId: dto.endpointId ?? null,
         customerName: dto.customerName ?? null,
@@ -70,7 +71,8 @@ export class EnrollmentService {
       meta: { endpointId: dto.endpointId, description: dto.description },
     });
 
-    return record;
+    // Return record with the raw token (not the stored hash) so caller can embed it in URLs
+    return { ...record, token };
   }
 
   async listClaimTokens(tenantId: string) {
@@ -84,8 +86,9 @@ export class EnrollmentService {
   }
 
   async claimEndpoint(dto: ClaimEndpointDto, claimedByIp?: string) {
+    const tokenHash = createHash('sha256').update(dto.token).digest('hex');
     const record = await this.prisma.deviceClaimToken.findUnique({
-      where: { token: dto.token },
+      where: { token: tokenHash },
     });
 
     if (!record) throw new NotFoundException('Claim token not found');

@@ -1,5 +1,6 @@
 import { Controller, Get, Param, Query, Res } from '@nestjs/common';
 import { Response } from 'express';
+import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { Public } from '../common/decorators/public.decorator';
 import * as https from 'https';
@@ -120,10 +121,11 @@ export class PublicController {
     const key = settings?.rustdeskPublicKey ?? null;
     const version = await this.fetchLatestVersion();
 
-    // Validate enrollment token if provided
+    // Validate enrollment token if provided — look up by SHA-256 hash
     let validatedToken: string | undefined;
     if (enrollToken) {
-      const tokenRecord = await this.prisma.deviceClaimToken.findUnique({ where: { token: enrollToken } });
+      const tokenHash = createHash('sha256').update(enrollToken).digest('hex');
+      const tokenRecord = await this.prisma.deviceClaimToken.findUnique({ where: { token: tokenHash } });
       if (tokenRecord && !tokenRecord.claimedAt && tokenRecord.expiresAt >= new Date()) {
         validatedToken = enrollToken;
       }

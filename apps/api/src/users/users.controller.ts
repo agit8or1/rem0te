@@ -10,6 +10,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { IsEmail, IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -19,21 +20,35 @@ import type { JwtPayload } from '../auth/strategies/jwt.strategy';
 import type { RoleType } from '@prisma/client';
 
 class InviteUserDto {
+  @IsEmail()
   email!: string;
+
+  @IsString()
   roleId!: string;
 }
 
 class ChangeRoleDto {
+  @IsString()
   roleId!: string;
 }
 
 class UpdateProfileDto {
+  @IsOptional()
+  @IsString()
   firstName?: string;
+
+  @IsOptional()
+  @IsString()
   lastName?: string;
+
+  @IsOptional()
+  @IsEmail()
   email?: string;
 }
 
 class ResetPasswordDto {
+  @IsString()
+  @MinLength(12, { message: 'Password must be at least 12 characters' })
   password!: string;
 }
 

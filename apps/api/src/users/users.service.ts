@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
-import { nanoid } from 'nanoid';
+import { randomBytes } from 'crypto';
 import { RoleType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -84,7 +84,7 @@ export class UsersService {
       userId = existing.id;
     }
 
-    const inviteToken = nanoid(32);
+    const inviteToken = randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
 
     await this.prisma.invitation.create({
@@ -186,8 +186,8 @@ export class UsersService {
       }
     }
 
-    if (!newPassword || newPassword.length < 8) {
-      throw new BadRequestException('Password must be at least 8 characters');
+    if (!newPassword || newPassword.length < 12) {
+      throw new BadRequestException('Password must be at least 12 characters');
     }
 
     const passwordHash = await argon2.hash(newPassword);

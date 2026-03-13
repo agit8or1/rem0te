@@ -35,7 +35,7 @@ export class AuthController {
       res.cookie('partial_token', result.partialToken, {
         httpOnly: true,
         secure: process.env.COOKIE_SECURE === 'true',
-        sameSite: 'lax',
+        sameSite: 'strict',
         maxAge: 10 * 60 * 1000, // 10 minutes
         path: '/',
       });
@@ -122,7 +122,7 @@ export class AuthController {
     res.cookie('access_token', token, {
       httpOnly: true,
       secure: process.env.COOKIE_SECURE === 'true',
-      sameSite: 'lax',
+      sameSite: 'strict',
       maxAge: 8 * 60 * 60 * 1000,
       path: '/',
     });

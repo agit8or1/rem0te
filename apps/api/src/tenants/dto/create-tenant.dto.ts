@@ -61,10 +61,12 @@ export class CreateTenantDto {
 
   @IsOptional()
   @IsString()
+  @Matches(/^[a-zA-Z0-9.\-]+$/, { message: 'rustdeskRelayHost must be a valid hostname' })
   rustdeskRelayHost?: string;
 
   @IsOptional()
   @IsString()
+  @Matches(/^[A-Za-z0-9+/=]+$/, { message: 'rustdeskPublicKey must be a valid base64 string' })
   rustdeskPublicKey?: string;
 }
 
@@ -124,10 +126,12 @@ export class UpdateSettingsDto {
 
   @IsOptional()
   @IsString()
+  @Matches(/^[a-zA-Z0-9.\-]+$/, { message: 'rustdeskRelayHost must be a valid hostname' })
   rustdeskRelayHost?: string;
 
   @IsOptional()
   @IsString()
+  @Matches(/^[A-Za-z0-9+/=]+$/, { message: 'rustdeskPublicKey must be a valid base64 string' })
   rustdeskPublicKey?: string;
 
   @IsOptional()
