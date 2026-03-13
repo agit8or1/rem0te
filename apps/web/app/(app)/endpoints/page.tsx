@@ -58,6 +58,7 @@ export default function EndpointsPage() {
 
   const scriptUrls = generatedToken
     ? {
+        windowsBat: `${window.location.origin}/api/v1/public/install/windows.bat?token=${generatedToken}`,
         windows: `${window.location.origin}/api/v1/public/install/windows.ps1?token=${generatedToken}`,
         linux: `${window.location.origin}/api/v1/public/install/linux.sh?token=${generatedToken}`,
         macos: `${window.location.origin}/api/v1/public/install/macos.sh?token=${generatedToken}`,
@@ -206,11 +207,21 @@ export default function EndpointsPage() {
             ) : (
               <>
                 <p className="text-sm text-muted-foreground">
-                  Share one of these script URLs with the device. The token is valid for 24 hours and single-use.
+                  Share one of these with the device. The token is valid for 24 hours and single-use.
                 </p>
                 <div className="space-y-3">
+                  <div className="rounded-lg border-2 border-primary/20 bg-primary/5 p-3 space-y-1.5">
+                    <p className="text-xs font-semibold">Windows — One-click installer (recommended)</p>
+                    <p className="text-xs text-muted-foreground">Send this URL — user downloads and double-clicks, no PowerShell needed.</p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-xs bg-muted rounded px-2 py-1.5 break-all">{scriptUrls!.windowsBat}</code>
+                      <Button size="sm" variant="outline" onClick={() => copyToClipboard(scriptUrls!.windowsBat)}>
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </div>
                   {[
-                    { label: 'Windows (PowerShell)', url: scriptUrls!.windows },
+                    { label: 'Windows (PowerShell fallback)', url: scriptUrls!.windows },
                     { label: 'Linux (Bash)', url: scriptUrls!.linux },
                     { label: 'macOS (Bash)', url: scriptUrls!.macos },
                   ].map(({ label, url }) => (

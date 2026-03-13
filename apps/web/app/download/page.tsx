@@ -236,19 +236,23 @@ export default function DownloadPage() {
                   <div className="flex items-center gap-2">
                     <Monitor className="h-4 w-4" />
                     <span className="font-medium text-sm">Windows</span>
-                    <Badge variant="secondary" className="text-xs">Run as Administrator</Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Open PowerShell as Administrator (right-click → Run as Administrator) and paste:
-                  </p>
+                  <div className="rounded-lg border-2 border-primary/20 bg-primary/5 p-4 space-y-2">
+                    <p className="text-sm font-medium">One-click installer (recommended)</p>
+                    <p className="text-xs text-muted-foreground">
+                      Download and double-click. It will request Administrator access and install automatically — no PowerShell needed.
+                    </p>
+                    <Button asChild size="sm" className="mt-1">
+                      <a href={`${installBase}/windows.bat`}>
+                        <Download className="h-4 w-4 mr-2" />
+                        Download Windows Installer (.bat)
+                      </a>
+                    </Button>
+                  </div>
                   <InstallCommand
-                    label="PowerShell (as Administrator)"
+                    label="Or run in PowerShell (as Administrator):"
                     command={`irm ${installBase}/windows.ps1 | iex`}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    This installs RustDesk, configures it to use this server, and installs it as a Windows
-                    service that starts automatically.
-                  </p>
                 </div>
 
                 <div className="border-t pt-4 space-y-3">

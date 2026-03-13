@@ -1,5 +1,5 @@
-import { Controller, Get, Param, Query, Res } from '@nestjs/common';
-import { Response } from 'express';
+import { Controller, Get, Param, Query, Res, Req } from '@nestjs/common';
+import { Response, Request } from 'express';
 import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { Public } from '../common/decorators/public.decorator';
@@ -115,6 +115,7 @@ export class PublicController {
     @Param('platform') platform: string,
     @Query('token') enrollToken: string | undefined,
     @Res() res: Response,
+    @Req() req: Request,
   ) {
     const settings = await this.getSettings();
     const host = settings?.rustdeskRelayHost ?? null;
@@ -147,6 +148,15 @@ export class PublicController {
       script = this.buildMacosScript(version, host, key, validatedToken);
       contentType = 'text/plain; charset=utf-8';
       filename = 'install-rustdesk-macos.sh';
+    } else if (platform === 'windows.bat') {
+      const proto = (req.headers['x-forwarded-proto'] as string | undefined) ?? 'https';
+      const reqHost = (req.headers['x-forwarded-host'] as string | undefined) ?? req.headers.host ?? 'localhost';
+      const apiUrl = `${proto}://${reqHost}`;
+      const tokenSuffix = validatedToken ? `?token=${validatedToken}` : '';
+      const psUrl = `${apiUrl}/api/v1/public/install/windows.ps1${tokenSuffix}`;
+      script = this.buildWindowsBatchLauncher(psUrl);
+      contentType = 'application/octet-stream';
+      filename = 'install-reboot-remote.bat';
     } else {
       res.status(404).json({ success: false, message: 'Unknown platform' });
       return;
@@ -333,6 +343,26 @@ Write-Host "  The RustDesk service starts automatically with Windows." -Foregrou
 Write-Host "  Run this script again at any time to update the server config." -ForegroundColor Gray
 Write-Host ""
 Read-Host "Press Enter to close"
+`;
+  }
+
+  private buildWindowsBatchLauncher(scriptUrl: string): string {
+    return `@echo off
+net session >nul 2>&1
+if NOT %errorLevel% == 0 (
+    powershell -NoProfile -Command "Start-Process '%~f0' -Verb RunAs"
+    exit /B
+)
+echo.
+echo   Reboot Remote - Installing remote support client...
+echo   This window will close when setup is complete.
+echo.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm '${scriptUrl}' | iex"
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo   Setup did not complete. Press any key to close.
+    pause >nul
+)
 `;
   }
 
