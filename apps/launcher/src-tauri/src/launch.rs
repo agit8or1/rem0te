@@ -24,24 +24,31 @@ struct ValidateData {
     session_id: Option<String>,
 }
 
-/// Parse a `reboot-remote://launch?token=<jwt>&api=<url>` deep link,
+/// Parse a `reboot-remote://launch#token=<jwt>&api=<url>` deep link,
 /// validate the token with the API, spawn RustDesk, and return the peer ID.
+/// Token is passed in the URL fragment so it is never sent to any server or
+/// recorded in proxy / server access logs.
 pub async fn handle_launch_url(
     url_str: &str,
     app: AppHandle,
 ) -> Result<LaunchResult, String> {
     let url = Url::parse(url_str).map_err(|e| format!("Invalid URL: {e}"))?;
 
-    let token = url
-        .query_pairs()
-        .find(|(k, _)| k == "token")
-        .map(|(_, v)| v.into_owned())
+    // Parse key=value pairs from the fragment (#token=...&api=...)
+    let fragment = url.fragment().unwrap_or("");
+    let params: std::collections::HashMap<String, String> =
+        form_urlencoded::parse(fragment.as_bytes())
+            .into_owned()
+            .collect();
+
+    let token = params
+        .get("token")
+        .cloned()
         .ok_or_else(|| "Missing token parameter".to_string())?;
 
-    let api_base = url
-        .query_pairs()
-        .find(|(k, _)| k == "api")
-        .map(|(_, v)| v.into_owned())
+    let api_base = params
+        .get("api")
+        .cloned()
         .unwrap_or_else(|| "http://localhost:3001".to_string());
 
     // Validate token with API

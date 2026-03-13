@@ -99,7 +99,8 @@ export class LauncherService {
     });
 
     const apiUrl = this.config.get<string>('PUBLIC_API_URL') ?? 'http://localhost:3001';
-    const deepLink = `reboot-remote://launch?token=${signedToken}&api=${encodeURIComponent(apiUrl)}`;
+    // Use fragment (#) instead of query string — fragments are not sent to servers or logged by proxies
+    const deepLink = `reboot-remote://launch#token=${signedToken}&api=${encodeURIComponent(apiUrl)}`;
 
     return { token: signedToken, deepLink, expiresAt };
   }

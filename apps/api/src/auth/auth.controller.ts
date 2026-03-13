@@ -54,8 +54,9 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const ip = req.ip ?? 'unknown';
-    // Accept partialToken from body OR from the partial_token httpOnly cookie
-    const partialToken = dto.partialToken ?? (req.cookies as Record<string, string>)?.['partial_token'];
+    // Prefer httpOnly cookie over body — prevents token fixation via body injection
+    const cookieToken = (req.cookies as Record<string, string>)?.['partial_token'];
+    const partialToken = cookieToken ?? dto.partialToken;
     if (!partialToken) {
       return { success: false, message: 'No partial token found' };
     }

@@ -125,11 +125,11 @@ export class UpdateService {
           return;
         }
 
-        emit('fetch', `Fetching v${info.latestVersion} from GitHub…`, 10);
-        await this.runShell('git fetch origin main', emit, 'fetch', 15, 20);
+        emit('fetch', `Fetching tag v${info.latestVersion} from GitHub…`, 10);
+        await this.runShell(`git fetch origin tag v${info.latestVersion} --no-tags`, emit, 'fetch', 15, 20);
 
-        emit('pull', 'Pulling latest code…', 25);
-        await this.runShell('git pull origin main', emit, 'pull', 25, 40);
+        emit('checkout', `Checking out v${info.latestVersion}…`, 25);
+        await this.runShell(`git checkout v${info.latestVersion}`, emit, 'checkout', 25, 40);
 
         emit('deps', 'Installing dependencies…', 42);
         await this.runShell('pnpm install --frozen-lockfile', emit, 'deps', 42, 55);

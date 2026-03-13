@@ -20,8 +20,8 @@ export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 
   @Get('status')
-  getStatus(@CurrentUser() user: JwtPayload) {
-    return { success: true, data: this.adminService.getStatus(user) };
+  async getStatus(@CurrentUser() user: JwtPayload) {
+    return { success: true, data: await this.adminService.getStatus(user) };
   }
 
   @Get('unassigned-devices')
