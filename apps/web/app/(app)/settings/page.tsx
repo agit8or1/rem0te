@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 const REQUIRED_PORTS = [
   { port: '80', proto: 'TCP', service: 'HTTP / Caddy', note: 'Web UI + API (redirects to HTTPS)' },
@@ -26,6 +27,7 @@ const REQUIRED_PORTS = [
 export default function SettingsPage() {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const router = useRouter();
 
   const { data: me } = useQuery({
     queryKey: ['me'],
@@ -160,7 +162,7 @@ export default function SettingsPage() {
           <TabsTrigger value="rustdesk">RustDesk</TabsTrigger>
           <TabsTrigger value="branding">Branding</TabsTrigger>
           <TabsTrigger value="network">Network / Ports</TabsTrigger>
-          <TabsTrigger value="access">Access Control</TabsTrigger>
+          <TabsTrigger value="access" onClick={() => router.push('/admin/access')}>Access Control</TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="mt-4 space-y-4">
@@ -517,18 +519,6 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="access" className="mt-4">
-          <Card>
-            <CardContent className="py-6">
-              <p className="text-sm text-muted-foreground mb-4">
-                Manage the permissions hierarchy — tenants, technicians, and customers.
-              </p>
-              <Link href="/admin/access">
-                <Button variant="outline" size="sm">Open Access Control</Button>
-              </Link>
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
     </div>
   );
