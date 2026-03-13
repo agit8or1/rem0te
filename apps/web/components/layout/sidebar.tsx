@@ -24,6 +24,7 @@ import {
   Users,
   Globe,
   MonitorCheck,
+  MonitorX,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -174,6 +175,7 @@ export function Sidebar() {
       <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1">
         {NAV_ITEMS.map(({ href, label, icon: Icon }) => navLink(href, label, Icon))}
         {me?.isPlatformAdmin && navLink('/admin/security', 'Security', ShieldCheck)}
+        {me?.isPlatformAdmin && navLink('/admin/unassigned', 'Unassigned Devices', MonitorX)}
         {showDownloadPage && navLink('/download', 'Downloads', Download)}
       </nav>
 

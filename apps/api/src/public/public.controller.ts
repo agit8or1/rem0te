@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Res } from '@nestjs/common';
+import { Controller, Get, Param, Query, Res } from '@nestjs/common';
 import { Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { Public } from '../common/decorators/public.decorator';
@@ -112,6 +112,7 @@ export class PublicController {
   @Public()
   async getInstallScript(
     @Param('platform') platform: string,
+    @Query('token') enrollToken: string | undefined,
     @Res() res: Response,
   ) {
     const settings = await this.getSettings();
@@ -119,20 +120,29 @@ export class PublicController {
     const key = settings?.rustdeskPublicKey ?? null;
     const version = await this.fetchLatestVersion();
 
+    // Validate enrollment token if provided
+    let validatedToken: string | undefined;
+    if (enrollToken) {
+      const tokenRecord = await this.prisma.deviceClaimToken.findUnique({ where: { token: enrollToken } });
+      if (tokenRecord && !tokenRecord.claimedAt && tokenRecord.expiresAt >= new Date()) {
+        validatedToken = enrollToken;
+      }
+    }
+
     let script: string;
     let contentType: string;
     let filename: string;
 
     if (platform === 'windows.ps1') {
-      script = this.buildWindowsScript(version, host, key);
+      script = this.buildWindowsScript(version, host, key, validatedToken);
       contentType = 'text/plain; charset=utf-8';
       filename = 'install-rustdesk.ps1';
     } else if (platform === 'linux.sh') {
-      script = this.buildLinuxScript(version, host, key);
+      script = this.buildLinuxScript(version, host, key, validatedToken);
       contentType = 'text/plain; charset=utf-8';
       filename = 'install-rustdesk.sh';
     } else if (platform === 'macos.sh') {
-      script = this.buildMacosScript(version, host, key);
+      script = this.buildMacosScript(version, host, key, validatedToken);
       contentType = 'text/plain; charset=utf-8';
       filename = 'install-rustdesk-macos.sh';
     } else {
@@ -148,9 +158,10 @@ export class PublicController {
 
   // ── Script templates ──────────────────────────────────────────────────────
 
-  private buildWindowsScript(version: string, host: string | null, key: string | null): string {
+  private buildWindowsScript(version: string, host: string | null, key: string | null, enrollToken?: string): string {
     const hostVal = host ?? '';
     const keyVal = key ?? '';
+    const claimToken = enrollToken ?? '';
     return `# Reboot Remote — RustDesk Auto-Installer for Windows
 # Server: ${host ?? 'NOT CONFIGURED'}
 # Re-run this script at any time to update the server config.
@@ -163,11 +174,12 @@ if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit 1
 }
 
-$VERSION   = "${version}"
-$HOST_ADDR = "${hostVal}"
-$PUB_KEY   = "${keyVal}"
-$INSTALLER = "$env:TEMP\\rustdesk-setup.exe"
-$RDEXE     = "C:\\Program Files\\RustDesk\\rustdesk.exe"
+$VERSION    = "${version}"
+$HOST_ADDR  = "${hostVal}"
+$PUB_KEY    = "${keyVal}"
+$CLAIM_TOKEN = "${claimToken}"
+$INSTALLER  = "$env:TEMP\\rustdesk-setup.exe"
+$RDEXE      = "C:\\Program Files\\RustDesk\\rustdesk.exe"
 
 # Generate a permanent password for this device (replaces the rotating one-time password)
 $chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789'
@@ -287,6 +299,17 @@ foreach ($f in $idPaths) {
     }
 }
 
+if ($CLAIM_TOKEN -and $rdId) {
+    Write-Host "  Registering device with management portal..." -ForegroundColor Yellow
+    try {
+        $claimBody = @{ token = $CLAIM_TOKEN; rustdeskId = $rdId; hostname = $env:COMPUTERNAME; platform = "Windows"; password = $PERM_PW } | ConvertTo-Json
+        Invoke-RestMethod -Uri "https://$HOST_ADDR/api/v1/enrollment/claim" -Method Post -Body $claimBody -ContentType "application/json" -UseBasicParsing -ErrorAction Stop | Out-Null
+        Write-Host "  Device registered to management portal." -ForegroundColor Green
+    } catch {
+        Write-Host "  Portal registration skipped (will retry on next heartbeat)." -ForegroundColor DarkGray
+    }
+}
+
 Write-Host ""
 Write-Host "=============================================" -ForegroundColor Green
 Write-Host "  RustDesk installed and running as service!" -ForegroundColor Green
@@ -311,9 +334,10 @@ Read-Host "Press Enter to close"
 `;
   }
 
-  private buildLinuxScript(version: string, host: string | null, key: string | null): string {
+  private buildLinuxScript(version: string, host: string | null, key: string | null, enrollToken?: string): string {
     const hostVal = host ?? '';
     const keyVal = key ?? '';
+    const claimToken = enrollToken ?? '';
     return `#!/usr/bin/env bash
 # Reboot Remote — RustDesk Auto-Installer for Linux (Debian/Ubuntu)
 # Server: ${host ?? 'NOT CONFIGURED'}
@@ -323,6 +347,7 @@ set -euo pipefail
 VERSION="${version}"
 HOST_ADDR="${hostVal}"
 PUB_KEY="${keyVal}"
+CLAIM_TOKEN="${claimToken}"
 
 RED='\\033[0;31m'; GREEN='\\033[0;32m'; YELLOW='\\033[1;33m'; CYAN='\\033[0;36m'; NC='\\033[0m'
 
@@ -398,6 +423,15 @@ for CFG_FILE in "/root/.config/rustdesk/RustDesk.toml" "/var/lib/rustdesk/RustDe
   fi
 done
 
+# Auto-register with management portal
+if [ -n "\${CLAIM_TOKEN}" ] && [ -n "\${RD_ID}" ]; then
+  echo "  Registering device with management portal..."
+  curl -s -X POST "https://\${HOST_ADDR}/api/v1/enrollment/claim" \\
+    -H "Content-Type: application/json" \\
+    -d "{\\"token\\":\\"\${CLAIM_TOKEN}\\",\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\$(hostname -s 2>/dev/null || echo unknown)\\",\\"platform\\":\\"linux\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null 2>&1 || true
+  echo "  Device registered to management portal."
+fi
+
 echo ""
 echo -e "\${GREEN}=============================================\${NC}"
 echo -e "\${GREEN}  RustDesk installed and running as service!\${NC}"
@@ -417,9 +451,10 @@ echo ""
 `;
   }
 
-  private buildMacosScript(version: string, host: string | null, key: string | null): string {
+  private buildMacosScript(version: string, host: string | null, key: string | null, enrollToken?: string): string {
     const hostVal = host ?? '';
     const keyVal = key ?? '';
+    const claimToken = enrollToken ?? '';
     return `#!/usr/bin/env bash
 # Reboot Remote — RustDesk Auto-Installer for macOS
 # Server: ${host ?? 'NOT CONFIGURED'}
@@ -429,6 +464,7 @@ set -euo pipefail
 VERSION="${version}"
 HOST_ADDR="${hostVal}"
 PUB_KEY="${keyVal}"
+CLAIM_TOKEN="${claimToken}"
 
 # Generate a permanent password for this device
 PERM_PW=$(LC_ALL=C tr -dc 'A-Za-z2-9' < /dev/urandom | head -c 12)
@@ -501,6 +537,15 @@ for CFG in "\${HOME}/Library/Preferences/com.carriez.RustDesk/RustDesk.toml" \\
     [ -n "\${RD_ID}" ] && break
   fi
 done
+
+# Auto-register with management portal
+if [ -n "\${CLAIM_TOKEN}" ] && [ -n "\${RD_ID}" ]; then
+  echo "  Registering device with management portal..."
+  curl -s -X POST "https://\${HOST_ADDR}/api/v1/enrollment/claim" \\
+    -H "Content-Type: application/json" \\
+    -d "{\\"token\\":\\"\${CLAIM_TOKEN}\\",\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\$(hostname -s 2>/dev/null || echo unknown)\\",\\"platform\\":\\"macos\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null 2>&1 || true
+  echo "  Device registered to management portal."
+fi
 
 echo ""
 echo "============================================="

@@ -92,14 +92,48 @@ export class EnrollmentService {
     if (record.claimedAt) throw new BadRequestException('Token has already been used');
     if (record.expiresAt < new Date()) throw new BadRequestException('Token has expired');
 
-    // Check for duplicate RustDesk ID within tenant
-    const existingNode = await this.prisma.rustdeskNode.findFirst({
-      where: { rustdeskId: dto.rustdeskId, tenantId: record.tenantId },
+    // Check for duplicate RustDesk ID globally
+    const existingNode = await this.prisma.rustdeskNode.findUnique({
+      where: { rustdeskId: dto.rustdeskId },
     });
+
     if (existingNode) {
-      throw new BadRequestException(
-        `RustDesk ID ${dto.rustdeskId} is already registered to endpoint ${existingNode.endpointId}`,
-      );
+      if (existingNode.tenantId && existingNode.tenantId !== record.tenantId) {
+        throw new BadRequestException(`RustDesk ID ${dto.rustdeskId} is registered to a different tenant`);
+      }
+      if (existingNode.tenantId === record.tenantId) {
+        throw new BadRequestException(`RustDesk ID ${dto.rustdeskId} is already enrolled in this tenant`);
+      }
+      // tenantId is null (unassigned)
+      if (!record.endpointId) {
+        // Assign the unassigned node/endpoint to this tenant
+        await this.prisma.rustdeskNode.update({
+          where: { id: existingNode.id },
+          data: { tenantId: record.tenantId },
+        });
+        await this.prisma.endpoint.update({
+          where: { id: existingNode.endpointId },
+          data: { tenantId: record.tenantId, status: 'ACTIVE' },
+        });
+        await this.prisma.deviceClaimToken.update({
+          where: { id: record.id },
+          data: { claimedAt: new Date(), claimedByIp: claimedByIp ?? null, endpointId: existingNode.endpointId },
+        });
+        const endpoint = await this.prisma.endpoint.findUnique({ where: { id: existingNode.endpointId } });
+        await this.audit.log({
+          tenantId: record.tenantId,
+          action: 'ENDPOINT_CLAIMED',
+          resource: 'endpoint',
+          resourceId: existingNode.endpointId,
+          actorIp: claimedByIp,
+          meta: { rustdeskId: dto.rustdeskId, hostname: dto.hostname },
+        });
+        return { endpoint, tenantId: record.tenantId };
+      } else {
+        // Token has endpointId — delete the unassigned duplicate and proceed with normal token flow
+        await this.prisma.rustdeskNode.delete({ where: { id: existingNode.id } });
+        await this.prisma.endpoint.delete({ where: { id: existingNode.endpointId } });
+      }
     }
 
     let endpoint = record.endpointId
@@ -181,10 +215,37 @@ export class EnrollmentService {
   }
 
   async heartbeat(dto: { rustdeskId: string; hostname?: string; platform?: string; osVersion?: string; agentVersion?: string; ipAddress?: string }) {
-    const node = await this.prisma.rustdeskNode.findFirst({
+    const node = await this.prisma.rustdeskNode.findUnique({
       where: { rustdeskId: dto.rustdeskId },
     });
-    if (!node) return { found: false };
+
+    if (!node) {
+      // Auto-create an unassigned endpoint + node in the pending pool
+      const endpoint = await this.prisma.endpoint.create({
+        data: {
+          tenantId: null,
+          name: dto.hostname ?? dto.rustdeskId,
+          hostname: dto.hostname ?? null,
+          platform: dto.platform ?? null,
+          osVersion: dto.osVersion ?? null,
+          ipAddress: dto.ipAddress ?? null,
+          lastSeenAt: new Date(),
+          isOnline: true,
+          status: 'PENDING_ENROLLMENT',
+        },
+      });
+      await this.prisma.rustdeskNode.create({
+        data: {
+          tenantId: null,
+          endpointId: endpoint.id,
+          rustdeskId: dto.rustdeskId,
+          hostname: dto.hostname ?? null,
+          platform: dto.platform ?? null,
+          lastSeenAt: new Date(),
+        },
+      });
+      return { found: false, endpointId: endpoint.id };
+    }
 
     await this.prisma.rustdeskNode.update({
       where: { id: node.id },

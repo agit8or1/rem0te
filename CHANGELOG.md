@@ -5,6 +5,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.3.0] — 2026-03-13 · *Luna*
+
+### Added
+- **Unassigned device pool** — devices that heartbeat/enroll without a tenant token land in an unassigned state; only platform admins can see them at `/admin/unassigned`
+- **Platform admin: Unassigned Devices page** — table of unassigned devices with one-click tenant assignment
+- **Tenant-generated enrollment links** — "Generate Enrollment Link" button on Enrolled Clients page creates a claim token and shows per-platform script URLs (`?token=<token>`) with copy buttons
+- **Auto-claim in install scripts** — when a script URL includes `?token=`, the script automatically calls `POST /enrollment/claim` after installation, assigning the device to the correct tenant
+- **Claim flow: handles unassigned → assigned** — if a device heartbeated first (creating an unassigned record), the claim step assigns that record to the tenant rather than creating a duplicate
+- **`GET /admin/unassigned-devices`** API endpoint (platform admin only)
+- **`POST /admin/unassigned-devices/:id/assign`** API endpoint (platform admin only)
+
+### Changed
+- `RustdeskNode.rustdeskId` is now globally unique (was per-tenant) — a device can only be enrolled in one tenant at a time
+- `Endpoint.tenantId` and `RustdeskNode.tenantId` are now nullable; `null` means unassigned
+
+---
+
 ## [0.2.0] — 2026-03-12 · *Luna*
 
 ### Added

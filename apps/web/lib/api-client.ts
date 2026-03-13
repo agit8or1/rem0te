@@ -174,6 +174,8 @@ export const enrollmentApi = {
 // ─── Admin ────────────────────────────────────────────────────────────────────
 export const adminApi = {
   status: () => api.get('/admin/status'),
+  listUnassigned: () => api.get('/admin/unassigned-devices'),
+  assignDevice: (id: string, tenantId: string) => api.post(`/admin/unassigned-devices/${id}/assign`, { tenantId }),
 };
 
 // ─── Update ───────────────────────────────────────────────────────────────────

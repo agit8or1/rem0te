@@ -1,10 +1,13 @@
-import { Injectable, ForbiddenException } from '@nestjs/common';
+import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { execSync } from 'child_process';
 import * as os from 'os';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class AdminService {
+  constructor(private readonly prisma: PrismaService) {}
+
   getStatus(user: JwtPayload) {
     if (!user.isPlatformAdmin) {
       throw new ForbiddenException('Platform admin access required');
@@ -35,6 +38,41 @@ export class AdminService {
       disk,
       services,
     };
+  }
+
+  async getUnassignedDevices() {
+    return this.prisma.endpoint.findMany({
+      where: { tenantId: null },
+      include: {
+        rustdeskNode: { select: { rustdeskId: true, lastSeenAt: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async assignDevice(id: string, tenantId: string) {
+    const endpoint = await this.prisma.endpoint.findFirst({
+      where: { id, tenantId: null },
+      include: { rustdeskNode: true },
+    });
+    if (!endpoint) throw new NotFoundException(`Unassigned endpoint ${id} not found`);
+
+    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId } });
+    if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
+
+    const updated = await this.prisma.endpoint.update({
+      where: { id },
+      data: { tenantId, status: 'ACTIVE' },
+    });
+
+    if (endpoint.rustdeskNode) {
+      await this.prisma.rustdeskNode.update({
+        where: { id: endpoint.rustdeskNode.id },
+        data: { tenantId },
+      });
+    }
+
+    return updated;
   }
 
   private getDiskUsage() {

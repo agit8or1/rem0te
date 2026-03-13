@@ -356,8 +356,8 @@ model Site {
 
 model Endpoint {
   id              String         @id @default(cuid())
-  tenantId        String
-  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String?
+  tenant          Tenant?        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   customerId      String?
   customer        Customer?      @relation(fields: [customerId], references: [id])
   siteId          String?
@@ -436,12 +436,12 @@ model EndpointAlias {
 
 model RustdeskNode {
   id         String   @id @default(cuid())
-  tenantId   String
-  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId   String?
+  tenant     Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   endpointId String   @unique
   endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
 
-  rustdeskId        String
+  rustdeskId        String    @unique
   lastSeenAt        DateTime?
   platform          String?
   version           String?
@@ -452,7 +452,6 @@ model RustdeskNode {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([tenantId, rustdeskId])
   @@index([rustdeskId])
 }
 
