@@ -353,6 +353,7 @@ rsync -a --delete \
   "${INSTALL_DIR}/api/prisma/"
 cp "${REPO_DIR}/apps/api/package.json" "${INSTALL_DIR}/api/"
 cp "${REPO_DIR}/apps/api/tsconfig.json" "${INSTALL_DIR}/api/" 2>/dev/null || true
+cp "${REPO_DIR}/version.json" "${INSTALL_DIR}/version.json"
 
 # Install production-only node_modules for API
 cd "${INSTALL_DIR}/api"
