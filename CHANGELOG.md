@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.3.4] — 2026-03-13 · *Luna*
+
+### Changed
+- **Settings → Access Control tab** now navigates directly to the Access Control page instead of showing an intermediary card with a button
+
+### Dependencies
+- `argon2` updated 0.40.3 → 0.44.0
+- `class-validator` updated 0.14.4 → 0.15.1
+
+---
+
 ## [0.3.3] — 2026-03-13 · *Luna*
 
 ### Security
