@@ -155,7 +155,7 @@ function MfaTab() {
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
-  const mfaEnabled: boolean = status?.mfaEnabled ?? false;
+  const mfaEnabled: boolean = status?.enrolled ?? false;
 
   const beginEnroll = useMutation({
     mutationFn: () => mfaApi.beginEnroll(),
