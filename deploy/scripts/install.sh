@@ -356,6 +356,8 @@ rsync -a --delete \
 cp "${REPO_DIR}/apps/api/package.json" "${INSTALL_DIR}/api/"
 cp "${REPO_DIR}/apps/api/tsconfig.json" "${INSTALL_DIR}/api/" 2>/dev/null || true
 cp "${REPO_DIR}/version.json" "${INSTALL_DIR}/version.json"
+mkdir -p "${INSTALL_DIR}/dist"
+cp "${REPO_DIR}/dist/windows-installer.exe" "${INSTALL_DIR}/dist/windows-installer.exe"
 
 # Install production-only node_modules for API
 cd "${INSTALL_DIR}/api"
