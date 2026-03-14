@@ -1,12 +1,19 @@
 import { Controller, Get, Param, Query, Res, Req } from '@nestjs/common';
 import { Response, Request } from 'express';
 import { createHash } from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { Public } from '../common/decorators/public.decorator';
 import * as https from 'https';
 
+const INSTALLER_MAGIC = Buffer.from('REM0TE_INST_URL:');
+const INSTALLER_SLOT_SIZE = 256;
+
 @Controller('public')
 export class PublicController {
+  private readonly projectRoot = process.env.PROJECT_ROOT ?? path.join(process.cwd(), '..', '..');
+
   constructor(private readonly prisma: PrismaService) {}
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -148,15 +155,14 @@ export class PublicController {
       script = this.buildMacosScript(version, host, key, validatedToken);
       contentType = 'text/plain; charset=utf-8';
       filename = 'install-rustdesk-macos.sh';
-    } else if (platform === 'windows.bat') {
+    } else if (platform === 'windows.exe') {
       const proto = (req.headers['x-forwarded-proto'] as string | undefined) ?? 'https';
       const reqHost = (req.headers['x-forwarded-host'] as string | undefined) ?? req.headers.host ?? 'localhost';
       const apiUrl = `${proto}://${reqHost}`;
       const tokenSuffix = validatedToken ? `?token=${validatedToken}` : '';
       const psUrl = `${apiUrl}/api/v1/public/install/windows.ps1${tokenSuffix}`;
-      script = this.buildWindowsBatchLauncher(psUrl);
-      contentType = 'application/octet-stream';
-      filename = 'install-reboot-remote.bat';
+      await this.serveWindowsExe(psUrl, res);
+      return;
     } else {
       res.status(404).json({ success: false, message: 'Unknown platform' });
       return;
@@ -346,24 +352,34 @@ Read-Host "Press Enter to close"
 `;
   }
 
-  private buildWindowsBatchLauncher(scriptUrl: string): string {
-    return `@echo off
-net session >nul 2>&1
-if NOT %errorLevel% == 0 (
-    powershell -NoProfile -Command "Start-Process '%~f0' -Verb RunAs"
-    exit /B
-)
-echo.
-echo   Reboot Remote - Installing remote support client...
-echo   This window will close when setup is complete.
-echo.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm '${scriptUrl}' | iex"
-if %ERRORLEVEL% neq 0 (
-    echo.
-    echo   Setup did not complete. Press any key to close.
-    pause >nul
-)
-`;
+  private async serveWindowsExe(psUrl: string, res: Response): Promise<void> {
+    const exePath = path.join(this.projectRoot, 'dist', 'windows-installer.exe');
+    let binary: Buffer;
+    try {
+      binary = await fs.promises.readFile(exePath);
+    } catch {
+      res.status(503).json({ success: false, message: 'Windows installer binary not available' });
+      return;
+    }
+
+    const idx = binary.indexOf(INSTALLER_MAGIC);
+    if (idx === -1) {
+      res.status(500).json({ success: false, message: 'Installer binary is corrupt (magic not found)' });
+      return;
+    }
+
+    // Patch: zero the URL field then write the new URL (null-terminated)
+    const patched = Buffer.from(binary);
+    const urlStart = idx + INSTALLER_MAGIC.length;
+    const urlEnd = idx + INSTALLER_SLOT_SIZE;
+    patched.fill(0, urlStart, urlEnd);
+    const urlBytes = Buffer.from(psUrl, 'utf8');
+    urlBytes.copy(patched, urlStart, 0, Math.min(urlBytes.length, urlEnd - urlStart - 1));
+
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment; filename="install-reboot-remote.exe"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(patched);
   }
 
   private buildLinuxScript(version: string, host: string | null, key: string | null, enrollToken?: string): string {

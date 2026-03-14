@@ -243,9 +243,9 @@ export default function DownloadPage() {
                       Download and double-click. It will request Administrator access and install automatically — no PowerShell needed.
                     </p>
                     <Button asChild size="sm" className="mt-1">
-                      <a href={`${installBase}/windows.bat`}>
+                      <a href={`${installBase}/windows.exe`}>
                         <Download className="h-4 w-4 mr-2" />
-                        Download Windows Installer (.bat)
+                        Download Windows Installer (.exe)
                       </a>
                     </Button>
                   </div>

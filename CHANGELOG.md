@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.3.6] — 2026-03-14 · *Luna*
+
+### Changed
+- **Windows installer** — replaced `.bat` launcher with a compiled Go `.exe` (`GET /public/install/windows.exe`); binary patching at serve time embeds the PS1 URL including any enrollment token; self-elevates via UAC, no PowerShell knowledge required; signable with a code signing certificate
+
+### Removed
+- `GET /public/install/windows.bat` — superseded by `windows.exe`
+
+---
+
 ## [0.3.5] — 2026-03-13 · *Luna*
 
 ### Added

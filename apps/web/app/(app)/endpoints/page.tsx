@@ -58,7 +58,7 @@ export default function EndpointsPage() {
 
   const scriptUrls = generatedToken
     ? {
-        windowsBat: `${window.location.origin}/api/v1/public/install/windows.bat?token=${generatedToken}`,
+        windowsExe: `${window.location.origin}/api/v1/public/install/windows.exe?token=${generatedToken}`,
         windows: `${window.location.origin}/api/v1/public/install/windows.ps1?token=${generatedToken}`,
         linux: `${window.location.origin}/api/v1/public/install/linux.sh?token=${generatedToken}`,
         macos: `${window.location.origin}/api/v1/public/install/macos.sh?token=${generatedToken}`,
@@ -214,8 +214,8 @@ export default function EndpointsPage() {
                     <p className="text-xs font-semibold">Windows — One-click installer (recommended)</p>
                     <p className="text-xs text-muted-foreground">Send this URL — user downloads and double-clicks, no PowerShell needed.</p>
                     <div className="flex items-center gap-2">
-                      <code className="flex-1 text-xs bg-muted rounded px-2 py-1.5 break-all">{scriptUrls!.windowsBat}</code>
-                      <Button size="sm" variant="outline" onClick={() => copyToClipboard(scriptUrls!.windowsBat)}>
+                      <code className="flex-1 text-xs bg-muted rounded px-2 py-1.5 break-all">{scriptUrls!.windowsExe}</code>
+                      <Button size="sm" variant="outline" onClick={() => copyToClipboard(scriptUrls!.windowsExe)}>
                         <Copy className="h-3 w-3" />
                       </Button>
                     </div>
