@@ -1,5 +1,6 @@
 node_modules/
-dist/
+dist/*
+!dist/windows-installer.exe
 .next/
 *.env
 *.env.local
