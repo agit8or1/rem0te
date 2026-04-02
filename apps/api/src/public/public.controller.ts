@@ -212,7 +212,7 @@ Write-Host "[1/4] Downloading RustDesk v$VERSION..." -ForegroundColor Yellow
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $dlUrl = "https://github.com/rustdesk/rustdesk/releases/download/$VERSION/rustdesk-$VERSION-x86_64.exe"
 try {
-    Invoke-WebRequest -Uri $dlUrl -OutFile $INSTALLER -UseBasicParsing
+    Invoke-WebRequest -Uri $dlUrl -OutFile $INSTALLER -UseBasicParsing -ProgressAction SilentlyContinue
 } catch {
     Write-Host "ERROR: Download failed — $_" -ForegroundColor Red
     exit 1
@@ -226,13 +226,21 @@ Write-Host "[2/4] Stopping existing RustDesk (if running)..." -ForegroundColor Y
 Start-Sleep -Seconds 2
 
 # Install silently — NSIS /S flag
+# WaitForExit only waits for the NSIS stub; the actual file extraction runs as a
+# child process and can finish several seconds after the stub exits.
+# Poll until $RDEXE appears (up to 60 s) before declaring failure.
 Write-Host "     Installing..." -ForegroundColor Yellow
 $install = Start-Process -FilePath $INSTALLER -ArgumentList "/S" -PassThru
 $install.WaitForExit(180000)
 Remove-Item $INSTALLER -ErrorAction SilentlyContinue
 
+$waited = 0
+while (-not (Test-Path $RDEXE) -and $waited -lt 60) {
+    Start-Sleep -Seconds 2
+    $waited += 2
+}
 if (-not (Test-Path $RDEXE)) {
-    Write-Host "ERROR: Installation failed — $RDEXE not found." -ForegroundColor Red
+    Write-Host "ERROR: Installation failed — $RDEXE not found after $waited s." -ForegroundColor Red
     exit 1
 }
 
