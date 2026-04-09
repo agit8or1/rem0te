@@ -3,7 +3,10 @@
 > Multi-tenant remote support management platform built on [RustDesk](https://rustdesk.com).
 > Managed by **Luna** — a very good German Shepherd Dog.
 
-[![Version](https://img.shields.io/github/v/release/agit8or1/rem0te)](https://github.com/agit8or1/rem0te/releases)
+⭐ If Rem0te is useful to you, a star helps others find it!
+
+[![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te/stargazers)
+[![Version](https://img.shields.io/badge/version-0.3.6-blue)](https://github.com/agit8or1/rem0te/releases)
 [![Issues](https://img.shields.io/github/issues/agit8or1/rem0te)](https://github.com/agit8or1/rem0te/issues)
 [![License](https://img.shields.io/github/license/agit8or1/rem0te)](LICENSE)
 [![Website](https://img.shields.io/badge/website-mspreboot.com-blue)](https://mspreboot.com)
