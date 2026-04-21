@@ -1,7 +1,8 @@
 import {
-  Injectable, NotFoundException, ConflictException,
+  Injectable, NotFoundException, ConflictException, InternalServerErrorException,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
+import Anthropic from '@anthropic-ai/sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { ConfigService } from '@nestjs/config';
@@ -180,10 +181,97 @@ export class EndpointsService {
         ...(dto.osVersion !== undefined ? { osVersion: dto.osVersion } : {}),
         ...(dto.ipAddress !== undefined ? { ipAddress: dto.ipAddress } : {}),
         ...(dto.isManaged !== undefined ? { isManaged: dto.isManaged } : {}),
+        ...(dto.aiTimeline !== undefined ? { aiTimeline: dto.aiTimeline } : {}),
       },
     });
     await this.audit.log({ action: 'ENDPOINT_UPDATED', actorId, tenantId, resource: 'endpoint', resourceId: id });
     return endpoint;
+  }
+
+  async generateTimeline(tenantId: string, id: string): Promise<{ text: string }> {
+    const endpoint = await this.prisma.endpoint.findFirst({
+      where: { id, tenantId },
+      include: {
+        customer: { select: { id: true, name: true } },
+        site: { select: { id: true, name: true } },
+        tags: true,
+        aliases: true,
+        noteRels: {
+          include: { author: { select: { email: true } } },
+          orderBy: { createdAt: 'asc' },
+          take: 30,
+        },
+        supportSessions: {
+          orderBy: { createdAt: 'asc' },
+          take: 20,
+          select: {
+            createdAt: true,
+            status: true,
+            issueDescription: true,
+            notes: true,
+            disposition: true,
+            duration: true,
+          },
+        },
+      },
+    });
+    if (!endpoint) throw new NotFoundException('Endpoint not found');
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new InternalServerErrorException('ANTHROPIC_API_KEY is not configured');
+
+    const lines: string[] = [
+      `Device: ${endpoint.name}`,
+      `Hostname: ${endpoint.hostname ?? 'Unknown'}`,
+      `Platform: ${endpoint.platform ?? 'Unknown'}`,
+      `OS: ${endpoint.osVersion ?? 'Unknown'}`,
+      `Status: ${endpoint.status}`,
+      `Currently online: ${endpoint.isOnline ? 'Yes' : 'No'}`,
+      `Last seen: ${endpoint.lastSeenAt ? endpoint.lastSeenAt.toISOString() : 'Never'}`,
+      `Customer: ${endpoint.customer?.name ?? 'Unassigned'}`,
+      `Site: ${endpoint.site?.name ?? 'None'}`,
+      `Tags: ${endpoint.tags.map((t) => t.tag).join(', ') || 'None'}`,
+      `Enrolled: ${endpoint.createdAt.toISOString()}`,
+    ];
+
+    if (endpoint.noteRels.length > 0) {
+      lines.push('\nNotes (oldest to newest):');
+      for (const n of endpoint.noteRels) {
+        lines.push(`  [${n.createdAt.toLocaleDateString()}] ${n.content}`);
+      }
+    }
+
+    if (endpoint.supportSessions.length > 0) {
+      lines.push('\nSupport session history:');
+      for (const s of endpoint.supportSessions) {
+        const parts = [`[${s.createdAt.toLocaleDateString()}] ${s.status}`];
+        if (s.issueDescription) parts.push(`Issue: ${s.issueDescription}`);
+        if (s.disposition) parts.push(`Resolution: ${s.disposition}`);
+        if (s.duration) parts.push(`Duration: ${Math.round(s.duration / 60)}m`);
+        lines.push('  ' + parts.join(' | '));
+      }
+    }
+
+    const anthropic = new Anthropic({ apiKey });
+    const message = await anthropic.messages.create({
+      model: 'claude-opus-4-6',
+      max_tokens: 1024,
+      messages: [{
+        role: 'user',
+        content: `You are a technical support AI assistant. Based on the device information below, write a concise narrative summary (2–4 paragraphs) about this device: its current state, history, notable patterns, and anything a technician should know before working on it. Write in plain, direct prose — no bullet points, no headings, no markdown.\n\n${lines.join('\n')}`,
+      }],
+    });
+
+    const text = message.content.find((b) => b.type === 'text')
+      ? (message.content.find((b) => b.type === 'text') as Anthropic.TextBlock).text
+      : '';
+
+    await this.prisma.endpoint.update({
+      where: { id },
+      data: { aiTimeline: text },
+    });
+
+    return { text };
   }
 
   async archive(tenantId: string, id: string, actorId: string) {

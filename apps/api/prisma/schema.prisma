@@ -387,6 +387,8 @@ model Endpoint {
   supportSessions   SupportSession[]
   deviceClaimTokens DeviceClaimToken[]
 
+  aiTimeline String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -1149,6 +1149,195 @@ const SEMGREP_FIX_GUIDANCE: Record<string, string> = {
   'regex-dos': 'Rewrite the regex to avoid nested quantifiers on overlapping patterns. Use a linear-time regex engine or input length limits.',
 };
 
+// Legal citations for security rules — mapped to regulation references
+const RULE_LEGAL_CITATIONS: Record<string, string[]> = {
+  // Credential / secret exposure
+  'hardcoded-password': [
+    'GDPR Art. 32 — obligation to implement appropriate technical measures to protect personal data',
+    'CCPA §1798.150 — private right of action for exposure of personal information',
+    'HIPAA §164.312(a)(2)(i) — unique user identification; §164.312(d) — authentication safeguards',
+    'NY SHIELD Act (N.Y. Gen. Bus. Law §899-bb) — reasonable safeguards for private information',
+    'TX Bus. & Com. Code §521.052 — requirement to implement reasonable security procedures',
+    'PCI DSS Req. 8.2 — proper identification and authentication of all system components',
+  ],
+  'hardcoded-secret': [
+    'GDPR Art. 32 — obligation to implement appropriate technical measures to protect personal data',
+    'CCPA §1798.150 — private right of action for exposure of personal information',
+    'HIPAA §164.312(a)(2)(i) — unique user identification requirements',
+    'NY SHIELD Act (N.Y. Gen. Bus. Law §899-bb) — reasonable safeguards for private information',
+    'TX Bus. & Com. Code §521.052 — requirement to implement reasonable security procedures',
+    'PCI DSS Req. 8.2.1 — passwords/passphrases must not be embedded in application source',
+    'NIST SP 800-53 IA-5(7) — no embedded unencrypted static authenticators',
+  ],
+
+  // Cryptographic weaknesses
+  'weak-crypto-md5': [
+    'HIPAA §164.312(e)(2)(ii) — encryption and decryption must use NIST-approved algorithms',
+    'PCI DSS Req. 4.2.1 — strong cryptography required; MD5 is explicitly prohibited',
+    'NIST SP 800-131A Rev. 2 — MD5 disallowed for all security applications',
+    'GDPR Art. 32 — pseudonymisation and encryption of personal data using appropriate measures',
+    'FTC Act §5 — unfair or deceptive practices; use of broken crypto may constitute negligence',
+  ],
+  'weak-crypto-sha1': [
+    'HIPAA §164.312(e)(2)(ii) — NIST-approved algorithms required for PHI encryption',
+    'PCI DSS Req. 4.2.1 — strong cryptography only; SHA-1 deprecated for digital signatures',
+    'NIST SP 800-131A Rev. 2 — SHA-1 disallowed for digital signatures after 2013',
+    'GDPR Art. 32 — encryption must be appropriate to risk; deprecated algorithms are not',
+    'CA SB 327 — reasonable security for connected devices; weak crypto fails this standard',
+  ],
+
+  // Injection / code execution
+  'no-eval': [
+    'OWASP Top 10 A03 — Injection: eval with user data is a primary injection vector',
+    'GDPR Art. 32 — security of processing; code injection can lead to data breach',
+    'CCPA §1798.150 — private right of action where breach results from security failures',
+    'FTC Act §5 — failure to protect against known vulnerability classes (eval injection)',
+    'NY SHIELD Act — reasonable safeguards must address known attack vectors',
+  ],
+  'no-new-function': [
+    'OWASP Top 10 A03 — Injection; new Function() is equivalent to eval()',
+    'GDPR Art. 32 — obligation to prevent unauthorised data processing',
+    'FTC Act §5 — unfair practice where known vulnerability class causes consumer harm',
+  ],
+  'child-process-exec-dynamic': [
+    'OWASP Top 10 A03 — Injection (OS Command Injection)',
+    'GDPR Art. 32 — security of processing; command injection can cause full system compromise',
+    'HIPAA §164.312(a)(1) — access control; OS injection bypasses all access controls',
+    'PCI DSS Req. 6.2.4 — prevent common software attacks including OS command injection',
+    'NY SHIELD Act — reasonable safeguards include protection against injection attacks',
+    'FTC Act §5 — failure to guard against well-known vulnerability class',
+  ],
+  'security/detect-child-process': [
+    'OWASP Top 10 A03 — Injection (OS Command Injection)',
+    'GDPR Art. 32 — security of processing obligations',
+    'PCI DSS Req. 6.2.4 — prevent common software attacks including OS command injection',
+    'FTC Act §5 — failure to guard against well-known vulnerability class',
+  ],
+  'security/detect-eval-with-expression': [
+    'OWASP Top 10 A03 — Injection',
+    'GDPR Art. 32 — security of processing; eval injection can expose personal data',
+    'FTC Act §5 — unfair or deceptive practices via known security failures',
+  ],
+
+  // Timing attacks / authentication
+  'security/detect-possible-timing-attacks': [
+    'GDPR Art. 32 — ongoing confidentiality of processing systems',
+    'HIPAA §164.312(d) — authentication; timing attacks can bypass authentication',
+    'PCI DSS Req. 8.3.6 — authentication mechanisms must be resistant to attack',
+    'NIST SP 800-63B §5.2.3 — verifiers shall use approved cryptographic algorithms resistant to timing attacks',
+  ],
+
+  // Memory / buffer issues
+  'security/detect-new-buffer': [
+    'GDPR Art. 32 — preventing unauthorised disclosure through memory safety issues',
+    'PCI DSS Req. 6.2.4 — protect against memory-related vulnerabilities',
+    'FTC Act §5 — failure to use safe language constructs where alternatives exist',
+  ],
+  'security/detect-buffer-noassert': [
+    'PCI DSS Req. 6.2.4 — protect against memory-related vulnerabilities',
+    'GDPR Art. 32 — integrity and confidentiality of processing',
+  ],
+
+  // Denial of service
+  'regex-dos': [
+    'GDPR Art. 32 — ensuring ongoing availability of processing systems',
+    'HIPAA §164.312(a)(2)(ii) — emergency access and availability procedures',
+    'PCI DSS Req. 6.2.4 — protect against denial of service attacks',
+    'SLA / Uptime commitments — ReDoS can cause full service outage',
+  ],
+  'security/detect-unsafe-regex': [
+    'GDPR Art. 32 — ensuring availability and resilience of processing systems',
+    'PCI DSS Req. 6.2.4 — protect against denial of service via input attacks',
+  ],
+
+  // Path traversal / file access
+  'security/detect-non-literal-fs-filename': [
+    'OWASP Top 10 A01 — Broken Access Control (path traversal)',
+    'GDPR Art. 32 — prevent unauthorised access to personal data stored on filesystem',
+    'HIPAA §164.312(a)(1) — access control safeguards for electronic PHI',
+    'PCI DSS Req. 6.2.4 — protect against path traversal attacks',
+    'NY SHIELD Act — reasonable safeguards include input validation to prevent directory traversal',
+  ],
+
+  // Injection / object safety
+  'prototype-pollution': [
+    'OWASP Top 10 A03 — Injection; prototype pollution can lead to RCE',
+    'GDPR Art. 32 — security of processing; prototype pollution can bypass access controls',
+    'PCI DSS Req. 6.2.4 — prevent common software attacks',
+    'FTC Act §5 — known vulnerability class with demonstrated real-world exploits',
+  ],
+  'security/detect-object-injection': [
+    'OWASP Top 10 A03 — Injection',
+    'GDPR Art. 32 — integrity and confidentiality of processing',
+    'PCI DSS Req. 6.2.4 — prevent common software attacks',
+  ],
+
+  // Randomness
+  'security/detect-pseudoRandomBytes': [
+    'GDPR Art. 32 — pseudonymisation must use cryptographically secure methods',
+    'PCI DSS Req. 3.7 — cryptographic key management must use approved RNG',
+    'NIST SP 800-90A — deterministic random bit generators must meet NIST standards',
+    'HIPAA §164.312(a)(2)(iv) — encryption/decryption requires secure key generation',
+  ],
+
+  // XSS / template injection
+  'security/detect-disable-mustache-escape': [
+    'OWASP Top 10 A03 — Injection (XSS)',
+    'GDPR Art. 32 — preventing data theft through client-side injection attacks',
+    'CCPA §1798.150 — XSS can expose personal information triggering private right of action',
+    'PCI DSS Req. 6.2.4 — protect against XSS attacks',
+  ],
+
+  // TLS / network
+  'no-disable-tls-validation': [
+    'PCI DSS Req. 4.2.1 — strong cryptography required for data in transit; disabling TLS validation nullifies encryption',
+    'GDPR Art. 32 — encryption in transit; certificate validation is mandatory for meaningful encryption',
+    'HIPAA §164.312(e)(2)(ii) — encryption of ePHI in transit',
+    'NY SHIELD Act — reasonable safeguards include encrypted transmission with valid certificate verification',
+    'FTC Act §5 — disabling TLS validation is an unfair practice under FTC enforcement precedent',
+  ],
+
+  // CSRF
+  'security/detect-no-csrf-before-method-override': [
+    'OWASP Top 10 A01 — Broken Access Control (CSRF)',
+    'GDPR Art. 32 — security of processing; CSRF can trigger unauthorised data modifications',
+    'PCI DSS Req. 6.2.4 — protect against CSRF attacks',
+    'FTC Act §5 — known vulnerability class with consumer harm potential',
+  ],
+
+  // Regex
+  'security/detect-non-literal-regexp': [
+    'OWASP Top 10 A03 — Injection (ReDoS / regex injection)',
+    'GDPR Art. 32 — availability of processing systems',
+    'PCI DSS Req. 6.2.4 — protect against input-based attacks',
+  ],
+};
+
+function LegalCitations({ rule }: { rule: string }) {
+  const [open, setOpen] = useState(false);
+  const citations = RULE_LEGAL_CITATIONS[rule];
+  if (!citations?.length) return null;
+  return (
+    <div className="mt-1">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="text-xs text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1"
+      >
+        {open ? '▾' : '▸'} Regulatory exposure
+      </button>
+      {open && (
+        <ul className="mt-1 space-y-0.5 bg-amber-50 dark:bg-amber-950/30 rounded p-2 border-l-2 border-amber-400/50">
+          {citations.map((c, i) => (
+            <li key={i} className="text-xs text-muted-foreground list-none">
+              · {c}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function RemediationGuidance({ rule, type }: { rule: string; type: 'eslint' | 'semgrep' }) {
   const [open, setOpen] = useState(false);
   const guidance = type === 'eslint' ? ESLINT_FIX_GUIDANCE[rule] : SEMGREP_FIX_GUIDANCE[rule];
@@ -1191,6 +1380,7 @@ function StaticIssueTableWithGuidance({ issues, type }: { issues: StaticIssue[];
               <td className="py-2 pr-3">
                 <div className="font-mono">{issue.rule}</div>
                 <RemediationGuidance rule={issue.rule} type={type} />
+                <LegalCitations rule={issue.rule} />
               </td>
               <td className="py-2 pr-3"><SeverityBadge level={issue.severity} /></td>
               <td className="py-2 text-muted-foreground">{issue.message}</td>

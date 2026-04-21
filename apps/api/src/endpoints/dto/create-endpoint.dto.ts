@@ -26,6 +26,7 @@ export class UpdateEndpointDto {
   @IsOptional() @IsString() osVersion?: string;
   @IsOptional() @IsString() ipAddress?: string;
   @IsOptional() @IsBoolean() isManaged?: boolean;
+  @IsOptional() @IsString() aiTimeline?: string;
 }
 
 export class AddTagDto {

@@ -86,6 +86,13 @@ export class EndpointsController {
     return { success: true };
   }
 
+  @Post(':id/timeline/generate')
+  @RequirePermissions('endpoints:write')
+  @HttpCode(HttpStatus.OK)
+  async generateTimeline(@CurrentUser() u: JwtPayload, @Param('id') id: string) {
+    return { success: true, data: await this.svc.generateTimeline(u.tenantId!, id) };
+  }
+
   @Get(':id/password')
   @RequirePermissions('endpoints:write')
   async getPassword(@CurrentUser() u: JwtPayload, @Param('id') id: string) {
