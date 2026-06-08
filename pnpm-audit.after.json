@@ -1,0 +1,438 @@
+[WARN] The "pnpm" field in package.json is no longer read by pnpm. The following keys were ignored: "pnpm.onlyBuiltDependencies". See https://pnpm.io/settings for the new home of each setting.
+{
+  "advisories": {
+    "1102341": {
+      "findings": [
+        {
+          "version": "0.21.5",
+          "paths": [
+            "apps__launcher>@vitejs/plugin-react>vite>esbuild",
+            "apps__launcher>vite>esbuild"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1102341,
+      "title": "esbuild enables any website to send any requests to the development server and read the response",
+      "module_name": "esbuild",
+      "vulnerable_versions": "<=0.24.2",
+      "patched_versions": ">=0.24.3",
+      "severity": "moderate",
+      "cwe": "CWE-346",
+      "github_advisory_id": "GHSA-67mh-4wv8-2f99",
+      "url": "https://github.com/advisories/GHSA-67mh-4wv8-2f99"
+    },
+    "1109842": {
+      "findings": [
+        {
+          "version": "10.3.10",
+          "paths": [
+            "apps__web>eslint-config-next>@next/eslint-plugin-next>glob"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1109842,
+      "title": "glob CLI: Command injection via -c/--cmd executes matches with shell:true",
+      "module_name": "glob",
+      "vulnerable_versions": ">=10.2.0 <10.5.0",
+      "patched_versions": ">=10.5.0",
+      "severity": "high",
+      "cwe": "CWE-78",
+      "github_advisory_id": "GHSA-5j98-mcp5-4vw2",
+      "url": "https://github.com/advisories/GHSA-5j98-mcp5-4vw2"
+    },
+    "1112593": {
+      "findings": [
+        {
+          "version": "14.2.35",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1112593,
+      "title": "Next.js self-hosted applications vulnerable to DoS via Image Optimizer remotePatterns configuration",
+      "module_name": "next",
+      "vulnerable_versions": ">=10.0.0 <15.5.10",
+      "patched_versions": ">=15.5.10",
+      "severity": "moderate",
+      "cwe": "CWE-400, CWE-770",
+      "github_advisory_id": "GHSA-9g9p-9gw9-jx7f",
+      "url": "https://github.com/advisories/GHSA-9g9p-9gw9-jx7f"
+    },
+    "1112653": {
+      "findings": [
+        {
+          "version": "14.2.35",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1112653,
+      "title": "Next.js HTTP request deserialization can lead to DoS when using insecure React Server Components",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.0.0 <15.0.8",
+      "patched_versions": ">=15.0.8",
+      "severity": "high",
+      "cwe": "CWE-400, CWE-502",
+      "github_advisory_id": "GHSA-h25m-26qc-wcjf",
+      "url": "https://github.com/advisories/GHSA-h25m-26qc-wcjf"
+    },
+    "1114897": {
+      "findings": [
+        {
+          "version": "14.2.35",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1114897,
+      "title": "Next.js: HTTP request smuggling in rewrites",
+      "module_name": "next",
+      "vulnerable_versions": ">=9.5.0 <15.5.13",
+      "patched_versions": ">=15.5.13",
+      "severity": "moderate",
+      "cwe": "CWE-444",
+      "github_advisory_id": "GHSA-ggv3-7p47-pfv8",
+      "url": "https://github.com/advisories/GHSA-ggv3-7p47-pfv8"
+    },
+    "1114940": {
+      "findings": [
+        {
+          "version": "14.2.35",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1114940,
+      "title": "Next.js: Unbounded next/image disk cache growth can exhaust storage",
+      "module_name": "next",
+      "vulnerable_versions": ">=10.0.0 <15.5.14",
+      "patched_versions": ">=15.5.14",
+      "severity": "moderate",
+      "cwe": "CWE-400",
+      "github_advisory_id": "GHSA-3x4c-7xq6-9pq8",
+      "url": "https://github.com/advisories/GHSA-3x4c-7xq6-9pq8"
+    },
+    "1116229": {
+      "findings": [
+        {
+          "version": "5.4.21",
+          "paths": [
+            "apps__launcher>@vitejs/plugin-react>vite",
+            "apps__launcher>vite"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1116229,
+      "title": "Vite Vulnerable to Path Traversal in Optimized Deps `.map` Handling",
+      "module_name": "vite",
+      "vulnerable_versions": "<=6.4.1",
+      "patched_versions": ">=6.4.2",
+      "severity": "moderate",
+      "cwe": "CWE-22, CWE-200",
+      "github_advisory_id": "GHSA-4w7w-66w2-5vf9",
+      "url": "https://github.com/advisories/GHSA-4w7w-66w2-5vf9"
+    },
+    "1116376": {
+      "findings": [
+        {
+          "version": "14.2.35",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1116376,
+      "title": "Next.js has a Denial of Service with Server Components",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.0.0 <15.5.15",
+      "patched_versions": ">=15.5.15",
+      "severity": "high",
+      "cwe": "CWE-770",
+      "github_advisory_id": "GHSA-q4gf-8mx6-v5v3",
+      "url": "https://github.com/advisories/GHSA-q4gf-8mx6-v5v3"
+    },
+    "1117015": {
+      "findings": [
+        {
+          "version": "8.4.31",
+          "paths": [
+            "apps__web>next>postcss"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117015,
+      "title": "PostCSS has XSS via Unescaped </style> in its CSS Stringify Output",
+      "module_name": "postcss",
+      "vulnerable_versions": "<8.5.10",
+      "patched_versions": ">=8.5.10",
+      "severity": "moderate",
+      "cwe": "CWE-79",
+      "github_advisory_id": "GHSA-qx2v-qp2m-jg93",
+      "url": "https://github.com/advisories/GHSA-qx2v-qp2m-jg93"
+    },
+    "1117931": {
+      "findings": [
+        {
+          "version": "14.2.35",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117931,
+      "title": "Next.js Vulnerable to Denial of Service with Server Components",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.0.0 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "high",
+      "cwe": "CWE-770",
+      "github_advisory_id": "GHSA-8h8q-6873-q5fj",
+      "url": "https://github.com/advisories/GHSA-8h8q-6873-q5fj"
+    },
+    "1118942": {
+      "findings": [
+        {
+          "version": "14.2.35",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118942,
+      "title": "Next.js's Middleware / Proxy redirects can be cache-poisoned",
+      "module_name": "next",
+      "vulnerable_versions": ">=12.2.0 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "low",
+      "cwe": "CWE-349",
+      "github_advisory_id": "GHSA-3g8h-86w9-wvmq",
+      "url": "https://github.com/advisories/GHSA-3g8h-86w9-wvmq"
+    },
+    "1118944": {
+      "findings": [
+        {
+          "version": "14.2.35",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118944,
+      "title": "Next.js vulnerable to cross-site scripting in App Router applications using CSP nonces",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.4.0 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "moderate",
+      "cwe": "CWE-79",
+      "github_advisory_id": "GHSA-ffhc-5mcf-pf4q",
+      "url": "https://github.com/advisories/GHSA-ffhc-5mcf-pf4q"
+    },
+    "1118946": {
+      "findings": [
+        {
+          "version": "14.2.35",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118946,
+      "title": "Next.js vulnerable to cache poisoning via collisions in React Server Component cache-busting",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.4.6 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "low",
+      "cwe": "CWE-328",
+      "github_advisory_id": "GHSA-vfv6-92ff-j949",
+      "url": "https://github.com/advisories/GHSA-vfv6-92ff-j949"
+    },
+    "1118948": {
+      "findings": [
+        {
+          "version": "14.2.35",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118948,
+      "title": "Next.js has cross-site scripting in beforeInteractive scripts with untrusted input",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.0.0 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "moderate",
+      "cwe": "CWE-79",
+      "github_advisory_id": "GHSA-gx5p-jg67-6x7h",
+      "url": "https://github.com/advisories/GHSA-gx5p-jg67-6x7h"
+    },
+    "1118952": {
+      "findings": [
+        {
+          "version": "14.2.35",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118952,
+      "title": "Next.js has a Denial of Service in the Image Optimization API",
+      "module_name": "next",
+      "vulnerable_versions": ">=10.0.0 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "moderate",
+      "cwe": "CWE-770",
+      "github_advisory_id": "GHSA-h64f-5h5j-jqjh",
+      "url": "https://github.com/advisories/GHSA-h64f-5h5j-jqjh"
+    },
+    "1118954": {
+      "findings": [
+        {
+          "version": "14.2.35",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118954,
+      "title": "Next.js vulnerable to server-side request forgery in applications using WebSocket upgrades",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.4.13 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "high",
+      "cwe": "CWE-918",
+      "github_advisory_id": "GHSA-c4j6-fc7j-m34r",
+      "url": "https://github.com/advisories/GHSA-c4j6-fc7j-m34r"
+    },
+    "1118958": {
+      "findings": [
+        {
+          "version": "14.2.35",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118958,
+      "title": "Next.js vulnerable to cache poisoning in React Server Component responses",
+      "module_name": "next",
+      "vulnerable_versions": ">=14.2.0 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "moderate",
+      "cwe": "CWE-436",
+      "github_advisory_id": "GHSA-wfc6-r584-vfw7",
+      "url": "https://github.com/advisories/GHSA-wfc6-r584-vfw7"
+    },
+    "1118962": {
+      "findings": [
+        {
+          "version": "14.2.35",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118962,
+      "title": "Next.js has a Middleware / Proxy bypass in Pages Router applications using i18n",
+      "module_name": "next",
+      "vulnerable_versions": ">=12.2.0 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "high",
+      "cwe": "CWE-863",
+      "github_advisory_id": "GHSA-36qx-fr4f-26g5",
+      "url": "https://github.com/advisories/GHSA-36qx-fr4f-26g5"
+    },
+    "1119428": {
+      "findings": [
+        {
+          "version": "0.90.0",
+          "paths": [
+            "apps__api>@anthropic-ai/sdk"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1119428,
+      "title": "Claude SDK for TypeScript has Insecure Default File Permissions in Local Filesystem Memory Tool",
+      "module_name": "@anthropic-ai/sdk",
+      "vulnerable_versions": ">=0.79.0 <0.91.1",
+      "patched_versions": ">=0.91.1",
+      "severity": "moderate",
+      "cwe": "CWE-732",
+      "github_advisory_id": "GHSA-p7fg-763f-g4gf",
+      "url": "https://github.com/advisories/GHSA-p7fg-763f-g4gf"
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 2,
+      "moderate": 11,
+      "high": 6,
+      "critical": 0
+    },
+    "dependencies": 314,
+    "devDependencies": 579,
+    "optionalDependencies": 98,
+    "totalDependencies": 903
+  }
+}

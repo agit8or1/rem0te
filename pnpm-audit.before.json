@@ -1,0 +1,1970 @@
+[WARN] The "pnpm" field in package.json is no longer read by pnpm. The following keys were ignored: "pnpm.onlyBuiltDependencies". See https://pnpm.io/settings for the new home of each setting.
+{
+  "advisories": {
+    "1101438": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1101438,
+      "title": "Next.js Allows a Denial of Service (DoS) with Server Actions",
+      "module_name": "next",
+      "vulnerable_versions": ">=14.0.0 <14.2.21",
+      "patched_versions": ">=14.2.21",
+      "severity": "moderate",
+      "cwe": "CWE-770",
+      "github_advisory_id": "GHSA-7m27-7ghc-44w9",
+      "url": "https://github.com/advisories/GHSA-7m27-7ghc-44w9"
+    },
+    "1102341": {
+      "findings": [
+        {
+          "version": "0.21.5",
+          "paths": [
+            "apps__launcher>@vitejs/plugin-react>vite>esbuild",
+            "apps__launcher>vite>esbuild"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1102341,
+      "title": "esbuild enables any website to send any requests to the development server and read the response",
+      "module_name": "esbuild",
+      "vulnerable_versions": "<=0.24.2",
+      "patched_versions": ">=0.24.3",
+      "severity": "moderate",
+      "cwe": "CWE-346",
+      "github_advisory_id": "GHSA-67mh-4wv8-2f99",
+      "url": "https://github.com/advisories/GHSA-67mh-4wv8-2f99"
+    },
+    "1105461": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1105461,
+      "title": "Information exposure in Next.js dev server due to lack of origin verification",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.0 <14.2.30",
+      "patched_versions": ">=14.2.30",
+      "severity": "low",
+      "cwe": "CWE-1385",
+      "github_advisory_id": "GHSA-3h52-269p-cp9r",
+      "url": "https://github.com/advisories/GHSA-3h52-269p-cp9r"
+    },
+    "1107226": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1107226,
+      "title": "Next.js Affected by Cache Key Confusion for Image Optimization API Routes",
+      "module_name": "next",
+      "vulnerable_versions": ">=0.9.9 <14.2.31",
+      "patched_versions": ">=14.2.31",
+      "severity": "moderate",
+      "cwe": "CWE-524",
+      "github_advisory_id": "GHSA-g5qg-72qw-gw5v",
+      "url": "https://github.com/advisories/GHSA-g5qg-72qw-gw5v"
+    },
+    "1107512": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1107512,
+      "title": "Next.js Improper Middleware Redirect Handling Leads to SSRF",
+      "module_name": "next",
+      "vulnerable_versions": ">=0.9.9 <14.2.32",
+      "patched_versions": ">=14.2.32",
+      "severity": "moderate",
+      "cwe": "CWE-918",
+      "github_advisory_id": "GHSA-4342-x723-ch2f",
+      "url": "https://github.com/advisories/GHSA-4342-x723-ch2f"
+    },
+    "1107513": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1107513,
+      "title": "Next.js Content Injection Vulnerability for Image Optimization",
+      "module_name": "next",
+      "vulnerable_versions": ">=0.9.9 <14.2.31",
+      "patched_versions": ">=14.2.31",
+      "severity": "moderate",
+      "cwe": "CWE-20",
+      "github_advisory_id": "GHSA-xv57-4mr9-wg8v",
+      "url": "https://github.com/advisories/GHSA-xv57-4mr9-wg8v"
+    },
+    "1108291": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1108291,
+      "title": "Next.js Race Condition to Cache Poisoning",
+      "module_name": "next",
+      "vulnerable_versions": ">=0.9.9 <14.2.24",
+      "patched_versions": ">=14.2.24",
+      "severity": "low",
+      "cwe": "CWE-362",
+      "github_advisory_id": "GHSA-qpjv-v59x-3qc4",
+      "url": "https://github.com/advisories/GHSA-qpjv-v59x-3qc4"
+    },
+    "1109842": {
+      "findings": [
+        {
+          "version": "10.3.10",
+          "paths": [
+            "apps__web>eslint-config-next>@next/eslint-plugin-next>glob"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1109842,
+      "title": "glob CLI: Command injection via -c/--cmd executes matches with shell:true",
+      "module_name": "glob",
+      "vulnerable_versions": ">=10.2.0 <10.5.0",
+      "patched_versions": ">=10.5.0",
+      "severity": "high",
+      "cwe": "CWE-78",
+      "github_advisory_id": "GHSA-5j98-mcp5-4vw2",
+      "url": "https://github.com/advisories/GHSA-5j98-mcp5-4vw2"
+    },
+    "1111391": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1111391,
+      "title": "Next Vulnerable to Denial of Service with Server Components",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.3.0 <14.2.34",
+      "patched_versions": ">=14.2.34",
+      "severity": "high",
+      "cwe": "CWE-400, CWE-502, CWE-1395",
+      "github_advisory_id": "GHSA-mwv6-3258-q52c",
+      "url": "https://github.com/advisories/GHSA-mwv6-3258-q52c"
+    },
+    "1112182": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1112182,
+      "title": "Next has a Denial of Service with Server Components - Incomplete Fix Follow-Up",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.3.1-canary.0 <14.2.35",
+      "patched_versions": ">=14.2.35",
+      "severity": "high",
+      "cwe": "CWE-400, CWE-502, CWE-1395",
+      "github_advisory_id": "GHSA-5j59-xgg2-r9c4",
+      "url": "https://github.com/advisories/GHSA-5j59-xgg2-r9c4"
+    },
+    "1112593": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1112593,
+      "title": "Next.js self-hosted applications vulnerable to DoS via Image Optimizer remotePatterns configuration",
+      "module_name": "next",
+      "vulnerable_versions": ">=10.0.0 <15.5.10",
+      "patched_versions": ">=15.5.10",
+      "severity": "moderate",
+      "cwe": "CWE-400, CWE-770",
+      "github_advisory_id": "GHSA-9g9p-9gw9-jx7f",
+      "url": "https://github.com/advisories/GHSA-9g9p-9gw9-jx7f"
+    },
+    "1112653": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1112653,
+      "title": "Next.js HTTP request deserialization can lead to DoS when using insecure React Server Components",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.0.0 <15.0.8",
+      "patched_versions": ">=15.0.8",
+      "severity": "high",
+      "cwe": "CWE-400, CWE-502",
+      "github_advisory_id": "GHSA-h25m-26qc-wcjf",
+      "url": "https://github.com/advisories/GHSA-h25m-26qc-wcjf"
+    },
+    "1113689": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1113689,
+      "title": "Authorization Bypass in Next.js Middleware",
+      "module_name": "next",
+      "vulnerable_versions": ">=14.0.0 <14.2.25",
+      "patched_versions": ">=14.2.25",
+      "severity": "critical",
+      "cwe": "CWE-285, CWE-863",
+      "github_advisory_id": "GHSA-f82v-jwr5-mffw",
+      "url": "https://github.com/advisories/GHSA-f82v-jwr5-mffw"
+    },
+    "1113715": {
+      "findings": [
+        {
+          "version": "8.17.1",
+          "paths": [
+            "apps__api>@nestjs/cli>@angular-devkit/core>ajv",
+            "apps__api>@nestjs/cli>@angular-devkit/core>ajv-formats>ajv",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics>@angular-devkit/core>ajv",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics>@angular-devkit/core>ajv-formats>ajv",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics-cli>@angular-devkit/core>ajv",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics-cli>@angular-devkit/core>ajv-formats>ajv",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics-cli>@angular-devkit/schematics>@angular-devkit/core>ajv",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics-cli>@angular-devkit/schematics>@angular-devkit/core>ajv-formats>ajv",
+            "apps__api>@nestjs/cli>@nestjs/schematics>@angular-devkit/core>ajv",
+            "apps__api>@nestjs/cli>@nestjs/schematics>@angular-devkit/core>ajv-formats>ajv",
+            "apps__api>@nestjs/cli>@nestjs/schematics>@angular-devkit/schematics>@angular-devkit/core>ajv",
+            "apps__api>@nestjs/cli>@nestjs/schematics>@angular-devkit/schematics>@angular-devkit/core>ajv-formats>ajv",
+            "apps__api>@nestjs/schematics>@angular-devkit/core>ajv",
+            "apps__api>@nestjs/schematics>@angular-devkit/core>ajv-formats>ajv",
+            "apps__api>@nestjs/schematics>@angular-devkit/schematics>@angular-devkit/core>ajv",
+            "apps__api>@nestjs/schematics>@angular-devkit/schematics>@angular-devkit/core>ajv-formats>ajv"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1113715,
+      "title": "ajv has ReDoS when using `$data` option",
+      "module_name": "ajv",
+      "vulnerable_versions": ">=7.0.0-alpha.0 <8.18.0",
+      "patched_versions": ">=8.18.0",
+      "severity": "moderate",
+      "cwe": "CWE-400, CWE-1333",
+      "github_advisory_id": "GHSA-2g4f-4pwh-qvx6",
+      "url": "https://github.com/advisories/GHSA-2g4f-4pwh-qvx6"
+    },
+    "1114301": {
+      "findings": [
+        {
+          "version": "21.3.0",
+          "paths": [
+            "apps__api>@nestjs/common>file-type",
+            "apps__api>@nestjs/config>@nestjs/common>file-type",
+            "apps__api>@nestjs/core>@nestjs/common>file-type",
+            "apps__api>@nestjs/core>@nestjs/platform-express>@nestjs/common>file-type",
+            "apps__api>@nestjs/jwt>@nestjs/common>file-type",
+            "apps__api>@nestjs/passport>@nestjs/common>file-type",
+            "apps__api>@nestjs/platform-express>@nestjs/common>file-type",
+            "apps__api>@nestjs/platform-express>@nestjs/core>@nestjs/common>file-type",
+            "apps__api>@nestjs/schedule>@nestjs/common>file-type",
+            "apps__api>@nestjs/schedule>@nestjs/core>@nestjs/common>file-type",
+            "apps__api>@nestjs/schedule>@nestjs/core>@nestjs/platform-express>@nestjs/common>file-type",
+            "apps__api>@nestjs/throttler>@nestjs/common>file-type",
+            "apps__api>@nestjs/throttler>@nestjs/core>@nestjs/common>file-type",
+            "apps__api>@nestjs/throttler>@nestjs/core>@nestjs/platform-express>@nestjs/common>file-type"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1114301,
+      "title": "file-type affected by infinite loop in ASF parser on malformed input with zero-size sub-header",
+      "module_name": "file-type",
+      "vulnerable_versions": ">=13.0.0 <21.3.1",
+      "patched_versions": ">=21.3.1",
+      "severity": "moderate",
+      "cwe": "CWE-835",
+      "github_advisory_id": "GHSA-5v7r-6r5c-r473",
+      "url": "https://github.com/advisories/GHSA-5v7r-6r5c-r473"
+    },
+    "1114726": {
+      "findings": [
+        {
+          "version": "21.3.0",
+          "paths": [
+            "apps__api>@nestjs/common>file-type",
+            "apps__api>@nestjs/config>@nestjs/common>file-type",
+            "apps__api>@nestjs/core>@nestjs/common>file-type",
+            "apps__api>@nestjs/core>@nestjs/platform-express>@nestjs/common>file-type",
+            "apps__api>@nestjs/jwt>@nestjs/common>file-type",
+            "apps__api>@nestjs/passport>@nestjs/common>file-type",
+            "apps__api>@nestjs/platform-express>@nestjs/common>file-type",
+            "apps__api>@nestjs/platform-express>@nestjs/core>@nestjs/common>file-type",
+            "apps__api>@nestjs/schedule>@nestjs/common>file-type",
+            "apps__api>@nestjs/schedule>@nestjs/core>@nestjs/common>file-type",
+            "apps__api>@nestjs/schedule>@nestjs/core>@nestjs/platform-express>@nestjs/common>file-type",
+            "apps__api>@nestjs/throttler>@nestjs/common>file-type",
+            "apps__api>@nestjs/throttler>@nestjs/core>@nestjs/common>file-type",
+            "apps__api>@nestjs/throttler>@nestjs/core>@nestjs/platform-express>@nestjs/common>file-type"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1114726,
+      "title": "file-type: ZIP Decompression Bomb DoS via [Content_Types].xml entry",
+      "module_name": "file-type",
+      "vulnerable_versions": ">=20.0.0 <=21.3.1",
+      "patched_versions": ">=21.3.2",
+      "severity": "moderate",
+      "cwe": "CWE-400, CWE-409",
+      "github_advisory_id": "GHSA-j47w-4g3g-c36v",
+      "url": "https://github.com/advisories/GHSA-j47w-4g3g-c36v"
+    },
+    "1114897": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1114897,
+      "title": "Next.js: HTTP request smuggling in rewrites",
+      "module_name": "next",
+      "vulnerable_versions": ">=9.5.0 <15.5.13",
+      "patched_versions": ">=15.5.13",
+      "severity": "moderate",
+      "cwe": "CWE-444",
+      "github_advisory_id": "GHSA-ggv3-7p47-pfv8",
+      "url": "https://github.com/advisories/GHSA-ggv3-7p47-pfv8"
+    },
+    "1114940": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1114940,
+      "title": "Next.js: Unbounded next/image disk cache growth can exhaust storage",
+      "module_name": "next",
+      "vulnerable_versions": ">=10.0.0 <15.5.14",
+      "patched_versions": ">=15.5.14",
+      "severity": "moderate",
+      "cwe": "CWE-400",
+      "github_advisory_id": "GHSA-3x4c-7xq6-9pq8",
+      "url": "https://github.com/advisories/GHSA-3x4c-7xq6-9pq8"
+    },
+    "1115357": {
+      "findings": [
+        {
+          "version": "3.4.1",
+          "paths": [
+            "apps__web>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@eslint-community/eslint-utils>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/utils>@eslint-community/eslint-utils>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/utils>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>@typescript-eslint/parser>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint-module-utils>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>@typescript-eslint/parser>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>eslint-import-resolver-typescript>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>eslint-plugin-import>@typescript-eslint/parser>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>eslint-plugin-jsx-a11y>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>eslint-plugin-react>eslint>file-entry-cache>flat-cache>flatted",
+            "apps__web>eslint-config-next>eslint-plugin-react-hooks>eslint>file-entry-cache>flat-cache>flatted"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1115357,
+      "title": "Prototype Pollution via parse() in NodeJS flatted",
+      "module_name": "flatted",
+      "vulnerable_versions": "<=3.4.1",
+      "patched_versions": ">=3.4.2",
+      "severity": "high",
+      "cwe": "CWE-1321",
+      "github_advisory_id": "GHSA-rf6f-7fwh-wjgh",
+      "url": "https://github.com/advisories/GHSA-rf6f-7fwh-wjgh"
+    },
+    "1115540": {
+      "findings": [
+        {
+          "version": "1.1.12",
+          "paths": [
+            "apps__api>@nestjs/cli>fork-ts-checker-webpack-plugin>minimatch>brace-expansion",
+            "apps__web>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@eslint-community/eslint-utils>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@eslint-community/eslint-utils>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@eslint-community/eslint-utils>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@eslint-community/eslint-utils>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/utils>@eslint-community/eslint-utils>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/utils>@eslint-community/eslint-utils>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/utils>@eslint-community/eslint-utils>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/utils>@eslint-community/eslint-utils>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/utils>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/utils>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/utils>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/utils>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/parser>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/parser>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/parser>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/parser>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint-module-utils>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint-module-utils>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint-module-utils>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint-module-utils>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>@typescript-eslint/parser>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>@typescript-eslint/parser>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>@typescript-eslint/parser>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>@typescript-eslint/parser>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>eslint-import-resolver-typescript>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>eslint-import-resolver-typescript>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>eslint-import-resolver-typescript>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>eslint-import-resolver-typescript>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>@typescript-eslint/parser>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>@typescript-eslint/parser>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>@typescript-eslint/parser>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>@typescript-eslint/parser>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-jsx-a11y>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-jsx-a11y>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-jsx-a11y>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-jsx-a11y>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-jsx-a11y>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-react>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-react>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-react>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-react>eslint>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-react>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-react-hooks>eslint>@eslint/eslintrc>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-react-hooks>eslint>@humanwhocodes/config-array>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-react-hooks>eslint>file-entry-cache>flat-cache>rimraf>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-react-hooks>eslint>minimatch>brace-expansion"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1115540,
+      "title": "brace-expansion: Zero-step sequence causes process hang and memory exhaustion",
+      "module_name": "brace-expansion",
+      "vulnerable_versions": "<1.1.13",
+      "patched_versions": ">=1.1.13",
+      "severity": "moderate",
+      "cwe": "CWE-400",
+      "github_advisory_id": "GHSA-f886-m6hf-6m8v",
+      "url": "https://github.com/advisories/GHSA-f886-m6hf-6m8v"
+    },
+    "1115541": {
+      "findings": [
+        {
+          "version": "2.0.2",
+          "paths": [
+            "apps__web>eslint-config-next>@next/eslint-plugin-next>glob>minimatch>brace-expansion"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1115541,
+      "title": "brace-expansion: Zero-step sequence causes process hang and memory exhaustion",
+      "module_name": "brace-expansion",
+      "vulnerable_versions": ">=2.0.0 <2.0.3",
+      "patched_versions": ">=2.0.3",
+      "severity": "moderate",
+      "cwe": "CWE-400",
+      "github_advisory_id": "GHSA-f886-m6hf-6m8v",
+      "url": "https://github.com/advisories/GHSA-f886-m6hf-6m8v"
+    },
+    "1115543": {
+      "findings": [
+        {
+          "version": "5.0.4",
+          "paths": [
+            "apps__api>@nestjs/cli>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1115543,
+      "title": "brace-expansion: Zero-step sequence causes process hang and memory exhaustion",
+      "module_name": "brace-expansion",
+      "vulnerable_versions": ">=4.0.0 <5.0.5",
+      "patched_versions": ">=5.0.5",
+      "severity": "moderate",
+      "cwe": "CWE-400",
+      "github_advisory_id": "GHSA-f886-m6hf-6m8v",
+      "url": "https://github.com/advisories/GHSA-f886-m6hf-6m8v"
+    },
+    "1115549": {
+      "findings": [
+        {
+          "version": "2.3.1",
+          "paths": [
+            "apps__web>tailwindcss>chokidar>anymatch>picomatch",
+            "apps__web>tailwindcss>chokidar>readdirp>picomatch",
+            "apps__web>tailwindcss>fast-glob>micromatch>picomatch",
+            "apps__web>tailwindcss>micromatch>picomatch"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1115549,
+      "title": "Picomatch: Method Injection in POSIX Character Classes causes incorrect Glob Matching",
+      "module_name": "picomatch",
+      "vulnerable_versions": "<2.3.2",
+      "patched_versions": ">=2.3.2",
+      "severity": "moderate",
+      "cwe": "CWE-1321",
+      "github_advisory_id": "GHSA-3v7f-55p6-f55p",
+      "url": "https://github.com/advisories/GHSA-3v7f-55p6-f55p"
+    },
+    "1115551": {
+      "findings": [
+        {
+          "version": "4.0.2",
+          "paths": [
+            "apps__api>@nestjs/cli>@angular-devkit/core>picomatch",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics>@angular-devkit/core>picomatch",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics-cli>@angular-devkit/core>picomatch",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics-cli>@angular-devkit/schematics>@angular-devkit/core>picomatch",
+            "apps__api>@nestjs/cli>@nestjs/schematics>@angular-devkit/core>picomatch",
+            "apps__api>@nestjs/cli>@nestjs/schematics>@angular-devkit/schematics>@angular-devkit/core>picomatch",
+            "apps__api>@nestjs/schematics>@angular-devkit/core>picomatch",
+            "apps__api>@nestjs/schematics>@angular-devkit/schematics>@angular-devkit/core>picomatch"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        },
+        {
+          "version": "4.0.3",
+          "paths": [
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/utils>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/utils>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>eslint-import-resolver-typescript>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>eslint-import-resolver-typescript>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>eslint-plugin-import>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>eslint-plugin-import>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>tailwindcss>sucrase>tinyglobby>fdir>picomatch",
+            "apps__web>tailwindcss>sucrase>tinyglobby>picomatch"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1115551,
+      "title": "Picomatch: Method Injection in POSIX Character Classes causes incorrect Glob Matching",
+      "module_name": "picomatch",
+      "vulnerable_versions": ">=4.0.0 <4.0.4",
+      "patched_versions": ">=4.0.4",
+      "severity": "moderate",
+      "cwe": "CWE-1321",
+      "github_advisory_id": "GHSA-3v7f-55p6-f55p",
+      "url": "https://github.com/advisories/GHSA-3v7f-55p6-f55p"
+    },
+    "1115552": {
+      "findings": [
+        {
+          "version": "2.3.1",
+          "paths": [
+            "apps__web>tailwindcss>chokidar>anymatch>picomatch",
+            "apps__web>tailwindcss>chokidar>readdirp>picomatch",
+            "apps__web>tailwindcss>fast-glob>micromatch>picomatch",
+            "apps__web>tailwindcss>micromatch>picomatch"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1115552,
+      "title": "Picomatch has a ReDoS vulnerability via extglob quantifiers",
+      "module_name": "picomatch",
+      "vulnerable_versions": "<2.3.2",
+      "patched_versions": ">=2.3.2",
+      "severity": "high",
+      "cwe": "CWE-1333",
+      "github_advisory_id": "GHSA-c2c7-rcm5-vvqj",
+      "url": "https://github.com/advisories/GHSA-c2c7-rcm5-vvqj"
+    },
+    "1115554": {
+      "findings": [
+        {
+          "version": "4.0.2",
+          "paths": [
+            "apps__api>@nestjs/cli>@angular-devkit/core>picomatch",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics>@angular-devkit/core>picomatch",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics-cli>@angular-devkit/core>picomatch",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics-cli>@angular-devkit/schematics>@angular-devkit/core>picomatch",
+            "apps__api>@nestjs/cli>@nestjs/schematics>@angular-devkit/core>picomatch",
+            "apps__api>@nestjs/cli>@nestjs/schematics>@angular-devkit/schematics>@angular-devkit/core>picomatch",
+            "apps__api>@nestjs/schematics>@angular-devkit/core>picomatch",
+            "apps__api>@nestjs/schematics>@angular-devkit/schematics>@angular-devkit/core>picomatch"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        },
+        {
+          "version": "4.0.3",
+          "paths": [
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/utils>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/utils>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>eslint-import-resolver-typescript>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>eslint-import-resolver-typescript>tinyglobby>picomatch",
+            "apps__web>eslint-config-next>eslint-plugin-import>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>fdir>picomatch",
+            "apps__web>eslint-config-next>eslint-plugin-import>@typescript-eslint/parser>@typescript-eslint/typescript-estree>tinyglobby>picomatch",
+            "apps__web>tailwindcss>sucrase>tinyglobby>fdir>picomatch",
+            "apps__web>tailwindcss>sucrase>tinyglobby>picomatch"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1115554,
+      "title": "Picomatch has a ReDoS vulnerability via extglob quantifiers",
+      "module_name": "picomatch",
+      "vulnerable_versions": ">=4.0.0 <4.0.4",
+      "patched_versions": ">=4.0.4",
+      "severity": "high",
+      "cwe": "CWE-1333",
+      "github_advisory_id": "GHSA-c2c7-rcm5-vvqj",
+      "url": "https://github.com/advisories/GHSA-c2c7-rcm5-vvqj"
+    },
+    "1115573": {
+      "findings": [
+        {
+          "version": "8.3.0",
+          "paths": [
+            "apps__api>@nestjs/core>path-to-regexp",
+            "apps__api>@nestjs/core>@nestjs/platform-express>express>router>path-to-regexp",
+            "apps__api>@nestjs/core>@nestjs/platform-express>path-to-regexp",
+            "apps__api>@nestjs/platform-express>@nestjs/core>path-to-regexp",
+            "apps__api>@nestjs/platform-express>express>router>path-to-regexp",
+            "apps__api>@nestjs/platform-express>path-to-regexp",
+            "apps__api>@nestjs/schedule>@nestjs/core>path-to-regexp",
+            "apps__api>@nestjs/schedule>@nestjs/core>@nestjs/platform-express>express>router>path-to-regexp",
+            "apps__api>@nestjs/schedule>@nestjs/core>@nestjs/platform-express>path-to-regexp",
+            "apps__api>@nestjs/throttler>@nestjs/core>path-to-regexp",
+            "apps__api>@nestjs/throttler>@nestjs/core>@nestjs/platform-express>express>router>path-to-regexp",
+            "apps__api>@nestjs/throttler>@nestjs/core>@nestjs/platform-express>path-to-regexp"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1115573,
+      "title": "path-to-regexp vulnerable to Denial of Service via sequential optional groups",
+      "module_name": "path-to-regexp",
+      "vulnerable_versions": ">=8.0.0 <8.4.0",
+      "patched_versions": ">=8.4.0",
+      "severity": "high",
+      "cwe": "CWE-400, CWE-1333",
+      "github_advisory_id": "GHSA-j3q9-mxjg-w52f",
+      "url": "https://github.com/advisories/GHSA-j3q9-mxjg-w52f"
+    },
+    "1115582": {
+      "findings": [
+        {
+          "version": "8.3.0",
+          "paths": [
+            "apps__api>@nestjs/core>path-to-regexp",
+            "apps__api>@nestjs/core>@nestjs/platform-express>express>router>path-to-regexp",
+            "apps__api>@nestjs/core>@nestjs/platform-express>path-to-regexp",
+            "apps__api>@nestjs/platform-express>@nestjs/core>path-to-regexp",
+            "apps__api>@nestjs/platform-express>express>router>path-to-regexp",
+            "apps__api>@nestjs/platform-express>path-to-regexp",
+            "apps__api>@nestjs/schedule>@nestjs/core>path-to-regexp",
+            "apps__api>@nestjs/schedule>@nestjs/core>@nestjs/platform-express>express>router>path-to-regexp",
+            "apps__api>@nestjs/schedule>@nestjs/core>@nestjs/platform-express>path-to-regexp",
+            "apps__api>@nestjs/throttler>@nestjs/core>path-to-regexp",
+            "apps__api>@nestjs/throttler>@nestjs/core>@nestjs/platform-express>express>router>path-to-regexp",
+            "apps__api>@nestjs/throttler>@nestjs/core>@nestjs/platform-express>path-to-regexp"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1115582,
+      "title": "path-to-regexp vulnerable to Regular Expression Denial of Service via multiple wildcards",
+      "module_name": "path-to-regexp",
+      "vulnerable_versions": ">=8.0.0 <8.4.0",
+      "patched_versions": ">=8.4.0",
+      "severity": "moderate",
+      "cwe": "CWE-1333",
+      "github_advisory_id": "GHSA-27v5-c462-wpq7",
+      "url": "https://github.com/advisories/GHSA-27v5-c462-wpq7"
+    },
+    "1115806": {
+      "findings": [
+        {
+          "version": "4.17.23",
+          "paths": [
+            "apps__api>@nestjs/config>lodash",
+            "apps__api>@nestjs/cli>node-emoji>lodash"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1115806,
+      "title": "lodash vulnerable to Code Injection via `_.template` imports key names",
+      "module_name": "lodash",
+      "vulnerable_versions": ">=4.0.0 <=4.17.23",
+      "patched_versions": ">=4.17.24",
+      "severity": "high",
+      "cwe": "CWE-94",
+      "github_advisory_id": "GHSA-r5fr-rjxr-66jc",
+      "url": "https://github.com/advisories/GHSA-r5fr-rjxr-66jc"
+    },
+    "1115810": {
+      "findings": [
+        {
+          "version": "4.17.23",
+          "paths": [
+            "apps__api>@nestjs/config>lodash",
+            "apps__api>@nestjs/cli>node-emoji>lodash"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1115810,
+      "title": "lodash vulnerable to Prototype Pollution via array path bypass in `_.unset` and `_.omit`",
+      "module_name": "lodash",
+      "vulnerable_versions": "<=4.17.23",
+      "patched_versions": ">=4.17.24",
+      "severity": "moderate",
+      "cwe": "CWE-1321",
+      "github_advisory_id": "GHSA-f23m-r3pf-42rh",
+      "url": "https://github.com/advisories/GHSA-f23m-r3pf-42rh"
+    },
+    "1116229": {
+      "findings": [
+        {
+          "version": "5.4.21",
+          "paths": [
+            "apps__launcher>@vitejs/plugin-react>vite",
+            "apps__launcher>vite"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1116229,
+      "title": "Vite Vulnerable to Path Traversal in Optimized Deps `.map` Handling",
+      "module_name": "vite",
+      "vulnerable_versions": "<=6.4.1",
+      "patched_versions": ">=6.4.2",
+      "severity": "moderate",
+      "cwe": "CWE-22, CWE-200",
+      "github_advisory_id": "GHSA-4w7w-66w2-5vf9",
+      "url": "https://github.com/advisories/GHSA-4w7w-66w2-5vf9"
+    },
+    "1116376": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1116376,
+      "title": "Next.js has a Denial of Service with Server Components",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.0.0 <15.5.15",
+      "patched_versions": ">=15.5.15",
+      "severity": "high",
+      "cwe": "CWE-770",
+      "github_advisory_id": "GHSA-q4gf-8mx6-v5v3",
+      "url": "https://github.com/advisories/GHSA-q4gf-8mx6-v5v3"
+    },
+    "1116560": {
+      "findings": [
+        {
+          "version": "1.15.11",
+          "paths": [
+            "apps__web>axios>follow-redirects"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1116560,
+      "title": "follow-redirects leaks Custom Authentication Headers to Cross-Domain Redirect Targets",
+      "module_name": "follow-redirects",
+      "vulnerable_versions": "<=1.15.11",
+      "patched_versions": ">=1.15.12",
+      "severity": "moderate",
+      "cwe": "CWE-200",
+      "github_advisory_id": "GHSA-r4q5-vmmm-2653",
+      "url": "https://github.com/advisories/GHSA-r4q5-vmmm-2653"
+    },
+    "1116673": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1116673,
+      "title": "Axios has a NO_PROXY Hostname Normalization Bypass that Leads to SSRF",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.15.0",
+      "patched_versions": ">=1.15.0",
+      "severity": "moderate",
+      "cwe": "CWE-441, CWE-918",
+      "github_advisory_id": "GHSA-3p68-rc4w-qgx5",
+      "url": "https://github.com/advisories/GHSA-3p68-rc4w-qgx5"
+    },
+    "1117015": {
+      "findings": [
+        {
+          "version": "8.5.8",
+          "paths": [
+            "apps__launcher>@vitejs/plugin-react>vite>postcss",
+            "apps__launcher>vite>postcss",
+            "apps__web>autoprefixer>postcss",
+            "apps__web>postcss",
+            "apps__web>tailwindcss>postcss",
+            "apps__web>tailwindcss>postcss-import>postcss",
+            "apps__web>tailwindcss>postcss-js>postcss",
+            "apps__web>tailwindcss>postcss-load-config>postcss",
+            "apps__web>tailwindcss>postcss-nested>postcss"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        },
+        {
+          "version": "8.4.31",
+          "paths": [
+            "apps__web>next>postcss"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117015,
+      "title": "PostCSS has XSS via Unescaped </style> in its CSS Stringify Output",
+      "module_name": "postcss",
+      "vulnerable_versions": "<8.5.10",
+      "patched_versions": ">=8.5.10",
+      "severity": "moderate",
+      "cwe": "CWE-79",
+      "github_advisory_id": "GHSA-qx2v-qp2m-jg93",
+      "url": "https://github.com/advisories/GHSA-qx2v-qp2m-jg93"
+    },
+    "1117063": {
+      "findings": [
+        {
+          "version": "11.1.16",
+          "paths": [
+            "apps__api>@nestjs/core",
+            "apps__api>@nestjs/platform-express>@nestjs/core",
+            "apps__api>@nestjs/schedule>@nestjs/core",
+            "apps__api>@nestjs/throttler>@nestjs/core"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117063,
+      "title": "@nestjs/core Improperly Neutralizes Special Elements in Output Used by a Downstream Component ('Injection')",
+      "module_name": "@nestjs/core",
+      "vulnerable_versions": "<=11.1.17",
+      "patched_versions": ">=11.1.18",
+      "severity": "moderate",
+      "cwe": "CWE-74",
+      "github_advisory_id": "GHSA-36xv-jgw5-4q75",
+      "url": "https://github.com/advisories/GHSA-36xv-jgw5-4q75"
+    },
+    "1117574": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117574,
+      "title": "Axios: Authentication Bypass via Prototype Pollution Gadget in `validateStatus` Merge Strategy",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.15.1",
+      "patched_versions": ">=1.15.1",
+      "severity": "moderate",
+      "cwe": "CWE-287, CWE-1321",
+      "github_advisory_id": "GHSA-w9j2-pvgh-6h63",
+      "url": "https://github.com/advisories/GHSA-w9j2-pvgh-6h63"
+    },
+    "1117576": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117576,
+      "title": "Axios: Incomplete Fix for CVE-2025-62718 — NO_PROXY Protection Bypassed via RFC 1122 Loopback Subnet (127.0.0.0/8) in Axios 1.15.0",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.15.1",
+      "patched_versions": ">=1.15.1",
+      "severity": "high",
+      "cwe": "CWE-183, CWE-441, CWE-918",
+      "github_advisory_id": "GHSA-pmwg-cvhr-8vh7",
+      "url": "https://github.com/advisories/GHSA-pmwg-cvhr-8vh7"
+    },
+    "1117577": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117577,
+      "title": "Axios: Invisible JSON Response Tampering via Prototype Pollution Gadget in `parseReviver`",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.15.2",
+      "patched_versions": ">=1.15.2",
+      "severity": "moderate",
+      "cwe": "CWE-915, CWE-1321",
+      "github_advisory_id": "GHSA-3w6x-2g7m-8v23",
+      "url": "https://github.com/advisories/GHSA-3w6x-2g7m-8v23"
+    },
+    "1117580": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117580,
+      "title": "Axios: Null Byte Injection via Reverse-Encoding in AxiosURLSearchParams",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.15.1",
+      "patched_versions": ">=1.15.1",
+      "severity": "low",
+      "cwe": "CWE-116, CWE-626",
+      "github_advisory_id": "GHSA-xhjh-pmcv-23jw",
+      "url": "https://github.com/advisories/GHSA-xhjh-pmcv-23jw"
+    },
+    "1117581": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117581,
+      "title": "Axios: CRLF Injection in multipart/form-data body via unsanitized blob.type in formDataToStream",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.15.1",
+      "patched_versions": ">=1.15.1",
+      "severity": "moderate",
+      "cwe": "CWE-93",
+      "github_advisory_id": "GHSA-445q-vr5w-6q77",
+      "url": "https://github.com/advisories/GHSA-445q-vr5w-6q77"
+    },
+    "1117583": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117583,
+      "title": "Axios: no_proxy bypass via IP alias allows SSRF",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.15.1",
+      "patched_versions": ">=1.15.1",
+      "severity": "moderate",
+      "cwe": "CWE-918",
+      "github_advisory_id": "GHSA-m7pr-hjqh-92cm",
+      "url": "https://github.com/advisories/GHSA-m7pr-hjqh-92cm"
+    },
+    "1117587": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117587,
+      "title": "Axios' HTTP adapter-streamed uploads bypass maxBodyLength when maxRedirects: 0",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.15.1",
+      "patched_versions": ">=1.15.1",
+      "severity": "moderate",
+      "cwe": "CWE-770",
+      "github_advisory_id": "GHSA-5c9x-8gcm-mpgx",
+      "url": "https://github.com/advisories/GHSA-5c9x-8gcm-mpgx"
+    },
+    "1117589": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117589,
+      "title": "Axios: HTTP adapter streamed responses bypass maxContentLength",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.15.1",
+      "patched_versions": ">=1.15.1",
+      "severity": "moderate",
+      "cwe": "CWE-770",
+      "github_advisory_id": "GHSA-vf2m-468p-8v99",
+      "url": "https://github.com/advisories/GHSA-vf2m-468p-8v99"
+    },
+    "1117591": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117591,
+      "title": "Axios: Prototype Pollution Gadgets - Response Tampering, Data Exfiltration, and Request Hijacking",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.15.1",
+      "patched_versions": ">=1.15.1",
+      "severity": "high",
+      "cwe": "CWE-1321",
+      "github_advisory_id": "GHSA-pf86-5x62-jrwf",
+      "url": "https://github.com/advisories/GHSA-pf86-5x62-jrwf"
+    },
+    "1117593": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117593,
+      "title": "Axios: Header Injection via Prototype Pollution",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.15.1",
+      "patched_versions": ">=1.15.1",
+      "severity": "high",
+      "cwe": "CWE-113, CWE-1321",
+      "github_advisory_id": "GHSA-6chq-wfr3-2hj9",
+      "url": "https://github.com/advisories/GHSA-6chq-wfr3-2hj9"
+    },
+    "1117595": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117595,
+      "title": "Axios: XSRF Token Cross-Origin Leakage via Prototype Pollution Gadget in `withXSRFToken` Boolean Coercion",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.15.1",
+      "patched_versions": ">=1.15.1",
+      "severity": "moderate",
+      "cwe": "CWE-183, CWE-201",
+      "github_advisory_id": "GHSA-xx6v-rp6x-q39c",
+      "url": "https://github.com/advisories/GHSA-xx6v-rp6x-q39c"
+    },
+    "1117870": {
+      "findings": [
+        {
+          "version": "3.1.0",
+          "paths": [
+            "apps__api>@nestjs/cli>@angular-devkit/core>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@angular-devkit/core>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics>@angular-devkit/core>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics>@angular-devkit/core>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics-cli>@angular-devkit/core>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics-cli>@angular-devkit/core>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics-cli>@angular-devkit/schematics>@angular-devkit/core>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics-cli>@angular-devkit/schematics>@angular-devkit/core>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@nestjs/schematics>@angular-devkit/core>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@nestjs/schematics>@angular-devkit/core>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@nestjs/schematics>@angular-devkit/schematics>@angular-devkit/core>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@nestjs/schematics>@angular-devkit/schematics>@angular-devkit/core>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>fork-ts-checker-webpack-plugin>webpack>schema-utils>ajv>fast-uri",
+            "apps__api>@nestjs/cli>fork-ts-checker-webpack-plugin>webpack>schema-utils>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>fork-ts-checker-webpack-plugin>webpack>schema-utils>ajv-keywords>ajv>fast-uri",
+            "apps__api>@nestjs/cli>fork-ts-checker-webpack-plugin>webpack>terser-webpack-plugin>schema-utils>ajv>fast-uri",
+            "apps__api>@nestjs/cli>fork-ts-checker-webpack-plugin>webpack>terser-webpack-plugin>schema-utils>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>fork-ts-checker-webpack-plugin>webpack>terser-webpack-plugin>schema-utils>ajv-keywords>ajv>fast-uri",
+            "apps__api>@nestjs/cli>webpack>schema-utils>ajv>fast-uri",
+            "apps__api>@nestjs/cli>webpack>schema-utils>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>webpack>schema-utils>ajv-keywords>ajv>fast-uri",
+            "apps__api>@nestjs/cli>webpack>terser-webpack-plugin>schema-utils>ajv>fast-uri",
+            "apps__api>@nestjs/cli>webpack>terser-webpack-plugin>schema-utils>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>webpack>terser-webpack-plugin>schema-utils>ajv-keywords>ajv>fast-uri",
+            "apps__api>@nestjs/schematics>@angular-devkit/core>ajv>fast-uri",
+            "apps__api>@nestjs/schematics>@angular-devkit/core>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/schematics>@angular-devkit/schematics>@angular-devkit/core>ajv>fast-uri",
+            "apps__api>@nestjs/schematics>@angular-devkit/schematics>@angular-devkit/core>ajv-formats>ajv>fast-uri"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117870,
+      "title": "fast-uri vulnerable to path traversal via percent-encoded dot segments",
+      "module_name": "fast-uri",
+      "vulnerable_versions": "<=3.1.0",
+      "patched_versions": ">=3.1.1",
+      "severity": "high",
+      "cwe": "CWE-22",
+      "github_advisory_id": "GHSA-q3j6-qgpj-74h6",
+      "url": "https://github.com/advisories/GHSA-q3j6-qgpj-74h6"
+    },
+    "1117884": {
+      "findings": [
+        {
+          "version": "3.1.0",
+          "paths": [
+            "apps__api>@nestjs/cli>@angular-devkit/core>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@angular-devkit/core>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics>@angular-devkit/core>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics>@angular-devkit/core>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics-cli>@angular-devkit/core>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics-cli>@angular-devkit/core>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics-cli>@angular-devkit/schematics>@angular-devkit/core>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@angular-devkit/schematics-cli>@angular-devkit/schematics>@angular-devkit/core>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@nestjs/schematics>@angular-devkit/core>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@nestjs/schematics>@angular-devkit/core>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@nestjs/schematics>@angular-devkit/schematics>@angular-devkit/core>ajv>fast-uri",
+            "apps__api>@nestjs/cli>@nestjs/schematics>@angular-devkit/schematics>@angular-devkit/core>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>fork-ts-checker-webpack-plugin>webpack>schema-utils>ajv>fast-uri",
+            "apps__api>@nestjs/cli>fork-ts-checker-webpack-plugin>webpack>schema-utils>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>fork-ts-checker-webpack-plugin>webpack>schema-utils>ajv-keywords>ajv>fast-uri",
+            "apps__api>@nestjs/cli>fork-ts-checker-webpack-plugin>webpack>terser-webpack-plugin>schema-utils>ajv>fast-uri",
+            "apps__api>@nestjs/cli>fork-ts-checker-webpack-plugin>webpack>terser-webpack-plugin>schema-utils>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>fork-ts-checker-webpack-plugin>webpack>terser-webpack-plugin>schema-utils>ajv-keywords>ajv>fast-uri",
+            "apps__api>@nestjs/cli>webpack>schema-utils>ajv>fast-uri",
+            "apps__api>@nestjs/cli>webpack>schema-utils>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>webpack>schema-utils>ajv-keywords>ajv>fast-uri",
+            "apps__api>@nestjs/cli>webpack>terser-webpack-plugin>schema-utils>ajv>fast-uri",
+            "apps__api>@nestjs/cli>webpack>terser-webpack-plugin>schema-utils>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/cli>webpack>terser-webpack-plugin>schema-utils>ajv-keywords>ajv>fast-uri",
+            "apps__api>@nestjs/schematics>@angular-devkit/core>ajv>fast-uri",
+            "apps__api>@nestjs/schematics>@angular-devkit/core>ajv-formats>ajv>fast-uri",
+            "apps__api>@nestjs/schematics>@angular-devkit/schematics>@angular-devkit/core>ajv>fast-uri",
+            "apps__api>@nestjs/schematics>@angular-devkit/schematics>@angular-devkit/core>ajv-formats>ajv>fast-uri"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117884,
+      "title": "fast-uri vulnerable to host confusion via percent-encoded authority delimiters",
+      "module_name": "fast-uri",
+      "vulnerable_versions": "<=3.1.1",
+      "patched_versions": ">=3.1.2",
+      "severity": "high",
+      "cwe": "CWE-436",
+      "github_advisory_id": "GHSA-v39h-62p7-jpjc",
+      "url": "https://github.com/advisories/GHSA-v39h-62p7-jpjc"
+    },
+    "1117931": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1117931,
+      "title": "Next.js Vulnerable to Denial of Service with Server Components",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.0.0 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "high",
+      "cwe": "CWE-770",
+      "github_advisory_id": "GHSA-8h8q-6873-q5fj",
+      "url": "https://github.com/advisories/GHSA-8h8q-6873-q5fj"
+    },
+    "1118607": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118607,
+      "title": "Axios has prototype pollution read-side gadgets in HTTP adapter that allow credential injection and request hijacking",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.15.2",
+      "patched_versions": ">=1.15.2",
+      "severity": "high",
+      "cwe": "CWE-1321",
+      "github_advisory_id": "GHSA-q8qp-cvcw-x6jj",
+      "url": "https://github.com/advisories/GHSA-q8qp-cvcw-x6jj"
+    },
+    "1118942": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118942,
+      "title": "Next.js's Middleware / Proxy redirects can be cache-poisoned",
+      "module_name": "next",
+      "vulnerable_versions": ">=12.2.0 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "low",
+      "cwe": "CWE-349",
+      "github_advisory_id": "GHSA-3g8h-86w9-wvmq",
+      "url": "https://github.com/advisories/GHSA-3g8h-86w9-wvmq"
+    },
+    "1118944": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118944,
+      "title": "Next.js vulnerable to cross-site scripting in App Router applications using CSP nonces",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.4.0 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "moderate",
+      "cwe": "CWE-79",
+      "github_advisory_id": "GHSA-ffhc-5mcf-pf4q",
+      "url": "https://github.com/advisories/GHSA-ffhc-5mcf-pf4q"
+    },
+    "1118946": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118946,
+      "title": "Next.js vulnerable to cache poisoning via collisions in React Server Component cache-busting",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.4.6 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "low",
+      "cwe": "CWE-328",
+      "github_advisory_id": "GHSA-vfv6-92ff-j949",
+      "url": "https://github.com/advisories/GHSA-vfv6-92ff-j949"
+    },
+    "1118948": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118948,
+      "title": "Next.js has cross-site scripting in beforeInteractive scripts with untrusted input",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.0.0 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "moderate",
+      "cwe": "CWE-79",
+      "github_advisory_id": "GHSA-gx5p-jg67-6x7h",
+      "url": "https://github.com/advisories/GHSA-gx5p-jg67-6x7h"
+    },
+    "1118952": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118952,
+      "title": "Next.js has a Denial of Service in the Image Optimization API",
+      "module_name": "next",
+      "vulnerable_versions": ">=10.0.0 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "moderate",
+      "cwe": "CWE-770",
+      "github_advisory_id": "GHSA-h64f-5h5j-jqjh",
+      "url": "https://github.com/advisories/GHSA-h64f-5h5j-jqjh"
+    },
+    "1118954": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118954,
+      "title": "Next.js vulnerable to server-side request forgery in applications using WebSocket upgrades",
+      "module_name": "next",
+      "vulnerable_versions": ">=13.4.13 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "high",
+      "cwe": "CWE-918",
+      "github_advisory_id": "GHSA-c4j6-fc7j-m34r",
+      "url": "https://github.com/advisories/GHSA-c4j6-fc7j-m34r"
+    },
+    "1118958": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118958,
+      "title": "Next.js vulnerable to cache poisoning in React Server Component responses",
+      "module_name": "next",
+      "vulnerable_versions": ">=14.2.0 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "moderate",
+      "cwe": "CWE-436",
+      "github_advisory_id": "GHSA-wfc6-r584-vfw7",
+      "url": "https://github.com/advisories/GHSA-wfc6-r584-vfw7"
+    },
+    "1118962": {
+      "findings": [
+        {
+          "version": "14.2.18",
+          "paths": [
+            "apps__web>next"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1118962,
+      "title": "Next.js has a Middleware / Proxy bypass in Pages Router applications using i18n",
+      "module_name": "next",
+      "vulnerable_versions": ">=12.2.0 <15.5.16",
+      "patched_versions": ">=15.5.16",
+      "severity": "high",
+      "cwe": "CWE-863",
+      "github_advisory_id": "GHSA-36qx-fr4f-26g5",
+      "url": "https://github.com/advisories/GHSA-36qx-fr4f-26g5"
+    },
+    "1119088": {
+      "findings": [
+        {
+          "version": "5.0.4",
+          "paths": [
+            "apps__api>@nestjs/cli>glob>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/type-utils>@typescript-eslint/utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/eslint-plugin>@typescript-eslint/utils>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-import-resolver-typescript>eslint-plugin-import>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>eslint-module-utils>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion",
+            "apps__web>eslint-config-next>eslint-plugin-import>@typescript-eslint/parser>@typescript-eslint/typescript-estree>minimatch>brace-expansion"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1119088,
+      "title": "brace-expansion: Large numeric range defeats documented `max` DoS protection",
+      "module_name": "brace-expansion",
+      "vulnerable_versions": ">=5.0.0 <5.0.6",
+      "patched_versions": ">=5.0.6",
+      "severity": "moderate",
+      "cwe": "CWE-400",
+      "github_advisory_id": "GHSA-jxxr-4gwj-5jf2",
+      "url": "https://github.com/advisories/GHSA-jxxr-4gwj-5jf2"
+    },
+    "1119404": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1119404,
+      "title": "Axios has Unrestricted Cloud Metadata Exfiltration via Header Injection Chain",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.15.0",
+      "patched_versions": ">=1.15.0",
+      "severity": "moderate",
+      "cwe": "CWE-113, CWE-444, CWE-918",
+      "github_advisory_id": "GHSA-fvcv-3m26-pcqx",
+      "url": "https://github.com/advisories/GHSA-fvcv-3m26-pcqx"
+    },
+    "1119428": {
+      "findings": [
+        {
+          "version": "0.90.0",
+          "paths": [
+            "apps__api>@anthropic-ai/sdk"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1119428,
+      "title": "Claude SDK for TypeScript has Insecure Default File Permissions in Local Filesystem Memory Tool",
+      "module_name": "@anthropic-ai/sdk",
+      "vulnerable_versions": ">=0.79.0 <0.91.1",
+      "patched_versions": ">=0.91.1",
+      "severity": "moderate",
+      "cwe": "CWE-732",
+      "github_advisory_id": "GHSA-p7fg-763f-g4gf",
+      "url": "https://github.com/advisories/GHSA-p7fg-763f-g4gf"
+    },
+    "1119502": {
+      "findings": [
+        {
+          "version": "6.14.2",
+          "paths": [
+            "apps__api>@nestjs/core>@nestjs/platform-express>express>body-parser>qs",
+            "apps__api>@nestjs/core>@nestjs/platform-express>express>qs",
+            "apps__api>@nestjs/platform-express>express>body-parser>qs",
+            "apps__api>@nestjs/platform-express>express>qs",
+            "apps__api>@nestjs/schedule>@nestjs/core>@nestjs/platform-express>express>body-parser>qs",
+            "apps__api>@nestjs/schedule>@nestjs/core>@nestjs/platform-express>express>qs",
+            "apps__api>@nestjs/throttler>@nestjs/core>@nestjs/platform-express>express>body-parser>qs",
+            "apps__api>@nestjs/throttler>@nestjs/core>@nestjs/platform-express>express>qs"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1119502,
+      "title": "qs has a remotely triggerable DoS: qs.stringify crashes with TypeError on null/undefined entries in comma-format arrays when encodeValuesOnly is set",
+      "module_name": "qs",
+      "vulnerable_versions": ">=6.11.1 <=6.15.1",
+      "patched_versions": ">=6.15.2",
+      "severity": "moderate",
+      "cwe": "CWE-476",
+      "github_advisory_id": "GHSA-q8mj-m7cp-5q26",
+      "url": "https://github.com/advisories/GHSA-q8mj-m7cp-5q26"
+    },
+    "1119667": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1119667,
+      "title": "axios's shouldBypassProxy does not recognize IPv4-mapped IPv6 addresses, allowing NO_PROXY bypass (incomplete fix for CVE-2025-62718)",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.16.0",
+      "patched_versions": ">=1.16.0",
+      "severity": "high",
+      "cwe": "CWE-918",
+      "github_advisory_id": "GHSA-pjwm-pj3p-43mv",
+      "url": "https://github.com/advisories/GHSA-pjwm-pj3p-43mv"
+    },
+    "1119669": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1119669,
+      "title": "axios has DoS & Header Injection via Prototype Pollution Read-Side Gadgets in axios merge functions",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.16.0",
+      "patched_versions": ">=1.16.0",
+      "severity": "moderate",
+      "cwe": "CWE-1321",
+      "github_advisory_id": "GHSA-898c-q2cr-xwhg",
+      "url": "https://github.com/advisories/GHSA-898c-q2cr-xwhg"
+    },
+    "1119674": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1119674,
+      "title": "axios Vulnerable to Credential Theft and Response Hijacking via Prototype Pollution Gadget in Config Merge",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.15.2",
+      "patched_versions": ">=1.15.2",
+      "severity": "high",
+      "cwe": "CWE-94, CWE-1321",
+      "github_advisory_id": "GHSA-3g43-6gmg-66jw",
+      "url": "https://github.com/advisories/GHSA-3g43-6gmg-66jw"
+    },
+    "1119675": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1119675,
+      "title": "axios Vulnerable to Full Man-in-the-Middle via Prototype Pollution Gadget in `config.proxy`",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.16.0",
+      "patched_versions": ">=1.16.0",
+      "severity": "high",
+      "cwe": "CWE-441, CWE-1321",
+      "github_advisory_id": "GHSA-35jp-ww65-95wh",
+      "url": "https://github.com/advisories/GHSA-35jp-ww65-95wh"
+    },
+    "1120073": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1120073,
+      "title": "Axios: Regular Expression Denial of Service (ReDoS) via Cookie Name Injection",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.16.0",
+      "patched_versions": ">=1.16.0",
+      "severity": "high",
+      "cwe": "CWE-400, CWE-1333",
+      "github_advisory_id": "GHSA-hfxv-24rg-xrqf",
+      "url": "https://github.com/advisories/GHSA-hfxv-24rg-xrqf"
+    },
+    "1120074": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1120074,
+      "title": "Allocation of Resources Without Limits or Throttling in Axios",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.7.0 <1.16.0",
+      "patched_versions": ">=1.16.0",
+      "severity": "high",
+      "cwe": "CWE-770",
+      "github_advisory_id": "GHSA-777c-7fjr-54vf",
+      "url": "https://github.com/advisories/GHSA-777c-7fjr-54vf"
+    },
+    "1120076": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1120076,
+      "title": "Axios: Proxy-Authorization Credential Leak to Origin Server Across HTTP-to-HTTPS Redirect in Axios Node.js HTTP Adapter",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.16.0",
+      "patched_versions": ">=1.16.0",
+      "severity": "high",
+      "cwe": "CWE-201",
+      "github_advisory_id": "GHSA-p92q-9vqr-4j8v",
+      "url": "https://github.com/advisories/GHSA-p92q-9vqr-4j8v"
+    },
+    "1120078": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1120078,
+      "title": "Axios: Proxy-Authorization header leaks to redirect target when proxy is re-evaluated to direct connection",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.16.0",
+      "patched_versions": ">=1.16.0",
+      "severity": "high",
+      "cwe": "CWE-200",
+      "github_advisory_id": "GHSA-j5f8-grm9-p9fc",
+      "url": "https://github.com/advisories/GHSA-j5f8-grm9-p9fc"
+    },
+    "1120125": {
+      "findings": [
+        {
+          "version": "1.13.6",
+          "paths": [
+            "apps__web>axios"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1120125,
+      "title": "Axios: unbounded recursion in toFormData causes DoS via deeply nested request data",
+      "module_name": "axios",
+      "vulnerable_versions": ">=1.0.0 <1.15.1",
+      "patched_versions": ">=1.15.1",
+      "severity": "moderate",
+      "cwe": "CWE-674",
+      "github_advisory_id": "GHSA-62hf-57xw-28j9",
+      "url": "https://github.com/advisories/GHSA-62hf-57xw-28j9"
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 5,
+      "moderate": 40,
+      "high": 26,
+      "critical": 1
+    },
+    "dependencies": 316,
+    "devDependencies": 580,
+    "optionalDependencies": 95,
+    "totalDependencies": 906
+  }
+}
