@@ -274,6 +274,14 @@ export class UpdateService {
           '/opt/reboot-remote/web/standalone/apps/web/.next/static/',
         ], emit, 'deploy', 92, 94);
 
+        // version.json drives the version banner and the update check;
+        // CHANGELOG.md is what Release History is parsed from. Without these
+        // the UI keeps reporting the previous release after a successful update.
+        await this.runProc('cp', ['version.json', '/opt/reboot-remote/version.json'],
+          emit, 'deploy', 94, 94);
+        await this.runProc('cp', ['CHANGELOG.md', '/opt/reboot-remote/CHANGELOG.md'],
+          emit, 'deploy', 94, 95);
+
         emit('restart', 'Restarting services…', 95);
         await this.runProc('sudo', [
           '-n',

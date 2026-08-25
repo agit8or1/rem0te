@@ -356,6 +356,9 @@ rsync -a --delete \
 cp "${REPO_DIR}/apps/api/package.json" "${INSTALL_DIR}/api/"
 cp "${REPO_DIR}/apps/api/tsconfig.json" "${INSTALL_DIR}/api/" 2>/dev/null || true
 cp "${REPO_DIR}/version.json" "${INSTALL_DIR}/version.json"
+# The About page reads Release History straight out of the shipped CHANGELOG,
+# so it has to land at PROJECT_ROOT alongside version.json.
+cp "${REPO_DIR}/CHANGELOG.md" "${INSTALL_DIR}/CHANGELOG.md"
 mkdir -p "${INSTALL_DIR}/dist"
 cp "${REPO_DIR}/dist/windows-installer.exe" "${INSTALL_DIR}/dist/windows-installer.exe"
 
