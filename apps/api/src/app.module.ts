@@ -27,6 +27,8 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { AdminModule } from './admin/admin.module';
 import { PublicModule } from './public/public.module';
 import { PortalModule } from './portal/portal.module';
+import { ApiKeysModule } from './apikeys/apikeys.module';
+import { PublicApiModule } from './public-api/public-api.module';
 
 @Module({
   imports: [
@@ -65,6 +67,8 @@ import { PortalModule } from './portal/portal.module';
     AdminModule,
     PublicModule,
     PortalModule,
+    ApiKeysModule,
+    PublicApiModule,
   ],
   providers: [
     {
