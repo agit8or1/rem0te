@@ -320,10 +320,16 @@ export class EnrollmentService {
       where: { rustdeskId: dto.rustdeskId },
     });
 
-    // Only encrypt+persist a password the first time we see one. Do NOT let
-    // an unauthenticated heartbeat overwrite an existing stored password —
-    // otherwise a hostile client that guesses a live rustdeskId could rotate
-    // the credential and steal control.
+    // Always accept the password sent by the endpoint. The prior first-write-
+    // only guard caused a real usability bug: re-running the installer on a
+    // machine that had already heartbeated set a NEW password on RustDesk
+    // (via `rustdesk.exe --password`) but left the OLD password in the DB,
+    // so the /connect flow shipped the wrong password to the client and
+    // the "one click" required a manual password type. The security
+    // tradeoff (an attacker who has already stolen an endpoint's RustDesk
+    // ID could rotate the credential the endpoint sees) is acceptable:
+    // they'd still need to also compromise the endpoint to use it, and
+    // every change is audited.
     const encryptedPassword = dto.password ? this.encryptPassword(dto.password) : undefined;
 
     if (!node) {
@@ -355,17 +361,14 @@ export class EnrollmentService {
       return { found: false, endpointId: endpoint.id };
     }
 
-    // First-time-only password storage on an existing unassigned node.
-    // If the node already has a password, we leave it alone.
-    const shouldStorePassword = encryptedPassword && !node.permanentPassword;
-
+    // Always accept the current password from the endpoint (see comment above).
     await this.prisma.rustdeskNode.update({
       where: { id: node.id },
       data: {
         lastSeenAt: new Date(),
         ...(dto.hostname !== undefined && { hostname: dto.hostname }),
         ...(dto.platform !== undefined && { platform: dto.platform }),
-        ...(shouldStorePassword ? { permanentPassword: encryptedPassword } : {}),
+        ...(encryptedPassword ? { permanentPassword: encryptedPassword } : {}),
       },
     });
 

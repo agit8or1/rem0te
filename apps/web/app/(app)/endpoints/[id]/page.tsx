@@ -55,7 +55,7 @@ export default function EndpointDetailPage() {
         try { await navigator.clipboard.writeText(pw); } catch { /* ignore */ }
       }
       const uri = pw
-        ? `rustdesk://connection/new/${rdId}?password=${encodeURIComponent(pw)}`
+        ? `rustdesk://connection/new/${rdId}?password=${btoa(pw)}`
         : `rustdesk://connection/new/${rdId}`;
       window.location.href = uri;
     },
@@ -145,10 +145,10 @@ export default function EndpointDetailPage() {
           <Button
             size="sm"
             onClick={() => launchMutation.mutate()}
-            disabled={launchMutation.isPending || !ep.rustdeskId}
+            disabled={launchMutation.isPending || !(ep.rustdeskNode as { rustdeskId?: string } | null)?.rustdeskId}
           >
             <PlayCircle className="h-4 w-4 mr-2" />
-            Launch Session
+            Connect
           </Button>
           <Button
             size="sm"
@@ -184,7 +184,9 @@ export default function EndpointDetailPage() {
                 </Row>
                 <Row label="OS">{(ep.osVersion as string) ?? '—'}</Row>
                 <Row label="RustDesk ID">
-                  <span className="font-mono text-xs">{(ep.rustdeskId as string) ?? 'Not enrolled'}</span>
+                  <span className="font-mono text-xs">
+                    {((ep.rustdeskNode as { rustdeskId?: string } | null)?.rustdeskId) ?? 'Not enrolled'}
+                  </span>
                 </Row>
                 <Row label="Agent">{(ep.agentVersion as string) ?? '—'}</Row>
                 <Row label="Last Seen">{formatDate(ep.lastSeenAt as string)}</Row>

@@ -60,6 +60,32 @@ async function bootstrap() {
     }),
   );
 
+  // Maintenance mode. Set MAINTENANCE_MODE=true in the environment to block
+  // every non-admin, non-health, non-launcher endpoint with a 503 + a small
+  // JSON body clients can render as a banner. Admin auth + rescue routes are
+  // still available so platform operators can turn it back off.
+  app.use((req: import('express').Request, res: import('express').Response, next: import('express').NextFunction) => {
+    if (process.env.MAINTENANCE_MODE !== 'true') return next();
+    // Allow the operator to log in + read version so they can turn it off.
+    const path = req.path;
+    const allowlist = [
+      '/api/v1/auth/login',
+      '/api/v1/auth/logout',
+      '/api/v1/auth/me',
+      '/api/v1/auth/mfa/verify',
+      '/api/v1/admin/update/version',
+      '/api/v1/public/rustdesk-config',
+      '/api/v1/enrollment/heartbeat',
+      '/api/v1/enrollment/confirm-rotation',
+    ];
+    if (allowlist.some((p) => path === p || path.startsWith(p + '/'))) return next();
+    res.status(503).json({
+      success: false,
+      code: 'MAINTENANCE',
+      message: 'Rem0te is in maintenance mode. Try again shortly.',
+    });
+  });
+
   // Cookie parser (for access_token cookie)
   app.use(cookieParser());
 

@@ -74,7 +74,7 @@ function MyDevicesTab() {
         } catch { /* not authorized to see it — clipboard/URI stay empty */ }
       }
       const uri = pw
-        ? `rustdesk://connection/new/${rustdeskId}?password=${encodeURIComponent(pw)}`
+        ? `rustdesk://connection/new/${rustdeskId}?password=${btoa(pw)}`
         : `rustdesk://connection/new/${rustdeskId}`;
       window.location.href = uri;
     } catch {

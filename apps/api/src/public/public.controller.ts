@@ -590,7 +590,12 @@ if ($rdId) { $registered = Register $rdId }
 # ~10 minutes without one). Persistent, self-repairing, SYSTEM context.
 try { New-Item -ItemType Directory -Force -Path $STATEDIR | Out-Null } catch {}
 $hbFile = "$STATEDIR\\heartbeat.dat"
-$hbPayload = [PSCustomObject]@{ host = $REM0TE_HOST } | ConvertTo-Json -Compress
+# Store the current RustDesk password too so every heartbeat can keep the
+# server's stored copy in sync. Without this a re-install (or a manual
+# --password change on the endpoint) desyncs and one-click Connect stops
+# working because the server sends the browser an outdated password.
+# File is chmod 600 to SYSTEM+Administrators only.
+$hbPayload = [PSCustomObject]@{ host = $REM0TE_HOST; password = $PERM_PW } | ConvertTo-Json -Compress
 try { Set-Content -Path $hbFile -Value $hbPayload -Encoding UTF8; icacls $hbFile /inheritance:r /grant:r 'SYSTEM:(F)' 'Administrators:(F)' *>$null } catch {}
 
 $hbScript = "$STATEDIR\\heartbeat.ps1"
@@ -601,7 +606,11 @@ try { \$state = Get-Content 'C:\\ProgramData\\Rem0te\\heartbeat.dat' -Raw | Conv
 \$id = ''
 try { \$out = & \$RDEXE --get-id 2>\$null | Out-String; if (\$out -match '([0-9]{6,15})') { \$id = \$Matches[1] } } catch {}
 if (-not \$id) { exit 0 }
-\$body = @{ rustdeskId = \$id; hostname = \$env:COMPUTERNAME; platform = 'Windows' } | ConvertTo-Json -Compress
+\$body = @{ rustdeskId = \$id; hostname = \$env:COMPUTERNAME; platform = 'Windows' }
+# Include the current password so the server can keep its encrypted copy in
+# sync (needed for one-click Connect after any endpoint-side password change).
+if (\$state.password) { \$body['password'] = \$state.password }
+\$body = \$body | ConvertTo-Json -Compress
 \$resp = \$null
 try { \$resp = Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/heartbeat') -Method Post -Body \$body -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop } catch { exit 0 }
 # Apply any pending credential rotation. Server sends back { rotate: { password, sha256 } }
