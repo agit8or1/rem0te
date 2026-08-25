@@ -9,6 +9,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { IsBoolean, IsEnum, IsOptional, IsString, Length } from 'class-validator';
 import { NotesService } from './notes.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -17,22 +18,23 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
 import { NoteVisibility } from '@prisma/client';
 
+// class-validator decorators are REQUIRED — see comment in customers.controller.ts.
 class CreateNoteDto {
-  content!: string;
-  endpointId?: string;
-  customerId?: string;
-  sessionId?: string;
-  visibility?: NoteVisibility;
-  isPinned?: boolean;
+  @IsString() @Length(1, 8192)                     content!: string;
+  @IsOptional() @IsString()                         endpointId?: string;
+  @IsOptional() @IsString()                         customerId?: string;
+  @IsOptional() @IsString()                         sessionId?: string;
+  @IsOptional() @IsEnum(NoteVisibility)             visibility?: NoteVisibility;
+  @IsOptional() @IsBoolean()                        isPinned?: boolean;
 }
 
 class UpdateNoteDto {
-  content?: string;
-  isPinned?: boolean;
+  @IsOptional() @IsString() @Length(1, 8192)       content?: string;
+  @IsOptional() @IsBoolean()                        isPinned?: boolean;
 }
 
 class AddCommentDto {
-  content!: string;
+  @IsString() @Length(1, 4096)                     content!: string;
 }
 
 @Controller('notes')

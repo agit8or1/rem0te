@@ -8,6 +8,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { IsBoolean, IsEmail, IsOptional, IsString, Length } from 'class-validator';
 import { CustomersService } from './customers.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -15,31 +16,35 @@ import { RequirePermissions } from '../common/decorators/require-permissions.dec
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
 
+// class-validator decorators are REQUIRED — the global ValidationPipe runs
+// with { whitelist: true, forbidNonWhitelisted: true }, which strips any body
+// property that has no rule. Without these decorators the request body arrives
+// at the service as `{}` and Prisma throws.
 class CreateCustomerDto {
-  name!: string;
-  code?: string;
-  email?: string;
-  phone?: string;
-  address?: string;
-  city?: string;
-  state?: string;
-  country?: string;
-  postalCode?: string;
-  notes?: string;
+  @IsString() @Length(1, 128)                   name!: string;
+  @IsOptional() @IsString() @Length(0, 64)      code?: string;
+  @IsOptional() @IsEmail()                       email?: string;
+  @IsOptional() @IsString() @Length(0, 32)      phone?: string;
+  @IsOptional() @IsString() @Length(0, 256)     address?: string;
+  @IsOptional() @IsString() @Length(0, 96)      city?: string;
+  @IsOptional() @IsString() @Length(0, 96)      state?: string;
+  @IsOptional() @IsString() @Length(0, 96)      country?: string;
+  @IsOptional() @IsString() @Length(0, 32)      postalCode?: string;
+  @IsOptional() @IsString() @Length(0, 2048)    notes?: string;
 }
 
 class UpdateCustomerDto {
-  name?: string;
-  code?: string;
-  email?: string;
-  phone?: string;
-  address?: string;
-  city?: string;
-  state?: string;
-  country?: string;
-  postalCode?: string;
-  notes?: string;
-  isActive?: boolean;
+  @IsOptional() @IsString() @Length(1, 128)     name?: string;
+  @IsOptional() @IsString() @Length(0, 64)      code?: string;
+  @IsOptional() @IsEmail()                       email?: string;
+  @IsOptional() @IsString() @Length(0, 32)      phone?: string;
+  @IsOptional() @IsString() @Length(0, 256)     address?: string;
+  @IsOptional() @IsString() @Length(0, 96)      city?: string;
+  @IsOptional() @IsString() @Length(0, 96)      state?: string;
+  @IsOptional() @IsString() @Length(0, 96)      country?: string;
+  @IsOptional() @IsString() @Length(0, 32)      postalCode?: string;
+  @IsOptional() @IsString() @Length(0, 2048)    notes?: string;
+  @IsOptional() @IsBoolean()                     isActive?: boolean;
 }
 
 @Controller('customers')
