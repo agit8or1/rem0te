@@ -195,6 +195,17 @@ model User {
   status          UserStatus @default(ACTIVE)
   emailVerifiedAt DateTime?
   isPlatformAdmin Boolean    @default(false)
+
+  // Contact and address information (all optional)
+  phone      String?
+  jobTitle   String?
+  address    String?
+  city       String?
+  state      String?
+  country    String?
+  postalCode String?
+  timeZone   String?
+
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 

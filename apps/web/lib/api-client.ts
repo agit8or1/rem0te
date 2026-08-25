@@ -32,8 +32,12 @@ export const authApi = {
   verifyMfa: (code: string) => api.post('/auth/mfa/verify', { code }),
   switchTenant: (tenantId: string) => api.post('/auth/switch-tenant', { tenantId }),
   profile: () => api.get('/auth/profile'),
-  updateProfile: (data: { firstName?: string; lastName?: string; email?: string }) =>
-    api.patch('/auth/profile', data),
+  updateProfile: (data: {
+    firstName?: string; lastName?: string; email?: string;
+    phone?: string; jobTitle?: string;
+    address?: string; city?: string; state?: string; country?: string; postalCode?: string;
+    timeZone?: string;
+  }) => api.patch('/auth/profile', data),
   changePassword: (currentPassword: string, newPassword: string) =>
     api.post('/auth/change-password', { currentPassword, newPassword }),
 };
@@ -123,8 +127,12 @@ export const usersApi = {
     api.patch(`/users/${userId}/suspend`),
   activate: (_tenantId: string, userId: string) =>
     api.patch(`/users/${userId}/activate`),
-  updateProfile: (userId: string, data: { firstName?: string; lastName?: string; email?: string }) =>
-    api.patch(`/users/${userId}`, data),
+  updateProfile: (userId: string, data: {
+    firstName?: string; lastName?: string; email?: string;
+    phone?: string; jobTitle?: string;
+    address?: string; city?: string; state?: string; country?: string; postalCode?: string;
+    timeZone?: string;
+  }) => api.patch(`/users/${userId}`, data),
   resetPassword: (userId: string, password: string) =>
     api.post(`/users/${userId}/reset-password`, { password }),
   changeRole: (userId: string, roleId: string) =>

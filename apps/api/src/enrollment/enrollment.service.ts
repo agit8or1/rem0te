@@ -221,10 +221,16 @@ export class EnrollmentService {
     return { endpoint, tenantId: record.tenantId };
   }
 
-  async heartbeat(dto: { rustdeskId: string; hostname?: string; platform?: string; osVersion?: string; agentVersion?: string; ipAddress?: string }) {
+  async heartbeat(dto: { rustdeskId: string; hostname?: string; platform?: string; osVersion?: string; agentVersion?: string; ipAddress?: string; password?: string }) {
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { rustdeskId: dto.rustdeskId },
     });
+
+    // Only encrypt+persist a password the first time we see one. Do NOT let
+    // an unauthenticated heartbeat overwrite an existing stored password —
+    // otherwise a hostile client that guesses a live rustdeskId could rotate
+    // the credential and steal control.
+    const encryptedPassword = dto.password ? this.encryptPassword(dto.password) : undefined;
 
     if (!node) {
       // Auto-create an unassigned endpoint + node in the pending pool
@@ -249,10 +255,15 @@ export class EnrollmentService {
           hostname: dto.hostname ?? null,
           platform: dto.platform ?? null,
           lastSeenAt: new Date(),
+          ...(encryptedPassword ? { permanentPassword: encryptedPassword } : {}),
         },
       });
       return { found: false, endpointId: endpoint.id };
     }
+
+    // First-time-only password storage on an existing unassigned node.
+    // If the node already has a password, we leave it alone.
+    const shouldStorePassword = encryptedPassword && !node.permanentPassword;
 
     await this.prisma.rustdeskNode.update({
       where: { id: node.id },
@@ -260,6 +271,7 @@ export class EnrollmentService {
         lastSeenAt: new Date(),
         ...(dto.hostname !== undefined && { hostname: dto.hostname }),
         ...(dto.platform !== undefined && { platform: dto.platform }),
+        ...(shouldStorePassword ? { permanentPassword: encryptedPassword } : {}),
       },
     });
 

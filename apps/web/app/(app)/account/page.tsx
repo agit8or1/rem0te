@@ -25,23 +25,43 @@ function ProfileTab() {
     queryFn: () => authApi.profile().then(r => r.data?.data),
   });
 
-  const [firstName, setFirstName] = useState('');
-  const [lastName,  setLastName]  = useState('');
-  const [email,     setEmail]     = useState('');
-  const [loaded,    setLoaded]    = useState(false);
+  type ProfileForm = {
+    firstName: string; lastName: string; email: string;
+    phone: string; jobTitle: string;
+    address: string; city: string; state: string; country: string; postalCode: string;
+    timeZone: string;
+  };
+  const empty: ProfileForm = {
+    firstName: '', lastName: '', email: '', phone: '', jobTitle: '',
+    address: '', city: '', state: '', country: '', postalCode: '', timeZone: '',
+  };
+  const [form, setForm] = useState<ProfileForm>(empty);
+  const [loaded, setLoaded] = useState(false);
+  const set = <K extends keyof ProfileForm>(k: K, v: ProfileForm[K]) =>
+    setForm((f) => ({ ...f, [k]: v }));
 
   useEffect(() => {
     if (profile && !loaded) {
-      const p = profile as { firstName?: string; lastName?: string; email?: string };
-      setFirstName(p.firstName ?? '');
-      setLastName(p.lastName  ?? '');
-      setEmail(p.email        ?? '');
+      const p = profile as Partial<ProfileForm>;
+      setForm({
+        firstName:  p.firstName  ?? '',
+        lastName:   p.lastName   ?? '',
+        email:      p.email      ?? '',
+        phone:      p.phone      ?? '',
+        jobTitle:   p.jobTitle   ?? '',
+        address:    p.address    ?? '',
+        city:       p.city       ?? '',
+        state:      p.state      ?? '',
+        country:    p.country    ?? '',
+        postalCode: p.postalCode ?? '',
+        timeZone:   p.timeZone   ?? '',
+      });
       setLoaded(true);
     }
   }, [profile, loaded]);
 
   const mutation = useMutation({
-    mutationFn: () => authApi.updateProfile({ firstName, lastName, email }),
+    mutationFn: () => authApi.updateProfile(form),
     onSuccess: () => {
       toast({ title: 'Profile updated' });
       qc.invalidateQueries({ queryKey: ['auth-profile'] });
@@ -57,22 +77,62 @@ function ProfileTab() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><User className="h-4 w-4" /> Profile</CardTitle>
-        <CardDescription>Update your name and email address.</CardDescription>
+        <CardDescription>Contact information and mailing address for this user.</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4 max-w-md">
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <Label>First Name</Label>
-            <Input value={firstName} onChange={e => setFirstName(e.target.value)} placeholder="First" />
-          </div>
-          <div className="space-y-1">
-            <Label>Last Name</Label>
-            <Input value={lastName}  onChange={e => setLastName(e.target.value)}  placeholder="Last" />
+      <CardContent className="space-y-6 max-w-2xl">
+        <div>
+          <p className="text-sm font-medium mb-2">Identity</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>First Name</Label>
+              <Input value={form.firstName} onChange={e => set('firstName', e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Last Name</Label>
+              <Input value={form.lastName} onChange={e => set('lastName', e.target.value)} />
+            </div>
+            <div className="space-y-1 col-span-2">
+              <Label>Email</Label>
+              <Input type="email" value={form.email} onChange={e => set('email', e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Phone</Label>
+              <Input value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="+1 555 555 0100" />
+            </div>
+            <div className="space-y-1">
+              <Label>Job Title</Label>
+              <Input value={form.jobTitle} onChange={e => set('jobTitle', e.target.value)} placeholder="e.g. Support Technician" />
+            </div>
           </div>
         </div>
-        <div className="space-y-1">
-          <Label>Email</Label>
-          <Input type="email" value={email} onChange={e => setEmail(e.target.value)} />
+        <div>
+          <p className="text-sm font-medium mb-2">Mailing Address</p>
+          <div className="grid grid-cols-6 gap-3">
+            <div className="space-y-1 col-span-6">
+              <Label>Street</Label>
+              <Input value={form.address} onChange={e => set('address', e.target.value)} placeholder="123 Main St" />
+            </div>
+            <div className="space-y-1 col-span-2">
+              <Label>City</Label>
+              <Input value={form.city} onChange={e => set('city', e.target.value)} />
+            </div>
+            <div className="space-y-1 col-span-2">
+              <Label>State / Region</Label>
+              <Input value={form.state} onChange={e => set('state', e.target.value)} />
+            </div>
+            <div className="space-y-1 col-span-2">
+              <Label>Postal Code</Label>
+              <Input value={form.postalCode} onChange={e => set('postalCode', e.target.value)} />
+            </div>
+            <div className="space-y-1 col-span-3">
+              <Label>Country</Label>
+              <Input value={form.country} onChange={e => set('country', e.target.value)} />
+            </div>
+            <div className="space-y-1 col-span-3">
+              <Label>Time Zone</Label>
+              <Input value={form.timeZone} onChange={e => set('timeZone', e.target.value)} placeholder="America/New_York" />
+            </div>
+          </div>
         </div>
         <div className="text-xs text-muted-foreground">
           Role: <span className="font-medium">{me?.roleType ?? '—'}</span>

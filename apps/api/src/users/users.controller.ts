@@ -10,7 +10,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { IsEmail, IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
+import { IsEmail, IsOptional, IsString, Length, Matches, MinLength } from 'class-validator';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -33,17 +33,17 @@ class ChangeRoleDto {
 }
 
 class UpdateProfileDto {
-  @IsOptional()
-  @IsString()
-  firstName?: string;
-
-  @IsOptional()
-  @IsString()
-  lastName?: string;
-
-  @IsOptional()
-  @IsEmail()
-  email?: string;
+  @IsOptional() @IsString() @Length(1, 64)  firstName?: string;
+  @IsOptional() @IsString() @Length(1, 64)  lastName?: string;
+  @IsOptional() @IsEmail()                   email?: string;
+  @IsOptional() @IsString() @Length(0, 32) @Matches(/^[+0-9()\-.\s]*$/, { message: 'Phone contains invalid characters' }) phone?: string;
+  @IsOptional() @IsString() @Length(0, 128)  jobTitle?: string;
+  @IsOptional() @IsString() @Length(0, 256)  address?: string;
+  @IsOptional() @IsString() @Length(0, 96)   city?: string;
+  @IsOptional() @IsString() @Length(0, 96)   state?: string;
+  @IsOptional() @IsString() @Length(0, 96)   country?: string;
+  @IsOptional() @IsString() @Length(0, 32)   postalCode?: string;
+  @IsOptional() @IsString() @Length(0, 64)   timeZone?: string;
 }
 
 class ResetPasswordDto {

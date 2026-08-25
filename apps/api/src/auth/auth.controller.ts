@@ -95,7 +95,12 @@ export class AuthController {
   @Patch('profile')
   async updateProfile(
     @CurrentUser() user: JwtPayload,
-    @Body() body: { firstName?: string; lastName?: string; email?: string },
+    @Body() body: {
+      firstName?: string; lastName?: string; email?: string;
+      phone?: string; jobTitle?: string;
+      address?: string; city?: string; state?: string; country?: string; postalCode?: string;
+      timeZone?: string;
+    },
   ) {
     return { success: true, data: await this.authService.updateProfile(user.sub, body) };
   }

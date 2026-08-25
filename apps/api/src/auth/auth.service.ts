@@ -192,11 +192,25 @@ export class AuthService {
   async getProfile(userId: string) {
     return this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, firstName: true, lastName: true, status: true, createdAt: true },
+      select: {
+        id: true, email: true, firstName: true, lastName: true,
+        status: true, createdAt: true, isPlatformAdmin: true,
+        phone: true, jobTitle: true,
+        address: true, city: true, state: true, country: true, postalCode: true,
+        timeZone: true,
+      },
     });
   }
 
-  async updateProfile(userId: string, data: { firstName?: string; lastName?: string; email?: string }) {
+  async updateProfile(
+    userId: string,
+    data: {
+      firstName?: string; lastName?: string; email?: string;
+      phone?: string; jobTitle?: string;
+      address?: string; city?: string; state?: string; country?: string; postalCode?: string;
+      timeZone?: string;
+    },
+  ) {
     if (data.email) {
       const clash = await this.prisma.user.findFirst({
         where: { email: data.email.toLowerCase(), NOT: { id: userId } },
@@ -206,13 +220,25 @@ export class AuthService {
     const updated = await this.prisma.user.update({
       where: { id: userId },
       data: {
-        ...(data.firstName !== undefined && { firstName: data.firstName }),
-        ...(data.lastName  !== undefined && { lastName:  data.lastName  }),
-        ...(data.email     !== undefined && { email:     data.email.toLowerCase() }),
+        ...(data.firstName  !== undefined && { firstName:  data.firstName }),
+        ...(data.lastName   !== undefined && { lastName:   data.lastName  }),
+        ...(data.email      !== undefined && { email:      data.email.toLowerCase() }),
+        ...(data.phone      !== undefined && { phone:      data.phone || null }),
+        ...(data.jobTitle   !== undefined && { jobTitle:   data.jobTitle || null }),
+        ...(data.address    !== undefined && { address:    data.address || null }),
+        ...(data.city       !== undefined && { city:       data.city || null }),
+        ...(data.state      !== undefined && { state:      data.state || null }),
+        ...(data.country    !== undefined && { country:    data.country || null }),
+        ...(data.postalCode !== undefined && { postalCode: data.postalCode || null }),
+        ...(data.timeZone   !== undefined && { timeZone:   data.timeZone || null }),
       },
-      select: { id: true, email: true, firstName: true, lastName: true },
+      select: {
+        id: true, email: true, firstName: true, lastName: true,
+        phone: true, jobTitle: true,
+        address: true, city: true, state: true, country: true, postalCode: true, timeZone: true,
+      },
     });
-    await this.audit.log({ actorId: userId, action: 'USER_UPDATED', resource: 'user', resourceId: userId, meta: { self: true } });
+    await this.audit.log({ actorId: userId, action: 'USER_UPDATED', resource: 'user', resourceId: userId, meta: { self: true, fields: Object.keys(data) } });
     return updated;
   }
 

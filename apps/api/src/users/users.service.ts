@@ -42,6 +42,14 @@ export class UsersService {
             lastName: true,
             status: true,
             createdAt: true,
+            phone: true,
+            jobTitle: true,
+            address: true,
+            city: true,
+            state: true,
+            country: true,
+            postalCode: true,
+            timeZone: true,
             mfaMethods: {
               where: { type: 'TOTP', isActive: true },
               select: { id: true },
@@ -49,6 +57,7 @@ export class UsersService {
           },
         },
         role: { select: { id: true, name: true, type: true } },
+        customer: { select: { id: true, name: true } },
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -118,7 +127,12 @@ export class UsersService {
     userId: string,
     actorId: string,
     actorRoleType: RoleType | null,
-    data: { firstName?: string; lastName?: string; email?: string },
+    data: {
+      firstName?: string; lastName?: string; email?: string;
+      phone?: string; jobTitle?: string;
+      address?: string; city?: string; state?: string; country?: string; postalCode?: string;
+      timeZone?: string;
+    },
   ) {
     const membership = await this.prisma.membership.findFirst({
       where: { tenantId, userId },
@@ -144,11 +158,23 @@ export class UsersService {
     const updated = await this.prisma.user.update({
       where: { id: userId },
       data: {
-        ...(data.firstName !== undefined && { firstName: data.firstName }),
-        ...(data.lastName  !== undefined && { lastName:  data.lastName  }),
-        ...(data.email     !== undefined && { email:     data.email.toLowerCase() }),
+        ...(data.firstName  !== undefined && { firstName:  data.firstName }),
+        ...(data.lastName   !== undefined && { lastName:   data.lastName  }),
+        ...(data.email      !== undefined && { email:      data.email.toLowerCase() }),
+        ...(data.phone      !== undefined && { phone:      data.phone || null }),
+        ...(data.jobTitle   !== undefined && { jobTitle:   data.jobTitle || null }),
+        ...(data.address    !== undefined && { address:    data.address || null }),
+        ...(data.city       !== undefined && { city:       data.city || null }),
+        ...(data.state      !== undefined && { state:      data.state || null }),
+        ...(data.country    !== undefined && { country:    data.country || null }),
+        ...(data.postalCode !== undefined && { postalCode: data.postalCode || null }),
+        ...(data.timeZone   !== undefined && { timeZone:   data.timeZone || null }),
       },
-      select: { id: true, email: true, firstName: true, lastName: true, status: true },
+      select: {
+        id: true, email: true, firstName: true, lastName: true, status: true,
+        phone: true, jobTitle: true,
+        address: true, city: true, state: true, country: true, postalCode: true, timeZone: true,
+      },
     });
 
     await this.audit.log({

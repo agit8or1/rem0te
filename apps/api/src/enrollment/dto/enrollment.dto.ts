@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsIP } from 'class-validator';
+import { IsOptional, IsString, IsIP, Length, Matches } from 'class-validator';
 
 export class CreateClaimTokenDto {
   @IsOptional()
@@ -20,27 +20,41 @@ export class CreateClaimTokenDto {
 
 export class HeartbeatDto {
   @IsString()
+  @Matches(/^[0-9]{6,15}$/, { message: 'rustdeskId must be numeric' })
   rustdeskId!: string;
 
   @IsOptional()
   @IsString()
+  @Length(1, 64)
   hostname?: string;
 
   @IsOptional()
   @IsString()
+  @Length(1, 32)
   platform?: string;
 
   @IsOptional()
   @IsString()
+  @Length(1, 64)
   osVersion?: string;
 
   @IsOptional()
   @IsString()
+  @Length(1, 32)
   agentVersion?: string;
 
   @IsOptional()
   @IsIP()
   ipAddress?: string;
+
+  // Optional permanent password from the on-device installer. Stored
+  // encrypted on the RustdeskNode so that when a platform admin later
+  // assigns an unassigned device to a tenant, the tenant already has
+  // the password without needing the customer to re-type it.
+  @IsOptional()
+  @IsString()
+  @Length(1, 128)
+  password?: string;
 }
 
 export class ClaimEndpointDto {

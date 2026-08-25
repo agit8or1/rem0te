@@ -356,33 +356,76 @@ Write-Host "[4/4] Setting permanent password and starting RustDesk service..." -
 Start-Sleep -Seconds 2
 
 Start-Service -Name "RustDesk" -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 5
 
-# Read the assigned RustDesk ID from any available config
+# Wait for RustDesk to actually assign an ID. The ID is not written to disk
+# until RustDesk has contacted hbbs and received an assignment, which can
+# take 10-30 seconds on slow links. Retry for up to 45 s.
+Write-Host "     Waiting for RustDesk to receive Device ID from server..." -ForegroundColor DarkGray
 $rdId = ""
 $idPaths = @(
     "$env:APPDATA\\RustDesk\\config\\RustDesk.toml",
+    "$env:APPDATA\\RustDesk\\config\\RustDesk2.toml",
     "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Roaming\\RustDesk\\config\\RustDesk.toml",
+    "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Roaming\\RustDesk\\config\\RustDesk2.toml",
     "C:\\Windows\\ServiceProfiles\\LocalSystem\\AppData\\Roaming\\RustDesk\\config\\RustDesk.toml",
-    "C:\\Windows\\ServiceProfiles\\LocalSystem\\AppData\\Roaming\\RustDesk\\config\\RustDesk2.toml"
+    "C:\\Windows\\ServiceProfiles\\LocalSystem\\AppData\\Roaming\\RustDesk\\config\\RustDesk2.toml",
+    "C:\\ProgramData\\RustDesk\\config\\RustDesk.toml",
+    "C:\\ProgramData\\RustDesk\\config\\RustDesk2.toml"
 )
-foreach ($f in $idPaths) {
-    if (Test-Path $f) {
-        $line = Get-Content $f -ErrorAction SilentlyContinue | Where-Object { $_ -match '^id\\s*=' } | Select-Object -First 1
-        if ($line -match '"(.+)"') { $rdId = $Matches[1]; break }
-        if ($line -match "=\\s*'(.+)'") { $rdId = $Matches[1]; break }
+$waited = 0
+while (-not $rdId -and $waited -lt 45) {
+    Start-Sleep -Seconds 3
+    $waited += 3
+    foreach ($f in $idPaths) {
+        if (Test-Path $f) {
+            $lines = Get-Content $f -ErrorAction SilentlyContinue
+            foreach ($ln in $lines) {
+                # RustDesk writes: id = '123456789'  (single-quoted TOML string)
+                if ($ln -match "^\\s*id\\s*=\\s*'([0-9]{6,15})'") {
+                    $rdId = $Matches[1]
+                    break
+                }
+                if ($ln -match '^\\s*id\\s*=\\s*"([0-9]{6,15})"') {
+                    $rdId = $Matches[1]
+                    break
+                }
+            }
+        }
+        if ($rdId) { break }
     }
 }
 
-if ($CLAIM_TOKEN -and $rdId) {
-    Write-Host "  Registering device with management portal..." -ForegroundColor Yellow
-    try {
-        $claimBody = @{ token = $CLAIM_TOKEN; rustdeskId = $rdId; hostname = $env:COMPUTERNAME; platform = "Windows"; password = $PERM_PW } | ConvertTo-Json
-        Invoke-RestMethod -Uri "https://$HOST_ADDR/api/v1/enrollment/claim" -Method Post -Body $claimBody -ContentType "application/json" -UseBasicParsing -ErrorAction Stop | Out-Null
-        Write-Host "  Device registered to management portal." -ForegroundColor Green
-    } catch {
-        Write-Host "  Portal registration skipped (will retry on next heartbeat)." -ForegroundColor DarkGray
+# Register with the Rem0te API regardless of whether a claim token was given.
+# Without a token the device appears under Unassigned Devices so an admin can
+# assign it to a customer. With a token, the API auto-claims into the token's
+# tenant.
+if ($rdId) {
+    if ($CLAIM_TOKEN) {
+        Write-Host "  Registering device with Rem0te (claim token supplied)..." -ForegroundColor Yellow
+        try {
+            $claimBody = @{ token = $CLAIM_TOKEN; rustdeskId = $rdId; hostname = $env:COMPUTERNAME; platform = "Windows"; password = $PERM_PW } | ConvertTo-Json
+            Invoke-RestMethod -Uri "https://$HOST_ADDR/api/v1/enrollment/claim" -Method Post -Body $claimBody -ContentType "application/json" -UseBasicParsing -ErrorAction Stop | Out-Null
+            Write-Host "  Device registered to tenant." -ForegroundColor Green
+        } catch {
+            Write-Host "  Claim failed — device will appear as Unassigned. ($($_.Exception.Message))" -ForegroundColor Yellow
+            try {
+                $hbBody = @{ rustdeskId = $rdId; hostname = $env:COMPUTERNAME; platform = "Windows"; password = $PERM_PW } | ConvertTo-Json
+                Invoke-RestMethod -Uri "https://$HOST_ADDR/api/v1/enrollment/heartbeat" -Method Post -Body $hbBody -ContentType "application/json" -UseBasicParsing -ErrorAction Stop | Out-Null
+            } catch { }
+        }
+    } else {
+        Write-Host "  Registering device with Rem0te (no claim token — will appear as Unassigned)..." -ForegroundColor Yellow
+        try {
+            $hbBody = @{ rustdeskId = $rdId; hostname = $env:COMPUTERNAME; platform = "Windows"; password = $PERM_PW } | ConvertTo-Json
+            Invoke-RestMethod -Uri "https://$HOST_ADDR/api/v1/enrollment/heartbeat" -Method Post -Body $hbBody -ContentType "application/json" -UseBasicParsing -ErrorAction Stop | Out-Null
+            Write-Host "  Device registered. Assign it under Admin -> Unassigned Devices." -ForegroundColor Green
+        } catch {
+            Write-Host "  Registration failed: $($_.Exception.Message)" -ForegroundColor Red
+        }
     }
+} else {
+    Write-Host "  Could not detect RustDesk Device ID after 45 s — skipping registration." -ForegroundColor Yellow
+    Write-Host "  Re-run this installer once RustDesk has connected to the server." -ForegroundColor DarkGray
 }
 
 Write-Host ""
@@ -527,24 +570,54 @@ sleep 1
 
 systemctl enable rustdesk 2>/dev/null || true
 systemctl restart rustdesk 2>/dev/null || true
-sleep 3
 
-# Try to read RustDesk ID
+# Wait up to 45 s for RustDesk to receive its ID from hbbs
+echo "     Waiting for RustDesk to receive Device ID from server..."
 RD_ID=""
-for CFG_FILE in "/root/.config/rustdesk/RustDesk.toml" "/var/lib/rustdesk/RustDesk.toml" "/root/.config/rustdesk/RustDesk2.toml"; do
-  if [ -f "\${CFG_FILE}" ]; then
-    RD_ID=\$(grep '^id' "\${CFG_FILE}" 2>/dev/null | head -1 | sed "s/.*'\\(.*\\)'.*/\\1/" | sed 's/.*"\\(.*\\)".*/\\1/') || true
-    [ -n "\${RD_ID}" ] && break
-  fi
+WAITED=0
+while [ -z "\${RD_ID}" ] && [ \${WAITED} -lt 45 ]; do
+  sleep 3
+  WAITED=\$((WAITED + 3))
+  for CFG_FILE in "/root/.config/rustdesk/RustDesk.toml" \\
+                  "/root/.config/rustdesk/RustDesk2.toml" \\
+                  "/var/lib/rustdesk/RustDesk.toml" \\
+                  "/var/lib/rustdesk/RustDesk2.toml"; do
+    if [ -f "\${CFG_FILE}" ]; then
+      # Match: id = '123456789'  or  id = "123456789"
+      CAND=\$(grep -E "^[[:space:]]*id[[:space:]]*=" "\${CFG_FILE}" 2>/dev/null | head -1 | sed -E "s/.*['\\"]([0-9]{6,15})['\\"].*/\\1/" | head -1)
+      if echo "\${CAND}" | grep -qE '^[0-9]{6,15}$'; then
+        RD_ID="\${CAND}"
+        break
+      fi
+    fi
+  done
 done
 
-# Auto-register with management portal
-if [ -n "\${CLAIM_TOKEN}" ] && [ -n "\${RD_ID}" ]; then
-  echo "  Registering device with management portal..."
-  curl -s -X POST "https://\${HOST_ADDR}/api/v1/enrollment/claim" \\
-    -H "Content-Type: application/json" \\
-    -d "{\\"token\\":\\"\${CLAIM_TOKEN}\\",\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\$(hostname -s 2>/dev/null || echo unknown)\\",\\"platform\\":\\"linux\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null 2>&1 || true
-  echo "  Device registered to management portal."
+HOSTNAME_SHORT=\$(hostname -s 2>/dev/null || echo unknown)
+
+# Always register — claim if token present, else heartbeat as unassigned.
+if [ -n "\${RD_ID}" ]; then
+  if [ -n "\${CLAIM_TOKEN}" ]; then
+    echo "  Registering device with Rem0te (claim token supplied)..."
+    if ! curl -sf -X POST "https://\${HOST_ADDR}/api/v1/enrollment/claim" \\
+      -H "Content-Type: application/json" \\
+      -d "{\\"token\\":\\"\${CLAIM_TOKEN}\\",\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"linux\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null; then
+      echo "  Claim failed — falling back to unassigned registration."
+      curl -sf -X POST "https://\${HOST_ADDR}/api/v1/enrollment/heartbeat" \\
+        -H "Content-Type: application/json" \\
+        -d "{\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"linux\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null || true
+    else
+      echo "  Device registered to tenant."
+    fi
+  else
+    echo "  Registering device with Rem0te (no claim token — will appear as Unassigned)..."
+    curl -sf -X POST "https://\${HOST_ADDR}/api/v1/enrollment/heartbeat" \\
+      -H "Content-Type: application/json" \\
+      -d "{\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"linux\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null || true
+    echo "  Device registered. Assign it under Admin -> Unassigned Devices."
+  fi
+else
+  echo "  Could not detect RustDesk Device ID after 45 s — skipping registration."
 fi
 
 echo ""
@@ -642,25 +715,52 @@ sleep 1
 
 # Launch the app to initialize ID
 open "\${RDAPP}"
-sleep 5
 
-# Read ID from config
+# Wait up to 45 s for RustDesk to receive its ID from hbbs
+echo "  Waiting for RustDesk to receive Device ID from server..."
 RD_ID=""
-for CFG in "\${HOME}/Library/Preferences/com.carriez.RustDesk/RustDesk.toml" \\
-           "\${HOME}/Library/Application Support/com.carriez.RustDesk/RustDesk.toml"; do
-  if [ -f "\${CFG}" ]; then
-    RD_ID=\$(grep '^id' "\${CFG}" 2>/dev/null | head -1 | sed "s/.*'\\(.*\\)'.*/\\1/" | sed 's/.*"\\(.*\\)".*/\\1/') || true
-    [ -n "\${RD_ID}" ] && break
-  fi
+WAITED=0
+while [ -z "\${RD_ID}" ] && [ \${WAITED} -lt 45 ]; do
+  sleep 3
+  WAITED=\$((WAITED + 3))
+  for CFG in "\${HOME}/Library/Preferences/com.carriez.RustDesk/RustDesk.toml" \\
+             "\${HOME}/Library/Preferences/com.carriez.RustDesk/RustDesk2.toml" \\
+             "\${HOME}/Library/Application Support/com.carriez.RustDesk/RustDesk.toml"; do
+    if [ -f "\${CFG}" ]; then
+      CAND=\$(grep -E "^[[:space:]]*id[[:space:]]*=" "\${CFG}" 2>/dev/null | head -1 | sed -E "s/.*['\\"]([0-9]{6,15})['\\"].*/\\1/" | head -1)
+      if echo "\${CAND}" | grep -qE '^[0-9]{6,15}$'; then
+        RD_ID="\${CAND}"
+        break
+      fi
+    fi
+  done
 done
 
-# Auto-register with management portal
-if [ -n "\${CLAIM_TOKEN}" ] && [ -n "\${RD_ID}" ]; then
-  echo "  Registering device with management portal..."
-  curl -s -X POST "https://\${HOST_ADDR}/api/v1/enrollment/claim" \\
-    -H "Content-Type: application/json" \\
-    -d "{\\"token\\":\\"\${CLAIM_TOKEN}\\",\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\$(hostname -s 2>/dev/null || echo unknown)\\",\\"platform\\":\\"macos\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null 2>&1 || true
-  echo "  Device registered to management portal."
+HOSTNAME_SHORT=\$(hostname -s 2>/dev/null || echo unknown)
+
+# Always register — claim if token present, else heartbeat as unassigned.
+if [ -n "\${RD_ID}" ]; then
+  if [ -n "\${CLAIM_TOKEN}" ]; then
+    echo "  Registering device with Rem0te (claim token supplied)..."
+    if ! curl -sf -X POST "https://\${HOST_ADDR}/api/v1/enrollment/claim" \\
+      -H "Content-Type: application/json" \\
+      -d "{\\"token\\":\\"\${CLAIM_TOKEN}\\",\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"macos\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null; then
+      echo "  Claim failed — falling back to unassigned registration."
+      curl -sf -X POST "https://\${HOST_ADDR}/api/v1/enrollment/heartbeat" \\
+        -H "Content-Type: application/json" \\
+        -d "{\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"macos\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null || true
+    else
+      echo "  Device registered to tenant."
+    fi
+  else
+    echo "  Registering device with Rem0te (no claim token — will appear as Unassigned)..."
+    curl -sf -X POST "https://\${HOST_ADDR}/api/v1/enrollment/heartbeat" \\
+      -H "Content-Type: application/json" \\
+      -d "{\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"macos\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null || true
+    echo "  Device registered. Assign it under Admin -> Unassigned Devices."
+  fi
+else
+  echo "  Could not detect RustDesk Device ID after 45 s — skipping registration."
 fi
 
 echo ""
