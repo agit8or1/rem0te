@@ -23,9 +23,14 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   onModuleInit() {
     // Run every 5 minutes
     this.cleanupInterval = setInterval(() => {
-      // Windows agent heartbeats every 3 minutes (Rem0teHeartbeat scheduled
-      // task). 8 minutes = 2 missed pings + a network-blip grace period.
-      this.enrollment.markStaleEndpointsOffline(8).catch((e) =>
+      // Threshold is generous (30 min) because:
+      //   * older installers that pre-date the Rem0teHeartbeat task ping
+      //     only once at install time; we don't want to mark them offline
+      //     just because they haven't been re-installed yet
+      //   * new installers heartbeat every 3 min so a real 30-min silence
+      //     is either a genuinely-offline machine or a broken heartbeat
+      //     task worth investigating
+      this.enrollment.markStaleEndpointsOffline(30).catch((e) =>
         this.logger.error('Stale endpoint cleanup failed', e),
       );
     }, 5 * 60 * 1000);
@@ -90,4 +95,15 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
     return { success: true, data: result };
   }
 
+  // Endpoint confirms it applied a rotation. Payload = { rustdeskId, sha256 }
+  // where sha256 is SHA-256 of the plaintext the endpoint received back from
+  // /heartbeat and applied via rustdesk.exe --password.
+  @Post('confirm-rotation')
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
+  @HttpCode(HttpStatus.OK)
+  async confirmRotation(@Body() body: { rustdeskId: string; sha256: string }) {
+    const result = await this.enrollment.confirmRotation(body.rustdeskId, body.sha256);
+    return { success: true, data: result };
+  }
 }

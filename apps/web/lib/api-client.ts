@@ -62,8 +62,14 @@ export const endpointsApi = {
   connected: () => api.get('/endpoints/connected'),
   // Employee-facing: only computers this user is authorized to connect to.
   mine: () => api.get('/endpoints/mine'),
-  // Employee-facing Connect — checks ComputerAccess, returns {rustdeskId, password}
+  // Employee-facing Connect — checks ComputerAccess, returns
+  // { rustdeskId, password, grantToken, launchUri }.
   connect: (id: string) => api.post(`/endpoints/${id}/connect`),
+  // Redeem a ConnectionGrant token — the launcher path (browser fallback OK too).
+  redeemGrant: (token: string) => api.post(`/endpoints/grants/redeem`, { token }),
+  // Admin: stage a credential rotation. Old password stays valid until the
+  // endpoint applies + confirms the new one on its next heartbeat.
+  rotateCredential: (id: string) => api.post(`/endpoints/${id}/rotate-credential`),
   // Admin access management for one computer
   listAccess: (id: string) => api.get(`/endpoints/${id}/access`),
   grantAccess: (id: string, userId: string) => api.post(`/endpoints/${id}/access`, { userId }),

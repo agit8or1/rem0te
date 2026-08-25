@@ -10,6 +10,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Public } from '../common/decorators/public.decorator';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
 
 @Controller('endpoints')
@@ -33,17 +34,46 @@ export class EndpointsController {
   }
 
   // Employee-facing "Connect" — no admin permission required. The service
-  // authorizes via ComputerAccess (or COMPANY_WIDE + membership) and returns
-  // { rustdeskId, password } so the browser can populate the RustDesk prompt.
+  // authorizes via ComputerAccess (or COMPANY_WIDE + membership) and:
+  //   1. mints a short-lived, single-use ConnectionGrant (browser hands the
+  //      opaque token to the launcher via rem0te://connect/<token>);
+  //   2. returns { rustdeskId, password } as a fallback for the current
+  //      browser-launches-RustDesk flow (until the Tauri launcher is
+  //      universally installed). Both are audited.
   @Post(':id/connect')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   async connect(@CurrentUser() u: JwtPayload, @Param('id') id: string, @Req() req: Request) {
     if (!u.tenantId) return { success: false, message: 'No tenant context' };
-    const data = await this.svc.connectInfo(u.tenantId, u.sub, id, req.ip, {
+    const grant = await this.svc.createConnectionGrant(u.tenantId, u.sub, id, req.ip, {
       isPlatformAdmin: u.isPlatformAdmin,
       roleType: u.roleType,
     });
+    const legacy = await this.svc.connectInfo(u.tenantId, u.sub, id, req.ip, {
+      isPlatformAdmin: u.isPlatformAdmin,
+      roleType: u.roleType,
+    });
+    return {
+      success: true,
+      data: {
+        ...legacy,
+        // New: opaque grant for the launcher path. Ideally the browser only
+        // uses `launchUri` and never touches rustdeskId / password.
+        grantToken: grant.token,
+        grantExpiresAt: grant.expiresAt,
+        launchUri: `rem0te://connect/${grant.token}`,
+      },
+    };
+  }
+
+  // Redeem a ConnectionGrant. Public route — the token itself is the
+  // authorization proof. Returns rustdeskId + password for the launcher.
+  @Post('grants/redeem')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async redeemGrant(@Body() body: { token: string }, @Req() req: Request) {
+    const data = await this.svc.redeemConnectionGrant(body.token, req.ip);
     return { success: true, data };
   }
 
@@ -75,6 +105,17 @@ export class EndpointsController {
   ) {
     await this.svc.revokeAccess(u.tenantId!, id, userId, u.sub);
     return { success: true };
+  }
+
+  // Admin action: stage a credential rotation for this computer. Server
+  // generates a new high-entropy password; endpoint applies it on next
+  // heartbeat; endpoint confirms; server swaps it in. Old password stays
+  // valid until confirmation — no lockout risk.
+  @Post(':id/rotate-credential')
+  @RequirePermissions('endpoints:write')
+  @HttpCode(HttpStatus.OK)
+  async rotateCredential(@CurrentUser() u: JwtPayload, @Param('id') id: string) {
+    return { success: true, data: await this.svc.rotateCredential(u.tenantId!, id, u.sub) };
   }
 
   @Patch(':id/access-mode')

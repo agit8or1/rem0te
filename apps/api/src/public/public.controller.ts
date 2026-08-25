@@ -392,6 +392,12 @@ $configTargets.Add($sysDir) | Out-Null
 
 # Every user profile the OS knows about — from ProfileList registry, not from
 # a naive C:\Users scan (that missed domain profiles / picked up junk like Public).
+# Also collect (dir, sid) pairs so we can icacls the file grant afterwards —
+# if we write as SYSTEM the file is SYSTEM-owned and the interactive user's
+# RustDesk process can't necessarily read it, which is EXACTLY why the "set
+# up your own server" warning keeps returning: the GUI reads its own config,
+# doesn't see us in it, and shows the tip.
+$userSids = @{}
 try {
     $profileList = Get-ChildItem 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList' -ErrorAction Stop
     foreach ($p in $profileList) {
@@ -401,7 +407,10 @@ try {
         $pip = (Get-ItemProperty -Path $p.PSPath -Name 'ProfileImagePath' -ErrorAction SilentlyContinue).ProfileImagePath
         if (-not $pip) { continue }
         $ad = Join-Path $pip 'AppData\\Roaming\\RustDesk\\config'
-        if (Test-Path (Split-Path $ad)) { $configTargets.Add($ad) | Out-Null }
+        if (Test-Path (Split-Path $ad)) {
+            $configTargets.Add($ad) | Out-Null
+            $userSids[$ad] = $sid
+        }
     }
 } catch { Log "  Could not enumerate user profiles: $($_.Exception.Message)" 'WARN' }
 
@@ -415,8 +424,17 @@ $configTargets = [System.Linq.Enumerable]::Distinct([string[]]$configTargets)
 foreach ($d in $configTargets) {
     try {
         New-Item -ItemType Directory -Force -Path $d | Out-Null
-        $toml | Set-Content "$d\\RustDesk2.toml" -Encoding UTF8 -Force
-        Log "  Wrote config: $d\\RustDesk2.toml"
+        $file = "$d\\RustDesk2.toml"
+        $toml | Set-Content $file -Encoding UTF8 -Force
+        # Grant the profile-owning user READ access. Without this the file
+        # is SYSTEM-owned and the interactive RustDesk GUI cannot read it,
+        # which is why "For faster connection..." keeps coming back.
+        $sid = $userSids[$d]
+        if ($sid) {
+            & icacls $file /grant ('*' + $sid + ':R') *>$null
+            & icacls $d    /grant ('*' + $sid + ':(OI)(CI)R') *>$null
+        }
+        Log "  Wrote config: $file"
     } catch {
         Log "  Skip (no access): $d — $($_.Exception.Message)" 'WARN'
     }
@@ -584,7 +602,25 @@ try { \$state = Get-Content 'C:\\ProgramData\\Rem0te\\heartbeat.dat' -Raw | Conv
 try { \$out = & \$RDEXE --get-id 2>\$null | Out-String; if (\$out -match '([0-9]{6,15})') { \$id = \$Matches[1] } } catch {}
 if (-not \$id) { exit 0 }
 \$body = @{ rustdeskId = \$id; hostname = \$env:COMPUTERNAME; platform = 'Windows' } | ConvertTo-Json -Compress
-try { Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/heartbeat') -Method Post -Body \$body -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop | Out-Null } catch {}
+\$resp = \$null
+try { \$resp = Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/heartbeat') -Method Post -Body \$body -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop } catch { exit 0 }
+# Apply any pending credential rotation. Server sends back { rotate: { password, sha256 } }
+# when a rotation is staged. We apply it to RustDesk via --password (service must be running)
+# and confirm to the server so it swaps pending->active. Failure keeps the OLD password.
+try {
+    \$rot = \$resp.data.rotate
+    if (\$rot -and \$rot.password -and \$rot.sha256) {
+        # Compute local sha of what we are about to apply so we do not confirm a bad payload
+        \$bytes = [Text.Encoding]::UTF8.GetBytes(\$rot.password)
+        \$sha = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash(\$bytes)).Replace('-','').ToLower()
+        if (\$sha -eq \$rot.sha256) {
+            & \$RDEXE --password \$rot.password *>\$null
+            Start-Sleep -Seconds 1
+            \$confirm = @{ rustdeskId = \$id; sha256 = \$sha } | ConvertTo-Json -Compress
+            try { Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/confirm-rotation') -Method Post -Body \$confirm -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop | Out-Null } catch {}
+        }
+    }
+} catch {}
 '@
 Set-Content -Path $hbScript -Value $hbBody -Encoding UTF8
 schtasks /Create /F /TN 'Rem0teHeartbeat' /SC MINUTE /MO 3 /RU SYSTEM /RL HIGHEST /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \`"$hbScript\`"" *>$null

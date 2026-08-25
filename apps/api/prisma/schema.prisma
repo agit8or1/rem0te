@@ -93,6 +93,11 @@ enum ActivityAction {
   ENDPOINT_UNASSIGNED
   ENDPOINT_ACCESS_GRANTED
   ENDPOINT_ACCESS_REVOKED
+  ENDPOINT_CREDENTIAL_ROTATION_STAGED
+  ENDPOINT_CREDENTIAL_ROTATED
+  CONNECTION_GRANT_CREATED
+  CONNECTION_GRANT_REDEEMED
+  CONNECTION_GRANT_DENIED
   SESSION_LAUNCHED
   SESSION_COMPLETED
   SESSION_CANCELED
@@ -142,6 +147,7 @@ model Tenant {
   launcherTokens    LauncherToken[]
   supportSessions   SupportSession[]
   computerAccess    ComputerAccess[]
+  connectionGrants  ConnectionGrant[]
 
   @@index([slug])
 }
@@ -222,6 +228,7 @@ model User {
   supportSessions   SupportSession[]
   invitationsSent   Invitation[]
   computerAccess    ComputerAccess[]
+  connectionGrants  ConnectionGrant[]
 
   @@index([email])
 }
@@ -406,6 +413,7 @@ model Endpoint {
   supportSessions   SupportSession[]
   deviceClaimTokens DeviceClaimToken[]
   computerAccess    ComputerAccess[]
+  connectionGrants  ConnectionGrant[]
 
   // Access mode: how the computer's remote-access authorization is scoped.
   //   ASSIGNED_USERS  → only users listed in ComputerAccess may connect
@@ -503,10 +511,52 @@ model RustdeskNode {
   publicKey         String?
   permanentPassword String?   // AES-256-GCM encrypted, same format as TOTP secrets
 
+  // Credential rotation staging. When the server issues a rotation:
+  //   pendingPassword   = AES-GCM(new candidate)
+  //   pendingPasswordAt = time it was staged
+  // The endpoint's next heartbeat response includes the plaintext new
+  // password; the endpoint applies it via rustdesk.exe --password and
+  // POSTs to /enrollment/confirm-rotation. Only then does the server
+  // swap pending -> permanent and clear pending. This coordinated
+  // protocol prevents desync (the old password stays valid until the
+  // endpoint confirms).
+  pendingPassword   String?
+  pendingPasswordAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([rustdeskId])
+}
+
+// A ConnectionGrant is the short-lived authorization the browser hands to
+// the launcher instead of the RustDesk password. Ideally the browser only
+// receives `{ token, launchUri }`; the launcher then POSTs to /grants/redeem
+// with the token to get the actual credentials over authenticated HTTPS.
+//
+// Single-use; TTL ~60 s; server-issued only after all authorization
+// (ComputerAccess / MFA / GeoIP / active user / active company) checks pass.
+model ConnectionGrant {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpointId String
+  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+  usedAt    DateTime?
+  usedByIp  String?
+  createdByIp String?
+  purpose   String    @default("REMOTE_ACCESS")
+
+  @@index([tenantId])
+  @@index([endpointId])
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model DeviceClaimToken {

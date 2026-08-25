@@ -409,6 +409,141 @@ export class EndpointsService {
     return ep;
   }
 
+  // Create a short-lived, single-use ConnectionGrant the browser can hand to
+  // the launcher. Grant lifetime = 90 s. Server verifies ComputerAccess (or
+  // COMPANY_WIDE + membership) before minting. The grant is redeemed via
+  // POST /grants/:token/redeem which returns the actual RustDesk credentials
+  // over authenticated HTTPS. This keeps the permanent password off the
+  // browser process.
+  async createConnectionGrant(
+    tenantId: string,
+    userId: string,
+    endpointId: string,
+    actorIp: string | undefined,
+    actor: { isPlatformAdmin?: boolean; roleType?: string | null },
+  ) {
+    const authz = await this.authorizeConnect(tenantId, userId, endpointId, actor);
+    if (!authz.ok) {
+      await this.audit.log({
+        tenantId, actorId: userId, actorIp,
+        action: 'ENDPOINT_PASSWORD_REVEALED',
+        resource: 'endpoint', resourceId: endpointId,
+        meta: { denied: authz.reason },
+      });
+      throw new NotFoundException('Computer not found');
+    }
+    const { randomBytes, createHash } = await import('crypto');
+    const token = randomBytes(32).toString('hex');
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const expiresAt = new Date(Date.now() + 90_000);
+    const grant = await this.prisma.connectionGrant.create({
+      data: { tokenHash, tenantId, userId, endpointId, expiresAt, createdByIp: actorIp ?? null },
+      select: { id: true, expiresAt: true },
+    });
+    await this.audit.log({
+      tenantId, actorId: userId, actorIp,
+      action: 'CONNECTION_GRANT_CREATED',
+      resource: 'connection_grant', resourceId: grant.id,
+      meta: { endpointId },
+    });
+    return { grantId: grant.id, token, expiresAt: grant.expiresAt };
+  }
+
+  // Redeem a ConnectionGrant. Verifies token, freshness, single-use, and
+  // re-checks that the user still has access. Returns the actual credentials.
+  async redeemConnectionGrant(rawToken: string, actorIp: string | undefined) {
+    const { createHash } = await import('crypto');
+    const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+    const grant = await this.prisma.connectionGrant.findUnique({
+      where: { tokenHash },
+      include: {
+        endpoint: {
+          include: {
+            rustdeskNode: { select: { rustdeskId: true, permanentPassword: true } },
+            customer: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+    if (!grant) throw new NotFoundException('Grant not found');
+    if (grant.usedAt) throw new NotFoundException('Grant already used');
+    if (grant.expiresAt < new Date()) throw new NotFoundException('Grant expired');
+
+    // Re-verify authorization: user may have been disabled or access revoked
+    // between grant creation and redemption.
+    const authz = await this.authorizeConnect(grant.tenantId, grant.userId, grant.endpointId, { isPlatformAdmin: false, roleType: null });
+    if (!authz.ok) {
+      await this.audit.log({
+        tenantId: grant.tenantId, actorId: grant.userId, actorIp,
+        action: 'CONNECTION_GRANT_DENIED',
+        resource: 'connection_grant', resourceId: grant.id,
+        meta: { reason: authz.reason },
+      });
+      throw new NotFoundException('Authorization no longer valid');
+    }
+
+    const rdId = grant.endpoint.rustdeskNode?.rustdeskId;
+    if (!rdId) throw new NotFoundException('Computer not enrolled');
+    const password = grant.endpoint.rustdeskNode?.permanentPassword
+      ? this.decryptPassword(grant.endpoint.rustdeskNode.permanentPassword)
+      : null;
+
+    await this.prisma.connectionGrant.update({
+      where: { id: grant.id },
+      data: { usedAt: new Date(), usedByIp: actorIp ?? null },
+    });
+    await this.audit.log({
+      tenantId: grant.tenantId, actorId: grant.userId, actorIp,
+      action: 'CONNECTION_GRANT_REDEEMED',
+      resource: 'connection_grant', resourceId: grant.id,
+      meta: { endpointId: grant.endpointId },
+    });
+    return {
+      rustdeskId: rdId,
+      password,
+      computer: {
+        id: grant.endpoint.id,
+        name: grant.endpoint.name,
+        hostname: grant.endpoint.hostname,
+        customerName: grant.endpoint.customer?.name ?? null,
+      },
+    };
+  }
+
+  private async authorizeConnect(
+    tenantId: string,
+    userId: string,
+    endpointId: string,
+    actor: { isPlatformAdmin?: boolean; roleType?: string | null },
+  ): Promise<{ ok: true; endpoint: { customerId: string | null; accessMode: string } } | { ok: false; reason: string }> {
+    const endpoint = await this.prisma.endpoint.findFirst({
+      where: { id: endpointId, tenantId },
+      select: { id: true, customerId: true, accessMode: true, status: true },
+    });
+    if (!endpoint) return { ok: false, reason: 'endpoint_not_found' };
+    if (endpoint.status === 'ARCHIVED' || endpoint.status === 'REVOKED' as never) {
+      return { ok: false, reason: 'endpoint_' + endpoint.status.toLowerCase() };
+    }
+
+    const isMgmt = actor.isPlatformAdmin === true ||
+      actor.roleType === 'TENANT_OWNER' ||
+      actor.roleType === 'TENANT_ADMIN';
+    if (isMgmt) return { ok: true, endpoint };
+
+    const access = await this.prisma.computerAccess.findFirst({
+      where: { endpointId, userId }, select: { id: true },
+    });
+    if (access) return { ok: true, endpoint };
+    if (endpoint.accessMode === 'COMPANY_WIDE' && endpoint.customerId) {
+      const m = await this.prisma.membership.findFirst({
+        where: { tenantId, userId, isActive: true, customerId: endpoint.customerId },
+        select: { id: true },
+      });
+      if (m) return { ok: true, endpoint };
+    }
+    return { ok: false, reason: 'no_access' };
+  }
+
   // Employee "click Connect" flow. Verifies the caller is authorized for this
   // computer (via ComputerAccess or COMPANY_WIDE + membership), audits the
   // reveal, and returns { rustdeskId, password } so the browser can populate
@@ -484,6 +619,83 @@ export class EndpointsService {
         customerName: endpoint.customer?.name ?? null,
       },
     };
+  }
+
+  // Stage a credential rotation. Generates a fresh high-entropy password,
+  // encrypts it, and stores it as `pendingPassword` on the RustdeskNode.
+  // The endpoint picks it up on its next /enrollment/heartbeat response and
+  // applies it via `rustdesk.exe --password`, then POSTs to
+  // /enrollment/confirm-rotation with the digest of the new password so the
+  // server knows the endpoint actually applied it. Only then does the server
+  // swap `permanentPassword` <- `pendingPassword` and clear pending.
+  //
+  // Until confirmation the OLD password remains active so Connect keeps
+  // working. On failure the operator can call rotate again.
+  async rotateCredential(tenantId: string, endpointId: string, actorId: string) {
+    await this.assertOwnership(tenantId, endpointId);
+    const node = await this.prisma.rustdeskNode.findFirst({
+      where: { endpointId, tenantId }, select: { id: true },
+    });
+    if (!node) throw new NotFoundException('No RustDesk node linked to this computer');
+
+    const rnd = crypto.randomBytes(24).toString('base64')
+      .replace(/[+/=]/g, '')  // URL-safe, no padding
+      .slice(0, 20);
+    const encrypted = this.encryptPassword(rnd);
+
+    await this.prisma.rustdeskNode.update({
+      where: { id: node.id },
+      data: { pendingPassword: encrypted, pendingPasswordAt: new Date() },
+    });
+    await this.audit.log({
+      tenantId, actorId,
+      action: 'ENDPOINT_CREDENTIAL_ROTATION_STAGED',
+      resource: 'endpoint', resourceId: endpointId,
+    });
+    return { success: true, status: 'PENDING' };
+  }
+
+  // Called by the endpoint (during heartbeat) after applying the pending
+  // password. The endpoint proves it succeeded by sending back the SHA-256
+  // of the applied plaintext; we compare against the pending ciphertext's
+  // decryption to swap it into place.
+  async confirmRotation(rustdeskId: string, passwordSha256: string) {
+    const node = await this.prisma.rustdeskNode.findUnique({
+      where: { rustdeskId },
+      select: { id: true, tenantId: true, endpointId: true, pendingPassword: true },
+    });
+    if (!node?.pendingPassword) return { confirmed: false, reason: 'no_pending' };
+    let plain: string;
+    try { plain = this.decryptPassword(node.pendingPassword); }
+    catch { return { confirmed: false, reason: 'decrypt_failed' }; }
+    const expected = crypto.createHash('sha256').update(plain).digest('hex');
+    if (expected !== passwordSha256) return { confirmed: false, reason: 'digest_mismatch' };
+
+    await this.prisma.rustdeskNode.update({
+      where: { id: node.id },
+      data: {
+        permanentPassword: node.pendingPassword,
+        pendingPassword: null,
+        pendingPasswordAt: null,
+      },
+    });
+    await this.audit.log({
+      tenantId: node.tenantId ?? undefined,
+      action: 'ENDPOINT_CREDENTIAL_ROTATED',
+      resource: 'endpoint', resourceId: node.endpointId,
+    });
+    return { confirmed: true };
+  }
+
+  // Return the pending-rotation plaintext for the endpoint to apply. Only
+  // used in the /enrollment/heartbeat response — never in a browser API.
+  async getPendingRotationForEndpoint(rustdeskId: string): Promise<string | null> {
+    const node = await this.prisma.rustdeskNode.findUnique({
+      where: { rustdeskId }, select: { pendingPassword: true },
+    });
+    if (!node?.pendingPassword) return null;
+    try { return this.decryptPassword(node.pendingPassword); }
+    catch { return null; }
   }
 
   // ── ComputerAccess management ─────────────────────────────────────────────

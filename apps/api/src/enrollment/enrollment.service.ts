@@ -383,7 +383,63 @@ export class EnrollmentService {
       data: updateData,
     });
 
-    return { found: true, endpointId: node.endpointId };
+    // If a credential rotation is pending for this node, include the new
+    // plaintext in the response. The endpoint applies it via
+    // rustdesk.exe --password and POSTs to /enrollment/confirm-rotation.
+    let rotate: { password: string; sha256: string } | null = null;
+    const refreshed = await this.prisma.rustdeskNode.findUnique({
+      where: { id: node.id }, select: { pendingPassword: true },
+    });
+    if (refreshed?.pendingPassword) {
+      try {
+        const plain = this.decryptPassword(refreshed.pendingPassword);
+        const sha = createHash('sha256').update(plain).digest('hex');
+        rotate = { password: plain, sha256: sha };
+      } catch { /* ignore */ }
+    }
+
+    return { found: true, endpointId: node.endpointId, rotate };
+  }
+
+  private decryptPassword(data: string): string {
+    const [ivHex, tagHex, encHex] = data.split(':');
+    const iv = Buffer.from(ivHex, 'hex');
+    const tag = Buffer.from(tagHex, 'hex');
+    const enc = Buffer.from(encHex, 'hex');
+    const decipher = createDecipheriv('aes-256-gcm', this.encKey, iv);
+    decipher.setAuthTag(tag);
+    return decipher.update(enc).toString('utf8') + decipher.final('utf8');
+  }
+
+  // Confirm a pending rotation. Called by the endpoint after it applied
+  // the new password. rustdeskId + digest are the only inputs; the server
+  // computes the expected digest from its own pending ciphertext.
+  async confirmRotation(rustdeskId: string, passwordSha256: string) {
+    const node = await this.prisma.rustdeskNode.findUnique({
+      where: { rustdeskId },
+      select: { id: true, tenantId: true, endpointId: true, pendingPassword: true },
+    });
+    if (!node?.pendingPassword) return { confirmed: false, reason: 'no_pending' };
+    let plain: string;
+    try { plain = this.decryptPassword(node.pendingPassword); }
+    catch { return { confirmed: false, reason: 'decrypt_failed' }; }
+    const expected = createHash('sha256').update(plain).digest('hex');
+    if (expected !== passwordSha256) return { confirmed: false, reason: 'digest_mismatch' };
+
+    await this.prisma.rustdeskNode.update({
+      where: { id: node.id },
+      data: {
+        permanentPassword: node.pendingPassword,
+        pendingPassword: null,
+        pendingPasswordAt: null,
+      },
+    });
+    await this.audit.log({
+      tenantId: node.tenantId ?? undefined,
+      action: 'ENDPOINT_CREDENTIAL_ROTATED',
+      resource: 'endpoint', resourceId: node.endpointId,
+    });
+    return { confirmed: true };
   }
 
   async markStaleEndpointsOffline(thresholdMinutes = 10) {
