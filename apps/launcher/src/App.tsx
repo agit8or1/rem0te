@@ -45,7 +45,7 @@ export default function App() {
     <div className="container">
       <div className="logo">🔌</div>
       <h1>Reboot Remote Launcher</h1>
-      <p>Handles deep links for launching RustDesk sessions from the Reboot Remote portal.</p>
+      <p>Handles deep links for launching RustDesk sessions from the Rem0te web app.</p>
 
       <div className={`status ${state.status === 'idle' ? '' : state.status}`}>
         {state.status === 'idle' && 'Waiting for deep link…'}

@@ -167,21 +167,43 @@ try {
   console.error('\n✗', err.message);
   process.exitCode = 1;
 } finally {
-  // Cleanup
+  // Cleanup. Order matters, and every FK that can pin a User has to be cleared
+  // first — a failed delete here used to leave a throwaway PLATFORM ADMIN
+  // behind on every run, which is not a residue anyone should tolerate.
+  const userIds = [admin.id, ...created.filter((c) => c.type === 'user').map((c) => c.id)];
+
   for (const c of created.reverse()) {
     try {
       if (c.type === 'endpoint') {
         await prisma.rustdeskNode.deleteMany({ where: { endpointId: c.id } });
         await prisma.computerAccess.deleteMany({ where: { endpointId: c.id } });
         await prisma.endpoint.delete({ where: { id: c.id } });
-      } else if (c.type === 'user') {
-        await prisma.membership.deleteMany({ where: { userId: c.id } });
-        await prisma.user.delete({ where: { id: c.id } });
       } else if (c.type === 'customer') {
+        await prisma.deviceClaimToken.deleteMany({ where: { customerId: c.id } });
+        await prisma.apiKey.deleteMany({ where: { customerId: c.id } });
+        await prisma.activityLog.updateMany({ where: { customerId: c.id }, data: { customerId: null } });
         await prisma.customer.delete({ where: { id: c.id } });
       }
     } catch { /* best-effort */ }
   }
-  await prisma.user.delete({ where: { id: admin.id } }).catch(()=>{});
+
+  try {
+    await prisma.computerAccess.deleteMany({ where: { userId: { in: userIds } } });
+    await prisma.connectionGrant.deleteMany({ where: { userId: { in: userIds } } });
+    await prisma.launcherToken.deleteMany({ where: { userId: { in: userIds } } });
+    await prisma.supportSession.deleteMany({ where: { technicianId: { in: userIds } } });
+    await prisma.invitation.deleteMany({ where: { invitedById: { in: userIds } } });
+    await prisma.membership.deleteMany({ where: { userId: { in: userIds } } });
+    // Keep the audit history, drop the actor link — the record of what happened
+    // outlives the throwaway account that did it.
+    await prisma.activityLog.updateMany({ where: { actorId: { in: userIds } }, data: { actorId: null } });
+    await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+  } catch (e) {
+    console.error('Cleanup left residue — inspect manually:', e.message);
+  }
+
+  const stragglers = await prisma.user.count({ where: { id: { in: userIds } } }).catch(() => 0);
+  if (stragglers > 0) console.error(`WARNING: ${stragglers} test user(s) not cleaned up`);
+
   await prisma.$disconnect();
 }
