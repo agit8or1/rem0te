@@ -37,8 +37,8 @@ const SECTIONS: Section[] = [
           consistent as long as the device is registered.
         </p>
         <p>
-          When a technician wants to connect, they enter that ID in the{' '}
-          <Link href="/connect" className="underline text-foreground">
+          When a Rem0te user wants to connect, they enter that ID in the{' '}
+          <Link href="/quick-connect" className="underline text-foreground">
             Connect
           </Link>{' '}
           page. The hbbs server brokers the connection:
@@ -113,7 +113,7 @@ const SECTIONS: Section[] = [
           <div className="rounded-md border px-4 py-3 space-y-1">
             <p className="font-medium text-foreground">Ad-hoc (no registration)</p>
             <p>
-              The user opens RustDesk, reads their 9-digit ID to the technician, and the tech
+              The user opens RustDesk, reads their 9-digit ID out, and the person helping them
               enters it in the Connect page. Nothing needs to be installed permanently — RustDesk
               can even run as a portable app. The ID may change each time RustDesk is restarted.
             </p>
@@ -211,13 +211,13 @@ const SECTIONS: Section[] = [
   },
   {
     id: 'connect-flow',
-    title: 'The Connect Flow (Technician Side)',
+    title: 'The Connect Flow (Support Side)',
     content: (
       <div className="space-y-3 text-sm text-muted-foreground">
         <ol className="list-decimal pl-5 space-y-2">
           <li>
             Go to{' '}
-            <Link href="/connect" className="underline text-foreground">
+            <Link href="/quick-connect" className="underline text-foreground">
               Connect
             </Link>{' '}
             in the sidebar.
@@ -254,41 +254,73 @@ const SECTIONS: Section[] = [
     ),
   },
   {
-    id: 'customer-portal',
-    title: 'Customer Portal',
+    id: 'access-control',
+    title: 'Access Control',
     content: (
       <div className="space-y-3 text-sm text-muted-foreground">
         <p>
-          Customers can be given a login to view their own devices and request support — without
-          access to the full admin interface.
+          Rem0te has exactly three access levels. There is no reseller hierarchy and no separate
+          role for billing, read-only or portal access.
         </p>
-        <p className="font-medium text-foreground">Enabling the portal</p>
-        <ol className="list-decimal pl-5 space-y-1.5">
-          <li>
-            Go to{' '}
-            <Link href="/customers" className="underline text-foreground">
-              Customers
-            </Link>{' '}
-            and open the customer detail page.
-          </li>
-          <li>
-            Enable the portal toggle. This allows portal logins for that customer.
-          </li>
-          <li>
-            Click <strong className="text-foreground">Invite User</strong> and enter the
-            customer&apos;s email address. They will receive an invitation link.
-          </li>
-        </ol>
-        <p className="font-medium text-foreground">What portal users see</p>
-        <ul className="list-disc pl-5 space-y-1.5">
-          <li>Their enrolled devices and current online status</li>
-          <li>Their session history</li>
-          <li>A &quot;Request Support&quot; button to notify technicians</li>
-        </ul>
+        <p className="font-medium text-foreground">Platform Admin</p>
         <p>
-          Portal users cannot see other customers&apos; data, manage users, or change settings.
-          They log in at the same URL as admins — the system detects the portal role and shows the
-          appropriate interface.
+          The Rem0te operator. Creates and manages every business, sees every computer, and owns all
+          platform settings and infrastructure.
+        </p>
+        <p className="font-medium text-foreground">Business Owner</p>
+        <p>
+          Full administrative control of one business — its computers, its people, its sessions and
+          its audit history. A Business Owner can never see another business.
+        </p>
+        <p className="font-medium text-foreground">Business User</p>
+        <p>
+          Access is determined by permissions assigned by the Business Owner. New Business Users
+          start with <strong className="text-foreground">View computers</strong> and{' '}
+          <strong className="text-foreground">Remote connect</strong>; everything more
+          administrative is off until granted.
+        </p>
+        <p>
+          Manage all of this from{' '}
+          <Link href="/users" className="underline text-foreground">Users</Link>, or from{' '}
+          <Link href="/admin/access" className="underline text-foreground">Access Control</Link> if
+          you are a Platform Admin.
+        </p>
+        <p>
+          Every one of these boundaries is enforced on the server. Hiding a button in this interface
+          is a courtesy — changing a URL or calling the API directly still gets refused.
+        </p>
+      </div>
+    ),
+  },
+  {
+    id: 'quick-connect',
+    title: 'Quick Connect',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          Quick Connect is for helping someone whose computer is{' '}
+          <strong className="text-foreground">not</strong> an enrolled managed device — a one-off
+          support call rather than a machine you look after.
+        </p>
+        <ol className="list-decimal pl-5 space-y-1.5">
+          <li>Send them to <code className="rounded bg-muted px-1 py-0.5 text-xs">/quick</code>.</li>
+          <li>They download and run the Quick Connect client. Nothing is installed as a service.</li>
+          <li>It shows a Remote ID and a password; they read both to you.</li>
+          <li>
+            You enter them under{' '}
+            <Link href="/quick-connect" className="underline text-foreground">Quick Connect</Link>{' '}
+            and connect.
+          </li>
+          <li>They close the client when you are done, which ends their availability.</li>
+        </ol>
+        <p>
+          No permanent managed computer is created, and the password is never stored by Rem0te — the
+          fact that the remote person read it out to you is what authorises the session.
+        </p>
+        <p>
+          Three switches have to line up: the platform master switch (Settings → Quick Connect), the
+          per-business switch, and the individual&apos;s{' '}
+          <strong className="text-foreground">Use Quick Connect</strong> permission.
         </p>
       </div>
     ),

@@ -1,34 +1,27 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { JwtPayload } from '../auth/strategies/jwt.strategy';
+import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
+import { Actor } from '../common/decorators/actor.decorator';
+import type { ActorContext } from '../rbac/access-control.service';
 
 @Controller('dashboard')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, CapabilitiesGuard)
 export class DashboardController {
   constructor(private readonly dashboard: DashboardService) {}
 
+  /**
+   * Counts for whatever the caller can see. Ungated: the service returns
+   * zeroes for anything the caller lacks the capability to view, so the page
+   * renders for a Business User with minimal permissions instead of 403-ing.
+   */
   @Get()
-  @RequirePermissions('dashboard:read')
-  async getStats(@CurrentUser() user: JwtPayload) {
-    if (user.isPlatformAdmin && !user.tenantId) {
-      const stats = await this.dashboard.getPlatformStats();
-      return { success: true, data: stats };
-    }
-
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-
-    const stats = await this.dashboard.getTenantStats(user.tenantId);
-    return { success: true, data: stats };
+  async getStats(@Actor() actor: ActorContext, @Query('businessId') businessId?: string) {
+    return { success: true, data: await this.dashboard.getStats(actor, businessId) };
   }
 
   @Get('platform')
-  @RequirePermissions('platform:read')
-  async getPlatformStats() {
-    const stats = await this.dashboard.getPlatformStats();
-    return { success: true, data: stats };
+  async getPlatformStats(@Actor() actor: ActorContext) {
+    return { success: true, data: await this.dashboard.getPlatformStats(actor) };
   }
 }

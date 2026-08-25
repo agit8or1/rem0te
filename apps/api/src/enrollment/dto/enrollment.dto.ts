@@ -12,8 +12,12 @@ export class CreateClaimTokenDto {
   @IsOptional() @IsString() @Length(0, 256) description?: string;
 
   // Managed-computer enrollment binding. All of these travel WITH the token
-  // (server-side) so the endpoint that redeems it cannot pick a different
-  // company or assign itself to a different user.
+  // (server-side) so the machine that redeems it cannot pick a different
+  // business or assign itself to a different user.
+  //
+  // `businessId` is the current name; `customerId` is still accepted so a
+  // client mid-upgrade keeps working.
+  @IsOptional() @IsString() businessId?: string;
   @IsOptional() @IsString() customerId?: string;
   @IsOptional() @IsEnum(EndpointAccessMode) accessMode?: EndpointAccessMode;
   @IsOptional() @IsArray() @IsString({ each: true }) assignedUserIds?: string[];

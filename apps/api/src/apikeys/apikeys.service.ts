@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 
 // Known scopes exposed via the public API. Keys can be minted with any
 // subset; the guard enforces the required scope per route.
@@ -29,11 +30,16 @@ function generateKey(): { raw: string; prefix: string; hash: string } {
 
 @Injectable()
 export class ApiKeysService {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+    private readonly acl: AccessControlService,
+  ) {}
 
-  async list(tenantId: string) {
+  async list(actor: ActorContext, businessId?: string) {
+    const scope = this.acl.resolveScope(actor, businessId);
     return this.prisma.apiKey.findMany({
-      where: { tenantId },
+      where: { ...(scope ? { customerId: scope } : {}) },
       select: {
         id: true, name: true, keyPrefix: true, scopes: true,
         lastUsedAt: true, expiresAt: true, revokedAt: true, createdAt: true,
@@ -42,7 +48,15 @@ export class ApiKeysService {
     });
   }
 
-  async create(tenantId: string, actorId: string, dto: { name: string; scopes: string[]; expiresInDays?: number }) {
+  async create(actor: ActorContext, dto: { name: string; scopes: string[]; expiresInDays?: number; businessId?: string }) {
+    // A key always belongs to exactly one business — no key is ever minted
+    // with platform-wide reach.
+    const businessId = this.acl.requireScope(actor, dto.businessId);
+    const business = await this.prisma.customer.findUnique({
+      where: { id: businessId }, select: { id: true, tenantId: true },
+    });
+    if (!business) throw new NotFoundException('Business not found');
+
     if (!dto.name || dto.name.length < 1) throw new BadRequestException('name required');
     const validScopes = dto.scopes.filter((s) => (API_SCOPES as readonly string[]).includes(s));
     if (validScopes.length === 0) throw new BadRequestException('at least one valid scope required');
@@ -54,7 +68,9 @@ export class ApiKeysService {
 
     const record = await this.prisma.apiKey.create({
       data: {
-        tenantId, createdById: actorId,
+        tenantId: business.tenantId,
+        customerId: businessId,
+        createdById: actor.userId,
         name: dto.name.trim(),
         keyHash: hash, keyPrefix: prefix,
         scopes: validScopes,
@@ -64,7 +80,8 @@ export class ApiKeysService {
     });
 
     await this.audit.log({
-      tenantId, actorId,
+      tenantId: business.tenantId, customerId: businessId,
+      actorId: actor.userId, actorIp: actor.ip,
       action: 'API_KEY_CREATED',
       resource: 'api_key', resourceId: record.id,
       meta: { name: record.name, scopes: validScopes },
@@ -74,13 +91,17 @@ export class ApiKeysService {
     return { ...record, key: raw };
   }
 
-  async revoke(tenantId: string, id: string, actorId: string) {
-    const row = await this.prisma.apiKey.findFirst({ where: { id, tenantId } });
+  async revoke(actor: ActorContext, id: string) {
+    const scope = this.acl.resolveScope(actor);
+    const row = await this.prisma.apiKey.findFirst({
+      where: { id, ...(scope ? { customerId: scope } : {}) },
+    });
     if (!row) throw new NotFoundException('API key not found');
     if (row.revokedAt) return { success: true, alreadyRevoked: true };
     await this.prisma.apiKey.update({ where: { id }, data: { revokedAt: new Date() } });
     await this.audit.log({
-      tenantId, actorId,
+      tenantId: row.tenantId, customerId: row.customerId ?? undefined,
+      actorId: actor.userId, actorIp: actor.ip,
       action: 'API_KEY_REVOKED',
       resource: 'api_key', resourceId: id,
       meta: { name: row.name },
@@ -88,14 +109,26 @@ export class ApiKeysService {
     return { success: true };
   }
 
-  // Auth-guard entrypoint: given a raw `rk_...` header, resolve the tenant + scopes.
+  /**
+   * Auth-guard entrypoint: resolve a raw `rk_...` header to its business and
+   * scopes.
+   *
+   * A key with no business is refused outright — that combination only exists
+   * on keys predating business scoping, and resolving it to "everything"
+   * would be exactly the cross-business hole this model exists to close.
+   */
   async resolveBearer(rawKey: string) {
     if (!rawKey?.startsWith('rk_')) return null;
     const hash = createHash('sha256').update(rawKey).digest('hex');
-    const row = await this.prisma.apiKey.findUnique({ where: { keyHash: hash } });
+    const row = await this.prisma.apiKey.findUnique({
+      where: { keyHash: hash },
+      include: { customer: { select: { id: true, isActive: true, isArchived: true } } },
+    });
     if (!row) return null;
     if (row.revokedAt) return null;
     if (row.expiresAt && row.expiresAt < new Date()) return null;
+    if (!row.customerId || !row.customer) return null;
+    if (!row.customer.isActive || row.customer.isArchived) return null;
 
     // Best-effort touch — a background job could batch these to avoid a
     // write on every request, but volume is expected to be low.
@@ -105,6 +138,7 @@ export class ApiKeysService {
     return {
       id: row.id,
       tenantId: row.tenantId,
+      businessId: row.customerId,
       scopes: row.scopes,
       createdById: row.createdById,
     };

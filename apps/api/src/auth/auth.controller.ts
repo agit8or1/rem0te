@@ -5,15 +5,22 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
-import { LoginDto, VerifyMfaDto, SwitchTenantDto } from './dto/login.dto';
+import { LoginDto, VerifyMfaDto } from './dto/login.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Actor } from '../common/decorators/actor.decorator';
+import { PrismaService } from '../prisma/prisma.service';
+import type { ActorContext } from '../rbac/access-control.service';
+import { accessLevelLabel } from '../rbac/capabilities';
 import type { JwtPayload } from './strategies/jwt.strategy';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   @Public()
   @Post('login')
@@ -67,22 +74,38 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @Post('switch-tenant')
-  @HttpCode(HttpStatus.OK)
-  async switchTenant(
-    @Body() dto: SwitchTenantDto,
-    @CurrentUser() user: JwtPayload,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    const token = await this.authService.switchTenant(user.sub, dto.tenantSlug);
-    this.setAuthCookie(res, token);
-    return { success: true };
-  }
-
   @UseGuards(JwtAuthGuard)
+  /**
+   * Who am I, and what am I allowed to do.
+   *
+   * The capability list is the *effective* one — a Business Owner gets the
+   * full set even though their membership row stores none — so the UI has a
+   * single thing to check and never has to re-derive the role rules. It is
+   * for rendering only; the server re-checks everything on every request.
+   */
   @Get('me')
-  me(@CurrentUser() user: JwtPayload) {
-    return { success: true, data: user };
+  async me(@Actor() actor: ActorContext) {
+    const business = actor.businessId
+      ? await this.prisma.customer.findUnique({
+          where: { id: actor.businessId },
+          select: { id: true, name: true, isActive: true, quickConnectEnabled: true },
+        })
+      : null;
+
+    return {
+      success: true,
+      data: {
+        id: actor.userId,
+        email: actor.email,
+        isPlatformAdmin: actor.isPlatformAdmin,
+        roleType: actor.roleType,
+        accessLevel: accessLevelLabel(actor),
+        businessId: actor.businessId,
+        business,
+        capabilities: actor.capabilities,
+        tenantId: actor.tenantId,
+      },
+    };
   }
 
   @UseGuards(JwtAuthGuard)

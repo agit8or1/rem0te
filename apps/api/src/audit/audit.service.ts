@@ -6,6 +6,8 @@ interface LogParams {
   action: ActivityAction;
   actorId?: string;
   tenantId?: string;
+  /** Business scope. Set it on anything a Business Owner should be able to see. */
+  customerId?: string;
   actorIp?: string;
   actorAgent?: string;
   resource?: string;
@@ -16,7 +18,13 @@ interface LogParams {
 }
 
 interface QueryParams {
-  tenantId: string;
+  tenantId?: string;
+  /**
+   * Business scope. `undefined` means platform-wide and is only ever passed
+   * by a Platform Admin — AuditController resolves it through
+   * AccessControlService before it gets here.
+   */
+  customerId?: string;
   action?: ActivityAction;
   actorId?: string;
   resource?: string;
@@ -40,6 +48,7 @@ export class AuditService {
           action: params.action,
           actorId: params.actorId ?? null,
           tenantId: params.tenantId ?? null,
+          customerId: params.customerId ?? null,
           actorIp: params.actorIp ?? null,
           actorAgent: params.actorAgent ?? null,
           resource: params.resource ?? null,
@@ -59,7 +68,8 @@ export class AuditService {
     const skip = (page - 1) * limit;
 
     const where = {
-      tenantId: params.tenantId,
+      ...(params.tenantId ? { tenantId: params.tenantId } : {}),
+      ...(params.customerId ? { customerId: params.customerId } : {}),
       ...(params.action ? { action: params.action } : {}),
       ...(params.actorId ? { actorId: params.actorId } : {}),
       ...(params.resource ? { resource: params.resource } : {}),

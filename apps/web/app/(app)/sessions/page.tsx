@@ -303,7 +303,7 @@ export default function SessionsPage() {
                 <thead>
                   <tr className="border-b bg-muted/50">
                     <th className="text-left px-4 py-3 font-medium">Endpoint / Target</th>
-                    <th className="text-left px-4 py-3 font-medium">Technician</th>
+                    <th className="text-left px-4 py-3 font-medium">Started by</th>
                     <th className="text-left px-4 py-3 font-medium">Started</th>
                     <th className="text-left px-4 py-3 font-medium">Duration</th>
                     <th className="text-left px-4 py-3 font-medium">Status</th>

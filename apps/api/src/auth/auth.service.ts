@@ -63,30 +63,32 @@ export class AuthService {
 
     let tenantId: string | null = null;
     let roleType = null;
-    let customerId: string | null = null;
+    let businessId: string | null = null;
+    let capabilities: string[] = [];
 
-    if (dto.tenantSlug) {
-      const membership = user.memberships.find((m) => m.tenant.slug === dto.tenantSlug);
-      if (!membership) throw new UnauthorizedException('No access to that tenant');
-      tenantId = membership.tenantId;
-      roleType = membership.role.type;
-      customerId = membership.customerId ?? null;
-    } else if (user.memberships.length === 1) {
+    // A person belongs to exactly one business, so there is nothing to pick.
+    if (user.memberships.length === 1) {
       tenantId = user.memberships[0].tenantId;
       roleType = user.memberships[0].role.type;
-      customerId = user.memberships[0].customerId ?? null;
+      businessId = user.memberships[0].customerId ?? null;
+      capabilities = user.memberships[0].capabilities ?? [];
     } else if (user.memberships.length === 0 && user.isPlatformAdmin) {
-      // Platform admins don't need explicit memberships — Rem0te is a
-      // single-tenant-per-install product ("tenant" is the Rem0te operator,
-      // and Customer rows are the customer businesses). Fall back to the
-      // first active tenant so admins can create/manage companies without
-      // having to seed a placeholder membership.
+      // Platform admins don't need a membership. Rem0te has one platform
+      // operator; the businesses it manages are Customer rows. Fall back to
+      // the platform container so an admin can create and manage businesses
+      // without a placeholder membership.
       const t = await this.prisma.tenant.findFirst({
         where: { isActive: true },
         orderBy: { createdAt: 'asc' },
         select: { id: true },
       });
       if (t) tenantId = t.id;
+    }
+
+    // A Business Owner / Business User with no business cannot do anything —
+    // say so at login rather than handing out a token that 403s everywhere.
+    if (!user.isPlatformAdmin && roleType && !businessId) {
+      this.logger.warn(`User ${user.email} has a membership with no business assigned`);
     }
 
     const hasTotpMethod = user.mfaMethods.length > 0;
@@ -102,20 +104,26 @@ export class AuthService {
 
     if (hasTotpMethod || requireMfa) {
       const partialToken = this.jwtService.sign(
-        { sub: user.id, email: user.email, tenantId, roleType, isPlatformAdmin: user.isPlatformAdmin, mfaVerified: false, partial: true },
+        {
+          sub: user.id, email: user.email, tenantId, roleType,
+          isPlatformAdmin: user.isPlatformAdmin, mfaVerified: false, partial: true,
+        },
         { expiresIn: '10m' },
       );
       return { requiresMfa: true, mfaEnrolled: hasTotpMethod, partialToken };
     }
 
-    const token = this.issueFullToken(user, tenantId, roleType, customerId);
-    await this.audit.log({ action: 'LOGIN_SUCCESS', actorId: user.id, tenantId: tenantId ?? undefined, actorIp: ip, actorAgent: userAgent });
+    const token = this.issueFullToken(user, tenantId, roleType, businessId, capabilities);
+    await this.audit.log({
+      action: 'LOGIN_SUCCESS', actorId: user.id,
+      tenantId: tenantId ?? undefined, customerId: businessId ?? undefined,
+      actorIp: ip, actorAgent: userAgent,
+    });
 
     return {
       requiresMfa: false,
       accessToken: token,
       user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName },
-      tenants: user.memberships.map((m) => ({ id: m.tenantId, name: m.tenant.name, slug: m.tenant.slug, role: m.role.type })),
     };
   }
 
@@ -149,27 +157,23 @@ export class AuthService {
     await this.audit.log({ action: 'MFA_VERIFIED', actorId: user.id, tenantId: payload.tenantId ?? undefined, actorIp: ip });
     await this.audit.log({ action: 'LOGIN_SUCCESS', actorId: user.id, tenantId: payload.tenantId ?? undefined, actorIp: ip });
 
-    // Resolve customerId from matching membership (partial token may not carry it)
+    // Resolve business + capabilities from the matching membership — the
+    // partial token deliberately does not carry them.
     const matchingMembership = payload.tenantId
       ? user.memberships.find((m) => m.tenantId === payload.tenantId)
       : user.memberships[0];
-    const mfaCustomerId = matchingMembership?.customerId ?? null;
 
-    const token = this.issueFullToken(user, payload.tenantId, payload.roleType, mfaCustomerId);
+    const token = this.issueFullToken(
+      user,
+      payload.tenantId,
+      matchingMembership?.role.type ?? payload.roleType,
+      matchingMembership?.customerId ?? null,
+      matchingMembership?.capabilities ?? [],
+    );
     return {
       accessToken: token,
       user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName },
-      tenants: user.memberships.map((m) => ({ id: m.tenantId, name: m.tenant.name, slug: m.tenant.slug, role: m.role.type })),
     };
-  }
-
-  async switchTenant(userId: string, tenantSlug: string): Promise<string> {
-    const membership = await this.prisma.membership.findFirst({
-      where: { userId, isActive: true, tenant: { slug: tenantSlug, isActive: true } },
-      include: { tenant: true, role: true, user: true },
-    });
-    if (!membership) throw new UnauthorizedException('No access to that tenant');
-    return this.issueFullToken(membership.user, membership.tenantId, membership.role.type, membership.customerId ?? null);
   }
 
   async register(dto: RegisterDto): Promise<void> {
@@ -187,7 +191,8 @@ export class AuthService {
     user: { id: string; email: string; isPlatformAdmin: boolean },
     tenantId: string | null,
     roleType: unknown,
-    customerId?: string | null,
+    businessId?: string | null,
+    capabilities?: string[] | null,
   ): string {
     const payload: JwtPayload = {
       sub: user.id,
@@ -196,7 +201,10 @@ export class AuthService {
       roleType: roleType as JwtPayload['roleType'],
       isPlatformAdmin: user.isPlatformAdmin,
       mfaVerified: true,
-      customerId: customerId ?? null,
+      businessId: businessId ?? null,
+      // Legacy alias so a token minted here still resolves on older code paths.
+      customerId: businessId ?? null,
+      capabilities: capabilities ?? [],
     };
     return this.jwtService.sign(payload);
   }

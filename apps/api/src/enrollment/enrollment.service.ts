@@ -8,6 +8,8 @@ import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'crypt
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { ConfigService } from '@nestjs/config';
+import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
+import { CAP } from '../rbac/capabilities';
 import { CreateClaimTokenDto, ClaimEndpointDto } from './dto/enrollment.dto';
 
 @Injectable()
@@ -20,6 +22,7 @@ export class EnrollmentService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly config: ConfigService,
+    private readonly acl: AccessControlService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -36,50 +39,55 @@ export class EnrollmentService {
     return `${iv.toString('hex')}:${tag.toString('hex')}:${enc.toString('hex')}`;
   }
 
-  async createClaimToken(
-    tenantId: string,
-    actorId: string,
-    dto: CreateClaimTokenDto,
-    actorIp?: string,
-  ) {
+  /**
+   * Mint a managed-device enrollment token.
+   *
+   * The business the device will land in is decided here, from the caller's
+   * scope — never by the machine that later redeems the token. Everything the
+   * token carries (business, access mode, assigned users) is validated now,
+   * so a device can only ever enroll itself where an authorised person said
+   * it could.
+   */
+  async createClaimToken(actor: ActorContext, dto: CreateClaimTokenDto & { businessId?: string }) {
+    this.acl.assertCapability(actor, CAP.COMPUTERS_ADD);
+
+    const businessId = this.acl.requireScope(actor, dto.businessId ?? dto.customerId);
+    const business = await this.prisma.customer.findFirst({
+      where: { id: businessId, isArchived: false },
+      select: { id: true, tenantId: true, name: true },
+    });
+    if (!business) throw new NotFoundException('Business not found');
+
     if (dto.endpointId) {
-      const endpoint = await this.prisma.endpoint.findFirst({
-        where: { id: dto.endpointId, tenantId },
-      });
-      if (!endpoint) throw new NotFoundException(`Endpoint ${dto.endpointId} not found`);
+      // Re-enrolling an existing computer: it must already be in this business.
+      await this.acl.assertEndpointInScope(actor, dto.endpointId);
     }
 
-    // If a customer was specified, validate it belongs to this tenant and
-    // that every assignedUserId is an active member of the same tenant.
-    // The endpoint being enrolled cannot influence these values — the token
-    // itself carries the authorization.
-    let customerId: string | null = null;
+    // Every assigned user must belong to the SAME business as the device.
+    // Without this check a token could hand a stranger standing access to a
+    // machine the moment it enrolls.
     let assignedUserIds: string[] = [];
-    if (dto.customerId) {
-      const customer = await this.prisma.customer.findFirst({
-        where: { id: dto.customerId, tenantId },
-        select: { id: true },
-      });
-      if (!customer) throw new NotFoundException('Customer not found in this tenant');
-      customerId = customer.id;
-    }
     if (dto.assignedUserIds && dto.assignedUserIds.length > 0) {
       const memberships = await this.prisma.membership.findMany({
-        where: {
-          tenantId,
-          isActive: true,
-          userId: { in: dto.assignedUserIds },
-        },
+        where: { customerId: businessId, isActive: true, userId: { in: dto.assignedUserIds } },
         select: { userId: true },
       });
       const validIds = new Set(memberships.map((m) => m.userId));
       const missing = dto.assignedUserIds.filter((id) => !validIds.has(id));
       if (missing.length > 0) {
         throw new BadRequestException(
-          `assignedUserIds not members of this tenant: ${missing.join(', ')}`,
+          `These users are not active members of ${business.name}: ${missing.join(', ')}`,
         );
       }
       assignedUserIds = dto.assignedUserIds;
+    }
+
+    if (dto.endpointGroupId) {
+      const group = await this.prisma.endpointGroup.findFirst({
+        where: { id: dto.endpointGroupId, tenantId: business.tenantId },
+        select: { id: true },
+      });
+      if (!group) throw new BadRequestException('Unknown computer group');
     }
 
     const token = randomBytes(32).toString('hex');
@@ -88,46 +96,53 @@ export class EnrollmentService {
 
     const record = await this.prisma.deviceClaimToken.create({
       data: {
-        tenantId,
+        tenantId: business.tenantId,
         token: tokenHash,
         expiresAt,
         endpointId: dto.endpointId ?? null,
-        customerName: dto.customerName ?? null,
+        customerName: business.name,
         siteName: dto.siteName ?? null,
         description: dto.description ?? null,
-        customerId,
+        customerId: businessId,
         accessMode: dto.accessMode ?? 'ASSIGNED_USERS',
         assignedUserIds,
         endpointGroupId: dto.endpointGroupId ?? null,
-        createdById: actorId,
+        createdById: actor.userId,
       },
     });
 
     await this.audit.log({
-      tenantId,
-      actorId,
-      actorIp,
+      tenantId: business.tenantId,
+      customerId: businessId,
+      actorId: actor.userId,
+      actorIp: actor.ip,
       action: 'CLAIM_TOKEN_CREATED',
       resource: 'device_claim_token',
       resourceId: record.id,
       meta: {
         endpointId: dto.endpointId,
         description: dto.description,
-        customerId,
+        businessId,
         accessMode: dto.accessMode ?? 'ASSIGNED_USERS',
         assignedUserIds,
       },
     });
 
-    // Return record with the raw token (not the stored hash) so caller can embed it in URLs
+    // The raw token is returned once so the caller can build the install URL;
+    // only its hash is stored.
     return { ...record, token };
   }
 
-  async listClaimTokens(tenantId: string) {
+  async listClaimTokens(actor: ActorContext, businessId?: string) {
+    this.acl.assertCapability(actor, CAP.COMPUTERS_VIEW);
+    const scope = this.acl.resolveScope(actor, businessId);
+
     return this.prisma.deviceClaimToken.findMany({
-      where: { tenantId },
+      where: { ...(scope ? { customerId: scope } : {}) },
       include: {
         endpoint: { select: { id: true, name: true, hostname: true } },
+        // Enough to show which business a token is bound to, nothing more.
+        tenant: { select: { id: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -150,14 +165,14 @@ export class EnrollmentService {
 
     if (existingNode) {
       if (existingNode.tenantId && existingNode.tenantId !== record.tenantId) {
-        throw new BadRequestException(`RustDesk ID ${dto.rustdeskId} is registered to a different tenant`);
+        throw new BadRequestException(`RustDesk ID ${dto.rustdeskId} is already registered to another Rem0te account`);
       }
       if (existingNode.tenantId === record.tenantId) {
-        throw new BadRequestException(`RustDesk ID ${dto.rustdeskId} is already enrolled in this tenant`);
+        throw new BadRequestException(`RustDesk ID ${dto.rustdeskId} is already enrolled`);
       }
       // tenantId is null (unassigned)
       if (!record.endpointId) {
-        // Assign the unassigned node/endpoint to this tenant
+        // Adopt the unassigned node/endpoint into the token's business
         await this.prisma.rustdeskNode.update({
           where: { id: existingNode.id },
           data: { tenantId: record.tenantId },
@@ -459,9 +474,12 @@ export class EnrollmentService {
     }
   }
 
-  async revokeClaimToken(tenantId: string, tokenId: string) {
+  async revokeClaimToken(actor: ActorContext, tokenId: string) {
+    this.acl.assertCapability(actor, CAP.COMPUTERS_REMOVE);
+    const scope = this.acl.resolveScope(actor);
+
     const record = await this.prisma.deviceClaimToken.findFirst({
-      where: { id: tokenId, tenantId },
+      where: { id: tokenId, ...(scope ? { customerId: scope } : {}) },
     });
     if (!record) throw new NotFoundException('Token not found');
 
@@ -470,6 +488,12 @@ export class EnrollmentService {
     }
 
     await this.prisma.deviceClaimToken.delete({ where: { id: tokenId } });
+    await this.audit.log({
+      tenantId: record.tenantId, customerId: record.customerId ?? undefined,
+      actorId: actor.userId, actorIp: actor.ip,
+      action: 'ENDPOINT_UNASSIGNED', resource: 'device_claim_token', resourceId: tokenId,
+      meta: { revoked: true },
+    });
     return { revoked: true };
   }
 }

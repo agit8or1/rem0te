@@ -22,8 +22,23 @@ enum MfaMethodType {
   WEBAUTHN
 }
 
+// The Rem0te authorization model has exactly three levels:
+//
+//   PLATFORM_ADMIN   the Rem0te operator — full access to every business
+//   BUSINESS_OWNER   full administrative rights inside ONE business
+//   BUSINESS_USER    only the capabilities the Business Owner grants
+//                    (see Membership.capabilities)
+//
+// The values below BUSINESS_USER are legacy. Postgres cannot drop an enum
+// value that historical rows may still reference, so they are retained as
+// read-only tombstones. Migration 0008 remapped every Membership off them;
+// nothing in the application assigns them any more.
 enum RoleType {
   PLATFORM_ADMIN
+  BUSINESS_OWNER
+  BUSINESS_USER
+
+  // ─ legacy, never assigned ─
   TENANT_OWNER
   TENANT_ADMIN
   TECHNICIAN
@@ -118,6 +133,16 @@ enum ActivityAction {
   TENANT_UPDATED
   CLAIM_TOKEN_CREATED
   INVITATION_SENT
+  BUSINESS_CREATED
+  BUSINESS_UPDATED
+  BUSINESS_DISABLED
+  BUSINESS_DELETED
+  USER_CAPABILITIES_UPDATED
+  PLATFORM_SETTINGS_UPDATED
+  QUICK_CONNECT_INITIATED
+  QUICK_CONNECT_ENDED
+  QUICK_CONNECT_DENIED
+  QUICK_CONNECT_SETTING_CHANGED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -295,6 +320,16 @@ model RolePermission {
   @@unique([roleId, permissionId])
 }
 
+// A Membership binds a user to exactly one Business (Customer).
+//
+//   customerId  IS the business id — it is the security boundary. Every
+//               business-scoped query derives its filter from this column.
+//               A BUSINESS_OWNER / BUSINESS_USER with a null customerId has
+//               no business context and is denied all business-scoped routes.
+//   capabilities  granted capability strings, meaningful only for
+//                 BUSINESS_USER. BUSINESS_OWNER implicitly holds every
+//                 business capability; PLATFORM_ADMIN holds everything.
+//                 See src/rbac/capabilities.ts for the vocabulary.
 model Membership {
   id         String    @id @default(cuid())
   userId     String
@@ -307,6 +342,8 @@ model Membership {
   customerId String?
   customer   Customer? @relation(fields: [customerId], references: [id])
 
+  capabilities String[] @default([])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -317,6 +354,14 @@ model Membership {
 
 // ─── Customers & Sites ────────────────────────────────────────────────────────
 
+// ─── Business ─────────────────────────────────────────────────────────────────
+//
+// A Business is a customer organisation created and managed by the Rem0te
+// platform operator. It owns its users, its computers, its sessions and its
+// audit trail, and it is the ONLY security boundary below Platform Admin.
+//
+// The table is still named `Customer` so no table rename / FK churn was
+// needed; the domain, API and UI all call it a Business.
 model Customer {
   id       String @id @default(cuid())
   tenantId String
@@ -342,6 +387,14 @@ model Customer {
   portalUsers  Membership[]
 
   portalEnabled Boolean @default(false)
+
+  // Per-business Quick Connect switch. Gated by the platform master switch
+  // (PlatformSettings.quickConnectEnabled) — OFF at platform level wins.
+  quickConnectEnabled Boolean @default(true)
+
+  activityLogs    ActivityLog[]
+  supportSessions SupportSession[]
+  apiKeys         ApiKey[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -657,6 +710,11 @@ model SupportSession {
   id           String    @id @default(cuid())
   tenantId     String
   tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // Business that owns this session. Set from the endpoint's business for
+  // managed sessions and from the initiating user's business for Quick
+  // Connect. Null only for legacy rows whose business could not be derived.
+  customerId   String?
+  customer     Customer? @relation(fields: [customerId], references: [id])
   technicianId String
   technician   User      @relation(fields: [technicianId], references: [id])
   endpointId   String?
@@ -684,9 +742,11 @@ model SupportSession {
   updatedAt DateTime @updatedAt
 
   @@index([tenantId])
+  @@index([customerId])
   @@index([technicianId])
   @@index([endpointId])
   @@index([status])
+  @@index([customerId, createdAt])
   @@index([tenantId, createdAt])
 }
 
@@ -751,6 +811,11 @@ model ActivityLog {
   id         String          @id @default(cuid())
   tenantId   String?
   tenant     Tenant?         @relation(fields: [tenantId], references: [id])
+  // Business scope. A Business Owner's audit view filters on this column;
+  // rows with a null customerId are platform-level events and are visible
+  // to Platform Admins only.
+  customerId String?
+  customer   Customer?       @relation(fields: [customerId], references: [id])
   actorId    String?
   actor      User?           @relation(fields: [actorId], references: [id])
   actorIp    String?
@@ -762,9 +827,11 @@ model ActivityLog {
   createdAt  DateTime        @default(now())
 
   @@index([tenantId])
+  @@index([customerId])
   @@index([actorId])
   @@index([action])
   @@index([createdAt])
+  @@index([customerId, createdAt])
   @@index([tenantId, createdAt])
 }
 
@@ -774,6 +841,10 @@ model ApiKey {
   id          String    @id @default(cuid())
   tenantId    String
   tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // Business the key acts on behalf of. A key can never read or write
+  // outside it. Null only on pre-0009 keys, which are refused at auth time.
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
   createdById String
   name        String
   keyHash     String    @unique
@@ -786,6 +857,7 @@ model ApiKey {
   createdAt DateTime @default(now())
 
   @@index([tenantId])
+  @@index([customerId])
   @@index([keyHash])
 }
 
@@ -827,6 +899,27 @@ model SavedView {
   updatedAt DateTime @updatedAt
 
   @@index([tenantId])
+}
+
+// ─── Platform Settings ───────────────────────────────────────────────────────
+
+// Single-row table (id is pinned to "singleton"). Platform-wide feature
+// switches owned by the Rem0te operator.
+model PlatformSettings {
+  id String @id @default("singleton")
+
+  // MASTER switch for Quick Connect. OFF here means Quick Connect is
+  // unavailable everywhere regardless of per-business or per-user settings.
+  quickConnectEnabled Boolean @default(false)
+
+  // Which Quick Connect client builds are offered. Only platforms with a
+  // working build should be advertised on /quick.
+  quickConnectWindows Boolean @default(true)
+  quickConnectMacos   Boolean @default(false)
+  quickConnectLinux   Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // ─── Platform Security Config ────────────────────────────────────────────────

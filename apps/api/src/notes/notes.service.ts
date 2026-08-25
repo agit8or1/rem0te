@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -6,10 +7,12 @@ import {
 import { NoteVisibility } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 
 interface CreateNoteDto {
   content: string;
   endpointId?: string;
+  businessId?: string;
   customerId?: string;
   sessionId?: string;
   visibility?: NoteVisibility;
@@ -21,102 +24,122 @@ interface UpdateNoteDto {
   isPinned?: boolean;
 }
 
+/**
+ * Notes hang off a computer, a business or a session. Rather than filter
+ * notes directly, every method resolves the *parent* through the business
+ * scope first — if the caller cannot see the computer, they cannot see the
+ * notes attached to it.
+ */
 @Injectable()
 export class NotesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly acl: AccessControlService,
   ) {}
 
-  async findByEndpoint(tenantId: string, endpointId: string, page = 1, limit = 20) {
+  private noteInclude = {
+    author: { select: { id: true, email: true, firstName: true, lastName: true } },
+    comments: {
+      include: { author: { select: { id: true, email: true, firstName: true, lastName: true } } },
+      orderBy: { createdAt: 'asc' as const },
+    },
+  };
+
+  async findByEndpoint(actor: ActorContext, endpointId: string, page = 1, limit = 20) {
+    await this.acl.assertEndpointInScope(actor, endpointId);
     const skip = (page - 1) * limit;
     const [data, total] = await this.prisma.$transaction([
       this.prisma.note.findMany({
-        where: { tenantId, endpointId },
-        include: {
-          author: { select: { id: true, email: true, firstName: true, lastName: true } },
-          comments: {
-            include: { author: { select: { id: true, email: true, firstName: true, lastName: true } } },
-            orderBy: { createdAt: 'asc' },
-          },
-        },
+        where: { endpointId },
+        include: this.noteInclude,
         orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }],
         skip,
         take: limit,
       }),
-      this.prisma.note.count({ where: { tenantId, endpointId } }),
+      this.prisma.note.count({ where: { endpointId } }),
     ]);
     return { data, total, page, limit };
   }
 
-  async findByCustomer(tenantId: string, customerId: string, page = 1, limit = 20) {
+  async findByBusiness(actor: ActorContext, businessId: string, page = 1, limit = 20) {
+    await this.acl.assertBusinessInScope(actor, businessId);
     const skip = (page - 1) * limit;
     const [data, total] = await this.prisma.$transaction([
       this.prisma.note.findMany({
-        where: { tenantId, customerId },
-        include: {
-          author: { select: { id: true, email: true, firstName: true, lastName: true } },
-          comments: {
-            include: { author: { select: { id: true, email: true, firstName: true, lastName: true } } },
-            orderBy: { createdAt: 'asc' },
-          },
-        },
+        where: { customerId: businessId },
+        include: this.noteInclude,
         orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }],
         skip,
         take: limit,
       }),
-      this.prisma.note.count({ where: { tenantId, customerId } }),
+      this.prisma.note.count({ where: { customerId: businessId } }),
     ]);
     return { data, total, page, limit };
   }
 
-  async findBySession(tenantId: string, sessionId: string) {
+  async findBySession(actor: ActorContext, sessionId: string) {
+    await this.assertSessionInScope(actor, sessionId);
     return this.prisma.note.findMany({
-      where: { tenantId, sessionId },
-      include: {
-        author: { select: { id: true, email: true, firstName: true, lastName: true } },
-        comments: {
-          include: { author: { select: { id: true, email: true, firstName: true, lastName: true } } },
-          orderBy: { createdAt: 'asc' },
-        },
-      },
+      where: { sessionId },
+      include: this.noteInclude,
       orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }],
     });
   }
 
-  async create(tenantId: string, authorId: string, dto: CreateNoteDto) {
+  async create(actor: ActorContext, dto: CreateNoteDto) {
+    const businessId = dto.businessId ?? dto.customerId;
+
+    // Whatever the note is attached to has to be inside the caller's business
+    // — otherwise a note is a way to write into someone else's records.
+    let tenantId = actor.tenantId;
+    let noteBusinessId: string | null = null;
+
+    if (dto.endpointId) {
+      const endpoint = await this.acl.assertEndpointInScope(actor, dto.endpointId);
+      tenantId = endpoint.tenantId;
+      noteBusinessId = endpoint.customerId;
+    } else if (businessId) {
+      const business = await this.acl.assertBusinessInScope(actor, businessId);
+      tenantId = business.tenantId;
+      noteBusinessId = business.id;
+    } else if (dto.sessionId) {
+      const session = await this.assertSessionInScope(actor, dto.sessionId);
+      tenantId = session.tenantId;
+      noteBusinessId = session.customerId;
+    } else {
+      throw new BadRequestException('A note must be attached to a computer, a business or a session');
+    }
+
+    if (!tenantId) throw new BadRequestException('No platform context');
+
     const note = await this.prisma.note.create({
       data: {
         tenantId,
-        authorId,
+        authorId: actor.userId,
         content: dto.content,
         endpointId: dto.endpointId ?? null,
-        customerId: dto.customerId ?? null,
+        customerId: noteBusinessId,
         sessionId: dto.sessionId ?? null,
         visibility: dto.visibility ?? NoteVisibility.INTERNAL,
         isPinned: dto.isPinned ?? false,
       },
-      include: {
-        author: { select: { id: true, email: true, firstName: true, lastName: true } },
-      },
+      include: { author: { select: { id: true, email: true, firstName: true, lastName: true } } },
     });
 
     await this.audit.log({
-      tenantId,
-      actorId: authorId,
-      action: 'NOTE_CREATED',
-      resource: 'note',
-      resourceId: note.id,
-      meta: { endpointId: dto.endpointId, customerId: dto.customerId, sessionId: dto.sessionId },
+      tenantId, customerId: noteBusinessId ?? undefined,
+      actorId: actor.userId, actorIp: actor.ip,
+      action: 'NOTE_CREATED', resource: 'note', resourceId: note.id,
+      meta: { endpointId: dto.endpointId, businessId: noteBusinessId, sessionId: dto.sessionId },
     });
 
     return note;
   }
 
-  async update(tenantId: string, id: string, authorId: string, dto: UpdateNoteDto, isAdmin = false) {
-    const note = await this.prisma.note.findFirst({ where: { id, tenantId } });
-    if (!note) throw new NotFoundException(`Note ${id} not found`);
-    if (!isAdmin && note.authorId !== authorId) {
+  async update(actor: ActorContext, id: string, dto: UpdateNoteDto) {
+    const note = await this.assertNoteInScope(actor, id);
+    if (!this.acl.isBusinessOwner(actor) && note.authorId !== actor.userId) {
       throw new ForbiddenException('You can only edit your own notes');
     }
 
@@ -129,40 +152,75 @@ export class NotesService {
       include: { author: { select: { id: true, email: true, firstName: true, lastName: true } } },
     });
 
-    await this.audit.log({ tenantId, actorId: authorId, action: 'NOTE_UPDATED', resource: 'note', resourceId: id, meta: dto as Record<string, unknown> });
+    await this.audit.log({
+      tenantId: note.tenantId, customerId: note.customerId ?? undefined,
+      actorId: actor.userId, actorIp: actor.ip,
+      action: 'NOTE_UPDATED', resource: 'note', resourceId: id,
+      meta: dto as Record<string, unknown>,
+    });
     return updated;
   }
 
-  async delete(tenantId: string, id: string, authorId: string, isAdmin = false) {
-    const note = await this.prisma.note.findFirst({ where: { id, tenantId } });
-    if (!note) throw new NotFoundException(`Note ${id} not found`);
-    if (!isAdmin && note.authorId !== authorId) {
+  async delete(actor: ActorContext, id: string) {
+    const note = await this.assertNoteInScope(actor, id);
+    if (!this.acl.isBusinessOwner(actor) && note.authorId !== actor.userId) {
       throw new ForbiddenException('You can only delete your own notes');
     }
 
     await this.prisma.note.delete({ where: { id } });
-    await this.audit.log({ tenantId, actorId: authorId, action: 'NOTE_DELETED', resource: 'note', resourceId: id, meta: {} });
+    await this.audit.log({
+      tenantId: note.tenantId, customerId: note.customerId ?? undefined,
+      actorId: actor.userId, actorIp: actor.ip,
+      action: 'NOTE_DELETED', resource: 'note', resourceId: id, meta: {},
+    });
     return { success: true };
   }
 
-  async addComment(tenantId: string, noteId: string, authorId: string, content: string) {
-    const note = await this.prisma.note.findFirst({ where: { id: noteId, tenantId } });
-    if (!note) throw new NotFoundException(`Note ${noteId} not found`);
+  async addComment(actor: ActorContext, noteId: string, content: string) {
+    const note = await this.assertNoteInScope(actor, noteId);
 
     const comment = await this.prisma.noteComment.create({
-      data: { noteId, authorId, content },
+      data: { noteId, authorId: actor.userId, content },
       include: { author: { select: { id: true, email: true, firstName: true, lastName: true } } },
     });
 
     await this.audit.log({
-      tenantId,
-      actorId: authorId,
-      action: 'NOTE_COMMENT_ADDED',
-      resource: 'note',
-      resourceId: noteId,
+      tenantId: note.tenantId, customerId: note.customerId ?? undefined,
+      actorId: actor.userId, actorIp: actor.ip,
+      action: 'NOTE_COMMENT_ADDED', resource: 'note', resourceId: noteId,
       meta: { commentId: comment.id },
     });
-
     return comment;
+  }
+
+  // ── Scope helpers ─────────────────────────────────────────────────────────
+
+  private async assertNoteInScope(actor: ActorContext, id: string) {
+    const note = await this.prisma.note.findUnique({
+      where: { id },
+      select: { id: true, tenantId: true, customerId: true, endpointId: true, authorId: true },
+    });
+    if (!note) throw new NotFoundException('Note not found');
+
+    if (!actor.isPlatformAdmin) {
+      if (note.endpointId) {
+        await this.acl.assertEndpointInScope(actor, note.endpointId);
+      } else if (!note.customerId || note.customerId !== actor.businessId) {
+        throw new NotFoundException('Note not found');
+      }
+    }
+    return note;
+  }
+
+  private async assertSessionInScope(actor: ActorContext, sessionId: string) {
+    const session = await this.prisma.supportSession.findUnique({
+      where: { id: sessionId },
+      select: { id: true, tenantId: true, customerId: true },
+    });
+    if (!session) throw new NotFoundException('Session not found');
+    if (!actor.isPlatformAdmin && session.customerId !== actor.businessId) {
+      throw new NotFoundException('Session not found');
+    }
+    return session;
   }
 }

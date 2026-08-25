@@ -18,14 +18,21 @@ export class ApiKeyAuthGuard implements CanActivate {
     const resolved = await this.svc.resolveBearer(m[1]);
     if (!resolved) throw new UnauthorizedException('API key invalid, revoked, or expired');
 
-    // Set a JwtPayload-shaped user so downstream code that reads req.user
-    // works uniformly. `apiKey: true` marks the source so audit trails can
-    // record it distinctly from an interactive session.
+    // Shape the request user like a JwtPayload so every downstream isolation
+    // check behaves identically to an interactive session.
+    //
+    // A key acts as a Business Owner *inside its own business and nowhere
+    // else*: never a Platform Admin, and always pinned to `businessId`, so
+    // AccessControlService confines it exactly like a logged-in owner. What
+    // the key may do within that business is further narrowed by its scopes.
     req.user = {
       sub: resolved.createdById,
       email: 'api-key',
       tenantId: resolved.tenantId,
-      roleType: null,
+      businessId: resolved.businessId,
+      customerId: resolved.businessId,
+      roleType: 'BUSINESS_OWNER',
+      capabilities: [],
       isPlatformAdmin: false,
       mfaVerified: true,
       apiKey: true,

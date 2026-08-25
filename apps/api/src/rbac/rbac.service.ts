@@ -1,14 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { RoleType } from '@prisma/client';
-import { roleHasPermission } from './permissions.map';
+import { actorHasPermission } from './permissions.map';
 
 @Injectable()
 export class RbacService {
-  async hasPermissions(
-    roleType: RoleType,
-    _tenantId: string,
+  hasPermissions(
+    actor: { isPlatformAdmin?: boolean; roleType?: RoleType | null; capabilities?: string[] | null },
     permissions: string[],
-  ): Promise<boolean> {
-    return permissions.every((p) => roleHasPermission(roleType, p));
+  ): boolean {
+    return permissions.every((p) => actorHasPermission(actor, p));
   }
 }

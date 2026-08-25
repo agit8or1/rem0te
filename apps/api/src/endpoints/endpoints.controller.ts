@@ -7,58 +7,59 @@ import type { Request } from 'express';
 import { EndpointsService } from './endpoints.service';
 import { CreateEndpointDto, UpdateEndpointDto, AddTagDto, AddAliasDto } from './dto/create-endpoint.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
+import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
+import { RequireCapability } from '../common/decorators/require-capability.decorator';
+import { Actor } from '../common/decorators/actor.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
+import type { ActorContext } from '../rbac/access-control.service';
+import { CAP } from '../rbac/capabilities';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
 
+/**
+ * Computers.
+ *
+ * The capability decorators here gate the verb. The business the verb lands
+ * on is resolved inside EndpointsService for every single route — a path
+ * parameter naming another business's computer produces a 404, not a leak.
+ */
 @Controller('endpoints')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, CapabilitiesGuard)
 export class EndpointsController {
   constructor(private readonly svc: EndpointsService) {}
 
   @Get('connected')
-  @RequirePermissions('endpoints:read')
-  async connected(@CurrentUser() u: JwtPayload) {
-    return { success: true, data: await this.svc.findConnected(u.tenantId!) };
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  async connected(@Actor() actor: ActorContext) {
+    return { success: true, data: await this.svc.findConnected(actor) };
   }
 
-  // Employee-facing: "My Computers" — the list of computers this specific user
-  // is authorized to connect to. Requires an authenticated user but no admin
-  // permission, so ordinary employees always have access to their assigned PCs.
+  /**
+   * "My Computers" — what this specific person may connect to. No admin
+   * capability required beyond `computers:view`, so an ordinary Business User
+   * always reaches their own assigned machines.
+   */
   @Get('mine')
-  async mine(@CurrentUser() u: JwtPayload) {
-    if (!u.tenantId) return { success: true, data: [] };
-    return { success: true, data: await this.svc.myComputers(u.tenantId, u.sub) };
+  async mine(@Actor() actor: ActorContext) {
+    return { success: true, data: await this.svc.myComputers(actor) };
   }
 
-  // Employee-facing "Connect" — no admin permission required. The service
-  // authorizes via ComputerAccess (or COMPANY_WIDE + membership) and:
-  //   1. mints a short-lived, single-use ConnectionGrant (browser hands the
-  //      opaque token to the launcher via rem0te://connect/<token>);
-  //   2. returns { rustdeskId, password } as a fallback for the current
-  //      browser-launches-RustDesk flow (until the Tauri launcher is
-  //      universally installed). Both are audited.
+  /**
+   * One-click Connect. Mints a short-lived single-use grant for the launcher
+   * and also returns the credentials for the current browser flow. Both paths
+   * run the same authorization check and both are audited.
+   */
   @Post(':id/connect')
   @HttpCode(HttpStatus.OK)
+  @RequireCapability(CAP.COMPUTERS_CONNECT)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
-  async connect(@CurrentUser() u: JwtPayload, @Param('id') id: string, @Req() req: Request) {
-    if (!u.tenantId) return { success: false, message: 'No tenant context' };
-    const grant = await this.svc.createConnectionGrant(u.tenantId, u.sub, id, req.ip, {
-      isPlatformAdmin: u.isPlatformAdmin,
-      roleType: u.roleType,
-    });
-    const legacy = await this.svc.connectInfo(u.tenantId, u.sub, id, req.ip, {
-      isPlatformAdmin: u.isPlatformAdmin,
-      roleType: u.roleType,
-    });
+  async connect(@Actor() actor: ActorContext, @Param('id') id: string) {
+    const grant = await this.svc.createConnectionGrant(actor, id);
+    const info = await this.svc.connectInfo(actor, id);
     return {
       success: true,
       data: {
-        ...legacy,
-        // New: opaque grant for the launcher path. Ideally the browser only
-        // uses `launchUri` and never touches rustdeskId / password.
+        ...info,
         grantToken: grant.token,
         grantExpiresAt: grant.expiresAt,
         launchUri: `rem0te://connect/${grant.token}`,
@@ -66,8 +67,11 @@ export class EndpointsController {
     };
   }
 
-  // Redeem a ConnectionGrant. Public route — the token itself is the
-  // authorization proof. Returns rustdeskId + password for the launcher.
+  /**
+   * Redeem a ConnectionGrant. Public because the launcher has no session —
+   * the single-use token is itself the proof, and the service re-runs the
+   * full authorization check before handing anything back.
+   */
   @Post('grants/redeem')
   @Public()
   @HttpCode(HttpStatus.OK)
@@ -77,63 +81,89 @@ export class EndpointsController {
     return { success: true, data };
   }
 
-  // Manage ComputerAccess rows for a specific endpoint (admin only).
+  // ── Per-computer access ───────────────────────────────────────────────────
+
   @Get(':id/access')
-  @RequirePermissions('endpoints:write')
-  async listAccess(@CurrentUser() u: JwtPayload, @Param('id') id: string) {
-    return { success: true, data: await this.svc.listAccess(u.tenantId!, id) };
+  @RequireCapability(CAP.USERS_VIEW)
+  async listAccess(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.svc.listAccess(actor, id) };
   }
 
   @Post(':id/access')
-  @RequirePermissions('endpoints:write')
+  @RequireCapability(CAP.USERS_MANAGE)
   @HttpCode(HttpStatus.OK)
-  async grantAccess(
-    @CurrentUser() u: JwtPayload,
-    @Param('id') id: string,
-    @Body() body: { userId: string },
-  ) {
-    return { success: true, data: await this.svc.grantAccess(u.tenantId!, id, body.userId, u.sub) };
+  async grantAccess(@Actor() actor: ActorContext, @Param('id') id: string, @Body() body: { userId: string }) {
+    return { success: true, data: await this.svc.grantAccess(actor, id, body.userId) };
   }
 
   @Delete(':id/access/:userId')
-  @RequirePermissions('endpoints:write')
+  @RequireCapability(CAP.USERS_MANAGE)
   @HttpCode(HttpStatus.OK)
-  async revokeAccess(
-    @CurrentUser() u: JwtPayload,
-    @Param('id') id: string,
-    @Param('userId') userId: string,
-  ) {
-    await this.svc.revokeAccess(u.tenantId!, id, userId, u.sub);
+  async revokeAccess(@Actor() actor: ActorContext, @Param('id') id: string, @Param('userId') userId: string) {
+    await this.svc.revokeAccess(actor, id, userId);
     return { success: true };
   }
 
-  // Admin action: stage a credential rotation for this computer. Server
-  // generates a new high-entropy password; endpoint applies it on next
-  // heartbeat; endpoint confirms; server swaps it in. Old password stays
-  // valid until confirmation — no lockout risk.
-  @Post(':id/rotate-credential')
-  @RequirePermissions('endpoints:write')
-  @HttpCode(HttpStatus.OK)
-  async rotateCredential(@CurrentUser() u: JwtPayload, @Param('id') id: string) {
-    return { success: true, data: await this.svc.rotateCredential(u.tenantId!, id, u.sub) };
-  }
-
   @Patch(':id/access-mode')
-  @RequirePermissions('endpoints:write')
+  @RequireCapability(CAP.COMPUTERS_EDIT)
   @HttpCode(HttpStatus.OK)
   async setAccessMode(
-    @CurrentUser() u: JwtPayload,
+    @Actor() actor: ActorContext,
     @Param('id') id: string,
     @Body() body: { accessMode: 'ASSIGNED_USERS' | 'COMPANY_WIDE' },
   ) {
-    return { success: true, data: await this.svc.setAccessMode(u.tenantId!, id, body.accessMode, u.sub) };
+    return { success: true, data: await this.svc.setAccessMode(actor, id, body.accessMode) };
   }
 
+  // ── Credentials ───────────────────────────────────────────────────────────
+
+  @Post(':id/rotate-credential')
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  @HttpCode(HttpStatus.OK)
+  async rotateCredential(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.svc.rotateCredential(actor, id) };
+  }
+
+  @Get(':id/password')
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async getPassword(
+    @Actor() actor: ActorContext,
+    @CurrentUser() u: JwtPayload,
+    @Param('id') id: string,
+  ) {
+    // Revealing a persistent credential requires MFA to have been satisfied
+    // on this session, for anyone who has MFA configured.
+    if (u.mfaVerified === false) {
+      return { success: false, message: 'MFA required to reveal a computer password' };
+    }
+    const password = await this.svc.getPassword(actor, id);
+    return { success: true, data: { hasPassword: password !== null, password } };
+  }
+
+  @Patch(':id/password')
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  @HttpCode(HttpStatus.OK)
+  async setPassword(
+    @Actor() actor: ActorContext,
+    @Param('id') id: string,
+    @Body('password') password: string | null,
+  ) {
+    await this.svc.setPassword(actor, id, password ?? null);
+    return { success: true };
+  }
+
+  // ── CRUD ──────────────────────────────────────────────────────────────────
+
   @Get()
-  @RequirePermissions('endpoints:read')
-  async list(@CurrentUser() u: JwtPayload, @Query() q: Record<string, string>) {
-    return { success: true, data: await this.svc.findAll(u.tenantId!, {
-      search: q.search, customerId: q.customerId, status: q.status,
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  async list(@Actor() actor: ActorContext, @Query() q: Record<string, string>) {
+    return { success: true, data: await this.svc.findAll(actor, {
+      search: q.search,
+      // `businessId` is the current name; `customerId` still accepted so an
+      // in-flight client does not break mid-upgrade.
+      businessId: q.businessId ?? q.customerId,
+      status: q.status,
       tag: q.tag, platform: q.platform,
       page: q.page ? parseInt(q.page) : 1,
       limit: q.limit ? parseInt(q.limit) : 50,
@@ -141,92 +171,63 @@ export class EndpointsController {
   }
 
   @Get(':id')
-  @RequirePermissions('endpoints:read')
-  async get(@CurrentUser() u: JwtPayload, @Param('id') id: string) {
-    return { success: true, data: await this.svc.findOne(u.tenantId!, id) };
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  async get(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.svc.findOne(actor, id) };
   }
 
   @Post()
-  @RequirePermissions('endpoints:write')
-  async create(@CurrentUser() u: JwtPayload, @Body() dto: CreateEndpointDto) {
-    return { success: true, data: await this.svc.create(u.tenantId!, u.sub, dto) };
+  @RequireCapability(CAP.COMPUTERS_ADD)
+  async create(@Actor() actor: ActorContext, @Body() dto: CreateEndpointDto) {
+    return { success: true, data: await this.svc.create(actor, dto) };
   }
 
   @Patch(':id')
-  @RequirePermissions('endpoints:write')
-  async update(@CurrentUser() u: JwtPayload, @Param('id') id: string, @Body() dto: UpdateEndpointDto) {
-    return { success: true, data: await this.svc.update(u.tenantId!, id, u.sub, dto) };
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  async update(@Actor() actor: ActorContext, @Param('id') id: string, @Body() dto: UpdateEndpointDto) {
+    return { success: true, data: await this.svc.update(actor, id, dto) };
   }
 
   @Patch(':id/archive')
-  @RequirePermissions('endpoints:write')
+  @RequireCapability(CAP.COMPUTERS_REMOVE)
   @HttpCode(HttpStatus.OK)
-  async archive(@CurrentUser() u: JwtPayload, @Param('id') id: string) {
-    return { success: true, data: await this.svc.archive(u.tenantId!, id, u.sub) };
+  async archive(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.svc.archive(actor, id) };
   }
 
   @Post(':id/tags')
-  @RequirePermissions('endpoints:write')
-  async addTag(@CurrentUser() u: JwtPayload, @Param('id') id: string, @Body() dto: AddTagDto) {
-    await this.svc.addTag(u.tenantId!, id, dto.tag);
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  async addTag(@Actor() actor: ActorContext, @Param('id') id: string, @Body() dto: AddTagDto) {
+    await this.svc.addTag(actor, id, dto.tag);
     return { success: true };
   }
 
   @Delete(':id/tags/:tag')
-  @RequirePermissions('endpoints:write')
+  @RequireCapability(CAP.COMPUTERS_EDIT)
   @HttpCode(HttpStatus.OK)
-  async removeTag(@CurrentUser() u: JwtPayload, @Param('id') id: string, @Param('tag') tag: string) {
-    await this.svc.removeTag(u.tenantId!, id, tag);
+  async removeTag(@Actor() actor: ActorContext, @Param('id') id: string, @Param('tag') tag: string) {
+    await this.svc.removeTag(actor, id, tag);
     return { success: true };
   }
 
   @Post(':id/aliases')
-  @RequirePermissions('endpoints:write')
-  async addAlias(@CurrentUser() u: JwtPayload, @Param('id') id: string, @Body() dto: AddAliasDto) {
-    return { success: true, data: await this.svc.addAlias(u.tenantId!, id, dto.alias, dto.isPrimary) };
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  async addAlias(@Actor() actor: ActorContext, @Param('id') id: string, @Body() dto: AddAliasDto) {
+    return { success: true, data: await this.svc.addAlias(actor, id, dto.alias, dto.isPrimary) };
   }
 
   @Delete(':id/aliases/:aliasId')
-  @RequirePermissions('endpoints:write')
+  @RequireCapability(CAP.COMPUTERS_EDIT)
   @HttpCode(HttpStatus.OK)
-  async removeAlias(@CurrentUser() u: JwtPayload, @Param('id') id: string, @Param('aliasId') aliasId: string) {
-    await this.svc.removeAlias(u.tenantId!, id, aliasId);
+  async removeAlias(@Actor() actor: ActorContext, @Param('id') id: string, @Param('aliasId') aliasId: string) {
+    await this.svc.removeAlias(actor, id, aliasId);
     return { success: true };
   }
 
   @Post(':id/timeline/generate')
-  @RequirePermissions('endpoints:write')
+  @RequireCapability(CAP.COMPUTERS_EDIT)
   @HttpCode(HttpStatus.OK)
-  async generateTimeline(@CurrentUser() u: JwtPayload, @Param('id') id: string) {
-    return { success: true, data: await this.svc.generateTimeline(u.tenantId!, id) };
-  }
-
-  @Get(':id/password')
-  @RequirePermissions('endpoints:write')
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  async getPassword(
-    @CurrentUser() u: JwtPayload,
-    @Param('id') id: string,
-    @Req() req: Request,
-  ) {
-    // MFA gate: revealing a persistent RustDesk credential requires the technician
-    // to have satisfied MFA on this session (if they have MFA configured).
-    if (u.mfaVerified === false) {
-      return { success: false, message: 'MFA required to reveal endpoint password' };
-    }
-    const password = await this.svc.getPassword(u.tenantId!, id, u.sub, req.ip);
-    return { success: true, data: { hasPassword: password !== null, password } };
-  }
-
-  @Patch(':id/password')
-  @RequirePermissions('endpoints:write')
-  @HttpCode(HttpStatus.OK)
-  async setPassword(
-    @CurrentUser() u: JwtPayload,
-    @Param('id') id: string,
-    @Body('password') password: string | null,
-  ) {
-    await this.svc.setPassword(u.tenantId!, id, password ?? null);
-    return { success: true };
+  async generateTimeline(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.svc.generateTimeline(actor, id) };
   }
 }

@@ -39,18 +39,18 @@ export default function DashboardPage() {
         <>
           {/* KPI Cards — Row 1 */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <Link href="/connect?tab=endpoints">
+            <Link href="/endpoints">
               <StatCard
-                title="Total Endpoints"
+                title="Total Computers"
                 value={data?.endpoints?.total ?? 0}
                 sub={`${data?.endpoints?.online ?? 0} online`}
                 icon={<Monitor className="h-4 w-4 text-muted-foreground" />}
                 accent={onlinePercent === 100 ? 'green' : offlineCount > 0 ? 'yellow' : undefined}
               />
             </Link>
-            <Link href="/connect?tab=endpoints">
+            <Link href="/endpoints">
               <StatCard
-                title="Offline Endpoints"
+                title="Offline Computers"
                 value={offlineCount}
                 sub={`${onlinePercent}% availability`}
                 icon={<WifiOff className="h-4 w-4 text-muted-foreground" />}
@@ -78,15 +78,15 @@ export default function DashboardPage() {
 
           {/* KPI Cards — Row 2 */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <Link href="/admin/access?tab=customers">
+            <Link href="/businesses">
               <StatCard
-                title="Customers"
-                value={data?.customers?.total ?? 0}
+                title="Businesses"
+                value={data?.businesses?.total ?? 0}
                 sub="active"
                 icon={<Building2 className="h-4 w-4 text-muted-foreground" />}
               />
             </Link>
-            <Link href="/admin/access?tab=technicians">
+            <Link href="/users">
               <StatCard
                 title="Users"
                 value={data?.users?.total ?? 0}

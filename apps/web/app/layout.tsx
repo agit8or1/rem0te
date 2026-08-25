@@ -9,7 +9,7 @@ const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: 'Reboot Remote',
-  description: 'Multi-tenant remote support management platform',
+  description: 'Remote support management platform',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

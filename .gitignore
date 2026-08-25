@@ -1,6 +1,13 @@
 node_modules/
+
+# Root dist/ holds the prebuilt Windows installer stub, which IS tracked.
+# Per-app build output (apps/api/dist) is not.
 dist/*
 !dist/windows-installer.exe
+apps/*/dist/
+
+# Quick Connect caches the RustDesk binary here at first download.
+cache/
 .next/
 *.env
 *.env.local

@@ -11,7 +11,7 @@ const INSTALLER_MAGIC = Buffer.from('REM0TE_INST_URL:');
 const INSTALLER_SLOT_SIZE = 256;
 
 // Strict allowlists for values interpolated into generated shell / PowerShell scripts.
-// A hostile or corrupted tenant setting must never be able to break out of a quoted
+// A hostile or corrupted platform setting must never be able to break out of a quoted
 // string and inject arbitrary shell commands into the customer-run installer.
 const HOSTNAME_RE = /^[a-zA-Z0-9._-]{1,253}$/;
 const BASE64_RE = /^[A-Za-z0-9+/]{16,512}={0,2}$/;

@@ -1,8 +1,19 @@
 import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
+  IsEmail,
+  IsIn,
+  IsOptional,
+  IsString,
+  Length,
+  Matches,
+  MinLength,
+} from 'class-validator';
+import {
   Body,
   Controller,
   Delete,
-  ForbiddenException,
   Get,
   Param,
   Patch,
@@ -10,27 +21,15 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { IsEmail, IsOptional, IsString, Length, Matches, MinLength } from 'class-validator';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
+import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
+import { RequireCapability } from '../common/decorators/require-capability.decorator';
+import { Actor } from '../common/decorators/actor.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { ActorContext } from '../rbac/access-control.service';
+import { CAP } from '../rbac/capabilities';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
-import type { RoleType } from '@prisma/client';
-
-class InviteUserDto {
-  @IsEmail()
-  email!: string;
-
-  @IsString()
-  roleId!: string;
-}
-
-class ChangeRoleDto {
-  @IsString()
-  roleId!: string;
-}
 
 class UpdateProfileDto {
   @IsOptional() @IsString() @Length(1, 64)  firstName?: string;
@@ -52,141 +51,145 @@ class ResetPasswordDto {
   password!: string;
 }
 
+class SetLevelDto {
+  @IsIn(['BUSINESS_OWNER', 'BUSINESS_USER']) level!: 'BUSINESS_OWNER' | 'BUSINESS_USER';
+}
+
+class SetCapabilitiesDto {
+  @IsArray() @ArrayMaxSize(32) @IsString({ each: true }) capabilities!: string[];
+}
+
+class SetBusinessDto {
+  @IsOptional() @IsString() businessId?: string | null;
+}
+
+class SetPlatformAdminDto {
+  @IsBoolean() enabled!: boolean;
+}
+
+/**
+ * People, scoped to a business.
+ *
+ * Every route resolves its scope in the service. A user id belonging to
+ * another business produces a 404 from `assertUserInScope`, so guessing ids
+ * yields nothing.
+ */
 @Controller('users')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, CapabilitiesGuard)
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  @Get()
-  @RequirePermissions('users:read')
-  list(@CurrentUser() user: JwtPayload) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    return this.usersService.listMembers(user.tenantId);
-  }
-
-  @Post('invite')
-  @RequirePermissions('users:write')
-  invite(@CurrentUser() user: JwtPayload, @Body() dto: InviteUserDto) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    return this.usersService.invite(user.tenantId, user.sub, dto.email, dto.roleId);
-  }
-
-  @Patch(':userId')
-  @RequirePermissions('users:write')
-  updateProfile(
-    @Param('userId') userId: string,
-    @CurrentUser() user: JwtPayload,
-    @Body() dto: UpdateProfileDto,
-  ) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    return this.usersService.updateProfile(
-      user.tenantId, userId, user.sub, user.roleType as RoleType | null, dto,
-    );
-  }
-
-  @Post(':userId/reset-password')
-  @RequirePermissions('users:write')
-  resetPassword(
-    @Param('userId') userId: string,
-    @CurrentUser() user: JwtPayload,
-    @Body() dto: ResetPasswordDto,
-  ) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    return this.usersService.resetPassword(
-      user.tenantId, userId, user.sub, user.roleType as RoleType | null, dto.password,
-    );
-  }
-
-  @Patch(':userId/suspend')
-  @RequirePermissions('users:write')
-  suspend(@Param('userId') userId: string, @CurrentUser() user: JwtPayload) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    return this.usersService.suspend(
-      user.tenantId, userId, user.sub, user.roleType as RoleType | null,
-    );
-  }
-
-  @Patch(':userId/activate')
-  @RequirePermissions('users:write')
-  activate(@Param('userId') userId: string, @CurrentUser() user: JwtPayload) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    return this.usersService.activate(
-      user.tenantId, userId, user.sub, user.roleType as RoleType | null,
-    );
-  }
-
-  @Patch(':userId/role')
-  @RequirePermissions('roles:write')
-  changeRole(
-    @Param('userId') userId: string,
-    @CurrentUser() user: JwtPayload,
-    @Body() dto: ChangeRoleDto,
-  ) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    return this.usersService.changeRole(
-      user.tenantId, userId, dto.roleId, user.sub, user.roleType as RoleType | null,
-    );
-  }
-
-  @Delete(':userId')
-  @RequirePermissions('users:write')
-  remove(@Param('userId') userId: string, @CurrentUser() user: JwtPayload) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    return this.usersService.removeFromTenant(
-      user.tenantId, userId, user.sub, user.roleType as RoleType | null,
-    );
-  }
-
-  // Link a user to a Company (Customer). Pass `customerId: null` to unlink.
-  @Patch(':userId/customer')
-  @RequirePermissions('users:write')
-  setCustomer(
-    @Param('userId') userId: string,
-    @CurrentUser() user: JwtPayload,
-    @Body() body: { customerId: string | null },
-  ) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    return this.usersService.setCustomer(user.tenantId, userId, body.customerId ?? null, user.sub);
-  }
-
-  @Post(':userId/mfa/reset')
-  @RequirePermissions('users:write')
-  resetMfa(@Param('userId') userId: string, @CurrentUser() user: JwtPayload) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    return this.usersService.resetMfa(
-      user.tenantId, userId, user.sub, user.roleType as RoleType | null,
-    );
-  }
+  // ── Self ──────────────────────────────────────────────────────────────────
+  // Declared before ':userId' routes so they are not swallowed by the param.
 
   @Get('me/mfa-status')
-  getMfaStatus(@CurrentUser() user: JwtPayload) {
-    return this.usersService.getMfaStatus(user.sub);
+  async myMfaStatus(@CurrentUser() u: JwtPayload) {
+    return { success: true, data: await this.usersService.getMfaStatus(u.sub) };
   }
 
-  // Platform admin management — restricted to isPlatformAdmin users
+  // ── Platform admins ───────────────────────────────────────────────────────
 
   @Get('platform-admins')
-  listPlatformAdmins(@CurrentUser() user: JwtPayload) {
-    if (!user.isPlatformAdmin) throw new ForbiddenException('Platform admin access required');
-    return this.usersService.listPlatformAdmins().then((data) => ({ success: true, data }));
+  async listPlatformAdmins(@Actor() actor: ActorContext) {
+    return { success: true, data: await this.usersService.listPlatformAdmins(actor) };
   }
 
   @Get('find')
-  findByEmail(@CurrentUser() user: JwtPayload, @Query('email') email: string) {
-    if (!user.isPlatformAdmin) throw new ForbiddenException('Platform admin access required');
-    if (!email) return { success: false, message: 'email query param required' };
-    return this.usersService.findUserByEmail(email).then((data) => ({ success: true, data }));
+  async find(@Actor() actor: ActorContext, @Query('email') email: string) {
+    if (!email) return { success: false, message: 'email is required' };
+    return { success: true, data: await this.usersService.findUserByEmail(actor, email) };
   }
 
   @Patch(':userId/platform-admin')
-  setPlatformAdmin(
+  async setPlatformAdmin(
+    @Actor() actor: ActorContext,
     @Param('userId') userId: string,
-    @CurrentUser() user: JwtPayload,
-    @Body() body: { enabled: boolean },
+    @Body() dto: SetPlatformAdminDto,
   ) {
-    if (!user.isPlatformAdmin) throw new ForbiddenException('Platform admin access required');
-    return this.usersService
-      .setPlatformAdmin(userId, body.enabled, user.sub)
-      .then((data) => ({ success: true, data }));
+    return { success: true, data: await this.usersService.setPlatformAdmin(actor, userId, dto.enabled) };
+  }
+
+  // ── Business members ──────────────────────────────────────────────────────
+
+  @Get()
+  @RequireCapability(CAP.USERS_VIEW)
+  async list(@Actor() actor: ActorContext, @Query('businessId') businessId?: string) {
+    return { success: true, data: await this.usersService.listMembers(actor, businessId) };
+  }
+
+  @Patch(':userId')
+  @RequireCapability(CAP.USERS_MANAGE)
+  async updateProfile(
+    @Actor() actor: ActorContext,
+    @Param('userId') userId: string,
+    @Body() dto: UpdateProfileDto,
+  ) {
+    return { success: true, data: await this.usersService.updateProfile(actor, userId, dto) };
+  }
+
+  @Post(':userId/reset-password')
+  @RequireCapability(CAP.USERS_MANAGE)
+  async resetPassword(
+    @Actor() actor: ActorContext,
+    @Param('userId') userId: string,
+    @Body() dto: ResetPasswordDto,
+  ) {
+    return { success: true, data: await this.usersService.resetPassword(actor, userId, dto.password) };
+  }
+
+  @Patch(':userId/suspend')
+  @RequireCapability(CAP.USERS_MANAGE)
+  async suspend(@Actor() actor: ActorContext, @Param('userId') userId: string) {
+    return { success: true, data: await this.usersService.suspend(actor, userId) };
+  }
+
+  @Patch(':userId/activate')
+  @RequireCapability(CAP.USERS_MANAGE)
+  async activate(@Actor() actor: ActorContext, @Param('userId') userId: string) {
+    return { success: true, data: await this.usersService.activate(actor, userId) };
+  }
+
+  /** Promote/demote between the two business levels. */
+  @Patch(':userId/level')
+  @RequireCapability(CAP.USERS_MANAGE)
+  async setLevel(
+    @Actor() actor: ActorContext,
+    @Param('userId') userId: string,
+    @Body() dto: SetLevelDto,
+  ) {
+    return { success: true, data: await this.usersService.setLevel(actor, userId, dto.level) };
+  }
+
+  @Patch(':userId/capabilities')
+  @RequireCapability(CAP.USERS_MANAGE)
+  async setCapabilities(
+    @Actor() actor: ActorContext,
+    @Param('userId') userId: string,
+    @Body() dto: SetCapabilitiesDto,
+  ) {
+    return { success: true, data: await this.usersService.setCapabilities(actor, userId, dto.capabilities) };
+  }
+
+  /** Move someone into another business. Platform Admin only. */
+  @Patch(':userId/business')
+  @RequireCapability(CAP.USERS_MANAGE)
+  async setBusiness(
+    @Actor() actor: ActorContext,
+    @Param('userId') userId: string,
+    @Body() dto: SetBusinessDto,
+  ) {
+    return { success: true, data: await this.usersService.setBusiness(actor, userId, dto.businessId ?? null) };
+  }
+
+  @Post(':userId/mfa/reset')
+  @RequireCapability(CAP.USERS_MANAGE)
+  async resetMfa(@Actor() actor: ActorContext, @Param('userId') userId: string) {
+    return { success: true, data: await this.usersService.resetMfa(actor, userId) };
+  }
+
+  @Delete(':userId')
+  @RequireCapability(CAP.USERS_MANAGE)
+  async remove(@Actor() actor: ActorContext, @Param('userId') userId: string) {
+    return { success: true, data: await this.usersService.remove(actor, userId) };
   }
 }

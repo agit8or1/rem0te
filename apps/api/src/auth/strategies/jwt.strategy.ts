@@ -8,10 +8,19 @@ import { PrismaService } from '../../prisma/prisma.service';
 export interface JwtPayload {
   sub: string;
   email: string;
+  /** Internal platform container. Not a security boundary — `businessId` is. */
   tenantId: string | null;
+  /**
+   * The business this user belongs to (Customer id). Null for a Platform
+   * Admin, who is not confined to one.
+   */
+  businessId?: string | null;
   roleType: RoleType | null;
   isPlatformAdmin: boolean;
   mfaVerified: boolean;
+  /** Granted business capabilities. Meaningful for BUSINESS_USER only. */
+  capabilities?: string[] | null;
+  /** @deprecated legacy alias of `businessId`, kept so old tokens still resolve. */
   customerId?: string | null;
   partial?: boolean;
   iat?: number;
@@ -64,38 +73,59 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const isPlatformAdmin = user.isPlatformAdmin === true;
 
     let roleType = payload.roleType;
-    let customerId = payload.customerId ?? null;
+    let businessId = payload.businessId ?? payload.customerId ?? null;
+    let capabilities = payload.capabilities ?? null;
 
     if (payload.tenantId) {
       const tenant = await this.prisma.tenant.findUnique({
         where: { id: payload.tenantId },
         select: { id: true, isActive: true },
       });
-      if (!tenant) throw new UnauthorizedException('Tenant no longer exists');
-      if (!tenant.isActive) throw new UnauthorizedException('Tenant is disabled');
+      if (!tenant) throw new UnauthorizedException('Platform container no longer exists');
+      if (!tenant.isActive) throw new UnauthorizedException('Account is disabled');
 
-      // Platform admins may operate against any tenant without a membership row —
-      // regular users must have an active membership in the tenant claimed by the JWT.
+      // Platform admins may operate without a membership row — everyone else
+      // must have an active membership matching the token.
       const membership = await this.prisma.membership.findUnique({
         where: { userId_tenantId: { userId: payload.sub, tenantId: payload.tenantId } },
         select: {
           isActive: true,
           customerId: true,
+          capabilities: true,
           role: { select: { type: true } },
+          customer: { select: { id: true, isActive: true, isArchived: true } },
         },
       });
 
       if (!membership || !membership.isActive) {
         if (!isPlatformAdmin) {
-          throw new UnauthorizedException('Membership no longer active for this tenant');
+          throw new UnauthorizedException('Your access to this business is no longer active');
         }
       } else {
-        // Honor current role / customerId from the database rather than the frozen JWT claim.
+        // Role, business and capabilities always come from the database, not
+        // from the frozen token — so revoking a capability or moving a user
+        // between businesses takes effect on the very next request rather
+        // than whenever their token happens to expire.
         roleType = membership.role.type;
-        customerId = membership.customerId ?? null;
+        businessId = membership.customerId ?? null;
+        capabilities = membership.capabilities ?? [];
+
+        // A disabled or archived business locks out its own users immediately.
+        if (!isPlatformAdmin && membership.customer) {
+          if (!membership.customer.isActive || membership.customer.isArchived) {
+            throw new UnauthorizedException('This business is disabled');
+          }
+        }
       }
     }
 
-    return { ...payload, isPlatformAdmin, roleType, customerId };
+    return {
+      ...payload,
+      isPlatformAdmin,
+      roleType,
+      businessId,
+      customerId: businessId,
+      capabilities,
+    };
   }
 }

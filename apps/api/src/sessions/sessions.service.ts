@@ -2,21 +2,47 @@ import { Injectable, NotFoundException, ForbiddenException, BadRequestException 
 import { SessionStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
+import { CAP } from '../rbac/capabilities';
 import { CreateSessionDto, CompleteSessionDto, SessionEventDto } from './dto/create-session.dto';
 
+/**
+ * Support sessions.
+ *
+ * Sessions carry their own `customerId` so a Quick Connect session — which
+ * has no endpoint to inherit a business from — is still confined to the
+ * business that started it.
+ */
 @Injectable()
 export class SessionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly acl: AccessControlService,
   ) {}
 
+  /**
+   * Scope filter for every session query.
+   *
+   * A Business User who cannot view history only ever sees sessions they ran
+   * themselves — the business filter alone would show them their colleagues'.
+   */
+  private sessionScope(actor: ActorContext, businessId?: string) {
+    const scope = this.acl.resolveScope(actor, businessId);
+    const canSeeOthers = this.acl.isBusinessOwner(actor) || this.acl.can(actor, CAP.HISTORY_VIEW);
+    return {
+      ...(scope ? { customerId: scope } : {}),
+      ...(canSeeOthers ? {} : { technicianId: actor.userId }),
+    };
+  }
+
   async findAll(
-    tenantId: string,
+    actor: ActorContext,
     opts: {
       status?: SessionStatus;
       technicianId?: string;
       endpointId?: string;
+      businessId?: string;
       page?: number;
       limit?: number;
     } = {},
@@ -26,7 +52,7 @@ export class SessionsService {
     const skip = (page - 1) * limit;
 
     const where = {
-      tenantId,
+      ...this.sessionScope(actor, opts.businessId),
       ...(opts.status ? { status: opts.status } : {}),
       ...(opts.technicianId ? { technicianId: opts.technicianId } : {}),
       ...(opts.endpointId ? { endpointId: opts.endpointId } : {}),
@@ -40,6 +66,7 @@ export class SessionsService {
         take: limit,
         include: {
           technician: { select: { id: true, email: true, firstName: true, lastName: true } },
+          customer: { select: { id: true, name: true } },
           endpoint: { select: { id: true, name: true, hostname: true, rustdeskNode: { select: { rustdeskId: true } } } },
         },
       }),
@@ -49,14 +76,16 @@ export class SessionsService {
     return { sessions, total, page, limit, pages: Math.ceil(total / limit) };
   }
 
-  async findOne(tenantId: string, id: string) {
+  async findOne(actor: ActorContext, id: string) {
     const session = await this.prisma.supportSession.findFirst({
-      where: { id, tenantId },
+      where: { id, ...this.sessionScope(actor) },
       include: {
         technician: { select: { id: true, email: true, firstName: true, lastName: true } },
+        customer: { select: { id: true, name: true } },
         endpoint: {
           select: {
-            id: true, name: true, hostname: true, rustdeskNode: { select: { rustdeskId: true } },
+            id: true, name: true, hostname: true,
+            rustdeskNode: { select: { rustdeskId: true } },
             customer: { select: { id: true, name: true } },
             site: { select: { id: true, name: true } },
           },
@@ -69,74 +98,57 @@ export class SessionsService {
         launcherToken: { select: { id: true, expiresAt: true, usedAt: true, revokedAt: true } },
       },
     });
-    if (!session) throw new NotFoundException(`Session ${id} not found`);
+    if (!session) throw new NotFoundException('Session not found');
     return session;
   }
 
-  async create(
-    tenantId: string,
-    technicianId: string,
-    dto: CreateSessionDto,
-    actor?: { isPlatformAdmin?: boolean; roleType?: string | null },
-  ) {
+  /**
+   * Open a session.
+   *
+   * Ad-hoc sessions go through Quick Connect, which has its own gate; this
+   * path is for sessions against an enrolled computer, and the caller must be
+   * authorised for that specific computer.
+   */
+  async create(actor: ActorContext, dto: CreateSessionDto) {
     if (!dto.endpointId && !dto.adHocRustdeskId) {
       throw new BadRequestException('Either endpointId or adHocRustdeskId is required');
     }
+    if (dto.adHocRustdeskId) {
+      throw new BadRequestException('Use Quick Connect for ad-hoc support sessions');
+    }
 
-    if (dto.endpointId) {
-      const endpoint = await this.prisma.endpoint.findFirst({
-        where: { id: dto.endpointId, tenantId },
-        select: { id: true, accessMode: true, customerId: true },
+    this.acl.assertCapability(actor, CAP.COMPUTERS_CONNECT);
+
+    const endpoint = await this.acl.assertEndpointInScope(actor, dto.endpointId!);
+
+    // Owners and admins may reach any computer in scope; everyone else needs
+    // a standing grant or a COMPANY_WIDE computer in their own business.
+    if (!this.acl.isBusinessOwner(actor)) {
+      const access = await this.prisma.computerAccess.findFirst({
+        where: { endpointId: endpoint.id, userId: actor.userId },
+        select: { id: true },
       });
-      if (!endpoint) throw new NotFoundException(`Endpoint ${dto.endpointId} not found`);
+      const authorized = !!access
+        || (endpoint.accessMode === 'COMPANY_WIDE' && endpoint.customerId === actor.businessId);
 
-      // Authorization: the caller must actually be allowed to connect to this
-      // computer. Platform admins and tenant owner/admin bypass this check
-      // (they can manage everything); everyone else must have a
-      // ComputerAccess row OR the computer must be COMPANY_WIDE and the
-      // caller must be a member of the same customer.
-      const isMgmt =
-        actor?.isPlatformAdmin === true ||
-        actor?.roleType === 'TENANT_OWNER' ||
-        actor?.roleType === 'TENANT_ADMIN';
-      if (!isMgmt) {
-        const access = await this.prisma.computerAccess.findFirst({
-          where: { endpointId: dto.endpointId, userId: technicianId },
-          select: { id: true },
+      if (!authorized) {
+        await this.audit.log({
+          tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
+          actorId: actor.userId, actorIp: actor.ip,
+          action: 'SESSION_LAUNCHED', resource: 'support_session',
+          meta: { endpointId: endpoint.id, denied: 'no_access' },
         });
-        let authorized = !!access;
-        if (!authorized && endpoint.accessMode === 'COMPANY_WIDE' && endpoint.customerId) {
-          const membership = await this.prisma.membership.findFirst({
-            where: {
-              tenantId,
-              userId: technicianId,
-              isActive: true,
-              customerId: endpoint.customerId,
-            },
-            select: { id: true },
-          });
-          authorized = !!membership;
-        }
-        if (!authorized) {
-          await this.audit.log({
-            tenantId,
-            actorId: technicianId,
-            action: 'SESSION_LAUNCHED',
-            resource: 'support_session',
-            meta: { endpointId: dto.endpointId, denied: 'no_access' },
-          });
-          throw new ForbiddenException('You do not have access to this computer');
-        }
+        throw new ForbiddenException('You do not have access to this computer');
       }
     }
 
     const session = await this.prisma.supportSession.create({
       data: {
-        tenantId,
-        technicianId,
-        endpointId: dto.endpointId ?? null,
-        adHocRustdeskId: dto.adHocRustdeskId ?? null,
-        isAdHoc: dto.isAdHoc ?? !!dto.adHocRustdeskId,
+        tenantId: endpoint.tenantId!,
+        customerId: endpoint.customerId,
+        technicianId: actor.userId,
+        endpointId: endpoint.id,
+        isAdHoc: false,
         contactName: dto.contactName ?? null,
         contactEmail: dto.contactEmail ?? null,
         issueDescription: dto.issueDescription ?? null,
@@ -149,23 +161,17 @@ export class SessionsService {
     });
 
     await this.audit.log({
-      tenantId,
-      actorId: technicianId,
-      action: 'SESSION_LAUNCHED',
-      resource: 'support_session',
-      resourceId: session.id,
-      meta: {
-        endpointId: dto.endpointId,
-        adHocRustdeskId: dto.adHocRustdeskId,
-        isAdHoc: session.isAdHoc,
-      },
+      tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
+      actorId: actor.userId, actorIp: actor.ip,
+      action: 'SESSION_LAUNCHED', resource: 'support_session', resourceId: session.id,
+      meta: { endpointId: endpoint.id },
     });
 
     return session;
   }
 
-  async complete(tenantId: string, id: string, actorId: string, dto: CompleteSessionDto) {
-    const session = await this.findOne(tenantId, id);
+  async complete(actor: ActorContext, id: string, dto: CompleteSessionDto) {
+    const session = await this.findOne(actor, id);
 
     if (session.status === SessionStatus.SESSION_COMPLETED || session.status === SessionStatus.CANCELED) {
       throw new BadRequestException(`Session is already ${session.status.toLowerCase()}`);
@@ -188,19 +194,17 @@ export class SessionsService {
     });
 
     await this.audit.log({
-      tenantId,
-      actorId,
-      action: 'SESSION_COMPLETED',
-      resource: 'support_session',
-      resourceId: id,
+      tenantId: session.tenantId, customerId: session.customerId ?? undefined,
+      actorId: actor.userId, actorIp: actor.ip,
+      action: 'SESSION_COMPLETED', resource: 'support_session', resourceId: id,
       meta: { disposition: dto.disposition, duration },
     });
 
     return updated;
   }
 
-  async cancel(tenantId: string, id: string, actorId: string) {
-    const session = await this.findOne(tenantId, id);
+  async cancel(actor: ActorContext, id: string) {
+    const session = await this.findOne(actor, id);
 
     if (session.status === SessionStatus.SESSION_COMPLETED || session.status === SessionStatus.CANCELED) {
       throw new BadRequestException(`Session is already ${session.status.toLowerCase()}`);
@@ -212,20 +216,20 @@ export class SessionsService {
     });
 
     await this.audit.log({
-      tenantId,
-      actorId,
-      action: 'SESSION_CANCELED',
-      resource: 'support_session',
-      resourceId: id,
+      tenantId: session.tenantId, customerId: session.customerId ?? undefined,
+      actorId: actor.userId, actorIp: actor.ip,
+      action: 'SESSION_CANCELED', resource: 'support_session', resourceId: id,
     });
 
     return updated;
   }
 
-  async addEvent(tenantId: string, sessionId: string, dto: SessionEventDto) {
-    // Verify session belongs to tenant
-    const session = await this.prisma.supportSession.findFirst({ where: { id: sessionId, tenantId } });
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+  async addEvent(actor: ActorContext, sessionId: string, dto: SessionEventDto) {
+    const session = await this.prisma.supportSession.findFirst({
+      where: { id: sessionId, ...this.sessionScope(actor) },
+      select: { id: true, startedAt: true },
+    });
+    if (!session) throw new NotFoundException('Session not found');
 
     const event = await this.prisma.supportSessionEvent.create({
       data: {
@@ -235,7 +239,6 @@ export class SessionsService {
       },
     });
 
-    // Update session status based on event type
     if (dto.event === 'client_opened') {
       await this.prisma.supportSession.update({
         where: { id: sessionId },
@@ -255,16 +258,17 @@ export class SessionsService {
     return event;
   }
 
-  async getStats(tenantId: string, days = 30) {
+  async getStats(actor: ActorContext, days = 30, businessId?: string) {
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const scope = this.sessionScope(actor, businessId);
 
     const [total, completed, active, canceled, avgDuration] = await Promise.all([
-      this.prisma.supportSession.count({ where: { tenantId, createdAt: { gte: since } } }),
-      this.prisma.supportSession.count({ where: { tenantId, status: SessionStatus.SESSION_COMPLETED, createdAt: { gte: since } } }),
-      this.prisma.supportSession.count({ where: { tenantId, status: { notIn: [SessionStatus.SESSION_COMPLETED, SessionStatus.FAILED, SessionStatus.CANCELED] } } }),
-      this.prisma.supportSession.count({ where: { tenantId, status: SessionStatus.CANCELED, createdAt: { gte: since } } }),
+      this.prisma.supportSession.count({ where: { ...scope, createdAt: { gte: since } } }),
+      this.prisma.supportSession.count({ where: { ...scope, status: SessionStatus.SESSION_COMPLETED, createdAt: { gte: since } } }),
+      this.prisma.supportSession.count({ where: { ...scope, status: { notIn: [SessionStatus.SESSION_COMPLETED, SessionStatus.FAILED, SessionStatus.CANCELED] } } }),
+      this.prisma.supportSession.count({ where: { ...scope, status: SessionStatus.CANCELED, createdAt: { gte: since } } }),
       this.prisma.supportSession.aggregate({
-        where: { tenantId, status: SessionStatus.SESSION_COMPLETED, duration: { not: null }, createdAt: { gte: since } },
+        where: { ...scope, status: SessionStatus.SESSION_COMPLETED, duration: { not: null }, createdAt: { gte: since } },
         _avg: { duration: true },
       }),
     ]);

@@ -3,27 +3,24 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { adminApi, authApi, tenantsApi } from '@/lib/api-client';
+import { adminApi, businessesApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { StatusIndicator } from '@/components/common/status-indicator';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
+import { usePermissions } from '@/lib/auth';
 
 export default function UnassignedDevicesPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [assigningId, setAssigningId] = useState<string | null>(null);
-  const [selectedTenant, setSelectedTenant] = useState<string>('');
+  const [selectedBusiness, setSelectedBusiness] = useState<string>('');
+  const { isPlatformAdmin, isLoading: authLoading } = usePermissions();
 
-  const { data: me } = useQuery({
-    queryKey: ['me'],
-    queryFn: () => authApi.me().then((r) => r.data?.data),
-  });
-
-  if (me && !me.isPlatformAdmin) {
+  if (!authLoading && !isPlatformAdmin) {
     router.push('/dashboard');
     return null;
   }
@@ -34,33 +31,34 @@ export default function UnassignedDevicesPage() {
     refetchInterval: 30_000,
   });
 
-  const { data: tenantsData } = useQuery({
-    queryKey: ['tenants'],
-    queryFn: () => tenantsApi.list().then((r) => r.data?.data),
+  const { data: businessesData } = useQuery({
+    queryKey: ['businesses', ''],
+    queryFn: () => businessesApi.list().then((r) => r.data?.data ?? []),
   });
 
   const devices: Record<string, unknown>[] = devicesData ?? [];
-  const tenants: Record<string, unknown>[] = tenantsData?.tenants ?? tenantsData ?? [];
+  const businesses: Record<string, unknown>[] = Array.isArray(businessesData) ? businessesData : [];
 
   const assignMutation = useMutation({
-    mutationFn: ({ id, tenantId }: { id: string; tenantId: string }) =>
-      adminApi.assignDevice(id, tenantId),
+    mutationFn: ({ id, businessId }: { id: string; businessId: string }) =>
+      adminApi.assignDevice(id, businessId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['unassigned-devices'] });
+      queryClient.invalidateQueries({ queryKey: ['endpoints'] });
       setAssigningId(null);
-      setSelectedTenant('');
-      toast({ title: 'Device assigned', description: 'The device has been assigned to the selected tenant.' });
+      setSelectedBusiness('');
+      toast({ title: 'Computer assigned', description: 'It now belongs to the selected business.' });
     },
-    onError: () => {
-      toast({ title: 'Assignment failed', description: 'Could not assign the device.', variant: 'destructive' });
+    onError: (e: { response?: { data?: { message?: string } } }) => {
+      toast({ title: 'Assignment failed', description: e.response?.data?.message, variant: 'destructive' });
     },
   });
 
   return (
     <div className="p-6 space-y-6">
       <PageHeader
-        title="Unassigned Devices"
-        description="Devices that enrolled without a tenant link — only visible to platform admins"
+        title="Unassigned Computers"
+        description="Computers that checked in but do not belong to a business yet. Platform Admins only."
       />
 
       {isLoading ? (
@@ -83,7 +81,7 @@ export default function UnassignedDevicesPage() {
               {devices.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="text-center py-8 text-muted-foreground">
-                    No unassigned devices.
+                    No unassigned computers.
                   </td>
                 </tr>
               ) : (
@@ -117,27 +115,27 @@ export default function UnassignedDevicesPage() {
                           <div className="flex items-center gap-2">
                             <select
                               className="text-xs border rounded px-2 py-1 bg-background"
-                              value={selectedTenant}
-                              onChange={(e) => setSelectedTenant(e.target.value)}
+                              value={selectedBusiness}
+                              onChange={(e) => setSelectedBusiness(e.target.value)}
                             >
-                              <option value="">Select tenant…</option>
-                              {tenants.map((t) => (
-                                <option key={t.id as string} value={t.id as string}>
-                                  {t.name as string}
+                              <option value="">Select business…</option>
+                              {businesses.map((b) => (
+                                <option key={b.id as string} value={b.id as string}>
+                                  {b.name as string}
                                 </option>
                               ))}
                             </select>
                             <Button
                               size="sm"
-                              disabled={!selectedTenant || assignMutation.isPending}
-                              onClick={() => assignMutation.mutate({ id, tenantId: selectedTenant })}
+                              disabled={!selectedBusiness || assignMutation.isPending}
+                              onClick={() => assignMutation.mutate({ id, businessId: selectedBusiness })}
                             >
                               Assign
                             </Button>
                             <Button
                               size="sm"
                               variant="ghost"
-                              onClick={() => { setAssigningId(null); setSelectedTenant(''); }}
+                              onClick={() => { setAssigningId(null); setSelectedBusiness(''); }}
                             >
                               Cancel
                             </Button>

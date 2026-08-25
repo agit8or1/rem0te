@@ -5,11 +5,9 @@ import {
   Get,
   Param,
   Patch,
-  Post,
   UploadedFile,
   UseGuards,
   UseInterceptors,
-  ForbiddenException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -17,64 +15,75 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { randomBytes } from 'crypto';
 import { TenantsService } from './tenants.service';
-import {
-  CreateTenantDto,
-  UpdateBrandingDto,
-  UpdateSettingsDto,
-  UpdateTenantDto,
-} from './dto/create-tenant.dto';
+import { UpdateBrandingDto, UpdateSettingsDto, UpdateTenantDto } from './dto/create-tenant.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { JwtPayload } from '../auth/strategies/jwt.strategy';
+import { Actor } from '../common/decorators/actor.decorator';
+import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 
 const UPLOAD_DIR = '/opt/reboot-remote/uploads/logos';
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
 
-@Controller('tenants')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+/**
+ * Platform configuration — branding, RustDesk server settings, MFA policy.
+ *
+ * This used to be the multi-tenant surface. There is now exactly one Rem0te
+ * operator, so everything here is platform-level and Platform Admin only.
+ * Businesses are managed through /businesses.
+ *
+ * `tenants` stays as a route alias so the deployed web build keeps working
+ * across the upgrade.
+ */
+@Controller(['platform', 'tenants'])
+@UseGuards(JwtAuthGuard)
 export class TenantsController {
-  constructor(private readonly tenantsService: TenantsService) {}
+  constructor(
+    private readonly tenantsService: TenantsService,
+    private readonly acl: AccessControlService,
+  ) {}
 
   @Get()
-  @RequirePermissions('platform:admin')
-  async findAll() {
-    const data = await this.tenantsService.findAll();
-    return { success: true, data };
+  async findAll(@Actor() actor: ActorContext) {
+    this.acl.assertPlatformAdmin(actor);
+    return { success: true, data: await this.tenantsService.findAll() };
   }
 
   @Get(':id')
-  @RequirePermissions('tenant:read')
-  async findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    if (!user.isPlatformAdmin && user.tenantId !== id) {
-      throw new ForbiddenException('Access denied');
-    }
-    const data = await this.tenantsService.findOne(id);
-    return { success: true, data };
-  }
-
-  @Post()
-  @RequirePermissions('platform:admin')
-  async create(@CurrentUser() user: JwtPayload, @Body() dto: CreateTenantDto) {
-    const data = await this.tenantsService.create(user.sub, dto);
-    return { success: true, data };
+  async findOne(@Actor() actor: ActorContext, @Param('id') id: string) {
+    this.acl.assertPlatformAdmin(actor);
+    return { success: true, data: await this.tenantsService.findOne(id) };
   }
 
   @Patch(':id')
-  @RequirePermissions('tenant:write')
   async update(
+    @Actor() actor: ActorContext,
     @Param('id') id: string,
-    @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateTenantDto,
   ) {
-    if (!user.isPlatformAdmin && user.tenantId !== id) throw new ForbiddenException('Access denied');
-    const data = await this.tenantsService.update(id, user.sub, dto);
-    return { success: true, data };
+    this.acl.assertPlatformAdmin(actor);
+    return { success: true, data: await this.tenantsService.update(id, actor.userId, dto) };
   }
 
-  @Post(':id/branding/logo')
-  @RequirePermissions('branding:write')
+  @Patch(':id/branding')
+  async updateBranding(
+    @Actor() actor: ActorContext,
+    @Param('id') id: string,
+    @Body() dto: UpdateBrandingDto,
+  ) {
+    this.acl.assertPlatformAdmin(actor);
+    return { success: true, data: await this.tenantsService.updateBranding(id, actor.userId, dto) };
+  }
+
+  @Patch(':id/settings')
+  async updateSettings(
+    @Actor() actor: ActorContext,
+    @Param('id') id: string,
+    @Body() dto: UpdateSettingsDto,
+  ) {
+    this.acl.assertPlatformAdmin(actor);
+    return { success: true, data: await this.tenantsService.updateSettings(id, actor.userId, dto) };
+  }
+
+  @Patch(':id/branding/logo')
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
@@ -93,80 +102,9 @@ export class TenantsController {
       limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
     }),
   )
-  async uploadLogo(
-    @Param('id') id: string,
-    @CurrentUser() user: JwtPayload,
-    @UploadedFile() file: Express.Multer.File,
-  ) {
-    if (!user.isPlatformAdmin && user.tenantId !== id) throw new ForbiddenException();
+  async uploadLogo(@Actor() actor: ActorContext, @UploadedFile() file: Express.Multer.File) {
+    this.acl.assertPlatformAdmin(actor);
     if (!file) throw new BadRequestException('No valid image file provided (JPEG/PNG/GIF/WebP/SVG, max 2 MB)');
-    const url = `/uploads/logos/${file.filename}`;
-    return { success: true, data: { url } };
-  }
-
-  @Patch(':id/branding')
-  @RequirePermissions('branding:write')
-  async updateBranding(
-    @Param('id') id: string,
-    @CurrentUser() user: JwtPayload,
-    @Body() dto: UpdateBrandingDto,
-  ) {
-    if (!user.isPlatformAdmin && user.tenantId !== id) throw new ForbiddenException('Access denied');
-    const data = await this.tenantsService.updateBranding(id, user.sub, dto);
-    return { success: true, data };
-  }
-
-  @Patch(':id/settings')
-  @RequirePermissions('settings:write')
-  async updateSettings(
-    @Param('id') id: string,
-    @CurrentUser() user: JwtPayload,
-    @Body() dto: UpdateSettingsDto,
-  ) {
-    if (!user.isPlatformAdmin && user.tenantId !== id) throw new ForbiddenException('Access denied');
-    const data = await this.tenantsService.updateSettings(id, user.sub, dto);
-    return { success: true, data };
-  }
-
-  @Get(':id/members')
-  @RequirePermissions('users:read')
-  async getMembers(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    if (!user.isPlatformAdmin && user.tenantId !== id) throw new ForbiddenException('Access denied');
-    const data = await this.tenantsService.getMembers(id);
-    return { success: true, data };
-  }
-
-  @Patch(':id/members/:userId/role')
-  @RequirePermissions('roles:write')
-  async assignRole(
-    @Param('id') id: string,
-    @Param('userId') userId: string,
-    @CurrentUser() user: JwtPayload,
-    @Body('roleId') roleId: string,
-  ) {
-    if (!user.isPlatformAdmin && user.tenantId !== id) throw new ForbiddenException('Access denied');
-    const data = await this.tenantsService.assignRole(id, userId, roleId, user.sub);
-    return { success: true, data };
-  }
-
-  @Get(':id/roles')
-  @RequirePermissions('users:read')
-  async listRoles(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    if (!user.isPlatformAdmin && user.tenantId !== id) throw new ForbiddenException('Access denied');
-    const data = await this.tenantsService.listRoles(id);
-    return { success: true, data };
-  }
-
-  @Post(':id/invite')
-  @RequirePermissions('users:write')
-  async inviteMember(
-    @Param('id') id: string,
-    @CurrentUser() user: JwtPayload,
-    @Body('email') email: string,
-    @Body('roleId') roleId: string,
-  ) {
-    if (!user.isPlatformAdmin && user.tenantId !== id) throw new ForbiddenException('Access denied');
-    const data = await this.tenantsService.inviteMember(id, user.sub, email, roleId);
-    return { success: true, data };
+    return { success: true, data: { url: `/uploads/logos/${file.filename}` } };
   }
 }

@@ -3,7 +3,7 @@
 import { useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { endpointsApi, customersApi, sitesApi } from '@/lib/api-client';
+import { endpointsApi, businessesApi, sitesApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,12 +28,12 @@ export default function NewEndpointPage() {
   });
 
   const { data: customersData } = useQuery({
-    queryKey: ['customers-list'],
-    queryFn: () => customersApi.list().then((r) => r.data?.data?.customers ?? []),
+    queryKey: ['businesses', ''],
+    queryFn: () => businessesApi.list().then((r) => r.data?.data ?? []),
   });
 
   const { data: sitesData } = useQuery({
-    queryKey: ['sites-for-customer', form.customerId],
+    queryKey: ['sites-for-business', form.customerId],
     queryFn: () =>
       form.customerId
         ? sitesApi.list(form.customerId).then((r) => r.data?.data ?? [])
@@ -70,7 +70,7 @@ export default function NewEndpointPage() {
     createMutation.mutate(payload);
   }
 
-  const customers: { id: string; name: string }[] = customersData ?? [];
+  const businesses: { id: string; name: string }[] = customersData ?? [];
   const sites: { id: string; name: string }[] = sitesData ?? [];
 
   return (
@@ -139,16 +139,16 @@ export default function NewEndpointPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="customer">Customer</Label>
+                <Label htmlFor="business">Business</Label>
                 <Select
                   value={form.customerId}
                   onValueChange={(v) => setForm((f) => ({ ...f, customerId: v, siteId: '' }))}
                 >
-                  <SelectTrigger id="customer">
-                    <SelectValue placeholder="Select customer" />
+                  <SelectTrigger id="business">
+                    <SelectValue placeholder="Select business" />
                   </SelectTrigger>
                   <SelectContent>
-                    {customers.map((c) => (
+                    {businesses.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
                         {c.name}
                       </SelectItem>

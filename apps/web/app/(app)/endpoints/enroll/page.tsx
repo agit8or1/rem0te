@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { customersApi, enrollmentApi, usersApi } from '@/lib/api-client';
+import { businessesApi, enrollmentApi, usersApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import { Copy, Check } from 'lucide-react';
 
-type Customer = { id: string; name: string };
+type Business = { id: string; name: string };
 type Member = {
   userId: string;
   user: { id: string; email: string; firstName: string; lastName: string };
@@ -20,29 +20,30 @@ type Member = {
 export default function AddComputerPage() {
   const { toast } = useToast();
 
-  const [customerId, setCustomerId] = useState('');
+  const [businessId, setBusinessId] = useState('');
   const [accessMode, setAccessMode] = useState<'ASSIGNED_USERS' | 'COMPANY_WIDE'>('ASSIGNED_USERS');
   const [assignedUserIds, setAssignedUserIds] = useState<string[]>([]);
   const [platform, setPlatform] = useState<'windows' | 'linux' | 'macos'>('windows');
   const [generated, setGenerated] = useState<{ token: string; url: string; command: string } | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const { data: customersData } = useQuery({
-    queryKey: ['customers-list'],
-    queryFn: () => customersApi.list().then((r) => {
-      // Controller returns { success, data: [...] }
+  const { data: businessesData } = useQuery({
+    queryKey: ['businesses', ''],
+    queryFn: () => businessesApi.list().then((r) => {
       const body = r.data as unknown;
       if (body && typeof body === 'object' && Array.isArray((body as { data?: unknown }).data)) {
-        return (body as { data: Customer[] }).data;
+        return (body as { data: Business[] }).data;
       }
       return [];
     }),
   });
-  const customers: Customer[] = customersData ?? [];
+  const businesses: Business[] = businessesData ?? [];
 
+  // Only people in the chosen business can be pre-assigned to the computer;
+  // the server rejects anyone else at token-mint time regardless.
   const { data: membersData } = useQuery({
-    queryKey: ['members-for-token'],
-    queryFn: () => usersApi.listMembers().then((r) => {
+    queryKey: ['members-for-token', businessId],
+    queryFn: () => usersApi.list(businessId || undefined).then((r) => {
       const body = r.data as unknown;
       if (Array.isArray(body)) return body;
       if (body && typeof body === 'object' && Array.isArray((body as { data?: unknown }).data)) {
@@ -56,7 +57,7 @@ export default function AddComputerPage() {
   const createToken = useMutation({
     mutationFn: () =>
       enrollmentApi.createToken({
-        customerId: customerId || undefined,
+        businessId: businessId || undefined,
         accessMode,
         assignedUserIds: accessMode === 'ASSIGNED_USERS' ? assignedUserIds : [],
         description: `Managed ${platform} install (${accessMode === 'COMPANY_WIDE' ? 'company-wide' : assignedUserIds.length + ' user(s)'})`,
@@ -94,33 +95,36 @@ export default function AddComputerPage() {
 
   const canGenerate =
     (accessMode === 'COMPANY_WIDE' || assignedUserIds.length > 0) &&
-    !!customerId;
+    !!businessId;
 
   return (
     <div className="p-6 space-y-6 max-w-3xl">
       <PageHeader
-        title="Add Computer"
-        description="Generate a one-time installer command that automatically enrolls a Windows, Linux, or macOS computer into Rem0te and assigns access."
+        title="Downloads"
+        description="Generate a one-time Managed Device Installer. Any computer that runs it is enrolled as a permanent managed computer belonging to the business you choose here."
       />
 
       <Card>
         <CardHeader>
-          <CardTitle>1. Company</CardTitle>
-          <CardDescription>Which business does this computer belong to?</CardDescription>
+          <CardTitle>1. Business</CardTitle>
+          <CardDescription>
+            Which business does this computer belong to? The binding is fixed when the link is
+            created — the machine that runs it cannot choose a different business.
+          </CardDescription>
         </CardHeader>
         <CardContent className="max-w-md">
-          <Label>Company</Label>
-          <Select value={customerId} onValueChange={setCustomerId}>
-            <SelectTrigger><SelectValue placeholder="Select a company…" /></SelectTrigger>
+          <Label>Business</Label>
+          <Select value={businessId} onValueChange={setBusinessId}>
+            <SelectTrigger><SelectValue placeholder="Select a business…" /></SelectTrigger>
             <SelectContent>
-              {customers.map((c) => (
-                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+              {businesses.map((b) => (
+                <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
               ))}
             </SelectContent>
           </Select>
-          {customers.length === 0 && (
+          {businesses.length === 0 && (
             <p className="mt-2 text-xs text-muted-foreground">
-              No companies yet. Create one under <strong>Customers → New</strong>.
+              No businesses yet. Create one under <strong>Businesses</strong>.
             </p>
           )}
         </CardContent>
@@ -167,7 +171,7 @@ export default function AddComputerPage() {
 
           {accessMode === 'ASSIGNED_USERS' && (
             <div className="border rounded-md p-3 max-h-64 overflow-y-auto space-y-1">
-              {members.length === 0 && <p className="text-sm text-muted-foreground">No users in this tenant yet.</p>}
+              {members.length === 0 && <p className="text-sm text-muted-foreground">No users in this business yet.</p>}
               {members.map((m) => (
                 <label key={m.userId} className="flex items-center gap-2 py-1 cursor-pointer">
                   <input

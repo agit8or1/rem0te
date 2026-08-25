@@ -12,16 +12,19 @@ import {
 import { IsBoolean, IsEnum, IsOptional, IsString, Length } from 'class-validator';
 import { NotesService } from './notes.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { JwtPayload } from '../auth/strategies/jwt.strategy';
+import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
+import { RequireCapability } from '../common/decorators/require-capability.decorator';
+import { Actor } from '../common/decorators/actor.decorator';
+import type { ActorContext } from '../rbac/access-control.service';
+import { CAP } from '../rbac/capabilities';
 import { NoteVisibility } from '@prisma/client';
 
-// class-validator decorators are REQUIRED — see comment in customers.controller.ts.
+// class-validator decorators are REQUIRED — the global ValidationPipe runs
+// with { whitelist: true, forbidNonWhitelisted: true }.
 class CreateNoteDto {
   @IsString() @Length(1, 8192)                     content!: string;
   @IsOptional() @IsString()                         endpointId?: string;
+  @IsOptional() @IsString()                         businessId?: string;
   @IsOptional() @IsString()                         customerId?: string;
   @IsOptional() @IsString()                         sessionId?: string;
   @IsOptional() @IsEnum(NoteVisibility)             visibility?: NoteVisibility;
@@ -38,72 +41,56 @@ class AddCommentDto {
 }
 
 @Controller('notes')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, CapabilitiesGuard)
 export class NotesController {
   constructor(private readonly notesService: NotesService) {}
 
   @Get()
-  @RequirePermissions('notes:read')
+  @RequireCapability(CAP.COMPUTERS_VIEW)
   async list(
-    @CurrentUser() user: JwtPayload,
+    @Actor() actor: ActorContext,
     @Query('endpointId') endpointId?: string,
+    @Query('businessId') businessId?: string,
     @Query('customerId') customerId?: string,
     @Query('sessionId') sessionId?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    if (!user.tenantId) return { success: false, data: [] };
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 20;
+    const business = businessId ?? customerId;
 
     let data;
-    if (endpointId) data = await this.notesService.findByEndpoint(user.tenantId, endpointId, pageNum, limitNum);
-    else if (customerId) data = await this.notesService.findByCustomer(user.tenantId, customerId, pageNum, limitNum);
-    else if (sessionId) data = await this.notesService.findBySession(user.tenantId, sessionId);
+    if (endpointId) data = await this.notesService.findByEndpoint(actor, endpointId, pageNum, limitNum);
+    else if (business) data = await this.notesService.findByBusiness(actor, business, pageNum, limitNum);
+    else if (sessionId) data = { data: await this.notesService.findBySession(actor, sessionId), total: 0, page: pageNum, limit: limitNum };
     else data = { data: [], total: 0, page: pageNum, limit: limitNum };
 
     return { success: true, ...data };
   }
 
   @Post()
-  @RequirePermissions('notes:write')
-  async create(@CurrentUser() user: JwtPayload, @Body() dto: CreateNoteDto) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    const data = await this.notesService.create(user.tenantId, user.sub, dto);
-    return { success: true, data };
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  async create(@Actor() actor: ActorContext, @Body() dto: CreateNoteDto) {
+    return { success: true, data: await this.notesService.create(actor, dto) };
   }
 
   @Patch(':id')
-  @RequirePermissions('notes:write')
-  async update(
-    @Param('id') id: string,
-    @CurrentUser() user: JwtPayload,
-    @Body() dto: UpdateNoteDto,
-  ) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    const isAdmin = user.roleType === 'TENANT_ADMIN' || user.roleType === 'TENANT_OWNER' || user.isPlatformAdmin;
-    const data = await this.notesService.update(user.tenantId, id, user.sub, dto, isAdmin);
-    return { success: true, data };
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  async update(@Actor() actor: ActorContext, @Param('id') id: string, @Body() dto: UpdateNoteDto) {
+    return { success: true, data: await this.notesService.update(actor, id, dto) };
   }
 
   @Delete(':id')
-  @RequirePermissions('notes:write')
-  async delete(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    const isAdmin = user.roleType === 'TENANT_ADMIN' || user.roleType === 'TENANT_OWNER' || user.isPlatformAdmin;
-    await this.notesService.delete(user.tenantId, id, user.sub, isAdmin);
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  async delete(@Actor() actor: ActorContext, @Param('id') id: string) {
+    await this.notesService.delete(actor, id);
     return { success: true };
   }
 
   @Post(':id/comments')
-  @RequirePermissions('notes:write')
-  async addComment(
-    @Param('id') id: string,
-    @CurrentUser() user: JwtPayload,
-    @Body() dto: AddCommentDto,
-  ) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    const data = await this.notesService.addComment(user.tenantId, id, user.sub, dto.content);
-    return { success: true, data };
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  async addComment(@Actor() actor: ActorContext, @Param('id') id: string, @Body() dto: AddCommentDto) {
+    return { success: true, data: await this.notesService.addComment(actor, id, dto.content) };
   }
 }

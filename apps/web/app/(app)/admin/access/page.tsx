@@ -1,9 +1,13 @@
 'use client';
 
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { authApi, tenantsApi, usersApi, customersApi, endpointsApi } from '@/lib/api-client';
+import {
+  ArrowDown, Building2, Check, Loader2, Plus, Search, Shield, ShieldCheck,
+  Trash2, UserCog, Users, X,
+} from 'lucide-react';
+import { businessesApi, usersApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -11,1098 +15,327 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
-  DropdownMenuSeparator, DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import {
-  ChevronDown, ChevronRight, Shield, Users, Building2, Plus, Search, Pencil,
-  ShieldCheck, Trash2, MoreHorizontal, KeyRound, ShieldOff, UserX, UserCheck,
-} from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { formatDate } from '@/lib/utils';
+import { usePermissions } from '@/lib/auth';
+import { cn, formatDate } from '@/lib/utils';
 
-// ─── Shared ───────────────────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
 
-const ROLE_COLORS: Record<string, string> = {
-  TENANT_OWNER: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-  TENANT_ADMIN: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
-  TECHNICIAN: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-  BILLING_ADMIN: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
-  READ_ONLY: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
-  CUSTOMER: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+interface Business {
+  id: string;
+  name: string;
+  code: string | null;
+  city: string | null;
+  isActive: boolean;
+  quickConnectEnabled: boolean;
+  _count?: { endpoints: number; portalUsers: number };
+}
+
+interface Membership {
+  id: string;
+  capabilities: string[];
+  isActive: boolean;
+  accessLevel: 'Platform Admin' | 'Business Owner' | 'Business User';
+  user: {
+    id: string; email: string; firstName: string; lastName: string;
+    status: string; isPlatformAdmin: boolean;
+  };
+  role: { id: string; name: string; type: string };
+  business: { id: string; name: string } | null;
+}
+
+interface CapabilityGroup {
+  group: string;
+  items: { key: string; label: string; description: string }[];
+}
+
+const LEVEL_STYLE: Record<string, string> = {
+  'Platform Admin': 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
+  'Business Owner': 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+  'Business User': 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
 };
 
-// ─── Overview Tab ─────────────────────────────────────────────────────────────
+function fullName(u: { firstName: string; lastName: string; email: string }) {
+  const n = `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim();
+  return n || u.email;
+}
 
-const HIERARCHY_LEVELS = [
-  { label: 'Platform Admin', desc: 'Full system access', color: 'border-red-400 bg-red-50 dark:bg-red-950/30' },
-  { label: 'Tenant Owner', desc: 'Full tenant control', color: 'border-blue-400 bg-blue-50 dark:bg-blue-950/30' },
-  { label: 'Tenant Admin', desc: 'Manage users & settings', color: 'border-purple-400 bg-purple-50 dark:bg-purple-950/30' },
-  { label: 'Technician', desc: 'Connect & manage endpoints', color: 'border-green-400 bg-green-50 dark:bg-green-950/30' },
-  { label: 'Billing Admin', desc: 'View billing & audit', color: 'border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30' },
-  { label: 'Read Only', desc: 'View-only access', color: 'border-gray-400 bg-gray-50 dark:bg-gray-950/30' },
-  { label: 'Customer Portal', desc: 'Own devices + request support', color: 'border-orange-400 bg-orange-50 dark:bg-orange-950/30' },
-];
+// ─── Overview ────────────────────────────────────────────────────────────────
 
-function OverviewTab({ me }: { me: Record<string, unknown> }) {
+/**
+ * The whole model on one screen. Three boxes, top to bottom — anything more
+ * elaborate would be describing a hierarchy Rem0te does not have.
+ */
+function Overview({ businessCount, userCount, adminCount }: {
+  businessCount: number; userCount: number; adminCount: number;
+}) {
+  const levels = [
+    {
+      title: 'PLATFORM ADMIN',
+      subtitle: 'Full platform access',
+      detail: 'The Rem0te operator. Creates and manages every business, every computer and every platform setting.',
+      icon: ShieldCheck,
+      count: `${adminCount} ${adminCount === 1 ? 'admin' : 'admins'}`,
+      ring: 'border-purple-300 dark:border-purple-800 bg-purple-50/60 dark:bg-purple-950/30',
+      badge: 'text-purple-700 dark:text-purple-300',
+    },
+    {
+      title: 'BUSINESS OWNER / ADMIN',
+      subtitle: 'Full business control',
+      detail: 'Complete control of their own business — its computers, its people, its history. Nothing outside it.',
+      icon: Building2,
+      count: `${businessCount} ${businessCount === 1 ? 'business' : 'businesses'}`,
+      ring: 'border-blue-300 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/30',
+      badge: 'text-blue-700 dark:text-blue-300',
+    },
+    {
+      title: 'BUSINESS USER',
+      subtitle: 'Permissions assigned by owner',
+      detail: 'Access is determined by permissions assigned by the Business Owner.',
+      icon: Users,
+      count: `${userCount} ${userCount === 1 ? 'user' : 'users'}`,
+      ring: 'border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40',
+      badge: 'text-slate-700 dark:text-slate-300',
+    },
+  ];
+
   return (
     <div className="space-y-6">
+      <div className="mx-auto max-w-2xl">
+        {levels.map((lvl, i) => (
+          <div key={lvl.title}>
+            <div className={cn('rounded-lg border-2 p-5 text-center', lvl.ring)}>
+              <lvl.icon className={cn('mx-auto h-7 w-7', lvl.badge)} />
+              <h3 className="mt-2 text-sm font-bold tracking-wide">{lvl.title}</h3>
+              <p className={cn('text-sm font-medium', lvl.badge)}>{lvl.subtitle}</p>
+              <p className="mx-auto mt-2 max-w-md text-xs text-muted-foreground">{lvl.detail}</p>
+              <Badge variant="secondary" className="mt-3">{lvl.count}</Badge>
+            </div>
+            {i < levels.length - 1 && (
+              <div className="flex justify-center py-2">
+                <ArrowDown className="h-5 w-5 text-muted-foreground/50" />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Shield className="h-4 w-4" />
-            Platform Admins
-          </CardTitle>
+          <CardTitle className="text-base">How it works</CardTitle>
         </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            Platform Admins have the{' '}
-            <code className="text-xs bg-muted px-1 py-0.5 rounded">isPlatformAdmin</code> flag and
-            full access to all tenants and admin APIs. Currently logged in as{' '}
-            <strong>{me.email as string}</strong>.
+        <CardContent className="space-y-3 text-sm text-muted-foreground">
+          <p>
+            A <strong className="text-foreground">Business</strong> is the security boundary. Its
+            computers, users, sessions and audit history belong to it and to nothing else — and
+            that is enforced on the server, not by hiding things in this interface.
+          </p>
+          <p>
+            A <strong className="text-foreground">Business Owner</strong> automatically holds every
+            permission inside their business. A <strong className="text-foreground">Business User</strong>{' '}
+            holds only what the owner has explicitly granted; new users start with{' '}
+            <em>View computers</em> and <em>Remote connect</em> and nothing else.
+          </p>
+          <p>
+            Quick Connect is a permission, not a level. It needs three things to line up: the
+            platform master switch, the business switch, and the individual&apos;s{' '}
+            <em>Use Quick Connect</em> permission.
           </p>
         </CardContent>
       </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Permission Hierarchy</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col items-center gap-1">
-            {HIERARCHY_LEVELS.map((level, i) => (
-              <div key={level.label} className="flex flex-col items-center w-full">
-                <div className={cn('rounded-lg border-2 px-4 py-2 text-center w-full max-w-xs', level.color)}>
-                  <div className="font-semibold text-sm">{level.label}</div>
-                  <div className="text-xs text-muted-foreground">{level.desc}</div>
-                </div>
-                {i < HIERARCHY_LEVELS.length - 1 && <div className="h-4 w-px bg-border" />}
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }
 
-// ─── Tenants Tab ──────────────────────────────────────────────────────────────
+// ─── Businesses tab ──────────────────────────────────────────────────────────
 
-function TenantCard({ tenant }: { tenant: Record<string, unknown> }) {
-  const { toast } = useToast();
+function BusinessesTab() {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [showEdit, setShowEdit] = useState(false);
-  const [editName, setEditName] = useState('');
-  const tenantId = tenant.id as string;
-
-  const { data: membersData, isLoading } = useQuery({
-    queryKey: ['tenant-members', tenantId],
-    queryFn: () => tenantsApi.listMembers(tenantId).then((r) => r.data?.data ?? []),
-    enabled: open,
-  });
-  const members = Array.isArray(membersData) ? membersData : [];
-
-  const editMutation = useMutation({
-    mutationFn: () => tenantsApi.update(tenantId, { name: editName }),
-    onSuccess: () => {
-      toast({ title: 'Tenant updated' });
-      qc.invalidateQueries({ queryKey: ['all-tenants'] });
-      setShowEdit(false);
-    },
-    onError: () => toast({ title: 'Error updating tenant', variant: 'destructive' }),
-  });
-
-  function openEdit(e: React.MouseEvent) {
-    e.stopPropagation();
-    setEditName(tenant.name as string);
-    setShowEdit(true);
-  }
-
-  return (
-    <>
-    <Card>
-      <CardHeader className="pb-3 cursor-pointer" onClick={() => setOpen((o) => !o)}>
-        <CardTitle className="flex items-center justify-between text-sm">
-          <div className="flex items-center gap-2">
-            <Building2 className="h-4 w-4 text-muted-foreground" />
-            {tenant.name as string}
-            <span className="text-xs text-muted-foreground font-normal">/{tenant.slug as string}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={openEdit}>
-              <Pencil className="h-3.5 w-3.5" />
-            </Button>
-            {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          </div>
-        </CardTitle>
-      </CardHeader>
-      {open && (
-        <CardContent className="pt-0">
-          {isLoading ? (
-            <p className="text-sm text-muted-foreground">Loading members…</p>
-          ) : members.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No members</p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b">
-                  <th className="py-2 text-left text-xs text-muted-foreground font-medium">User</th>
-                  <th className="py-2 text-left text-xs text-muted-foreground font-medium">Role</th>
-                  <th className="py-2 text-left text-xs text-muted-foreground font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {members.map((m: Record<string, unknown>) => {
-                  const u = m.user as Record<string, unknown>;
-                  const r = m.role as Record<string, unknown>;
-                  return (
-                    <tr key={m.id as string} className="border-b last:border-0">
-                      <td className="py-2 pr-4">
-                        <div className="font-medium">{u?.firstName as string} {u?.lastName as string}</div>
-                        <div className="text-xs text-muted-foreground">{u?.email as string}</div>
-                      </td>
-                      <td className="py-2 pr-4">
-                        <span className={cn('text-xs px-2 py-1 rounded-full font-medium', ROLE_COLORS[r?.type as string] ?? 'bg-gray-100')}>
-                          {r?.name as string}
-                        </span>
-                      </td>
-                      <td className="py-2">
-                        <Badge variant={u?.status === 'ACTIVE' ? 'default' : 'secondary'} className="text-xs">
-                          {u?.status as string}
-                        </Badge>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </CardContent>
-      )}
-    </Card>
-
-    <Dialog open={showEdit} onOpenChange={setShowEdit}>
-      <DialogContent aria-describedby={undefined}>
-        <DialogHeader><DialogTitle>Edit Tenant</DialogTitle></DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="edit-tenant-name">Name *</Label>
-            <Input
-              id="edit-tenant-name"
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              placeholder="Acme Inc."
-            />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setShowEdit(false)}>Cancel</Button>
-          <Button onClick={() => editMutation.mutate()} disabled={!editName.trim() || editMutation.isPending}>
-            {editMutation.isPending ? 'Saving…' : 'Save'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-    </>
-  );
-}
-
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
-function TenantsTab({ isPlatformAdmin }: { isPlatformAdmin: boolean }) {
   const { toast } = useToast();
-  const qc = useQueryClient();
-  const [showCreate, setShowCreate] = useState(false);
-  const [tenantName, setTenantName] = useState('');
-  const [tenantSlug, setTenantSlug] = useState('');
-  const [slugEdited, setSlugEdited] = useState(false);
+  const [search, setSearch] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState({ name: '', code: '', email: '', city: '' });
 
-  const { data: tenantsData } = useQuery({
-    queryKey: ['all-tenants'],
-    queryFn: () => tenantsApi.list().then((r) => r.data?.data ?? []),
-    enabled: isPlatformAdmin,
-  });
-  const tenants = Array.isArray(tenantsData) ? tenantsData : [];
-
-  const createMutation = useMutation({
-    mutationFn: () => tenantsApi.create({ name: tenantName, slug: tenantSlug }),
-    onSuccess: () => {
-      toast({ title: 'Tenant created' });
-      qc.invalidateQueries({ queryKey: ['all-tenants'] });
-      setShowCreate(false);
-      setTenantName('');
-      setTenantSlug('');
-      setSlugEdited(false);
-    },
-    onError: () => toast({ title: 'Error', description: 'Failed to create tenant', variant: 'destructive' }),
+  const { data: businesses = [], isLoading } = useQuery<Business[]>({
+    queryKey: ['businesses', search],
+    queryFn: () => businessesApi.list(search ? { search } : undefined).then((r) => r.data?.data ?? []),
   });
 
-  function handleNameChange(value: string) {
-    setTenantName(value);
-    if (!slugEdited) {
-      setTenantSlug(slugify(value));
-    }
-  }
-
-  function handleSlugChange(value: string) {
-    setTenantSlug(value);
-    setSlugEdited(true);
-  }
-
-  const slugValid = /^[a-z0-9-]+$/.test(tenantSlug);
-  const canSubmit = tenantName.trim() !== '' && tenantSlug.trim() !== '' && slugValid && !createMutation.isPending;
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {tenants.length} tenant{tenants.length !== 1 ? 's' : ''} on this platform. Click a tenant to expand its members.
-        </p>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Create Tenant
-        </Button>
-      </div>
-
-      {tenants.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
-      ) : (
-        tenants.map((t: Record<string, unknown>) => (
-          <TenantCard key={t.id as string} tenant={t} />
-        ))
-      )}
-
-      <Dialog open={showCreate} onOpenChange={(open) => {
-        setShowCreate(open);
-        if (!open) {
-          setTenantName('');
-          setTenantSlug('');
-          setSlugEdited(false);
-        }
-      }}>
-        <DialogContent aria-describedby={undefined}>
-          <DialogHeader><DialogTitle>Create Tenant</DialogTitle></DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="tenant-name">Name *</Label>
-              <Input
-                id="tenant-name"
-                value={tenantName}
-                onChange={(e) => handleNameChange(e.target.value)}
-                placeholder="Acme Inc."
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="tenant-slug">Slug *</Label>
-              <Input
-                id="tenant-slug"
-                value={tenantSlug}
-                onChange={(e) => handleSlugChange(e.target.value)}
-                placeholder="acme-inc"
-              />
-              {tenantSlug && !slugValid && (
-                <p className="text-xs text-destructive">Slug may only contain lowercase letters, numbers, and hyphens.</p>
-              )}
-              <p className="text-xs text-muted-foreground">Auto-generated from name. Only lowercase letters, numbers, and hyphens.</p>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
-            <Button onClick={() => createMutation.mutate()} disabled={!canSubmit}>
-              {createMutation.isPending ? 'Creating…' : 'Create Tenant'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-// ─── Technicians Tab ──────────────────────────────────────────────────────────
-
-const ROLE_PRIORITY_ACCESS: Record<string, number> = {
-  PLATFORM_ADMIN: 100, TENANT_OWNER: 90, TENANT_ADMIN: 80,
-  BILLING_ADMIN: 60, TECHNICIAN: 50, READ_ONLY: 40, CUSTOMER: 10,
-};
-
-type AccessMember = {
-  id: string;
-  user: { id: string; email: string; firstName: string; lastName: string; status: string; mfaMethods: unknown[] };
-  role: { id: string; name: string; type: string } | null;
-  createdAt: string;
-};
-
-function EditUserDialog({ member, roles, myRoleType, isPlatformAdmin, isSelf, onClose }: {
-  member: AccessMember;
-  roles: { id: string; name: string; type: string }[];
-  myRoleType: string;
-  isPlatformAdmin: boolean;
-  isSelf: boolean;
-  onClose: () => void;
-}) {
-  const { toast } = useToast();
-  const qc = useQueryClient();
-
-  const [firstName, setFirstName] = useState(member.user.firstName);
-  const [lastName,  setLastName]  = useState(member.user.lastName);
-  const [email,     setEmail]     = useState(member.user.email);
-  const [roleId,    setRoleId]    = useState(member.role?.id ?? '');
-  const [password,  setPassword]  = useState('');
-  const [confirm,   setConfirm]   = useState('');
-
-  const myPriority = isPlatformAdmin ? 999 : (ROLE_PRIORITY_ACCESS[myRoleType] ?? 0);
-  const assignableRoles = isPlatformAdmin
-    ? roles
-    : roles.filter(r => (ROLE_PRIORITY_ACCESS[r.type] ?? 0) < myPriority);
-
-  const profileMutation = useMutation({
-    mutationFn: () => usersApi.updateProfile(member.user.id, { firstName, lastName, email }),
-    onSuccess: () => { toast({ title: 'Profile updated' }); qc.invalidateQueries({ queryKey: ['members'] }); },
-    onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
-      toast({ title: 'Error', description: msg, variant: 'destructive' });
-    },
-  });
-
-  const roleMutation = useMutation({
-    mutationFn: () => usersApi.changeRole(member.user.id, roleId),
-    onSuccess: () => { toast({ title: 'Role updated' }); qc.invalidateQueries({ queryKey: ['members'] }); },
-    onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
-      toast({ title: 'Error', description: msg, variant: 'destructive' });
-    },
-  });
-
-  const passwordMutation = useMutation({
-    mutationFn: () => usersApi.resetPassword(member.user.id, password),
-    onSuccess: () => { toast({ title: 'Password reset' }); setPassword(''); setConfirm(''); },
-    onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
-      toast({ title: 'Error', description: msg, variant: 'destructive' });
-    },
-  });
-
-  const mfaMutation = useMutation({
-    mutationFn: () => usersApi.resetMfa(member.user.id),
-    onSuccess: () => { toast({ title: 'MFA reset' }); qc.invalidateQueries({ queryKey: ['members'] }); },
-    onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
-      toast({ title: 'Error', description: msg, variant: 'destructive' });
-    },
-  });
-
-  const pwMismatch = password !== confirm && confirm.length > 0;
-  const pwValid = password.length >= 8 && password === confirm;
-  const hasMfa = (member.user.mfaMethods?.length ?? 0) > 0;
-  const roleChanged = roleId !== (member.role?.id ?? '');
-
-  return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-md" aria-describedby={undefined}>
-        <DialogHeader>
-          <DialogTitle>Edit User</DialogTitle>
-          <DialogDescription className="text-xs">{member.user.email}</DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-5">
-          {/* Profile */}
-          <div className="space-y-3">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Profile</p>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label>First Name</Label>
-                <Input value={firstName} onChange={e => setFirstName(e.target.value)} />
-              </div>
-              <div className="space-y-1">
-                <Label>Last Name</Label>
-                <Input value={lastName} onChange={e => setLastName(e.target.value)} />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <Label>Email</Label>
-              <Input type="email" value={email} onChange={e => setEmail(e.target.value)} />
-            </div>
-            <Button size="sm" onClick={() => profileMutation.mutate()} disabled={profileMutation.isPending}>
-              {profileMutation.isPending ? 'Saving…' : 'Save Profile'}
-            </Button>
-          </div>
-
-          {/* Role / Permissions */}
-          {!isSelf && assignableRoles.length > 0 && (
-            <div className="space-y-3 border-t pt-4">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Role & Permissions</p>
-              <div className="space-y-1">
-                <Label>Role</Label>
-                <Select value={roleId} onValueChange={setRoleId}>
-                  <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
-                  <SelectContent>
-                    {assignableRoles.map(r => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button size="sm" onClick={() => roleMutation.mutate()} disabled={!roleId || !roleChanged || roleMutation.isPending}>
-                {roleMutation.isPending ? 'Updating…' : 'Update Role'}
-              </Button>
-            </div>
-          )}
-
-          {/* Password Reset */}
-          <div className="space-y-3 border-t pt-4">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Reset Password</p>
-            <div className="space-y-2">
-              <Input type="password" placeholder="New password (min 8 chars)" value={password} onChange={e => setPassword(e.target.value)} />
-              <Input type="password" placeholder="Confirm password" value={confirm} onChange={e => setConfirm(e.target.value)} />
-              {pwMismatch && <p className="text-xs text-destructive">Passwords do not match</p>}
-            </div>
-            <Button size="sm" variant="outline" onClick={() => passwordMutation.mutate()} disabled={!pwValid || passwordMutation.isPending}>
-              {passwordMutation.isPending ? 'Resetting…' : 'Reset Password'}
-            </Button>
-          </div>
-
-          {/* MFA */}
-          {hasMfa && (
-            <div className="border-t pt-4 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">MFA</p>
-                <p className="text-xs text-muted-foreground mt-0.5">MFA is currently enabled for this user.</p>
-              </div>
-              <Button size="sm" variant="outline" className="text-orange-600 border-orange-300"
-                onClick={() => mfaMutation.mutate()} disabled={mfaMutation.isPending}>
-                {mfaMutation.isPending ? 'Resetting…' : 'Reset MFA'}
-              </Button>
-            </div>
-          )}
-        </div>
-
-        <DialogFooter className="pt-2">
-          <Button variant="outline" onClick={onClose}>Close</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function TechniciansTab({ tenantId, myUserId, myRoleType, isPlatformAdmin }: {
-  tenantId: string; myUserId: string; myRoleType: string; isPlatformAdmin: boolean;
-}) {
-  const { toast } = useToast();
-  const qc = useQueryClient();
-  const [showInvite,    setShowInvite]    = useState(false);
-  const [inviteEmail,   setInviteEmail]   = useState('');
-  const [inviteRoleId,  setInviteRoleId]  = useState('');
-  const [editingMember, setEditingMember] = useState<AccessMember | null>(null);
-
-  const { data: members, isLoading } = useQuery({
-    queryKey: ['members', tenantId],
-    queryFn: () => usersApi.listMembers(tenantId).then((r) => r.data?.data ?? []),
-    enabled: !!tenantId,
-  });
-
-  const { data: roles } = useQuery({
-    queryKey: ['roles', tenantId],
-    queryFn: () => usersApi.listRoles(tenantId).then((r) => r.data?.data ?? []),
-    enabled: !!tenantId,
-  });
-
-  const inviteMutation = useMutation({
-    mutationFn: () => usersApi.invite(tenantId, { email: inviteEmail, roleId: inviteRoleId }),
-    onSuccess: () => {
-      toast({ title: 'Invitation sent' });
-      qc.invalidateQueries({ queryKey: ['members'] });
-      setShowInvite(false); setInviteEmail(''); setInviteRoleId('');
-    },
-    onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
-      toast({ title: 'Error', description: msg, variant: 'destructive' });
-    },
-  });
-
-  const suspendMutation = useMutation({
-    mutationFn: (userId: string) => usersApi.suspend(tenantId, userId),
-    onSuccess: () => { toast({ title: 'User suspended' }); qc.invalidateQueries({ queryKey: ['members'] }); },
-    onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
-      toast({ title: 'Error', description: msg, variant: 'destructive' });
-    },
-  });
-
-  const activateMutation = useMutation({
-    mutationFn: (userId: string) => usersApi.activate(tenantId, userId),
-    onSuccess: () => { toast({ title: 'User activated' }); qc.invalidateQueries({ queryKey: ['members'] }); },
-    onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
-      toast({ title: 'Error', description: msg, variant: 'destructive' });
-    },
-  });
-
-  const removeMutation = useMutation({
-    mutationFn: (userId: string) => usersApi.remove(userId),
-    onSuccess: () => { toast({ title: 'User removed' }); qc.invalidateQueries({ queryKey: ['members'] }); },
-    onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
-      toast({ title: 'Error', description: msg, variant: 'destructive' });
-    },
-  });
-
-  const resetMfaMutation = useMutation({
-    mutationFn: (userId: string) => usersApi.resetMfa(userId),
-    onSuccess: () => { toast({ title: 'MFA reset' }); qc.invalidateQueries({ queryKey: ['members'] }); },
-    onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
-      toast({ title: 'Error', description: msg, variant: 'destructive' });
-    },
-  });
-
-  const memberList: AccessMember[] = Array.isArray(members) ? (members as AccessMember[]) : [];
-  const roleList: { id: string; name: string; type: string }[] = Array.isArray(roles) ? roles : [];
-  const myPriority = ROLE_PRIORITY_ACCESS[myRoleType] ?? 0;
-
-  function canActOn(m: AccessMember) {
-    if (isPlatformAdmin) return true;
-    if (m.user.id === myUserId) return false;
-    const targetP = ROLE_PRIORITY_ACCESS[m.role?.type ?? ''] ?? 0;
-    return myPriority > 0 && targetP < myPriority;
-  }
-
-  function statusBadge(status: string) {
-    const cls: Record<string, string> = {
-      ACTIVE: 'bg-green-100 text-green-700', SUSPENDED: 'bg-red-100 text-red-700',
-      INVITED: 'bg-yellow-100 text-yellow-700', DELETED: 'bg-gray-100 text-gray-500',
-    };
-    return (
-      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${cls[status] ?? 'bg-muted text-muted-foreground'}`}>
-        {status}
-      </span>
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button size="sm" onClick={() => setShowInvite(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Invite User
-        </Button>
-      </div>
-
-      {isLoading ? (
-        <div className="text-sm text-muted-foreground">Loading…</div>
-      ) : (
-        <div className="rounded-md border bg-background overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/50">
-                <th className="text-left px-4 py-3 font-medium">User</th>
-                <th className="text-left px-4 py-3 font-medium">Role</th>
-                <th className="text-left px-4 py-3 font-medium">MFA</th>
-                <th className="text-left px-4 py-3 font-medium">Status</th>
-                <th className="text-left px-4 py-3 font-medium">Joined</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {memberList.length === 0 ? (
-                <tr><td colSpan={6} className="text-center py-8 text-muted-foreground">No members yet.</td></tr>
-              ) : memberList.map((m) => {
-                const hasMfa = (m.user.mfaMethods?.length ?? 0) > 0;
-                const isSelf = m.user.id === myUserId;
-                return (
-                  <tr key={m.id} className="hover:bg-muted/30">
-                    <td className="px-4 py-3">
-                      <p className="font-medium">
-                        {m.user.firstName || m.user.lastName
-                          ? `${m.user.firstName} ${m.user.lastName}`.trim()
-                          : <span className="text-muted-foreground italic">No name</span>}
-                        {isSelf && <span className="ml-1.5 text-xs text-muted-foreground">(you)</span>}
-                      </p>
-                      <p className="text-xs text-muted-foreground">{m.user.email}</p>
-                    </td>
-                    <td className="px-4 py-3"><Badge variant="secondary">{m.role?.name ?? '—'}</Badge></td>
-                    <td className="px-4 py-3">
-                      {hasMfa
-                        ? <span className="text-green-600 text-xs font-medium">Enabled</span>
-                        : <span className="text-muted-foreground text-xs">—</span>}
-                    </td>
-                    <td className="px-4 py-3">{statusBadge(m.user.status)}</td>
-                    <td className="px-4 py-3 text-muted-foreground text-xs">{formatDate(m.createdAt)}</td>
-                    <td className="px-4 py-3 text-right">
-                      {canActOn(m) && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => setEditingMember(m)}>
-                              <Pencil className="h-3.5 w-3.5 mr-2" /> Edit User
-                            </DropdownMenuItem>
-                            {hasMfa && (
-                              <DropdownMenuItem
-                                onClick={() => resetMfaMutation.mutate(m.user.id)}
-                                className="text-orange-600 focus:text-orange-600">
-                                <ShieldOff className="h-3.5 w-3.5 mr-2" /> Reset MFA
-                              </DropdownMenuItem>
-                            )}
-                            <DropdownMenuSeparator />
-                            {m.user.status === 'SUSPENDED' ? (
-                              <DropdownMenuItem onClick={() => activateMutation.mutate(m.user.id)}>
-                                <UserCheck className="h-3.5 w-3.5 mr-2" /> Activate
-                              </DropdownMenuItem>
-                            ) : m.user.status !== 'DELETED' && (
-                              <DropdownMenuItem
-                                onClick={() => suspendMutation.mutate(m.user.id)}
-                                className="text-destructive focus:text-destructive">
-                                <UserX className="h-3.5 w-3.5 mr-2" /> Suspend
-                              </DropdownMenuItem>
-                            )}
-                            <DropdownMenuItem
-                              onClick={() => { if (confirm(`Remove ${m.user.email} from this tenant?`)) removeMutation.mutate(m.user.id); }}
-                              className="text-destructive focus:text-destructive">
-                              <UserX className="h-3.5 w-3.5 mr-2" /> Remove from Tenant
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Invite dialog */}
-      <Dialog open={showInvite} onOpenChange={setShowInvite}>
-        <DialogContent aria-describedby={undefined}>
-          <DialogHeader><DialogTitle>Invite Team Member</DialogTitle></DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="invite-email">Email *</Label>
-              <Input id="invite-email" type="email" value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)} placeholder="colleague@example.com" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="invite-role">Role *</Label>
-              <Select value={inviteRoleId} onValueChange={setInviteRoleId}>
-                <SelectTrigger id="invite-role"><SelectValue placeholder="Select role" /></SelectTrigger>
-                <SelectContent>
-                  {roleList
-                    .filter(r => isPlatformAdmin || (ROLE_PRIORITY_ACCESS[r.type] ?? 0) < myPriority)
-                    .map(r => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowInvite(false)}>Cancel</Button>
-            <Button onClick={() => inviteMutation.mutate()} disabled={!inviteEmail || !inviteRoleId || inviteMutation.isPending}>
-              {inviteMutation.isPending ? 'Sending…' : 'Send Invite'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {editingMember && (
-        <EditUserDialog
-          member={editingMember}
-          roles={roleList}
-          myRoleType={myRoleType}
-          isPlatformAdmin={isPlatformAdmin}
-          isSelf={editingMember.user.id === myUserId}
-          onClose={() => setEditingMember(null)}
-        />
-      )}
-    </div>
-  );
-}
-
-// ─── Customers Tab ────────────────────────────────────────────────────────────
-
-interface Endpoint {
-  id: string;
-  name: string;
-  hostname: string;
-  isOnline: boolean;
-  customerId: string | null | undefined;
-}
-
-function CustomerRow({ customer }: { customer: Record<string, unknown> }) {
-  const { toast } = useToast();
-  const qc = useQueryClient();
-  const [expanded, setExpanded] = useState(false);
-  const [showEdit, setShowEdit] = useState(false);
-  const [editForm, setEditForm] = useState({ name: '', code: '', email: '', phone: '' });
-  const customerId = customer.id as string;
-
-  const editMutation = useMutation({
-    mutationFn: () => customersApi.update(customerId, {
-      name: editForm.name,
-      code: editForm.code || undefined,
-      email: editForm.email || undefined,
-      phone: editForm.phone || undefined,
+  const create = useMutation({
+    mutationFn: () => businessesApi.create({
+      name: form.name.trim(),
+      ...(form.code.trim() ? { code: form.code.trim() } : {}),
+      ...(form.email.trim() ? { email: form.email.trim() } : {}),
+      ...(form.city.trim() ? { city: form.city.trim() } : {}),
     }),
     onSuccess: () => {
-      toast({ title: 'Customer updated' });
-      qc.invalidateQueries({ queryKey: ['customers'] });
-      setShowEdit(false);
+      toast({ title: 'Business created' });
+      setCreating(false);
+      setForm({ name: '', code: '', email: '', city: '' });
+      qc.invalidateQueries({ queryKey: ['businesses'] });
     },
-    onError: () => toast({ title: 'Error updating customer', variant: 'destructive' }),
+    onError: (e: { response?: { data?: { message?: string } } }) =>
+      toast({ title: 'Could not create business', description: e.response?.data?.message, variant: 'destructive' }),
   });
 
-  function openEdit(e: React.MouseEvent) {
-    e.stopPropagation();
-    setEditForm({
-      name: (customer.name as string) ?? '',
-      code: (customer.code as string) ?? '',
-      email: (customer.email as string) ?? '',
-      phone: (customer.phone as string) ?? '',
-    });
-    setShowEdit(true);
-  }
-
-  const { data: assignedData, isLoading: loadingAssigned } = useQuery({
-    queryKey: ['customer-endpoints', customerId],
-    queryFn: () => endpointsApi.list({ customerId }).then((r) => (r.data?.data?.endpoints ?? []) as Endpoint[]),
-    enabled: expanded,
+  const setActive = useMutation({
+    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
+      businessesApi.update(id, { isActive }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['businesses'] }),
+    onError: (e: { response?: { data?: { message?: string } } }) =>
+      toast({ title: 'Update failed', description: e.response?.data?.message, variant: 'destructive' }),
   });
 
-  const { data: allEndpointsData } = useQuery({
-    queryKey: ['all-endpoints'],
-    queryFn: () => endpointsApi.list({}).then((r) => (r.data?.data?.endpoints ?? []) as Endpoint[]),
-    enabled: expanded,
+  const setQuickConnect = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      businessesApi.update(id, { quickConnectEnabled: enabled }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['businesses'] }),
   });
 
-  const assignedEndpoints: Endpoint[] = Array.isArray(assignedData) ? assignedData : [];
-  const allEndpoints: Endpoint[] = Array.isArray(allEndpointsData) ? allEndpointsData : [];
-
-  const assignedIds = new Set(assignedEndpoints.map((ep) => ep.id));
-  const unassignedEndpoints = allEndpoints.filter(
-    (ep) => (ep.customerId == null) && !assignedIds.has(ep.id),
-  );
-
-  const assignMutation = useMutation({
-    mutationFn: (endpointId: string) =>
-      endpointsApi.update(endpointId, { customerId }),
+  const remove = useMutation({
+    mutationFn: (id: string) => businessesApi.remove(id),
     onSuccess: () => {
-      toast({ title: 'Endpoint assigned' });
-      qc.invalidateQueries({ queryKey: ['customer-endpoints', customerId] });
-      qc.invalidateQueries({ queryKey: ['all-endpoints'] });
+      toast({ title: 'Business deleted' });
+      qc.invalidateQueries({ queryKey: ['businesses'] });
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to assign endpoint', variant: 'destructive' }),
+    onError: (e: { response?: { data?: { message?: string } } }) =>
+      toast({ title: 'Could not delete', description: e.response?.data?.message, variant: 'destructive' }),
   });
-
-  const counts = customer._count as { endpoints?: number } | null;
-
-  return (
-    <>
-      <tr
-        className="hover:bg-muted/30 cursor-pointer select-none"
-        onClick={() => setExpanded((o) => !o)}
-      >
-        <td className="px-4 py-3">
-          <div className="flex items-center gap-2">
-            {expanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
-            <span className="font-medium">{customer.name as string}</span>
-            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 ml-1" onClick={openEdit}>
-              <Pencil className="h-3 w-3" />
-            </Button>
-          </div>
-        </td>
-        <td className="px-4 py-3">
-          {customer.code
-            ? <Badge variant="outline" className="font-mono text-xs">{customer.code as string}</Badge>
-            : '—'}
-        </td>
-        <td className="px-4 py-3 text-muted-foreground">{(customer.email as string) ?? '—'}</td>
-        <td className="px-4 py-3 text-muted-foreground">{counts?.endpoints ?? 0}</td>
-        <td className="px-4 py-3 text-muted-foreground text-xs">{formatDate(customer.createdAt as string)}</td>
-      </tr>
-
-      {expanded && (
-        <tr>
-          <td colSpan={5} className="px-4 pb-4 bg-muted/20">
-            <div className="pt-3 space-y-4">
-              {/* Assigned endpoints */}
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Assigned Endpoints</p>
-                {loadingAssigned ? (
-                  <p className="text-sm text-muted-foreground">Loading…</p>
-                ) : assignedEndpoints.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No endpoints assigned.</p>
-                ) : (
-                  <div className="rounded-md border bg-background overflow-hidden">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b bg-muted/50">
-                          <th className="text-left px-3 py-2 text-xs font-medium">Name</th>
-                          <th className="text-left px-3 py-2 text-xs font-medium">Hostname</th>
-                          <th className="text-left px-3 py-2 text-xs font-medium">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {assignedEndpoints.map((ep) => (
-                          <tr key={ep.id} className="hover:bg-muted/30">
-                            <td className="px-3 py-2 font-medium">{ep.name}</td>
-                            <td className="px-3 py-2 text-muted-foreground font-mono text-xs">{ep.hostname}</td>
-                            <td className="px-3 py-2">
-                              <span className={cn(
-                                'inline-flex items-center gap-1 text-xs font-medium',
-                                ep.isOnline ? 'text-green-600' : 'text-muted-foreground',
-                              )}>
-                                <span className={cn('h-1.5 w-1.5 rounded-full', ep.isOnline ? 'bg-green-500' : 'bg-gray-400')} />
-                                {ep.isOnline ? 'Online' : 'Offline'}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                <p className="text-xs text-muted-foreground mt-2">
-                  Customers can only access endpoints assigned to their account.
-                </p>
-              </div>
-
-              {/* Assign endpoint */}
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Assign Endpoint</p>
-                {unassignedEndpoints.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No unassigned endpoints available.</p>
-                ) : (
-                  <Select
-                    onValueChange={(endpointId) => assignMutation.mutate(endpointId)}
-                    disabled={assignMutation.isPending}
-                  >
-                    <SelectTrigger className="w-full max-w-sm">
-                      <SelectValue placeholder="Select an endpoint to assign…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {unassignedEndpoints.map((ep) => (
-                        <SelectItem key={ep.id} value={ep.id}>
-                          {ep.name} — <span className="text-muted-foreground font-mono">{ep.hostname}</span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-
-              {/* Manage link */}
-              <div>
-                <Link
-                  href={`/customers/${customerId}`}
-                  className="text-sm font-medium text-primary hover:underline"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  Manage customer →
-                </Link>
-              </div>
-            </div>
-          </td>
-        </tr>
-      )}
-
-      {/* Edit customer dialog */}
-      <Dialog open={showEdit} onOpenChange={(o) => { if (!o) setShowEdit(false); }}>
-        <DialogContent aria-describedby={undefined} onClick={(e) => e.stopPropagation()}>
-          <DialogHeader><DialogTitle>Edit Customer</DialogTitle></DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-cust-name">Company Name *</Label>
-              <Input
-                id="edit-cust-name"
-                value={editForm.name}
-                onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="Acme Corp"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-cust-code">Short Code</Label>
-              <Input
-                id="edit-cust-code"
-                value={editForm.code}
-                onChange={(e) => setEditForm((f) => ({ ...f, code: e.target.value.toUpperCase() }))}
-                placeholder="ACME"
-                maxLength={20}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-cust-email">Email</Label>
-              <Input
-                id="edit-cust-email"
-                type="email"
-                value={editForm.email}
-                onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
-                placeholder="it@example.com"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-cust-phone">Phone</Label>
-              <Input
-                id="edit-cust-phone"
-                value={editForm.phone}
-                onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))}
-                placeholder="+1-555-0100"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowEdit(false)}>Cancel</Button>
-            <Button
-              onClick={() => editMutation.mutate()}
-              disabled={!editForm.name || editMutation.isPending}
-            >
-              {editMutation.isPending ? 'Saving…' : 'Save'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-}
-
-function CustomersTab() {
-  const { toast } = useToast();
-  const qc = useQueryClient();
-  const [search, setSearch] = useState('');
-  const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ name: '', code: '', email: '', phone: '' });
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['customers', search],
-    queryFn: () => customersApi.list(search ? { search } : undefined).then((r) => r.data?.data),
-  });
-
-  const createMutation = useMutation({
-    mutationFn: () =>
-      customersApi.create({
-        name: form.name,
-        code: form.code || undefined,
-        email: form.email || undefined,
-        phone: form.phone || undefined,
-      }),
-    onSuccess: () => {
-      toast({ title: 'Customer created' });
-      qc.invalidateQueries({ queryKey: ['customers'] });
-      setShowCreate(false);
-      setForm({ name: '', code: '', email: '', phone: '' });
-    },
-    onError: () => toast({ title: 'Error', description: 'Failed to create customer', variant: 'destructive' }),
-  });
-
-  const customers: Record<string, unknown>[] = Array.isArray(data) ? data : [];
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center gap-2">
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search customers…"
-            className="pl-9"
+            placeholder="Search businesses..."
+            className="pl-8"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Add Customer
+        <Button onClick={() => setCreating(true)}>
+          <Plus className="mr-2 h-4 w-4" /> New business
         </Button>
       </div>
 
-      {isLoading ? (
-        <div className="text-sm text-muted-foreground">Loading…</div>
-      ) : (
-        <div className="rounded-md border bg-background overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/50">
-                <th className="text-left px-4 py-3 font-medium">Name</th>
-                <th className="text-left px-4 py-3 font-medium">Code</th>
-                <th className="text-left px-4 py-3 font-medium">Email</th>
-                <th className="text-left px-4 py-3 font-medium">Endpoints</th>
-                <th className="text-left px-4 py-3 font-medium">Created</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {customers.length === 0 ? (
+      <Card>
+        <CardContent className="p-0">
+          {isLoading ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>
+          ) : businesses.length === 0 ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">
+              No businesses yet. Create one to start adding computers and people to it.
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
-                  <td colSpan={5} className="text-center py-8 text-muted-foreground">No customers found.</td>
+                  <th className="px-4 py-3 font-medium">Business</th>
+                  <th className="px-4 py-3 font-medium">Computers</th>
+                  <th className="px-4 py-3 font-medium">People</th>
+                  <th className="px-4 py-3 font-medium">Quick Connect</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3" />
                 </tr>
-              ) : (
-                customers.map((c) => (
-                  <CustomerRow key={c.id as string} customer={c} />
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody className="divide-y">
+                {businesses.map((b) => (
+                  <tr key={b.id} className="hover:bg-muted/40">
+                    <td className="px-4 py-3">
+                      <Link href={`/businesses/${b.id}`} className="font-medium hover:underline">
+                        {b.name}
+                      </Link>
+                      <div className="text-xs text-muted-foreground">
+                        {[b.code, b.city].filter(Boolean).join(' · ') || '—'}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">{b._count?.endpoints ?? 0}</td>
+                    <td className="px-4 py-3">{b._count?.portalUsers ?? 0}</td>
+                    <td className="px-4 py-3">
+                      <Button
+                        size="sm"
+                        variant={b.quickConnectEnabled ? 'default' : 'outline'}
+                        onClick={() => setQuickConnect.mutate({ id: b.id, enabled: !b.quickConnectEnabled })}
+                      >
+                        {b.quickConnectEnabled ? 'Enabled' : 'Disabled'}
+                      </Button>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant={b.isActive ? 'default' : 'secondary'}>
+                        {b.isActive ? 'Active' : 'Disabled'}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setActive.mutate({ id: b.id, isActive: !b.isActive })}
+                        >
+                          {b.isActive ? 'Disable' : 'Enable'}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          title="Delete — only possible when the business is empty"
+                          onClick={() => {
+                            if (confirm(`Delete ${b.name}? This only works if it has no computers, users or session history.`)) {
+                              remove.mutate(b.id);
+                            }
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </CardContent>
+      </Card>
 
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent aria-describedby={undefined}>
-          <DialogHeader><DialogTitle>Add Customer</DialogTitle></DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="cust-name">Company Name *</Label>
-              <Input
-                id="cust-name"
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="Acme Corp"
-              />
+      <Dialog open={creating} onOpenChange={setCreating}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New business</DialogTitle>
+            <DialogDescription>
+              A business owns its own computers, people and history. Nothing is shared with any other business.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="b-name">Business name</Label>
+              <Input id="b-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="cust-code">Short Code</Label>
-              <Input
-                id="cust-code"
-                value={form.code}
-                onChange={(e) => setForm((f) => ({ ...f, code: e.target.value.toUpperCase() }))}
-                placeholder="ACME"
-                maxLength={20}
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="b-code">Short code (optional)</Label>
+                <Input id="b-code" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
+              </div>
+              <div>
+                <Label htmlFor="b-city">City (optional)</Label>
+                <Input id="b-city" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="cust-email">Email</Label>
-              <Input
-                id="cust-email"
-                type="email"
-                value={form.email}
-                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                placeholder="it@example.com"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="cust-phone">Phone</Label>
-              <Input
-                id="cust-phone"
-                value={form.phone}
-                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-                placeholder="+1-555-0100"
-              />
+            <div>
+              <Label htmlFor="b-email">Contact email (optional)</Label>
+              <Input id="b-email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
-            <Button
-              onClick={() => createMutation.mutate()}
-              disabled={!form.name || createMutation.isPending}
-            >
-              {createMutation.isPending ? 'Creating…' : 'Create'}
+            <Button variant="outline" onClick={() => setCreating(false)}>Cancel</Button>
+            <Button disabled={!form.name.trim() || create.isPending} onClick={() => create.mutate()}>
+              {create.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Create
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1111,231 +344,607 @@ function CustomersTab() {
   );
 }
 
-// ─── Platform Admins Tab ──────────────────────────────────────────────────────
+// ─── Permission editor ───────────────────────────────────────────────────────
 
-function PlatformAdminsTab({ myUserId }: { myUserId: string }) {
-  const { toast } = useToast();
+function PermissionsDialog({
+  membership, catalog, open, onClose,
+}: {
+  membership: Membership | null;
+  catalog: CapabilityGroup[];
+  open: boolean;
+  onClose: () => void;
+}) {
   const qc = useQueryClient();
-  const [searchEmail, setSearchEmail] = useState('');
-  const [foundUser, setFoundUser] = useState<Record<string, unknown> | null>(null);
-  const [searching, setSearching] = useState(false);
+  const { toast } = useToast();
+  const [selected, setSelected] = useState<string[]>([]);
+  const [initialised, setInitialised] = useState<string | null>(null);
 
-  const { data: adminsData, isLoading } = useQuery({
-    queryKey: ['platform-admins'],
-    queryFn: () => usersApi.listPlatformAdmins().then((r) => r.data?.data ?? []),
-  });
-  const admins: Record<string, unknown>[] = Array.isArray(adminsData) ? adminsData : [];
+  // Seed the checkboxes the first time this membership is opened.
+  if (membership && initialised !== membership.id) {
+    setSelected(membership.capabilities ?? []);
+    setInitialised(membership.id);
+  }
 
-  const promoteMutation = useMutation({
-    mutationFn: (userId: string) => usersApi.setPlatformAdmin(userId, true),
+  const save = useMutation({
+    mutationFn: () => usersApi.setCapabilities(membership!.user.id, selected),
     onSuccess: () => {
-      toast({ title: 'Platform admin granted' });
-      qc.invalidateQueries({ queryKey: ['platform-admins'] });
-      setFoundUser(null);
-      setSearchEmail('');
+      toast({ title: 'Permissions updated' });
+      qc.invalidateQueries({ queryKey: ['access-users'] });
+      onClose();
     },
-    onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
-      toast({ title: 'Error', description: msg, variant: 'destructive' });
-    },
+    onError: (e: { response?: { data?: { message?: string } } }) =>
+      toast({ title: 'Could not save', description: e.response?.data?.message, variant: 'destructive' }),
   });
 
-  const revokeMutation = useMutation({
-    mutationFn: (userId: string) => usersApi.setPlatformAdmin(userId, false),
-    onSuccess: () => {
-      toast({ title: 'Platform admin revoked' });
-      qc.invalidateQueries({ queryKey: ['platform-admins'] });
-    },
-    onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
-      toast({ title: 'Error', description: msg, variant: 'destructive' });
-    },
-  });
+  const isOwner = membership?.accessLevel === 'Business Owner' || membership?.user.isPlatformAdmin;
 
-  async function handleSearch() {
-    if (!searchEmail.trim()) return;
-    setSearching(true);
-    setFoundUser(null);
-    try {
-      const res = await usersApi.findByEmail(searchEmail.trim());
-      const user = res.data?.data;
-      if (!user) {
-        toast({ title: 'User not found', variant: 'destructive' });
-      } else {
-        setFoundUser(user);
-      }
-    } catch {
-      toast({ title: 'User not found', variant: 'destructive' });
-    } finally {
-      setSearching(false);
-    }
+  function toggle(key: string) {
+    setSelected((cur) => (cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key]));
   }
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Permissions</DialogTitle>
+          <DialogDescription>
+            {membership ? `${fullName(membership.user)} · ${membership.business?.name ?? 'No business'}` : ''}
+          </DialogDescription>
+        </DialogHeader>
+
+        {isOwner ? (
+          <p className="rounded-md border bg-muted/40 p-4 text-sm text-muted-foreground">
+            This person already holds every permission in their business. Permissions are assigned
+            to Business Users; change their level first if you want to restrict them.
+          </p>
+        ) : (
+          <div className="max-h-[55vh] space-y-4 overflow-y-auto pr-1">
+            {catalog.map((group) => (
+              <div key={group.group}>
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {group.group}
+                </div>
+                <div className="space-y-1">
+                  {group.items.map((item) => {
+                    const on = selected.includes(item.key);
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => toggle(item.key)}
+                        className={cn(
+                          'flex w-full items-start gap-3 rounded-md border p-2.5 text-left transition-colors',
+                          on ? 'border-primary/40 bg-primary/5' : 'hover:bg-muted/50',
+                        )}
+                      >
+                        <span className={cn(
+                          'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border',
+                          on ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40',
+                        )}>
+                          {on && <Check className="h-3 w-3" />}
+                        </span>
+                        <span>
+                          <span className="block text-sm font-medium">{item.label}</span>
+                          <span className="block text-xs text-muted-foreground">{item.description}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          {!isOwner && (
+            <Button disabled={save.isPending} onClick={() => save.mutate()}>
+              {save.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save permissions
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Business Users tab ──────────────────────────────────────────────────────
+
+function BusinessUsersTab({ businesses }: { businesses: Business[] }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { isPlatformAdmin } = usePermissions();
+  const [businessFilter, setBusinessFilter] = useState<string>('all');
+  const [editing, setEditing] = useState<Membership | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [invite, setInvite] = useState({ email: '', firstName: '', lastName: '', businessId: '', level: 'BUSINESS_USER' as 'BUSINESS_OWNER' | 'BUSINESS_USER' });
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+
+  const { data: memberships = [], isLoading } = useQuery<Membership[]>({
+    queryKey: ['access-users', businessFilter],
+    queryFn: () => usersApi
+      .list(businessFilter === 'all' ? undefined : businessFilter)
+      .then((r) => r.data?.data ?? []),
+  });
+
+  const { data: catalog = [] } = useQuery<CapabilityGroup[]>({
+    queryKey: ['capability-catalog'],
+    queryFn: () => businessesApi.capabilityCatalog().then((r) => r.data?.data ?? []),
+    staleTime: Infinity,
+  });
+
+  const addUser = useMutation({
+    mutationFn: () => businessesApi.addUser(invite.businessId, {
+      email: invite.email.trim(),
+      firstName: invite.firstName.trim() || undefined,
+      lastName: invite.lastName.trim() || undefined,
+      level: invite.level,
+    }),
+    onSuccess: (res) => {
+      setInviteToken(res.data?.data?.inviteToken ?? null);
+      qc.invalidateQueries({ queryKey: ['access-users'] });
+      toast({ title: 'User added' });
+    },
+    onError: (e: { response?: { data?: { message?: string } } }) =>
+      toast({ title: 'Could not add user', description: e.response?.data?.message, variant: 'destructive' }),
+  });
+
+  const setLevel = useMutation({
+    mutationFn: ({ userId, level }: { userId: string; level: 'BUSINESS_OWNER' | 'BUSINESS_USER' }) =>
+      usersApi.setLevel(userId, level),
+    onSuccess: () => {
+      toast({ title: 'Access level updated' });
+      qc.invalidateQueries({ queryKey: ['access-users'] });
+    },
+    onError: (e: { response?: { data?: { message?: string } } }) =>
+      toast({ title: 'Could not change level', description: e.response?.data?.message, variant: 'destructive' }),
+  });
+
+  const toggleActive = useMutation({
+    mutationFn: ({ userId, active }: { userId: string; active: boolean }) =>
+      active ? usersApi.activate(userId) : usersApi.suspend(userId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['access-users'] }),
+    onError: (e: { response?: { data?: { message?: string } } }) =>
+      toast({ title: 'Could not update', description: e.response?.data?.message, variant: 'destructive' }),
+  });
+
+  const removeUser = useMutation({
+    mutationFn: (userId: string) => usersApi.remove(userId),
+    onSuccess: () => {
+      toast({ title: 'User removed' });
+      qc.invalidateQueries({ queryKey: ['access-users'] });
+    },
+    onError: (e: { response?: { data?: { message?: string } } }) =>
+      toast({ title: 'Could not remove', description: e.response?.data?.message, variant: 'destructive' }),
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        {isPlatformAdmin && (
+          <Select value={businessFilter} onValueChange={setBusinessFilter}>
+            <SelectTrigger className="w-56">
+              <SelectValue placeholder="All businesses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All businesses</SelectItem>
+              {businesses.map((b) => (
+                <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        <div className="flex-1" />
+        <Button
+          disabled={businesses.length === 0}
+          onClick={() => {
+            setInviteToken(null);
+            setInvite({
+              email: '', firstName: '', lastName: '',
+              businessId: businessFilter !== 'all' ? businessFilter : businesses[0]?.id ?? '',
+              level: 'BUSINESS_USER',
+            });
+            setAdding(true);
+          }}
+        >
+          <Plus className="mr-2 h-4 w-4" /> Add person
+        </Button>
+      </div>
+
+      <Card>
+        <CardContent className="p-0">
+          {isLoading ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>
+          ) : memberships.length === 0 ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">
+              No people yet.
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-3 font-medium">Person</th>
+                  <th className="px-4 py-3 font-medium">Business</th>
+                  <th className="px-4 py-3 font-medium">Level</th>
+                  <th className="px-4 py-3 font-medium">Permissions</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3" />
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {memberships.map((m) => (
+                  <tr key={m.id} className="hover:bg-muted/40">
+                    <td className="px-4 py-3">
+                      <div className="font-medium">{fullName(m.user)}</div>
+                      <div className="text-xs text-muted-foreground">{m.user.email}</div>
+                    </td>
+                    <td className="px-4 py-3">{m.business?.name ?? <span className="text-muted-foreground">—</span>}</td>
+                    <td className="px-4 py-3">
+                      <Badge className={LEVEL_STYLE[m.accessLevel]}>{m.accessLevel}</Badge>
+                    </td>
+                    <td className="px-4 py-3">
+                      {m.accessLevel === 'Business User' ? (
+                        <span className="text-xs text-muted-foreground">
+                          {m.capabilities.length} granted
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">All</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant={m.user.status === 'ACTIVE' ? 'default' : 'secondary'}>
+                        {m.user.status}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-1">
+                        {m.accessLevel === 'Business User' && (
+                          <Button size="sm" variant="outline" onClick={() => setEditing(m)}>
+                            <UserCog className="mr-1.5 h-3.5 w-3.5" /> Permissions
+                          </Button>
+                        )}
+                        {isPlatformAdmin && !m.user.isPlatformAdmin && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setLevel.mutate({
+                              userId: m.user.id,
+                              level: m.accessLevel === 'Business Owner' ? 'BUSINESS_USER' : 'BUSINESS_OWNER',
+                            })}
+                          >
+                            {m.accessLevel === 'Business Owner' ? 'Make user' : 'Make owner'}
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => toggleActive.mutate({
+                            userId: m.user.id,
+                            active: m.user.status !== 'ACTIVE',
+                          })}
+                        >
+                          {m.user.status === 'ACTIVE' ? 'Disable' : 'Enable'}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            if (confirm(`Remove ${fullName(m.user)} from ${m.business?.name ?? 'this business'}?`)) {
+                              removeUser.mutate(m.user.id);
+                            }
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </CardContent>
+      </Card>
+
+      <PermissionsDialog
+        membership={editing}
+        catalog={catalog}
+        open={!!editing}
+        onClose={() => setEditing(null)}
+      />
+
+      <Dialog open={adding} onOpenChange={(o) => { if (!o) { setAdding(false); setInviteToken(null); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add a person to a business</DialogTitle>
+            <DialogDescription>
+              Business Users start with <em>View computers</em> and <em>Remote connect</em>. You can
+              adjust that immediately afterwards.
+            </DialogDescription>
+          </DialogHeader>
+
+          {inviteToken ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Send this one-time setup link to the person. It expires in 7 days.
+              </p>
+              <Input
+                readOnly
+                value={`${typeof window !== 'undefined' ? window.location.origin : ''}/accept-invite?token=${inviteToken}`}
+                onFocus={(e) => e.currentTarget.select()}
+              />
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <Label htmlFor="u-email">Email</Label>
+                <Input id="u-email" type="email" value={invite.email}
+                  onChange={(e) => setInvite({ ...invite, email: e.target.value })} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="u-first">First name</Label>
+                  <Input id="u-first" value={invite.firstName}
+                    onChange={(e) => setInvite({ ...invite, firstName: e.target.value })} />
+                </div>
+                <div>
+                  <Label htmlFor="u-last">Last name</Label>
+                  <Input id="u-last" value={invite.lastName}
+                    onChange={(e) => setInvite({ ...invite, lastName: e.target.value })} />
+                </div>
+              </div>
+              <div>
+                <Label>Business</Label>
+                <Select value={invite.businessId} onValueChange={(v) => setInvite({ ...invite, businessId: v })}>
+                  <SelectTrigger><SelectValue placeholder="Choose a business" /></SelectTrigger>
+                  <SelectContent>
+                    {businesses.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Access level</Label>
+                <Select
+                  value={invite.level}
+                  onValueChange={(v) => setInvite({ ...invite, level: v as 'BUSINESS_OWNER' | 'BUSINESS_USER' })}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="BUSINESS_USER">Business User</SelectItem>
+                    {isPlatformAdmin && <SelectItem value="BUSINESS_OWNER">Business Owner</SelectItem>}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setAdding(false); setInviteToken(null); }}>
+              {inviteToken ? 'Done' : 'Cancel'}
+            </Button>
+            {!inviteToken && (
+              <Button
+                disabled={!invite.email.trim() || !invite.businessId || addUser.isPending}
+                onClick={() => addUser.mutate()}
+              >
+                {addUser.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Add
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ─── Platform Admins tab ─────────────────────────────────────────────────────
+
+function PlatformAdminsTab() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { user } = usePermissions();
+  const [email, setEmail] = useState('');
+  const [found, setFound] = useState<{ id: string; email: string; firstName: string; lastName: string } | null>(null);
+  const [searched, setSearched] = useState(false);
+
+  const { data: admins = [], isLoading } = useQuery({
+    queryKey: ['platform-admins'],
+    queryFn: () => usersApi.listPlatformAdmins().then((r) => r.data?.data ?? []),
+  });
+
+  const lookup = useMutation({
+    mutationFn: () => usersApi.findByEmail(email.trim()),
+    onSuccess: (r) => { setFound(r.data?.data ?? null); setSearched(true); },
+  });
+
+  const setAdmin = useMutation({
+    mutationFn: ({ userId, enabled }: { userId: string; enabled: boolean }) =>
+      usersApi.setPlatformAdmin(userId, enabled),
+    onSuccess: () => {
+      toast({ title: 'Platform admins updated' });
+      setFound(null); setEmail(''); setSearched(false);
+      qc.invalidateQueries({ queryKey: ['platform-admins'] });
+    },
+    onError: (e: { response?: { data?: { message?: string } } }) =>
+      toast({ title: 'Could not update', description: e.response?.data?.message, variant: 'destructive' }),
+  });
+
+  return (
+    <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4 text-orange-600" />
-            Current Platform Admins
-          </CardTitle>
+          <CardTitle className="text-base">Grant Platform Admin</CardTitle>
         </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <p className="text-sm text-muted-foreground">Loading…</p>
-          ) : admins.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No platform admins found.</p>
-          ) : (
-            <div className="space-y-2">
-              {admins.map((u) => (
-                <div key={u.id as string} className="flex items-center justify-between rounded-lg border px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium">{u.firstName as string} {u.lastName as string}</p>
-                    <p className="text-xs text-muted-foreground">{u.email as string}</p>
-                  </div>
-                  {(u.id as string) !== myUserId ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive hover:text-destructive h-8 px-2"
-                      onClick={() => revokeMutation.mutate(u.id as string)}
-                      disabled={revokeMutation.isPending}
-                    >
-                      <Trash2 className="h-3.5 w-3.5 mr-1" />
-                      Revoke
-                    </Button>
-                  ) : (
-                    <span className="text-xs text-muted-foreground px-2">(you)</span>
-                  )}
-                </div>
-              ))}
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Platform Admins can see and change everything, in every business. Keep the list short.
+          </p>
+          <div className="flex gap-2">
+            <Input
+              placeholder="person@example.com"
+              value={email}
+              onChange={(e) => { setEmail(e.target.value); setSearched(false); setFound(null); }}
+              onKeyDown={(e) => e.key === 'Enter' && email.trim() && lookup.mutate()}
+            />
+            <Button variant="outline" disabled={!email.trim() || lookup.isPending} onClick={() => lookup.mutate()}>
+              <Search className="mr-2 h-4 w-4" /> Find
+            </Button>
+          </div>
+          {searched && !found && (
+            <p className="text-sm text-muted-foreground">
+              No Rem0te account with that email. Add them to a business first.
+            </p>
+          )}
+          {found && (
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div>
+                <div className="text-sm font-medium">{fullName(found)}</div>
+                <div className="text-xs text-muted-foreground">{found.email}</div>
+              </div>
+              <Button size="sm" onClick={() => setAdmin.mutate({ userId: found.id, enabled: true })}>
+                <ShieldCheck className="mr-2 h-4 w-4" /> Make Platform Admin
+              </Button>
             </div>
           )}
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Plus className="h-4 w-4" />
-            Grant Platform Admin
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex gap-2">
-            <Input
-              placeholder="Search by email address…"
-              value={searchEmail}
-              onChange={(e) => { setSearchEmail(e.target.value); setFoundUser(null); }}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              className="flex-1"
-            />
-            <Button variant="outline" onClick={handleSearch} disabled={searching}>
-              <Search className="h-4 w-4" />
-            </Button>
-          </div>
-
-          {foundUser && (
-            <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2">
-              <div>
-                <p className="text-sm font-medium">{foundUser.firstName as string} {foundUser.lastName as string}</p>
-                <p className="text-xs text-muted-foreground">{foundUser.email as string}</p>
-                {!!foundUser.isPlatformAdmin && (
-                  <p className="text-xs text-orange-600 font-medium mt-0.5">Already a platform admin</p>
-                )}
-              </div>
-              {!foundUser.isPlatformAdmin as boolean && (
-                <Button
-                  size="sm"
-                  onClick={() => promoteMutation.mutate(foundUser.id as string)}
-                  disabled={promoteMutation.isPending}
-                >
-                  {promoteMutation.isPending ? 'Granting…' : 'Grant Admin'}
-                </Button>
-              )}
-            </div>
+        <CardContent className="p-0">
+          {isLoading ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-3 font-medium">Platform Admin</th>
+                  <th className="px-4 py-3 font-medium">MFA</th>
+                  <th className="px-4 py-3 font-medium">Since</th>
+                  <th className="px-4 py-3" />
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {admins.map((a: { id: string; email: string; firstName: string; lastName: string; createdAt: string; mfaMethods?: unknown[] }) => (
+                  <tr key={a.id} className="hover:bg-muted/40">
+                    <td className="px-4 py-3">
+                      <div className="font-medium">{fullName(a)}</div>
+                      <div className="text-xs text-muted-foreground">{a.email}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {a.mfaMethods && a.mfaMethods.length > 0
+                        ? <Badge variant="default">Enabled</Badge>
+                        : <Badge variant="secondary">Not set up</Badge>}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">{formatDate(a.createdAt)}</td>
+                    <td className="px-4 py-3 text-right">
+                      {a.id !== user?.id && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            if (confirm(`Revoke Platform Admin from ${fullName(a)}?`)) {
+                              setAdmin.mutate({ userId: a.id, enabled: false });
+                            }
+                          }}
+                        >
+                          <X className="mr-1.5 h-3.5 w-3.5" /> Revoke
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
-
-          <p className="text-xs text-muted-foreground">
-            Platform admins bypass all tenant-level permission checks and have full access to every tenant and admin API.
-          </p>
         </CardContent>
       </Card>
     </div>
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+// ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function AccessControlPage() {
-  const [activeTab, setActiveTab] = useState('overview');
+  const { isPlatformAdmin, isLoading } = usePermissions();
 
-  const { data: me } = useQuery({
-    queryKey: ['me'],
-    queryFn: () => authApi.me().then((r) => r.data?.data),
+  const { data: businesses = [] } = useQuery<Business[]>({
+    queryKey: ['businesses', ''],
+    queryFn: () => businessesApi.list().then((r) => r.data?.data ?? []),
   });
 
-  if (!me) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+  const { data: memberships = [] } = useQuery<Membership[]>({
+    queryKey: ['access-users', 'all'],
+    queryFn: () => usersApi.list().then((r) => r.data?.data ?? []),
+  });
 
-  if (!me.isPlatformAdmin) {
+  const { data: admins = [] } = useQuery({
+    queryKey: ['platform-admins'],
+    queryFn: () => usersApi.listPlatformAdmins().then((r) => r.data?.data ?? []),
+    enabled: isPlatformAdmin,
+  });
+
+  const businessUserCount = useMemo(
+    () => memberships.filter((m) => m.accessLevel === 'Business User').length,
+    [memberships],
+  );
+
+  if (isLoading) {
+    return <div className="p-8 text-sm text-muted-foreground">Loading…</div>;
+  }
+
+  if (!isPlatformAdmin) {
     return (
-      <div className="p-6">
-        <p className="text-sm text-destructive">Access denied. Platform admin privileges required.</p>
+      <div className="space-y-6">
+        <PageHeader title="Access Control" description="Who can do what in Rem0te." />
+        <Card>
+          <CardContent className="p-8 text-center text-sm text-muted-foreground">
+            <Shield className="mx-auto mb-3 h-8 w-8 text-muted-foreground/50" />
+            Access Control is managed by your Rem0te administrator.
+            <div className="mt-2">
+              To manage the people in your own business, use <Link href="/users" className="underline">Users</Link>.
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
-  const tenantId: string = me.tenantId ?? '';
-
   return (
-    <div className="p-6 space-y-6 max-w-5xl">
+    <div className="space-y-6">
       <PageHeader
         title="Access Control"
-        description="Manage the permissions hierarchy — tenants, technicians, and customers"
+        description="Three levels: Platform Admin, Business Owner, Business User."
       />
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
+      <Tabs defaultValue="overview">
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="tenants" className="flex items-center gap-1.5">
-            <Building2 className="h-3.5 w-3.5" /> Tenants
-          </TabsTrigger>
-          <TabsTrigger value="technicians" className="flex items-center gap-1.5">
-            <Users className="h-3.5 w-3.5" /> Technicians
-          </TabsTrigger>
-          <TabsTrigger value="customers" className="flex items-center gap-1.5">
-            <Shield className="h-3.5 w-3.5" /> Customers
-          </TabsTrigger>
-          <TabsTrigger value="platform-admins" className="flex items-center gap-1.5">
-            <ShieldCheck className="h-3.5 w-3.5" /> Platform Admins
-          </TabsTrigger>
+          <TabsTrigger value="businesses">Businesses</TabsTrigger>
+          <TabsTrigger value="users">Business Users</TabsTrigger>
+          <TabsTrigger value="admins">Platform Admins</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-6">
-          <OverviewTab me={me as Record<string, unknown>} />
+          <Overview
+            businessCount={businesses.length}
+            userCount={businessUserCount}
+            adminCount={admins.length}
+          />
         </TabsContent>
 
-        <TabsContent value="tenants" className="mt-6">
-          {activeTab === 'tenants' && <TenantsTab isPlatformAdmin={!!me.isPlatformAdmin} />}
+        <TabsContent value="businesses" className="mt-6">
+          <BusinessesTab />
         </TabsContent>
 
-        <TabsContent value="technicians" className="mt-6">
-          {activeTab === 'technicians' && (
-            <TechniciansTab
-              tenantId={tenantId}
-              myUserId={me.sub as string}
-              myRoleType={(me.roleType as string) ?? ''}
-              isPlatformAdmin={!!me.isPlatformAdmin}
-            />
-          )}
+        <TabsContent value="users" className="mt-6">
+          <BusinessUsersTab businesses={businesses} />
         </TabsContent>
 
-        <TabsContent value="customers" className="mt-6">
-          {activeTab === 'customers' && <CustomersTab />}
-        </TabsContent>
-
-        <TabsContent value="platform-admins" className="mt-6">
-          {activeTab === 'platform-admins' && <PlatformAdminsTab myUserId={me.sub as string} />}
+        <TabsContent value="admins" className="mt-6">
+          <PlatformAdminsTab />
         </TabsContent>
       </Tabs>
     </div>

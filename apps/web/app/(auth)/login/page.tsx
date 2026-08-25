@@ -41,13 +41,7 @@ function LoginForm() {
         return;
       }
 
-      const meRes = await authApi.me().catch(() => null);
-      const me = meRes?.data?.data;
-      if (me?.roleType === 'CUSTOMER') {
-        router.push('/portal');
-      } else {
-        router.push(returnTo);
-      }
+      router.push(returnTo);
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??

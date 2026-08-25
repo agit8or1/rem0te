@@ -11,33 +11,61 @@
 // matching common credential patterns (ghp_*, rk_*, etc.) via CSS masking
 // before capture. Never runs against production.
 //
-// Usage:  DATABASE_URL=postgresql://... node scripts/screenshots.mjs
+// Usage:  cd apps/web && DATABASE_URL=postgresql://... node scripts/screenshots.mjs
 
 import { chromium } from 'playwright';
-import { PrismaClient } from '@prisma/client';
-import argon2 from 'argon2';
+import { createRequire } from 'module';
 import { randomBytes } from 'crypto';
 import { mkdir } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
+// Playwright lives in apps/web; Prisma and argon2 live in apps/api. Rather than
+// duplicate either dependency, resolve the API-side ones against the API's own
+// package root.
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const apiRequire = createRequire(path.resolve(HERE, '../../api/package.json'));
+const { PrismaClient } = apiRequire('@prisma/client');
+const argon2 = apiRequire('argon2');
+
 const prisma = new PrismaClient();
 
 const WEB = process.env.WEB_URL ?? 'http://127.0.0.1:3000';
-const OUT_DIR = process.env.OUT_DIR ?? path.resolve(fileURLToPath(import.meta.url), '../../../../docs/screenshots');
+const OUT_DIR = process.env.OUT_DIR ?? path.resolve(HERE, '../../../docs/screenshots');
 const VIEWPORT = { width: 1440, height: 900 };
 
 const PAGES = [
-  { path: '/dashboard',           name: 'dashboard' },
-  { path: '/my-computers',        name: 'my-computers' },
-  { path: '/endpoints',           name: 'computers' },
-  { path: '/endpoints/enroll',    name: 'add-computer' },
-  { path: '/customers',           name: 'companies' },
-  { path: '/users',               name: 'users' },
-  { path: '/sessions',            name: 'sessions' },
-  { path: '/audit',               name: 'audit' },
-  { path: '/connect',             name: 'quick-connect' },
-  { path: '/account',             name: 'account' },
+  { path: '/dashboard',        name: 'dashboard' },
+  { path: '/my-computers',     name: 'my-computers' },
+  { path: '/businesses',       name: 'businesses' },
+  { path: '/admin/access',     name: 'access-control' },
+  { path: '/endpoints',        name: 'computers' },
+  { path: '/endpoints/enroll', name: 'add-computer' },
+  { path: '/users',            name: 'users' },
+  { path: '/sessions',         name: 'sessions' },
+  { path: '/quick-connect',    name: 'quick-connect' },
+  { path: '/audit',            name: 'audit' },
+  { path: '/account',          name: 'account' },
+];
+
+// Captured without signing in — it is the page someone who needs help lands on.
+const PUBLIC_PAGES = [
+  { path: '/quick', name: 'quick-public' },
+];
+
+// Fictional businesses and computers, so the docs show a populated product
+// rather than an empty one. Everything here is torn down afterwards.
+const DEMO_BUSINESSES = [
+  { name: 'ACME Manufacturing', code: 'ACME', city: 'Detroit', email: 'it@acme.example' },
+  { name: 'Smith Accounting',   code: 'SMTH', city: 'Boston',  email: 'admin@smith.example' },
+  { name: 'Northwind Clinic',   code: 'NWND', city: 'Portland', email: 'ops@northwind.example' },
+];
+const DEMO_COMPUTERS = [
+  ['ACME-RECEPTION', 'Windows', 'Windows 11 Pro 23H2', true],
+  ['ACME-CAD-01',    'Windows', 'Windows 11 Pro 23H2', true],
+  ['ACME-SERVER',    'Windows', 'Windows Server 2022', false],
+  ['SMITH-FRONTPC',  'Windows', 'Windows 11 Home',     true],
+  ['NWND-NURSE-02',  'Windows', 'Windows 10 Pro 22H2', false],
 ];
 
 async function main() {
@@ -58,6 +86,83 @@ async function main() {
     },
   });
   console.log(`Seeded ${email}`);
+
+  // ── Demo data ────────────────────────────────────────────────────────────
+  const tenant = await prisma.tenant.findFirst({ where: { isActive: true }, orderBy: { createdAt: 'asc' } });
+  if (!tenant) throw new Error('no platform container — run the seed first');
+
+  const demoBusinessIds = [];
+  const demoUserIds = [];
+  const demoEndpointIds = [];
+
+  for (const b of DEMO_BUSINESSES) {
+    const biz = await prisma.customer.create({
+      data: { ...b, tenantId: tenant.id, isActive: true, quickConnectEnabled: true },
+    });
+    demoBusinessIds.push(biz.id);
+  }
+
+  const ownerRole = await prisma.role.findFirst({ where: { tenantId: tenant.id, type: 'BUSINESS_OWNER' } });
+  const userRole  = await prisma.role.findFirst({ where: { tenantId: tenant.id, type: 'BUSINESS_USER' } });
+  const demoPeople = [
+    ['dana.owner',  'Dana',  'Whitfield', 0, ownerRole, []],
+    ['sam.tech',    'Sam',   'Okoye',     0, userRole,  ['computers:view', 'computers:connect', 'support:quick_connect']],
+    ['riley.desk',  'Riley', 'Fernandez', 0, userRole,  ['computers:view', 'computers:connect']],
+    ['jo.owner',    'Jo',    'Patel',     1, ownerRole, []],
+    ['casey.front', 'Casey', 'Lindqvist', 2, userRole,  ['computers:view']],
+  ];
+  const stubHash = await argon2.hash(randomBytes(24).toString('hex'), { type: argon2.argon2id });
+  for (const [handle, first, last, bizIdx, role, caps] of demoPeople) {
+    if (!role) continue;
+    const u = await prisma.user.create({
+      data: {
+        email: `${handle}-${suffix}@example.invalid`,
+        passwordHash: stubHash, firstName: first, lastName: last, status: 'ACTIVE',
+      },
+    });
+    demoUserIds.push(u.id);
+    await prisma.membership.create({
+      data: {
+        userId: u.id, tenantId: tenant.id, customerId: demoBusinessIds[bizIdx],
+        roleId: role.id, capabilities: caps, isActive: true,
+      },
+    });
+  }
+
+  for (const [name, platform, osVersion, online] of DEMO_COMPUTERS) {
+    const bizIdx = name.startsWith('ACME') ? 0 : name.startsWith('SMITH') ? 1 : 2;
+    const ep = await prisma.endpoint.create({
+      data: {
+        tenantId: tenant.id, customerId: demoBusinessIds[bizIdx],
+        name, hostname: name.toLowerCase(), platform, osVersion,
+        status: 'ACTIVE', isManaged: true, isOnline: online,
+        lastSeenAt: new Date(Date.now() - (online ? 30_000 : 3 * 3600_000)),
+        accessMode: 'COMPANY_WIDE',
+        rustdeskNode: {
+          create: {
+            tenantId: tenant.id,
+            rustdeskId: String(100000000 + Math.floor(Math.random() * 800000000)),
+            platform, hostname: name.toLowerCase(), lastSeenAt: new Date(),
+          },
+        },
+      },
+    });
+    demoEndpointIds.push(ep.id);
+    // The screenshot admin needs a grant so "My Computers" is not empty.
+    await prisma.computerAccess.create({
+      data: { tenantId: tenant.id, endpointId: ep.id, userId: admin.id, grantedBy: admin.id },
+    });
+  }
+  console.log(`Seeded ${demoBusinessIds.length} businesses, ${demoUserIds.length} people, ${demoEndpointIds.length} computers`);
+
+  // Quick Connect must be on for its pages to render anything useful.
+  const priorQuickConnect =
+    (await prisma.platformSettings.findUnique({ where: { id: 'singleton' } }))?.quickConnectEnabled ?? false;
+  await prisma.platformSettings.upsert({
+    where: { id: 'singleton' },
+    update: { quickConnectEnabled: true },
+    create: { id: 'singleton', quickConnectEnabled: true },
+  });
 
   try {
     const browser = await chromium.launch({ headless: true });
@@ -108,11 +213,57 @@ async function main() {
       }
     }
 
+    // ── Public pages, captured signed-OUT in a clean context ──────────────
+    for (const theme of ['light', 'dark']) {
+      const anon = await browser.newContext({ viewport: VIEWPORT, colorScheme: theme, ignoreHTTPSErrors: true });
+      const anonPage = await anon.newPage();
+      for (const p of PUBLIC_PAGES) {
+        try {
+          await anonPage.goto(`${WEB}${p.path}`, { waitUntil: 'networkidle', timeout: 20_000 });
+        } catch {
+          console.log(`  · ${p.name}/${theme}: navigation slow, continuing`);
+        }
+        await anonPage.evaluate((t) => {
+          const html = document.documentElement;
+          html.classList.remove('light', 'dark');
+          html.classList.add(t);
+        }, theme);
+        await anonPage.waitForTimeout(900);
+        const file = path.join(OUT_DIR, `${p.name}-${theme}.png`);
+        await anonPage.screenshot({ path: file, fullPage: true });
+        console.log(`  ✓ ${p.name}/${theme} → ${file}`);
+      }
+      await anon.close();
+    }
+
     await browser.close();
     console.log('\n✓ Screenshots regenerated.');
   } finally {
-    // Cleanup — remove the throwaway user + any residue.
-    try { await prisma.user.delete({ where: { id: admin.id } }); } catch {}
+    // Cleanup — remove every throwaway record, in FK-safe order.
+    try {
+      await prisma.platformSettings.update({
+        where: { id: 'singleton' }, data: { quickConnectEnabled: priorQuickConnect },
+      });
+      const allUsers = [admin.id, ...demoUserIds];
+      await prisma.computerAccess.deleteMany({ where: { userId: { in: allUsers } } });
+      await prisma.connectionGrant.deleteMany({ where: { userId: { in: allUsers } } });
+      await prisma.supportSession.deleteMany({ where: { technicianId: { in: allUsers } } });
+      await prisma.launcherToken.deleteMany({ where: { userId: { in: allUsers } } });
+      await prisma.activityLog.deleteMany({ where: { actorId: { in: allUsers } } });
+      await prisma.membership.deleteMany({ where: { userId: { in: allUsers } } });
+      await prisma.invitation.deleteMany({ where: { invitedById: { in: allUsers } } });
+      await prisma.rustdeskNode.deleteMany({ where: { endpointId: { in: demoEndpointIds } } });
+      await prisma.endpoint.deleteMany({ where: { id: { in: demoEndpointIds } } });
+      await prisma.deviceClaimToken.deleteMany({ where: { customerId: { in: demoBusinessIds } } });
+      await prisma.activityLog.updateMany({
+        where: { customerId: { in: demoBusinessIds } }, data: { customerId: null },
+      });
+      await prisma.customer.deleteMany({ where: { id: { in: demoBusinessIds } } });
+      await prisma.user.deleteMany({ where: { id: { in: allUsers } } });
+      console.log('Demo data removed.');
+    } catch (e) {
+      console.error('Cleanup failed — inspect manually:', e.message);
+    }
     await prisma.$disconnect();
   }
 }

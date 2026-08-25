@@ -2,7 +2,7 @@
 
 import { useState, useEffect, FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { authApi, tenantsApi } from '@/lib/api-client';
+import { authApi, platformApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,7 +23,7 @@ export default function BrandingPage() {
 
   const { data: tenant } = useQuery({
     queryKey: ['tenant', tenantId],
-    queryFn: () => tenantsApi.get(tenantId).then((r) => r.data?.data),
+    queryFn: () => platformApi.get(tenantId).then((r) => r.data?.data),
     enabled: !!tenantId,
   });
 
@@ -54,7 +54,7 @@ export default function BrandingPage() {
 
   const updateMutation = useMutation({
     mutationFn: () =>
-      tenantsApi.updateBranding(tenantId, {
+      platformApi.updateBranding(tenantId, {
         portalTitle: form.portalTitle || undefined,
         logoUrl: form.logoUrl || null,
         accentColor: form.accentColor || undefined,

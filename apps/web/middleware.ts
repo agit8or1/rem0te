@@ -1,13 +1,21 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-const PUBLIC_PATHS = ['/login', '/mfa', '/api/', '/_next/', '/favicon.ico', '/download'];
+const PUBLIC_PREFIXES = ['/login', '/mfa', '/api/', '/_next/', '/favicon.ico', '/download'];
+
+// `/quick` is the public "I need remote support" page. It must stay reachable
+// without an account — requiring one to receive a support session would defeat
+// the point — and it exposes nothing from the console.
+//
+// Matched exactly, NOT as a prefix: `/quick-connect` and `/quickstart` are
+// signed-in pages and a prefix match would quietly open them up.
+const PUBLIC_EXACT = ['/quick'];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Allow public paths
-  if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
+  if (PUBLIC_EXACT.includes(pathname) || PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {
     return NextResponse.next();
   }
 

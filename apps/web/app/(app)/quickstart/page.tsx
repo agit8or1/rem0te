@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { authApi, tenantsApi } from '@/lib/api-client';
+import { authApi, platformApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -29,7 +29,7 @@ export default function QuickstartPage() {
 
   const { data: tenantData } = useQuery({
     queryKey: ['tenant', tenantId],
-    queryFn: () => tenantsApi.get(tenantId).then((r) => r.data?.data),
+    queryFn: () => platformApi.get(tenantId).then((r) => r.data?.data),
     enabled: !!tenantId,
   });
 
@@ -124,7 +124,7 @@ export default function QuickstartPage() {
             <ChevronRight className="h-4 w-4 ml-1" />
           </Button>
         ) : (
-          <Link href="/connect">
+          <Link href="/quick-connect">
             <Button>
               <Link2 className="h-4 w-4 mr-2" />
               Go to Connect
@@ -244,7 +244,7 @@ function StepInstallRustDesk({
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          As a technician, you need RustDesk installed on your own computer to connect to remote
+          To connect to a remote computer you need RustDesk installed on your own machine, to reach
           devices.
         </p>
 
@@ -400,7 +400,7 @@ function StepReady() {
         </ul>
 
         <div className="flex flex-wrap gap-3 pt-2">
-          <Link href="/connect">
+          <Link href="/quick-connect">
             <Button>
               <Link2 className="h-4 w-4 mr-2" />
               Connect to a Device

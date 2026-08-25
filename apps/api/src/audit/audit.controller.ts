@@ -3,19 +3,29 @@ import { ActivityAction } from '@prisma/client';
 import { AuditService } from './audit.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { JwtPayload } from '../auth/strategies/jwt.strategy';
+import { RequireCapability } from '../common/decorators/require-capability.decorator';
+import { Actor } from '../common/decorators/actor.decorator';
+import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
+import { CAP } from '../rbac/capabilities';
 
 @Controller('audit')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class AuditController {
-  constructor(private readonly audit: AuditService) {}
+  constructor(
+    private readonly audit: AuditService,
+    private readonly acl: AccessControlService,
+  ) {}
 
+  /**
+   * Business audit log. A Platform Admin sees every event (and may narrow to
+   * one business with `?businessId=`); everyone else sees only their own
+   * business, regardless of what they ask for.
+   */
   @Get()
-  @RequirePermissions('audit:read')
+  @RequireCapability(CAP.AUDIT_VIEW)
   async getLogs(
-    @CurrentUser() user: JwtPayload,
+    @Actor() actor: ActorContext,
+    @Query('businessId') businessId?: string,
     @Query('action') action?: string,
     @Query('actorId') actorId?: string,
     @Query('resource') resource?: string,
@@ -24,12 +34,10 @@ export class AuditController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    if (!user.tenantId) {
-      return { success: false, message: 'No tenant context' };
-    }
+    const scope = this.acl.resolveScope(actor, businessId);
 
     const result = await this.audit.query({
-      tenantId: user.tenantId,
+      customerId: scope ?? undefined,
       action: action as ActivityAction | undefined,
       actorId,
       resource,
@@ -39,6 +47,6 @@ export class AuditController {
       limit: limit ? parseInt(limit, 10) : 50,
     });
 
-    return { success: true, data: result };
+    return { success: true, data: { ...result, scope: scope ? 'business' : 'platform' } };
   }
 }

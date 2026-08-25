@@ -5,10 +5,8 @@ import { SecurityController } from './security.controller';
 import { SecurityService } from './security.service';
 import { UpdateController } from './update.controller';
 import { UpdateService } from './update.service';
-import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
-  imports: [PrismaModule],
   controllers: [AdminController, SecurityController, UpdateController],
   providers: [AdminService, SecurityService, UpdateService],
 })

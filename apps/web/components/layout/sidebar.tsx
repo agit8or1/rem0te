@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
   Monitor,
@@ -10,12 +10,10 @@ import {
   Settings,
   LogOut,
   Shield,
-  Link2,
+  Zap,
   Sun,
   Moon,
   Download,
-  Sparkles,
-  HelpCircle,
   ShieldCheck,
   Info,
   UserCircle,
@@ -23,8 +21,11 @@ import {
   Star,
   Users,
   Globe,
+  Building2,
   MonitorCheck,
   MonitorX,
+  RefreshCw,
+  Activity,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -34,61 +35,75 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import { authApi, tenantsApi } from '@/lib/api-client';
-import { useRouter } from 'next/navigation';
+import { authApi, platformApi } from '@/lib/api-client';
 import { useQuery } from '@tanstack/react-query';
 import { useTheme } from '@/lib/theme-provider';
+import { usePermissions, CAP, type Capability } from '@/lib/auth';
 
-// Employee items — visible to every authenticated user.
-const EMPLOYEE_NAV = [
+type NavItem = {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  /** Omit to always show; otherwise the user must hold this capability. */
+  cap?: Capability;
+  /** Platform Admin only. */
+  platformOnly?: boolean;
+};
+
+/** Always visible — every signed-in person has some computers of their own. */
+const MY_NAV: NavItem[] = [
   { href: '/my-computers', label: 'My Computers', icon: Monitor },
 ];
 
-// Admin items — visible when the caller can manage the company.
-const ADMIN_NAV = [
+/**
+ * The working section. Each entry declares the capability it needs, so a
+ * Business User only ever sees the parts they can actually use — no
+ * hand-maintained per-role menus.
+ */
+const MAIN_NAV: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/endpoints', label: 'Computers', icon: MonitorCheck },
-  { href: '/endpoints/enroll', label: 'Add Computer', icon: Download },
-  { href: '/users', label: 'Users', icon: Users },
-  { href: '/customers', label: 'Companies', icon: Globe },
-  { href: '/sessions', label: 'Sessions', icon: PlayCircle },
-  { href: '/connect', label: 'Quick Connect', icon: Link2 },
-  { href: '/audit', label: 'Audit Log', icon: FileText },
-  { href: '/settings', label: 'Settings', icon: Settings },
+  { href: '/businesses', label: 'Businesses', icon: Building2, platformOnly: true },
+  { href: '/endpoints', label: 'Computers', icon: MonitorCheck, cap: CAP.COMPUTERS_VIEW },
+  { href: '/users', label: 'Users', icon: Users, cap: CAP.USERS_VIEW },
+  { href: '/sessions', label: 'Sessions', icon: PlayCircle, cap: CAP.SESSIONS_VIEW },
+  { href: '/quick-connect', label: 'Quick Connect', icon: Zap, cap: CAP.QUICK_CONNECT },
+  { href: '/endpoints/enroll', label: 'Downloads', icon: Download, cap: CAP.COMPUTERS_ADD },
+  { href: '/audit', label: 'Audit Log', icon: FileText, cap: CAP.AUDIT_VIEW },
+];
+
+/**
+ * Operator-only infrastructure.
+ *
+ * "Updates" points at /about because that is where the version check, update
+ * runner and changelog actually live; /admin/status is host health (CPU,
+ * memory, systemd units), which is a different question.
+ */
+const PLATFORM_NAV: NavItem[] = [
+  { href: '/admin/access', label: 'Access Control', icon: ShieldCheck },
+  { href: '/admin/security', label: 'Security', icon: Shield },
+  { href: '/admin/unassigned', label: 'Unassigned Computers', icon: MonitorX },
+  { href: '/admin/status', label: 'System Status', icon: Activity },
+  { href: '/about', label: 'Updates', icon: RefreshCw },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
+  const { user, can, isPlatformAdmin, isBusinessOwner, accessLevel, businessName } = usePermissions();
 
-  const { data: me } = useQuery({
-    queryKey: ['me'],
-    queryFn: () => authApi.me().then((r) => r.data?.data),
+  // Branding lives on the platform record and is readable only by the
+  // operator; everyone else just gets the default mark.
+  const { data: platform } = useQuery({
+    queryKey: ['platform', user?.tenantId],
+    queryFn: () => platformApi.get(user!.tenantId!).then((r) => r.data?.data),
+    enabled: !!user?.tenantId && isPlatformAdmin,
   });
 
-  const tenantId: string = me?.tenantId ?? '';
-
-  const { data: tenantData } = useQuery({
-    queryKey: ['tenant', tenantId],
-    queryFn: () => tenantsApi.get(tenantId).then((r) => r.data?.data),
-    enabled: !!tenantId,
-  });
-
-  const tenant = tenantData as Record<string, unknown> | undefined;
-  const settings = tenant?.settings as Record<string, unknown> | undefined;
-  const branding = tenant?.branding as Record<string, unknown> | null | undefined;
-  const showDownloadPage = settings?.showDownloadPage !== false; // default true
+  const branding = (platform as Record<string, unknown> | undefined)?.branding as Record<string, unknown> | null | undefined;
   const portalTitle = (branding?.portalTitle as string | null) || 'Rem0te';
   const logoUrl = branding?.logoUrl as string | null | undefined;
   const accentColor = branding?.accentColor as string | null | undefined;
-
-  // Any admin role (platform, tenant owner, tenant admin, billing) sees the
-  // Administration section. Regular employees see only "My Computers".
-  const roleType = (me as { roleType?: string } | undefined)?.roleType ?? '';
-  const isAdmin =
-    (me as { isPlatformAdmin?: boolean } | undefined)?.isPlatformAdmin === true ||
-    ['TENANT_OWNER', 'TENANT_ADMIN', 'BILLING_ADMIN', 'TECHNICIAN'].includes(roleType);
 
   async function handleLogout() {
     try {
@@ -98,20 +113,51 @@ export function Sidebar() {
     }
   }
 
-  function cycleTheme() {
-    if (theme === 'light') setTheme('dark');
-    else if (theme === 'dark') setTheme('system');
-    else setTheme('light');
+  // A toggle should toggle. This used to cycle light → dark → system, so getting
+  // from light back to dark took two clicks and landed on "system" in between —
+  // which looks like nothing happened whenever the OS preference matches.
+  //
+  // Flip against `resolvedTheme` (what is actually on screen) rather than the
+  // stored preference, so one click always visibly changes something.
+  function toggleTheme() {
+    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
   }
 
-  const ThemeIcon = theme === 'light' ? Sun : theme === 'dark' ? Moon : Monitor;
-  const themeLabel = theme === 'light' ? 'Light' : theme === 'dark' ? 'Dark' : 'System';
+  const ThemeIcon = resolvedTheme === 'dark' ? Moon : Sun;
+  const themeLabel = resolvedTheme === 'dark' ? 'Dark' : 'Light';
+
+  function visible(item: NavItem) {
+    if (item.platformOnly) return isPlatformAdmin;
+    if (!item.cap) return true;
+    return can(item.cap);
+  }
+
+  function navLink(item: NavItem) {
+    const { href, label, icon: Icon } = item;
+    const active = pathname === href
+      || (href !== '/settings' && href !== '/endpoints' && pathname.startsWith(`${href}/`));
+    return (
+      <Link
+        key={href}
+        href={href}
+        className={cn(
+          'flex items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+          active
+            ? 'bg-primary text-primary-foreground'
+            : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+        )}
+      >
+        <Icon className="h-4 w-4" />
+        {label}
+      </Link>
+    );
+  }
 
   function supportMenu() {
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors">
+          <button className="flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors">
             <Heart className="h-4 w-4 text-red-500 fill-red-500" />
             Support Rem0te
           </button>
@@ -141,26 +187,8 @@ export function Sidebar() {
     );
   }
 
-  function navLink(href: string, label: string, Icon: React.ComponentType<{ className?: string }>, external = false) {
-    const active = !external && (pathname === href || (href !== '/settings' && pathname.startsWith(`${href}/`)));
-    const linkProps = external ? { target: '_blank', rel: 'noopener noreferrer' } : {};
-    return (
-      <Link
-        key={href}
-        href={href}
-        {...linkProps}
-        className={cn(
-          'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-          active
-            ? 'bg-primary text-primary-foreground'
-            : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-        )}
-      >
-        <Icon className="h-4 w-4" />
-        {label}
-      </Link>
-    );
-  }
+  const mainItems = MAIN_NAV.filter(visible);
+  const sectionLabel = isPlatformAdmin ? 'Administration' : businessName ?? 'My Business';
 
   return (
     <aside className="flex h-screen w-60 flex-col border-r bg-background">
@@ -179,49 +207,63 @@ export function Sidebar() {
         ) : (
           <Shield className={`h-5 w-5 ${accentColor ? 'text-white' : 'text-primary'}`} />
         )}
-        <span className={`font-semibold text-sm truncate ${accentColor ? 'text-white' : ''}`}>
-          {portalTitle}
-        </span>
+        <div className="min-w-0 leading-tight">
+          <div className={`font-semibold text-sm truncate ${accentColor ? 'text-white' : ''}`}>
+            {portalTitle}
+          </div>
+          {accessLevel && (
+            <div className={`text-[10px] uppercase tracking-wider truncate ${accentColor ? 'text-white/70' : 'text-muted-foreground/70'}`}>
+              {accessLevel}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Nav — Employees see "My Computers"; admins see the full toolset. */}
-      <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1">
-        {EMPLOYEE_NAV.map(({ href, label, icon: Icon }) => navLink(href, label, Icon))}
-        {isAdmin && (
+      <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
+        {MY_NAV.map(navLink)}
+
+        {mainItems.length > 0 && (
           <>
-            <div className="pt-4 pb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-              Administration
+            <div className="pt-3 pb-0.5 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 truncate">
+              {sectionLabel}
             </div>
-            {ADMIN_NAV.map(({ href, label, icon: Icon }) => navLink(href, label, Icon))}
+            {mainItems.map(navLink)}
+            {/* A Business Owner configures their own business; the platform
+                operator configures the platform. Same slot, different scope. */}
+            {isBusinessOwner && navLink({
+              href: '/settings',
+              label: isPlatformAdmin ? 'Settings' : 'Business Settings',
+              icon: Settings,
+            })}
           </>
         )}
-        {me?.isPlatformAdmin && (
+
+        {isPlatformAdmin && (
           <>
-            <div className="pt-4 pb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+            <div className="pt-3 pb-0.5 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
               Platform
             </div>
-            {navLink('/admin/security', 'Security', ShieldCheck)}
-            {navLink('/admin/unassigned', 'Unassigned Computers', MonitorX)}
+            {PLATFORM_NAV.map(navLink)}
           </>
         )}
       </nav>
 
-      {/* Footer */}
-      <div className="border-t p-2 space-y-1">
-        {navLink('/account', 'My Account', UserCircle)}
-        {navLink('/about', 'About', Info)}
+      <div className="border-t p-2 space-y-0.5">
+        {navLink({ href: '/account', label: 'My Account', icon: UserCircle })}
+        {/* Platform Admins reach the same page as "Updates" above. */}
+        {!isPlatformAdmin && navLink({ href: '/about', label: 'About', icon: Info })}
         {supportMenu()}
         <button
-          onClick={cycleTheme}
-          className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-          title={`Theme: ${themeLabel} (click to cycle)`}
+          onClick={toggleTheme}
+          className="flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+          title={`${themeLabel} theme — click to switch to ${resolvedTheme === 'dark' ? 'light' : 'dark'}`}
         >
           <ThemeIcon className="h-4 w-4" />
           {themeLabel} theme
         </button>
         <button
           onClick={handleLogout}
-          className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+          className="flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
         >
           <LogOut className="h-4 w-4" />
           Sign out

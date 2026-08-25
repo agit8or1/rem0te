@@ -30,7 +30,6 @@ export const authApi = {
   logout: () => api.post('/auth/logout'),
   me: () => api.get('/auth/me'),
   verifyMfa: (code: string) => api.post('/auth/mfa/verify', { code }),
-  switchTenant: (tenantId: string) => api.post('/auth/switch-tenant', { tenantId }),
   profile: () => api.get('/auth/profile'),
   updateProfile: (data: {
     firstName?: string; lastName?: string; email?: string;
@@ -108,42 +107,55 @@ export const launcherApi = {
   revokeToken: (id: string) => api.patch(`/launcher/token/${id}/revoke`),
 };
 
-// ─── Customers ───────────────────────────────────────────────────────────────
-export const customersApi = {
-  list: (params?: Record<string, string>) => api.get('/customers', { params }),
-  get: (id: string) => api.get(`/customers/${id}`),
-  create: (data: Record<string, unknown>) => api.post('/customers', data),
-  update: (id: string, data: Record<string, unknown>) => api.patch(`/customers/${id}`, data),
-  archive: (id: string) => api.patch(`/customers/${id}/archive`),
-  sites: (id: string) => api.get(`/customers/${id}/sites`),
-  invitePortalUser: (id: string, data: Record<string, unknown>) => api.post(`/customers/${id}/portal/invite`, data),
-  togglePortal: (id: string, enabled: boolean) => api.patch(`/customers/${id}/portal`, { enabled }),
-  listPortalUsers: (id: string) => api.get(`/customers/${id}/portal/users`),
+// ─── Businesses ──────────────────────────────────────────────────────────────
+// A Business is a customer organisation, and it is the security boundary:
+// every call below is scoped server-side to the caller's own business unless
+// they are a Platform Admin.
+export const businessesApi = {
+  list: (params?: Record<string, string>) => api.get('/businesses', { params }),
+  get: (id: string) => api.get(`/businesses/${id}`),
+  create: (data: Record<string, unknown>) => api.post('/businesses', data),
+  update: (id: string, data: Record<string, unknown>) => api.patch(`/businesses/${id}`, data),
+  archive: (id: string) => api.patch(`/businesses/${id}/archive`),
+  remove: (id: string) => api.delete(`/businesses/${id}`),
+  sites: (id: string) => api.get(`/businesses/${id}/sites`),
+
+  // People
+  listUsers: (id: string) => api.get(`/businesses/${id}/users`),
+  addUser: (id: string, data: {
+    email: string; firstName?: string; lastName?: string;
+    level: 'BUSINESS_OWNER' | 'BUSINESS_USER'; capabilities?: string[];
+  }) => api.post(`/businesses/${id}/users`, data),
+  setUserCapabilities: (id: string, userId: string, capabilities: string[]) =>
+    api.patch(`/businesses/${id}/users/${userId}/capabilities`, { capabilities }),
+  setUserActive: (id: string, userId: string, active: boolean) =>
+    api.patch(`/businesses/${id}/users/${userId}/active`, { active }),
+  resetUserAccess: (id: string, userId: string) =>
+    api.post(`/businesses/${id}/users/${userId}/reset-access`),
+  removeUser: (id: string, userId: string) =>
+    api.delete(`/businesses/${id}/users/${userId}`),
+
+  // The capability vocabulary, so the permission checkboxes stay in step with
+  // the server instead of being duplicated in the UI.
+  capabilityCatalog: () => api.get('/businesses/capability-catalog'),
 };
 
 // ─── Sites ───────────────────────────────────────────────────────────────────
 export const sitesApi = {
-  list: (customerId?: string) =>
-    api.get('/sites', { params: customerId ? { customerId } : {} }),
+  list: (businessId?: string) =>
+    api.get('/sites', { params: businessId ? { businessId } : {} }),
   get: (id: string) => api.get(`/sites/${id}`),
   create: (data: Record<string, unknown>) => api.post('/sites', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/sites/${id}`, data),
   delete: (id: string) => api.delete(`/sites/${id}`),
 };
 
-// ─── Users / Members ─────────────────────────────────────────────────────────
+// ─── Users ───────────────────────────────────────────────────────────────────
 export const usersApi = {
-  listMembers: (_tenantId?: string) => api.get('/users'),
-  listMembersOfTenant: (tenantId: string) => api.get(`/tenants/${tenantId}/members`),
-  invite: (tenantId: string, data: Record<string, unknown>) =>
-    api.post(`/tenants/${tenantId}/invite`, data),
-  assignRole: (tenantId: string, userId: string, roleId: string) =>
-    api.patch(`/tenants/${tenantId}/members/${userId}/role`, { roleId }),
-  listRoles: (tenantId: string) => api.get(`/tenants/${tenantId}/roles`),
-  suspend: (_tenantId: string, userId: string) =>
-    api.patch(`/users/${userId}/suspend`),
-  activate: (_tenantId: string, userId: string) =>
-    api.patch(`/users/${userId}/activate`),
+  list: (businessId?: string) =>
+    api.get('/users', { params: businessId ? { businessId } : {} }),
+  suspend: (userId: string) => api.patch(`/users/${userId}/suspend`),
+  activate: (userId: string) => api.patch(`/users/${userId}/activate`),
   updateProfile: (userId: string, data: {
     firstName?: string; lastName?: string; email?: string;
     phone?: string; jobTitle?: string;
@@ -152,40 +164,61 @@ export const usersApi = {
   }) => api.patch(`/users/${userId}`, data),
   resetPassword: (userId: string, password: string) =>
     api.post(`/users/${userId}/reset-password`, { password }),
-  changeRole: (userId: string, roleId: string) =>
-    api.patch(`/users/${userId}/role`, { roleId }),
-  remove: (userId: string) =>
-    api.delete(`/users/${userId}`),
-  setCustomer: (userId: string, customerId: string | null) =>
-    api.patch(`/users/${userId}/customer`, { customerId }),
-  resetMfa: (userId: string) =>
-    api.post(`/users/${userId}/mfa/reset`),
-  listPlatformAdmins: () =>
-    api.get('/users/platform-admins'),
-  findByEmail: (email: string) =>
-    api.get('/users/find', { params: { email } }),
+  /** Move between the two business levels. Promotion is Platform Admin only. */
+  setLevel: (userId: string, level: 'BUSINESS_OWNER' | 'BUSINESS_USER') =>
+    api.patch(`/users/${userId}/level`, { level }),
+  setCapabilities: (userId: string, capabilities: string[]) =>
+    api.patch(`/users/${userId}/capabilities`, { capabilities }),
+  setBusiness: (userId: string, businessId: string | null) =>
+    api.patch(`/users/${userId}/business`, { businessId }),
+  remove: (userId: string) => api.delete(`/users/${userId}`),
+  resetMfa: (userId: string) => api.post(`/users/${userId}/mfa/reset`),
+  listPlatformAdmins: () => api.get('/users/platform-admins'),
+  findByEmail: (email: string) => api.get('/users/find', { params: { email } }),
   setPlatformAdmin: (userId: string, enabled: boolean) =>
     api.patch(`/users/${userId}/platform-admin`, { enabled }),
 };
 
-// ─── Tenants ─────────────────────────────────────────────────────────────────
-export const tenantsApi = {
-  list: () => api.get('/tenants'),
-  get: (id: string) => api.get(`/tenants/${id}`),
-  create: (data: Record<string, unknown>) => api.post('/tenants', data),
-  update: (id: string, data: Record<string, unknown>) => api.patch(`/tenants/${id}`, data),
+// ─── Platform configuration ──────────────────────────────────────────────────
+// Branding, RustDesk server settings, MFA policy, feature switches.
+// Platform Admin only.
+export const platformApi = {
+  list: () => api.get('/platform'),
+  get: (id: string) => api.get(`/platform/${id}`),
+  update: (id: string, data: Record<string, unknown>) => api.patch(`/platform/${id}`, data),
   updateBranding: (id: string, data: Record<string, unknown>) =>
-    api.patch(`/tenants/${id}/branding`, data),
+    api.patch(`/platform/${id}/branding`, data),
   uploadLogo: (id: string, file: File) => {
     const form = new FormData();
     form.append('file', file);
-    return api.post(`/tenants/${id}/branding/logo`, form, {
+    return api.patch(`/platform/${id}/branding/logo`, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
   updateSettings: (id: string, data: Record<string, unknown>) =>
-    api.patch(`/tenants/${id}/settings`, data),
-  listMembers: (id: string) => api.get(`/tenants/${id}/members`),
+    api.patch(`/platform/${id}/settings`, data),
+
+  // Platform-wide feature switches — the Quick Connect master switch lives here.
+  getSettings: () => api.get('/admin/platform-settings'),
+  saveSettings: (data: {
+    quickConnectEnabled?: boolean;
+    quickConnectWindows?: boolean;
+    quickConnectMacos?: boolean;
+    quickConnectLinux?: boolean;
+  }) => api.patch('/admin/platform-settings', data),
+};
+
+// ─── Quick Connect ───────────────────────────────────────────────────────────
+// Temporary support access to a machine that is NOT an enrolled managed
+// computer. The remote person reads out the ID and password their Quick
+// Connect client displays; Rem0te never stores that password.
+export const quickConnectApi = {
+  status: () => api.get('/quick-connect/status'),
+  connect: (data: { rustdeskId: string; password: string; contactName?: string; issueDescription?: string }) =>
+    api.post('/quick-connect/connect', data),
+  endSession: (id: string, result?: 'completed' | 'failed' | 'cancelled') =>
+    api.post(`/quick-connect/sessions/${id}/end`, result ? { result } : {}),
+  sessions: (params?: Record<string, string>) => api.get('/quick-connect/sessions', { params }),
 };
 
 // ─── Audit ───────────────────────────────────────────────────────────────────
@@ -204,7 +237,10 @@ export const enrollmentApi = {
 export const adminApi = {
   status: () => api.get('/admin/status'),
   listUnassigned: () => api.get('/admin/unassigned-devices'),
-  assignDevice: (id: string, tenantId: string) => api.post(`/admin/unassigned-devices/${id}/assign`, { tenantId }),
+  assignDevice: (id: string, businessId: string) =>
+    api.post(`/admin/unassigned-devices/${id}/assign`, { businessId }),
+  /** Global search — scoped to the caller's business unless Platform Admin. */
+  search: (q: string) => api.get('/admin/search', { params: { q } }),
 };
 
 // ─── Update ───────────────────────────────────────────────────────────────────
@@ -235,15 +271,6 @@ export const securityApi = {
   runAuditFix: (force = false) => api.post('/admin/security/audit/fix', { force }),
   getTls: () => api.get('/admin/security/tls'),
   renewTls: () => api.post('/admin/security/tls/renew'),
-};
-
-// ─── Portal (customer-facing) ─────────────────────────────────────────────
-export const portalApi = {
-  me: () => api.get('/portal/me'),
-  endpoints: () => api.get('/portal/endpoints'),
-  sessions: () => api.get('/portal/sessions'),
-  requestSupport: (data: Record<string, unknown>) => api.post('/portal/request-support', data),
-  connect: (endpointId: string) => api.post('/portal/connect', { endpointId }),
 };
 
 // ─── Notes ───────────────────────────────────────────────────────────────────

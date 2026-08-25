@@ -5,6 +5,7 @@ import { APP_GUARD, APP_FILTER } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { PermissionsGuard } from './common/guards/permissions.guard';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { CapabilitiesGuard } from './common/guards/capabilities.guard';
 
 import configuration from './config/configuration';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
@@ -16,7 +17,7 @@ import { RbacModule } from './rbac/rbac.module';
 import { AuditModule } from './audit/audit.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { UsersModule } from './users/users.module';
-import { CustomersModule } from './customers/customers.module';
+import { BusinessesModule } from './businesses/businesses.module';
 import { SitesModule } from './sites/sites.module';
 import { EndpointsModule } from './endpoints/endpoints.module';
 import { SessionsModule } from './sessions/sessions.module';
@@ -26,9 +27,10 @@ import { NotesModule } from './notes/notes.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { AdminModule } from './admin/admin.module';
 import { PublicModule } from './public/public.module';
-import { PortalModule } from './portal/portal.module';
 import { ApiKeysModule } from './apikeys/apikeys.module';
 import { PublicApiModule } from './public-api/public-api.module';
+import { PlatformModule } from './platform/platform.module';
+import { QuickConnectModule } from './quick-connect/quick-connect.module';
 
 @Module({
   imports: [
@@ -56,7 +58,7 @@ import { PublicApiModule } from './public-api/public-api.module';
     MfaModule,
     TenantsModule,
     UsersModule,
-    CustomersModule,
+    BusinessesModule,
     SitesModule,
     EndpointsModule,
     SessionsModule,
@@ -66,9 +68,10 @@ import { PublicApiModule } from './public-api/public-api.module';
     DashboardModule,
     AdminModule,
     PublicModule,
-    PortalModule,
     ApiKeysModule,
     PublicApiModule,
+    PlatformModule,
+    QuickConnectModule,
   ],
   providers: [
     {
@@ -82,6 +85,10 @@ import { PublicApiModule } from './public-api/public-api.module';
     {
       provide: APP_GUARD,
       useClass: PermissionsGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: CapabilitiesGuard,
     },
     {
       provide: APP_FILTER,

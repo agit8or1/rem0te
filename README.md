@@ -1,13 +1,13 @@
 # Rem0te 🐾
 
 > Secure self-hosted remote access for businesses.
-> Users sign in and connect to the company computers they've been granted access to. That's it.
+> Users sign in and connect to the business computers they've been granted access to. That's it.
 > Managed by **Luna** — a very good German Shepherd Dog.
 
 ⭐ If Rem0te is useful to you, a star helps others find it!
 
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te/stargazers)
-[![Version](https://img.shields.io/badge/version-0.6.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.8.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![Issues](https://img.shields.io/github/issues/agit8or1/rem0te)](https://github.com/agit8or1/rem0te/issues)
 [![License](https://img.shields.io/github/license/agit8or1/rem0te)](LICENSE)
 
@@ -15,9 +15,9 @@
 
 ## What Rem0te is (and isn't)
 
-**Rem0te is:** a business remote-access product. One Rem0te operator hosts the platform; many companies buy access; each company's administrators create users and register computers, and each user only sees the computers they've been assigned to.
+**Rem0te is:** a business remote-access product. One Rem0te operator hosts the platform and creates customer **businesses**; each business has its own owners, users and computers, and nothing is shared between them.
 
-**Rem0te is not:** an RMM. No patch management, no software inventory, no ticketing, no monitoring dashboards. RustDesk is the underlying remote-desktop transport — an implementation detail hidden from the customer experience.
+**Rem0te is not:** an RMM, and not a reseller hierarchy. No patch management, no software inventory, no ticketing, no monitoring dashboards. RustDesk is the underlying remote-desktop transport — an implementation detail hidden from the customer experience.
 
 ```
                  REM0TE PLATFORM
@@ -25,6 +25,7 @@
         +--------------+---------------+
         |                              |
    ACME Manufacturing            Smith Accounting
+     (a Business)                  (a Business)
         |                              |
       Users                          Users
         ↕                              ↕
@@ -33,28 +34,103 @@
 
 ---
 
+## Access control — the whole model
+
+```
+              PLATFORM ADMIN
+              Full platform access
+                     |
+                     v
+            BUSINESS OWNER / ADMIN
+            Full business control
+                     |
+                     v
+               BUSINESS USER
+          Permissions assigned by owner
+```
+
+Three levels. That's all of it.
+
+| Level | Scope |
+|---|---|
+| **Platform Admin** | The Rem0te operator. Creates and manages every business, sees every computer, owns all platform settings and infrastructure. |
+| **Business Owner** | Full administrative control of **one** business — its computers, its people, its sessions, its audit history. Cannot see any other business. |
+| **Business User** | Exactly the capabilities the Business Owner granted. Nothing else. |
+
+**A Business is the security boundary**, and it is enforced server-side on every request. Hiding a
+button in the UI is a courtesy; changing a URL or calling the API directly still gets refused.
+
+### Business User permissions
+
+| Group | Permissions |
+|---|---|
+| Computers | View computers · Remote connect · Add computers · Remove/revoke computers · Rename/edit computers |
+| Support | Use Quick Connect · View active sessions · View session history |
+| Users | View business users · Manage business users |
+| Audit | View business audit log |
+
+New Business Users start with **View computers** and **Remote connect** on; everything more
+administrative is off until granted. A Business Owner implicitly holds all of them; a Platform Admin
+holds everything.
+
+Quick Connect is a **permission, not a role**.
+
+---
+
 ## Who does what
 
-### Employee
+### Business User
 1. Log in.
-2. Land on **My Computers** — the list of PCs an admin has authorized you for.
+2. Land on **My Computers** — the PCs they've been authorized for.
 3. Click **Connect**. Rem0te fetches the credentials and launches RustDesk with the password pre-filled.
 
 No RustDesk ID typing, no password copy-paste, no server configuration.
 
-### Company Admin
-- **Users** — invite, disable, remove company users.
-- **Computers** — see every company computer, its assigned users, status.
-- **Add Computer** — pick company + who can access it + Windows/Linux/macOS. Copy the one-line install command. That's it.
-- **Access** — grant / revoke user → computer authorization at any time.
-- **Security** — MFA, GeoIP (planned), session policy.
-- **Audit** — who accessed what, when, from where.
+### Business Owner
+- **Users** — add, disable, remove business users, and set exactly what each one can do.
+- **Computers** — every computer in the business, its assigned users, its status.
+- **Downloads** — Managed Device Installer bound to this business; Quick Connect client for one-off support.
+- **Sessions / Audit** — what happened in this business, and when.
+- **Business Settings** — the business profile.
 
 ### Platform Admin
-- **Companies** — add / disable / manage every customer business.
-- **Global Computers** — search / audit computers across all companies.
-- **Platform Security** — global MFA / GeoIP policy that companies inherit and can only make stricter.
-- **System** — health, updates, backups.
+- **Businesses** — create, edit, disable and (when empty) delete every customer business.
+- **Computers** — search and manage computers across every business, including unassigned ones.
+- **Access Control** — the three-level model, business users, and platform admins.
+- **Settings** — RustDesk infrastructure, branding, MFA policy, and the Quick Connect master switch.
+- **Security / System Status / Updates** — the platform itself.
+
+---
+
+## Quick Connect
+
+Temporary support access to a machine that is **not** an enrolled managed computer.
+
+```
+Person needing help → https://your-rem0te/quick → downloads the Quick Connect client
+                                                            ↓
+                                    Runs it. No install, no account, no service.
+                                                            ↓
+                              Client shows:  Remote ID  123 456 789
+                                             Password   A7k9X2
+                                             Status     Waiting for connection
+                                                            ↓
+                                  They read both out to the person helping them
+                                                            ↓
+              Authorized Rem0te user → Quick Connect → enters ID + password → Connect
+                                                            ↓
+                                     RustDesk session. Closing the client ends it.
+```
+
+- **No permanent enrollment.** No `Endpoint` row is created; nothing becomes a managed device.
+- **The client is preconfigured** for your RustDesk server, so nobody types a relay host, ID server or key.
+- **The password is never stored, never logged, never put in a URL.** The remote person choosing to
+  read it out is what authorises the session.
+- **Three switches must all be on**: platform master switch → per-business switch → the user's
+  `Use Quick Connect` permission.
+
+Every session start and end is audited with the user, their business, the remote RustDesk ID and the
+source IP. Passwords, clipboard contents, keystrokes and screen contents never are.
 
 ---
 
@@ -90,7 +166,10 @@ The endpoint that redeems the enrollment token **cannot** influence which compan
 
 | Threat | Control |
 |---|---|
-| Cross-company data access | `tenantId` filter on every Prisma query; `ComputerAccess` many-to-many; enrollment token binds company + users at mint time |
+| Cross-business data access | Every business-scoped read and write resolves through `AccessControlService`; object lookups by id go through `assertEndpointInScope` / `assertBusinessInScope` / `assertUserInScope` before anything is read. Proven by `apps/api/scripts/e2e-business-access.mjs` (82 checks). |
+| Privilege escalation | Nobody can edit their own permissions or level. Only a Platform Admin can create a Business Owner. Capability strings are allowlisted before they reach the database. |
+| Quick Connect abuse | Platform master switch → per-business switch → per-user capability, all re-checked server-side on every call. Denials are audited. |
+| API key over-reach | Every key is bound to exactly one business and acts as a Business Owner **within it only** — never a Platform Admin. Keys predating business scoping were revoked by migration 0009. |
 | Endpoint password exposure | Ciphertext never leaves the server. Plaintext only via authorized `getPassword` / `connect` — throttled, MFA-gated, audited (`ENDPOINT_PASSWORD_REVEALED`) |
 | Enrollment token abuse | 256-bit random, SHA-256 hashed at rest, one-time, TTL-bound, atomic redemption |
 | Stale JWT after role change | JWT re-checks `user.isPlatformAdmin`, `tenant.isActive`, `membership.isActive` on every request |
@@ -119,18 +198,20 @@ Full audit trail: [`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md).
 
 ## Screenshots
 
-Regenerated automatically from the running v0.6.x UI via Playwright (`pnpm --filter @reboot-remote/api run screenshots` — script at `apps/api/scripts/screenshots.mjs`). Both light and dark themes captured.
+Regenerated automatically from the running v0.8.x UI via Playwright (`node apps/web/scripts/screenshots.mjs`). Both light and dark themes captured.
 
 | Page | Light | Dark |
 |------|-------|------|
-| My Computers (employee) | ![](docs/screenshots/my-computers-light.png) | ![](docs/screenshots/my-computers-dark.png) |
+| My Computers | ![](docs/screenshots/my-computers-light.png) | ![](docs/screenshots/my-computers-dark.png) |
 | Dashboard | ![](docs/screenshots/dashboard-light.png) | ![](docs/screenshots/dashboard-dark.png) |
-| Companies | ![](docs/screenshots/companies-light.png) | ![](docs/screenshots/companies-dark.png) |
+| Businesses | ![](docs/screenshots/businesses-light.png) | ![](docs/screenshots/businesses-dark.png) |
+| Access Control | ![](docs/screenshots/access-control-light.png) | ![](docs/screenshots/access-control-dark.png) |
 | Users | ![](docs/screenshots/users-light.png) | ![](docs/screenshots/users-dark.png) |
 | Computers | ![](docs/screenshots/computers-light.png) | ![](docs/screenshots/computers-dark.png) |
 | Add Computer | ![](docs/screenshots/add-computer-light.png) | ![](docs/screenshots/add-computer-dark.png) |
 | Sessions | ![](docs/screenshots/sessions-light.png) | ![](docs/screenshots/sessions-dark.png) |
 | Quick Connect | ![](docs/screenshots/quick-connect-light.png) | ![](docs/screenshots/quick-connect-dark.png) |
+| Quick Connect (public `/quick`) | ![](docs/screenshots/quick-public-light.png) | ![](docs/screenshots/quick-public-dark.png) |
 | Audit Log | ![](docs/screenshots/audit-light.png) | ![](docs/screenshots/audit-dark.png) |
 | My Account | ![](docs/screenshots/account-light.png) | ![](docs/screenshots/account-dark.png) |
 

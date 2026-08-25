@@ -6,32 +6,33 @@ import { SessionStatus } from '@prisma/client';
 import { SessionsService } from './sessions.service';
 import { CreateSessionDto, CompleteSessionDto, SessionEventDto } from './dto/create-session.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { JwtPayload } from '../auth/strategies/jwt.strategy';
+import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
+import { RequireCapability } from '../common/decorators/require-capability.decorator';
+import { Actor } from '../common/decorators/actor.decorator';
+import type { ActorContext } from '../rbac/access-control.service';
+import { CAP } from '../rbac/capabilities';
 
 @Controller('sessions')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, CapabilitiesGuard)
 export class SessionsController {
   constructor(private readonly sessions: SessionsService) {}
 
   @Get()
-  @RequirePermissions('sessions:read')
+  @RequireCapability(CAP.SESSIONS_VIEW)
   async findAll(
-    @CurrentUser() user: JwtPayload,
+    @Actor() actor: ActorContext,
     @Query('status') status?: string,
     @Query('technicianId') technicianId?: string,
     @Query('endpointId') endpointId?: string,
+    @Query('businessId') businessId?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-
-    const result = await this.sessions.findAll(user.tenantId, {
+    const result = await this.sessions.findAll(actor, {
       status: status as SessionStatus | undefined,
       technicianId,
       endpointId,
+      businessId,
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 50,
     });
@@ -39,66 +40,53 @@ export class SessionsController {
   }
 
   @Get('stats')
-  @RequirePermissions('sessions:read')
+  @RequireCapability(CAP.SESSIONS_VIEW)
   async getStats(
-    @CurrentUser() user: JwtPayload,
+    @Actor() actor: ActorContext,
     @Query('days') days?: string,
+    @Query('businessId') businessId?: string,
   ) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    const result = await this.sessions.getStats(user.tenantId, days ? parseInt(days, 10) : 30);
+    const result = await this.sessions.getStats(actor, days ? parseInt(days, 10) : 30, businessId);
     return { success: true, data: result };
   }
 
   @Get(':id')
-  @RequirePermissions('sessions:read')
-  async findOne(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    const session = await this.sessions.findOne(user.tenantId, id);
-    return { success: true, data: session };
+  @RequireCapability(CAP.SESSIONS_VIEW)
+  async findOne(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.sessions.findOne(actor, id) };
   }
 
   @Post()
-  @RequirePermissions('sessions:create')
-  async create(@CurrentUser() user: JwtPayload, @Body() dto: CreateSessionDto) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    const session = await this.sessions.create(user.tenantId, user.sub, dto, {
-      isPlatformAdmin: user.isPlatformAdmin,
-      roleType: user.roleType ?? null,
-    });
-    return { success: true, data: session };
+  @RequireCapability(CAP.COMPUTERS_CONNECT)
+  async create(@Actor() actor: ActorContext, @Body() dto: CreateSessionDto) {
+    return { success: true, data: await this.sessions.create(actor, dto) };
   }
 
   @Patch(':id/complete')
-  @RequirePermissions('sessions:update')
+  @RequireCapability(CAP.COMPUTERS_CONNECT)
   async complete(
-    @CurrentUser() user: JwtPayload,
+    @Actor() actor: ActorContext,
     @Param('id') id: string,
     @Body() dto: CompleteSessionDto,
   ) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    const session = await this.sessions.complete(user.tenantId, id, user.sub, dto);
-    return { success: true, data: session };
+    return { success: true, data: await this.sessions.complete(actor, id, dto) };
   }
 
   @Patch(':id/cancel')
-  @RequirePermissions('sessions:update')
+  @RequireCapability(CAP.COMPUTERS_CONNECT)
   @HttpCode(HttpStatus.OK)
-  async cancel(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    const session = await this.sessions.cancel(user.tenantId, id, user.sub);
-    return { success: true, data: session };
+  async cancel(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.sessions.cancel(actor, id) };
   }
 
   @Post(':id/events')
-  @RequirePermissions('sessions:update')
+  @RequireCapability(CAP.COMPUTERS_CONNECT)
   @HttpCode(HttpStatus.OK)
   async addEvent(
-    @CurrentUser() user: JwtPayload,
+    @Actor() actor: ActorContext,
     @Param('id') id: string,
     @Body() dto: SessionEventDto,
   ) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    const event = await this.sessions.addEvent(user.tenantId, id, dto);
-    return { success: true, data: event };
+    return { success: true, data: await this.sessions.addEvent(actor, id, dto) };
   }
 }

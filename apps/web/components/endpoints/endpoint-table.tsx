@@ -76,7 +76,7 @@ export function EndpointTable({
               Platform
             </th>
             <th className="h-12 px-4 text-left font-medium text-muted-foreground">
-              Customer
+              Business
             </th>
             <th className="h-12 px-4 text-left font-medium text-muted-foreground">
               Status

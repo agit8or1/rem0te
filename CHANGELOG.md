@@ -5,6 +5,118 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.8.0] — 2026-08-25 · *Ledger*
+
+Rem0te's authorization model is now three levels and nothing else, and **a Business is the
+security boundary** — enforced server-side on every request rather than by hiding things in the UI.
+
+### Access control — the whole model
+
+```
+PLATFORM ADMIN  →  BUSINESS OWNER  →  BUSINESS USER + assigned permissions
+```
+
+- **Platform Admin** — the Rem0te operator. Every business, every computer, every setting.
+- **Business Owner / Admin** — full control of exactly one business, and nothing outside it.
+- **Business User** — only the capabilities the Business Owner granted.
+
+Removed as roles: Tenant Owner, Tenant Admin, Technician, Billing Admin, Read Only, Customer
+Portal. The customer portal (`/portal`, `PortalModule`) has been deleted outright — Business Users
+now use the main application with permissions instead of a parallel interface.
+
+### Added
+- **Capability-based permissions for Business Users.** Stored on `Membership.capabilities`, granted
+  per person from Users or Access Control:
+  - *Computers* — view · remote connect · add · remove/revoke · rename/edit
+  - *Support* — use Quick Connect · view active sessions · view session history
+  - *Users* — view business users · manage business users
+  - *Audit* — view business audit log
+
+  New Business Users default to **View computers + Remote connect** and nothing else. A Business
+  Owner implicitly holds every business capability; a Platform Admin holds everything. Nobody can
+  edit their own permissions or level.
+- **`AccessControlService`** — the one place that answers "which business may this actor touch".
+  Every business-scoped read and write goes through `resolveScope()`, and every lookup by id goes
+  through `assertEndpointInScope` / `assertBusinessInScope` / `assertUserInScope` before anything is
+  read. Cross-business ids return 404, not a filtered-empty 200.
+- **Quick Connect.** Temporary support access to a machine that is **not** an enrolled managed
+  computer:
+  - Public `/quick` landing page — no account, no console exposure, clear security warning.
+  - `GET /api/v1/public/quick-connect/download/windows` serves the official RustDesk binary
+    **preconfigured for this server** via RustDesk's documented config-in-filename mechanism, so the
+    person downloading it never enters a relay host, ID server or key. Cached on disk so a support
+    call doesn't depend on GitHub being reachable.
+  - Signed-in `/quick-connect` page: Remote ID + Password → Connect.
+  - Three switches must all be on: platform master switch → per-business switch → the user's
+    `support:quick_connect` capability. Denials are audited with the reason.
+  - **No permanent enrollment.** No `Endpoint` row is created; the session record is `isAdHoc`.
+  - **The password is never stored, never logged, never placed in a URL.** It is relayed to the
+    caller's RustDesk and forgotten. Audit records carry the remote ID, user, business, result and
+    source IP — never the password.
+- **Redesigned Access Control page** — Overview / Businesses / Business Users / Platform Admins.
+  The Overview is three boxes top to bottom instead of seven role cards.
+- **Global search** (`GET /api/v1/admin/search`) across businesses, users and computers — by name,
+  RustDesk ID, hostname, OS, IP and status. Platform-wide for a Platform Admin, confined to their
+  own business for everyone else, using the same scope rule as every other read.
+- **Business-scoped API keys.** Every key now belongs to exactly one business and acts as a Business
+  Owner **within it only** — never a Platform Admin. Creating a business via the public API is
+  refused accordingly.
+- **`apps/api/scripts/e2e-business-access.mjs`** — 82 server-side checks covering Platform Admin
+  reach, Business Owner confinement, cross-business probing by direct URL and API call, Business
+  User permission enforcement, self-escalation attempts, and all eight Quick Connect switch
+  combinations.
+
+### Changed
+- **`Customer` is the Business.** The table keeps its name (no FK churn), but the domain, API and UI
+  all call it a Business. `/api/v1/businesses` is the route; `/api/v1/customers` remains as an alias
+  so deployed clients keep working.
+- **`Tenant` is now the internal platform container**, not a security boundary. `/api/v1/platform`
+  (alias `/api/v1/tenants`) is Platform-Admin-only and holds branding, RustDesk settings and MFA
+  policy. Tenant switching (`POST /auth/switch-tenant`) was removed — a person belongs to exactly
+  one business.
+- **`/auth/me`** now returns `accessLevel`, `businessId`, the business record, and the caller's
+  *effective* capabilities, so the UI has one thing to check.
+- **JWT re-reads role, business and capabilities from the database on every request.** Revoking a
+  capability or moving someone between businesses takes effect on the next request rather than
+  whenever their token happens to expire. A disabled or archived business locks its own users out
+  immediately.
+- **Navigation rebuilt from capabilities** — each nav entry declares what it needs, so a Business
+  User only sees what they can actually use. "Updates" now points at `/about` (where the version
+  check and changelog live); `/admin/status` is labelled System Status.
+- Sessions, notes, sites, audit, dashboard, enrollment tokens and launcher tokens are all business
+  scoped. Dashboard counts return zero rather than 403 for capabilities the caller lacks.
+- Terminology swept through the UI: Business, Business Owner, Business User, Platform Admin.
+
+### Migrations
+- `0008_business_roles_enum` — adds `BUSINESS_OWNER` / `BUSINESS_USER` and the new
+  `ActivityAction` values. Split from 0009 because PostgreSQL will not let a newly added enum value
+  be used in the transaction that added it.
+- `0009_business_access_model` — `Membership.capabilities`, `Customer.quickConnectEnabled`,
+  `PlatformSettings` singleton, `customerId` on `ActivityLog` / `SupportSession` / `ApiKey`, plus
+  the data migration:
+  - Tenant Owner / Tenant Admin → **Business Owner**
+  - Technician / Billing Admin / Read Only / Customer Portal → **Business User**, with legacy
+    capabilities translated preserving least privilege. An old **Read Only** user becomes a Business
+    User **without** `computers:connect`; an old **Billing Admin** — who never had `endpoints:read`
+    — gets no computer capabilities at all.
+  - Legacy `Role` rows are retained but renamed `(retired) …` and marked non-system so they cannot
+    be selected. Pending invitations pointing at them are repointed to Business User.
+  - API keys with no business are revoked — resolving them to "everything" would be exactly the
+    cross-business hole this release closes. Re-issue per business.
+
+### Security
+- Cross-business isolation is enforced in the service layer, not the controller, so a forged path
+  parameter, a swapped query string or a direct API call all hit the same check.
+- A Business Owner cannot promote anyone (including themselves) to Business Owner, act on a Platform
+  Admin, or mint an enrollment token bound to another business.
+- Capability strings are allowlisted before they reach the database.
+- Deleting a business is refused unless it is genuinely empty; audit history is detached rather than
+  deleted.
+- `/quick` is matched exactly in the Next.js middleware, not as a prefix — `/quick-connect` and
+  `/quickstart` remain authenticated.
+
+---
+
 ## [0.7.1] — 2026-08-25 · *Luna*
 
 ### Fixed

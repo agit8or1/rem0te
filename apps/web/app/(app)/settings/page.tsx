@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { authApi, tenantsApi } from '@/lib/api-client';
+import { authApi, platformApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,7 +38,7 @@ export default function SettingsPage() {
 
   const { data: tenant } = useQuery({
     queryKey: ['tenant', tenantId],
-    queryFn: () => tenantsApi.get(tenantId).then((r) => r.data?.data),
+    queryFn: () => platformApi.get(tenantId).then((r) => r.data?.data),
     enabled: !!tenantId,
   });
 
@@ -49,7 +49,14 @@ export default function SettingsPage() {
   const [rustdeskRelayHost, setRustdeskRelayHost] = useState('');
   const [rustdeskPublicKey, setRustdeskPublicKey] = useState('');
   const [showDownloadPage, setShowDownloadPage] = useState(true);
-  const [allowCustomerPortal, setAllowCustomerPortal] = useState(false);
+  // Quick Connect master switch — platform level, independent of the
+  // per-business switch and the per-user permission.
+  const [quickConnect, setQuickConnect] = useState({
+    quickConnectEnabled: false,
+    quickConnectWindows: true,
+    quickConnectMacos: false,
+    quickConnectLinux: false,
+  });
 
   const [branding, setBranding] = useState({
     portalTitle: '',
@@ -74,7 +81,7 @@ export default function SettingsPage() {
         setRustdeskRelayHost((settings.rustdeskRelayHost as string) ?? '');
         setRustdeskPublicKey((settings.rustdeskPublicKey as string) ?? '');
         setShowDownloadPage((settings.showDownloadPage as boolean) ?? true);
-        setAllowCustomerPortal((settings.allowCustomerPortal as boolean) ?? false);
+
       }
       const b = t.branding as Record<string, unknown> | null;
       if (b) {
@@ -90,10 +97,38 @@ export default function SettingsPage() {
     }
   }, [tenant]);
 
-  const updateNameMutation = useMutation({
-    mutationFn: () => tenantsApi.update(tenantId, { name }),
+  const { data: platformSettings } = useQuery({
+    queryKey: ['platform-settings'],
+    queryFn: () => platformApi.getSettings().then((r) => r.data?.data),
+  });
+
+  useEffect(() => {
+    if (platformSettings) {
+      const p = platformSettings as Record<string, boolean>;
+      setQuickConnect({
+        quickConnectEnabled: !!p.quickConnectEnabled,
+        quickConnectWindows: p.quickConnectWindows !== false,
+        quickConnectMacos: !!p.quickConnectMacos,
+        quickConnectLinux: !!p.quickConnectLinux,
+      });
+    }
+  }, [platformSettings]);
+
+  const saveQuickConnect = useMutation({
+    mutationFn: () => platformApi.saveSettings(quickConnect),
     onSuccess: () => {
-      toast({ title: 'Tenant name updated' });
+      toast({ title: 'Quick Connect settings saved' });
+      qc.invalidateQueries({ queryKey: ['platform-settings'] });
+      qc.invalidateQueries({ queryKey: ['quick-connect'] });
+    },
+    onError: (e: { response?: { data?: { message?: string } } }) =>
+      toast({ title: 'Could not save', description: e.response?.data?.message, variant: 'destructive' }),
+  });
+
+  const updateNameMutation = useMutation({
+    mutationFn: () => platformApi.update(tenantId, { name }),
+    onSuccess: () => {
+      toast({ title: 'Platform name updated' });
       qc.invalidateQueries({ queryKey: ['tenant'] });
     },
     onError: () => toast({ title: 'Error', variant: 'destructive' }),
@@ -101,7 +136,7 @@ export default function SettingsPage() {
 
   const updateSettingsMutation = useMutation({
     mutationFn: (extra?: Record<string, unknown>) =>
-      tenantsApi.updateSettings(tenantId, {
+      platformApi.updateSettings(tenantId, {
         requireMfa,
         sessionTimeoutMinutes: sessionTimeout,
         passwordMinLength,
@@ -122,7 +157,7 @@ export default function SettingsPage() {
     if (!file || !tenantId) return;
     setLogoUploading(true);
     try {
-      const res = await tenantsApi.uploadLogo(tenantId, file);
+      const res = await platformApi.uploadLogo(tenantId, file);
       const url: string = res.data?.data?.url;
       if (url) setBranding((b) => ({ ...b, logoUrl: url }));
       toast({ title: 'Logo uploaded' });
@@ -136,7 +171,7 @@ export default function SettingsPage() {
 
   const updateBrandingMutation = useMutation({
     mutationFn: () =>
-      tenantsApi.updateBranding(tenantId, {
+      platformApi.updateBranding(tenantId, {
         portalTitle: branding.portalTitle || undefined,
         logoUrl: branding.logoUrl || null,
         accentColor: branding.accentColor || undefined,
@@ -153,12 +188,13 @@ export default function SettingsPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-4xl">
-      <PageHeader title="Settings" description="Configure your tenant" />
+      <PageHeader title="Settings" description="Platform configuration" />
 
       <Tabs defaultValue="general">
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
+          <TabsTrigger value="quick-connect">Quick Connect</TabsTrigger>
           <TabsTrigger value="rustdesk">RustDesk</TabsTrigger>
           <TabsTrigger value="branding">Branding</TabsTrigger>
           <TabsTrigger value="network">Network / Ports</TabsTrigger>
@@ -171,7 +207,7 @@ export default function SettingsPage() {
             <CardContent>
               <form onSubmit={(e: FormEvent) => { e.preventDefault(); updateNameMutation.mutate(); }} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="tenant-name">Tenant Name</Label>
+                  <Label htmlFor="tenant-name">Platform Name</Label>
                   <Input
                     id="tenant-name"
                     value={name}
@@ -213,29 +249,83 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
+        </TabsContent>
+
+        <TabsContent value="quick-connect" className="mt-4 space-y-4">
           <Card>
-            <CardHeader><CardTitle className="text-sm">Customer Portal</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-sm">Quick Connect</CardTitle></CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Allow customers to log in to a simplified portal where they can view their devices and request support sessions.
-                You can invite customer users from each customer&apos;s detail page.
+                Allows users to download a temporary support client and provide its ID and password
+                to an authorized Rem0te user.
               </p>
               <div className="flex items-center gap-3">
                 <input
                   type="checkbox"
-                  id="allow-customer-portal"
-                  checked={allowCustomerPortal}
-                  onChange={(e) => setAllowCustomerPortal(e.target.checked)}
+                  id="qc-master"
                   className="h-4 w-4"
+                  checked={quickConnect.quickConnectEnabled}
+                  onChange={(e) => setQuickConnect((q) => ({ ...q, quickConnectEnabled: e.target.checked }))}
                 />
-                <Label htmlFor="allow-customer-portal">Enable customer portal</Label>
+                <Label htmlFor="qc-master">
+                  Quick Connect {quickConnect.quickConnectEnabled ? 'ON' : 'OFF'} (master switch)
+                </Label>
               </div>
+              <p className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+                This is the master switch. With it off, Quick Connect is unavailable everywhere,
+                whatever individual businesses or users are set to. With it on, each business can
+                still be enabled or disabled separately, and each Business User additionally needs
+                the <strong>Use Quick Connect</strong> permission.
+              </p>
+
+              <div className="space-y-2">
+                <Label>Client builds to offer</Label>
+                {([
+                  ['quickConnectWindows', 'Windows', true],
+                  ['quickConnectMacos', 'macOS', false],
+                  ['quickConnectLinux', 'Linux', false],
+                ] as const).map(([key, label, available]) => (
+                  <div key={key} className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      id={key}
+                      className="h-4 w-4"
+                      disabled={!available}
+                      checked={quickConnect[key]}
+                      onChange={(e) => setQuickConnect((q) => ({ ...q, [key]: e.target.checked }))}
+                    />
+                    <Label htmlFor={key} className={available ? '' : 'text-muted-foreground'}>
+                      {label}{available ? '' : ' — no preconfigured build yet'}
+                    </Label>
+                  </div>
+                ))}
+                <p className="text-xs text-muted-foreground">
+                  Only platforms with a working preconfigured build are offered on{' '}
+                  <code className="rounded bg-muted px-1 py-0.5 text-xs">/quick</code>. The client is
+                  delivered already pointed at this server, so the person downloading it never enters
+                  a relay host, ID server or key.
+                </p>
+              </div>
+
               <Button
-                onClick={() => updateSettingsMutation.mutate({ allowCustomerPortal })}
-                disabled={updateSettingsMutation.isPending}
+                onClick={() => saveQuickConnect.mutate()}
+                disabled={saveQuickConnect.isPending}
               >
-                {updateSettingsMutation.isPending ? 'Saving…' : 'Save'}
+                {saveQuickConnect.isPending ? 'Saving…' : 'Save'}
               </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle className="text-sm">Public page</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
+              <p className="text-sm text-muted-foreground">
+                Send anyone who needs help to this page. It does not expose the Rem0te console and
+                does not ask them to create an account.
+              </p>
+              <a href="/quick" target="_blank" rel="noopener noreferrer" className="text-sm font-mono underline">
+                /quick
+              </a>
             </CardContent>
           </Card>
         </TabsContent>

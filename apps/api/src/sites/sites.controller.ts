@@ -12,12 +12,13 @@ import {
 import { IsBoolean, IsEmail, IsOptional, IsString, Length } from 'class-validator';
 import { SitesService } from './sites.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { JwtPayload } from '../auth/strategies/jwt.strategy';
+import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
+import { RequireCapability } from '../common/decorators/require-capability.decorator';
+import { Actor } from '../common/decorators/actor.decorator';
+import type { ActorContext } from '../rbac/access-control.service';
+import { CAP } from '../rbac/capabilities';
 
-// class-validator decorators are REQUIRED — see comment in customers.controller.ts.
+// class-validator decorators are REQUIRED — see businesses.controller.ts.
 class CreateSiteDto {
   @IsString() @Length(1, 128)                name!: string;
   @IsOptional() @IsString() @Length(0, 256)  address?: string;
@@ -45,92 +46,75 @@ class UpdateSiteDto {
   @IsOptional() @IsBoolean()                  isActive?: boolean;
 }
 
-// Nested route: /customers/:customerId/sites
-@Controller('customers/:customerId/sites')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
-export class SitesByCustomerController {
-  constructor(private readonly sitesService: SitesService) {}
+// Sites nested under a business. `customers/...` is kept as an alias so
+// existing links keep resolving through the rename.
+@Controller(['businesses/:businessId/sites', 'customers/:businessId/sites'])
+@UseGuards(JwtAuthGuard, CapabilitiesGuard)
+export class BusinessSitesController {
+  constructor(private readonly sites: SitesService) {}
 
   @Get()
-  @RequirePermissions('customers:read')
-  async list(@Param('customerId') customerId: string, @CurrentUser() user: JwtPayload) {
-    if (!user.tenantId) return { success: false, data: [] };
-    const data = await this.sitesService.findAll(user.tenantId, customerId);
-    return { success: true, data };
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  async list(@Actor() actor: ActorContext, @Param('businessId') businessId: string) {
+    return { success: true, data: await this.sites.findAll(actor, businessId) };
   }
 
   @Get(':id')
-  @RequirePermissions('customers:read')
-  async get(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    const data = await this.sitesService.findOne(user.tenantId, id);
-    return { success: true, data };
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  async get(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.sites.findOne(actor, id) };
   }
 
   @Post()
-  @RequirePermissions('customers:write')
+  @RequireCapability(CAP.COMPUTERS_EDIT)
   async create(
-    @Param('customerId') customerId: string,
-    @CurrentUser() user: JwtPayload,
+    @Actor() actor: ActorContext,
+    @Param('businessId') businessId: string,
     @Body() dto: CreateSiteDto,
   ) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    const data = await this.sitesService.create(user.tenantId, user.sub, { ...dto, customerId });
-    return { success: true, data };
+    return { success: true, data: await this.sites.create(actor, { ...dto, businessId }) };
   }
 
   @Patch(':id')
-  @RequirePermissions('customers:write')
-  async update(@Param('id') id: string, @CurrentUser() user: JwtPayload, @Body() dto: UpdateSiteDto) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    const data = await this.sitesService.update(user.tenantId, id, user.sub, dto);
-    return { success: true, data };
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  async update(@Actor() actor: ActorContext, @Param('id') id: string, @Body() dto: UpdateSiteDto) {
+    return { success: true, data: await this.sites.update(actor, id, dto) };
   }
 
   @Delete(':id')
-  @RequirePermissions('customers:write')
-  async delete(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    await this.sitesService.delete(user.tenantId, id, user.sub);
-    return { success: true };
+  @RequireCapability(CAP.COMPUTERS_REMOVE)
+  async remove(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.sites.delete(actor, id) };
   }
 }
 
-// Flat route: /sites
+// Flat route for cross-business listing (Platform Admin) and direct lookups.
 @Controller('sites')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, CapabilitiesGuard)
 export class SitesController {
-  constructor(private readonly sitesService: SitesService) {}
+  constructor(private readonly sites: SitesService) {}
 
   @Get()
-  @RequirePermissions('customers:read')
-  async list(@CurrentUser() user: JwtPayload, @Query('customerId') customerId?: string) {
-    if (!user.tenantId) return { success: false, data: [] };
-    const data = await this.sitesService.findAll(user.tenantId, customerId);
-    return { success: true, data };
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  async list(@Actor() actor: ActorContext, @Query('businessId') businessId?: string) {
+    return { success: true, data: await this.sites.findAll(actor, businessId) };
   }
 
   @Get(':id')
-  @RequirePermissions('customers:read')
-  async get(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    const data = await this.sitesService.findOne(user.tenantId, id);
-    return { success: true, data };
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  async get(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.sites.findOne(actor, id) };
   }
 
   @Patch(':id')
-  @RequirePermissions('customers:write')
-  async update(@Param('id') id: string, @CurrentUser() user: JwtPayload, @Body() dto: UpdateSiteDto) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    const data = await this.sitesService.update(user.tenantId, id, user.sub, dto);
-    return { success: true, data };
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  async update(@Actor() actor: ActorContext, @Param('id') id: string, @Body() dto: UpdateSiteDto) {
+    return { success: true, data: await this.sites.update(actor, id, dto) };
   }
 
   @Delete(':id')
-  @RequirePermissions('customers:write')
-  async delete(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    await this.sitesService.delete(user.tenantId, id, user.sub);
-    return { success: true };
+  @RequireCapability(CAP.COMPUTERS_REMOVE)
+  async remove(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.sites.delete(actor, id) };
   }
 }

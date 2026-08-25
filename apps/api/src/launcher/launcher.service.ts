@@ -9,6 +9,8 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
+import { CAP } from '../rbac/capabilities';
 import { IssueLauncherTokenDto } from './dto/launcher.dto';
 
 interface LauncherTokenPayload {
@@ -30,32 +32,45 @@ export class LauncherService {
     private readonly audit: AuditService,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
+    private readonly acl: AccessControlService,
   ) {}
 
-  async issueToken(
-    tenantId: string,
-    userId: string,
-    dto: IssueLauncherTokenDto,
-    actorIp?: string,
-  ) {
+  /**
+   * Mint a short-lived deep-link token for the desktop launcher.
+   *
+   * A launcher token is a bearer credential for a specific machine, so the
+   * business check has to happen here too — not only on the route that
+   * eventually reveals the password.
+   */
+  async issueToken(actor: ActorContext, dto: IssueLauncherTokenDto) {
     if (!dto.endpointId && !dto.adHocRustdeskId) {
       throw new BadRequestException('Either endpointId or adHocRustdeskId is required');
     }
+    this.acl.assertCapability(actor, CAP.COMPUTERS_CONNECT);
 
     let targetRustdeskId = dto.adHocRustdeskId ?? null;
-    let targetEndpointId = dto.endpointId ?? null;
+    const targetEndpointId = dto.endpointId ?? null;
 
     if (dto.endpointId) {
-      const endpoint = await this.prisma.endpoint.findFirst({
-        where: { id: dto.endpointId, tenantId },
+      // Confirms the computer is inside the caller's business before anything
+      // else is read from it.
+      await this.acl.assertEndpointInScope(actor, dto.endpointId);
+      const endpoint = await this.prisma.endpoint.findUnique({
+        where: { id: dto.endpointId },
         include: { rustdeskNode: { select: { rustdeskId: true } } },
       });
-      if (!endpoint) throw new NotFoundException(`Endpoint ${dto.endpointId} not found`);
-      if (!endpoint.rustdeskNode?.rustdeskId) {
-        throw new BadRequestException('Endpoint has no RustDesk ID assigned');
+      if (!endpoint?.rustdeskNode?.rustdeskId) {
+        throw new BadRequestException('That computer has no RustDesk ID assigned');
       }
       targetRustdeskId = endpoint.rustdeskNode.rustdeskId;
+    } else if (dto.adHocRustdeskId) {
+      // Ad-hoc targets are Quick Connect, which has its own three-way gate.
+      this.acl.assertCapability(actor, CAP.QUICK_CONNECT);
     }
+
+    const tenantId = actor.tenantId;
+    if (!tenantId) throw new BadRequestException('No platform context');
+    const userId = actor.userId;
 
     const expiresAt = new Date(Date.now() + this.tokenTtlSeconds * 1000);
 
@@ -90,8 +105,9 @@ export class LauncherService {
 
     await this.audit.log({
       tenantId,
+      customerId: actor.businessId ?? undefined,
       actorId: userId,
-      actorIp,
+      actorIp: actor.ip,
       action: 'LAUNCHER_TOKEN_ISSUED',
       resource: 'launcher_token',
       resourceId: record.id,
@@ -152,9 +168,13 @@ export class LauncherService {
     };
   }
 
-  async revokeToken(tenantId: string, tokenId: string, actorId: string) {
+  /** Revoke an outstanding launcher token. Only its issuer's business may. */
+  async revokeToken(actor: ActorContext, tokenId: string) {
     const record = await this.prisma.launcherToken.findFirst({
-      where: { id: tokenId, tenantId },
+      where: {
+        id: tokenId,
+        ...(actor.isPlatformAdmin ? {} : { user: { memberships: { some: { customerId: actor.businessId ?? '__none__' } } } }),
+      },
     });
     if (!record) throw new NotFoundException('Token not found');
 

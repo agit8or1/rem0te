@@ -72,21 +72,40 @@ The installer pre-configures the RustDesk relay host to your domain and sets the
 
 Once set, the **Download** page (`/download`) will generate install scripts pre-configured for your server.
 
-### Create your first tenant
+### Create your first business
 
-1. Go to **Admin → Tenants** and create a tenant for your organisation
-2. Inside that tenant, create technician users via **Access**
-3. Enrol your first device from **Enrolled Clients → Generate Enrollment Link**
+The seed creates a Platform Admin — the Rem0te operator. Everything else hangs off a **Business**.
+
+1. Sign in as the Platform Admin.
+2. Go to **Businesses → Add Business** and create one for your first customer.
+3. Open **Users → Add person**, choose that business, and create its **Business Owner**. Send them
+   the one-time setup link that comes back.
+4. That owner can now add **Business Users** and set exactly what each one can do.
+
+See [access-control.md](access-control.md) for the three-level model and the permission list.
+
+### Turn on Quick Connect (optional)
+
+Quick Connect ships **off**. To enable temporary support sessions for machines that are not managed
+devices:
+
+1. **Settings → Quick Connect** → turn the master switch on and pick which client builds to offer.
+2. Per business: **Businesses → [Business] → Overview → Quick Connect**.
+3. Per person: grant **Use Quick Connect** on their permissions. Business Owners get it implicitly.
+
+Then send anyone who needs help to `https://<your-host>/quick`.
 
 ---
 
 ## Enrolling a Device
 
-1. In the Rem0te web UI, go to **Enrolled Clients**
-2. Click **Generate Enrollment Link** — fill in an optional description and customer name
-3. Copy the **Windows installer (.exe)** URL (or the appropriate platform link)
-4. Send that URL to the device — the user downloads and double-clicks it
-5. One UAC prompt → installer runs → device appears in Enrolled Clients
+1. Go to **Downloads** (or **Businesses → [Business] → Downloads**).
+2. Pick the business the computer belongs to and who should be able to reach it, then generate the
+   installer link. The binding is fixed at this point — the machine that runs it cannot choose a
+   different business.
+3. Copy the one-line install command (or the **Windows installer (.exe)** URL).
+4. Send it to the device — the user runs it.
+5. One UAC prompt → installer runs → the computer appears in that business.
 
 The install script on the device:
 - Downloads and silently installs RustDesk

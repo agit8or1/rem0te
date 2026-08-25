@@ -100,7 +100,7 @@ export default function EndpointsPage() {
             <thead>
               <tr className="border-b bg-muted/50">
                 <th className="text-left px-4 py-3 font-medium">Name</th>
-                <th className="text-left px-4 py-3 font-medium">Customer</th>
+                <th className="text-left px-4 py-3 font-medium">Business</th>
                 <th className="text-left px-4 py-3 font-medium">Platform</th>
                 <th className="text-left px-4 py-3 font-medium">RustDesk ID</th>
                 <th className="text-left px-4 py-3 font-medium">Last Seen</th>
@@ -172,7 +172,7 @@ export default function EndpointsPage() {
             {!generatedToken ? (
               <>
                 <p className="text-sm text-muted-foreground">
-                  Generate a one-time enrollment link. Devices that use this link will be automatically assigned to your tenant.
+                  Generate a one-time enrollment link. Any computer that uses it is enrolled as a managed computer belonging to the business you choose.
                 </p>
                 <div className="space-y-3">
                   <div>
@@ -185,7 +185,7 @@ export default function EndpointsPage() {
                     />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Customer Name (optional)</label>
+                    <label className="text-sm font-medium">Business name (optional label)</label>
                     <Input
                       className="mt-1"
                       placeholder="Pre-assign customer name"

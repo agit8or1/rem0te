@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
+import { CAP } from '../rbac/capabilities';
 
 interface CreateSiteDto {
   name: string;
@@ -33,18 +35,23 @@ interface UpdateSiteDto {
   isActive?: boolean;
 }
 
+/**
+ * Sites are locations inside a business. They inherit the business boundary
+ * exactly: a site query is a business query with an extra filter.
+ */
 @Injectable()
 export class SitesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly acl: AccessControlService,
   ) {}
 
-  async findAll(tenantId: string, customerId?: string) {
+  async findAll(actor: ActorContext, businessId?: string) {
+    const scope = this.acl.resolveScope(actor, businessId);
     return this.prisma.site.findMany({
       where: {
-        tenantId,
-        ...(customerId ? { customerId } : {}),
+        ...(scope ? { customerId: scope } : {}),
         isActive: true,
       },
       include: {
@@ -55,9 +62,10 @@ export class SitesService {
     });
   }
 
-  async findOne(tenantId: string, id: string) {
-    const site = await this.prisma.site.findFirst({
-      where: { id, tenantId },
+  async findOne(actor: ActorContext, id: string) {
+    const site = await this.assertInScope(actor, id);
+    return this.prisma.site.findUnique({
+      where: { id: site.id },
       include: {
         customer: { select: { id: true, name: true } },
         endpoints: {
@@ -65,31 +73,23 @@ export class SitesService {
         },
       },
     });
-    if (!site) {
-      throw new NotFoundException(`Site ${id} not found`);
-    }
-    return site;
   }
 
-  async create(
-    tenantId: string,
-    actorId: string,
-    dto: CreateSiteDto & { customerId: string },
-  ) {
-    // Validate customer belongs to the tenant
-    const customer = await this.prisma.customer.findFirst({
-      where: { id: dto.customerId, tenantId, isArchived: false },
+  async create(actor: ActorContext, dto: CreateSiteDto & { businessId?: string; customerId?: string }) {
+    this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
+
+    // The business is resolved from the caller's scope, not taken on trust.
+    const businessId = this.acl.requireScope(actor, dto.businessId ?? dto.customerId);
+    const business = await this.prisma.customer.findFirst({
+      where: { id: businessId, isArchived: false },
+      select: { id: true, tenantId: true },
     });
-    if (!customer) {
-      throw new BadRequestException(
-        `Customer ${dto.customerId} not found in this tenant`,
-      );
-    }
+    if (!business) throw new BadRequestException('Business not found');
 
     const site = await this.prisma.site.create({
       data: {
-        tenantId,
-        customerId: dto.customerId,
+        tenantId: business.tenantId,
+        customerId: business.id,
         name: dto.name,
         address: dto.address ?? null,
         city: dto.city ?? null,
@@ -102,30 +102,22 @@ export class SitesService {
         notes: dto.notes ?? null,
         isActive: true,
       },
-      include: {
-        customer: { select: { id: true, name: true } },
-      },
+      include: { customer: { select: { id: true, name: true } } },
     });
 
     await this.audit.log({
-      tenantId,
-      actorId,
-      action: 'SITE_CREATED',
-      resource: 'site',
-      resourceId: site.id,
-      meta: { name: site.name, customerId: dto.customerId },
+      tenantId: business.tenantId, customerId: business.id,
+      actorId: actor.userId, actorIp: actor.ip,
+      action: 'SITE_CREATED', resource: 'site', resourceId: site.id,
+      meta: { name: site.name, businessId: business.id },
     });
 
     return site;
   }
 
-  async update(
-    tenantId: string,
-    id: string,
-    actorId: string,
-    dto: UpdateSiteDto,
-  ) {
-    await this.findOne(tenantId, id);
+  async update(actor: ActorContext, id: string, dto: UpdateSiteDto) {
+    this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
+    const site = await this.assertInScope(actor, id);
 
     const updated = await this.prisma.site.update({
       where: { id },
@@ -145,19 +137,18 @@ export class SitesService {
     });
 
     await this.audit.log({
-      tenantId,
-      actorId,
-      action: 'SITE_UPDATED',
-      resource: 'site',
-      resourceId: id,
+      tenantId: site.tenantId, customerId: site.customerId,
+      actorId: actor.userId, actorIp: actor.ip,
+      action: 'SITE_UPDATED', resource: 'site', resourceId: id,
       meta: dto as Record<string, unknown>,
     });
 
     return updated;
   }
 
-  async delete(tenantId: string, id: string, actorId: string) {
-    await this.findOne(tenantId, id);
+  async delete(actor: ActorContext, id: string) {
+    this.acl.assertCapability(actor, CAP.COMPUTERS_REMOVE);
+    const site = await this.assertInScope(actor, id);
 
     const updated = await this.prisma.site.update({
       where: { id },
@@ -165,14 +156,24 @@ export class SitesService {
     });
 
     await this.audit.log({
-      tenantId,
-      actorId,
-      action: 'SITE_DELETED',
-      resource: 'site',
-      resourceId: id,
-      meta: {},
+      tenantId: site.tenantId, customerId: site.customerId,
+      actorId: actor.userId, actorIp: actor.ip,
+      action: 'SITE_DELETED', resource: 'site', resourceId: id, meta: {},
     });
 
     return updated;
+  }
+
+  /** A site is reachable only through the business that owns it. */
+  private async assertInScope(actor: ActorContext, id: string) {
+    const site = await this.prisma.site.findUnique({
+      where: { id },
+      select: { id: true, tenantId: true, customerId: true },
+    });
+    if (!site) throw new NotFoundException('Site not found');
+    if (!actor.isPlatformAdmin && site.customerId !== actor.businessId) {
+      throw new NotFoundException('Site not found');
+    }
+    return site;
   }
 }

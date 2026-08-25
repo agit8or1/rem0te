@@ -198,7 +198,7 @@ export default function EndpointDetailPage() {
                 <CardTitle className="text-sm">Assignment</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 text-sm">
-                <Row label="Customer">{customer?.name ?? '—'}</Row>
+                <Row label="Business">{customer?.name ?? '—'}</Row>
                 <Row label="Site">{site?.name ?? '—'}</Row>
                 <Row label="Tags">
                   <div className="flex flex-wrap gap-1">

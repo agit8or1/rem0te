@@ -80,19 +80,16 @@ try {
   const customerId = cust.body?.data?.id;
   created.push({ type: 'customer', id: customerId });
 
-  // 3. Invite an employee. usersService.invite creates a User (status=INVITED)
-  //    and a Membership. We then flip the user to ACTIVE + set a password
-  //    directly in the DB (the real UX would be an invite-accept flow).
-  const listMembers1 = await req('GET', '/users', null, adminCookie);
-  const roleId = await prisma.role.findFirst({ where: { tenantId: adminTenantId, type: 'TECHNICIAN' } }).then((r) => r?.id);
-  assert(roleId, 'TECHNICIAN role not seeded');
-
-  const invite = await req('POST', '/users/invite',
-    { email: `john-${suffix}@acme.test`, roleId },
+  // 3. Add a Business User to the business. The membership lands with the
+  //    default capabilities (view + connect). We then flip the user to ACTIVE
+  //    with a known password directly in the DB — the real UX is the
+  //    invite-accept flow, which is not what this test is proving.
+  const invite = await req('POST', `/businesses/${customerId}/users`,
+    { email: `john-${suffix}@acme.test`, firstName: 'John', lastName: `Smith-${suffix}`, level: 'BUSINESS_USER' },
     adminCookie);
-  log('invite user', invite, invite.status === 201);
-  assert(invite.status === 201, 'invite failed');
-  const johnUserId = invite.body?.membership?.userId;
+  log('add business user', invite, invite.status === 201);
+  assert(invite.status === 201, 'adding the business user failed');
+  const johnUserId = invite.body?.data?.membership?.user?.id;
   assert(johnUserId, 'no userId returned');
   created.push({ type: 'user', id: johnUserId });
 
@@ -101,17 +98,22 @@ try {
     data: {
       status: 'ACTIVE',
       passwordHash: await argon2.hash(johnPw, { type: argon2.argon2id }),
-      firstName: 'John', lastName: `Smith-${suffix}`,
     },
   });
-  await prisma.membership.updateMany({
-    where: { userId: johnUserId, tenantId: adminTenantId },
-    data: { isActive: true, customerId },
-  });
 
-  // 4. Create a managed-enrollment token bound to Company + John
+  // The membership is already bound to this business by the route above —
+  // assert it rather than setting it, since that binding is the thing under test.
+  const johnMembership = await prisma.membership.findFirst({ where: { userId: johnUserId } });
+  assert(johnMembership?.customerId === customerId, 'new user was not bound to the business');
+  assert(
+    johnMembership.capabilities.includes('computers:view') &&
+    johnMembership.capabilities.includes('computers:connect'),
+    `default capabilities wrong: ${JSON.stringify(johnMembership.capabilities)}`,
+  );
+
+  // 4. Create a managed-enrollment token bound to Business + John
   const tokenRes = await req('POST', '/enrollment/tokens',
-    { customerId, accessMode: 'ASSIGNED_USERS', assignedUserIds: [johnUserId], description: `e2e ${suffix}` },
+    { businessId: customerId, accessMode: 'ASSIGNED_USERS', assignedUserIds: [johnUserId], description: `e2e ${suffix}` },
     adminCookie);
   log('create enrollment token', tokenRes, tokenRes.status === 201);
   assert(tokenRes.status === 201, 'token creation failed');

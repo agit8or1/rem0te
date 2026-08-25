@@ -7,10 +7,6 @@ export class LoginDto {
   @IsString()
   @MinLength(1)
   password!: string;
-
-  @IsOptional()
-  @IsString()
-  tenantSlug?: string;
 }
 
 export class VerifyMfaDto {
@@ -40,7 +36,3 @@ export class RegisterDto {
   lastName!: string;
 }
 
-export class SwitchTenantDto {
-  @IsString()
-  tenantSlug!: string;
-}
