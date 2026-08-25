@@ -7,7 +7,7 @@
 ⭐ If Rem0te is useful to you, a star helps others find it!
 
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te/stargazers)
-[![Version](https://img.shields.io/badge/version-0.5.1-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.6.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![Issues](https://img.shields.io/github/issues/agit8or1/rem0te)](https://github.com/agit8or1/rem0te/issues)
 [![License](https://img.shields.io/github/license/agit8or1/rem0te)](LICENSE)
 
@@ -119,23 +119,20 @@ Full audit trail: [`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md).
 
 ## Screenshots
 
-*Screenshots below are from Rem0te v0.3.x; regeneration on the v0.5.x UI is deferred until an automated Playwright pipeline is set up.*
+Regenerated automatically from the running v0.6.x UI via Playwright (`pnpm --filter @reboot-remote/api run screenshots` — script at `apps/api/scripts/screenshots.mjs`). Both light and dark themes captured.
 
-| Dashboard | Enrolled Clients |
-|-----------|-----------------|
-| ![Dashboard](docs/screenshots/dashboard.png) | ![Enrolled Clients](docs/screenshots/enrolled-clients.png) |
-
-| Sessions | Connect |
-|----------|---------|
-| ![Sessions](docs/screenshots/sessions.png) | ![Connect](docs/screenshots/connect.png) |
-
-| Security | Audit Log |
-|----------|-----------|
-| ![Security](docs/screenshots/security.png) | ![Audit Log](docs/screenshots/audit.png) |
-
-| About & Updates |
-|-----------------|
-| ![About](docs/screenshots/about.png) |
+| Page | Light | Dark |
+|------|-------|------|
+| My Computers (employee) | ![](docs/screenshots/my-computers-light.png) | ![](docs/screenshots/my-computers-dark.png) |
+| Dashboard | ![](docs/screenshots/dashboard-light.png) | ![](docs/screenshots/dashboard-dark.png) |
+| Companies | ![](docs/screenshots/companies-light.png) | ![](docs/screenshots/companies-dark.png) |
+| Users | ![](docs/screenshots/users-light.png) | ![](docs/screenshots/users-dark.png) |
+| Computers | ![](docs/screenshots/computers-light.png) | ![](docs/screenshots/computers-dark.png) |
+| Add Computer | ![](docs/screenshots/add-computer-light.png) | ![](docs/screenshots/add-computer-dark.png) |
+| Sessions | ![](docs/screenshots/sessions-light.png) | ![](docs/screenshots/sessions-dark.png) |
+| Quick Connect | ![](docs/screenshots/quick-connect-light.png) | ![](docs/screenshots/quick-connect-dark.png) |
+| Audit Log | ![](docs/screenshots/audit-light.png) | ![](docs/screenshots/audit-dark.png) |
+| My Account | ![](docs/screenshots/account-light.png) | ![](docs/screenshots/account-dark.png) |
 
 ---
 
