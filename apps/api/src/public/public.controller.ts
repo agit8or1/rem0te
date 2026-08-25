@@ -842,7 +842,7 @@ if [ -n "\${RD_ID}" ]; then
         -H "Content-Type: application/json" \\
         -d "{\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"linux\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null || true
     else
-      echo "  Device registered to tenant."
+      echo "  Device registered to its business."
     fi
   else
     echo "  Registering device with Rem0te (no claim token — will appear as Unassigned)..."
@@ -985,7 +985,7 @@ if [ -n "\${RD_ID}" ]; then
         -H "Content-Type: application/json" \\
         -d "{\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"macos\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null || true
     else
-      echo "  Device registered to tenant."
+      echo "  Device registered to its business."
     fi
   else
     echo "  Registering device with Rem0te (no claim token — will appear as Unassigned)..."

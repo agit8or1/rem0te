@@ -40,7 +40,7 @@ export default function EndpointDetailPage() {
   });
 
   // Prefer the direct browser-launch path (rustdesk:// with password) — one click
-  // for anyone with access, and does not require the technician launcher.
+  // for anyone with access, and does not require the desktop launcher.
   const launchMutation = useMutation({
     mutationFn: () => endpointsApi.connect(id),
     onSuccess: async (res) => {
