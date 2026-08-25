@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { authApi, usersApi } from '@/lib/api-client';
+import { authApi, customersApi, usersApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,7 +15,7 @@ import {
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, MoreHorizontal, Pencil, KeyRound, ShieldOff, UserX, UserCheck, Shield } from 'lucide-react';
+import { Plus, MoreHorizontal, Pencil, KeyRound, ShieldOff, UserX, UserCheck, Shield, Building2 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 
 // Role priority — mirrors the API's ROLE_PRIORITY map
@@ -29,10 +29,12 @@ type Member = {
   userId?: string;
   user: { id: string; email: string; firstName: string; lastName: string; status: string; mfaMethods: unknown[] };
   role: { id: string; name: string; type: string } | null;
+  customer?: { id: string; name: string } | null;
   createdAt: string;
 };
 
 type Role = { id: string; name: string; type: string };
+type Company = { id: string; name: string };
 
 // ─── Edit Profile Dialog ────────────────────────────────────────────────────
 
@@ -198,6 +200,59 @@ function ChangeRoleDialog({
   );
 }
 
+// ─── Assign Company Dialog ──────────────────────────────────────────────────
+
+function AssignCompanyDialog({
+  member, companies, onClose,
+}: { member: Member; companies: Company[]; onClose: () => void }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [customerId, setCustomerId] = useState<string>(member.customer?.id ?? '_none');
+
+  const mutation = useMutation({
+    mutationFn: () => usersApi.setCustomer(member.user.id, customerId === '_none' ? null : customerId),
+    onSuccess: () => {
+      toast({ title: 'Company updated' });
+      qc.invalidateQueries({ queryKey: ['members'] });
+      onClose();
+    },
+    onError: (e: unknown) => {
+      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed';
+      toast({ title: 'Error', description: msg, variant: 'destructive' });
+    },
+  });
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Assign Company</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          Link <span className="font-medium">{member.user.email}</span> to a company.
+          Company-wide computers in that company will become visible to this user.
+        </p>
+        <div className="space-y-1">
+          <Label>Company</Label>
+          <Select value={customerId} onValueChange={setCustomerId}>
+            <SelectTrigger><SelectValue placeholder="Pick a company…" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="_none">— No company —</SelectItem>
+              {companies.map((c) => (
+                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+            {mutation.isPending ? 'Saving…' : 'Save'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Main Page ──────────────────────────────────────────────────────────────
 
 export default function UsersPage() {
@@ -210,6 +265,7 @@ export default function UsersPage() {
   const [editingMember, setEditingMember] = useState<Member | null>(null);
   const [resetPwMember, setResetPwMember] = useState<Member | null>(null);
   const [changeRoleMbr, setChangeRoleMbr] = useState<Member | null>(null);
+  const [assignCoMbr,   setAssignCoMbr]   = useState<Member | null>(null);
 
   const { data: me } = useQuery({
     queryKey: ['me'],
@@ -235,6 +291,19 @@ export default function UsersPage() {
     queryFn: () => usersApi.listRoles(tenantId).then((r) => r.data?.data ?? []),
     enabled: !!tenantId,
   });
+
+  const { data: companiesData } = useQuery({
+    queryKey: ['companies-list'],
+    queryFn: () => customersApi.list().then((r) => {
+      const body = r.data as unknown;
+      if (body && typeof body === 'object' && Array.isArray((body as { data?: unknown }).data)) {
+        return (body as { data: Company[] }).data;
+      }
+      return [];
+    }),
+    enabled: !!tenantId,
+  });
+  const companyList: Company[] = companiesData ?? [];
 
   const inviteMutation = useMutation({
     mutationFn: () => usersApi.invite(tenantId, { email: inviteEmail, roleId: inviteRoleId }),
@@ -338,6 +407,7 @@ export default function UsersPage() {
               <tr className="border-b bg-muted/50">
                 <th className="text-left px-4 py-3 font-medium">User</th>
                 <th className="text-left px-4 py-3 font-medium">Role</th>
+                <th className="text-left px-4 py-3 font-medium">Company</th>
                 <th className="text-left px-4 py-3 font-medium">MFA</th>
                 <th className="text-left px-4 py-3 font-medium">Status</th>
                 <th className="text-left px-4 py-3 font-medium">Joined</th>
@@ -347,7 +417,7 @@ export default function UsersPage() {
             <tbody className="divide-y">
               {memberList.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-8 text-muted-foreground">
+                  <td colSpan={7} className="text-center py-8 text-muted-foreground">
                     No members yet.
                   </td>
                 </tr>
@@ -370,6 +440,11 @@ export default function UsersPage() {
                       </td>
                       <td className="px-4 py-3">
                         <Badge variant="secondary">{m.role?.name ?? '—'}</Badge>
+                      </td>
+                      <td className="px-4 py-3">
+                        {m.customer?.name
+                          ? <span className="text-sm">{m.customer.name}</span>
+                          : <span className="text-muted-foreground text-xs">—</span>}
                       </td>
                       <td className="px-4 py-3">
                         {hasMfa
@@ -400,6 +475,10 @@ export default function UsersPage() {
                               <DropdownMenuItem onClick={() => setChangeRoleMbr(m)}>
                                 <Shield className="h-3.5 w-3.5 mr-2" />
                                 Change Role
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => setAssignCoMbr(m)}>
+                                <Building2 className="h-3.5 w-3.5 mr-2" />
+                                Assign Company
                               </DropdownMenuItem>
                               {hasMfa && (
                                 <DropdownMenuItem
@@ -489,6 +568,13 @@ export default function UsersPage() {
           roles={roleList}
           myRoleType={myRoleType}
           onClose={() => setChangeRoleMbr(null)}
+        />
+      )}
+      {assignCoMbr && (
+        <AssignCompanyDialog
+          member={assignCoMbr}
+          companies={companyList}
+          onClose={() => setAssignCoMbr(null)}
         />
       )}
     </div>

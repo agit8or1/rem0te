@@ -23,7 +23,9 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   onModuleInit() {
     // Run every 5 minutes
     this.cleanupInterval = setInterval(() => {
-      this.enrollment.markStaleEndpointsOffline(10).catch((e) =>
+      // Windows agent heartbeats every 3 minutes (Rem0teHeartbeat scheduled
+      // task). 8 minutes = 2 missed pings + a network-blip grace period.
+      this.enrollment.markStaleEndpointsOffline(8).catch((e) =>
         this.logger.error('Stale endpoint cleanup failed', e),
       );
     }, 5 * 60 * 1000);

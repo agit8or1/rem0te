@@ -150,6 +150,8 @@ export const usersApi = {
     api.patch(`/users/${userId}/role`, { roleId }),
   remove: (userId: string) =>
     api.delete(`/users/${userId}`),
+  setCustomer: (userId: string, customerId: string | null) =>
+    api.patch(`/users/${userId}/customer`, { customerId }),
   resetMfa: (userId: string) =>
     api.post(`/users/${userId}/mfa/reset`),
   listPlatformAdmins: () =>

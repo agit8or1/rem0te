@@ -233,6 +233,35 @@ export class UsersService {
     return { success: true };
   }
 
+  // Link a user to a Company (Customer). null unlinks.
+  async setCustomer(tenantId: string, userId: string, customerId: string | null, actorId: string) {
+    if (customerId) {
+      const customer = await this.prisma.customer.findFirst({
+        where: { id: customerId, tenantId },
+        select: { id: true },
+      });
+      if (!customer) throw new NotFoundException('Company not found in this tenant');
+    }
+    const membership = await this.prisma.membership.findFirst({
+      where: { tenantId, userId },
+      select: { id: true },
+    });
+    if (!membership) throw new NotFoundException('User has no membership in this tenant');
+
+    await this.prisma.membership.update({
+      where: { id: membership.id },
+      data: { customerId: customerId ?? null },
+    });
+    await this.audit.log({
+      tenantId, actorId,
+      action: 'USER_UPDATED',
+      resource: 'membership',
+      resourceId: membership.id,
+      meta: { customerId },
+    });
+    return { success: true, customerId };
+  }
+
   // ── Suspend / Activate ──────────────────────────────────────────────────────
 
   async suspend(

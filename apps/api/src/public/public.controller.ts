@@ -565,6 +565,31 @@ function Register([string]$id) {
 $registered = ''
 if ($rdId) { $registered = Register $rdId }
 
+# ── Install a persistent Rem0teHeartbeat scheduled task ────────────────────
+# RustDesk pings hbbs on its own but Rem0te has no direct visibility into
+# hbbs's online state. A tiny 3-min heartbeat keeps Endpoint.isOnline true
+# in the Rem0te DB (the API's stale-sweeper marks endpoints offline after
+# ~10 minutes without one). Persistent, self-repairing, SYSTEM context.
+try { New-Item -ItemType Directory -Force -Path $STATEDIR | Out-Null } catch {}
+$hbFile = "$STATEDIR\\heartbeat.dat"
+$hbPayload = [PSCustomObject]@{ host = $REM0TE_HOST } | ConvertTo-Json -Compress
+try { Set-Content -Path $hbFile -Value $hbPayload -Encoding UTF8; icacls $hbFile /inheritance:r /grant:r 'SYSTEM:(F)' 'Administrators:(F)' *>$null } catch {}
+
+$hbScript = "$STATEDIR\\heartbeat.ps1"
+$hbBody = @'
+\$ErrorActionPreference = 'Continue'; \$ProgressPreference = 'SilentlyContinue'
+try { \$state = Get-Content 'C:\\ProgramData\\Rem0te\\heartbeat.dat' -Raw | ConvertFrom-Json } catch { exit 0 }
+\$RDEXE = 'C:\\Program Files\\RustDesk\\rustdesk.exe'
+\$id = ''
+try { \$out = & \$RDEXE --get-id 2>\$null | Out-String; if (\$out -match '([0-9]{6,15})') { \$id = \$Matches[1] } } catch {}
+if (-not \$id) { exit 0 }
+\$body = @{ rustdeskId = \$id; hostname = \$env:COMPUTERNAME; platform = 'Windows' } | ConvertTo-Json -Compress
+try { Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/heartbeat') -Method Post -Body \$body -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop | Out-Null } catch {}
+'@
+Set-Content -Path $hbScript -Value $hbBody -Encoding UTF8
+schtasks /Create /F /TN 'Rem0teHeartbeat' /SC MINUTE /MO 3 /RU SYSTEM /RL HIGHEST /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \`"$hbScript\`"" *>$null
+Log "  Heartbeat task installed: 'Rem0teHeartbeat' (every 3 minutes, persistent)."
+
 if (-not $rdId -or -not $registered) {
     # Schedule a retry task. Runs every 5 minutes for up to 24 hours, then self-deletes.
     Log "  Immediate registration incomplete; scheduling retry task." 'WARN'

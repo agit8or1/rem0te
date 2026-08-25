@@ -29,7 +29,14 @@ export default function AddComputerPage() {
 
   const { data: customersData } = useQuery({
     queryKey: ['customers-list'],
-    queryFn: () => customersApi.list().then((r) => r.data?.data?.customers ?? []),
+    queryFn: () => customersApi.list().then((r) => {
+      // Controller returns { success, data: [...] }
+      const body = r.data as unknown;
+      if (body && typeof body === 'object' && Array.isArray((body as { data?: unknown }).data)) {
+        return (body as { data: Customer[] }).data;
+      }
+      return [];
+    }),
   });
   const customers: Customer[] = customersData ?? [];
 

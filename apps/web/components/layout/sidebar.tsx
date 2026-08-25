@@ -204,7 +204,6 @@ export function Sidebar() {
             {navLink('/admin/unassigned', 'Unassigned Computers', MonitorX)}
           </>
         )}
-        {showDownloadPage && navLink('/download', 'Downloads', Download)}
       </nav>
 
       {/* Footer */}

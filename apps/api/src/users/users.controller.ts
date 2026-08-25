@@ -137,6 +137,18 @@ export class UsersController {
     );
   }
 
+  // Link a user to a Company (Customer). Pass `customerId: null` to unlink.
+  @Patch(':userId/customer')
+  @RequirePermissions('users:write')
+  setCustomer(
+    @Param('userId') userId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() body: { customerId: string | null },
+  ) {
+    if (!user.tenantId) return { success: false, message: 'No tenant context' };
+    return this.usersService.setCustomer(user.tenantId, userId, body.customerId ?? null, user.sub);
+  }
+
   @Post(':userId/mfa/reset')
   @RequirePermissions('users:write')
   resetMfa(@Param('userId') userId: string, @CurrentUser() user: JwtPayload) {
