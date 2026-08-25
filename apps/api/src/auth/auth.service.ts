@@ -75,6 +75,18 @@ export class AuthService {
       tenantId = user.memberships[0].tenantId;
       roleType = user.memberships[0].role.type;
       customerId = user.memberships[0].customerId ?? null;
+    } else if (user.memberships.length === 0 && user.isPlatformAdmin) {
+      // Platform admins don't need explicit memberships — Rem0te is a
+      // single-tenant-per-install product ("tenant" is the Rem0te operator,
+      // and Customer rows are the customer businesses). Fall back to the
+      // first active tenant so admins can create/manage companies without
+      // having to seed a placeholder membership.
+      const t = await this.prisma.tenant.findFirst({
+        where: { isActive: true },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      });
+      if (t) tenantId = t.id;
     }
 
     const hasTotpMethod = user.mfaMethods.length > 0;
