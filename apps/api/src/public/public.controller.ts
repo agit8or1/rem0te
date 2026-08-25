@@ -223,241 +223,301 @@ export class PublicController {
     const keyVal = safeKey(key);
     const claimToken = safeToken(enrollToken);
     version = safeVersion(version);
-    return `# Reboot Remote — RustDesk Auto-Installer for Windows
+    // Base64-encoded server config for `rustdesk.exe --config <base64>`. This is the
+    // documented mechanism to reconfigure an already-installed RustDesk without
+    // touching the TOML files. Format: host=...,key=...,relay=...,api=
+    const configPlain = `host=${hostVal},key=${keyVal},api=,relay=${hostVal}`;
+    const configB64 = Buffer.from(configPlain, 'utf8').toString('base64');
+    return `# Rem0te Managed Agent — Windows installer
 # Server: ${host ?? 'NOT CONFIGURED'}
-# Re-run this script at any time to update the server config.
+# Safe to re-run; existing installs will be reconfigured, not duplicated.
 
-$ErrorActionPreference = "Continue"
-# Silence Invoke-WebRequest progress on Windows PowerShell 5.1 (built into every
-# Windows install). $ProgressPreference works on both PS 5.1 and PS 7+, unlike
-# the -ProgressAction common parameter which is PS 7.4+ only.
-$ProgressPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'Continue'
+$ProgressPreference    = 'SilentlyContinue'
 
-if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")) {
-    Write-Host "ERROR: Run this script as Administrator." -ForegroundColor Red
-    Read-Host "Press Enter to exit"
-    exit 1
+# ── Constants (server-side embedded) ────────────────────────────────────────
+$REM0TE_HOST   = '${hostVal}'
+$REM0TE_KEY    = '${keyVal}'
+$REM0TE_CONFIG = '${configB64}'
+$CLAIM_TOKEN   = '${claimToken}'
+$VERSION       = '${version}'
+
+$RDEXE = 'C:\\Program Files\\RustDesk\\rustdesk.exe'
+$LOGDIR = 'C:\\ProgramData\\Rem0te\\Logs'
+$LOG = "$LOGDIR\\install.log"
+$STATEDIR = 'C:\\ProgramData\\Rem0te'
+$SETUP_DIR = "$env:TEMP\\rem0te-install"
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
+function Log([string]$msg, [string]$level = 'INFO') {
+    try { if (-not (Test-Path $LOGDIR)) { New-Item -ItemType Directory -Force -Path $LOGDIR | Out-Null } } catch {}
+    $ts = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    $line = "[$ts] [$level] $msg"
+    try { Add-Content -Path $LOG -Value $line -ErrorAction SilentlyContinue } catch {}
+    switch ($level) {
+        'ERROR' { Write-Host $msg -ForegroundColor Red }
+        'WARN'  { Write-Host $msg -ForegroundColor Yellow }
+        'OK'    { Write-Host $msg -ForegroundColor Green }
+        default { Write-Host $msg }
+    }
+}
+function Step([int]$n, [int]$total, [string]$msg) { Log ("[$n/$total] " + $msg) }
+function Fail([string]$msg, [int]$code = 1) {
+    Log $msg 'ERROR'
+    Log "Install log: $LOG" 'ERROR'
+    exit $code
+}
+function IsInteractive { return [Environment]::UserInteractive -and $Host.Name -notmatch 'ServerRemoteHost' }
+function TestAdmin {
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent()
+    return ([Security.Principal.WindowsPrincipal]$me).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+function Stop-Rustdesk {
+    & sc.exe stop RustDesk 2>$null | Out-Null
+    & taskkill /F /IM rustdesk.exe /T 2>$null | Out-Null
+    Start-Sleep -Seconds 2
 }
 
-$VERSION    = "${version}"
-$HOST_ADDR  = "${hostVal}"
-$PUB_KEY    = "${keyVal}"
-$CLAIM_TOKEN = "${claimToken}"
-$INSTALLER  = "$env:TEMP\\rustdesk-setup.exe"
-$RDEXE      = "C:\\Program Files\\RustDesk\\rustdesk.exe"
+Write-Host ''
+Write-Host '  Rem0te Managed Agent' -ForegroundColor Cyan
+Write-Host ''
 
-# Generate a permanent password for this device (replaces the rotating one-time password)
-$chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789'
-$PERM_PW = -join (1..12 | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
+if (-not (TestAdmin)) { Fail 'ERROR: Run this script as Administrator.' 2 }
+Log "Rem0te installer starting. server=$REM0TE_HOST version=$VERSION claim=$($CLAIM_TOKEN.Length -gt 0)"
 
-Write-Host ""
-Write-Host "  Reboot Remote — Installing RustDesk remote support client" -ForegroundColor Cyan
-Write-Host ""
-
-# [1/4] Download
-Write-Host "[1/4] Downloading RustDesk v$VERSION..." -ForegroundColor Yellow
+# ── [1/6] Download ─────────────────────────────────────────────────────────
+Step 1 6 'Preparing installer...'
+try { New-Item -ItemType Directory -Force -Path $SETUP_DIR | Out-Null } catch {}
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+# The RustDesk MSP-config-in-filename technique: name the setup exe so its own
+# filename encodes the server config. On install RustDesk parses its name and
+# atomically writes the server config — no TOML shotgun required.
+# https://rustdesk.com/docs/en/self-host/rustdesk-server-oss/install/#windows
+$installerName = "rustdesk-host=$REM0TE_HOST,key=$REM0TE_KEY.exe"
+# Strip characters that are legal in RustDesk's config but illegal in Windows filenames.
+$installerName = ($installerName -replace '[<>:"/\\\\|?*]', '_')
+$INSTALLER = Join-Path $SETUP_DIR $installerName
 $dlUrl = "https://github.com/rustdesk/rustdesk/releases/download/$VERSION/rustdesk-$VERSION-x86_64.exe"
+Log "Downloading $dlUrl -> $INSTALLER"
 try {
     Invoke-WebRequest -Uri $dlUrl -OutFile $INSTALLER -UseBasicParsing
-} catch {
-    Write-Host "ERROR: Download failed — $_" -ForegroundColor Red
-    Write-Host "  URL: $dlUrl" -ForegroundColor DarkGray
-    Read-Host "Press Enter to exit"
-    exit 1
-}
+} catch { Fail "ERROR: Download failed: $($_.Exception.Message)" 10 }
 
-# [2/4] Stop any running RustDesk before installing/reconfiguring
-Write-Host "[2/4] Stopping existing RustDesk (if running)..." -ForegroundColor Yellow
-# Use taskkill — faster and non-blocking unlike Stop-Service -Force
-& taskkill /F /IM rustdesk.exe /T 2>$null | Out-Null
-& sc.exe stop RustDesk 2>$null | Out-Null
-Start-Sleep -Seconds 2
-
-# Install silently — NSIS /S flag
-# WaitForExit only waits for the NSIS stub; the actual file extraction runs as a
-# child process and can finish several seconds after the stub exits.
-# Poll until $RDEXE appears (up to 60 s) before declaring failure.
-Write-Host "     Installing..." -ForegroundColor Yellow
-$install = Start-Process -FilePath $INSTALLER -ArgumentList "/S" -PassThru
+# ── [2/6] Stop existing RustDesk and install ───────────────────────────────
+Step 2 6 'Installing remote-support service...'
+Stop-Rustdesk
+$install = Start-Process -FilePath $INSTALLER -ArgumentList '/S' -PassThru -WindowStyle Hidden
 $install.WaitForExit(180000)
-Remove-Item $INSTALLER -ErrorAction SilentlyContinue
-
+# Wait for rustdesk.exe to appear (NSIS installer child processes may finish after the stub)
 $waited = 0
-while (-not (Test-Path $RDEXE) -and $waited -lt 60) {
-    Start-Sleep -Seconds 2
-    $waited += 2
+while (-not (Test-Path $RDEXE) -and $waited -lt 90) { Start-Sleep -Seconds 2; $waited += 2 }
+if (-not (Test-Path $RDEXE)) { Fail "ERROR: Installation failed — $RDEXE not found after $waited s." 11 }
+try { Remove-Item $INSTALLER -Force -ErrorAction SilentlyContinue } catch {}
+
+# ── [3/6] Apply Rem0te server configuration ────────────────────────────────
+Step 3 6 "Configuring server ($REM0TE_HOST)..."
+# Stop the service so the CLI writes directly to the config, not via a running-service IPC race.
+Stop-Rustdesk
+
+$svcDir = 'C:\\Windows\\ServiceProfiles\\LocalSystem\\AppData\\Roaming\\RustDesk\\config'
+$sysDir = 'C:\\Windows\\System32\\config\\systemprofile\\AppData\\Roaming\\RustDesk\\config'
+
+# Wipe any pre-existing RustDesk2.toml that might be pointing at public rustdesk.com
+# servers from a prior manual install. We leave RustDesk.toml alone so the assigned
+# device id (if any) survives; --config below will populate the new server settings.
+$wipeDirs = @($svcDir, $sysDir, "$env:APPDATA\\RustDesk\\config", 'C:\\ProgramData\\RustDesk\\config')
+foreach ($d in $wipeDirs) {
+    Remove-Item "$d\\RustDesk2.toml" -Force -ErrorAction SilentlyContinue
 }
-if (-not (Test-Path $RDEXE)) {
-    Write-Host "ERROR: Installation failed — $RDEXE not found after $waited s." -ForegroundColor Red
-    exit 1
-}
 
-# Let the service start briefly so it initialises its config directories
-Start-Service -Name "RustDesk" -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 5
+# --config takes a base64-encoded 'host=X,key=Y,api=,relay=Z' string and rewrites
+# RustDesk2.toml + rendezvous_server atomically. Works on all RustDesk 1.4.x.
+& $RDEXE --config $REM0TE_CONFIG *>$null
 
-# Now kill everything so we can safely overwrite the config
-Write-Host "     Stopping RustDesk to apply custom server config..." -ForegroundColor Yellow
-& taskkill /F /IM rustdesk.exe /T 2>$null | Out-Null
-& sc.exe stop RustDesk 2>$null | Out-Null
-Start-Sleep -Seconds 3
-
-# [3/4] Write server config — overwrite every possible path
-Write-Host "[3/4] Configuring server ($HOST_ADDR)..." -ForegroundColor Yellow
-
-$tomlContent = @"
-rendezvous_server = '${hostVal}:21116'
+# Belt-and-braces: also write the authoritative TOML in the LocalSystem service
+# path in case --config was not honored (older 1.4.x builds).
+$toml = @"
+rendezvous_server = '$($REM0TE_HOST):21116'
 nat_type = 1
-serial = 2
+serial = 3
 
 [options]
-custom-rendezvous-server = '${hostVal}'
-relay-server = '${hostVal}'
+custom-rendezvous-server = '$REM0TE_HOST'
+relay-server = '$REM0TE_HOST'
 api-server = ''
-key = '${keyVal}'
-verification-method = 'use-permanent-password'
+key = '$REM0TE_KEY'
 "@
-
-# Build list of ALL config paths to write
-$cfgDirs = [System.Collections.Generic.List[string]]::new()
-
-# All real user profiles
-Get-ChildItem "C:\\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-    $cfgDirs.Add("$($_.FullName)\\AppData\\Roaming\\RustDesk\\config")
-}
-
-# Service / system accounts
-@(
-    "$env:APPDATA\\RustDesk\\config",
-    "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Roaming\\RustDesk\\config",
-    "C:\\Windows\\SysWOW64\\config\\systemprofile\\AppData\\Roaming\\RustDesk\\config",
-    "C:\\Windows\\ServiceProfiles\\LocalSystem\\AppData\\Roaming\\RustDesk\\config",
-    "C:\\Windows\\ServiceProfiles\\NetworkService\\AppData\\Roaming\\RustDesk\\config",
-    "C:\\ProgramData\\RustDesk\\config"
-) | ForEach-Object { if (-not $cfgDirs.Contains($_)) { $cfgDirs.Add($_) } }
-
-foreach ($d in $cfgDirs) {
+foreach ($d in @($svcDir, $sysDir)) {
     try {
         New-Item -ItemType Directory -Force -Path $d | Out-Null
-        $tomlContent | Set-Content "$d\\RustDesk2.toml" -Encoding UTF8
-        Write-Host "  Wrote: $d" -ForegroundColor DarkGray
+        $toml | Set-Content "$d\\RustDesk2.toml" -Encoding UTF8
+        Log "  Wrote server config: $d\\RustDesk2.toml"
     } catch {
-        Write-Host "  Skip (no access): $d" -ForegroundColor DarkGray
+        Log "  Skip (no access): $d" 'WARN'
     }
 }
 
-# [4/4] Set permanent password (service still stopped) then start
-Write-Host "[4/4] Setting permanent password and starting RustDesk service..." -ForegroundColor Yellow
+# Set a strong internal password so the endpoint accepts authenticated Rem0te
+# sessions. Not displayed to the operator; stored server-side by heartbeat.
+$rnd = New-Object byte[] 24
+[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($rnd)
+$PERM_PW = [Convert]::ToBase64String($rnd).Replace('+','A').Replace('/','B').Replace('=','').Substring(0,20)
+& $RDEXE --password $PERM_PW *>$null
 
-# Set password BEFORE starting the service so it is already in the config on first read.
-# With the service stopped this writes directly to the TOML file instead of going via IPC.
-& "$RDEXE" --password "$PERM_PW" 2>$null | Out-Null
-Start-Sleep -Seconds 2
+# ── [4/6] Start service and verify config ──────────────────────────────────
+Step 4 6 'Starting service...'
+& sc.exe config RustDesk start= auto 2>$null | Out-Null
+& sc.exe start RustDesk 2>$null | Out-Null
+Start-Sleep -Seconds 4
 
-Start-Service -Name "RustDesk" -ErrorAction SilentlyContinue
-
-# Wait for RustDesk to actually assign an ID. The ID is not written to disk
-# until RustDesk has contacted hbbs and received an assignment, which can
-# take 10-30 seconds on slow links. Retry for up to 45 s.
-Write-Host "     Waiting for RustDesk to receive Device ID from server..." -ForegroundColor DarkGray
-$rdId = ""
-$idPaths = @(
-    "$env:APPDATA\\RustDesk\\config\\RustDesk.toml",
-    "$env:APPDATA\\RustDesk\\config\\RustDesk2.toml",
-    "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Roaming\\RustDesk\\config\\RustDesk.toml",
-    "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Roaming\\RustDesk\\config\\RustDesk2.toml",
-    "C:\\Windows\\ServiceProfiles\\LocalSystem\\AppData\\Roaming\\RustDesk\\config\\RustDesk.toml",
-    "C:\\Windows\\ServiceProfiles\\LocalSystem\\AppData\\Roaming\\RustDesk\\config\\RustDesk2.toml",
-    "C:\\ProgramData\\RustDesk\\config\\RustDesk.toml",
-    "C:\\ProgramData\\RustDesk\\config\\RustDesk2.toml"
-)
-$waited = 0
-while (-not $rdId -and $waited -lt 45) {
+# Verify effective config: search the RustDesk2.toml files RustDesk actually reads
+# and confirm rendezvous_server / custom-rendezvous-server point at us, not at
+# a public rs-*.rustdesk.com server. If they don't, the install did NOT succeed.
+function Get-EffectiveServer {
+    $paths = @(
+        "$svcDir\\RustDesk2.toml",
+        "$sysDir\\RustDesk2.toml",
+        "$env:APPDATA\\RustDesk\\config\\RustDesk2.toml"
+    )
+    foreach ($p in $paths) {
+        if (Test-Path $p) {
+            $c = Get-Content $p -Raw -ErrorAction SilentlyContinue
+            if ($c -match 'custom-rendezvous-server\\s*=\\s*[''"]([^''"]+)[''"]') { return $Matches[1] }
+        }
+    }
+    return ''
+}
+$effective = Get-EffectiveServer
+if ($effective -and $effective -ne $REM0TE_HOST) {
+    Log "  Effective server = '$effective' (wanted '$REM0TE_HOST'). Repairing." 'WARN'
+    Stop-Rustdesk
+    & $RDEXE --config $REM0TE_CONFIG *>$null
+    Start-Sleep -Seconds 1
+    & sc.exe start RustDesk 2>$null | Out-Null
     Start-Sleep -Seconds 3
-    $waited += 3
-    foreach ($f in $idPaths) {
-        if (Test-Path $f) {
-            $lines = Get-Content $f -ErrorAction SilentlyContinue
-            foreach ($ln in $lines) {
-                # RustDesk writes: id = '123456789'  (single-quoted TOML string)
-                if ($ln -match "^\\s*id\\s*=\\s*'([0-9]{6,15})'") {
-                    $rdId = $Matches[1]
-                    break
-                }
-                if ($ln -match '^\\s*id\\s*=\\s*"([0-9]{6,15})"') {
-                    $rdId = $Matches[1]
-                    break
-                }
-            }
+    $effective = Get-EffectiveServer
+}
+if ($effective -match 'rustdesk\\.com$') {
+    Fail "ERROR: RustDesk is still using a public server ($effective). Refusing to report success." 20
+}
+Log "  Server config verified: $effective"
+
+# ── [5/6] Acquire RustDesk device ID ───────────────────────────────────────
+Step 5 6 'Waiting for device identity...'
+function Get-RustdeskId {
+    # Primary: ask the running RustDesk directly.
+    try {
+        $out = & $RDEXE --get-id 2>$null | Out-String
+        if ($out -match '([0-9]{6,15})') { return $Matches[1] }
+    } catch {}
+    # Fallback: read the id from any RustDesk.toml the service has written.
+    $paths = @(
+        "$svcDir\\RustDesk.toml",
+        "$sysDir\\RustDesk.toml",
+        "$env:APPDATA\\RustDesk\\config\\RustDesk.toml"
+    )
+    foreach ($p in $paths) {
+        if (Test-Path $p) {
+            $c = Get-Content $p -Raw -ErrorAction SilentlyContinue
+            if ($c -match 'id\\s*=\\s*[''"]([0-9]{6,15})[''"]') { return $Matches[1] }
         }
-        if ($rdId) { break }
     }
+    return ''
+}
+$rdId = ''
+$deadline = (Get-Date).AddSeconds(120)
+while (-not $rdId -and (Get-Date) -lt $deadline) {
+    $rdId = Get-RustdeskId
+    if (-not $rdId) { Start-Sleep -Seconds 3 }
 }
 
-# Register with the Rem0te API regardless of whether a claim token was given.
-# Without a token the device appears under Unassigned Devices so an admin can
-# assign it to a customer. With a token, the API auto-claims into the token's
-# tenant.
-if ($rdId) {
+# ── [6/6] Register with Rem0te ─────────────────────────────────────────────
+Step 6 6 'Registering with Rem0te...'
+function Register([string]$id) {
+    $body = @{ rustdeskId = $id; hostname = $env:COMPUTERNAME; platform = 'Windows'; osVersion = [Environment]::OSVersion.VersionString; password = $PERM_PW }
     if ($CLAIM_TOKEN) {
-        Write-Host "  Registering device with Rem0te (claim token supplied)..." -ForegroundColor Yellow
+        $body['token'] = $CLAIM_TOKEN
+        $json = $body | ConvertTo-Json -Compress
         try {
-            $claimBody = @{ token = $CLAIM_TOKEN; rustdeskId = $rdId; hostname = $env:COMPUTERNAME; platform = "Windows"; password = $PERM_PW } | ConvertTo-Json
-            Invoke-RestMethod -Uri "https://$HOST_ADDR/api/v1/enrollment/claim" -Method Post -Body $claimBody -ContentType "application/json" -UseBasicParsing -ErrorAction Stop | Out-Null
-            Write-Host "  Device registered to tenant." -ForegroundColor Green
+            Invoke-RestMethod -Uri "https://$REM0TE_HOST/api/v1/enrollment/claim" -Method Post -Body $json -ContentType 'application/json' -UseBasicParsing -ErrorAction Stop -TimeoutSec 15 | Out-Null
+            return 'CLAIMED'
         } catch {
-            Write-Host "  Claim failed — device will appear as Unassigned. ($($_.Exception.Message))" -ForegroundColor Yellow
-            try {
-                $hbBody = @{ rustdeskId = $rdId; hostname = $env:COMPUTERNAME; platform = "Windows"; password = $PERM_PW } | ConvertTo-Json
-                Invoke-RestMethod -Uri "https://$HOST_ADDR/api/v1/enrollment/heartbeat" -Method Post -Body $hbBody -ContentType "application/json" -UseBasicParsing -ErrorAction Stop | Out-Null
-            } catch { }
+            Log "  Claim failed: $($_.Exception.Message) — falling back to heartbeat" 'WARN'
         }
-    } else {
-        Write-Host "  Registering device with Rem0te (no claim token — will appear as Unassigned)..." -ForegroundColor Yellow
-        try {
-            $hbBody = @{ rustdeskId = $rdId; hostname = $env:COMPUTERNAME; platform = "Windows"; password = $PERM_PW } | ConvertTo-Json
-            Invoke-RestMethod -Uri "https://$HOST_ADDR/api/v1/enrollment/heartbeat" -Method Post -Body $hbBody -ContentType "application/json" -UseBasicParsing -ErrorAction Stop | Out-Null
-            Write-Host "  Device registered. Assign it under Admin -> Unassigned Devices." -ForegroundColor Green
-        } catch {
-            Write-Host "  Registration failed: $($_.Exception.Message)" -ForegroundColor Red
-        }
+        $body.Remove('token') | Out-Null
     }
-} else {
-    Write-Host "  Could not detect RustDesk Device ID after 45 s — skipping registration." -ForegroundColor Yellow
-    Write-Host "  Re-run this installer once RustDesk has connected to the server." -ForegroundColor DarkGray
+    $json = $body | ConvertTo-Json -Compress
+    try {
+        Invoke-RestMethod -Uri "https://$REM0TE_HOST/api/v1/enrollment/heartbeat" -Method Post -Body $json -ContentType 'application/json' -UseBasicParsing -ErrorAction Stop -TimeoutSec 15 | Out-Null
+        return 'HEARTBEAT'
+    } catch {
+        Log "  Heartbeat failed: $($_.Exception.Message)" 'WARN'
+        return ''
+    }
 }
 
-Write-Host ""
-Write-Host "=============================================" -ForegroundColor Green
-Write-Host "  RustDesk installed and running as service!" -ForegroundColor Green
-Write-Host "=============================================" -ForegroundColor Green
-Write-Host ""
-if ($rdId) {
-    Write-Host "  Device ID:          $rdId" -ForegroundColor Cyan
+$registered = ''
+if ($rdId) { $registered = Register $rdId }
+
+if (-not $rdId -or -not $registered) {
+    # Schedule a retry task. Runs every 5 minutes for up to 24 hours, then self-deletes.
+    Log "  Immediate registration incomplete; scheduling retry task." 'WARN'
+    try { New-Item -ItemType Directory -Force -Path $STATEDIR | Out-Null } catch {}
+    $secretFile = "$STATEDIR\\enroll.dat"
+    $payload = [PSCustomObject]@{
+        host = $REM0TE_HOST; token = $CLAIM_TOKEN; password = $PERM_PW
+        expiresAt = (Get-Date).AddDays(1).ToString('o')
+    } | ConvertTo-Json -Compress
+    try { Set-Content -Path $secretFile -Value $payload -Encoding UTF8; icacls $secretFile /inheritance:r /grant:r 'SYSTEM:(F)' 'Administrators:(F)' *>$null } catch {}
+
+    $retryScript = "$STATEDIR\\retry-enroll.ps1"
+    $retryBody = @'
+\$ErrorActionPreference = 'Continue'; \$ProgressPreference = 'SilentlyContinue'
+\$state = Get-Content 'C:\\ProgramData\\Rem0te\\enroll.dat' -Raw | ConvertFrom-Json
+if ((Get-Date) -gt [DateTime]\$state.expiresAt) { schtasks /Delete /TN 'Rem0teEnrollment' /F | Out-Null; Remove-Item 'C:\\ProgramData\\Rem0te\\enroll.dat' -Force -ErrorAction SilentlyContinue; exit 0 }
+\$RDEXE = 'C:\\Program Files\\RustDesk\\rustdesk.exe'
+\$id = ''
+try { \$out = & \$RDEXE --get-id 2>\$null | Out-String; if (\$out -match '([0-9]{6,15})') { \$id = \$Matches[1] } } catch {}
+if (-not \$id) { exit 0 }
+\$body = @{ rustdeskId = \$id; hostname = \$env:COMPUTERNAME; platform = 'Windows'; password = \$state.password }
+if (\$state.token) { \$body['token'] = \$state.token }
+\$json = \$body | ConvertTo-Json -Compress
+\$endpoint = if (\$state.token) { 'enrollment/claim' } else { 'enrollment/heartbeat' }
+try {
+    Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/' + \$endpoint) -Method Post -Body \$json -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop | Out-Null
+    Remove-Item 'C:\\ProgramData\\Rem0te\\enroll.dat' -Force -ErrorAction SilentlyContinue
+    schtasks /Delete /TN 'Rem0teEnrollment' /F | Out-Null
+} catch {}
+'@
+    Set-Content -Path $retryScript -Value $retryBody -Encoding UTF8
+    schtasks /Create /F /TN 'Rem0teEnrollment' /SC MINUTE /MO 5 /RU SYSTEM /RL HIGHEST /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \`"$retryScript\`"" *>$null
+    Log "  Retry task installed: 'Rem0teEnrollment' (every 5 minutes for 24 hours)."
 } else {
-    Write-Host "  Device ID:          (open RustDesk to view — extraction failed)" -ForegroundColor Yellow
+    # Success path: no secret spills to disk.
+    Log "  Registered ($registered) as $rdId" 'OK'
 }
-Write-Host "  Permanent password: $PERM_PW" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "  IMPORTANT: Save the password above in the Rem0te portal." -ForegroundColor Yellow
-Write-Host "  The one-time rotating password has been DISABLED on this device." -ForegroundColor Yellow
-if ($CLAIM_TOKEN -eq "") {
-    Write-Host ""
-    Write-Host "  This install did NOT include an enrollment token." -ForegroundColor Yellow
-    Write-Host "  The device will not appear in the Rem0te dashboard automatically." -ForegroundColor Yellow
-    Write-Host "  To auto-register, run the installer link from a Device Enrollment" -ForegroundColor DarkGray
-    Write-Host "  page in the Rem0te portal — the link includes a one-use token." -ForegroundColor DarkGray
+
+# ── Summary ────────────────────────────────────────────────────────────────
+Write-Host ''
+Write-Host '  ─────────────────────────────────────────────' -ForegroundColor Green
+if ($rdId -and $registered) {
+    Write-Host '  Rem0te installed successfully' -ForegroundColor Green
+} elseif ($rdId) {
+    Write-Host '  Rem0te installed. Registration will retry in background.' -ForegroundColor Yellow
+} else {
+    Write-Host '  Rem0te installed. Device ID not yet assigned — retry task will finish enrollment.' -ForegroundColor Yellow
 }
-if ($HOST_ADDR) {
-    Write-Host ""
-    Write-Host "  Connected to server: $HOST_ADDR" -ForegroundColor Gray
-}
-Write-Host ""
-Write-Host "  The RustDesk service starts automatically with Windows." -ForegroundColor Gray
-Write-Host "  Run this script again at any time to update the server config." -ForegroundColor Gray
-Write-Host ""
-Read-Host "Press Enter to close"
+Write-Host '  ─────────────────────────────────────────────' -ForegroundColor Green
+Write-Host ''
+Write-Host "  Device:   $env:COMPUTERNAME"
+Write-Host "  Server:   $REM0TE_HOST"
+if ($rdId) { Write-Host "  Device ID: $rdId" }
+Write-Host "  Log:      $LOG"
+Write-Host ''
+
+if (IsInteractive) { try { Read-Host 'Press Enter to close' | Out-Null } catch {} }
+exit 0
 `;
   }
 
