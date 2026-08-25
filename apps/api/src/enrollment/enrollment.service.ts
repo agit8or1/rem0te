@@ -49,6 +49,39 @@ export class EnrollmentService {
       if (!endpoint) throw new NotFoundException(`Endpoint ${dto.endpointId} not found`);
     }
 
+    // If a customer was specified, validate it belongs to this tenant and
+    // that every assignedUserId is an active member of the same tenant.
+    // The endpoint being enrolled cannot influence these values — the token
+    // itself carries the authorization.
+    let customerId: string | null = null;
+    let assignedUserIds: string[] = [];
+    if (dto.customerId) {
+      const customer = await this.prisma.customer.findFirst({
+        where: { id: dto.customerId, tenantId },
+        select: { id: true },
+      });
+      if (!customer) throw new NotFoundException('Customer not found in this tenant');
+      customerId = customer.id;
+    }
+    if (dto.assignedUserIds && dto.assignedUserIds.length > 0) {
+      const memberships = await this.prisma.membership.findMany({
+        where: {
+          tenantId,
+          isActive: true,
+          userId: { in: dto.assignedUserIds },
+        },
+        select: { userId: true },
+      });
+      const validIds = new Set(memberships.map((m) => m.userId));
+      const missing = dto.assignedUserIds.filter((id) => !validIds.has(id));
+      if (missing.length > 0) {
+        throw new BadRequestException(
+          `assignedUserIds not members of this tenant: ${missing.join(', ')}`,
+        );
+      }
+      assignedUserIds = dto.assignedUserIds;
+    }
+
     const token = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(token).digest('hex');
     const expiresAt = new Date(Date.now() + this.tokenTtlHours * 60 * 60 * 1000);
@@ -62,6 +95,11 @@ export class EnrollmentService {
         customerName: dto.customerName ?? null,
         siteName: dto.siteName ?? null,
         description: dto.description ?? null,
+        customerId,
+        accessMode: dto.accessMode ?? 'ASSIGNED_USERS',
+        assignedUserIds,
+        endpointGroupId: dto.endpointGroupId ?? null,
+        createdById: actorId,
       },
     });
 
@@ -72,7 +110,13 @@ export class EnrollmentService {
       action: 'CLAIM_TOKEN_CREATED',
       resource: 'device_claim_token',
       resourceId: record.id,
-      meta: { endpointId: dto.endpointId, description: dto.description },
+      meta: {
+        endpointId: dto.endpointId,
+        description: dto.description,
+        customerId,
+        accessMode: dto.accessMode ?? 'ASSIGNED_USERS',
+        assignedUserIds,
+      },
     });
 
     // Return record with the raw token (not the stored hash) so caller can embed it in URLs
@@ -148,7 +192,8 @@ export class EnrollmentService {
       : null;
 
     if (endpoint) {
-      // Update existing endpoint
+      // Update existing endpoint. Token's binding overrides prior customer/access
+      // if this is a re-enrollment against a specific token.
       endpoint = await this.prisma.endpoint.update({
         where: { id: endpoint.id },
         data: {
@@ -158,17 +203,26 @@ export class EnrollmentService {
           lastSeenAt: new Date(),
           isOnline: true,
           status: 'ACTIVE',
+          ...(record.customerId ? { customerId: record.customerId } : {}),
+          ...(record.endpointGroupId ? { endpointGroupId: record.endpointGroupId } : {}),
+          accessMode: record.accessMode,
         },
       });
     } else {
-      // Create new endpoint from claim context
+      // Create new endpoint from token+claim context. customerId and
+      // endpointGroupId come from the token so the endpoint cannot enroll
+      // itself into a different business.
       endpoint = await this.prisma.endpoint.create({
         data: {
           tenantId: record.tenantId,
+          customerId: record.customerId ?? null,
+          endpointGroupId: record.endpointGroupId ?? null,
+          accessMode: record.accessMode,
           name: dto.hostname ?? dto.rustdeskId,
           hostname: dto.hostname ?? null,
           platform: dto.platform ?? null,
           osVersion: dto.osVersion ?? null,
+          isManaged: true,
           lastSeenAt: new Date(),
           isOnline: true,
           status: 'ACTIVE',
@@ -199,6 +253,40 @@ export class EnrollmentService {
       },
     });
 
+    // Apply user access assignments from the token. The endpoint has no say
+    // in this — the assignedUserIds were locked in when the admin minted the
+    // token, and were validated at that time to belong to the same tenant.
+    if (record.assignedUserIds.length > 0) {
+      // Upsert-then-prune so re-enrollment against a new token becomes the new
+      // authoritative access list (without churning identical rows).
+      const currentAccess = await this.prisma.computerAccess.findMany({
+        where: { endpointId: endpoint.id },
+        select: { userId: true },
+      });
+      const currentIds = new Set(currentAccess.map((c) => c.userId));
+      const wantIds = new Set(record.assignedUserIds);
+
+      const toAdd = record.assignedUserIds.filter((u) => !currentIds.has(u));
+      const toRemove = [...currentIds].filter((u) => !wantIds.has(u));
+
+      if (toAdd.length > 0) {
+        await this.prisma.computerAccess.createMany({
+          data: toAdd.map((userId) => ({
+            tenantId: record.tenantId,
+            endpointId: endpoint!.id,
+            userId,
+            grantedBy: record.createdById ?? null,
+          })),
+          skipDuplicates: true,
+        });
+      }
+      if (toRemove.length > 0) {
+        await this.prisma.computerAccess.deleteMany({
+          where: { endpointId: endpoint.id, userId: { in: toRemove } },
+        });
+      }
+    }
+
     // Mark token as claimed
     await this.prisma.deviceClaimToken.update({
       where: { id: record.id },
@@ -215,7 +303,13 @@ export class EnrollmentService {
       resource: 'endpoint',
       resourceId: endpoint.id,
       actorIp: claimedByIp,
-      meta: { rustdeskId: dto.rustdeskId, hostname: dto.hostname },
+      meta: {
+        rustdeskId: dto.rustdeskId,
+        hostname: dto.hostname,
+        customerId: record.customerId,
+        accessMode: record.accessMode,
+        assignedUsers: record.assignedUserIds.length,
+      },
     });
 
     return { endpoint, tenantId: record.tenantId };

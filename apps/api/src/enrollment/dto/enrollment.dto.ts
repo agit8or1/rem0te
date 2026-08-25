@@ -1,21 +1,23 @@
-import { IsOptional, IsString, IsIP, Length, Matches } from 'class-validator';
+import { IsArray, IsEnum, IsOptional, IsString, IsIP, Length, Matches } from 'class-validator';
+
+export enum EndpointAccessMode {
+  ASSIGNED_USERS = 'ASSIGNED_USERS',
+  COMPANY_WIDE   = 'COMPANY_WIDE',
+}
 
 export class CreateClaimTokenDto {
-  @IsOptional()
-  @IsString()
-  endpointId?: string;
+  @IsOptional() @IsString() endpointId?: string;
+  @IsOptional() @IsString() customerName?: string;
+  @IsOptional() @IsString() siteName?: string;
+  @IsOptional() @IsString() @Length(0, 256) description?: string;
 
-  @IsOptional()
-  @IsString()
-  customerName?: string;
-
-  @IsOptional()
-  @IsString()
-  siteName?: string;
-
-  @IsOptional()
-  @IsString()
-  description?: string;
+  // Managed-computer enrollment binding. All of these travel WITH the token
+  // (server-side) so the endpoint that redeems it cannot pick a different
+  // company or assign itself to a different user.
+  @IsOptional() @IsString() customerId?: string;
+  @IsOptional() @IsEnum(EndpointAccessMode) accessMode?: EndpointAccessMode;
+  @IsOptional() @IsArray() @IsString({ each: true }) assignedUserIds?: string[];
+  @IsOptional() @IsString() endpointGroupId?: string;
 }
 
 export class HeartbeatDto {

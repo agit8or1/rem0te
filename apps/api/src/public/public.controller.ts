@@ -144,6 +144,37 @@ export class PublicController {
    * GET /public/install/macos.sh
    * No auth required — safe because they only embed public server settings.
    */
+  // Cleaner managed-install URL: /api/v1/public/install/win/<opaque-token>
+  // The token is in the path so it doesn't appear in query-string logs / Referer
+  // headers, and the URL fits the pattern the Add-Computer UI hands out.
+  @Get('install/win/:token')
+  @Public()
+  async getWindowsInstallScript(
+    @Param('token') token: string,
+    @Res() res: Response,
+    @Req() req: Request,
+  ) {
+    return this.getInstallScript('windows.ps1', token, res, req);
+  }
+  @Get('install/linux/:token')
+  @Public()
+  async getLinuxInstallScript(
+    @Param('token') token: string,
+    @Res() res: Response,
+    @Req() req: Request,
+  ) {
+    return this.getInstallScript('linux.sh', token, res, req);
+  }
+  @Get('install/mac/:token')
+  @Public()
+  async getMacInstallScript(
+    @Param('token') token: string,
+    @Res() res: Response,
+    @Req() req: Request,
+  ) {
+    return this.getInstallScript('macos.sh', token, res, req);
+  }
+
   @Get('install/:platform')
   @Public()
   async getInstallScript(
@@ -335,8 +366,14 @@ foreach ($d in $wipeDirs) {
 # RustDesk2.toml + rendezvous_server atomically. Works on all RustDesk 1.4.x.
 & $RDEXE --config $REM0TE_CONFIG *>$null
 
-# Belt-and-braces: also write the authoritative TOML in the LocalSystem service
-# path in case --config was not honored (older 1.4.x builds).
+# RustDesk keeps SEPARATE configs for (a) the LocalSystem service and
+# (b) every interactive Windows user's GUI. If we only fix the service the
+# desktop GUI keeps displaying "For faster connection, please set up your
+# own server" and can even initiate connections against public rustdesk.com
+# rendezvous. So: write the authoritative RustDesk2.toml into
+#   - service profile (LocalSystem + systemprofile — for the running service)
+#   - every real user profile that has AppData
+#   - C:\Users\Default so any future new user gets the Rem0te config
 $toml = @"
 rendezvous_server = '$($REM0TE_HOST):21116'
 nat_type = 1
@@ -348,14 +385,46 @@ relay-server = '$REM0TE_HOST'
 api-server = ''
 key = '$REM0TE_KEY'
 "@
-foreach ($d in @($svcDir, $sysDir)) {
+
+$configTargets = New-Object System.Collections.Generic.List[string]
+$configTargets.Add($svcDir) | Out-Null
+$configTargets.Add($sysDir) | Out-Null
+
+# Every user profile the OS knows about — from ProfileList registry, not from
+# a naive C:\Users scan (that missed domain profiles / picked up junk like Public).
+try {
+    $profileList = Get-ChildItem 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList' -ErrorAction Stop
+    foreach ($p in $profileList) {
+        $sid = Split-Path $p.Name -Leaf
+        # Skip well-known system SIDs: S-1-5-18 LocalSystem, S-1-5-19 LocalService, S-1-5-20 NetworkService
+        if ($sid -in @('S-1-5-18','S-1-5-19','S-1-5-20')) { continue }
+        $pip = (Get-ItemProperty -Path $p.PSPath -Name 'ProfileImagePath' -ErrorAction SilentlyContinue).ProfileImagePath
+        if (-not $pip) { continue }
+        $ad = Join-Path $pip 'AppData\\Roaming\\RustDesk\\config'
+        if (Test-Path (Split-Path $ad)) { $configTargets.Add($ad) | Out-Null }
+    }
+} catch { Log "  Could not enumerate user profiles: $($_.Exception.Message)" 'WARN' }
+
+# C:\Users\Default so future first-logins inherit the Rem0te config
+$defaultDir = 'C:\\Users\\Default\\AppData\\Roaming\\RustDesk\\config'
+if (Test-Path 'C:\\Users\\Default') { $configTargets.Add($defaultDir) | Out-Null }
+
+# De-dupe
+$configTargets = [System.Linq.Enumerable]::Distinct([string[]]$configTargets)
+
+foreach ($d in $configTargets) {
     try {
         New-Item -ItemType Directory -Force -Path $d | Out-Null
-        $toml | Set-Content "$d\\RustDesk2.toml" -Encoding UTF8
-        Log "  Wrote server config: $d\\RustDesk2.toml"
+        $toml | Set-Content "$d\\RustDesk2.toml" -Encoding UTF8 -Force
+        Log "  Wrote config: $d\\RustDesk2.toml"
     } catch {
-        Log "  Skip (no access): $d" 'WARN'
+        Log "  Skip (no access): $d — $($_.Exception.Message)" 'WARN'
     }
+}
+
+# Kill any running RustDesk GUI/tray so it re-reads the new config on next start.
+Get-Process -Name rustdesk -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 } | ForEach-Object {
+    try { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue } catch {}
 }
 
 # Set a strong internal password so the endpoint accepts authenticated Rem0te
@@ -371,37 +440,73 @@ Step 4 6 'Starting service...'
 & sc.exe start RustDesk 2>$null | Out-Null
 Start-Sleep -Seconds 4
 
-# Verify effective config: search the RustDesk2.toml files RustDesk actually reads
-# and confirm rendezvous_server / custom-rendezvous-server point at us, not at
-# a public rs-*.rustdesk.com server. If they don't, the install did NOT succeed.
-function Get-EffectiveServer {
-    $paths = @(
-        "$svcDir\\RustDesk2.toml",
-        "$sysDir\\RustDesk2.toml",
-        "$env:APPDATA\\RustDesk\\config\\RustDesk2.toml"
-    )
-    foreach ($p in $paths) {
-        if (Test-Path $p) {
-            $c = Get-Content $p -Raw -ErrorAction SilentlyContinue
-            if ($c -match 'custom-rendezvous-server\\s*=\\s*[''"]([^''"]+)[''"]') { return $Matches[1] }
+# Verify effective config across EVERY RustDesk2.toml the OS knows about —
+# not just $env:APPDATA. Detects service-vs-user divergence (service configured
+# for Rem0te but the interactive user's GUI still pointed at rustdesk.com).
+function Get-AllConfigs {
+    $paths = @("$svcDir\\RustDesk2.toml", "$sysDir\\RustDesk2.toml")
+    try {
+        $profileList = Get-ChildItem 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList' -ErrorAction Stop
+        foreach ($p in $profileList) {
+            $sid = Split-Path $p.Name -Leaf
+            if ($sid -in @('S-1-5-18','S-1-5-19','S-1-5-20')) { continue }
+            $pip = (Get-ItemProperty -Path $p.PSPath -Name 'ProfileImagePath' -ErrorAction SilentlyContinue).ProfileImagePath
+            if ($pip) { $paths += (Join-Path $pip 'AppData\\Roaming\\RustDesk\\config\\RustDesk2.toml') }
+        }
+    } catch {}
+    return ($paths | Where-Object { Test-Path $_ })
+}
+function Get-ConfigServer([string]$path) {
+    $c = Get-Content $path -Raw -ErrorAction SilentlyContinue
+    if (-not $c) { return $null }
+    $r = $null; $cs = $null
+    if ($c -match 'custom-rendezvous-server\\s*=\\s*[''"]([^''"]+)[''"]') { $cs = $Matches[1] }
+    if ($c -match 'rendezvous_server\\s*=\\s*[''"]([^''"]+)[''"]') { $r = $Matches[1] }
+    return [PSCustomObject]@{ path = $path; rendezvous = $r; customRendezvous = $cs }
+}
+function Verify-AllConfigs {
+    $bad = @()
+    foreach ($p in (Get-AllConfigs)) {
+        $s = Get-ConfigServer $p
+        if (-not $s) { continue }
+        $host_ok = ($s.customRendezvous -eq $REM0TE_HOST)
+        # rendezvous_server may be blank on first run or contain host:port
+        $rz_ok  = (-not $s.rendezvous) -or ($s.rendezvous -like "$REM0TE_HOST*")
+        $public = ($s.rendezvous -match 'rustdesk\\.com') -or ($s.customRendezvous -match 'rustdesk\\.com')
+        if (-not $host_ok -or -not $rz_ok -or $public) {
+            $bad += $s
+            Log ("  BAD: " + $s.path + " -> custom=" + $s.customRendezvous + " rz=" + $s.rendezvous) 'WARN'
+        } else {
+            Log ("  OK:  " + $s.path + " -> custom=" + $s.customRendezvous + " rz=" + $s.rendezvous)
         }
     }
-    return ''
+    return $bad
 }
-$effective = Get-EffectiveServer
-if ($effective -and $effective -ne $REM0TE_HOST) {
-    Log "  Effective server = '$effective' (wanted '$REM0TE_HOST'). Repairing." 'WARN'
+$bad = Verify-AllConfigs
+if ($bad.Count -gt 0) {
+    # Repair: rewrite bad files, then re-verify.
+    Log "  Repairing $($bad.Count) config file(s)..." 'WARN'
+    foreach ($b in $bad) {
+        try {
+            $dir = Split-Path $b.path -Parent
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            $toml | Set-Content $b.path -Encoding UTF8 -Force
+        } catch {}
+    }
     Stop-Rustdesk
     & $RDEXE --config $REM0TE_CONFIG *>$null
     Start-Sleep -Seconds 1
     & sc.exe start RustDesk 2>$null | Out-Null
     Start-Sleep -Seconds 3
-    $effective = Get-EffectiveServer
+    $bad = Verify-AllConfigs
 }
-if ($effective -match 'rustdesk\\.com$') {
-    Fail "ERROR: RustDesk is still using a public server ($effective). Refusing to report success." 20
+if ($bad.Count -gt 0) {
+    $stillPublic = $bad | Where-Object { ($_.rendezvous -match 'rustdesk\\.com') -or ($_.customRendezvous -match 'rustdesk\\.com') }
+    if ($stillPublic) {
+        Fail "ERROR: RustDesk still uses a public server after repair. Refusing to report success." 20
+    }
 }
-Log "  Server config verified: $effective"
+Log "  Server config verified across $((Get-AllConfigs).Count) profile(s)."
 
 # ── [5/6] Acquire RustDesk device ID ───────────────────────────────────────
 Step 5 6 'Waiting for device identity...'

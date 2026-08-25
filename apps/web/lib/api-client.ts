@@ -60,6 +60,14 @@ export const dashboardApi = {
 // ─── Endpoints ───────────────────────────────────────────────────────────────
 export const endpointsApi = {
   connected: () => api.get('/endpoints/connected'),
+  // Employee-facing: only computers this user is authorized to connect to.
+  mine: () => api.get('/endpoints/mine'),
+  // Admin access management for one computer
+  listAccess: (id: string) => api.get(`/endpoints/${id}/access`),
+  grantAccess: (id: string, userId: string) => api.post(`/endpoints/${id}/access`, { userId }),
+  revokeAccess: (id: string, userId: string) => api.delete(`/endpoints/${id}/access/${userId}`),
+  setAccessMode: (id: string, mode: 'ASSIGNED_USERS' | 'COMPANY_WIDE') =>
+    api.patch(`/endpoints/${id}/access-mode`, { accessMode: mode }),
   list: (params?: Record<string, string>) =>
     api.get('/endpoints', { params }),
   get: (id: string) => api.get(`/endpoints/${id}`),
@@ -117,7 +125,8 @@ export const sitesApi = {
 
 // ─── Users / Members ─────────────────────────────────────────────────────────
 export const usersApi = {
-  listMembers: (tenantId: string) => api.get(`/tenants/${tenantId}/members`),
+  listMembers: (_tenantId?: string) => api.get('/users'),
+  listMembersOfTenant: (tenantId: string) => api.get(`/tenants/${tenantId}/members`),
   invite: (tenantId: string, data: Record<string, unknown>) =>
     api.post(`/tenants/${tenantId}/invite`, data),
   assignRole: (tenantId: string, userId: string, roleId: string) =>

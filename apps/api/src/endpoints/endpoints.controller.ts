@@ -23,6 +23,56 @@ export class EndpointsController {
     return { success: true, data: await this.svc.findConnected(u.tenantId!) };
   }
 
+  // Employee-facing: "My Computers" — the list of computers this specific user
+  // is authorized to connect to. Requires an authenticated user but no admin
+  // permission, so ordinary employees always have access to their assigned PCs.
+  @Get('mine')
+  async mine(@CurrentUser() u: JwtPayload) {
+    if (!u.tenantId) return { success: true, data: [] };
+    return { success: true, data: await this.svc.myComputers(u.tenantId, u.sub) };
+  }
+
+  // Manage ComputerAccess rows for a specific endpoint (admin only).
+  @Get(':id/access')
+  @RequirePermissions('endpoints:write')
+  async listAccess(@CurrentUser() u: JwtPayload, @Param('id') id: string) {
+    return { success: true, data: await this.svc.listAccess(u.tenantId!, id) };
+  }
+
+  @Post(':id/access')
+  @RequirePermissions('endpoints:write')
+  @HttpCode(HttpStatus.OK)
+  async grantAccess(
+    @CurrentUser() u: JwtPayload,
+    @Param('id') id: string,
+    @Body() body: { userId: string },
+  ) {
+    return { success: true, data: await this.svc.grantAccess(u.tenantId!, id, body.userId, u.sub) };
+  }
+
+  @Delete(':id/access/:userId')
+  @RequirePermissions('endpoints:write')
+  @HttpCode(HttpStatus.OK)
+  async revokeAccess(
+    @CurrentUser() u: JwtPayload,
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+  ) {
+    await this.svc.revokeAccess(u.tenantId!, id, userId, u.sub);
+    return { success: true };
+  }
+
+  @Patch(':id/access-mode')
+  @RequirePermissions('endpoints:write')
+  @HttpCode(HttpStatus.OK)
+  async setAccessMode(
+    @CurrentUser() u: JwtPayload,
+    @Param('id') id: string,
+    @Body() body: { accessMode: 'ASSIGNED_USERS' | 'COMPANY_WIDE' },
+  ) {
+    return { success: true, data: await this.svc.setAccessMode(u.tenantId!, id, body.accessMode, u.sub) };
+  }
+
   @Get()
   @RequirePermissions('endpoints:read')
   async list(@CurrentUser() u: JwtPayload, @Query() q: Record<string, string>) {

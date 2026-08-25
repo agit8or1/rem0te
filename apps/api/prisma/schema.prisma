@@ -91,6 +91,8 @@ enum ActivityAction {
   ENDPOINT_CLAIMED
   ENDPOINT_ENROLLED
   ENDPOINT_UNASSIGNED
+  ENDPOINT_ACCESS_GRANTED
+  ENDPOINT_ACCESS_REVOKED
   SESSION_LAUNCHED
   SESSION_COMPLETED
   SESSION_CANCELED
@@ -139,6 +141,7 @@ model Tenant {
   deviceClaimTokens DeviceClaimToken[]
   launcherTokens    LauncherToken[]
   supportSessions   SupportSession[]
+  computerAccess    ComputerAccess[]
 
   @@index([slug])
 }
@@ -218,6 +221,7 @@ model User {
   launcherTokens    LauncherToken[]
   supportSessions   SupportSession[]
   invitationsSent   Invitation[]
+  computerAccess    ComputerAccess[]
 
   @@index([email])
 }
@@ -401,6 +405,12 @@ model Endpoint {
   noteRels          Note[]
   supportSessions   SupportSession[]
   deviceClaimTokens DeviceClaimToken[]
+  computerAccess    ComputerAccess[]
+
+  // Access mode: how the computer's remote-access authorization is scoped.
+  //   ASSIGNED_USERS  → only users listed in ComputerAccess may connect
+  //   COMPANY_WIDE    → any user in the same customer may connect (still subject to RBAC/GeoIP)
+  accessMode  EndpointAccessMode @default(ASSIGNED_USERS)
 
   aiTimeline String?
 
@@ -411,6 +421,33 @@ model Endpoint {
   @@index([customerId])
   @@index([status])
   @@index([tenantId, status])
+}
+
+// Which users have been granted remote access to which computers.
+// This is the primary authorization table for "John can connect to JOHN-OFFICE-PC".
+// Multi-tenant safe: (userId, endpointId) is unique.
+model ComputerAccess {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  endpointId String
+  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  grantedBy String?
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+
+  @@unique([userId, endpointId])
+  @@index([tenantId])
+  @@index([endpointId])
+  @@index([userId])
+}
+
+enum EndpointAccessMode {
+  ASSIGNED_USERS
+  COMPANY_WIDE
 }
 
 model EndpointGroup {
@@ -488,7 +525,16 @@ model DeviceClaimToken {
   siteName     String?
   description  String?
 
+  // Managed-computer enrollment binding — set by the admin at token-mint time.
+  // The endpoint that redeems this token cannot influence any of these values;
+  // enrollment.service copies them onto the created endpoint + ComputerAccess.
+  customerId       String?
+  accessMode       EndpointAccessMode @default(ASSIGNED_USERS)
+  assignedUserIds  String[]            @default([])  // whitelisted user IDs (all must belong to the same customer)
+  endpointGroupId  String?
+
   createdAt DateTime @default(now())
+  createdById String?
 
   @@index([token])
   @@index([tenantId])

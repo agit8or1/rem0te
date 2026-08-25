@@ -73,6 +73,39 @@ export class EndpointsService {
     return this.decryptPassword(node.permanentPassword);
   }
 
+  // Employee-facing: computers the given user is authorized to connect to.
+  // Includes: explicit ComputerAccess rows (assigned users) + endpoints whose
+  // accessMode is COMPANY_WIDE and belong to a customer the user is a member of.
+  // Never returns computers from other tenants; never returns the encrypted password.
+  async myComputers(tenantId: string, userId: string) {
+    // Which customers is this user linked to via their membership?
+    const membership = await this.prisma.membership.findFirst({
+      where: { tenantId, userId, isActive: true },
+      select: { customerId: true },
+    });
+
+    const wideCustomerIds = membership?.customerId ? [membership.customerId] : [];
+
+    const rows = await this.prisma.endpoint.findMany({
+      where: {
+        tenantId,
+        status: 'ACTIVE',
+        OR: [
+          { computerAccess: { some: { userId } } },
+          ...(wideCustomerIds.length > 0
+            ? [{ accessMode: 'COMPANY_WIDE' as const, customerId: { in: wideCustomerIds } }]
+            : []),
+        ],
+      },
+      orderBy: [{ isOnline: 'desc' }, { name: 'asc' }],
+      include: {
+        customer: { select: { id: true, name: true } },
+        rustdeskNode: { select: { rustdeskId: true, lastSeenAt: true, permanentPassword: true } },
+      },
+    });
+    return rows.map((r) => this.stripSecrets(r));
+  }
+
   async findConnected(tenantId: string) {
     const rows = await this.prisma.endpoint.findMany({
       where: { tenantId, isOnline: true, status: 'ACTIVE' },
@@ -374,5 +407,72 @@ export class EndpointsService {
     const ep = await this.prisma.endpoint.findFirst({ where: { id, tenantId }, select: { id: true } });
     if (!ep) throw new NotFoundException('Endpoint not found');
     return ep;
+  }
+
+  // ── ComputerAccess management ─────────────────────────────────────────────
+
+  async listAccess(tenantId: string, endpointId: string) {
+    await this.assertOwnership(tenantId, endpointId);
+    return this.prisma.computerAccess.findMany({
+      where: { endpointId, tenantId },
+      include: {
+        user: { select: { id: true, email: true, firstName: true, lastName: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async grantAccess(tenantId: string, endpointId: string, userId: string, actorId: string) {
+    await this.assertOwnership(tenantId, endpointId);
+    // The user must actually be a member of this tenant.
+    const membership = await this.prisma.membership.findFirst({
+      where: { tenantId, userId, isActive: true },
+      select: { id: true },
+    });
+    if (!membership) throw new NotFoundException('User is not an active member of this tenant');
+
+    const row = await this.prisma.computerAccess.upsert({
+      where: { userId_endpointId: { userId, endpointId } },
+      update: { grantedBy: actorId },
+      create: { tenantId, endpointId, userId, grantedBy: actorId },
+      include: { user: { select: { id: true, email: true, firstName: true, lastName: true } } },
+    });
+    await this.audit.log({
+      tenantId, actorId,
+      action: 'ENDPOINT_ACCESS_GRANTED',
+      resource: 'endpoint',
+      resourceId: endpointId,
+      meta: { userId },
+    });
+    return row;
+  }
+
+  async revokeAccess(tenantId: string, endpointId: string, userId: string, actorId: string) {
+    await this.assertOwnership(tenantId, endpointId);
+    await this.prisma.computerAccess.deleteMany({ where: { endpointId, userId, tenantId } });
+    await this.audit.log({
+      tenantId, actorId,
+      action: 'ENDPOINT_ACCESS_REVOKED',
+      resource: 'endpoint',
+      resourceId: endpointId,
+      meta: { userId },
+    });
+  }
+
+  async setAccessMode(tenantId: string, endpointId: string, mode: 'ASSIGNED_USERS' | 'COMPANY_WIDE', actorId: string) {
+    await this.assertOwnership(tenantId, endpointId);
+    const updated = await this.prisma.endpoint.update({
+      where: { id: endpointId },
+      data: { accessMode: mode },
+      select: { id: true, accessMode: true },
+    });
+    await this.audit.log({
+      tenantId, actorId,
+      action: 'ENDPOINT_UPDATED',
+      resource: 'endpoint',
+      resourceId: endpointId,
+      meta: { accessMode: mode },
+    });
+    return updated;
   }
 }
