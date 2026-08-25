@@ -100,7 +100,8 @@ export class NotesController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: AddCommentDto,
   ) {
-    const data = await this.notesService.addComment(id, user.sub, dto.content);
+    if (!user.tenantId) return { success: false, message: 'No tenant context' };
+    const data = await this.notesService.addComment(user.tenantId, id, user.sub, dto.content);
     return { success: true, data };
   }
 }

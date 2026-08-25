@@ -21,7 +21,11 @@ export class EnrollmentService {
     private readonly audit: AuditService,
     private readonly config: ConfigService,
   ) {
-    this.encKey = Buffer.from(this.config.get<string>('ENCRYPTION_KEY', '0'.repeat(64)), 'hex');
+    const rawKey = this.config.get<string>('ENCRYPTION_KEY');
+    if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
+      throw new Error('ENCRYPTION_KEY is missing or invalid — refusing to start. Set a 64-hex-char key.');
+    }
+    this.encKey = Buffer.from(rawKey, 'hex');
   }
 
   private encryptPassword(text: string): string {

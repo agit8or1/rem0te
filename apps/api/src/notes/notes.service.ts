@@ -145,13 +145,24 @@ export class NotesService {
     return { success: true };
   }
 
-  async addComment(noteId: string, authorId: string, content: string) {
-    const note = await this.prisma.note.findUnique({ where: { id: noteId } });
+  async addComment(tenantId: string, noteId: string, authorId: string, content: string) {
+    const note = await this.prisma.note.findFirst({ where: { id: noteId, tenantId } });
     if (!note) throw new NotFoundException(`Note ${noteId} not found`);
 
-    return this.prisma.noteComment.create({
+    const comment = await this.prisma.noteComment.create({
       data: { noteId, authorId, content },
       include: { author: { select: { id: true, email: true, firstName: true, lastName: true } } },
     });
+
+    await this.audit.log({
+      tenantId,
+      actorId: authorId,
+      action: 'NOTE_COMMENT_ADDED',
+      resource: 'note',
+      resourceId: noteId,
+      meta: { commentId: comment.id },
+    });
+
+    return comment;
   }
 }

@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as https from 'https';
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync, spawn } from 'child_process';
+import { spawn } from 'child_process';
 import { Subject } from 'rxjs';
 
 export interface UpdateProgress {
@@ -98,6 +98,14 @@ export class UpdateService {
     });
   }
 
+  private isUpdateEnabled(): boolean {
+    return process.env.ALLOW_IN_APP_UPDATE === 'true';
+  }
+
+  private isValidVersion(v: string): boolean {
+    return /^[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}(?:[-.+][A-Za-z0-9._-]{1,32})?$/.test(v);
+  }
+
   applyUpdate(): Subject<UpdateProgress> {
     if (this.activeUpdate) return this.activeUpdate;
 
@@ -116,6 +124,16 @@ export class UpdateService {
 
     (async () => {
       try {
+        if (!this.isUpdateEnabled()) {
+          fail('disabled',
+            'In-app updates are disabled on this server. ' +
+            'Updates are a supply-chain-critical operation and must be performed by an operator ' +
+            'who can verify the release signature. Set ALLOW_IN_APP_UPDATE=true only if you accept ' +
+            'that this server will git-checkout and build code fetched from GitHub without additional ' +
+            'signature verification.');
+          return;
+        }
+
         emit('check', 'Checking for update…', 5);
         const info = await this.checkForUpdate();
         if (!info.hasUpdate) {
@@ -125,31 +143,67 @@ export class UpdateService {
           return;
         }
 
-        emit('fetch', `Fetching tag v${info.latestVersion} from GitHub…`, 10);
-        await this.runShell(`git fetch origin tag v${info.latestVersion} --no-tags`, emit, 'fetch', 15, 20);
+        // Validate the version string BEFORE it reaches any shell — otherwise a hostile
+        // GitHub response could inject arbitrary characters into `git fetch/checkout`.
+        if (!this.isValidVersion(info.latestVersion)) {
+          fail('validate', `Refusing to apply update — release tag '${info.latestVersion}' is not a valid semver`);
+          return;
+        }
+        // Reject downgrades even if the version parser is confused
+        if (!this.isNewer(info.latestVersion, info.currentVersion)) {
+          fail('validate', `Refusing to apply update — refusing downgrade from ${info.currentVersion} to ${info.latestVersion}`);
+          return;
+        }
 
-        emit('checkout', `Checking out v${info.latestVersion}…`, 25);
-        await this.runShell(`git checkout v${info.latestVersion}`, emit, 'checkout', 25, 40);
+        const tag = `v${info.latestVersion}`;
+
+        emit('fetch', `Fetching tag ${tag} from GitHub…`, 10);
+        await this.runProc('git', ['fetch', 'origin', `tag`, tag, '--no-tags'], emit, 'fetch', 15, 20);
+
+        // Verify the tag is signed and the signature is trusted. If gpg is not
+        // installed or the tag is unsigned, refuse — better to fail than blindly
+        // build attacker-controlled code with elevated privileges.
+        emit('verify', `Verifying tag signature…`, 22);
+        try {
+          await this.runProc('git', ['tag', '--verify', tag], emit, 'verify', 22, 24);
+        } catch {
+          fail('verify',
+            `Refusing to apply update — tag ${tag} is unsigned or the signature is not trusted. ` +
+            `Either sign releases with git tag -s and add the maintainer key to the server's GPG keyring, ` +
+            `or update the server manually.`);
+          return;
+        }
+
+        emit('checkout', `Checking out ${tag}…`, 25);
+        await this.runProc('git', ['checkout', tag], emit, 'checkout', 25, 40);
 
         emit('deps', 'Installing dependencies…', 42);
-        await this.runShell('pnpm install --frozen-lockfile', emit, 'deps', 42, 55);
+        await this.runProc('pnpm', ['install', '--frozen-lockfile'], emit, 'deps', 42, 55);
 
         emit('build-api', 'Building API…', 57);
-        await this.runShell('pnpm --filter api build', emit, 'build-api', 57, 72);
+        await this.runProc('pnpm', ['--filter', 'api', 'build'], emit, 'build-api', 57, 72);
 
         emit('build-web', 'Building web app…', 74);
-        await this.runShell('pnpm --filter web build', emit, 'build-web', 74, 88);
+        await this.runProc('pnpm', ['--filter', 'web', 'build'], emit, 'build-web', 74, 88);
 
         emit('deploy', 'Deploying web assets…', 90);
-        await this.runShell(
-          'rsync -a --delete apps/web/.next/standalone/ /opt/reboot-remote/web/standalone/ && rsync -a --delete apps/web/.next/static/ /opt/reboot-remote/web/standalone/apps/web/.next/static/',
-          emit, 'deploy', 90, 94,
-        );
+        await this.runProc('rsync', [
+          '-a', '--delete',
+          'apps/web/.next/standalone/',
+          '/opt/reboot-remote/web/standalone/',
+        ], emit, 'deploy', 90, 92);
+        await this.runProc('rsync', [
+          '-a', '--delete',
+          'apps/web/.next/static/',
+          '/opt/reboot-remote/web/standalone/apps/web/.next/static/',
+        ], emit, 'deploy', 92, 94);
 
         emit('restart', 'Restarting services…', 95);
-        await this.runShell('sudo systemctl restart reboot-remote-api reboot-remote-web', emit, 'restart', 95, 99);
+        await this.runProc('sudo', [
+          '-n',
+          'systemctl', 'restart', 'reboot-remote-api', 'reboot-remote-web',
+        ], emit, 'restart', 95, 99);
 
-        // Update version.json
         try {
           const vJson = JSON.parse(fs.readFileSync(this.versionFile, 'utf8'));
           vJson.version = info.latestVersion;
@@ -168,15 +222,18 @@ export class UpdateService {
     return subject;
   }
 
-  private runShell(
+  private runProc(
     cmd: string,
+    args: string[],
     emit: (step: string, msg: string, pct: number) => void,
     step: string,
     startPct: number,
     endPct: number,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
-      const proc = spawn('bash', ['-c', cmd], { cwd: this.projectRoot });
+      // shell:false — arguments never touch a shell interpreter so no globbing,
+      // no interpolation, no command chaining.
+      const proc = spawn(cmd, args, { cwd: this.projectRoot, shell: false });
       const lines: string[] = [];
       let pct = startPct;
       const range = endPct - startPct;
@@ -195,17 +252,24 @@ export class UpdateService {
       });
       proc.on('close', (code) => {
         if (code === 0) resolve();
-        else reject(new Error(`Command failed (exit ${code}): ${cmd}`));
+        else reject(new Error(`Command failed (exit ${code}): ${cmd} ${args.join(' ')}`));
       });
+      proc.on('error', (err) => reject(err));
     });
   }
 
   private isNewer(a: string, b: string): boolean {
-    const parse = (v: string) => v.split('.').map(Number);
-    const [am, an, ap] = parse(a);
-    const [bm, bn, bp] = parse(b);
-    if (am !== bm) return am > bm;
-    if (an !== bn) return an > bn;
-    return ap > bp;
+    const parse = (v: string): number[] => {
+      const parts = v.split(/[.+-]/).slice(0, 3).map((p) => parseInt(p, 10));
+      if (parts.length < 3) parts.push(...new Array(3 - parts.length).fill(0));
+      return parts;
+    };
+    const av = parse(a);
+    const bv = parse(b);
+    if (av.some((n) => !Number.isFinite(n)) || bv.some((n) => !Number.isFinite(n))) return false;
+    for (let i = 0; i < 3; i++) {
+      if (av[i] !== bv[i]) return av[i] > bv[i];
+    }
+    return false;
   }
 }

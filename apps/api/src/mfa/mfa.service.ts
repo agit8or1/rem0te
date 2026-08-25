@@ -10,13 +10,21 @@ import { AuditService } from '../audit/audit.service';
 @Injectable()
 export class MfaService {
   private readonly encKey: Buffer;
+  // In-process per-user backoff for recovery-code attempts. Cleared on successful use.
+  // Combined with the per-IP throttle on the controller, this ensures a single hostile
+  // authenticated session cannot brute-force recovery codes even if IP throttling is bypassed.
+  private readonly recoveryAttempts = new Map<string, { count: number; blockedUntil: number }>();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly audit: AuditService,
   ) {
-    this.encKey = Buffer.from(config.get<string>('ENCRYPTION_KEY', '0'.repeat(64)), 'hex');
+    const rawKey = config.get<string>('ENCRYPTION_KEY');
+    if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
+      throw new Error('ENCRYPTION_KEY is missing or invalid — refusing to start. Set a 64-hex-char key.');
+    }
+    this.encKey = Buffer.from(rawKey, 'hex');
   }
 
   async generateTotpSetup(userId: string): Promise<{ secret: string; qrCodeUrl: string; otpauthUrl: string }> {
@@ -74,6 +82,13 @@ export class MfaService {
   }
 
   async verifyRecoveryCode(userId: string, code: string): Promise<boolean> {
+    const now = Date.now();
+    const state = this.recoveryAttempts.get(userId);
+    if (state && state.blockedUntil > now) {
+      await this.audit.log({ action: 'RECOVERY_CODE_BLOCKED', actorId: userId, resource: 'user', resourceId: userId });
+      return false;
+    }
+
     const methods = await this.prisma.userMfaMethod.findMany({
       where: { userId, type: 'RECOVERY_CODE', isActive: true, usedAt: null },
     });
@@ -86,10 +101,22 @@ export class MfaService {
           where: { id: method.id },
           data: { usedAt: new Date(), isActive: false },
         });
+        this.recoveryAttempts.delete(userId);
         await this.audit.log({ action: 'RECOVERY_CODE_USED', actorId: userId, resource: 'user', resourceId: userId });
         return true;
       }
     }
+
+    // Track failure. After 5 wrong attempts within 15 minutes, lock this user out
+    // of the recovery-code path for 15 minutes.
+    const next = state && state.blockedUntil > now - 15 * 60_000
+      ? { count: state.count + 1, blockedUntil: state.blockedUntil }
+      : { count: 1, blockedUntil: now + 15 * 60_000 };
+    if (next.count >= 5) {
+      next.blockedUntil = now + 15 * 60_000;
+      await this.audit.log({ action: 'RECOVERY_CODE_LOCKOUT', actorId: userId, resource: 'user', resourceId: userId });
+    }
+    this.recoveryAttempts.set(userId, next);
     return false;
   }
 

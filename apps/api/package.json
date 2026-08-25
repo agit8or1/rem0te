@@ -1,6 +1,6 @@
 {
   "name": "api",
-  "version": "0.3.1",
+  "version": "0.3.7",
   "private": true,
   "scripts": {
     "dev": "nest start --watch",
@@ -8,7 +8,8 @@
     "start": "node dist/main",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
-    "prisma": "prisma"
+    "prisma": "prisma",
+    "security:regression": "node scripts/security-regression.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",

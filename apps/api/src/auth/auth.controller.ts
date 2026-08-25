@@ -34,7 +34,7 @@ export class AuthController {
       // Store partial token in httpOnly cookie so MFA page can access it without exposing to JS
       res.cookie('partial_token', result.partialToken, {
         httpOnly: true,
-        secure: process.env.COOKIE_SECURE === 'true',
+        secure: process.env.NODE_ENV === 'production' || process.env.COOKIE_SECURE === 'true',
         sameSite: 'strict',
         maxAge: 10 * 60 * 1000, // 10 minutes
         path: '/',
@@ -121,7 +121,7 @@ export class AuthController {
   private setAuthCookie(res: Response, token: string) {
     res.cookie('access_token', token, {
       httpOnly: true,
-      secure: process.env.COOKIE_SECURE === 'true',
+      secure: process.env.NODE_ENV === 'production' || process.env.COOKIE_SECURE === 'true',
       sameSite: 'strict',
       maxAge: 8 * 60 * 60 * 1000,
       path: '/',

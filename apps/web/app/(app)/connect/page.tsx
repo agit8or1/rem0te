@@ -59,8 +59,9 @@ function MyDevicesTab() {
       if (oneTime) {
         endpointsApi.archive(ep.id as string).catch(() => null);
       }
-      // If endpoint has a stored password, copy it to clipboard before launching
-      const hasPassword = !!(ep.rustdeskNode as Record<string, unknown> | undefined)?.permanentPassword;
+      // If endpoint has a stored password, copy it to clipboard before launching.
+      // The API exposes only a `hasPassword` boolean, never the ciphertext.
+      const hasPassword = !!(ep.rustdeskNode as Record<string, unknown> | undefined)?.hasPassword;
       if (hasPassword) {
         try {
           const res = await endpointsApi.getPassword(ep.id as string);
@@ -157,7 +158,7 @@ function MyDevicesTab() {
                 const isOnline = ep.isOnline as boolean;
                 const rustdeskNode = ep.rustdeskNode as Record<string, unknown> | undefined;
                 const rustdeskId = rustdeskNode?.rustdeskId as string | undefined;
-                const hasPassword = !!rustdeskNode?.permanentPassword;
+                const hasPassword = !!rustdeskNode?.hasPassword;
                 const customer = ep.customer as { name?: string } | null;
                 const isConnecting = connecting === (ep.id as string);
                 return (

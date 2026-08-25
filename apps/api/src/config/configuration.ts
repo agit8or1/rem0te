@@ -1,15 +1,29 @@
 import { z } from 'zod';
 
+const HEX64 = /^[0-9a-fA-F]{64}$/;
+const ZERO_KEY = '0'.repeat(64);
+
 const configSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().default(3001),
   API_PORT: z.coerce.number().default(3001),
   API_PREFIX: z.string().default('api'),
-  JWT_SECRET: z.string().min(32),
+  JWT_SECRET: z.string().min(32).refine(
+    (v) => v !== 'change_me' && !/^changeme/i.test(v),
+    { message: 'JWT_SECRET is set to a placeholder value — generate a real 32+ byte random secret' },
+  ),
   JWT_EXPIRES_IN: z.string().default('8h'),
-  LAUNCHER_TOKEN_SECRET: z.string().min(16),
+  LAUNCHER_TOKEN_SECRET: z.string().min(16).refine(
+    (v) => v !== 'change_me' && !/^changeme/i.test(v),
+    { message: 'LAUNCHER_TOKEN_SECRET is set to a placeholder — generate a real random secret' },
+  ),
   LAUNCHER_TOKEN_TTL_SECONDS: z.coerce.number().default(120),
-  ENCRYPTION_KEY: z.string().length(64),
+  ENCRYPTION_KEY: z.string()
+    .regex(HEX64, 'ENCRYPTION_KEY must be exactly 64 lowercase hex characters (32 bytes)')
+    .refine(
+      (v) => v.toLowerCase() !== ZERO_KEY,
+      { message: 'ENCRYPTION_KEY is the placeholder all-zeros value — generate a real key: openssl rand -hex 32' },
+    ),
   MFA_ISSUER: z.string().default('RebootRemote'),
   DATABASE_URL: z.string(),
   REDIS_URL: z.string().default('redis://localhost:6379'),

@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, Res, Req } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Param, Query, Res, Req } from '@nestjs/common';
 import { Response, Request } from 'express';
 import { createHash } from 'crypto';
 import * as fs from 'fs';
@@ -9,6 +9,34 @@ import * as https from 'https';
 
 const INSTALLER_MAGIC = Buffer.from('REM0TE_INST_URL:');
 const INSTALLER_SLOT_SIZE = 256;
+
+// Strict allowlists for values interpolated into generated shell / PowerShell scripts.
+// A hostile or corrupted tenant setting must never be able to break out of a quoted
+// string and inject arbitrary shell commands into the customer-run installer.
+const HOSTNAME_RE = /^[a-zA-Z0-9._-]{1,253}$/;
+const BASE64_RE = /^[A-Za-z0-9+/]{16,512}={0,2}$/;
+const HEX_TOKEN_RE = /^[A-Fa-f0-9]{16,128}$/;
+const VERSION_RE = /^[a-zA-Z0-9._+-]{1,32}$/;
+
+function safeHost(host: string | null): string {
+  if (!host) return '';
+  if (!HOSTNAME_RE.test(host)) throw new BadRequestException('Server relay host is not a valid hostname');
+  return host;
+}
+function safeKey(key: string | null): string {
+  if (!key) return '';
+  if (!BASE64_RE.test(key)) throw new BadRequestException('Server public key is not a valid base64 value');
+  return key;
+}
+function safeToken(token: string | undefined): string {
+  if (!token) return '';
+  if (!HEX_TOKEN_RE.test(token)) throw new BadRequestException('Enrollment token is not a valid hex value');
+  return token;
+}
+function safeVersion(version: string): string {
+  if (!VERSION_RE.test(version)) return '1.4.6';
+  return version;
+}
 
 @Controller('public')
 export class PublicController {
@@ -156,10 +184,24 @@ export class PublicController {
       contentType = 'text/plain; charset=utf-8';
       filename = 'install-rustdesk-macos.sh';
     } else if (platform === 'windows.exe') {
-      const proto = (req.headers['x-forwarded-proto'] as string | undefined) ?? 'https';
-      const reqHost = (req.headers['x-forwarded-host'] as string | undefined) ?? req.headers.host ?? 'localhost';
-      const apiUrl = `${proto}://${reqHost}`;
-      const tokenSuffix = validatedToken ? `?token=${validatedToken}` : '';
+      // Prefer the configured public URL over spoofable request headers. Falling back
+      // to headers only if PUBLIC_API_URL is unset. The URL is embedded inside the
+      // installer and controls where the customer's machine fetches the PowerShell
+      // script from, so header trust is a supply-chain risk.
+      const configuredBase = process.env.PUBLIC_API_URL?.replace(/\/+$/, '');
+      let apiUrl: string;
+      if (configuredBase && /^https?:\/\/[a-zA-Z0-9.:_-]+/.test(configuredBase)) {
+        apiUrl = configuredBase;
+      } else {
+        const proto = (req.headers['x-forwarded-proto'] as string | undefined) ?? 'https';
+        const reqHost = (req.headers['x-forwarded-host'] as string | undefined) ?? req.headers.host ?? 'localhost';
+        if (!HOSTNAME_RE.test(String(reqHost).replace(/:.*$/, ''))) {
+          res.status(400).json({ success: false, message: 'Invalid host' });
+          return;
+        }
+        apiUrl = `${proto}://${reqHost}`;
+      }
+      const tokenSuffix = validatedToken ? `?token=${encodeURIComponent(validatedToken)}` : '';
       const psUrl = `${apiUrl}/api/v1/public/install/windows.ps1${tokenSuffix}`;
       await this.serveWindowsExe(psUrl, res);
       return;
@@ -177,14 +219,19 @@ export class PublicController {
   // ── Script templates ──────────────────────────────────────────────────────
 
   private buildWindowsScript(version: string, host: string | null, key: string | null, enrollToken?: string): string {
-    const hostVal = host ?? '';
-    const keyVal = key ?? '';
-    const claimToken = enrollToken ?? '';
+    const hostVal = safeHost(host);
+    const keyVal = safeKey(key);
+    const claimToken = safeToken(enrollToken);
+    version = safeVersion(version);
     return `# Reboot Remote — RustDesk Auto-Installer for Windows
 # Server: ${host ?? 'NOT CONFIGURED'}
 # Re-run this script at any time to update the server config.
 
 $ErrorActionPreference = "Continue"
+# Silence Invoke-WebRequest progress on Windows PowerShell 5.1 (built into every
+# Windows install). $ProgressPreference works on both PS 5.1 and PS 7+, unlike
+# the -ProgressAction common parameter which is PS 7.4+ only.
+$ProgressPreference = 'SilentlyContinue'
 
 if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")) {
     Write-Host "ERROR: Run this script as Administrator." -ForegroundColor Red
@@ -212,9 +259,11 @@ Write-Host "[1/4] Downloading RustDesk v$VERSION..." -ForegroundColor Yellow
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $dlUrl = "https://github.com/rustdesk/rustdesk/releases/download/$VERSION/rustdesk-$VERSION-x86_64.exe"
 try {
-    Invoke-WebRequest -Uri $dlUrl -OutFile $INSTALLER -UseBasicParsing -ProgressAction SilentlyContinue
+    Invoke-WebRequest -Uri $dlUrl -OutFile $INSTALLER -UseBasicParsing
 } catch {
     Write-Host "ERROR: Download failed — $_" -ForegroundColor Red
+    Write-Host "  URL: $dlUrl" -ForegroundColor DarkGray
+    Read-Host "Press Enter to exit"
     exit 1
 }
 
@@ -340,13 +389,22 @@ Write-Host ""
 Write-Host "=============================================" -ForegroundColor Green
 Write-Host "  RustDesk installed and running as service!" -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Green
+Write-Host ""
 if ($rdId) {
+    Write-Host "  Device ID:          $rdId" -ForegroundColor Cyan
+} else {
+    Write-Host "  Device ID:          (open RustDesk to view — extraction failed)" -ForegroundColor Yellow
+}
+Write-Host "  Permanent password: $PERM_PW" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  IMPORTANT: Save the password above in the Rem0te portal." -ForegroundColor Yellow
+Write-Host "  The one-time rotating password has been DISABLED on this device." -ForegroundColor Yellow
+if ($CLAIM_TOKEN -eq "") {
     Write-Host ""
-    Write-Host "  Device ID:         $rdId" -ForegroundColor Cyan
-    Write-Host "  Permanent password: $PERM_PW" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "  IMPORTANT: Save this password in your remote management portal." -ForegroundColor Yellow
-    Write-Host "  The one-time rotating password has been DISABLED on this device." -ForegroundColor Yellow
+    Write-Host "  This install did NOT include an enrollment token." -ForegroundColor Yellow
+    Write-Host "  The device will not appear in the Rem0te dashboard automatically." -ForegroundColor Yellow
+    Write-Host "  To auto-register, run the installer link from a Device Enrollment" -ForegroundColor DarkGray
+    Write-Host "  page in the Rem0te portal — the link includes a one-use token." -ForegroundColor DarkGray
 }
 if ($HOST_ADDR) {
     Write-Host ""
@@ -391,9 +449,10 @@ Read-Host "Press Enter to close"
   }
 
   private buildLinuxScript(version: string, host: string | null, key: string | null, enrollToken?: string): string {
-    const hostVal = host ?? '';
-    const keyVal = key ?? '';
-    const claimToken = enrollToken ?? '';
+    const hostVal = safeHost(host);
+    const keyVal = safeKey(key);
+    const claimToken = safeToken(enrollToken);
+    version = safeVersion(version);
     return `#!/usr/bin/env bash
 # Reboot Remote — RustDesk Auto-Installer for Linux (Debian/Ubuntu)
 # Server: ${host ?? 'NOT CONFIGURED'}
@@ -508,9 +567,10 @@ echo ""
   }
 
   private buildMacosScript(version: string, host: string | null, key: string | null, enrollToken?: string): string {
-    const hostVal = host ?? '';
-    const keyVal = key ?? '';
-    const claimToken = enrollToken ?? '';
+    const hostVal = safeHost(host);
+    const keyVal = safeKey(key);
+    const claimToken = safeToken(enrollToken);
+    version = safeVersion(version);
     return `#!/usr/bin/env bash
 # Reboot Remote — RustDesk Auto-Installer for macOS
 # Server: ${host ?? 'NOT CONFIGURED'}

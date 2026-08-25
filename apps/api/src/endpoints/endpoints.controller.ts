@@ -1,7 +1,9 @@
 import {
   Controller, Get, Post, Patch, Delete,
-  Body, Param, Query, UseGuards, HttpCode, HttpStatus,
+  Body, Param, Query, Req, UseGuards, HttpCode, HttpStatus,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
+import type { Request } from 'express';
 import { EndpointsService } from './endpoints.service';
 import { CreateEndpointDto, UpdateEndpointDto, AddTagDto, AddAliasDto } from './dto/create-endpoint.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -95,8 +97,18 @@ export class EndpointsController {
 
   @Get(':id/password')
   @RequirePermissions('endpoints:write')
-  async getPassword(@CurrentUser() u: JwtPayload, @Param('id') id: string) {
-    const password = await this.svc.getPassword(u.tenantId!, id);
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async getPassword(
+    @CurrentUser() u: JwtPayload,
+    @Param('id') id: string,
+    @Req() req: Request,
+  ) {
+    // MFA gate: revealing a persistent RustDesk credential requires the technician
+    // to have satisfied MFA on this session (if they have MFA configured).
+    if (u.mfaVerified === false) {
+      return { success: false, message: 'MFA required to reveal endpoint password' };
+    }
+    const password = await this.svc.getPassword(u.tenantId!, id, u.sub, req.ip);
     return { success: true, data: { hasPassword: password !== null, password } };
   }
 

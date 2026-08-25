@@ -17,7 +17,11 @@ export class EndpointsService {
     private readonly audit: AuditService,
     private readonly config: ConfigService,
   ) {
-    this.encKey = Buffer.from(this.config.get<string>('ENCRYPTION_KEY', '0'.repeat(64)), 'hex');
+    const rawKey = this.config.get<string>('ENCRYPTION_KEY');
+    if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
+      throw new Error('ENCRYPTION_KEY is missing or invalid — refusing to start. Set a 64-hex-char key.');
+    }
+    this.encKey = Buffer.from(rawKey, 'hex');
   }
 
   private encryptPassword(text: string): string {
@@ -40,32 +44,59 @@ export class EndpointsService {
 
   async setPassword(tenantId: string, id: string, password: string | null): Promise<void> {
     await this.assertOwnership(tenantId, id);
-    const node = await this.prisma.rustdeskNode.findUnique({ where: { endpointId: id } });
+    const node = await this.prisma.rustdeskNode.findFirst({
+      where: { endpointId: id, tenantId },
+      select: { id: true },
+    });
     if (!node) throw new NotFoundException('No RustDesk node linked to this endpoint');
     await this.prisma.rustdeskNode.update({
-      where: { endpointId: id },
+      where: { id: node.id },
       data: { permanentPassword: password ? this.encryptPassword(password) : null },
     });
   }
 
-  async getPassword(tenantId: string, id: string): Promise<string | null> {
+  async getPassword(tenantId: string, id: string, actorId: string, actorIp?: string): Promise<string | null> {
     await this.assertOwnership(tenantId, id);
-    const node = await this.prisma.rustdeskNode.findUnique({ where: { endpointId: id }, select: { permanentPassword: true } });
+    const node = await this.prisma.rustdeskNode.findFirst({
+      where: { endpointId: id, tenantId },
+      select: { permanentPassword: true },
+    });
     if (!node?.permanentPassword) return null;
+    await this.audit.log({
+      tenantId,
+      actorId,
+      actorIp,
+      action: 'ENDPOINT_PASSWORD_REVEALED',
+      resource: 'endpoint',
+      resourceId: id,
+    });
     return this.decryptPassword(node.permanentPassword);
   }
 
   async findConnected(tenantId: string) {
-    return this.prisma.endpoint.findMany({
+    const rows = await this.prisma.endpoint.findMany({
       where: { tenantId, isOnline: true, status: 'ACTIVE' },
       orderBy: { lastSeenAt: 'desc' },
       include: {
         customer: { select: { id: true, name: true } },
         site: { select: { id: true, name: true } },
-        rustdeskNode: { select: { rustdeskId: true, lastSeenAt: true } },
+        rustdeskNode: { select: { rustdeskId: true, lastSeenAt: true, permanentPassword: true } },
         tags: true,
       },
     });
+    return rows.map((r) => this.stripSecrets(r));
+  }
+
+  // Never expose permanentPassword ciphertext beyond the service boundary.
+  // Replace it with a boolean `hasPassword` so the UI can render the key icon.
+  private stripSecrets<T extends { rustdeskNode?: { permanentPassword?: string | null } | null } | null>(row: T): T {
+    if (!row) return row;
+    const node = row.rustdeskNode;
+    if (node) {
+      const { permanentPassword, ...rest } = node as { permanentPassword?: string | null } & Record<string, unknown>;
+      (row as unknown as { rustdeskNode: unknown }).rustdeskNode = { ...rest, hasPassword: !!permanentPassword };
+    }
+    return row;
   }
 
   async findAll(tenantId: string, params: {
@@ -101,7 +132,7 @@ export class EndpointsService {
         include: {
           customer: { select: { id: true, name: true } },
           site: { select: { id: true, name: true } },
-          rustdeskNode: { select: { rustdeskId: true, lastSeenAt: true } },
+          rustdeskNode: { select: { rustdeskId: true, lastSeenAt: true, permanentPassword: true } },
           tags: true,
           aliases: { where: { isPrimary: true }, take: 1 },
           enrollment: { select: { status: true } },
@@ -110,7 +141,7 @@ export class EndpointsService {
       this.prisma.endpoint.count({ where }),
     ]);
 
-    return { endpoints, total, page, limit, pages: Math.ceil(total / limit) };
+    return { endpoints: endpoints.map((e) => this.stripSecrets(e)), total, page, limit, pages: Math.ceil(total / limit) };
   }
 
   async findOne(tenantId: string, id: string) {
@@ -120,7 +151,20 @@ export class EndpointsService {
         customer: true,
         site: true,
         endpointGroup: true,
-        rustdeskNode: true,
+        // permanentPassword ciphertext is selected but stripped below into a boolean.
+        // The plaintext is only reachable through the dedicated audited GET /endpoints/:id/password.
+        rustdeskNode: {
+          select: {
+            id: true,
+            rustdeskId: true,
+            hostname: true,
+            platform: true,
+            version: true,
+            lastSeenAt: true,
+            createdAt: true,
+            permanentPassword: true,
+          },
+        },
         enrollment: true,
         aliases: true,
         tags: true,
@@ -137,7 +181,7 @@ export class EndpointsService {
       },
     });
     if (!endpoint) throw new NotFoundException('Endpoint not found');
-    return endpoint;
+    return this.stripSecrets(endpoint);
   }
 
   async create(tenantId: string, actorId: string, dto: CreateEndpointDto) {
@@ -310,8 +354,15 @@ export class EndpointsService {
 
   async setRustdeskNode(tenantId: string, endpointId: string, rustdeskId: string, meta?: { platform?: string; version?: string; hostname?: string }) {
     await this.assertOwnership(tenantId, endpointId);
-    const dupe = await this.prisma.rustdeskNode.findFirst({ where: { tenantId, rustdeskId, endpointId: { not: endpointId } } });
+    // Global uniqueness check: a rustdeskId may only be tied to one endpoint anywhere.
+    const dupe = await this.prisma.rustdeskNode.findFirst({ where: { rustdeskId, endpointId: { not: endpointId } } });
     if (dupe) throw new ConflictException('RustDesk ID already assigned to another endpoint');
+    // Defensive: if a rustdeskNode already exists for this endpointId with a different tenantId,
+    // do not overwrite it — that would indicate a corrupted tenant binding.
+    const existing = await this.prisma.rustdeskNode.findUnique({ where: { endpointId }, select: { tenantId: true } });
+    if (existing && existing.tenantId && existing.tenantId !== tenantId) {
+      throw new ConflictException('RustDesk node is bound to a different tenant');
+    }
     return this.prisma.rustdeskNode.upsert({
       where: { endpointId },
       create: { tenantId, endpointId, rustdeskId, ...meta },

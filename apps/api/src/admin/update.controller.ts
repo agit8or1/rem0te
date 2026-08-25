@@ -11,11 +11,22 @@ export class UpdateController {
   constructor(private readonly updateService: UpdateService) {}
 
   @Get('version')
-  getVersion(@CurrentUser() user: JwtPayload) {
+  async getVersion(@CurrentUser() user: JwtPayload) {
     if (!user.isPlatformAdmin) throw new ForbiddenException('Platform admin required');
+    const current = this.updateService.getCurrentVersion();
+    // Best-effort update check — never fail this endpoint if GitHub is unreachable.
+    const info = await this.updateService.checkForUpdate().catch(() => null);
     return {
       success: true,
-      data: { version: this.updateService.getCurrentVersion() },
+      data: {
+        version: current,
+        commit: process.env.BUILD_COMMIT ?? 'unknown',
+        buildDate: process.env.BUILD_DATE ?? 'unknown',
+        channel: process.env.RELEASE_CHANNEL ?? 'stable',
+        latestVersion: info?.latestVersion ?? current,
+        updateAvailable: info?.hasUpdate ?? false,
+        inAppUpdateEnabled: process.env.ALLOW_IN_APP_UPDATE === 'true',
+      },
     };
   }
 

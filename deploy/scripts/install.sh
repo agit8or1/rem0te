@@ -396,19 +396,35 @@ systemctl daemon-reload
 systemctl enable reboot-remote-api reboot-remote-web caddy
 
 # ─── sudoers ─────────────────────────────────────────────────────────────────
+# Principle: every rule below is the EXACT command line the API runs. No
+# wildcards on install, no wildcards on caddy config paths, no wildcards on
+# reload/restart targets. A compromise of the Node process must not translate
+# to arbitrary package installation or arbitrary systemd control.
 step "Configuring sudoers for service management…"
 cat > /etc/sudoers.d/reboot-remote << 'EOF'
-# Reboot Remote - allow reboot user to run security management commands
-reboot ALL=(ALL) NOPASSWD: /usr/bin/fail2ban-client
-reboot ALL=(ALL) NOPASSWD: /usr/bin/apt-get update *
-reboot ALL=(ALL) NOPASSWD: /usr/bin/apt-get upgrade *
-reboot ALL=(ALL) NOPASSWD: /usr/bin/apt-get install -y fail2ban
-reboot ALL=(ALL) NOPASSWD: /usr/bin/systemctl enable fail2ban
-reboot ALL=(ALL) NOPASSWD: /usr/bin/systemctl start fail2ban
-reboot ALL=(ALL) NOPASSWD: /usr/bin/caddy reload *
-reboot ALL=(ALL) NOPASSWD: /usr/bin/systemctl reload caddy
+# Reboot Remote — narrowly-scoped sudo grants
+# fail2ban management (args validated in security.service.ts)
+reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client
+# One-time initial install of fail2ban only
+reboot ALL=(root) NOPASSWD: /usr/bin/apt-get install -y fail2ban
+# OS update workflow (admin-triggered)
+reboot ALL=(root) NOPASSWD: /usr/bin/apt-get update
+reboot ALL=(root) NOPASSWD: /usr/bin/apt-get upgrade -y --allow-downgrades -o Dpkg\:\:Options\:\:=--force-confold
+# Service management — Reboot Remote units only
+reboot ALL=(root) NOPASSWD: /usr/bin/systemctl enable fail2ban
+reboot ALL=(root) NOPASSWD: /usr/bin/systemctl start fail2ban
+reboot ALL=(root) NOPASSWD: /usr/bin/systemctl restart reboot-remote-api reboot-remote-web
+reboot ALL=(root) NOPASSWD: /usr/bin/systemctl reload caddy
+# Deny writing to sudoers via the reboot user under any circumstance
+reboot ALL=(root) NOPASSWD: !/usr/sbin/visudo, !/usr/bin/tee /etc/sudoers*
 EOF
 chmod 440 /etc/sudoers.d/reboot-remote
+# Validate before deploying so a bad edit cannot lock the server out of sudo
+if ! visudo -c -q -f /etc/sudoers.d/reboot-remote; then
+  echo "sudoers file failed syntax check — refusing to leave it in place" >&2
+  rm -f /etc/sudoers.d/reboot-remote
+  exit 1
+fi
 
 # ─── Database migrations & seed ───────────────────────────────────────────────
 step "Running database migrations…"
