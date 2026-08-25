@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { sessionsApi, endpointsApi, launcherApi } from '@/lib/api-client';
+import { sessionsApi, endpointsApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -72,11 +72,22 @@ export default function SessionsPage() {
   });
 
   const connectMutation = useMutation({
-    mutationFn: (endpointId: string) => launcherApi.issueToken({ endpointId }),
-    onSuccess: (res) => {
-      const deepLink = res.data?.data?.deepLink;
-      if (deepLink) window.location.href = deepLink;
-      toast({ title: 'Launching RustDesk…' });
+    mutationFn: (endpointId: string) => endpointsApi.connect(endpointId),
+    onSuccess: async (res) => {
+      const info = res.data?.data as { rustdeskId?: string; password?: string | null } | undefined;
+      const rdId = info?.rustdeskId;
+      if (!rdId) {
+        toast({ title: 'Computer not ready', description: 'This computer has not finished enrollment.', variant: 'destructive' });
+        return;
+      }
+      const pw = info?.password ?? null;
+      if (pw) {
+        try { await navigator.clipboard.writeText(pw); } catch { /* ignore */ }
+      }
+      const uri = pw
+        ? `rustdesk://connection/new/${rdId}?password=${encodeURIComponent(pw)}`
+        : `rustdesk://connection/new/${rdId}`;
+      window.location.href = uri;
     },
     onError: () => toast({ title: 'Error', description: 'Failed to launch session', variant: 'destructive' }),
   });

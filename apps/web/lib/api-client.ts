@@ -62,6 +62,8 @@ export const endpointsApi = {
   connected: () => api.get('/endpoints/connected'),
   // Employee-facing: only computers this user is authorized to connect to.
   mine: () => api.get('/endpoints/mine'),
+  // Employee-facing Connect — checks ComputerAccess, returns {rustdeskId, password}
+  connect: (id: string) => api.post(`/endpoints/${id}/connect`),
   // Admin access management for one computer
   listAccess: (id: string) => api.get(`/endpoints/${id}/access`),
   grantAccess: (id: string, userId: string) => api.post(`/endpoints/${id}/access`, { userId }),

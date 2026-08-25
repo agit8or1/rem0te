@@ -61,7 +61,10 @@ export class SessionsController {
   @RequirePermissions('sessions:create')
   async create(@CurrentUser() user: JwtPayload, @Body() dto: CreateSessionDto) {
     if (!user.tenantId) return { success: false, message: 'No tenant context' };
-    const session = await this.sessions.create(user.tenantId, user.sub, dto);
+    const session = await this.sessions.create(user.tenantId, user.sub, dto, {
+      isPlatformAdmin: user.isPlatformAdmin,
+      roleType: user.roleType ?? null,
+    });
     return { success: true, data: session };
   }
 

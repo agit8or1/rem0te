@@ -32,6 +32,21 @@ export class EndpointsController {
     return { success: true, data: await this.svc.myComputers(u.tenantId, u.sub) };
   }
 
+  // Employee-facing "Connect" — no admin permission required. The service
+  // authorizes via ComputerAccess (or COMPANY_WIDE + membership) and returns
+  // { rustdeskId, password } so the browser can populate the RustDesk prompt.
+  @Post(':id/connect')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  async connect(@CurrentUser() u: JwtPayload, @Param('id') id: string, @Req() req: Request) {
+    if (!u.tenantId) return { success: false, message: 'No tenant context' };
+    const data = await this.svc.connectInfo(u.tenantId, u.sub, id, req.ip, {
+      isPlatformAdmin: u.isPlatformAdmin,
+      roleType: u.roleType,
+    });
+    return { success: true, data };
+  }
+
   // Manage ComputerAccess rows for a specific endpoint (admin only).
   @Get(':id/access')
   @RequirePermissions('endpoints:write')

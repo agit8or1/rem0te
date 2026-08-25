@@ -39,16 +39,22 @@ import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { useTheme } from '@/lib/theme-provider';
 
-const NAV_ITEMS = [
+// Employee items — visible to every authenticated user.
+const EMPLOYEE_NAV = [
+  { href: '/my-computers', label: 'My Computers', icon: Monitor },
+];
+
+// Admin items — visible when the caller can manage the company.
+const ADMIN_NAV = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/endpoints', label: 'Enrolled Clients', icon: MonitorCheck },
+  { href: '/endpoints', label: 'Computers', icon: MonitorCheck },
+  { href: '/endpoints/enroll', label: 'Add Computer', icon: Download },
+  { href: '/users', label: 'Users', icon: Users },
+  { href: '/customers', label: 'Companies', icon: Globe },
   { href: '/sessions', label: 'Sessions', icon: PlayCircle },
-  { href: '/connect', label: 'Connect', icon: Link2 },
+  { href: '/connect', label: 'Quick Connect', icon: Link2 },
   { href: '/audit', label: 'Audit Log', icon: FileText },
-  { href: '/quickstart', label: 'Quick Start', icon: Sparkles },
-  { href: '/help', label: 'Help & Docs', icon: HelpCircle },
   { href: '/settings', label: 'Settings', icon: Settings },
-  // Downloads conditionally rendered at bottom of this list
 ];
 
 export function Sidebar() {
@@ -76,6 +82,13 @@ export function Sidebar() {
   const portalTitle = (branding?.portalTitle as string | null) || 'Rem0te';
   const logoUrl = branding?.logoUrl as string | null | undefined;
   const accentColor = branding?.accentColor as string | null | undefined;
+
+  // Any admin role (platform, tenant owner, tenant admin, billing) sees the
+  // Administration section. Regular employees see only "My Computers".
+  const roleType = (me as { roleType?: string } | undefined)?.roleType ?? '';
+  const isAdmin =
+    (me as { isPlatformAdmin?: boolean } | undefined)?.isPlatformAdmin === true ||
+    ['TENANT_OWNER', 'TENANT_ADMIN', 'BILLING_ADMIN', 'TECHNICIAN'].includes(roleType);
 
   async function handleLogout() {
     try {
@@ -171,11 +184,26 @@ export function Sidebar() {
         </span>
       </div>
 
-      {/* Nav */}
+      {/* Nav — Employees see "My Computers"; admins see the full toolset. */}
       <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1">
-        {NAV_ITEMS.map(({ href, label, icon: Icon }) => navLink(href, label, Icon))}
-        {me?.isPlatformAdmin && navLink('/admin/security', 'Security', ShieldCheck)}
-        {me?.isPlatformAdmin && navLink('/admin/unassigned', 'Unassigned Devices', MonitorX)}
+        {EMPLOYEE_NAV.map(({ href, label, icon: Icon }) => navLink(href, label, Icon))}
+        {isAdmin && (
+          <>
+            <div className="pt-4 pb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+              Administration
+            </div>
+            {ADMIN_NAV.map(({ href, label, icon: Icon }) => navLink(href, label, Icon))}
+          </>
+        )}
+        {me?.isPlatformAdmin && (
+          <>
+            <div className="pt-4 pb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+              Platform
+            </div>
+            {navLink('/admin/security', 'Security', ShieldCheck)}
+            {navLink('/admin/unassigned', 'Unassigned Computers', MonitorX)}
+          </>
+        )}
         {showDownloadPage && navLink('/download', 'Downloads', Download)}
       </nav>
 

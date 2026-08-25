@@ -59,20 +59,24 @@ function MyDevicesTab() {
       if (oneTime) {
         endpointsApi.archive(ep.id as string).catch(() => null);
       }
-      // If endpoint has a stored password, copy it to clipboard before launching.
-      // The API exposes only a `hasPassword` boolean, never the ciphertext.
+      // Fetch stored password + copy to clipboard + embed in URI so RustDesk
+      // auto-authenticates on builds that honor ?password=, with clipboard as
+      // fallback for older builds.
+      let pw: string | null = null;
       const hasPassword = !!(ep.rustdeskNode as Record<string, unknown> | undefined)?.hasPassword;
       if (hasPassword) {
         try {
           const res = await endpointsApi.getPassword(ep.id as string);
-          const pw: string | null = res.data?.data?.password;
+          pw = res.data?.data?.password ?? null;
           if (pw) {
-            await navigator.clipboard.writeText(pw);
-            toast({ title: 'Password copied', description: 'Paste it in RustDesk when prompted.' });
+            try { await navigator.clipboard.writeText(pw); } catch { /* ignore */ }
           }
-        } catch { /* clipboard may not be available */ }
+        } catch { /* not authorized to see it — clipboard/URI stay empty */ }
       }
-      window.location.href = `rustdesk://connection/new/${rustdeskId}`;
+      const uri = pw
+        ? `rustdesk://connection/new/${rustdeskId}?password=${encodeURIComponent(pw)}`
+        : `rustdesk://connection/new/${rustdeskId}`;
+      window.location.href = uri;
     } catch {
       toast({ title: 'Failed to start session', variant: 'destructive' });
     } finally {

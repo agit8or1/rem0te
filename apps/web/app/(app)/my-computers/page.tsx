@@ -30,15 +30,31 @@ export default function MyComputersPage() {
   const computers: Computer[] = data ?? [];
 
   async function connect(c: Computer) {
-    const rdId = c.rustdeskNode?.rustdeskId;
-    if (!rdId) {
-      toast({ title: 'Computer not ready', description: 'This computer is not yet enrolled to accept connections.', variant: 'destructive' });
-      return;
-    }
     try {
-      await sessionsApi.create({ endpointId: c.id });
-    } catch { /* audit only */ }
-    window.location.href = `rustdesk://connection/new/${rdId}`;
+      const res = await endpointsApi.connect(c.id);
+      const info = res.data?.data as { rustdeskId?: string; password?: string | null } | undefined;
+      const rdId = info?.rustdeskId;
+      if (!rdId) {
+        toast({ title: 'Computer not ready', description: 'This computer has not finished enrollment.', variant: 'destructive' });
+        return;
+      }
+      const pw = info?.password ?? null;
+      // Best-effort: put the password on the clipboard AND embed it in the
+      // rustdesk:// URI. Modern RustDesk builds honor the query-string password
+      // so it's truly one click; older builds fall back to a clipboard paste.
+      if (pw) {
+        try { await navigator.clipboard.writeText(pw); } catch { /* ignore */ }
+      }
+      // Audit the launch.
+      try { await sessionsApi.create({ endpointId: c.id }); } catch { /* audit only */ }
+      const uri = pw
+        ? `rustdesk://connection/new/${rdId}?password=${encodeURIComponent(pw)}`
+        : `rustdesk://connection/new/${rdId}`;
+      window.location.href = uri;
+    } catch (err) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to start connection';
+      toast({ title: 'Error', description: msg, variant: 'destructive' });
+    }
   }
 
   if (isLoading) {

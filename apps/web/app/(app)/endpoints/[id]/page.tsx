@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useRouter } from 'next/navigation';
-import { endpointsApi, launcherApi, notesApi } from '@/lib/api-client';
+import { endpointsApi, notesApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -39,14 +39,27 @@ export default function EndpointDetailPage() {
       notesApi.list({ endpointId: id }).then((r) => r.data?.data ?? []),
   });
 
+  // Prefer the direct browser-launch path (rustdesk:// with password) — one click
+  // for anyone with access, and does not require the technician launcher.
   const launchMutation = useMutation({
-    mutationFn: () => launcherApi.issueToken({ endpointId: id }),
-    onSuccess: (res) => {
-      const deepLink = res.data?.data?.deepLink;
-      if (deepLink) window.location.href = deepLink;
-      toast({ title: 'Launcher token issued', description: 'Opening RustDesk…' });
+    mutationFn: () => endpointsApi.connect(id),
+    onSuccess: async (res) => {
+      const info = res.data?.data as { rustdeskId?: string; password?: string | null } | undefined;
+      const rdId = info?.rustdeskId;
+      if (!rdId) {
+        toast({ title: 'Computer not ready', description: 'This computer has not finished enrollment.', variant: 'destructive' });
+        return;
+      }
+      const pw = info?.password ?? null;
+      if (pw) {
+        try { await navigator.clipboard.writeText(pw); } catch { /* ignore */ }
+      }
+      const uri = pw
+        ? `rustdesk://connection/new/${rdId}?password=${encodeURIComponent(pw)}`
+        : `rustdesk://connection/new/${rdId}`;
+      window.location.href = uri;
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to launch session', variant: 'destructive' }),
+    onError: () => toast({ title: 'Error', description: 'Failed to start connection', variant: 'destructive' }),
   });
 
   const archiveMutation = useMutation({

@@ -409,6 +409,83 @@ export class EndpointsService {
     return ep;
   }
 
+  // Employee "click Connect" flow. Verifies the caller is authorized for this
+  // computer (via ComputerAccess or COMPANY_WIDE + membership), audits the
+  // reveal, and returns { rustdeskId, password } so the browser can populate
+  // RustDesk's clipboard-based prompt.
+  //
+  // No admin permission required — authorization comes from ComputerAccess.
+  async connectInfo(
+    tenantId: string,
+    userId: string,
+    endpointId: string,
+    actorIp: string | undefined,
+    actor: { isPlatformAdmin?: boolean; roleType?: string | null },
+  ) {
+    const endpoint = await this.prisma.endpoint.findFirst({
+      where: { id: endpointId, tenantId },
+      include: {
+        rustdeskNode: { select: { rustdeskId: true, permanentPassword: true } },
+        customer: { select: { id: true, name: true } },
+      },
+    });
+    if (!endpoint) throw new NotFoundException('Computer not found');
+    if (!endpoint.rustdeskNode?.rustdeskId) {
+      throw new NotFoundException('Computer is not yet enrolled to accept connections');
+    }
+
+    const isMgmt =
+      actor.isPlatformAdmin === true ||
+      actor.roleType === 'TENANT_OWNER' ||
+      actor.roleType === 'TENANT_ADMIN';
+    if (!isMgmt) {
+      const access = await this.prisma.computerAccess.findFirst({
+        where: { endpointId, userId },
+        select: { id: true },
+      });
+      let authorized = !!access;
+      if (!authorized && endpoint.accessMode === 'COMPANY_WIDE' && endpoint.customerId) {
+        const m = await this.prisma.membership.findFirst({
+          where: { tenantId, userId, isActive: true, customerId: endpoint.customerId },
+          select: { id: true },
+        });
+        authorized = !!m;
+      }
+      if (!authorized) {
+        await this.audit.log({
+          tenantId, actorId: userId, actorIp,
+          action: 'ENDPOINT_PASSWORD_REVEALED',
+          resource: 'endpoint', resourceId: endpointId,
+          meta: { denied: 'no_access' },
+        });
+        throw new NotFoundException('Computer not found');
+      }
+    }
+
+    const password = endpoint.rustdeskNode.permanentPassword
+      ? this.decryptPassword(endpoint.rustdeskNode.permanentPassword)
+      : null;
+
+    await this.audit.log({
+      tenantId, actorId: userId, actorIp,
+      action: 'ENDPOINT_PASSWORD_REVEALED',
+      resource: 'endpoint', resourceId: endpointId,
+      meta: { via: 'connect' },
+    });
+
+    return {
+      rustdeskId: endpoint.rustdeskNode.rustdeskId,
+      password,
+      hasPassword: !!password,
+      computer: {
+        id: endpoint.id,
+        name: endpoint.name,
+        hostname: endpoint.hostname,
+        customerName: endpoint.customer?.name ?? null,
+      },
+    };
+  }
+
   // ── ComputerAccess management ─────────────────────────────────────────────
 
   async listAccess(tenantId: string, endpointId: string) {

@@ -73,14 +73,61 @@ export class SessionsService {
     return session;
   }
 
-  async create(tenantId: string, technicianId: string, dto: CreateSessionDto) {
+  async create(
+    tenantId: string,
+    technicianId: string,
+    dto: CreateSessionDto,
+    actor?: { isPlatformAdmin?: boolean; roleType?: string | null },
+  ) {
     if (!dto.endpointId && !dto.adHocRustdeskId) {
       throw new BadRequestException('Either endpointId or adHocRustdeskId is required');
     }
 
     if (dto.endpointId) {
-      const endpoint = await this.prisma.endpoint.findFirst({ where: { id: dto.endpointId, tenantId } });
+      const endpoint = await this.prisma.endpoint.findFirst({
+        where: { id: dto.endpointId, tenantId },
+        select: { id: true, accessMode: true, customerId: true },
+      });
       if (!endpoint) throw new NotFoundException(`Endpoint ${dto.endpointId} not found`);
+
+      // Authorization: the caller must actually be allowed to connect to this
+      // computer. Platform admins and tenant owner/admin bypass this check
+      // (they can manage everything); everyone else must have a
+      // ComputerAccess row OR the computer must be COMPANY_WIDE and the
+      // caller must be a member of the same customer.
+      const isMgmt =
+        actor?.isPlatformAdmin === true ||
+        actor?.roleType === 'TENANT_OWNER' ||
+        actor?.roleType === 'TENANT_ADMIN';
+      if (!isMgmt) {
+        const access = await this.prisma.computerAccess.findFirst({
+          where: { endpointId: dto.endpointId, userId: technicianId },
+          select: { id: true },
+        });
+        let authorized = !!access;
+        if (!authorized && endpoint.accessMode === 'COMPANY_WIDE' && endpoint.customerId) {
+          const membership = await this.prisma.membership.findFirst({
+            where: {
+              tenantId,
+              userId: technicianId,
+              isActive: true,
+              customerId: endpoint.customerId,
+            },
+            select: { id: true },
+          });
+          authorized = !!membership;
+        }
+        if (!authorized) {
+          await this.audit.log({
+            tenantId,
+            actorId: technicianId,
+            action: 'SESSION_LAUNCHED',
+            resource: 'support_session',
+            meta: { endpointId: dto.endpointId, denied: 'no_access' },
+          });
+          throw new ForbiddenException('You do not have access to this computer');
+        }
+      }
     }
 
     const session = await this.prisma.supportSession.create({
