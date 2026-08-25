@@ -71,10 +71,81 @@ export class UpdateService {
     });
   }
 
+  /**
+   * Release history.
+   *
+   * The shipped CHANGELOG.md is the authority — it is complete, it travels with
+   * the release, and it works with no network. GitHub Releases are only used to
+   * enrich entries with a real publish date, and only when reachable.
+   *
+   * Reading it from GitHub alone used to drop versions on the floor two ways:
+   * the query was capped at 10 releases, and several versions were never cut as
+   * GitHub Releases at all even though they shipped.
+   */
   async getChangelog(): Promise<{ version: string; notes: string; publishedAt: string }[]> {
+    const local = this.parseChangelogFile();
+    const dates = await this.fetchReleaseDates();
+
+    if (local.length === 0) {
+      // No CHANGELOG on disk (unusual) — fall back to whatever GitHub has.
+      return Object.entries(dates).map(([version, meta]) => ({
+        version, notes: meta.notes, publishedAt: meta.publishedAt,
+      }));
+    }
+
+    return local.map((e) => ({
+      ...e,
+      publishedAt: dates[e.version]?.publishedAt ?? e.publishedAt,
+    }));
+  }
+
+  /**
+   * Parse `## [1.2.3] — 2026-08-25 · *Codename*` sections out of CHANGELOG.md.
+   * Everything up to the next `## [` heading is that version's notes.
+   */
+  private parseChangelogFile(): { version: string; notes: string; publishedAt: string }[] {
+    const candidates = [
+      path.join(this.projectRoot, 'CHANGELOG.md'),
+      path.join(process.cwd(), '..', '..', 'CHANGELOG.md'),
+      path.join(process.cwd(), 'CHANGELOG.md'),
+    ];
+
+    let raw = '';
+    for (const file of candidates) {
+      try {
+        raw = fs.readFileSync(file, 'utf8');
+        break;
+      } catch { /* try the next location */ }
+    }
+    if (!raw) return [];
+
+    const out: { version: string; notes: string; publishedAt: string }[] = [];
+    const heading = /^##\s*\[(\d+\.\d+\.\d+)\]\s*(?:[—\-–]\s*(\d{4}-\d{2}-\d{2}))?/gm;
+
+    const matches = [...raw.matchAll(heading)];
+    for (let i = 0; i < matches.length; i++) {
+      const m = matches[i];
+      const bodyStart = m.index! + m[0].length;
+      const bodyEnd = i + 1 < matches.length ? matches[i + 1].index! : raw.length;
+      const notes = raw
+        .slice(bodyStart, bodyEnd)
+        .replace(/\n---\s*$/, '')
+        .trim();
+
+      out.push({
+        version: m[1],
+        notes,
+        publishedAt: m[2] ? new Date(`${m[2]}T00:00:00Z`).toISOString() : '',
+      });
+    }
+    return out;
+  }
+
+  /** Best-effort publish dates from GitHub. Never blocks the response. */
+  private async fetchReleaseDates(): Promise<Record<string, { publishedAt: string; notes: string }>> {
     return new Promise((resolve) => {
       const req = https.get(
-        `https://api.github.com/repos/${this.repoOwner}/${this.repoName}/releases?per_page=10`,
+        `https://api.github.com/repos/${this.repoOwner}/${this.repoName}/releases?per_page=100`,
         { headers: { 'User-Agent': 'rem0te-updater', Accept: 'application/vnd.github.v3+json' } },
         (res) => {
           let data = '';
@@ -82,19 +153,24 @@ export class UpdateService {
           res.on('end', () => {
             try {
               const releases = JSON.parse(data) as Array<Record<string, unknown>>;
-              resolve(releases.map((r) => ({
-                version: ((r.tag_name as string) ?? '').replace(/^v/, ''),
-                notes: (r.body as string) ?? '',
-                publishedAt: (r.published_at as string) ?? '',
-              })));
+              const map: Record<string, { publishedAt: string; notes: string }> = {};
+              for (const r of releases) {
+                const version = ((r.tag_name as string) ?? '').replace(/^v/, '');
+                if (!version) continue;
+                map[version] = {
+                  publishedAt: (r.published_at as string) ?? '',
+                  notes: (r.body as string) ?? '',
+                };
+              }
+              resolve(map);
             } catch {
-              resolve([]);
+              resolve({});
             }
           });
         },
       );
-      req.on('error', () => resolve([]));
-      req.setTimeout(8000, () => { req.destroy(); resolve([]); });
+      req.on('error', () => resolve({}));
+      req.setTimeout(8000, () => { req.destroy(); resolve({}); });
     });
   }
 
