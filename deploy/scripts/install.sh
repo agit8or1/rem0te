@@ -453,8 +453,22 @@ step "Running database migrations…"
 cd "${INSTALL_DIR}/api"
 # Load env for DATABASE_URL
 set -a; source "${CONFIG_DIR}/api.env"; set +a
-# Use db push for fresh installs (no migration files), migrate deploy when migrations exist
+# The migration history starts with 0000_baseline, which creates the whole
+# schema. A database that already has tables was provisioned before that
+# baseline existed (the original schema came from `prisma db push` and was
+# never captured as a migration), so running it would fail on objects that are
+# already there. Mark it applied instead — that writes a row to
+# _prisma_migrations and runs nothing — and let the remaining migrations apply
+# normally. Fresh databases just run the full chain.
 if [ -d "${INSTALL_DIR}/api/prisma/migrations" ] && [ -n "$(ls -A "${INSTALL_DIR}/api/prisma/migrations" 2>/dev/null)" ]; then
+  HAS_TABLES=$(psql "${DATABASE_URL}" -tAc \
+    "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name <> '_prisma_migrations';" 2>/dev/null || echo 0)
+  BASELINED=$(psql "${DATABASE_URL}" -tAc \
+    "SELECT count(*) FROM _prisma_migrations WHERE migration_name = '0000_baseline';" 2>/dev/null || echo 0)
+  if [ "${HAS_TABLES:-0}" -gt 0 ] && [ "${BASELINED:-0}" -eq 0 ]; then
+    info "Existing schema detected — marking 0000_baseline as applied instead of running it."
+    npx prisma migrate resolve --applied 0000_baseline
+  fi
   npx prisma migrate deploy
 else
   npx prisma db push --skip-generate
