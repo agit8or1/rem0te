@@ -119,7 +119,7 @@ export class RustdeskService {
    * bare `R`, which would search for `RustDeskrustdesk.exe`. Same class of bug
    * as `\U` in `C:\Users` — see the header of public.controller.ts.
    */
-  private findOrFetchRustdesk(clientVersion: string, clientDownloadUrl: string): string {
+  private findOrFetchRustdesk(config: RustdeskServerConfig, clientVersion: string, clientDownloadUrl: string): string {
     const githubUrl =
       `https://github.com/rustdesk/rustdesk/releases/download/${clientVersion}/rustdesk-${clientVersion}-x86_64.exe`;
 
@@ -153,6 +153,40 @@ export class RustdeskService {
         `if (-not $ok) { Write-Host 'Could not download RustDesk. Check this computer can reach the internet.'; Read-Host 'Press Enter to close'; exit 1 }`,
         `Move-Item -Force $part $rd`,
       ])} }`,
+      // Write the config file directly for a copy we own.
+      //
+      // `--config` is RustDesk's own mechanism and it is used below, but it is
+      // a process: it can no-op, exit before it writes, or decide to open a
+      // window, and when it does the client silently keeps talking to
+      // rustdesk.com — which surfaces as "the target device is offline or does
+      // not exist", the exact symptom this script exists to remove. A file on
+      // disk has none of those failure modes.
+      //
+      // Only on this branch. Here there is no installed RustDesk, so there are
+      // no user settings to overwrite; an installed client keeps `--config`,
+      // which merges instead of replacing.
+      `$tomlDir = Join-Path (Join-Path $env:APPDATA 'RustDesk') 'config'`,
+      `New-Item -ItemType Directory -Force -Path $tomlDir | Out-Null`,
+      // Base64 because the TOML needs quote characters and the .cmd wrapper
+      // cannot carry a double quote through cmd.exe at all.
+      `$toml = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${
+        Buffer.from(
+          [
+            `rendezvous_server = '${config.host}'`,
+            `nat_type = 1`,
+            `serial = 0`,
+            ``,
+            `[options]`,
+            `custom-rendezvous-server = '${config.host}'`,
+            `relay-server = '${config.host}'`,
+            `key = '${config.key}'`,
+            ``,
+          ].join('\n'),
+          'utf8',
+        ).toString('base64')
+      }'))`,
+      `Set-Content -Path (Join-Path $tomlDir 'RustDesk2.toml') -Value $toml -Encoding UTF8`,
+      `Write-Host ('Wrote server config to ' + (Join-Path $tomlDir 'RustDesk2.toml'))`,
     ]);
 
     return this.joinPs([
@@ -261,11 +295,22 @@ export class RustdeskService {
   buildSetupCmd(config: RustdeskServerConfig, clientVersion: string, clientDownloadUrl: string): string {
     const ps = this.withErrorReporting([
       `$cfg = '${config.configB64}'`,
-      this.findOrFetchRustdesk(clientVersion, clientDownloadUrl),
+      this.findOrFetchRustdesk(config, clientVersion, clientDownloadUrl),
       `Write-Host ('Pointing ' + $rd + ' at ${config.host} ...')`,
-      // Bounded. `--config` is a CLI action that applies and exits, but this runs on the path someone is waiting on and a build that decided to open its window instead would hang the script exactly where the install step used to.
+      // Bounded, and loud about which way it went.
+      //
+      // `--config` is a CLI action that applies and exits, but it runs on the
+      // path someone is waiting on, so it cannot be allowed to hang. It is
+      // also the step most likely to be quietly wrong: if it is killed before
+      // it writes, the next launch has no server address and RustDesk reports
+      // the endpoint as offline — indistinguishable from the bug this whole
+      // script exists to fix. So say which happened, and say which executable
+      // it happened to.
+      `Write-Host ('Using ' + $rd)`,
       `$p = Start-Process -FilePath $rd -ArgumentList '--config', $cfg -PassThru`,
-      `if (-not $p.WaitForExit(15000)) { try { $p.Kill() } catch { } }`,
+      `$applied = $p.WaitForExit(15000)`,
+      `if ($applied) { Write-Host ('Server config applied (exit ' + $p.ExitCode + ').') }`,
+      `if (-not $applied) { Write-Host 'WARNING: --config did not exit within 15s; leaving it running rather than killing it mid-write.' }`,
       `Write-Host ''`,
       `Write-Host ('Done. RustDesk at ' + $rd + ' now uses ${config.host}.')`,
       `Write-Host 'Close RustDesk if it is open, then use Connect in Rem0te.'`,
@@ -320,11 +365,14 @@ export class RustdeskService {
       `$cfg = '${config.configB64}'`,
       `$peer = '${peerId}'`,
       `$pw = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${pwB64}'))`,
-      this.findOrFetchRustdesk(clientVersion, clientDownloadUrl),
+      this.findOrFetchRustdesk(config, clientVersion, clientDownloadUrl),
       `Write-Host 'Pointing RustDesk at ${config.host} ...'`,
       // Bounded. `--config` is a CLI action that applies and exits, but this runs on the path someone is waiting on and a build that decided to open its window instead would hang the script exactly where the install step used to.
+      `Write-Host ('Using ' + $rd)`,
       `$p = Start-Process -FilePath $rd -ArgumentList '--config', $cfg -PassThru`,
-      `if (-not $p.WaitForExit(15000)) { try { $p.Kill() } catch { } }`,
+      `$applied = $p.WaitForExit(15000)`,
+      `if ($applied) { Write-Host ('Server config applied (exit ' + $p.ExitCode + ').') }`,
+      `if (-not $applied) { Write-Host 'WARNING: --config did not exit within 15s; leaving it running rather than killing it mid-write.' }`,
       // The config lands via IPC when a client is already running; give it a
       // moment before the connection request or that request uses the previous
       // server.
