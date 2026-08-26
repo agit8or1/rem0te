@@ -55,7 +55,7 @@ export default function EndpointDetailPage() {
         try { await navigator.clipboard.writeText(pw); } catch { /* ignore */ }
       }
       const uri = pw
-        ? `rustdesk://connection/new/${rdId}?password=${btoa(pw)}`
+        ? `rustdesk://connection/new/${rdId}?password=${encodeURIComponent(pw)}`
         : `rustdesk://connection/new/${rdId}`;
       window.location.href = uri;
     },

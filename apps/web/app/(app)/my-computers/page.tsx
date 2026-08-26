@@ -48,7 +48,7 @@ export default function MyComputersPage() {
       // Audit the launch.
       try { await sessionsApi.create({ endpointId: c.id }); } catch { /* audit only */ }
       const uri = pw
-        ? `rustdesk://connection/new/${rdId}?password=${btoa(pw)}`
+        ? `rustdesk://connection/new/${rdId}?password=${encodeURIComponent(pw)}`
         : `rustdesk://connection/new/${rdId}`;
       window.location.href = uri;
     } catch (err) {
