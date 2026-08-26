@@ -42,10 +42,14 @@ There are three, and they are not equivalent.
 
 ### 1. The Connect button — a downloaded script
 
-Clicking **Connect** hands you one file, named for the target machine. It
-installs RustDesk if the computer has none, points it at this server, then
-opens the session with the password applied — and deletes itself afterwards,
-because it carries a live credential.
+Clicking **Connect** hands you one file, named for the target machine. It uses
+the RustDesk already on the computer — or fetches a portable copy once into
+`%LOCALAPPDATA%\Rem0te` — points it at this server, then opens the session
+with the password applied. It deletes itself afterwards, because it carries a
+live credential.
+
+It installs nothing, so there is no elevation prompt, and only the first run on
+a machine without RustDesk pays the download.
 
 It assumes nothing about the machine it runs on. That is deliberate, and it is
 what the alternative could not do:

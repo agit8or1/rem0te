@@ -27,9 +27,15 @@ delivering those two values.
 **Connect** on a computer's page hands you a single file, named for the machine
 you are connecting to. Run it and it:
 
-1. Finds RustDesk — and installs it if the computer has none
+1. Uses the RustDesk already on the computer — or, if there is none,
+   fetches a portable copy once into `%LOCALAPPDATA%\Rem0te` and reuses it
+   every time after
 2. Points it at this server
 3. Opens the session, with the password already applied
+
+**Nothing is installed**, so there is no UAC prompt and no elevation. Only the
+first run on a machine without RustDesk pays the ~24 MB download; every connect
+after that starts immediately.
 
 It assumes nothing about the machine it runs on, which is the point: it works on
 a technician's laptop that has never seen Rem0te before, and on one whose
@@ -50,9 +56,10 @@ signed-in users can fetch them.
 
 ### Set up this computer for Connect *(start here)*
 
-`rem0te-setup-rustdesk.cmd` — finds the RustDesk already installed, installs
-one if there is none, and points it at this server with
-`rustdesk --config <base64>`. It does not touch anything else.
+`rem0te-setup-rustdesk.cmd` — finds the RustDesk already on the machine, or
+fetches a portable copy into `%LOCALAPPDATA%\Rem0te`, and points it at this
+server with `rustdesk --config <base64>`. It installs nothing and touches
+nothing else.
 
 Use it to prepare a machine ahead of time. Clicking **Connect** does the same
 work plus the connection, so this is for the case where you want the setup done

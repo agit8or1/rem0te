@@ -55,7 +55,7 @@ export class DownloadsController {
             filename: 'rem0te-setup-rustdesk.cmd',
             path: '/api/v1/downloads/rustdesk/setup.cmd',
             description:
-              'Points this machine\'s RustDesk at this server, installing one first if it is missing. Use it to prepare a computer in advance — clicking Connect does the same work plus the connection.',
+              'Points this machine\'s RustDesk at this server, fetching a portable copy first if there is none. Installs nothing. Use it to prepare a computer in advance — clicking Connect does the same work plus the connection.',
             recommended: true,
           },
           {

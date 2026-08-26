@@ -82,8 +82,9 @@ export default function DownloadsPage() {
           </p>
           <p className="text-foreground">
             <strong>You usually do not need this page.</strong> Clicking{' '}
-            <strong>Connect</strong> on a computer hands you a file that installs RustDesk if
-            needed, configures it, and opens the session — no setup in advance.
+            <strong>Connect</strong> on a computer hands you a file that uses the RustDesk
+            already on your machine — or fetches a portable copy once — configures it, and
+            opens the session. Nothing is installed, and no setup is needed in advance.
           </p>
           <p>
             Use the files below to prepare a machine <em>before</em> someone needs it, or when you

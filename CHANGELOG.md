@@ -21,11 +21,22 @@ behind by an installer that only ever installed.
   device is offline or does not exist"* about a computer that is online. There
   is no fixing that from inside the link.
 
-  Connect now returns a script named for the target machine that installs
-  RustDesk if the computer has none, points it at this server, then opens the
-  session with the password applied. It assumes nothing about the machine it
-  runs on. It deletes itself when it finishes, because it carries a live
-  credential.
+  Connect now returns a script named for the target machine that uses the
+  RustDesk already there — or fetches a portable copy once into
+  `%LOCALAPPDATA%\Rem0te` and reuses it every time after — points it at this
+  server, then opens the session with the password applied. It assumes nothing
+  about the machine it runs on, and it deletes itself when it finishes, because
+  it carries a live credential.
+
+  It deliberately **installs nothing**. The first version ran the RustDesk
+  setup executable with `Start-Process -Wait -ArgumentList '--silent-install'`,
+  and installing needs elevation — from a non-elevated shell that blocks on a
+  UAC prompt behind the console window, so the script sat at "Installing
+  RustDesk..." indefinitely. RustDesk runs fine from a folder, so there was
+  never a reason to install one to open a session. Two other things made the
+  first run slow: the download was repeated on every connect rather than
+  cached, and `Invoke-WebRequest` renders a progress bar per chunk, which for a
+  ~24 MB file costs far more than the transfer. Both fixed.
 
 ### Added
 

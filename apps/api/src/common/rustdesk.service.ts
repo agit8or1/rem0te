@@ -64,49 +64,66 @@ export class RustdeskService {
     return { host, key, configB64: Buffer.from(plain, 'utf8').toString('base64') };
   }
   /**
-   * PowerShell that leaves `$rd` holding a path to rustdesk.exe, installing
-   * one if the machine has none.
+   * PowerShell that leaves `$rd` holding a runnable rustdesk.exe.
    *
-   * Shared by the setup script and the per-connection script, which need the
-   * same thing for different reasons.
+   * Three tiers, cheapest first:
    *
-   * Emitted as one string rather than an array of statements joined with
-   * "; ": joining that way puts a semicolon immediately after every `{`, and
-   * nothing in this repo's toolchain can syntax-check PowerShell — there is
-   * none on the build host. The one file that has to work should not depend on
-   * a parser accepting something unusual.
+   *  1. An installed RustDesk. Costs nothing.
+   *  2. A portable copy cached under %LOCALAPPDATA%\Rem0te. Costs nothing
+   *     after the first time.
+   *  3. Download one, into that cache.
+   *
+   * It does not install anything, which is both faster and the fix for a real
+   * hang: the previous version ran the setup executable with
+   * `Start-Process -Wait -ArgumentList '--silent-install'`, and installing
+   * RustDesk needs elevation. From a non-elevated shell that blocks on a UAC
+   * prompt behind the console window — the script simply sat at "Installing
+   * RustDesk..." forever. RustDesk runs perfectly well from a folder, so
+   * there was never a reason to install it to open a session.
+   *
+   * `$ProgressPreference = 'SilentlyContinue'` around the download is not
+   * cosmetic. Invoke-WebRequest renders a progress bar per chunk, and for a
+   * ~24 MB file that redraw costs far more than the transfer does — this is
+   * the single biggest factor in how long the first run takes.
    *
    * Backslashes are doubled deliberately. A template literal turns `\R` into a
    * bare `R`, which would search for `RustDeskrustdesk.exe`. Same class of bug
    * as `\U` in `C:\Users` — see the header of public.controller.ts.
    */
-  private findOrInstallRustdesk(clientVersion: string, clientDownloadUrl: string): string {
+  private findOrFetchRustdesk(clientVersion: string, clientDownloadUrl: string): string {
     const githubUrl =
       `https://github.com/rustdesk/rustdesk/releases/download/${clientVersion}/rustdesk-${clientVersion}-x86_64.exe`;
 
     // Our own server first so a site with restricted egress still works, then
     // GitHub. We apply the config ourselves afterwards, so it does not matter
-    // which of the two builds ends up installed.
+    // which of the two builds ends up cached.
     const sources = `@('${clientDownloadUrl}', '${githubUrl}')`;
 
-    const install = [
-      `Write-Host 'RustDesk is not installed. Downloading it...'`,
-      `$tmp = Join-Path $env:TEMP 'rem0te-rustdesk-setup.exe'`,
-      `$ok = $false`,
-      `foreach ($u in ${sources}) { try { Invoke-WebRequest -Uri $u -OutFile $tmp -UseBasicParsing -TimeoutSec 300; $ok = $true; break } catch { } }`,
-      `if (-not $ok) { Write-Host 'Could not download RustDesk. Check this computer can reach the internet.'; Read-Host 'Press Enter to close'; exit 1 }`,
-      `Write-Host 'Installing RustDesk...'`,
-      `Start-Process -FilePath $tmp -ArgumentList '--silent-install' -Wait`,
-      `Start-Sleep -Seconds 3`,
-      `$rd = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1`,
-      `if (-not $rd) { Write-Host 'RustDesk did not finish installing. Run the downloaded installer by hand, then try again.'; Read-Host 'Press Enter to close'; exit 1 }`,
+    const fetch = [
+      `$dir = Join-Path $env:LOCALAPPDATA 'Rem0te'`,
+      `New-Item -ItemType Directory -Force -Path $dir | Out-Null`,
+      `$rd = Join-Path $dir 'rustdesk.exe'`,
+      // Size check as well as existence: a transfer killed part-way leaves a
+      // file that exists and cannot run, and the retry would skip it forever.
+      `if ((Test-Path $rd) -and ((Get-Item $rd).Length -gt 20000000)) { Write-Host 'Using the RustDesk already cached for Rem0te.' }`,
+      `else { ${[
+        `Write-Host 'Fetching RustDesk (one time, about 24 MB)...'`,
+        `$part = $rd + '.part'`,
+        `$ok = $false`,
+        `$prev = $ProgressPreference`,
+        `$ProgressPreference = 'SilentlyContinue'`,
+        `foreach ($u in ${sources}) { try { Invoke-WebRequest -Uri $u -OutFile $part -UseBasicParsing -TimeoutSec 600; $ok = $true; break } catch { } }`,
+        `$ProgressPreference = $prev`,
+        `if (-not $ok) { Write-Host 'Could not download RustDesk. Check this computer can reach the internet.'; Read-Host 'Press Enter to close'; exit 1 }`,
+        `Move-Item -Force $part $rd`,
+      ].join('; ')} }`,
     ].join('; ');
 
     return [
       `$paths = @($env:ProgramFiles + '\\RustDesk\\rustdesk.exe', ${'${env:ProgramFiles(x86)}'} + '\\RustDesk\\rustdesk.exe')`,
       `$rd = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1`,
       `if (-not $rd) { $rd = (Get-Command rustdesk.exe -ErrorAction SilentlyContinue).Source }`,
-      `if (-not $rd) { ${install} }`,
+      `if (-not $rd) { ${fetch} }`,
     ].join('; ');
   }
 
@@ -146,30 +163,33 @@ export class RustdeskService {
   }
 
   /**
-   * Point this computer's RustDesk at this server, installing one if needed.
+   * Point this computer's RustDesk at this server, fetching one if needed.
    *
-   * The install step is not a nicety. The first version of this printed
-   * "RustDesk is not installed, download the preconfigured client instead"
-   * and stopped — a dead end handed to someone who came here precisely
-   * because their remote support was broken. If the fix is "fetch a client and
-   * configure it", the script can do both.
+   * The fetch is not a nicety. The first version of this printed "RustDesk is
+   * not installed, download the preconfigured client instead" and stopped — a
+   * dead end handed to someone who came here precisely because their remote
+   * support was broken. If the fix is "get a client and configure it", the
+   * script can do both.
    */
   buildSetupCmd(config: RustdeskServerConfig, clientVersion: string, clientDownloadUrl: string): string {
     const ps = [
       `$ErrorActionPreference = 'Stop'`,
       `$cfg = '${config.configB64}'`,
-      this.findOrInstallRustdesk(clientVersion, clientDownloadUrl),
+      this.findOrFetchRustdesk(clientVersion, clientDownloadUrl),
       `Write-Host ('Pointing ' + $rd + ' at ${config.host} ...')`,
-      `& $rd --config $cfg`,
+      // Bounded. `--config` is a CLI action that applies and exits, but this runs on the path someone is waiting on and a build that decided to open its window instead would hang the script exactly where the install step used to.
+      `$p = Start-Process -FilePath $rd -ArgumentList '--config', $cfg -PassThru`,
+      `if (-not $p.WaitForExit(15000)) { try { $p.Kill() } catch { } }`,
       `Write-Host ''`,
-      `Write-Host 'Done. This computer now uses ${config.host}.'`,
+      `Write-Host ('Done. RustDesk at ' + $rd + ' now uses ${config.host}.')`,
       `Write-Host 'Close RustDesk if it is open, then use Connect in Rem0te.'`,
       `Read-Host 'Press Enter to close'`,
     ].join('; ');
 
     return this.wrapCmd('Rem0te - set up RustDesk', [
-      `Points this computer's RustDesk at ${config.host}, installing one`,
-      'first if it is missing.',
+      `Points this computer's RustDesk at ${config.host}, fetching a`,
+      'portable copy into %LOCALAPPDATA%\\Rem0te first if there is none.',
+      'Nothing is installed.',
       '',
       'Run once. The Connect button in Rem0te opens rustdesk://, which',
       'Windows hands to the installed RustDesk using whatever server that',
@@ -189,9 +209,10 @@ export class RustdeskService {
    * target device is offline or does not exist" about an endpoint that is
    * online and reachable. There is no fixing that from inside the link.
    *
-   * So Connect hands over this instead: find RustDesk, install it if missing,
-   * point it at this server, open the session. It assumes nothing about the
-   * machine it runs on, which is the whole point.
+   * So Connect hands over this instead: find RustDesk — or fetch a portable
+   * copy and cache it — point it at this server, open the session. It assumes
+   * nothing about the machine it runs on, which is the whole point, and it
+   * installs nothing, so it needs no elevation and no UAC prompt.
    *
    * The password travels base64-encoded so no character in it can terminate a
    * string or be read as an operator, and the file deletes itself on the way
@@ -214,23 +235,34 @@ export class RustdeskService {
       `$cfg = '${config.configB64}'`,
       `$peer = '${peerId}'`,
       `$pw = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${pwB64}'))`,
-      this.findOrInstallRustdesk(clientVersion, clientDownloadUrl),
+      this.findOrFetchRustdesk(clientVersion, clientDownloadUrl),
       `Write-Host 'Pointing RustDesk at ${config.host} ...'`,
-      `& $rd --config $cfg`,
-      // The config lands via IPC to the running client; give it a moment
-      // before the connection request or it uses the previous server.
+      // Bounded. `--config` is a CLI action that applies and exits, but this runs on the path someone is waiting on and a build that decided to open its window instead would hang the script exactly where the install step used to.
+      `$p = Start-Process -FilePath $rd -ArgumentList '--config', $cfg -PassThru`,
+      `if (-not $p.WaitForExit(15000)) { try { $p.Kill() } catch { } }`,
+      // The config lands via IPC when a client is already running; give it a
+      // moment before the connection request or that request uses the previous
+      // server.
       `Start-Sleep -Seconds 2`,
       `$uri = 'rustdesk://connection/new/' + $peer`,
       `if ($pw) { $uri = $uri + '?password=' + [Uri]::EscapeDataString($pw) }`,
+      // Clipboard as a fallback: if this build ignores the password in the URI
+      // and prompts, a paste is the difference between working and not.
+      `if ($pw) { try { Set-Clipboard -Value $pw } catch { } }`,
       `Write-Host ('Connecting to ${endpointName} (' + $peer + ') ...')`,
-      `Start-Process $uri`,
+      // Hand the URI to *this* executable rather than Start-Process'ing it as
+      // a protocol link. The link form goes through the registered rustdesk://
+      // handler, which only exists if RustDesk was installed — and the whole
+      // point of the cached portable copy is that it was not.
+      `Start-Process -FilePath $rd -ArgumentList $uri`,
     ].join('; ');
 
     return this.wrapCmd(`Rem0te - connect to ${endpointName}`, [
       `Rem0te one-click connect: ${endpointName} (${peerId})`,
       '',
-      'Installs RustDesk if this computer does not have it, points it at',
-      `${config.host}, then opens the connection.`,
+      'Uses the RustDesk already on this computer. If there is none it',
+      'fetches a portable copy once into %LOCALAPPDATA%\\Rem0te and reuses',
+      'it every time after. Nothing is installed.',
       '',
       'This file contains a live credential and deletes itself when it',
       'finishes. Do not keep or share it.',
