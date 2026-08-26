@@ -58,6 +58,14 @@ export const dashboardApi = {
 
 // ─── Endpoints ───────────────────────────────────────────────────────────────
 export const endpointsApi = {
+  /**
+   * One-click connect, as a downloadable script.
+   *
+   * Not an axios call: the browser must navigate to it so the download lands
+   * with its Content-Disposition filename. Same authorization and audit entry
+   * as POST :id/connect.
+   */
+  connectScriptUrl: (id: string) => `${BASE_URL}/endpoints/${id}/connect.cmd`,
   connected: () => api.get('/endpoints/connected'),
   // Employee-facing: only computers this user is authorized to connect to.
   mine: () => api.get('/endpoints/mine'),
@@ -244,6 +252,13 @@ export const adminApi = {
 };
 
 // ─── Update ───────────────────────────────────────────────────────────────────
+// ─── Technician client downloads ──────────────────────────────────────────
+// Authenticated, unlike the Quick Connect downloads: these are for the people
+// doing the supporting, not the person being helped.
+export const downloadsApi = {
+  manifest: () => api.get('/downloads'),
+};
+
 export const updateApi = {
   version: () => api.get('/admin/update/version'),
   check: () => api.get('/admin/update/check'),
@@ -255,6 +270,10 @@ export const updateApi = {
     api.post('/admin/update/rustdesk', endpointIds?.length ? { endpointIds } : {}),
   cancelRustdesk: (endpointId: string) =>
     api.post(`/admin/update/rustdesk/${endpointId}/cancel`, {}),
+  // hbbs/hbbr — the rendezvous and relay pair this platform runs, which is a
+  // different thing from the client on an endpoint.
+  rustdeskServer: () => api.get('/admin/update/rustdesk-server'),
+  updateRustdeskServer: () => api.post('/admin/update/rustdesk-server', {}),
 };
 
 // ─── Admin Security ───────────────────────────────────────────────────────

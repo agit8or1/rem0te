@@ -1,10 +1,13 @@
 import {
   Controller, Get, Post, Patch, Delete,
-  Body, Param, Query, Req, UseGuards, HttpCode, HttpStatus,
+  Body, Param, Query, Req, Res, UseGuards, HttpCode, HttpStatus,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { EndpointsService } from './endpoints.service';
+import { RustdeskService } from '../common/rustdesk.service';
+import { latestRustdeskVersionOr } from '../common/rustdesk-release';
 import { CreateEndpointDto, UpdateEndpointDto, AddTagDto, AddAliasDto } from './dto/create-endpoint.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
@@ -26,7 +29,10 @@ import type { JwtPayload } from '../auth/strategies/jwt.strategy';
 @Controller('endpoints')
 @UseGuards(JwtAuthGuard, CapabilitiesGuard)
 export class EndpointsController {
-  constructor(private readonly svc: EndpointsService) {}
+  constructor(
+    private readonly svc: EndpointsService,
+    private readonly rustdesk: RustdeskService,
+  ) {}
 
   @Get('connected')
   @RequireCapability(CAP.COMPUTERS_VIEW)
@@ -65,6 +71,54 @@ export class EndpointsController {
         launchUri: `rem0te://connect/${grant.token}`,
       },
     };
+  }
+
+  /**
+   * Connect as one downloadable file.
+   *
+   * The `rustdesk://` link the Connect button opens cannot carry a server
+   * address, so it only works on a machine whose RustDesk is already pointed
+   * here. This route hands back a script that needs nothing to be true in
+   * advance: it installs RustDesk if the machine does not have it, applies
+   * this server's configuration, and opens the session.
+   *
+   * Same authorization and the same audit entry as POST :id/connect — it goes
+   * through connectInfo, which is what decides whether this actor may see the
+   * endpoint's password at all.
+   */
+  @Get(':id/connect.cmd')
+  @RequireCapability(CAP.COMPUTERS_CONNECT)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  async connectScript(
+    @Actor() actor: ActorContext,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    const info = await this.svc.connectInfo(actor, id);
+    const config = await this.rustdesk.serverConfig();
+    if (!config) {
+      throw new ServiceUnavailableException(
+        'No RustDesk relay host is configured. A Platform Admin must set it under Settings.',
+      );
+    }
+
+    const name = info.computer.hostname ?? info.computer.name ?? info.rustdeskId;
+    const script = this.rustdesk.buildConnectCmd({
+      config,
+      peerId: info.rustdeskId,
+      password: info.password ?? null,
+      // Windows filenames reject these outright, and the value reaches both a
+      // Content-Disposition header and a `title` line inside the script.
+      // eslint-disable-next-line no-control-regex -- control chars are exactly what this strips
+      endpointName: String(name).replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').slice(0, 60),
+      clientDownloadUrl: `${(process.env.PUBLIC_API_URL ?? '').replace(/\/$/, '')}/api/v1/public/quick-connect/download/windows`,
+      clientVersion: await latestRustdeskVersionOr(),
+    });
+
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="Connect to ${String(name).replace(/[^A-Za-z0-9._ -]/g, '')}.cmd"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(script);
   }
 
   /**

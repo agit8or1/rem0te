@@ -54,10 +54,11 @@ export default function EndpointDetailPage() {
       if (pw) {
         try { await navigator.clipboard.writeText(pw); } catch { /* ignore */ }
       }
-      const uri = pw
-        ? `rustdesk://connection/new/${rdId}?password=${encodeURIComponent(pw)}`
-        : `rustdesk://connection/new/${rdId}`;
-      window.location.href = uri;
+      // See my-computers/page.tsx: a bare rustdesk:// link cannot carry the
+      // server address, so it only works on a client that already knows this
+      // server. The script installs RustDesk if needed, configures it, then
+      // connects — and deletes itself afterwards.
+      window.location.href = endpointsApi.connectScriptUrl(id);
     },
     onError: () => toast({ title: 'Error', description: 'Failed to start connection', variant: 'destructive' }),
   });

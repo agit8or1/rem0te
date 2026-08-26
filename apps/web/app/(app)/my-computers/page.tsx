@@ -47,10 +47,22 @@ export default function MyComputersPage() {
       }
       // Audit the launch.
       try { await sessionsApi.create({ endpointId: c.id }); } catch { /* audit only */ }
-      const uri = pw
-        ? `rustdesk://connection/new/${rdId}?password=${encodeURIComponent(pw)}`
-        : `rustdesk://connection/new/${rdId}`;
-      window.location.href = uri;
+      // Hand over a file that does the whole job rather than a bare
+      // rustdesk:// link.
+      //
+      // The link is routed by Windows to whichever RustDesk is installed,
+      // using whatever server *that* client points at — and the URI scheme has
+      // no field for a server address, so it cannot say "use ours". On a
+      // machine whose RustDesk was never told about this server, or that
+      // auto-updated to a stock build, it asks rustdesk.com, is told the ID is
+      // unknown, and reports "the target device is offline or does not exist"
+      // about an endpoint that is online. There is no fixing that from inside
+      // the link.
+      //
+      // The script installs RustDesk if the machine has none, applies this
+      // server's config, then opens the connection — and deletes itself,
+      // because it carries a live credential.
+      window.location.href = endpointsApi.connectScriptUrl(c.id);
     } catch (err) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to start connection';
       toast({ title: 'Error', description: msg, variant: 'destructive' });
