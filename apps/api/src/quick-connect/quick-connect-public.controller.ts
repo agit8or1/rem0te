@@ -225,9 +225,8 @@ serial = 3
 [options]
 custom-rendezvous-server = '\${HOST}'
 relay-server = '\${HOST}'
-api-server = 'https://\${HOST}'
+api-server = ''
 key = '\${KEY}'
-allow-websocket = 'Y'
 TOML
 
 echo "  [3/3] Starting…"
@@ -296,9 +295,8 @@ serial = 3
 [options]
 custom-rendezvous-server = '\${HOST}'
 relay-server = '\${HOST}'
-api-server = 'https://\${HOST}'
+api-server = ''
 key = '\${KEY}'
-allow-websocket = 'Y'
 TOML
 
 echo "  [2/2] Starting…"

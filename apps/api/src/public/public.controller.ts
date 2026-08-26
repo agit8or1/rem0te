@@ -271,7 +271,7 @@ export class PublicController {
     // Base64-encoded server config for `rustdesk.exe --config <base64>`. This is the
     // documented mechanism to reconfigure an already-installed RustDesk without
     // touching the TOML files. Format: host=...,key=...,relay=...,api=
-    const configPlain = `host=${hostVal},key=${keyVal},api=https://${hostVal},relay=${hostVal}`;
+    const configPlain = `host=${hostVal},key=${keyVal},api=,relay=${hostVal}`;
     const configB64 = Buffer.from(configPlain, 'utf8').toString('base64');
     return `# Rem0te Managed Agent — Windows installer
 # Server: ${host ?? 'NOT CONFIGURED'}
@@ -404,9 +404,8 @@ serial = 3
 [options]
 custom-rendezvous-server = '$REM0TE_HOST'
 relay-server = '$REM0TE_HOST'
-api-server = 'https://$REM0TE_HOST'
+api-server = ''
 key = '$REM0TE_KEY'
-allow-websocket = 'Y'
 "@
 
 $configTargets = New-Object System.Collections.Generic.List[string]
@@ -845,8 +844,10 @@ $(($diag | ForEach-Object { '    ' + $_ }) -join [Environment]::NewLine)
 
   If the service state is not RUNNING, that is the cause - RustDesk is not
   dialling out at all. If it IS running and 21116 is BLOCKED while 443 is
-  open, outbound filtering is the cause and the WebSocket route should have
-  been used; check allow-websocket in the config files listed above.
+  open, outbound filtering is the cause: the server can proxy RustDesk over
+  443 (/ws/id and /ws/relay are already routed to hbbs/hbbr), but hbbs 1.1.15
+  accepts the upgrade and drops the connection, so that path is not usable
+  until the server is upgraded.
 
   Refusing to report success for a device nobody can connect to.
 "@ 22
@@ -956,9 +957,8 @@ serial = 2
 [options]
 custom-rendezvous-server = '\${HOST_ADDR}'
 relay-server = '\${HOST_ADDR}'
-api-server = 'https://\${HOST_ADDR}'
+api-server = ''
 key = '\${PUB_KEY}'
-allow-websocket = 'Y'
 verification-method = 'use-permanent-password'"
 
 # Write to all known config locations
@@ -1106,9 +1106,8 @@ serial = 2
 [options]
 custom-rendezvous-server = '\${HOST_ADDR}'
 relay-server = '\${HOST_ADDR}'
-api-server = 'https://\${HOST_ADDR}'
+api-server = ''
 key = '\${PUB_KEY}'
-allow-websocket = 'Y'
 verification-method = 'use-permanent-password'"
 
 # Write to all known macOS config paths
