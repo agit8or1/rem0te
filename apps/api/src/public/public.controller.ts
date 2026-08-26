@@ -406,6 +406,7 @@ custom-rendezvous-server = '$REM0TE_HOST'
 relay-server = '$REM0TE_HOST'
 api-server = ''
 key = '$REM0TE_KEY'
+verification-method = 'use-permanent-password'
 "@
 
 $configTargets = New-Object System.Collections.Generic.List[string]
