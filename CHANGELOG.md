@@ -5,6 +5,75 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+The Connect button assumed something it never checked, and hbbs had been left
+behind by an installer that only ever installed.
+
+### Fixed
+
+- **Connect never configured the client it was connecting from.** The launcher
+  spawned `rustdesk --connect <id>` and nothing else, which silently assumed the
+  technician's RustDesk was already pointed at this server. It frequently is
+  not — a fresh install, or an auto-update that replaced a Rem0te-configured
+  build with a stock one, talks to rustdesk.com's public rendezvous instead,
+  where our IDs do not exist. RustDesk reports that as *"the target device is
+  offline or does not exist"*, which reads as a broken endpoint and sends you
+  to look at the machine that is working fine. `/launcher/validate` now returns
+  the same base64 `host=…,key=…` config the installer writes, and the launcher
+  applies it with `--config` before connecting, so a deep link works on a
+  RustDesk that has never seen this server.
+
+- **The launcher could only ever find RustDesk on PATH.** Its search list put
+  the bare name `rustdesk` first and matched any candidate without a path
+  separator unconditionally, so `find` returned on the first entry every time
+  and the five absolute paths below it were unreachable. On a normal Windows
+  install RustDesk is not on PATH: the spawn failed with "program not found"
+  while `C:\Program Files\RustDesk\rustdesk.exe` sat there untried. Absolute
+  paths are checked first now, PATH is the fallback it was meant to be, and
+  applying the config is bounded by a timeout so a hung RustDesk cannot leave
+  the Connect button doing nothing.
+
+- **`install.sh` never upgraded rustdesk-server.** It installed hbbs only when
+  none was present, so re-running it reported "already installed" and left
+  whatever version first landed, forever. That is how a deployment sat on
+  1.1.15 long after 1.1.16 shipped — and it is why the `/ws/id` and `/ws/relay`
+  routes added in 0.8.2 were dead: 1.1.15 accepts the WebSocket upgrade and
+  immediately drops the connection. The script now resolves the latest release,
+  validates the tag before it reaches a download URL, and upgrades an older
+  install instead of skipping it. **WebSocket rendezvous over 443 works on
+  1.1.16**, verified end to end through Caddy: a `PunchHoleRequest` over
+  `wss://<host>/ws/id` resolves a live peer and returns `ID_NOT_EXIST` for one
+  that does not exist. The 0.8.2 note saying otherwise is superseded.
+
+- **Three copies of "latest RustDesk version", three behaviours.** The installer
+  templates, Quick Connect, and the Updates page each fetched the GitHub release
+  tag with their own cache and their own fallback — `1.4.6` in one, `1.4.9` in
+  another — and only one of the three validated the tag before caching it. The
+  unvalidated copy fed `rustdesk-${version}-x86_64.exe` download URLs, so a
+  single odd tag would have been cached for an hour and served to every
+  installer and Quick Connect download in that window. One helper, one cache,
+  one fallback, in `apps/api/src/common/rustdesk-release.ts`.
+
+### Added
+
+- **`deploy/scripts/hbbs-probe.py`** — asks hbbs directly whether a peer is
+  reachable, over the native rendezvous port or the WebSocket path, and prints
+  `ONLINE` / `OFFLINE` / `ID_NOT_EXIST` / `LICENSE_MISMATCH`. hbbs logs nothing
+  when a punch-hole fails, and Rem0te's own online dot is a different signal
+  entirely (a 3-minute HTTP heartbeat), so there was previously no way to ask
+  the component that actually decides a Connect. `docs/setup.md` now leads its
+  RustDesk troubleshooting with it.
+
+### Security
+
+- **Removed the unauthorised peer from `db_v2.sqlite3`.** 0.8.2 locked hbbs and
+  hbbr with `-k` and noted that a stranger's peer had registered itself during
+  the window when they ran open; the row itself was never deleted. It is gone,
+  and it no longer resolves. Existing backup taken first.
+
+---
+
 ## [0.8.2] — 2026-08-26 · *Ledger*
 
 An endpoint that reported "installed successfully" six times in a row while
