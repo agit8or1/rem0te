@@ -53,7 +53,13 @@ sudo rsync -a --delete --exclude 'apps/web/.next/static/' \
   apps/web/.next/standalone/ /opt/reboot-remote/web/standalone/
 sudo rsync -a apps/web/.next/static/ \
   /opt/reboot-remote/web/standalone/apps/web/.next/static/
-sudo chown -R reboot:reboot /opt/reboot-remote/api/dist /opt/reboot-remote/web/standalone
+# `public/` is NOT part of the standalone output and must be copied too —
+# without it every documentation screenshot 404s.
+sudo rsync -a --delete apps/web/public/ \
+  /opt/reboot-remote/web/standalone/apps/web/public/
+sudo cp version.json CHANGELOG.md /opt/reboot-remote/
+sudo chown -R reboot:reboot /opt/reboot-remote/api/dist /opt/reboot-remote/web/standalone \
+  /opt/reboot-remote/version.json /opt/reboot-remote/CHANGELOG.md
 sudo systemctl restart reboot-remote-api reboot-remote-web
 ```
 
@@ -80,7 +86,15 @@ previous build's files 404s every browser that already had the app open.
 
 ## Docs
 
-`docs/README.md` is the index. When behaviour changes, the page that describes
+`docs/README.md` is the index, and the same pages are compiled into the app at
+`/docs` by `apps/web/scripts/gen-docs-bundle.mjs`, which runs as `prebuild`.
+**A new page must be added to that script's `ORDER` list or the build fails** —
+deliberately, because a page that silently never appears is how the
+documentation came to be invisible in the first place.
+
+`docs/API-REFERENCE.md` is generated: `node scripts/gen-api-reference.mjs`.
+Verify it with `--check <file of RouterExplorer lines>`; it must match the
+runtime route table exactly. When behaviour changes, the page that describes
 it changes in the same commit — `docs/connecting.md`, `docs/clients.md`,
 `docs/updates.md`, `docs/troubleshooting.md`, `docs/architecture.md`. The in-app
 copy at `/help` is separate and also needs updating.

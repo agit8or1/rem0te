@@ -23,3 +23,4 @@ prisma/migrations/dev.db
 *.tsbuildinfo
 /tmp/
 src-tauri/target/
+apps/web/public/docs-img/

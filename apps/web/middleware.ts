@@ -31,5 +31,9 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  // docs-img holds the documentation screenshots. They are served from public/
+  // and are the same images already published in the repository, so gating them
+  // buys nothing and costs a middleware round trip per image on a page that has
+  // a lot of them.
+  matcher: ['/((?!_next/static|_next/image|docs-img|favicon.ico).*)'],
 };

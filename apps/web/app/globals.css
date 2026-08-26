@@ -57,3 +57,32 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ── Documentation ──────────────────────────────────────────────────────────
+   Styling for the HTML compiled from docs/*.md by gen-docs-bundle.mjs. Scoped
+   to .docs-prose so it cannot leak into the application's own markup. */
+.docs-prose {
+  @apply text-sm leading-relaxed text-muted-foreground;
+}
+.docs-prose > *:first-child { @apply mt-0; }
+.docs-prose h1 { @apply mt-0 mb-4 text-2xl font-semibold tracking-tight text-foreground; }
+.docs-prose h2 { @apply mt-10 mb-3 border-b pb-2 text-lg font-semibold tracking-tight text-foreground scroll-mt-20; }
+.docs-prose h3 { @apply mt-6 mb-2 text-base font-semibold text-foreground scroll-mt-20; }
+.docs-prose h4 { @apply mt-4 mb-2 text-sm font-semibold text-foreground scroll-mt-20; }
+.docs-prose p { @apply my-3; }
+.docs-prose strong { @apply font-semibold text-foreground; }
+.docs-prose a { @apply text-foreground underline underline-offset-2 hover:no-underline; }
+.docs-prose ul { @apply my-3 list-disc space-y-1.5 pl-6; }
+.docs-prose ol { @apply my-3 list-decimal space-y-1.5 pl-6; }
+.docs-prose li > ul, .docs-prose li > ol { @apply my-1.5; }
+.docs-prose code { @apply rounded bg-muted px-1.5 py-0.5 font-mono text-[0.8125rem] text-foreground; }
+.docs-prose pre { @apply my-4 overflow-x-auto rounded-lg border bg-muted/50 p-4; }
+.docs-prose pre code { @apply bg-transparent p-0 text-xs leading-relaxed; }
+.docs-prose blockquote { @apply my-4 border-l-2 border-primary/40 bg-muted/30 py-2 pl-4 pr-3 italic; }
+.docs-prose hr { @apply my-8 border-t; }
+.docs-prose img { @apply my-4 rounded-lg border; }
+/* Wide tables scroll inside their own container rather than the page. */
+.docs-prose table { @apply my-4 w-full border-collapse text-left text-xs; }
+.docs-prose thead th { @apply border-b bg-muted/40 px-3 py-2 font-semibold text-foreground; }
+.docs-prose tbody td { @apply border-b px-3 py-2 align-top; }
+.docs-prose tbody tr:last-child td { @apply border-b-0; }

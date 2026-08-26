@@ -16,6 +16,7 @@ import {
   Download,
   HardDriveDownload,
   BookOpen,
+  LifeBuoy,
   ShieldCheck,
   Info,
   UserCircle,
@@ -78,7 +79,8 @@ const MAIN_NAV: NavItem[] = [
   // The in-app documentation was reachable from exactly one place — a link at
   // the bottom of the Quick Start wizard — which meant that in practice nobody
   // found it.
-  { href: '/help', label: 'Help & Docs', icon: BookOpen },
+  { href: '/docs', label: 'Documentation', icon: BookOpen },
+  { href: '/help', label: 'Help', icon: LifeBuoy },
 ];
 
 /**

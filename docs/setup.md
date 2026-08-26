@@ -246,7 +246,7 @@ See `deploy/caddy/` for a working Caddyfile, or adapt it for nginx/Traefik. The 
 
 ## Configuration Reference
 
-All configuration is via environment variables. See `apps/api/.env.example` for a fully annotated example.
+All configuration is via environment variables. See `apps/api/.env.example` for a fully commented example.
 
 **Required variables:**
 

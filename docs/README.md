@@ -1,6 +1,7 @@
 # Rem0te documentation
 
-Start with the page that matches what you are doing.
+Start with the page that matches what you are doing. All of this is also inside
+the product, searchable, under **Documentation** in the sidebar.
 
 ## Something is broken
 
@@ -28,7 +29,11 @@ Start with the page that matches what you are doing.
 
 ## Building on it
 
-- **[PUBLIC-API.md](PUBLIC-API.md)** — the public API surface.
+- **[API-REFERENCE.md](API-REFERENCE.md)** — every route, its access level and the
+  capability it needs. Generated from the controllers and checked against the
+  running route table, so it cannot quietly fall behind.
+- **[PUBLIC-API.md](PUBLIC-API.md)** — the API guide: scopes, request and
+  response shapes, errors, worked examples.
 - **[SECURITY-AUDIT.md](SECURITY-AUDIT.md)** — security posture and findings.
 
 ---

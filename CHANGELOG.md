@@ -5,6 +5,50 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.10.0] — 2026-08-26 · *Ledger*
+
+The documentation stopped being a folder in a repository.
+
+### Added
+
+- **Documentation inside the product, with search.** A **Documentation** section
+  in the sidebar renders every page from `docs/` and searches across all of
+  them — 12 pages, 114 sections, about nine thousand indexed words. Results
+  point at the section, not the page.
+
+  Answering "where are the docs" with a GitHub URL was never going to work for
+  the people actually using the thing. `gen-docs-bundle.mjs` compiles the
+  markdown to HTML at build time, so the running app ships no markdown parser
+  and no filesystem access — just a data module. It runs as `prebuild`, which
+  means the bundle cannot drift from `docs/`, and it **fails the build** if a
+  page exists on disk but is missing from the ordered list, because a page that
+  silently never appears is the failure this all started from.
+
+  The search is deliberately dependency-free. Nine thousand words, fixed at
+  build time and already in memory, cost less to scan than an index would cost
+  to build.
+
+- **`docs/API-REFERENCE.md` — the complete API surface**, generated from the
+  controllers by `scripts/gen-api-reference.mjs`. 188 routes across 23
+  controllers, each with its access level and the capability a Business User
+  needs.
+
+  Hand-written endpoint lists rot silently, so this one reads the decorators —
+  and then checks itself against the route table Nest prints at startup.
+  `--check` compares the two and exits non-zero on any disagreement. It earned
+  its keep immediately: the first version parsed 137 of 188 routes, and the
+  check is what found the three reasons — `@Controller(['businesses',
+  'customers'])` array prefixes, files declaring more than one controller, and
+  `@Get(['businesses', 'companies'])` array route paths. It now matches
+  exactly.
+
+### Changed
+
+- The sidebar's **Help & Docs** is now two entries: **Documentation** for the
+  full reference, **Help** for the short in-app answers.
+
+---
+
 ## [0.9.0] — 2026-08-26 · *Ledger*
 
 The Connect button assumed something it never checked, and hbbs had been left

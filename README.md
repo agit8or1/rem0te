@@ -264,13 +264,14 @@ This project is overseen by **Luna**, a German Shepherd Dog of exceptional intel
 | Guide | For |
 | --- | --- |
 | [Troubleshooting](docs/troubleshooting.md) | Something will not connect. Start here — the error RustDesk shows rarely names the cause. |
-| [Technician Guide](docs/technician-guide.md) | Day-to-day use — connecting, Quick Connect, enrolling. Annotated screenshots. |
+| [Technician Guide](docs/technician-guide.md) | Day-to-day use — connecting, Quick Connect, enrolling. Step-by-step, with screenshots. |
 | [Clients](docs/clients.md) | Every RustDesk client Rem0te hands out, and how each learns where the server is. |
 | [Connecting](docs/connecting.md) | What happens when you click Connect, and the three connect paths. |
 | [Setup](docs/setup.md) | Installing and operating a server. |
 | [Updates](docs/updates.md) | Rem0te, the RustDesk clients, and hbbs/hbbr — three separate things. |
 | [Architecture](docs/architecture.md) | What runs where, the data model, the RustDesk config chain. |
 | [Access Control](docs/access-control.md) | The three-level model and capability vocabulary. |
+| [API Reference](docs/API-REFERENCE.md) | Every route, its access level and required capability. Generated from the controllers. |
 | [Public API](docs/PUBLIC-API.md) | RMM/PSA integration. Scopes, response shapes, errors, worked examples. |
 | [Security Audit](docs/SECURITY-AUDIT.md) | Threat model and audit trail. |
 
