@@ -208,6 +208,20 @@ sudo -u postgres psql reboot_remote -c \
 
 ---
 
+## Searching this from inside the product
+
+Everything on this page is also in the app, under **Documentation** in the
+sidebar, searchable across every page.
+
+![Documentation, with search](screenshots/guide/docs.png)
+
+1. **Documentation** in the sidebar.
+2. The search box. It matches across every page and returns the section, not
+   just the page — searching *offline or does not exist* lands on the section
+   above.
+
+---
+
 ## See also
 
 - [connecting.md](connecting.md) — how the connect paths work

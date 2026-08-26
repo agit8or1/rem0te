@@ -51,7 +51,16 @@ Connect button's `rustdesk://` link would work directly too.
 
 ## Technician clients — Rem0te → Downloads
 
-![Downloads](screenshots/downloads-light.png)
+![The Downloads page](screenshots/guide/downloads.png)
+
+1. **Downloads** in the sidebar. Separate from *Enroll Computer*, which prepares
+   the machine being supported rather than the one supporting it.
+2. **Set up this computer for Connect** — the one to reach for. Points this
+   machine's RustDesk at the server, fetching a portable copy first if there is
+   none.
+3. **Preconfigured client** — a full client that configures itself from its own
+   filename. For a machine with no RustDesk at all.
+4. **Unconfigured client** — stock RustDesk, pointed at nothing.
 
 
 These are for the computer you connect **from**. They are authenticated; only

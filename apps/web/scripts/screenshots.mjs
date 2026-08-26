@@ -53,6 +53,74 @@ const PAGES = [
   { path: '/account',          name: 'account' },
 ];
 
+/**
+ * Pages captured with numbered callouts drawn over them.
+ *
+ * The guide shots were made by hand once and then could not be regenerated,
+ * so they went stale the moment the navigation changed — one of them still
+ * highlighted a menu entry that had moved. Marking up in the browser means
+ * they are rebuilt with everything else.
+ *
+ * `find` is a CSS selector, or { text } to match an element by its content
+ * when there is nothing stable to select on.
+ */
+const CALLOUT_PAGES = [
+  {
+    name: 'guide/tech-02-computers',
+    path: '/endpoints',
+    callouts: [
+      { find: 'a[href="/endpoints"]' },
+      // Connect lives on a computer's own page, not on the list — the first
+      // version of this pointed at a button that is not here.
+      { find: 'input[placeholder^="Search"]' },
+    ],
+  },
+  {
+    name: 'guide/tech-03-connect',
+    path: '/my-computers',
+    callouts: [
+      { find: 'a[href="/my-computers"]' },
+      { find: { text: 'Connect', tag: 'button' } },
+    ],
+  },
+  {
+    name: 'guide/tech-04-quick-connect',
+    path: '/quick-connect',
+    callouts: [
+      { find: 'a[href="/quick-connect"]' },
+      { find: 'input' },
+    ],
+  },
+  {
+    name: 'guide/tech-05-sessions',
+    path: '/sessions',
+    callouts: [{ find: 'a[href="/sessions"]' }],
+  },
+  {
+    name: 'guide/tech-06-updates',
+    path: '/about',
+    callouts: [{ find: 'a[href="/about"]' }],
+  },
+  {
+    name: 'guide/downloads',
+    path: '/downloads',
+    callouts: [
+      { find: 'a[href="/downloads"]' },
+      { find: { text: 'Set up this computer for Connect' } },
+      { find: { text: 'RustDesk client, preconfigured' } },
+      { find: { text: 'RustDesk client, unconfigured' } },
+    ],
+  },
+  {
+    name: 'guide/docs',
+    path: '/docs',
+    callouts: [
+      { find: 'a[href="/docs"]' },
+      { find: 'input[aria-label="Search the documentation"]' },
+    ],
+  },
+];
+
 // Captured without signing in — it is the page someone who needs help lands on.
 const PUBLIC_PAGES = [
   { path: '/quick', name: 'quick-public' },
@@ -72,6 +140,92 @@ const DEMO_COMPUTERS = [
   ['SMITH-FRONTPC',  'Windows', 'Windows 11 Home',     true],
   ['NWND-NURSE-02',  'Windows', 'Windows 10 Pro 22H2', false],
 ];
+
+
+/**
+ * Outline each target and pin a numbered badge to it, then screenshot.
+ *
+ * Drawn in the page as real DOM so the browser does the layout — an overlay
+ * composited afterwards would have to guess at positions and would be wrong
+ * the moment anything reflowed.
+ */
+async function captureWithCallouts(page, spec, outDir, theme) {
+  await page.goto(`${WEB}${spec.path}`, { waitUntil: 'networkidle', timeout: 20_000 });
+  await page.waitForTimeout(600);
+
+  const drawn = await page.evaluate((callouts) => {
+    const old = document.getElementById('rem0te-callouts');
+    if (old) old.remove();
+
+    const layer = document.createElement('div');
+    layer.id = 'rem0te-callouts';
+    Object.assign(layer.style, {
+      position: 'absolute', inset: '0', pointerEvents: 'none', zIndex: '2147483647',
+    });
+    document.body.appendChild(layer);
+
+    let n = 0;
+    for (const c of callouts) {
+      let el = null;
+      if (typeof c.find === 'string') {
+        el = document.querySelector(c.find);
+      } else if (c.find && c.find.text) {
+        const tag = (c.find.tag || '*').toLowerCase();
+        const candidates = [...document.querySelectorAll(tag)];
+        // Deepest match wins: an ancestor also "contains" the text, and
+        // outlining the whole card instead of the button is not a callout.
+        el = candidates
+          .filter((e) => (e.textContent || '').trim().includes(c.find.text))
+          .sort((a, b) => b.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_CONTAINED_BY ? 1 : -1)
+          .pop() || null;
+      }
+      if (!el) continue;
+
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      n += 1;
+
+      const pad = 4;
+      const top = r.top + window.scrollY - pad;
+      const left = r.left + window.scrollX - pad;
+
+      const box = document.createElement('div');
+      Object.assign(box.style, {
+        position: 'absolute',
+        top: `${top}px`, left: `${left}px`,
+        width: `${r.width + pad * 2}px`, height: `${r.height + pad * 2}px`,
+        border: '2px solid #e11d48', borderRadius: '8px',
+        boxShadow: '0 0 0 3px rgba(225,29,72,0.18)',
+      });
+      layer.appendChild(box);
+
+      const badge = document.createElement('div');
+      badge.textContent = String(n);
+      Object.assign(badge.style, {
+        position: 'absolute',
+        top: `${top - 11}px`, left: `${left - 11}px`,
+        width: '22px', height: '22px', borderRadius: '11px',
+        background: '#e11d48', color: '#fff',
+        font: '600 12px/22px ui-sans-serif, system-ui, sans-serif',
+        textAlign: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+      });
+      layer.appendChild(badge);
+    }
+    return n;
+  }, spec.callouts);
+
+  const file = path.join(outDir, `${spec.name}${theme === 'dark' ? '-dark' : ''}.png`);
+  await mkdir(path.dirname(file), { recursive: true });
+  await page.screenshot({ path: file, fullPage: true });
+  await page.evaluate(() => document.getElementById('rem0te-callouts')?.remove());
+
+  const expected = spec.callouts.length;
+  console.log(
+    `  ${drawn === expected ? '✓' : '!'} ${spec.name}/${theme} → ${file}` +
+    (drawn === expected ? '' : `  (${drawn}/${expected} targets found)`),
+  );
+  return drawn === expected;
+}
 
 async function main() {
   await mkdir(OUT_DIR, { recursive: true });
@@ -200,6 +354,8 @@ async function main() {
     create: { id: 'singleton', quickConnectEnabled: true },
   });
 
+  const calloutMisses = [];
+
   try {
     const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
@@ -247,7 +403,17 @@ async function main() {
         await page.screenshot({ path: file, fullPage: true });
         console.log(`  ✓ ${p.name}/${theme} → ${file}`);
       }
+      for (const spec of CALLOUT_PAGES) {
+        try {
+          const ok = await captureWithCallouts(page, spec, OUT_DIR, theme);
+          if (!ok) calloutMisses.push(`${spec.name}/${theme}`);
+        } catch (e) {
+          console.log(`  ✗ ${spec.name}/${theme} — ${e.message.split('\n')[0]}`);
+          calloutMisses.push(`${spec.name}/${theme}`);
+        }
+      }
     }
+
 
     // ── Public pages, captured signed-OUT in a clean context ──────────────
     for (const theme of ['light', 'dark']) {
@@ -273,6 +439,13 @@ async function main() {
     }
 
     await browser.close();
+    if (calloutMisses.length) {
+      // Loud rather than fatal: a moved selector should be obvious, but it
+      // should not throw away the whole run's output.
+      console.log(`\n! ${calloutMisses.length} marked-up capture(s) did not find every target:`);
+      for (const m of calloutMisses) console.log(`    ${m}`);
+      console.log('  Update the selectors in CALLOUT_PAGES.');
+    }
     console.log('\n✓ Screenshots regenerated.');
   } finally {
     // Cleanup — remove every throwaway record, in FK-safe order.

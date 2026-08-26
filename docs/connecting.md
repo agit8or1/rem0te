@@ -40,6 +40,12 @@ UI shows a green dot next to a machine that RustDesk will tell you is offline.
 
 There are three, and they are not equivalent.
 
+![Connect, on a computer you have access to](screenshots/guide/tech-03-connect.png)
+
+1. **My Computers** — the computers this account may connect to. Platform Admins
+   and Business Owners get the full list under **Computers**.
+2. **Connect** — downloads the script described below.
+
 ### 1. The Connect button — a downloaded script
 
 Clicking **Connect** hands you one file, named for the target machine. It uses

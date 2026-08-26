@@ -5,6 +5,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.10.1] — 2026-08-26 · *Ledger*
+
+### Changed
+
+- **The marked-up screenshots are generated now.** The guide images were made
+  by hand once and could not be rebuilt, so they went stale the moment the
+  navigation changed — one still pointed at a menu entry that had moved. The
+  callouts are drawn in the browser before capture, as real DOM, so the browser
+  does the layout and nothing has to guess at coordinates after the fact.
+
+  Fourteen captures across seven pages, light and dark, including the Downloads
+  page and the searchable documentation. A selector that stops matching is
+  reported at the end of the run with the count it found, rather than silently
+  producing a picture with no marks on it — which is how the first attempt
+  pointed at a Connect button that does not exist on the computers list.
+
+  `docs/clients.md`, `docs/connecting.md` and `docs/troubleshooting.md` carry
+  them, each with its numbered points written out.
+
+---
+
 ## [0.10.0] — 2026-08-26 · *Ledger*
 
 The documentation stopped being a folder in a repository.
