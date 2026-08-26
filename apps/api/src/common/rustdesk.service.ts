@@ -128,6 +128,49 @@ export class RustdeskService {
   }
 
   /**
+   * Wrap a script body so a failure is readable after the fact.
+   *
+   * `$ErrorActionPreference = 'Stop'` turns any failure into a terminating
+   * error, PowerShell exits, and the .cmd — which deletes itself — closes the
+   * window in the same instant. The result is a script that "runs, errors out
+   * and closes before you can read the error", which is the worst possible
+   * outcome: it looks identical to doing nothing.
+   *
+   * So: a transcript to a file that outlives the window, a catch that prints
+   * the message and waits, and the log path echoed either way. The transcript
+   * is best-effort because Start-Transcript is unavailable under constrained
+   * language mode, and a missing log should not itself become the failure.
+   *
+   * Join-Path is nested rather than passed a `Rem0te\\file.log` literal because
+   * a template literal turns `\\R` into a bare `R` — the same trap as `\\U` in
+   * `C:\\Users`.
+   */
+  private withErrorReporting(body: string): string {
+    return [
+      `$ErrorActionPreference = 'Stop'`,
+      `$dir = Join-Path $env:LOCALAPPDATA 'Rem0te'`,
+      `New-Item -ItemType Directory -Force -Path $dir | Out-Null`,
+      `$log = Join-Path $dir 'rem0te-last-run.log'`,
+      `try { Start-Transcript -Path $log -Force | Out-Null } catch { }`,
+      `try { ${body} } catch { ${[
+        `Write-Host ''`,
+        `Write-Host ('ERROR: ' + $_.Exception.Message)`,
+        // Deliberately NOT $_.InvocationInfo.Line: the whole script is a
+        // single line, so printing it would put the endpoint's password into
+        // the console and into the transcript file. The category and the
+        // failing command name locate the fault without that.
+        `Write-Host ('  where: ' + $_.CategoryInfo.Category + ' in ' + $_.CategoryInfo.Activity)`,
+        `Write-Host ''`,
+        `Write-Host ('A full log was saved to ' + $log)`,
+        `try { Stop-Transcript | Out-Null } catch { }`,
+        `Read-Host 'Press Enter to close'`,
+        `exit 1`,
+      ].join('; ')} }`,
+      `try { Stop-Transcript | Out-Null } catch { }`,
+    ].join('; ');
+  }
+
+  /**
    * Wrap a PowerShell one-liner in a .cmd.
    *
    * A .cmd and not a .ps1 because PowerShell scripts do not run on
@@ -148,6 +191,14 @@ export class RustdeskService {
       ...comments.map((c) => (c ? `rem  ${c}` : 'rem')),
       'rem',
       `powershell -NoProfile -ExecutionPolicy Bypass -Command "${ps}"`,
+      '',
+      'rem  Hold the window open on failure. Without this the script reports an',
+      'rem  error and closes in the same instant, which is indistinguishable',
+      'rem  from it doing nothing at all.',
+      'if errorlevel 1 (',
+      '  echo.',
+      '  pause',
+      ')',
       '',
     ];
     if (selfDelete) {
@@ -172,8 +223,7 @@ export class RustdeskService {
    * script can do both.
    */
   buildSetupCmd(config: RustdeskServerConfig, clientVersion: string, clientDownloadUrl: string): string {
-    const ps = [
-      `$ErrorActionPreference = 'Stop'`,
+    const ps = this.withErrorReporting([
       `$cfg = '${config.configB64}'`,
       this.findOrFetchRustdesk(clientVersion, clientDownloadUrl),
       `Write-Host ('Pointing ' + $rd + ' at ${config.host} ...')`,
@@ -184,7 +234,7 @@ export class RustdeskService {
       `Write-Host ('Done. RustDesk at ' + $rd + ' now uses ${config.host}.')`,
       `Write-Host 'Close RustDesk if it is open, then use Connect in Rem0te.'`,
       `Read-Host 'Press Enter to close'`,
-    ].join('; ');
+    ].join('; '));
 
     return this.wrapCmd('Rem0te - set up RustDesk', [
       `Points this computer's RustDesk at ${config.host}, fetching a`,
@@ -230,8 +280,7 @@ export class RustdeskService {
     const { config, peerId, password, endpointName, clientDownloadUrl, clientVersion } = opts;
     const pwB64 = Buffer.from(password ?? '', 'utf8').toString('base64');
 
-    const ps = [
-      `$ErrorActionPreference = 'Stop'`,
+    const ps = this.withErrorReporting([
       `$cfg = '${config.configB64}'`,
       `$peer = '${peerId}'`,
       `$pw = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${pwB64}'))`,
@@ -255,7 +304,8 @@ export class RustdeskService {
       // handler, which only exists if RustDesk was installed — and the whole
       // point of the cached portable copy is that it was not.
       `Start-Process -FilePath $rd -ArgumentList $uri`,
-    ].join('; ');
+      `Write-Host 'RustDesk should be opening now.'`,
+    ].join('; '));
 
     return this.wrapCmd(`Rem0te - connect to ${endpointName}`, [
       `Rem0te one-click connect: ${endpointName} (${peerId})`,

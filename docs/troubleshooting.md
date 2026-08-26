@@ -102,13 +102,38 @@ Stage a credential rotation from the endpoint's page, or re-run the installer.
 
 ---
 
-## The Connect script does nothing / closes instantly
+## The Connect script closes before you can read it
 
-- It needs to actually run. A browser that saved it and did not open it has done
-  nothing yet.
-- SmartScreen may block it — *More info* → *Run anyway*.
-- It deletes itself on completion by design; it carries a live credential. If
-  you need to run it again, click Connect again.
+Every run writes a full log to:
+
+```
+%LOCALAPPDATA%\Rem0te\rem0te-last-run.log
+```
+
+Open that. It survives the window closing, and it is the fastest way to see
+which step failed.
+
+The script also pauses on failure now, so a window that closes instantly
+usually means something stopped it before PowerShell ever ran — see below.
+
+To watch it run with the window guaranteed to stay open, start a Command Prompt
+first and drag the file into it, or:
+
+```bat
+cmd /k "%USERPROFILE%\Downloads\Connect to NAME.cmd"
+```
+
+Other reasons it may appear to do nothing:
+
+- **It needs to actually run.** A browser that saved it and did not open it has
+  done nothing yet.
+- **SmartScreen may block it** — *More info* → *Run anyway*.
+- **It deletes itself on completion by design**, because it carries a live
+  credential. If you need it again, click Connect again.
+
+The log never contains the password: the error handler prints the failing
+command's category, deliberately not the script line, because the whole script
+is one line and printing it would put the credential in the log.
 
 ---
 
