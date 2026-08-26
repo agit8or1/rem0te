@@ -5,6 +5,103 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.8.1] — 2026-08-26 · *Ledger*
+
+Maintenance release. Four things that were quietly broken, plus the cause of a
+login failure that this project's own deploy procedure was creating.
+
+### Fixed
+
+- **Deploying could break every open session.** The deploy step ran
+  `rsync -a --delete` over `.next/static`, deleting the previous build's client
+  chunks. Next.js requests chunks by content hash, so any browser with the app
+  already open kept asking for filenames that had just been removed — 404, hard
+  reload, and for anyone mid-login it looked like "sign in, pass 2FA, land back
+  on the login page". Deploys now exclude the static directory from the delete
+  pass and add chunks rather than replacing them, so a release can no longer
+  pull the floor out from under a live client. Applied to the in-app updater and
+  documented in `docs/setup.md`. **If you hit this, one hard refresh clears it.**
+
+- **`pnpm build` did not work at all.** The API package was named `api` while
+  the rest of the workspace used `@reboot-remote/*`, so every root script
+  filtering on `@reboot-remote/api` — `build`, `db:migrate`, `db:generate`,
+  `db:seed`, `db:studio` — matched no project. `pnpm build` is the install step
+  the README tells people to run. Renamed the package; the in-app updater's
+  `--filter` arguments were wrong in the same way and are fixed too.
+
+- **`pnpm db:seed` was broken.** `ts-node`'s `dist/` was missing from the
+  install, so the seed could not run at all. Reinstalled and verified against a
+  live database (idempotent — existing accounts are untouched).
+
+- **The launcher never recorded that a session started.** It POSTed
+  `client_opened` to `/sessions/:id/events` using its launcher token as a bearer
+  credential, which cannot work: that route is behind `JwtAuthGuard` and a
+  launcher token is signed with `LAUNCHER_TOKEN_SECRET`, not `JWT_SECRET`. The
+  result was discarded, so it failed silently on every launch and sessions never
+  left `PENDING`. Redeeming the token *is* the client opening, so the server
+  records it in `/launcher/validate` instead of asking the client to report
+  something already observed. Sessions now move `PENDING → CLIENT_OPENED`.
+
+- **The in-app updater could never have worked.** It ran `git fetch` in
+  `PROJECT_ROOT`, which is the deploy target and deliberately not a git
+  repository, so it died on its first command with a bare "not a git
+  repository". Introduced `SOURCE_DIR` for the checkout to build from, and
+  `GET /admin/update/check` now reports whether an update can actually run and
+  why not — the About page shows that reason instead of offering a button that
+  fails.
+
+- **Release History was capped and mis-parsed.** Nested-quantifier heading regex
+  replaced with two simple passes, and `\s` narrowed to horizontal whitespace so
+  the optional date can no longer be pulled off the following line.
+
+- Three Windows paths in the generated installer read `C:UsersDefault` instead
+  of `C:\Users\Default` — `\U` inside a JS template literal collapses to a bare
+  `U`. Comment lines only, so nothing executed wrongly, but the same slip on a
+  real path would misdirect the installer. Fixed, and guarded by an assertion in
+  `security-regression.mjs` that fetches each generated script and fails if a
+  drive letter lost its separator.
+
+- **Hooks were called after an early return** in Unassigned Computers, which
+  React can throw "Rendered fewer hooks than expected" on. Gated the queries and
+  moved the redirect into an effect.
+
+### Added
+
+- **Working ESLint.** There was no config anywhere in the repo: the API had a
+  `lint` script but no ESLint dependency, and `next lint` dropped into its
+  interactive setup prompt. The security rules existed only as an untracked file
+  on the production server referencing globally-installed plugins by absolute
+  path, so nobody could reproduce a run. Both apps now have flat configs with
+  their plugins as real dependencies, and both lint clean.
+
+- **CI** (`.github/workflows/ci.yml`) — version consistency, lint, typecheck and
+  build on every push and PR. There was none, which is how all of the above
+  stayed broken without anyone noticing.
+
+- **`scripts/check-versions.mjs`** — asserts every version string agrees. v0.8.0
+  shipped with `apps/api/package.json` still on 0.7.1 because a stray
+  `git checkout` reverted the bump and nothing was watching.
+
+- **Quick Connect for macOS and Linux.** RustDesk's config-in-filename trick is
+  specific to the Windows setup executable, and repackaging their signed `.app`
+  would break its signature — so these get a launcher script that runs RustDesk
+  from a **throwaway `HOME`**. Nothing is installed, an existing RustDesk
+  configuration on that machine is never touched, and quitting removes every
+  trace. The Linux client is verified end to end on real hardware: it downloads,
+  isolates, configures, registers with `hbbs` and cleans up after itself. **The
+  macOS client has not been run on a Mac** and ships disabled — enable it in
+  Settings once you have tested it.
+
+### Notes
+
+- `hbbs` was confirmed healthy while testing the Linux client: a correctly
+  configured client registers and confirms its key without trouble. An endpoint
+  that is missing from the peer table is a client-side configuration problem, or
+  simply switched off — not a server fault.
+- `pnpm lint` and `pnpm typecheck` are now root scripts.
+
+---
+
 ## [0.8.0] — 2026-08-25 · *Ledger*
 
 Rem0te's authorization model is now three levels and nothing else, and **a Business is the

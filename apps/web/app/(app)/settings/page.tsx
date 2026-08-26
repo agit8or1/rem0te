@@ -11,7 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 const REQUIRED_PORTS = [
@@ -281,29 +280,30 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <Label>Client builds to offer</Label>
                 {([
-                  ['quickConnectWindows', 'Windows', true],
-                  ['quickConnectMacos', 'macOS', false],
-                  ['quickConnectLinux', 'Linux', false],
-                ] as const).map(([key, label, available]) => (
+                  ['quickConnectWindows', 'Windows', 'preconfigured .exe'],
+                  ['quickConnectLinux', 'Linux', 'launcher script, verified'],
+                  ['quickConnectMacos', 'macOS', 'launcher script, untested on real hardware'],
+                ] as const).map(([key, label, note]) => (
                   <div key={key} className="flex items-center gap-3">
                     <input
                       type="checkbox"
                       id={key}
                       className="h-4 w-4"
-                      disabled={!available}
                       checked={quickConnect[key]}
                       onChange={(e) => setQuickConnect((q) => ({ ...q, [key]: e.target.checked }))}
                     />
-                    <Label htmlFor={key} className={available ? '' : 'text-muted-foreground'}>
-                      {label}{available ? '' : ' — no preconfigured build yet'}
+                    <Label htmlFor={key}>
+                      {label} <span className="text-muted-foreground">— {note}</span>
                     </Label>
                   </div>
                 ))}
                 <p className="text-xs text-muted-foreground">
-                  Only platforms with a working preconfigured build are offered on{' '}
-                  <code className="rounded bg-muted px-1 py-0.5 text-xs">/quick</code>. The client is
-                  delivered already pointed at this server, so the person downloading it never enters
-                  a relay host, ID server or key.
+                  Every client is delivered already pointed at this server, so the person
+                  downloading it never enters a relay host, ID server or key. Windows gets
+                  RustDesk&apos;s own signed installer, named so RustDesk reads the config from its
+                  filename. macOS and Linux get a launcher script that runs RustDesk from a
+                  throwaway home directory — nothing is installed and an existing RustDesk
+                  configuration on that machine is never touched.
                 </p>
               </div>
 

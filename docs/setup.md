@@ -117,6 +117,58 @@ The install script on the device:
 
 ## Updating Rem0te
 
+### Deploying a build by hand
+
+```bash
+pnpm build
+cp -r apps/web/.next/static apps/web/.next/standalone/apps/web/.next/static
+
+sudo rsync -a --delete --exclude 'apps/web/.next/static/' \
+  apps/web/.next/standalone/ /opt/reboot-remote/web/standalone/
+sudo rsync -a \
+  apps/web/.next/static/ /opt/reboot-remote/web/standalone/apps/web/.next/static/
+
+sudo rsync -a --delete apps/api/dist/ /opt/reboot-remote/api/dist/
+sudo cp version.json CHANGELOG.md /opt/reboot-remote/
+sudo systemctl restart reboot-remote-api reboot-remote-web
+```
+
+Note the `--exclude` on the first rsync and the missing `--delete` on the
+second. Next.js requests client chunks by content hash, and a browser that
+already has the app open is still asking for the **previous** build's
+filenames. Deleting them mid-deploy 404s every running client, which shows up
+as pages reloading themselves or bouncing back to the login screen. New builds
+produce new hashes, so old files just go unreferenced — prune them during a
+maintenance window, not on every deploy.
+
+After a schema change, regenerate the deployed Prisma client too:
+
+```bash
+sudo -u reboot bash -c 'cd /opt/reboot-remote/api && ./node_modules/.bin/prisma generate'
+```
+
+### In-app updates are off by default
+
+Applying an update means the server checks out and builds code fetched from
+GitHub — supply-chain-critical, so it is opt-in:
+
+```bash
+# /etc/reboot-remote/api.env
+ALLOW_IN_APP_UPDATE=true
+SOURCE_DIR=/srv/rem0te-src      # a git clone the service account can write
+```
+
+`SOURCE_DIR` is **not** `PROJECT_ROOT`. `PROJECT_ROOT` (`/opt/reboot-remote`)
+is the deploy target — build output, `version.json`, uploads — and is
+deliberately not a git repository. Without `SOURCE_DIR` the About page reports
+that in-app updates are unavailable, and why, rather than offering a button
+that dies on its first command.
+
+The updater also refuses any release tag that is not GPG-signed with a key in
+the service account's keyring. Sign releases with `git tag -s`, or update
+manually.
+
+
 From the web UI: **Admin → About & Updates → Check for Updates → Apply Update**
 
 This fetches the latest release tag, rebuilds, and restarts services in-place with a live progress stream.

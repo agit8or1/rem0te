@@ -11,7 +11,13 @@ import { PlatformSettingsService } from '../platform/platform-settings.service';
 
 const HOSTNAME_RE = /^[a-zA-Z0-9._-]{1,253}$/;
 const BASE64_KEY_RE = /^[A-Za-z0-9+/]{16,512}={0,2}$/;
-/** Characters Windows will not accept in a filename. */
+/**
+ * Characters Windows will not accept in a filename.
+ *
+ * The control-character range is deliberate — it is exactly what this guard
+ * exists to catch, since the value ends up in a Content-Disposition filename.
+ */
+// eslint-disable-next-line no-control-regex -- control chars are the subject of the check
 const WINDOWS_ILLEGAL_RE = /[<>:"/\\|?*\x00-\x1f]/;
 
 /**
@@ -94,30 +100,215 @@ export class QuickConnectPublicController {
       throw new NotFoundException('Quick Connect is not available');
     }
 
-    if (os !== 'windows') {
-      // macOS and Linux have no preconfigured build yet. Handing over a
-      // vanilla installer that points at public RustDesk infrastructure would
-      // be worse than saying so.
-      throw new NotFoundException(
-        'The Quick Connect client is currently available for Windows only.',
-      );
-    }
-    if (!settings.quickConnectWindows) {
-      throw new NotFoundException('The Windows Quick Connect client is not enabled');
-    }
+    const enabled: Record<string, boolean> = {
+      windows: settings.quickConnectWindows,
+      macos: settings.quickConnectMacos,
+      linux: settings.quickConnectLinux,
+    };
+    if (!(os in enabled)) throw new NotFoundException('Unknown platform');
+    if (!enabled[os]) throw new NotFoundException(`The ${os} Quick Connect client is not enabled`);
 
     const config = await this.rustdeskConfig();
     const version = await this.latestRustdeskVersion();
-    const exePath = await this.ensureCachedClient(version);
 
-    const filename = `rustdesk-host=${config.host},key=${config.key}.exe`;
-    const stat = fs.statSync(exePath);
+    if (os === 'windows') {
+      // Windows gets the real binary, preconfigured through its filename.
+      const exePath = await this.ensureCachedClient(version);
+      const filename = `rustdesk-host=${config.host},key=${config.key}.exe`;
+      const stat = fs.statSync(exePath);
 
-    res.setHeader('Content-Type', 'application/vnd.microsoft.portable-executable');
-    res.setHeader('Content-Length', stat.size);
+      res.setHeader('Content-Type', 'application/vnd.microsoft.portable-executable');
+      res.setHeader('Content-Length', stat.size);
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Cache-Control', 'no-store');
+      fs.createReadStream(exePath).pipe(res);
+      return;
+    }
+
+    // macOS and Linux get a launcher script instead of a binary: RustDesk's
+    // config-in-filename trick is specific to the Windows setup executable,
+    // and repackaging their signed .app would break its signature.
+    const script = os === 'macos'
+      ? this.buildMacosQuickConnect(config, version)
+      : this.buildLinuxQuickConnect(config, version);
+
+    const filename = os === 'macos'
+      ? 'Rem0te Quick Connect.command'
+      : 'rem0te-quick-connect.sh';
+
+    res.setHeader('Content-Type', 'application/x-shellscript; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Cache-Control', 'no-store');
-    fs.createReadStream(exePath).pipe(res);
+    res.send(script);
+  }
+
+  /**
+   * macOS Quick Connect.
+   *
+   * Runs RustDesk straight off the mounted disk image with a throwaway HOME,
+   * so:
+   *   • nothing is installed — the .app is never copied to /Applications
+   *   • an existing RustDesk install's config is never touched, because the
+   *     temporary HOME is where this instance reads and writes its settings
+   *   • quitting RustDesk ends the session, and the temp directory goes with it
+   *
+   * The binary is RustDesk's own, still inside their signed .app bundle, so
+   * Gatekeeper sees an untampered signature.
+   */
+  private buildMacosQuickConnect(config: { host: string; key: string }, version: string): string {
+    return `#!/bin/bash
+# Rem0te Quick Connect — temporary remote support for macOS
+#
+# Nothing is installed. Nothing on this Mac is modified. Quit RustDesk (or
+# close this window) and every trace is removed.
+set -uo pipefail
+
+HOST='${config.host}'
+KEY='${config.key}'
+VERSION='${version}'
+
+WORK="$(mktemp -d /tmp/rem0te-quickconnect.XXXXXX)"
+MOUNT="$WORK/mnt"
+QC_HOME="$WORK/home"
+mkdir -p "$MOUNT" "$QC_HOME"
+
+cleanup() {
+  echo ""
+  echo "  Cleaning up…"
+  /usr/bin/hdiutil detach "$MOUNT" -quiet 2>/dev/null || true
+  rm -rf "$WORK"
+  echo "  Quick Connect closed. Nothing was left on this Mac."
+}
+trap cleanup EXIT INT TERM
+
+echo ""
+echo "  Rem0te Quick Connect"
+echo "  ────────────────────────────────────────────"
+echo ""
+
+if [ "$(uname -m)" = "arm64" ]; then
+  DMG="rustdesk-\${VERSION}-aarch64.dmg"
+else
+  DMG="rustdesk-\${VERSION}-x86_64.dmg"
+fi
+
+echo "  [1/3] Downloading the support client…"
+if ! curl -fsSL -o "$WORK/rustdesk.dmg" \
+     "https://github.com/rustdesk/rustdesk/releases/download/\${VERSION}/\${DMG}"; then
+  echo "  Could not download the support client. Check your internet connection."
+  read -r -p "  Press Return to close." _
+  exit 1
+fi
+
+echo "  [2/3] Opening it…"
+if ! /usr/bin/hdiutil attach "$WORK/rustdesk.dmg" -quiet -nobrowse -mountpoint "$MOUNT"; then
+  echo "  Could not open the support client."
+  read -r -p "  Press Return to close." _
+  exit 1
+fi
+
+APP="$MOUNT/RustDesk.app/Contents/MacOS/rustdesk"
+if [ ! -x "$APP" ]; then
+  echo "  The support client looks damaged. Please ask for a fresh link."
+  read -r -p "  Press Return to close." _
+  exit 1
+fi
+
+# Point this instance at the Rem0te server. HOME is the throwaway directory
+# above, so this writes nowhere near any real RustDesk configuration.
+mkdir -p "$QC_HOME/Library/Preferences/com.carriez.RustDesk"
+cat > "$QC_HOME/Library/Preferences/com.carriez.RustDesk/RustDesk2.toml" <<TOML
+rendezvous_server = '\${HOST}:21116'
+nat_type = 1
+serial = 3
+
+[options]
+custom-rendezvous-server = '\${HOST}'
+relay-server = '\${HOST}'
+api-server = ''
+key = '\${KEY}'
+TOML
+
+echo "  [3/3] Starting…"
+echo ""
+echo "  RustDesk will open in a moment. Read the ID and the password it shows"
+echo "  to the person helping you, and leave it open until they are finished."
+echo ""
+echo "  Keep this window open too — closing it ends the session."
+echo ""
+
+HOME="$QC_HOME" "$APP"
+`;
+  }
+
+  /**
+   * Linux Quick Connect. Same isolation approach as macOS, using the AppImage —
+   * a single executable, so there is nothing to mount or install.
+   */
+  private buildLinuxQuickConnect(config: { host: string; key: string }, version: string): string {
+    return `#!/bin/bash
+# Rem0te Quick Connect — temporary remote support for Linux
+#
+# Nothing is installed. Nothing in your home directory is modified. Quit
+# RustDesk (or close this terminal) and every trace is removed.
+set -uo pipefail
+
+HOST='${config.host}'
+KEY='${config.key}'
+VERSION='${version}'
+
+WORK="$(mktemp -d /tmp/rem0te-quickconnect.XXXXXX)"
+QC_HOME="$WORK/home"
+mkdir -p "$QC_HOME/.config/rustdesk"
+
+cleanup() {
+  echo ""
+  echo "  Cleaning up…"
+  rm -rf "$WORK"
+  echo "  Quick Connect closed. Nothing was left on this machine."
+}
+trap cleanup EXIT INT TERM
+
+echo ""
+echo "  Rem0te Quick Connect"
+echo "  ────────────────────────────────────────────"
+echo ""
+
+case "$(uname -m)" in
+  aarch64|arm64) ARCH="aarch64" ;;
+  *)             ARCH="x86_64"  ;;
+esac
+
+echo "  [1/2] Downloading the support client…"
+if ! curl -fsSL -o "$WORK/rustdesk.AppImage" \
+     "https://github.com/rustdesk/rustdesk/releases/download/\${VERSION}/rustdesk-\${VERSION}-\${ARCH}.AppImage"; then
+  echo "  Could not download the support client. Check your internet connection."
+  exit 1
+fi
+chmod +x "$WORK/rustdesk.AppImage"
+
+cat > "$QC_HOME/.config/rustdesk/RustDesk2.toml" <<TOML
+rendezvous_server = '\${HOST}:21116'
+nat_type = 1
+serial = 3
+
+[options]
+custom-rendezvous-server = '\${HOST}'
+relay-server = '\${HOST}'
+api-server = ''
+key = '\${KEY}'
+TOML
+
+echo "  [2/2] Starting…"
+echo ""
+echo "  RustDesk will open in a moment. Read the ID and the password it shows"
+echo "  to the person helping you, and leave it open until they are finished."
+echo ""
+echo "  Keep this terminal open too — closing it ends the session."
+echo ""
+
+HOME="$QC_HOME" "$WORK/rustdesk.AppImage"
+`;
   }
 
   // ── Internals ─────────────────────────────────────────────────────────────

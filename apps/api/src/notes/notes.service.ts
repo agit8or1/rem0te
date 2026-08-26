@@ -92,8 +92,10 @@ export class NotesService {
 
     // Whatever the note is attached to has to be inside the caller's business
     // — otherwise a note is a way to write into someone else's records.
-    let tenantId = actor.tenantId;
-    let noteBusinessId: string | null = null;
+    // Declared without initialisers on purpose: every branch below either
+    // assigns both or throws, so a default would only mask a missed case.
+    let tenantId: string | null;
+    let noteBusinessId: string | null;
 
     if (dto.endpointId) {
       const endpoint = await this.acl.assertEndpointInScope(actor, dto.endpointId);

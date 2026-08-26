@@ -20,8 +20,9 @@ struct ValidateResponse {
 struct ValidateData {
     #[serde(rename = "targetRustdeskId")]
     target_rustdesk_id: Option<String>,
-    #[serde(rename = "sessionId")]
-    session_id: Option<String>,
+    // `sessionId` is also returned, but the launcher no longer needs it: the
+    // server records the session event itself at validation time. Serde
+    // ignores response fields we do not declare.
 }
 
 /// Parse a `reboot-remote://launch#token=<jwt>&api=<url>` deep link,
@@ -82,20 +83,13 @@ pub async fn handle_launch_url(
     // Spawn RustDesk
     spawn_rustdesk(&rustdesk_id, app.clone()).await?;
 
-    // Post client_opened event if we have a session ID
-    if let Some(session_id) = data.session_id {
-        let event_url = format!(
-            "{}/api/v1/sessions/{}/events",
-            api_base.trim_end_matches('/'),
-            session_id
-        );
-        let _ = client
-            .post(&event_url)
-            .bearer_auth(&token)
-            .json(&serde_json::json!({ "event": "client_opened" }))
-            .send()
-            .await;
-    }
+    // The `client_opened` event is recorded server-side by /launcher/validate.
+    //
+    // This used to POST it to /sessions/:id/events with the launcher token as
+    // a bearer credential, which could never succeed: that route is behind
+    // JwtAuthGuard and a launcher token is signed with LAUNCHER_TOKEN_SECRET,
+    // not JWT_SECRET. Because the result was discarded, it failed silently on
+    // every launch and sessions never left PENDING.
 
     Ok(LaunchResult { rustdesk_id })
 }

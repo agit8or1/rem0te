@@ -21,6 +21,22 @@ export class UpdateService {
   private readonly versionFile = process.env.VERSION_FILE ?? path.join(process.cwd(), '..', '..', 'version.json');
   private readonly projectRoot = process.env.PROJECT_ROOT ?? path.join(process.cwd(), '..', '..');
 
+  /**
+   * Git checkout the updater builds from.
+   *
+   * This is NOT the same directory as PROJECT_ROOT. PROJECT_ROOT is the deploy
+   * target (`/opt/reboot-remote`) — build output, version.json, uploads — and
+   * it is deliberately not a git repository. The updater used to run its
+   * `git fetch` there and fail on the very first step with a bare
+   * "not a git repository", which read like a bug in Rem0te rather than a
+   * missing configuration.
+   *
+   * Set SOURCE_DIR to a checkout of the repo for in-app updates to be possible
+   * at all. Unset, the updater reports precisely that instead of failing
+   * halfway through.
+   */
+  private readonly sourceDir = process.env.SOURCE_DIR ?? null;
+
   private activeUpdate: Subject<UpdateProgress> | null = null;
 
   getCurrentVersion(): string {
@@ -40,6 +56,7 @@ export class UpdateService {
     releaseNotes: string | null;
     publishedAt: string | null;
   }> {
+    // Readiness is folded into the response below by the controller.
     const current = this.getCurrentVersion();
     return new Promise((resolve) => {
       const req = https.get(
@@ -120,7 +137,14 @@ export class UpdateService {
     if (!raw) return [];
 
     const out: { version: string; notes: string; publishedAt: string }[] = [];
-    const heading = /^##\s*\[(\d+\.\d+\.\d+)\]\s*(?:[—\-–]\s*(\d{4}-\d{2}-\d{2}))?/gm;
+    // Two simple passes rather than one nested-quantifier regex: match the
+    // heading line, then pull the date out of the remainder. Keeps both
+    // patterns at star height 1, so there is no backtracking to reason about.
+    //
+    // Horizontal whitespace only — `\s` matches newlines, and under /m that let
+    // the date group reach onto the following line.
+    const heading = /^##[ \t]*\[(\d+\.\d+\.\d+)\][ \t]*([^\n]*)$/gm;
+    const dateInHeading = /(\d{4}-\d{2}-\d{2})/;
 
     const matches = [...raw.matchAll(heading)];
     for (let i = 0; i < matches.length; i++) {
@@ -132,10 +156,14 @@ export class UpdateService {
         .replace(/\n---\s*$/, '')
         .trim();
 
+      // m[2] is the rest of the heading line ("— 2026-08-25 · *Ledger*");
+      // pull the date out of it in a second, trivially-bounded pass.
+      const date = dateInHeading.exec(m[2] ?? '')?.[1];
+
       out.push({
         version: m[1],
         notes,
-        publishedAt: m[2] ? new Date(`${m[2]}T00:00:00Z`).toISOString() : '',
+        publishedAt: date ? new Date(`${date}T00:00:00Z`).toISOString() : '',
       });
     }
     return out;
@@ -178,7 +206,59 @@ export class UpdateService {
     return process.env.ALLOW_IN_APP_UPDATE === 'true';
   }
 
+  /**
+   * Whether an in-app update could actually run, and if not, exactly why.
+   *
+   * Reported by GET /admin/update/check so the UI can disable the button with
+   * a reason rather than offering an action that dies on its first command.
+   */
+  updaterReadiness(): { ready: boolean; reason: string | null } {
+    if (!this.isUpdateEnabled()) {
+      return {
+        ready: false,
+        reason:
+          'In-app updates are disabled. Updates are supply-chain critical and are meant to be ' +
+          'applied by an operator who can verify the release signature. Set ALLOW_IN_APP_UPDATE=true ' +
+          'to opt in.',
+      };
+    }
+    if (!this.sourceDir) {
+      return {
+        ready: false,
+        reason:
+          'SOURCE_DIR is not set. The updater builds from a git checkout, which is a different ' +
+          'directory from PROJECT_ROOT (the deploy target). Point SOURCE_DIR at a clone of the ' +
+          'repository that the service account can read and write.',
+      };
+    }
+    if (!fs.existsSync(path.join(this.sourceDir, '.git'))) {
+      return {
+        ready: false,
+        reason: `SOURCE_DIR (${this.sourceDir}) is not a git checkout, so there is nothing to fetch a release into.`,
+      };
+    }
+    return { ready: true, reason: null };
+  }
+
+  /**
+   * Validates a version string before it reaches `git fetch` / `git checkout`.
+   * The value comes from a GitHub tag name, so it is remote input on a
+   * supply-chain-critical path.
+   *
+   * Every quantifier is bounded, so the total work is bounded and there is no
+   * catastrophic backtracking to exploit — but keep the bounds if you edit it.
+   */
   private isValidVersion(v: string): boolean {
+    // Hard length cap before the pattern sees anything. Every quantifier below
+    // is already bounded, so the work was bounded regardless, but capping the
+    // input makes that true by inspection rather than by analysis — worth it
+    // on a path that feeds `git fetch` / `git checkout`.
+    if (typeof v !== 'string' || v.length > 64) return false;
+
+    // All quantifiers below are bounded ({1,5} / {1,32}) and the input is
+    // capped above, so there is no unbounded backtracking to exploit. Keep the
+    // bounds if you edit this.
+    // eslint-disable-next-line security/detect-unsafe-regex
     return /^[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}(?:[-.+][A-Za-z0-9._-]{1,32})?$/.test(v);
   }
 
@@ -200,13 +280,9 @@ export class UpdateService {
 
     (async () => {
       try {
-        if (!this.isUpdateEnabled()) {
-          fail('disabled',
-            'In-app updates are disabled on this server. ' +
-            'Updates are a supply-chain-critical operation and must be performed by an operator ' +
-            'who can verify the release signature. Set ALLOW_IN_APP_UPDATE=true only if you accept ' +
-            'that this server will git-checkout and build code fetched from GitHub without additional ' +
-            'signature verification.');
+        const readiness = this.updaterReadiness();
+        if (!readiness.ready) {
+          fail('unavailable', readiness.reason!);
           return;
         }
 
@@ -257,19 +333,31 @@ export class UpdateService {
         await this.runProc('pnpm', ['install', '--frozen-lockfile'], emit, 'deps', 42, 55);
 
         emit('build-api', 'Building API…', 57);
-        await this.runProc('pnpm', ['--filter', 'api', 'build'], emit, 'build-api', 57, 72);
+        await this.runProc('pnpm', ['--filter', '@reboot-remote/api', 'build'], emit, 'build-api', 57, 72);
 
         emit('build-web', 'Building web app…', 74);
-        await this.runProc('pnpm', ['--filter', 'web', 'build'], emit, 'build-web', 74, 88);
+        await this.runProc('pnpm', ['--filter', '@reboot-remote/web', 'build'], emit, 'build-web', 74, 88);
 
         emit('deploy', 'Deploying web assets…', 90);
+
+        // Server code is replaced wholesale…
         await this.runProc('rsync', [
           '-a', '--delete',
+          '--exclude', 'apps/web/.next/static/',
           'apps/web/.next/standalone/',
           '/opt/reboot-remote/web/standalone/',
         ], emit, 'deploy', 90, 92);
+
+        // …but the hashed client chunks are ADDED, never deleted.
+        //
+        // Next.js requests chunks by content hash. A browser that already has
+        // the app open is still asking for the previous build's filenames, and
+        // deleting them mid-session 404s the running client — which surfaces
+        // as the page reloading itself, or bouncing back to /login. New builds
+        // get new hashes, so old files simply go unreferenced; prune them on a
+        // maintenance window, not during a deploy.
         await this.runProc('rsync', [
-          '-a', '--delete',
+          '-a',
           'apps/web/.next/static/',
           '/opt/reboot-remote/web/standalone/apps/web/.next/static/',
         ], emit, 'deploy', 92, 94);
@@ -317,7 +405,9 @@ export class UpdateService {
     return new Promise((resolve, reject) => {
       // shell:false — arguments never touch a shell interpreter so no globbing,
       // no interpolation, no command chaining.
-      const proc = spawn(cmd, args, { cwd: this.projectRoot, shell: false });
+      // Build steps run in the checkout; only the rsync/cp targets below point
+      // at the deploy directory, and those are absolute paths.
+      const proc = spawn(cmd, args, { cwd: this.sourceDir ?? this.projectRoot, shell: false });
       const lines: string[] = [];
       let pct = startPct;
       const range = endPct - startPct;

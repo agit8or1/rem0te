@@ -7,7 +7,7 @@
 ⭐ If Rem0te is useful to you, a star helps others find it!
 
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te/stargazers)
-[![Version](https://img.shields.io/badge/version-0.8.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.8.1-blue)](https://github.com/agit8or1/rem0te/releases)
 [![Issues](https://img.shields.io/github/issues/agit8or1/rem0te)](https://github.com/agit8or1/rem0te/issues)
 [![License](https://img.shields.io/github/license/agit8or1/rem0te)](LICENSE)
 

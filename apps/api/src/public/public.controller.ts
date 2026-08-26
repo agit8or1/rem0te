@@ -1,3 +1,17 @@
+/* eslint-disable no-useless-escape --
+ * The installer templates in this file are shell scripts living inside JS
+ * template literals, and they write `\$` for every shell variable. 81 of those
+ * sites are `\${...}`, where the backslash is REQUIRED — drop it and the shell
+ * variable silently becomes a JavaScript interpolation. Writing the remainder
+ * as a bare `$` would leave both forms mixed in one script, which is precisely
+ * the confusion that produces that bug.
+ *
+ * The escape that DID bite here was `\U` in `C:\Users`: a template literal
+ * turns it into a bare `U`, so the generated script read `C:UsersDefault`.
+ * That class of mistake is guarded by an assertion instead — see
+ * scripts/security-regression.mjs, which fetches every generated installer and
+ * fails if a Windows path lost its separator.
+ */
 import { BadRequestException, Controller, Get, Param, Query, Res, Req } from '@nestjs/common';
 import { Response, Request } from 'express';
 import { createHash } from 'crypto';
@@ -373,7 +387,7 @@ foreach ($d in $wipeDirs) {
 # rendezvous. So: write the authoritative RustDesk2.toml into
 #   - service profile (LocalSystem + systemprofile — for the running service)
 #   - every real user profile that has AppData
-#   - C:\Users\Default so any future new user gets the Rem0te config
+#   - C:\\Users\\Default so any future new user gets the Rem0te config
 $toml = @"
 rendezvous_server = '$($REM0TE_HOST):21116'
 nat_type = 1
@@ -391,7 +405,7 @@ $configTargets.Add($svcDir) | Out-Null
 $configTargets.Add($sysDir) | Out-Null
 
 # Every user profile the OS knows about — from ProfileList registry, not from
-# a naive C:\Users scan (that missed domain profiles / picked up junk like Public).
+# a naive C:\\Users scan (that missed domain profiles / picked up junk like Public).
 # Also collect (dir, sid) pairs so we can icacls the file grant afterwards —
 # if we write as SYSTEM the file is SYSTEM-owned and the interactive user's
 # RustDesk process can't necessarily read it, which is EXACTLY why the "set
@@ -414,7 +428,7 @@ try {
     }
 } catch { Log "  Could not enumerate user profiles: $($_.Exception.Message)" 'WARN' }
 
-# C:\Users\Default so future first-logins inherit the Rem0te config
+# C:\\Users\\Default so future first-logins inherit the Rem0te config
 $defaultDir = 'C:\\Users\\Default\\AppData\\Roaming\\RustDesk\\config'
 if (Test-Path 'C:\\Users\\Default') { $configTargets.Add($defaultDir) | Out-Null }
 

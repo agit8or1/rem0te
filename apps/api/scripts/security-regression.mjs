@@ -120,6 +120,33 @@ async function main() {
   const rn = await prisma.rustdeskNode.findFirst({ where: { endpointId: endpointA.id, tenantId: tB.id } });
   assertEqual('rustdeskNode cross-tenant scoping returns null', rn, null);
 
+  // ── Generated installer scripts must not have mangled Windows paths ───────
+  //
+  // The installer templates live inside JS template literals, where `\U` in
+  // `C:\Users` silently collapses to a bare `U` — the generated script then
+  // says `C:UsersDefault`. It bit us in v0.8.0 (comment lines only, so it was
+  // harmless), but the same slip in an executable line would send the
+  // installer to the wrong path. ESLint cannot see through the template, so
+  // assert on the real output instead.
+  const API_BASE = process.env.API_BASE ?? 'http://127.0.0.1:3001/api/v1';
+  for (const script of ['windows.ps1', 'linux.sh', 'macos.sh']) {
+    try {
+      const res = await fetch(`${API_BASE}/public/install/${script}`);
+      const body = await res.text();
+      // A drive letter followed directly by a capitalised path segment means
+      // the separator was eaten. Requiring an uppercase letter and 4+ chars
+      // keeps PowerShell time formats like 'HH:mm:ss' out of the results.
+      const mangled = body.match(/\b[A-Z]:[A-Z][A-Za-z]{3,}/g) ?? [];
+      assertEqual(
+        `${script}: no Windows path lost its separator${mangled.length ? ` (${mangled.slice(0, 3).join(', ')})` : ''}`,
+        mangled.length,
+        0,
+      );
+    } catch (err) {
+      console.log(`  · ${script}: API not reachable, skipped (${err.message})`);
+    }
+  }
+
   // Cleanup
   await prisma.rustdeskNode.deleteMany({ where: { endpointId: endpointA.id } });
   await prisma.endpoint.delete({ where: { id: endpointA.id } });

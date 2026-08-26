@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { adminApi, businessesApi } from '@/lib/api-client';
@@ -19,21 +19,23 @@ export default function UnassignedDevicesPage() {
   const [assigningId, setAssigningId] = useState<string | null>(null);
   const [selectedBusiness, setSelectedBusiness] = useState<string>('');
   const { isPlatformAdmin, isLoading: authLoading } = usePermissions();
+  const allowed = authLoading || isPlatformAdmin;
 
-  if (!authLoading && !isPlatformAdmin) {
-    router.push('/dashboard');
-    return null;
-  }
-
+  // Every hook must run on every render — bailing out with an early return
+  // above them changes the hook count between renders and React throws
+  // "Rendered fewer hooks than expected". Gate the *queries* instead and
+  // redirect from an effect.
   const { data: devicesData, isLoading } = useQuery({
     queryKey: ['unassigned-devices'],
     queryFn: () => adminApi.listUnassigned().then((r) => r.data?.data),
     refetchInterval: 30_000,
+    enabled: allowed,
   });
 
   const { data: businessesData } = useQuery({
     queryKey: ['businesses', ''],
     queryFn: () => businessesApi.list().then((r) => r.data?.data ?? []),
+    enabled: allowed,
   });
 
   const devices: Record<string, unknown>[] = devicesData ?? [];
@@ -53,6 +55,12 @@ export default function UnassignedDevicesPage() {
       toast({ title: 'Assignment failed', description: e.response?.data?.message, variant: 'destructive' });
     },
   });
+
+  useEffect(() => {
+    if (!authLoading && !isPlatformAdmin) router.push('/dashboard');
+  }, [authLoading, isPlatformAdmin, router]);
+
+  if (!allowed) return null;
 
   return (
     <div className="p-6 space-y-6">

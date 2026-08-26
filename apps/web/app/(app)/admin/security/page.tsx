@@ -1098,27 +1098,6 @@ interface AuditPackage {
 
 interface StaticIssue { file: string; line: number; rule: string; severity: string; message: string; }
 
-function StaticIssueTable({ issues }: { issues: StaticIssue[] }) {
-  const errors = issues.filter((i) => i.severity === 'error');
-  const warnings = issues.filter((i) => i.severity !== 'error');
-  const sorted = [...errors, ...warnings];
-  return (
-    <div className="divide-y text-xs">
-      {sorted.map((issue, i) => (
-        <div key={i} className="py-2.5 flex items-start gap-3">
-          <span className={`shrink-0 font-semibold uppercase text-[10px] px-1.5 py-0.5 rounded ${issue.severity === 'error' ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300' : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-950 dark:text-yellow-300'}`}>
-            {issue.severity}
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="font-medium text-foreground">{issue.message}</p>
-            <p className="text-muted-foreground font-mono truncate mt-0.5">{issue.file}:{issue.line} <span className="opacity-60">({issue.rule})</span></p>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // Fix guidance for known ESLint security rules
 const ESLINT_FIX_GUIDANCE: Record<string, string> = {
   'security/detect-non-literal-fs-filename': 'Validate or whitelist the filename value before passing to fs methods. Avoid user-controlled paths.',

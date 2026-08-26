@@ -31,7 +31,7 @@ function bad(name, detail) {
   fail++; failures.push(`${name} — ${detail}`);
   console.log(`  \x1b[31m✗\x1b[0m ${name}\n      ${detail}`);
 }
-function check(cond, name, detail = '') { cond ? ok(name) : bad(name, detail); }
+function check(cond, name, detail = '') { if (cond) ok(name); else bad(name, detail); }
 function section(t) { console.log(`\n\x1b[1m${t}\x1b[0m`); }
 
 async function req(method, path, { body, cookie } = {}) {

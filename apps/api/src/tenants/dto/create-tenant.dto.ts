@@ -61,7 +61,7 @@ export class CreateTenantDto {
 
   @IsOptional()
   @IsString()
-  @Matches(/^[a-zA-Z0-9.\-]+$/, { message: 'rustdeskRelayHost must be a valid hostname' })
+  @Matches(/^[a-zA-Z0-9.-]+$/, { message: 'rustdeskRelayHost must be a valid hostname' })
   rustdeskRelayHost?: string;
 
   @IsOptional()
@@ -126,7 +126,7 @@ export class UpdateSettingsDto {
 
   @IsOptional()
   @IsString()
-  @Matches(/^[a-zA-Z0-9.\-]+$/, { message: 'rustdeskRelayHost must be a valid hostname' })
+  @Matches(/^[a-zA-Z0-9.-]+$/, { message: 'rustdeskRelayHost must be a valid hostname' })
   rustdeskRelayHost?: string;
 
   @IsOptional()

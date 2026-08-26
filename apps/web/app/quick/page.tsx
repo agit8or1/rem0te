@@ -19,6 +19,20 @@ interface QuickInfo {
 const OS_ICON = { windows: Monitor, macos: Apple, linux: Server } as const;
 
 /**
+ * How to actually start the thing, per platform.
+ *
+ * Windows gets a real executable, so double-clicking is the whole story.
+ * macOS and Linux get a launcher script — which is what keeps the session
+ * genuinely temporary — so they need a sentence of guidance rather than
+ * leaving someone staring at a downloaded file.
+ */
+const OS_HINT: Record<string, string> = {
+  windows: 'Double-click the downloaded file. If Windows asks, choose “More info” then “Run anyway”.',
+  macos: 'Right-click the downloaded file and choose “Open”, then “Open” again. A black window appears — leave it open.',
+  linux: 'Open a terminal where the file downloaded and run: bash "rem0te-quick-connect.sh"',
+};
+
+/**
  * Public "I need help" page.
  *
  * Deliberately not part of the signed-in app: no navigation into the console,
@@ -117,16 +131,20 @@ export default function QuickConnectLandingPage() {
               info.downloads.map((d) => {
                 const Icon = OS_ICON[d.os];
                 return (
-                  <a
-                    key={d.os}
-                    href={d.path}
-                    className="flex w-full items-center justify-center gap-2 rounded-md px-4 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90"
-                    style={{ backgroundColor: accent }}
-                  >
-                    <Icon className="h-4 w-4" />
-                    Download for {d.label}
-                    <Download className="h-4 w-4" />
-                  </a>
+                  <div key={d.os} className="space-y-1">
+                    <a
+                      href={d.path}
+                      className="flex w-full items-center justify-center gap-2 rounded-md px-4 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                      style={{ backgroundColor: accent }}
+                    >
+                      <Icon className="h-4 w-4" />
+                      Download for {d.label}
+                      <Download className="h-4 w-4" />
+                    </a>
+                    {OS_HINT[d.os] && (
+                      <p className="px-1 text-xs text-muted-foreground">{OS_HINT[d.os]}</p>
+                    )}
+                  </div>
                 );
               })
             )}

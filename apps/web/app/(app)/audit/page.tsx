@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { auditApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
+
 import { Button } from '@/components/ui/button';
 import { formatDate } from '@/lib/utils';
 import { ChevronLeft, ChevronRight } from 'lucide-react';

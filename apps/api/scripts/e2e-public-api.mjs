@@ -113,7 +113,7 @@ try {
     try {
       if (c.type === 'customer') await prisma.customer.delete({ where: { id: c.id } });
       if (c.type === 'apikey') await prisma.apiKey.delete({ where: { id: c.id } });
-    } catch {}
+    } catch { /* best-effort cleanup */ }
   }
   await prisma.user.delete({ where: { id: admin.id } }).catch(()=>{});
   await prisma.$disconnect();

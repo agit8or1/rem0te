@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Res, UseGuards, ForbiddenException } from '@nestjs/common';
+import { Controller, Get, Res, UseGuards, ForbiddenException } from '@nestjs/common';
 import { Response } from 'express';
 import { UpdateService } from './update.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -34,7 +34,8 @@ export class UpdateController {
   async checkUpdate(@CurrentUser() user: JwtPayload) {
     if (!user.isPlatformAdmin) throw new ForbiddenException('Platform admin required');
     const info = await this.updateService.checkForUpdate();
-    return { success: true, data: info };
+    // Tell the UI whether the Update button can do anything, and why not.
+    return { success: true, data: { ...info, updater: this.updateService.updaterReadiness() } };
   }
 
   @Get('changelog')

@@ -39,6 +39,8 @@ interface StatusData {
 interface UpdateInfo {
   currentVersion: string; latestVersion: string; hasUpdate: boolean;
   releaseUrl: string | null; releaseNotes: string | null; publishedAt: string | null;
+  /** Whether an in-app update could actually run here, and if not, why. */
+  updater?: { ready: boolean; reason: string | null };
 }
 interface UpdateProgress { step: string; message: string; percent: number; done?: boolean; error?: string; }
 interface ChangelogEntry { version: string; notes: string; publishedAt: string; }
@@ -163,10 +165,23 @@ function UpdatePanel({ isPlatformAdmin }: { isPlatformAdmin: boolean }) {
                 {updateInfo.releaseNotes.slice(0, 600)}
               </pre>
             )}
-            <Button onClick={startUpdate} size="sm">
-              <ArrowUpCircle className="h-3.5 w-3.5 mr-1.5" />
-              Apply Update
-            </Button>
+            {updateInfo.updater?.ready === false ? (
+              // Offering a button that dies on its first command is worse than
+              // saying plainly why it cannot run.
+              <div className="rounded-md border bg-background p-3 space-y-2">
+                <p className="text-xs font-medium">In-app update unavailable on this server</p>
+                <p className="text-xs text-muted-foreground">{updateInfo.updater.reason}</p>
+                <p className="text-xs text-muted-foreground">
+                  Update manually, or see{' '}
+                  <code className="rounded bg-muted px-1 py-0.5">docs/setup.md</code>.
+                </p>
+              </div>
+            ) : (
+              <Button onClick={startUpdate} size="sm">
+                <ArrowUpCircle className="h-3.5 w-3.5 mr-1.5" />
+                Apply Update
+              </Button>
+            )}
           </div>
         )}
 

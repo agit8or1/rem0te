@@ -133,7 +133,7 @@ export default function AddComputerPage() {
       <Card>
         <CardHeader>
           <CardTitle>2. Access</CardTitle>
-          <CardDescription>Who will be able to connect to this computer once it's enrolled?</CardDescription>
+          <CardDescription>Who will be able to connect to this computer once it&apos;s enrolled?</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
@@ -149,7 +149,7 @@ export default function AddComputerPage() {
               <span className="text-sm">
                 <strong>Specific users</strong>
                 <br />
-                <span className="text-xs text-muted-foreground">Only the users you pick below will see this computer under "My Computers".</span>
+                <span className="text-xs text-muted-foreground">Only the users you pick below will see this computer under &ldquo;My Computers&rdquo;.</span>
               </span>
             </label>
             <label className="flex items-start gap-2 cursor-pointer">

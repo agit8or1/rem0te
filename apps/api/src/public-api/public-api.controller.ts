@@ -2,7 +2,7 @@ import {
   Body, Controller, Get, Param, Post, Query, Req, UseGuards,
   HttpCode, HttpStatus, UnauthorizedException,
 } from '@nestjs/common';
-import { IsArray, IsEmail, IsIn, IsInt, IsOptional, IsString, Length, Min, Max, Matches } from 'class-validator';
+import { IsArray, IsEmail, IsIn, IsInt, IsOptional, IsString, Length, Min, Max } from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 

@@ -64,7 +64,7 @@ export default function QuickstartPage() {
       {/* Progress indicator */}
       <div className="flex items-center gap-2">
         {STEPS.map((s, i) => {
-          const Icon = s.icon;
+          // The per-step icon was replaced by the check/circle indicator below.
           const done = i < step;
           const active = i === step;
           return (

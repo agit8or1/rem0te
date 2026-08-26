@@ -3,8 +3,7 @@
 import * as React from 'react';
 import { StatusIndicator } from '@/components/common/status-indicator';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
+
 import { Monitor, Globe, Apple, HelpCircle } from 'lucide-react';
 
 interface Endpoint {

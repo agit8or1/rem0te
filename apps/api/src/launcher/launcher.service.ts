@@ -6,6 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { SessionStatus } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -148,6 +149,37 @@ export class LauncherService {
       where: { id: record.id },
       data: { usedAt: new Date() },
     });
+
+    // Record that the client opened.
+    //
+    // The launcher used to POST this to /sessions/:id/events with its launcher
+    // token as a bearer credential — which could never work: that route is
+    // behind JwtAuthGuard and a launcher token is signed with a different
+    // secret entirely. The call was fire-and-forget, so it failed silently and
+    // the session simply never left PENDING.
+    //
+    // Redeeming the token IS the client opening, so the server records it here
+    // rather than asking the client to report something we already observed.
+    if (record.supportSessionId) {
+      try {
+        const session = await this.prisma.supportSession.findUnique({
+          where: { id: record.supportSessionId },
+          select: { id: true, status: true, customerId: true },
+        });
+        if (session && session.status !== SessionStatus.SESSION_COMPLETED) {
+          await this.prisma.supportSessionEvent.create({
+            data: { supportSessionId: session.id, event: 'client_opened' },
+          });
+          await this.prisma.supportSession.update({
+            where: { id: session.id },
+            data: { status: SessionStatus.CLIENT_OPENED, startedAt: new Date() },
+          });
+        }
+      } catch (err) {
+        // Telemetry must never block the launch the user is waiting on.
+        this.logger.warn(`Could not record client_opened for session ${record.supportSessionId}: ${err}`);
+      }
+    }
 
     await this.audit.log({
       tenantId: record.tenantId,
