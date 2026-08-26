@@ -5,6 +5,101 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.8.2] — 2026-08-26 · *Ledger*
+
+An endpoint that reported "installed successfully" six times in a row while
+being impossible to connect to. Four independent faults were stacked on top of
+each other, each one hiding the next, plus the reason none of them were
+visible: the installer's definition of success never included "RustDesk
+actually reached the server".
+
+### Fixed
+
+- **The installer wrote the service config where RustDesk never reads it.**
+  The RustDesk service stores its data under
+  `C:\Windows\ServiceProfiles\LocalService`, even though `sc qc` reports it
+  runs as `LocalSystem`. The installer wrote `ServiceProfiles\LocalSystem` —
+  not a real Windows profile — and `System32\config\systemprofile`, which is
+  SYSTEM's genuine APPDATA but not what RustDesk uses. The service therefore
+  ran on a **default config pointing at the public rustdesk.com rendezvous
+  server** while every check passed, because verification only ever looked at
+  the paths the installer itself had written. Affected machines were reachable
+  by strangers on public infrastructure under a publicly-issued ID; rotate any
+  endpoint credential that predates this release.
+
+- **One-click Connect sent the password base64-encoded.** RustDesk uses the
+  `rustdesk://` URI password parameter verbatim — `flutter/lib/common.dart`
+  passes it straight to `--password` with no decode step. v0.7.1 switched to
+  `btoa()` while fixing a genuine encoding bug and picked the wrong encoding,
+  so RustDesk received the base64 text *as* the password. The tell was in the
+  tree the whole time: Quick Connect used `encodeURIComponent` and worked while
+  the other three paths did not. All four now agree.
+
+- **`verification-method` was never set on Windows.** The Linux and macOS
+  templates in the same file both set `use-permanent-password`; Windows fell
+  back to RustDesk's default and would not reliably accept the credential
+  Rem0te stores — so the endpoint answered and rejected a password both ends
+  agreed on.
+
+- **The permanent password was set while the service was stopped.** `--password`
+  reaches the running service over IPC and lands the credential in the
+  service's own profile; with the service stopped it writes into the *calling
+  user's* profile, which the service never reads. Rem0te stored and handed out
+  a password the endpoint had never been given.
+
+- **Credential rotations desynced roughly three minutes after they succeeded.**
+  `heartbeat.ps1` applied a staged rotation and confirmed it but never updated
+  `heartbeat.dat`, and the heartbeat handler takes the endpoint-supplied
+  password verbatim — so the next heartbeat clobbered the DB back to the
+  install-time value while RustDesk held the rotated one, with both ends
+  believing they agreed. Any rotation would have done this.
+
+- **Every failed Connect leaked a permanently "active" session.** Sessions were
+  created `PENDING` and only left that state when the launcher reported the
+  client had opened, with nothing expiring the gap — and the active count is
+  everything not completed/failed/cancelled. Ten failed clicks read as ten live
+  sessions against one machine. Sessions that never opened a client are now
+  failed after 30 minutes; anything that genuinely opened is left alone.
+
+- **The installer could not tell you any of this.** It now refuses to report
+  success when the server is certain hbbs has never seen the endpoint, and
+  prints service state, a TCP probe of 443 and 21116, and RustDesk's own log —
+  the facts that actually discriminate. `sc.exe start` succeeds silently on a
+  stuck service and `--get-id` reads the config file directly, so between them
+  a completely dead install looked healthy.
+
+### Security
+
+- **hbbs and hbbr now require the server key.** Both ran without `-k`, so any
+  client that reached the host could register a peer and the relay would carry
+  traffic for any pair that found port 21117. An unrelated peer had registered
+  itself into `db_v2.sqlite3`. Shipped as systemd drop-ins, because the
+  `rustdesk-server` package owns those units and an in-place edit is silently
+  reverted on upgrade. `install.sh` installs them before enabling the services,
+  so a fresh install is locked from the start — it previously never passed `-r`
+  either.
+
+### Added
+
+- **RustDesk client updates on the Updates page.** Endpoints report their
+  installed RustDesk version on every heartbeat; the page shows current versus
+  latest and stages upgrades per-machine or for everything outdated. Reuses the
+  credential-rotation protocol rather than inventing a second one: the endpoint
+  re-runs the installer, which is already idempotent and pins the version this
+  server serves. A staged update clears only when the endpoint reports the
+  target version, so a failed install retries instead of being dropped, and an
+  endpoint will not reinstall more than once per 30 minutes. Endpoints that
+  have never reported a version show as *Unknown* rather than *Outdated*.
+
+- **WebSocket routes for RustDesk over 443.** Caddy proxies `/ws/id` and
+  `/ws/relay` to hbbs 21118 and hbbr 21119, matching `hbb_common`'s own
+  contract. Not yet usable: hbbs 1.1.15 accepts the upgrade and immediately
+  drops the connection, so clients are left on the native rendezvous path. The
+  routes cost nothing idle and become useful for port-restricted sites once the
+  server is upgraded.
+
+---
+
 ## [0.8.1] — 2026-08-26 · *Ledger*
 
 Maintenance release. Four things that were quietly broken, plus the cause of a
