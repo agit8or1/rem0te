@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
+import { RustdeskService } from '../common/rustdesk.service';
 import { IssueLauncherTokenDto } from './dto/launcher.dto';
 
 interface LauncherTokenPayload {
@@ -34,6 +35,7 @@ export class LauncherService {
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
     private readonly acl: AccessControlService,
+    private readonly rustdesk: RustdeskService,
   ) {}
 
   /**
@@ -210,25 +212,13 @@ export class LauncherService {
    * replaced a Rem0te-configured build — talks to rustdesk.com's public
    * rendezvous instead, where our IDs do not exist, and RustDesk reports that
    * as "the target device is offline or does not exist". The endpoint looks
-   * broken when nothing is wrong with it. Pointing the client at this server
-   * on every launch is the only way the deep link can be self-contained.
+   * broken when nothing is wrong with it.
    *
-   * Same encoding the installer uses (see public.controller buildWindowsScript)
-   * so both paths configure a client identically. Null when the platform has
-   * no relay host configured, which the launcher treats as "connect anyway".
+   * Null when the platform has no usable relay host, which the launcher
+   * treats as "connect with whatever the client already has".
    */
   private async rustdeskLaunchConfig(): Promise<string | null> {
-    const settings = await this.prisma.tenantSettings.findFirst({
-      select: { rustdeskRelayHost: true, rustdeskPublicKey: true },
-      orderBy: { createdAt: 'asc' },
-    });
-    const host = settings?.rustdeskRelayHost ?? '';
-    const key = settings?.rustdeskPublicKey ?? '';
-    // Refuse to build a config out of a malformed setting rather than handing
-    // RustDesk something it will parse into a half-applied server address.
-    if (!/^[a-zA-Z0-9._-]{1,253}$/.test(host)) return null;
-    if (key && !/^[A-Za-z0-9+/]{16,512}={0,2}$/.test(key)) return null;
-    return Buffer.from(`host=${host},key=${key},api=,relay=${host}`, 'utf8').toString('base64');
+    return (await this.rustdesk.serverConfig())?.configB64 ?? null;
   }
 
   /** Revoke an outstanding launcher token. Only its issuer's business may. */

@@ -11,6 +11,7 @@ import configuration from './config/configuration';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 
 import { PrismaModule } from './prisma/prisma.module';
+import { CommonModule } from './common/common.module';
 import { AuthModule } from './auth/auth.module';
 import { MfaModule } from './mfa/mfa.module';
 import { RbacModule } from './rbac/rbac.module';
@@ -31,6 +32,7 @@ import { ApiKeysModule } from './apikeys/apikeys.module';
 import { PublicApiModule } from './public-api/public-api.module';
 import { PlatformModule } from './platform/platform.module';
 import { QuickConnectModule } from './quick-connect/quick-connect.module';
+import { DownloadsModule } from './downloads/downloads.module';
 
 @Module({
   imports: [
@@ -52,6 +54,7 @@ import { QuickConnectModule } from './quick-connect/quick-connect.module';
       },
     ]),
     PrismaModule,
+    CommonModule,
     RbacModule,
     AuditModule,
     AuthModule,
@@ -72,6 +75,7 @@ import { QuickConnectModule } from './quick-connect/quick-connect.module';
     PublicApiModule,
     PlatformModule,
     QuickConnectModule,
+    DownloadsModule,
   ],
   providers: [
     {
