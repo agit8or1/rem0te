@@ -10,6 +10,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 The Connect button assumed something it never checked, and hbbs had been left
 behind by an installer that only ever installed.
 
+### Changed
+
+- **Connect now hands over a file that does the whole job.** It used to open
+  `rustdesk://connection/new/<id>?password=…` and let Windows route it to the
+  installed RustDesk — which works only if that client already knows this
+  server, because **the URI scheme has no field for a server address**. A stock
+  client, or one that auto-updated away from a Rem0te-configured build, asks
+  rustdesk.com instead, is told the ID is unknown, and reports *"the target
+  device is offline or does not exist"* about a computer that is online. There
+  is no fixing that from inside the link.
+
+  Connect now returns a script named for the target machine that installs
+  RustDesk if the computer has none, points it at this server, then opens the
+  session with the password applied. It assumes nothing about the machine it
+  runs on. It deletes itself when it finishes, because it carries a live
+  credential.
+
+### Added
+
+- **Downloads page for technician clients.** The setup script (configure this
+  computer, installing RustDesk first if needed), the preconfigured client, and
+  stock unconfigured RustDesk. Quick Connect covered the customer's side; the
+  technician's own machine had nothing.
+
+- **RustDesk server updates from the Updates page.** hbbs and hbbr had no update
+  path at all — `install.sh` installed them once and every later run reported
+  "already installed". Shows installed versus latest for both binaries, flags a
+  version split between them, flags anything below 1.1.16 as lacking WebSocket
+  support, and upgrades in place. Privileges are two fixed-path sudoers rules,
+  no wildcards. The card states plainly that the restart blanks hbbs's in-memory
+  peer map and every endpoint reads offline for ~30 seconds.
+
+- **Rewritten documentation.** `docs/` now has an index that routes by task, and
+  four new pages covering what nothing documented before: `connecting.md` (the
+  connect paths and why they differ), `clients.md` (every client Rem0te hands
+  out and how each learns the server address), `updates.md` (the three separate
+  things that can be out of date), and `troubleshooting.md` (which now leads
+  with `hbbs-probe.py`, because the message RustDesk shows almost never names
+  the component that produced it). `architecture.md` documents the RustDesk
+  configuration chain end to end.
+
 ### Fixed
 
 - **Connect never configured the client it was connecting from.** The launcher
@@ -54,6 +95,13 @@ behind by an installer that only ever installed.
   single odd tag would have been cached for an hour and served to every
   installer and Quick Connect download in that window. One helper, one cache,
   one fallback, in `apps/api/src/common/rustdesk-release.ts`.
+
+- **The same drift in the RustDesk server config and the client cache.** Quick
+  Connect, the installer templates and the launcher each read the relay host and
+  key out of `TenantSettings` and re-derived the config string, and Quick
+  Connect owned the only cache of the client binary — so a new download surface
+  had to duplicate a 40-line GitHub fetch or reach into another module's cache
+  directory. Both now live in `apps/api/src/common/rustdesk.service.ts`.
 
 ### Added
 
