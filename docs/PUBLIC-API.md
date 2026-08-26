@@ -132,6 +132,206 @@ curl -sX POST -H "Authorization: Bearer $KEY" -H "content-type: application/json
   -d '{"assignedUserIds":["usr_..."], "platform":"windows"}'
 ```
 
+## Response shapes
+
+Every response is wrapped in `{ "success": true, "data": ... }`. **What sits
+under `data` is not uniform**, and this trips integrators up:
+
+| Route | `data` is |
+| --- | --- |
+| `GET /pub/v1/whoami` | *no `data` wrapper* — fields are at the top level |
+| `GET /pub/v1/businesses` | an **array** of businesses |
+| `GET /pub/v1/users` | an **array** of memberships |
+| `GET /pub/v1/enrollment/tokens` | an **array** of tokens |
+| `GET /pub/v1/computers` | an **object**: `{ endpoints, total, page, limit, pages }` |
+
+Only `computers` is paginated, and only it nests its array under a key. Treat
+`data.endpoints` as the list there and `data` as the list everywhere else.
+
+### whoami
+
+```json
+{
+  "success": true,
+  "businessId": "cmtaiwkcv000rza3semyybks5",
+  "apiKeyId": "cmtaj6l5g0007rjrpd756sliz",
+  "scopes": ["companies:read", "computers:read", "users:read", "enrollment:write"],
+  "timestamp": "2026-08-26T20:13:11.632Z"
+}
+```
+
+Note there is no `data` key here — read `businessId` and `scopes` directly. This
+is the cheapest call for verifying a key works and discovering what it may do.
+
+### businesses
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "cmtaiwkcv000rza3semyybks5",
+      "name": "Cascade Accounting",
+      "code": "CASC",
+      "email": "it@casc.example.com",
+      "city": "Seattle",
+      "state": "WA",
+      "country": "US",
+      "isActive": true,
+      "quickConnectEnabled": true,
+      "createdAt": "2026-08-26T20:05:12.079Z",
+      "_count": { "endpoints": 3, "sites": 0 }
+    }
+  ]
+}
+```
+
+Always exactly one element — the key's own business. Use `_count.endpoints` for
+a machine count instead of listing computers just to count them.
+
+### computers
+
+```json
+{
+  "success": true,
+  "data": {
+    "endpoints": [
+      {
+        "id": "cmtaiwkdb0017za3stnccaho1",
+        "name": "BACKOFFICE-01",
+        "hostname": "BACKOFFICE-01",
+        "status": "OFFLINE",
+        "platform": "Windows",
+        "osVersion": "Microsoft Windows NT 10.0.26100.0",
+        "ipAddress": "203.0.113.26",
+        "isOnline": false,
+        "isManaged": true,
+        "lastSeenAt": "2026-08-24T20:05:12.095Z",
+        "accessMode": "ASSIGNED_USERS",
+        "customerId": "cmtaiwkcv000rza3semyybks5",
+        "rustdeskNode": {
+          "rustdeskId": "145925926",
+          "lastSeenAt": "2026-08-24T20:05:12.095Z",
+          "hasPassword": true
+        },
+        "tags": [],
+        "aliases": []
+      }
+    ],
+    "total": 3, "page": 1, "limit": 50, "pages": 1
+  }
+}
+```
+
+Two things worth knowing:
+
+- **The RustDesk ID is nested under `rustdeskNode`**, not on the endpoint. A
+  machine that has not completed enrolment has `rustdeskNode: null`.
+- **The password is never returned.** `hasPassword` tells you whether one is
+  stored; the credential itself is not exposed through this API at all.
+
+`status` is the administrative state (`ACTIVE`, `OFFLINE`, `ARCHIVED`,
+`PENDING_ENROLLMENT`); `isOnline` is liveness from the agent heartbeat. They can
+disagree — an `ACTIVE` machine that stopped checking in is `isOnline: false`.
+
+### users
+
+`data` is an array of *memberships*, each wrapping the person under `user`:
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "cmtaiwkcy000uza3saz93v5jm",
+      "userId": "cmtaiwkcw000sza3shgvnvoy9",
+      "customerId": "cmtaiwkcv000rza3semyybks5",
+      "isActive": true,
+      "capabilities": [],
+      "role": { "name": "Business Owner" },
+      "user": {
+        "id": "cmtaiwkcw000sza3shgvnvoy9",
+        "email": "owner@casc.example.com",
+        "firstName": "Dana",
+        "lastName": "Cascade",
+        "jobTitle": "IT Manager",
+        "status": "ACTIVE"
+      }
+    }
+  ]
+}
+```
+
+An empty `capabilities` array means the role defaults apply, not that the person
+has none.
+
+## Errors
+
+Errors share one envelope:
+
+```json
+{
+  "success": false,
+  "statusCode": 401,
+  "code": "UNAUTHORIZED",
+  "message": "Missing required scopes: companies:write",
+  "path": "/api/v1/pub/v1/companies",
+  "timestamp": "2026-08-26T20:13:11.836Z"
+}
+```
+
+| Situation | Status | `message` |
+| --- | --- | --- |
+| No or malformed `Authorization` header | 401 | `Missing or malformed API key` |
+| Revoked, expired or unknown key | 401 | `Missing or malformed API key` |
+| Key lacks the route's scope | **401** | `Missing required scopes: <list>` |
+| Action needs Platform Admin | 403 | varies |
+| Id belongs to another business | 404 | `Not found` |
+| Over 300 req/min | 429 | rate limit |
+
+**A missing scope returns 401, not 403.** Branch on `message`, or check
+`whoami` first — retrying a 401 as if the key were invalid will not help.
+
+## Worked example: sync computers into an RMM
+
+Verified against a live instance; only ids and hostnames are anonymised.
+
+```bash
+KEY='rk_...'
+HOST='https://remote.example'
+
+# 1. Confirm the key works and see what it may do.
+curl -s -H "Authorization: Bearer $KEY" "$HOST/api/v1/pub/v1/whoami"
+
+# 2. Page through the computers. Only this route paginates.
+page=1
+while :; do
+  body=$(curl -s -H "Authorization: Bearer $KEY" \
+    "$HOST/api/v1/pub/v1/computers?page=$page&limit=50")
+  echo "$body" | jq -r '.data.endpoints[]
+    | [.name, .rustdeskNode.rustdeskId // "not-enrolled", .isOnline, .lastSeenAt]
+    | @tsv'
+  pages=$(echo "$body" | jq -r '.data.pages')
+  [ "$page" -ge "$pages" ] && break
+  page=$((page + 1))
+done
+
+# 3. Mint a Windows install command for a new machine.
+curl -sX POST -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
+  "$HOST/api/v1/pub/v1/enrollment/tokens" \
+  -d '{"platform":"windows","accessMode":"COMPANY_WIDE","expiresInDays":1,
+       "description":"RMM rollout"}' \
+  | jq -r '.data.install.command'
+```
+
+Step 3 prints a one-liner to hand to your deployment tool. The token is
+single-use and carries the business and access rules with it, so the machine
+running it cannot choose which business it joins.
+
+Polling guidance: `lastSeenAt` only moves every 3 minutes (the agent heartbeat),
+so polling faster than that gains nothing and will hit the 300 req/min limit on
+any fleet of size.
+
 ## Security notes
 
 - Every request is confined to the key's business by the same

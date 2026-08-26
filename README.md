@@ -255,6 +255,18 @@ This project is overseen by **Luna**, a German Shepherd Dog of exceptional intel
 
 ---
 
+## Documentation
+
+| Guide | For |
+| --- | --- |
+| [Technician Guide](docs/technician-guide.md) | Day-to-day use — connecting, Quick Connect, enrolling, keeping RustDesk current. Annotated screenshots. |
+| [Public API](docs/PUBLIC-API.md) | RMM/PSA integration. Scopes, response shapes, errors, worked examples. |
+| [Access Control](docs/access-control.md) | The three-level model and capability vocabulary. |
+| [Setup](docs/setup.md) | Installing and operating a server. |
+| [Security Audit](docs/SECURITY-AUDIT.md) | Threat model and audit trail. |
+
+---
+
 ## Support this project
 
 - ⭐ [Star on GitHub](https://github.com/agit8or1/rem0te)
