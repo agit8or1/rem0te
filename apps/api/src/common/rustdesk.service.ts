@@ -124,14 +124,28 @@ export class RustdeskService {
       `https://github.com/rustdesk/rustdesk/releases/download/${clientVersion}/rustdesk-${clientVersion}-x86_64.exe`;
 
     // Our own server first so a site with restricted egress still works, then
-    // GitHub. We apply the config ourselves afterwards, so it does not matter
-    // which of the two builds ends up cached.
+    // GitHub. The two builds are interchangeable — what configures the copy is
+    // the name we save it under, not which URL it came from.
     const sources = `@('${clientDownloadUrl}', '${githubUrl}')`;
+
+    // Config in the filename, which is what actually works.
+    //
+    // RustDesk parses its own executable name for `host=` and `key=` at
+    // startup. This is the mechanism Quick Connect has always used, and it is
+    // the one with field evidence behind it: the first client this script
+    // produced registered with our hbbs and paired a relay session.
+    //
+    // Two later attempts to configure a copy some other way — `--config`, then
+    // writing RustDesk2.toml directly — both left the client still talking to
+    // rustdesk.com, reporting a healthy endpoint as "offline or does not
+    // exist". Neither failed loudly. Use the mechanism that demonstrably
+    // works rather than the one that looks tidier.
+    const cachedName = `rustdesk-host=${config.host},key=${config.key}.exe`;
 
     const fetch = this.joinPs([
       `$dir = Join-Path $env:LOCALAPPDATA 'Rem0te'`,
       `New-Item -ItemType Directory -Force -Path $dir | Out-Null`,
-      `$rd = Join-Path $dir 'rustdesk.exe'`,
+      `$rd = Join-Path $dir '${cachedName}'`,
       // Size check as well as existence: a transfer killed part-way leaves a
       // file that exists and cannot run, and the retry would skip it forever.
       //
@@ -139,7 +153,7 @@ export class RustdeskService {
       // joined with "; ", and a semicolon terminates an if-statement — so
       // `if (...) { }; else { }` parses as a bare `else`, which PowerShell
       // reports as "The term 'else' is not recognized as the name of a
-      // cmdlet". joinPs() below refuses to emit that shape at all.
+      // cmdlet". joinPs() refuses to emit that shape at all.
       `$cached = (Test-Path $rd) -and ((Get-Item $rd).Length -gt 20000000)`,
       `if ($cached) { Write-Host 'Using the RustDesk already cached for Rem0te.' }`,
       `if (-not $cached) { ${this.joinPs([
@@ -153,43 +167,18 @@ export class RustdeskService {
         `if (-not $ok) { Write-Host 'Could not download RustDesk. Check this computer can reach the internet.'; Read-Host 'Press Enter to close'; exit 1 }`,
         `Move-Item -Force $part $rd`,
       ])} }`,
-      // Write the config file directly for a copy we own.
-      //
-      // `--config` is RustDesk's own mechanism and it is used below, but it is
-      // a process: it can no-op, exit before it writes, or decide to open a
-      // window, and when it does the client silently keeps talking to
-      // rustdesk.com — which surfaces as "the target device is offline or does
-      // not exist", the exact symptom this script exists to remove. A file on
-      // disk has none of those failure modes.
-      //
-      // Only on this branch. Here there is no installed RustDesk, so there are
-      // no user settings to overwrite; an installed client keeps `--config`,
-      // which merges instead of replacing.
-      `$tomlDir = Join-Path (Join-Path $env:APPDATA 'RustDesk') 'config'`,
-      `New-Item -ItemType Directory -Force -Path $tomlDir | Out-Null`,
-      // Base64 because the TOML needs quote characters and the .cmd wrapper
-      // cannot carry a double quote through cmd.exe at all.
-      `$toml = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${
-        Buffer.from(
-          [
-            `rendezvous_server = '${config.host}'`,
-            `nat_type = 1`,
-            `serial = 0`,
-            ``,
-            `[options]`,
-            `custom-rendezvous-server = '${config.host}'`,
-            `relay-server = '${config.host}'`,
-            `key = '${config.key}'`,
-            ``,
-          ].join('\n'),
-          'utf8',
-        ).toString('base64')
-      }'))`,
-      `Set-Content -Path (Join-Path $tomlDir 'RustDesk2.toml') -Value $toml -Encoding UTF8`,
-      `Write-Host ('Wrote server config to ' + (Join-Path $tomlDir 'RustDesk2.toml'))`,
+      // Stale copies from before the name carried the config. They are inert
+      // once nothing points at them, but they are 24 MB each.
+      `Get-ChildItem -Path $dir -Filter 'rustdesk*.exe' | Where-Object { $_.FullName -ne $rd } | Remove-Item -Force -ErrorAction SilentlyContinue`,
+      // The name is the configuration, so a client that was previously left
+      // pointing somewhere else must not keep overriding it from disk.
+      `$stale = Join-Path (Join-Path (Join-Path $env:APPDATA 'RustDesk') 'config') 'RustDesk2.toml'`,
+      `if (Test-Path $stale) { Remove-Item -Force $stale -ErrorAction SilentlyContinue; Write-Host 'Cleared a previous RustDesk server setting.' }`,
+      `$portable = $true`,
     ]);
 
     return this.joinPs([
+      `$portable = $false`,
       `$paths = @($env:ProgramFiles + '\\RustDesk\\rustdesk.exe', ${'${env:ProgramFiles(x86)}'} + '\\RustDesk\\rustdesk.exe')`,
       `$rd = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1`,
       `if (-not $rd) { $rd = (Get-Command rustdesk.exe -ErrorAction SilentlyContinue).Source }`,
@@ -297,20 +286,19 @@ export class RustdeskService {
       `$cfg = '${config.configB64}'`,
       this.findOrFetchRustdesk(config, clientVersion, clientDownloadUrl),
       `Write-Host ('Pointing ' + $rd + ' at ${config.host} ...')`,
-      // Bounded, and loud about which way it went.
-      //
-      // `--config` is a CLI action that applies and exits, but it runs on the
-      // path someone is waiting on, so it cannot be allowed to hang. It is
-      // also the step most likely to be quietly wrong: if it is killed before
-      // it writes, the next launch has no server address and RustDesk reports
-      // the endpoint as offline — indistinguishable from the bug this whole
-      // script exists to fix. So say which happened, and say which executable
-      // it happened to.
       `Write-Host ('Using ' + $rd)`,
-      `$p = Start-Process -FilePath $rd -ArgumentList '--config', $cfg -PassThru`,
-      `$applied = $p.WaitForExit(15000)`,
-      `if ($applied) { Write-Host ('Server config applied (exit ' + $p.ExitCode + ').') }`,
-      `if (-not $applied) { Write-Host 'WARNING: --config did not exit within 15s; leaving it running rather than killing it mid-write.' }`,
+      // A copy we fetched carries its configuration in its filename and needs
+      // nothing else. Only an installed RustDesk — which we must not
+      // reconfigure by overwriting its settings file — goes through
+      // `--config`, and even then the result is reported rather than assumed,
+      // because a silent failure here is indistinguishable from the bug this
+      // whole script exists to remove.
+      `if (-not $portable) { ${this.joinPs([
+        `$p = Start-Process -FilePath $rd -ArgumentList '--config', $cfg -PassThru`,
+        `$applied = $p.WaitForExit(15000)`,
+        `if ($applied) { Write-Host ('Server config applied (exit ' + $p.ExitCode + ').') }`,
+        `if (-not $applied) { Write-Host 'WARNING: --config did not exit within 15s; leaving it running rather than killing it mid-write.' }`,
+      ])} }`,
       `Write-Host ''`,
       `Write-Host ('Done. RustDesk at ' + $rd + ' now uses ${config.host}.')`,
       `Write-Host 'Close RustDesk if it is open, then use Connect in Rem0te.'`,
@@ -367,12 +355,19 @@ export class RustdeskService {
       `$pw = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${pwB64}'))`,
       this.findOrFetchRustdesk(config, clientVersion, clientDownloadUrl),
       `Write-Host 'Pointing RustDesk at ${config.host} ...'`,
-      // Bounded. `--config` is a CLI action that applies and exits, but this runs on the path someone is waiting on and a build that decided to open its window instead would hang the script exactly where the install step used to.
       `Write-Host ('Using ' + $rd)`,
-      `$p = Start-Process -FilePath $rd -ArgumentList '--config', $cfg -PassThru`,
-      `$applied = $p.WaitForExit(15000)`,
-      `if ($applied) { Write-Host ('Server config applied (exit ' + $p.ExitCode + ').') }`,
-      `if (-not $applied) { Write-Host 'WARNING: --config did not exit within 15s; leaving it running rather than killing it mid-write.' }`,
+      // A copy we fetched carries its configuration in its filename and needs
+      // nothing else. Only an installed RustDesk goes through `--config` —
+      // and the outcome is reported rather than assumed, because a silent
+      // failure here is indistinguishable from the bug this script exists to
+      // remove.
+      `if (-not $portable) { ${this.joinPs([
+        `$p = Start-Process -FilePath $rd -ArgumentList '--config', $cfg -PassThru`,
+        `$applied = $p.WaitForExit(15000)`,
+        `if ($applied) { Write-Host ('Server config applied (exit ' + $p.ExitCode + ').') }`,
+        `if (-not $applied) { Write-Host 'WARNING: --config did not exit within 15s; leaving it running rather than killing it mid-write.' }`,
+      ])} }`,
+      `if ($portable) { Write-Host 'Configured by filename; no reconfiguration needed.' }`,
       // The config lands via IPC when a client is already running; give it a
       // moment before the connection request or that request uses the previous
       // server.
