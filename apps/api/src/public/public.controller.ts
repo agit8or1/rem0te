@@ -19,7 +19,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { Public } from '../common/decorators/public.decorator';
-import * as https from 'https';
+import { latestRustdeskVersionOr, RUSTDESK_FALLBACK_VERSION } from '../common/rustdesk-release';
 
 const INSTALLER_MAGIC = Buffer.from('REM0TE_INST_URL:');
 const INSTALLER_SLOT_SIZE = 256;
@@ -48,7 +48,7 @@ function safeToken(token: string | undefined): string {
   return token;
 }
 function safeVersion(version: string): string {
-  if (!VERSION_RE.test(version)) return '1.4.6';
+  if (!VERSION_RE.test(version)) return RUSTDESK_FALLBACK_VERSION;
   return version;
 }
 
@@ -91,38 +91,6 @@ export class PublicController {
     return Buffer.from(JSON.stringify({ host, relay: host, key: key ?? '', api: '' })).toString('base64');
   }
 
-  /** Fetch the latest RustDesk release tag from GitHub (cached loosely by Node module scope). */
-  private latestVersionCache: { version: string; fetchedAt: number } | null = null;
-
-  private async fetchLatestVersion(): Promise<string> {
-    const FALLBACK = '1.4.6';
-    const now = Date.now();
-    if (this.latestVersionCache && now - this.latestVersionCache.fetchedAt < 3600_000) {
-      return this.latestVersionCache.version;
-    }
-    return new Promise((resolve) => {
-      const req = https.get(
-        'https://api.github.com/repos/rustdesk/rustdesk/releases/latest',
-        { headers: { 'User-Agent': 'reboot-remote', Accept: 'application/vnd.github.v3+json' } },
-        (res) => {
-          let data = '';
-          res.on('data', (chunk) => (data += chunk));
-          res.on('end', () => {
-            try {
-              const json = JSON.parse(data);
-              const version: string = json.tag_name ?? FALLBACK;
-              this.latestVersionCache = { version, fetchedAt: now };
-              resolve(version);
-            } catch {
-              resolve(FALLBACK);
-            }
-          });
-        },
-      );
-      req.on('error', () => resolve(FALLBACK));
-      req.setTimeout(5000, () => { req.destroy(); resolve(FALLBACK); });
-    });
-  }
 
   // ── Public config ─────────────────────────────────────────────────────────
 
@@ -200,7 +168,7 @@ export class PublicController {
     const settings = await this.getSettings();
     const host = settings?.rustdeskRelayHost ?? null;
     const key = settings?.rustdeskPublicKey ?? null;
-    const version = await this.fetchLatestVersion();
+    const version = await latestRustdeskVersionOr();
 
     // Validate enrollment token if provided — look up by SHA-256 hash
     let validatedToken: string | undefined;

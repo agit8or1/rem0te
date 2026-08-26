@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import { Subject } from 'rxjs';
+import { latestRustdeskVersion } from '../common/rustdesk-release';
 
 export interface UpdateProgress {
   step: string;
@@ -461,42 +462,10 @@ export class UpdateService {
   // endpoint reports `version` on every heartbeat; staging writes a target and
   // the endpoint's next heartbeat response tells it to re-run the installer.
 
-  private rustdeskCache: { version: string; fetchedAt: number } | null = null;
-
-  /** Latest RustDesk release, cached for an hour. Null if GitHub is unreachable. */
-  async latestRustdeskVersion(): Promise<string | null> {
-    if (this.rustdeskCache && Date.now() - this.rustdeskCache.fetchedAt < 3600_000) {
-      return this.rustdeskCache.version;
-    }
-    return new Promise((resolve) => {
-      const req = https.get(
-        'https://api.github.com/repos/rustdesk/rustdesk/releases/latest',
-        { headers: { 'User-Agent': 'reboot-remote', Accept: 'application/vnd.github.v3+json' } },
-        (res) => {
-          let data = '';
-          res.on('data', (c) => (data += c));
-          res.on('end', () => {
-            try {
-              const tag = String(JSON.parse(data).tag_name ?? '').replace(/^v/, '');
-              if (/^\d+\.\d+\.\d+$/.test(tag)) {
-                this.rustdeskCache = { version: tag, fetchedAt: Date.now() };
-                resolve(tag);
-              } else resolve(this.rustdeskCache?.version ?? null);
-            } catch {
-              resolve(this.rustdeskCache?.version ?? null);
-            }
-          });
-        },
-      );
-      req.on('error', () => resolve(this.rustdeskCache?.version ?? null));
-      req.setTimeout(8000, () => { req.destroy(); resolve(this.rustdeskCache?.version ?? null); });
-    });
-  }
-
   /** Per-endpoint RustDesk versions plus the latest available release. */
   async rustdeskStatus() {
     const [latest, nodes] = await Promise.all([
-      this.latestRustdeskVersion(),
+      latestRustdeskVersion(),
       this.prisma.rustdeskNode.findMany({
         select: {
           rustdeskId: true, version: true, lastSeenAt: true,
@@ -542,7 +511,7 @@ export class UpdateService {
     endpointIds: string[] | null,
     actor: { userId?: string; ip?: string },
   ) {
-    const latest = await this.latestRustdeskVersion();
+    const latest = await latestRustdeskVersion();
     if (!latest) throw new NotFoundException('Latest RustDesk version is unavailable right now');
 
     const nodes = await this.prisma.rustdeskNode.findMany({

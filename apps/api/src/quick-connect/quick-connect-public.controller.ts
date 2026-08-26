@@ -8,6 +8,7 @@ import * as https from 'https';
 import { PrismaService } from '../prisma/prisma.service';
 import { Public } from '../common/decorators/public.decorator';
 import { PlatformSettingsService } from '../platform/platform-settings.service';
+import { latestRustdeskVersionOr } from '../common/rustdesk-release';
 
 const HOSTNAME_RE = /^[a-zA-Z0-9._-]{1,253}$/;
 const BASE64_KEY_RE = /^[A-Za-z0-9+/]{16,512}={0,2}$/;
@@ -109,7 +110,7 @@ export class QuickConnectPublicController {
     if (!enabled[os]) throw new NotFoundException(`The ${os} Quick Connect client is not enabled`);
 
     const config = await this.rustdeskConfig();
-    const version = await this.latestRustdeskVersion();
+    const version = await latestRustdeskVersionOr();
 
     if (os === 'windows') {
       // Windows gets the real binary, preconfigured through its filename.
@@ -349,38 +350,6 @@ HOME="$QC_HOME" "$WORK/rustdesk.AppImage"
     }
 
     return { host, key };
-  }
-
-  /** Cached RustDesk release tag; refreshed hourly. */
-  private versionCache: { version: string; fetchedAt: number } | null = null;
-
-  private async latestRustdeskVersion(): Promise<string> {
-    const FALLBACK = '1.4.9';
-    if (this.versionCache && Date.now() - this.versionCache.fetchedAt < 3_600_000) {
-      return this.versionCache.version;
-    }
-    return new Promise((resolve) => {
-      const req = https.get(
-        'https://api.github.com/repos/rustdesk/rustdesk/releases/latest',
-        { headers: { 'User-Agent': 'reboot-remote', Accept: 'application/vnd.github.v3+json' } },
-        (r) => {
-          let data = '';
-          r.on('data', (c) => (data += c));
-          r.on('end', () => {
-            try {
-              const tag = String(JSON.parse(data).tag_name ?? FALLBACK);
-              const version = /^[0-9]+\.[0-9]+\.[0-9]+$/.test(tag) ? tag : FALLBACK;
-              this.versionCache = { version, fetchedAt: Date.now() };
-              resolve(version);
-            } catch {
-              resolve(FALLBACK);
-            }
-          });
-        },
-      );
-      req.on('error', () => resolve(FALLBACK));
-      req.setTimeout(5000, () => { req.destroy(); resolve(FALLBACK); });
-    });
   }
 
   /**
