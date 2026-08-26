@@ -49,6 +49,14 @@ export class HeartbeatDto {
   @Length(1, 32)
   agentVersion?: string;
 
+  // Installed RustDesk client version, e.g. "1.4.9". Drives the update
+  // check on the Updates page and clears a staged update once the endpoint
+  // reports the target version.
+  @IsOptional()
+  @IsString()
+  @Length(1, 32)
+  rustdeskVersion?: string;
+
   @IsOptional()
   @IsIP()
   ipAddress?: string;

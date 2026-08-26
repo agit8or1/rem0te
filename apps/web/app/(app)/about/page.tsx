@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { adminApi, updateApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
+import { RustdeskUpdates } from '@/components/admin/rustdesk-updates';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -332,6 +333,9 @@ export default function AboutPage() {
 
       {/* Update panel — platform admin only */}
       <UpdatePanel isPlatformAdmin={isPlatformAdmin} />
+
+      {/* RustDesk on the managed endpoints, as distinct from Rem0te itself above. */}
+      <RustdeskUpdates isPlatformAdmin={isPlatformAdmin} />
 
       {/* System resources */}
       {data && (

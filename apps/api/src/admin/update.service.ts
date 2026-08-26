@@ -1,4 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import * as https from 'https';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -15,6 +17,11 @@ export interface UpdateProgress {
 
 @Injectable()
 export class UpdateService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
+
   private readonly logger = new Logger(UpdateService.name);
   private readonly repoOwner = 'agit8or1';
   private readonly repoName = 'rem0te';
@@ -445,5 +452,143 @@ export class UpdateService {
       if (av[i] !== bv[i]) return av[i] > bv[i];
     }
     return false;
+  }
+
+  // ── RustDesk client updates on managed endpoints ──────────────────────────
+  //
+  // Separate from the Rem0te self-update above: this tracks the RustDesk
+  // version installed on each endpoint and stages upgrades for them. The
+  // endpoint reports `version` on every heartbeat; staging writes a target and
+  // the endpoint's next heartbeat response tells it to re-run the installer.
+
+  private rustdeskCache: { version: string; fetchedAt: number } | null = null;
+
+  /** Latest RustDesk release, cached for an hour. Null if GitHub is unreachable. */
+  async latestRustdeskVersion(): Promise<string | null> {
+    if (this.rustdeskCache && Date.now() - this.rustdeskCache.fetchedAt < 3600_000) {
+      return this.rustdeskCache.version;
+    }
+    return new Promise((resolve) => {
+      const req = https.get(
+        'https://api.github.com/repos/rustdesk/rustdesk/releases/latest',
+        { headers: { 'User-Agent': 'reboot-remote', Accept: 'application/vnd.github.v3+json' } },
+        (res) => {
+          let data = '';
+          res.on('data', (c) => (data += c));
+          res.on('end', () => {
+            try {
+              const tag = String(JSON.parse(data).tag_name ?? '').replace(/^v/, '');
+              if (/^\d+\.\d+\.\d+$/.test(tag)) {
+                this.rustdeskCache = { version: tag, fetchedAt: Date.now() };
+                resolve(tag);
+              } else resolve(this.rustdeskCache?.version ?? null);
+            } catch {
+              resolve(this.rustdeskCache?.version ?? null);
+            }
+          });
+        },
+      );
+      req.on('error', () => resolve(this.rustdeskCache?.version ?? null));
+      req.setTimeout(8000, () => { req.destroy(); resolve(this.rustdeskCache?.version ?? null); });
+    });
+  }
+
+  /** Per-endpoint RustDesk versions plus the latest available release. */
+  async rustdeskStatus() {
+    const [latest, nodes] = await Promise.all([
+      this.latestRustdeskVersion(),
+      this.prisma.rustdeskNode.findMany({
+        select: {
+          rustdeskId: true, version: true, lastSeenAt: true,
+          updateRequestedAt: true, updateTargetVersion: true,
+          endpoint: { select: { id: true, name: true, hostname: true, isOnline: true, platform: true } },
+        },
+        orderBy: { hostname: 'asc' },
+      }),
+    ]);
+
+    const endpoints = nodes.map((n) => ({
+      endpointId: n.endpoint?.id ?? null,
+      name: n.endpoint?.name ?? n.rustdeskId,
+      hostname: n.endpoint?.hostname ?? null,
+      platform: n.endpoint?.platform ?? null,
+      isOnline: n.endpoint?.isOnline ?? false,
+      rustdeskId: n.rustdeskId,
+      version: n.version ?? null,
+      lastSeenAt: n.lastSeenAt,
+      updatePending: !!n.updateRequestedAt,
+      updateTargetVersion: n.updateTargetVersion,
+      // Unknown until the endpoint heartbeats with a version, which only
+      // installers from v0.8.2 onward report. Explicitly not "outdated":
+      // flagging every pre-upgrade endpoint as out of date would be noise.
+      upToDate: latest && n.version ? this.compareVersions(n.version, latest) >= 0 : null,
+    }));
+
+    return {
+      latestVersion: latest,
+      total: endpoints.length,
+      outdated: endpoints.filter((e) => e.upToDate === false).length,
+      unknown: endpoints.filter((e) => e.upToDate === null).length,
+      endpoints,
+    };
+  }
+
+  /**
+   * Stage a RustDesk upgrade. Returns how many endpoints were queued.
+   * Endpoints already on the target are skipped rather than pointlessly
+   * re-running an installer on them.
+   */
+  async requestRustdeskUpdate(
+    endpointIds: string[] | null,
+    actor: { userId?: string; ip?: string },
+  ) {
+    const latest = await this.latestRustdeskVersion();
+    if (!latest) throw new NotFoundException('Latest RustDesk version is unavailable right now');
+
+    const nodes = await this.prisma.rustdeskNode.findMany({
+      where: endpointIds?.length ? { endpointId: { in: endpointIds } } : {},
+      select: { id: true, endpointId: true, version: true, tenantId: true },
+    });
+    if (!nodes.length) throw new NotFoundException('No matching endpoints');
+
+    const targets = nodes.filter(
+      (n) => !n.version || this.compareVersions(n.version, latest) < 0,
+    );
+
+    await this.prisma.rustdeskNode.updateMany({
+      where: { id: { in: targets.map((t) => t.id) } },
+      data: { updateRequestedAt: new Date(), updateTargetVersion: latest },
+    });
+
+    for (const t of targets) {
+      await this.audit.log({
+        tenantId: t.tenantId ?? undefined,
+        actorId: actor.userId, actorIp: actor.ip,
+        action: 'ENDPOINT_UPDATED', resource: 'endpoint', resourceId: t.endpointId,
+        meta: { rustdeskFrom: t.version ?? 'unknown', rustdeskTo: latest },
+      });
+    }
+
+    return { requested: targets.length, skipped: nodes.length - targets.length, targetVersion: latest };
+  }
+
+  /** Cancel a staged update. */
+  async cancelRustdeskUpdate(endpointId: string) {
+    const r = await this.prisma.rustdeskNode.updateMany({
+      where: { endpointId },
+      data: { updateRequestedAt: null, updateTargetVersion: null },
+    });
+    return { cancelled: r.count };
+  }
+
+  /** Numeric-segment compare; tolerates junk by treating it as 0. */
+  private compareVersions(a: string, b: string): number {
+    const pa = a.replace(/^v/, '').split('.').map((x) => parseInt(x, 10) || 0);
+    const pb = b.replace(/^v/, '').split('.').map((x) => parseInt(x, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+      if (d !== 0) return d < 0 ? -1 : 1;
+    }
+    return 0;
   }
 }

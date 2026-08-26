@@ -334,7 +334,7 @@ export class EnrollmentService {
     return { endpoint, tenantId: record.tenantId };
   }
 
-  async heartbeat(dto: { rustdeskId: string; hostname?: string; platform?: string; osVersion?: string; agentVersion?: string; ipAddress?: string; password?: string }) {
+  async heartbeat(dto: { rustdeskId: string; hostname?: string; platform?: string; osVersion?: string; agentVersion?: string; rustdeskVersion?: string; ipAddress?: string; password?: string }) {
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { rustdeskId: dto.rustdeskId },
     });
@@ -391,7 +391,16 @@ export class EnrollmentService {
         lastSeenAt: new Date(),
         ...(dto.hostname !== undefined && { hostname: dto.hostname }),
         ...(dto.platform !== undefined && { platform: dto.platform }),
+        ...(dto.rustdeskVersion !== undefined && { version: dto.rustdeskVersion }),
         ...(encryptedPassword ? { permanentPassword: encryptedPassword } : {}),
+        // A staged update clears once the endpoint reports the target version.
+        // Comparing reported-vs-target rather than assuming success means a
+        // failed or partial install simply retries on the next heartbeat.
+        ...(node.updateRequestedAt &&
+        node.updateTargetVersion &&
+        dto.rustdeskVersion === node.updateTargetVersion
+          ? { updateRequestedAt: null, updateTargetVersion: null }
+          : {}),
       },
     });
 
@@ -424,10 +433,21 @@ export class EnrollmentService {
       } catch { /* ignore */ }
     }
 
+    // Tell the endpoint to upgrade its RustDesk client when one is staged and
+    // it is not already on the target. The endpoint re-runs the installer,
+    // which is idempotent and pins whatever version this server serves.
+    const updateRustdesk =
+      node.updateRequestedAt &&
+      node.updateTargetVersion &&
+      dto.rustdeskVersion !== node.updateTargetVersion
+        ? { targetVersion: node.updateTargetVersion }
+        : null;
+
     return {
       found: true,
       endpointId: node.endpointId,
       rotate,
+      updateRustdesk,
       rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
     };
   }

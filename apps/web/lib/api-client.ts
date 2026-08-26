@@ -249,6 +249,12 @@ export const updateApi = {
   check: () => api.get('/admin/update/check'),
   changelog: () => api.get('/admin/update/changelog'),
   progressUrl: () => `${BASE_URL}/admin/update/progress`,
+  // RustDesk client versions across managed endpoints, and staging upgrades.
+  rustdesk: () => api.get('/admin/update/rustdesk'),
+  updateRustdesk: (endpointIds?: string[]) =>
+    api.post('/admin/update/rustdesk', endpointIds?.length ? { endpointIds } : {}),
+  cancelRustdesk: (endpointId: string) =>
+    api.post(`/admin/update/rustdesk/${endpointId}/cancel`, {}),
 };
 
 // ─── Admin Security ───────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
-import { Controller, Get, Res, UseGuards, ForbiddenException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Req, Res, UseGuards, ForbiddenException, HttpCode, HttpStatus } from '@nestjs/common';
+import type { Request } from 'express';
 import { Response } from 'express';
 import { UpdateService } from './update.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -68,5 +69,43 @@ export class UpdateController {
     });
 
     res.on('close', () => sub.unsubscribe());
+  }
+
+  // ── RustDesk client on managed endpoints ──────────────────────────────────
+
+  @Get('rustdesk')
+  async rustdeskStatus(@CurrentUser() user: JwtPayload) {
+    if (!user.isPlatformAdmin) throw new ForbiddenException('Platform admin required');
+    return { success: true, data: await this.updateService.rustdeskStatus() };
+  }
+
+  /**
+   * Stage a RustDesk upgrade. Body { endpointIds } targets specific machines;
+   * omitting it targets every endpoint that is behind. Endpoints already on
+   * the target version are skipped, so this is safe to fire repeatedly.
+   */
+  @Post('rustdesk')
+  @HttpCode(HttpStatus.OK)
+  async requestRustdeskUpdate(
+    @CurrentUser() user: JwtPayload,
+    @Body() body: { endpointIds?: string[] },
+    @Req() req: Request,
+  ) {
+    if (!user.isPlatformAdmin) throw new ForbiddenException('Platform admin required');
+    const data = await this.updateService.requestRustdeskUpdate(
+      Array.isArray(body?.endpointIds) && body.endpointIds.length ? body.endpointIds : null,
+      { userId: user.sub, ip: req.ip },
+    );
+    return { success: true, data };
+  }
+
+  @Post('rustdesk/:endpointId/cancel')
+  @HttpCode(HttpStatus.OK)
+  async cancelRustdeskUpdate(
+    @CurrentUser() user: JwtPayload,
+    @Param('endpointId') endpointId: string,
+  ) {
+    if (!user.isPlatformAdmin) throw new ForbiddenException('Platform admin required');
+    return { success: true, data: await this.updateService.cancelRustdeskUpdate(endpointId) };
   }
 }

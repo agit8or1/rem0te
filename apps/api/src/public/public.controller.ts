@@ -647,6 +647,13 @@ try { \$state = Get-Content 'C:\\ProgramData\\Rem0te\\heartbeat.dat' -Raw | Conv
 try { \$out = & \$RDEXE --get-id 2>\$null | Out-String; if (\$out -match '([0-9]{6,15})') { \$id = \$Matches[1] } } catch {}
 if (-not \$id) { exit 0 }
 \$body = @{ rustdeskId = \$id; hostname = \$env:COMPUTERNAME; platform = 'Windows' }
+# Installed RustDesk version, read from the binary rather than by spawning it.
+# Normalised to three segments: FileVersion reports 1.4.9.0 while the server
+# compares against the GitHub release tag 1.4.9.
+try {
+    \$vi = (Get-Item \$RDEXE -ErrorAction Stop).VersionInfo.FileVersion
+    if (\$vi -match '(\\d+\\.\\d+\\.\\d+)') { \$body['rustdeskVersion'] = \$Matches[1] }
+} catch {}
 # Include the current password so the server can keep its encrypted copy in
 # sync (needed for one-click Connect after any endpoint-side password change).
 if (\$state.password) { \$body['password'] = \$state.password }
@@ -685,6 +692,31 @@ try {
                     \$state | ConvertTo-Json -Compress | Set-Content 'C:\\ProgramData\\Rem0te\\heartbeat.dat' -Encoding UTF8
                 } catch {}
             }
+        }
+    }
+} catch {}
+# Apply a staged RustDesk upgrade. The server keeps sending
+# { updateRustdesk: { targetVersion } } until the endpoint reports that
+# version back, so a failed install retries rather than being lost. Re-running
+# the installer IS the mechanism: it is idempotent, pins the version this
+# server serves, and its only Read-Host is guarded by IsInteractive so it
+# cannot block a SYSTEM task.
+#
+# The 30-minute floor matters. Without it, any install that does not land on
+# exactly the target version becomes a reinstall - and a ~40 MB download -
+# every three minutes, indefinitely.
+try {
+    \$upd = \$resp.data.updateRustdesk
+    if (\$upd -and \$upd.targetVersion) {
+        \$last = \$null
+        try { if (\$state.lastUpdateAttempt) { \$last = [DateTime]\$state.lastUpdateAttempt } } catch {}
+        if (-not \$last -or ((Get-Date) - \$last).TotalMinutes -ge 30) {
+            try {
+                \$state | Add-Member -NotePropertyName lastUpdateAttempt -NotePropertyValue ((Get-Date).ToString('o')) -Force
+                \$state | ConvertTo-Json -Compress | Set-Content 'C:\\ProgramData\\Rem0te\\heartbeat.dat' -Encoding UTF8
+            } catch {}
+            \$iu = 'https://' + \$state.host + '/api/v1/public/install/windows.ps1'
+            try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm '\$iu' | iex" *>\$null } catch {}
         }
     }
 } catch {}

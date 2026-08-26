@@ -576,6 +576,15 @@ model RustdeskNode {
   pendingPassword   String?
   pendingPasswordAt DateTime?
 
+  // RustDesk client update staging, same shape as the rotation protocol above.
+  // The server records a request; the endpoint's next heartbeat response
+  // carries the target version; the endpoint re-runs the installer (which is
+  // idempotent and pins the version the server serves). The request clears
+  // when the endpoint reports `version` matching the target, so a failed
+  // update retries on the next heartbeat instead of being lost.
+  updateRequestedAt   DateTime?
+  updateTargetVersion String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
