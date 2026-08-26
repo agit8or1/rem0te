@@ -116,8 +116,27 @@ if [[ -f "${RUSTDESK_DATA}/id_ed25519.pub" ]]; then
   info "RustDesk public key: ${RUSTDESK_PUBLIC_KEY}"
 fi
 
+# Lock hbbs/hbbr to the server key. Done as systemd drop-ins because the
+# rustdesk-server .deb owns these units — an in-place edit is silently reverted
+# on package upgrade, which would reopen registration and the relay to anyone.
+# Runs after keypair generation above so "-k _" always has id_ed25519.pub to
+# resolve against.
+step "Locking RustDesk to the server key…"
+for D in "${REPO_DIR}/deploy/systemd/"*.service.d; do
+  [[ -d "${D}" ]] || continue
+  UNIT_D="/etc/systemd/system/$(basename "${D}")"
+  install -d -m 755 "${UNIT_D}"
+  for F in "${D}"/*.conf; do
+    sed "s|__DOMAIN__|${DOMAIN}|g" "${F}" > "${UNIT_D}/$(basename "${F}")"
+    chmod 644 "${UNIT_D}/$(basename "${F}")"
+  done
+done
+systemctl daemon-reload
+
 systemctl enable rustdesk-hbbs rustdesk-hbbr
-systemctl start rustdesk-hbbs rustdesk-hbbr || true
+# restart rather than start: the keypair-generation step above may already have
+# left hbbs running with the pre-drop-in ExecStart.
+systemctl restart rustdesk-hbbs rustdesk-hbbr || true
 
 # ─── Caddy ───────────────────────────────────────────────────────────────────
 if ! command -v caddy &>/dev/null; then

@@ -491,10 +491,11 @@ function Get-AllConfigs {
 function Get-ConfigServer([string]$path) {
     $c = Get-Content $path -Raw -ErrorAction SilentlyContinue
     if (-not $c) { return $null }
-    $r = $null; $cs = $null
+    $r = $null; $cs = $null; $k = $null
     if ($c -match 'custom-rendezvous-server\\s*=\\s*[''"]([^''"]+)[''"]') { $cs = $Matches[1] }
     if ($c -match 'rendezvous_server\\s*=\\s*[''"]([^''"]+)[''"]') { $r = $Matches[1] }
-    return [PSCustomObject]@{ path = $path; rendezvous = $r; customRendezvous = $cs }
+    if ($c -match '(?m)^\\s*key\\s*=\\s*[''"]([^''"]*)[''"]') { $k = $Matches[1] }
+    return [PSCustomObject]@{ path = $path; rendezvous = $r; customRendezvous = $cs; key = $k }
 }
 function Verify-AllConfigs {
     $bad = @()
@@ -504,12 +505,17 @@ function Verify-AllConfigs {
         $host_ok = ($s.customRendezvous -eq $REM0TE_HOST)
         # rendezvous_server may be blank on first run or contain host:port
         $rz_ok  = (-not $s.rendezvous) -or ($s.rendezvous -like "$REM0TE_HOST*")
+        # hbbs/hbbr run with -k, so a missing or wrong key means the client is
+        # rejected at registration: RustDesk looks "running" locally but never
+        # appears on the server and the machine is invisible in Rem0te. That is
+        # indistinguishable from "offline" in the UI, so verify it like the host.
+        $key_ok = ($s.key -eq $REM0TE_KEY)
         $public = ($s.rendezvous -match 'rustdesk\\.com') -or ($s.customRendezvous -match 'rustdesk\\.com')
-        if (-not $host_ok -or -not $rz_ok -or $public) {
+        if (-not $host_ok -or -not $rz_ok -or -not $key_ok -or $public) {
             $bad += $s
-            Log ("  BAD: " + $s.path + " -> custom=" + $s.customRendezvous + " rz=" + $s.rendezvous) 'WARN'
+            Log ("  BAD: " + $s.path + " -> custom=" + $s.customRendezvous + " rz=" + $s.rendezvous + " key=" + $(if ($key_ok) { 'ok' } else { 'MISMATCH' })) 'WARN'
         } else {
-            Log ("  OK:  " + $s.path + " -> custom=" + $s.customRendezvous + " rz=" + $s.rendezvous)
+            Log ("  OK:  " + $s.path + " -> custom=" + $s.customRendezvous + " rz=" + $s.rendezvous + " key=ok")
         }
     }
     return $bad
@@ -536,6 +542,10 @@ if ($bad.Count -gt 0) {
     $stillPublic = $bad | Where-Object { ($_.rendezvous -match 'rustdesk\\.com') -or ($_.customRendezvous -match 'rustdesk\\.com') }
     if ($stillPublic) {
         Fail "ERROR: RustDesk still uses a public server after repair. Refusing to report success." 20
+    }
+    $stillBadKey = $bad | Where-Object { $_.key -ne $REM0TE_KEY }
+    if ($stillBadKey) {
+        Fail "ERROR: RustDesk key does not match the server key after repair; hbbs would reject this client. Refusing to report success." 21
     }
 }
 Log "  Server config verified across $((Get-AllConfigs).Count) profile(s)."
