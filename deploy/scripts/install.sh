@@ -461,10 +461,21 @@ reboot ALL=(root) NOPASSWD: /usr/bin/systemctl enable fail2ban
 reboot ALL=(root) NOPASSWD: /usr/bin/systemctl start fail2ban
 reboot ALL=(root) NOPASSWD: /usr/bin/systemctl restart reboot-remote-api reboot-remote-web
 reboot ALL=(root) NOPASSWD: /usr/bin/systemctl reload caddy
+# RustDesk server upgrades from the Updates page. Both paths are fixed, not
+# wildcards: the API downloads the release pair to exactly these two names and
+# dpkg may install nothing else. Both packages go in one call so hbbs and hbbr
+# cannot be left on different versions by a half-failed install.
+reboot ALL=(root) NOPASSWD: /usr/bin/dpkg -i /var/lib/reboot-remote/rustdesk-server/hbbs.deb /var/lib/reboot-remote/rustdesk-server/hbbr.deb
+reboot ALL=(root) NOPASSWD: /usr/bin/systemctl restart rustdesk-hbbs rustdesk-hbbr
 # Deny writing to sudoers via the reboot user under any circumstance
 reboot ALL=(root) NOPASSWD: !/usr/sbin/visudo, !/usr/bin/tee /etc/sudoers*
 EOF
 chmod 440 /etc/sudoers.d/reboot-remote
+
+# Staging directory for the rustdesk-server .deb pair the Updates page installs.
+# Owned by the API user so it can write there; the sudoers rule above is what
+# keeps dpkg pinned to these two filenames.
+install -d -m 750 -o reboot -g reboot /var/lib/reboot-remote/rustdesk-server
 # Validate before deploying so a bad edit cannot lock the server out of sudo
 if ! visudo -c -q -f /etc/sudoers.d/reboot-remote; then
   echo "sudoers file failed syntax check — refusing to leave it in place" >&2

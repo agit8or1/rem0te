@@ -71,6 +71,29 @@ export class UpdateController {
     res.on('close', () => sub.unsubscribe());
   }
 
+  // ── RustDesk server (hbbs / hbbr) ─────────────────────────────────────────
+
+  @Get('rustdesk-server')
+  async rustdeskServerStatus(@CurrentUser() user: JwtPayload) {
+    if (!user.isPlatformAdmin) throw new ForbiddenException('Platform admin required');
+    return { success: true, data: await this.updateService.rustdeskServerStatus() };
+  }
+
+  /**
+   * Upgrade hbbs and hbbr in place. Restarts both, which blanks hbbs's
+   * in-memory online-peer map — endpoints read as offline for roughly 30
+   * seconds afterwards while they re-register.
+   */
+  @Post('rustdesk-server')
+  @HttpCode(HttpStatus.OK)
+  async updateRustdeskServer(@CurrentUser() user: JwtPayload, @Req() req: Request) {
+    if (!user.isPlatformAdmin) throw new ForbiddenException('Platform admin required');
+    return {
+      success: true,
+      data: await this.updateService.updateRustdeskServer({ userId: user.sub, ip: req.ip }),
+    };
+  }
+
   // ── RustDesk client on managed endpoints ──────────────────────────────────
 
   @Get('rustdesk')

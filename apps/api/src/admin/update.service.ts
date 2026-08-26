@@ -455,6 +455,180 @@ export class UpdateService {
     return false;
   }
 
+  // ── RustDesk server (hbbs / hbbr) ─────────────────────────────────────────
+  //
+  // Distinct from both updates above: this is the rendezvous and relay pair
+  // this platform runs, not Rem0te and not the client on an endpoint. It had
+  // no update path at all — install.sh installed it once and every later run
+  // reported "already installed" — so a deployment could sit on a version for
+  // as long as nobody thought to check by hand. That is not hypothetical: the
+  // /ws/id and /ws/relay routes shipped in 0.8.2 were dead on arrival because
+  // 1.1.15 accepts the WebSocket upgrade and immediately drops it, and nothing
+  // surfaced that the server was two releases behind.
+
+  /** Where the .deb pair is staged. Fixed, because the sudoers rule names it. */
+  private readonly rustdeskServerStaging = '/var/lib/reboot-remote/rustdesk-server';
+
+  private rustdeskServerCache: { version: string; fetchedAt: number } | null = null;
+
+  /** Latest rustdesk-server release. Null if GitHub has not been reachable. */
+  private async latestRustdeskServerVersion(): Promise<string | null> {
+    if (this.rustdeskServerCache && Date.now() - this.rustdeskServerCache.fetchedAt < 3600_000) {
+      return this.rustdeskServerCache.version;
+    }
+    const stale = () => this.rustdeskServerCache?.version ?? null;
+    return new Promise((resolve) => {
+      const req = https.get(
+        'https://api.github.com/repos/rustdesk/rustdesk-server/releases/latest',
+        { headers: { 'User-Agent': 'reboot-remote', Accept: 'application/vnd.github.v3+json' } },
+        (res) => {
+          let data = '';
+          res.on('data', (c) => (data += c));
+          res.on('end', () => {
+            try {
+              const tag = String(JSON.parse(data).tag_name ?? '').replace(/^v/, '');
+              if (!/^\d+\.\d+\.\d+$/.test(tag)) return resolve(stale());
+              this.rustdeskServerCache = { version: tag, fetchedAt: Date.now() };
+              resolve(tag);
+            } catch {
+              resolve(stale());
+            }
+          });
+        },
+      );
+      req.on('error', () => resolve(stale()));
+      req.setTimeout(8000, () => { req.destroy(); resolve(stale()); });
+    });
+  }
+
+  /** `hbbs --version` → "1.1.16". Null when the binary is missing or mute. */
+  private installedRustdeskServerVersion(binary: 'hbbs' | 'hbbr'): Promise<string | null> {
+    return new Promise((resolve) => {
+      const proc = spawn(`/usr/bin/${binary}`, ['--version'], { shell: false });
+      let out = '';
+      proc.stdout.on('data', (d: Buffer) => (out += d.toString()));
+      proc.on('error', () => resolve(null));
+      proc.on('close', () => {
+        const m = out.match(/(\d+\.\d+\.\d+)/);
+        resolve(m ? m[1] : null);
+      });
+    });
+  }
+
+  async rustdeskServerStatus() {
+    const [latest, hbbs, hbbr] = await Promise.all([
+      this.latestRustdeskServerVersion(),
+      this.installedRustdeskServerVersion('hbbs'),
+      this.installedRustdeskServerVersion('hbbr'),
+    ]);
+
+    return {
+      latestVersion: latest,
+      hbbs,
+      hbbr,
+      // Both binaries ship from the same release and are meant to match. They
+      // can diverge if one .deb failed to install, which is worth showing
+      // rather than averaging away.
+      mismatched: !!hbbs && !!hbbr && hbbs !== hbbr,
+      // Unknown rather than "outdated" when GitHub is unreachable or the
+      // binaries are missing — the same rule the client table follows.
+      upToDate: latest && hbbs && hbbr
+        ? this.compareVersions(hbbs, latest) >= 0 && this.compareVersions(hbbr, latest) >= 0
+        : null,
+      // WebSocket rendezvous over 443 needs 1.1.16; 1.1.15 accepts the upgrade
+      // then drops the connection, with no error on either side.
+      websocketCapable: hbbs ? this.compareVersions(hbbs, '1.1.16') >= 0 : null,
+    };
+  }
+
+  /**
+   * Download and install the latest rustdesk-server .deb pair, then restart
+   * both units.
+   *
+   * The restart is the part worth warning about: hbbs holds its online-peer
+   * map in memory only, so every endpoint reads as offline until it
+   * re-registers — about 30 seconds — and a Connect attempted inside that
+   * window fails with "the target device is offline or does not exist".
+   */
+  async updateRustdeskServer(actor: { userId?: string; ip?: string }) {
+    const latest = await this.latestRustdeskServerVersion();
+    if (!latest) {
+      throw new NotFoundException('The latest rustdesk-server version is unavailable right now');
+    }
+
+    const status = await this.rustdeskServerStatus();
+    if (status.upToDate && !status.mismatched) {
+      return { updated: false, version: latest, message: `Already on ${latest}.` };
+    }
+
+    const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
+    fs.mkdirSync(this.rustdeskServerStaging, { recursive: true });
+
+    const debs = [
+      { name: 'hbbs.deb', url: `https://github.com/rustdesk/rustdesk-server/releases/download/${latest}/rustdesk-server-hbbs_${latest}_${arch}.deb` },
+      { name: 'hbbr.deb', url: `https://github.com/rustdesk/rustdesk-server/releases/download/${latest}/rustdesk-server-hbbr_${latest}_${arch}.deb` },
+    ];
+
+    for (const deb of debs) {
+      await this.downloadTo(deb.url, path.join(this.rustdeskServerStaging, deb.name));
+    }
+
+    const noop = () => { /* no progress stream on this path */ };
+    // Fixed argument list, matching the sudoers rule exactly. dpkg is given
+    // both packages in one call because hbbs and hbbr must not be left on
+    // different versions if the second install fails.
+    await this.runProc('sudo', [
+      '-n', '/usr/bin/dpkg', '-i',
+      path.join(this.rustdeskServerStaging, 'hbbs.deb'),
+      path.join(this.rustdeskServerStaging, 'hbbr.deb'),
+    ], noop, 'install', 0, 0);
+
+    await this.runProc('sudo', [
+      '-n', '/usr/bin/systemctl', 'restart', 'rustdesk-hbbs', 'rustdesk-hbbr',
+    ], noop, 'restart', 0, 0);
+
+    await this.audit.log({
+      actorId: actor.userId, actorIp: actor.ip,
+      action: 'SETTINGS_UPDATED', resource: 'rustdesk_server', resourceId: 'hbbs+hbbr',
+      meta: { from: `${status.hbbs ?? 'unknown'}/${status.hbbr ?? 'unknown'}`, to: latest },
+    });
+
+    return {
+      updated: true,
+      version: latest,
+      message: `rustdesk-server updated to ${latest}. Endpoints re-register within about 30 seconds.`,
+    };
+  }
+
+  /** Straight HTTPS download to a path, following GitHub's release redirects. */
+  private downloadTo(url: string, target: string): Promise<void> {
+    const tmp = `${target}.part`;
+    return new Promise<void>((resolve, reject) => {
+      const out = fs.createWriteStream(tmp);
+      const get = (u: string, redirects = 0) => {
+        if (redirects > 5) return reject(new Error('Too many redirects'));
+        https.get(u, { headers: { 'User-Agent': 'reboot-remote' } }, (r) => {
+          if (r.statusCode && r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
+            r.resume();
+            return get(r.headers.location, redirects + 1);
+          }
+          if (r.statusCode !== 200) {
+            r.resume();
+            return reject(new Error(`Download failed with HTTP ${r.statusCode} for ${u}`));
+          }
+          r.pipe(out);
+          out.on('finish', () => out.close(() => resolve()));
+        }).on('error', reject);
+      };
+      get(url);
+    })
+      .then(() => { fs.renameSync(tmp, target); })
+      .catch((err) => {
+        try { fs.unlinkSync(tmp); } catch { /* nothing to clean up */ }
+        throw err;
+      });
+  }
+
   // ── RustDesk client updates on managed endpoints ──────────────────────────
   //
   // Separate from the Rem0te self-update above: this tracks the RustDesk
