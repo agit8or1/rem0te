@@ -14,6 +14,7 @@ import {
   Sun,
   Moon,
   Download,
+  HardDriveDownload,
   ShieldCheck,
   Info,
   UserCircle,
@@ -67,7 +68,11 @@ const MAIN_NAV: NavItem[] = [
   { href: '/users', label: 'Users', icon: Users, cap: CAP.USERS_VIEW },
   { href: '/sessions', label: 'Sessions', icon: PlayCircle, cap: CAP.SESSIONS_VIEW },
   { href: '/quick-connect', label: 'Quick Connect', icon: Zap, cap: CAP.QUICK_CONNECT },
-  { href: '/endpoints/enroll', label: 'Downloads', icon: Download, cap: CAP.COMPUTERS_ADD },
+  { href: '/endpoints/enroll', label: 'Enroll Computer', icon: Download, cap: CAP.COMPUTERS_ADD },
+  // Clients for the technician's own machine. Separate from enrolment, which
+  // prepares the computer being supported: the Connect button uses whatever
+  // RustDesk is installed here, so this is where that gets configured.
+  { href: '/downloads', label: 'Downloads', icon: HardDriveDownload },
   { href: '/audit', label: 'Audit Log', icon: FileText, cap: CAP.AUDIT_VIEW },
 ];
 
