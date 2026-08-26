@@ -716,6 +716,41 @@ try {
     Log "  Registered ($registered) as $rdId" 'OK'
 }
 
+# ── Local diagnostics ──────────────────────────────────────────────────────
+# sc.exe start succeeds silently when a service is already stuck or is
+# crash-looping, and rustdesk.exe --get-id reads the config file directly, so
+# it answers even when the service is dead. Between them an install can look
+# completely healthy while nothing is listening or dialling out. Capture the
+# facts that actually discriminate, and print them on failure.
+function Test-Port([int]$port) {
+    try {
+        $c = New-Object Net.Sockets.TcpClient
+        $iar = $c.BeginConnect($REM0TE_HOST, $port, $null, $null)
+        $ok = $iar.AsyncWaitHandle.WaitOne(5000, $false)
+        $r = ($ok -and $c.Connected)
+        $c.Close()
+        return $r
+    } catch { return $false }
+}
+function Get-RustdeskDiag {
+    $out = @()
+    try {
+        $q = (& sc.exe query RustDesk 2>&1 | Out-String)
+        if ($q -match 'STATE\\s+:\\s+\\d+\\s+(\\w+)') { $out += 'service state: ' + $Matches[1] }
+        else { $out += 'service state: NOT INSTALLED (sc.exe query returned no STATE)' }
+    } catch { $out += 'service state: query failed' }
+    try { $out += 'rustdesk processes running: ' + @(Get-Process rustdesk -ErrorAction SilentlyContinue).Count } catch {}
+    $out += 'tcp 443 (heartbeat/websocket): ' + $(if (Test-Port 443) { 'open' } else { 'BLOCKED' })
+    $out += 'tcp 21116 (rendezvous): ' + $(if (Test-Port 21116) { 'open' } else { 'BLOCKED' })
+    try {
+        $ev = Get-EventLog -LogName Application -Source RustDesk -Newest 3 -ErrorAction SilentlyContinue
+        foreach ($e in $ev) { $out += 'event: ' + $e.TimeGenerated + ' ' + ($e.Message -replace '\\s+',' ').Substring(0, [Math]::Min(160, $e.Message.Length)) }
+    } catch {}
+    return $out
+}
+$diag = Get-RustdeskDiag
+foreach ($d in $diag) { Log ('  ' + $d) }
+
 # ── Verify RustDesk actually reached the server ────────────────────────────
 # Config-on-disk and a Rem0te heartbeat both prove nothing about the path that
 # actually matters. RustDesk can be perfectly configured, heartbeat happily
@@ -760,11 +795,13 @@ ERROR: RustDesk never reached $REM0TE_HOST.
   Rem0te API over 443. But the server has never seen this device register,
   so remote control cannot work and Connect will fail.
 
-  That almost always means outbound traffic to the rendezvous server is
-  blocked, or the RustDesk service is not actually running. Check:
-    sc.exe query RustDesk
-    Test-NetConnection $REM0TE_HOST -Port 443
-    Test-NetConnection $REM0TE_HOST -Port 21116
+  Local diagnostics:
+$(($diag | ForEach-Object { '    ' + $_ }) -join [Environment]::NewLine)
+
+  If the service state is not RUNNING, that is the cause - RustDesk is not
+  dialling out at all. If it IS running and 21116 is BLOCKED while 443 is
+  open, outbound filtering is the cause and the WebSocket route should have
+  been used; check allow-websocket in the config files listed above.
 
   Refusing to report success for a device nobody can connect to.
 "@ 22
