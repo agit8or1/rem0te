@@ -296,10 +296,49 @@ journalctl -u reboot-remote-web -n 50
 sudo -u postgres psql -c "\l"   # list databases
 ```
 
-**RustDesk clients can't connect:**
+**RustDesk clients can't connect** — *"the target device is offline or does not exist"*:
+
+That message is hbbs's answer, not Rem0te's. The green dot on the Computers page
+is Rem0te's own 3-minute HTTP heartbeat; RustDesk registers with hbbs separately,
+and a Connect uses only the second one. They disagree more often than you would
+think, and hbbs logs nothing at all when a punch-hole fails. Ask it directly:
+
+```bash
+sudo deploy/scripts/hbbs-probe.py <rustdesk-id>          # native, TCP 21116
+sudo deploy/scripts/hbbs-probe.py <rustdesk-id> --ws \
+     --host your.domain.example                          # the wss://…/ws/id path on 443
+```
+
+| Verdict | What it means |
+|---------|---------------|
+| `ONLINE` | hbbs has the peer and handed back a connection path — the server side is fine, look at the *viewer* |
+| `OFFLINE` | hbbs knows the ID but has no live registration for it right now |
+| `ID_NOT_EXIST` | hbbs has never seen this ID |
+| `LICENSE_MISMATCH` | the key does not match the one hbbs was started with |
+
+- **`ONLINE`, but Connect still fails.** The connecting client is not talking to
+  your server. A RustDesk client that auto-updates to a stock build from
+  rustdesk.com loses its embedded configuration and falls back to the public
+  rendezvous servers, where your IDs do not exist — which produces this exact
+  message. Check Settings → Network → ID/Relay Server on the *technician's*
+  machine, not the endpoint's.
+- **`OFFLINE` right after an hbbs restart is normal.** The online-peer map lives
+  in memory only, so every endpoint reads as offline until it re-registers
+  (~30 seconds). Any package upgrade or `systemctl restart rustdesk-hbbs` opens
+  that window. Wait half a minute and probe again before treating it as a fault.
+- **`ID_NOT_EXIST` for an endpoint you enrolled.** The endpoint's RustDesk is
+  registering somewhere else — re-run the installer on it. Installs from before
+  v0.8.2 wrote the service config to a path RustDesk never reads, leaving the
+  service on defaults pointing at rustdesk.com.
 - Confirm ports 21115–21117 are open in your firewall and cloud security group
 - Confirm the relay host and public key in Rem0te Settings → RustDesk match the server
 - Check `systemctl status rustdesk-hbbs rustdesk-hbbr`
+
+**Endpoints on a network that only allows 443:** hbbs and hbbr also speak the
+rendezvous protocol over WebSocket, and Caddy proxies `/ws/id` and `/ws/relay`
+to them. This needs **rustdesk-server 1.1.16 or newer** — 1.1.15 accepts the
+upgrade and immediately drops the connection. Check with
+`hbbs --version`, and verify the path end to end with `hbbs-probe.py --ws`.
 
 **Reset admin password:**
 ```bash
