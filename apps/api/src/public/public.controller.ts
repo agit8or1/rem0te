@@ -365,7 +365,15 @@ Step 3 6 "Configuring server ($REM0TE_HOST)..."
 # Stop the service so the CLI writes directly to the config, not via a running-service IPC race.
 Stop-Rustdesk
 
-$svcDir = 'C:\\Windows\\ServiceProfiles\\LocalSystem\\AppData\\Roaming\\RustDesk\\config'
+# RustDesk's service stores its data under ServiceProfiles\LocalService even
+# though the service runs as LocalSystem — confirmed from the log path it
+# actually writes (…\ServiceProfiles\LocalService\AppData\Roaming\RustDesk\log).
+# This previously said \LocalSystem, which is not a real Windows profile (that
+# tree holds LocalService and NetworkService), so the write landed in a
+# directory nothing reads. The service therefore ran on a DEFAULT config
+# pointing at the public rustdesk.com rendezvous while every check here passed,
+# and the machine never contacted our hbbs at all.
+$svcDir = 'C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Roaming\\RustDesk\\config'
 $sysDir = 'C:\\Windows\\System32\\config\\systemprofile\\AppData\\Roaming\\RustDesk\\config'
 
 # Wipe any pre-existing RustDesk2.toml that might be pointing at public rustdesk.com
@@ -465,13 +473,20 @@ Get-Process -Name rustdesk -ErrorAction SilentlyContinue | Where-Object { $_.Ses
 $rnd = New-Object byte[] 24
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($rnd)
 $PERM_PW = [Convert]::ToBase64String($rnd).Replace('+','A').Replace('/','B').Replace('=','').Substring(0,20)
-& $RDEXE --password $PERM_PW *>$null
 
 # ── [4/6] Start service and verify config ──────────────────────────────────
 Step 4 6 'Starting service...'
 & sc.exe config RustDesk start= auto 2>$null | Out-Null
 & sc.exe start RustDesk 2>$null | Out-Null
 Start-Sleep -Seconds 4
+
+# Set the permanent password only now. --password talks to the RUNNING service
+# over IPC so the credential lands in the service's own profile; run with the
+# service stopped it writes into the *calling user's* profile instead, which
+# the service never reads. Rem0te then hands out a password the endpoint never
+# had and one-click Connect fails with "wrong password".
+& $RDEXE --password $PERM_PW *>$null
+Start-Sleep -Seconds 1
 
 # Verify effective config across EVERY RustDesk2.toml the OS knows about —
 # not just $env:APPDATA. Detects service-vs-user divergence (service configured
