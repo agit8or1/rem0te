@@ -740,6 +740,36 @@ function Get-RustdeskDiag {
         else { $out += 'service state: NOT INSTALLED (sc.exe query returned no STATE)' }
     } catch { $out += 'service state: query failed' }
     try { $out += 'rustdesk processes running: ' + @(Get-Process rustdesk -ErrorAction SilentlyContinue).Count } catch {}
+    # Which account the service runs as decides which profile RustDesk reads its
+    # config from. We write SYSTEM's profile (System32\\config\\systemprofile);
+    # if the service runs as LOCAL SERVICE or a named account it is reading a
+    # config we never wrote, which looks exactly like this: service RUNNING,
+    # files on disk perfect, and nothing ever dialled out.
+    try {
+        $qc = (& sc.exe qc RustDesk 2>&1 | Out-String)
+        foreach ($ln in ($qc -split '\\r?\\n')) {
+            if ($ln -match 'SERVICE_START_NAME|BINARY_PATH_NAME') { $out += 'sc qc: ' + $ln.Trim() }
+        }
+    } catch {}
+    # RustDesk's own log is the only place that says which rendezvous server the
+    # RUNNING process actually picked up, and why a connection failed.
+    $logDirs = @(
+        'C:\\Windows\\System32\\config\\systemprofile\\AppData\\Roaming\\RustDesk\\log',
+        'C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Roaming\\RustDesk\\log',
+        'C:\\Windows\\ServiceProfiles\\NetworkService\\AppData\\Roaming\\RustDesk\\log',
+        (Join-Path $env:APPDATA 'RustDesk\\log')
+    )
+    foreach ($ld in $logDirs) {
+        try {
+            if (-not (Test-Path $ld)) { continue }
+            $f = Get-ChildItem $ld -Filter *.log -Recurse -ErrorAction SilentlyContinue |
+                 Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($f) {
+                $out += 'log ' + $f.FullName + ' (' + $f.LastWriteTime + '):'
+                foreach ($l in (Get-Content $f.FullName -Tail 8 -ErrorAction SilentlyContinue)) { $out += '    ' + $l }
+            }
+        } catch {}
+    }
     $out += 'tcp 443 (heartbeat/websocket): ' + $(if (Test-Port 443) { 'open' } else { 'BLOCKED' })
     $out += 'tcp 21116 (rendezvous): ' + $(if (Test-Port 21116) { 'open' } else { 'BLOCKED' })
     try {
