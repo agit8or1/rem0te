@@ -197,7 +197,38 @@ export class LauncherService {
       targetRustdeskId: record.targetRustdeskId,
       targetEndpointId: record.targetEndpointId,
       sessionId: record.supportSessionId,
+      rustdeskConfig: await this.rustdeskLaunchConfig(),
     };
+  }
+
+  /**
+   * Base64 `host=…,key=…,api=,relay=…` for `rustdesk --config <b64>`.
+   *
+   * The launcher used to spawn `rustdesk --connect <id>` and nothing else,
+   * which quietly assumed the technician's RustDesk was already pointed at
+   * this server. A stock client — a fresh install, or an auto-update that
+   * replaced a Rem0te-configured build — talks to rustdesk.com's public
+   * rendezvous instead, where our IDs do not exist, and RustDesk reports that
+   * as "the target device is offline or does not exist". The endpoint looks
+   * broken when nothing is wrong with it. Pointing the client at this server
+   * on every launch is the only way the deep link can be self-contained.
+   *
+   * Same encoding the installer uses (see public.controller buildWindowsScript)
+   * so both paths configure a client identically. Null when the platform has
+   * no relay host configured, which the launcher treats as "connect anyway".
+   */
+  private async rustdeskLaunchConfig(): Promise<string | null> {
+    const settings = await this.prisma.tenantSettings.findFirst({
+      select: { rustdeskRelayHost: true, rustdeskPublicKey: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    const host = settings?.rustdeskRelayHost ?? '';
+    const key = settings?.rustdeskPublicKey ?? '';
+    // Refuse to build a config out of a malformed setting rather than handing
+    // RustDesk something it will parse into a half-applied server address.
+    if (!/^[a-zA-Z0-9._-]{1,253}$/.test(host)) return null;
+    if (key && !/^[A-Za-z0-9+/]{16,512}={0,2}$/.test(key)) return null;
+    return Buffer.from(`host=${host},key=${key},api=,relay=${host}`, 'utf8').toString('base64');
   }
 
   /** Revoke an outstanding launcher token. Only its issuer's business may. */
