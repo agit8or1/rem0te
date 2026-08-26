@@ -83,15 +83,39 @@ fi
 step "Installing RustDesk Server (hbbs + hbbr)…"
 RUSTDESK_DATA="/var/lib/rustdesk-server"
 
-if ! command -v hbbs &>/dev/null; then
-  RUSTDESK_VERSION=$(curl -s https://api.github.com/repos/rustdesk/rustdesk-server/releases/latest \
-    | grep '"tag_name"' | head -1 | cut -d'"' -f4)
-  RUSTDESK_VERSION="${RUSTDESK_VERSION:-1.1.15}"
+# Latest rustdesk-server release, validated before it is interpolated into a
+# download URL: an unexpected tag ("v1.1.16", an API error body, an empty
+# string) would otherwise produce a 404 that wget swallows and dpkg reports as
+# a corrupt archive, several steps away from the actual cause.
+RUSTDESK_VERSION=$(curl -s https://api.github.com/repos/rustdesk/rustdesk-server/releases/latest \
+  | grep '"tag_name"' | head -1 | cut -d'"' -f4 | sed 's/^v//')
+[[ "${RUSTDESK_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || RUSTDESK_VERSION="1.1.16"
 
+INSTALLED_RUSTDESK=""
+command -v hbbs &>/dev/null && INSTALLED_RUSTDESK=$(hbbs --version 2>/dev/null | awk '{print $NF}')
+
+# Re-running this script used to leave an existing hbbs untouched at whatever
+# version first installed it, however old. That is how a deployment sat on
+# 1.1.15 long after 1.1.16 shipped — and 1.1.15 accepts the WebSocket upgrade
+# on 21118/21119 then immediately drops the connection, so the /ws/id and
+# /ws/relay routes Caddy serves for port-restricted sites were dead with no
+# error anywhere to say why. Converge to the release this script targets.
+if [[ -z "${INSTALLED_RUSTDESK}" ]] \
+   || [[ "$(printf '%s\n' "${INSTALLED_RUSTDESK}" "${RUSTDESK_VERSION}" | sort -V | head -1)" != "${RUSTDESK_VERSION}" \
+         && "${INSTALLED_RUSTDESK}" != "${RUSTDESK_VERSION}" ]]; then
   ARCH="amd64"
   [[ "$(uname -m)" == "aarch64" ]] && ARCH="arm64"
 
-  info "Downloading rustdesk-server v${RUSTDESK_VERSION} (.deb)…"
+  if [[ -n "${INSTALLED_RUSTDESK}" ]]; then
+    # dpkg restarts hbbs, and hbbs keeps its online-peer map in memory only, so
+    # every endpoint reads as offline until its next registration (~30s). A
+    # Connect attempt inside that window fails with "the target device is
+    # offline or does not exist" and looks exactly like a broken endpoint.
+    info "Upgrading rustdesk-server ${INSTALLED_RUSTDESK} → ${RUSTDESK_VERSION} (endpoints re-register within ~30s)…"
+  else
+    info "Downloading rustdesk-server v${RUSTDESK_VERSION} (.deb)…"
+  fi
+
   wget -q -O /tmp/rustdesk-hbbs.deb \
     "https://github.com/rustdesk/rustdesk-server/releases/download/${RUSTDESK_VERSION}/rustdesk-server-hbbs_${RUSTDESK_VERSION}_${ARCH}.deb"
   wget -q -O /tmp/rustdesk-hbbr.deb \
@@ -100,7 +124,7 @@ if ! command -v hbbs &>/dev/null; then
   DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/rustdesk-hbbs.deb /tmp/rustdesk-hbbr.deb
   rm -f /tmp/rustdesk-hbbs.deb /tmp/rustdesk-hbbr.deb
 else
-  info "RustDesk server already installed ($(hbbs --version 2>/dev/null || echo 'unknown version'))."
+  info "RustDesk server already at ${INSTALLED_RUSTDESK}."
 fi
 
 # Start hbbs briefly to generate keypair if not already generated
