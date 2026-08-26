@@ -212,6 +212,8 @@ Regenerated automatically from the running v0.8.x UI via Playwright (`node apps/
 | Sessions | ![](docs/screenshots/sessions-light.png) | ![](docs/screenshots/sessions-dark.png) |
 | Quick Connect | ![](docs/screenshots/quick-connect-light.png) | ![](docs/screenshots/quick-connect-dark.png) |
 | Quick Connect (public `/quick`) | ![](docs/screenshots/quick-public-light.png) | ![](docs/screenshots/quick-public-dark.png) |
+| Downloads | ![](docs/screenshots/downloads-light.png) | ![](docs/screenshots/downloads-dark.png) |
+| Updates | ![](docs/screenshots/updates-light.png) | ![](docs/screenshots/updates-dark.png) |
 | Audit Log | ![](docs/screenshots/audit-light.png) | ![](docs/screenshots/audit-dark.png) |
 | My Account | ![](docs/screenshots/account-light.png) | ![](docs/screenshots/account-dark.png) |
 

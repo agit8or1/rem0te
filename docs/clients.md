@@ -51,6 +51,9 @@ Connect button's `rustdesk://` link would work directly too.
 
 ## Technician clients — Rem0te → Downloads
 
+![Downloads](screenshots/downloads-light.png)
+
+
 These are for the computer you connect **from**. They are authenticated; only
 signed-in users can fetch them.
 

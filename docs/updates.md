@@ -12,6 +12,8 @@ separately, from different places, and confusing them wastes time.
 All three live at **/about** in the UI, reachable from the sidebar as
 **Updates** (Platform Admin only).
 
+![Updates](screenshots/updates-light.png)
+
 ---
 
 ## Rem0te itself

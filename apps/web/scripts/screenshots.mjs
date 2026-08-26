@@ -44,6 +44,11 @@ const PAGES = [
   { path: '/users',            name: 'users' },
   { path: '/sessions',         name: 'sessions' },
   { path: '/quick-connect',    name: 'quick-connect' },
+  // Clients for the technician's own machine, and the three-way update surface
+  // (Rem0te, the RustDesk clients on endpoints, and hbbs/hbbr). Both are new
+  // enough that nothing in the docs showed them.
+  { path: '/downloads',        name: 'downloads' },
+  { path: '/about',            name: 'updates' },
   { path: '/audit',            name: 'audit' },
   { path: '/account',          name: 'account' },
 ];
@@ -155,6 +160,37 @@ async function main() {
   }
   console.log(`Seeded ${demoBusinessIds.length} businesses, ${demoUserIds.length} people, ${demoEndpointIds.length} computers`);
 
+  // The Downloads page and Quick Connect both render an "not configured yet"
+  // warning until a RustDesk relay host is set, which is an accurate but
+  // useless thing to show in documentation. Fictional host and key — the key
+  // is only ever echoed back into a filename here, never used to reach
+  // anything.
+  const priorSettings = await prisma.tenantSettings.findFirst({
+    where: { tenantId: tenant.id },
+    select: { id: true, rustdeskRelayHost: true, rustdeskRelayPort: true, rustdeskPublicKey: true },
+  });
+  const DEMO_RELAY_HOST = 'remote.example.net';
+  const DEMO_RELAY_KEY = 'YmFzZTY0ZXhhbXBsZWtleWZvcmRvY3Nvbmx5bm90cmVhbA=';
+  if (priorSettings) {
+    await prisma.tenantSettings.update({
+      where: { id: priorSettings.id },
+      data: {
+        rustdeskRelayHost: DEMO_RELAY_HOST,
+        rustdeskRelayPort: 21116,
+        rustdeskPublicKey: DEMO_RELAY_KEY,
+      },
+    });
+  } else {
+    await prisma.tenantSettings.create({
+      data: {
+        tenantId: tenant.id,
+        rustdeskRelayHost: DEMO_RELAY_HOST,
+        rustdeskRelayPort: 21116,
+        rustdeskPublicKey: DEMO_RELAY_KEY,
+      },
+    });
+  }
+
   // Quick Connect must be on for its pages to render anything useful.
   const priorQuickConnect =
     (await prisma.platformSettings.findUnique({ where: { id: 'singleton' } }))?.quickConnectEnabled ?? false;
@@ -244,6 +280,18 @@ async function main() {
       await prisma.platformSettings.update({
         where: { id: 'singleton' }, data: { quickConnectEnabled: priorQuickConnect },
       });
+      // Put the real relay settings back. Leaving a documentation hostname in
+      // place would point every generated installer at nowhere.
+      if (priorSettings) {
+        await prisma.tenantSettings.update({
+          where: { id: priorSettings.id },
+          data: {
+            rustdeskRelayHost: priorSettings.rustdeskRelayHost,
+            rustdeskRelayPort: priorSettings.rustdeskRelayPort,
+            rustdeskPublicKey: priorSettings.rustdeskPublicKey,
+          },
+        });
+      }
       const allUsers = [admin.id, ...demoUserIds];
       await prisma.computerAccess.deleteMany({ where: { userId: { in: allUsers } } });
       await prisma.connectionGrant.deleteMany({ where: { userId: { in: allUsers } } });
