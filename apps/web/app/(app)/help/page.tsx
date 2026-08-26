@@ -211,44 +211,101 @@ const SECTIONS: Section[] = [
   },
   {
     id: 'connect-flow',
-    title: 'The Connect Flow (Support Side)',
+    title: 'Connecting to a Computer',
     content: (
       <div className="space-y-3 text-sm text-muted-foreground">
         <ol className="list-decimal pl-5 space-y-2">
           <li>
-            Go to{' '}
-            <Link href="/quick-connect" className="underline text-foreground">
-              Connect
+            Open{' '}
+            <Link href="/endpoints" className="underline text-foreground">
+              Computers
             </Link>{' '}
-            in the sidebar.
+            (or{' '}
+            <Link href="/my-computers" className="underline text-foreground">
+              My Computers
+            </Link>
+            ) and click <strong className="text-foreground">Connect</strong>.
           </li>
           <li>
-            <strong className="text-foreground">Ad-hoc tab</strong> — Enter the user&apos;s 9-digit
-            RustDesk ID (they read it from their RustDesk app). Optionally add a contact name and
-            issue description for the session log.
+            Your browser downloads a small file named for that machine. Run it. It uses the
+            RustDesk already on your computer — or fetches a portable copy once — points it at
+            this server, and opens the session with the password applied.
           </li>
           <li>
-            <strong className="text-foreground">Managed Endpoint tab</strong> — Select an enrolled
-            endpoint from the dropdown. No need to ask the user for their ID.
-          </li>
-          <li>
-            Click <strong className="text-foreground">Connect</strong>. A session record is created
-            and a RustDesk deep-link button appears.
-          </li>
-          <li>
-            Click <strong className="text-foreground">Open in RustDesk</strong>. RustDesk must be
-            installed on your computer. It will open and attempt to connect.
-          </li>
-          <li>
-            The remote user sees an &quot;Accept&quot; prompt. Once they accept, the session starts.
+            It installs nothing, needs no elevation, and deletes itself afterwards because it
+            carries a live credential.
           </li>
         </ol>
+        <p>
+          <strong className="text-foreground">Why a file and not a link?</strong> A{' '}
+          <code className="font-mono text-xs">rustdesk://</code> link is routed by Windows to
+          whichever RustDesk is installed, using whatever server <em>that</em> client is set to —
+          and the URI scheme has no field for a server address. A client that has never been told
+          about this server asks rustdesk.com instead, is told the ID does not exist, and reports{' '}
+          <em>&ldquo;the target device is offline or does not exist&rdquo;</em> about a computer
+          that is online. The script configures the client first, so it works the first time on a
+          machine that has never seen this server.
+        </p>
+        <p>
+          For an unattended person with nothing installed, use{' '}
+          <Link href="/quick-connect" className="underline text-foreground">
+            Quick Connect
+          </Link>{' '}
+          instead — they run a self-configuring client and read you its 9-digit ID.
+        </p>
         <p>
           All sessions are logged under{' '}
           <Link href="/sessions" className="underline text-foreground">
             Sessions
           </Link>
-          . You can mark a session as complete and add notes when finished.
+          .
+        </p>
+      </div>
+    ),
+  },
+  {
+    id: 'connect-troubleshooting',
+    title: 'Connect Says the Computer Is Offline',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          That message comes from RustDesk, not Rem0te, and it usually means the client{' '}
+          <em>you are connecting from</em> is asking a different rendezvous server — not that
+          anything is wrong with the computer you are connecting to.
+        </p>
+        <ul className="list-disc pl-5 space-y-2">
+          <li>
+            <strong className="text-foreground">Quit RustDesk completely first</strong> — from the
+            system tray, not just the window. A running client will not pick up a configuration
+            change.
+          </li>
+          <li>
+            <strong className="text-foreground">Uninstalling RustDesk does not clear its
+            settings.</strong> <code className="font-mono text-xs">%APPDATA%\RustDesk</code>{' '}
+            survives, and a fresh install reads the old server back out of it.
+          </li>
+          <li>
+            Click <strong className="text-foreground">Connect</strong> again and run the file. It
+            reapplies the configuration every time.
+          </li>
+          <li>
+            To prepare a machine in advance, use{' '}
+            <Link href="/downloads" className="underline text-foreground">
+              Downloads
+            </Link>{' '}
+            → <em>Set up this computer for Connect</em>.
+          </li>
+        </ul>
+        <p>
+          Every run writes a log to{' '}
+          <code className="font-mono text-xs">%LOCALAPPDATA%\Rem0te\rem0te-last-run.log</code>,
+          which survives the window closing.
+        </p>
+        <p>
+          Server-side, an administrator can ask the rendezvous server directly with{' '}
+          <code className="font-mono text-xs">deploy/scripts/hbbs-probe.py &lt;id&gt;</code>. It
+          reports ONLINE / OFFLINE / ID_NOT_EXIST / LICENSE_MISMATCH, which are four different
+          problems that look identical from here.
         </p>
       </div>
     ),
@@ -395,6 +452,27 @@ export default function HelpPage() {
           );
         })}
       </div>
+
+      <Card>
+        <CardContent className="space-y-2 pt-5 text-sm text-muted-foreground">
+          <p className="font-medium text-foreground">Full documentation</p>
+          <p>
+            The complete reference lives with the source — installation and operations, the
+            connect paths and their failure modes, every client Rem0te hands out, the update
+            procedures, architecture, and the access-control model.
+          </p>
+          <p>
+            <a
+              href="https://github.com/agit8or1/rem0te/tree/main/docs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline text-foreground"
+            >
+              github.com/agit8or1/rem0te/tree/main/docs
+            </a>
+          </p>
+        </CardContent>
+      </Card>
 
       <p className="text-xs text-muted-foreground pt-2">
         Need to get set up from scratch?{' '}

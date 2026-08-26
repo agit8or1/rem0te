@@ -15,6 +15,7 @@ import {
   Moon,
   Download,
   HardDriveDownload,
+  BookOpen,
   ShieldCheck,
   Info,
   UserCircle,
@@ -74,6 +75,10 @@ const MAIN_NAV: NavItem[] = [
   // RustDesk is installed here, so this is where that gets configured.
   { href: '/downloads', label: 'Downloads', icon: HardDriveDownload },
   { href: '/audit', label: 'Audit Log', icon: FileText, cap: CAP.AUDIT_VIEW },
+  // The in-app documentation was reachable from exactly one place — a link at
+  // the bottom of the Quick Start wizard — which meant that in practice nobody
+  // found it.
+  { href: '/help', label: 'Help & Docs', icon: BookOpen },
 ];
 
 /**
