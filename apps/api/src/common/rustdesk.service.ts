@@ -64,6 +64,35 @@ export class RustdeskService {
     return { host, key, configB64: Buffer.from(plain, 'utf8').toString('base64') };
   }
   /**
+   * Join PowerShell statements with "; ", refusing anything the join would
+   * silently corrupt.
+   *
+   * A semicolon terminates a statement, so a continuation keyword that starts
+   * its own element stops being a continuation. `if (...) { }` and
+   * `else { }` as two elements become `if (...) { }; else { }`, and PowerShell
+   * reports the perfectly accurate but thoroughly unhelpful "The term 'else'
+   * is not recognized as the name of a cmdlet". Shipped exactly that once.
+   *
+   * Brace balance does not catch it — the braces balance fine. This does, at
+   * build time, in a place with a stack trace, instead of in a console window
+   * on someone else's machine. Any statement needing a continuation keyword
+   * must be built as a single element with its keyword inline.
+   */
+  private joinPs(statements: string[]): string {
+    const CONTINUATIONS = /^(else|elseif|catch|finally|until)\b/;
+    for (const stmt of statements) {
+      if (CONTINUATIONS.test(stmt.trim())) {
+        throw new Error(
+          `PowerShell statement starts with a continuation keyword and would be ` +
+          `orphaned by the "; " join: ${stmt.slice(0, 60)}. Build it as one ` +
+          `statement with its if/try inline.`,
+        );
+      }
+    }
+    return statements.join('; ');
+  }
+
+  /**
    * PowerShell that leaves `$rd` holding a runnable rustdesk.exe.
    *
    * Three tiers, cheapest first:
@@ -99,14 +128,21 @@ export class RustdeskService {
     // which of the two builds ends up cached.
     const sources = `@('${clientDownloadUrl}', '${githubUrl}')`;
 
-    const fetch = [
+    const fetch = this.joinPs([
       `$dir = Join-Path $env:LOCALAPPDATA 'Rem0te'`,
       `New-Item -ItemType Directory -Force -Path $dir | Out-Null`,
       `$rd = Join-Path $dir 'rustdesk.exe'`,
       // Size check as well as existence: a transfer killed part-way leaves a
       // file that exists and cannot run, and the retry would skip it forever.
-      `if ((Test-Path $rd) -and ((Get-Item $rd).Length -gt 20000000)) { Write-Host 'Using the RustDesk already cached for Rem0te.' }`,
-      `else { ${[
+      //
+      // Two independent `if`s rather than if/else. Every statement here is
+      // joined with "; ", and a semicolon terminates an if-statement — so
+      // `if (...) { }; else { }` parses as a bare `else`, which PowerShell
+      // reports as "The term 'else' is not recognized as the name of a
+      // cmdlet". joinPs() below refuses to emit that shape at all.
+      `$cached = (Test-Path $rd) -and ((Get-Item $rd).Length -gt 20000000)`,
+      `if ($cached) { Write-Host 'Using the RustDesk already cached for Rem0te.' }`,
+      `if (-not $cached) { ${this.joinPs([
         `Write-Host 'Fetching RustDesk (one time, about 24 MB)...'`,
         `$part = $rd + '.part'`,
         `$ok = $false`,
@@ -116,15 +152,15 @@ export class RustdeskService {
         `$ProgressPreference = $prev`,
         `if (-not $ok) { Write-Host 'Could not download RustDesk. Check this computer can reach the internet.'; Read-Host 'Press Enter to close'; exit 1 }`,
         `Move-Item -Force $part $rd`,
-      ].join('; ')} }`,
-    ].join('; ');
+      ])} }`,
+    ]);
 
-    return [
+    return this.joinPs([
       `$paths = @($env:ProgramFiles + '\\RustDesk\\rustdesk.exe', ${'${env:ProgramFiles(x86)}'} + '\\RustDesk\\rustdesk.exe')`,
       `$rd = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1`,
       `if (-not $rd) { $rd = (Get-Command rustdesk.exe -ErrorAction SilentlyContinue).Source }`,
       `if (-not $rd) { ${fetch} }`,
-    ].join('; ');
+    ]);
   }
 
   /**
@@ -146,13 +182,13 @@ export class RustdeskService {
    * `C:\\Users`.
    */
   private withErrorReporting(body: string): string {
-    return [
+    return this.joinPs([
       `$ErrorActionPreference = 'Stop'`,
       `$dir = Join-Path $env:LOCALAPPDATA 'Rem0te'`,
       `New-Item -ItemType Directory -Force -Path $dir | Out-Null`,
       `$log = Join-Path $dir 'rem0te-last-run.log'`,
       `try { Start-Transcript -Path $log -Force | Out-Null } catch { }`,
-      `try { ${body} } catch { ${[
+      `try { ${body} } catch { ${this.joinPs([
         `Write-Host ''`,
         `Write-Host ('ERROR: ' + $_.Exception.Message)`,
         // Deliberately NOT $_.InvocationInfo.Line: the whole script is a
@@ -165,9 +201,9 @@ export class RustdeskService {
         `try { Stop-Transcript | Out-Null } catch { }`,
         `Read-Host 'Press Enter to close'`,
         `exit 1`,
-      ].join('; ')} }`,
+      ])} }`,
       `try { Stop-Transcript | Out-Null } catch { }`,
-    ].join('; ');
+    ]);
   }
 
   /**
