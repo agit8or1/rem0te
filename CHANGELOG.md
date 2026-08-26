@@ -5,7 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased]
+## [0.9.0] — 2026-08-26 · *Ledger*
 
 The Connect button assumed something it never checked, and hbbs had been left
 behind by an installer that only ever installed.
@@ -130,6 +130,41 @@ behind by an installer that only ever installed.
   hbbr with `-k` and noted that a stranger's peer had registered itself during
   the window when they ran open; the row itself was never deleted. It is gone,
   and it no longer resolves. Existing backup taken first.
+
+### Added
+
+- **Client downloads for the technician's own machine.** Quick Connect always
+  covered the customer's side; the computer doing the supporting had nothing,
+  which is the gap that made Connect look broken. New **Downloads** page with a
+  setup script, a preconfigured client, and stock unconfigured RustDesk. The
+  sidebar entry previously called "Downloads" pointed at the endpoint enrolment
+  wizard and is now called **Enroll Computer**.
+
+- **The in-app documentation is reachable.** `/help` existed, and was linked
+  from exactly one place: the bottom of the Quick Start wizard. It is a sidebar
+  entry now, its Connect section has been rewritten to describe the flow that
+  actually exists, and it carries a section for the failure people hit —
+  "Connect says the computer is offline" — plus a pointer to the full reference
+  in `docs/`.
+
+- **Screenshots for Downloads and Updates**, and the whole set regenerated. The
+  pipeline now seeds a RustDesk relay host for the run and restores the real one
+  afterwards; without it the Downloads page documents its own unconfigured
+  state.
+
+### Fixed
+
+- **The Connect script, four times.** Each fix exposed the next, and all four
+  are worth recording because three of them were introduced by the fix before:
+  the RustDesk installer blocked on a UAC prompt behind the console window; the
+  24 MB download ran on every connect and rendered a per-chunk progress bar that
+  cost more than the transfer; joining PowerShell statements with `"; "`
+  orphaned an `else`, breaking every generated script; and two attempts to
+  configure the client by means other than its filename both failed silently,
+  each leaving it talking to rustdesk.com and reporting a healthy endpoint as
+  offline. `joinPs()` now refuses to emit a continuation keyword after a
+  semicolon at build time, and the client is configured the way Quick Connect
+  has always done it — by the name it is saved under.
 
 ---
 
