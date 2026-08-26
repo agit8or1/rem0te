@@ -141,7 +141,9 @@ export default function EndpointsPage() {
                         )}
                       </td>
                       <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                        {(ep.rustdeskId as string) ?? '—'}
+                        {/* The API nests this under rustdeskNode; reading ep.rustdeskId
+                            left the column permanently blank. */}
+                        {((ep.rustdeskNode as { rustdeskId?: string } | null)?.rustdeskId) ?? '—'}
                       </td>
                       <td className="px-4 py-3 text-muted-foreground text-xs">
                         {formatDate(ep.lastSeenAt as string)}
