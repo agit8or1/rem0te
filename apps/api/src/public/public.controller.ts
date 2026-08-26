@@ -651,7 +651,25 @@ try {
             & \$RDEXE --password \$rot.password *>\$null
             Start-Sleep -Seconds 1
             \$confirm = @{ rustdeskId = \$id; sha256 = \$sha } | ConvertTo-Json -Compress
-            try { Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/confirm-rotation') -Method Post -Body \$confirm -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop | Out-Null } catch {}
+            \$confirmed = \$false
+            try {
+                \$cr = Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/confirm-rotation') -Method Post -Body \$confirm -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+                \$confirmed = [bool]\$cr.data.confirmed
+            } catch {}
+            # Persist the new password locally, but ONLY once the server has
+            # swapped pending->active. Every heartbeat re-sends \$state.password
+            # and the server takes it verbatim, so leaving the old value here
+            # would clobber the rotated password back to the install-time one
+            # roughly three minutes later - permanently desyncing RustDesk from
+            # Rem0te while both ends believe they agree. If the confirm failed
+            # we deliberately keep the old value: the server still has the
+            # rotation pending and will re-offer it on the next heartbeat.
+            if (\$confirmed) {
+                try {
+                    \$state.password = \$rot.password
+                    \$state | ConvertTo-Json -Compress | Set-Content 'C:\\ProgramData\\Rem0te\\heartbeat.dat' -Encoding UTF8
+                } catch {}
+            }
         }
     }
 } catch {}
@@ -698,9 +716,59 @@ try {
     Log "  Registered ($registered) as $rdId" 'OK'
 }
 
+# ── Verify RustDesk actually reached the server ────────────────────────────
+# Config-on-disk and a Rem0te heartbeat both prove nothing about the path that
+# actually matters. RustDesk can be perfectly configured, heartbeat happily
+# over 443, and still never reach hbbs - the machine then shows as "offline"
+# forever and Connect cannot work, while this installer cheerfully reports
+# success. Ask the server whether hbbs has genuinely seen this peer.
+# $regState: $true registered, $false definitely not, $null unknown.
+function Test-Registered([string]$id) {
+    $b = @{ rustdeskId = $id; hostname = $env:COMPUTERNAME; platform = 'Windows' } | ConvertTo-Json -Compress
+    try {
+        $r = Invoke-RestMethod -Uri "https://$REM0TE_HOST/api/v1/enrollment/heartbeat" -Method Post -Body $b -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+        return $r.data.rustdeskRegistered
+    } catch { return $null }
+}
+$regState = $null
+if ($rdId) {
+    Log '  Waiting for RustDesk to reach the server...'
+    $regDeadline = (Get-Date).AddSeconds(90)
+    while ((Get-Date) -lt $regDeadline) {
+        $regState = Test-Registered $rdId
+        if ($regState -eq $true) { break }
+        Start-Sleep -Seconds 5
+    }
+    if ($regState -eq $true) {
+        Log "  Server confirms RustDesk registered as $rdId" 'OK'
+    } elseif ($regState -eq $false) {
+        Log '  Server has NEVER seen this device on its rendezvous port.' 'WARN'
+    } else {
+        Log '  Could not verify registration with the server (unknown).' 'WARN'
+    }
+}
+
 # ── Summary ────────────────────────────────────────────────────────────────
 Write-Host ''
 Write-Host '  ─────────────────────────────────────────────' -ForegroundColor Green
+if ($regState -eq $false) {
+    Fail @"
+ERROR: RustDesk never reached $REM0TE_HOST.
+
+  Everything local is correct - the service is installed, all config files
+  point at $REM0TE_HOST with the right key, and this machine can reach the
+  Rem0te API over 443. But the server has never seen this device register,
+  so remote control cannot work and Connect will fail.
+
+  That almost always means outbound traffic to the rendezvous server is
+  blocked, or the RustDesk service is not actually running. Check:
+    sc.exe query RustDesk
+    Test-NetConnection $REM0TE_HOST -Port 443
+    Test-NetConnection $REM0TE_HOST -Port 21116
+
+  Refusing to report success for a device nobody can connect to.
+"@ 22
+}
 if ($rdId -and $registered) {
     Write-Host '  Rem0te installed successfully' -ForegroundColor Green
 } elseif ($rdId) {

@@ -5,12 +5,16 @@ import {
   Logger,
 } from '@nestjs/common';
 import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'crypto';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { ConfigService } from '@nestjs/config';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
 import { CreateClaimTokenDto, ClaimEndpointDto } from './dto/enrollment.dto';
+
+const execFileAsync = promisify(execFile);
 
 @Injectable()
 export class EnrollmentService {
@@ -373,7 +377,11 @@ export class EnrollmentService {
           ...(encryptedPassword ? { permanentPassword: encryptedPassword } : {}),
         },
       });
-      return { found: false, endpointId: endpoint.id };
+      return {
+        found: false,
+        endpointId: endpoint.id,
+        rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
+      };
     }
 
     // Always accept the current password from the endpoint (see comment above).
@@ -416,7 +424,12 @@ export class EnrollmentService {
       } catch { /* ignore */ }
     }
 
-    return { found: true, endpointId: node.endpointId, rotate };
+    return {
+      found: true,
+      endpointId: node.endpointId,
+      rotate,
+      rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
+    };
   }
 
   private decryptPassword(data: string): string {
@@ -458,6 +471,45 @@ export class EnrollmentService {
       resource: 'endpoint', resourceId: node.endpointId,
     });
     return { confirmed: true };
+  }
+
+
+  /**
+   * Ask hbbs whether a peer has ever completed registration.
+   *
+   * This is the difference between "RustDesk is installed and configured" and
+   * "RustDesk can actually be connected to". An endpoint can hold a perfect
+   * config on disk, heartbeat us over 443 every 3 minutes, and still never
+   * reach 21116 — which is indistinguishable from offline in the UI and lets
+   * the installer report success for a machine nobody can connect to.
+   *
+   * hbbs (OSS) exposes no API, so its SQLite peer table is the only source of
+   * truth. We shell out to the sqlite3 CLI rather than take a dependency:
+   * node:sqlite does not exist on the Node 20 this service runs under, and
+   * better-sqlite3 would mean a compiled native module for one read-only
+   * query. The id is validated as digits before it reaches the SQL text.
+   *
+   * Returns null — never throws, never false — when the question cannot be
+   * answered (hbbs on another host, file unreadable, sqlite3 absent, WAL
+   * unreadable). Callers MUST treat null as "unknown", not as a failure:
+   * refusing an install because we could not read a file would be worse than
+   * the bug this exists to catch.
+   */
+  async peerRegisteredWithHbbs(rustdeskId: string): Promise<boolean | null> {
+    if (!/^[0-9]{6,15}$/.test(rustdeskId)) return null;
+    const dbPath =
+      this.config.get<string>('RUSTDESK_DB_PATH') ??
+      '/var/lib/rustdesk-server/db_v2.sqlite3';
+    try {
+      const { stdout } = await execFileAsync(
+        'sqlite3',
+        [`file:${dbPath}?mode=ro`, `SELECT 1 FROM peer WHERE id='${rustdeskId}' LIMIT 1;`],
+        { timeout: 3000 },
+      );
+      return stdout.trim() === '1';
+    } catch {
+      return null;
+    }
   }
 
   async markStaleEndpointsOffline(thresholdMinutes = 10) {
