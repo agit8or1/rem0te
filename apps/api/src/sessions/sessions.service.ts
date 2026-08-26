@@ -282,4 +282,38 @@ export class SessionsService {
       periodDays: days,
     };
   }
+
+  /**
+   * Fail sessions that were launched but whose client never opened.
+   *
+   * `create` writes a session as PENDING and only `addEvent` moves it to
+   * CLIENT_OPENED, so every Connect click that does not end in a working
+   * RustDesk connection leaves a row behind. getStats counts "active" as
+   * anything not in (SESSION_COMPLETED, FAILED, CANCELED), so those rows are
+   * reported as live sessions forever — ten failed clicks read as ten active
+   * sessions against a single endpoint.
+   *
+   * Only sessions that never opened a client are expired: startedAt is still
+   * null, which rules out a genuinely long-running session a technician is
+   * still sitting in. CLIENT_OPENED and later are left alone deliberately —
+   * a real session has no upper bound we can guess at safely.
+   */
+  async expireStaleSessions(thresholdMinutes = 30) {
+    const cutoff = new Date(Date.now() - thresholdMinutes * 60 * 1000);
+    const result = await this.prisma.supportSession.updateMany({
+      where: {
+        startedAt: null,
+        createdAt: { lt: cutoff },
+        status: {
+          in: [
+            SessionStatus.PENDING,
+            SessionStatus.LAUNCH_REQUESTED,
+            SessionStatus.LAUNCHER_ACKNOWLEDGED,
+          ],
+        },
+      },
+      data: { status: SessionStatus.FAILED, completedAt: new Date() },
+    });
+    return result.count;
+  }
 }

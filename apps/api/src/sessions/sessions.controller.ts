@@ -1,6 +1,6 @@
 import {
   Controller, Get, Post, Patch, Param, Body, Query,
-  UseGuards, HttpCode, HttpStatus,
+  UseGuards, HttpCode, HttpStatus, OnModuleInit, OnModuleDestroy, Logger,
 } from '@nestjs/common';
 import { SessionStatus } from '@prisma/client';
 import { SessionsService } from './sessions.service';
@@ -14,8 +14,30 @@ import { CAP } from '../rbac/capabilities';
 
 @Controller('sessions')
 @UseGuards(JwtAuthGuard, CapabilitiesGuard)
-export class SessionsController {
+export class SessionsController implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(SessionsController.name);
+  private expiryInterval: ReturnType<typeof setInterval> | null = null;
+
   constructor(private readonly sessions: SessionsService) {}
+
+  onModuleInit() {
+    // Sweep every 5 minutes. 30 min is generous: a technician who clicks
+    // Connect and is still fighting with the client half an hour later has
+    // bigger problems than a mislabelled session row, and nothing that has
+    // actually opened a client is touched (see expireStaleSessions).
+    this.expiryInterval = setInterval(() => {
+      this.sessions
+        .expireStaleSessions(30)
+        .then((n) => {
+          if (n > 0) this.logger.log(`Expired ${n} session(s) that never opened a client`);
+        })
+        .catch((e) => this.logger.error('Stale session cleanup failed', e));
+    }, 5 * 60 * 1000);
+  }
+
+  onModuleDestroy() {
+    if (this.expiryInterval) clearInterval(this.expiryInterval);
+  }
 
   @Get()
   @RequireCapability(CAP.SESSIONS_VIEW)

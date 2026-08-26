@@ -271,7 +271,7 @@ export class PublicController {
     // Base64-encoded server config for `rustdesk.exe --config <base64>`. This is the
     // documented mechanism to reconfigure an already-installed RustDesk without
     // touching the TOML files. Format: host=...,key=...,relay=...,api=
-    const configPlain = `host=${hostVal},key=${keyVal},api=,relay=${hostVal}`;
+    const configPlain = `host=${hostVal},key=${keyVal},api=https://${hostVal},relay=${hostVal}`;
     const configB64 = Buffer.from(configPlain, 'utf8').toString('base64');
     return `# Rem0te Managed Agent — Windows installer
 # Server: ${host ?? 'NOT CONFIGURED'}
@@ -396,8 +396,9 @@ serial = 3
 [options]
 custom-rendezvous-server = '$REM0TE_HOST'
 relay-server = '$REM0TE_HOST'
-api-server = ''
+api-server = 'https://$REM0TE_HOST'
 key = '$REM0TE_KEY'
+allow-websocket = 'Y'
 "@
 
 $configTargets = New-Object System.Collections.Generic.List[string]
@@ -805,8 +806,9 @@ serial = 2
 [options]
 custom-rendezvous-server = '\${HOST_ADDR}'
 relay-server = '\${HOST_ADDR}'
-api-server = ''
+api-server = 'https://\${HOST_ADDR}'
 key = '\${PUB_KEY}'
+allow-websocket = 'Y'
 verification-method = 'use-permanent-password'"
 
 # Write to all known config locations
@@ -954,8 +956,9 @@ serial = 2
 [options]
 custom-rendezvous-server = '\${HOST_ADDR}'
 relay-server = '\${HOST_ADDR}'
-api-server = ''
+api-server = 'https://\${HOST_ADDR}'
 key = '\${PUB_KEY}'
+allow-websocket = 'Y'
 verification-method = 'use-permanent-password'"
 
 # Write to all known macOS config paths

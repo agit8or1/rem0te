@@ -1,4 +1,17 @@
 your-domain.example.com {
+    # RustDesk over 443. With allow-websocket=Y and api-server=https://<host>,
+    # the client resolves a domain rendezvous/relay to wss://<host>/ws/id and
+    # wss://<host>/ws/relay on 443 (hbb_common check_ws). Proxying them to
+    # hbbs 21118 / hbbr 21119 lets endpoints behind 443-only egress connect
+    # without opening 21115-21119.
+    handle /ws/id {
+        reverse_proxy localhost:21118
+    }
+
+    handle /ws/relay {
+        reverse_proxy localhost:21119
+    }
+
     # Web frontend
     handle /* {
         reverse_proxy localhost:3000
