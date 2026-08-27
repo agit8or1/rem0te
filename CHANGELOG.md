@@ -5,6 +5,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.10.2] — 2026-08-27 · *Ledger*
+
+### Known gaps
+
+- **CI still is not in the repository.** The workflow has existed on one machine
+  since v0.8.1 and cannot be pushed: GitHub rejects any push touching
+  `.github/workflows/` from a token without `workflow` scope, and the token in
+  use has `repo` but not that. So the check that exists to stop things breaking
+  quietly is itself only running quietly, in one place, where nobody else can
+  see it.
+
+  Until it lands, `pnpm lint`, `pnpm typecheck`, `pnpm build` and
+  `node scripts/check-versions.mjs` have to be run by hand before a commit —
+  the last of these is what makes "every change bumps the version" a rule
+  rather than an intention, and nothing enforces it on anyone else's machine.
+
+  The file is written and ready. It needs `workflow` scope on the token, or one
+  paste into GitHub's web editor, which needs no scope at all.
+
+---
+
 ## [0.10.1] — 2026-08-26 · *Ledger*
 
 ### Changed
