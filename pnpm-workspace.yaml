@@ -16,14 +16,12 @@ overrides:
   'path-to-regexp': '>=8.4.0'
   'lodash': '>=4.18.1'
   'multer': '>=2.2.0'
-  # Pinned into a window that clears both esbuild advisories while still building
-  # the Tauri launcher, which targets safari13 for macOS 10.15 WKWebView:
-  #   >=0.25.0  clears the dev-server request forgery advisory
-  #   <0.27.3   is below the vulnerable range of the Windows dev-server file-read
-  #             advisory (>=0.27.3 <0.28.1), so that one does not apply either
-  #   <0.27.7   is required anyway: 0.27.7 dropped destructuring lowering for
-  #             safari13 and fails the launcher build (verified 0.27.6 ok, 0.27.7 not)
-  # vite 6.4.x asks for esbuild ^0.25.0, so it agrees with this range.
+  # Pinned into a window that clears both esbuild advisories while still
+  # building the Tauri launcher, which targets safari13 (macOS 10.15 WKWebView):
+  #   >=0.25.0 clears the dev-server request-forgery advisory
+  #   <0.27.3  sits below the Windows dev-server file-read advisory (>=0.27.3 <0.28.1)
+  #   <0.27.7  is required regardless: 0.27.7 dropped destructuring lowering for
+  #            safari13 and fails the launcher build (0.27.6 ok, 0.27.7 not)
   'esbuild': '>=0.25.0 <0.27.3'
   'glob': '>=12.0.0'
   'ajv': '>=8.18.0'
@@ -32,9 +30,12 @@ overrides:
   '@babel/core': '>=7.29.6'
   'body-parser': '>=2.3.0'
 
+  # Next 15 pulls sharp for image optimization; <0.35 inherits libvips CVEs.
+  'sharp': '>=0.35.0'
+
 # Packages allowed to run install scripts. pnpm <=10 reads onlyBuiltDependencies
 # from package.json; pnpm >=11 reads allowBuilds here. argon2 and prisma compile
-# native binaries, esbuild fetches its platform binary.
+# native binaries, esbuild and sharp fetch platform binaries.
 allowBuilds:
   'argon2': true
   '@prisma/client': true
@@ -42,3 +43,4 @@ allowBuilds:
   'prisma': true
   '@nestjs/core': true
   'esbuild': true
+  'sharp': true

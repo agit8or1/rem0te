@@ -23,7 +23,8 @@
       "@prisma/engines",
       "prisma",
       "@nestjs/core",
-      "esbuild"
+      "esbuild",
+      "sharp"
     ],
     "overrides": {
       "brace-expansion": ">=5.0.9",
@@ -42,7 +43,8 @@
       "flatted": ">=3.4.2",
       "qs": ">=6.15.2",
       "@babel/core": ">=7.29.6",
-      "body-parser": ">=2.3.0"
+      "body-parser": ">=2.3.0",
+      "sharp": ">=0.35.0"
     }
   }
 }
