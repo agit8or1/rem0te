@@ -5,6 +5,68 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.11.0] — 2026-08-30 · *Ledger*
+
+### Security
+
+- **Middleware could be skipped entirely, and middleware is the only thing
+  guarding the app.** Next.js 14.2.18 carries CVE-2025-29927: a request with a
+  crafted `x-middleware-subrequest` header bypasses middleware altogether.
+  `apps/web/middleware.ts` is the whole authentication gate — no `access_token`
+  cookie, redirect to `/login` — so the bypass reached every signed-in page
+  without an account. Directly exploitable here, not a theoretical advisory
+  about a feature nobody uses. Fixed by 14.2.18 → 14.2.35, a patch release.
+
+- **Every other advisory in the tree is now closed — 103 down to 0.** The
+  dependencies had never been audited, because there was no way to: `pnpm audit`
+  was never run against this lockfile. axios accounted for 28 of them and moved
+  1.7.7 → 1.16.0 inside its major. Next went 14.2.35 → 15.5.24 for the remaining
+  21. The rest are transitive and pinned through `overrides` in
+  `pnpm-workspace.yaml`, each with its floor written next to it.
+
+### Fixed
+
+- **`tenants.controller.ts` imported a package that was never a dependency.**
+  It takes `diskStorage` from `multer`, which was not in `apps/api`'s
+  dependencies and resolved only because pnpm happened to hoist it out of
+  `@nestjs/platform-express`. Any change to how multer resolved would break the
+  API at import time — which is exactly what happened while bumping it. Now
+  declared, with `@types/multer`.
+
+- **`@nestjs/core` and `@nestjs/common` had drifted apart.** core floated to
+  11.2.3 against common 11.1.16, and the API compiled cleanly and then failed to
+  start: `Cannot find module '@nestjs/common/decorators/http/sse-signal.decorator'`,
+  a decorator that only exists in common 11.2. The three Nest packages ship in
+  lockstep and are pinned together now. A typecheck does not catch this; importing
+  the built module does, and that check is worth keeping.
+
+- **The build scripts the project asks for were not running.** pnpm 11 stopped
+  reading the `pnpm` field from `package.json`, so `onlyBuiltDependencies` — the
+  list that lets argon2 and prisma compile their native binaries — was being
+  ignored with a warning nobody was reading. The settings live in
+  `pnpm-workspace.yaml` now as `overrides` and `allowBuilds`, and stay mirrored
+  in `package.json` for pnpm 10 and earlier.
+
+### Changed
+
+- **Next.js 15.** Cheaper than a framework major usually is, for two reasons
+  worth recording: 15 still accepts React 18, so React did not have to move, and
+  the app was already written against the async request APIs — the one dynamic
+  route already types `params` as `Promise<{ slug: string }>` and awaits it, and
+  there are no `cookies()`, `headers()`, server actions or route handlers to
+  convert. 15 pulls in `sharp`, whose versions below 0.35 inherit four libvips
+  CVEs, so the upgrade brought one advisory of its own; it is pinned to 0.35.
+
+- **The launcher builds on vite 6.4.3, and esbuild is pinned below 0.27.3.**
+  The launcher targets `safari13` because Tauri supports macOS 10.15, and
+  esbuild 0.27.7 dropped destructuring lowering for that target — the override
+  taken for a security advisory broke the build outright. `>=0.25.0 <0.27.3`
+  clears both esbuild advisories, because the second one's vulnerable range only
+  begins at 0.27.3, and still compiles. Boundaries checked version by version
+  rather than guessed; vite 6.4.x asks for esbuild `^0.25.0`, so the two agree.
+
+---
+
 ## [0.10.2] — 2026-08-27 · *Ledger*
 
 ### Known gaps

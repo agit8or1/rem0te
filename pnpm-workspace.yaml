@@ -44,3 +44,5 @@ allowBuilds:
   '@nestjs/core': true
   'esbuild': true
   'sharp': true
+  # native resolver used by eslint-config-next 15's import plugin
+  'unrs-resolver': true
