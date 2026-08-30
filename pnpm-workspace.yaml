@@ -1,3 +1,44 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+
+# Security overrides for transitive dependencies carrying advisories.
+# Duplicated in package.json's pnpm.overrides: pnpm <=10 reads that field,
+# pnpm >=11 reads this file and ignores it. Keep the two in sync.
+overrides:
+  'brace-expansion': '>=5.0.9'
+  'fast-uri': '>=3.1.1'
+  'picomatch': '>=4.0.4'
+  'js-yaml': '>=4.3.1'
+  'nanoid': '>=5.1.7'
+  'postcss': '>=8.5.23'
+  'file-type': '>=21.3.1'
+  'path-to-regexp': '>=8.4.0'
+  'lodash': '>=4.18.1'
+  'multer': '>=2.2.0'
+  # Pinned into a window that clears both esbuild advisories while still building
+  # the Tauri launcher, which targets safari13 for macOS 10.15 WKWebView:
+  #   >=0.25.0  clears the dev-server request forgery advisory
+  #   <0.27.3   is below the vulnerable range of the Windows dev-server file-read
+  #             advisory (>=0.27.3 <0.28.1), so that one does not apply either
+  #   <0.27.7   is required anyway: 0.27.7 dropped destructuring lowering for
+  #             safari13 and fails the launcher build (verified 0.27.6 ok, 0.27.7 not)
+  # vite 6.4.x asks for esbuild ^0.25.0, so it agrees with this range.
+  'esbuild': '>=0.25.0 <0.27.3'
+  'glob': '>=12.0.0'
+  'ajv': '>=8.18.0'
+  'flatted': '>=3.4.2'
+  'qs': '>=6.15.2'
+  '@babel/core': '>=7.29.6'
+  'body-parser': '>=2.3.0'
+
+# Packages allowed to run install scripts. pnpm <=10 reads onlyBuiltDependencies
+# from package.json; pnpm >=11 reads allowBuilds here. argon2 and prisma compile
+# native binaries, esbuild fetches its platform binary.
+allowBuilds:
+  'argon2': true
+  '@prisma/client': true
+  '@prisma/engines': true
+  'prisma': true
+  '@nestjs/core': true
+  'esbuild': true
