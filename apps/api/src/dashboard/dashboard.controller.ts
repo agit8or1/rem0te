@@ -20,6 +20,16 @@ export class DashboardController {
     return { success: true, data: await this.dashboard.getStats(actor, businessId) };
   }
 
+  /**
+   * Locations for the dashboard map. Ungated for the same reason as the counts:
+   * the service returns null without `computers:view`, so a Business User with
+   * minimal permissions gets a dashboard without a map rather than a 403.
+   */
+  @Get('map')
+  async getMap(@Actor() actor: ActorContext, @Query('businessId') businessId?: string) {
+    return { success: true, data: await this.dashboard.getEndpointMap(actor, businessId) };
+  }
+
   @Get('platform')
   async getPlatformStats(@Actor() actor: ActorContext) {
     return { success: true, data: await this.dashboard.getPlatformStats(actor) };

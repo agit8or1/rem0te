@@ -344,3 +344,21 @@ sudo -u postgres psql reboot_remote -c \
   id_ed25519      RustDesk private key
   id_ed25519.pub  RustDesk public key
 ```
+
+## GeoIP database (dashboard map)
+
+The dashboard's client map resolves addresses offline. The database is ~124 MB
+and is **not** in the repository:
+
+```bash
+sudo scripts/update-geoip.sh
+sudo systemctl restart reboot-remote-api
+```
+
+Without it the API logs a warning at startup and every computer is reported as
+"unlocatable" — the dashboard still works, the map just has nothing to show.
+
+The data is DB-IP City Lite (CC BY 4.0), refreshed monthly and requiring no
+licence key. Re-run the script periodically; the attribution DB-IP's licence
+requires is rendered on the map itself. `GEOIP_DB_PATH` overrides the location.
+

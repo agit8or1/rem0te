@@ -1,6 +1,6 @@
 {
   "name": "@reboot-remote/api",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "private": true,
   "scripts": {
     "dev": "nest start --watch",
@@ -30,6 +30,7 @@
     "cookie-parser": "^1.4.6",
     "helmet": "^7.1.0",
     "ioredis": "^5.3.2",
+    "maxmind": "^5.0.7",
     "multer": "^2.3.0",
     "nanoid": "^5.0.7",
     "otplib": "^12.0.1",

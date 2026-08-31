@@ -1,6 +1,6 @@
 import {
   Injectable, NotFoundException, ConflictException,
-  InternalServerErrorException, BadRequestException,
+  InternalServerErrorException, BadRequestException, Logger,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
@@ -22,6 +22,7 @@ import type { CreateEndpointDto, UpdateEndpointDto } from './dto/create-endpoint
  */
 @Injectable()
 export class EndpointsService {
+  private readonly logger = new Logger(EndpointsService.name);
   private readonly encKey: Buffer;
 
   constructor(
@@ -79,25 +80,14 @@ export class EndpointsService {
    * `computers:view`.
    */
   async myComputers(actor: ActorContext) {
-    const scope = this.acl.resolveScope(actor);
     if (!this.acl.can(actor, CAP.COMPUTERS_VIEW)) return [];
-
-    const ownerLike = this.acl.isBusinessOwner(actor);
 
     const rows = await this.prisma.endpoint.findMany({
       where: {
         status: 'ACTIVE',
-        ...(scope ? { customerId: scope } : {}),
-        ...(ownerLike
-          ? {}
-          : {
-              OR: [
-                { computerAccess: { some: { userId: actor.userId } } },
-                ...(actor.businessId
-                  ? [{ accessMode: 'COMPANY_WIDE' as const, customerId: actor.businessId }]
-                  : []),
-              ],
-            }),
+        // Shared with the dashboard map so the two can never disagree about
+        // who may see which computer.
+        ...this.acl.endpointVisibilityWhere(actor),
       },
       orderBy: [{ isOnline: 'desc' }, { name: 'asc' }],
       include: {
@@ -679,10 +669,40 @@ export class EndpointsService {
       meta: { via: 'connect' },
     });
 
+    // Record the connection as a session.
+    //
+    // Until now nothing did. The launcher promoted a session to CLIENT_OPENED,
+    // but the browser path — which is the one people actually use — created no
+    // session at all, so Recent Sessions only ever showed the ad-hoc records
+    // typed in by hand, which then aged into FAILED because nothing completed
+    // them either. Handing the credentials to a client IS the start of a
+    // session, and that is what CLIENT_OPENED means on the launcher path too.
+    //
+    // Best-effort: a bookkeeping failure must never stop someone connecting.
+    let sessionId: string | null = null;
+    try {
+      const s = await this.prisma.supportSession.create({
+        data: {
+          tenantId: endpoint.tenantId!,
+          customerId: endpoint.customerId,
+          technicianId: actor.userId,
+          endpointId: endpoint.id,
+          isAdHoc: false,
+          status: 'CLIENT_OPENED',
+          startedAt: new Date(),
+        },
+        select: { id: true },
+      });
+      sessionId = s.id;
+    } catch (e) {
+      this.logger.warn(`Could not record support session for ${endpointId}: ${(e as Error).message}`);
+    }
+
     return {
       rustdeskId: endpoint.rustdeskNode.rustdeskId,
       password,
       hasPassword: !!password,
+      sessionId,
       computer: {
         id: endpoint.id,
         name: endpoint.name,

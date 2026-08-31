@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import { SessionStatusBadge } from '@/components/sessions/session-status-badge';
+import { ClientMap } from '@/components/dashboard/client-map';
 import Link from 'next/link';
 
 export default function DashboardPage() {
@@ -112,6 +113,10 @@ export default function DashboardPage() {
               />
             </Link>
           </div>
+
+          {/* Where the computers are. Scoped server-side to what this person may
+              see, so a Business User's map is not their business's map. */}
+          <ClientMap />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Recent Sessions */}

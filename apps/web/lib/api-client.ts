@@ -52,6 +52,10 @@ export const mfaApi = {
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 export const dashboardApi = {
+  // Approximate client locations for the dashboard map. Returns null data
+  // when the caller lacks computers:view.
+  map: (businessId?: string) =>
+    api.get('/dashboard/map', { params: businessId ? { businessId } : {} }),
   stats: () => api.get('/dashboard'),
   platformStats: () => api.get('/dashboard/platform'),
 };

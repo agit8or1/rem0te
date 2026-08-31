@@ -5,6 +5,57 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.12.0] — 2026-08-31 · *Ledger*
+
+### Added
+
+- **Client location map on the dashboard.** Plots where the computers you can
+  see are checking in from — clustered by place, sized by how many are there,
+  pulsing while any are online, with detail on hover and a machine list on
+  click. The view fits itself to the fleet, because a handful of machines in one
+  city drawn on a whole-world projection is three invisible pixels.
+
+  **Scoped to what each person may actually see, not to their business.** A
+  Business User sees only the computers granted to them plus any marked
+  COMPANY_WIDE, and that rule previously lived inline in a single list query —
+  so a map filtered on business alone would have pinned every ASSIGNED_USERS
+  machine in their business for someone with no access to it. The rule now lives
+  in `AccessControlService.endpointVisibilityWhere`, shared by the list and the
+  map so the two cannot drift, and is verified against the shipped service: a
+  Business User holding one grant sees that machine and the COMPANY_WIDE one,
+  and neither the unassigned machine in their own business nor anything
+  belonging to another business. Without `computers:view` the card is absent
+  rather than empty. No raw IP addresses are returned — the map needs a
+  location, not an address.
+
+  Geolocation is offline, reading DB-IP City Lite: the addresses belong to
+  customers' networks, and posting them to a lookup API on every dashboard load
+  is a disclosure we would be making on their behalf. geoip-lite's bundled data
+  was tried first and was not good enough — it placed a Jacksonville endpoint on
+  the US centroid because it had never heard of the regional ISP, putting two
+  machines a few miles apart in different states. The ~124 MB database is not in
+  the repository; `scripts/update-geoip.sh` installs it and a missing file
+  degrades to "no locations" rather than breaking the page. The world outline is
+  a bundled 75 KB asset, so nothing calls a tile server.
+
+  Where only a country is known the marker is dashed and labelled country-level,
+  because a solid pin on a country centroid claims a precision we do not have.
+  Machines that cannot be placed are counted as "unlocatable" rather than
+  dropped, so the map is never quietly narrower than the fleet it shows.
+
+### Fixed
+
+- **Recent Sessions showed nothing but failures.** Connecting to a computer
+  created no session record at all: only the desktop launcher promoted a session
+  to CLIENT_OPENED, and the browser path — the one people actually use —
+  recorded nothing. The only rows in the list were ad-hoc records typed in by
+  hand, which then aged into FAILED because the v0.8.2 sweeper correctly
+  observed that no client had ever opened for them. Connecting now records a
+  session, best-effort so bookkeeping can never block a connection, and the
+  sweeper no longer fails ad-hoc rows — nothing ever opens a client for those.
+
+---
+
 ## [0.11.1] — 2026-08-31 · *Ledger*
 
 ### Added

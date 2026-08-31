@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { RoleType } from '@prisma/client';
+import { Prisma, RoleType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   Capability,
@@ -115,6 +115,38 @@ export class AccessControlService {
   businessWhere(actor: ActorContext, requestedBusinessId?: string | null): { customerId?: string } {
     const scope = this.resolveScope(actor, requestedBusinessId);
     return scope ? { customerId: scope } : {};
+  }
+
+  /**
+   * Prisma `where` fragment for the computers this actor may actually see.
+   *
+   * Business scope alone is NOT enough. A Business User sees only the
+   * computers explicitly granted to them plus any marked COMPANY_WIDE within
+   * their own business, so filtering on `customerId` would expose every
+   * ASSIGNED_USERS machine in that business to someone with no access to it.
+   * Owners and Platform Admins are unrestricted within their scope.
+   *
+   * Anything that lists, counts, maps, or otherwise derives facts about
+   * endpoints must use this rather than `businessWhere` — a map pin is as much
+   * a disclosure as a row in a table.
+   */
+  endpointVisibilityWhere(
+    actor: ActorContext,
+    requestedBusinessId?: string | null,
+  ): Prisma.EndpointWhereInput {
+    const scope = this.resolveScope(actor, requestedBusinessId);
+    if (this.isBusinessOwner(actor)) {
+      return scope ? { customerId: scope } : {};
+    }
+    return {
+      ...(scope ? { customerId: scope } : {}),
+      OR: [
+        { computerAccess: { some: { userId: actor.userId } } },
+        ...(actor.businessId
+          ? [{ accessMode: 'COMPANY_WIDE' as const, customerId: actor.businessId }]
+          : []),
+      ],
+    };
   }
 
   // ── Capabilities ──────────────────────────────────────────────────────────

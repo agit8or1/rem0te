@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { SessionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
+import { GeoipService } from '../geoip/geoip.service';
 import { CAP } from '../rbac/capabilities';
 
 /**
@@ -17,6 +18,7 @@ export class DashboardService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly acl: AccessControlService,
+    private readonly geoip: GeoipService,
   ) {}
 
   async getStats(actor: ActorContext, businessId?: string) {
@@ -155,6 +157,87 @@ export class DashboardService {
       users: { total: totalUsers },
       endpoints: { total: totalEndpoints, unassigned: unassignedEndpoints },
       sessions: { total: totalSessions, quickConnect: quickConnectSessions },
+    };
+  }
+
+  /**
+   * Approximate locations of the computers the caller may see, for the
+   * dashboard map.
+   *
+   * Scoped with `endpointVisibilityWhere`, NOT `businessWhere`: a map pin
+   * discloses at least as much as a table row, and a Business User must not
+   * see pins for ASSIGNED_USERS machines in their business that they have no
+   * access to. Without `computers:view` this returns null and the map is not
+   * rendered at all, matching how the counts above withhold rather than zero.
+   *
+   * Raw IP addresses are deliberately not returned. The map needs a location,
+   * not an address, and the computers list already shows the address to
+   * whoever is entitled to it.
+   */
+  async getEndpointMap(actor: ActorContext, businessId?: string) {
+    if (!this.acl.can(actor, CAP.COMPUTERS_VIEW)) return null;
+
+    const rows = await this.prisma.endpoint.findMany({
+      where: { ...this.acl.endpointVisibilityWhere(actor, businessId), status: 'ACTIVE' },
+      select: {
+        id: true, name: true, hostname: true, ipAddress: true,
+        isOnline: true, lastSeenAt: true,
+        customer: { select: { id: true, name: true } },
+      },
+    });
+
+    type Point = {
+      key: string; lat: number; lon: number;
+      city: string | null; region: string | null; country: string; countryName: string | null;
+      accuracy: 'city' | 'country';
+      total: number; online: number;
+      endpoints: { id: string; name: string; isOnline: boolean; businessName: string | null }[];
+    };
+
+    const points = new Map<string, Point>();
+    let unlocatable = 0;
+
+    for (const r of rows) {
+      const geo = this.geoip.lookup(r.ipAddress);
+      if (!geo) {
+        // Private address, no address yet, or absent from the database. Counted
+        // and reported rather than dropped, so the map is never quietly
+        // narrower than the fleet it claims to show.
+        unlocatable += 1;
+        continue;
+      }
+      // Group by resolved place, not by coordinate, so every machine behind one
+      // office NAT lands on a single marker instead of stacking invisibly.
+      const key = `${geo.country}|${geo.region ?? ''}|${geo.city ?? ''}`;
+      let p = points.get(key);
+      if (!p) {
+        p = {
+          key, lat: geo.lat, lon: geo.lon,
+          city: geo.city, region: geo.region, country: geo.country,
+          countryName: geo.countryName,
+          accuracy: geo.accuracy, total: 0, online: 0, endpoints: [],
+        };
+        points.set(key, p);
+      }
+      p.total += 1;
+      if (r.isOnline) p.online += 1;
+      p.endpoints.push({
+        id: r.id,
+        name: r.name,
+        isOnline: r.isOnline,
+        businessName: r.customer?.name ?? null,
+      });
+    }
+
+    const list = [...points.values()].sort((a, b) => b.total - a.total);
+    return {
+      points: list,
+      located: rows.length - unlocatable,
+      unlocatable,
+      total: rows.length,
+      // Country-level points sit on a country centroid, not on the machine.
+      // The client labels them so nobody reads a pin in Kansas as an address.
+      approximate: list.filter((p) => p.accuracy === 'country').length,
     };
   }
 }

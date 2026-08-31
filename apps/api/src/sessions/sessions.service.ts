@@ -304,6 +304,11 @@ export class SessionsService {
       where: {
         startedAt: null,
         createdAt: { lt: cutoff },
+        // Ad-hoc rows are typed in by a person to record work against a machine
+        // that is not enrolled; nothing ever "opens a client" for them, so
+        // failing them just relabels every manual record as a failure. They are
+        // completed or cancelled by hand.
+        isAdHoc: false,
         status: {
           in: [
             SessionStatus.PENDING,
