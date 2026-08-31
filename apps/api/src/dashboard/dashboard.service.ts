@@ -208,12 +208,19 @@ export class DashboardService {
       }
       // Group by resolved place, not by coordinate, so every machine behind one
       // office NAT lands on a single marker instead of stacking invisibly.
-      const key = `${geo.country}|${geo.region ?? ''}|${geo.city ?? ''}`;
+      //
+      // DB-IP qualifies some cities with a neighbourhood — "Jacksonville" and
+      // "Jacksonville (Lakeshore South)" are the same city a few miles apart.
+      // Left alone they become two markers whose labels sit on top of each
+      // other and read as two different places, so the suffix is dropped for
+      // grouping and for display.
+      const city = geo.city?.replace(/\s*\([^)]*\)\s*$/, '').trim() || null;
+      const key = `${geo.country}|${geo.region ?? ''}|${city ?? ''}`;
       let p = points.get(key);
       if (!p) {
         p = {
           key, lat: geo.lat, lon: geo.lon,
-          city: geo.city, region: geo.region, country: geo.country,
+          city, region: geo.region, country: geo.country,
           countryName: geo.countryName,
           accuracy: geo.accuracy, total: 0, online: 0, endpoints: [],
         };

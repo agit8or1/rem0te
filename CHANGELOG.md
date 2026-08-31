@@ -5,6 +5,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.12.1] — 2026-08-31 · *Ledger*
+
+### Fixed
+
+- **The client map was unreadable.** It filled a third of the dashboard, drew
+  pale grey land on a pale grey background with no water, had no labels, and
+  offered no way to zoom or pan — a decoration rather than a map.
+
+  Now 240px tall with land over water in colours that actually separate, place
+  labels with a halo so they read over either, zoom and pan (buttons, scroll
+  wheel anchored to the cursor, drag), and a fit-to-clients control. Zoom is
+  capped because the bundled 110m outline stops looking like a map well before
+  the browser stops zooming.
+
+- **One city appeared as two places.** DB-IP qualifies some cities with a
+  neighbourhood, so a machine in "Jacksonville" and another in "Jacksonville
+  (Lakeshore South)" — the same city, a few miles apart — produced two markers
+  whose labels overlapped into unreadable text. The suffix is now dropped, so
+  they group into one marker, and labels are placed largest-first with
+  overlapping ones skipped rather than drawn on top of each other.
+
+- **Markers vanished at high zoom.** Label halos were stroked in world units, so
+  zooming in scaled a 3-unit outline into a white mass that swallowed the
+  markers underneath. Strokes are screen-space now.
+
+---
+
 ## [0.12.0] — 2026-08-31 · *Ledger*
 
 ### Added
