@@ -31,7 +31,7 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // world-land-110m.geo.json is the dashboard map's country outline: public
+  // world-basemap.json is the dashboard map's country and state geometry: public
   // domain geometry, nothing to gate. Matched exactly rather than by prefix —
   // this middleware is the app's only auth gate, and a bare prefix would also
   // exempt /world-land-110m<anything>.
@@ -40,5 +40,5 @@ export const config = {
   // and are the same images already published in the repository, so gating them
   // buys nothing and costs a middleware round trip per image on a page that has
   // a lot of them.
-  matcher: ['/((?!_next/static|_next/image|docs-img|favicon.ico|world-land-110m\\.geo\\.json).*)'],
+  matcher: ['/((?!_next/static|_next/image|docs-img|favicon.ico|world\\-basemap\\.json).*)'],
 };

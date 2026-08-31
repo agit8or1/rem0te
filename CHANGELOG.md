@@ -5,6 +5,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.12.2] — 2026-08-31 · *Ledger*
+
+### Fixed
+
+- **The client map had no borders and barely any colour.** It drew a single
+  landmass silhouette from 110m geometry: no country outlines, no state lines,
+  and grey-on-grey, which read as monochrome. It also could not usefully zoom,
+  because that geometry turns into abstract polygons a few steps in.
+
+  The basemap is now 50m world countries plus 10m US states, drawn as three
+  layers — land, internal (state) borders, then country borders on top so the
+  heavier line always wins — over water in a colour that actually contrasts with
+  it. Zoom goes considerably further in before the outline gives up, and the map
+  is a little taller.
+
+  The geometry is 380 KB (125 KB gzipped, cached immutably) rather than the
+  1.4 MB the raw 50m + 10m sets weigh: rings smaller than the eye can resolve at
+  this scale are dropped, and the rest are simplified with Douglas–Peucker at a
+  tolerance below the rendered pixel size. Still a local asset, so the page
+  continues to call no tile server.
+
+---
+
 ## [0.12.1] — 2026-08-31 · *Ledger*
 
 ### Fixed

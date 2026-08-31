@@ -25,25 +25,18 @@ const W = 1000, H = 500;
 const projX = (lon: number) => ((lon + 180) / 360) * W;
 const projY = (lat: number) => ((90 - lat) / 180) * H;
 
-const VIEW_W = 1000, VIEW_H = 300;      // rendered aspect, deliberately letterbox-ish
+const VIEW_W = 1000, VIEW_H = 320;      // rendered aspect
 const ASPECT = VIEW_W / VIEW_H;
-// 110m geometry stops looking like a map well before this; past ~10x the
-// coastline is visibly polygonal, so both the auto-fit and the buttons stop there.
-const MIN_Z = 1, MAX_Z = 12;
+// 50m countries and 10m US states hold their shape much further in than the
+// old 110m silhouette, so the ceiling is city-scale rather than region-scale.
+const MIN_Z = 1, MAX_Z = 60;
 
-function ringToPath(ring: number[][]): string {
-  let d = '';
-  for (let i = 0; i < ring.length; i++) {
-    d += `${i === 0 ? 'M' : 'L'}${projX(ring[i][0]).toFixed(2)},${projY(ring[i][1]).toFixed(2)}`;
-  }
-  return d + 'Z';
-}
 
 const placeLabel = (p: Point) =>
   p.city ?? [p.region, p.countryName ?? p.country].filter(Boolean).join(', ');
 
 export function ClientMap({ businessId }: { businessId?: string }) {
-  const [land, setLand] = useState<string[] | null>(null);
+  const [base, setBase] = useState<{ countries: string[]; states: string[] } | null>(null);
   const [selected, setSelected] = useState<Point | null>(null);
   const [hover, setHover] = useState<{ p: Point; x: number; y: number } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -57,20 +50,21 @@ export function ClientMap({ businessId }: { businessId?: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/world-land-110m.geo.json')
+    fetch('/world-basemap.json')
       .then((r) => r.json())
-      .then((geo) => {
+      .then((geo: { countries: number[][][]; states: number[][][] }) => {
         if (cancelled) return;
-        const paths: string[] = [];
-        for (const f of geo.features ?? []) {
-          const g = f.geometry;
-          if (!g) continue;
-          const polys = g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
-          for (const poly of polys) for (const ring of poly) paths.push(ringToPath(ring));
-        }
-        setLand(paths);
+        const toPaths = (rings: number[][][]) =>
+          rings.map((ring) => {
+            let d = '';
+            for (let i = 0; i < ring.length; i++) {
+              d += `${i === 0 ? 'M' : 'L'}${projX(ring[i][0]).toFixed(2)},${projY(ring[i][1]).toFixed(2)}`;
+            }
+            return d + 'Z';
+          });
+        setBase({ countries: toPaths(geo.countries ?? []), states: toPaths(geo.states ?? []) });
       })
-      .catch(() => setLand([]));
+      .catch(() => setBase({ countries: [], states: [] }));
     return () => { cancelled = true; };
   }, []);
 
@@ -88,7 +82,7 @@ export function ClientMap({ businessId }: { businessId?: string }) {
     const spanX = Math.max(maxX - minX, 6);
     const spanY = Math.max(maxY - minY, 3);
     // Fit whichever axis is tighter, then back off so markers and labels have air.
-    const z = Math.min(W / (spanX * 3.2), (W / ASPECT) / (spanY * 3.2), 7);
+    const z = Math.min(W / (spanX * 3.2), (W / ASPECT) / (spanY * 3.2), 14);
     return { cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, zoom: Math.max(MIN_Z, z) };
   }, [points]);
 
@@ -192,11 +186,11 @@ export function ClientMap({ businessId }: { businessId?: string }) {
       </CardHeader>
       <CardContent className="pt-0">
         {isLoading ? (
-          <div className="h-[240px] flex items-center justify-center text-sm text-muted-foreground">
+          <div className="h-[300px] flex items-center justify-center text-sm text-muted-foreground">
             Loading map…
           </div>
         ) : points.length === 0 ? (
-          <div className="h-[240px] flex flex-col items-center justify-center gap-1 text-sm text-muted-foreground">
+          <div className="h-[300px] flex flex-col items-center justify-center gap-1 text-sm text-muted-foreground">
             <span>No computers could be located yet.</span>
             <span className="text-xs max-w-md text-center">
               Locations come from the address a computer checks in from. Machines on private
@@ -207,7 +201,7 @@ export function ClientMap({ businessId }: { businessId?: string }) {
           <>
             <div
               ref={wrapRef}
-              className="relative w-full h-[240px] overflow-hidden rounded-lg border border-slate-300 dark:border-slate-700 bg-[#dbeafe] dark:bg-[#0b1729] select-none"
+              className="relative w-full h-[300px] overflow-hidden rounded-lg border border-slate-300 dark:border-slate-700 bg-[#bcd9f0] dark:bg-[#0a1a2b] select-none"
               style={{ cursor: drag.current ? 'grabbing' : 'grab' }}
               onWheel={onWheel}
               onMouseDown={onDown}
@@ -223,18 +217,22 @@ export function ClientMap({ businessId }: { businessId?: string }) {
                 aria-label={`Map of ${data?.located ?? 0} located computers`}
               >
                 {/* Land sits clearly above the water rather than melting into it. */}
+                {/* Land first, then internal (state) borders, then country
+                    borders on top, so the heavier line always wins. */}
                 <g>
-                  {(land ?? []).map((d, i) => (
-                    <path
-                      key={i}
-                      d={d}
-                      className="fill-[#f1f5f9] stroke-[#94a3b8] dark:fill-[#1e293b] dark:stroke-[#475569]"
-                      strokeWidth={0.8}
-                      vectorEffect="non-scaling-stroke"
-                    />
+                  {(base?.countries ?? []).map((d, i) => (
+                    <path key={`c${i}`} d={d}
+                          className="fill-[#f4efe4] stroke-[#8fa0b0] dark:fill-[#243244] dark:stroke-[#63748a]"
+                          strokeWidth={0.9} vectorEffect="non-scaling-stroke" />
                   ))}
                 </g>
-
+                <g>
+                  {(base?.states ?? []).map((d, i) => (
+                    <path key={`s${i}`} d={d} fill="none"
+                          className="stroke-[#c2cdd8] dark:stroke-[#3c4a5c]"
+                          strokeWidth={0.6} vectorEffect="non-scaling-stroke" />
+                  ))}
+                </g>
                 {points.map((p) => {
                   const x = projX(p.lon), y = projY(p.lat);
                   const r = rOf(p.total);
