@@ -1,0 +1,83 @@
+name: CI
+
+# The checks that were only ever run by hand, on one machine. Every one of these
+# has caught something real: check-versions exists because v0.8.0 shipped with
+# apps/api still on 0.7.1, and the launcher build is here because an esbuild bump
+# broke it while nothing in `pnpm build` was looking at that package.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      # vite 6 requires ^20.19 || >=22.12; Next 15 requires >=18.18.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # allowBuilds in pnpm-workspace.yaml lists the packages permitted to run
+      # install scripts (argon2 and prisma compile native binaries; esbuild,
+      # sharp and unrs-resolver fetch platform ones). Without them pnpm exits
+      # non-zero and every later `pnpm exec` fails before it starts.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Every version string must agree and the release must be written down.
+      - name: Versions and changelog
+        run: node scripts/check-versions.mjs
+
+      # tsc cannot resolve @prisma/client's generated types until this has run,
+      # so it has to come before the typecheck rather than with the build.
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
+      # built separately here because it is the package that broke last, and it
+      # targets safari13, which is what makes it sensitive to esbuild bumps.
+      - name: Typecheck and build launcher
+        run: |
+          pnpm --filter @reboot-remote/launcher exec tsc --noEmit
+          pnpm --filter @reboot-remote/launcher build
+
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      # The tree reached zero advisories in 0.11.0. This is what keeps it there.
+      - name: Audit
+        run: pnpm audit

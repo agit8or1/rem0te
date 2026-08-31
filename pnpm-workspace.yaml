@@ -6,6 +6,11 @@ packages:
 # Duplicated in package.json's pnpm.overrides: pnpm <=10 reads that field,
 # pnpm >=11 reads this file and ignores it. Keep the two in sync.
 overrides:
+  # Scoped to the 7+ line only. The advisory covers >=7.0.0 <8.18.0, so ajv 6 is
+  # unaffected — and @eslint/eslintrc pins ajv ^6.14.0, so a blanket override
+  # forces an incompatible major on it and eslint dies with
+  # "Cannot set properties of undefined (setting 'defaultMeta')".
+  'ajv@>=7.0.0 <8.18.0': '>=8.18.0'
   'brace-expansion': '>=5.0.9'
   'fast-uri': '>=3.1.1'
   'picomatch': '>=4.0.4'
@@ -24,7 +29,6 @@ overrides:
   #            safari13 and fails the launcher build (0.27.6 ok, 0.27.7 not)
   'esbuild': '>=0.25.0 <0.27.3'
   'glob': '>=12.0.0'
-  'ajv': '>=8.18.0'
   'flatted': '>=3.4.2'
   'qs': '>=6.15.2'
   '@babel/core': '>=7.29.6'

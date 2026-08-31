@@ -5,6 +5,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.11.1] — 2026-08-31 · *Ledger*
+
+### Added
+
+- **CI is in the repository.** `.github/workflows/ci.yml` runs `pnpm lint`,
+  `pnpm typecheck`, `pnpm build` and `node scripts/check-versions.mjs` on every
+  push and pull request, plus `pnpm audit` as a second job to hold the tree at
+  the zero it reached in 0.11.0.
+
+  It also builds the launcher, which `pnpm typecheck` and `pnpm build` do not
+  cover — they run against api and web only. The launcher is the package that
+  broke most recently, and it targets `safari13`, which is precisely what makes
+  it sensitive to esbuild bumps, so leaving it outside CI would leave the gap
+  that caused the last breakage.
+
+  `pnpm db:generate` runs before the typecheck: tsc cannot resolve
+  `@prisma/client`'s generated types until it has, and a fresh checkout has not.
+
+  The 0.10.2 note said this could not be pushed because the token lacked
+  `workflow` scope. The token has `workflow` scope, and had it then. Nothing was
+  blocking it.
+
+### Fixed
+
+- **`pnpm lint` had been broken since 0.11.0, by the fix for an advisory that
+  did not apply to what it broke.** The ajv override was written as a blanket
+  `>=8.18.0`, but `@eslint/eslintrc` pins `ajv ^6.14.0`, so eslint was handed an
+  incompatible major and died on every run with `Cannot set properties of
+  undefined (setting 'defaultMeta')`.
+
+  The advisory covers `>=7.0.0 <8.18.0` — ajv 6 was never in scope. The override
+  is now scoped to that range, so `@nestjs/cli`'s ajv 8 is still raised and
+  eslint keeps the version it asks for. Both the audit and the lint pass.
+
+  This is the failure CI exists to catch, and it went in during a release where
+  builds were checked and lint was not.
+
+---
+
 ## [0.11.0] — 2026-08-30 · *Ledger*
 
 ### Security
@@ -85,6 +124,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
   The file is written and ready. It needs `workflow` scope on the token, or one
   paste into GitHub's web editor, which needs no scope at all.
+
+  **Resolved in 0.11.1.** The token did have `workflow` scope — the diagnosis
+  above was wrong, and the workflow had been sitting unpushed against a
+  restriction that was not there.
 
 ---
 
