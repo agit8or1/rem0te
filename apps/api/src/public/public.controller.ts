@@ -202,11 +202,20 @@ export class PublicController {
       // installer and controls where the customer's machine fetches the PowerShell
       // script from, so header trust is a supply-chain risk.
       const configuredBase = process.env.PUBLIC_API_URL?.replace(/\/+$/, '');
+      // https only outside development: this URL is baked into an installer that
+      // pipes whatever it fetches into an elevated PowerShell, so plaintext here
+      // is a root shell for anyone on the path. The installer binary refuses a
+      // non-https slot as well.
+      const schemeOk = process.env.NODE_ENV === 'production'
+        ? /^https:\/\/[a-zA-Z0-9.:_-]+/
+        : /^https?:\/\/[a-zA-Z0-9.:_-]+/;
       let apiUrl: string;
-      if (configuredBase && /^https?:\/\/[a-zA-Z0-9.:_-]+/.test(configuredBase)) {
+      if (configuredBase && schemeOk.test(configuredBase)) {
         apiUrl = configuredBase;
       } else {
-        const proto = (req.headers['x-forwarded-proto'] as string | undefined) ?? 'https';
+        const proto = process.env.NODE_ENV === 'production'
+          ? 'https'
+          : ((req.headers['x-forwarded-proto'] as string | undefined) ?? 'https');
         const reqHost = (req.headers['x-forwarded-host'] as string | undefined) ?? req.headers.host ?? 'localhost';
         if (!HOSTNAME_RE.test(String(reqHost).replace(/:.*$/, ''))) {
           res.status(400).json({ success: false, message: 'Invalid host' });
@@ -442,6 +451,23 @@ $rnd = New-Object byte[] 24
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($rnd)
 $PERM_PW = [Convert]::ToBase64String($rnd).Replace('+','A').Replace('/','B').Replace('=','').Substring(0,20)
 
+# Device secret. The heartbeat used to identify this machine by its RustDesk ID
+# alone — a number anyone who has connected to it knows — so the server would
+# hand a staged password rotation, in plaintext, to whoever asked with the right
+# number. The agent proves who it is with this instead. Reused if a previous
+# install left one, so re-running the installer does not orphan the binding the
+# server already holds; the file is SYSTEM+Administrators only.
+$AGENT_SECRET = ''
+try {
+    $prior = Get-Content "$STATEDIR\\heartbeat.dat" -Raw -ErrorAction Stop | ConvertFrom-Json
+    if ($prior.agentSecret) { $AGENT_SECRET = [string]$prior.agentSecret }
+} catch {}
+if (-not $AGENT_SECRET) {
+    $srnd = New-Object byte[] 32
+    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($srnd)
+    $AGENT_SECRET = [Convert]::ToBase64String($srnd).Replace('+','-').Replace('/','_').Replace('=','')
+}
+
 # ── [4/6] Start service and verify config ──────────────────────────────────
 Step 4 6 'Starting service...'
 & sc.exe config RustDesk start= auto 2>$null | Out-Null
@@ -566,7 +592,7 @@ while (-not $rdId -and (Get-Date) -lt $deadline) {
 # ── [6/6] Register with Rem0te ─────────────────────────────────────────────
 Step 6 6 'Registering with Rem0te...'
 function Register([string]$id) {
-    $body = @{ rustdeskId = $id; hostname = $env:COMPUTERNAME; platform = 'Windows'; osVersion = [Environment]::OSVersion.VersionString; password = $PERM_PW }
+    $body = @{ rustdeskId = $id; hostname = $env:COMPUTERNAME; platform = 'Windows'; osVersion = [Environment]::OSVersion.VersionString; password = $PERM_PW; agentSecret = $AGENT_SECRET }
     if ($CLAIM_TOKEN) {
         $body['token'] = $CLAIM_TOKEN
         $json = $body | ConvertTo-Json -Compress
@@ -603,7 +629,7 @@ $hbFile = "$STATEDIR\\heartbeat.dat"
 # --password change on the endpoint) desyncs and one-click Connect stops
 # working because the server sends the browser an outdated password.
 # File is chmod 600 to SYSTEM+Administrators only.
-$hbPayload = [PSCustomObject]@{ host = $REM0TE_HOST; password = $PERM_PW } | ConvertTo-Json -Compress
+$hbPayload = [PSCustomObject]@{ host = $REM0TE_HOST; password = $PERM_PW; agentSecret = $AGENT_SECRET } | ConvertTo-Json -Compress
 try { Set-Content -Path $hbFile -Value $hbPayload -Encoding UTF8; icacls $hbFile /inheritance:r /grant:r 'SYSTEM:(F)' 'Administrators:(F)' *>$null } catch {}
 
 $hbScript = "$STATEDIR\\heartbeat.ps1"
@@ -615,6 +641,10 @@ try { \$state = Get-Content 'C:\\ProgramData\\Rem0te\\heartbeat.dat' -Raw | Conv
 try { \$out = & \$RDEXE --get-id 2>\$null | Out-String; if (\$out -match '([0-9]{6,15})') { \$id = \$Matches[1] } } catch {}
 if (-not \$id) { exit 0 }
 \$body = @{ rustdeskId = \$id; hostname = \$env:COMPUTERNAME; platform = 'Windows' }
+# Identifies this machine to the server. Without it the heartbeat is treated as
+# an anonymous liveness ping: online state is refreshed and nothing else, and no
+# credential rotation is handed back.
+if (\$state.agentSecret) { \$body['agentSecret'] = \$state.agentSecret }
 # Installed RustDesk version, read from the binary rather than by spawning it.
 # Normalised to three segments: FileVersion reports 1.4.9.0 while the server
 # compares against the GitHub release tag 1.4.9.
@@ -640,7 +670,7 @@ try {
         if (\$sha -eq \$rot.sha256) {
             & \$RDEXE --password \$rot.password *>\$null
             Start-Sleep -Seconds 1
-            \$confirm = @{ rustdeskId = \$id; sha256 = \$sha } | ConvertTo-Json -Compress
+            \$confirm = @{ rustdeskId = \$id; sha256 = \$sha; agentSecret = \$state.agentSecret } | ConvertTo-Json -Compress
             \$confirmed = \$false
             try {
                 \$cr = Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/confirm-rotation') -Method Post -Body \$confirm -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
@@ -700,6 +730,7 @@ if (-not $rdId -or -not $registered) {
     $secretFile = "$STATEDIR\\enroll.dat"
     $payload = [PSCustomObject]@{
         host = $REM0TE_HOST; token = $CLAIM_TOKEN; password = $PERM_PW
+        agentSecret = $AGENT_SECRET
         expiresAt = (Get-Date).AddDays(1).ToString('o')
     } | ConvertTo-Json -Compress
     try { Set-Content -Path $secretFile -Value $payload -Encoding UTF8; icacls $secretFile /inheritance:r /grant:r 'SYSTEM:(F)' 'Administrators:(F)' *>$null } catch {}
@@ -714,6 +745,7 @@ if ((Get-Date) -gt [DateTime]\$state.expiresAt) { schtasks /Delete /TN 'Rem0teEn
 try { \$out = & \$RDEXE --get-id 2>\$null | Out-String; if (\$out -match '([0-9]{6,15})') { \$id = \$Matches[1] } } catch {}
 if (-not \$id) { exit 0 }
 \$body = @{ rustdeskId = \$id; hostname = \$env:COMPUTERNAME; platform = 'Windows'; password = \$state.password }
+if (\$state.agentSecret) { \$body['agentSecret'] = \$state.agentSecret }
 if (\$state.token) { \$body['token'] = \$state.token }
 \$json = \$body | ConvertTo-Json -Compress
 \$endpoint = if (\$state.token) { 'enrollment/claim' } else { 'enrollment/heartbeat' }
@@ -924,6 +956,21 @@ RED='\\033[0;31m'; GREEN='\\033[0;32m'; YELLOW='\\033[1;33m'; CYAN='\\033[0;36m'
 # Generate a permanent password for this device
 PERM_PW=$(LC_ALL=C tr -dc 'A-Za-z2-9' < /dev/urandom | head -c 12)
 
+# Device secret: what proves to the server that a later call really is this
+# machine. The RustDesk ID alone used to be enough, and it is a number anyone
+# who has connected here knows. Kept 0600 and reused across re-installs so the
+# binding the server holds stays valid.
+AGENT_STATE="/etc/rem0te-agent.secret"
+if [ -r "\${AGENT_STATE}" ]; then
+  AGENT_SECRET=$(cat "\${AGENT_STATE}" 2>/dev/null | tr -dc 'A-Za-z0-9_-')
+else
+  AGENT_SECRET=""
+fi
+if [ -z "\${AGENT_SECRET}" ]; then
+  AGENT_SECRET=$(LC_ALL=C tr -dc 'A-Za-z0-9_-' < /dev/urandom | head -c 43)
+  ( umask 077; printf '%s' "\${AGENT_SECRET}" > "\${AGENT_STATE}" ) 2>/dev/null || true
+fi
+
 [ "$EUID" -eq 0 ] || { echo -e "\${RED}ERROR: Run as root: sudo bash\${NC}"; exit 1; }
 
 echo -e "\${CYAN}"
@@ -1013,11 +1060,11 @@ if [ -n "\${RD_ID}" ]; then
     echo "  Registering device with Rem0te (claim token supplied)..."
     if ! curl -sf -X POST "https://\${HOST_ADDR}/api/v1/enrollment/claim" \\
       -H "Content-Type: application/json" \\
-      -d "{\\"token\\":\\"\${CLAIM_TOKEN}\\",\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"linux\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null; then
+      -d "{\\"token\\":\\"\${CLAIM_TOKEN}\\",\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"linux\\",\\"password\\":\\"\${PERM_PW}\\",\\"agentSecret\\":\\"\${AGENT_SECRET}\\"}" >/dev/null; then
       echo "  Claim failed — falling back to unassigned registration."
       curl -sf -X POST "https://\${HOST_ADDR}/api/v1/enrollment/heartbeat" \\
         -H "Content-Type: application/json" \\
-        -d "{\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"linux\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null || true
+        -d "{\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"linux\\",\\"password\\":\\"\${PERM_PW}\\",\\"agentSecret\\":\\"\${AGENT_SECRET}\\"}" >/dev/null || true
     else
       echo "  Device registered to its business."
     fi
@@ -1025,7 +1072,7 @@ if [ -n "\${RD_ID}" ]; then
     echo "  Registering device with Rem0te (no claim token — will appear as Unassigned)..."
     curl -sf -X POST "https://\${HOST_ADDR}/api/v1/enrollment/heartbeat" \\
       -H "Content-Type: application/json" \\
-      -d "{\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"linux\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null || true
+      -d "{\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"linux\\",\\"password\\":\\"\${PERM_PW}\\",\\"agentSecret\\":\\"\${AGENT_SECRET}\\"}" >/dev/null || true
     echo "  Device registered. Assign it under Admin -> Unassigned Devices."
   fi
 else
@@ -1069,6 +1116,20 @@ CLAIM_TOKEN="${claimToken}"
 
 # Generate a permanent password for this device
 PERM_PW=$(LC_ALL=C tr -dc 'A-Za-z2-9' < /dev/urandom | head -c 12)
+
+# Device secret — see the Linux installer for why the RustDesk ID is not
+# identity. Stored 0600 under the user's home because this installer does not
+# run as root, and reused across re-installs.
+AGENT_STATE="\${HOME}/.rem0te-agent.secret"
+if [ -r "\${AGENT_STATE}" ]; then
+  AGENT_SECRET=$(cat "\${AGENT_STATE}" 2>/dev/null | tr -dc 'A-Za-z0-9_-')
+else
+  AGENT_SECRET=""
+fi
+if [ -z "\${AGENT_SECRET}" ]; then
+  AGENT_SECRET=$(LC_ALL=C tr -dc 'A-Za-z0-9_-' < /dev/urandom | head -c 43)
+  ( umask 077; printf '%s' "\${AGENT_SECRET}" > "\${AGENT_STATE}" ) 2>/dev/null || true
+fi
 
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && DMGFILE="rustdesk-\${VERSION}-aarch64.dmg" || DMGFILE="rustdesk-\${VERSION}-x86_64.dmg"
@@ -1156,11 +1217,11 @@ if [ -n "\${RD_ID}" ]; then
     echo "  Registering device with Rem0te (claim token supplied)..."
     if ! curl -sf -X POST "https://\${HOST_ADDR}/api/v1/enrollment/claim" \\
       -H "Content-Type: application/json" \\
-      -d "{\\"token\\":\\"\${CLAIM_TOKEN}\\",\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"macos\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null; then
+      -d "{\\"token\\":\\"\${CLAIM_TOKEN}\\",\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"macos\\",\\"password\\":\\"\${PERM_PW}\\",\\"agentSecret\\":\\"\${AGENT_SECRET}\\"}" >/dev/null; then
       echo "  Claim failed — falling back to unassigned registration."
       curl -sf -X POST "https://\${HOST_ADDR}/api/v1/enrollment/heartbeat" \\
         -H "Content-Type: application/json" \\
-        -d "{\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"macos\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null || true
+        -d "{\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"macos\\",\\"password\\":\\"\${PERM_PW}\\",\\"agentSecret\\":\\"\${AGENT_SECRET}\\"}" >/dev/null || true
     else
       echo "  Device registered to its business."
     fi
@@ -1168,7 +1229,7 @@ if [ -n "\${RD_ID}" ]; then
     echo "  Registering device with Rem0te (no claim token — will appear as Unassigned)..."
     curl -sf -X POST "https://\${HOST_ADDR}/api/v1/enrollment/heartbeat" \\
       -H "Content-Type: application/json" \\
-      -d "{\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"macos\\",\\"password\\":\\"\${PERM_PW}\\"}" >/dev/null || true
+      -d "{\\"rustdeskId\\":\\"\${RD_ID}\\",\\"hostname\\":\\"\${HOSTNAME_SHORT}\\",\\"platform\\":\\"macos\\",\\"password\\":\\"\${PERM_PW}\\",\\"agentSecret\\":\\"\${AGENT_SECRET}\\"}" >/dev/null || true
     echo "  Device registered. Assign it under Admin -> Unassigned Devices."
   fi
 else

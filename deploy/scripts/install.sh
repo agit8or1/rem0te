@@ -449,8 +449,26 @@ systemctl enable reboot-remote-api reboot-remote-web caddy
 step "Configuring sudoers for service management…"
 cat > /etc/sudoers.d/reboot-remote << 'EOF'
 # Reboot Remote — narrowly-scoped sudo grants
-# fail2ban management (args validated in security.service.ts)
-reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client
+# fail2ban management. Pinned per subcommand, because an unrestricted
+# fail2ban-client is a root shell: `set <jail> addaction` plus
+# `set <jail> action <name> actionban "<command>"` runs that command as root the
+# next time the jail bans anything. The third argument is a literal keyword in
+# every rule below, so no action can be defined. Jail names and addresses are
+# also sanitised in security.service.ts; this is the half that holds even if
+# that sanitising is ever lost.
+reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client status
+reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client status [a-zA-Z0-9_-]*
+reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client get [a-zA-Z0-9_-]* ignoreip
+reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client get [a-zA-Z0-9_-]* bantime
+reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client get [a-zA-Z0-9_-]* findtime
+reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client get [a-zA-Z0-9_-]* maxretry
+reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client set [a-zA-Z0-9_-]* banip [0-9a-fA-F.\:/]*
+reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client set [a-zA-Z0-9_-]* unbanip [0-9a-fA-F.\:/]*
+reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client set [a-zA-Z0-9_-]* addignoreip [0-9a-fA-F.\:/]*
+reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client set [a-zA-Z0-9_-]* delignoreip [0-9a-fA-F.\:/]*
+reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client set [a-zA-Z0-9_-]* bantime [0-9]*
+reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client set [a-zA-Z0-9_-]* findtime [0-9]*
+reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client set [a-zA-Z0-9_-]* maxretry [0-9]*
 # One-time initial install of fail2ban only
 reboot ALL=(root) NOPASSWD: /usr/bin/apt-get install -y fail2ban
 # OS update workflow (admin-triggered)

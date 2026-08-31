@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-const PUBLIC_PREFIXES = ['/login', '/mfa', '/api/', '/_next/', '/favicon.ico', '/download'];
+const PUBLIC_PREFIXES = ['/login', '/mfa', '/api/', '/_next/', '/favicon.ico'];
 
 // `/quick` is the public "I need remote support" page. It must stay reachable
 // without an account — requiring one to receive a support session would defeat
@@ -9,7 +9,10 @@ const PUBLIC_PREFIXES = ['/login', '/mfa', '/api/', '/_next/', '/favicon.ico', '
 //
 // Matched exactly, NOT as a prefix: `/quick-connect` and `/quickstart` are
 // signed-in pages and a prefix match would quietly open them up.
-const PUBLIC_EXACT = ['/quick'];
+// `/download` is the public client-download page. Exact, not a prefix: as a
+// prefix it also matched `/downloads`, the signed-in page — the very mistake
+// this list already knew to avoid for `/quick`.
+const PUBLIC_EXACT = ['/quick', '/download'];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;

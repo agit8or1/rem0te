@@ -63,6 +63,18 @@ sudo chown -R reboot:reboot /opt/reboot-remote/api/dist /opt/reboot-remote/web/s
 sudo systemctl restart reboot-remote-api reboot-remote-web
 ```
 
+**A schema change needs two more steps**, or the API throws
+`Unknown field ... on model ...` at runtime: the deploy target has its own
+`node_modules`, so the Prisma client there is generated from the schema that was
+present at install time, and `dist/` does not carry it.
+
+```bash
+cd apps/api && DATABASE_URL=... npx prisma migrate deploy   # apply the migration
+sudo rsync -a apps/api/prisma/ /opt/reboot-remote/api/prisma/
+cd /opt/reboot-remote/api && sudo npx prisma generate       # regenerate the client there
+sudo chown -R reboot:reboot /opt/reboot-remote/api/prisma /opt/reboot-remote/api/node_modules/.prisma
+```
+
 Client chunks are **added, never deleted** — that is what the `--exclude` and the
 second rsync are for. Next.js requests chunks by content hash, and deleting the
 previous build's files 404s every browser that already had the app open.
@@ -83,6 +95,23 @@ previous build's files 404s every browser that already had the app open.
 - **hbbs logs nothing when a connection fails.** Use
   `deploy/scripts/hbbs-probe.py <id>`. Note it sends a real punch-hole, so the
   endpoint will dial the relay as a side effect.
+
+## Security invariants
+
+```bash
+node scripts/check-security-invariants.mjs
+```
+
+Static checks for protections that have failed silently before: a rate-limit
+decorator naming a throttler that is not configured, a pre-MFA token being
+accepted as a session, the device heartbeat trusting a RustDesk ID, an
+unrestricted `fail2ban-client` sudo grant, the launcher trusting a link's API
+address, and read-test-write on single-use tokens. Each one was a real finding
+in the 0.13.0 review; none of them threw, logged, or failed a test.
+
+Not yet wired into CI — add `node scripts/check-security-invariants.mjs`
+alongside `check-versions.mjs` in `.github/workflows/ci.yml` (a push touching
+that file needs a token with `workflow` scope).
 
 ## Docs
 

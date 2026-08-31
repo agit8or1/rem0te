@@ -8,6 +8,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
+import { createHmac } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { MfaService } from '../mfa/mfa.service';
@@ -17,6 +18,75 @@ import type { LoginDto, RegisterDto } from './dto/login.dto';
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+
+  /**
+   * The pre-MFA token is signed with a key derived from JWT_SECRET rather than
+   * with JWT_SECRET itself.
+   *
+   * It used to be signed with the session key, and `JwtStrategy` accepted it,
+   * so anyone holding a password could skip the second factor entirely: the
+   * partial token is handed to the browser after the password check and worked
+   * as a bearer credential on every route. The strategy now refuses tokens
+   * carrying `partial`, and a separate key means the two can never be
+   * interchangeable even if that check is ever lost again. Derived rather than
+   * configured so an existing deployment needs no new environment variable.
+   */
+  /**
+   * Failed password attempts per account, in process.
+   *
+   * `PlatformSecurityConfig.maxLoginAttempts` and `.lockoutMinutes` have been
+   * configurable — and shown in the Security page — since before there was any
+   * code that read them, so an operator could set a lockout policy that did
+   * nothing at all. The per-IP throttle is the other half and lives on the
+   * route; this half is per-account, so distributing an attack across addresses
+   * does not buy the attacker anything.
+   *
+   * In process, like the recovery-code backoff in MfaService, because the API
+   * runs as a single unit. Moving to Redis is the change to make if that stops
+   * being true.
+   */
+  private readonly loginFailures = new Map<string, { count: number; lockedUntil: number }>();
+
+  private async lockoutPolicy(): Promise<{ max: number; minutes: number }> {
+    const cfg = await this.prisma.platformSecurityConfig.findFirst({
+      select: { maxLoginAttempts: true, lockoutMinutes: true },
+    });
+    return {
+      max: cfg?.maxLoginAttempts ?? 5,
+      minutes: cfg?.lockoutMinutes ?? 15,
+    };
+  }
+
+  /** Remaining lockout in seconds, or 0 when the account is not locked. */
+  private lockedFor(userId: string): number {
+    const state = this.loginFailures.get(userId);
+    if (!state || state.lockedUntil <= Date.now()) return 0;
+    return Math.ceil((state.lockedUntil - Date.now()) / 1000);
+  }
+
+  private async recordLoginFailure(userId: string, ip: string): Promise<void> {
+    const { max, minutes } = await this.lockoutPolicy();
+    if (max <= 0) return;                       // 0 disables the policy
+    const state = this.loginFailures.get(userId);
+    const count = (state && state.lockedUntil > Date.now() - minutes * 60_000 ? state.count : 0) + 1;
+    const lockedUntil = count >= max ? Date.now() + minutes * 60_000 : Date.now();
+    this.loginFailures.set(userId, { count, lockedUntil });
+    if (count >= max) {
+      await this.audit.log({
+        action: 'LOGIN_FAILURE', actorId: userId, actorIp: ip,
+        meta: { reason: 'account_locked', attempts: count, lockoutMinutes: minutes },
+      });
+    }
+  }
+
+  private clearLoginFailures(userId: string): void {
+    this.loginFailures.delete(userId);
+  }
+
+  private partialSecret(): string {
+    const base = this.config.get<string>('JWT_SECRET')!;
+    return createHmac('sha256', base).update('rem0te:mfa-partial:v1').digest('hex');
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -50,6 +120,20 @@ export class AuthService {
     if (user.status === 'INVITED') {
       throw new UnauthorizedException('Account setup not complete. Check your invitation email.');
     }
+    // A deleted account is a deleted account. The strategy refuses its token on
+    // the next request anyway, so letting the login itself succeed only ever
+    // produced a confusing redirect loop.
+    if (user.status === 'DELETED') {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const locked = this.lockedFor(user.id);
+    if (locked > 0) {
+      await this.audit.log({ action: 'LOGIN_FAILURE', actorId: user.id, actorIp: ip, meta: { reason: 'locked_out' } });
+      throw new UnauthorizedException(
+        `Too many failed sign-in attempts. Try again in ${Math.ceil(locked / 60)} minute(s).`,
+      );
+    }
 
     if (!user.passwordHash) {
       throw new UnauthorizedException('Invalid credentials');
@@ -58,8 +142,10 @@ export class AuthService {
     const valid = await argon2.verify(user.passwordHash, dto.password);
     if (!valid) {
       await this.audit.log({ action: 'LOGIN_FAILURE', actorId: user.id, actorIp: ip, meta: { reason: 'invalid_password' } });
+      await this.recordLoginFailure(user.id, ip);
       throw new UnauthorizedException('Invalid credentials');
     }
+    this.clearLoginFailures(user.id);
 
     let tenantId: string | null = null;
     let roleType = null;
@@ -108,7 +194,7 @@ export class AuthService {
           sub: user.id, email: user.email, tenantId, roleType,
           isPlatformAdmin: user.isPlatformAdmin, mfaVerified: false, partial: true,
         },
-        { expiresIn: '10m' },
+        { expiresIn: '10m', secret: this.partialSecret() },
       );
       return { requiresMfa: true, mfaEnrolled: hasTotpMethod, partialToken };
     }
@@ -130,7 +216,7 @@ export class AuthService {
   async verifyMfaAndLogin(partialToken: string, code: string, ip: string) {
     let payload: JwtPayload & { partial?: boolean };
     try {
-      payload = this.jwtService.verify(partialToken);
+      payload = this.jwtService.verify(partialToken, { secret: this.partialSecret() });
     } catch {
       throw new UnauthorizedException('Invalid or expired partial token');
     }

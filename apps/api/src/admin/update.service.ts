@@ -5,8 +5,12 @@ import * as https from 'https';
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
+import { createHash } from 'crypto';
 import { Subject } from 'rxjs';
 import { latestRustdeskVersion } from '../common/rustdesk-release';
+
+interface RustdeskServerAsset { name: string; url: string; sha256: string }
+interface RustdeskServerRelease { version: string; assets: RustdeskServerAsset[] }
 
 export interface UpdateProgress {
   step: string;
@@ -469,14 +473,24 @@ export class UpdateService {
   /** Where the .deb pair is staged. Fixed, because the sudoers rule names it. */
   private readonly rustdeskServerStaging = '/var/lib/reboot-remote/rustdesk-server';
 
-  private rustdeskServerCache: { version: string; fetchedAt: number } | null = null;
+  private rustdeskServerCache: { release: RustdeskServerRelease; fetchedAt: number } | null = null;
 
-  /** Latest rustdesk-server release. Null if GitHub has not been reachable. */
-  private async latestRustdeskServerVersion(): Promise<string | null> {
+  /**
+   * Latest rustdesk-server release, with the SHA-256 GitHub publishes for each
+   * asset. Null if GitHub has not been reachable.
+   *
+   * The digests are the point. These packages are installed with `dpkg -i` as
+   * root, and until now nothing checked that the bytes on disk were the bytes
+   * the release names — a hostile redirect, a CDN edge or a compromised
+   * upstream account would have owned the host. GitHub returns
+   * `digest: "sha256:…"` per asset; a release that does not carry one is not
+   * installed.
+   */
+  private async rustdeskServerRelease(): Promise<RustdeskServerRelease | null> {
     if (this.rustdeskServerCache && Date.now() - this.rustdeskServerCache.fetchedAt < 3600_000) {
-      return this.rustdeskServerCache.version;
+      return this.rustdeskServerCache.release;
     }
-    const stale = () => this.rustdeskServerCache?.version ?? null;
+    const stale = () => this.rustdeskServerCache?.release ?? null;
     return new Promise((resolve) => {
       const req = https.get(
         'https://api.github.com/repos/rustdesk/rustdesk-server/releases/latest',
@@ -486,10 +500,24 @@ export class UpdateService {
           res.on('data', (c) => (data += c));
           res.on('end', () => {
             try {
-              const tag = String(JSON.parse(data).tag_name ?? '').replace(/^v/, '');
-              if (!/^\d+\.\d+\.\d+$/.test(tag)) return resolve(stale());
-              this.rustdeskServerCache = { version: tag, fetchedAt: Date.now() };
-              resolve(tag);
+              const json = JSON.parse(data) as {
+                tag_name?: string;
+                assets?: { name?: string; browser_download_url?: string; digest?: string }[];
+              };
+              const version = String(json.tag_name ?? '').replace(/^v/, '');
+              if (!/^\d+\.\d+\.\d+$/.test(version)) return resolve(stale());
+              const assets: RustdeskServerAsset[] = [];
+              for (const a of json.assets ?? []) {
+                const sha = /^sha256:([0-9a-f]{64})$/.exec(a.digest ?? '')?.[1];
+                // Only https URLs on github.com: the download follows redirects,
+                // and the starting point should not be attacker-chosen either.
+                if (!a.name || !a.browser_download_url || !sha) continue;
+                if (!/^https:\/\/(github\.com|objects\.githubusercontent\.com)\//.test(a.browser_download_url)) continue;
+                assets.push({ name: a.name, url: a.browser_download_url, sha256: sha });
+              }
+              const release = { version, assets };
+              this.rustdeskServerCache = { release, fetchedAt: Date.now() };
+              resolve(release);
             } catch {
               resolve(stale());
             }
@@ -498,6 +526,22 @@ export class UpdateService {
       );
       req.on('error', () => resolve(stale()));
       req.setTimeout(8000, () => { req.destroy(); resolve(stale()); });
+    });
+  }
+
+  /** Latest rustdesk-server version. Null if GitHub has not been reachable. */
+  private async latestRustdeskServerVersion(): Promise<string | null> {
+    return (await this.rustdeskServerRelease())?.version ?? null;
+  }
+
+  /** SHA-256 of a file on disk, as lowercase hex. */
+  private sha256File(file: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const hash = createHash('sha256');
+      const stream = fs.createReadStream(file);
+      stream.on('data', (c) => hash.update(c));
+      stream.on('error', reject);
+      stream.on('end', () => resolve(hash.digest('hex')));
     });
   }
 
@@ -551,10 +595,11 @@ export class UpdateService {
    * window fails with "the target device is offline or does not exist".
    */
   async updateRustdeskServer(actor: { userId?: string; ip?: string }) {
-    const latest = await this.latestRustdeskServerVersion();
-    if (!latest) {
+    const release = await this.rustdeskServerRelease();
+    if (!release) {
       throw new NotFoundException('The latest rustdesk-server version is unavailable right now');
     }
+    const latest = release.version;
 
     const status = await this.rustdeskServerStatus();
     if (status.upToDate && !status.mismatched) {
@@ -564,13 +609,35 @@ export class UpdateService {
     const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
     fs.mkdirSync(this.rustdeskServerStaging, { recursive: true });
 
-    const debs = [
-      { name: 'hbbs.deb', url: `https://github.com/rustdesk/rustdesk-server/releases/download/${latest}/rustdesk-server-hbbs_${latest}_${arch}.deb` },
-      { name: 'hbbr.deb', url: `https://github.com/rustdesk/rustdesk-server/releases/download/${latest}/rustdesk-server-hbbr_${latest}_${arch}.deb` },
-    ];
+    const debs = (['hbbs', 'hbbr'] as const).map((which) => {
+      const assetName = `rustdesk-server-${which}_${latest}_${arch}.deb`;
+      const asset = release.assets.find((a) => a.name === assetName);
+      if (!asset) {
+        throw new NotFoundException(
+          `Release ${latest} does not publish ${assetName} with a checksum. Refusing to install it.`,
+        );
+      }
+      return { name: `${which}.deb`, asset };
+    });
 
+    // Download, then verify against the digest GitHub published for that asset
+    // before anything is handed to dpkg. A file that does not match is deleted
+    // rather than left in the staging directory the sudoers rule points at.
     for (const deb of debs) {
-      await this.downloadTo(deb.url, path.join(this.rustdeskServerStaging, deb.name));
+      const target = path.join(this.rustdeskServerStaging, deb.name);
+      await this.downloadTo(deb.asset.url, target);
+      const actual = await this.sha256File(target);
+      if (actual !== deb.asset.sha256) {
+        fs.unlinkSync(target);
+        await this.audit.log({
+          actorId: actor.userId, actorIp: actor.ip,
+          action: 'SETTINGS_UPDATED', resource: 'rustdesk_server', resourceId: deb.name,
+          meta: { refused: 'checksum_mismatch', expected: deb.asset.sha256, actual, version: latest },
+        });
+        throw new NotFoundException(
+          `${deb.asset.name} did not match the checksum GitHub published for it. Nothing was installed.`,
+        );
+      }
     }
 
     const noop = () => { /* no progress stream on this path */ };

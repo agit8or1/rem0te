@@ -19,6 +19,7 @@ import { UpdateBrandingDto, UpdateSettingsDto, UpdateTenantDto } from './dto/cre
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { Actor } from '../common/decorators/actor.decorator';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
+import { PlatformAdminGuard } from '../common/guards/platform-admin.guard';
 
 const UPLOAD_DIR = '/opt/reboot-remote/uploads/logos';
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
@@ -84,6 +85,8 @@ export class TenantsController {
   }
 
   @Patch(':id/branding/logo')
+  // Before the interceptor, not after: see PlatformAdminGuard.
+  @UseGuards(PlatformAdminGuard)
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({

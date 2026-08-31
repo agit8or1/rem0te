@@ -5,6 +5,53 @@ authentication, remote-access credentials, installer/updater supply chain,
 and privileged operations. This document records what was fixed, what was
 verified, and what remains as future work.
 
+Two passes are recorded here: the original review, and a second full pass on
+2026-08-31 (v0.13.0, *Deadbolt*) which is written up first because it found the
+more serious problems of the two.
+
+## Second pass — 2026-08-31 (v0.13.0)
+
+Scope: every authentication, authorization, crypto, privileged-process and
+unauthenticated surface in `apps/api`, `apps/web`, `apps/launcher`,
+`tools/windows-installer`, `deploy` and `scripts`; the deployed configuration;
+and the dependency graph (`pnpm audit`: clean; semgrep: nine findings, all
+false positives or test fixtures).
+
+| Severity | Found | Fixed |
+|----------|------:|------:|
+| High     | 5     | 5     |
+| Medium   | 5     | 5     |
+| Low      | 6     | 6     |
+
+Every finding and its fix is written up in `CHANGELOG.md` under 0.13.0. In
+short:
+
+| # | Finding | CWE |
+|---|---------|-----|
+| H1 | Pre-MFA `partial` token accepted as a session token — MFA bypass for platform admins and owners | 287 |
+| H2 | All per-route rate limits inert (`@Throttle({default})` vs named throttlers); no account lockout despite configurable policy | 307 |
+| H3 | `/enrollment/heartbeat` authenticated by RustDesk ID alone — plaintext rotation disclosure, password overwrite, metadata spoofing, unbounded row creation | 306 |
+| H4 | `sudo fail2ban-client` unrestricted — API compromise escalates to root | 269 |
+| H5 | Launcher trusted `api=` from the deep link — token exfiltration and hostile RustDesk reconfiguration | 601/522 |
+| M1 | rustdesk-server .debs installed as root with no integrity check | 494 |
+| M2 | Launcher tokens and connection grants not atomically single-use | 367 |
+| M3 | Open redirect via `returnTo` after sign-in | 601 |
+| M4 | `/download` prefix exempted `/downloads` from the web auth gate | 288 |
+| M5 | Logo upload wrote the file before the platform-admin check | 285 |
+| L1–L6 | Launcher tokens stored in plaintext; `DELETED` accounts could complete login; tenant-less tokens kept frozen claims; 16-byte GCM nonce; installer accepted a non-https script URL; stale `next@14.2.18` in the dev store | — |
+
+Verified sound in this pass, and worth recording: business isolation through
+`AccessControlService` on every scoped read; JWT claims re-read from the
+database on every request; argon2id passwords; CSPRNG tokens stored hashed;
+AES-256-GCM with the tag verified and a boot-time key check; no SQL injection
+(two `$queryRaw`, both parameterised); no `eval` and no shell — every `spawn`
+uses a fixed argv with `shell: false`; anchored allowlists on every value
+interpolated into an installer script; and a deployed configuration with
+`PUBLIC_API_URL` set, the in-app updater off, loopback-only proxy trust and a
+root-owned `0600` environment file.
+
+## First pass — earlier August 2026
+
 ## Summary
 
 | Severity  | Found | Fixed in this pass | Remaining |

@@ -110,6 +110,7 @@ enum ActivityAction {
   ENDPOINT_ACCESS_REVOKED
   ENDPOINT_CREDENTIAL_ROTATION_STAGED
   ENDPOINT_CREDENTIAL_ROTATED
+  ENDPOINT_HEARTBEAT_REJECTED
   CONNECTION_GRANT_CREATED
   CONNECTION_GRANT_REDEEMED
   CONNECTION_GRANT_DENIED
@@ -563,6 +564,19 @@ model RustdeskNode {
   hostname          String?
   publicKey         String?
   permanentPassword String?   // AES-256-GCM encrypted, same format as TOTP secrets
+
+  // SHA-256 of the agent's device secret. The heartbeat used to identify a
+  // machine by its RustDesk ID alone — a number printed in the RustDesk window
+  // and shared with every technician who has ever connected — so anyone who
+  // knew one could collect a pending credential rotation in plaintext,
+  // overwrite the stored password, and rewrite the machine's metadata, all
+  // unauthenticated. The installer now generates a secret per device, sends it
+  // on every call, and the server binds it on first sight (or at claim time).
+  // Null means a machine enrolled before this existed: it still reports online,
+  // but nothing is written from its heartbeat and no rotation is handed to it
+  // until its installer is re-run.
+  agentSecretHash   String?
+  agentSecretSetAt  DateTime?
 
   // Credential rotation staging. When the server issues a rotation:
   //   pendingPassword   = AES-GCM(new candidate)

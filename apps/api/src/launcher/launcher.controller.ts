@@ -2,7 +2,6 @@ import {
   Controller, Post, Get, Patch, Param, Body, Req,
   UseGuards, HttpCode, HttpStatus,
 } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { LauncherService } from './launcher.service';
 import { IssueLauncherTokenDto } from './dto/launcher.dto';
@@ -13,6 +12,7 @@ import { Public } from '../common/decorators/public.decorator';
 import { Actor } from '../common/decorators/actor.decorator';
 import type { ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
+import { RateLimit } from '../common/throttling';
 
 @Controller('launcher')
 export class LauncherController {
@@ -29,7 +29,7 @@ export class LauncherController {
   @Get('validate')
   @Public()
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @RateLimit(20)
   async validateToken(@Req() req: Request) {
     const authHeader = req.headers['authorization'];
     const token = authHeader?.startsWith('Bearer ')

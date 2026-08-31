@@ -20,7 +20,12 @@ interface Branding {
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
-  const returnTo = params.get('returnTo') ?? '/dashboard';
+  // Only a path on this site. `returnTo` arrives in the query string, and
+  // `https://…` or `//host` in there would send someone straight from a real
+  // sign-in to somebody else's page — the ideal setup for asking them to sign
+  // in again.
+  const requested = params.get('returnTo') ?? '';
+  const returnTo = /^\/(?!\/)/.test(requested) ? requested : '/dashboard';
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

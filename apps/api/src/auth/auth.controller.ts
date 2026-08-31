@@ -2,7 +2,6 @@ import {
   Controller, Post, Get, Patch, Body, Req, Res,
   HttpCode, HttpStatus, UseGuards,
 } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto, VerifyMfaDto } from './dto/login.dto';
@@ -14,6 +13,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import type { ActorContext } from '../rbac/access-control.service';
 import { accessLevelLabel } from '../rbac/capabilities';
 import type { JwtPayload } from './strategies/jwt.strategy';
+import { RateLimit } from '../common/throttling';
 
 @Controller('auth')
 export class AuthController {
@@ -25,7 +25,7 @@ export class AuthController {
   @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @RateLimit(10)
   async login(
     @Body() dto: LoginDto,
     @Req() req: Request,
@@ -54,7 +54,7 @@ export class AuthController {
   @Public()
   @Post('mfa/verify')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @RateLimit(10)
   async verifyMfa(
     @Body() dto: VerifyMfaDto,
     @Req() req: Request,

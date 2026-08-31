@@ -3,7 +3,6 @@ import {
   Body, Param, Query, Req, Res, UseGuards, HttpCode, HttpStatus,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { EndpointsService } from './endpoints.service';
 import { RustdeskService } from '../common/rustdesk.service';
@@ -18,6 +17,7 @@ import { Public } from '../common/decorators/public.decorator';
 import type { ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
+import { RateLimit } from '../common/throttling';
 
 /**
  * Computers.
@@ -58,7 +58,7 @@ export class EndpointsController {
   @Post(':id/connect')
   @HttpCode(HttpStatus.OK)
   @RequireCapability(CAP.COMPUTERS_CONNECT)
-  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @RateLimit(30)
   async connect(@Actor() actor: ActorContext, @Param('id') id: string) {
     const grant = await this.svc.createConnectionGrant(actor, id);
     const info = await this.svc.connectInfo(actor, id);
@@ -88,7 +88,7 @@ export class EndpointsController {
    */
   @Get(':id/connect.cmd')
   @RequireCapability(CAP.COMPUTERS_CONNECT)
-  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @RateLimit(30)
   async connectScript(
     @Actor() actor: ActorContext,
     @Param('id') id: string,
@@ -129,7 +129,7 @@ export class EndpointsController {
   @Post('grants/redeem')
   @Public()
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @RateLimit(60)
   async redeemGrant(@Body() body: { token: string }, @Req() req: Request) {
     const data = await this.svc.redeemConnectionGrant(body.token, req.ip);
     return { success: true, data };
@@ -180,7 +180,7 @@ export class EndpointsController {
 
   @Get(':id/password')
   @RequireCapability(CAP.COMPUTERS_EDIT)
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @RateLimit(10)
   async getPassword(
     @Actor() actor: ActorContext,
     @CurrentUser() u: JwtPayload,

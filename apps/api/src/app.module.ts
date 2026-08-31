@@ -6,6 +6,7 @@ import { ThrottlerGuard } from '@nestjs/throttler';
 import { PermissionsGuard } from './common/guards/permissions.guard';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { CapabilitiesGuard } from './common/guards/capabilities.guard';
+import { THROTTLER_BURST, THROTTLER_MAIN } from './common/throttling';
 
 import configuration from './config/configuration';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
@@ -42,14 +43,18 @@ import { DownloadsModule } from './downloads/downloads.module';
       load: [configuration],
       envFilePath: ['.env'],
     }),
+    // Names matter: a route's @Throttle/RateLimit override is matched to a
+    // throttler by name, and an override naming a throttler that does not
+    // exist is silently ignored. Both names come from common/throttling.ts,
+    // which is also where RateLimit() builds its key.
     ThrottlerModule.forRoot([
       {
-        name: 'short',
+        name: THROTTLER_BURST,
         ttl: 1000,
         limit: 20,
       },
       {
-        name: 'long',
+        name: THROTTLER_MAIN,
         ttl: 60000,
         limit: 300,
       },

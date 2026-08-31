@@ -2,7 +2,6 @@ import {
   Controller, Get, Post, Delete, Param, Body, Query, Req,
   UseGuards, HttpCode, HttpStatus, OnModuleInit, OnModuleDestroy, Logger,
 } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { EnrollmentService } from './enrollment.service';
 import { CreateClaimTokenDto, ClaimEndpointDto, HeartbeatDto } from './dto/enrollment.dto';
@@ -13,6 +12,7 @@ import { Public } from '../common/decorators/public.decorator';
 import { Actor } from '../common/decorators/actor.decorator';
 import type { ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
+import { RateLimit } from '../common/throttling';
 
 @Controller('enrollment')
 export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
@@ -69,7 +69,7 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   // Public endpoint — called by the agent installer on the managed device
   @Post('claim')
   @Public()
-  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @RateLimit(10)
   @HttpCode(HttpStatus.OK)
   async claimEndpoint(@Body() dto: ClaimEndpointDto, @Req() req: Request) {
     const ip = req.ip ?? req.socket?.remoteAddress;
@@ -80,7 +80,7 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   // Public endpoint — called periodically by the agent to indicate online status
   @Post('heartbeat')
   @Public()
-  @Throttle({ default: { limit: 60, ttl: 60000 } })
+  @RateLimit(60)
   @HttpCode(HttpStatus.OK)
   async heartbeat(@Body() dto: HeartbeatDto, @Req() req: Request) {
     const ip = req.ip ?? req.socket?.remoteAddress;
@@ -93,10 +93,10 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   // /heartbeat and applied via rustdesk.exe --password.
   @Post('confirm-rotation')
   @Public()
-  @Throttle({ default: { limit: 30, ttl: 60000 } })
+  @RateLimit(30)
   @HttpCode(HttpStatus.OK)
-  async confirmRotation(@Body() body: { rustdeskId: string; sha256: string }) {
-    const result = await this.enrollment.confirmRotation(body.rustdeskId, body.sha256);
+  async confirmRotation(@Body() body: { rustdeskId: string; sha256: string; agentSecret?: string }) {
+    const result = await this.enrollment.confirmRotation(body.rustdeskId, body.sha256, body.agentSecret);
     return { success: true, data: result };
   }
 }

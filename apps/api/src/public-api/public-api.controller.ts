@@ -3,7 +3,6 @@ import {
   HttpCode, HttpStatus, UnauthorizedException,
 } from '@nestjs/common';
 import { IsArray, IsEmail, IsIn, IsInt, IsOptional, IsString, Length, Min, Max } from 'class-validator';
-import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 
 import { ApiKeyAuthGuard } from '../apikeys/apikey-auth.guard';
@@ -14,6 +13,7 @@ import { EndpointsService } from '../endpoints/endpoints.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
 import { buildActorContext, type ActorContext } from '../rbac/access-control.service';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
+import { RateLimit } from '../common/throttling';
 
 // ── DTOs ─────────────────────────────────────────────────────────────────────
 
@@ -56,7 +56,7 @@ class ApiMintEnrollmentDto {
 @Controller('pub/v1')
 @Public()
 @UseGuards(ApiKeyAuthGuard)
-@Throttle({ default: { limit: 300, ttl: 60_000 } })
+@RateLimit(300)
 export class PublicApiController {
   constructor(
     private readonly businesses: BusinessesService,

@@ -44,16 +44,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload): Promise<JwtPayload> {
-    // Partial tokens (pre-MFA) only carry a user identity; do not re-check membership.
+    // A pre-MFA token is not a session. It used to be accepted here, which made
+    // the second factor optional: the token is handed out once the password
+    // checks out, and both permission guards short-circuit on the
+    // platform-admin and owner claims it carries. Only /auth/mfa/verify may
+    // consume one, and it verifies it against its own key.
     if (payload.partial) {
-      const user = await this.prisma.user.findUnique({
-        where: { id: payload.sub },
-        select: { id: true, status: true },
-      });
-      if (!user || user.status !== 'ACTIVE') {
-        throw new UnauthorizedException('Account not available');
-      }
-      return payload;
+      throw new UnauthorizedException('Multi-factor authentication is not complete');
     }
 
     const user = await this.prisma.user.findUnique({
@@ -75,6 +72,34 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     let roleType = payload.roleType;
     let businessId = payload.businessId ?? payload.customerId ?? null;
     let capabilities = payload.capabilities ?? null;
+
+    // A token with no tenant used to keep whatever role, business and
+    // capabilities it was minted with, forever — the one path where a claim was
+    // taken on trust. Resolve it from the database like every other.
+    if (!payload.tenantId) {
+      const membership = await this.prisma.membership.findFirst({
+        where: { userId: payload.sub, isActive: true },
+        select: {
+          customerId: true,
+          capabilities: true,
+          role: { select: { type: true } },
+          customer: { select: { isActive: true, isArchived: true } },
+        },
+      });
+      if (membership) {
+        roleType = membership.role.type;
+        businessId = membership.customerId ?? null;
+        capabilities = membership.capabilities ?? [];
+        if (!isPlatformAdmin && membership.customer &&
+            (!membership.customer.isActive || membership.customer.isArchived)) {
+          throw new UnauthorizedException('This business is disabled');
+        }
+      } else if (!isPlatformAdmin) {
+        roleType = null;
+        businessId = null;
+        capabilities = [];
+      }
+    }
 
     if (payload.tenantId) {
       const tenant = await this.prisma.tenant.findUnique({

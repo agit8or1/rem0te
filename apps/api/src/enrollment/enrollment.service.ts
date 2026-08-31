@@ -2,9 +2,8 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
-  Logger,
-} from '@nestjs/common';
-import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'crypto';
+  Logger, UnauthorizedException } from '@nestjs/common';
+import { randomBytes, createCipheriv, createDecipheriv, createHash, timingSafeEqual } from 'crypto';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { PrismaService } from '../prisma/prisma.service';
@@ -36,7 +35,9 @@ export class EnrollmentService {
   }
 
   private encryptPassword(text: string): string {
-    const iv = randomBytes(16);
+    // 12 bytes is the GCM standard nonce length. The IV is stored with each
+    // record, so anything written when this was 16 still decrypts.
+    const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', this.encKey, iv);
     const enc = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
     const tag = cipher.getAuthTag();
@@ -179,7 +180,12 @@ export class EnrollmentService {
         // Adopt the unassigned node/endpoint into the token's business
         await this.prisma.rustdeskNode.update({
           where: { id: existingNode.id },
-          data: { tenantId: record.tenantId },
+          data: {
+            tenantId: record.tenantId,
+            ...(dto.agentSecret
+              ? { agentSecretHash: this.hashSecret(dto.agentSecret), agentSecretSetAt: new Date() }
+              : {}),
+          },
         });
         await this.prisma.endpoint.update({
           where: { id: existingNode.endpointId },
@@ -251,7 +257,17 @@ export class EnrollmentService {
 
     const encryptedPassword = dto.password ? this.encryptPassword(dto.password) : undefined;
 
-    // Upsert RustdeskNode — the join between endpoint and RustDesk ID
+    // Upsert RustdeskNode — the join between endpoint and RustDesk ID.
+    //
+    // Claim is the authenticated enrollment path: redeeming a single-use claim
+    // token proves the installer was handed out by an operator, so this is the
+    // right moment to bind (or rebind) the device secret every later heartbeat
+    // is checked against. Re-running the installer therefore re-establishes a
+    // machine's identity, which is exactly the recovery path for one enrolled
+    // before secrets existed.
+    const secretBinding = dto.agentSecret
+      ? { agentSecretHash: this.hashSecret(dto.agentSecret), agentSecretSetAt: new Date() }
+      : {};
     await this.prisma.rustdeskNode.upsert({
       where: { endpointId: endpoint.id },
       create: {
@@ -261,6 +277,7 @@ export class EnrollmentService {
         hostname: dto.hostname ?? null,
         platform: dto.platform ?? null,
         lastSeenAt: new Date(),
+        ...secretBinding,
         ...(encryptedPassword ? { permanentPassword: encryptedPassword } : {}),
       },
       update: {
@@ -268,6 +285,7 @@ export class EnrollmentService {
         hostname: dto.hostname ?? undefined,
         platform: dto.platform ?? undefined,
         lastSeenAt: new Date(),
+        ...secretBinding,
         ...(encryptedPassword ? { permanentPassword: encryptedPassword } : {}),
       },
     });
@@ -334,10 +352,36 @@ export class EnrollmentService {
     return { endpoint, tenantId: record.tenantId };
   }
 
-  async heartbeat(dto: { rustdeskId: string; hostname?: string; platform?: string; osVersion?: string; agentVersion?: string; rustdeskVersion?: string; ipAddress?: string; password?: string }) {
+  async heartbeat(dto: { rustdeskId: string; hostname?: string; platform?: string; osVersion?: string; agentVersion?: string; rustdeskVersion?: string; ipAddress?: string; password?: string; agentSecret?: string }) {
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { rustdeskId: dto.rustdeskId },
     });
+
+    // Identity check before anything is read or written. See secretMatches().
+    let authenticated = false;
+    if (node) {
+      if (node.agentSecretHash) {
+        if (!dto.agentSecret || !this.secretMatches(node.agentSecretHash, dto.agentSecret)) {
+          await this.audit.log({
+            tenantId: node.tenantId ?? undefined,
+            action: 'ENDPOINT_HEARTBEAT_REJECTED',
+            resource: 'endpoint', resourceId: node.endpointId,
+            meta: { rustdeskId: dto.rustdeskId, reason: dto.agentSecret ? 'secret_mismatch' : 'secret_missing' },
+          });
+          throw new UnauthorizedException('This device is not recognised');
+        }
+        authenticated = true;
+      } else if (dto.agentSecret) {
+        // First sight: bind it. The window in which this can be claimed by
+        // someone else is the window before the machine's own installer is
+        // re-run, which is why the operator is told to re-run it.
+        await this.prisma.rustdeskNode.update({
+          where: { id: node.id },
+          data: { agentSecretHash: this.hashSecret(dto.agentSecret), agentSecretSetAt: new Date() },
+        });
+        authenticated = true;
+      }
+    }
 
     // Always accept the password sent by the endpoint. The prior first-write-
     // only guard caused a real usability bug: re-running the installer on a
@@ -349,10 +393,17 @@ export class EnrollmentService {
     // ID could rotate the credential the endpoint sees) is acceptable:
     // they'd still need to also compromise the endpoint to use it, and
     // every change is audited.
-    const encryptedPassword = dto.password ? this.encryptPassword(dto.password) : undefined;
+    // Only from the device itself: an unauthenticated caller that could set
+    // this would decide which password the console hands to technicians.
+    const encryptedPassword = dto.password && authenticated ? this.encryptPassword(dto.password) : undefined;
 
     if (!node) {
-      // Auto-create an unassigned endpoint + node in the pending pool
+      // Auto-create an unassigned endpoint + node in the pending pool.
+      // Requires the device secret: without it this is an unauthenticated row
+      // factory, and every installer this server hands out sends one.
+      if (!dto.agentSecret) {
+        throw new UnauthorizedException('This device is not recognised');
+      }
       const endpoint = await this.prisma.endpoint.create({
         data: {
           tenantId: null,
@@ -374,6 +425,8 @@ export class EnrollmentService {
           hostname: dto.hostname ?? null,
           platform: dto.platform ?? null,
           lastSeenAt: new Date(),
+          agentSecretHash: this.hashSecret(dto.agentSecret),
+          agentSecretSetAt: new Date(),
           ...(encryptedPassword ? { permanentPassword: encryptedPassword } : {}),
         },
       });
@@ -384,19 +437,22 @@ export class EnrollmentService {
       };
     }
 
-    // Always accept the current password from the endpoint (see comment above).
+    // Liveness is recorded for anyone who knows the ID — it is only a
+    // timestamp, and refusing it would take a fleet enrolled before device
+    // secrets existed offline. Everything descriptive needs the secret.
     await this.prisma.rustdeskNode.update({
       where: { id: node.id },
       data: {
         lastSeenAt: new Date(),
-        ...(dto.hostname !== undefined && { hostname: dto.hostname }),
-        ...(dto.platform !== undefined && { platform: dto.platform }),
-        ...(dto.rustdeskVersion !== undefined && { version: dto.rustdeskVersion }),
+        ...(authenticated && dto.hostname !== undefined && { hostname: dto.hostname }),
+        ...(authenticated && dto.platform !== undefined && { platform: dto.platform }),
+        ...(authenticated && dto.rustdeskVersion !== undefined && { version: dto.rustdeskVersion }),
         ...(encryptedPassword ? { permanentPassword: encryptedPassword } : {}),
         // A staged update clears once the endpoint reports the target version.
         // Comparing reported-vs-target rather than assuming success means a
         // failed or partial install simply retries on the next heartbeat.
-        ...(node.updateRequestedAt &&
+        ...(authenticated &&
+        node.updateRequestedAt &&
         node.updateTargetVersion &&
         dto.rustdeskVersion === node.updateTargetVersion
           ? { updateRequestedAt: null, updateTargetVersion: null }
@@ -407,10 +463,12 @@ export class EnrollmentService {
     const updateData: Record<string, unknown> = {
       lastSeenAt: new Date(),
       isOnline: true,
-      ...(dto.hostname !== undefined && { hostname: dto.hostname }),
-      ...(dto.platform !== undefined && { platform: dto.platform }),
-      ...(dto.osVersion !== undefined && { osVersion: dto.osVersion }),
-      ...(dto.ipAddress !== undefined && { ipAddress: dto.ipAddress }),
+      ...(authenticated && dto.hostname !== undefined && { hostname: dto.hostname }),
+      ...(authenticated && dto.platform !== undefined && { platform: dto.platform }),
+      ...(authenticated && dto.osVersion !== undefined && { osVersion: dto.osVersion }),
+      // The address decides where the machine appears on the dashboard map and
+      // what the audit trail records, so it is the device's to report or nobody's.
+      ...(authenticated && dto.ipAddress !== undefined && { ipAddress: dto.ipAddress }),
     };
 
     await this.prisma.endpoint.update({
@@ -422,9 +480,11 @@ export class EnrollmentService {
     // plaintext in the response. The endpoint applies it via
     // rustdesk.exe --password and POSTs to /enrollment/confirm-rotation.
     let rotate: { password: string; sha256: string } | null = null;
-    const refreshed = await this.prisma.rustdeskNode.findUnique({
-      where: { id: node.id }, select: { pendingPassword: true },
-    });
+    const refreshed = authenticated
+      ? await this.prisma.rustdeskNode.findUnique({
+          where: { id: node.id }, select: { pendingPassword: true },
+        })
+      : null;
     if (refreshed?.pendingPassword) {
       try {
         const plain = this.decryptPassword(refreshed.pendingPassword);
@@ -437,6 +497,7 @@ export class EnrollmentService {
     // it is not already on the target. The endpoint re-runs the installer,
     // which is idempotent and pins whatever version this server serves.
     const updateRustdesk =
+      authenticated &&
       node.updateRequestedAt &&
       node.updateTargetVersion &&
       dto.rustdeskVersion !== node.updateTargetVersion
@@ -446,10 +507,40 @@ export class EnrollmentService {
     return {
       found: true,
       endpointId: node.endpointId,
+      // False for a machine enrolled before device secrets existed. Its
+      // installer needs re-running before the server will take anything it
+      // says, or hand it a rotation.
+      authenticated,
       rotate,
       updateRustdesk,
       rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
     };
+  }
+
+  /**
+   * Does this heartbeat come from the machine it claims to be?
+   *
+   * `/enrollment/heartbeat` is necessarily unauthenticated — it is called by a
+   * machine, not a person — and it used to take the RustDesk ID as proof of
+   * identity. That number is printed in the RustDesk window and handed to
+   * every technician who connects, so anyone who had seen one could collect
+   * that machine's pending password rotation in plaintext, overwrite the
+   * password the console hands out, and rewrite its hostname and address.
+   *
+   * The agent now sends a per-device secret. A node with a stored hash requires
+   * a match; a node without one binds the first secret it is offered, so a
+   * machine whose installer has been re-run authenticates itself from then on.
+   * A caller that offers nothing is not the device as far as this server is
+   * concerned, and gets a liveness ping and nothing else.
+   */
+  private hashSecret(secret: string): string {
+    return createHash('sha256').update(secret).digest('hex');
+  }
+
+  private secretMatches(stored: string, offered: string): boolean {
+    const a = Buffer.from(stored, 'utf8');
+    const b = Buffer.from(this.hashSecret(offered), 'utf8');
+    return a.length === b.length && timingSafeEqual(a, b);
   }
 
   private decryptPassword(data: string): string {
@@ -465,12 +556,17 @@ export class EnrollmentService {
   // Confirm a pending rotation. Called by the endpoint after it applied
   // the new password. rustdeskId + digest are the only inputs; the server
   // computes the expected digest from its own pending ciphertext.
-  async confirmRotation(rustdeskId: string, passwordSha256: string) {
+  async confirmRotation(rustdeskId: string, passwordSha256: string, agentSecret?: string) {
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { rustdeskId },
-      select: { id: true, tenantId: true, endpointId: true, pendingPassword: true },
+      select: { id: true, tenantId: true, endpointId: true, pendingPassword: true, agentSecretHash: true },
     });
     if (!node?.pendingPassword) return { confirmed: false, reason: 'no_pending' };
+    // A rotation is only ever handed to an authenticated device, so only an
+    // authenticated device can confirm one.
+    if (!node.agentSecretHash || !agentSecret || !this.secretMatches(node.agentSecretHash, agentSecret)) {
+      throw new UnauthorizedException('This device is not recognised');
+    }
     let plain: string;
     try { plain = this.decryptPassword(node.pendingPassword); }
     catch { return { confirmed: false, reason: 'decrypt_failed' }; }

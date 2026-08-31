@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -31,6 +32,18 @@ func getScriptURL() string {
 		return string(data[:n])
 	}
 	return ""
+}
+
+// The URL is patched into the binary by the server that served it, and what
+// comes back from it is piped straight into an elevated PowerShell. Trusting
+// the slot unconditionally meant an http:// value would have handed anyone on
+// the network a root shell, and a quote would have escaped the -Command string.
+// The server validates this too; a second check here costs nothing.
+func isSafeScriptURL(u string) bool {
+	if !strings.HasPrefix(u, "https://") || len(u) > 512 {
+		return false
+	}
+	return !strings.ContainsAny(u, "'\"`;|& \t\r\n")
 }
 
 func isElevated() bool {
@@ -77,7 +90,7 @@ func main() {
 	setTitle("Reboot Remote Installer")
 
 	url := getScriptURL()
-	if url == "" {
+	if !isSafeScriptURL(url) {
 		fmt.Println("  ERROR: Installer is not configured correctly.")
 		fmt.Println("  Please contact your administrator for a new link.")
 		pause()

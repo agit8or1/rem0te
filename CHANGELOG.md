@@ -5,6 +5,126 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.13.0] — 2026-08-31 · *Deadbolt*
+
+Findings from a full-repository security review, fixed. Nothing here changes
+what the product does; several things change what it refuses to do.
+
+### Security
+
+- **MFA could be skipped entirely.** A user with TOTP who entered the correct
+  password received a `partial: true` token — signed with the same `JWT_SECRET`
+  as a real session token, and returned in the login response body as well as a
+  cookie. `JwtStrategy.validate()` accepted it: for a partial token it checked
+  only that the account was active and returned the payload. It therefore worked
+  as a bearer credential on every route for ten minutes, and since both
+  permission guards short-circuit on `isPlatformAdmin` and `effectiveCapabilities`
+  grants everything to platform admins and owners, password-only authentication
+  was full access for exactly the two levels that matter.
+
+  The strategy now refuses any token carrying `partial`, and the pre-MFA token is
+  signed with a key derived from `JWT_SECRET` (HMAC, no new environment
+  variable), so a partial token and a session token can never be interchangeable
+  again. `/auth/mfa/verify` verifies it against that key, which is the only place
+  one is meant to be consumed.
+
+- **Every per-route rate limit was inert.** `ThrottlerModule.forRoot()` declared
+  throttlers named `short` and `long`; every route wrote
+  `@Throttle({ default: … })`. The guard looks up overrides by each *configured*
+  throttler's name, so nothing keyed `default` was ever read, and login, MFA
+  verify, recovery codes, enrollment, heartbeat, grant redemption and launcher
+  validation all ran at the global 300/minute instead of their stated limits.
+  Confirmed by probe: thirteen consecutive bad logins, thirteen 401s, no 429.
+
+  Throttler names now live in `common/throttling.ts` alongside a `RateLimit()`
+  decorator that builds the key from the same constant, so the two cannot drift.
+
+- **There was no account lockout.** `maxLoginAttempts` and `lockoutMinutes` have
+  been in `PlatformSecurityConfig` and on the Security page since before any code
+  read them — an operator could set a policy that did nothing. Failed password
+  attempts are now counted per account and the configured lockout is enforced,
+  which is the half of brute-force defence that survives an attacker spreading
+  attempts across addresses. A `DELETED` account can also no longer complete a
+  login it was never going to be able to use.
+
+- **The device heartbeat authenticated nothing.** `POST /enrollment/heartbeat`
+  is public — it is called by machines — and identified the caller solely by its
+  RustDesk ID, a number printed in the RustDesk window and given to every
+  technician who has ever connected. Anyone who knew one could collect that
+  machine's staged password rotation **in plaintext**, overwrite the password the
+  console hands technicians, rewrite its hostname and its address (which places
+  it on the dashboard map), and create endpoint rows at will.
+
+  The installers now generate a per-device secret, store it beside the heartbeat
+  state (SYSTEM+Administrators on Windows, 0600 elsewhere), and send it on claim,
+  heartbeat and rotation-confirm. The server binds it at claim time or on first
+  sight, then requires it. A machine enrolled before this still reports itself
+  online — refusing that would take a fleet offline — but nothing it says is
+  written and no rotation is handed to it until its installer is re-run.
+
+- **`sudo fail2ban-client` accepted any arguments.** An unrestricted
+  fail2ban-client is a root shell: define an action, point its `actionban` at a
+  command, trigger a ban. Every other rule in `/etc/sudoers.d/reboot-remote`
+  pins its exact argument vector — the file's own header says so — and this one
+  did not, so a compromise of the API process was a compromise of the host. Now
+  pinned per subcommand, with the third argument a literal keyword in every rule.
+
+- **The launcher trusted the API address in the deep link.** `api=` was taken
+  from the `reboot-remote://` fragment with no allowlist, and any web page can
+  invoke a custom scheme. A crafted link handed the technician's launcher token
+  to an attacker's server as a bearer credential, and that server's reply chose
+  the `rustdeskConfig` the launcher applied — repointing their RustDesk at a
+  hostile rendezvous and relay. The launcher now talks only to the server it was
+  built for (`REM0TE_API_BASE`), and a link naming anything else is refused with
+  the host it tried to reach.
+
+- **rustdesk-server packages were installed as root without verification.** Both
+  .debs were downloaded from GitHub through up to five unvalidated redirects and
+  handed to `sudo dpkg -i` with no checksum. The release API publishes a SHA-256
+  per asset; that digest is now required, checked after download, and a mismatch
+  deletes the file and installs nothing.
+
+- **Single-use tokens were not atomically single-use.** Launcher tokens and
+  connection grants were read, tested for `usedAt`, and then updated, so two
+  simultaneous redemptions of one token both passed. Both now claim the row with
+  a conditional update and treat "nothing updated" as already used.
+
+- **Open redirect after sign-in.** `returnTo` came from the query string and went
+  to `router.push()` unvalidated, so a link could land someone on an attacker's
+  page the moment they signed in successfully. Only same-site paths are accepted.
+
+- **`/downloads` skipped the middleware auth gate**, because `/download` was
+  matched as a prefix — the exact mistake the comment beside it warns about for
+  `/quick`. Both are exact matches now.
+
+- **The logo upload wrote the file before checking authorization.** Guards run
+  before interceptors and the platform-admin check was in the handler body, so
+  any signed-in user could write 2 MB into the upload directory repeatedly and be
+  told "no" each time. The check is now a guard.
+
+- **Launcher tokens were stored in the database in plaintext**, alone among this
+  system's bearer credentials. Stored as SHA-256 now, like claim tokens,
+  connection grants and API keys.
+
+- **A session token with no tenant kept its frozen claims.** Role, business and
+  capabilities are now re-read from the database on that path too, as they
+  already were on every other.
+
+- **AES-GCM now uses a 12-byte nonce** rather than 16. The IV travels with each
+  record, so everything written before this still decrypts.
+
+- **The Windows installer binary refuses a non-https script URL**, and the API
+  refuses to bake one into it in production. What that URL returns is piped into
+  an elevated PowerShell.
+
+### Changed
+
+- `RustdeskNode` gains `agentSecretHash` and `agentSecretSetAt`
+  (migration `0012_agent_device_secret`), and the audit trail gains
+  `ENDPOINT_HEARTBEAT_REJECTED` for a heartbeat that fails the device check.
+
+---
+
 ## [0.12.4] — 2026-08-31 · *Ledger*
 
 ### Fixed

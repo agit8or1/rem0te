@@ -6,6 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { createHash } from 'crypto';
 import { SessionStatus } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
@@ -93,12 +94,17 @@ export class LauncherService {
       expiresIn: this.tokenTtlSeconds,
     });
 
-    // Persist token record
+    // Persist token record.
+    //
+    // The column holds a SHA-256 of the token, not the token: it is a bearer
+    // credential for a specific machine, and every other one in this system
+    // (claim tokens, connection grants, API keys) is stored hashed. Anything
+    // that could read the table could otherwise replay a live one.
     const record = await this.prisma.launcherToken.create({
       data: {
         tenantId,
         userId,
-        token: signedToken,
+        token: createHash('sha256').update(signedToken).digest('hex'),
         expiresAt,
         targetEndpointId,
         targetRustdeskId,
@@ -140,17 +146,25 @@ export class LauncherService {
       throw new UnauthorizedException('Invalid token type');
     }
 
-    const record = await this.prisma.launcherToken.findUnique({ where: { token: rawToken } });
+    const record = await this.prisma.launcherToken.findUnique({
+      where: { token: createHash('sha256').update(rawToken).digest('hex') },
+    });
     if (!record) throw new UnauthorizedException('Token not found');
     if (record.revokedAt) throw new UnauthorizedException('Token has been revoked');
     if (record.usedAt) throw new UnauthorizedException('Token has already been used');
     if (record.expiresAt < new Date()) throw new UnauthorizedException('Token has expired');
 
-    // Mark as used (single-use)
-    await this.prisma.launcherToken.update({
-      where: { id: record.id },
+    // Mark as used, and let the database decide who got there first.
+    //
+    // This was a read, a test of `usedAt`, and then a write: two redemptions of
+    // the same token arriving together both passed the test before either
+    // wrote, so "single-use" held only when nobody raced it. The conditional
+    // update is the check.
+    const claimed = await this.prisma.launcherToken.updateMany({
+      where: { id: record.id, usedAt: null, revokedAt: null },
       data: { usedAt: new Date() },
     });
+    if (claimed.count === 0) throw new UnauthorizedException('Token has already been used');
 
     // Record that the client opened.
     //

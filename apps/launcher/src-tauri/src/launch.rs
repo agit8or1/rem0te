@@ -31,6 +31,34 @@ struct ValidateData {
     // ignores response fields we do not declare.
 }
 
+/// The one server this launcher will talk to.
+///
+/// `REM0TE_API_BASE` is baked in at build time; a debug build falls back to the
+/// local dev API. Without either, the launcher refuses to act on any link at
+/// all, which is the right failure: it cannot tell a real server from a
+/// hostile one.
+fn allowed_api_base() -> Option<String> {
+    if let Some(base) = option_env!("REM0TE_API_BASE") {
+        let trimmed = base.trim().trim_end_matches('/');
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    if cfg!(debug_assertions) {
+        return Some("http://localhost:3001".to_string());
+    }
+    None
+}
+
+/// Scheme, host and port all equal — the parts that decide who receives the
+/// token. Paths and credentials are deliberately not part of the comparison
+/// because the configured base is what actually gets used.
+fn same_origin(a: &Url, b: &Url) -> bool {
+    a.scheme() == b.scheme()
+        && a.host_str() == b.host_str()
+        && a.port_or_known_default() == b.port_or_known_default()
+}
+
 /// Parse a `reboot-remote://launch#token=<jwt>&api=<url>` deep link,
 /// validate the token with the API, spawn RustDesk, and return the peer ID.
 /// Token is passed in the URL fragment so it is never sent to any server or
@@ -53,10 +81,35 @@ pub async fn handle_launch_url(
         .cloned()
         .ok_or_else(|| "Missing token parameter".to_string())?;
 
-    let api_base = params
-        .get("api")
-        .cloned()
-        .unwrap_or_else(|| "http://localhost:3001".to_string());
+    // The API base is this launcher's, not the link's.
+    //
+    // It used to be taken straight from the fragment, and any web page can
+    // invoke a custom scheme: `reboot-remote://launch#token=…&api=https://evil`
+    // handed the technician's launcher token to that host as a bearer
+    // credential, and its reply then chose the `rustdeskConfig` applied below —
+    // repointing the technician's RustDesk at an attacker's rendezvous and
+    // relay server. A link may name the configured server or nothing at all.
+    let allowed = allowed_api_base().ok_or_else(|| {
+        "This launcher was built without a server address (REM0TE_API_BASE). \
+         Download a fresh launcher from your Rem0te server."
+            .to_string()
+    })?;
+    let allowed_url = Url::parse(&allowed)
+        .map_err(|e| format!("Launcher is misconfigured: {allowed} is not a valid URL ({e})"))?;
+
+    if let Some(requested) = params.get("api") {
+        let candidate = Url::parse(requested)
+            .map_err(|e| format!("That link's server address is not a valid URL: {e}"))?;
+        if !same_origin(&candidate, &allowed_url) {
+            return Err(format!(
+                "That link points at {}, which is not the server this launcher is set up for ({}). \
+                 Not opening it.",
+                candidate.host_str().unwrap_or("an unknown host"),
+                allowed_url.host_str().unwrap_or("its configured server"),
+            ));
+        }
+    }
+    let api_base = allowed;
 
     // Validate token with API
     let validate_url = format!("{}/api/v1/launcher/validate", api_base.trim_end_matches('/'));

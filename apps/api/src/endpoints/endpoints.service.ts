@@ -41,7 +41,9 @@ export class EndpointsService {
   // ── Crypto helpers ────────────────────────────────────────────────────────
 
   private encryptPassword(text: string): string {
-    const iv = crypto.randomBytes(16);
+    // 12 bytes is the GCM standard nonce length. The IV is stored with each
+    // record, so anything written when this was 16 still decrypts.
+    const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', this.encKey, iv);
     const enc = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
     const tag = cipher.getAuthTag();
@@ -608,10 +610,14 @@ export class EndpointsService {
       ? this.decryptPassword(grant.endpoint.rustdeskNode.permanentPassword)
       : null;
 
-    await this.prisma.connectionGrant.update({
-      where: { id: grant.id },
+    // Conditional update rather than update: the earlier read-test-write let
+    // two simultaneous redemptions of one grant both succeed, which is the one
+    // thing a single-use credential must not do.
+    const claimed = await this.prisma.connectionGrant.updateMany({
+      where: { id: grant.id, usedAt: null },
       data: { usedAt: new Date(), usedByIp: actorIp ?? null },
     });
+    if (claimed.count === 0) throw new NotFoundException('Grant already used');
     await this.audit.log({
       tenantId: grant.tenantId, customerId: grant.endpoint.customerId ?? undefined,
       actorId: grant.userId, actorIp,
