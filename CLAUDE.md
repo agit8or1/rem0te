@@ -109,9 +109,7 @@ unrestricted `fail2ban-client` sudo grant, the launcher trusting a link's API
 address, and read-test-write on single-use tokens. Each one was a real finding
 in the 0.13.0 review; none of them threw, logged, or failed a test.
 
-Not yet wired into CI — add `node scripts/check-security-invariants.mjs`
-alongside `check-versions.mjs` in `.github/workflows/ci.yml` (a push touching
-that file needs a token with `workflow` scope).
+CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs
 

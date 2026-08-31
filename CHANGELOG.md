@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.13.1] — 2026-08-31 · *Deadbolt*
+
+### Changed
+
+- **CI runs `check-security-invariants.mjs`.** The script shipped in 0.13.0 but
+  only ever ran by hand, which is the state the checks it replaces were already
+  in. Every defect it looks for produced no signal at all — no exception, no log
+  line, no failing test — so a check nobody remembers to run is worth about as
+  much as no check.
+
+---
+
 ## [0.13.0] — 2026-08-31 · *Deadbolt*
 
 Findings from a full-repository security review, fixed. Nothing here changes

@@ -43,6 +43,15 @@ jobs:
       - name: Versions and changelog
         run: node scripts/check-versions.mjs
 
+      # Protections that failed silently once already: a rate-limit decorator
+      # naming a throttler that is not configured, a pre-MFA token accepted as a
+      # session, the device heartbeat trusting a RustDesk ID, an unrestricted
+      # fail2ban-client sudo grant, the launcher trusting a link's API address,
+      # read-test-write on single-use tokens. None of them threw, logged, or
+      # failed a test — which is exactly why they are checked by grep.
+      - name: Security invariants
+        run: node scripts/check-security-invariants.mjs
+
       # tsc cannot resolve @prisma/client's generated types until this has run,
       # so it has to come before the typecheck rather than with the build.
       - name: Generate Prisma client
