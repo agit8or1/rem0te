@@ -24,3 +24,20 @@ prisma/migrations/dev.db
 /tmp/
 src-tauri/target/
 apps/web/public/docs-img/
+
+# ── Capture media ────────────────────────────────────────────────────────
+# Walkthrough recordings and their MP4/poster renders. These are large
+# binaries and do not belong in normal Git history — publish the finished
+# files as GitHub release assets and link to them. media/raw/ additionally
+# holds unsanitised source recordings and must never be committed.
+#
+# Root-anchored on purpose: a bare `media/` also matches docs/media/, which
+# holds the walkthrough transcript and caption files that DO belong in Git.
+/media/
+
+# Playwright leftovers from a capture run: browser state (which carries a
+# session cookie), traces, and any stray recording written outside media/.
+playwright-report/
+test-results/
+storage-state*.json
+*.webm

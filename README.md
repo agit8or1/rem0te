@@ -4,25 +4,24 @@
 
 **Self-hosted remote support for customer businesses, powered by RustDesk.**
 
-One operator, many customer businesses — each with its own computers, its own people,
-and its own history. Rem0te is the portal around a self-hosted RustDesk server that
-keeps them organised and separate.
+One operator, many customer businesses — each with its own computers, its own
+people and its own history. Rem0te is the portal around a self-hosted RustDesk
+server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.13.1-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.13.5-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te/stargazers)
-[![Issues](https://img.shields.io/github/issues/agit8or1/rem0te)](https://github.com/agit8or1/rem0te/issues)
 
-[Screenshots](#screenshot-tour) · [Quick start](#quick-start) · [Architecture](docs/architecture.md) · [Security](#security) · [Releases](https://github.com/agit8or1/rem0te/releases)
+[Quick start](#quick-start) · [Screenshots](docs/screenshots.md) · [Walkthrough](#watch-the-walkthrough) · [Documentation](docs/README.md) · [Security](#security) · [MSPReboot](https://mspreboot.com)
 
 </div>
 
 ---
 
-<img src="docs/images/github/hero-businesses.png" alt="The Rem0te Businesses page, listing six customer businesses with their short code, contact address, computer count, number of people and status." width="100%">
+<a href="docs/images/github/dashboard-light.png"><img src="docs/images/github/dashboard-light.png" alt="The Rem0te dashboard: tiles showing 32 total computers with 24 online and 8 offline, three active sessions and session counts for the last 7 and 30 days, above a map of client locations across the western United States." width="100%"></a>
 
-<sub><i>The operator's view: every customer business, with its computer and people counts at a glance. <a href="docs/images/github/hero-businesses.png">View full size</a></i></sub>
+<sub><i>The operator's view — every customer business, computer and session in one place. <a href="docs/images/github/dashboard-light.png">Full size</a> · <a href="docs/screenshots.md">30 more screenshots</a></i></sub>
 
 ---
 
@@ -30,45 +29,57 @@ keeps them organised and separate.
 
 **Every customer's computers in one place.** No spreadsheet of RustDesk IDs, no
 "which machine was that again?". Computers are grouped by the business that owns
-them, with platform, online state and last-seen time in the list.
+them, with platform, online state and last-seen time.
 
 **Connect without passing passwords around.** A technician clicks **Connect**;
-Rem0te authorises the request, fetches the machine's credentials and hands them to
-the RustDesk client on the technician's own PC. The password is never typed,
-e-mailed, or kept in a shared note — and every reveal is written to the audit log.
+Rem0te authorises the request and hands the credentials to the RustDesk client on
+their own PC. Nothing is typed, emailed or kept in a shared note — and every
+reveal is written to the audit log.
 
-**Give each person exactly the access they need.** A business owner decides who may
-see which computers and what they may do — connect, enrol, manage people, view
-history — without the operator being in the loop for every change.
-
----
-
-## Screenshot tour
-
-Captured from the running application at 1440×900 against an isolated demo database.
-All businesses, people and devices shown are fictitious.
-
-| | |
-|---|---|
-| <a href="docs/images/github/business-computers.png"><img src="docs/images/github/business-computers.png" alt="The Computers tab of a single business, listing seven machines with platform badges for Windows, macOS and Linux, online and offline status dots, and last-seen timestamps."></a><br><sub>**A business's computers.** Platform, live status and last-seen for every enrolled machine that business owns.</sub> | <a href="docs/images/github/enroll-managed-device.png"><img src="docs/images/github/enroll-managed-device.png" alt="The three-step managed device enrollment form: choosing the business, choosing which users may connect, and choosing the target platform before generating an installer."></a><br><sub>**Enrolling a managed device.** Pick the business, who may connect, and the platform. The business binding is fixed when the link is made.</sub> |
-| <a href="docs/images/github/business-user-access.png"><img src="docs/images/github/business-user-access.png" alt="The Business Users tab of Access Control, listing people across several businesses with their level, how many permissions are granted, and status."></a><br><sub>**Who can do what.** Owners hold everything; each business user shows the number of capabilities actually granted.</sub> | <a href="docs/images/github/quick-connect.png"><img src="docs/images/github/quick-connect.png" alt="The Quick Connect page, with fields for a remote ID and password, a download link for the Quick Connect client, and a five-step explanation of how a temporary session works."></a><br><sub>**Quick Connect.** One-off help for a machine that is not enrolled — no install, no managed computer created.</sub> |
+**Give each person exactly the access they need.** A Business Owner decides who
+may see which computers and what they may do, without the operator being in the
+loop for every change.
 
 ---
 
-## Who does what
+## See it in action
 
-There are three levels, and no reseller hierarchy.
+<table>
+<tr>
+<td width="50%"><a href="docs/images/github/client-map-dark.png"><img src="docs/images/github/client-map-dark.png" alt="Client locations map in dark theme with clustered markers over Everett, Spokane, Seattle, Portland, Bend, Boise and Denver, each showing a device count."></a><br><sub><b>Know where the estate is.</b> Managed computers plotted from their last check-in, clustered by city. <i>Dark</i></sub></td>
+<td width="50%"><a href="docs/images/github/business-computers-dark.png"><img src="docs/images/github/business-computers-dark.png" alt="A single business's Computers tab in dark theme listing machines with Windows, macOS and Linux badges and online or offline status."></a><br><sub><b>Answer "my PC is broken" fast.</b> One customer's machines, with live status. <i>Dark</i></sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="docs/images/github/enroll-device-light.png"><img src="docs/images/github/enroll-device-light.png" alt="The three-step enrollment form in light theme: choose business, choose which users may connect, choose platform."></a><br><sub><b>Onboard a machine in one run.</b> The business is fixed into the installer; the machine cannot pick another. <i>Light</i></sub></td>
+<td width="50%"><a href="docs/images/github/access-users-dark.png"><img src="docs/images/github/access-users-dark.png" alt="The Business Users tab in dark theme showing each person's level and the number of capabilities granted."></a><br><sub><b>Delegate safely.</b> Each user shows the capabilities actually granted, not a role name. <i>Dark</i></sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="docs/images/github/quick-connect-light.png"><img src="docs/images/github/quick-connect-light.png" alt="The Quick Connect page in light theme with remote ID and password fields and a five-step explanation."></a><br><sub><b>Help a machine you don't manage.</b> No install, no enrolment — it ends when they close the client. <i>Light</i></sub></td>
+<td width="50%"><a href="docs/images/github/audit-timeline-dark.png"><img src="docs/images/github/audit-timeline-dark.png" alt="The audit log in dark theme listing timestamped actions with actor, resource and source IP."></a><br><sub><b>Prove what happened.</b> An append-only trail of sign-ins, sessions and credential reveals. <i>Dark</i></sub></td>
+</tr>
+</table>
 
-| Level | Scope |
-|---|---|
-| **Platform Admin** | The Rem0te operator. Runs the service, creates and manages every customer business, and owns the platform settings and infrastructure. |
-| **Business Owner** | Full control of **one** business — its computers, its people, its sessions and its history. Nothing outside it. |
-| **Business User** | Exactly the capabilities their Business Owner granted, over the computers they were given access to. |
+**[→ See all 30 screenshots](docs/screenshots.md)** — dashboards, monitoring,
+inventory, workflows, administration and configuration, in light and dark.
 
-A **Business** is the boundary that matters: computers, users, sessions and audit
-records belong to one, and that is enforced on the server rather than by hiding
-buttons in the UI. Capability vocabulary and the full model are in
-[docs/access-control.md](docs/access-control.md).
+---
+
+## Watch the walkthrough
+
+A recorded tour of the real application: the dashboard, three end-to-end
+workflows, and the monitoring and audit surfaces, in both themes.
+
+<a href="docs/screenshots.md"><img src="docs/images/github/dashboard-dark.png" alt="Video poster: the Rem0te dashboard in dark theme. The walkthrough covers the dashboard, enrolling a device, access management, Quick Connect, session history and the audit log." width="100%"></a>
+
+> **The recording is not yet published.** It is built locally by
+> `apps/web/scripts/capture-video.mjs` and `scripts/build-video.sh`, and is
+> deliberately **not** committed — video binaries do not belong in Git history.
+> Once attached to a release it will be linked here. The exact content is
+> documented in the
+> [walkthrough script and transcript](docs/media/walkthrough-script.md), with
+> captions in [WebVTT](docs/media/walkthrough.vtt).
+> The walkthrough is **caption-led — no narration was recorded**; the transcript
+> carries a narration-ready script if you want to add one.
 
 ---
 
@@ -93,28 +104,39 @@ flowchart LR
   style RD fill:#dcfce7,stroke:#16a34a
 ```
 
-**Rem0te adds** the portal: customer businesses, accounts and permissions, managed
-device enrollment, credential storage and release, session records and the audit log.
+**Rem0te adds** the portal: businesses, accounts and permissions, managed device
+enrollment, credential storage and release, session records and the audit log.
+**RustDesk provides** the remote desktop itself — the `hbbs` rendezvous server,
+the `hbbr` relay, and the clients. Rem0te never sees the pixels or the keystrokes.
 
-**RustDesk provides** the remote desktop itself: the `hbbs` rendezvous server, the
-`hbbr` relay, and the clients that draw the screen and carry input. Rem0te never
-sees the pixels or the keystrokes.
-
-### Browser launching, not browser-based remote control
-
-Rem0te is used *in* a browser, but the session does not run in one. Clicking
-**Connect** opens a `rustdesk://` deep link, which the operating system hands to the
-RustDesk client already installed on the technician's machine. **A RustDesk client
-must be installed locally to connect.** There is no in-browser remote desktop.
+**Browser launching, not browser-based control.** Clicking **Connect** opens a
+`rustdesk://` deep link, which the OS hands to the RustDesk client already
+installed on the technician's machine. **A local RustDesk client is required.**
+There is no in-browser remote desktop.
 
 ### Managed devices vs Quick Connect
 
 |  | **Managed device** | **Quick Connect** |
 |---|---|---|
-| Set up by | Running a one-time enrollment installer on the machine | The person being helped runs a client; nothing is installed as a service |
+| Set up by | Running a one-time enrollment installer | The person being helped runs a client |
 | Lives in | The business's computer list, permanently | Nowhere — no computer record is created |
-| Connect using | The stored credentials, released on authorisation | An ID and password the remote person reads out |
+| Connect using | Stored credentials, released on authorisation | An ID and password they read out |
 | Ends when | You remove it | They close the client |
+
+---
+
+## Who does what
+
+Three levels, and no reseller hierarchy.
+
+| Level | Scope |
+|---|---|
+| **Platform Admin** | The operator. Runs the service, creates and manages every customer business, owns platform settings. |
+| **Business Owner** | Full control of **one** business — its computers, people, sessions and history. Nothing outside it. |
+| **Business User** | Exactly the capabilities their Business Owner granted, over the computers they were given. |
+
+A **Business** is the boundary that matters, and it is enforced on the server
+rather than by hiding buttons. Full model in [docs/access-control.md](docs/access-control.md).
 
 ---
 
@@ -122,20 +144,19 @@ must be installed locally to connect.** There is no in-browser remote desktop.
 
 **No.** Rem0te runs against the open-source RustDesk server and the standard
 open-source clients. The installer fetches `hbbs`/`hbbr` from the OSS
-[`rustdesk/rustdesk-server`](https://github.com/rustdesk/rustdesk-server) releases,
-and every client configuration Rem0te generates sets `api-server = ''` — RustDesk's
-own API server, a Pro component, is deliberately not used. Rem0te's portal fills
-that role instead.
+[`rustdesk/rustdesk-server`](https://github.com/rustdesk/rustdesk-server)
+releases, and every client configuration Rem0te generates sets `api-server = ''`
+— RustDesk's own API server, a Pro component, is deliberately unused. Rem0te's
+portal fills that role.
 
-No paid component, licence key or subscription is required by this project. Rem0te
-itself is MIT-licensed. RustDesk is a separate project under its own licence; if you
-choose to run RustDesk Pro, that is between you and them.
+No paid component, licence key or subscription is required by this project.
+Rem0te is MIT-licensed. RustDesk is a separate project under its own licence.
 
 ---
 
 ## Quick start
 
-Full instructions, including manual installation, are in [docs/setup.md](docs/setup.md).
+Full instructions, including manual installation, in [docs/setup.md](docs/setup.md).
 
 ```bash
 git clone https://github.com/agit8or1/rem0te
@@ -143,74 +164,68 @@ cd rem0te
 sudo bash deploy/scripts/install.sh your-domain.example.com admin@example.com
 ```
 
-The installer sets up Node.js, PostgreSQL, Redis, Caddy (with automatic HTTPS),
-fail2ban, the RustDesk server (`hbbs` + `hbbr`) and its keypair, builds the app,
-runs the migrations, seeds a Platform Admin and starts the systemd services. It
-prints the login URL and admin credentials at the end — **save them immediately**.
+The installer sets up Node.js, PostgreSQL, Redis, Caddy (automatic HTTPS),
+fail2ban, the RustDesk server and its keypair, builds the app, runs migrations,
+seeds a Platform Admin and starts the systemd services. It prints the login URL
+and admin credentials at the end — **save them immediately**.
 
 ### Enrolling a customer's computer
 
 1. **Businesses → Add Business** — create the customer.
-2. **Enroll Computer** — choose that business, choose who may connect, choose the
-   platform. The business is bound into the token at this point and the enrolling
-   machine cannot change it.
-3. **Generate Installer** — Rem0te produces a one-time command or a Windows
-   installer executable.
-4. Run it once on the target machine, as administrator. It installs and configures
-   RustDesk to point at your server and registers the device.
-5. The computer appears in that business's list, and the users you selected see it
+2. **Enroll Computer** — choose the business, who may connect, and the platform.
+   The business is bound into the token here and the machine cannot change it.
+3. **Generate Installer** — a one-time command or a Windows installer executable.
+4. Run it once on the target machine, as administrator.
+5. The computer appears in that business's list; the users you selected see it
    under **My Computers**.
 
 ---
 
-## Requirements and support
+## Requirements and limitations
 
 **Server** — Ubuntu 22.04 LTS or Debian 12, 1 GB RAM minimum (2 GB recommended),
-10 GB disk, a public IP. A domain name is strongly recommended; automatic HTTPS
-depends on it. Node.js 20+, PostgreSQL, Redis and Caddy are installed for you by
-`install.sh`. Deployment is plain systemd — Docker is not required.
+10 GB disk, a public IP. A domain is strongly recommended; automatic HTTPS
+depends on it. Node.js 20+, PostgreSQL, Redis and Caddy are installed for you.
+Deployment is plain systemd — Docker is not required.
 
-**Ports** — 80 and 443 (TCP) for the portal, plus RustDesk's own: 21115 (TCP),
-21116 (TCP **and** UDP), 21117 (TCP), and 21118–21119 (TCP, websocket, optional).
+**Ports** — 80 and 443 for the portal, plus RustDesk's own: 21115 (TCP),
+21116 (TCP **and** UDP), 21117 (TCP), 21118–21119 (TCP websocket, optional).
 
 **Endpoints** — enrollment scripts are generated for **Windows**, **Linux** and
-**macOS**. Windows additionally has a dedicated installer executable; Linux and
-macOS enrol with a shell one-liner.
+**macOS**. Windows additionally has a compiled installer executable.
 
-**RustDesk** — `hbbs`/`hbbr` are installed from the latest OSS release at install
-time. The generated client configuration targets the RustDesk **1.4.x** client
-series, which is what the installer scripts fetch and what the version checks
-compare against.
+**RustDesk** — `hbbs`/`hbbr` are installed from the latest OSS release. Generated
+client configuration targets the RustDesk **1.4.x** client series.
 
 ### Limitations
 
 - **Not an RMM.** No patch management, software inventory, ticketing or monitoring.
-- **No in-browser remote control** — a local RustDesk client is required to connect.
-- **One RustDesk server per Rem0te instance.** The relay host and public key are
+- **No in-browser remote control** — a local RustDesk client is required.
+- **One RustDesk server per instance.** Relay host and public key are
   platform-wide settings, not per-business.
-- **Linux and macOS support the enrollment path**, but the Windows route is the most
-  heavily exercised and is the only one with a compiled installer binary.
+- **No trend or time-series charting.** The dashboard has stat tiles, a
+  seven-day session bar chart and a client map; there is no charting library and
+  no historical graphing beyond that.
 - Automatic HTTPS requires a domain; a bare IP works but over plain HTTP.
 
 ---
 
 ## Security
 
-- **Report a vulnerability:** please follow [SECURITY.md](.github/SECURITY.md) and do
-  **not** open a public issue for it.
-- **What is enforced, and how:** [docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md)
-  records the review passes and what each one changed. This is an **internal review
-  by the project, not an independent third-party audit**, and should be read as such.
-- Business isolation is checked by an automated suite
-  (`apps/api/scripts/e2e-business-access.mjs`) and by static invariant checks
-  (`scripts/check-security-invariants.mjs`) that CI runs on every push.
+- **Report a vulnerability:** follow [SECURITY.md](.github/SECURITY.md) and do
+  **not** open a public issue. Private reporting is enabled on this repository.
+- **What is enforced:** [docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md) records
+  the review passes. This is an **internal review by the project, not an
+  independent third-party audit**.
+- Business isolation is covered by an automated suite
+  (`apps/api/scripts/e2e-business-access.mjs`) and static invariant checks
+  (`scripts/check-security-invariants.mjs`), both run by CI on every push.
 
 ## Updating
 
-Rem0te, the RustDesk clients on endpoints, and `hbbs`/`hbbr` are three separate
-things that update independently — [docs/updates.md](docs/updates.md) explains which
-is which. The in-app updater is **off by default**; enabling it requires
-`ALLOW_IN_APP_UPDATE=true` and a GPG-signed release tag.
+Rem0te, the RustDesk clients on endpoints, and `hbbs`/`hbbr` update
+independently — [docs/updates.md](docs/updates.md) explains which is which. The
+in-app updater is **off by default** and requires a GPG-signed release tag.
 
 ## Documentation
 
@@ -218,16 +233,16 @@ is which. The in-app updater is **off by default**; enabling it requires
 
 | Guide | For |
 | --- | --- |
+| [Screenshots](docs/screenshots.md) | The full gallery — every screen, light and dark. |
 | [Troubleshooting](docs/troubleshooting.md) | Something will not connect. Start here. |
 | [Technician Guide](docs/technician-guide.md) | Day-to-day use — connecting, Quick Connect, enrolling. |
-| [Connecting](docs/connecting.md) | What happens when you click Connect, and the three connect paths. |
-| [Clients](docs/clients.md) | Every RustDesk client Rem0te hands out, and how each finds the server. |
+| [Connecting](docs/connecting.md) | What happens when you click Connect. |
+| [Clients](docs/clients.md) | Every RustDesk client Rem0te hands out. |
 | [Setup](docs/setup.md) | Installing and operating a server. |
-| [Updates](docs/updates.md) | The three things that update separately. |
-| [Architecture](docs/architecture.md) | What runs where, the data model, the RustDesk config chain. |
-| [Access Control](docs/access-control.md) | The three-level model and capability vocabulary. |
-| [API Reference](docs/API-REFERENCE.md) | Every route, its access level and required capability. |
-| [Public API](docs/PUBLIC-API.md) | RMM/PSA integration — scopes, response shapes, worked examples. |
+| [Architecture](docs/architecture.md) | What runs where, and the RustDesk config chain. |
+| [Access Control](docs/access-control.md) | The three-level model and capabilities. |
+| [API Reference](docs/API-REFERENCE.md) | Every route and its required capability. |
+| [Public API](docs/PUBLIC-API.md) | RMM/PSA integration. |
 
 ## Contributing
 
@@ -235,15 +250,28 @@ Issues, ideas and pull requests are welcome.
 
 - [Report a bug](https://github.com/agit8or1/rem0te/issues/new?template=bug_report.md)
 - [Request a feature](https://github.com/agit8or1/rem0te/issues/new?template=feature_request.md)
-- [Join the discussion](https://github.com/agit8or1/rem0te/discussions)
+- [Discussions](https://github.com/agit8or1/rem0te/discussions)
 
 Every change bumps the version and adds a changelog entry — see [CLAUDE.md](CLAUDE.md).
 
-## Support this project
+---
 
-If Rem0te is useful to you, a [star](https://github.com/agit8or1/rem0te) helps others
-find it. You can also sponsor development via
-[GitHub Sponsors](https://github.com/sponsors/agit8or1).
+## More tools from MSPReboot
+
+Rem0te is published by **[MSPReboot](https://mspreboot.com)**, an MSP consulting
+practice that also releases free, self-hostable tools for MSPs. The other
+open-source projects listed there:
+
+| Project | What it is |
+|---|---|
+| [ClientSt0r](https://github.com/agit8or1/clientst0r) | Customer documentation, assets and knowledge base |
+| [OPNMGR](https://github.com/agit8or1/OpnMgr) | OPNsense firewall fleet management |
+| [Depl0y](https://github.com/agit8or1/Depl0y) | Proxmox infrastructure and VM deployment |
+| [St0r](https://github.com/agit8or1/St0r) | UrBackup backup visibility and administration |
+
+These are separate projects with their own repositories and licences. Rem0te is
+MIT-licensed and free; **this project does not come with a paid support offering
+or any service-level commitment.**
 
 ## License
 
