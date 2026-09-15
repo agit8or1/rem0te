@@ -5,6 +5,63 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.13.5] — 2026-09-15 · *Deadbolt*
+
+### Added
+
+- **A 30-image screenshot gallery at `docs/screenshots.md`**, captured from the
+  running UI at 1440×1000 retina across both themes, organised by workflow with
+  a table of contents. The README keeps a hero and six selected images and links
+  out; the previous five-image README tour is superseded.
+- **`apps/web/scripts/capture-media.mjs`** — reproducible gallery capture.
+  Themes are driven through the application's own store (`localStorage.theme`,
+  which `ThemeProvider` turns into `<html class="dark">`), never a CSS filter,
+  so what lands in the gallery is the shipped theme. It refuses an `https://`
+  target or port 3000/443 outright, and writes
+  `docs/images/github/manifest.json` recording the route, theme and viewport
+  behind every image.
+- **`apps/web/scripts/capture-video.mjs` and `scripts/build-video.sh`** — a
+  caption-led walkthrough of the real application (2m31s), a 52-second highlight
+  cut and a poster frame, rendered to H.264/AAC MP4. Output lands in `media/`,
+  which is gitignored: video binaries do not belong in Git history, so these are
+  published as release assets. Script and captions are tracked, in
+  `docs/media/walkthrough-script.md` and `docs/media/walkthrough.vtt`.
+  **No narration was recorded** — the transcript carries a narration-ready
+  script and says so.
+- **`.github/dependabot.yml`**, for the `ignore` rules rather than the schedule.
+  The usable esbuild window is narrow enough that no automated bump lands
+  inside it, so esbuild is ignored outright with the reasoning inline.
+
+### Fixed
+
+- **The demo dataset marked disconnected machines `EndpointStatus.OFFLINE`.**
+  The API never writes that value — it is an unused enum member — and the
+  dashboard counts `status: ACTIVE` rows and derives "offline" from `isOnline`.
+  Eight machines were therefore excluded from the totals entirely, so the
+  dashboard read "24 computers, 0 offline, 100% availability" against a seed
+  that deliberately contained offline ones. Enrolment lifecycle and connectivity
+  are now modelled separately, as the application does.
+- **Endpoint addresses were in `203.0.113.0/24`,** which no GeoIP database
+  resolves, so the dashboard map — the product's most useful visual — rendered
+  empty. Each demo site now carries an address chosen only because the deployed
+  GeoIP database places it in that business's city. They are office-egress
+  addresses for businesses that do not exist, and the capture layer replaces
+  every public address with `198.51.100.24` before the shutter, so none is
+  published.
+
+### Security
+
+- **Capture-time masking, applied in the DOM and never written back.**
+  Enrollment tokens, long hex secrets, RustDesk IDs and public IP addresses are
+  replaced with obvious sample values immediately before each screenshot and
+  each video frame. Two leaks this caught, both from the demo API reading the
+  real host: the Security page named the live deployment's certificate domain,
+  and the audit log published the routable addresses used for map placement.
+  Any FQDN outside a small allowlist is now replaced; `mspreboot.com`,
+  `github.com`, `rustdesk.com` and `example.com` are deliberately preserved.
+
+---
+
 ## [0.13.4] — 2026-09-15 · *Deadbolt*
 
 ### Security
