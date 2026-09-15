@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.13.8-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.13.9-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -269,9 +269,12 @@ open-source projects listed there:
 | [Depl0y](https://github.com/agit8or1/Depl0y) | Proxmox infrastructure and VM deployment |
 | [St0r](https://github.com/agit8or1/St0r) | UrBackup backup visibility and administration |
 
-These are separate projects with their own repositories and licences. Rem0te is
-MIT-licensed and free; **this project does not come with a paid support offering
-or any service-level commitment.**
+These are separate projects with their own repositories and licences.
+
+**Rem0te is MIT-licensed and free to self-host** — the install guide above is
+all you need, and nothing here requires an engagement. If you would rather not
+run it yourself, **MSPReboot offers hosting and support for Rem0te**:
+[get in touch](https://mspreboot.com/contact).
 
 ## License
 

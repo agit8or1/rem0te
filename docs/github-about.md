@@ -34,9 +34,11 @@ Some sibling projects have a dedicated product site (`clientst0r.mspreboot.com`,
 later, prefer it here as the primary About URL and keep the MSPReboot links in
 the README and gallery.
 
-Note for accuracy: MSPReboot sells **consulting**. Rem0te itself is free and
-MIT-licensed, and neither the README nor this file should imply a paid support
-offering or a service-level commitment for it.
+MSPReboot sells consulting, and **offers hosting and support for Rem0te** for
+people who would rather not self-host. Rem0te itself stays free and
+MIT-licensed, and self-hosting requires no engagement — keep both halves of that
+true in any copy written here. Do not attach specific uptime, response-time or
+service-level figures to it unless they are published somewhere checkable.
 
 ## Topics
 
