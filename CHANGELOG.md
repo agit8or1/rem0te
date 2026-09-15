@@ -5,6 +5,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.13.8] — 2026-09-15 · *Deadbolt*
+
+### Fixed
+
+- **The Stars badge linked to a page that 404s for the people most likely to
+  click it.** GitHub now returns 404 on `/stargazers` and `/watchers` to
+  signed-out visitors, and a signed-out visitor is most of a public README's
+  audience. Checking it while signed in — or with a plain `curl` that follows
+  GitHub's redirect for authenticated agents — hides this. The badge now points
+  at the repository root.
+
+  Found by resolving all 57 links on the rendered page and then re-checking the
+  failures individually: six of the seven were HTTP 429 from checking too fast,
+  not real breakage. Only this one was genuine.
+
+---
+
 ## [0.13.7] — 2026-09-15 · *Deadbolt*
 
 ### Fixed

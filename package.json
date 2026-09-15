@@ -1,6 +1,6 @@
 {
   "name": "reboot-remote",
-  "version": "0.13.7",
+  "version": "0.13.8",
   "private": true,
   "scripts": {
     "dev": "pnpm --filter @reboot-remote/api dev & pnpm --filter @reboot-remote/web dev",
