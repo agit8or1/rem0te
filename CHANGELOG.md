@@ -5,6 +5,59 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.13.4] — 2026-09-15 · *Deadbolt*
+
+### Security
+
+- **`pnpm audit` was failing on four advisories published since main last passed
+  (2026-08-31).** All four are transitive and none is reachable from
+  request-handling code, but the audit job is what keeps the tree at zero and it
+  had been red on every CI run since.
+  - `browserslist` <=4.28.6 — unbounded cache growth leading to OOM, via
+    `@nestjs/cli > fork-ts-checker-webpack-plugin > webpack`. Overridden to
+    `>=4.28.7 <4.29.0`; resolves 4.28.9.
+  - `postcss-selector-parser` >=6.1.0 <6.1.3 — ReDoS, via `tailwindcss`.
+    Overridden to `>=6.1.3`; resolves 7.1.6, which Tailwind builds clean against.
+  - `qs` — the existing `>=6.15.2` override sat inside the new advisory window
+    (>=6.14.2 <=6.15.3). Raised to `>=6.16.0`.
+  - `js-yaml` — existing `>=4.3.1` raised to `>=4.3.2`.
+
+  Both override lists were updated, as `pnpm-workspace.yaml` documents: pnpm
+  <=10 reads `package.json`, pnpm >=11 reads the workspace file, and CI runs
+  pnpm 11 while local development is on 10. A fix in only one works in exactly
+  one of the two places.
+
+### Fixed
+
+- **CI's pnpm rejects any lockfile entry younger than 24 hours**
+  (`minimumReleaseAge`), and local pnpm 10 does not enforce it — so a lockfile
+  that resolves fine here can fail the install in CI with
+  `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`. The first attempt at the overrides
+  above did exactly that: an unconstrained `browserslist: >=4.28.7` resolved to
+  4.29.0, published that morning, and dragged `electron-to-chromium` to that
+  day's release with it.
+
+  Two constraints keep the resolution off same-day releases: `browserslist` is
+  capped below 4.29.0 (4.28.9, 2026-09-04, is patched and eleven days old), and
+  `electron-to-chromium` — which publishes most days and is pulled in by
+  browserslist — is capped below 1.5.428. The second is **not** a security pin
+  and can be raised freely; it is a data table of Chromium versions.
+
+  Worth knowing when touching dependencies here: the policy checks every entry
+  in the lockfile, not just changed ones, so a wide re-resolution is far more
+  likely to trip it than a narrow one. Regenerating from `main`'s lockfile and
+  changing only what the overrides force keeps the diff to 9 entries.
+
+  Verified: `pnpm audit` clean, `--frozen-lockfile` install, lint, both
+  typechecks, a full `pnpm build`, and every newly added lockfile entry
+  confirmed older than 24 hours.
+
+  The `esbuild` window is deliberately untouched — it is pinned below 0.27.7 for
+  the Tauri launcher's safari13 target, and widening it to clear an advisory
+  would break that build.
+
+---
+
 ## [0.13.3] — 2026-09-15 · *Deadbolt*
 
 ### Removed
