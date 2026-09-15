@@ -10,8 +10,10 @@ these devices can be reached. Enrollment tokens, RustDesk IDs and public IP
 addresses are replaced with sample values in the browser immediately before each
 capture — see [Regenerating these](#regenerating-these).
 
-↩︎ [Back to the README](../README.md) · [Quick start](setup.md) ·
-[Architecture](architecture.md) · [More MSP tools at mspreboot.com](https://mspreboot.com)
+↩︎ [Back to the README](../README.md) ·
+[▶ Watch the walkthrough](https://github.com/agit8or1/rem0te/releases/download/v0.13.5/walkthrough.mp4) ·
+[Quick start](setup.md) · [Architecture](architecture.md) ·
+[More MSP tools at mspreboot.com](https://mspreboot.com)
 
 ---
 

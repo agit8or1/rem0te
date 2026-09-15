@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.13.5-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.13.6-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te/stargazers)
 
@@ -66,19 +66,19 @@ inventory, workflows, administration and configuration, in light and dark.
 
 ## Watch the walkthrough
 
-A recorded tour of the real application: the dashboard, three end-to-end
-workflows, and the monitoring and audit surfaces, in both themes.
+A recorded tour of the real application — the dashboard, three end-to-end
+workflows, then Quick Connect, session history and the audit log, in both themes.
 
-<a href="docs/screenshots.md"><img src="docs/images/github/dashboard-dark.png" alt="Video poster: the Rem0te dashboard in dark theme. The walkthrough covers the dashboard, enrolling a device, access management, Quick Connect, session history and the audit log." width="100%"></a>
+<a href="https://github.com/agit8or1/rem0te/releases/download/v0.13.5/walkthrough.mp4"><img src="https://github.com/agit8or1/rem0te/releases/download/v0.13.5/poster.png" alt="Play the Rem0te walkthrough: a 2 minute 28 second tour covering the dashboard, enrolling a device, access management, Quick Connect, session history and the audit log." width="100%"></a>
 
-> **The recording is not yet published.** It is built locally by
-> `apps/web/scripts/capture-video.mjs` and `scripts/build-video.sh`, and is
-> deliberately **not** committed — video binaries do not belong in Git history.
-> Once attached to a release it will be linked here. The exact content is
-> documented in the
-> [walkthrough script and transcript](docs/media/walkthrough-script.md), with
-> captions in [WebVTT](docs/media/walkthrough.vtt).
-> The walkthrough is **caption-led — no narration was recorded**; the transcript
+**[▶ Watch the walkthrough](https://github.com/agit8or1/rem0te/releases/download/v0.13.5/walkthrough.mp4)** (2 min 28 s)
+ · [52-second highlight](https://github.com/agit8or1/rem0te/releases/download/v0.13.5/highlight.mp4)
+ · [transcript](docs/media/walkthrough-script.md)
+ · [captions](docs/media/walkthrough.vtt)
+
+> Everything shown is an isolated demo environment — fictitious businesses,
+> synthetic devices, and no remote session at any point. The walkthrough is
+> **caption-led: there is no narration and no audio track.** The transcript
 > carries a narration-ready script if you want to add one.
 
 ---
