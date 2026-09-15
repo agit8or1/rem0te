@@ -41,6 +41,14 @@ const ORDER = [
   ['SECURITY-AUDIT.md', 'Security'],
 ];
 
+// Pages in docs/ that are repo metadata rather than user documentation. They are
+// deliberately NOT in the in-app bundle, and the unlisted-pages guard below must
+// not treat them as an omission. Keep this list short: if something here would
+// help a reader of the app, it belongs in ORDER instead.
+const NOT_IN_APP = new Set([
+  'github-about.md', // GitHub About panel copy + settings checklist, for maintainers
+]);
+
 const slugify = (s) =>
   s.toLowerCase().replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').slice(0, 80);
 
@@ -102,7 +110,9 @@ if (missing.length) {
   console.error(`✗ listed in the bundle but not on disk: ${missing.join(', ')}`);
   process.exit(1);
 }
-const unlisted = [...present].filter((f) => !ORDER.some(([o]) => o === f));
+const unlisted = [...present].filter(
+  (f) => !NOT_IN_APP.has(f) && !ORDER.some(([o]) => o === f),
+);
 if (unlisted.length) {
   // A new page that nobody added to ORDER would silently never appear in the
   // app — which is the failure this whole exercise started from.
