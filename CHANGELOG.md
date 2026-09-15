@@ -5,6 +5,62 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.13.2] — 2026-09-15 · *Deadbolt*
+
+### Changed
+
+- **Rewrote the README around what an operator actually does.** It led with a
+  claim ("Secure self-hosted remote access for businesses") and then spent most
+  of its length on internal mechanics — the `connect` route's response shape, a
+  threat-model table, ASCII diagrams of the enrollment flow. None of that tells
+  someone landing on the repo whether this solves their problem. It now leads
+  with the positioning line, one real screenshot, and three workflow benefits,
+  and links out to `docs/` for the mechanics that were inlined.
+- **The version badge said 0.8.1.** Five minor releases had shipped since. It is
+  now 0.13.2, alongside a CI badge that reflects the checks that actually run.
+- **Documented that RustDesk Pro is not required, with the reason.** Every
+  generated client config sets `api-server = ''` and the installer pulls `hbbs`
+  and `hbbr` from the OSS `rustdesk/rustdesk-server` releases, so the Pro API
+  server is deliberately unused. This was true before and written down nowhere,
+  which made it a question every evaluator had to answer for themselves.
+- **Said plainly that connecting launches a local RustDesk client.** The old
+  README described a browser-based product without ever stating that a
+  `rustdesk://` handler — and therefore an installed client — is required. That
+  is the first thing a new user hits when it does not work.
+- **Separated managed devices from Quick Connect in a table**, because the two
+  were described in adjacent sections that never contrasted them.
+
+### Added
+
+- **Real screenshots under `docs/images/github/`** — one hero and four
+  supporting images, captured from the running UI at 1440×900 against an
+  isolated `reboot_remote_docs` database. Fictitious businesses, synthetic
+  RustDesk IDs, and endpoint addresses in `203.0.113.0/24` (TEST-NET-3), so
+  nothing in them can reach a real machine.
+- **`.github/SECURITY.md`** — there was no reporting policy, so the only route
+  for a vulnerability was a public issue. It points at private vulnerability
+  reporting, and states that `docs/SECURITY-AUDIT.md` is an internal review and
+  not an independent audit.
+- **`docs/github-about.md`** — the About-panel description, topics, and the
+  repository settings that have to be applied by hand.
+
+### Fixed
+
+- **`prisma/_docs-demo-data.ts` could not run.** It wrote `ComputerAccess` with
+  `grantedById` and no `tenantId`; the model has `grantedBy` and requires
+  `tenantId`, so the seed threw partway through and left the database half
+  populated. It now also grants the technician access to the machines it
+  creates, which is why **My Computers** was empty in every previous capture,
+  and varies device counts, platforms and onboarding dates so a screenshot does
+  not read as placeholder data.
+- **`gen-docs-bundle.mjs` rejected repo-metadata pages in `docs/`.** Any `.md`
+  there that is not in `ORDER` fails the build — deliberately, so a user-facing
+  page cannot silently vanish from `/docs`. `github-about.md` is for
+  maintainers and does not belong in the app, so there is now a small
+  `NOT_IN_APP` set it is listed in, leaving the guard intact for real pages.
+
+---
+
 ## [0.13.1] — 2026-08-31 · *Deadbolt*
 
 ### Changed
