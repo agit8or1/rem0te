@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.13.6-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.13.7-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te/stargazers)
 
@@ -19,7 +19,7 @@ server that keeps them organised and separate.
 
 ---
 
-<a href="docs/images/github/dashboard-light.png"><img src="docs/images/github/dashboard-light.png" alt="The Rem0te dashboard: tiles showing 32 total computers with 24 online and 8 offline, three active sessions and session counts for the last 7 and 30 days, above a map of client locations across the western United States." width="100%"></a>
+<a href="docs/images/github/dashboard-light.png"><img src="docs/images/github/dashboard-light.png" alt="The Rem0te dashboard: tiles showing 34 total computers with 26 online and 8 offline, three active sessions and session counts for the last 7 and 30 days, above a map of client locations across the western United States." width="100%"></a>
 
 <sub><i>The operator's view — every customer business, computer and session in one place. <a href="docs/images/github/dashboard-light.png">Full size</a> · <a href="docs/screenshots.md">30 more screenshots</a></i></sub>
 
@@ -59,7 +59,7 @@ loop for every change.
 </tr>
 </table>
 
-**[→ See all 30 screenshots](docs/screenshots.md)** — dashboards, monitoring,
+**[→ See all 31 screenshots](docs/screenshots.md)** — dashboards, monitoring,
 inventory, workflows, administration and configuration, in light and dark.
 
 ---

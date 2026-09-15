@@ -45,7 +45,7 @@ many are offline right now, what is connected, and how much support work the
 last week actually took.
 
 ### Dashboard — dark
-<a href="images/github/dashboard-dark.png"><img src="images/github/dashboard-dark.png" alt="The same Rem0te dashboard in dark theme, showing 32 total computers with 24 online, 8 offline, three active sessions, the client location map and a seven-day session bar chart."></a>
+<a href="images/github/dashboard-dark.png"><img src="images/github/dashboard-dark.png" alt="The same Rem0te dashboard in dark theme, showing 34 total computers with 26 online, 8 offline, three active sessions, the client location map and a seven-day session bar chart."></a>
 
 The same view in dark. Both themes ship with the product and are switched from
 the sidebar — this pair is the one deliberate duplicate in the gallery.

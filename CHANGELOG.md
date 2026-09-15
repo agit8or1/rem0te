@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.13.7] — 2026-09-15 · *Deadbolt*
+
+### Fixed
+
+- **Two inaccuracies in the README, found by reading it as GitHub renders it
+  rather than as source.** The gallery link said "See all 30 screenshots"
+  against a gallery of 31, and the hero image's alt text described "32 total
+  computers with 24 online" — the numbers from an earlier capture, not the ones
+  in the image it labels (34 / 26 / 8). Alt text that misdescribes its own
+  image is worse than none: it is the only version a screen reader gets. The
+  matching alt text on the dark dashboard in the gallery had the same stale
+  numbers and is corrected too.
+
+  Everything else rendered correctly on GitHub and was checked rather than
+  assumed: 12 images all load, the Mermaid diagram renders natively, five
+  tables and the video poster are fine.
+
+---
+
 ## [0.13.6] — 2026-09-15 · *Deadbolt*
 
 ### Changed
