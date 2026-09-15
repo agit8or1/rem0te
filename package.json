@@ -14,7 +14,7 @@
     "docs:api": "node scripts/gen-api-reference.mjs"
   },
   "devDependencies": {
-    "typescript": "^5"
+    "typescript": "^7"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
