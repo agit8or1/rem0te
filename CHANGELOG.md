@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.13.6] — 2026-09-15 · *Deadbolt*
+
+### Changed
+
+- **The walkthrough is published, so the README links it instead of explaining
+  its absence.** 0.13.5 shipped the recording but deliberately did not commit
+  it — video binaries do not belong in Git history — which left the README
+  carrying a note saying where the video would eventually be. It is now a
+  release asset on `v0.13.5`, and the README shows a clickable poster with the
+  duration, a highlight cut, the transcript and the caption file. The gallery
+  header links it too.
+
+  The poster is a real frame from the recording with a play affordance
+  composited on. The dashboard numbers in it (32 computers) differ slightly
+  from the gallery's (34) because the two were captured in separate sessions —
+  both are genuine states of the demo database, not retouched.
+
+---
+
 ## [0.13.5] — 2026-09-15 · *Deadbolt*
 
 ### Added
