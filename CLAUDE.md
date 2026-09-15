@@ -85,10 +85,19 @@ previous build's files 404s every browser that already had the app open.
   `.git`. Build in the source tree.
 - **Never `pkill -f 'node dist/main.js'`** — it matches the production API.
   Use PIDs.
-- **The screenshot pipeline seeds demo businesses and computers.** Point it at a
-  scratch database, never a live one. `output: 'standalone'` bakes the Next
-  rewrite destination in at build time, so `INTERNAL_API_URL` at runtime is
-  ignored — patch `routes-manifest.json` in a copy of the build.
+- **Every capture script seeds demo businesses and computers.** Point them at a
+  scratch database, never a live one — see *Capturing media* below. `output:
+  'standalone'` bakes the Next rewrite destination in at build time, so
+  `INTERNAL_API_URL` at runtime is ignored; patch `server.js` and
+  `routes-manifest.json` in a **copy** of the build, not the build itself.
+- **The API sweeps `isOnline` from staleness.** A demo database seeded twenty
+  minutes before a capture has already drifted: machines seeded online start
+  reporting Offline and the dashboard stops agreeing with the inventory. Run
+  `prisma/_docs-demo-refresh.ts` immediately before capturing.
+- **`EndpointStatus.OFFLINE` is a dead enum value.** Nothing in the API writes
+  it. Enrolment lifecycle is `status`, connectivity is `isOnline`, and the
+  dashboard counts `ACTIVE` rows and derives offline from the flag — so marking
+  a disconnected machine OFFLINE hides it from the totals entirely.
 - **Generated PowerShell cannot be syntax-checked here.** There is no PowerShell
   on the host. `RustdeskService.joinPs()` refuses the mistakes that are not
   visible to a brace count; add to it rather than eyeballing.
@@ -125,3 +134,48 @@ runtime route table exactly. When behaviour changes, the page that describes
 it changes in the same commit — `docs/connecting.md`, `docs/clients.md`,
 `docs/updates.md`, `docs/troubleshooting.md`, `docs/architecture.md`. The in-app
 copy at `/help` is separate and also needs updating.
+
+## Capturing media
+
+Two audiences, two toolchains, and they do not share files:
+
+| Script | Writes | Consumed by |
+|---|---|---|
+| `apps/web/scripts/screenshots.mjs` | `docs/screenshots/` | The in-app docs at `/docs` — numbered-callout guide images |
+| `apps/web/scripts/capture-media.mjs` | `docs/images/github/` | The GitHub gallery, `docs/screenshots.md` |
+| `apps/web/scripts/capture-video.mjs` | `media/raw/*.webm` | `scripts/build-video.sh` |
+| `scripts/build-video.sh` | `media/*.mp4`, `media/poster*.png` | GitHub **release assets** |
+
+**`media/` is gitignored and must stay that way.** Video binaries do not belong
+in Git history; publish the finished files as release assets and link to them.
+The rule is root-anchored (`/media/`) on purpose — a bare `media/` also matches
+`docs/media/`, which holds the walkthrough transcript and captions and *is*
+tracked.
+
+**Never capture against production.** Both capture scripts refuse an `https://`
+target or port 3000/443 outright, and `prisma/_docs-demo-data.ts` refuses any
+database whose name is not `reboot_remote_docs`. Those guards are the safety
+net, not the plan — stand up the isolated stack described in
+`docs/screenshots.md` ("Regenerating these").
+
+**Themes come from the application's own store**, `localStorage.theme`, which
+`ThemeProvider` turns into `<html class="dark">`. Never simulate a theme with a
+CSS filter: the point of a theme screenshot is that it is the shipped theme.
+
+**Masking happens in the DOM immediately before the shutter** and never writes
+back to the database. It covers enrollment tokens, long hex secrets, RustDesk
+IDs, public IP addresses, and any FQDN outside a small allowlist
+(`mspreboot.com`, `github.com`, `rustdesk.com`, `example.com` are kept
+deliberately). This is not belt-and-braces: the demo API reads the *real* host,
+so the Security page names the live deployment's certificate domain and the
+audit log shows whatever addresses the demo data carries. Both were caught by
+masking, not by review.
+
+Credentials are passed as environment variables — never written into a script,
+a manifest, or the repository. `docs/images/github/manifest.json` records the
+route, theme and viewport behind every image and is safe to commit.
+
+`docs/screenshots.md` is excluded from the in-app docs bundle (`NOT_IN_APP` in
+`gen-docs-bundle.mjs`) because its images live in `docs/images/github/`, which
+that script does not mirror — bundling it would put 31 broken images inside
+`/docs`.
