@@ -9,9 +9,9 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.13.7-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.13.8-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te/stargazers)
+[![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
 [Quick start](#quick-start) · [Screenshots](docs/screenshots.md) · [Walkthrough](#watch-the-walkthrough) · [Documentation](docs/README.md) · [Security](#security) · [MSPReboot](https://mspreboot.com)
 
