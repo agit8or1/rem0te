@@ -5,6 +5,53 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.13.3] — 2026-09-15 · *Deadbolt*
+
+### Removed
+
+- **34 screenshots that nothing referenced — 3.6 MB.** `gen-docs-bundle.mjs`
+  copies the whole of `docs/screenshots/` into `apps/web/public/docs-img`, so
+  every one of them was being committed *and* shipped in the deployed web app
+  while no page embedded it. Of 43 tracked images, 9 are actually referenced by
+  `docs/*.md`. The dark variants could never have been used at all: there is no
+  theme-based image swapping anywhere in the app, and the generated docs bundle
+  contains no `-dark.png` reference.
+- **`packages/types`.** A workspace package exporting 144 lines that nothing
+  imported — the only mention of `@reboot-remote/types` in the repository was
+  its own `package.json`. It sat at 0.1.0 while the other three packages moved
+  together, which is the giveaway. `pnpm-lock.yaml` regenerated; the change is
+  two lines and `pnpm install --frozen-lockfile` still passes.
+
+### Changed
+
+- **`screenshots.mjs` now writes only what the docs embed.** It captured 13
+  pages plus a public page in two themes each, and exactly one of those outputs
+  (`updates-light.png`) was referenced; the rest were regenerated and
+  re-committed every run. `PAGES` is trimmed to that one page, `PUBLIC_PAGES`
+  is empty, and themes default to light with `SCREENSHOT_THEMES=light,dark` to
+  opt back in. Deleting the files without this would have brought them straight
+  back on the next run.
+- **`docs/github-about.md` corrected.** It said no website existed; the
+  repository has `https://mspreboot.com` set, which resolves. It now records
+  that, notes the URL is the maintainer's consulting site rather than a Rem0te
+  product page, and lists the thirteen topics that are actually set rather than
+  the ten originally proposed.
+
+### Kept, deliberately
+
+- **`dist/windows-installer.exe`** looks like a committed build artifact, and
+  is one, but `deploy/scripts/install.sh` copies it out of the checkout and
+  never builds it — there is no Go toolchain step in the installer. Removing it
+  breaks every fresh install.
+- **`semgrep-rules/nodejs-security.yml`** is not referenced by CI, but
+  `apps/api/src/admin/security.service.ts` loads it at runtime for the Security
+  page.
+- **`docs/screenshots/guide/tech-01-signin.png`** is referenced by the
+  technician guide and is *not* reproducible by `screenshots.mjs` — it predates
+  the callout pipeline and was never migrated into it.
+
+---
+
 ## [0.13.2] — 2026-09-15 · *Deadbolt*
 
 ### Changed

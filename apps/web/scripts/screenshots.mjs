@@ -3,7 +3,7 @@
 //
 // - Seeds a fresh platform-admin user in the dev DB.
 // - Uses Playwright (headless Chromium) against http://127.0.0.1:3000.
-// - Captures each major page in both light AND dark themes.
+// - Captures in light theme. THEMES below says why dark is not written.
 // - Writes to docs/screenshots/{page}-{theme}.png.
 // - Cleans up the throwaway user at the end.
 //
@@ -34,23 +34,13 @@ const WEB = process.env.WEB_URL ?? 'http://127.0.0.1:3000';
 const OUT_DIR = process.env.OUT_DIR ?? path.resolve(HERE, '../../../docs/screenshots');
 const VIEWPORT = { width: 1440, height: 900 };
 
+// Only pages that docs/*.md actually embed are captured. Everything else was
+// being written, committed and shipped into apps/web/public/docs-img without a
+// single reference to it — 34 files and 3.6 MB of it. Adding a page back is one
+// line here plus the `![...](screenshots/<name>-light.png)` that uses it; a
+// capture nobody references is the state this list is meant to prevent.
 const PAGES = [
-  { path: '/dashboard',        name: 'dashboard' },
-  { path: '/my-computers',     name: 'my-computers' },
-  { path: '/businesses',       name: 'businesses' },
-  { path: '/admin/access',     name: 'access-control' },
-  { path: '/endpoints',        name: 'computers' },
-  { path: '/endpoints/enroll', name: 'add-computer' },
-  { path: '/users',            name: 'users' },
-  { path: '/sessions',         name: 'sessions' },
-  { path: '/quick-connect',    name: 'quick-connect' },
-  // Clients for the technician's own machine, and the three-way update surface
-  // (Rem0te, the RustDesk clients on endpoints, and hbbs/hbbr). Both are new
-  // enough that nothing in the docs showed them.
-  { path: '/downloads',        name: 'downloads' },
-  { path: '/about',            name: 'updates' },
-  { path: '/audit',            name: 'audit' },
-  { path: '/account',          name: 'account' },
+  { path: '/about', name: 'updates' },
 ];
 
 /**
@@ -122,9 +112,15 @@ const CALLOUT_PAGES = [
 ];
 
 // Captured without signing in — it is the page someone who needs help lands on.
-const PUBLIC_PAGES = [
-  { path: '/quick', name: 'quick-public' },
-];
+// Light only. Nothing consumes a dark capture: the app has no theme-based image
+// swapping, and the generated docs bundle references no -dark.png. Set
+// SCREENSHOT_THEMES=light,dark to write them anyway.
+const THEMES = (process.env.SCREENSHOT_THEMES ?? 'light').split(',').map((t) => t.trim());
+
+// Signed-out pages. Empty for the same reason PAGES is short: the /quick
+// capture was written every run and referenced by nothing. Re-add it here when
+// a doc page actually embeds it.
+const PUBLIC_PAGES = [];
 
 // Fictional businesses and computers, so the docs show a populated product
 // rather than an empty one. Everything here is torn down afterwards.
@@ -375,7 +371,7 @@ async function main() {
     ]);
     console.log('Logged in.');
 
-    for (const theme of ['light', 'dark']) {
+    for (const theme of THEMES) {
       // Set the app's theme (Tailwind: html.dark for dark mode).
       await page.emulateMedia({ colorScheme: theme });
       await page.evaluate((t) => {
@@ -416,7 +412,7 @@ async function main() {
 
 
     // ── Public pages, captured signed-OUT in a clean context ──────────────
-    for (const theme of ['light', 'dark']) {
+    for (const theme of THEMES) {
       const anon = await browser.newContext({ viewport: VIEWPORT, colorScheme: theme, ignoreHTTPSErrors: true });
       const anonPage = await anon.newPage();
       for (const p of PUBLIC_PAGES) {
