@@ -5,6 +5,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.13.9] — 2026-09-15 · *Deadbolt*
+
+### Changed
+
+- **MSPReboot offers hosting and support for Rem0te; the README said it did
+  not.** The earlier wording — "this project does not come with a paid support
+  offering or any service-level commitment" — came from reading mspreboot.com,
+  which advertises consulting, and from a deliberate rule against claiming a
+  support relationship that could not be verified. The publisher has confirmed
+  the offering, which is the verification that was missing. Corrected in the
+  README, `docs/github-about.md` and the published v0.13.5 release notes.
+
+  Both halves are kept true: Rem0te stays MIT-licensed and free to self-host,
+  and self-hosting requires no engagement. No uptime, response-time or
+  service-level figures are attached, because none are published anywhere
+  checkable — `docs/github-about.md` records that constraint for future copy.
+
+### Added
+
+- **`CLAUDE.md` now documents the capture toolchain**, which had grown to four
+  scripts while the only mention was a single stale bullet naming the original
+  one. It records which script writes where and who consumes it, that `media/`
+  is gitignored and root-anchored (a bare `media/` also matches `docs/media/`,
+  which is tracked), that themes come from the application's own store rather
+  than a CSS filter, and what capture-time masking covers and why it is not
+  optional — the demo API reads the real host, so the Security page names the
+  live certificate domain and the audit log carries real addresses.
+
+  Three new entries under *Things that will bite you*, each from a defect that
+  reached a published screenshot before being caught: the `isOnline` sweep that
+  desynchronises a stale demo database from the dashboard, the dead
+  `EndpointStatus.OFFLINE` enum value that hides machines from the totals, and
+  the standalone build baking its API rewrite in at build time.
+
+---
+
 ## [0.13.8] — 2026-09-15 · *Deadbolt*
 
 ### Fixed
