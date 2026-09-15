@@ -1,0 +1,59 @@
+version: 2
+
+# Security updates are enabled at the repository level and do not need this
+# file. This exists for the `ignore` rules, which apply to security updates as
+# well as version updates — see the esbuild entry.
+
+updates:
+  # ── JavaScript (pnpm workspace) ──────────────────────────────────────────
+  # One entry for the workspace root: apps/api, apps/web and apps/launcher all
+  # share the root pnpm-lock.yaml.
+  #
+  # Note for anyone reviewing these PRs: transitive pins live in BOTH
+  # package.json (pnpm <=10) and pnpm-workspace.yaml (pnpm >=11, which is what
+  # CI runs). Dependabot only knows about the first. A PR that bumps a pinned
+  # transitive needs the workspace file updated by hand or it changes nothing
+  # in CI. CI also rejects any lockfile entry younger than 24h
+  # (minimumReleaseAge), so a freshly-published fix may need a day to land.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      production:
+        dependency-type: production
+      development:
+        dependency-type: development
+    ignore:
+      # Do not let anything move esbuild. The usable window is narrow and no
+      # automated bump lands inside it:
+      #   <0.25.0          dev-server request-forgery advisory
+      #   >=0.27.3 <0.28.1 Windows dev-server file-read advisory
+      #   >=0.27.7         drops destructuring lowering for safari13, which the
+      #                    Tauri launcher targets (macOS 10.15 WKWebView), and
+      #                    fails its build — 0.27.6 ok, 0.27.7 not
+      # That leaves >=0.25.0 <0.27.3, which pnpm-workspace.yaml pins by hand.
+      # Revisit only when 0.28.1+ also restores the safari13 lowering.
+      - dependency-name: esbuild
+
+  # ── Tauri launcher (Rust) ────────────────────────────────────────────────
+  - package-ecosystem: cargo
+    directory: "/apps/launcher/src-tauri"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+
+  # ── Windows installer (Go) ───────────────────────────────────────────────
+  - package-ecosystem: gomod
+    directory: "/tools/windows-installer"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+
+  # ── CI actions ───────────────────────────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
