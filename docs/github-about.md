@@ -19,13 +19,24 @@ Short form, if a shorter field is needed:
 
 ## Website
 
-`https://mspreboot.com` — set on the repository and verified live (HTTP 200,
-"MSP Consulting for Operations, Profitability & Growth | MSP Reboot").
+**`https://mspreboot.com`** — currently set on the repository and verified live
+(HTTP 200, "MSP Consulting for Operations, Profitability & Growth | MSP Reboot").
 
-Note what it is: the maintainer's MSP consulting site, not a product page for
-Rem0te and not a hosted demo. That is a reasonable thing to point at, but if a
-project page or demo is published later, prefer it here — a visitor clicking
-**Website** from the repo is looking for more about Rem0te.
+MSPReboot publishes Rem0te. Its *Free Projects* page lists this repository as
+"Rem0te — Open Source — Multi-tenant remote support built on RustDesk", alongside
+ClientSt0r, OPNMGR, Depl0y and St0r. Pointing **Website** there gives a visitor
+the publisher and the sibling tools, which is the most useful destination that
+currently exists.
+
+Some sibling projects have a dedicated product site (`clientst0r.mspreboot.com`,
+`depl0y.mspreboot.com`, `st0r.mspreboot.com`). Rem0te does **not** — neither
+`rem0te.mspreboot.com` nor `remote.mspreboot.com` resolves. If one is published
+later, prefer it here as the primary About URL and keep the MSPReboot links in
+the README and gallery.
+
+Note for accuracy: MSPReboot sells **consulting**. Rem0te itself is free and
+MIT-licensed, and neither the README nor this file should imply a paid support
+offering or a service-level commitment for it.
 
 ## Topics
 

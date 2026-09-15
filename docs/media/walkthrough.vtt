@@ -1,0 +1,98 @@
+WEBVTT
+
+NOTE
+Captions for the Rem0te walkthrough. The video is caption-led and has no
+narration or audio track; these cues mirror the on-screen captions so the
+walkthrough is searchable and accessible. Timings match media/walkthrough.mp4.
+
+1
+00:00:00.000 --> 00:00:05.500
+Rem0te — self-hosted remote support for customer
+businesses, powered by RustDesk.
+
+2
+00:00:06.000 --> 00:00:11.500
+Signing in to a demo environment. Every business,
+person and device shown is fictitious.
+
+3
+00:00:12.000 --> 00:00:16.500
+The dashboard: every customer business, computer
+and session in one overview.
+
+4
+00:00:17.000 --> 00:00:22.500
+Client locations are plotted from each device's
+last known address.
+
+5
+00:00:23.000 --> 00:00:27.500
+Workflow 1 — find a customer, then their computers.
+
+6
+00:00:28.000 --> 00:00:32.500
+Each business owns its own computers, people
+and history.
+
+7
+00:00:33.000 --> 00:00:39.500
+Platform, live status and last-seen for every
+enrolled machine.
+
+8
+00:00:40.000 --> 00:00:44.500
+Light and dark themes both ship with the product.
+
+9
+00:00:45.000 --> 00:00:51.500
+Workflow 2 — enrol a managed device.
+
+10
+00:00:52.000 --> 00:00:57.500
+The business is fixed into the installer. The
+machine that runs it cannot choose another.
+
+11
+00:00:58.000 --> 00:01:04.500
+Choose exactly who may connect once it is enrolled.
+
+12
+00:01:05.000 --> 00:01:11.500
+Workflow 3 — three levels: Platform Admin,
+Business Owner, Business User.
+
+13
+00:01:12.000 --> 00:01:19.500
+Owners hold everything; each business user shows
+the capabilities actually granted.
+
+14
+00:01:20.000 --> 00:01:25.500
+Quick Connect — one-off help for a machine that
+is not enrolled.
+
+15
+00:01:26.000 --> 00:01:32.500
+No install and no managed computer is created.
+It ends when they close the client.
+
+16
+00:01:33.000 --> 00:01:40.500
+Live sessions and full history, per business.
+
+17
+00:01:41.000 --> 00:01:47.500
+Every action is written to an append-only audit log.
+
+18
+00:01:48.000 --> 00:01:54.500
+Service health, CPU, memory and disk on the host.
+
+19
+00:01:55.000 --> 00:02:01.500
+Self-hosted. Open source. No RustDesk Pro required.
+
+20
+00:02:02.000 --> 00:02:08.000
+github.com/agit8or1/rem0te — more free tools for
+MSPs at mspreboot.com

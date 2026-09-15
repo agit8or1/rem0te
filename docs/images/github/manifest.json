@@ -1,0 +1,196 @@
+{
+  "viewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "deviceScaleFactor": 2,
+  "demoData": "apps/api/prisma/_docs-demo-data.ts against reboot_remote_docs",
+  "shots": [
+    {
+      "name": "dashboard-light",
+      "route": "/dashboard",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "businesses-light",
+      "route": "/businesses",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "session-history-light",
+      "route": "/sessions",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "audit-timeline-light",
+      "route": "/audit",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "security-overview-light",
+      "route": "/admin/security",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "computers-inventory-light",
+      "route": "/endpoints",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "device-detail-light",
+      "route": "/endpoints/cmu2vyx1c00484d6wo3yqxel1",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "unassigned-light",
+      "route": "/admin/unassigned",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "enroll-device-light",
+      "route": "/endpoints/enroll",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "quick-connect-light",
+      "route": "/quick-connect",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "access-model-light",
+      "route": "/admin/access",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "access-admins-light",
+      "route": "/admin/access",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "account-security-light",
+      "route": "/account",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "branding-light",
+      "route": "/settings/branding",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "documentation-light",
+      "route": "/docs",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "dashboard-dark",
+      "route": "/dashboard",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "business-overview-dark",
+      "route": "/businesses/cmu2vyx0q003l4d6wcdg4vk3p",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "client-map-dark",
+      "route": "/dashboard",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "sessions-live-dark",
+      "route": "/sessions",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "audit-timeline-dark",
+      "route": "/audit",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "system-status-dark",
+      "route": "/admin/status",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "computers-inventory-dark",
+      "route": "/endpoints",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "business-computers-dark",
+      "route": "/businesses/cmu2vyx0q003l4d6wcdg4vk3p",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "my-computers-dark",
+      "route": "/my-computers",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "enroll-device-dark",
+      "route": "/endpoints/enroll",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "downloads-dark",
+      "route": "/downloads",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "help-dark",
+      "route": "/help",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "access-users-dark",
+      "route": "/admin/access",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "users-dark",
+      "route": "/users",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "settings-dark",
+      "route": "/settings",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "release-history-dark",
+      "route": "/about",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    }
+  ]
+}
