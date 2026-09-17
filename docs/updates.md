@@ -10,7 +10,14 @@ separately, from different places, and confusing them wastes time.
 | **RustDesk server (hbbs/hbbr)** | Updates → *RustDesk Server* | **Every endpoint reads offline for ~30s** |
 
 All three live at **/about** in the UI, reachable from the sidebar as
-**Updates** (Platform Admin only).
+**Updates** (Platform Admin only). The running version is also in the sidebar
+footer and on the About page, for everyone signed in — "which version are you
+on?" is the first question asked about every problem.
+
+A fourth thing can be out of date and is **not** on that page: **Windows
+updates pending on an endpoint**. Those belong to the machine, not to this
+platform, and Rem0te reports them without installing them — see
+[inventory.md](inventory.md).
 
 ![Updates](screenshots/updates-light.png)
 
@@ -151,5 +158,7 @@ peer database. Losing `id_ed25519` invalidates every configured client.
 ## See also
 
 - [clients.md](clients.md) — which client is which
+- [inventory.md](inventory.md) — pending Windows updates on an endpoint, and
+  the rest of what the agent collects
 - [connecting.md](connecting.md) — the connect paths and their failure modes
 - [setup.md](setup.md) — installation and operations

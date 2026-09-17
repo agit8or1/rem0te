@@ -207,6 +207,49 @@ export class EndpointsController {
     return { success: true };
   }
 
+  // ── Inventory, updates and event logs ─────────────────────────────────────
+
+  @Get(':id/inventory')
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  async inventory(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.svc.getInventory(actor, id) };
+  }
+
+  // Queues a collection for the endpoint's next heartbeat. Rate limited
+  // because the button is right there and the work lands on someone's
+  // production machine, not on this server.
+  @Post(':id/inventory/refresh')
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  @RateLimit(20)
+  @HttpCode(HttpStatus.OK)
+  async refreshInventory(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.svc.requestInventoryRefresh(actor, id) };
+  }
+
+  @Post(':id/event-log')
+  @RequireCapability(CAP.COMPUTERS_EVENT_LOGS)
+  @RateLimit(20)
+  @HttpCode(HttpStatus.OK)
+  async requestEventLog(
+    @Actor() actor: ActorContext,
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    return { success: true, data: await this.svc.requestEventLog(actor, id, body) };
+  }
+
+  // Polled by the UI while a request is outstanding. The capability check for
+  // event-log contents is inside the service, keyed on the command's type.
+  @Get(':id/commands/:commandId')
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  async command(
+    @Actor() actor: ActorContext,
+    @Param('id') id: string,
+    @Param('commandId') commandId: string,
+  ) {
+    return { success: true, data: await this.svc.getCommand(actor, id, commandId) };
+  }
+
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
   @Get()

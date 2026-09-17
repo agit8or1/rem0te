@@ -1,4 +1,7 @@
-import { IsArray, IsEnum, IsOptional, IsString, IsIP, Length, Matches } from 'class-validator';
+import {
+  IsArray, IsBoolean, IsEnum, IsInt, IsIP, IsISO8601, IsObject,
+  IsOptional, IsString, Length, Matches, Min,
+} from 'class-validator';
 
 export enum EndpointAccessMode {
   ASSIGNED_USERS = 'ASSIGNED_USERS',
@@ -77,6 +80,56 @@ export class HeartbeatDto {
   @Length(16, 128)
   @Matches(/^[A-Za-z0-9_-]+$/, { message: 'agentSecret must be URL-safe base64' })
   agentSecret?: string;
+
+  // Live session state. Cheap enough on the agent (one CIM query) to send on
+  // every beat, and it is the first thing a technician looks at before
+  // connecting: an empty string means nobody is signed in, which is different
+  // from the field being absent.
+  @IsOptional()
+  @IsString()
+  @Length(0, 128)
+  loggedOnUser?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  uptimeSeconds?: number;
+
+  @IsOptional()
+  @IsISO8601()
+  lastBootAt?: string;
+}
+
+/**
+ * An endpoint reporting back on a command it was handed.
+ *
+ * Only one of `inventory` / `updates` / `events` is meaningful, decided by the
+ * type of the command being closed out — the server picks the right one from
+ * its own row rather than believing whichever field arrived. Each is validated
+ * as a shape only; every value inside is clamped by
+ * EndpointInventoryService's sanitisers, which is where the real bounds live.
+ */
+export class CommandResultDto {
+  @IsString()
+  @Matches(/^[0-9]{6,15}$/, { message: 'rustdeskId must be numeric' })
+  rustdeskId!: string;
+
+  @IsString()
+  @Length(16, 128)
+  @Matches(/^[A-Za-z0-9_-]+$/, { message: 'agentSecret must be URL-safe base64' })
+  agentSecret!: string;
+
+  @IsString()
+  @Length(1, 64)
+  commandId!: string;
+
+  @IsBoolean()
+  ok!: boolean;
+
+  @IsOptional() @IsString() @Length(0, 2000) error?: string;
+  @IsOptional() @IsObject() inventory?: Record<string, unknown>;
+  @IsOptional() @IsObject() updates?: Record<string, unknown>;
+  @IsOptional() @IsArray() events?: unknown[];
 }
 
 export class ClaimEndpointDto {

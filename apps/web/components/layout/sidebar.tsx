@@ -38,7 +38,7 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import { authApi, platformApi } from '@/lib/api-client';
+import { authApi, platformApi, updateApi } from '@/lib/api-client';
 import { useQuery } from '@tanstack/react-query';
 import { useTheme } from '@/lib/theme-provider';
 import { usePermissions, CAP, type Capability } from '@/lib/auth';
@@ -199,6 +199,19 @@ export function Sidebar() {
     );
   }
 
+  // The running version, shown at the bottom of the menu. Nobody reporting a
+  // problem can be expected to find the About page first, and "which version
+  // are you on?" is the first question asked every time.
+  const { data: build } = useQuery({
+    queryKey: ['app-version'],
+    queryFn: () =>
+      updateApi.appVersion().then(
+        (r) => r.data?.data as { version: string; codename: string | null } | undefined,
+      ),
+    staleTime: 60 * 60 * 1000,
+    retry: false,
+  });
+
   const mainItems = MAIN_NAV.filter(visible);
   const sectionLabel = isPlatformAdmin ? 'Administration' : businessName ?? 'My Business';
 
@@ -280,6 +293,16 @@ export function Sidebar() {
           <LogOut className="h-4 w-4" />
           Sign out
         </button>
+        {build?.version && (
+          <Link
+            href="/about"
+            className="block px-3 pt-1.5 text-[10px] text-muted-foreground/60 hover:text-muted-foreground transition-colors truncate"
+            title={build.codename ? `Rem0te v${build.version} — ${build.codename}` : `Rem0te v${build.version}`}
+          >
+            v{build.version}
+            {build.codename && <span className="ml-1">· {build.codename}</span>}
+          </Link>
+        )}
       </div>
     </aside>
   );

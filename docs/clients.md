@@ -115,12 +115,15 @@ client that does more than configure RustDesk:
 - Installs RustDesk as a service and applies this server's config
 - Sets a permanent password and reports it to Rem0te, encrypted
 - Installs a scheduled task that heartbeats every ~3 minutes, which is what
-  drives the online dot, the credential-rotation channel, and the RustDesk
-  client update channel
+  drives the online dot, the credential-rotation channel, the RustDesk client
+  update channel, and the inventory the computer's Overview tab shows
 - Claims the machine into a business if given an enrolment token
 
 It is **idempotent** — safe to re-run, and re-running is the supported way to
-repair a broken install or apply a staged upgrade.
+repair a broken install, apply a staged upgrade, or replace the heartbeat
+script with a newer agent. Only installers from **v0.14.0** onward collect
+system specs, pending Windows updates and event logs; older ones report
+liveness and a version and nothing else. See [inventory.md](inventory.md).
 
 > **Installs from before v0.8.2 need to be re-run.** They wrote the RustDesk
 > service config to a path the service never reads, so the service ran on
@@ -210,5 +213,7 @@ upgrade — re-run the installer on those. See [updates.md](updates.md).
 ## See also
 
 - [connecting.md](connecting.md) — what happens after you click Connect
+- [inventory.md](inventory.md) — what the managed agent collects, and the
+  event-log viewer
 - [updates.md](updates.md) — keeping clients and the server current
 - [troubleshooting.md](troubleshooting.md)

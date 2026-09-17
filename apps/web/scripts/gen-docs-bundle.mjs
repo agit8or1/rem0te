@@ -32,6 +32,7 @@ const ORDER = [
   ['technician-guide.md', 'Technician guide'],
   ['connecting.md', 'Connecting'],
   ['clients.md', 'Clients'],
+  ['inventory.md', 'Inventory and event logs'],
   ['updates.md', 'Updates'],
   ['setup.md', 'Setup and operations'],
   ['architecture.md', 'Architecture'],

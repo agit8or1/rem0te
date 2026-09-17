@@ -32,6 +32,16 @@ export class SessionsController implements OnModuleInit, OnModuleDestroy {
           if (n > 0) this.logger.log(`Expired ${n} session(s) that never opened a client`);
         })
         .catch((e) => this.logger.error('Stale session cleanup failed', e));
+
+      // And the other half: sessions that DID open a client. Nothing tells us
+      // when a RustDesk session ends, so without this they stay live forever
+      // and every Connect ever clicked is counted as an active session.
+      this.sessions
+        .closeAbandonedSessions(12)
+        .then((n) => {
+          if (n > 0) this.logger.log(`Closed ${n} session(s) with no end signal`);
+        })
+        .catch((e) => this.logger.error('Abandoned session cleanup failed', e));
     }, 5 * 60 * 1000);
   }
 

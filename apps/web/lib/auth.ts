@@ -19,6 +19,7 @@ export const CAP = {
   COMPUTERS_ADD: 'computers:add',
   COMPUTERS_REMOVE: 'computers:remove',
   COMPUTERS_EDIT: 'computers:edit',
+  COMPUTERS_EVENT_LOGS: 'computers:event_logs',
   QUICK_CONNECT: 'support:quick_connect',
   SESSIONS_VIEW: 'support:sessions_view',
   HISTORY_VIEW: 'support:history_view',

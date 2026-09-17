@@ -26,6 +26,14 @@ async function bootstrap() {
     logger: ['error', 'warn', 'log'],
   });
 
+  // Endpoints POST collected event-log pages here, and the default Express
+  // limit is 100 KB — a page of 200 events is several times that and comes
+  // back as a 413 the agent has no way to report. The cap is deliberate
+  // rather than generous: EndpointInventoryService clamps a result to 200
+  // events of 2000 characters, which fits inside this with room to spare, and
+  // /enrollment/command-result is rate limited because it is a public route.
+  app.useBodyParser('json', { limit: '1mb' });
+
   const config = app.get(ConfigService);
   const port = config.get<number>('PORT') ?? config.get<number>('API_PORT') ?? 3001;
   const frontendUrl = config.get<string>('FRONTEND_URL') ?? 'http://localhost:3000';

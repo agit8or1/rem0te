@@ -88,7 +88,15 @@ function parseFile(file) {
         if (!routePaths.length) routePaths.push('');
         const cap = pending.find((d) => d.startsWith('@RequireCapability('));
         const isPublic = classPublic || pending.some((d) => d === '@Public()');
-        const throttled = pending.some((d) => d.startsWith('@Throttle('));
+        // `@RateLimit(...)` is this repo's per-route limit; a bare `@Throttle`
+        // is only still recognised because a stray one would otherwise vanish
+        // from the reference. Looking for `@Throttle(` alone is how every
+        // "throttled" marker in this page came to be a year out of date: the
+        // decorator was renamed when route limits turned out to be silently
+        // inert (see common/throttling.ts) and nothing re-checked this.
+        const throttled = pending.some(
+          (d) => d.startsWith('@RateLimit(') || d.startsWith('@Throttle('),
+        );
         const handler = t.replace(/^async\s+/, '').split('(')[0];
 
         for (const prefix of prefixes) for (const route of routePaths) {

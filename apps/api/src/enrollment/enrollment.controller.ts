@@ -4,7 +4,7 @@ import {
 } from '@nestjs/common';
 import { Request } from 'express';
 import { EnrollmentService } from './enrollment.service';
-import { CreateClaimTokenDto, ClaimEndpointDto, HeartbeatDto } from './dto/enrollment.dto';
+import { CreateClaimTokenDto, ClaimEndpointDto, HeartbeatDto, CommandResultDto } from './dto/enrollment.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
 import { RequireCapability } from '../common/decorators/require-capability.decorator';
@@ -85,6 +85,18 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   async heartbeat(@Body() dto: HeartbeatDto, @Req() req: Request) {
     const ip = req.ip ?? req.socket?.remoteAddress;
     const result = await this.enrollment.heartbeat({ ...dto, ipAddress: dto.ipAddress ?? ip });
+    return { success: true, data: result };
+  }
+
+  // Public endpoint — an endpoint reporting the result of a command it was
+  // handed on a previous heartbeat. Rate limit is generous because two
+  // commands may be collected per beat and each reports separately.
+  @Post('command-result')
+  @Public()
+  @RateLimit(60)
+  @HttpCode(HttpStatus.OK)
+  async commandResult(@Body() dto: CommandResultDto) {
+    const result = await this.enrollment.commandResult(dto);
     return { success: true, data: result };
   }
 

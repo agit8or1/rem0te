@@ -12,6 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
 import { CreateClaimTokenDto, ClaimEndpointDto } from './dto/enrollment.dto';
+import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -26,6 +27,7 @@ export class EnrollmentService {
     private readonly audit: AuditService,
     private readonly config: ConfigService,
     private readonly acl: AccessControlService,
+    private readonly inventory: EndpointInventoryService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -352,7 +354,12 @@ export class EnrollmentService {
     return { endpoint, tenantId: record.tenantId };
   }
 
-  async heartbeat(dto: { rustdeskId: string; hostname?: string; platform?: string; osVersion?: string; agentVersion?: string; rustdeskVersion?: string; ipAddress?: string; password?: string; agentSecret?: string }) {
+  async heartbeat(dto: {
+    rustdeskId: string; hostname?: string; platform?: string; osVersion?: string;
+    agentVersion?: string; rustdeskVersion?: string; ipAddress?: string;
+    password?: string; agentSecret?: string;
+    loggedOnUser?: string; uptimeSeconds?: number; lastBootAt?: string;
+  }) {
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { rustdeskId: dto.rustdeskId },
     });
@@ -504,6 +511,29 @@ export class EnrollmentService {
         ? { targetVersion: node.updateTargetVersion }
         : null;
 
+    // Live session state, and whatever collection work is queued for this
+    // machine. Both are gated on `authenticated` for the same reason the
+    // descriptive fields above are: an anonymous caller that could write these
+    // would decide what the console says is running on a customer's computer,
+    // and an anonymous caller that could collect a command would decide what
+    // that computer goes and reads.
+    let commands: { id: string; type: string; params: unknown }[] = [];
+    if (authenticated) {
+      // Inventory writes are best-effort: a malformed report, or a database
+      // hiccup writing one, must not cost the endpoint its liveness ping. That
+      // is what marks it offline on the dashboard.
+      try {
+        await this.inventory.recordLiveState(node.endpointId, {
+          loggedOnUser: dto.loggedOnUser,
+          uptimeSeconds: dto.uptimeSeconds,
+          lastBootAt: dto.lastBootAt,
+        });
+        commands = await this.inventory.collectForHeartbeat(node.endpointId);
+      } catch (e) {
+        this.logger.warn(`Inventory step failed for endpoint ${node.endpointId}: ${String(e)}`);
+      }
+    }
+
     return {
       found: true,
       endpointId: node.endpointId,
@@ -513,8 +543,46 @@ export class EnrollmentService {
       authenticated,
       rotate,
       updateRustdesk,
+      commands,
       rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
     };
+  }
+
+  /**
+   * An endpoint reporting the result of a command it was handed.
+   *
+   * Public by nature — a machine speaks here, not a person — so the device
+   * secret is not optional the way it is on the heartbeat. A heartbeat without
+   * one still has a job (recording liveness for a fleet enrolled before
+   * secrets existed); a command result without one has none, and accepting it
+   * would let anyone who knows a RustDesk ID write a customer's event log
+   * contents into the console.
+   */
+  async commandResult(dto: {
+    rustdeskId: string; agentSecret: string; commandId: string; ok: boolean;
+    error?: string; inventory?: unknown; updates?: unknown; events?: unknown;
+  }) {
+    const node = await this.prisma.rustdeskNode.findUnique({
+      where: { rustdeskId: dto.rustdeskId },
+      select: { id: true, tenantId: true, endpointId: true, agentSecretHash: true },
+    });
+    if (!node?.agentSecretHash || !this.secretMatches(node.agentSecretHash, dto.agentSecret)) {
+      await this.audit.log({
+        tenantId: node?.tenantId ?? undefined,
+        action: 'ENDPOINT_HEARTBEAT_REJECTED',
+        resource: 'endpoint', resourceId: node?.endpointId,
+        meta: { rustdeskId: dto.rustdeskId, reason: 'command_result_unauthenticated' },
+      });
+      throw new UnauthorizedException('This device is not recognised');
+    }
+
+    return this.inventory.completeCommand(node.endpointId, dto.commandId, {
+      ok: dto.ok,
+      error: dto.error,
+      inventory: dto.inventory,
+      updates: dto.updates,
+      events: dto.events,
+    });
   }
 
   /**

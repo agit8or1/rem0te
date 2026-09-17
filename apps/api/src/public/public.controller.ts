@@ -635,26 +635,44 @@ try { Set-Content -Path $hbFile -Value $hbPayload -Encoding UTF8; icacls $hbFile
 $hbScript = "$STATEDIR\\heartbeat.ps1"
 $hbBody = @'
 \$ErrorActionPreference = 'Continue'; \$ProgressPreference = 'SilentlyContinue'
-try { \$state = Get-Content 'C:\\ProgramData\\Rem0te\\heartbeat.dat' -Raw | ConvertFrom-Json } catch { exit 0 }
+\$STATE_FILE = 'C:\\ProgramData\\Rem0te\\heartbeat.dat'
+try { \$state = Get-Content \$STATE_FILE -Raw | ConvertFrom-Json } catch { exit 0 }
 \$RDEXE = 'C:\\Program Files\\RustDesk\\rustdesk.exe'
 \$id = ''
 try { \$out = & \$RDEXE --get-id 2>\$null | Out-String; if (\$out -match '([0-9]{6,15})') { \$id = \$Matches[1] } } catch {}
 if (-not \$id) { exit 0 }
 \$body = @{ rustdeskId = \$id; hostname = \$env:COMPUTERNAME; platform = 'Windows' }
 # Identifies this machine to the server. Without it the heartbeat is treated as
-# an anonymous liveness ping: online state is refreshed and nothing else, and no
-# credential rotation is handed back.
+# an anonymous liveness ping: online state is refreshed and nothing else, no
+# credential rotation is handed back, and no inventory is written.
 if (\$state.agentSecret) { \$body['agentSecret'] = \$state.agentSecret }
 # Installed RustDesk version, read from the binary rather than by spawning it.
 # Normalised to three segments: FileVersion reports 1.4.9.0 while the server
 # compares against the GitHub release tag 1.4.9.
 try {
     \$vi = (Get-Item \$RDEXE -ErrorAction Stop).VersionInfo.FileVersion
-    if (\$vi -match '(\\d+\\.\\d+\\.\\d+)') { \$body['rustdeskVersion'] = \$Matches[1] }
+    if (\$vi -match '([0-9]+\\.[0-9]+\\.[0-9]+)') { \$body['rustdeskVersion'] = \$Matches[1] }
 } catch {}
 # Include the current password so the server can keep its encrypted copy in
 # sync (needed for one-click Connect after any endpoint-side password change).
 if (\$state.password) { \$body['password'] = \$state.password }
+# Live session state: who is at the console, and how long this machine has been
+# up. Two CIM queries, cheap enough to send on every beat, and they are the
+# first two things a technician looks at before connecting. The empty string is
+# a deliberate value - it means nobody is signed in, and it has to clear the
+# name the console last showed rather than leave a user there who left an hour
+# ago.
+try {
+    \$cs0 = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+    if (\$cs0.UserName) { \$body['loggedOnUser'] = [string]\$cs0.UserName } else { \$body['loggedOnUser'] = '' }
+} catch {}
+try {
+    \$os0 = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+    if (\$os0.LastBootUpTime) {
+        \$body['lastBootAt'] = \$os0.LastBootUpTime.ToUniversalTime().ToString('o')
+        \$body['uptimeSeconds'] = [int]((Get-Date) - \$os0.LastBootUpTime).TotalSeconds
+    }
+} catch {}
 \$body = \$body | ConvertTo-Json -Compress
 \$resp = \$null
 try { \$resp = Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/heartbeat') -Method Post -Body \$body -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop } catch { exit 0 }
@@ -687,18 +705,174 @@ try {
             if (\$confirmed) {
                 try {
                     \$state.password = \$rot.password
-                    \$state | ConvertTo-Json -Compress | Set-Content 'C:\\ProgramData\\Rem0te\\heartbeat.dat' -Encoding UTF8
+                    \$state | ConvertTo-Json -Compress | Set-Content \$STATE_FILE -Encoding UTF8
                 } catch {}
             }
         }
     }
 } catch {}
+# ---- Collection commands -------------------------------------------------
+# There is no push channel to this machine, so the server stages work and the
+# heartbeat response carries it. Every command is one of three fixed, read-only
+# collections. There is deliberately no "run this script" type: the server
+# cannot make this agent do anything but describe the machine it runs on.
+function Send-Rem0teResult(\$cmdId, \$ok, \$extra, \$err) {
+    \$payload = @{ rustdeskId = \$id; agentSecret = \$state.agentSecret; commandId = [string]\$cmdId; ok = [bool]\$ok }
+    if (\$err) { \$payload['error'] = [string]\$err }
+    if (\$extra) { foreach (\$k in \$extra.Keys) { \$payload[\$k] = \$extra[\$k] } }
+    # Depth is not optional. ConvertTo-Json defaults to 2, which renders the
+    # nested disk / adapter / event objects as the literal text
+    # "System.Collections.Hashtable" and throws away the whole collection.
+    \$json = \$payload | ConvertTo-Json -Depth 8 -Compress
+    try { Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/command-result') -Method Post -Body \$json -ContentType 'application/json' -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop | Out-Null } catch {}
+}
+function Get-Rem0teInventory {
+    \$cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+    \$os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+    \$bi = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
+    \$cpu = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+    \$enc = Get-CimInstance Win32_SystemEnclosure -ErrorAction SilentlyContinue | Select-Object -First 1
+    # Only the values worth telling a technician apart. Anything else reports
+    # its raw SMBIOS number, which is still more use than "Other".
+    \$chassisNames = @{ 3 = 'Desktop'; 4 = 'Low Profile Desktop'; 5 = 'Pizza Box'; 6 = 'Mini Tower'; 7 = 'Tower'; 8 = 'Portable'; 9 = 'Laptop'; 10 = 'Notebook'; 11 = 'Handheld'; 12 = 'Docking Station'; 13 = 'All In One'; 14 = 'Sub Notebook'; 15 = 'Space Saving'; 17 = 'Server'; 23 = 'Rack Mount'; 30 = 'Tablet'; 31 = 'Convertible'; 32 = 'Detachable' }
+    \$chassis = ''
+    foreach (\$c in @(\$enc.ChassisTypes)) {
+        if (\$c) {
+            \$ct = [int]\$c
+            if (\$chassisNames[\$ct]) { \$chassis = [string]\$chassisNames[\$ct] } else { \$chassis = 'Type ' + [string]\$ct }
+            break
+        }
+    }
+    \$disks = @()
+    foreach (\$d in (Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction SilentlyContinue)) {
+        \$disks += @{ drive = [string]\$d.DeviceID; label = [string]\$d.VolumeName; fsType = [string]\$d.FileSystem; totalBytes = [double]\$d.Size; freeBytes = [double]\$d.FreeSpace }
+    }
+    \$gpus = @()
+    foreach (\$g in (Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue)) {
+        \$res = ''
+        if (\$g.CurrentHorizontalResolution) { \$res = [string]\$g.CurrentHorizontalResolution + 'x' + [string]\$g.CurrentVerticalResolution }
+        \$gpus += @{ name = [string]\$g.Name; driverVersion = [string]\$g.DriverVersion; resolution = \$res }
+    }
+    \$nets = @()
+    foreach (\$n in (Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'IPEnabled=True' -ErrorAction SilentlyContinue)) {
+        # First IPv4 only. The IPAddress property is an array that mixes v4 and
+        # v6, and a colon is the cheapest way to tell them apart without a
+        # regex escape that a template literal would eat.
+        \$v4 = ''
+        foreach (\$a in @(\$n.IPAddress)) { if (\$a -and -not ([string]\$a).Contains(':')) { \$v4 = [string]\$a; break } }
+        \$gw = ''
+        foreach (\$a in @(\$n.DefaultIPGateway)) { if (\$a) { \$gw = [string]\$a; break } }
+        \$nets += @{ name = [string]\$n.Description; mac = [string]\$n.MACAddress; ipv4 = \$v4; gateway = \$gw; dhcp = [bool]\$n.DHCPEnabled }
+    }
+    \$tz = ''
+    try { \$tz = (Get-TimeZone -ErrorAction Stop).Id } catch {}
+    \$biosDate = \$null
+    if (\$bi -and \$bi.ReleaseDate) { \$biosDate = \$bi.ReleaseDate.ToUniversalTime().ToString('o') }
+    \$installed = \$null
+    if (\$os -and \$os.InstallDate) { \$installed = \$os.InstallDate.ToUniversalTime().ToString('o') }
+    return @{
+        manufacturer = [string]\$cs.Manufacturer
+        model = [string]\$cs.Model
+        serialNumber = [string]\$bi.SerialNumber
+        chassisType = \$chassis
+        biosVersion = [string]\$bi.SMBIOSBIOSVersion
+        biosDate = \$biosDate
+        osCaption = [string]\$os.Caption
+        osBuild = [string]\$os.BuildNumber
+        osArch = [string]\$os.OSArchitecture
+        osInstalledAt = \$installed
+        domain = [string]\$cs.Domain
+        timezone = \$tz
+        cpuModel = [string]\$cpu.Name
+        cpuCores = [int]\$cpu.NumberOfCores
+        cpuThreads = [int]\$cpu.NumberOfLogicalProcessors
+        cpuMhz = [int]\$cpu.MaxClockSpeed
+        memoryTotalMb = [int]([math]::Round(([double]\$cs.TotalPhysicalMemory) / 1048576))
+        memoryFreeMb = [int]([math]::Round(([double]\$os.FreePhysicalMemory) / 1024))
+        disks = \$disks
+        gpus = \$gpus
+        networks = \$nets
+    }
+}
+function Get-Rem0tePendingUpdates {
+    # Asking the Windows Update agent takes tens of seconds and goes to the
+    # network, which is why this is its own command on a slow cadence rather
+    # than part of the inventory pass.
+    \$pending = @()
+    \$session = New-Object -ComObject Microsoft.Update.Session
+    \$searcher = \$session.CreateUpdateSearcher()
+    \$found = \$searcher.Search('IsInstalled=0 and IsHidden=0')
+    foreach (\$u in \$found.Updates) {
+        if (\$pending.Count -ge 100) { break }
+        \$kb = ''
+        foreach (\$k in @(\$u.KBArticleIDs)) { if (\$k) { \$kb = 'KB' + [string]\$k; break } }
+        \$pending += @{ title = [string]\$u.Title; kb = \$kb; severity = [string]\$u.MsrcSeverity; sizeBytes = [double]\$u.MaxDownloadSize }
+    }
+    \$reboot = \$false
+    try { \$reboot = [bool](New-Object -ComObject Microsoft.Update.SystemInfo).RebootRequired } catch {}
+    return @{ pending = \$pending; rebootRequired = \$reboot }
+}
+function Get-Rem0teEventLog(\$p) {
+    # The server validates these too. Checking again here is not redundant:
+    # this is the process that actually reads the log, and it should not be
+    # able to be talked into reading one nobody authorised.
+    \$allowed = @('Application','System','Security','Setup','Windows PowerShell')
+    if (-not \$p) { throw 'No query supplied' }
+    \$logName = [string]\$p.logName
+    if (-not (\$allowed -contains \$logName)) { throw ('Log not permitted: ' + \$logName) }
+    \$hours = [int]\$p.sinceHours; if (\$hours -lt 1) { \$hours = 24 }; if (\$hours -gt 336) { \$hours = 336 }
+    \$max = [int]\$p.maxEvents; if (\$max -lt 1) { \$max = 50 }; if (\$max -gt 200) { \$max = 200 }
+    \$filter = @{ LogName = \$logName; StartTime = (Get-Date).AddHours(-1 * \$hours) }
+    # \`if (\$l)\` would silently drop level 0, which is what nearly every
+    # Security log entry is - and dropping it turns "show me the Security log"
+    # into an empty table.
+    \$levels = @()
+    foreach (\$l in @(\$p.levels)) { if (\$null -ne \$l) { \$levels += [int]\$l } }
+    if (\$levels.Count -gt 0) { \$filter['Level'] = \$levels }
+    if (\$p.providerName) { \$filter['ProviderName'] = [string]\$p.providerName }
+    \$raw = @()
+    # A filter that matches nothing is an error to Get-WinEvent, not an empty
+    # result - and "show me Critical events from the last hour" matches nothing
+    # on a healthy machine most of the time. Keyed on the error id rather than
+    # the message, which is localised.
+    try { \$raw = @(Get-WinEvent -FilterHashtable \$filter -MaxEvents \$max -ErrorAction Stop) }
+    catch { if (\$_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*') { throw } }
+    \$out = @()
+    foreach (\$e in \$raw) {
+        \$m = [string]\$e.Message
+        if (\$m.Length -gt 2000) { \$m = \$m.Substring(0, 2000) }
+        \$out += @{ timeCreated = \$e.TimeCreated.ToUniversalTime().ToString('o'); eventId = [int]\$e.Id; level = [int]\$e.Level; provider = [string]\$e.ProviderName; message = \$m }
+    }
+    return \$out
+}
+# Nothing is collected for a heartbeat that could not identify itself: without
+# the device secret the result POST would be refused anyway, and the server
+# hands out no commands in the first place.
+if (\$state.agentSecret) {
+    foreach (\$cmd in @(\$resp.data.commands)) {
+        if (-not \$cmd -or -not \$cmd.id) { continue }
+        try {
+            switch ([string]\$cmd.type) {
+                'INVENTORY_REFRESH' { Send-Rem0teResult \$cmd.id \$true @{ inventory = (Get-Rem0teInventory) } \$null }
+                'UPDATE_SCAN' { Send-Rem0teResult \$cmd.id \$true @{ updates = (Get-Rem0tePendingUpdates) } \$null }
+                'EVENT_LOG_QUERY' { Send-Rem0teResult \$cmd.id \$true @{ events = @(Get-Rem0teEventLog \$cmd.params) } \$null }
+                default { Send-Rem0teResult \$cmd.id \$false \$null ('Unknown command type: ' + [string]\$cmd.type) }
+            }
+        } catch {
+            # Reported rather than swallowed. A command that fails silently is
+            # indistinguishable from an agent too old to understand it, and the
+            # console would keep showing "waiting" for something already dead.
+            Send-Rem0teResult \$cmd.id \$false \$null ([string]\$_.Exception.Message)
+        }
+    }
+}
 # Apply a staged RustDesk upgrade. The server keeps sending
 # { updateRustdesk: { targetVersion } } until the endpoint reports that
 # version back, so a failed install retries rather than being lost. Re-running
 # the installer IS the mechanism: it is idempotent, pins the version this
 # server serves, and its only Read-Host is guarded by IsInteractive so it
-# cannot block a SYSTEM task.
+# cannot block a SYSTEM task. It also rewrites this script, which is how an
+# endpoint picks up a newer agent.
 #
 # The 30-minute floor matters. Without it, any install that does not land on
 # exactly the target version becomes a reinstall - and a ~40 MB download -
@@ -711,7 +885,7 @@ try {
         if (-not \$last -or ((Get-Date) - \$last).TotalMinutes -ge 30) {
             try {
                 \$state | Add-Member -NotePropertyName lastUpdateAttempt -NotePropertyValue ((Get-Date).ToString('o')) -Force
-                \$state | ConvertTo-Json -Compress | Set-Content 'C:\\ProgramData\\Rem0te\\heartbeat.dat' -Encoding UTF8
+                \$state | ConvertTo-Json -Compress | Set-Content \$STATE_FILE -Encoding UTF8
             } catch {}
             \$iu = 'https://' + \$state.host + '/api/v1/public/install/windows.ps1'
             try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm '\$iu' | iex" *>\$null } catch {}

@@ -11,6 +11,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { StatusIndicator } from '@/components/common/status-indicator';
+import { EndpointSpecs } from '@/components/endpoints/endpoint-specs';
+import { EndpointEventLog } from '@/components/endpoints/endpoint-event-log';
+import { usePermissions, CAP } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { PlayCircle, Archive, Pencil, Check, X, RefreshCw, Sparkles } from 'lucide-react';
@@ -20,6 +23,7 @@ export default function EndpointDetailPage() {
   const router = useRouter();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const { can } = usePermissions();
 
   const [newNote, setNewNote] = useState('');
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
@@ -166,60 +170,60 @@ export default function EndpointDetailPage() {
       <Tabs defaultValue="overview">
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          {/* Hidden without the capability as a courtesy — the route re-checks
+              it, so this is tidiness rather than a control. */}
+          {can(CAP.COMPUTERS_EVENT_LOGS) && (
+            <TabsTrigger value="events">Event Log</TabsTrigger>
+          )}
           <TabsTrigger value="notes">Notes</TabsTrigger>
           <TabsTrigger value="timeline">AI Timeline</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4 mt-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Assignment first: it is the only part of this page that is true
+              the moment it loads. Everything below came off the endpoint on a
+              heartbeat and carries its own collected-at line. */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">System Info</CardTitle>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm">Assignment</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3 text-sm">
+              <CardContent className="space-y-2.5 text-sm">
                 <Row label="Status">
                   <StatusIndicator status={(ep.isOnline as boolean) ? 'online' : 'offline'} />
                 </Row>
+                <Row label="Business">{customer?.name ?? '—'}</Row>
+                <Row label="Site">{site?.name ?? '—'}</Row>
                 <Row label="Platform">
                   {ep.platform ? <Badge variant="secondary">{ep.platform as string}</Badge> : '—'}
                 </Row>
-                <Row label="OS">{(ep.osVersion as string) ?? '—'}</Row>
-                <Row label="RustDesk ID">
-                  <span className="font-mono text-xs">
-                    {((ep.rustdeskNode as { rustdeskId?: string } | null)?.rustdeskId) ?? 'Not enrolled'}
-                  </span>
-                </Row>
-                <Row label="Agent">{(ep.agentVersion as string) ?? '—'}</Row>
-                <Row label="Last Seen">{formatDate(ep.lastSeenAt as string)}</Row>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">Assignment</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm">
-                <Row label="Business">{customer?.name ?? '—'}</Row>
-                <Row label="Site">{site?.name ?? '—'}</Row>
                 <Row label="Tags">
-                  <div className="flex flex-wrap gap-1">
+                  <div className="flex flex-wrap gap-1 justify-end">
                     {tags.length ? tags.map((t) => (
                       <Badge key={t.id} variant="secondary" className="text-xs">{t.tag}</Badge>
                     )) : '—'}
                   </div>
                 </Row>
                 <Row label="Aliases">
-                  <div className="flex flex-wrap gap-1">
+                  <div className="flex flex-wrap gap-1 justify-end">
                     {aliases.length ? aliases.map((a) => (
                       <Badge key={a.id} variant="outline" className="text-xs font-mono">{a.alias}</Badge>
                     )) : '—'}
                   </div>
                 </Row>
-                <Row label="Created">{formatDate(ep.createdAt as string)}</Row>
+                <Row label="Enrolled">{formatDate(ep.createdAt as string)}</Row>
               </CardContent>
             </Card>
           </div>
+
+          <EndpointSpecs endpointId={id} endpoint={ep} />
         </TabsContent>
+
+        {can(CAP.COMPUTERS_EVENT_LOGS) && (
+          <TabsContent value="events" className="mt-4">
+            <EndpointEventLog endpointId={id} isOnline={!!(ep.isOnline as boolean)} />
+          </TabsContent>
+        )}
 
         <TabsContent value="notes" className="mt-4 space-y-4">
           {/* Add new note */}

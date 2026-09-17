@@ -17,6 +17,8 @@ the product, searchable, under **Documentation** in the sidebar.
   is for, and how it learns where this server is.
 - **[connecting.md](connecting.md)** — what actually happens when you click
   Connect, the three connect paths, and why they are not equivalent.
+- **[inventory.md](inventory.md)** — the specs a managed computer reports, its
+  pending Windows updates, and how to read a slice of its event log.
 
 ## Running it
 

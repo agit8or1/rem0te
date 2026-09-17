@@ -111,6 +111,8 @@ enum ActivityAction {
   ENDPOINT_CREDENTIAL_ROTATION_STAGED
   ENDPOINT_CREDENTIAL_ROTATED
   ENDPOINT_HEARTBEAT_REJECTED
+  ENDPOINT_INVENTORY_REFRESH_REQUESTED
+  ENDPOINT_EVENT_LOG_REQUESTED
   CONNECTION_GRANT_CREATED
   CONNECTION_GRANT_REDEEMED
   CONNECTION_GRANT_DENIED
@@ -461,6 +463,8 @@ model Endpoint {
 
   rustdeskNode      RustdeskNode?
   enrollment        EndpointEnrollment?
+  inventory         EndpointInventory?
+  commands          EndpointCommand[]
   aliases           EndpointAlias[]
   tags              EndpointTag[]
   noteRels          Note[]
@@ -680,6 +684,145 @@ model EndpointEnrollment {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ─── Endpoint Inventory & Command Queue ──────────────────────────────────────
+
+// Everything a managed computer reports about itself beyond "I am alive".
+//
+// One row per endpoint, rewritten wholesale by the agent rather than appended
+// to: this is a snapshot of current state, not a history. The heartbeat is the
+// only writer, and only for a heartbeat that authenticated with the device
+// secret — an unauthenticated caller must not be able to decide what the
+// console says a customer's machine contains.
+//
+// Sizes are stored in megabytes, not bytes. Prisma maps BigInt to a JS BigInt,
+// which `JSON.stringify` throws on outright, so a byte count on a column would
+// have to be converted at every boundary or it takes down the response that
+// carries it. Byte-precise figures that belong to a list (per-disk capacity,
+// per-adapter speed) live inside the Json columns, where they are ordinary
+// JSON numbers and safe up to 2^53.
+model EndpointInventory {
+  id         String   @id @default(cuid())
+  endpointId String   @unique
+  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  // Chassis and firmware
+  manufacturer String?
+  model        String?
+  serialNumber String?
+  chassisType  String?
+  biosVersion  String?
+  biosDate     DateTime?
+
+  // Operating system
+  osCaption     String?
+  osBuild       String?
+  osArch        String?
+  osInstalledAt DateTime?
+  domain        String?
+  timezone      String?
+
+  // Processor
+  cpuModel   String?
+  cpuCores   Int?
+  cpuThreads Int?
+  cpuMhz     Int?
+
+  // Memory, in MB — see the note above about BigInt.
+  memoryTotalMb Int?
+  memoryFreeMb  Int?
+
+  // Lists, each an array of flat objects sanitised on ingest:
+  //   disks    [{ drive, label, fsType, totalBytes, freeBytes }]
+  //   gpus     [{ name, driverVersion, resolution }]
+  //   networks [{ name, mac, ipv4, gateway, dhcp }]
+  disks    Json?
+  gpus     Json?
+  networks Json?
+
+  // Live session state. Cheap to collect, so the heartbeat sends these every
+  // three minutes rather than waiting for a full inventory pass.
+  loggedOnUser  String?
+  lastBootAt    DateTime?
+  uptimeSeconds Int?
+
+  // Windows Update. Querying the update agent takes tens of seconds and hits
+  // the network, so it runs on its own slow cadence and keeps its own
+  // timestamp — `collectedAt` moving does not mean these were re-checked.
+  //   pendingUpdates [{ title, kb, severity, sizeBytes }]
+  pendingUpdates     Json?
+  pendingUpdateCount Int?
+  rebootRequired     Boolean?
+  updatesCheckedAt   DateTime?
+
+  // When the last full inventory pass landed. Null means the endpoint has
+  // never run one: its installer predates this feature and needs re-running.
+  collectedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// A task for an endpoint to run, collected on its next heartbeat.
+//
+// There is no push channel to a managed computer and inventing one would mean
+// a second protocol to secure, so this reuses the shape the credential
+// rotation and RustDesk upgrade already use: the console stages a row, the
+// endpoint's next heartbeat (~3 min) hands it out, the endpoint POSTs the
+// result back to /enrollment/command-result with its device secret.
+//
+// `type` is an enum and `params` is validated against a per-type whitelist
+// before the row is written. This is deliberately NOT a remote shell: an
+// endpoint only ever performs one of a fixed set of read-only collections, so
+// a compromise of the console cannot become arbitrary SYSTEM execution across
+// a fleet.
+model EndpointCommand {
+  id         String   @id @default(cuid())
+  endpointId String
+  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  // Denormalised from the endpoint at creation so the audit trail and the
+  // expiry sweeper do not have to join to know whose data this is.
+  tenantId   String?
+  customerId String?
+
+  type   EndpointCommandType
+  params Json?
+  status EndpointCommandStatus @default(PENDING)
+
+  // Not a relation: consistent with grantedBy/revokedBy elsewhere, and a
+  // command outlives the person who asked for it.
+  requestedById String?
+
+  result Json?
+  error  String?
+
+  // How many heartbeats have been handed this command. A command that keeps
+  // being dispatched and never completes is an endpoint that cannot run it;
+  // the sweeper gives up rather than retrying forever.
+  dispatchCount Int @default(0)
+
+  createdAt    DateTime  @default(now())
+  dispatchedAt DateTime?
+  completedAt  DateTime?
+  expiresAt    DateTime
+
+  @@index([endpointId, status])
+  @@index([status, expiresAt])
+}
+
+enum EndpointCommandType {
+  INVENTORY_REFRESH
+  UPDATE_SCAN
+  EVENT_LOG_QUERY
+}
+
+enum EndpointCommandStatus {
+  PENDING
+  DISPATCHED
+  SUCCEEDED
+  FAILED
+  EXPIRED
 }
 
 // ─── Technician Devices & Launcher ───────────────────────────────────────────

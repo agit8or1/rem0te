@@ -69,6 +69,7 @@ Stored on `Membership.capabilities` as an allowlisted string array. The vocabula
 | | `computers:add` | Create enrollment links and add new computers |
 | | `computers:remove` | Archive computers and revoke their access |
 | | `computers:edit` | Rename, tag and re-organise computers |
+| | `computers:event_logs` | Read Windows event log entries from a computer they can see |
 | Support | `support:quick_connect` | Use Quick Connect |
 | | `support:sessions_view` | See sessions currently in progress |
 | | `support:history_view` | See past sessions for this business |
@@ -78,6 +79,12 @@ Stored on `Membership.capabilities` as an allowlisted string array. The vocabula
 
 **Defaults for a new Business User:** `computers:view` and `computers:connect`. Everything more
 administrative is off until granted.
+
+`computers:event_logs` is separate from `computers:view` on purpose. Somebody else's System and
+Security logs are a different kind of access from a name and an online dot, and plenty of people
+who should see a computer's inventory should not see every failed logon on it. Every request is
+audited as `ENDPOINT_EVENT_LOG_REQUESTED` with the log, the window and the requester — see
+[inventory.md](inventory.md).
 
 A **Business Owner** implicitly holds every business capability — the column is left empty for them
 so there is exactly one source of truth and no stale grant can survive a demotion. A **Platform

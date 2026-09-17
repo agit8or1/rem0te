@@ -11,6 +11,20 @@ import type { JwtPayload } from '../auth/strategies/jwt.strategy';
 export class UpdateController {
   constructor(private readonly updateService: UpdateService) {}
 
+  /**
+   * The running version and codename, for anyone signed in.
+   *
+   * `GET version` below is Platform Admin only, and rightly so — it also
+   * reports whether an update is available and whether the in-app updater can
+   * run. But it was the only place the version lived, so the About page showed
+   * a Business Owner a permanent "..." where the version should be, and the
+   * sidebar could not show one at all. This carries no operator detail.
+   */
+  @Get('app-version')
+  async appVersion() {
+    return { success: true, data: this.updateService.getVersionInfo() };
+  }
+
   @Get('version')
   async getVersion(@CurrentUser() user: JwtPayload) {
     if (!user.isPlatformAdmin) throw new ForbiddenException('Platform admin required');

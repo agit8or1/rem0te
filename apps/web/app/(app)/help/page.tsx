@@ -264,6 +264,60 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'specs-and-event-logs',
+    title: 'System Specs, Updates and Event Logs',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          A managed computer&apos;s page shows what it has reported about itself:
+          hardware, storage, network adapters, who is signed in, how long it has been
+          up, and how many Windows updates it is waiting on. Open it from{' '}
+          <Link href="/endpoints" className="underline text-foreground">Computers</Link> and
+          look at the <strong className="text-foreground">Overview</strong> tab.
+        </p>
+        <p className="font-medium text-foreground">Nothing here is live</p>
+        <p>
+          Rem0te has no channel to reach into a computer. Everything on that tab arrived
+          on a heartbeat, which happens about every three minutes, and each card says
+          when its contents were collected. Pressing{' '}
+          <strong className="text-foreground">Refresh</strong> queues a fresh collection
+          for the next heartbeat — it does not fetch anything on the spot.
+        </p>
+        <p>
+          Signed-in user and uptime come in on every heartbeat. Full specs are
+          re-collected every six hours, and the Windows Update check every twelve —
+          that one starts the Windows Update agent and goes out to the network, so it
+          runs on its own slower schedule and keeps its own timestamp.
+        </p>
+        <p className="font-medium text-foreground">Event logs</p>
+        <p>
+          The <strong className="text-foreground">Event Log</strong> tab asks the
+          computer for a page of one Windows log — Application, System, Security, Setup
+          or Windows PowerShell. Pick a time range, the levels and how many of the most
+          recent events you want; the table fills in when the machine answers, up to
+          three minutes later. If it is offline the request waits half an hour and then
+          expires.
+        </p>
+        <p>
+          Reading event logs is a separate permission from viewing computers, because a
+          machine&apos;s Security log is a different kind of access from its name and an
+          online dot. A Business Owner has it; a Business User is granted it under{' '}
+          <Link href="/users" className="underline text-foreground">Users</Link>. Every
+          request is recorded in the audit log with the log name, the window and who
+          asked.
+        </p>
+        <p className="font-medium text-foreground">If a computer reports nothing</p>
+        <p>
+          Re-run the managed installer on it. The agent that collects all of this is
+          written to disk at install time, so a machine runs whatever version its last
+          install left behind — and anything enrolled before per-device secrets existed
+          is not trusted to report at all. The Overview tab says which of the two is
+          the case.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'connect-troubleshooting',
     title: 'Connect Says the Computer Is Offline',
     content: (

@@ -2,7 +2,7 @@
 
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
-Every route is prefixed with `/api/v1`. There are **188** of them across
+Every route is prefixed with `/api/v1`. There are **195** of them across
 **23** controllers.
 
 For request and response shapes, worked examples and error codes, see
@@ -108,6 +108,7 @@ Admins and Business Owners are not confined by it; see
 | Method | Path | Access | Capability |
 |---|---|---|---|
 | `GET` | `/api/v1/dashboard` | signed in | — |
+| `GET` | `/api/v1/dashboard/map` | signed in | — |
 | `GET` | `/api/v1/dashboard/platform` | signed in | — |
 
 ## Client downloads
@@ -138,8 +139,12 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/endpoints/:id/aliases` | signed in | `COMPUTERS_EDIT` |
 | `DELETE` | `/api/v1/endpoints/:id/aliases/:aliasId` | signed in | `COMPUTERS_EDIT` |
 | `PATCH` | `/api/v1/endpoints/:id/archive` | signed in | `COMPUTERS_REMOVE` |
+| `GET` | `/api/v1/endpoints/:id/commands/:commandId` | signed in | `COMPUTERS_VIEW` |
 | `POST` | `/api/v1/endpoints/:id/connect` | signed in, throttled | `COMPUTERS_CONNECT` |
 | `GET` | `/api/v1/endpoints/:id/connect.cmd` | signed in, throttled | `COMPUTERS_CONNECT` |
+| `POST` | `/api/v1/endpoints/:id/event-log` | signed in, throttled | `COMPUTERS_EVENT_LOGS` |
+| `GET` | `/api/v1/endpoints/:id/inventory` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/endpoints/:id/inventory/refresh` | signed in, throttled | `COMPUTERS_VIEW` |
 | `GET` | `/api/v1/endpoints/:id/password` | signed in, throttled | `COMPUTERS_EDIT` |
 | `PATCH` | `/api/v1/endpoints/:id/password` | signed in | `COMPUTERS_EDIT` |
 | `POST` | `/api/v1/endpoints/:id/rotate-credential` | signed in | `COMPUTERS_EDIT` |
@@ -157,6 +162,7 @@ Admins and Business Owners are not confined by it; see
 | Method | Path | Access | Capability |
 |---|---|---|---|
 | `POST` | `/api/v1/enrollment/claim` | public, throttled | — |
+| `POST` | `/api/v1/enrollment/command-result` | public, throttled | — |
 | `POST` | `/api/v1/enrollment/confirm-rotation` | public, throttled | — |
 | `POST` | `/api/v1/enrollment/heartbeat` | public, throttled | — |
 | `GET` | `/api/v1/enrollment/tokens` | signed in | `COMPUTERS_VIEW` |
@@ -341,6 +347,7 @@ Admins and Business Owners are not confined by it; see
 
 | Method | Path | Access | Capability |
 |---|---|---|---|
+| `GET` | `/api/v1/admin/update/app-version` | signed in | — |
 | `GET` | `/api/v1/admin/update/changelog` | signed in | — |
 | `GET` | `/api/v1/admin/update/check` | signed in | — |
 | `GET` | `/api/v1/admin/update/progress` | signed in | — |

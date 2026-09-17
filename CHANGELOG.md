@@ -5,6 +5,182 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.14.0] — 2026-09-17 · *Lantern*
+
+### Added
+
+- **A computer's page showed six fields and knew nothing else about the
+  machine.** Status, platform, OS string, RustDesk ID, agent version, last
+  seen — because that was everything the heartbeat had ever sent. A technician
+  about to connect could not see who was signed in, whether the disk was full,
+  how long it had been up, or whether it was sitting on thirty pending Windows
+  updates, and the answer to all of those was "connect and look".
+
+  The managed agent now collects and reports:
+
+  - **Every heartbeat (~3 min)** — the signed-in console user, uptime, last
+    boot. Two CIM queries; cheap enough not to make anyone wait for a pass.
+  - **Every 6 hours, or on request** — manufacturer, model, chassis, serial,
+    BIOS version and date, CPU model/cores/threads/clock, installed and free
+    memory, per-volume capacity and free space, GPUs with driver versions and
+    current resolution, and every IP-enabled adapter with its MAC, address,
+    gateway and DHCP state.
+  - **Every 12 hours, or on request** — pending Windows updates with KB
+    numbers, severities and download sizes, and whether the machine is waiting
+    on a restart to finish installing them.
+
+  The Overview tab is rebuilt around this: System, Session, Hardware, Memory,
+  Storage, Network and Updates cards, each saying when its contents were
+  collected. Assignment moved to the top, because it is the only part of that
+  page that is true the moment it loads.
+
+  The update scan is deliberately on its own slow cadence with its own
+  timestamp. It starts the Windows Update agent and goes to the network — tens
+  of seconds — so folding it into the inventory pass would have made every
+  refresh expensive, and sharing one `collectedAt` would have made *Collected
+  4m ago* silently claim the update list had been re-checked then.
+
+- **Event Log tab — read a slice of a managed computer's Windows event log
+  without connecting to it.** Pick the log, a time range, the levels and how
+  many of the most recent events you want; the request is queued and the table
+  fills in when the machine answers.
+
+  Five logs are readable and only five — Application, System, Security, Setup,
+  Windows PowerShell — allowlisted both in the API and again in the agent,
+  because the agent is the process that actually opens the log and it should
+  not be talkable into opening one nobody authorised. Hard bounds: 200 events,
+  14 days, 2000 characters per message.
+
+  Gated on a **new capability, `computers:event_logs`**, separate from
+  `computers:view`. Somebody else's System and Security logs are a different
+  kind of access from a name and an online dot, and plenty of people who should
+  see the inventory should not see every failed logon on the machine. A
+  Business Owner holds it; a Business User is granted it explicitly. Every
+  request is audited as `ENDPOINT_EVENT_LOG_REQUESTED` with the log, the
+  window, the levels and the requester.
+
+- **The running version is in the sidebar footer**, and on the About page for
+  everyone rather than Platform Admins only. `GET /admin/update/version` is
+  Platform Admin only — correctly, it also reports update availability and
+  updater readiness — but it was the *only* place the version lived, so a
+  Business Owner on a page called About saw a permanent `…` where the version
+  should be. `GET /admin/update/app-version` returns the version and codename
+  to anyone signed in and carries no operator detail. "Which version are you
+  on?" is the first question asked about every problem.
+
+### Changed
+
+- **The endpoint command queue is how all of the above is asked for.** There is
+  no push channel to a managed computer and inventing one would have meant a
+  second protocol to secure, so this reuses the channel the credential rotation
+  and the RustDesk client upgrade already ride on: the console stages a row in
+  `EndpointCommand`, the endpoint's next heartbeat response carries up to two of
+  them, the endpoint collects and POSTs to `/enrollment/command-result`.
+
+  Consequences worth knowing:
+
+  - **Nothing is synchronous.** *Refresh* queues a collection; the machine
+    performs it within ~3 minutes. The UI says that rather than spinning.
+  - **Explicit requests jump the queue.** A person waiting at a screen is
+    ordered ahead of automatic housekeeping, and two commands go out per
+    heartbeat, so an event-log request is not stuck behind an inventory pass
+    for another three minutes.
+  - **An automatic command is never queued twice.** Without that, the
+    stale-inventory check stages another row every three minutes for as long as
+    the machine is offline, and it comes back to a queue of hundreds of
+    identical refreshes.
+  - **A command that is collected four times without a result is failed**, with
+    a message saying to re-run the installer. That is what an agent too old to
+    understand the command looks like from here, and retrying forever would
+    mean a queue that never drains.
+  - **A command unclaimed for 30 minutes expires.** An offline machine does not
+    come back to a week of stale requests.
+
+  `EndpointCommandType` has three values and each maps to one specific
+  read-only collection. There is no type that runs arbitrary code, and there
+  will not be: the agent runs as SYSTEM on every managed machine, so such a
+  type would turn a compromise of the console into arbitrary SYSTEM execution
+  across the fleet in one `INSERT`.
+
+- **Nothing an endpoint reports is trusted as it arrives.** `/enrollment/*` is
+  public by necessity — a machine speaks there, not a person — so every field
+  from a heartbeat or a command result is clamped before it reaches a column:
+  strings length-limited, numbers range-checked, arrays truncated, unrecognised
+  fields dropped. Reported timestamps are bounded to 1990–2100, because a
+  machine with a dead CMOS battery reports 1980 and every "how old is this?"
+  calculation downstream then reads as absurd. The pending-update count is
+  derived from the list that survived sanitising rather than from a number sent
+  alongside it — those two disagreeing is how a badge ends up reading "12
+  updates" over a list of three.
+
+  `/enrollment/command-result` requires the device secret outright, unlike the
+  heartbeat. A heartbeat without one still has a job — recording liveness for a
+  fleet enrolled before secrets existed — but a command result without one has
+  none, and accepting it would let anyone who knows a RustDesk ID write a
+  customer's event log contents into the console.
+
+- **The API's JSON body limit is now 1 MB**, explicitly, where it was Express's
+  default 100 KB. A 200-event page is several times that and would have come
+  back as a 413 the agent has no way to report. The cap is chosen to fit what
+  the sanitiser already allows, not to be generous.
+
+### Fixed
+
+- **Every session in Recent Sessions read "Connecting…", including ones a
+  technician was actively working in and ones from the day before.**
+  `CLIENT_OPENED` is the furthest any session ever gets — Rem0te's part ends
+  when it hands out the credential, RustDesk carries the connection, and hbbs
+  logs nothing for a connect or a disconnect, so nothing reports back
+  afterwards. Labelling that terminal state as an intermediate one meant the
+  label was guaranteed to be wrong forever. It now reads **Launched**, and the
+  type in `session-status-badge.tsx` carries a note about why no label there may
+  imply progress.
+
+- **Sessions that opened a client stayed "active" permanently.** `getStats`
+  counts active as anything not in (SESSION_COMPLETED, FAILED, CANCELED), and
+  nothing ever moved a `CLIENT_OPENED` row out of that set, so every Connect
+  ever clicked was counted as an ongoing session — four clicks in one minute
+  read as four live sessions, and yesterday's read as live too.
+
+  `closeAbandonedSessions` now completes sessions whose client opened more than
+  **12 hours** ago with no end recorded. Deliberately separate from
+  `expireStaleSessions`, which fails clicks that never reached a client at all:
+  these did start, so they are recorded as completed rather than failed, and
+  the threshold is generous because closing one early would mark a technician's
+  genuinely long session done underneath them. `duration` is left null — we
+  know when it started and are inferring when it stopped, and writing a number
+  would put a fabricated figure into the average session length.
+
+- **Two different `useQuery` fetchers shared the key `['app-version']`.** The
+  About page's Platform-Admin version query and the new sidebar one would have
+  landed on one cache entry, and whichever mounted first would have decided
+  what the other read. The admin payload is now keyed `['platform-version']`.
+
+### Notes for operators
+
+- **Schema change** — two new tables (`EndpointInventory`, `EndpointCommand`),
+  two new enums, two new `ActivityAction` values. Additive: every column is
+  nullable or defaulted and no existing row is touched. Migration
+  `0013_endpoint_inventory_and_commands`. Follow the schema-change steps in
+  CLAUDE.md, or the API throws `Unknown field ... on model ...` at runtime
+  because the deploy target generates its own Prisma client.
+
+- **Existing endpoints report nothing new until their installer is re-run.**
+  The heartbeat script is written to disk at install time, so an endpoint runs
+  whatever agent its last install left behind. The Overview tab distinguishes
+  the two reasons a machine has no specs — never bound a device secret, versus
+  an agent older than v0.14.0 — rather than showing empty cards with no
+  explanation. Re-running the managed installer fixes both, and a staged
+  RustDesk client upgrade re-runs it as a side effect.
+
+- Sizes in `EndpointInventory` are stored in **megabytes**. Prisma maps
+  `BigInt` to a JavaScript `BigInt` and `JSON.stringify` throws on those, so a
+  byte count in a column would take down whichever response carried it.
+  Byte-precise per-disk figures live inside the JSON columns as ordinary JSON
+  numbers.
+
+---
+
 ## [0.13.9] — 2026-09-15 · *Deadbolt*
 
 ### Changed

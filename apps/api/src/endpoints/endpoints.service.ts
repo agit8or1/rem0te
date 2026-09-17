@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { CAP, effectiveCapabilities } from '../rbac/capabilities';
 import type { CreateEndpointDto, UpdateEndpointDto } from './dto/create-endpoint.dto';
+import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
 
 /**
  * Computers.
@@ -30,6 +31,7 @@ export class EndpointsService {
     private readonly audit: AuditService,
     private readonly config: ConfigService,
     private readonly acl: AccessControlService,
+    private readonly inventory: EndpointInventoryService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -889,4 +891,134 @@ export class EndpointsService {
     await this.prisma.endpoint.update({ where: { id }, data: { aiTimeline: text } });
     return { text };
   }
+
+  // ── Inventory, updates and event logs ─────────────────────────────────────
+
+  /**
+   * Everything this computer has reported about itself.
+   *
+   * Also returns the RustDesk-client staleness, because "what needs updating
+   * on this machine" is one question to the person asking it even though the
+   * two answers come from different places: Windows Update pending patches are
+   * collected by the agent, and the client version is compared against the
+   * release this server serves.
+   */
+  async getInventory(actor: ActorContext, id: string) {
+    await this.acl.assertEndpointInScope(actor, id);
+    this.acl.assertCapability(actor, CAP.COMPUTERS_VIEW);
+
+    const [inventory, node, commands] = await Promise.all([
+      this.inventory.get(id),
+      this.prisma.rustdeskNode.findUnique({
+        where: { endpointId: id },
+        select: { version: true, updateTargetVersion: true, updateRequestedAt: true, agentSecretHash: true },
+      }),
+      this.inventory.listCommands(id, 10),
+    ]);
+
+    return {
+      inventory,
+      rustdesk: {
+        installedVersion: node?.version ?? null,
+        // A staged upgrade the endpoint has not applied yet. Surfaced here so
+        // the device page agrees with the Updates page instead of quietly
+        // disagreeing with it.
+        stagedVersion: node?.updateTargetVersion ?? null,
+        stagedAt: node?.updateRequestedAt ?? null,
+      },
+      // The one thing that explains an endpoint reporting nothing at all: its
+      // installer predates device secrets, so the server takes nothing it
+      // says. Without this the UI can only show empty cards and no reason.
+      agentBound: !!node?.agentSecretHash,
+      commands,
+    };
+  }
+
+  /**
+   * Ask a computer to re-collect its inventory and re-check Windows Update.
+   *
+   * Nothing happens immediately: the commands sit in the queue until the
+   * endpoint's next heartbeat, up to three minutes away. The UI says so rather
+   * than spinning as though this were synchronous.
+   */
+  async requestInventoryRefresh(actor: ActorContext, id: string) {
+    const endpoint = await this.acl.assertEndpointInScope(actor, id);
+    this.acl.assertCapability(actor, CAP.COMPUTERS_VIEW);
+
+    const staged = [];
+    for (const type of ['INVENTORY_REFRESH', 'UPDATE_SCAN'] as const) {
+      const cmd = await this.inventory.stage({
+        endpointId: id,
+        tenantId: endpoint.tenantId, customerId: endpoint.customerId,
+        type,
+        requestedById: actor.userId,
+      });
+      if (cmd) staged.push({ id: cmd.id, type: cmd.type });
+    }
+
+    await this.audit.log({
+      tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
+      actorId: actor.userId, actorIp: actor.ip,
+      action: 'ENDPOINT_INVENTORY_REFRESH_REQUESTED',
+      resource: 'endpoint', resourceId: id,
+    });
+
+    return { staged };
+  }
+
+  /**
+   * Ask a computer for a slice of one of its Windows event logs.
+   *
+   * Audited unconditionally, and with the query in the metadata. Someone
+   * reading a customer's Security log is a thing that has to be answerable
+   * after the fact — which log, how far back, and who asked.
+   */
+  async requestEventLog(actor: ActorContext, id: string, params: Record<string, unknown>) {
+    const endpoint = await this.acl.assertEndpointInScope(actor, id);
+    this.acl.assertCapability(actor, CAP.COMPUTERS_EVENT_LOGS);
+
+    // Throws on an unknown log name or an out-of-range bound before anything
+    // is written, so a rejected request leaves no row behind.
+    const validated = this.inventory.validateParams('EVENT_LOG_QUERY', params);
+
+    const cmd = await this.inventory.stage({
+      endpointId: id,
+      tenantId: endpoint.tenantId, customerId: endpoint.customerId,
+      type: 'EVENT_LOG_QUERY',
+      params,
+      requestedById: actor.userId,
+    });
+
+    await this.audit.log({
+      tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
+      actorId: actor.userId, actorIp: actor.ip,
+      action: 'ENDPOINT_EVENT_LOG_REQUESTED',
+      resource: 'endpoint', resourceId: id,
+      meta: { ...validated, commandId: cmd?.id },
+    });
+
+    if (!cmd) throw new InternalServerErrorException('Could not queue the request');
+    return { commandId: cmd.id, status: cmd.status };
+  }
+
+  /**
+   * Poll one command.
+   *
+   * An EVENT_LOG_QUERY result contains log contents, so this is gated on the
+   * same capability that could ask for it — not on `computers:view`. Otherwise
+   * the capability would only control who can make the request, and anyone who
+   * could see the computer could read the answer.
+   */
+  async getCommand(actor: ActorContext, id: string, commandId: string) {
+    await this.acl.assertEndpointInScope(actor, id);
+    this.acl.assertCapability(actor, CAP.COMPUTERS_VIEW);
+
+    const cmd = await this.inventory.getCommand(id, commandId);
+    if (!cmd) throw new NotFoundException('Request not found');
+    if (cmd.type === 'EVENT_LOG_QUERY') {
+      this.acl.assertCapability(actor, CAP.COMPUTERS_EVENT_LOGS);
+    }
+    return cmd;
+  }
+
 }

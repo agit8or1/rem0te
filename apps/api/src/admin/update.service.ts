@@ -60,6 +60,29 @@ export class UpdateService {
     }
   }
 
+  /**
+   * The running build, for display.
+   *
+   * Separate from `getVersion`'s payload on the controller because that one
+   * also reports whether an update is available and whether the in-app updater
+   * is armed — operator information, Platform Admin only. The version string
+   * and its codename are just what everyone is looking at, and every person
+   * signed in needs them to report a problem usefully.
+   */
+  getVersionInfo(): { version: string; codename: string | null; releaseDate: string | null; channel: string } {
+    try {
+      const v = JSON.parse(fs.readFileSync(this.versionFile, 'utf8'));
+      return {
+        version: v.version ?? '0.1.0',
+        codename: v.codename ?? null,
+        releaseDate: v.releaseDate ?? null,
+        channel: process.env.RELEASE_CHANNEL ?? v.channel ?? 'stable',
+      };
+    } catch {
+      return { version: '0.1.0', codename: null, releaseDate: null, channel: 'stable' };
+    }
+  }
+
   async checkForUpdate(): Promise<{
     currentVersion: string;
     latestVersion: string;

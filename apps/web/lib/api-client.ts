@@ -99,6 +99,19 @@ export const endpointsApi = {
   setPassword: (id: string, password: string | null) => api.patch(`/endpoints/${id}/password`, { password }),
   addTag: (id: string, tag: string) => api.post(`/endpoints/${id}/tags`, { tag }),
   removeTag: (id: string, tag: string) => api.delete(`/endpoints/${id}/tags/${encodeURIComponent(tag)}`),
+  // System specs, Windows Update state and recent collection requests for one
+  // computer. Populated by the agent's heartbeat, so a machine whose installer
+  // predates this reports `agentBound: false` and nothing else.
+  inventory: (id: string) => api.get(`/endpoints/${id}/inventory`),
+  // Queues a re-collection for the endpoint's next heartbeat — up to ~3
+  // minutes away. Nothing is synchronous here.
+  refreshInventory: (id: string) => api.post(`/endpoints/${id}/inventory/refresh`, {}),
+  requestEventLog: (
+    id: string,
+    query: { logName: string; levels?: number[]; maxEvents?: number; sinceHours?: number; providerName?: string },
+  ) => api.post(`/endpoints/${id}/event-log`, query),
+  // Polled while a request is outstanding.
+  command: (id: string, commandId: string) => api.get(`/endpoints/${id}/commands/${commandId}`),
   addAlias: (id: string, alias: string) => api.post(`/endpoints/${id}/aliases`, { alias }),
   removeAlias: (id: string, aliasId: string) => api.delete(`/endpoints/${id}/aliases/${aliasId}`),
 };
@@ -264,6 +277,9 @@ export const downloadsApi = {
 };
 
 export const updateApi = {
+  // Version and codename only — readable by anyone signed in. `version` below
+  // also reports update availability and is Platform Admin only.
+  appVersion: () => api.get('/admin/update/app-version'),
   version: () => api.get('/admin/update/version'),
   check: () => api.get('/admin/update/check'),
   changelog: () => api.get('/admin/update/changelog'),

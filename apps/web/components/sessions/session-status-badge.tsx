@@ -9,6 +9,16 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+/**
+ * Session status, as the console can honestly describe it.
+ *
+ * Worth knowing before changing a label here: Rem0te's part of a session ends
+ * when it hands out the credential. RustDesk carries the connection, and there
+ * is no channel that reports back that a session started, or ended, or failed
+ * after that point. So `client_opened` is not a step on the way to something —
+ * it is where a working session stays until a sweeper closes it out on a
+ * timer. Any label implying progress is a label that will be wrong forever.
+ */
 type SessionStatus =
   | 'active'
   | 'completed'
@@ -80,11 +90,17 @@ const SESSION_STATUS_MAP: Record<string, StatusConfig> = {
     icon: Clock,
     className: 'bg-orange-50 text-orange-800 border-orange-200 dark:bg-orange-900 dark:text-orange-100',
   },
+  // Not "Connecting…". This is the furthest any session ever gets: Rem0te
+  // handed out the credential and the client was launched, and nothing after
+  // that reports back — RustDesk carries the session and hbbs logs nothing for
+  // a connect or a disconnect. Labelling the terminal state as an intermediate
+  // one meant every session a technician was sitting in, working, read as
+  // still trying to connect, and so did every session from the day before.
   client_opened: {
-    label: 'Connecting…',
+    label: 'Launched',
     variant: 'outline',
-    icon: Clock,
-    className: 'bg-orange-50 text-orange-800 border-orange-200 dark:bg-orange-900 dark:text-orange-100',
+    icon: Circle,
+    className: 'bg-green-50 text-green-800 border-green-300 dark:bg-green-950 dark:text-green-200',
   },
   connecting: {
     label: 'Connecting…',

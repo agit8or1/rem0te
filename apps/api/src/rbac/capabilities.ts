@@ -18,6 +18,12 @@ export const CAP = {
   COMPUTERS_ADD: 'computers:add',
   COMPUTERS_REMOVE: 'computers:remove',
   COMPUTERS_EDIT: 'computers:edit',
+  // Reading a managed computer's Windows event logs. Separate from
+  // `computers:view` on purpose: the System and Security logs of somebody
+  // else's machine are a different kind of access from a name and an online
+  // dot, and plenty of people who should see the inventory should not see
+  // every failed logon on it.
+  COMPUTERS_EVENT_LOGS: 'computers:event_logs',
 
   // Support
   QUICK_CONNECT: 'support:quick_connect',
@@ -60,6 +66,7 @@ export const CAPABILITY_GROUPS: {
       { key: CAP.COMPUTERS_ADD, label: 'Add computers', description: 'Create enrollment links and add new computers.' },
       { key: CAP.COMPUTERS_REMOVE, label: 'Remove/revoke computers', description: 'Archive computers and revoke their access.' },
       { key: CAP.COMPUTERS_EDIT, label: 'Rename/edit computers', description: 'Rename, tag and re-organise computers.' },
+      { key: CAP.COMPUTERS_EVENT_LOGS, label: 'Read event logs', description: "Fetch Windows event log entries from a computer they can see, including the Security log." },
     ],
   },
   {

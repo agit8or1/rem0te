@@ -321,4 +321,45 @@ export class SessionsService {
     });
     return result.count;
   }
+
+  /**
+   * Close out sessions that opened a client and were never heard from again.
+   *
+   * There is no signal that a RustDesk session ended. Rem0te hands out a
+   * credential and RustDesk carries the session; hbbs logs nothing for a
+   * connect, let alone a disconnect. So a row promoted to CLIENT_OPENED has
+   * nothing that will ever move it on, and `getStats` counts "active" as
+   * anything not in (SESSION_COMPLETED, FAILED, CANCELED) — which made every
+   * Connect click in the platform's history a permanently live session.
+   * Clicking Connect four times in one minute read as four ongoing sessions,
+   * and yesterday's read as ongoing too.
+   *
+   * `expireStaleSessions` deliberately does not touch these, and should not:
+   * those are clicks that never reached a client at all, and failing them is
+   * the right verdict. This one is the opposite case — a session that did
+   * start, and whose end we can only infer from time passing. It is recorded
+   * as completed rather than failed for that reason, and the threshold is
+   * generous on purpose: the cost of closing one early is a technician's
+   * genuinely-long session being marked done underneath them, which is worse
+   * than a stale row.
+   *
+   * `duration` is left null. We know when it started and we are guessing when
+   * it stopped, so writing a number here would put a fabricated figure into
+   * the average session length on the stats page.
+   */
+  async closeAbandonedSessions(thresholdHours = 12) {
+    const cutoff = new Date(Date.now() - thresholdHours * 60 * 60 * 1000);
+    const result = await this.prisma.supportSession.updateMany({
+      where: {
+        // Keyed on when the session actually started, not when the row was
+        // created: those differ by the whole handshake on the launcher path.
+        startedAt: { lt: cutoff, not: null },
+        completedAt: null,
+        isAdHoc: false,
+        status: { in: [SessionStatus.CLIENT_OPENED, SessionStatus.SESSION_STARTED] },
+      },
+      data: { status: SessionStatus.SESSION_COMPLETED, completedAt: new Date() },
+    });
+    return result.count;
+  }
 }

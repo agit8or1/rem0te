@@ -57,8 +57,12 @@ function UpdatePanel({ isPlatformAdmin }: { isPlatformAdmin: boolean }) {
   const [done, setDone] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
 
+  // Keyed separately from the shared ['app-version'] query below: this payload
+  // is the Platform Admin one (update availability, updater readiness) and two
+  // different fetchers under one key mean whichever mounts first decides what
+  // the other one reads.
   const { data: versionData } = useQuery({
-    queryKey: ['app-version'],
+    queryKey: ['platform-version'],
     queryFn: () => updateApi.version().then((r) => r.data?.data as { version: string }),
     enabled: isPlatformAdmin,
   });
@@ -282,6 +286,18 @@ export default function AboutPage() {
     refetchInterval: 60_000,
   });
 
+  // The version panel below is Platform Admin only, which left a Business
+  // Owner on a page called About with no way to find out what they were
+  // running. Same query as the sidebar's, deliberately — one cache entry.
+  const { data: build } = useQuery({
+    queryKey: ['app-version'],
+    queryFn: () =>
+      updateApi.appVersion().then(
+        (r) => r.data?.data as { version: string; codename: string | null; releaseDate: string | null } | undefined,
+      ),
+    staleTime: 60 * 60 * 1000,
+  });
+
   return (
     <div className="p-6 space-y-6 max-w-3xl">
       <PageHeader title="About" description="System information, versions, and updates" />
@@ -296,6 +312,11 @@ export default function AboutPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="grid grid-cols-2 gap-y-3 text-sm">
+            <span className="text-muted-foreground">Version</span>
+            <span className="font-mono text-xs">
+              v{build?.version ?? '…'}
+              {build?.codename && <span className="text-muted-foreground"> · {build.codename}</span>}
+            </span>
             <span className="text-muted-foreground">Platform</span>
             <span className="font-mono text-xs">{data?.platform ?? '…'}</span>
 

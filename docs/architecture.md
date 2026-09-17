@@ -86,6 +86,11 @@ Tenant  ─┬─ Customer (a BUSINESS — the security boundary)
 - **`Endpoint`** is a managed computer; **`RustdeskNode`** holds its RustDesk
   identity — the peer ID, reported version, and the AES-256-GCM encrypted
   permanent password.
+- **`EndpointInventory`** is what that computer reports about itself — one row,
+  rewritten in place, a snapshot rather than a history. **`EndpointCommand`** is
+  the queue that asks it: the console stages a row, the endpoint's next
+  heartbeat carries it out. There is no push channel and no command type that
+  runs arbitrary code. See [inventory.md](inventory.md).
 
 Full model in [access-control.md](access-control.md).
 
