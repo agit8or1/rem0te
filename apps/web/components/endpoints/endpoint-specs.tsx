@@ -61,6 +61,9 @@ export interface InventoryPayload {
   agent: {
     version: string | null;
     server: string;
+    /** The version the agent contract actually requires — not the server's. */
+    required: string;
+    outdated: boolean;
     reinstallPending: boolean;
     reinstallDispatched: boolean;
   };
@@ -215,17 +218,21 @@ function UpdatesCard({ data }: { data: InventoryPayload }) {
           {data.agent.version ? (
             <>
               <span className="font-mono text-xs">v{data.agent.version}</span>
-              {data.agent.version !== data.agent.server && (
+              {/* Only when it actually falls short of what the server asks of
+                  it. An agent behind the platform version but at or above the
+                  contract needs nothing, and saying otherwise sends people
+                  reinstalling a fleet for no reason. */}
+              {data.agent.outdated && (
                 <div className="text-[11px] text-amber-600">
-                  server is v{data.agent.server}
+                  needs v{data.agent.required} or later
                 </div>
               )}
             </>
           ) : (
             <>
               <span className="text-muted-foreground">Not reported</span>
-              <div className="text-[11px] text-muted-foreground">
-                predates v0.14.0
+              <div className="text-[11px] text-amber-600">
+                predates v0.14.0 — cannot collect
               </div>
             </>
           )}
@@ -345,10 +352,11 @@ export function EndpointSpecs({
       (c.type === 'INVENTORY_REFRESH' || c.type === 'UPDATE_SCAN'),
   );
 
-  // "Not reported" means an agent older than 0.14.0, which is also out of
-  // date — so an absent version counts as outdated, not as unknown.
-  const agentOutdated =
-    !!data && (data.agent.version === null || data.agent.version !== data.agent.server);
+  // Decided by the server against the agent contract, not by comparing with
+  // the platform version here. An agent newer than the contract is the normal
+  // case, not a problem — comparing against the server's own version flagged
+  // every machine in the fleet on every release.
+  const agentOutdated = !!data?.agent.outdated;
 
   const memTotal = inv?.memoryTotalMb ?? null;
   const memFree = inv?.memoryFreeMb ?? null;

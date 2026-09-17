@@ -8,6 +8,7 @@ import { spawn } from 'child_process';
 import { createHash } from 'crypto';
 import { Subject } from 'rxjs';
 import { latestRustdeskVersion } from '../common/rustdesk-release';
+import { compareVersions } from '../common/agent-contract';
 
 interface RustdeskServerAsset { name: string; url: string; sha256: string }
 interface RustdeskServerRelease { version: string; assets: RustdeskServerAsset[] }
@@ -814,14 +815,15 @@ export class UpdateService {
     return { cancelled: r.count };
   }
 
-  /** Numeric-segment compare; tolerates junk by treating it as 0. */
+  /**
+   * Numeric-segment compare; tolerates junk by treating it as 0.
+   *
+   * Delegates to common/agent-contract so there is one implementation: this
+   * used to be a private copy, and a second copy of version-comparison logic
+   * is how two parts of the same page come to disagree about whether a machine
+   * is behind.
+   */
   private compareVersions(a: string, b: string): number {
-    const pa = a.replace(/^v/, '').split('.').map((x) => parseInt(x, 10) || 0);
-    const pb = b.replace(/^v/, '').split('.').map((x) => parseInt(x, 10) || 0);
-    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-      const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-      if (d !== 0) return d < 0 ? -1 : 1;
-    }
-    return 0;
+    return compareVersions(a, b);
   }
 }

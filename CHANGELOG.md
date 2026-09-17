@@ -5,6 +5,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.16.2] — 2026-09-17 · *Caliper*
+
+### Fixed
+
+- **Every managed computer was reported as running an outdated agent, on every
+  release.** The device page compared a machine's reported agent version
+  against `version.json`, so any release at all — including 0.16.1, which
+  changed only the README — put an amber "server is v0.16.1" under a fleet of
+  perfectly current agents, next to a button offering to reinstall each one.
+
+  Those are different numbers. The agent only changes when the generated
+  heartbeat script changes, which is rarer than a release: 0.14.0 changed it
+  (188 lines), 0.15.0 changed it (44), and 0.16.x did not touch it at all — so
+  a 0.15.0 agent is functionally identical to what a 0.16.1 installer produces
+  and has nothing to gain from reinstalling.
+
+  The comparison is now against `AGENT_CONTRACT_VERSION` in
+  `common/agent-contract.ts`, the last version in which the agent actually
+  changed, and the UI names that bar — "needs v0.15.0 or later" — instead of
+  reciting the server's own version. An agent *newer* than the contract is the
+  normal case and is no longer flagged at all.
+
+  This mattered beyond tidiness: crying wolf with a ~40 MB download per machine
+  attached is how an operator learns to ignore the one case that matters, which
+  is an agent genuinely too old to collect an inventory or run a command. That
+  case — no version reported at all — now reads "predates v0.14.0 — cannot
+  collect" in amber rather than a grey aside.
+
+- **Version comparison existed twice.** `UpdateService` carried a private copy
+  of the numeric-segment compare that the agent check needed. Two copies of
+  version logic is how two parts of one page come to disagree about whether a
+  machine is behind; there is now one implementation and `UpdateService`
+  delegates to it.
+
+### Notes for operators
+
+- No schema change, and **no reason to reinstall any agent for this release.**
+  If a machine showed the amber flag before this and reports v0.15.0 or later,
+  it was already current.
+
+---
+
 ## [0.16.1] — 2026-09-17 · *Caliper*
 
 ### Changed

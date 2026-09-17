@@ -11,6 +11,7 @@ import { AuditService } from '../audit/audit.service';
 import { ConfigService } from '@nestjs/config';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { CAP, effectiveCapabilities } from '../rbac/capabilities';
+import { AGENT_CONTRACT_VERSION, agentMeetsContract } from '../common/agent-contract';
 import type { CreateEndpointDto, UpdateEndpointDto } from './dto/create-endpoint.dto';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
 
@@ -934,11 +935,19 @@ export class EndpointsService {
       },
       // The Rem0te agent, which is a different question from the RustDesk
       // client: it is what decides whether this machine can collect anything
-      // at all. `server` is what a fresh installer would bake in, so the UI
-      // can say "outdated" rather than making someone compare two strings.
+      // at all.
+      //
+      // `outdated` is decided against AGENT_CONTRACT_VERSION, not against this
+      // server's version. Those are different numbers, and comparing with the
+      // platform version meant every release — a README fix included — marked
+      // the whole fleet outdated next to a button offering a ~40 MB reinstall
+      // per machine. `required` is surfaced so the UI can name the bar rather
+      // than asking someone to compare two strings.
       agent: {
         version: endpointRow?.agentVersion ?? null,
         server: this.platformVersion(),
+        required: AGENT_CONTRACT_VERSION,
+        outdated: !agentMeetsContract(endpointRow?.agentVersion),
         reinstallPending: !!node?.reinstallRequestedAt,
         reinstallDispatched: !!node?.reinstallDispatchedAt,
       },

@@ -107,6 +107,19 @@ version. It is baked into the installer at generation time, so it names the
 platform version whose installer last ran — which is exactly the question when
 a machine is reporting nothing.
 
+**An agent behind the platform version is not necessarily out of date.** The
+agent only changes when the generated heartbeat script changes, which is rarer
+than a release: 0.14.0 and 0.15.0 changed it, 0.16.x did not. The Overview tab
+compares a reported agent against `AGENT_CONTRACT_VERSION` in
+`apps/api/src/common/agent-contract.ts` — the last version in which the agent
+actually changed — and flags it only when it falls short of that.
+
+Comparing against the platform version instead, which is what this did at
+first, marks the whole fleet outdated on every release including a
+documentation fix, next to a button offering a ~40 MB reinstall per machine.
+That trains people to ignore the one case that matters. If you change the agent,
+bump that constant in the same commit.
+
 ---
 
 ## Event logs
