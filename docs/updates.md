@@ -14,8 +14,11 @@ All three live at **/about** in the UI, reachable from the sidebar as
 footer and on the About page, for everyone signed in — "which version are you
 on?" is the first question asked about every problem.
 
-A fourth thing can be out of date and is **not** on that page: **Windows
-updates pending on an endpoint**. Those belong to the machine, not to this
+Two more things can be out of date and are **not** on that page. The **Rem0te
+agent** on a managed computer is upgraded from that computer's own Overview tab
+with *Reinstall agent* — staging a client upgrade will not do it, because that
+skips any endpoint already on the latest client, which is usually most of them.
+And **Windows updates pending on an endpoint**. Those belong to the machine, not to this
 platform, and Rem0te reports them without installing them — see
 [inventory.md](inventory.md).
 
@@ -78,8 +81,11 @@ understand the staged-upgrade instruction in the heartbeat response. An older
 endpoint can therefore be staged for an upgrade it will never apply, and the
 staging will never clear.
 
-Those machines need the installer re-run by hand — which they need anyway, for
-the service-config fix in v0.8.2. See [clients.md](clients.md#managed-installer--rem0te--enroll-computer).
+Those machines need the installer re-run — which they need anyway, for the
+service-config fix in v0.8.2. From v0.15.0 that can be done from the console
+with *Reinstall agent* on the computer's Overview tab, provided the machine has
+authenticated with a device secret; one that never has needs a single local
+run first. See [inventory.md](inventory.md). See [clients.md](clients.md#managed-installer--rem0te--enroll-computer).
 
 ---
 

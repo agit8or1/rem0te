@@ -5,6 +5,8 @@ import {
   Logger, UnauthorizedException } from '@nestjs/common';
 import { randomBytes, createCipheriv, createDecipheriv, createHash, timingSafeEqual } from 'crypto';
 import { execFile } from 'child_process';
+import { readFileSync } from 'fs';
+import * as path from 'path';
 import { promisify } from 'util';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -418,6 +420,7 @@ export class EnrollmentService {
           hostname: dto.hostname ?? null,
           platform: dto.platform ?? null,
           osVersion: dto.osVersion ?? null,
+          agentVersion: dto.agentVersion ?? null,
           ipAddress: dto.ipAddress ?? null,
           lastSeenAt: new Date(),
           isOnline: true,
@@ -464,6 +467,17 @@ export class EnrollmentService {
         dto.rustdeskVersion === node.updateTargetVersion
           ? { updateRequestedAt: null, updateTargetVersion: null }
           : {}),
+        // A reinstall clears once the endpoint reports an agent matching this
+        // server AND the request has been handed out at least once. Without
+        // the dispatch half, a repair reinstall of an already-current agent
+        // would be cancelled by the very heartbeat that collected it, and the
+        // installer would never run.
+        ...(authenticated &&
+        node.reinstallRequestedAt &&
+        node.reinstallDispatchedAt &&
+        dto.agentVersion === this.platformVersion()
+          ? { reinstallRequestedAt: null, reinstallRequestedBy: null, reinstallDispatchedAt: null }
+          : {}),
       },
     });
 
@@ -473,6 +487,11 @@ export class EnrollmentService {
       ...(authenticated && dto.hostname !== undefined && { hostname: dto.hostname }),
       ...(authenticated && dto.platform !== undefined && { platform: dto.platform }),
       ...(authenticated && dto.osVersion !== undefined && { osVersion: dto.osVersion }),
+      // Accepted by the DTO since v0.8.x and dropped on the floor ever since:
+      // there was no column, so the device page's "Agent" row showed a dash on
+      // every machine ever enrolled. It is the fastest way to see that a
+      // machine's agent is too old to collect an inventory.
+      ...(authenticated && dto.agentVersion !== undefined && { agentVersion: dto.agentVersion }),
       // The address decides where the machine appears on the dashboard map and
       // what the audit trail records, so it is the device's to report or nobody's.
       ...(authenticated && dto.ipAddress !== undefined && { ipAddress: dto.ipAddress }),
@@ -511,6 +530,23 @@ export class EnrollmentService {
         ? { targetVersion: node.updateTargetVersion }
         : null;
 
+    // An operator-requested agent reinstall. Same mechanism as the RustDesk
+    // upgrade — re-run the installer, which is idempotent and keeps the
+    // machine's existing configuration, password and enrolment — but reachable
+    // regardless of which RustDesk version the endpoint is on.
+    let reinstallAgent: { targetVersion: string } | null = null;
+    if (authenticated && node.reinstallRequestedAt) {
+      reinstallAgent = { targetVersion: this.platformVersion() };
+      // Recorded before the response goes out, so a request is only ever
+      // considered satisfiable after the endpoint has genuinely been told.
+      if (!node.reinstallDispatchedAt) {
+        await this.prisma.rustdeskNode.update({
+          where: { id: node.id },
+          data: { reinstallDispatchedAt: new Date() },
+        }).catch(() => { /* best-effort: never cost the endpoint its heartbeat */ });
+      }
+    }
+
     // Live session state, and whatever collection work is queued for this
     // machine. Both are gated on `authenticated` for the same reason the
     // descriptive fields above are: an anonymous caller that could write these
@@ -543,6 +579,7 @@ export class EnrollmentService {
       authenticated,
       rotate,
       updateRustdesk,
+      reinstallAgent,
       commands,
       rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
     };
@@ -601,6 +638,25 @@ export class EnrollmentService {
    * A caller that offers nothing is not the device as far as this server is
    * concerned, and gets a liveness ping and nothing else.
    */
+  /**
+   * This server's version, as the agent should report after a reinstall.
+   *
+   * Read from disk per call rather than cached: an in-app update rewrites
+   * version.json, and a stale cache here would keep handing out a reinstall
+   * request that can never be satisfied because the target it compares
+   * against no longer matches what a fresh installer bakes in.
+   */
+  private platformVersion(): string {
+    try {
+      const file = process.env.VERSION_FILE
+        ?? path.join(process.env.PROJECT_ROOT ?? process.cwd(), 'version.json');
+      const v = JSON.parse(readFileSync(file, 'utf8')) as { version?: string };
+      return v.version ?? 'unknown';
+    } catch {
+      return 'unknown';
+    }
+  }
+
   private hashSecret(secret: string): string {
     return createHash('sha256').update(secret).digest('hex');
   }

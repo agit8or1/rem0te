@@ -5,6 +5,88 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.15.0] — 2026-09-17 · *Ratchet*
+
+### Added
+
+- **Reinstall agent — a button that upgrades the agent on a machine whose
+  RustDesk client is already current.** There was no way to do this. The only
+  server-staged action that re-runs an installer is
+  `requestRustdeskUpdate`, and it filters on a version comparison:
+
+  ```ts
+  targets = nodes.filter(n => !n.version || compareVersions(n.version, latest) < 0)
+  ```
+
+  An endpoint already on the latest client is skipped outright. That is right
+  for its own purpose and wrong as a way to upgrade the *agent*, which only
+  changes when the installer re-runs — so the newest agent could not be pushed
+  to exactly the machines that were otherwise healthy, and the only route was
+  running the installer by hand on every box.
+
+  `POST /endpoints/:id/reinstall-agent` stages it on the same channel as the
+  credential rotation and the client upgrade, reusing the endpoint's existing
+  installer re-run and its 30-minute floor. The installer is idempotent: it
+  keeps the machine's server configuration, its permanent password and its
+  enrolment, and replaces the heartbeat script. `COMPUTERS_EDIT` rather than
+  `COMPUTERS_VIEW`, because unlike an inventory refresh this installs software
+  on somebody's computer, and audited as
+  `ENDPOINT_AGENT_REINSTALL_REQUESTED`.
+
+  **It refuses a machine that has never authenticated with a device secret**,
+  rather than accepting the request and silently doing nothing. The heartbeat
+  only hands work to an authenticated endpoint, so staging for an unbound one
+  looks like it worked and never runs — which is exactly the trap the RustDesk
+  staging fell into: one endpoint in this deployment had been advertising a
+  pending upgrade since 27 August, three weeks, because it could never be
+  handed the instruction and nothing ever cleared it either. The refusal names
+  the fix instead: re-run the installer locally once, and it can be managed
+  from the console afterwards.
+
+  The request self-clears on the same principle as the client staging, keyed on
+  the agent version rather than RustDesk's — and it needs both halves:
+  `reinstallRequestedAt` clears once the endpoint reports an `agentVersion`
+  matching this server **and** the request has been dispatched at least once.
+  Without the dispatch half, a repair reinstall of an already-current agent
+  would be cancelled by the very heartbeat that collected it and the installer
+  would never run.
+
+### Fixed
+
+- **`Endpoint.agentVersion` was dead through four layers.** `HeartbeatDto` and
+  `ClaimEndpointDto` accepted it, `EnrollmentService.heartbeat()` named it in
+  its signature, and the device page rendered an *Agent* row for it — but there
+  was no column, nothing ever wrote it, and the agent never sent it. The row
+  showed a dash on every machine ever enrolled, which reads as "not reported
+  yet" rather than "not implemented".
+
+  The generated installer now bakes in the platform version that produced it
+  and reports it on claim, on every heartbeat, and on the retry-enrolment path.
+  The Overview tab shows **Rem0te agent** alongside **RustDesk client** — three
+  things can be out of date on a managed machine and confusing them wastes
+  time, so each is named rather than merged — and flags an agent that does not
+  match the server, with an absent version counted as outdated rather than
+  unknown, because "not reported" means an agent older than v0.14.0.
+
+  This is also what makes the reinstall above verifiable: without a reported
+  agent version there is nothing to compare a completed reinstall against, and
+  the request could only ever be fire-and-forget.
+
+### Notes for operators
+
+- **Schema change** — `Endpoint.agentVersion`, and three columns on
+  `RustdeskNode` for the reinstall staging, plus one `ActivityAction` value.
+  Migrations `0014_endpoint_agent_version` and `0015_agent_reinstall_request`.
+  Additive: every column is nullable with no default. Follow the schema-change
+  steps in CLAUDE.md.
+
+- **A machine's agent version stays blank until its installer re-runs**, since
+  that is what bakes the value in. For a machine that has never bound a device
+  secret the reinstall button cannot help, and the server says so — those need
+  one local run of the installer first.
+
+---
+
 ## [0.14.0] — 2026-09-17 · *Lantern*
 
 ### Added

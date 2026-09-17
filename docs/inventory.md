@@ -44,6 +44,11 @@ to secure.
 
 ## What is collected, and how often
 
+Three different things can be out of date on a managed machine — the **Rem0te
+agent**, the **RustDesk client**, and the machine's own **Windows updates** —
+and they are updated by three different mechanisms. The Overview tab names each
+rather than merging them.
+
 | What | Cadence | Cost on the endpoint |
 |---|---|---|
 | Signed-in user, uptime, last boot | **Every heartbeat** (~3 min) | Two CIM queries |
@@ -78,9 +83,29 @@ heartbeats the queue gives up and says so on the command rather than retrying
 forever. Re-running the installer replaces the heartbeat script, which is what
 actually upgrades the agent.
 
-A staged RustDesk client upgrade also re-runs the installer, so a fleet you
-upgrade through **Updates → RustDesk Clients** picks up the new agent as a side
-effect.
+### Upgrading the agent
+
+**Computers → *the machine* → Overview → Reinstall agent** re-runs the
+installer on the next heartbeat. The installer is idempotent: it keeps the
+server configuration, the permanent password and the enrolment, and replaces
+the heartbeat script. That is what upgrades the agent.
+
+Use this rather than staging a client upgrade. **Updates → RustDesk Clients**
+re-runs the installer as a side effect, but it filters on the client version
+and skips any endpoint already on the latest release — so it cannot reach the
+machines that are otherwise healthy, which is usually most of them.
+
+> **A machine that has never authenticated with a device secret cannot be
+> reinstalled from the console**, and the button says so rather than accepting
+> the request. The heartbeat only hands work to an authenticated endpoint, so
+> staging for an unbound one would look like it worked and never run. Run the
+> installer on that machine once, locally, and it can be managed from here
+> afterwards.
+
+The agent version is shown on the Overview tab next to the RustDesk client
+version. It is baked into the installer at generation time, so it names the
+platform version whose installer last ran — which is exactly the question when
+a machine is reporting nothing.
 
 ---
 

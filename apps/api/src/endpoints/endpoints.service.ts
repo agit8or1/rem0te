@@ -3,6 +3,8 @@ import {
   InternalServerErrorException, BadRequestException, Logger,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import Anthropic from '@anthropic-ai/sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -907,11 +909,15 @@ export class EndpointsService {
     await this.acl.assertEndpointInScope(actor, id);
     this.acl.assertCapability(actor, CAP.COMPUTERS_VIEW);
 
-    const [inventory, node, commands] = await Promise.all([
+    const [inventory, endpointRow, node, commands] = await Promise.all([
       this.inventory.get(id),
+      this.prisma.endpoint.findUnique({ where: { id }, select: { agentVersion: true } }),
       this.prisma.rustdeskNode.findUnique({
         where: { endpointId: id },
-        select: { version: true, updateTargetVersion: true, updateRequestedAt: true, agentSecretHash: true },
+        select: {
+          version: true, updateTargetVersion: true, updateRequestedAt: true,
+          agentSecretHash: true, reinstallRequestedAt: true, reinstallDispatchedAt: true,
+        },
       }),
       this.inventory.listCommands(id, 10),
     ]);
@@ -926,12 +932,33 @@ export class EndpointsService {
         stagedVersion: node?.updateTargetVersion ?? null,
         stagedAt: node?.updateRequestedAt ?? null,
       },
+      // The Rem0te agent, which is a different question from the RustDesk
+      // client: it is what decides whether this machine can collect anything
+      // at all. `server` is what a fresh installer would bake in, so the UI
+      // can say "outdated" rather than making someone compare two strings.
+      agent: {
+        version: endpointRow?.agentVersion ?? null,
+        server: this.platformVersion(),
+        reinstallPending: !!node?.reinstallRequestedAt,
+        reinstallDispatched: !!node?.reinstallDispatchedAt,
+      },
       // The one thing that explains an endpoint reporting nothing at all: its
       // installer predates device secrets, so the server takes nothing it
       // says. Without this the UI can only show empty cards and no reason.
       agentBound: !!node?.agentSecretHash,
       commands,
     };
+  }
+
+  /** This server's version — what a freshly generated installer reports. */
+  private platformVersion(): string {
+    try {
+      const file = process.env.VERSION_FILE
+        ?? path.join(process.env.PROJECT_ROOT ?? process.cwd(), 'version.json');
+      return (JSON.parse(fs.readFileSync(file, 'utf8')) as { version?: string }).version ?? 'unknown';
+    } catch {
+      return 'unknown';
+    }
   }
 
   /**
@@ -999,6 +1026,67 @@ export class EndpointsService {
 
     if (!cmd) throw new InternalServerErrorException('Could not queue the request');
     return { commandId: cmd.id, status: cmd.status };
+  }
+
+  /**
+   * Ask a computer to re-run its installer.
+   *
+   * This is the only way to upgrade the *agent* on a machine whose RustDesk
+   * client is already current: `requestRustdeskUpdate` compares versions and
+   * skips anything on the latest client, which is right for its purpose and
+   * leaves the agent stuck at whatever the last install left behind.
+   *
+   * Re-running is idempotent and non-destructive — the installer keeps the
+   * machine's server configuration, its permanent password and its enrolment,
+   * and replaces the heartbeat script. It does pull the client binary again,
+   * so it is not free; the endpoint's own 30-minute floor stops a stuck
+   * request turning into a download loop.
+   *
+   * COMPUTERS_EDIT, not COMPUTERS_VIEW: unlike an inventory refresh this
+   * installs software on somebody's machine.
+   */
+  async requestAgentReinstall(actor: ActorContext, id: string) {
+    const endpoint = await this.acl.assertEndpointInScope(actor, id);
+    this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
+
+    const node = await this.prisma.rustdeskNode.findUnique({
+      where: { endpointId: id },
+      select: { id: true, agentSecretHash: true, reinstallRequestedAt: true },
+    });
+    if (!node) throw new NotFoundException('No RustDesk node linked to this computer');
+
+    // The heartbeat only hands work to an endpoint that authenticated with its
+    // device secret, so staging this for an unbound machine would look like it
+    // worked and do nothing at all — which is precisely the trap the RustDesk
+    // staging fell into, leaving one endpoint advertising a pending upgrade for
+    // three weeks. Refuse instead, and say what the operator has to do.
+    if (!node.agentSecretHash) {
+      throw new BadRequestException(
+        'This computer has never authenticated with a device secret, so the server cannot ' +
+        'ask it to do anything. Re-run the installer on the machine itself once; after that ' +
+        'it can be reinstalled from here.',
+      );
+    }
+
+    await this.prisma.rustdeskNode.update({
+      where: { id: node.id },
+      data: {
+        reinstallRequestedAt: new Date(),
+        reinstallRequestedBy: actor.userId ?? null,
+        // Cleared so a repeat request is dispatched again rather than being
+        // treated as one already satisfied.
+        reinstallDispatchedAt: null,
+      },
+    });
+
+    await this.audit.log({
+      tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
+      actorId: actor.userId, actorIp: actor.ip,
+      action: 'ENDPOINT_AGENT_REINSTALL_REQUESTED', resource: 'endpoint', resourceId: id,
+      meta: { requeued: !!node.reinstallRequestedAt },
+    });
+
+    return { status: 'PENDING' };
   }
 
   /**

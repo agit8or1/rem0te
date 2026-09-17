@@ -106,6 +106,10 @@ export const endpointsApi = {
   // Queues a re-collection for the endpoint's next heartbeat — up to ~3
   // minutes away. Nothing is synchronous here.
   refreshInventory: (id: string) => api.post(`/endpoints/${id}/inventory/refresh`, {}),
+  // Re-runs the installer on the machine: upgrades the Rem0te agent while
+  // keeping its config, password and enrolment. The only way to refresh the
+  // agent on a computer whose RustDesk client is already current.
+  reinstallAgent: (id: string) => api.post(`/endpoints/${id}/reinstall-agent`, {}),
   requestEventLog: (
     id: string,
     query: { logName: string; levels?: number[]; maxEvents?: number; sinceHours?: number; providerName?: string },

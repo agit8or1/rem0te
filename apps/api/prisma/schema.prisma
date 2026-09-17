@@ -113,6 +113,7 @@ enum ActivityAction {
   ENDPOINT_HEARTBEAT_REJECTED
   ENDPOINT_INVENTORY_REFRESH_REQUESTED
   ENDPOINT_EVENT_LOG_REQUESTED
+  ENDPOINT_AGENT_REINSTALL_REQUESTED
   CONNECTION_GRANT_CREATED
   CONNECTION_GRANT_REDEEMED
   CONNECTION_GRANT_DENIED
@@ -457,6 +458,19 @@ model Endpoint {
   macAddress   String?
   serialNumber String?
 
+  // Version of the Rem0te agent on this machine — the platform version whose
+  // installer last ran on it, baked into the generated heartbeat script.
+  //
+  // This is NOT the RustDesk client version (that is RustdeskNode.version).
+  // It answers a different and, in practice, more urgent question: is the
+  // agent on this machine new enough to collect what the console is asking
+  // for? An endpoint running a pre-0.14.0 agent reports liveness and nothing
+  // else, and before this column existed there was no way to see that — the
+  // field was accepted by the heartbeat DTO, named in the service signature,
+  // rendered by the UI, and stored nowhere, so the device page showed a dash
+  // for it on every machine ever enrolled.
+  agentVersion String?
+
   isManaged  Boolean   @default(false)
   isOnline   Boolean   @default(false)
   lastSeenAt DateTime?
@@ -602,6 +616,25 @@ model RustdeskNode {
   // update retries on the next heartbeat instead of being lost.
   updateRequestedAt   DateTime?
   updateTargetVersion String?
+
+  // Operator-requested agent reinstall, staged the same way.
+  //
+  // Distinct from the RustDesk staging above, which is driven by a version
+  // comparison and therefore CANNOT reach a machine already on the latest
+  // client — `requestRustdeskUpdate` skips those outright. That left no way to
+  // push a newer *Rem0te agent* to an up-to-date machine, even though the
+  // agent only changes when the installer re-runs. This is that way.
+  //
+  // Self-clearing on the same principle as the update staging, but keyed on
+  // the agent version rather than RustDesk's: the request clears once the
+  // endpoint reports an `agentVersion` matching this server AND the request
+  // has actually been handed out at least once. Both halves are needed — the
+  // dispatch check is what lets a repair reinstall of an already-current agent
+  // survive long enough to run instead of being cancelled by the same
+  // heartbeat that collected it.
+  reinstallRequestedAt  DateTime?
+  reinstallRequestedBy  String?
+  reinstallDispatchedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

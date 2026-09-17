@@ -10,7 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import {
   Cpu, HardDrive, MemoryStick, Network, PackageCheck, RefreshCw,
-  User, Server, AlertTriangle, ChevronDown, ChevronRight, Info,
+  User, Server, AlertTriangle, ChevronDown, ChevronRight, Info, Download,
 } from 'lucide-react';
 
 /**
@@ -56,6 +56,14 @@ export interface Inventory {
 export interface InventoryPayload {
   inventory: Inventory | null;
   rustdesk: { installedVersion: string | null; stagedVersion: string | null; stagedAt: string | null };
+  // The Rem0te agent, as distinct from the RustDesk client: this is the one
+  // that decides whether the machine can collect anything at all.
+  agent: {
+    version: string | null;
+    server: string;
+    reinstallPending: boolean;
+    reinstallDispatched: boolean;
+  };
   agentBound: boolean;
   commands: {
     id: string; type: string; status: string; error: string | null;
@@ -200,9 +208,28 @@ function UpdatesCard({ data }: { data: InventoryPayload }) {
         </div>
       )}
 
-      {/* The RustDesk client is a separate thing that can be out of date, and
-          confusing the two wastes time — so it is labelled, not merged in. */}
+      {/* Three different things can be out of date on a managed machine and
+          confusing them wastes time, so each is named rather than merged. */}
       <div className="pt-1 border-t space-y-2.5">
+        <Row label="Rem0te agent">
+          {data.agent.version ? (
+            <>
+              <span className="font-mono text-xs">v{data.agent.version}</span>
+              {data.agent.version !== data.agent.server && (
+                <div className="text-[11px] text-amber-600">
+                  server is v{data.agent.server}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <span className="text-muted-foreground">Not reported</span>
+              <div className="text-[11px] text-muted-foreground">
+                predates v0.14.0
+              </div>
+            </>
+          )}
+        </Row>
         <Row label="RustDesk client">
           {data.rustdesk.installedVersion ? (
             <span className="font-mono text-xs">v{data.rustdesk.installedVersion}</span>
@@ -273,6 +300,28 @@ export function EndpointSpecs({
     refetchInterval: 30_000,
   });
 
+  const reinstall = useMutation({
+    mutationFn: () => endpointsApi.reinstallAgent(endpointId),
+    onSuccess: () => {
+      toast({
+        title: 'Reinstall queued',
+        description:
+          'The installer re-runs on this computer at its next heartbeat. It keeps the server ' +
+          'config, password and enrolment — it replaces the agent and pulls the current client.',
+      });
+      qc.invalidateQueries({ queryKey: ['endpoint-inventory', endpointId] });
+    },
+    onError: (e: unknown) => {
+      // The server refuses this for a machine that has never authenticated,
+      // and the reason is the actionable part — show it rather than a generic
+      // failure the operator cannot do anything with.
+      const message =
+        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Could not queue the reinstall';
+      toast({ title: 'Cannot reinstall from here', description: message, variant: 'destructive' });
+    },
+  });
+
   const refresh = useMutation({
     mutationFn: () => endpointsApi.refreshInventory(endpointId),
     onSuccess: () => {
@@ -295,6 +344,11 @@ export function EndpointSpecs({
       (c.status === 'PENDING' || c.status === 'DISPATCHED') &&
       (c.type === 'INVENTORY_REFRESH' || c.type === 'UPDATE_SCAN'),
   );
+
+  // "Not reported" means an agent older than 0.14.0, which is also out of
+  // date — so an absent version counts as outdated, not as unknown.
+  const agentOutdated =
+    !!data && (data.agent.version === null || data.agent.version !== data.agent.server);
 
   const memTotal = inv?.memoryTotalMb ?? null;
   const memFree = inv?.memoryFreeMb ?? null;
@@ -325,8 +379,9 @@ export function EndpointSpecs({
           <div>
             <div className="font-medium">Specs have not been collected yet</div>
             <p className="text-muted-foreground text-xs mt-0.5">
-              The first pass runs on this computer&apos;s next heartbeat, up to about three
-              minutes away. It needs an installer from v0.14.0 or later.
+              {agentOutdated
+                ? 'This computer’s agent is older than v0.14.0 and cannot collect specs. Use Reinstall agent below — it keeps every setting and replaces the agent.'
+                : 'The first pass runs on this computer’s next heartbeat, up to about three minutes away.'}
             </p>
           </div>
         </div>
@@ -339,15 +394,30 @@ export function EndpointSpecs({
             : 'Nothing collected yet'}
           {pendingCollection && ' · a refresh is queued for the next heartbeat'}
         </p>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => refresh.mutate()}
-          disabled={refresh.isPending || pendingCollection}
-        >
-          <RefreshCw className={`h-3 w-3 mr-1 ${refresh.isPending ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => refresh.mutate()}
+            disabled={refresh.isPending || pendingCollection}
+          >
+            <RefreshCw className={`h-3 w-3 mr-1 ${refresh.isPending ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+          {/* Offered whenever the agent is not the server's version, and as a
+              repair otherwise. Left enabled for an unbound machine on purpose:
+              the server's refusal explains what to do, which is more use than
+              a disabled button with no reason. */}
+          <Button
+            size="sm"
+            variant={agentOutdated ? 'default' : 'outline'}
+            onClick={() => reinstall.mutate()}
+            disabled={reinstall.isPending || data?.agent.reinstallPending}
+          >
+            <Download className={`h-3 w-3 mr-1 ${reinstall.isPending ? 'animate-pulse' : ''}`} />
+            {data?.agent.reinstallPending ? 'Reinstall queued' : 'Reinstall agent'}
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

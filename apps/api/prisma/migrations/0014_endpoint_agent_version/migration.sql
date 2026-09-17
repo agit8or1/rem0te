@@ -1,0 +1,16 @@
+-- The Rem0te agent version an endpoint is running.
+--
+-- `agentVersion` has been accepted by HeartbeatDto and named in
+-- EnrollmentService.heartbeat()'s signature since v0.8.x, and the device page
+-- rendered an "Agent" row for it — but there was no column, nothing ever wrote
+-- it, and the agent never sent it. The row showed a dash on every machine ever
+-- enrolled, which read as "not reported yet" rather than "not implemented".
+--
+-- It matters now: an endpoint running a pre-0.14.0 agent reports liveness and
+-- nothing else, and this is how the console can say so instead of showing
+-- empty inventory cards with no explanation.
+--
+-- Nullable with no default, so this is additive and safe on a live database:
+-- existing rows are untouched and each fills in on its endpoint's next
+-- heartbeat once its installer has been re-run.
+ALTER TABLE "Endpoint" ADD COLUMN IF NOT EXISTS "agentVersion" TEXT;

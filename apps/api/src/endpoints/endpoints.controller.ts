@@ -226,6 +226,18 @@ export class EndpointsController {
     return { success: true, data: await this.svc.requestInventoryRefresh(actor, id) };
   }
 
+  // Re-runs the installer on the machine, which is what upgrades the agent.
+  // Idempotent and non-destructive, but it is a software install on someone's
+  // computer and it pulls the client binary again, so: COMPUTERS_EDIT, rate
+  // limited, and audited in the service.
+  @Post(':id/reinstall-agent')
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  @RateLimit(10)
+  @HttpCode(HttpStatus.OK)
+  async reinstallAgent(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.svc.requestAgentReinstall(actor, id) };
+  }
+
   @Post(':id/event-log')
   @RequireCapability(CAP.COMPUTERS_EVENT_LOGS)
   @RateLimit(20)

@@ -55,6 +55,27 @@ function safeVersion(version: string): string {
 @Controller('public')
 export class PublicController {
   private readonly projectRoot = process.env.PROJECT_ROOT ?? path.join(process.cwd(), '..', '..');
+  private readonly versionFile =
+    process.env.VERSION_FILE ?? path.join(this.projectRoot, 'version.json');
+
+  /**
+   * The platform version to bake into a generated installer.
+   *
+   * Read per request rather than cached at construction: an in-app update
+   * rewrites version.json and restarts the units, but a cache here would also
+   * have to survive someone editing that file by hand, and a file read on an
+   * installer download is free next to the ~40 MB the endpoint is about to
+   * pull. `safeVersion`'s allowlist applies — this value is interpolated into
+   * a PowerShell string literal.
+   */
+  private agentVersion(): string {
+    try {
+      const v = JSON.parse(fs.readFileSync(this.versionFile, 'utf8')) as { version?: string };
+      return v.version && VERSION_RE.test(v.version) ? v.version : 'unknown';
+    } catch {
+      return 'unknown';
+    }
+  }
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -263,6 +284,10 @@ $REM0TE_KEY    = '${keyVal}'
 $REM0TE_CONFIG = '${configB64}'
 $CLAIM_TOKEN   = '${claimToken}'
 $VERSION       = '${version}'
+# The Rem0te platform version that generated this installer. Reported on every
+# heartbeat so the console can tell an agent too old to collect anything from a
+# machine that simply has not been asked yet.
+$AGENT_VERSION = '${this.agentVersion()}'
 
 $RDEXE = 'C:\\Program Files\\RustDesk\\rustdesk.exe'
 $LOGDIR = 'C:\\ProgramData\\Rem0te\\Logs'
@@ -592,7 +617,7 @@ while (-not $rdId -and (Get-Date) -lt $deadline) {
 # ── [6/6] Register with Rem0te ─────────────────────────────────────────────
 Step 6 6 'Registering with Rem0te...'
 function Register([string]$id) {
-    $body = @{ rustdeskId = $id; hostname = $env:COMPUTERNAME; platform = 'Windows'; osVersion = [Environment]::OSVersion.VersionString; password = $PERM_PW; agentSecret = $AGENT_SECRET }
+    $body = @{ rustdeskId = $id; hostname = $env:COMPUTERNAME; platform = 'Windows'; osVersion = [Environment]::OSVersion.VersionString; password = $PERM_PW; agentSecret = $AGENT_SECRET; agentVersion = $AGENT_VERSION }
     if ($CLAIM_TOKEN) {
         $body['token'] = $CLAIM_TOKEN
         $json = $body | ConvertTo-Json -Compress
@@ -629,7 +654,7 @@ $hbFile = "$STATEDIR\\heartbeat.dat"
 # --password change on the endpoint) desyncs and one-click Connect stops
 # working because the server sends the browser an outdated password.
 # File is chmod 600 to SYSTEM+Administrators only.
-$hbPayload = [PSCustomObject]@{ host = $REM0TE_HOST; password = $PERM_PW; agentSecret = $AGENT_SECRET } | ConvertTo-Json -Compress
+$hbPayload = [PSCustomObject]@{ host = $REM0TE_HOST; password = $PERM_PW; agentSecret = $AGENT_SECRET; agentVersion = $AGENT_VERSION } | ConvertTo-Json -Compress
 try { Set-Content -Path $hbFile -Value $hbPayload -Encoding UTF8; icacls $hbFile /inheritance:r /grant:r 'SYSTEM:(F)' 'Administrators:(F)' *>$null } catch {}
 
 $hbScript = "$STATEDIR\\heartbeat.ps1"
@@ -646,6 +671,10 @@ if (-not \$id) { exit 0 }
 # an anonymous liveness ping: online state is refreshed and nothing else, no
 # credential rotation is handed back, and no inventory is written.
 if (\$state.agentSecret) { \$body['agentSecret'] = \$state.agentSecret }
+# Which Rem0te agent this is - the platform version whose installer wrote this
+# script. Read from state rather than hardcoded into the body so a machine that
+# upgraded reports the new version without this line changing.
+if (\$state.agentVersion) { \$body['agentVersion'] = [string]\$state.agentVersion }
 # Installed RustDesk version, read from the binary rather than by spawning it.
 # Normalised to three segments: FileVersion reports 1.4.9.0 while the server
 # compares against the GitHub release tag 1.4.9.
@@ -878,7 +907,15 @@ if (\$state.agentSecret) {
 # exactly the target version becomes a reinstall - and a ~40 MB download -
 # every three minutes, indefinitely.
 try {
+    # Two reasons to re-run the installer, one mechanism:
+    #   updateRustdesk  - the server staged a newer RustDesk client
+    #   reinstallAgent  - an operator asked for the agent itself to be
+    #                     refreshed, which a version comparison cannot ask for
+    #                     because the client may already be current
+    # Re-running is idempotent: it keeps this machine's server config, its
+    # permanent password and its enrolment, and rewrites this script.
     \$upd = \$resp.data.updateRustdesk
+    if (-not (\$upd -and \$upd.targetVersion)) { \$upd = \$resp.data.reinstallAgent }
     if (\$upd -and \$upd.targetVersion) {
         \$last = \$null
         try { if (\$state.lastUpdateAttempt) { \$last = [DateTime]\$state.lastUpdateAttempt } } catch {}
@@ -904,7 +941,7 @@ if (-not $rdId -or -not $registered) {
     $secretFile = "$STATEDIR\\enroll.dat"
     $payload = [PSCustomObject]@{
         host = $REM0TE_HOST; token = $CLAIM_TOKEN; password = $PERM_PW
-        agentSecret = $AGENT_SECRET
+        agentSecret = $AGENT_SECRET; agentVersion = $AGENT_VERSION
         expiresAt = (Get-Date).AddDays(1).ToString('o')
     } | ConvertTo-Json -Compress
     try { Set-Content -Path $secretFile -Value $payload -Encoding UTF8; icacls $secretFile /inheritance:r /grant:r 'SYSTEM:(F)' 'Administrators:(F)' *>$null } catch {}
@@ -920,6 +957,7 @@ try { \$out = & \$RDEXE --get-id 2>\$null | Out-String; if (\$out -match '([0-9]
 if (-not \$id) { exit 0 }
 \$body = @{ rustdeskId = \$id; hostname = \$env:COMPUTERNAME; platform = 'Windows'; password = \$state.password }
 if (\$state.agentSecret) { \$body['agentSecret'] = \$state.agentSecret }
+if (\$state.agentVersion) { \$body['agentVersion'] = [string]\$state.agentVersion }
 if (\$state.token) { \$body['token'] = \$state.token }
 \$json = \$body | ConvertTo-Json -Compress
 \$endpoint = if (\$state.token) { 'enrollment/claim' } else { 'enrollment/heartbeat' }
