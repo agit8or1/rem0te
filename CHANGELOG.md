@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.16.1] — 2026-09-17 · *Caliper*
+
+### Changed
+
+- **The README shows the two new device screens.** Its feature grid stopped at
+  onboarding and access, so the largest thing added in 0.14.0 — that a computer
+  reports its own hardware, disk space, signed-in user and pending updates, and
+  that its Windows event log can be read without starting a session — was
+  visible only to someone who opened the full gallery. Added as a row of the
+  grid, with a *Why it helps* paragraph, and the gallery counts corrected from
+  31 to 33.
+
+---
+
 ## [0.16.0] — 2026-09-17 · *Caliper*
 
 ### Added

@@ -21,7 +21,7 @@ server that keeps them organised and separate.
 
 <a href="docs/images/github/dashboard-light.png"><img src="docs/images/github/dashboard-light.png" alt="The Rem0te dashboard: tiles showing 34 total computers with 26 online and 8 offline, three active sessions and session counts for the last 7 and 30 days, above a map of client locations across the western United States." width="100%"></a>
 
-<sub><i>The operator's view — every customer business, computer and session in one place. <a href="docs/images/github/dashboard-light.png">Full size</a> · <a href="docs/screenshots.md">30 more screenshots</a></i></sub>
+<sub><i>The operator's view — every customer business, computer and session in one place. <a href="docs/images/github/dashboard-light.png">Full size</a> · <a href="docs/screenshots.md">32 more screenshots</a></i></sub>
 
 ---
 
@@ -40,6 +40,14 @@ reveal is written to the audit log.
 may see which computers and what they may do, without the operator being in the
 loop for every change.
 
+**Diagnose before you interrupt anyone.** Each computer reports its own
+hardware, disk space, signed-in user, uptime and pending Windows updates, and
+you can pull a slice of its Windows event log without starting a session. Half
+of "can you take a look at my PC?" is answerable without touching the machine
+— and reading event logs is a separate permission from seeing the computer,
+because someone else's Security log is not the same as a name and an online
+dot.
+
 ---
 
 ## See it in action
@@ -48,6 +56,10 @@ loop for every change.
 <tr>
 <td width="50%"><a href="docs/images/github/client-map-dark.png"><img src="docs/images/github/client-map-dark.png" alt="Client locations map in dark theme with clustered markers over Everett, Spokane, Seattle, Portland, Bend, Boise and Denver, each showing a device count."></a><br><sub><b>Know where the estate is.</b> Managed computers plotted from their last check-in, clustered by city. <i>Dark</i></sub></td>
 <td width="50%"><a href="docs/images/github/business-computers-dark.png"><img src="docs/images/github/business-computers-dark.png" alt="A single business's Computers tab in dark theme listing machines with Windows, macOS and Linux badges and online or offline status."></a><br><sub><b>Answer "my PC is broken" fast.</b> One customer's machines, with live status. <i>Dark</i></sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="docs/images/github/device-specs-dark.png"><img src="docs/images/github/device-specs-dark.png" alt="The collected-inventory cards on a computer's page in dark theme: operating system and build, who is signed in and how long the machine has been up, an HP EliteBook with its processor and BIOS version, memory and disk usage bars, network adapter, and pending Windows updates beside the agent and client versions."></a><br><sub><b>Know the machine before you touch it.</b> Hardware, disk space, who is signed in, how long it has been up, and what it is waiting to install. <i>Dark</i></sub></td>
+<td width="50%"><a href="docs/images/github/device-event-log-dark.png"><img src="docs/images/github/device-event-log-dark.png" alt="The Event Log tab on a computer's page in dark theme, with log, time range and count selectors, level chips, and a table of System log entries showing timestamps, colour-coded level badges, event IDs, providers and messages."></a><br><sub><b>Read the event log without connecting.</b> Five Windows logs, filtered by level and window — and reading them is its own permission. <i>Dark</i></sub></td>
 </tr>
 <tr>
 <td width="50%"><a href="docs/images/github/enroll-device-light.png"><img src="docs/images/github/enroll-device-light.png" alt="The three-step enrollment form in light theme: choose business, choose which users may connect, choose platform."></a><br><sub><b>Onboard a machine in one run.</b> The business is fixed into the installer; the machine cannot pick another. <i>Light</i></sub></td>
@@ -59,7 +71,7 @@ loop for every change.
 </tr>
 </table>
 
-**[→ See all 31 screenshots](docs/screenshots.md)** — dashboards, monitoring,
+**[→ See all 33 screenshots](docs/screenshots.md)** — dashboards, monitoring,
 inventory, workflows, administration and configuration, in light and dark.
 
 ---
