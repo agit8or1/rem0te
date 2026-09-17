@@ -238,6 +238,14 @@ export class EndpointsController {
     return { success: true, data: await this.svc.requestAgentReinstall(actor, id) };
   }
 
+  // The last query run against this computer, so returning to the tab shows
+  // what was already fetched instead of an empty form.
+  @Get(':id/event-log/latest')
+  @RequireCapability(CAP.COMPUTERS_EVENT_LOGS)
+  async latestEventLog(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.svc.latestEventLog(actor, id) };
+  }
+
   @Post(':id/event-log')
   @RequireCapability(CAP.COMPUTERS_EVENT_LOGS)
   @RateLimit(20)

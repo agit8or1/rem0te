@@ -603,6 +603,24 @@ export class EndpointInventoryService {
     });
   }
 
+  /**
+   * The most recent event-log query for an endpoint, results included.
+   *
+   * Without this the Event Log tab could only ever show a result fetched in
+   * the current browser session: the command id lived in component state, so
+   * navigating away and back presented an empty form as though nothing had
+   * ever been asked, and the page gave no way to see a colleague's query from
+   * an hour ago either. Returned only through a route that checks
+   * `computers:event_logs`, because this carries log contents.
+   */
+  async latestEventLog(endpointId: string) {
+    await this.expireStale(endpointId);
+    return this.prisma.endpointCommand.findFirst({
+      where: { endpointId, type: 'EVENT_LOG_QUERY' },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   async getCommand(endpointId: string, commandId: string) {
     await this.expireStale(endpointId);
     return this.prisma.endpointCommand.findFirst({ where: { id: commandId, endpointId } });

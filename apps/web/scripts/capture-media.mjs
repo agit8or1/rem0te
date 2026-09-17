@@ -19,7 +19,7 @@
  * immediately before the shutter, so stored records are untouched.
  */
 import { chromium } from 'playwright';
-import { mkdir, writeFile } from 'fs/promises';
+import { mkdir, writeFile, readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
@@ -115,7 +115,14 @@ export const SHOTS = [
   { name: 'computers-inventory-light', path: '/endpoints', theme: 'light', wait: 'text=RustDesk ID' },
   { name: 'computers-inventory-dark', path: '/endpoints', theme: 'dark', wait: 'text=RustDesk ID' },
   { name: 'business-computers-dark', path: '@business', theme: 'dark', click: ['button:has-text("Computers")'], settle: 2500 },
-  { name: 'device-detail-light', maxHeight: 660, path: '@endpoint', theme: 'light', settle: 3000 },
+  // The device page is mostly collected inventory now, so it needs more than
+  // the old 660px: that height cropped it at the Assignment card, above
+  // everything the page is actually for.
+  { name: 'device-detail-light', maxHeight: 1100, path: '@endpoint', theme: 'light', settle: 3500 },
+  { name: 'device-specs-dark', path: '@endpoint', theme: 'dark', settle: 3500,
+    clip: '@specs' },
+  { name: 'device-event-log-dark', maxHeight: 1000, path: '@endpoint', theme: 'dark',
+    click: ['button[role=tab]:has-text("Event Log")'], settle: 2500 },
   { name: 'my-computers-dark', path: '/my-computers', theme: 'dark', settle: 3000 },
   { name: 'unassigned-light', maxHeight: 620, path: '/admin/unassigned', theme: 'light', settle: 2500 },
 
@@ -234,6 +241,35 @@ async function run() {
                      height: Math.min(r.height + 8, window.innerHeight - r.y) };
           });
           await p.screenshot({ path: file, clip: box ?? undefined });
+        } else if (s.clip === '@specs') {
+          // The collected-inventory grid on a device page, on its own.
+          //
+          // Taken as an ELEMENT screenshot, not a clip. A clip is bounded by
+          // the viewport, and this grid is taller than one — the first attempt
+          // produced an image that stopped halfway through the Hardware card,
+          // mid-row, which looks like a rendering fault rather than a crop.
+          // Playwright scrolls an element into view and captures all of it.
+          //
+          // Anchored on the Hardware card's heading rather than a position or
+          // a class: the grid re-flows between one and two columns with the
+          // window, so anything geometric breaks at the next viewport change.
+          const found = await p.evaluate(() => {
+            const heads = [...document.querySelectorAll('div,section')]
+              .filter((el) => /^Hardware$/.test((el.textContent ?? '').trim()));
+            const card = heads[0]?.closest('div.rounded-lg,div.rounded-xl,section');
+            const grid = card?.parentElement?.closest('div.grid') ?? card?.parentElement;
+            if (!grid) return false;
+            grid.setAttribute('data-capture-specs', '');
+            return true;
+          });
+          if (found) {
+            await p.locator('[data-capture-specs]').screenshot({ path: file });
+          } else {
+            // No cards at all is what an endpoint that has never reported
+            // looks like; fall back rather than failing the whole run.
+            console.log('    (specs grid not found — full page instead)');
+            await p.screenshot({ path: file });
+          }
         } else if (s.maxHeight) {
           // Pages whose content ends well above the fold would otherwise be
           // half empty, which reads badly at GitHub's display width.
@@ -252,10 +288,29 @@ async function run() {
     await ctx.close();
   }
 
-  await writeFile(path.join(OUT, 'manifest.json'),
+  // A partial run (ONLY=...) must not throw away the rest of the manifest.
+  // It did once: re-shooting three images rewrote the file with three entries,
+  // and the gallery page then referenced thirty images the manifest denied
+  // existed. Merge by name, keeping this run's entries and preserving the
+  // order already recorded.
+  const manifestPath = path.join(OUT, 'manifest.json');
+  let merged = manifest;
+  if (only?.length) {
+    let existing = [];
+    try {
+      existing = JSON.parse(await readFile(manifestPath, 'utf8')).shots ?? [];
+    } catch { /* no manifest yet - this run's entries are the whole of it */ }
+    const fresh = new Map(manifest.map((m) => [m.name, m]));
+    merged = [
+      ...existing.map((e) => fresh.get(e.name) ?? e),
+      ...manifest.filter((m) => !existing.some((e) => e.name === m.name)),
+    ];
+  }
+
+  await writeFile(manifestPath,
     JSON.stringify({ viewport: VIEWPORT, deviceScaleFactor: SCALE,
       demoData: 'apps/api/prisma/_docs-demo-data.ts against reboot_remote_docs',
-      shots: manifest }, null, 2) + '\n');
+      shots: merged }, null, 2) + '\n');
   console.log(`\n${manifest.length} captured -> ${OUT}`);
   await browser.close();
 }

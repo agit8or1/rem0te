@@ -44,7 +44,7 @@
     },
     {
       "name": "device-detail-light",
-      "route": "/endpoints/cmu2vyx1c00484d6wo3yqxel1",
+      "route": "/endpoints/cmu65hc89004u124f8vwfcvel",
       "theme": "light",
       "viewport": "1440x1000@2x"
     },
@@ -104,7 +104,7 @@
     },
     {
       "name": "business-overview-dark",
-      "route": "/businesses/cmu2vyx0q003l4d6wcdg4vk3p",
+      "route": "/businesses/cmu65hc7v004j124fngyw0fiq",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
@@ -140,7 +140,19 @@
     },
     {
       "name": "business-computers-dark",
-      "route": "/businesses/cmu2vyx0q003l4d6wcdg4vk3p",
+      "route": "/businesses/cmu65hc7v004j124fngyw0fiq",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "device-specs-dark",
+      "route": "/endpoints/cmu65hc89004u124f8vwfcvel",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "device-event-log-dark",
+      "route": "/endpoints/cmu65hc89004u124f8vwfcvel",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },

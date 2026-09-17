@@ -1090,6 +1090,19 @@ export class EndpointsService {
   }
 
   /**
+   * The last event-log query run against this computer, whoever ran it.
+   *
+   * Same capability as making the request: this returns log contents, so
+   * gating it on `computers:view` would mean the capability only controlled
+   * who could ask, not who could read the answer.
+   */
+  async latestEventLog(actor: ActorContext, id: string) {
+    await this.acl.assertEndpointInScope(actor, id);
+    this.acl.assertCapability(actor, CAP.COMPUTERS_EVENT_LOGS);
+    return this.inventory.latestEventLog(id);
+  }
+
+  /**
    * Poll one command.
    *
    * An EVENT_LOG_QUERY result contains log contents, so this is gated on the

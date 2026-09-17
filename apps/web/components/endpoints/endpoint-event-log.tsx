@@ -167,6 +167,19 @@ export function EndpointEventLog({
     },
   });
 
+  // Whatever was last asked of this machine, so the tab opens with content
+  // instead of a blank form. Only consulted until this session makes its own
+  // request, at which point `commandId` takes over.
+  const { data: previous } = useQuery({
+    queryKey: ['endpoint-event-log-latest', endpointId],
+    queryFn: () =>
+      endpointsApi.latestEventLog(endpointId).then(
+        (r) => (r.data?.data ?? null) as CommandRow | null,
+      ),
+    enabled: !commandId,
+    staleTime: 30_000,
+  });
+
   const { data: command } = useQuery({
     queryKey: ['endpoint-command', endpointId, commandId],
     queryFn: () =>
@@ -183,8 +196,13 @@ export function EndpointEventLog({
     },
   });
 
-  const waiting = command?.status === 'PENDING' || command?.status === 'DISPATCHED';
-  const events = command?.status === 'SUCCEEDED' ? command.result?.events ?? [] : [];
+  // This session's request wins; otherwise fall back to the stored one.
+  const shown = command ?? previous ?? null;
+  const waiting = shown?.status === 'PENDING' || shown?.status === 'DISPATCHED';
+  const events = shown?.status === 'SUCCEEDED' ? shown.result?.events ?? [] : [];
+  // A result nobody on this screen asked for gets said so, rather than
+  // implying the Fetch button produced it.
+  const isHistoric = !command && !!previous;
 
   function toggleLevel(values: readonly number[]) {
     setLevels((cur) =>
@@ -313,13 +331,13 @@ export function EndpointEventLog({
         </CardContent>
       </Card>
 
-      {command && (
+      {shown && (
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <CardTitle className="text-sm">
-                {command.params?.logName ?? 'Event'} log
-                {command.status === 'SUCCEEDED' && (
+                {shown.params?.logName ?? 'Event'} log
+                {shown.status === 'SUCCEEDED' && (
                   <span className="text-muted-foreground font-normal">
                     {' '}
                     — {events.length} event{events.length === 1 ? '' : 's'}
@@ -328,46 +346,52 @@ export function EndpointEventLog({
               </CardTitle>
               <Badge
                 variant={
-                  command.status === 'SUCCEEDED' ? 'secondary'
-                  : command.status === 'FAILED' || command.status === 'EXPIRED' ? 'destructive'
+                  shown.status === 'SUCCEEDED' ? 'secondary'
+                  : shown.status === 'FAILED' || shown.status === 'EXPIRED' ? 'destructive'
                   : 'outline'
                 }
                 className="text-xs"
               >
-                {command.status === 'PENDING' ? 'Queued'
-                  : command.status === 'DISPATCHED' ? 'Collecting'
-                  : command.status === 'SUCCEEDED' ? 'Done'
-                  : command.status === 'EXPIRED' ? 'Expired'
+                {shown.status === 'PENDING' ? 'Queued'
+                  : shown.status === 'DISPATCHED' ? 'Collecting'
+                  : shown.status === 'SUCCEEDED' ? 'Done'
+                  : shown.status === 'EXPIRED' ? 'Expired'
                   : 'Failed'}
               </Badge>
             </div>
           </CardHeader>
           <CardContent>
+            {isHistoric && shown.status === 'SUCCEEDED' && (
+              <p className="text-xs text-muted-foreground mb-3">
+                Collected {formatDate(shown.completedAt ?? shown.createdAt)} — from an
+                earlier request. Fetch again for current entries.
+              </p>
+            )}
             {waiting && (
               <p className="text-sm text-muted-foreground py-4 text-center">
-                Requested {formatDate(command.createdAt)}. This page updates itself when
+                Requested {formatDate(shown.createdAt)}. This page updates itself when
                 the computer answers.
               </p>
             )}
 
-            {(command.status === 'FAILED' || command.status === 'EXPIRED') && (
+            {(shown.status === 'FAILED' || shown.status === 'EXPIRED') && (
               <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
                 <AlertTriangle className="h-4 w-4 shrink-0 text-destructive mt-0.5" />
                 <div>
                   <div className="font-medium">
-                    {command.status === 'EXPIRED'
+                    {shown.status === 'EXPIRED'
                       ? 'The computer never picked this up'
                       : 'The computer could not read that log'}
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5 break-words">
-                    {command.error ??
+                    {shown.error ??
                       'It did not check in before the request expired. Try again when it is online.'}
                   </p>
                 </div>
               </div>
             )}
 
-            {command.status === 'SUCCEEDED' && events.length === 0 && (
+            {shown.status === 'SUCCEEDED' && events.length === 0 && (
               <p className="text-sm text-muted-foreground py-4 text-center">
                 No events matched. Nothing was logged at those levels in that window —
                 on a healthy machine that is the usual answer for Critical over an hour.

@@ -23,7 +23,7 @@ capture — see [Regenerating these](#regenerating-these).
 |---|---|
 | [Overview and dashboards](#overview-and-dashboards) | The operator's landing view and the customer list |
 | [Visual insights and monitoring](#visual-insights-and-monitoring) | Client map, live sessions, history, audit, host health |
-| [Device inventory](#device-inventory) | Every computer, per business and per person |
+| [Device inventory](#device-inventory) | Every computer, its collected specs and its event log |
 | [Everyday workflows](#everyday-workflows) | Enrolling a device, downloads, Quick Connect |
 | [Access and administration](#access-and-administration) | The three-level model, capabilities, accounts |
 | [Configuration](#configuration) | Platform settings, branding, releases, documentation |
@@ -130,6 +130,31 @@ Scoped to a single customer — the view you use when they phone up.
 <a href="images/github/device-detail-light.png"><img src="images/github/device-detail-light.png" alt="A single computer's detail page in light theme showing its platform, operating system version, status and connection controls."></a>
 
 One machine: what it is, what it runs, and the controls to connect to it.
+
+### Device specs — dark
+<a href="images/github/device-specs-dark.png"><img src="images/github/device-specs-dark.png" alt="The collected-inventory cards on a computer's page in dark theme: System with OS build and architecture, Session showing nobody at the console and six hours of uptime, Hardware with an HP EliteBook 840 G9 and its Core i7 and BIOS version, Memory and Storage with usage bars, Network with adapter and address, and an Updates card showing two pending Windows updates beside the Rem0te agent and RustDesk client versions."></a>
+
+What a managed computer reports about itself, collected by its agent on a
+heartbeat rather than fetched live — so every card says how old its contents
+are. Hardware, storage and network come in every six hours, pending Windows
+updates every twelve, and who is signed in on every beat.
+
+Three separate things can be out of date here — the Rem0te agent, the RustDesk
+client, and the machine's own Windows updates — so each is named rather than
+merged into one "up to date" claim.
+
+### Event log — dark
+<a href="images/github/device-event-log-dark.png"><img src="images/github/device-event-log-dark.png" alt="The Event Log tab on a computer's page in dark theme, with selectors for log, time range and event count, level chips for Critical, Error, Warning and Information, an optional source filter, and a table of returned System log entries with timestamps, level badges, event IDs, providers and messages."></a>
+
+Read a page of a managed computer's Windows event log without connecting to it.
+Five logs are available — Application, System, Security, Setup and Windows
+PowerShell — and nothing else: the allowlist is enforced by the API and again
+by the agent that opens the log.
+
+There is no channel to reach into an endpoint, so this is a request rather than
+a query: it is collected on the machine's next heartbeat, up to about three
+minutes away. Reading logs is its own permission, separate from viewing the
+computer, and every request is audited with the log, the window and who asked.
 
 ### My Computers — dark
 <a href="images/github/my-computers-dark.png"><img src="images/github/my-computers-dark.png" alt="The My Computers page in dark theme, showing only the machines the signed-in user has been granted access to, each with a Connect button."></a>

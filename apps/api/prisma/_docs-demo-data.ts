@@ -18,7 +18,9 @@
  */
 import { PrismaClient, ActivityAction, SessionStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
-import { randomBytes, createCipheriv } from 'crypto';
+import { randomBytes, createCipheriv, createHash } from 'crypto';
+import { readFileSync } from 'fs';
+import * as path from 'path';
 
 const prisma = new PrismaClient();
 
@@ -35,6 +37,118 @@ function encrypt(text: string) {
 }
 
 const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
+
+/**
+ * Hardware profiles for the inventory the agent would have collected.
+ *
+ * Seeded because the device page is mostly inventory now, and without it every
+ * screenshot of it shows "Specs have not been collected yet" over rows of
+ * dashes — a gallery advertising the feature as empty. Chosen to vary: a
+ * workstation, two business laptops, a Mac, a Linux server, a near-full disk
+ * and a machine waiting on a restart, so the usage bars and the amber states
+ * appear at all.
+ *
+ * All fictional, like everything else here. Serials are obviously synthetic.
+ */
+type HwProfile = {
+  manufacturer: string; model: string; chassisType: string;
+  biosVersion: string; cpuModel: string; cpuCores: number; cpuThreads: number;
+  cpuMhz: number; memoryTotalMb: number; memoryFreeMb: number;
+  diskTotalGb: number; diskFreeGb: number;
+  gpu: string; resolution: string;
+  pendingUpdates: number; rebootRequired: boolean;
+  user: string | null;
+  uptimeSeconds: number;
+};
+
+const HW_PROFILES: HwProfile[] = [
+  {
+    manufacturer: 'Dell Inc.', model: 'OptiPlex 7090', chassisType: 'Mini Tower',
+    biosVersion: '1.21.0', cpuModel: 'Intel(R) Core(TM) i7-11700 @ 2.50GHz',
+    cpuCores: 8, cpuThreads: 16, cpuMhz: 2496, memoryTotalMb: 32768, memoryFreeMb: 18944,
+    diskTotalGb: 953, diskFreeGb: 412, gpu: 'Intel(R) UHD Graphics 750', resolution: '2560x1440',
+    pendingUpdates: 0, rebootRequired: false, user: 'a.patel', uptimeSeconds: 4 * 86400 + 7 * 3600,
+  },
+  {
+    manufacturer: 'LENOVO', model: 'ThinkPad T14 Gen 3', chassisType: 'Notebook',
+    biosVersion: 'N3AET82W (1.62)', cpuModel: 'Intel(R) Core(TM) i5-1245U @ 1.60GHz',
+    cpuCores: 10, cpuThreads: 12, cpuMhz: 1600, memoryTotalMb: 16384, memoryFreeMb: 5120,
+    diskTotalGb: 476, diskFreeGb: 38, gpu: 'Intel(R) Iris(R) Xe Graphics', resolution: '1920x1200',
+    pendingUpdates: 7, rebootRequired: true, user: 'j.okafor', uptimeSeconds: 19 * 86400,
+  },
+  {
+    manufacturer: 'HP', model: 'EliteBook 840 G9', chassisType: 'Notebook',
+    biosVersion: 'U70 Ver. 01.12.01', cpuModel: 'Intel(R) Core(TM) i7-1265U @ 1.80GHz',
+    cpuCores: 10, cpuThreads: 12, cpuMhz: 1800, memoryTotalMb: 16384, memoryFreeMb: 9216,
+    diskTotalGb: 476, diskFreeGb: 201, gpu: 'Intel(R) Iris(R) Xe Graphics', resolution: '1920x1080',
+    pendingUpdates: 2, rebootRequired: false, user: null, uptimeSeconds: 6 * 3600 + 40 * 60,
+  },
+  {
+    manufacturer: 'Apple Inc.', model: 'MacBook Pro (14-inch, M2 Pro)', chassisType: 'Notebook',
+    biosVersion: '10151.61.4', cpuModel: 'Apple M2 Pro',
+    cpuCores: 10, cpuThreads: 10, cpuMhz: 3504, memoryTotalMb: 16384, memoryFreeMb: 4608,
+    diskTotalGb: 994, diskFreeGb: 612, gpu: 'Apple M2 Pro (16-core GPU)', resolution: '3024x1964',
+    pendingUpdates: 1, rebootRequired: false, user: 'r.castellanos', uptimeSeconds: 2 * 86400 + 3 * 3600,
+  },
+  {
+    manufacturer: 'Supermicro', model: 'SYS-510P-M', chassisType: 'Rack Mount',
+    biosVersion: '1.4b', cpuModel: 'Intel(R) Xeon(R) Silver 4310 @ 2.10GHz',
+    cpuCores: 12, cpuThreads: 24, cpuMhz: 2100, memoryTotalMb: 65536, memoryFreeMb: 41984,
+    diskTotalGb: 1863, diskFreeGb: 1204, gpu: 'ASPEED Graphics Family', resolution: '1024x768',
+    pendingUpdates: 0, rebootRequired: false, user: null, uptimeSeconds: 141 * 86400,
+  },
+  {
+    manufacturer: 'Dell Inc.', model: 'Latitude 5540', chassisType: 'Notebook',
+    biosVersion: '1.9.2', cpuModel: 'Intel(R) Core(TM) i5-1345U @ 1.60GHz',
+    cpuCores: 10, cpuThreads: 12, cpuMhz: 1600, memoryTotalMb: 16384, memoryFreeMb: 7424,
+    diskTotalGb: 476, diskFreeGb: 22, gpu: 'Intel(R) Iris(R) Xe Graphics', resolution: '1920x1080',
+    pendingUpdates: 12, rebootRequired: false, user: 's.whitfield', uptimeSeconds: 31 * 86400,
+  },
+];
+
+/**
+ * Sample System-log entries. Real Windows event IDs and providers with
+ * plausible messages — an event log full of invented ids would look wrong to
+ * anyone who reads these for a living.
+ */
+const DEMO_EVENTS: { id: number; level: number; provider: string; message: string }[] = [
+  { id: 7000, level: 2, provider: 'Service Control Manager',
+    message: 'The Print Spooler service failed to start due to the following error: The service did not respond to the start or control request in a timely fashion.' },
+  { id: 41, level: 1, provider: 'Microsoft-Windows-Kernel-Power',
+    message: 'The system has rebooted without cleanly shutting down first. This error could be caused if the system stopped responding, crashed, or lost power unexpectedly.' },
+  { id: 7031, level: 2, provider: 'Service Control Manager',
+    message: 'The Windows Update service terminated unexpectedly. It has done this 2 time(s). The following corrective action will be taken in 60000 milliseconds: Restart the service.' },
+  { id: 1014, level: 3, provider: 'Microsoft-Windows-DNS-Client',
+    message: 'Name resolution for the name update.internal.example.com timed out after none of the configured DNS servers responded.' },
+  { id: 129, level: 3, provider: 'storahci',
+    message: 'Reset to device, \\Device\\RaidPort0, was issued.' },
+  { id: 6008, level: 2, provider: 'EventLog',
+    message: 'The previous system shutdown at 3:42:11 AM was unexpected.' },
+  { id: 219, level: 3, provider: 'Microsoft-Windows-Kernel-PnP',
+    message: 'The driver \\Driver\\WudfRd failed to load for the device USB\\VID_0BDA&PID_8153.' },
+  { id: 10016, level: 3, provider: 'Microsoft-Windows-DistributedCOM',
+    message: 'The application-specific permission settings do not grant Local Activation permission for the COM Server application with CLSID {2593F8B9-4EAF-457C-B68A-50F6B8EA6B54}.' },
+  { id: 36874, level: 2, provider: 'Schannel',
+    message: 'An TLS 1.3 connection request was received from a remote client application, but none of the cipher suites supported by the client application are supported by the server.' },
+  { id: 1001, level: 3, provider: 'Microsoft-Windows-WER-SystemErrorReporting',
+    message: 'The computer has rebooted from a bugcheck. The bugcheck was: 0x0000009f (0x0000000000000003).' },
+];
+
+/** Plausible pending-update titles, drawn on in order. */
+const UPDATE_TITLES: { title: string; kb: string; severity: string; sizeBytes: number }[] = [
+  { title: '2026-09 Cumulative Update for Windows 10 Version 22H2 for x64-based Systems', kb: 'KB5041580', severity: 'Important', sizeBytes: 812_000_000 },
+  { title: 'Security Intelligence Update for Microsoft Defender Antivirus', kb: 'KB2267602', severity: 'Critical', sizeBytes: 118_000_000 },
+  { title: '2026-09 .NET Framework 3.5 and 4.8.1 Cumulative Update for Windows 10 Version 22H2', kb: 'KB5041938', severity: 'Important', sizeBytes: 74_600_000 },
+  { title: 'Windows Malicious Software Removal Tool x64 — September 2026', kb: 'KB890830', severity: 'Moderate', sizeBytes: 62_300_000 },
+  { title: 'Intel Corporation — System — 10.1.19.4 driver update', kb: '', severity: 'Low', sizeBytes: 3_900_000 },
+  { title: '2026-08 Servicing Stack Update for Windows 10 Version 22H2 for x64-based Systems', kb: 'KB5041948', severity: 'Important', sizeBytes: 15_400_000 },
+  { title: 'Realtek Semiconductor Corp. — Audio — 6.0.9612.1 driver update', kb: '', severity: 'Low', sizeBytes: 11_200_000 },
+  { title: '2026-09 Update for Windows 10 Version 22H2 for x64-based Systems', kb: 'KB5042099', severity: 'Moderate', sizeBytes: 28_700_000 },
+  { title: 'Microsoft Edge — Stable Channel Update 129.0.2792.52', kb: '', severity: 'Important', sizeBytes: 168_000_000 },
+  { title: 'NVIDIA — Display — 32.0.15.6094 driver update', kb: '', severity: 'Low', sizeBytes: 421_000_000 },
+  { title: '2026-07 Cumulative Update Preview for .NET Framework 4.8.1', kb: 'KB5041082', severity: 'Low', sizeBytes: 48_100_000 },
+  { title: 'Windows Security platform definition update', kb: 'KB5007651', severity: 'Moderate', sizeBytes: 9_800_000 },
+];
 const ago = (ms: number) => new Date(Date.now() - ms);
 
 type OS = 'Windows' | 'macOS' | 'Linux';
@@ -49,6 +163,44 @@ const OS_VERSIONS: Record<OS, string> = {
   macOS: 'macOS 15.1 (24B83)',
   Linux: 'Ubuntu 24.04.1 LTS',
 };
+
+/**
+ * The friendlier OS strings the inventory pass collects.
+ *
+ * `osVersion` above is what the heartbeat reports — a raw
+ * `OSVersion.VersionString`. The inventory collects `Win32_OperatingSystem`'s
+ * caption and build separately, which is why the device page can show
+ * "Windows 11 Pro / 26100" where the endpoint list shows the NT string.
+ */
+const OS_CAPTIONS: Record<OS, string> = {
+  Windows: 'Microsoft Windows 11 Pro',
+  macOS: 'macOS Sequoia 15.1',
+  Linux: 'Ubuntu 24.04.1 LTS',
+};
+
+const OS_BUILDS: Record<OS, string> = {
+  Windows: '26100',
+  macOS: '24B83',
+  Linux: '6.8.0-45-generic',
+};
+
+/**
+ * The agent version the demo machines report.
+ *
+ * Read from version.json rather than hardcoded: the Overview tab compares the
+ * reported agent against this server's version and flags a mismatch, so a
+ * literal here would make every screenshot show the whole demo estate running
+ * an outdated agent one release after it was written.
+ */
+const DEMO_AGENT_VERSION: string = (() => {
+  try {
+    const file = process.env.VERSION_FILE
+      ?? path.join(__dirname, '..', '..', '..', 'version.json');
+    return (JSON.parse(readFileSync(file, 'utf8')) as { version?: string }).version ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+})();
 
 /** Verified against the deployed GeoIP database; each places in the named city. */
 const REMOTE = {
@@ -240,6 +392,9 @@ async function main() {
           // OFFLINE hides it from the totals entirely.
           status: 'ACTIVE',
           isManaged: true, isOnline: m.online, lastSeenAt: seen,
+          // Matches version.json, or the Overview tab flags every demo machine
+          // as running an outdated agent beside the specs it just collected.
+          agentVersion: DEMO_AGENT_VERSION,
           ipAddress: m.ip ?? b.ip,
           createdAt: ago((40 + idx * 3) * DAY),
         },
@@ -251,11 +406,114 @@ async function main() {
           rustdeskId: String(100000000 + idx * 7654321).slice(0, 9),
           hostname: m.name.toLowerCase(), platform: m.os, version: m.ver,
           lastSeenAt: seen, permanentPassword: encrypt('demo-' + randomBytes(9).toString('hex')),
+          // Bound, like a machine whose installer has actually run.
+          //
+          // Without this the device page showed "This computer cannot report
+          // its specs yet — it enrolled before per-device secrets existed"
+          // directly above a full set of collected specs: a contradiction, and
+          // a state production cannot reach, because inventory is only ever
+          // written for a heartbeat that authenticated. The hash is of a
+          // random value that is then thrown away — no demo machine can
+          // authenticate anywhere, and nothing here is reachable.
+          agentSecretHash: createHash('sha256')
+            .update(randomBytes(32).toString('base64url')).digest('hex'),
+          agentSecretSetAt: ago((40 + idx * 3) * DAY),
         },
       });
       await prisma.computerAccess.create({
         data: { tenantId: tenant.id, endpointId: ep.id, userId: tech.id, grantedBy: owner.id },
       });
+
+      // A completed event-log query, so the Event Log tab has something to
+      // show. The tab falls back to the last stored query for the machine, so
+      // this is what a technician returning to the page would see.
+      // Every online Windows machine, not a sample: the capture script picks
+      // whichever online endpoint it finds first, so seeding a subset meant
+      // the Event Log screenshot landed on a machine with no stored query and
+      // photographed an empty form.
+      if (m.online && m.os === 'Windows') {
+        await prisma.endpointCommand.create({
+          data: {
+            endpointId: ep.id, tenantId: tenant.id, customerId: customer.id,
+            type: 'EVENT_LOG_QUERY', status: 'SUCCEEDED',
+            requestedById: tech.id,
+            params: { logName: 'System', levels: [1, 2, 3], maxEvents: 50, sinceHours: 24, providerName: null },
+            result: { events: DEMO_EVENTS.map((e, i) => ({
+              timeCreated: ago((18 + idx * 7 + i * 47) * MIN).toISOString(),
+              eventId: e.id, level: e.level,
+              levelName: e.level === 1 ? 'Critical' : e.level === 2 ? 'Error' : e.level === 3 ? 'Warning' : 'Information',
+              provider: e.provider, message: e.message,
+            })) },
+            createdAt: ago(26 * MIN), dispatchedAt: ago(24 * MIN), completedAt: ago(23 * MIN),
+            dispatchCount: 1,
+            expiresAt: ago(-4 * MIN),
+          },
+        });
+      }
+
+      // The inventory the agent would have reported. Only for machines that
+      // are online or were recently: an endpoint that has been dark for days
+      // having freshly-collected specs is the kind of detail that makes a
+      // screenshot quietly wrong.
+      if (m.mins < 6 * 60) {
+        const hw = HW_PROFILES[idx % HW_PROFILES.length];
+        const gb = (n: number) => n * 1024 * 1024 * 1024;
+        const pending = UPDATE_TITLES.slice(0, hw.pendingUpdates).map((u) => ({
+          title: u.title,
+          kb: u.kb || null,
+          severity: u.severity,
+          sizeBytes: u.sizeBytes,
+        }));
+        await prisma.endpointInventory.create({
+          data: {
+            endpointId: ep.id,
+            manufacturer: hw.manufacturer, model: hw.model, chassisType: hw.chassisType,
+            // Synthetic, and obviously so.
+            serialNumber: `DEMO-${String(idx).padStart(4, '0')}-${m.os.slice(0, 3).toUpperCase()}`,
+            biosVersion: hw.biosVersion, biosDate: ago((900 + idx * 11) * DAY),
+            osCaption: OS_CAPTIONS[m.os], osBuild: OS_BUILDS[m.os], osArch: '64-bit',
+            osInstalledAt: ago((420 + idx * 9) * DAY),
+            // Derived from the machine's own name prefix, which is the
+            // business code. A fixed domain here put NORTHWIND\\ on a Cascade
+            // Accounting machine — the kind of detail a reader spots
+            // immediately and that makes a whole gallery look invented.
+            domain: m.os === 'Windows'
+              ? (idx % 3 === 0 ? 'WORKGROUP' : `${m.name.split('-')[0].toLowerCase()}.local`)
+              : 'local',
+            timezone: 'Pacific Standard Time',
+            cpuModel: hw.cpuModel, cpuCores: hw.cpuCores,
+            cpuThreads: hw.cpuThreads, cpuMhz: hw.cpuMhz,
+            memoryTotalMb: hw.memoryTotalMb, memoryFreeMb: hw.memoryFreeMb,
+            disks: [{
+              drive: m.os === 'Windows' ? 'C:' : '/',
+              label: m.os === 'Windows' ? 'OS' : 'root',
+              fsType: m.os === 'Windows' ? 'NTFS' : m.os === 'macOS' ? 'APFS' : 'ext4',
+              totalBytes: gb(hw.diskTotalGb), freeBytes: gb(hw.diskFreeGb),
+            }],
+            gpus: [{ name: hw.gpu, driverVersion: '31.0.101.4502', resolution: hw.resolution }],
+            networks: [{
+              name: m.os === 'Windows' ? 'Intel(R) Ethernet Connection I219-LM' : 'en0',
+              mac: `00:1A:2B:${String(idx % 100).padStart(2, '0')}:C3:D4`,
+              // Private ranges carry nothing and are left as themselves; the
+              // masking pass only rewrites public addresses.
+              ipv4: `192.168.${10 + (idx % 6)}.${20 + (idx % 60)}`,
+              gateway: `192.168.${10 + (idx % 6)}.1`, dhcp: true,
+            }],
+            // Qualified with the machine's own business code, so the account
+            // shown belongs to the company that owns the computer.
+            loggedOnUser: m.online && hw.user
+              ? (m.os === 'Windows' ? `${m.name.split('-')[0]}\\${hw.user}` : hw.user)
+              : null,
+            lastBootAt: ago(hw.uptimeSeconds * 1000),
+            uptimeSeconds: hw.uptimeSeconds,
+            pendingUpdates: pending,
+            pendingUpdateCount: pending.length,
+            rebootRequired: hw.rebootRequired,
+            updatesCheckedAt: ago((20 + (idx % 5) * 37) * MIN),
+            collectedAt: ago((4 + (idx % 7) * 3) * MIN),
+          },
+        });
+      }
       activity.push({
         customerId: customer.id, actorId: owner.id, action: ActivityAction.ENDPOINT_ENROLLED,
         resource: 'Endpoint', resourceId: ep.id, actorIp: b.ip,

@@ -5,6 +5,65 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.16.0] — 2026-09-17 · *Caliper*
+
+### Added
+
+- **The Event Log tab shows the last query run against a computer.** The
+  command id lived in React state, so a result was only ever visible to the
+  browser that requested it: navigating away and back presented an empty form
+  as though nothing had ever been asked, and there was no way to see the query
+  a colleague ran an hour ago. `GET /endpoints/:id/event-log/latest` returns
+  the most recent `EVENT_LOG_QUERY` for the endpoint, results included, and the
+  tab falls back to it until this session makes its own request. A stored
+  result is labelled with when it was collected rather than presented as
+  though the Fetch button had just produced it.
+
+  Gated on `computers:event_logs`, the same capability as making the request —
+  it returns log contents, so putting it behind `computers:view` would have
+  meant the capability controlled who could ask but not who could read the
+  answer.
+
+### Changed
+
+- **The documentation gallery is regenerated, and the demo data now includes
+  inventory.** The device page is mostly collected inventory since v0.14.0, and
+  the demo seed had none — so every screenshot of it showed "Specs have not
+  been collected yet" over rows of dashes. A gallery advertising the feature as
+  empty is worse than no screenshot.
+
+  `prisma/_docs-demo-data.ts` seeds hardware profiles across the demo estate:
+  a workstation, business laptops, a Mac, a rack server, a near-full disk and a
+  machine waiting on a restart, so the usage bars and the amber states appear
+  at all rather than every card reading healthy. Plus pending Windows updates
+  with real KB numbers and a completed event-log query per online Windows
+  machine, with genuine event IDs and providers — an event log full of invented
+  ids looks wrong to anyone who reads these for a living.
+
+  Two details that were wrong on the first pass and are worth recording:
+  the logged-on account carried a hardcoded `NORTHWIND\` domain, which put it
+  on a Cascade Accounting machine; both the domain and the account are now
+  derived from the machine's own name prefix. And the event-log query was
+  seeded on a sample of machines while the capture script picks whichever
+  online endpoint it finds first — so the screenshot landed on a machine with
+  no stored query and photographed an empty form.
+
+- **`device-detail-light` was cropping the device page at 660px**, which cut it
+  off at the Assignment card — above everything the page is now for. Raised,
+  and joined by `device-specs-dark` (the collected-inventory grid) and
+  `device-event-log-dark`.
+
+  The specs shot is taken as an **element** screenshot rather than a clip: a
+  clip is bounded by the viewport and that grid is taller than one, so the
+  first attempt stopped halfway through the Hardware card, mid-row, which reads
+  as a rendering fault rather than a crop.
+
+### Notes for operators
+
+- No schema change.
+
+---
+
 ## [0.15.0] — 2026-09-17 · *Ratchet*
 
 ### Added

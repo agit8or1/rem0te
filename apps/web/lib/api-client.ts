@@ -114,6 +114,9 @@ export const endpointsApi = {
     id: string,
     query: { logName: string; levels?: number[]; maxEvents?: number; sinceHours?: number; providerName?: string },
   ) => api.post(`/endpoints/${id}/event-log`, query),
+  // The last query run against this computer, whoever ran it — so the tab
+  // shows what was already fetched rather than an empty form.
+  latestEventLog: (id: string) => api.get(`/endpoints/${id}/event-log/latest`),
   // Polled while a request is outstanding.
   command: (id: string, commandId: string) => api.get(`/endpoints/${id}/commands/${commandId}`),
   addAlias: (id: string, alias: string) => api.post(`/endpoints/${id}/aliases`, { alias }),
