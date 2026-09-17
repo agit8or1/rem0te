@@ -1,264 +1,291 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { dashboardApi } from '@/lib/api-client';
-import { PageHeader } from '@/components/common/page-header';
+import { dashboardApi, adminApi } from '@/lib/api-client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import {
-  Monitor,
-  PlayCircle,
-  Building2,
-  Activity,
-  Users,
-  WifiOff,
-  Clock,
-  AlertCircle,
+  Monitor, PlayCircle, Building2, Activity, WifiOff, Clock, ArrowDownUp, Radio,
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
-import { SessionStatusBadge } from '@/components/sessions/session-status-badge';
+import { usePermissions } from '@/lib/auth';
+import { MeterGauge, Sparkline, rate, size } from '@/components/common/gauge';
 import { ClientMap } from '@/components/dashboard/client-map';
 import Link from 'next/link';
 
+/**
+ * The operator's landing view, built to fit one screen without scrolling.
+ *
+ * That constraint is the whole design. The previous layout ran eight tall stat
+ * cards over two rows, then a map, then two full-height panels, then an
+ * activity list — about two and a half screens, so the map and everything
+ * under it were only ever seen by someone who scrolled. Nothing was removed to
+ * fix it; the density changed. Tiles are one line of figures instead of three,
+ * and the lower half is a fixed-height row whose panels scroll internally
+ * rather than growing the page.
+ *
+ * `lg:h-screen lg:overflow-hidden` on the page, with the lower row as the only
+ * flex-grow child, is what makes it end at the fold. Both are deliberately
+ * `lg:`-only: on a phone a fixed-height row of stacked panels is unreadable,
+ * and vertical scrolling is the right answer there.
+ */
 export default function DashboardPage() {
+  const { isPlatformAdmin } = usePermissions();
+
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => dashboardApi.stats().then((r) => r.data?.data),
     refetchInterval: 30_000,
   });
 
+  /**
+   * Host health, Platform Admin only.
+   *
+   * This is the platform operator's own server — its CPU, memory, disk and
+   * link. A Business Owner has no business seeing how full the disk on shared
+   * infrastructure is, which is why /admin/status is admin-gated and why this
+   * query is disabled rather than merely hidden: not requesting it is the
+   * difference between hiding a tile and not fetching the data.
+   *
+   * Polled faster than the rest of the page because it is the part that
+   * actually moves second to second.
+   */
+  const { data: host } = useQuery({
+    queryKey: ['admin-status'],
+    queryFn: () => adminApi.status().then((r) => r.data?.data as HostStatus | undefined),
+    enabled: isPlatformAdmin,
+    refetchInterval: 5_000,
+  });
+
   const onlinePercent = data?.endpoints?.onlinePercent ?? 0;
   const offlineCount = data?.endpoints?.offline ?? 0;
+  const net = host?.network;
 
   return (
-    <div className="p-6 space-y-6">
-      <PageHeader title="Dashboard" description="Overview of your environment" />
+    <div className="p-4 lg:p-6 space-y-3 lg:h-screen lg:overflow-hidden flex flex-col">
+      <div className="flex items-baseline justify-between gap-4 shrink-0">
+        <h1 className="text-xl font-semibold">Dashboard</h1>
+        <p className="text-xs text-muted-foreground">
+          {data?.scope === 'business' ? 'Your business' : 'Every business'} · refreshes automatically
+        </p>
+      </div>
 
       {isLoading ? (
         <div className="text-muted-foreground text-sm">Loading…</div>
       ) : (
         <>
-          {/* KPI Cards — Row 1 */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <Link href="/endpoints">
-              <StatCard
-                title="Total Computers"
-                value={data?.endpoints?.total ?? 0}
-                sub={`${data?.endpoints?.online ?? 0} online`}
-                icon={<Monitor className="h-4 w-4 text-muted-foreground" />}
-                accent={onlinePercent === 100 ? 'green' : offlineCount > 0 ? 'yellow' : undefined}
-              />
-            </Link>
-            <Link href="/endpoints">
-              <StatCard
-                title="Offline Computers"
-                value={offlineCount}
-                sub={`${onlinePercent}% availability`}
-                icon={<WifiOff className="h-4 w-4 text-muted-foreground" />}
-                accent={offlineCount > 0 ? 'red' : 'green'}
-              />
-            </Link>
-            <Link href="/sessions">
-              <StatCard
-                title="Active Sessions"
-                value={data?.sessions?.active ?? 0}
-                sub="right now"
-                icon={<PlayCircle className="h-4 w-4 text-muted-foreground" />}
-                accent={data?.sessions?.active ? 'blue' : undefined}
-              />
-            </Link>
-            <Link href="/sessions">
-              <StatCard
-                title="Sessions (30d)"
-                value={data?.sessions?.last30Days ?? 0}
-                sub="last 30 days"
-                icon={<Activity className="h-4 w-4 text-muted-foreground" />}
-              />
-            </Link>
+          {/* Estate. Six figures on one row — the old layout spent two rows and
+              most of a screen on eight. */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 shrink-0">
+            <Tile href="/endpoints" label="Computers" value={data?.endpoints?.total ?? 0}
+              sub={`${data?.endpoints?.online ?? 0} online`} icon={Monitor}
+              accent={offlineCount > 0 ? 'yellow' : 'green'} />
+            <Tile href="/endpoints" label="Offline" value={offlineCount}
+              sub={`${onlinePercent}% up`} icon={WifiOff}
+              accent={offlineCount > 0 ? 'red' : 'green'} />
+            <Tile href="/sessions" label="Launched" value={data?.sessions?.active ?? 0}
+              sub="not yet closed" icon={PlayCircle}
+              accent={data?.sessions?.active ? 'blue' : undefined} />
+            {/* Sessions actually moving traffic through this server's relay.
+                Admin-only, because it is a property of the platform host. */}
+            {isPlatformAdmin && (
+              <Tile label="In use now" value={host?.relay?.sessions ?? 0}
+                sub="relayed both ways" icon={Radio}
+                accent={host?.relay?.sessions ? 'green' : undefined}
+                title={
+                  'Sessions currently relaying traffic through this server, counted from ' +
+                  'paired connections on the relay port. RustDesk prefers a direct ' +
+                  'peer-to-peer connection, and a session that went direct does not pass ' +
+                  'through here — so this counts relayed sessions, not every session.'
+                } />
+            )}
+            <Tile href="/sessions" label="Sessions 7d" value={data?.sessions?.last7Days ?? 0}
+              sub="last week" icon={Clock} />
+            <Tile href="/sessions" label="Sessions 30d" value={data?.sessions?.last30Days ?? 0}
+              sub="last month" icon={Activity} />
+            {!isPlatformAdmin && (
+              <Tile href="/businesses" label="Businesses" value={data?.businesses?.total ?? 0}
+                sub="active" icon={Building2} />
+            )}
           </div>
 
-          {/* KPI Cards — Row 2 */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <Link href="/businesses">
-              <StatCard
-                title="Businesses"
-                value={data?.businesses?.total ?? 0}
-                sub="active"
-                icon={<Building2 className="h-4 w-4 text-muted-foreground" />}
-              />
-            </Link>
-            <Link href="/users">
-              <StatCard
-                title="Users"
-                value={data?.users?.total ?? 0}
-                sub="active accounts"
-                icon={<Users className="h-4 w-4 text-muted-foreground" />}
-              />
-            </Link>
-            <Link href="/sessions">
-              <StatCard
-                title="Sessions (7d)"
-                value={data?.sessions?.last7Days ?? 0}
-                sub="last 7 days"
-                icon={<Clock className="h-4 w-4 text-muted-foreground" />}
-              />
-            </Link>
-            <Link href="/sessions">
-              <StatCard
-                title="Pending Sessions"
-                value={data?.sessions?.pending ?? 0}
-                sub="awaiting action"
-                icon={<AlertCircle className="h-4 w-4 text-muted-foreground" />}
-                accent={(data?.sessions?.pending ?? 0) > 0 ? 'yellow' : undefined}
-              />
-            </Link>
-          </div>
+          {/* Host health. One card of gauges rather than four tiles, because
+              they are read together — "is this server coping" is one question. */}
+          {isPlatformAdmin && (
+            <Card className="shrink-0">
+              <CardContent className="py-3">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3">
+                  <MeterGauge
+                    label="CPU"
+                    percent={host?.cpu?.percent ?? null}
+                    detail={
+                      host?.cpu
+                        ? `${host.cpu.count} cores · load ${host.cpu.loadAvg.map((l) => l.toFixed(2)).join(' / ')}`
+                        : undefined
+                    }
+                    unknown="sampling…"
+                  />
+                  <MeterGauge
+                    label="Memory"
+                    percent={host?.memory?.percent ?? null}
+                    detail={host?.memory ? `${size(host.memory.used)} of ${size(host.memory.total)}` : undefined}
+                    unknown="sampling…"
+                  />
+                  <MeterGauge
+                    label="Disk"
+                    percent={host?.disk?.percent ?? null}
+                    detail={host?.disk ? `${size(host.disk.free)} free of ${size(host.disk.total)}` : undefined}
+                    unknown="sampling…"
+                  />
+                  <div className="space-y-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-xs text-muted-foreground flex items-center gap-1">
+                        <ArrowDownUp className="h-3 w-3" /> Bandwidth
+                      </span>
+                      <span className="text-sm font-semibold tabular-nums">
+                        {rate(net?.rxBytesPerSec)}
+                      </span>
+                    </div>
+                    <Sparkline values={(net?.history ?? []).map((h) => h.rx + h.tx)} height={22} />
+                    <div className="text-[11px] text-muted-foreground tabular-nums">
+                      ↓ {rate(net?.rxBytesPerSec)} · ↑ {rate(net?.txBytesPerSec)}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
-          {/* Where the computers are. Scoped server-side to what this person may
-              see, so a Business User's map is not their business's map. */}
-          <ClientMap />
+          {/* The lower half: map, recent sessions, seven-day shape. Bounded on
+              desktop so the page ends at the fold; each panel scrolls itself. */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 lg:flex-1 lg:min-h-0">
+            {/* Carries its own header and its located / unlocatable counts, so
+                it is placed directly rather than wrapped in a second card. */}
+            <div className="lg:col-span-2 lg:min-h-0">
+              <ClientMap embedded />
+            </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Recent Sessions */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Recent Sessions</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {data?.sessions?.recent?.length ? (
-                  <div className="divide-y">
-                    {data.sessions.recent.map((s: Record<string, unknown>) => (
-                      <div key={s.id as string} className="py-3 flex items-center justify-between gap-4">
-                        <div>
-                          <p className="text-sm font-medium">
+            <div className="flex flex-col gap-3 lg:min-h-0">
+              <Card className="flex flex-col lg:flex-1 lg:min-h-0 overflow-hidden">
+                <CardHeader className="py-2 shrink-0">
+                  <CardTitle className="text-sm">Recent sessions</CardTitle>
+                </CardHeader>
+                <CardContent className="pt-0 overflow-y-auto">
+                  {data?.sessions?.recent?.length ? (
+                    <div className="divide-y">
+                      {(data.sessions.recent as Record<string, unknown>[]).slice(0, 6).map((s) => (
+                        <div key={s.id as string} className="py-1.5">
+                          <p className="text-xs font-medium truncate">
                             {(s.endpoint as { name?: string } | null)?.name ??
-                              (s.adHocRustdeskId as string) ??
-                              'Ad-hoc'}
+                              (s.adHocRustdeskId as string) ?? 'Ad-hoc'}
                           </p>
-                          <p className="text-xs text-muted-foreground">
+                          <p className="text-[11px] text-muted-foreground truncate">
                             {(s.technician as { email?: string } | null)?.email} ·{' '}
                             {formatDate(s.createdAt as string)}
                           </p>
                         </div>
-                        <SessionStatusBadge status={s.status as string} />
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">No sessions yet.</p>
-                )}
-              </CardContent>
-            </Card>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No sessions yet.</p>
+                  )}
+                </CardContent>
+              </Card>
 
-            {/* Sessions by day */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Sessions — Last 7 Days</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {data?.activity?.sessionsByDay?.length ? (
-                  <div className="space-y-2">
-                    {(data.activity.sessionsByDay as Array<{ date: string; count: number }>).map(
-                      (row) => {
+              <Card className="shrink-0">
+                <CardHeader className="py-2">
+                  <CardTitle className="text-sm">Sessions — last 7 days</CardTitle>
+                </CardHeader>
+                <CardContent className="pt-0 pb-3">
+                  {data?.activity?.sessionsByDay?.length ? (
+                    <div className="flex items-end gap-1 h-16">
+                      {(data.activity.sessionsByDay as { date: string; count: number }[]).map((row) => {
                         const max = Math.max(
                           1,
-                          ...((data.activity.sessionsByDay as Array<{ count: number }>) ?? []).map(
-                            (r) => r.count,
-                          ),
+                          ...(data.activity.sessionsByDay as { count: number }[]).map((r) => r.count),
                         );
-                        const pct = Math.round((row.count / max) * 100);
                         return (
-                          <div key={row.date} className="flex items-center gap-3">
-                            <span className="text-xs text-muted-foreground w-20 shrink-0">
-                              {new Date(row.date).toLocaleDateString(undefined, {
-                                month: 'short',
-                                day: 'numeric',
-                              })}
-                            </span>
-                            <div className="flex-1 bg-muted rounded-full h-2">
+                          <div key={row.date} className="flex-1 flex flex-col items-center gap-1 min-w-0">
+                            <div className="w-full bg-muted rounded-sm flex items-end flex-1">
                               <div
-                                className="bg-primary rounded-full h-2 transition-all"
-                                style={{ width: `${pct}%` }}
+                                className="w-full bg-primary rounded-sm transition-all"
+                                style={{ height: `${Math.max(4, (row.count / max) * 100)}%` }}
+                                title={`${row.count} on ${row.date}`}
                               />
                             </div>
-                            <span className="text-xs font-medium w-6 text-right">{row.count}</span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {new Date(row.date).toLocaleDateString(undefined, { weekday: 'narrow' })}
+                            </span>
                           </div>
                         );
-                      },
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">No session data yet.</p>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Recent Activity — compact */}
-          {data?.activity?.recent?.length ? (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">Recent Activity</CardTitle>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <div className="space-y-0.5">
-                  {(data.activity.recent as Record<string, unknown>[]).slice(0, 8).map(
-                    (log: Record<string, unknown>) => (
-                      <div key={log.id as string} className="flex items-center gap-2 py-1 text-xs">
-                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">
-                          {(log.action as string).replace(/_/g, ' ')}
-                        </Badge>
-                        <span className="text-muted-foreground truncate flex-1">
-                          {(log.actor as { email?: string } | null)?.email ?? 'System'}
-                        </span>
-                        <span className="text-muted-foreground/70 shrink-0">
-                          {formatDate(log.createdAt as string)}
-                        </span>
-                      </div>
-                    ),
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No session data yet.</p>
                   )}
-                </div>
-              </CardContent>
-            </Card>
-          ) : null}
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         </>
       )}
     </div>
   );
 }
 
+interface HostStatus {
+  memory?: { total: number; used: number; free: number; percent: number };
+  cpu?: { count: number; loadAvg: [number, number, number]; percent?: number };
+  disk?: { total: number; used: number; free: number; percent: number };
+  network?: {
+    rxBytesPerSec: number; txBytesPerSec: number;
+    history: { rx: number; tx: number; cpu: number }[];
+    sampleSeconds: number;
+  };
+  relay?: { port: number; connections: number; sessions: number };
+}
+
 type Accent = 'green' | 'red' | 'yellow' | 'blue';
 
-function StatCard({
-  title,
-  value,
-  sub,
-  icon,
-  accent,
+/**
+ * One figure, one line of context, one row tall.
+ *
+ * Deliberately not the old StatCard, which spent a padded header, a 2xl
+ * numeral and a sub-line on each of eight tiles — over half the viewport
+ * before anything else was drawn.
+ */
+function Tile({
+  label, value, sub, icon: Icon, accent, href, title,
 }: {
-  title: string;
+  label: string;
   value: number;
   sub: string;
-  icon: React.ReactNode;
+  icon: React.ComponentType<{ className?: string }>;
   accent?: Accent;
+  href?: string;
+  title?: string;
 }) {
-  const accentClasses: Record<Accent, string> = {
-    green: 'border-l-4 border-l-green-500',
-    red: 'border-l-4 border-l-red-500',
-    yellow: 'border-l-4 border-l-yellow-500',
-    blue: 'border-l-4 border-l-blue-500',
+  const accents: Record<Accent, string> = {
+    green: 'border-l-green-500',
+    red: 'border-l-red-500',
+    yellow: 'border-l-yellow-500',
+    blue: 'border-l-blue-500',
   };
-
-  return (
-    <Card className={`transition-colors hover:bg-muted/40 cursor-pointer${accent ? ` ${accentClasses[accent]}` : ''}`}>
-      <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        {icon}
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-bold">{value.toLocaleString()}</div>
-        <p className="text-xs text-muted-foreground mt-1">{sub}</p>
+  const body = (
+    <Card
+      title={title}
+      className={`h-full transition-colors ${href ? 'hover:bg-muted/40 cursor-pointer' : ''}${
+        accent ? ` border-l-4 ${accents[accent]}` : ''
+      }`}
+    >
+      <CardContent className="p-3">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] text-muted-foreground truncate">{label}</span>
+          <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        </div>
+        <div className="text-xl font-bold leading-tight tabular-nums">{value.toLocaleString()}</div>
+        <p className="text-[11px] text-muted-foreground truncate">{sub}</p>
       </CardContent>
     </Card>
   );
+  return href ? <Link href={href} className="block h-full">{body}</Link> : body;
 }

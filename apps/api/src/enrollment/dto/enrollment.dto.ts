@@ -1,6 +1,6 @@
 import {
   IsArray, IsBoolean, IsEnum, IsInt, IsIP, IsISO8601, IsObject,
-  IsOptional, IsString, Length, Matches, Min,
+  IsOptional, IsString, Length, Matches, Max, Min,
 } from 'class-validator';
 
 export enum EndpointAccessMode {
@@ -98,6 +98,15 @@ export class HeartbeatDto {
   @IsOptional()
   @IsISO8601()
   lastBootAt?: string;
+
+  // Live resource sample. Sent every beat so the device page's gauges are
+  // minutes old rather than hours; the slower inventory pass still carries
+  // the full per-disk list and everything that does not move.
+  @IsOptional() @IsInt() @Min(0) @Max(100) cpuLoadPercent?: number;
+  @IsOptional() @IsInt() @Min(0) memoryTotalMb?: number;
+  @IsOptional() @IsInt() @Min(0) memoryFreeMb?: number;
+  @IsOptional() @IsInt() @Min(0) systemDiskTotalMb?: number;
+  @IsOptional() @IsInt() @Min(0) systemDiskFreeMb?: number;
 }
 
 /**

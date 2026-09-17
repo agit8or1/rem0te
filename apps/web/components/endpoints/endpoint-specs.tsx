@@ -8,9 +8,10 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
+import { MeterGauge } from '@/components/common/gauge';
 import {
   Cpu, HardDrive, MemoryStick, Network, PackageCheck, RefreshCw,
-  User, Server, AlertTriangle, ChevronDown, ChevronRight, Info, Download,
+  User, Server, AlertTriangle, ChevronDown, ChevronRight, Info, Download, Gauge,
 } from 'lucide-react';
 
 /**
@@ -48,6 +49,8 @@ export interface Inventory {
   memoryTotalMb: number | null; memoryFreeMb: number | null;
   disks: Disk[] | null; gpus: Gpu[] | null; networks: Nic[] | null;
   loggedOnUser: string | null; lastBootAt: string | null; uptimeSeconds: number | null;
+  cpuLoadPercent: number | null; liveSampledAt: string | null;
+  systemDiskTotalMb: number | null; systemDiskFreeMb: number | null;
   pendingUpdates: PendingUpdate[] | null; pendingUpdateCount: number | null;
   rebootRequired: boolean | null; updatesCheckedAt: string | null;
   collectedAt: string | null;
@@ -360,6 +363,8 @@ export function EndpointSpecs({
 
   const memTotal = inv?.memoryTotalMb ?? null;
   const memFree = inv?.memoryFreeMb ?? null;
+  const sysDiskTotal = inv?.systemDiskTotalMb ?? null;
+  const sysDiskFree = inv?.systemDiskFreeMb ?? null;
 
   return (
     <div className="space-y-4">
@@ -427,6 +432,51 @@ export function EndpointSpecs({
           </Button>
         </div>
       </div>
+
+      {/* Resources first. It is what someone opens this page to see, and it is
+          the only part of it that is minutes rather than hours old. */}
+      <SectionCard
+        title="Resources"
+        icon={Gauge}
+        aside={
+          <span className="text-[11px] text-muted-foreground">
+            {inv?.liveSampledAt ? `sampled ${ago(inv.liveSampledAt)}` : 'not sampled yet'}
+          </span>
+        }
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
+          <MeterGauge
+            label="CPU"
+            percent={inv?.cpuLoadPercent ?? null}
+            detail={inv?.cpuCores ? `${inv.cpuCores} cores · ${inv.cpuThreads ?? '?'} threads` : undefined}
+            unknown={agentOutdated ? 'Needs a newer agent' : 'Awaiting first sample'}
+          />
+          <MeterGauge
+            label="Memory"
+            percent={memTotal && memFree !== null ? ((memTotal - memFree) / memTotal) * 100 : null}
+            detail={
+              memTotal && memFree !== null
+                ? `${mb(memTotal - memFree)} of ${mb(memTotal)}`
+                : undefined
+            }
+            unknown={agentOutdated ? 'Needs a newer agent' : 'Awaiting first sample'}
+          />
+          <MeterGauge
+            label="System disk"
+            percent={
+              sysDiskTotal && sysDiskFree !== null
+                ? ((sysDiskTotal - sysDiskFree) / sysDiskTotal) * 100
+                : null
+            }
+            detail={
+              sysDiskTotal && sysDiskFree !== null
+                ? `${mb(sysDiskFree)} free of ${mb(sysDiskTotal)}`
+                : undefined
+            }
+            unknown={agentOutdated ? 'Needs a newer agent' : 'Awaiting first sample'}
+          />
+        </div>
+      </SectionCard>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <SectionCard title="System" icon={Server}>
@@ -519,10 +569,12 @@ export function EndpointSpecs({
               </Row>
               <Row label="Available">{mb(memFree)}</Row>
               <Row label="Installed">{mb(memTotal)}</Row>
-              {/* Free memory is a snapshot from the moment of collection, not a
-                  live reading — saying so stops it being read as current. */}
+              {/* Memory now arrives on every heartbeat, not with the six-hourly
+                  pass, so this reads minutes old rather than hours. The
+                  Resources card above is the live view; this card is the
+                  installed-capacity detail. */}
               <p className="text-[11px] text-muted-foreground pt-1">
-                Free memory is as of {inv?.collectedAt ? ago(inv.collectedAt) : 'the last pass'}.
+                Free memory as of {inv?.liveSampledAt ? ago(inv.liveSampledAt) : 'the last sample'}.
               </p>
             </>
           ) : (

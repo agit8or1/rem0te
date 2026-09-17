@@ -774,11 +774,23 @@ model EndpointInventory {
   gpus     Json?
   networks Json?
 
-  // Live session state. Cheap to collect, so the heartbeat sends these every
-  // three minutes rather than waiting for a full inventory pass.
-  loggedOnUser  String?
-  lastBootAt    DateTime?
-  uptimeSeconds Int?
+  // Live session state and resource sample. Cheap to collect, so the heartbeat
+  // sends these every three minutes rather than waiting for a full inventory
+  // pass.
+  //
+  // `memoryTotalMb` / `memoryFreeMb` above are written from here too, not only
+  // by the inventory pass: a memory gauge reading six hours stale is worse than
+  // no gauge, because it looks current. `liveSampledAt` is when this set was
+  // taken, and it is deliberately separate from `collectedAt` — the two move
+  // on completely different cadences and one timestamp for both would let the
+  // UI claim a freshness it does not have.
+  loggedOnUser      String?
+  lastBootAt        DateTime?
+  uptimeSeconds     Int?
+  cpuLoadPercent    Int?
+  systemDiskTotalMb Int?
+  systemDiskFreeMb  Int?
+  liveSampledAt     DateTime?
 
   // Windows Update. Querying the update agent takes tens of seconds and hits
   // the network, so it runs on its own slow cadence and keeps its own

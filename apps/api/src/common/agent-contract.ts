@@ -23,8 +23,9 @@
  *   0.14.0  inventory, update scan, event-log query, command queue   (+188)
  *   0.15.0  reports its own version; handles reinstallAgent           (+44)
  *   0.16.x  no agent change                                            (0)
+ *   0.17.0  CPU load, live memory and system-disk free space
  */
-export const AGENT_CONTRACT_VERSION = '0.15.0';
+export const AGENT_CONTRACT_VERSION = '0.17.0';
 
 /**
  * Numeric-segment version compare; tolerates junk by treating it as 0.

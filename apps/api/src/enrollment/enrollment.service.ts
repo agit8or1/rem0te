@@ -361,6 +361,8 @@ export class EnrollmentService {
     agentVersion?: string; rustdeskVersion?: string; ipAddress?: string;
     password?: string; agentSecret?: string;
     loggedOnUser?: string; uptimeSeconds?: number; lastBootAt?: string;
+    cpuLoadPercent?: number; memoryTotalMb?: number; memoryFreeMb?: number;
+    systemDiskTotalMb?: number; systemDiskFreeMb?: number;
   }) {
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { rustdeskId: dto.rustdeskId },
@@ -563,6 +565,11 @@ export class EnrollmentService {
           loggedOnUser: dto.loggedOnUser,
           uptimeSeconds: dto.uptimeSeconds,
           lastBootAt: dto.lastBootAt,
+          cpuLoadPercent: dto.cpuLoadPercent,
+          memoryTotalMb: dto.memoryTotalMb,
+          memoryFreeMb: dto.memoryFreeMb,
+          systemDiskTotalMb: dto.systemDiskTotalMb,
+          systemDiskFreeMb: dto.systemDiskFreeMb,
         });
         commands = await this.inventory.collectForHeartbeat(node.endpointId);
       } catch (e) {

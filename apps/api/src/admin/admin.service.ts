@@ -4,6 +4,7 @@ import * as os from 'os';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
+import { HostMetricsService } from './host-metrics.service';
 import { CAP } from '../rbac/capabilities';
 
 @Injectable()
@@ -12,6 +13,7 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly acl: AccessControlService,
+    private readonly hostMetrics: HostMetricsService,
   ) {}
 
   async getStatus(actor: ActorContext) {
@@ -29,6 +31,11 @@ export class AdminService {
       this.getServiceStatuses(),
     ]);
 
+    // Live rates and relay usage, from the sampler. `cpu.percent` is real
+    // utilisation; `loadAvg` is kept beside it because they answer different
+    // questions and neither substitutes for the other.
+    const live = this.hostMetrics.snapshot();
+
     return {
       uptime: Math.floor(os.uptime()),
       platform: `${os.type()} ${os.release()}`,
@@ -40,9 +47,12 @@ export class AdminService {
         percent: memPercent,
       },
       cpu: {
-        loadAvg: os.loadavg() as [number, number, number],
-        count: os.cpus().length,
+        loadAvg: live.cpu.loadAvg,
+        count: live.cpu.cores,
+        percent: live.cpu.percent,
       },
+      network: live.network,
+      relay: live.relay,
       disk,
       services,
     };

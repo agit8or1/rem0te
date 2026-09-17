@@ -141,6 +141,30 @@ See [connecting.md](connecting.md).
 
 ---
 
+## Host metrics and what "in use" can mean
+
+The dashboard's host row — CPU, memory, disk, bandwidth — is `HostMetricsService`
+reading `/proc/stat`, `/proc/net/dev` and `/proc/net/tcp` on a two-second timer.
+No subprocess and no privilege: the API has fixed-command sudo grants for a
+couple of operations, and this needed none of them.
+
+Both throughput and CPU utilisation are **rates**, and those files hold
+monotonic counters — a single read says nothing about the current rate, which is
+why a timer samples and each request reads the last computed value. CPU
+utilisation is reported alongside `loadavg` rather than instead of it: load
+average counts uninterruptible-sleep tasks, so a host blocked on disk shows a
+load of 8 at 2% CPU.
+
+**"Sessions in use" is relay-only, and that is a hard limit, not an omission.**
+It counts paired established connections on the relay port, because a relayed
+session holds one from each side. RustDesk prefers a direct peer-to-peer
+connection and only falls back to the relay when hole-punching fails, so a
+direct session never passes through this host and cannot be observed from it —
+the API hands out a credential and never touches the session again. Any number
+presented as "sessions in progress" would read low; the tile says *relayed*.
+
+---
+
 ## Two meanings of "online"
 
 | Signal | Owner | Lifetime |

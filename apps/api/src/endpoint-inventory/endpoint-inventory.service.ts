@@ -156,7 +156,11 @@ export class EndpointInventoryService {
    */
   async recordLiveState(
     endpointId: string,
-    report: { loggedOnUser?: unknown; uptimeSeconds?: unknown; lastBootAt?: unknown },
+    report: {
+      loggedOnUser?: unknown; uptimeSeconds?: unknown; lastBootAt?: unknown;
+      cpuLoadPercent?: unknown; memoryTotalMb?: unknown; memoryFreeMb?: unknown;
+      systemDiskTotalMb?: unknown; systemDiskFreeMb?: unknown;
+    },
   ): Promise<void> {
     // An empty string is meaningful: it is how the agent says "nobody is
     // logged on", and it has to clear a previous user rather than leave a name
@@ -169,9 +173,20 @@ export class EndpointInventoryService {
       loggedOnUser: signedOut ? null : str(report.loggedOnUser, 128),
       uptimeSeconds: int(report.uptimeSeconds, 0, 60 * 60 * 24 * 3650),
       lastBootAt: date(report.lastBootAt),
+      cpuLoadPercent: int(report.cpuLoadPercent, 0, 100),
+      // Also written by the inventory pass. Whichever arrives last wins, which
+      // is what we want: this one arrives every three minutes and that one
+      // every six hours.
+      memoryTotalMb: int(report.memoryTotalMb, 0, 64 * 1024 * 1024),
+      memoryFreeMb: int(report.memoryFreeMb, 0, 64 * 1024 * 1024),
+      systemDiskTotalMb: int(report.systemDiskTotalMb, 0, 1024 * 1024 * 1024),
+      systemDiskFreeMb: int(report.systemDiskFreeMb, 0, 1024 * 1024 * 1024),
     };
     if (Object.values(data).every((v) => v === undefined)) return;
 
+    // Stamped only when something in the sample actually arrived, so the UI
+    // can say how old the gauges are without ever overstating it.
+    data.liveSampledAt = new Date();
     await this.upsert(endpointId, data);
   }
 

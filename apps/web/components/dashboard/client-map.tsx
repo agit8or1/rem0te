@@ -95,7 +95,12 @@ function parseBasemap(geo: { countries?: RawCountry[]; states?: RawState[] }): B
   };
 }
 
-export function ClientMap({ businessId }: { businessId?: string }) {
+/**
+ * `embedded` makes the map fill its container instead of standing at a fixed
+ * 300px. The dashboard places it in a flexible row that has to end at the fold,
+ * and a fixed height there either leaves a gap or overflows the viewport.
+ */
+export function ClientMap({ businessId, embedded }: { businessId?: string; embedded?: boolean }) {
   const [coarse, setCoarse] = useState<Basemap | null>(null);
   const [detail, setDetail] = useState<Basemap | null>(null);
   const detailAsked = useRef(false);
@@ -134,6 +139,10 @@ export function ClientMap({ businessId }: { businessId?: string }) {
   }, [isLoading, data]);
 
   const points = useMemo(() => data?.points ?? [], [data]);
+
+  // min-h keeps an embedded map usable inside a short container; without it a
+  // squeezed flex row can collapse the projection to a few pixels.
+  const mapH = embedded ? 'h-full min-h-[200px]' : 'h-[300px]';
 
   // Where the fleet is, in world units. A handful of machines in one city on a
   // whole-world projection is three invisible pixels, so this is the default
@@ -312,8 +321,8 @@ export function ClientMap({ businessId }: { businessId?: string }) {
   const rOf = (n: number) => (4.5 + (Math.sqrt(n) / Math.sqrt(maxTotal)) * 4) * scale;
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
+    <Card className={embedded ? 'h-full flex flex-col' : undefined}>
+      <CardHeader className={embedded ? 'pb-2 shrink-0' : 'pb-2'}>
         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
           <Globe className="h-4 w-4" />
           Client Locations
@@ -332,13 +341,13 @@ export function ClientMap({ businessId }: { businessId?: string }) {
           </span>
         </CardTitle>
       </CardHeader>
-      <CardContent className="pt-0">
+      <CardContent className={embedded ? 'pt-0 flex-1 min-h-0' : 'pt-0'}>
         {isLoading ? (
-          <div className="h-[300px] flex items-center justify-center text-sm text-muted-foreground">
+          <div className={`${mapH} flex items-center justify-center text-sm text-muted-foreground`}>
             Loading map…
           </div>
         ) : points.length === 0 ? (
-          <div className="h-[300px] flex flex-col items-center justify-center gap-1 text-sm text-muted-foreground">
+          <div className={`${mapH} flex flex-col items-center justify-center gap-1 text-sm text-muted-foreground`}>
             <span>No computers could be located yet.</span>
             <span className="text-xs max-w-md text-center">
               Locations come from the address a computer checks in from. Machines on private
@@ -349,7 +358,7 @@ export function ClientMap({ businessId }: { businessId?: string }) {
           <>
             <div
               ref={wrapRef}
-              className="relative w-full h-[300px] overflow-hidden rounded-lg border border-slate-300 dark:border-slate-700 bg-[#a8cbe6] dark:bg-[#0b1f38] select-none"
+              className={`relative w-full ${mapH} overflow-hidden rounded-lg border border-slate-300 dark:border-slate-700 bg-[#a8cbe6] dark:bg-[#0b1f38] select-none`}
               style={{ cursor: drag.current ? 'grabbing' : 'grab' }}
               onWheel={onWheel}
               onMouseDown={onDown}

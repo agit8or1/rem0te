@@ -51,7 +51,7 @@ rather than merging them.
 
 | What | Cadence | Cost on the endpoint |
 |---|---|---|
-| Signed-in user, uptime, last boot | **Every heartbeat** (~3 min) | Two CIM queries |
+| Signed-in user, uptime, last boot, **CPU load, free memory, free system-disk space** | **Every heartbeat** (~3 min) | Three CIM queries |
 | Full specs — CPU, memory, disks, GPUs, adapters, BIOS, chassis, serial | **Every 6 hours**, or on request | A handful of CIM queries |
 | Windows Update pending patches | **Every 12 hours**, or on request | Tens of seconds, and network |
 
@@ -61,8 +61,16 @@ is why it is a separate command on its own slow cadence rather than part of the
 inventory pass. Its timestamp is separate too: *Collected 4m ago* on the
 Overview tab does **not** mean the update list was re-checked then.
 
-Everything is a **snapshot**, not a live reading. Free memory and free disk
-space are true as of the collection, and the cards say when that was.
+The Resources card at the top of the Overview tab — CPU, memory and system
+disk — is fed by the per-heartbeat sample and carries its own timestamp,
+`liveSampledAt`. That is separate from `collectedAt` on purpose: one moves
+every three minutes and the other every six hours, and one timestamp for both
+would let a gauge claim a freshness it does not have.
+
+Everything here is still a **snapshot**, not a live feed — a gauge on that card
+is minutes old, not seconds — and every card says when its contents were taken.
+The one genuinely live view in Rem0te is the host health row on the dashboard,
+which describes this server rather than an endpoint.
 
 ---
 

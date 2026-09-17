@@ -701,6 +701,36 @@ try {
         \$body['lastBootAt'] = \$os0.LastBootUpTime.ToUniversalTime().ToString('o')
         \$body['uptimeSeconds'] = [int]((Get-Date) - \$os0.LastBootUpTime).TotalSeconds
     }
+    # Memory every beat, not only on the six-hourly inventory pass. A gauge
+    # reading six hours stale is worse than no gauge, because it looks current.
+    # Both values are already on this object - they cost nothing extra here.
+    if (\$os0.TotalVisibleMemorySize) { \$body['memoryTotalMb'] = [int]([math]::Round(([double]\$os0.TotalVisibleMemorySize) / 1024)) }
+    if (\$os0.FreePhysicalMemory) { \$body['memoryFreeMb'] = [int]([math]::Round(([double]\$os0.FreePhysicalMemory) / 1024)) }
+} catch {}
+# Processor load. LoadPercentage is a short sample the CIM provider maintains,
+# so this is a property read rather than a counter this script has to time.
+# Averaged across sockets, because a two-socket box reports one figure each.
+try {
+    \$loads = @()
+    foreach (\$cp in (Get-CimInstance Win32_Processor -ErrorAction Stop)) {
+        if (\$null -ne \$cp.LoadPercentage) { \$loads += [int]\$cp.LoadPercentage }
+    }
+    if (\$loads.Count -gt 0) {
+        \$sum = 0
+        foreach (\$l in \$loads) { \$sum += \$l }
+        \$body['cpuLoadPercent'] = [int]([math]::Round(\$sum / \$loads.Count))
+    }
+} catch {}
+# Free space on the system volume, for the same reason as memory above. Only
+# the volume Windows booted from; the full per-disk list stays on the slower
+# inventory pass, where capacity that never changes belongs.
+try {
+    \$sysDrive = \$env:SystemDrive
+    \$ld = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='\$sysDrive'" -ErrorAction Stop
+    if (\$ld -and \$ld.Size) {
+        \$body['systemDiskTotalMb'] = [int]([math]::Round(([double]\$ld.Size) / 1048576))
+        \$body['systemDiskFreeMb'] = [int]([math]::Round(([double]\$ld.FreeSpace) / 1048576))
+    }
 } catch {}
 \$body = \$body | ConvertTo-Json -Compress
 \$resp = \$null

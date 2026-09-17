@@ -5,6 +5,111 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.17.0] — 2026-09-17 · *Dial*
+
+### Added
+
+- **Resource gauges on a computer's Overview tab — CPU, memory and system
+  disk.** Memory and disk were already on the page but came from the six-hourly
+  inventory pass, which is fine as a spec ("16 GB installed") and wrong as a
+  gauge: a needle pointing at a six-hour-old reading looks current and is not.
+  CPU load was not collected at all, only the processor's model and clock.
+
+  These now arrive on **every heartbeat**, alongside the signed-in user, and
+  carry their own `liveSampledAt` timestamp — deliberately separate from
+  `collectedAt`, because one moves every three minutes and the other every six
+  hours, and a single column for both would let the card claim a freshness it
+  does not have. The Resources card sits at the top of the tab and says how old
+  its sample is.
+
+  Collection is cheap by design: memory comes off the `Win32_OperatingSystem`
+  object the heartbeat already reads for uptime, so it costs nothing extra, and
+  CPU load is a property read of `LoadPercentage` rather than a counter the
+  script has to time itself. It is averaged across sockets, because a
+  two-socket box reports one figure per socket.
+
+- **Host health on the dashboard — CPU, memory, disk and a live bandwidth
+  gauge**, Platform Admin only. These describe the platform operator's own
+  server, so the query is *disabled* for anyone else rather than merely hidden:
+  not requesting it is the difference between hiding a tile and not fetching
+  the data.
+
+  Bandwidth is new work. `/proc/net/dev` holds monotonic counters, and one read
+  of a counter says nothing about a rate, so `HostMetricsService` samples every
+  two seconds and keeps a one-minute history for the sparkline. Loopback is
+  excluded — the API talks to Postgres, Redis and the web process over it, and
+  on a quiet server Rem0te's own internal chatter would be most of the graph —
+  as are bridges and veth pairs, which would count container traffic twice. A
+  negative delta is treated as a counter wrap, not as negative traffic.
+
+  CPU is now real utilisation from `/proc/stat`, reported **alongside** load
+  average rather than instead of it. They answer different questions and
+  neither substitutes for the other: load average counts uninterruptible-sleep
+  tasks, so a box blocked on disk shows a load of 8 at 2% CPU, and it is scaled
+  by core count, so the same figure means different things on different hosts.
+
+  All of it is read from `/proc` with no subprocess and no privilege. The API
+  has fixed-command sudo grants for a couple of operations; this needed none of
+  them, so it got none.
+
+- **An "In use now" tile — sessions actually relaying traffic through this
+  server.** Counted from paired established connections on the relay port,
+  since a relayed session holds one connection from each side. Verified against
+  the live host while building it: two connections, one session.
+
+  **It undercounts, and the tile says so.** RustDesk prefers a direct
+  peer-to-peer connection and only falls back to the relay when hole-punching
+  fails, so a session that went direct never passes through this host and
+  cannot be seen from it — Rem0te hands out a credential and never touches the
+  session again. The tile is labelled *relayed both ways* and its tooltip
+  states the limit, rather than presenting a number that quietly reads low as
+  though it were the whole truth.
+
+### Changed
+
+- **The dashboard fits one screen.** It ran eight tall stat cards over two
+  rows, then the map, then two full-height panels, then an activity list —
+  about two and a half screens, so the map and everything below it were only
+  ever seen by someone who scrolled. Nothing was removed: the density changed.
+  Tiles are one line of figures instead of a padded header, a 2xl numeral and a
+  sub-line; the lower half is a bounded row whose panels scroll internally
+  rather than growing the page.
+
+  `lg:h-screen lg:overflow-hidden` is what ends the page at the fold, and it is
+  `lg:`-only on purpose — on a phone a fixed-height row of stacked panels is
+  unreadable and scrolling is the right answer.
+
+  The **Active Sessions** tile is relabelled **Launched / not yet closed**. It
+  counts rows Rem0te opened and has not closed, which is not the same as a live
+  connection, and the old label implied otherwise — the new relay tile is the
+  one that means "in use".
+
+- `ClientMap` takes an `embedded` prop so it fills its container instead of
+  standing at a fixed 300px, which in a flexible row either left a gap or
+  overflowed the viewport.
+
+- One gauge component serves both the dashboard and the device page. The
+  thresholds at which a number stops being trivia and starts being the reason
+  for the ticket — amber at 80%, red at 92%, where a Windows volume starts
+  failing updates and pagefile growth — are the same whether the disk belongs
+  to this server or a customer's laptop, and two implementations would drift on
+  the first change to either.
+
+### Notes for operators
+
+- **Schema change** — four nullable columns on `EndpointInventory`
+  (`cpuLoadPercent`, `systemDiskTotalMb`, `systemDiskFreeMb`, `liveSampledAt`).
+  Migration `0016_endpoint_live_resources`. Additive.
+
+- **`AGENT_CONTRACT_VERSION` moves to 0.17.0**, because this release genuinely
+  changes the agent — the first time it has moved since 0.15.0. Endpoints on an
+  older agent will show "Needs a newer agent" in the Resources card and keep
+  working in every other respect; *Reinstall agent* on the computer's Overview
+  tab is the fix, and it is now a truthful prompt rather than the noise it was
+  before 0.16.2.
+
+---
+
 ## [0.16.2] — 2026-09-17 · *Caliper*
 
 ### Fixed
