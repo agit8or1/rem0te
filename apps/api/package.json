@@ -51,11 +51,11 @@
     "@types/node": "^26",
     "@types/passport-jwt": "^4.0.1",
     "@types/qrcode": "^1.5.5",
-    "eslint": "^10.10.0",
+    "eslint": "^9.39.5",
     "eslint-plugin-security": "^4.0.1",
     "prisma": "^5.14.0",
     "ts-node": "^10.9.2",
-    "typescript": "^7.0.2",
+    "typescript": "^5.4.5",
     "typescript-eslint": "^8.70.0"
   },
   "prisma": {

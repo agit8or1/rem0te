@@ -19,6 +19,6 @@
     "deploy:manifest": "node scripts/make-prod-manifest.mjs"
   },
   "devDependencies": {
-    "typescript": "^7"
+    "typescript": "^5"
   }
 }
