@@ -5,6 +5,81 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.8] — 2026-09-18 · *Handshake*
+
+### Changed
+
+- **The security overrides have one home, and the toolchain that reads it is
+  pinned.** They were duplicated in `package.json`'s `pnpm.overrides` and in
+  `pnpm-workspace.yaml`, and the duplication was not redundancy — it was
+  load-bearing in two different places. pnpm <=10 reads the first and ignores
+  the second; pnpm >=11 does the reverse. **CI pinned pnpm 11 while this
+  checkout ran pnpm 10.32.0**, and nothing pinned the toolchain, so both copies
+  were live for different people and could drift without anything failing.
+
+  CI had already started saying so on every run:
+
+  ```
+  [WARN] The "pnpm" field in package.json is no longer read by pnpm.
+         The following keys were ignored: "pnpm.onlyBuiltDependencies",
+         "pnpm.overrides".
+  ```
+
+  Deleting the "dead" copy first would have been the wrong order: it is only
+  dead in CI. Locally it was the *only* copy being read, and removing it would
+  have silently dropped 22 advisory overrides and all 8 build allowances from
+  every developer install — including the esbuild window that keeps the Tauri
+  launcher compiling.
+
+  So `packageManager: "pnpm@11.27.0"` and `engines.pnpm: ">=11"` came first, and
+  then the mirror went. Verified rather than assumed: both copies were compared
+  key by key and proven identical before collapsing them, and a clean install on
+  the pinned pnpm reproduces every pin from `pnpm-workspace.yaml` alone —
+  esbuild 0.27.2 (inside `>=0.25.0 <0.27.3`), lodash 4.18.1, brace-expansion
+  5.0.9, picomatch 4.0.7, qs 6.16.0, sharp 0.35.4 — with the argon2 and Prisma
+  native builds running and `pnpm-lock.yaml` unchanged.
+
+- **Three new security invariants**, because the two facts hold each other up:
+
+  ```
+  packageManager pins pnpm 11 or newer
+  security overrides are not mirrored back into package.json
+  pnpm-workspace.yaml still carries the overrides and build allowances
+  ```
+
+  Removing the pin makes every local install lose the overrides, so the check
+  refuses that combination rather than trusting anyone to remember why the pin
+  is there. Each one was temporarily broken and confirmed to fail for its own
+  reason before being restored — an unproven guard is decoration.
+
+  `.github/dependabot.yml` gains the consequence worth knowing: **Dependabot
+  does not read `pnpm-workspace.yaml`**, so it cannot see these pins, and a PR
+  bumping a package constrained there changes nothing in the install while
+  looking like it did something.
+
+- **The pnpm version is declared once too.** `ci.yml` pinned `version: 11` on
+  both `pnpm/action-setup` steps, and adding `packageManager` made that a hard
+  failure rather than a duplicate:
+
+  ```
+  Error: Multiple versions of pnpm specified
+  Remove one of these versions to avoid ERR_PNPM_BAD_PM_VERSION
+  ```
+
+  Caught by CI on the pull request, which is the first thing the new branch
+  protection was good for. The `version:` lines are gone and action-setup reads
+  `packageManager` — so the toolchain version now has a single home, the same
+  way the pins it reads do.
+
+### Notes for operators
+
+- The first `pnpm install` in an existing checkout **purges `node_modules`**,
+  because pnpm 11 will not reuse a tree pnpm 10 built. Expect one slow install;
+  it took 34.5s here. Without a TTY it refuses instead, with
+  `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` — set `CI=true` for that case.
+
+---
+
 ## [0.18.7] — 2026-09-18 · *Handshake*
 
 ### Fixed

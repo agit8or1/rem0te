@@ -3,8 +3,21 @@ packages:
   - 'packages/*'
 
 # Security overrides for transitive dependencies carrying advisories.
-# Duplicated in package.json's pnpm.overrides: pnpm <=10 reads that field,
-# pnpm >=11 reads this file and ignores it. Keep the two in sync.
+#
+# THIS FILE IS THE ONLY HOME FOR THEM. They used to be duplicated in
+# package.json's `pnpm.overrides`, because pnpm <=10 reads that field and
+# pnpm >=11 reads this one — CI ran 11, developers ran 10, and both copies were
+# load-bearing in different places. Keeping two hand-maintained lists of
+# security pins in sync is a bet nobody wins, so `package.json` now pins
+# `packageManager: pnpm@11.x` and the mirror is gone.
+#
+# If you find yourself adding an override to package.json, the toolchain pin has
+# been removed or bypassed — fix that instead.
+#
+# Note for anyone reviewing a Dependabot PR: Dependabot does not read this file.
+# It cannot see, update or even mention these pins, so a PR that bumps a package
+# constrained here changes nothing in the install until the range below is
+# widened by hand.
 overrides:
   # Scoped to the 7+ line only. The advisory covers >=7.0.0 <8.18.0, so ajv 6 is
   # unaffected — and @eslint/eslintrc pins ajv ^6.14.0, so a blanket override
@@ -47,9 +60,14 @@ overrides:
   # Next 15 pulls sharp for image optimization; <0.35 inherits libvips CVEs.
   'sharp': '>=0.35.0'
 
-# Packages allowed to run install scripts. pnpm <=10 reads onlyBuiltDependencies
-# from package.json; pnpm >=11 reads allowBuilds here. argon2 and prisma compile
-# native binaries, esbuild and sharp fetch platform binaries.
+# Packages allowed to run install scripts. Also only here now: pnpm <=10 read
+# `onlyBuiltDependencies` from package.json, pnpm >=11 reads `allowBuilds` from
+# this file, and the toolchain pin settles which. argon2 and prisma compile
+# native binaries; esbuild and sharp fetch platform binaries.
+#
+# A pnpm that ignores this list fails loudly rather than quietly — it prints
+# "Ignored build scripts" and the native modules are simply absent — so a
+# mis-pinned toolchain shows up as a build error, not as a silent downgrade.
 allowBuilds:
   'argon2': true
   '@prisma/client': true
