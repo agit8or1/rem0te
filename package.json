@@ -1,6 +1,6 @@
 {
   "name": "reboot-remote",
-  "version": "0.18.12",
+  "version": "0.18.13",
   "private": true,
   "packageManager": "pnpm@11.27.0",
   "engines": {
@@ -15,7 +15,8 @@
     "db:studio": "pnpm --filter @reboot-remote/api exec prisma studio",
     "lint": "pnpm --filter @reboot-remote/api run lint && pnpm --filter @reboot-remote/web run lint",
     "typecheck": "pnpm --filter @reboot-remote/api exec tsc --noEmit && pnpm --filter @reboot-remote/web exec tsc --noEmit",
-    "docs:api": "node scripts/gen-api-reference.mjs"
+    "docs:api": "node scripts/gen-api-reference.mjs",
+    "deploy:manifest": "node scripts/make-prod-manifest.mjs"
   },
   "devDependencies": {
     "typescript": "^5"

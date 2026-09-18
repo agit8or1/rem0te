@@ -104,6 +104,38 @@ previous build's files 404s every browser that already had the app open.
 
 - **The deploy target is not a git checkout.** `/opt/reboot-remote` has no
   `.git`. Build in the source tree.
+- **The API's runtime dependencies live at the target, installed by npm**, in
+  `/opt/reboot-remote/api/node_modules` with its own `package.json` and
+  `package-lock.json`. `dist/` carries none of them. So when a production
+  dependency moves, rsyncing `dist` alone ships new code onto old libraries —
+  and it only breaks on the *next restart*, which may be an unattended reboot
+  hours later.
+
+  This is the same trap as the Prisma client below, one level up. That target
+  manifest is **generated, not copied** — `apps/api/package.json` cannot be
+  used as-is, because its devDependencies carry an eslint 9 / `@eslint/js` 10
+  peer conflict that pnpm tolerates and npm refuses, so `npm install
+  --omit=dev` dies on dependencies the target will never install. When
+  `apps/api/package.json` dependencies change:
+
+  ```bash
+  pnpm deploy:manifest -o /tmp/prod-package.json          # generate
+  cd /tmp && npm install --omit=dev --package-lock-only   # must exit 0
+  sudo cp /tmp/prod-package.json /opt/reboot-remote/api/package.json
+  cd /opt/reboot-remote/api && sudo npm install --omit=dev
+  ```
+
+  **Check that npm can resolve the tree before rsyncing anything**, because
+  pnpm and npm disagree: pnpm is lenient about peer ranges and npm is not. A
+  NestJS 12 bump passed all of CI under pnpm and was refused outright by npm at
+  the target. And check the exit code, not the output — `npm install | tail`
+  exits 0 whatever npm thought of it.
+
+  The manifest was hand-maintained until v0.18.13 and had drifted a long way:
+  the target was running zod 3.25, ioredis 5.10, helmet 7.2 and
+  `@anthropic-ai/sdk` 0.52 while `dist` was compiled against zod 4, ioredis 6,
+  helmet 8 and sdk 0.125. It also claimed `version: 0.3.6`. Nothing failed,
+  because nothing compares the two. Generating it is what stops that.
 - **Never `pkill -f 'node dist/main.js'`** — it matches the production API.
   Use PIDs.
 - **Every capture script seeds demo businesses and computers.** Point them at a

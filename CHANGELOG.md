@@ -5,6 +5,52 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.13] — 2026-09-18 · *Handshake*
+
+### Fixed
+
+- **The `@nestjs/*` 12 majors are reverted.** Dependabot's production group
+  (#30) carried seven of the eight `@nestjs/*` packages to 12 and left
+  `@nestjs/throttler` at `^6.5.0`, whose peer range stops at core 11. CI was
+  green — pnpm is lenient about peer ranges — and npm at the deploy target
+  refused the tree outright with `ERESOLVE`, leaving `node_modules` untouched
+  while a NestJS-12-compiled `dist` had already been rsynced over it. Nothing
+  was serving from that combination, and production never went down, but only
+  because the install failed loudly.
+
+  `@nestjs/*` majors are now ignored in `.github/dependabot.yml`. The exit
+  condition is written down there: raise `@nestjs/throttler` to `^6.6.0` or
+  newer first (6.6.0 is the release that added `^12.0.0` to its peer range),
+  then take the framework major deliberately, with a check that rate limits
+  still fire afterwards.
+
+- **The API's production manifest is generated rather than hand-maintained.**
+  `/opt/reboot-remote/api/package.json` is a separate file from
+  `apps/api/package.json` — the target installs with npm, and `dist` carries no
+  dependencies — and it had drifted for months without anything noticing:
+  production was running zod 3.25, ioredis 5.10, helmet 7.2 and
+  `@anthropic-ai/sdk` 0.52 while `dist` was being compiled against zod 4,
+  ioredis 6, helmet 8 and sdk 0.125. It still claimed `version: 0.3.6`.
+
+  `pnpm deploy:manifest` now derives it from `apps/api/package.json`, so a
+  dependency change reaches the target by construction. It cannot simply be
+  copied: the workspace manifest's devDependencies carry an eslint 9 /
+  `@eslint/js` 10 peer conflict that pnpm tolerates and npm refuses, on
+  packages the target never installs.
+
+  Two details the generator handles that a copy would get wrong. The security
+  overrides live only in `pnpm-workspace.yaml`, in pnpm's `name@range` key
+  form that npm does not understand, and npm additionally rejects an override
+  for a package that is also a direct dependency — so those pins are folded
+  into the dependency range as an intersection (`nanoid` becomes
+  `^5.0.7 >=5.1.7`) rather than dropped, since `^5.0.7` alone admits the
+  version the advisory is about. And the `prisma` CLI, a devDependency in the
+  workspace, is pinned to `@prisma/client`'s own range, because the target runs
+  `prisma generate` after every install and `npx prisma` was free to fetch a
+  newer major and generate a client the installed runtime cannot load.
+
+---
+
 ## [0.18.12] — 2026-09-18 · *Handshake*
 
 ### Changed

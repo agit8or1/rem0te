@@ -9,6 +9,7 @@
  * Run: node scripts/check-security-invariants.mjs
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -128,6 +129,34 @@ check(
   'pnpm-workspace.yaml still carries the overrides and build allowances',
   /^overrides:/m.test(workspace) && /^allowBuilds:/m.test(workspace),
   'the single home for the pins is empty — every advisory override is inert',
+);
+
+// 8. Every advisory override survives into the API's production manifest.
+//
+//    The target installs with npm from a generated manifest, and npm cannot
+//    consume the pins as written: the keys use pnpm's `name@range` form, and
+//    npm rejects an override for a package that is also a direct dependency.
+//    The generator translates both cases — the second by intersecting the pin
+//    into the dependency range. Dropping the pin instead would also make npm
+//    happy, and would ship the vulnerable version. This asserts the
+//    translation, not the mechanism: for every pin, the production manifest
+//    must constrain that package somewhere.
+const prod = JSON.parse(
+  execFileSync(process.execPath, [join(ROOT, 'scripts/make-prod-manifest.mjs')], {
+    encoding: 'utf8',
+  }),
+);
+const lost = [];
+for (const [, name, range] of workspace.matchAll(/^ {2}'([^'@]+)(?:@[^']*)?'\s*:\s*'([^']+)'/gm)) {
+  const asOverride = prod.overrides[name] === range;
+  const asDependency = (prod.dependencies[name] ?? '').includes(range);
+  if (!asOverride && !asDependency) lost.push(name);
+}
+
+check(
+  'every pnpm override still constrains the API production manifest',
+  lost.length === 0,
+  `these advisory pins vanish from the npm install at the target: ${lost.join(', ')}`,
 );
 
 if (failures.length > 0) {
