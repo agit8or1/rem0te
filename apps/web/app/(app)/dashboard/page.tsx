@@ -240,15 +240,22 @@ function SessionsByDay({ rows }: { rows: DayCount[] }) {
 
   return (
     <div className="space-y-1">
-      <div className="flex items-end gap-1 h-16">
+      {/* `items-stretch` and `h-full` on the column are load-bearing, not
+          decoration. With `items-end` on this row each column sizes to its own
+          content, so the track's `flex-1` has no free space to claim, collapses
+          to zero height, and the bar's `height: N%` resolves to a percentage of
+          nothing. The counts and the day labels still render, which is what
+          made it look like a data problem for so long: a chart with correct
+          numbers and no bars at all. */}
+      <div className="flex items-stretch gap-1 h-20">
         {rows.map((row) => {
           const day = localDay(row.date);
           return (
-            <div key={row.date} className="flex-1 flex flex-col items-center gap-1 min-w-0">
+            <div key={row.date} className="flex-1 h-full flex flex-col items-center gap-1 min-w-0">
               <span className="text-[10px] tabular-nums text-muted-foreground leading-none">
                 {row.count > 0 ? row.count : ''}
               </span>
-              <div className="w-full bg-muted rounded-sm flex items-end flex-1 overflow-hidden">
+              <div className="w-full flex-1 min-h-0 bg-muted rounded-sm flex items-end overflow-hidden">
                 <div
                   className="w-full bg-primary rounded-sm transition-all"
                   style={{ height: `${(row.count / max) * 100}%` }}

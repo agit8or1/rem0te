@@ -39,6 +39,16 @@ function encrypt(text: string) {
 const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
 
 /**
+ * Which day-back each in-week session lands on, as a weighted bag.
+ *
+ * Days appearing twice get roughly twice the sessions. Read against a capture
+ * on any given day it is not weekday-aware, which is deliberate: the demo is
+ * reseeded immediately before every capture, so a Monday-is-busy rule would be
+ * wrong five days out of seven. What matters is that the seven bars differ.
+ */
+const WEEK_SHAPE = [0, 1, 1, 2, 2, 3, 4, 4, 5, 6];
+
+/**
  * Hardware profiles for the inventory the agent would have collected.
  *
  * Seeded because the device page is mostly inventory now, and without it every
@@ -546,8 +556,22 @@ async function main() {
     for (let s = 0; s < completed; s++) {
       sessionIdx += 1;
       const target = endpoints[s % endpoints.length];
-      // Weight recent days more heavily, but reach back past 7 days.
-      const daysBack = s < 3 ? s * 0.6 : 2 + s * 2.4;
+      // Cover every day of the last week, then reach back for the 30-day total.
+      //
+      // The previous curve — `s < 3 ? s * 0.6 : 2 + s * 2.4` — put sessions at
+      // 0, 0.6 and 1.2 days back and then jumped straight to 9.2, stepping
+      // clean over days 2 to 8. So the dashboard's seven-day chart could only
+      // ever have three populated days, and the captured screenshot showed
+      // three bars labelled W T F with nothing in them.
+      //
+      // Inside the week the day comes from a weighted bag rather than `s % 7`:
+      // one session per business per day gives a flat 6,6,6,6,6,6,5, and seven
+      // identical bars read as invented. Repeating some day-backs in the bag,
+      // and offsetting each business by its index, yields something with a
+      // shape — quieter at the ends of the window, busier through the middle.
+      const daysBack = s < 7
+        ? WEEK_SHAPE[(s + bi * 3) % WEEK_SHAPE.length]
+        : 9 + (s - 7) * 2.6;
       const started = ago(daysBack * DAY + (s * 37) * MIN);
       const dur = (9 + ((s * 7) % 34)) * 60;
       await prisma.supportSession.create({

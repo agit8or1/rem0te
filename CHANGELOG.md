@@ -5,6 +5,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.10] — 2026-09-18 · *Handshake*
+
+### Fixed
+
+- **The sessions chart had no bars at all — the fifth fault in it, and the one
+  0.18.9 missed.** That release fixed the day labels, the missing days, the
+  partial-day window and the minimum-height stub, and the chart still drew
+  nothing: correct counts, correct weekday names, no bars. The previous
+  screenshot had no bars either, which was read as the missing-days bug and not
+  looked at again.
+
+  A flex trap. The row was `items-end`, which sizes each column to its own
+  content, so the track's `flex-1` had no free space to claim, collapsed to zero
+  height, and the bar's `height: N%` resolved to a percentage of nothing. The
+  numbers and labels render independently of the track, which is exactly why it
+  looked like a data problem. `items-stretch` on the row, `h-full` on the
+  column and `flex-1 min-h-0` on the track — all three load-bearing, and
+  commented as such.
+
+  Caught by measuring the rendered image rather than looking at it: the chart
+  region held **887** blue pixels (0.38%) where bars should be. After the fix,
+  **40,246** (17.2%).
+
+- **The demo seed could not populate a seven-day chart.** Sessions were placed
+  at `s < 3 ? s * 0.6 : 2 + s * 2.4` days back — 0, 0.6, 1.2, then straight to
+  9.2, stepping clean over days 2 to 8. At most three of the seven days could
+  ever hold a session, which is why the captured screenshot showed three
+  columns labelled `W T F`. So the gallery was photographing two bugs at once:
+  a chart that could not draw, fed by data that could not fill it.
+
+  In-week days now come from a weighted bag offset per business. The first
+  attempt at this gave a flat `6 6 6 6 6 6 5`, and seven identical bars read as
+  invented; it now produces a shape — 4, 5, 7, 6, 8, 9, 5 — while the 30-day
+  total still differs from the 7-day one, which is the point of the two tiles.
+
+- **The gallery is recaptured** at this version, all 35 in one run.
+
+---
+
 ## [0.18.9] — 2026-09-18 · *Handshake*
 
 ### Fixed
