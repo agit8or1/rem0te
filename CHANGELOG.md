@@ -5,6 +5,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.16] — 2026-09-18 · *Handshake*
+
+No production code changes.
+
+### Changed
+
+- **A devDependency-only merge no longer gets its own release.** These now
+  accumulate on `main` and fold into the next release — the next one shipping
+  anything, or a batched one at most weekly if nothing else is due.
+
+  0.18.14 and 0.18.15 were both cut within an hour, the first for fifteen dev
+  dependency bumps and the second for a single `eslint-config-next` patch. Each
+  cost a branch, a pull request, three CI jobs, a tag, a release and an API
+  restart in order to record a change that cannot reach production: the API's
+  production manifest is generated with no devDependencies at all, so `dist`
+  and the target's `node_modules` are identical either side of the release.
+  Worse than the cost, `version.json` is what the in-app update check reads and
+  what an endpoint consults to decide whether to re-run its installer — moving
+  it for a lint plugin makes those consultations mean less.
+
+  The exception is deliberately narrow, and `CLAUDE.md` says so: a **production**
+  dependency reaches the target and still gets the full treatment — bump,
+  changelog, release, and a deploy with the manifest regenerated and
+  `npm install --omit=dev` run at the target. A change touching both is a
+  production change. `check-versions.mjs` is unaffected; it asserts that the
+  version strings agree and that the changelog documents the current one, which
+  a dev bump does not disturb.
+
+  Dependabot already batches the pull requests — the npm entry runs `monthly`
+  with devDependencies in one group — so this is about release cadence, not PR
+  cadence.
+
+---
+
 ## [0.18.15] — 2026-09-18 · *Handshake*
 
 No production code changes.

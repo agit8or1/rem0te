@@ -41,6 +41,44 @@ Write the changelog entry for someone debugging this six months from now: what
 broke, what the symptom looked like, and why the fix is what it is. The existing
 entries set the bar.
 
+### The one exception: development-only dependency bumps
+
+**A merge that touches only devDependencies does not get its own release.**
+These accumulate on `main` and are folded into the next release — the next one
+that ships anything, or a batched one at most weekly if nothing else is due.
+
+The reason is that a release for a devDependency records a change that cannot
+reach production. The API's production manifest is generated with no
+devDependencies at all (`pnpm deploy:manifest`), so `dist` and the target's
+`node_modules` are byte-identical before and after. Two of these were cut an
+hour apart on 2026-09-18 — 0.18.14 for fifteen dev bumps and 0.18.15 for a
+single `eslint-config-next` patch — each costing a branch, a pull request,
+three CI jobs, a tag, a release and an API restart to record nothing a user or
+an endpoint can observe. `version.json` is read by the update check and by
+endpoints deciding whether to re-run their installer; moving it for a lint
+plugin makes those consultations meaningless.
+
+So for a devDependency-only merge:
+
+- Let Dependabot's commit land as it is. `check-versions.mjs` still passes —
+  it asserts the five version strings agree and that the changelog documents
+  the current one, and a dev bump changes none of that.
+- Note it in the *next* release's entry, in one line, alongside whatever else
+  ships.
+- If a month of them piles up with no other release due, cut one batched
+  entry listing them.
+
+**This exception is narrow.** It is devDependencies only. A production
+dependency reaches the target and gets the full treatment — bump, changelog,
+release, deploy with the manifest regenerated and `npm install --omit=dev` run
+at the target. If a change touches both, it is a production change.
+
+Dependabot already batches the pull requests themselves: the npm entry runs
+`monthly` with devDependencies in one `development` group, so this policy is
+about the release cadence, not the PR cadence. A second dev group PR appearing
+days after the first usually means someone rewrote the first one's branch, as
+happened with #34 and #35 — Dependabot re-raises whatever it still wants.
+
 ## Getting a change onto `main`
 
 `main` is protected by a repository ruleset: deletions and force pushes are
