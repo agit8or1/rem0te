@@ -56,6 +56,17 @@ async function main() {
     await prisma.rustdeskNode.updateMany({ where: { endpointId: offline[i].id }, data: { lastSeenAt: seen } });
   }
 
+  // The Resources card's sample carries its own timestamp and is read as
+  // "minutes old". Leaving it behind while every other clock moves would make
+  // a gauge on a freshly-captured screenshot claim to be hours stale.
+  const inv = await prisma.endpointInventory.findMany({ select: { id: true } });
+  for (let i = 0; i < inv.length; i++) {
+    await prisma.endpointInventory.update({
+      where: { id: inv[i].id },
+      data: { liveSampledAt: ago((1 + (i % 3)) * MIN), collectedAt: ago((4 + (i % 7) * 3) * MIN) },
+    });
+  }
+
   // Sessions still in flight should look like they started minutes ago.
   const live = await prisma.supportSession.findMany({
     where: { status: { in: ['SESSION_STARTED', 'LAUNCH_REQUESTED', 'CLIENT_OPENED'] } },
@@ -67,7 +78,7 @@ async function main() {
     });
   }
 
-  console.log(`refreshed: ${online.length} online, ${offline.length} offline, ${live.length} live sessions`);
+  console.log(`refreshed: ${online.length} online, ${offline.length} offline, ${live.length} live sessions, ${inv.length} inventory samples`);
 }
 
 main().finally(() => prisma.$disconnect());

@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.13.9-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.18.2-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -21,7 +21,37 @@ server that keeps them organised and separate.
 
 <a href="docs/images/github/dashboard-light.png"><img src="docs/images/github/dashboard-light.png" alt="The Rem0te dashboard: tiles showing 34 total computers with 26 online and 8 offline, three active sessions and session counts for the last 7 and 30 days, above a map of client locations across the western United States." width="100%"></a>
 
-<sub><i>The operator's view — every customer business, computer and session in one place. <a href="docs/images/github/dashboard-light.png">Full size</a> · <a href="docs/screenshots.md">32 more screenshots</a></i></sub>
+<sub><i>The operator's view — every customer business, computer and session in one place. <a href="docs/images/github/dashboard-light.png">Full size</a> · <a href="docs/screenshots.md">34 more screenshots</a></i></sub>
+
+---
+
+## What's new in 0.18
+
+**Every computer describes itself.** Hardware, storage, network adapters, who
+is signed in, uptime, and how many Windows updates it is waiting on — collected
+by the managed agent on its heartbeat, with live CPU, memory and disk gauges
+that say how old their sample is. [inventory.md](docs/inventory.md)
+
+**Read a Windows event log without connecting.** Pick a log, a window and the
+levels; the request is collected on the computer's next heartbeat. Five logs,
+allowlisted twice, behind its own permission — somebody else's Security log is
+not the same as a name and an online dot.
+
+**Works from Tactical RMM.** Right-click an agent in TRMM and connect through
+Rem0te, or open that computer's page. Hostnames collide between customers, so
+Rem0te asks rather than guessing — and remembers your answer.
+[tactical-rmm.md](docs/tactical-rmm.md)
+
+**Upgrade the agent from the console.** *Reinstall agent* re-runs the installer
+on the next heartbeat, keeping the machine's configuration, password and
+enrolment. It is also the only way to reach a machine whose RustDesk client is
+already current.
+
+**A dashboard that fits one screen**, with host CPU, memory, disk and live
+bandwidth for the operator, and a count of sessions actually relaying through
+the server.
+
+Full detail in the [changelog](CHANGELOG.md).
 
 ---
 
@@ -66,12 +96,16 @@ dot.
 <td width="50%"><a href="docs/images/github/access-users-dark.png"><img src="docs/images/github/access-users-dark.png" alt="The Business Users tab in dark theme showing each person's level and the number of capabilities granted."></a><br><sub><b>Delegate safely.</b> Each user shows the capabilities actually granted, not a role name. <i>Dark</i></sub></td>
 </tr>
 <tr>
+<td width="50%"><a href="docs/images/github/trmm-match-dark.png"><img src="docs/images/github/trmm-match-dark.png" alt="The from-Tactical-RMM landing page in dark theme, warning that two computers from different customer businesses both answer to the hostname reception-pc, and listing both with their status and business so the technician can choose."></a><br><sub><b>Launch from Tactical RMM.</b> Right-click an agent in TRMM and connect through Rem0te. Two customers with the same hostname? It asks, then remembers. <i>Dark</i></sub></td>
+<td width="50%"><a href="docs/images/github/device-resources-light.png"><img src="docs/images/github/device-resources-light.png" alt="The Resources card on a computer's page in light theme, showing CPU, memory and system disk as labelled meters with percentages and the age of the sample."></a><br><sub><b>See the state before you connect.</b> CPU, memory and disk sampled on the heartbeat — and the card says how old the reading is. <i>Light</i></sub></td>
+</tr>
+<tr>
 <td width="50%"><a href="docs/images/github/quick-connect-light.png"><img src="docs/images/github/quick-connect-light.png" alt="The Quick Connect page in light theme with remote ID and password fields and a five-step explanation."></a><br><sub><b>Help a machine you don't manage.</b> No install, no enrolment — it ends when they close the client. <i>Light</i></sub></td>
 <td width="50%"><a href="docs/images/github/audit-timeline-dark.png"><img src="docs/images/github/audit-timeline-dark.png" alt="The audit log in dark theme listing timestamped actions with actor, resource and source IP."></a><br><sub><b>Prove what happened.</b> An append-only trail of sign-ins, sessions and credential reveals. <i>Dark</i></sub></td>
 </tr>
 </table>
 
-**[→ See all 33 screenshots](docs/screenshots.md)** — dashboards, monitoring,
+**[→ See all 35 screenshots](docs/screenshots.md)** — dashboards, monitoring,
 inventory, workflows, administration and configuration, in light and dark.
 
 ---
@@ -80,6 +114,11 @@ inventory, workflows, administration and configuration, in light and dark.
 
 A recorded tour of the real application — the dashboard, three end-to-end
 workflows, then Quick Connect, session history and the audit log, in both themes.
+
+> Recorded at **v0.13.5**. Everything in it still works the same way, but the
+> dashboard has since been rebuilt to fit one screen and the device page has
+> gained inventory, resource gauges and an event-log tab — so the
+> [screenshots](docs/screenshots.md) are the current picture of those two.
 
 <a href="https://github.com/agit8or1/rem0te/releases/download/v0.13.5/walkthrough.mp4"><img src="https://github.com/agit8or1/rem0te/releases/download/v0.13.5/poster.png" alt="Play the Rem0te walkthrough: a 2 minute 28 second tour covering the dashboard, enrolling a device, access management, Quick Connect, session history and the audit log." width="100%"></a>
 
@@ -250,11 +289,13 @@ in-app updater is **off by default** and requires a GPG-signed release tag.
 | [Technician Guide](docs/technician-guide.md) | Day-to-day use — connecting, Quick Connect, enrolling. |
 | [Connecting](docs/connecting.md) | What happens when you click Connect. |
 | [Clients](docs/clients.md) | Every RustDesk client Rem0te hands out. |
+| [Inventory & event logs](docs/inventory.md) | What a computer reports about itself, and reading its Windows event log. |
+| [Tactical RMM](docs/tactical-rmm.md) | Connecting and querying from inside Tactical RMM. |
 | [Setup](docs/setup.md) | Installing and operating a server. |
 | [Architecture](docs/architecture.md) | What runs where, and the RustDesk config chain. |
 | [Access Control](docs/access-control.md) | The three-level model and capabilities. |
 | [API Reference](docs/API-REFERENCE.md) | Every route and its required capability. |
-| [Public API](docs/PUBLIC-API.md) | RMM/PSA integration. |
+| [Public API](docs/PUBLIC-API.md) | Scripted RMM/PSA integration, scopes and examples. |
 
 ## Contributing
 

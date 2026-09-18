@@ -44,7 +44,13 @@
     },
     {
       "name": "device-detail-light",
-      "route": "/endpoints/cmu65hc89004u124f8vwfcvel",
+      "route": "/endpoints/cmu67j0r3004ysdnepaqo916w",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "device-resources-light",
+      "route": "/endpoints/cmu67j0r3004ysdnepaqo916w",
       "theme": "light",
       "viewport": "1440x1000@2x"
     },
@@ -104,7 +110,7 @@
     },
     {
       "name": "business-overview-dark",
-      "route": "/businesses/cmu65hc7v004j124fngyw0fiq",
+      "route": "/businesses/cmu67j0qt004nsdneqxvrtb7b",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
@@ -140,19 +146,19 @@
     },
     {
       "name": "business-computers-dark",
-      "route": "/businesses/cmu65hc7v004j124fngyw0fiq",
+      "route": "/businesses/cmu67j0qt004nsdneqxvrtb7b",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "device-specs-dark",
-      "route": "/endpoints/cmu65hc89004u124f8vwfcvel",
+      "route": "/endpoints/cmu67j0r3004ysdnepaqo916w",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "device-event-log-dark",
-      "route": "/endpoints/cmu65hc89004u124f8vwfcvel",
+      "route": "/endpoints/cmu67j0r3004ysdnepaqo916w",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
@@ -171,6 +177,12 @@
     {
       "name": "downloads-dark",
       "route": "/downloads",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "trmm-match-dark",
+      "route": "/trmm?host=reception-pc&agent=demo-agent-0001",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },

@@ -9,6 +9,22 @@ Two passes are recorded here: the original review, and a second full pass on
 2026-08-31 (v0.13.0, *Deadbolt*) which is written up first because it found the
 more serious problems of the two.
 
+> **This document describes v0.13.0. It has not been re-audited since**, and the
+> releases after it added surface that a full pass has not covered:
+>
+> | Added | Release | Surface |
+> |---|---|---|
+> | Endpoint inventory and the command queue | 0.14.0 | A public `/enrollment/command-result` route; endpoint-reported data written to shared tables |
+> | Windows event-log reading | 0.14.0 | Log contents crossing into the console, behind the `computers:event_logs` capability |
+> | Agent reinstall staging | 0.15.0 | An operator action that re-runs an installer as SYSTEM on a managed machine |
+> | Host metrics | 0.17.0 | `/proc` reads on the platform host, exposed to Platform Admins |
+> | Tactical RMM resolver | 0.18.0 | Endpoint lookup by attacker-influenceable hostname, and an open-redirect fix in the sign-in flow |
+>
+> Each of those was designed against the invariants in this document, and
+> `scripts/check-security-invariants.mjs` covers the ones that can be checked
+> statically — but designed-against is not the same as audited, and saying so is
+> cheaper than implying a review that has not happened.
+
 ## Second pass — 2026-08-31 (v0.13.0)
 
 Scope: every authentication, authorization, crypto, privileged-process and

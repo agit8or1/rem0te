@@ -119,6 +119,8 @@ export const SHOTS = [
   // the old 660px: that height cropped it at the Assignment card, above
   // everything the page is actually for.
   { name: 'device-detail-light', maxHeight: 1100, path: '@endpoint', theme: 'light', settle: 3500 },
+  { name: 'device-resources-light', path: '@endpoint', theme: 'light', settle: 3500,
+    clip: '@resources' },
   { name: 'device-specs-dark', path: '@endpoint', theme: 'dark', settle: 3500,
     clip: '@specs' },
   { name: 'device-event-log-dark', maxHeight: 1000, path: '@endpoint', theme: 'dark',
@@ -133,6 +135,15 @@ export const SHOTS = [
     click: ['[role=combobox]', '[role=option]:has-text("Cascade Accounting")'], settle: 2500 },
   { name: 'downloads-dark', path: '/downloads', theme: 'dark', settle: 3000 },
   { name: 'quick-connect-light', path: '/quick-connect', theme: 'light', settle: 2500 },
+  // What a Tactical RMM URL Action lands on when a hostname is ambiguous. The
+  // demo data carries a deliberate cross-business collision on "reception-pc"
+  // for exactly this, because the refusal to guess is the point of the feature.
+  // No `client` on purpose. Passing one would narrow the two candidates to a
+  // single business, and a single match does not show a picker — it connects,
+  // which during a capture means a credential issued and a .cmd download. The
+  // shot needs the ambiguous case, which is the hostname alone.
+  { name: 'trmm-match-dark', maxHeight: 900, theme: 'dark', settle: 2500,
+    path: '/trmm?host=reception-pc&agent=demo-agent-0001' },
   { name: 'help-dark', path: '/help', theme: 'dark', settle: 3000 },
 
   // ── Access and administration ──────────────────────────────────────────
@@ -241,6 +252,24 @@ async function run() {
                      height: Math.min(r.height + 8, window.innerHeight - r.y) };
           });
           await p.screenshot({ path: file, clip: box ?? undefined });
+        } else if (s.clip === '@resources') {
+          // The live-sample gauges, on their own. Anchored on the card's own
+          // heading: it sits above the specs grid rather than inside it, so
+          // the @specs anchor below deliberately does not include it.
+          const found = await p.evaluate(() => {
+            const head = [...document.querySelectorAll('div,section')]
+              .find((el) => /^Resources$/.test((el.textContent ?? '').trim()));
+            const card = head?.closest('div.rounded-lg,div.rounded-xl,section');
+            if (!card) return false;
+            card.setAttribute('data-capture-resources', '');
+            return true;
+          });
+          if (found) {
+            await p.locator('[data-capture-resources]').screenshot({ path: file });
+          } else {
+            console.log('    (resources card not found — full page instead)');
+            await p.screenshot({ path: file });
+          }
         } else if (s.clip === '@specs') {
           // The collected-inventory grid on a device page, on its own.
           //

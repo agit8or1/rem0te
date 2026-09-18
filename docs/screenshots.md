@@ -24,7 +24,7 @@ capture — see [Regenerating these](#regenerating-these).
 | [Overview and dashboards](#overview-and-dashboards) | The operator's landing view and the customer list |
 | [Visual insights and monitoring](#visual-insights-and-monitoring) | Client map, live sessions, history, audit, host health |
 | [Device inventory](#device-inventory) | Every computer, its collected specs and its event log |
-| [Everyday workflows](#everyday-workflows) | Enrolling a device, downloads, Quick Connect |
+| [Everyday workflows](#everyday-workflows) | Enrolling a device, downloads, Quick Connect, launching from Tactical RMM |
 | [Access and administration](#access-and-administration) | The three-level model, capabilities, accounts |
 | [Configuration](#configuration) | Platform settings, branding, releases, documentation |
 | [Regenerating these](#regenerating-these) | How to rebuild the gallery without touching production |
@@ -131,6 +131,14 @@ Scoped to a single customer — the view you use when they phone up.
 
 One machine: what it is, what it runs, and the controls to connect to it.
 
+### Resource gauges — light
+<a href="images/github/device-resources-light.png"><img src="images/github/device-resources-light.png" alt="The Resources card on a computer's page in light theme: CPU, memory and system disk shown as labelled meters with percentages, the memory meter reading 44 percent of 16 GB and the disk meter showing free space, above a note saying when the sample was taken."></a>
+
+CPU, memory and system disk, sampled on the computer's heartbeat rather than
+read from the six-hourly inventory pass — so these are minutes old, and the
+card says so instead of letting a needle imply "now". Amber past 80% and red
+past 92%, the point at which a Windows volume starts failing updates.
+
 ### Device specs — dark
 <a href="images/github/device-specs-dark.png"><img src="images/github/device-specs-dark.png" alt="The collected-inventory cards on a computer's page in dark theme: System with OS build and architecture, Session showing nobody at the console and six hours of uptime, Hardware with an HP EliteBook 840 G9 and its Core i7 and BIOS version, Memory and Storage with usage bars, Network with adapter and address, and an Updates card showing two pending Windows updates beside the Rem0te agent and RustDesk client versions."></a>
 
@@ -188,6 +196,17 @@ Choosing a different business narrows the access list to that business's people.
 
 The clients Rem0te hands out, including the preconfigured RustDesk build that
 already knows where your server is.
+
+### Launched from Tactical RMM — dark
+<a href="images/github/trmm-match-dark.png"><img src="images/github/trmm-match-dark.png" alt="The from-Tactical-RMM landing page in dark theme, warning that more than one computer matches the hostname reception-pc and listing two candidates from different customer businesses, each with its online status, business, site and last-seen time, and a Connect button."></a>
+
+What a Tactical RMM URL Action lands on. Right-click an agent in TRMM and
+Rem0te resolves it to a computer and connects.
+
+Here it will not: two customers both have a machine the front desk calls
+`reception-pc`, which is most MSPs rather than a contrived example. Rem0te
+refuses to pick — guessing opens a remote session on somebody else's machine —
+and remembers whichever you choose, so the next launch goes straight through.
 
 ### Quick Connect — light
 <a href="images/github/quick-connect-light.png"><img src="images/github/quick-connect-light.png" alt="The Quick Connect page in light theme with remote ID and password fields, a client download panel and a five-step explanation of a temporary session."></a>

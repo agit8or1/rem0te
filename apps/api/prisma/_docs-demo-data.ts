@@ -424,6 +424,19 @@ async function main() {
         data: { tenantId: tenant.id, endpointId: ep.id, userId: tech.id, grantedBy: owner.id },
       });
 
+      // A deliberate cross-business collision on "reception-pc".
+      //
+      // Two customers each having a machine the front desk calls RECEPTION-PC
+      // is not a contrived example, it is most MSPs — and it is the case the
+      // Tactical RMM resolver exists to refuse to guess at. Seeded as an alias
+      // rather than by renaming machines, so it changes no counts, no display
+      // names and nothing the offline set is keyed on.
+      if (/-RECEPTION/.test(m.name)) {
+        await prisma.endpointAlias.create({
+          data: { endpointId: ep.id, alias: 'reception-pc' },
+        });
+      }
+
       // A completed event-log query, so the Event Log tab has something to
       // show. The tab falls back to the last stored query for the machine, so
       // this is what a technician returning to the page would see.
@@ -501,6 +514,13 @@ async function main() {
             }],
             // Qualified with the machine's own business code, so the account
             // shown belongs to the company that owns the computer.
+            // The live sample the Resources card reads. Without it that card
+            // shows "Awaiting first sample" in every screenshot, which is the
+            // same trap the inventory itself fell into before 0.16.0.
+            cpuLoadPercent: m.online ? 6 + ((idx * 13) % 62) : null,
+            systemDiskTotalMb: hw.diskTotalGb * 1024,
+            systemDiskFreeMb: hw.diskFreeGb * 1024,
+            liveSampledAt: ago((1 + (idx % 3)) * MIN),
             loggedOnUser: m.online && hw.user
               ? (m.os === 'Windows' ? `${m.name.split('-')[0]}\\${hw.user}` : hw.user)
               : null,

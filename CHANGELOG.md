@@ -5,6 +5,58 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.2] — 2026-09-18 · *Handshake*
+
+### Changed
+
+- **Documentation and the gallery brought up to date with 0.14 – 0.18.** All 35
+  images re-captured in one run against the isolated demo stack, plus two new
+  ones: the Resources card, and what a Tactical RMM URL Action lands on.
+
+  The README gains a **What's new** section — inventory, event logs, the TRMM
+  integration, agent reinstall and the one-screen dashboard were all shipped
+  without the front page mentioning any of them — and rows in the feature grid
+  and documentation table for the two new pages.
+
+- **The demo seed carries a live resource sample and a deliberate hostname
+  collision.** The Resources card would otherwise have photographed as
+  "Awaiting first sample" on every machine, which is the same trap the
+  inventory itself fell into before 0.16.0. And the TRMM shot needs an
+  *ambiguous* match to show anything: two customers each with a machine the
+  front desk calls `reception-pc` is most MSPs rather than a contrived example.
+  Seeded as an alias, so it changes no counts, no display names and nothing the
+  offline set is keyed on.
+
+### Fixed
+
+- **The README's version badge had been stale for five releases** — it still
+  read 0.13.9 at 0.18.1. It is the first version a visitor sees, so
+  `check-versions.mjs` now checks it alongside the four package files and the
+  changelog heading, and CI fails if it drifts again.
+
+- **`docs/SECURITY-AUDIT.md` described v0.13.0 as though it were current.**
+  Five releases have since added surface a full pass has not covered — a public
+  command-result route, event-log contents crossing into the console, an
+  operator action that re-runs an installer as SYSTEM, `/proc` reads, and
+  endpoint lookup by attacker-influenceable hostname. Each was designed against
+  the invariants in that document and the statically-checkable ones are covered
+  by `check-security-invariants.mjs`, but designed-against is not audited, and
+  the page now says which is which rather than implying a review that has not
+  happened.
+
+- **The walkthrough video is marked as recorded at v0.13.5.** It is still
+  accurate about how everything works, but the dashboard has been rebuilt and
+  the device page has gained three tabs' worth of new content since, and a tour
+  that silently shows neither invites the wrong conclusion.
+
+- **A capture-script trap, caught by looking at the image rather than the tick
+  mark.** The first Tactical RMM shot passed a client name, which narrowed two
+  candidates to one — so instead of the picker it auto-connected and
+  photographed a raw 503 from `/connect.cmd`. The shot now sends the hostname
+  alone, which is the ambiguous case it is meant to demonstrate.
+
+---
+
 ## [0.18.1] — 2026-09-18 · *Handshake*
 
 ### Fixed

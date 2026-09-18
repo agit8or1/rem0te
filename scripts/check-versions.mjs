@@ -56,3 +56,28 @@ if (!heading.test(changelog)) {
 }
 
 console.log(`✓ CHANGELOG.md documents ${version}`);
+
+// The README's version badge is a version string like any other, and it went
+// five releases stale without anything noticing — it still read 0.13.9 at
+// 0.18.1. It is the first version a visitor sees, so it is worth checking.
+const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+const badge = readme.match(/img\.shields\.io\/badge\/version-([0-9][^-]*)-/);
+
+if (!badge) {
+  console.error(
+    '\n✗ README.md has no version badge matching' +
+    ' img.shields.io/badge/version-<version>-.\n' +
+    '  If the badge was removed on purpose, remove this check with it.',
+  );
+  process.exit(1);
+}
+
+if (badge[1] !== version) {
+  console.error(
+    `\n✗ README.md version badge says ${badge[1]}, not ${version}.\n` +
+    '  It is the first version a visitor sees. Update the badge URL.',
+  );
+  process.exit(1);
+}
+
+console.log(`✓ README.md badge shows ${version}`);
