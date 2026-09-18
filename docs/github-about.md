@@ -118,9 +118,15 @@ contents.
       # ["deletion","non_fast_forward"]
       ```
 
-- [x] **Require status checks** — `check` and `audit`, both pinned to the
-      GitHub Actions app (id 15368) so that only Actions can satisfy them and
-      no other app reporting a context of the same name can.
+- [x] **Require status checks** — `check`, `audit` and `installer`, all pinned
+      to the GitHub Actions app (id 15368) so that only Actions can satisfy them
+      and no other app reporting a context of the same name can.
+
+      `installer` was added in v0.18.12, three releases after the job itself.
+      That gap was deliberate: requiring a check in the same change that
+      introduces it blocks every pull request opened before the job existed,
+      because their runs have no such check to report. Add the job, let it run
+      green a few times, then require it.
 
       **This blocks direct pushes to `main`, by design.** CI runs *on push*, so
       a new commit cannot already be green at the moment it is pushed — there is
