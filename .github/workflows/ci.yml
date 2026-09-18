@@ -116,7 +116,7 @@ jobs:
       # in tools/windows-installer/go.mod, the same way pnpm's is by
       # packageManager.
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: tools/windows-installer/go.mod
           cache-dependency-path: tools/windows-installer/go.sum
