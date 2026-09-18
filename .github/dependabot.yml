@@ -21,6 +21,22 @@ updates:
       interval: monthly
     open-pull-requests-limit: 5
     groups:
+      # Listed FIRST, because a dependency joins the first group whose rules it
+      # matches. `prisma` (the CLI, a devDependency) and `@prisma/client` (a
+      # production dependency) must move together or neither works — and
+      # grouping only by dependency-type put them in separate pull requests,
+      # each carrying half a version-locked pair:
+      #
+      #   #20  @prisma/client 7.10.0 with prisma 5.22.0
+      #        -> Cannot find module '.../generator-build/index.js'
+      #   #17  prisma 7.10.0 with @prisma/client 5.22.0
+      #        -> P1012, and the real blocker below
+      #
+      # Neither could pass, so neither could merge, so the pair sat open.
+      prisma:
+        patterns:
+          - "prisma"
+          - "@prisma/client"
       production:
         dependency-type: production
       development:
@@ -36,6 +52,25 @@ updates:
       # That leaves >=0.25.0 <0.27.3, which pnpm-workspace.yaml pins by hand.
       # Revisit only when 0.28.1+ also restores the safari13 lowering.
       - dependency-name: esbuild
+
+      # Prisma majors are a migration, not a bump, so they are not raised
+      # automatically. Prisma 7 removes `url` from the schema's datasource
+      # block:
+      #
+      #   P1012  The datasource property `url` is no longer supported in schema
+      #          files. Move connection URLs for Migrate to `prisma.config.ts`
+      #
+      # which touches schema.prisma, the PrismaClient constructor, migrate
+      # deploy, seed.ts, both _docs-demo-* scripts, the deploy steps in
+      # CLAUDE.md, and the `prisma generate` run on the deploy target. Taking
+      # it as a dependency update would break the API on merge.
+      #
+      # Minor and patch updates still arrive, grouped, via the `prisma` group
+      # above. Lift this when someone is actually doing the v7 migration.
+      - dependency-name: "prisma"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@prisma/client"
+        update-types: ["version-update:semver-major"]
 
   # ── Tauri launcher (Rust) ────────────────────────────────────────────────
   - package-ecosystem: cargo
