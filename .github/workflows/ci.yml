@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # No `version:` here on purpose. The pnpm version is declared once, by
       # `packageManager` in package.json, and action-setup reads it from there.
@@ -81,7 +81,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # No `version:` here on purpose. The pnpm version is declared once, by
       # `packageManager` in package.json, and action-setup reads it from there.
       # Declaring it in both places is a hard error:
