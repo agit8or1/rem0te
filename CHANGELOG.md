@@ -5,6 +5,51 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.14] — 2026-09-18 · *Handshake*
+
+No production code changes. This release exists so `main` carries a version
+number that matches what is on it: Dependabot's merge commit cannot bump the
+version, and fifteen development dependencies landed in #34 without one.
+
+### Changed
+
+- **Development dependencies:** `@types/node` 20 → 26, `@types/express` 4 → 5,
+  `vite` 6 → 8, `@vitejs/plugin-react` 4 → 6, `eslint-plugin-security` 3 → 4,
+  `typescript-eslint` 8.68 → 8.70, `@nestjs/cli` 11.0.24, `@nestjs/schematics`
+  11.1.0, `@playwright/test` and `playwright` 1.63, `@tauri-apps/cli` 2.11.4,
+  `@eslint/eslintrc` 3.3.7, `autoprefixer` 10.6.1, `marked` 18.0.13. None of
+  these reach the deploy target — the API's production manifest carries no
+  devDependencies.
+
+- **Four majors from that group are ignored, with the evidence recorded.**
+  They arrived together and each breaks the repo on its own, so each was tested
+  rather than assumed:
+
+  - `typescript` 5 → 7: `typescript-eslint` refuses to load against it, and its
+    latest stable still peers `typescript >=4.8.4 <6.1.0` with everything past
+    8.70.0 an alpha. Blocked upstream, not sequencing.
+  - `eslint` 9 → 10: eslint 10 dropped the legacy eslintrc format that
+    `eslint-config-next` 15 publishes — `Cannot read config file`.
+  - `eslint-config-next` 15 → 16: reaches flat config through `FlatCompat` in a
+    shape eslint's own error formatter cannot serialize (`Converting circular
+    structure to JSON`). Fails on eslint 9 and 10 alike, so it blocks
+    independently of the eslint major.
+  - `tailwindcss` 3 → 4: the PostCSS plugin moved to `@tailwindcss/postcss`, so
+    `globals.css` stops building. Tailwind 4 is a rewrite — the theme moves
+    into CSS `@theme`, and the dark-mode tokens and gauge thresholds all live
+    in that config, so it wants its own release with screenshots recaptured.
+
+  Each ignore in `.github/dependabot.yml` carries the error it was diagnosed
+  from and the concrete condition for lifting it, because the failure mode
+  otherwise is a weekly PR nobody can evaluate.
+
+### Fixed
+
+- `version.json` carried `releaseDate: 2026-09-17` through the 0.18.13
+  release. Nothing reads it, which is why it drifted.
+
+---
+
 ## [0.18.13] — 2026-09-18 · *Handshake*
 
 ### Fixed
