@@ -57,6 +57,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   bumping a package constrained there changes nothing in the install while
   looking like it did something.
 
+- **The pnpm version is declared once too.** `ci.yml` pinned `version: 11` on
+  both `pnpm/action-setup` steps, and adding `packageManager` made that a hard
+  failure rather than a duplicate:
+
+  ```
+  Error: Multiple versions of pnpm specified
+  Remove one of these versions to avoid ERR_PNPM_BAD_PM_VERSION
+  ```
+
+  Caught by CI on the pull request, which is the first thing the new branch
+  protection was good for. The `version:` lines are gone and action-setup reads
+  `packageManager` — so the toolchain version now has a single home, the same
+  way the pins it reads do.
+
 ### Notes for operators
 
 - The first `pnpm install` in an existing checkout **purges `node_modules`**,
