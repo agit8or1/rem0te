@@ -114,6 +114,64 @@ updates:
       - dependency-name: "@nestjs/*"
         update-types: ["version-update:semver-major"]
 
+      # TypeScript majors. TS 7 arrived in the development group and took lint
+      # down across the whole workspace: typescript-eslint refuses to load
+      # against it —
+      #
+      #   Error: typescript-eslint does not support TS 7.0.
+      #   ESLint: 10.10.0
+      #
+      # — and its latest stable still peers `typescript >=4.8.4 <6.1.0`, with
+      # everything past 8.70.0 an alpha. So this is genuinely blocked upstream,
+      # not sequencing: nothing we can pin here makes eslint run on TS 7.
+      #
+      # Lift it when typescript-eslint ships a stable release whose typescript
+      # peer range admits 7 — tracked at
+      # https://github.com/typescript-eslint/typescript-eslint/issues/10940.
+      # Note that TS 6 is the intermediate step Microsoft documents for running
+      # side by side, so the move may well be 5 -> 6 first.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+
+      # The lint toolchain majors. These arrived together in the development
+      # group (#34) and each one breaks lint on its own — tested in both
+      # directions rather than guessed at:
+      #
+      #   eslint 10 + eslint-config-next 15  ->  Cannot read config file:
+      #                                          eslint-config-next/index.js
+      #   eslint  9 + eslint-config-next 16  ->  TypeError: Converting circular
+      #                                          structure to JSON
+      #   eslint 10 + eslint-config-next 16  ->  same circular structure
+      #
+      # eslint 10 dropped the legacy eslintrc format that eslint-config-next 15
+      # still publishes, and 16 reaches the flat config through FlatCompat in a
+      # shape eslint's own error formatter cannot even serialize. The API lints
+      # fine on eslint 10 — it has no Next config — but Dependabot ignores are
+      # per dependency name, not per workspace, and running two eslint majors
+      # across one monorepo to satisfy that is worse than waiting.
+      #
+      # Lifting this is a deliberate piece of work, not a version bump: move
+      # apps/web/eslint.config.mjs off FlatCompat onto whatever flat config
+      # eslint-config-next 16 exports natively, then take both majors together.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint-config-next"
+        update-types: ["version-update:semver-major"]
+
+      # Tailwind majors. Tailwind 4 is a rewrite, not a version bump: the
+      # PostCSS plugin moved to its own package, so the CSS build stops dead —
+      #
+      #   It looks like you're trying to use `tailwindcss` directly as a
+      #   PostCSS plugin. The PostCSS plugin has moved to a separate package
+      #
+      # — and configuration moves from tailwind.config.ts into CSS `@theme`.
+      # Lifting this means installing @tailwindcss/postcss, rewriting
+      # postcss.config.js, and porting the theme; the dark-mode tokens and the
+      # gauge colour thresholds all live in that config, so it wants its own
+      # release with the screenshots recaptured.
+      - dependency-name: "tailwindcss"
+        update-types: ["version-update:semver-major"]
+
   # ── Tauri launcher (Rust) ────────────────────────────────────────────────
   #
   # Nothing in CI compiles this. The "Typecheck and build launcher" job builds
