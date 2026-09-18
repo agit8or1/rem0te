@@ -5,6 +5,66 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.11] — 2026-09-18 · *Handshake*
+
+### Added
+
+- **CI cross-compiles the Windows installer.** Nothing verified it before, which
+  is how a `golang.org/x/sys` 0.18 → 0.48 bump came to sit open for three days
+  with a green check beside it: the check was real, it just never compiled the
+  module the PR changed. `main.go` imports `golang.org/x/sys/windows` directly.
+
+  `GOOS=windows` because that is the only target this binary is built for — the
+  syscall package it uses does not exist on Linux, so a native build fails for
+  reasons unrelated to whatever is under test. The Go toolchain is declared once,
+  by the `go` directive in `go.mod`, the same way pnpm's is by `packageManager`.
+
+### Changed
+
+- **Three major action bumps merged, one at a time**, each verified on `main`
+  before the next went in: `actions/checkout` 4 → 7, `actions/setup-node`
+  4 → 7, `pnpm/action-setup` 4 → 6. They change the machinery that verifies
+  everything else, so merging them as a batch would have meant losing the signal
+  that says which one broke it.
+
+- **Major updates are now ignored for `otplib` and `reqwest`**, joining
+  `esbuild` and the Prisma pair. Both for the same reason: a grouped PR is only
+  as mergeable as its worst member, and an unverifiable one is worse than a
+  failing one.
+
+  **otplib 13** removes the `authenticator` named export:
+
+  ```
+  src/mfa/mfa.service.ts(3,10): error TS2305
+  Module '"otplib"' has no exported member 'authenticator'
+  ```
+
+  Five call sites — `generateSecret`, `keyuri` and three `verify()` — so this is
+  a rewrite of the TOTP path, which is the second factor on every account.
+  Subtly wrong either locks people out or weakens 2FA while still appearing to
+  work, and nothing in CI would catch the latter. It was also holding 31
+  unrelated production updates hostage.
+
+  **reqwest 0.13** is a major bump to the one HTTP client the launcher uses,
+  with `default-features` off and `rustls-tls` selected by hand — and **nothing
+  in CI compiles the Rust side.** The "Typecheck and build launcher" job builds
+  the launcher's TypeScript; `src-tauri` is only ever built when someone
+  produces an installer locally. Merging it blind would leave a broken installer
+  to be discovered at release time by whoever is trying to ship. Minor and patch
+  cargo updates still come through, since the next local build catches those.
+
+  Lift the reqwest ignore when CI builds the Rust side — it needs a Rust
+  toolchain and the webkit2gtk system libraries — and do the upgrade with a
+  toolchain in hand.
+
+### Notes for operators
+
+- The new `installer` job is not yet a required status check. Add it to the
+  `main` ruleset once it has run green a few times; doing it in the same change
+  would block every pull request opened before the job existed.
+
+---
+
 ## [0.18.10] — 2026-09-18 · *Handshake*
 
 ### Fixed

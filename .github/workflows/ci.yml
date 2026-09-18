@@ -96,3 +96,35 @@ jobs:
       # The tree reached zero advisories in 0.11.0. This is what keeps it there.
       - name: Audit
         run: pnpm audit
+
+  # The Windows installer, cross-compiled.
+  #
+  # This was unverified by anything until now, which is how a
+  # golang.org/x/sys 0.18 -> 0.48 bump came to sit open with a green check
+  # beside it: the check was real, it simply never compiled the module the PR
+  # changed. `main.go` imports golang.org/x/sys/windows directly, so nothing
+  # about that bump was being tested.
+  #
+  # GOOS=windows because that is the only target this binary is ever built for;
+  # the syscall package it uses does not exist on Linux and the build fails
+  # there for reasons that have nothing to do with the change under test.
+  installer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # No `version:` — the toolchain is declared once, by the `go` directive
+      # in tools/windows-installer/go.mod, the same way pnpm's is by
+      # packageManager.
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/windows-installer/go.mod
+          cache-dependency-path: tools/windows-installer/go.sum
+      - name: Build for Windows
+        working-directory: tools/windows-installer
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          go build -v ./...
+          go vet ./...
