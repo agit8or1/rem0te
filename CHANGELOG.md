@@ -5,6 +5,56 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.9] — 2026-09-18 · *Handshake*
+
+### Fixed
+
+- **"Sessions — last 7 days" was wrong in four separate ways at once.** Every
+  label named the wrong day, quiet days vanished instead of showing as zero,
+  and the oldest bar always read low.
+
+  1. **Every label was one day early.** The API returns a plain calendar date
+     (`2026-09-11`) and the chart passed it to `new Date()`, which parses a
+     bare date as **UTC midnight** — so any browser at a negative offset
+     formatted it as the 10th. In US Eastern, all seven labels were off:
+
+     ```
+     2026-09-11  showed 'T'  should be 'Fri'
+     2026-09-17  showed 'W'  should be 'Thu'
+     ```
+
+     The date is now built from its parts, which keeps it local and keeps the
+     label attached to its own bar.
+
+  2. **The labels were single letters.** `weekday: 'narrow'` renders
+     `S S M T W T F` — two Ts, two Ss, and nothing to notice an off-by-one day
+     by. Now `weekday: 'short'`, with the full date on hover.
+
+  3. **Days with no sessions were missing entirely**, because the query grouped
+     the sessions rather than the days: `GROUP BY DATE("createdAt")` returns no
+     row for a quiet Saturday, the chart drew one fewer column, and the
+     remaining columns closed the gap — so the axis silently claimed a run of
+     consecutive days it did not have. A week with two busy days rendered as a
+     two-bar chart. The series is now generated in SQL and the sessions LEFT
+     JOINed onto it, so it is always exactly seven consecutive days,
+     zero-filled.
+
+  4. **The window was a rolling 168 hours, not seven calendar days.** Starting
+     at `now - 7 days` makes the oldest bucket a partial day that always reads
+     low, and lets the window spill into an eighth. It is anchored on
+     `current_date` now.
+
+  A zero is also drawn as *no bar* rather than the old `Math.max(4, …)` floor,
+  which made an idle day look like a small amount of work, and each bar carries
+  its count. A completely quiet week says so in words instead of showing seven
+  stubs.
+
+  Days are the database's calendar days, and both the server and the database
+  run UTC — noted in the service, because a deployment whose database sits in
+  another zone would shift the day boundaries.
+
+---
+
 ## [0.18.8] — 2026-09-18 · *Handshake*
 
 ### Changed

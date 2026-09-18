@@ -91,7 +91,7 @@ export class DashboardService {
         : [],
 
       canSeeSessions
-        ? this.sessionsPerDay(scope, sevenDaysAgo)
+        ? this.sessionsPerDay(scope, 7)
         : Promise.resolve([] as { date: string; count: number }[]),
     ]);
 
@@ -117,22 +117,51 @@ export class DashboardService {
   }
 
   /**
+   * Sessions per calendar day, for the last `days` days, **zero-filled**.
+   *
+   * The series is generated in SQL and LEFT JOINed against, rather than
+   * grouping the sessions and returning whatever days happen to have one. That
+   * grouping was the bug: a quiet Saturday produced no row, the chart drew one
+   * fewer bar, and the remaining bars closed the gap — so the axis silently
+   * claimed a run of consecutive days it did not have. A week with two active
+   * days rendered as a two-bar chart, which is what "nothing shown" looked
+   * like.
+   *
+   * It is also anchored on `current_date` rather than on a rolling 168-hour
+   * window. `now - 7 days` starts mid-day seven days ago, so the oldest bucket
+   * was a partial day that always read low, and the window could spill into an
+   * eighth calendar day.
+   *
+   * Days are the **database's** calendar days, and both the server and the
+   * database run UTC here. `date` is returned as a plain `YYYY-MM-DD` with no
+   * zone, and the client must render it as a local date rather than parsing it
+   * as an instant — `new Date('2026-09-11')` is UTC midnight, which is the
+   * 10th in any negative-offset browser.
+   *
    * Parameterised rather than interpolated — `scope` reaches this from a
-   * request, and a raw query is the one place a scope value could stop being
-   * a filter and start being SQL.
+   * request, and a raw query is the one place a scope value could stop being a
+   * filter and start being SQL.
    */
-  private async sessionsPerDay(scope: string | null, since: Date) {
+  private async sessionsPerDay(scope: string | null, days = 7) {
+    const span = Math.max(1, Math.min(days, 90)) - 1;
+
     const rows = scope
-      ? await this.prisma.$queryRaw<{ date: string; count: bigint }[]>`
-          SELECT DATE("createdAt")::text as date, COUNT(*) as count
-          FROM "SupportSession"
-          WHERE "customerId" = ${scope} AND "createdAt" >= ${since}
-          GROUP BY DATE("createdAt") ORDER BY date ASC`
-      : await this.prisma.$queryRaw<{ date: string; count: bigint }[]>`
-          SELECT DATE("createdAt")::text as date, COUNT(*) as count
-          FROM "SupportSession"
-          WHERE "createdAt" >= ${since}
-          GROUP BY DATE("createdAt") ORDER BY date ASC`;
+      ? await this.prisma.$queryRaw<{ date: string; count: number }[]>`
+          SELECT d.day::text AS date, COUNT(s.id)::int AS count
+          FROM generate_series(${span}::int, 0, -1) AS offs,
+               LATERAL (SELECT (current_date - offs)::date AS day) d
+          LEFT JOIN "SupportSession" s
+            ON DATE(s."createdAt") = d.day AND s."customerId" = ${scope}
+          GROUP BY d.day
+          ORDER BY d.day ASC`
+      : await this.prisma.$queryRaw<{ date: string; count: number }[]>`
+          SELECT d.day::text AS date, COUNT(s.id)::int AS count
+          FROM generate_series(${span}::int, 0, -1) AS offs,
+               LATERAL (SELECT (current_date - offs)::date AS day) d
+          LEFT JOIN "SupportSession" s
+            ON DATE(s."createdAt") = d.day
+          GROUP BY d.day
+          ORDER BY d.day ASC`;
 
     return rows.map((r) => ({ date: r.date, count: Number(r.count) }));
   }

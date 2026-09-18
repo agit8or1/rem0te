@@ -194,37 +194,78 @@ export default function DashboardPage() {
                   <CardTitle className="text-sm">Sessions — last 7 days</CardTitle>
                 </CardHeader>
                 <CardContent className="pt-0 pb-3">
-                  {data?.activity?.sessionsByDay?.length ? (
-                    <div className="flex items-end gap-1 h-16">
-                      {(data.activity.sessionsByDay as { date: string; count: number }[]).map((row) => {
-                        const max = Math.max(
-                          1,
-                          ...(data.activity.sessionsByDay as { count: number }[]).map((r) => r.count),
-                        );
-                        return (
-                          <div key={row.date} className="flex-1 flex flex-col items-center gap-1 min-w-0">
-                            <div className="w-full bg-muted rounded-sm flex items-end flex-1">
-                              <div
-                                className="w-full bg-primary rounded-sm transition-all"
-                                style={{ height: `${Math.max(4, (row.count / max) * 100)}%` }}
-                                title={`${row.count} on ${row.date}`}
-                              />
-                            </div>
-                            <span className="text-[10px] text-muted-foreground">
-                              {new Date(row.date).toLocaleDateString(undefined, { weekday: 'narrow' })}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">No session data yet.</p>
-                  )}
+                  <SessionsByDay rows={(data?.activity?.sessionsByDay ?? []) as DayCount[]} />
                 </CardContent>
               </Card>
             </div>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+interface DayCount { date: string; count: number }
+
+/**
+ * `YYYY-MM-DD` as a date in the viewer's own timezone.
+ *
+ * `new Date('2026-09-11')` is parsed as **UTC midnight**, so in any
+ * negative-offset browser it formats as the 10th — every label on this chart
+ * was one day early, and being single letters (`weekday: 'narrow'` gives S, S,
+ * M, T, W, T) there was nothing to notice it by. Building the date from its
+ * parts keeps it local and keeps the label matching the bar.
+ */
+function localDay(iso: string): Date {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
+
+/**
+ * Seven days of session counts.
+ *
+ * The server zero-fills the series, so this renders exactly what it is given
+ * and never closes a gap: a quiet day is a labelled column with no bar, not a
+ * missing column. A zero is drawn as no bar at all rather than a minimum-height
+ * stub — the old `Math.max(4, …)` floor made an idle day look like a small
+ * amount of work.
+ */
+function SessionsByDay({ rows }: { rows: DayCount[] }) {
+  if (rows.length === 0) {
+    return <p className="text-xs text-muted-foreground">No session data yet.</p>;
+  }
+
+  const max = Math.max(1, ...rows.map((r) => r.count));
+  const total = rows.reduce((sum, r) => sum + r.count, 0);
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-end gap-1 h-16">
+        {rows.map((row) => {
+          const day = localDay(row.date);
+          return (
+            <div key={row.date} className="flex-1 flex flex-col items-center gap-1 min-w-0">
+              <span className="text-[10px] tabular-nums text-muted-foreground leading-none">
+                {row.count > 0 ? row.count : ''}
+              </span>
+              <div className="w-full bg-muted rounded-sm flex items-end flex-1 overflow-hidden">
+                <div
+                  className="w-full bg-primary rounded-sm transition-all"
+                  style={{ height: `${(row.count / max) * 100}%` }}
+                />
+              </div>
+              <span
+                className="text-[10px] text-muted-foreground"
+                title={day.toLocaleDateString(undefined, { dateStyle: 'full' })}
+              >
+                {day.toLocaleDateString(undefined, { weekday: 'short' })}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {total === 0 && (
+        <p className="text-[11px] text-muted-foreground">No sessions in the last 7 days.</p>
       )}
     </div>
   );
