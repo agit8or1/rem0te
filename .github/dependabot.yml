@@ -21,7 +21,18 @@ updates:
   - package-ecosystem: npm
     directory: "/"
     schedule:
-      interval: monthly
+      # Weekly, deliberately, and it pairs with the release policy in
+      # CLAUDE.md: a devDependency-only merge does not get its own release, it
+      # folds into the next one. Without that policy a weekly interval means a
+      # weekly branch-PR-CI-tag-release-restart cycle to record a change that
+      # cannot reach production; with it, the PRs arrive weekly and the
+      # releases stay tied to things that actually ship.
+      #
+      # The groups below are what make the cadence tolerable: one PR for
+      # production, one for development, one for the prisma pair — not one per
+      # package.
+      interval: weekly
+      day: monday
     open-pull-requests-limit: 5
     groups:
       # Listed FIRST, because a dependency joins the first group whose rules it
