@@ -27,7 +27,7 @@ jobs:
       # Declaring it in both places is a hard error:
       #   Error: Multiple versions of pnpm specified
       #   Remove one of these versions to avoid ERR_PNPM_BAD_PM_VERSION
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
       # vite 6 requires ^20.19 || >=22.12; Next 15 requires >=18.18.
       - uses: actions/setup-node@v7
@@ -87,7 +87,7 @@ jobs:
       # Declaring it in both places is a hard error:
       #   Error: Multiple versions of pnpm specified
       #   Remove one of these versions to avoid ERR_PNPM_BAD_PM_VERSION
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
