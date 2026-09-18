@@ -5,6 +5,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.5] — 2026-09-18 · *Handshake*
+
+### Changed
+
+- **`main` is protected.** A repository ruleset now restricts deletions and
+  blocks force pushes on the default branch, with **no bypass actors** — it
+  binds repository admins too, which is the point, since the account that would
+  force-push by accident is the one holding admin. Recorded in
+  `docs/github-about.md`, which is the source of truth for repository settings.
+
+  **Requiring status checks is deliberately left off.** CI runs *on push* to
+  `main`, so a commit cannot already be green at the moment it is pushed —
+  requiring checks would block every direct push and force a pull-request
+  workflow. This repository commits straight to `main`, so that is a workflow
+  decision rather than a settings one, and the checklist says what to require
+  (`check` and `audit`) if it is ever made.
+
+  Worth recording how this was verified, because the obvious test is useless:
+  `git push --dry-run` never contacts GitHub for rule evaluation and cheerfully
+  reports a force-push it would not be allowed to make. `gh api
+  repos/.../rules/branches/main` asks the server which rules apply.
+
+- **The Tactical RMM release notes are shorter and flatter.** 0.18.0 went from
+  62 lines to 27 and lost its screenshot and its editorial framing; the section
+  in 0.18.2 is down to a short paragraph; 0.18.4 is five lines. It is another
+  way to open a remote session, and the notes now read like it.
+
+---
+
 ## [0.18.4] — 2026-09-18 · *Handshake*
 
 ### Added

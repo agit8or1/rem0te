@@ -103,4 +103,26 @@ contents.
       the link is broken until this is on.
 - [ ] **Settings → Social preview** — upload a preview image. A 1280×640 crop of
       `docs/images/github/hero-businesses.png` works.
+- [x] **Settings → Rules → Rulesets** — a repository ruleset named `main`,
+      enforcement *active*, targeting `~DEFAULT_BRANCH`, with two rules:
+      **Restrict deletions** and **Block force pushes**. No bypass actors, so it
+      binds repository admins too — which is the point, since the account that
+      would force-push by accident is the one with admin.
+
+      Verify server-side rather than with `git push --dry-run`, which never
+      contacts GitHub for rule evaluation and happily reports a force-push it
+      would not be allowed to make:
+
+      ```bash
+      gh api repos/agit8or1/rem0te/rules/branches/main -q '[.[].type]'
+      # ["deletion","non_fast_forward"]
+      ```
+
+- [ ] **Require status checks** — deliberately NOT set. CI (`check`, `audit`)
+      runs *on push* to `main`, so a commit cannot already be green at the
+      moment it is pushed; requiring checks would block every direct push and
+      force a pull-request workflow. This repository commits straight to `main`.
+      Turn it on together with that change of workflow, not before, and require
+      both `check` and `audit`.
+
 - [ ] Confirm the default branch is `main`, which the CI badge in the README assumes.
