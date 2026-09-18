@@ -5,6 +5,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.7] — 2026-09-18 · *Handshake*
+
+### Fixed
+
+- **Dependabot was splitting the Prisma pair across two pull requests, so
+  neither could ever pass.** `prisma` is a devDependency and `@prisma/client` a
+  production one, and grouping by `dependency-type` alone put them in separate
+  PRs — each carrying half of a pair that has to move together:
+
+  | PR | Carried | Failed with |
+  |---|---|---|
+  | #20 | client 7.10.0, CLI 5.22.0 | `Cannot find module '.../generator-build/index.js'` |
+  | #17 | CLI 7.10.0, client 5.22.0 | `P1012` |
+
+  Neither could pass, so neither could merge, so both sat open. A `prisma`
+  group listed **first** now keeps them together — a dependency joins the first
+  group whose rules it matches, so ordering is the whole fix.
+
+- **Prisma majors are no longer raised automatically**, because v7 is a
+  migration rather than a bump. It removes `url` from the schema's datasource
+  block:
+
+  ```
+  P1012  The datasource property `url` is no longer supported in schema files.
+         Move connection URLs for Migrate to `prisma.config.ts`
+  ```
+
+  which touches `schema.prisma`, the `PrismaClient` constructor,
+  `migrate deploy`, `seed.ts`, both `_docs-demo-*` scripts, the deploy steps in
+  `CLAUDE.md`, and the `prisma generate` run on the deploy target. Merging it as
+  a dependency update would have broken the API.
+
+  Minor and patch updates still arrive, grouped. The ignore is scoped to majors
+  and comes off when someone is actually doing the migration — recorded
+  alongside the esbuild entry, which is this file's existing precedent for a
+  dependency that must not move on its own.
+
+  #17 and #20 are closed, with the reasoning left on both.
+
+---
+
 ## [0.18.6] — 2026-09-18 · *Handshake*
 
 ### Changed
