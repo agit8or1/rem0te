@@ -40,7 +40,7 @@
     "@types/react-dom": "^19",
     "autoprefixer": "^10.6.1",
     "eslint": "^8.57.1",
-    "eslint-config-next": "15.5.24",
+    "eslint-config-next": "15.5.25",
     "marked": "^18.0.13",
     "playwright": "^1.63.0",
     "postcss": "^8",
