@@ -75,14 +75,51 @@ updates:
       - dependency-name: "@prisma/client"
         update-types: ["version-update:semver-major"]
 
+      # otplib majors. 13.x removes the `authenticator` named export:
+      #
+      #   src/mfa/mfa.service.ts(3,10): error TS2305
+      #   Module '"otplib"' has no exported member 'authenticator'
+      #
+      # Five call sites in mfa.service.ts — generateSecret, keyuri and three
+      # verify() — so this is a rewrite of the TOTP path, which is the second
+      # factor for every account. Getting it subtly wrong either locks people
+      # out or weakens 2FA while still appearing to work, and nothing in CI
+      # would notice the latter.
+      #
+      # Left grouped it also blocked 31 unrelated production updates, because a
+      # grouped PR is only as mergeable as its worst member.
+      - dependency-name: "otplib"
+        update-types: ["version-update:semver-major"]
+
   # ── Tauri launcher (Rust) ────────────────────────────────────────────────
+  #
+  # Nothing in CI compiles this. The "Typecheck and build launcher" job builds
+  # the launcher's TypeScript; the Rust in src-tauri is only ever built when
+  # someone produces an installer locally. So a green check on a cargo PR says
+  # nothing whatsoever about whether the crate still compiles.
+  #
+  # Minor and patch updates still come through on that basis — they are
+  # low-risk and the next local build catches a mistake. Majors do not:
+  # reqwest 0.12 -> 0.13 touches the one HTTP client the launcher uses, with
+  # default-features off and rustls-tls selected by hand, and merging it blind
+  # would leave a broken installer build to be discovered at release time by
+  # whoever is trying to ship.
+  #
+  # Lift this when CI builds the Rust side (it needs a Rust toolchain and the
+  # webkit2gtk system libraries), and do the upgrade with a toolchain in hand.
   - package-ecosystem: cargo
     directory: "/apps/launcher/src-tauri"
     schedule:
       interval: monthly
     open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: "reqwest"
+        update-types: ["version-update:semver-major"]
 
   # ── Windows installer (Go) ───────────────────────────────────────────────
+  # Verified by the `installer` job in ci.yml, which cross-compiles this for
+  # Windows. It was unverified until 0.18.11, which is why a golang.org/x/sys
+  # bump sat open with a green check that proved nothing.
   - package-ecosystem: gomod
     directory: "/tools/windows-installer"
     schedule:
