@@ -24,8 +24,16 @@ function LoginForm() {
   // `https://…` or `//host` in there would send someone straight from a real
   // sign-in to somebody else's page — the ideal setup for asking them to sign
   // in again.
+  //
+  // A backslash is rejected as well as a second slash: several browsers
+  // normalise `/\evil.example` to `//evil.example` before anything here gets a
+  // say, so a check that only looked for `//` was one character from being no
+  // check at all. The query string is allowed through — it has to be, since a
+  // Tactical RMM launch is nothing but query string — which is safe because
+  // the value stays a same-origin path and nothing downstream redirects on it.
   const requested = params.get('returnTo') ?? '';
-  const returnTo = /^\/(?!\/)/.test(requested) ? requested : '/dashboard';
+  const returnTo =
+    /^\/(?![/\\])/.test(requested) && !requested.includes('\\') ? requested : '/dashboard';
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

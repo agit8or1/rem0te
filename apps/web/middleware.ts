@@ -26,7 +26,12 @@ export function middleware(request: NextRequest) {
   const token = request.cookies.get('access_token')?.value;
   if (!token) {
     const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('returnTo', pathname);
+    // Path AND query. Dropping the query was silently fine while every
+    // protected route carried its state in the path, and broke the moment one
+    // did not: a Tactical RMM URL Action is nothing but query string, so a
+    // technician without a session signed in and arrived at /trmm with no
+    // hostname to look up — the exact first-launch case the integration is for.
+    loginUrl.searchParams.set('returnTo', pathname + request.nextUrl.search);
     return NextResponse.redirect(loginUrl);
   }
 

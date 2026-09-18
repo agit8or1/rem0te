@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { dashboardApi, adminApi } from '@/lib/api-client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
-  Monitor, PlayCircle, Building2, Activity, WifiOff, Clock, ArrowDownUp, Radio,
+  Monitor, Building2, Activity, WifiOff, Clock, ArrowDownUp, Radio,
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import { usePermissions } from '@/lib/auth';
@@ -73,18 +73,16 @@ export default function DashboardPage() {
         <div className="text-muted-foreground text-sm">Loading…</div>
       ) : (
         <>
-          {/* Estate. Six figures on one row — the old layout spent two rows and
-              most of a screen on eight. */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 shrink-0">
+          {/* Estate, on one row. "Launched" was removed deliberately: it counted
+              sessions Rem0te had opened and not closed, which reads as a live
+              figure and is not one — "In use now" is the tile that means that. */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 shrink-0">
             <Tile href="/endpoints" label="Computers" value={data?.endpoints?.total ?? 0}
               sub={`${data?.endpoints?.online ?? 0} online`} icon={Monitor}
               accent={offlineCount > 0 ? 'yellow' : 'green'} />
             <Tile href="/endpoints" label="Offline" value={offlineCount}
               sub={`${onlinePercent}% up`} icon={WifiOff}
               accent={offlineCount > 0 ? 'red' : 'green'} />
-            <Tile href="/sessions" label="Launched" value={data?.sessions?.active ?? 0}
-              sub="not yet closed" icon={PlayCircle}
-              accent={data?.sessions?.active ? 'blue' : undefined} />
             {/* Sessions actually moving traffic through this server's relay.
                 Admin-only, because it is a property of the platform host. */}
             {isPlatformAdmin && (

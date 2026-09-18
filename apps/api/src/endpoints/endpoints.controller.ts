@@ -1,10 +1,11 @@
 import {
   Controller, Get, Post, Patch, Delete,
   Body, Param, Query, Req, Res, UseGuards, HttpCode, HttpStatus,
-  ServiceUnavailableException,
+  ServiceUnavailableException, BadRequestException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { EndpointsService } from './endpoints.service';
+import { TrmmResolverService } from './trmm-resolver.service';
 import { RustdeskService } from '../common/rustdesk.service';
 import { latestRustdeskVersionOr } from '../common/rustdesk-release';
 import { CreateEndpointDto, UpdateEndpointDto, AddTagDto, AddAliasDto } from './dto/create-endpoint.dto';
@@ -32,6 +33,7 @@ export class EndpointsController {
   constructor(
     private readonly svc: EndpointsService,
     private readonly rustdesk: RustdeskService,
+    private readonly trmm: TrmmResolverService,
   ) {}
 
   @Get('connected')
@@ -205,6 +207,43 @@ export class EndpointsController {
   ) {
     await this.svc.setPassword(actor, id, password ?? null);
     return { success: true };
+  }
+
+  // ── Tactical RMM ──────────────────────────────────────────────────────────
+
+  /**
+   * Resolve a Tactical RMM agent to a computer.
+   *
+   * Reached from a TRMM URL Action, which opens this in the technician's
+   * browser — so it authenticates as the person who clicked it and is scoped
+   * to what they can already see. No API key travels in the URL, deliberately:
+   * a URL Action ends up in browser history, and TRMM's own audit log.
+   */
+  @Get('trmm/resolve')
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  @RateLimit(60)
+  async trmmResolve(@Actor() actor: ActorContext, @Query() q: Record<string, string>) {
+    return { success: true, data: await this.trmm.resolve(actor, {
+      hostname: q.host ?? q.hostname,
+      clientName: q.client ?? q.clientName,
+      siteName: q.site ?? q.siteName,
+      agentId: q.agent ?? q.agentId,
+    }) };
+  }
+
+  /** Record which computer a TRMM agent is, so the next launch is exact. */
+  @Post('trmm/link')
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  @RateLimit(30)
+  @HttpCode(HttpStatus.OK)
+  async trmmLink(
+    @Actor() actor: ActorContext,
+    @Body() body: { endpointId?: string; agentId?: string },
+  ) {
+    if (!body.endpointId || !body.agentId) {
+      throw new BadRequestException('endpointId and agentId are required');
+    }
+    return { success: true, data: await this.trmm.remember(actor, body.endpointId, body.agentId) };
   }
 
   // ── Inventory, updates and event logs ─────────────────────────────────────

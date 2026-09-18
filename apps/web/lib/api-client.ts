@@ -99,6 +99,12 @@ export const endpointsApi = {
   setPassword: (id: string, password: string | null) => api.patch(`/endpoints/${id}/password`, { password }),
   addTag: (id: string, tag: string) => api.post(`/endpoints/${id}/tags`, { tag }),
   removeTag: (id: string, tag: string) => api.delete(`/endpoints/${id}/tags/${encodeURIComponent(tag)}`),
+  // Tactical RMM: turn what a TRMM URL Action sends into one computer, and
+  // record the mapping so the next launch is exact.
+  trmmResolve: (q: { host?: string; client?: string; site?: string; agent?: string }) =>
+    api.get('/endpoints/trmm/resolve', { params: q }),
+  trmmLink: (endpointId: string, agentId: string) =>
+    api.post('/endpoints/trmm/link', { endpointId, agentId }),
   // System specs, Windows Update state and recent collection requests for one
   // computer. Populated by the agent's heartbeat, so a machine whose installer
   // predates this reports `agentBound: false` and nothing else.

@@ -33,6 +33,7 @@ const ORDER = [
   ['connecting.md', 'Connecting'],
   ['clients.md', 'Clients'],
   ['inventory.md', 'Inventory and event logs'],
+  ['tactical-rmm.md', 'Tactical RMM'],
   ['updates.md', 'Updates'],
   ['setup.md', 'Setup and operations'],
   ['architecture.md', 'Architecture'],

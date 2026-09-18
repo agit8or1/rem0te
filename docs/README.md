@@ -19,6 +19,8 @@ the product, searchable, under **Documentation** in the sidebar.
   Connect, the three connect paths, and why they are not equivalent.
 - **[inventory.md](inventory.md)** — the specs a managed computer reports, its
   pending Windows updates, and how to read a slice of its event log.
+- **[tactical-rmm.md](tactical-rmm.md)** — connecting and querying from inside
+  Tactical RMM: URL Actions, agent matching, and the Collector Task.
 
 ## Running it
 

@@ -5,6 +5,112 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.1] — 2026-09-18 · *Handshake*
+
+### Fixed
+
+- **Signing in threw away the query string, which broke the first Tactical RMM
+  launch in any browser without a session — the common case.** The middleware
+  set `returnTo` to the pathname only, so a technician who clicked *Connect with
+  Rem0te* while signed out signed in and arrived at `/trmm` with no hostname to
+  look up, and a page that correctly said it had nothing to do. Harmless for
+  every route that came before, because they all carried their state in the
+  path; a URL Action is nothing but query string.
+
+- **The `returnTo` guard was one character from being no guard at all.** It
+  rejected `//evil.example` but allowed `/\evil.example`, and several browsers
+  normalise the second into the first before the application gets a say — an
+  open redirect from a real sign-in page, which is the ideal place to ask
+  somebody to sign in again. Backslashes are now rejected alongside a second
+  slash. The query string is allowed through, which it has to be for the fix
+  above, and is safe because the value stays a same-origin path and nothing
+  downstream redirects on it.
+
+---
+
+## [0.18.0] — 2026-09-18 · *Handshake*
+
+### Added
+
+- **Tactical RMM integration — connect to a computer, or open its page, by
+  right-clicking the agent in TRMM.**
+
+  Worth stating first, because it shaped the whole design: **Tactical RMM has no
+  way to consume a REST API.** There is no screen where you paste an API URL and
+  have TRMM render someone else's data. Its extension points are URL Actions,
+  scripts, Collector Tasks and alert actions — so "add our API into TRMM" means
+  giving TRMM the right URLs to open and scripts to run, and that is what this
+  is. Nothing here requires a change to Tactical RMM.
+
+  `/trmm` receives what a URL Action sends — `{{agent.hostname}}`,
+  `{{client.name}}`, `{{site.name}}`, `{{agent.agent_id}}` — and resolves it to
+  one computer, then connects or opens the device page (`&action=open`).
+
+  **No API key travels in the URL, deliberately.** A URL Action opens in the
+  technician's own browser, so it authenticates as them against what they can
+  already see — and a URL Action is stored in TRMM's global settings, lands in
+  browser history and is visible to every operator who can right-click an agent,
+  which is the wrong place for a credential.
+
+- **Resolve, then remember.** Matching runs in order of how much it can be
+  trusted: a recorded TRMM agent id, then hostname narrowed by client name, then
+  hostname alone. Business names are compared loosely — case, punctuation and
+  company suffixes ignored — so *Harbor Logistics* matches *Harbor Logistics
+  Ltd*.
+
+  **Hostnames collide**, and two customers each with a `SERVER01` is not an edge
+  case. When more than one computer matches, Rem0te shows a shortlist and asks;
+  it never picks a closest match, because guessing opens a remote session on
+  somebody else's machine. Choosing records the TRMM agent id as an endpoint
+  alias (`trmm:<id>`), so every later launch is exact — the integration gets
+  more reliable the more it is used.
+
+  The id is an alias rather than a new column: aliases already exist, already
+  carry a per-endpoint uniqueness constraint, and are already how this system
+  says "also known as". The mapping *moves* rather than duplicating, so a stale
+  one left after a rebuild cannot resolve confidently to the wrong machine.
+
+### Changed
+
+- **The RustDesk ID reaches TRMM by Collector Task, not by Rem0te calling
+  TRMM's API.** The plan was for Rem0te to push the value into a TRMM custom
+  field. Two things found while building it changed the approach:
+
+  - **TRMM documents no API endpoint for setting custom field values.**
+    Collector Tasks — a scheduled script whose last output line TRMM saves into
+    the field — are the documented mechanism. Building on an undocumented
+    endpoint produces an integration that breaks on somebody else's upgrade, in
+    a way that looks like Rem0te's fault.
+  - **It would mean Rem0te holding an API key for your RMM.** A TRMM key
+    inherits its user's full permissions and bypasses 2FA. That is a lot of
+    custody for the convenience of writing down a value the endpoint can print
+    locally for free — the machine already knows its own RustDesk ID.
+
+  `docs/tactical-rmm.md` ships the collector script, the custom-field setup and
+  both URL Action templates.
+
+### Notes for operators
+
+- No schema change — the TRMM mapping reuses `EndpointAlias`.
+- Recording a mapping needs `computers:edit`. Without it the connection still
+  works; it asks again next time.
+- New documentation page, in the app at **/docs/tactical-rmm**.
+
+---
+
+## [0.17.1] — 2026-09-18 · *Dial*
+
+### Removed
+
+- **The dashboard's "Launched" tile.** It counted sessions Rem0te had opened and
+  not yet closed, which sits in the same row as live figures and reads as one —
+  and it is not: a launched session may have ended minutes ago with nothing to
+  tell us. *In use now*, which counts sessions actually relaying through this
+  server, is the tile that means what this one looked like it meant. Session
+  totals for 7 and 30 days remain, and session history is unchanged.
+
+---
+
 ## [0.17.0] — 2026-09-17 · *Dial*
 
 ### Added

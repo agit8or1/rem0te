@@ -2,7 +2,7 @@
 
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
-Every route is prefixed with `/api/v1`. There are **197** of them across
+Every route is prefixed with `/api/v1`. There are **199** of them across
 **23** controllers.
 
 For request and response shapes, worked examples and error codes, see
@@ -156,6 +156,8 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/endpoints/connected` | signed in | `COMPUTERS_VIEW` |
 | `POST` | `/api/v1/endpoints/grants/redeem` | public, throttled | — |
 | `GET` | `/api/v1/endpoints/mine` | signed in | — |
+| `POST` | `/api/v1/endpoints/trmm/link` | signed in, throttled | `COMPUTERS_EDIT` |
+| `GET` | `/api/v1/endpoints/trmm/resolve` | signed in, throttled | `COMPUTERS_VIEW` |
 
 ## Endpoint enrolment
 
