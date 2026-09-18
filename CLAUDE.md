@@ -41,6 +41,26 @@ Write the changelog entry for someone debugging this six months from now: what
 broke, what the symptom looked like, and why the fix is what it is. The existing
 entries set the bar.
 
+## Getting a change onto `main`
+
+`main` is protected by a repository ruleset: deletions and force pushes are
+blocked, and `check` and `audit` must pass. **Direct pushes are refused** — CI
+runs on push, so a new commit has no checks to read and the push is rejected.
+
+```bash
+git switch -c some-change
+# … work, and bump the version as above …
+git push -u origin some-change
+gh pr create --fill
+gh pr checks --watch
+gh pr merge --squash --delete-branch
+```
+
+There are no bypass actors, deliberately: an owner exemption restores direct
+pushes for emergencies and makes the rule advisory, which is how most branch
+protection ends up meaning nothing. `docs/github-about.md` holds the settings
+and the reasoning.
+
 ## Deploying
 
 Build in the checkout, rsync to `/opt/reboot-remote`, restart the units:

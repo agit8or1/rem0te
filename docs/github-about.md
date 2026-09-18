@@ -118,11 +118,29 @@ contents.
       # ["deletion","non_fast_forward"]
       ```
 
-- [ ] **Require status checks** — deliberately NOT set. CI (`check`, `audit`)
-      runs *on push* to `main`, so a commit cannot already be green at the
-      moment it is pushed; requiring checks would block every direct push and
-      force a pull-request workflow. This repository commits straight to `main`.
-      Turn it on together with that change of workflow, not before, and require
-      both `check` and `audit`.
+- [x] **Require status checks** — `check` and `audit`, both pinned to the
+      GitHub Actions app (id 15368) so that only Actions can satisfy them and
+      no other app reporting a context of the same name can.
+
+      **This blocks direct pushes to `main`, by design.** CI runs *on push*, so
+      a new commit cannot already be green at the moment it is pushed — there is
+      nothing for the rule to read, and the push is refused. Work goes in
+      through a branch and a pull request:
+
+      ```bash
+      git switch -c some-change
+      git push -u origin some-change
+      gh pr create --fill
+      gh pr checks --watch          # check + audit
+      gh pr merge --squash --delete-branch
+      ```
+
+      `strict_required_status_checks_policy` is left off: requiring a branch to
+      be up to date with `main` before merging adds a rebase round-trip that
+      earns nothing on a repository with one author.
+
+      No bypass actors. Adding the repository owner as one would restore direct
+      pushes for emergencies and quietly make the rule advisory, which is the
+      failure mode of most branch protection.
 
 - [ ] Confirm the default branch is `main`, which the CI badge in the README assumes.

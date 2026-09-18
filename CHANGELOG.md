@@ -5,6 +5,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.6] — 2026-09-18 · *Handshake*
+
+### Changed
+
+- **`main` now requires `check` and `audit` to pass.** Both are pinned to the
+  GitHub Actions app (id 15368), so only Actions can satisfy them — an
+  unpinned context can be reported by any app that can write a check run with
+  a matching name.
+
+  **This blocks direct pushes, by design.** CI runs on push, so a new commit
+  has no checks to read at the moment it is offered and the push is refused.
+  Work now goes in through a branch and a pull request; `CLAUDE.md` carries the
+  four commands, and this release went in that way as its own first test.
+
+  `strict_required_status_checks_policy` is off — requiring a branch to be up
+  to date with `main` before merging adds a rebase round-trip that earns nothing
+  on a repository with one author. And there are still no bypass actors: adding
+  the owner would restore direct pushes for emergencies and quietly make the
+  whole ruleset advisory, which is how most branch protection ends up meaning
+  nothing.
+
+---
+
 ## [0.18.5] — 2026-09-18 · *Handshake*
 
 ### Changed
