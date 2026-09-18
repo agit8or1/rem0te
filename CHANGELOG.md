@@ -5,6 +5,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.12] — 2026-09-18 · *Handshake*
+
+### Changed
+
+- **`installer` is now a required status check on `main`**, alongside `check`
+  and `audit`, all three pinned to the GitHub Actions app so no other app
+  reporting a same-named context can satisfy them.
+
+  It was added three releases after the job itself, deliberately: requiring a
+  check in the same change that introduces it blocks every pull request opened
+  before the job existed, because their runs have no such check to report. The
+  job shipped in 0.18.11, ran green on three pull requests, and is required
+  now. `docs/github-about.md` records that sequence, since the temptation next
+  time will be to do both at once.
+
+---
+
 ## [0.18.11] — 2026-09-18 · *Handshake*
 
 ### Added

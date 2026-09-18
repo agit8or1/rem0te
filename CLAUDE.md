@@ -44,8 +44,9 @@ entries set the bar.
 ## Getting a change onto `main`
 
 `main` is protected by a repository ruleset: deletions and force pushes are
-blocked, and `check` and `audit` must pass. **Direct pushes are refused** — CI
-runs on push, so a new commit has no checks to read and the push is rejected.
+blocked, and `check`, `audit` and `installer` must pass. **Direct pushes are
+refused** — CI runs on push, so a new commit has no checks to read and the push
+is rejected.
 
 ```bash
 git switch -c some-change
