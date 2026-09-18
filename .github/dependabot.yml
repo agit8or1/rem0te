@@ -91,6 +91,29 @@ updates:
       - dependency-name: "otplib"
         update-types: ["version-update:semver-major"]
 
+      # NestJS majors. Reverted once already, in v0.18.13, after a grouped PR
+      # took seven of the eight @nestjs/* packages to 12 and left
+      # @nestjs/throttler on ^6.5.0 — whose peer range stops at NestJS 11.
+      #
+      # pnpm installed that tree anyway (it is lenient about peers), CI compiled
+      # it and all three checks went green. npm at the deploy target refused
+      # outright with ERESOLVE, which is the only reason anyone found out:
+      #
+      #   peer @nestjs/core@"^7 || ^8 || ^9 || ^10 || ^11" from
+      #   @nestjs/throttler@6.5.0
+      #
+      # The throttler is the rate limiter on login, MFA verify, enrollment,
+      # grant redemption and the event-log routes. A rate limiter that quietly
+      # stops limiting is the exact failure check-security-invariants.mjs
+      # exists for, so "compiles and probably fine" is not the bar.
+      #
+      # This is NOT blocked upstream: @nestjs/throttler 6.6.0 added ^12.0.0 to
+      # its peer range. Lifting this means bumping throttler to ^6.6.0 or later
+      # FIRST, then doing the framework upgrade deliberately — with a runtime
+      # check that the limits still fire, not just a build that succeeds.
+      - dependency-name: "@nestjs/*"
+        update-types: ["version-update:semver-major"]
+
   # ── Tauri launcher (Rust) ────────────────────────────────────────────────
   #
   # Nothing in CI compiles this. The "Typecheck and build launcher" job builds
