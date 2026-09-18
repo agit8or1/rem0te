@@ -10,19 +10,23 @@ Keep it under GitHub's 350-character limit; the first ~120 characters are what s
 in search results and social cards.
 
 > Self-hosted remote support portal for managing multiple customer businesses on top
-> of RustDesk. Organise each customer's computers, see their specs and pending
-> Windows updates, read an event log without connecting, launch from Tactical RMM,
-> and keep an audit trail — without RustDesk Pro.
-
-The first sentence is unchanged on purpose: it is what shows in search results and
-social cards, and it was already the clearest statement of what this is. The second
-carries what 0.14–0.18 added, because "organise computers and keep an audit trail"
-undersold a tool that now reports hardware, pending patches and event logs, and
-plugs into an RMM.
+> of RustDesk. Organise each customer's computers, control who can connect to what,
+> enrol managed devices, and keep an audit trail — without RustDesk Pro.
 
 Short form, if a shorter field is needed:
 
 > Self-hosted remote support for customer businesses, powered by RustDesk.
+
+**This is a remote-support tool and the copy says only that.** A previous edit
+listed pending Windows updates and event logs here, which reads as a claim to do
+patch management. Rem0te *reports* what a machine is waiting to install; it does
+not install it, schedule it, or remediate anything — and the Tactical RMM
+integration is one more way to open a session, not a foothold in that category.
+
+Somebody who arrives expecting an RMM leaves disappointed, and the disappointment
+is the copy's fault rather than the product's. The inventory, the event-log viewer
+and the TRMM launch are all documented and in the gallery for anyone who reads
+further; they do not belong in the sentence that sets expectations.
 
 ## Website
 
@@ -49,7 +53,7 @@ service-level figures to it unless they are published somewhere checkable.
 
 ## Topics
 
-Fifteen, as currently set. GitHub allows up to 20.
+Fourteen, as currently set. GitHub allows up to 20.
 
 ```
 rustdesk
@@ -60,7 +64,6 @@ msp
 remote-desktop
 multi-tenant
 tactical-rmm
-asset-inventory
 nestjs
 nextjs
 typescript
@@ -72,18 +75,17 @@ ubuntu
 - `rustdesk`, `remote-support`, `remote-access`, `self-hosted`, `msp` — how
   people looking for this kind of tool actually search.
 - `remote-desktop`, `multi-tenant` — the broader category and the shape.
-- `tactical-rmm` — there is a real integration to find: URL Actions, agent
-  matching and a Collector Task. People run TRMM and search for what works with
-  it.
-- `asset-inventory` — accurate since 0.14.0, which added hardware, storage,
-  network and pending-update collection.
+- `tactical-rmm` — kept, because there is a real integration to find and it is
+  squarely about remote control: right-click an agent in TRMM, open a session
+  here. Someone searching this finds a way to connect, which is what it is.
 - `nestjs`, `nextjs`, `typescript`, `postgresql`, `systemd`, `ubuntu` — the
   stack and how it deploys, for contributors.
 
-**Deliberately not `rmm`.** Rem0te is a remote-support portal that *integrates*
-with an RMM; it does not do patching, monitoring or scripted remediation.
-Claiming the category to catch searches would bring people here expecting a
-Tactical RMM competitor and send them away again.
+**Deliberately not `rmm`, and no longer `asset-inventory`.** Rem0te is a
+remote-support tool. It does not patch, monitor or remediate, and it collects
+inventory only so that a technician can see what they are about to connect to.
+Both topics would advertise a category this does not compete in, and topics are
+how people decide whether to click.
 
 ## Repository settings checklist
 

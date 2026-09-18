@@ -264,6 +264,69 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'tactical-rmm',
+    title: 'Connecting from Tactical RMM',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          If you run Tactical RMM, you can start a Rem0te session straight from the
+          agent you are already looking at — right-click it and pick the action. It
+          is just another way to open a session; nothing about Rem0te changes.
+        </p>
+        <p className="font-medium text-foreground">Add the URL Action in Tactical RMM</p>
+        <p>
+          In TRMM, go to <strong className="text-foreground">Settings → Global
+          Settings → URL Actions</strong> and add one:
+        </p>
+        <ul className="list-disc pl-5 space-y-1">
+          <li><strong className="text-foreground">Name</strong> — Connect with Rem0te</li>
+          <li><strong className="text-foreground">URL Pattern</strong> — the address below</li>
+        </ul>
+        <CodeBlock>{`https://${'{'}your-rem0te-host}/trmm?host={{agent.hostname}}&client={{client.name}}&site={{site.name}}&agent={{agent.agent_id}}`}</CodeBlock>
+        <p>
+          Then right-click any agent in TRMM →{' '}
+          <strong className="text-foreground">Run URL Action</strong> → Connect with
+          Rem0te. You can also make it the double-click action under TRMM&apos;s
+          Preferences.
+        </p>
+        <p>
+          Want to look at the computer rather than connect to it? Add a second action
+          with <code className="text-foreground">&amp;action=open</code> on the end —
+          that lands on the computer&apos;s page in Rem0te instead.
+        </p>
+        <p className="font-medium text-foreground">Everything in {'{{ }}'} is case sensitive</p>
+        <p>
+          Tactical RMM does not warn you about a typo — it sends the text through
+          as-is, which arrives here as a hostname that matches nothing. Copy the line
+          above rather than retyping it.
+        </p>
+        <p className="font-medium text-foreground">No API key, and no extra sign-in</p>
+        <p>
+          The action opens in your own browser, so it uses the Rem0te session you
+          already have and only reaches computers you can already see. If you are not
+          signed in, Rem0te asks, then carries on to the computer. There is
+          deliberately no key in that address: a URL Action is visible to everyone in
+          TRMM who can right-click an agent.
+        </p>
+        <p className="font-medium text-foreground">If two computers have the same name</p>
+        <p>
+          Common enough — two customers both with a machine called RECEPTION-PC.
+          Rem0te will not guess, because guessing would open a session on the wrong
+          customer&apos;s machine. It shows you both and asks. Pick one and it
+          remembers, so the next time you launch that agent from TRMM it goes
+          straight through.
+        </p>
+        <p>
+          Full setup, including showing the RustDesk ID inside TRMM and calling
+          Rem0te from a TRMM script, is in{' '}
+          <Link href="/docs/tactical-rmm" className="underline text-foreground">
+            the documentation
+          </Link>.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'specs-and-event-logs',
     title: 'System Specs, Updates and Event Logs',
     content: (

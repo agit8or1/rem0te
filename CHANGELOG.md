@@ -5,6 +5,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.4] — 2026-09-18 · *Handshake*
+
+### Added
+
+- **Tactical RMM setup in the in-app help**, at **/help → Connecting from
+  Tactical RMM** — placed immediately after *Connecting to a Computer*, because
+  that is what it is: one more way to open a session. The URL Action to paste,
+  where it goes in TRMM, the `&action=open` variant, the case-sensitivity trap,
+  why there is no API key in the address, and what happens when two customers
+  have a machine with the same name.
+
+### Changed
+
+- **The repository description is back to describing a remote-support tool.**
+  0.18.3 added "see their specs and pending Windows updates, read an event log
+  without connecting" to it, which reads as a claim to do patch management.
+  Rem0te *reports* what a machine is waiting to install; it does not install it,
+  schedule it or remediate anything, and the Tactical RMM integration is one
+  more way to open a session rather than a foothold in that category.
+
+  Somebody who arrives expecting an RMM leaves disappointed, and that is the
+  copy's fault rather than the product's. The inventory, the event-log viewer and
+  the TRMM launch are documented, in the gallery and in the help — they do not
+  belong in the sentence that sets expectations.
+
+  The `asset-inventory` topic is removed for the same reason. `tactical-rmm`
+  stays: it is squarely about remote control, and somebody searching it finds a
+  way to connect, which is exactly what it is.
+
+---
+
 ## [0.18.3] — 2026-09-18 · *Handshake*
 
 ### Changed
