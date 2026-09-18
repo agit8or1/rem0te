@@ -10,8 +10,15 @@ Keep it under GitHub's 350-character limit; the first ~120 characters are what s
 in search results and social cards.
 
 > Self-hosted remote support portal for managing multiple customer businesses on top
-> of RustDesk. Organise each customer's computers, control who can connect to what,
-> enrol managed devices, and keep an audit trail — without RustDesk Pro.
+> of RustDesk. Organise each customer's computers, see their specs and pending
+> Windows updates, read an event log without connecting, launch from Tactical RMM,
+> and keep an audit trail — without RustDesk Pro.
+
+The first sentence is unchanged on purpose: it is what shows in search results and
+social cards, and it was already the clearest statement of what this is. The second
+carries what 0.14–0.18 added, because "organise computers and keep an audit trail"
+undersold a tool that now reports hardware, pending patches and event logs, and
+plugs into an RMM.
 
 Short form, if a shorter field is needed:
 
@@ -42,7 +49,7 @@ service-level figures to it unless they are published somewhere checkable.
 
 ## Topics
 
-Thirteen, as currently set. GitHub allows up to 20.
+Fifteen, as currently set. GitHub allows up to 20.
 
 ```
 rustdesk
@@ -52,6 +59,8 @@ self-hosted
 msp
 remote-desktop
 multi-tenant
+tactical-rmm
+asset-inventory
 nestjs
 nextjs
 typescript
@@ -63,8 +72,18 @@ ubuntu
 - `rustdesk`, `remote-support`, `remote-access`, `self-hosted`, `msp` — how
   people looking for this kind of tool actually search.
 - `remote-desktop`, `multi-tenant` — the broader category and the shape.
+- `tactical-rmm` — there is a real integration to find: URL Actions, agent
+  matching and a Collector Task. People run TRMM and search for what works with
+  it.
+- `asset-inventory` — accurate since 0.14.0, which added hardware, storage,
+  network and pending-update collection.
 - `nestjs`, `nextjs`, `typescript`, `postgresql`, `systemd`, `ubuntu` — the
   stack and how it deploys, for contributors.
+
+**Deliberately not `rmm`.** Rem0te is a remote-support portal that *integrates*
+with an RMM; it does not do patching, monitoring or scripted remediation.
+Claiming the category to catch searches would bring people here expecting a
+Tactical RMM competitor and send them away again.
 
 ## Repository settings checklist
 

@@ -5,6 +5,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.3] — 2026-09-18 · *Handshake*
+
+### Changed
+
+- **The GitHub About panel now describes what this became.** Its description
+  predated 0.14.0 and stopped at "organise computers and keep an audit trail",
+  which undersold a tool that reports hardware and pending patches, reads event
+  logs, and plugs into an RMM. The first sentence is untouched on purpose — it
+  is what shows in search results and social cards, and it was already the
+  clearest statement of what this is.
+
+  Topics gain `tactical-rmm` (there is a real integration to find, and people
+  running TRMM search for what works with it) and `asset-inventory` (accurate
+  since 0.14.0). Deliberately **not** `rmm`: Rem0te integrates with an RMM, it
+  does not do patching, monitoring or scripted remediation, and claiming the
+  category to catch searches would bring people here expecting a Tactical RMM
+  competitor and send them away again.
+
+  `docs/github-about.md` is the source of truth for these, so it was edited
+  first and then applied — which is what that file exists to make possible.
+
+### Fixed
+
+- **Five tags had no GitHub release**: 0.16.2, 0.17.0, 0.17.1, 0.18.0 and
+  0.18.1. Two of them were the ones that mattered — **0.17.0**, which added the
+  resource gauges and host health, and **0.18.0**, the Tactical RMM integration
+  itself, which had never been announced under its own release and existed only
+  as a paragraph inside 0.18.2's notes. All five are now written up.
+
+- **0.18.1 was showing as the latest release**, because GitHub marks whichever
+  release was created most recently as latest and the backfill above created
+  them out of order. 0.18.2 is latest again — which also matters to the in-app
+  updater, since it compares `version.json` against
+  `releases/latest` and would otherwise have offered an upgrade to an older
+  version.
+
+---
+
 ## [0.18.2] — 2026-09-18 · *Handshake*
 
 ### Changed
