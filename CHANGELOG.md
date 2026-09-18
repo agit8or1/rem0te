@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.15] — 2026-09-18 · *Handshake*
+
+No production code changes.
+
+### Changed
+
+- `eslint-config-next` 15.5.24 → 15.5.25 (#35). A patch, which the
+  majors-only ignore added in 0.18.14 correctly let through — the major to 16
+  stays blocked. Lint passes on it.
+
+---
+
 ## [0.18.14] — 2026-09-18 · *Handshake*
 
 No production code changes. This release exists so `main` carries a version
