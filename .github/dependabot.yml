@@ -9,12 +9,15 @@ updates:
   # One entry for the workspace root: apps/api, apps/web and apps/launcher all
   # share the root pnpm-lock.yaml.
   #
-  # Note for anyone reviewing these PRs: transitive pins live in BOTH
-  # package.json (pnpm <=10) and pnpm-workspace.yaml (pnpm >=11, which is what
-  # CI runs). Dependabot only knows about the first. A PR that bumps a pinned
-  # transitive needs the workspace file updated by hand or it changes nothing
-  # in CI. CI also rejects any lockfile entry younger than 24h
-  # (minimumReleaseAge), so a freshly-published fix may need a day to land.
+  # Note for anyone reviewing these PRs: transitive pins live ONLY in
+  # pnpm-workspace.yaml now, and Dependabot does not read that file. It cannot
+  # see those pins, so a PR that bumps a package constrained there changes
+  # nothing in the install until the range is widened by hand — and the PR will
+  # look like it did something. (Until 0.18.8 the pins were mirrored in
+  # package.json, which Dependabot does read; the mirror is gone because two
+  # hand-maintained copies of a security pin list is a bet nobody wins.)
+  # CI also rejects any lockfile entry younger than 24h (minimumReleaseAge), so
+  # a freshly-published fix may need a day to land.
   - package-ecosystem: npm
     directory: "/"
     schedule:

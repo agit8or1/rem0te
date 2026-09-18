@@ -97,6 +97,39 @@ for (const [file, model] of [
   );
 }
 
+// 7. The security overrides have exactly one home, and the toolchain that
+//    reads it is pinned.
+//
+//    These two facts hold each other up. The overrides used to be mirrored in
+//    package.json because pnpm <=10 reads that field and pnpm >=11 reads
+//    pnpm-workspace.yaml; CI ran 11 and developers ran 10, so both copies were
+//    live in different places and could drift without anything failing. The
+//    mirror is gone, which is only safe while `packageManager` pins a pnpm that
+//    reads the surviving file — remove the pin and every local install silently
+//    loses 22 advisory overrides.
+const rootPkg = JSON.parse(read('package.json'));
+const pnpmPin = /^pnpm@(\d+)\./.exec(rootPkg.packageManager ?? '');
+
+check(
+  'packageManager pins pnpm 11 or newer',
+  pnpmPin !== null && Number(pnpmPin[1]) >= 11,
+  'pnpm <=10 reads overrides from package.json, which no longer carries them — ' +
+  'without this pin a local install drops every security override',
+);
+
+check(
+  'security overrides are not mirrored back into package.json',
+  rootPkg.pnpm === undefined,
+  'two hand-maintained copies of a pin list drift; pnpm-workspace.yaml is the only home',
+);
+
+const workspace = read('pnpm-workspace.yaml');
+check(
+  'pnpm-workspace.yaml still carries the overrides and build allowances',
+  /^overrides:/m.test(workspace) && /^allowBuilds:/m.test(workspace),
+  'the single home for the pins is empty — every advisory override is inert',
+);
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);
