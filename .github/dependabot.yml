@@ -202,7 +202,14 @@ updates:
   - package-ecosystem: cargo
     directory: "/apps/launcher/src-tauri"
     schedule:
-      interval: monthly
+      # Tuesday, so it does not pile onto Monday with the npm batch. Note what
+      # weekly means for this one specifically: nothing in CI compiles the Rust
+      # side, so these arrive with a green check that proves only that the
+      # launcher's TypeScript still builds. Read them as unverified until CI
+      # grows a Rust toolchain — the same trap the gomod entry was in until
+      # 0.18.11.
+      interval: weekly
+      day: tuesday
     open-pull-requests-limit: 3
     ignore:
       - dependency-name: "reqwest"
@@ -215,12 +222,14 @@ updates:
   - package-ecosystem: gomod
     directory: "/tools/windows-installer"
     schedule:
-      interval: monthly
+      interval: weekly
+      day: wednesday
     open-pull-requests-limit: 3
 
   # ── CI actions ───────────────────────────────────────────────────────────
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: monthly
+      interval: weekly
+      day: thursday
     open-pull-requests-limit: 3

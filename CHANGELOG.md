@@ -5,6 +5,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.18] — 2026-09-18 · *Handshake*
+
+No production code changes.
+
+### Changed
+
+- **`cargo`, `gomod` and `github-actions` move to weekly too**, joining npm.
+  They are staggered across the week rather than all landing on Monday — npm
+  Monday, cargo Tuesday, gomod Wednesday, actions Thursday — so a week's
+  updates arrive as a few small pull requests on separate days instead of one
+  pile.
+
+  One caveat is recorded in the config next to the cargo entry, because it
+  changes how those pull requests should be read: **nothing in CI compiles the
+  Rust side.** The `installer` job cross-compiles the Go installer and the
+  launcher job builds only the launcher's TypeScript, so a cargo bump arrives
+  with a green check that says nothing about whether `src-tauri` still builds.
+  That is the same trap the Go installer was in until 0.18.11, when a
+  `golang.org/x/sys` bump sat open for three days behind a check that proved
+  nothing. Weekly cargo updates mean meeting that situation more often, not
+  less — treat them as unverified until CI grows a Rust toolchain and the
+  webkit2gtk system libraries.
+
+- `@types/node` 26.5.1 → 26.6.0 (#40). A devDependency, folded into this
+  release rather than given one of its own — the first application of the
+  policy added in 0.18.16.
+
+---
+
 ## [0.18.17] — 2026-09-18 · *Handshake*
 
 No production code changes.
