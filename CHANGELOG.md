@@ -5,6 +5,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.17] — 2026-09-18 · *Handshake*
+
+No production code changes.
+
+### Changed
+
+- **Dependabot's npm entry moves from `monthly` to `weekly` (Mondays).** This
+  only works because of the release policy added in 0.18.16 — a
+  devDependency-only merge folds into the next release instead of getting its
+  own. Weekly without that policy is a weekly
+  branch-PR-CI-tag-release-restart cycle to record a change that cannot reach
+  production. With it, updates arrive weekly and releases stay tied to things
+  that ship.
+
+  The three groups are what make the cadence tolerable: one pull request for
+  production dependencies, one for development, one for the version-locked
+  `prisma`/`@prisma/client` pair — not one per package.
+
+  `cargo`, `gomod` and `github-actions` stay monthly. They are small, they
+  move slowly, and neither of them produced the churn this addresses.
+
+---
+
 ## [0.18.16] — 2026-09-18 · *Handshake*
 
 No production code changes.
