@@ -13,7 +13,7 @@
     "lint:fix": "eslint . --fix"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.125.0",
+    "@anthropic-ai/sdk": "^0.126.0",
     "@nestjs/common": "^11.2.3",
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.2.3",
@@ -21,7 +21,7 @@
     "@nestjs/passport": "^11.0.0",
     "@nestjs/platform-express": "^11.2.3",
     "@nestjs/schedule": "^6.1.1",
-    "@nestjs/throttler": "^6.5.0",
+    "@nestjs/throttler": "^6.7.0",
     "@prisma/client": "^5.14.0",
     "@types/multer": "^2.2.0",
     "argon2": "^0.45.1",
