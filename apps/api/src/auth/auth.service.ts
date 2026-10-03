@@ -1,3 +1,4 @@
+import { credentialVersion } from './credential-version';
 import {
   Injectable,
   UnauthorizedException,
@@ -274,7 +275,7 @@ export class AuthService {
   }
 
   private issueFullToken(
-    user: { id: string; email: string; isPlatformAdmin: boolean },
+    user: { id: string; email: string; isPlatformAdmin: boolean; passwordHash: string | null },
     tenantId: string | null,
     roleType: unknown,
     businessId?: string | null,
@@ -287,6 +288,7 @@ export class AuthService {
       roleType: roleType as JwtPayload['roleType'],
       isPlatformAdmin: user.isPlatformAdmin,
       mfaVerified: true,
+      credentialVersion: credentialVersion(this.config.get<string>('JWT_SECRET')!, user.passwordHash),
       businessId: businessId ?? null,
       // Legacy alias so a token minted here still resolves on older code paths.
       customerId: businessId ?? null,

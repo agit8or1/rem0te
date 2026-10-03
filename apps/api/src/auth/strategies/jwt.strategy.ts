@@ -1,3 +1,4 @@
+import { matchesCredentialVersion } from '../credential-version';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
@@ -18,6 +19,7 @@ export interface JwtPayload {
   roleType: RoleType | null;
   isPlatformAdmin: boolean;
   mfaVerified: boolean;
+  credentialVersion?: string;
   /** Granted business capabilities. Meaningful for BUSINESS_USER only. */
   capabilities?: string[] | null;
   /** @deprecated legacy alias of `businessId`, kept so old tokens still resolve. */
@@ -30,7 +32,7 @@ export interface JwtPayload {
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
-    config: ConfigService,
+    private readonly config: ConfigService,
     private readonly prisma: PrismaService,
   ) {
     super({
@@ -55,11 +57,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, status: true, isPlatformAdmin: true },
+      select: { id: true, status: true, isPlatformAdmin: true, passwordHash: true },
     });
 
     if (!user || user.status === 'DELETED') {
       throw new UnauthorizedException('Account not found');
+    }
+    if (!matchesCredentialVersion(payload.credentialVersion, this.config.get<string>('JWT_SECRET')!, user.passwordHash)) {
+      throw new UnauthorizedException('Credentials changed; sign in again');
     }
     if (user.status === 'SUSPENDED') {
       throw new UnauthorizedException('Account suspended');
