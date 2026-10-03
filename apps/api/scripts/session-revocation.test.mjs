@@ -1,10 +1,10 @@
 // pnpm --filter @reboot-remote/api build
-// node apps/api/scripts/session-revocation.test.cjs
+// node apps/api/scripts/session-revocation.test.mjs
 // Exercise the real strategy with in-memory Prisma responses. No database.
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const { JwtStrategy } = require('../dist/auth/strategies/jwt.strategy');
-const { credentialVersion } = require('../dist/auth/credential-version');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { JwtStrategy } from '../dist/auth/strategies/jwt.strategy.js';
+import { credentialVersion } from '../dist/auth/credential-version.js';
 const secret = 'offline-regression-key-not-for-production';
 const config = { get: () => secret };
 const token = (hash) => ({ sub: 'user-1', email: 'test@example.invalid',

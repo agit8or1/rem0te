@@ -11,7 +11,7 @@ API build and web TypeScript checks passed. Prisma client generation used no liv
 
 ```sh
 pnpm --filter @reboot-remote/api build
-node apps/api/scripts/session-revocation.test.cjs
+node apps/api/scripts/session-revocation.test.mjs
 ```
 
 Four tests passed for old/new credentials, legacy tokens, partial MFA and suspended/deleted users. Prisma calls are in-memory doubles; full login/MFA/database integration and a production Next.js build were not exercised.
