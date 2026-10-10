@@ -11,8 +11,8 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/plugin-deep-link": "^2.4.10",
+    "@tauri-apps/api": "^2.12.1",
+    "@tauri-apps/plugin-deep-link": "^2.6.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
