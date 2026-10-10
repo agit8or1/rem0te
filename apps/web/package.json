@@ -1,6 +1,6 @@
 {
   "name": "@reboot-remote/web",
-  "version": "0.18.18",
+  "version": "0.18.19",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
@@ -26,7 +26,7 @@
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "lucide-react": "^1.46.0",
-    "next": "16.3.5",
+    "next": "16.3.8",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "tailwind-merge": "^3.7.0"
