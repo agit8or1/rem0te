@@ -5,6 +5,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.19] — 2026-10-10 · *Handshake*
+
+### Security
+
+`pnpm audit` went from clean to 18 advisories (2 critical, 8 high) between
+0.18.18 and now without a line of this repository changing — every one was
+published after 2026-09-18. The `audit` job is a required check, so `main` was
+unmergeable until this landed.
+
+- **`next` 16.3.5 → 16.3.8.** Clears GHSA-vcvr-r3jv-pc5j (critical: remote
+  code execution in `next/og` `ImageResponse`, fixed in 16.3.6) and six later
+  advisories fixed in 16.3.8. Stays on the 16.3 line on purpose; 16.4 is a
+  separate change.
+- **`proxy-addr` >=2.0.8** (override). Critical, GHSA-jqcg-44mw-7w3h:
+  IPv4-mapped IPv6 addresses matched trust subnets they are not in. This is
+  the library behind Express's `trust proxy`, which is what `TRUSTED_PROXIES`
+  configures — so it is the one in this batch that touches the API's own
+  security model, not just a dependency's.
+- **`fast-uri` back to `^3.1.1`.** The previous override, `>=3.1.1`, was
+  unbounded, and had quietly lifted ajv's declared `fast-uri ^3` onto 4.1.3 —
+  the version carrying GHSA-qw65-cvwx-89v3, GHSA-58mr-gqgx-xq4g and two more,
+  all of which exist only in 4.x. The same trap the `ajv` override's comment
+  already warns about. Now resolves 3.1.8.
+- **`sharp` >=0.35.5** (raised from >=0.35.0; GHSA-wq5f-xc86-pv6w),
+  **`brace-expansion` >=5.0.12** (raised from >=5.0.9; three advisories) and
+  **`source-map-js` >=1.2.2** (GHSA-68fv-2mgg-jv7q; launcher build only).
+- **One advisory accepted, not fixed:** `braces` <=3.0.3, GHSA-vfj7-8cjw-p6xm
+  (stack exhaustion on nested patterns). No patched release exists. It is
+  reached only through `eslint-config-next` → `fast-glob` → `micromatch`, i.e.
+  the lint run over this repository's own globs, and is absent from every
+  production install. Recorded under `auditConfig.ignoreGhsas` in
+  `pnpm-workspace.yaml` with that reason; remove it when `braces` ships a fix.
+
+**Deploying this needs the full production-dependency procedure**, not a
+`dist` rsync: regenerate the manifest (`pnpm deploy:manifest`) — it now carries
+the new overrides — and run `npm install --omit=dev` at the target, or the API
+keeps running on `proxy-addr` 2.0.7. Rebuild and redeploy the web standalone
+for `next`.
+
+---
+
 ## [0.18.18] — 2026-09-18 · *Handshake*
 
 No production code changes.
