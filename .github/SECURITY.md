@@ -8,6 +8,10 @@ Report it privately through GitHub's
 [private vulnerability reporting](https://github.com/agit8or1/rem0te/security/advisories/new)
 for this repository. That opens a draft advisory only you and the maintainers can see.
 
+If you cannot use GitHub's reporting, email **agit8or@gmail.com** instead. This is
+also the security contact on record for automated scanning services that report to
+the project privately, such as Anthropic's OSS Scanner.
+
 Please include, as far as you can:
 
 - what the issue is, and which component it affects (API, web, installer scripts,

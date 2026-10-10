@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.21] — 2026-10-10 · *Handshake*
+
+No production code changes.
+
+### Changed
+
+- **`.github/SECURITY.md` names an email address** — agit8or@gmail.com — as
+  the fallback for anyone who cannot use GitHub's private vulnerability
+  reporting. Until now the policy offered no address at all, which also meant
+  the OSS Scanner enrolment triage (anthropics/oss-scanner#363) had nothing to
+  check its `primary_contact` against. Private advisories remain the preferred
+  route.
+
+---
+
 ## [0.18.20] — 2026-10-10 · *Handshake*
 
 No production code changes. The Dockerfile builds on 0.18.19's clean dependency tree.
