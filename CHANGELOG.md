@@ -5,6 +5,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.20] — 2026-10-10 · *Handshake*
+
+No production code changes. The Dockerfile builds on 0.18.19's clean dependency tree.
+
+### Added
+
+- **`.oss-scanner/` — build and threat model for Anthropic's OSS Scanner.**
+  The free scanner (github.com/anthropics/oss-scanner) clones this repository,
+  builds `.oss-scanner/Dockerfile` with network access, then audits the image
+  with none. So the Dockerfile fetches everything up front: the pnpm workspace,
+  Prisma's engines, the Inter font `next build` pulls from Google, Go modules
+  for the Windows installer and Rust crates for the Tauri launcher.
+
+  `start-services.sh` brings up Postgres, Redis and the built API on loopback
+  inside that image, so the e2e suites — `e2e-business-access.mjs` above all —
+  run offline and give the scanner a working two-business harness. The secrets
+  it uses are random values generated during the image build; nothing in
+  `.oss-scanner/` is production configuration and nothing there is deployed.
+
+  `threat_model.md` states what the scanner should treat as untrusted, the
+  invariants that must hold, and how findings are rated. Its central point:
+  **the business is the boundary**, so a cross-business read by any logged-in
+  user is High, not "post-auth, therefore low". It can be edited at any time
+  without touching the enrolment.
+
+  The Rust launcher compiles in that image on a best-effort basis, and a
+  failure there is a warning rather than a failed build — CI still does not
+  build `src-tauri` (see 0.18.18).
+
+---
+
 ## [0.18.19] — 2026-10-10 · *Handshake*
 
 ### Security
