@@ -9,21 +9,54 @@ Two passes are recorded here: the original review, and a second full pass on
 2026-08-31 (v0.13.0, *Deadbolt*) which is written up first because it found the
 more serious problems of the two.
 
-> **This document describes v0.13.0. It has not been re-audited since**, and the
-> releases after it added surface that a full pass has not covered:
->
-> | Added | Release | Surface |
-> |---|---|---|
-> | Endpoint inventory and the command queue | 0.14.0 | A public `/enrollment/command-result` route; endpoint-reported data written to shared tables |
-> | Windows event-log reading | 0.14.0 | Log contents crossing into the console, behind the `computers:event_logs` capability |
-> | Agent reinstall staging | 0.15.0 | An operator action that re-runs an installer as SYSTEM on a managed machine |
-> | Host metrics | 0.17.0 | `/proc` reads on the platform host, exposed to Platform Admins |
-> | Tactical RMM resolver | 0.18.0 | Endpoint lookup by attacker-influenceable hostname, and an open-redirect fix in the sign-in flow |
->
-> Each of those was designed against the invariants in this document, and
-> `scripts/check-security-invariants.mjs` covers the ones that can be checked
-> statically — but designed-against is not the same as audited, and saying so is
-> cheaper than implying a review that has not happened.
+Three passes are recorded here, newest first: 2026-10-22 (v0.18.22), which
+covered everything added since 0.13.0; 2026-08-31 (v0.13.0, *Deadbolt*); and
+the original review.
+
+## Third pass — 2026-10-22 (v0.18.22)
+
+Scope: the whole repository again, including what came after 0.13.0 —
+inventory and the command queue, event-log reading, agent reinstall, host
+metrics and the Tactical RMM resolver. The live deployment's ports, TLS,
+headers and file permissions were checked too, as were `pnpm audit`,
+`govulncheck` and Dependabot.
+
+| Severity | Found | Fixed |
+|----------|------:|------:|
+| Critical | 3     | 3     |
+| High     | 3     | 3     |
+| Medium   | 9     | 9     |
+| Low      | 12    | 12    |
+
+Every finding has a check, either in `apps/api/scripts/e2e-security-audit.mjs`
+(it needs a running API against a scratch database, and refuses port 3001) or
+in `scripts/check-security-invariants.mjs`. The changelog entry for 0.18.22
+gives each one's symptom and the reasoning behind its fix. This is the summary.
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| C1 | Critical | A device-reported hostname reached `title`/`rem` lines of the Connect `.cmd`; `PC&<cmd>` ran `<cmd>` as the technician | `buildConnectCmd` reduces name and ID to `[A-Za-z0-9._ -]`; claim DTO bounded |
+| C2 | Critical | `sudo dpkg -i` on an API-writable path → root | Root-owned `rem0te-rustdesk-server-upgrade` downloads, verifies and installs |
+| C3 | Critical | `C:\ProgramData\Rem0te` could be pre-created by a standard user → SYSTEM via `heartbeat.ps1` | Ownership + SID-based ACL + verification before any write; planted items removed; client pinned by digest or signature |
+| H1 | High | A Business Owner could register another business's RustDesk ID and receive its secret and password | RustDesk IDs typed in by Platform Admins only |
+| H2 | High | sudoers `*` matches spaces, so the fail2ban rules admitted `actionban` | Root-owned `rem0te-f2b` with anchored, per-operation argument checks |
+| H3 | High | Served Windows installer predated its own source's security fix | Rebuilt with Go 1.26.10, which `go.mod` now names |
+| M1 | Medium | Sign-in `returnTo` open redirect (`/%09/…`, `/..//…`) | Resolved with `URL`, same-origin and non-protocol-relative only |
+| M2 | Medium | TOTP: per-IP limit only; replay within the window | Per-account lockout; `lastTotpStep` single-use |
+| M3 | Medium | TOTP setup silently deactivated active MFA; self MFA reset without a code | Refused while active; self reset refused |
+| M4 | Medium | `computers:edit` bypassed per-computer grants for credentials | Same reach as connecting; company-wide needs `users:manage` |
+| M5 | Medium | Business detail listed computers to members with no capabilities | Needs `computers:view` |
+| M6 | Medium | Note attachable to another business's session | Session checked against the note's business |
+| M7 | Medium | Computer pointable at another business's site | Site checked against the computer's business |
+| M8 | Medium | Claim tokens reusable under a race; pool adoption without the secret | Conditional consume; existing secret required |
+| M9 | Medium | Unbound nodes bound by the first heartbeat | Only a claim binds; a token minted for that computer can re-bind |
+| L1–L12 | Low | No session revocation; unvalidated profile body; email change without re-auth; API keys outliving their creator's role; launcher `sessionId` scope, Quick Connect switches and `?token=`; heartbeat oracle; DTO-less public routes; SVG and name-derived extensions on uploads; no console CSP; Next on `0.0.0.0`; cleartext LAN site; firewall off | See the 0.18.22 changelog |
+
+**Not changed, deliberately:** `script-src` keeps `'unsafe-inline'`, because
+the App Router inlines its hydration payload and a nonce-based CSP would need
+dynamic rendering of every page. The policy still blocks foreign script
+origins, plugins, `<base>` hijacking, framing and off-origin form posts and
+fetches.
 
 ## Second pass — 2026-08-31 (v0.13.0)
 

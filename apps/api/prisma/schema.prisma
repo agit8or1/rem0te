@@ -234,6 +234,10 @@ model User {
   emailVerifiedAt DateTime?
   isPlatformAdmin Boolean    @default(false)
 
+  // Session tokens issued before this instant are refused. Moved on password
+  // change, MFA change and sign-out; null means no revocation has happened.
+  sessionsValidAfter DateTime?
+
   // Contact and address information (all optional)
   phone      String?
   jobTitle   String?
@@ -270,6 +274,8 @@ model UserMfaMethod {
   isActive Boolean       @default(true)
 
   totpSecret   String?
+  // Last TOTP time step accepted, so a code cannot be replayed in its window.
+  lastTotpStep Int?
   codeHash     String?
   usedAt       DateTime?
   credentialId String?

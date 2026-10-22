@@ -4,7 +4,7 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
-import { LoginDto, VerifyMfaDto } from './dto/login.dto';
+import { LoginDto, VerifyMfaDto, UpdateProfileDto, ChangePasswordDto } from './dto/login.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -118,12 +118,7 @@ export class AuthController {
   @Patch('profile')
   async updateProfile(
     @CurrentUser() user: JwtPayload,
-    @Body() body: {
-      firstName?: string; lastName?: string; email?: string;
-      phone?: string; jobTitle?: string;
-      address?: string; city?: string; state?: string; country?: string; postalCode?: string;
-      timeZone?: string;
-    },
+    @Body() body: UpdateProfileDto,
   ) {
     return { success: true, data: await this.authService.updateProfile(user.sub, body) };
   }
@@ -131,17 +126,27 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Post('change-password')
   @HttpCode(HttpStatus.OK)
+  @RateLimit(10)
   async changePassword(
     @CurrentUser() user: JwtPayload,
-    @Body() body: { currentPassword: string; newPassword: string },
+    @Body() body: ChangePasswordDto,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return { success: true, data: await this.authService.changePassword(user.sub, body.currentPassword, body.newPassword) };
+    const result = await this.authService.changePassword(user.sub, body.currentPassword, body.newPassword);
+    // Every other session ended with the old password; this one carries on
+    // with a token minted after the revocation.
+    this.setAuthCookie(res, result.accessToken);
+    return { success: true, data: { success: true } };
   }
 
   @UseGuards(JwtAuthGuard)
   @Post('logout')
   @HttpCode(HttpStatus.OK)
-  logout(@Res({ passthrough: true }) res: Response) {
+  async logout(@CurrentUser() user: JwtPayload, @Res({ passthrough: true }) res: Response) {
+    // Clearing the cookie alone left the token itself valid for the rest of
+    // its eight hours, wherever a copy of it had got to. Sign-out ends every
+    // session the account holds; there is no per-token record to end just one.
+    await this.authService.revokeSessions(user.sub);
     res.clearCookie('access_token');
     return { success: true };
   }

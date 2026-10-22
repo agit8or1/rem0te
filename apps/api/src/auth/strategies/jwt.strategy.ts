@@ -4,6 +4,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { RoleType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isRevoked } from '../session-revocation';
 
 export interface JwtPayload {
   sub: string;
@@ -55,11 +56,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, status: true, isPlatformAdmin: true },
+      select: { id: true, status: true, isPlatformAdmin: true, sessionsValidAfter: true },
     });
 
     if (!user || user.status === 'DELETED') {
       throw new UnauthorizedException('Account not found');
+    }
+    // Revoked by sign-out, a password change or an MFA change. See
+    // session-revocation.ts for why this is not a plain timestamp comparison.
+    if (isRevoked(payload.iat, user.sessionsValidAfter)) {
+      throw new UnauthorizedException('This session has ended. Sign in again.');
     }
     if (user.status === 'SUSPENDED') {
       throw new UnauthorizedException('Account suspended');

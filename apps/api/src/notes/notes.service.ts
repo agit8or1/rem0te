@@ -115,6 +115,16 @@ export class NotesService {
 
     if (!tenantId) throw new BadRequestException('No platform context');
 
+    // A session id can ride along with an endpoint or business attachment, and
+    // only the branch that picked the business checked it. A session from
+    // another business then had this note show up in its own timeline.
+    if (dto.sessionId) {
+      const session = await this.assertSessionInScope(actor, dto.sessionId);
+      if (session.customerId !== noteBusinessId) {
+        throw new BadRequestException('That session belongs to a different business');
+      }
+    }
+
     const note = await this.prisma.note.create({
       data: {
         tenantId,

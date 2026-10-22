@@ -1,6 +1,6 @@
 {
   "name": "@reboot-remote/launcher",
-  "version": "0.18.21",
+  "version": "0.18.22",
   "private": true,
   "type": "module",
   "scripts": {
@@ -22,6 +22,6 @@
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.1.1",
     "typescript": "^5",
-    "vite": "^8.3.0"
+    "vite": "^8.3.5"
   }
 }

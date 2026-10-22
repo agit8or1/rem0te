@@ -68,7 +68,7 @@ Stored on `Membership.capabilities` as an allowlisted string array. The vocabula
 | | `computers:connect` | Start a remote session to a computer they can see |
 | | `computers:add` | Create enrollment links and add new computers |
 | | `computers:remove` | Archive computers and revoke their access |
-| | `computers:edit` | Rename, tag and re-organise computers |
+| | `computers:edit` | Rename, tag and re-organise computers; reveal, set or rotate a computer's password — on computers they have been given access to |
 | | `computers:event_logs` | Read Windows event log entries from a computer they can see |
 | Support | `support:quick_connect` | Use Quick Connect |
 | | `support:sessions_view` | See sessions currently in progress |
@@ -91,6 +91,21 @@ so there is exactly one source of truth and no stale grant can survive a demotio
 Admin** holds everything.
 
 **Nobody can edit their own permissions or their own level**, owner or not.
+
+Three rules that are easy to assume the other way round:
+
+- **`computers:edit` does not widen reach.** Revealing, setting or rotating a computer's password,
+  and minting a launcher token for it, take the same per-computer access as connecting: a grant on
+  that computer, or the computer being company-wide. Before 0.18.22 the capability alone was
+  enough, which let a Business User read the password of a machine they had been given no access to.
+- **Making a computer company-wide needs `users:manage`**, the capability that grants access to one
+  person, because it grants access to everyone in the business at once.
+- **Membership alone shows the business's profile, not its inventory.** `GET /businesses/:id`
+  includes the computer list only with `computers:view`.
+
+An **API key** acts as a Business Owner of its business, and only while the person who created it
+still is one (or is a Platform Admin). Suspending, demoting or removing that person stops their
+keys working.
 
 ---
 

@@ -1,4 +1,4 @@
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as https from 'https';
@@ -19,6 +19,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 const HOSTNAME_RE = /^[a-zA-Z0-9._-]{1,253}$/;
 const BASE64_KEY_RE = /^[A-Za-z0-9+/]{16,512}={0,2}$/;
+const PEER_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 
 export interface RustdeskServerConfig {
   host: string;
@@ -272,6 +273,11 @@ export class RustdeskService {
     return lines.join('\r\n');
   }
 
+  /** Letters, digits, dot, underscore, hyphen and space — inert in cmd.exe and PowerShell alike. */
+  static cmdSafe(value: string): string {
+    return String(value ?? '').replace(/[^A-Za-z0-9._ -]/g, '-').slice(0, 60);
+  }
+
   /**
    * Point this computer's RustDesk at this server, fetching one if needed.
    *
@@ -346,7 +352,20 @@ export class RustdeskService {
     clientDownloadUrl: string;
     clientVersion: string;
   }): string {
-    const { config, peerId, password, endpointName, clientDownloadUrl, clientVersion } = opts;
+    const { config, password, clientDownloadUrl, clientVersion } = opts;
+    // Both of these come from the device: the hostname a machine reports about
+    // itself and the RustDesk ID it registered with. They reach a `title` line
+    // and `rem` comments, which cmd.exe parses for `&`, `|`, `^` and `%`, and
+    // single-quoted PowerShell strings, which a `'` terminates. A hostile
+    // enrolled machine that called itself `PC&powershell -e ...` ran that
+    // payload as whichever technician next clicked Connect. Reduce both to a
+    // charset with no metacharacter in either language rather than escaping,
+    // because the two languages escape differently and one line feeds both.
+    const endpointName = RustdeskService.cmdSafe(opts.endpointName) || 'computer';
+    const peerId = RustdeskService.cmdSafe(opts.peerId).replace(/ /g, '');
+    if (!PEER_ID_RE.test(peerId)) {
+      throw new BadRequestException('This computer has no valid RustDesk ID to connect to.');
+    }
     const pwB64 = Buffer.from(password ?? '', 'utf8').toString('base64');
 
     const ps = this.withErrorReporting([

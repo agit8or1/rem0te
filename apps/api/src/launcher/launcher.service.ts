@@ -15,6 +15,8 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { CAP } from '../rbac/capabilities';
 import { RustdeskService } from '../common/rustdesk.service';
 import { IssueLauncherTokenDto } from './dto/launcher.dto';
+import { EndpointsService } from '../endpoints/endpoints.service';
+import { QuickConnectService } from '../quick-connect/quick-connect.service';
 
 interface LauncherTokenPayload {
   sub: string;           // userId
@@ -37,6 +39,8 @@ export class LauncherService {
     private readonly config: ConfigService,
     private readonly acl: AccessControlService,
     private readonly rustdesk: RustdeskService,
+    private readonly endpoints: EndpointsService,
+    private readonly quickConnect: QuickConnectService,
   ) {}
 
   /**
@@ -59,6 +63,11 @@ export class LauncherService {
       // Confirms the computer is inside the caller's business before anything
       // else is read from it.
       await this.acl.assertEndpointInScope(actor, dto.endpointId);
+      // The same decision as every other way of connecting: business scope
+      // alone let a Business User with no grant on this computer launch it.
+      if (!(await this.endpoints.canConnect(actor, dto.endpointId))) {
+        throw new NotFoundException('Computer not found');
+      }
       const endpoint = await this.prisma.endpoint.findUnique({
         where: { id: dto.endpointId },
         include: { rustdeskNode: { select: { rustdeskId: true } } },
@@ -68,8 +77,21 @@ export class LauncherService {
       }
       targetRustdeskId = endpoint.rustdeskNode.rustdeskId;
     } else if (dto.adHocRustdeskId) {
-      // Ad-hoc targets are Quick Connect, which has its own three-way gate.
-      this.acl.assertCapability(actor, CAP.QUICK_CONNECT);
+      // Ad-hoc targets are Quick Connect, which has its own three-way gate:
+      // platform switch, business switch, and the capability. Checking only
+      // the capability here let a launcher token bypass both switches.
+      await this.quickConnect.assertUsable(actor);
+    }
+
+    // A session id travels into the token and is written to when the token
+    // is redeemed, so it has to be one of this caller's business's sessions.
+    if (dto.sessionId) {
+      const scope = this.acl.resolveScope(actor);
+      const session = await this.prisma.supportSession.findFirst({
+        where: { id: dto.sessionId, ...(scope ? { customerId: scope } : {}) },
+        select: { id: true },
+      });
+      if (!session) throw new NotFoundException('Session not found');
     }
 
     const tenantId = actor.tenantId;

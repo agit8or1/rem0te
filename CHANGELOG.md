@@ -5,6 +5,156 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.22] — 2026-10-22 · *Handshake*
+
+### Security
+
+A full security review on 2026-10-22, the first since 0.13.0, found 3
+critical, 3 high, 9 medium and a dozen low issues. All are fixed here. Each
+one has a check in the new `scripts/e2e-security-audit.mjs` (48 checks) or in
+`check-security-invariants.mjs`, and the write-up is in
+`docs/SECURITY-AUDIT.md`.
+
+**Upgrading a server installed before this release takes manual steps.** The
+sudo wrappers, the web unit's loopback binding and the Caddy changes all live
+in files the installer owns. See *Upgrading a server installed before 0.18.22*
+in `docs/setup.md`.
+
+#### Critical
+
+- **A managed computer could run commands on the technician's PC.** The
+  Connect `.cmd` put the hostname a device reports about itself into a
+  `title` line and `rem` comments. cmd.exe parses those for `&`, `|`, `^` and
+  `%`, and the old filter let all four through. A hostile enrolled machine
+  that called itself `PC&powershell -e …` ran that payload as whichever
+  technician next clicked Connect, Platform Admins included. `buildConnectCmd`
+  now reduces the name and the RustDesk ID to `[A-Za-z0-9._ -]` itself, so the
+  fix holds whatever its caller passes. `ClaimEndpointDto`, which had no
+  bounds at all, now requires a numeric `rustdeskId` and length-limits every
+  field.
+- **The API's service account could become root.** sudoers allowed `dpkg -i`
+  on two `.deb` paths in a directory owned by `reboot`, so anything running as
+  that user could drop a package with a malicious `postinst` there and install
+  it. The SHA-256 check ran in the same process it was meant to guard against.
+  RustDesk server upgrades now go through
+  `/usr/local/sbin/rem0te-rustdesk-server-upgrade`, a root-owned wrapper. It
+  downloads the official packages itself, into a directory only root can
+  write, checks the digests GitHub publishes, and only then runs dpkg. The
+  caller picks a version but never the bytes.
+- **Any local user on a managed Windows PC could get SYSTEM.**
+  `C:\ProgramData\Rem0te` is where a SYSTEM scheduled task runs
+  `heartbeat.ps1` every three minutes, and it holds the agent secret.
+  `New-Item -Force` on a folder that already exists changes nothing, so a
+  standard user who created the folder (or the script) first stayed its owner
+  and could edit the script. The installer now locks the folder down before it
+  writes anything: it removes a junction in its place, takes ownership,
+  restricts it to SYSTEM and Administrators by SID, and verifies the result,
+  refusing to continue otherwise. Anything a non-administrator could have
+  planted is deleted; what a previous install wrote survives, so the machine
+  keeps its identity. Downloads are staged inside that folder instead of
+  `$env:TEMP`, which on the SYSTEM reinstall path is `C:\Windows\Temp`. The
+  RustDesk client is now pinned to the SHA-256 GitHub publishes for that
+  release, falling back to a required valid Authenticode signature when the
+  server cannot reach GitHub. Before this it was run without any check.
+
+#### High
+
+- **One business could capture another business's computer password.** A
+  Business Owner could create a computer using another business's RustDesk ID
+  (IDs get read out over the phone). When that machine's real installer ran,
+  its claim failed, the heartbeat fallback bound the first secret it saw, and
+  the machine's secret and permanent password landed on the attacker's record.
+  Typing in a RustDesk ID is now Platform Admin only. The duplicate-ID errors
+  also no longer reveal whether an ID exists on another business.
+- **The fail2ban sudo rules admitted a root shell.** In sudoers `*` also
+  matches spaces, so `set [a-zA-Z0-9_-]* banip …*` matched
+  `set <jail> action <a> actionban '<cmd>' banip 1`. Anchored sudoers regexes
+  need sudo 1.9.10, and Ubuntu 22.04 ships 1.9.9, so every fail2ban call now
+  goes through `/usr/local/sbin/rem0te-f2b`. That root-owned wrapper accepts
+  one exact argument shape per operation the API performs and refuses
+  everything else.
+- **The served Windows installer predated the 2026-08-31 fix to its own
+  source.** That fix (https-only, no shell metacharacters in the patched URL)
+  never reached the binary, which was built in March with Go 1.22.2. Rebuilt
+  with Go 1.26.10, which `go.mod` now names, so CI builds with the same
+  toolchain.
+
+#### Medium
+
+- **Open redirect after sign-in.** `returnTo=/%09/evil.example` passed the
+  pattern check, because the URL parser strips the tab, and so did
+  `/..//evil.example`. The value is now resolved the way the browser will
+  resolve it, and used only if it stays on this origin and is not
+  protocol-relative.
+- **TOTP brute force was limited per IP only, and a code could be replayed.**
+  Five wrong codes now lock that account's second factor for 15 minutes,
+  whatever address they come from. Each accepted code's time step is recorded
+  (`UserMfaMethod.lastTotpStep`) with a conditional update, so a code works
+  once.
+- **Starting a new TOTP setup switched active MFA off without a code.** It is
+  refused while MFA is on; turning MFA off takes a current code. A Business
+  Owner can also no longer reset their own MFA through
+  `POST /users/:id/mfa/reset`.
+- **`computers:edit` skipped per-computer grants.** Revealing, setting or
+  rotating a password, and minting a launcher token, now need the same reach
+  as connecting. Making a computer company-wide needs `users:manage`.
+- **`GET /businesses/:id` listed every computer and RustDesk ID to a member
+  with no capabilities.** The list now requires `computers:view`.
+- **A note could be attached to another business's session**, and **a
+  computer could be pointed at another business's site.** Both ids are now
+  checked against the business.
+- **Claim tokens could be redeemed twice under a race.** The token is consumed
+  by a conditional update before anything else happens, and handed back if
+  the claim fails. A claim also has to prove the existing device secret before
+  it adopts or replaces a computer in the unassigned pool.
+- **A node with no device secret was claimed by whoever heartbeated first.**
+  Heartbeats no longer bind a first secret; only a claim does. Production had
+  no such nodes. Elsewhere they keep reporting online and can be re-bound
+  with *Make an enrollment link for this computer*, now on their Specs tab.
+  That link is a token minted for that computer, and only such a token may
+  re-claim an existing RustDesk ID. Password rotation is refused for these
+  nodes until then.
+
+#### Low
+
+- **Sessions can be revoked.** Signing out, changing your password, turning
+  2FA off, and an admin password or MFA reset now end the account's sessions
+  (`User.sessionsValidAfter`). Before, a token stayed valid for its full eight
+  hours whatever happened to the account. **Signing out now signs out every
+  device**, because there is no per-token record to end just one. A password
+  change hands the current browser a replacement session. JWT time is in
+  whole seconds, which is handled in `auth/session-revocation.ts`.
+- **Changing your email address needs your current password.**
+  `PATCH /auth/profile` and `POST /auth/change-password` have real DTOs.
+  Before, the inline types meant nothing was validated.
+- **API keys stop working when their creator stops being a Business Owner**
+  (suspended, demoted or removed).
+- **Launcher:** a token's `sessionId` must belong to the caller's business,
+  ad-hoc tokens obey Quick Connect's platform and business switches, and
+  `?token=` is no longer accepted, because a query string lands in Caddy's
+  access log.
+- **The device heartbeat tells an unauthenticated caller nothing** about which
+  record an ID belongs to. `confirm-rotation` and `grants/redeem` have DTOs.
+  Two unused, unauthenticated rotation helpers in `EndpointsService` were
+  deleted.
+- **Logo uploads are raster only**, and the file extension comes from the
+  MIME type, never the uploaded name. SVG was served same-origin, and a file
+  named `.html` but declared as `image/png` was stored and served as HTML.
+  Caddy now serves `/uploads` with a sandboxing CSP.
+- **The console has a Content-Security-Policy** and no longer sends
+  `X-Powered-By`.
+- **Deployment:**
+  - Next.js listens on `127.0.0.1` instead of `0.0.0.0`.
+  - The plain-HTTP site on the server's LAN IP is a redirect to the domain;
+    it used to serve sign-ins in cleartext.
+  - The installer enables ufw: default deny inbound; SSH on sshd's actual
+    port, 80, 443 and RustDesk's ports allowed.
+- **Dependencies:** `follow-redirects` 1.16.1 (two high advisories, via axios
+  in the web app; lockfile only). Folded in from devDependencies: `vite`
+  8.3.3 for the launcher (six advisories).
+
+---
+
 ## [0.18.21] — 2026-10-10 · *Handshake*
 
 No production code changes.

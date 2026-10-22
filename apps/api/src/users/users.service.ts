@@ -7,6 +7,7 @@ import {
 import * as argon2 from 'argon2';
 import { RoleType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { revocationInstant } from '../auth/session-revocation';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { accessLevelLabel, DEFAULT_BUSINESS_USER_CAPABILITIES, sanitizeCapabilities } from '../rbac/capabilities';
@@ -141,7 +142,9 @@ export class UsersService {
     const passwordHash = await argon2.hash(newPassword);
     await this.prisma.user.update({
       where: { id: userId },
-      data: { passwordHash, status: 'ACTIVE' },
+      // A reset is usually because the password is believed known to someone
+      // else, so their sessions end with it.
+      data: { passwordHash, status: 'ACTIVE', sessionsValidAfter: revocationInstant() },
     });
 
     await this.audit.log({
@@ -154,19 +157,24 @@ export class UsersService {
   }
 
   async resetMfa(actor: ActorContext, userId: string) {
-    const membership = await this.acl.assertUserInScope(actor, userId);
-    if (actor.userId !== userId) {
-      this.acl.assertMayManage(actor, {
-        roleType: membership.role.type,
-        isPlatformAdmin: membership.user.isPlatformAdmin,
-        userId,
-      });
+    // Not for your own account: this switches MFA off without a code, so a
+    // stolen session could use it to downgrade the account it is in. Turning
+    // off your own MFA goes through DELETE /mfa/totp, which takes a code.
+    if (actor.userId === userId) {
+      throw new ForbiddenException('Turn off your own two-factor authentication from your account page, with a current code.');
     }
+    const membership = await this.acl.assertUserInScope(actor, userId);
+    this.acl.assertMayManage(actor, {
+      roleType: membership.role.type,
+      isPlatformAdmin: membership.user.isPlatformAdmin,
+      userId,
+    });
 
     await this.prisma.userMfaMethod.updateMany({
       where: { userId, type: 'TOTP' },
       data: { isActive: false },
     });
+    await this.prisma.user.update({ where: { id: userId }, data: { sessionsValidAfter: revocationInstant() } });
 
     await this.audit.log({
       tenantId: membership.tenantId, customerId: membership.customerId ?? undefined,

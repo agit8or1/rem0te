@@ -5,6 +5,8 @@ import * as http from 'http';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 
+const F2B_WRAPPER = '/usr/local/sbin/rem0te-f2b';
+
 @Injectable()
 export class SecurityService {
   constructor(private readonly prisma: PrismaService) {}
@@ -24,6 +26,17 @@ export class SecurityService {
   }
 
   private bustCache(key: string) { this._cache.delete(key); }
+
+  /**
+   * How to reach fail2ban-client as root: the argument-checking wrapper the
+   * installer puts in /usr/local/sbin (see deploy/sbin/rem0te-f2b), or — on a
+   * host installed before 0.18.22 whose sudoers still names fail2ban-client
+   * directly — the binary itself, so the Security page keeps working there
+   * until the installer's sudoers section is re-applied.
+   */
+  private f2b(): string[] {
+    return fs.existsSync(F2B_WRAPPER) ? ['-n', F2B_WRAPPER] : ['fail2ban-client'];
+  }
 
   // ── Non-blocking child process helper ─────────────────────────────────────
   private runAsync(
@@ -97,7 +110,7 @@ export class SecurityService {
       const isActive = svcCheck.stdout.trim() === 'active';
       if (!isActive) return { running: false, jails: [] };
 
-      const result = await this.runAsync('sudo', ['fail2ban-client', 'status'], { timeout: 5000 });
+      const result = await this.runAsync('sudo', [...this.f2b(), 'status'], { timeout: 5000 });
       const statusOut = result.stdout.trim();
       if (result.status !== 0 || !statusOut) return { running: true, jails: [] };
 
@@ -109,7 +122,7 @@ export class SecurityService {
       const jails = await Promise.all(
         jailNames.map(async (jail) => {
           const safeJail = jail.replace(/[^a-zA-Z0-9_-]/g, '');
-          const detail = await this.runAsync('sudo', ['fail2ban-client', 'status', safeJail], { timeout: 3000 });
+          const detail = await this.runAsync('sudo', [...this.f2b(), 'status', safeJail], { timeout: 3000 });
           const out = detail.stdout;
           const totalMatch = out.match(/Total banned:\s+(\d+)/);
           const currentMatch = out.match(/Currently banned:\s+(\d+)/);
@@ -136,7 +149,7 @@ export class SecurityService {
     const safeJail = jail.replace(/[^a-zA-Z0-9_-]/g, '');
     const safeIp = ip.replace(/[^0-9a-fA-F.:/]/g, '');
     if (!safeJail || !safeIp) return { success: false, error: 'Invalid input' };
-    const result = await this.runAsync('sudo', ['fail2ban-client', 'set', safeJail, 'banip', safeIp], { timeout: 5000 });
+    const result = await this.runAsync('sudo', [...this.f2b(), 'set', safeJail, 'banip', safeIp], { timeout: 5000 });
     const ok = result.status === 0;
     if (ok) this.bustCache('fail2ban');
     return { success: ok, error: ok ? undefined : result.stderr.trim() };
@@ -155,11 +168,11 @@ export class SecurityService {
   async getIgnoreList() {
     try {
       // Try each jail and merge; use 'www' (the primary jail) first
-      const jailsResult = await this.runAsync('sudo', ['fail2ban-client', 'status'], { timeout: 5000 });
+      const jailsResult = await this.runAsync('sudo', [...this.f2b(), 'status'], { timeout: 5000 });
       const jailMatch = jailsResult.stdout.match(/Jail list:\s+(.+)/);
       const jailNames = jailMatch ? jailMatch[1].split(',').map(j => j.trim()).filter(Boolean) : ['www'];
       const results = await Promise.all(
-        jailNames.map(j => this.runAsync('sudo', ['fail2ban-client', 'get', j.replace(/[^a-zA-Z0-9_-]/g, ''), 'ignoreip'], { timeout: 5000 })),
+        jailNames.map(j => this.runAsync('sudo', [...this.f2b(), 'get', j.replace(/[^a-zA-Z0-9_-]/g, ''), 'ignoreip'], { timeout: 5000 })),
       );
       const all = new Set<string>();
       for (const r of results) this.parseIgnoreIps(r.stdout).forEach(ip => all.add(ip));
@@ -171,11 +184,11 @@ export class SecurityService {
     const safeIp = ip.replace(/[^0-9a-fA-F.:/]/g, '');
     if (!safeIp) return { success: false, error: 'Invalid IP' };
     try {
-      const jailsResult = await this.runAsync('sudo', ['fail2ban-client', 'status'], { timeout: 5000 });
+      const jailsResult = await this.runAsync('sudo', [...this.f2b(), 'status'], { timeout: 5000 });
       const jailMatch = jailsResult.stdout.match(/Jail list:\s+(.+)/);
       const jailNames = jailMatch ? jailMatch[1].split(',').map(j => j.trim()).filter(Boolean) : [];
       const results = await Promise.all(
-        jailNames.map(j => this.runAsync('sudo', ['fail2ban-client', 'set', j.replace(/[^a-zA-Z0-9_-]/g, ''), 'addignoreip', safeIp], { timeout: 5000 })),
+        jailNames.map(j => this.runAsync('sudo', [...this.f2b(), 'set', j.replace(/[^a-zA-Z0-9_-]/g, ''), 'addignoreip', safeIp], { timeout: 5000 })),
       );
       const anyOk = results.some(r => r.status === 0);
       if (anyOk) this.bustCache('fail2ban');
@@ -187,11 +200,11 @@ export class SecurityService {
     const safeIp = ip.replace(/[^0-9a-fA-F.:/]/g, '');
     if (!safeIp) return { success: false, error: 'Invalid IP' };
     try {
-      const jailsResult = await this.runAsync('sudo', ['fail2ban-client', 'status'], { timeout: 5000 });
+      const jailsResult = await this.runAsync('sudo', [...this.f2b(), 'status'], { timeout: 5000 });
       const jailMatch = jailsResult.stdout.match(/Jail list:\s+(.+)/);
       const jailNames = jailMatch ? jailMatch[1].split(',').map(j => j.trim()).filter(Boolean) : [];
       await Promise.all(
-        jailNames.map(j => this.runAsync('sudo', ['fail2ban-client', 'set', j.replace(/[^a-zA-Z0-9_-]/g, ''), 'delignoreip', safeIp], { timeout: 5000 })),
+        jailNames.map(j => this.runAsync('sudo', [...this.f2b(), 'set', j.replace(/[^a-zA-Z0-9_-]/g, ''), 'delignoreip', safeIp], { timeout: 5000 })),
       );
       this.bustCache('fail2ban');
       return { success: true };
@@ -203,9 +216,9 @@ export class SecurityService {
     if (!safeJail) return { success: false, error: 'Invalid jail name' };
     try {
       const [bt, ft, mr] = await Promise.all([
-        this.runAsync('sudo', ['fail2ban-client', 'get', safeJail, 'bantime'], { timeout: 3000 }),
-        this.runAsync('sudo', ['fail2ban-client', 'get', safeJail, 'findtime'], { timeout: 3000 }),
-        this.runAsync('sudo', ['fail2ban-client', 'get', safeJail, 'maxretry'], { timeout: 3000 }),
+        this.runAsync('sudo', [...this.f2b(), 'get', safeJail, 'bantime'], { timeout: 3000 }),
+        this.runAsync('sudo', [...this.f2b(), 'get', safeJail, 'findtime'], { timeout: 3000 }),
+        this.runAsync('sudo', [...this.f2b(), 'get', safeJail, 'maxretry'], { timeout: 3000 }),
       ]);
       return { success: true, config: { bantime: bt.stdout.trim(), findtime: ft.stdout.trim(), maxretry: mr.stdout.trim() } };
     } catch (e: unknown) { return { success: false, error: (e as Error).message }; }
@@ -220,7 +233,7 @@ export class SecurityService {
       if (findtime !== undefined) updates.push(['findtime', findtime]);
       if (maxretry !== undefined) updates.push(['maxretry', maxretry]);
       await Promise.all(
-        updates.map(([key, val]) => this.runAsync('sudo', ['fail2ban-client', 'set', safeJail, key, String(val)], { timeout: 5000 })),
+        updates.map(([key, val]) => this.runAsync('sudo', [...this.f2b(), 'set', safeJail, key, String(val)], { timeout: 5000 })),
       );
       this.bustCache('fail2ban');
       return { success: true };
@@ -231,7 +244,7 @@ export class SecurityService {
     const safeJail = jail.replace(/[^a-zA-Z0-9_-]/g, '');
     const safeIp = ip.replace(/[^0-9a-fA-F.:/]/g, '');
     if (!safeJail || !safeIp) return { success: false, error: 'Invalid input' };
-    const result = await this.runAsync('sudo', ['fail2ban-client', 'set', safeJail, 'unbanip', safeIp], { timeout: 5000 });
+    const result = await this.runAsync('sudo', [...this.f2b(), 'set', safeJail, 'unbanip', safeIp], { timeout: 5000 });
     const ok = result.status === 0;
     if (ok) this.bustCache('fail2ban');
     return { success: ok };

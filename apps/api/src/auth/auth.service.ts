@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
 import { createHmac } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { issueAt, revocationInstant } from './session-revocation';
 import { AuditService } from '../audit/audit.service';
 import { MfaService } from '../mfa/mfa.service';
 import type { JwtPayload } from './strategies/jwt.strategy';
@@ -274,7 +275,7 @@ export class AuthService {
   }
 
   private issueFullToken(
-    user: { id: string; email: string; isPlatformAdmin: boolean },
+    user: { id: string; email: string; isPlatformAdmin: boolean; sessionsValidAfter?: Date | null },
     tenantId: string | null,
     roleType: unknown,
     businessId?: string | null,
@@ -291,6 +292,9 @@ export class AuthService {
       // Legacy alias so a token minted here still resolves on older code paths.
       customerId: businessId ?? null,
       capabilities: capabilities ?? [],
+      // Never earlier than the account's last revocation, or a sign-in in
+      // the same second as a sign-out would mint an already-dead token.
+      iat: issueAt(user.sessionsValidAfter),
     };
     return this.jwtService.sign(payload);
   }
@@ -314,10 +318,20 @@ export class AuthService {
       firstName?: string; lastName?: string; email?: string;
       phone?: string; jobTitle?: string;
       address?: string; city?: string; state?: string; country?: string; postalCode?: string;
-      timeZone?: string;
+      timeZone?: string; currentPassword?: string;
     },
   ) {
+    const { currentPassword, ...fields } = data;
+    data = fields;
     if (data.email) {
+      const current = await this.prisma.user.findUnique({
+        where: { id: userId }, select: { email: true, passwordHash: true },
+      });
+      if (current && data.email.toLowerCase() !== current.email.toLowerCase()) {
+        const ok = !!currentPassword && !!current.passwordHash
+          && await argon2.verify(current.passwordHash, currentPassword).catch(() => false);
+        if (!ok) throw new BadRequestException('Enter your current password to change your email address');
+      }
       const clash = await this.prisma.user.findFirst({
         where: { email: data.email.toLowerCase(), NOT: { id: userId } },
       });
@@ -356,8 +370,29 @@ export class AuthService {
     const valid = await argon2.verify(user.passwordHash, currentPassword);
     if (!valid) throw new UnauthorizedException('Current password is incorrect');
     const passwordHash = await argon2.hash(newPassword);
-    await this.prisma.user.update({ where: { id: userId }, data: { passwordHash } });
+    const sessionsValidAfter = revocationInstant();
+    await this.prisma.user.update({ where: { id: userId }, data: { passwordHash, sessionsValidAfter } });
     await this.audit.log({ actorId: userId, action: 'PASSWORD_CHANGED', resource: 'user', resourceId: userId, meta: { self: true } });
-    return { success: true };
+
+    // A replacement for the caller's own session, minted after the revocation
+    // so it outlives it. Built the way login builds one.
+    const membership = await this.prisma.membership.findFirst({
+      where: { userId, isActive: true },
+      select: { tenantId: true, customerId: true, capabilities: true, role: { select: { type: true } } },
+    });
+    let tenantId = membership?.tenantId ?? null;
+    if (!tenantId && user.isPlatformAdmin) {
+      tenantId = (await this.prisma.tenant.findFirst({
+        where: { isActive: true }, orderBy: { createdAt: 'asc' }, select: { id: true },
+      }))?.id ?? null;
+    }
+    const accessToken = this.issueFullToken(
+      { ...user, sessionsValidAfter }, tenantId, membership?.role.type ?? null, membership?.customerId ?? null, membership?.capabilities ?? [],
+    );
+    return { success: true, accessToken };
+  }
+
+  async revokeSessions(userId: string): Promise<void> {
+    await this.prisma.user.update({ where: { id: userId }, data: { sessionsValidAfter: revocationInstant() } });
   }
 }

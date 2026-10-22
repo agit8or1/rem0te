@@ -19,7 +19,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { Public } from '../common/decorators/public.decorator';
-import { latestRustdeskVersionOr, RUSTDESK_FALLBACK_VERSION } from '../common/rustdesk-release';
+import { latestRustdeskVersionOr, RUSTDESK_FALLBACK_VERSION, rustdeskAssetSha256 } from '../common/rustdesk-release';
 
 const INSTALLER_MAGIC = Buffer.from('REM0TE_INST_URL:');
 const INSTALLER_SLOT_SIZE = 256;
@@ -206,7 +206,8 @@ export class PublicController {
     let filename: string;
 
     if (platform === 'windows.ps1') {
-      script = this.buildWindowsScript(version, host, key, validatedToken);
+      const sha = await rustdeskAssetSha256(version, `rustdesk-${version}-x86_64.exe`);
+      script = this.buildWindowsScript(version, host, key, validatedToken, sha);
       contentType = 'text/plain; charset=utf-8';
       filename = 'install-rustdesk.ps1';
     } else if (platform === 'linux.sh') {
@@ -261,11 +262,14 @@ export class PublicController {
 
   // ── Script templates ──────────────────────────────────────────────────────
 
-  private buildWindowsScript(version: string, host: string | null, key: string | null, enrollToken?: string): string {
+  private buildWindowsScript(
+    version: string, host: string | null, key: string | null, enrollToken?: string, clientSha256?: string | null,
+  ): string {
     const hostVal = safeHost(host);
     const keyVal = safeKey(key);
     const claimToken = safeToken(enrollToken);
     version = safeVersion(version);
+    const shaVal = /^[0-9a-f]{64}$/.test(clientSha256 ?? '') ? clientSha256! : '';
     // Base64-encoded server config for `rustdesk.exe --config <base64>`. This is the
     // documented mechanism to reconfigure an already-installed RustDesk without
     // touching the TOML files. Format: host=...,key=...,relay=...,api=
@@ -284,6 +288,9 @@ $REM0TE_KEY    = '${keyVal}'
 $REM0TE_CONFIG = '${configB64}'
 $CLAIM_TOKEN   = '${claimToken}'
 $VERSION       = '${version}'
+# SHA-256 GitHub published for this client build; empty if the server could
+# not reach GitHub, in which case the Authenticode signature is required.
+$RD_SHA256     = '${shaVal}'
 # The Rem0te platform version that generated this installer. Reported on every
 # heartbeat so the console can tell an agent too old to collect anything from a
 # machine that simply has not been asked yet.
@@ -293,7 +300,10 @@ $RDEXE = 'C:\\Program Files\\RustDesk\\rustdesk.exe'
 $LOGDIR = 'C:\\ProgramData\\Rem0te\\Logs'
 $LOG = "$LOGDIR\\install.log"
 $STATEDIR = 'C:\\ProgramData\\Rem0te'
-$SETUP_DIR = "$env:TEMP\\rem0te-install"
+# Under the locked-down state directory, not $env:TEMP: on the SYSTEM reinstall
+# path that is C:\\Windows\\Temp, where any local user can plant a file at
+# the name the client is about to be downloaded to and executed from.
+$SETUP_DIR = "$STATEDIR\\setup"
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 function Log([string]$msg, [string]$level = 'INFO') {
@@ -329,7 +339,62 @@ Write-Host ''
 Write-Host '  Rem0te Managed Agent' -ForegroundColor Cyan
 Write-Host ''
 
-if (-not (TestAdmin)) { Fail 'ERROR: Run this script as Administrator.' 2 }
+if (-not (TestAdmin)) { Write-Host 'ERROR: Run this script as Administrator.' -ForegroundColor Red; exit 2 }
+
+# ── Lock down the state directory before anything is written to it ─────────
+# A SYSTEM scheduled task runs heartbeat.ps1 from here every three minutes, and
+# the agent secret lives here. ProgramData is writable by every local user, and
+# New-Item -Force on a directory that already exists changes nothing — so a
+# standard user who created C:\\ProgramData\\Rem0te (or a heartbeat.ps1 inside
+# it) first stayed its owner, kept write access, and ran code as SYSTEM within
+# three minutes. Every write below also has to land in a directory the user
+# cannot redirect, so a junction in place of the directory is removed first.
+# Identities are SIDs, not names: 'Administrators' is localised.
+$trusted = @('S-1-5-18', 'S-1-5-32-544')
+function OwnerSid($path) {
+    try { return (Get-Acl -LiteralPath $path).GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { return '' }
+}
+$sd = Get-Item -LiteralPath $STATEDIR -Force -ErrorAction SilentlyContinue
+if ($sd -and ($sd.Attributes -band [IO.FileAttributes]::ReparsePoint)) { [IO.Directory]::Delete($STATEDIR); $sd = $null }
+# Note what a non-administrator could have planted BEFORE taking ownership,
+# which erases the evidence: anything owned by someone other than SYSTEM or
+# Administrators, and any link. What a previous install wrote (the agent
+# secret in heartbeat.dat among it) is owned by SYSTEM or Administrators and
+# survives, so a re-run keeps the machine's identity.
+$planted = @()
+if ($sd) {
+    $planted = @(Get-ChildItem -LiteralPath $STATEDIR -Recurse -Force -ErrorAction SilentlyContinue | Where-Object {
+        ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        ($_.PSObject.Properties['LinkType'] -and $_.LinkType) -or
+        ($trusted -notcontains (OwnerSid $_.FullName))
+    } | ForEach-Object { $_.FullName })
+    if ($trusted -notcontains (OwnerSid $STATEDIR)) { $planted += '*' }
+}
+if (-not (Test-Path -LiteralPath $STATEDIR)) { New-Item -ItemType Directory -Path $STATEDIR | Out-Null }
+& takeown.exe /F $STATEDIR /R /A /D Y *>$null
+& icacls.exe $STATEDIR /reset /T /C /Q *>$null
+& icacls.exe $STATEDIR /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /T /C /Q *>$null
+$acl = Get-Acl -LiteralPath $STATEDIR
+$foreign = @($acl.Access | Where-Object {
+    $sid = try { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { '' }
+    $_.AccessControlType -eq 'Allow' -and $trusted -notcontains $sid
+})
+if ($trusted -notcontains (OwnerSid $STATEDIR) -or $foreign.Count -gt 0) {
+    Write-Host "ERROR: $STATEDIR could not be restricted to SYSTEM and Administrators. Refusing to continue." -ForegroundColor Red
+    exit 3
+}
+# A directory someone else created may hold anything, so none of it is kept.
+# Otherwise only the planted items go. Removing a link removes the link, not
+# what it points at. The scripts are rewritten below whatever happens here.
+if ($planted -contains '*') {
+    Get-ChildItem -LiteralPath $STATEDIR -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+} else {
+    foreach ($p in $planted) { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue }
+}
+foreach ($f in @('heartbeat.ps1', 'setup')) {
+    Remove-Item -LiteralPath (Join-Path $STATEDIR $f) -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 Log "Rem0te installer starting. server=$REM0TE_HOST version=$VERSION claim=$($CLAIM_TOKEN.Length -gt 0)"
 
 # ── [1/6] Download ─────────────────────────────────────────────────────────
@@ -350,6 +415,25 @@ Log "Downloading $dlUrl -> $INSTALLER"
 try {
     Invoke-WebRequest -Uri $dlUrl -OutFile $INSTALLER -UseBasicParsing
 } catch { Fail "ERROR: Download failed: $($_.Exception.Message)" 10 }
+
+# This file is about to run elevated. Pin it to the digest GitHub published for
+# the release, or — when the server could not fetch that — require a valid
+# Authenticode signature. Either failing means it is not the RustDesk release.
+$actualSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $INSTALLER).Hash.ToLower()
+if ($RD_SHA256) {
+    if ($actualSha -ne $RD_SHA256) {
+        Remove-Item -LiteralPath $INSTALLER -Force -ErrorAction SilentlyContinue
+        Fail "ERROR: The downloaded RustDesk client does not match the published checksum (got $actualSha). Nothing was installed." 12
+    }
+    Log "Client checksum verified ($actualSha)."
+} else {
+    $sig = Get-AuthenticodeSignature -LiteralPath $INSTALLER
+    if ($sig.Status -ne 'Valid') {
+        Remove-Item -LiteralPath $INSTALLER -Force -ErrorAction SilentlyContinue
+        Fail "ERROR: No published checksum was available and the client's signature is $($sig.Status). Nothing was installed." 12
+    }
+    Log "Client signature verified ($($sig.SignerCertificate.Subject))."
+}
 
 # ── [2/6] Stop existing RustDesk and install ───────────────────────────────
 Step 2 6 'Installing remote-support service...'
@@ -1078,7 +1162,7 @@ foreach ($d in $diag) { Log ('  ' + $d) }
 # success. Ask the server whether hbbs has genuinely seen this peer.
 # $regState: $true registered, $false definitely not, $null unknown.
 function Test-Registered([string]$id) {
-    $b = @{ rustdeskId = $id; hostname = $env:COMPUTERNAME; platform = 'Windows' } | ConvertTo-Json -Compress
+    $b = @{ rustdeskId = $id; hostname = $env:COMPUTERNAME; platform = 'Windows'; agentSecret = $AGENT_SECRET } | ConvertTo-Json -Compress
     try {
         $r = Invoke-RestMethod -Uri "https://$REM0TE_HOST/api/v1/enrollment/heartbeat" -Method Post -Body $b -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
         return $r.data.rustdeskRegistered

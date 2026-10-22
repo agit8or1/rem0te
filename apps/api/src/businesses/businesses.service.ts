@@ -10,6 +10,7 @@ import { RoleType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
+import { CAP } from '../rbac/capabilities';
 import {
   DEFAULT_BUSINESS_USER_CAPABILITIES,
   sanitizeCapabilities,
@@ -96,15 +97,22 @@ export class BusinessesService {
   async findOne(actor: ActorContext, id: string) {
     await this.acl.assertBusinessInScope(actor, id);
 
+    // Being in a business is enough to see its name and profile, not its
+    // inventory: a member granted no capabilities got every computer and
+    // RustDesk ID from here. The computer list goes with `computers:view`,
+    // as it does on /endpoints.
+    const canSeeComputers = this.acl.can(actor, CAP.COMPUTERS_VIEW);
     const business = await this.prisma.customer.findFirst({
       where: { id, isArchived: false },
       include: {
         sites: { where: { isActive: true } },
-        endpoints: {
-          where: { status: { not: 'ARCHIVED' } },
-          include: { rustdeskNode: { select: { rustdeskId: true, lastSeenAt: true } } },
-          orderBy: [{ isOnline: 'desc' }, { name: 'asc' }],
-        },
+        ...(canSeeComputers ? {
+          endpoints: {
+            where: { status: { not: 'ARCHIVED' as const } },
+            include: { rustdeskNode: { select: { rustdeskId: true, lastSeenAt: true } } },
+            orderBy: [{ isOnline: 'desc' as const }, { name: 'asc' as const }],
+          },
+        } : {}),
         _count: { select: { endpoints: true, sites: true, portalUsers: true } },
       },
     });

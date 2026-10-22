@@ -31,9 +31,13 @@ function LoginForm() {
   // check at all. The query string is allowed through — it has to be, since a
   // Tactical RMM launch is nothing but query string — which is safe because
   // the value stays a same-origin path and nothing downstream redirects on it.
+  //
+  // The pattern check alone was not enough: the URL parser strips tab, CR and
+  // LF before resolving, so `/%09/evil.example` passed it as a single-slash
+  // path and resolved to `https://evil.example/`. So the value is resolved the
+  // way the browser will resolve it, and kept only if it is still this origin.
   const requested = params.get('returnTo') ?? '';
-  const returnTo =
-    /^\/(?![/\\])/.test(requested) && !requested.includes('\\') ? requested : '/dashboard';
+  const returnTo = safeReturnTo(requested);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -171,4 +175,21 @@ export default function LoginPage() {
       </div>
     </div>
   );
+}
+
+function safeReturnTo(requested: string): string {
+  const fallback = '/dashboard';
+  if (!/^\/(?![/\\])/.test(requested) || requested.includes('\\')) return fallback;
+  if (/[\u0000-\u001f\u007f]/.test(requested)) return fallback;
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const url = new URL(requested, window.location.origin);
+    if (url.origin !== window.location.origin) return fallback;
+    // Dot segments normalise too: `/..//evil.example` resolves on this origin
+    // to the path `//evil.example`, which the router reads as another host.
+    if (/^\/[/\\]/.test(url.pathname)) return fallback;
+    return url.pathname + url.search + url.hash;
+  } catch {
+    return fallback;
+  }
 }

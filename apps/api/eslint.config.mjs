@@ -64,7 +64,10 @@ export default tseslint.config(
     // Test harnesses and one-off scripts are plain ESM run by hand.
     files: ['scripts/**/*.mjs', '*.mjs'],
     languageOptions: {
-      globals: { process: 'readonly', console: 'readonly', fetch: 'readonly' },
+      globals: {
+        process: 'readonly', console: 'readonly', fetch: 'readonly',
+        Buffer: 'readonly', setTimeout: 'readonly', FormData: 'readonly', Blob: 'readonly',
+      },
     },
     rules: {
       '@typescript-eslint/no-unused-vars': 'off',

@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsBoolean, IsIn } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsIn, Matches } from 'class-validator';
 
 export class CreateEndpointDto {
   @IsString() name!: string;
@@ -36,4 +36,9 @@ export class AddTagDto {
 export class AddAliasDto {
   @IsString() alias!: string;
   @IsOptional() @IsBoolean() isPrimary?: boolean;
+}
+
+export class RedeemGrantDto {
+  // 32 random bytes, hex — exactly what createConnectionGrant mints.
+  @IsString() @Matches(/^[0-9a-f]{64}$/, { message: 'token is malformed' }) token!: string;
 }

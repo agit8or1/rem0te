@@ -5,6 +5,7 @@ import * as qrcode from 'qrcode';
 import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { revocationInstant } from '../auth/session-revocation';
 import { AuditService } from '../audit/audit.service';
 
 @Injectable()
@@ -14,6 +15,12 @@ export class MfaService {
   // Combined with the per-IP throttle on the controller, this ensures a single hostile
   // authenticated session cannot brute-force recovery codes even if IP throttling is bypassed.
   private readonly recoveryAttempts = new Map<string, { count: number; blockedUntil: number }>();
+  // The same backoff for TOTP codes. Login throttling was per IP only, and a
+  // partial token stays usable for ten minutes, so an attacker holding a
+  // password could spread a million-code search across addresses.
+  private readonly totpAttempts = new Map<string, { count: number; blockedUntil: number }>();
+  private static readonly TOTP_MAX_FAILURES = 5;
+  private static readonly TOTP_LOCKOUT_MS = 15 * 60_000;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -30,6 +37,17 @@ export class MfaService {
   async generateTotpSetup(userId: string): Promise<{ secret: string; qrCodeUrl: string; otpauthUrl: string }> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
+
+    // Starting a new setup used to overwrite the secret and mark the method
+    // inactive — switching MFA off with no code. A stolen session could
+    // downgrade the account in one request. Replacing an authenticator now
+    // means disabling it first, which takes a current code.
+    const active = await this.prisma.userMfaMethod.findFirst({
+      where: { userId, type: 'TOTP', isActive: true }, select: { id: true },
+    });
+    if (active) {
+      throw new BadRequestException('Two-factor authentication is already on. Turn it off with a current code before setting up a new authenticator.');
+    }
 
     const secret = authenticator.generateSecret(20);
     const issuer = this.config.get<string>('MFA_ISSUER', 'RebootRemote');
@@ -59,11 +77,15 @@ export class MfaService {
     const method = await this.prisma.userMfaMethod.findFirst({ where: { userId, type: 'TOTP' } });
     if (!method?.totpSecret) throw new BadRequestException('TOTP setup not initiated');
 
-    const secret = this.decrypt(method.totpSecret);
-    const valid = authenticator.verify({ token: code, secret });
-    if (!valid) throw new BadRequestException('Invalid TOTP code');
+    if (method.isActive) throw new BadRequestException('Two-factor authentication is already on');
 
-    await this.prisma.userMfaMethod.update({ where: { id: method.id }, data: { isActive: true } });
+    const secret = this.decrypt(method.totpSecret);
+    const step = this.matchingStep(code, secret);
+    if (step === null) throw new BadRequestException('Invalid TOTP code');
+
+    await this.prisma.userMfaMethod.update({
+      where: { id: method.id }, data: { isActive: true, lastTotpStep: step },
+    });
 
     const recoveryCodes = await this.generateAndStoreRecoveryCodes(userId);
 
@@ -73,12 +95,62 @@ export class MfaService {
   }
 
   async verifyTotp(userId: string, code: string): Promise<boolean> {
+    const now = Date.now();
+    const state = this.totpAttempts.get(userId);
+    if (state && state.count >= MfaService.TOTP_MAX_FAILURES && state.blockedUntil > now) {
+      await this.audit.log({ action: 'LOGIN_FAILURE', actorId: userId, resource: 'user', resourceId: userId, meta: { reason: 'totp_locked' } });
+      return false;
+    }
+
     const method = await this.prisma.userMfaMethod.findFirst({
       where: { userId, type: 'TOTP', isActive: true },
     });
     if (!method?.totpSecret) return false;
     const secret = this.decrypt(method.totpSecret);
-    return authenticator.verify({ token: code, secret });
+    const step = this.matchingStep(code, secret);
+
+    // Single use: the conditional update is the check, so two requests racing
+    // the same code cannot both win.
+    const accepted = step !== null && (await this.prisma.userMfaMethod.updateMany({
+      where: {
+        id: method.id,
+        OR: [{ lastTotpStep: null }, { lastTotpStep: { lt: step } }],
+      },
+      data: { lastTotpStep: step },
+    })).count === 1;
+
+    if (accepted) {
+      this.totpAttempts.delete(userId);
+      return true;
+    }
+
+    const fresh = !state || state.blockedUntil <= now;
+    const next = {
+      count: fresh ? 1 : state.count + 1,
+      blockedUntil: fresh ? now + MfaService.TOTP_LOCKOUT_MS : state.blockedUntil,
+    };
+    if (next.count >= MfaService.TOTP_MAX_FAILURES) {
+      next.blockedUntil = now + MfaService.TOTP_LOCKOUT_MS;
+      await this.audit.log({ action: 'LOGIN_FAILURE', actorId: userId, resource: 'user', resourceId: userId, meta: { reason: 'totp_lockout', attempts: next.count } });
+    }
+    this.totpAttempts.set(userId, next);
+    return false;
+  }
+
+  /** The TOTP time step `code` is valid for, or null. */
+  private matchingStep(code: string, secret: string): number | null {
+    const delta = authenticator.checkDelta(code, secret);
+    if (delta === null) return null;
+    return Math.floor(Date.now() / 1000 / (authenticator.allOptions().step ?? 30)) + delta;
+  }
+
+  /**
+   * End every session this account holds. A session JWT is otherwise valid
+   * for its full lifetime whatever happens to the account; JwtStrategy
+   * refuses any token issued before this instant.
+   */
+  async revokeSessions(userId: string): Promise<void> {
+    await this.prisma.user.update({ where: { id: userId }, data: { sessionsValidAfter: revocationInstant() } });
   }
 
   async verifyRecoveryCode(userId: string, code: string): Promise<boolean> {
@@ -122,6 +194,7 @@ export class MfaService {
 
   async resetTotp(userId: string, actorId: string): Promise<void> {
     await this.prisma.userMfaMethod.deleteMany({ where: { userId } });
+    await this.revokeSessions(userId);
     await this.audit.log({ action: 'MFA_RESET', actorId, resource: 'user', resourceId: userId });
   }
 
@@ -162,9 +235,10 @@ export class MfaService {
   async disableTotp(userId: string, code: string): Promise<{ success: boolean }> {
     const method = await this.prisma.userMfaMethod.findFirst({ where: { userId, type: 'TOTP', isActive: true } });
     if (!method?.totpSecret) throw new BadRequestException('TOTP is not enabled');
-    const secret = this.decrypt(method.totpSecret);
-    if (!authenticator.verify({ token: code, secret })) throw new BadRequestException('Invalid TOTP code');
+    // Through verifyTotp so the lockout and single-use rules apply here too.
+    if (!(await this.verifyTotp(userId, code))) throw new BadRequestException('Invalid TOTP code');
     await this.prisma.userMfaMethod.update({ where: { id: method.id }, data: { isActive: false } });
+    await this.revokeSessions(userId);
     await this.audit.log({ actorId: userId, action: 'MFA_RESET', resource: 'user', resourceId: userId, meta: { self: true } });
     return { success: true };
   }

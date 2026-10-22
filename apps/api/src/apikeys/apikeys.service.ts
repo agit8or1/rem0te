@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { isOwnerRole } from '../rbac/capabilities';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 
@@ -129,6 +130,23 @@ export class ApiKeysService {
     if (row.expiresAt && row.expiresAt < new Date()) return null;
     if (!row.customerId || !row.customer) return null;
     if (!row.customer.isActive || row.customer.isArchived) return null;
+
+    // A key acts as a Business Owner, so it is only as good as the person
+    // who made it still being one. It used to outlive its creator being
+    // suspended, removed from the business or demoted, which left a former
+    // owner holding owner rights through a key nobody remembered.
+    const creator = await this.prisma.user.findUnique({
+      where: { id: row.createdById },
+      select: {
+        status: true, isPlatformAdmin: true,
+        memberships: {
+          where: { customerId: row.customerId, isActive: true },
+          select: { role: { select: { type: true } } },
+        },
+      },
+    });
+    if (!creator || creator.status !== 'ACTIVE') return null;
+    if (!creator.isPlatformAdmin && !creator.memberships.some((m) => isOwnerRole(m.role.type))) return null;
 
     // Best-effort touch — a background job could batch these to avoid a
     // write on every request, but volume is expected to be low.

@@ -11,7 +11,6 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
-import * as path from 'path';
 import * as fs from 'fs';
 import { randomBytes } from 'crypto';
 import { TenantsService } from './tenants.service';
@@ -22,7 +21,14 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { PlatformAdminGuard } from '../common/guards/platform-admin.guard';
 
 const UPLOAD_DIR = '/opt/reboot-remote/uploads/logos';
-const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
+// Raster formats only. SVG is a document that can carry script, and these are
+// served from /uploads on the console's own origin. The extension comes from
+// this map, never from the uploaded file's name: the MIME type is what the
+// client claimed, so trusting the name too let `logo.html` declared as
+// image/png be stored and served as HTML.
+const MIME_EXT: Record<string, string> = {
+  'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp',
+};
 
 /**
  * Platform configuration — branding, RustDesk server settings, MFA policy.
@@ -95,19 +101,19 @@ export class TenantsController {
           cb(null, UPLOAD_DIR);
         },
         filename: (_req, file, cb) => {
-          const ext = path.extname(file.originalname).toLowerCase() || '.png';
+          const ext = MIME_EXT[file.mimetype] ?? '.png';
           cb(null, `${Date.now()}-${randomBytes(16).toString('hex')}${ext}`);
         },
       }),
       fileFilter: (_req, file, cb) => {
-        cb(null, ALLOWED_MIME.includes(file.mimetype));
+        cb(null, Object.prototype.hasOwnProperty.call(MIME_EXT, file.mimetype));
       },
       limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
     }),
   )
   async uploadLogo(@Actor() actor: ActorContext, @UploadedFile() file: Express.Multer.File) {
     this.acl.assertPlatformAdmin(actor);
-    if (!file) throw new BadRequestException('No valid image file provided (JPEG/PNG/GIF/WebP/SVG, max 2 MB)');
+    if (!file) throw new BadRequestException('No valid image file provided (JPEG/PNG/GIF/WebP, max 2 MB)');
     return { success: true, data: { url: `/uploads/logos/${file.filename}` } };
   }
 }

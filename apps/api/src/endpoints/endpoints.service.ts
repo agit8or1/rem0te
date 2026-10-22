@@ -1,6 +1,6 @@
 import {
   Injectable, NotFoundException, ConflictException,
-  InternalServerErrorException, BadRequestException, Logger,
+  InternalServerErrorException, BadRequestException, ForbiddenException, Logger,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -231,6 +231,24 @@ export class EndpointsService {
       if (!site) throw new BadRequestException('That site does not belong to this business');
     }
 
+    // Typing in a RustDesk ID is a Platform Admin action. A node created this
+    // way has no device secret, and the installer's heartbeat fallback used to
+    // bind the first secret it saw — so a Business Owner who learned another
+    // business's machine ID (they get read out over the phone) could register
+    // it first and receive that machine's secret and permanent password when
+    // its real installer ran. Everyone else enrolls through a claim token,
+    // which is the only path that proves the machine was handed an installer.
+    if (dto.rustdeskId) {
+      this.acl.assertPlatformAdmin(actor);
+      if (!/^[0-9]{6,15}$/.test(dto.rustdeskId)) {
+        throw new BadRequestException('A RustDesk ID is 6 to 15 digits');
+      }
+      const taken = await this.prisma.rustdeskNode.findUnique({
+        where: { rustdeskId: dto.rustdeskId }, select: { id: true },
+      });
+      if (taken) throw new ConflictException('That RustDesk ID cannot be added');
+    }
+
     const endpoint = await this.prisma.endpoint.create({
       data: {
         tenantId: business.tenantId,
@@ -274,6 +292,17 @@ export class EndpointsService {
         });
         if (!target) throw new NotFoundException('Target business not found');
       }
+    }
+
+    // A site must belong to the business the computer ends up in. Unchecked,
+    // pointing a computer at another business's site id put that site's
+    // contact details into findOne for this business.
+    if (dto.siteId) {
+      const targetBusiness = dto.customerId !== undefined ? dto.customerId : existing.customerId;
+      const site = await this.prisma.site.findFirst({
+        where: { id: dto.siteId, customerId: targetBusiness ?? '__none__' }, select: { id: true },
+      });
+      if (!site) throw new BadRequestException('That site does not belong to this business');
     }
 
     const endpoint = await this.prisma.endpoint.update({
@@ -350,9 +379,29 @@ export class EndpointsService {
 
   // ── Credentials ───────────────────────────────────────────────────────────
 
+  /**
+   * The per-computer half of authorizeConnect, for the operations that hand
+   * out or replace a computer's credential. `computers:edit` alone is a
+   * business-wide capability; without this, a Business User who had been
+   * granted no access to a machine could still reveal its permanent password
+   * and connect with it. Owners and Platform Admins reach everything in scope.
+   */
+  private async assertComputerReachable(actor: ActorContext, endpointId: string): Promise<void> {
+    if (this.acl.isBusinessOwner(actor)) return;
+    const endpoint = await this.prisma.endpoint.findUnique({
+      where: { id: endpointId }, select: { accessMode: true, customerId: true },
+    });
+    if (endpoint?.accessMode === 'COMPANY_WIDE' && endpoint.customerId === actor.businessId) return;
+    const access = await this.prisma.computerAccess.findFirst({
+      where: { endpointId, userId: actor.userId }, select: { id: true },
+    });
+    if (!access) throw new ForbiddenException('You have not been given access to this computer');
+  }
+
   async setPassword(actor: ActorContext, id: string, password: string | null): Promise<void> {
     await this.acl.assertEndpointInScope(actor, id);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
+    await this.assertComputerReachable(actor, id);
 
     const node = await this.prisma.rustdeskNode.findUnique({ where: { endpointId: id }, select: { id: true } });
     if (!node) throw new NotFoundException('No RustDesk node linked to this computer');
@@ -365,6 +414,7 @@ export class EndpointsService {
   async getPassword(actor: ActorContext, id: string): Promise<string | null> {
     const endpoint = await this.acl.assertEndpointInScope(actor, id);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
+    await this.assertComputerReachable(actor, id);
 
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { endpointId: id }, select: { permanentPassword: true },
@@ -388,9 +438,19 @@ export class EndpointsService {
   async rotateCredential(actor: ActorContext, endpointId: string) {
     const endpoint = await this.acl.assertEndpointInScope(actor, endpointId);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
+    await this.assertComputerReachable(actor, endpointId);
 
-    const node = await this.prisma.rustdeskNode.findUnique({ where: { endpointId }, select: { id: true } });
+    const node = await this.prisma.rustdeskNode.findUnique({
+      where: { endpointId }, select: { id: true, agentSecretHash: true },
+    });
     if (!node) throw new NotFoundException('No RustDesk node linked to this computer');
+    // The staged password is handed to whoever heartbeats as this RustDesk ID.
+    // Without a bound device secret that is anyone who knows the ID.
+    if (!node.agentSecretHash) {
+      throw new BadRequestException(
+        'This computer has no device secret yet. Re-run its installer before rotating its password.',
+      );
+    }
 
     const rnd = crypto.randomBytes(24).toString('base64')
       .replace(/[+/=]/g, '')
@@ -406,53 +466,6 @@ export class EndpointsService {
       action: 'ENDPOINT_CREDENTIAL_ROTATION_STAGED', resource: 'endpoint', resourceId: endpointId,
     });
     return { success: true, status: 'PENDING' };
-  }
-
-  /**
-   * Called by the endpoint after it applied the pending password. It proves
-   * success by returning the SHA-256 of the plaintext it applied.
-   *
-   * Unauthenticated by nature (the device speaks, not a user), so it is keyed
-   * solely on the rustdeskId and can only ever promote a password the server
-   * itself generated.
-   */
-  async confirmRotation(rustdeskId: string, passwordSha256: string) {
-    const node = await this.prisma.rustdeskNode.findUnique({
-      where: { rustdeskId },
-      select: { id: true, tenantId: true, endpointId: true, pendingPassword: true },
-    });
-    if (!node?.pendingPassword) return { confirmed: false, reason: 'no_pending' };
-
-    let plain: string;
-    try { plain = this.decryptPassword(node.pendingPassword); }
-    catch { return { confirmed: false, reason: 'decrypt_failed' }; }
-
-    const expected = crypto.createHash('sha256').update(plain).digest('hex');
-    if (expected !== passwordSha256) return { confirmed: false, reason: 'digest_mismatch' };
-
-    await this.prisma.rustdeskNode.update({
-      where: { id: node.id },
-      data: { permanentPassword: node.pendingPassword, pendingPassword: null, pendingPasswordAt: null },
-    });
-
-    const endpoint = await this.prisma.endpoint.findUnique({
-      where: { id: node.endpointId }, select: { customerId: true },
-    });
-    await this.audit.log({
-      tenantId: node.tenantId ?? undefined, customerId: endpoint?.customerId ?? undefined,
-      action: 'ENDPOINT_CREDENTIAL_ROTATED', resource: 'endpoint', resourceId: node.endpointId,
-    });
-    return { confirmed: true };
-  }
-
-  /** Pending-rotation plaintext for the endpoint itself. Heartbeat only. */
-  async getPendingRotationForEndpoint(rustdeskId: string): Promise<string | null> {
-    const node = await this.prisma.rustdeskNode.findUnique({
-      where: { rustdeskId }, select: { pendingPassword: true },
-    });
-    if (!node?.pendingPassword) return null;
-    try { return this.decryptPassword(node.pendingPassword); }
-    catch { return null; }
   }
 
   // ── Connecting ────────────────────────────────────────────────────────────
@@ -503,6 +516,11 @@ export class EndpointsService {
       return { ok: true };
     }
     return { ok: false, reason: 'no_access' };
+  }
+
+  /** authorizeConnect for callers outside this service (the launcher). */
+  async canConnect(actor: ActorContext, endpointId: string): Promise<boolean> {
+    return (await this.authorizeConnect(actor, endpointId)).ok;
   }
 
   /**
@@ -780,6 +798,9 @@ export class EndpointsService {
   async setAccessMode(actor: ActorContext, endpointId: string, mode: 'ASSIGNED_USERS' | 'COMPANY_WIDE') {
     const endpoint = await this.acl.assertEndpointInScope(actor, endpointId);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
+    // COMPANY_WIDE grants every member of the business at once, so it needs
+    // the same capability as granting one of them (grantAccess).
+    this.acl.assertCapability(actor, CAP.USERS_MANAGE);
 
     const updated = await this.prisma.endpoint.update({
       where: { id: endpointId }, data: { accessMode: mode }, select: { id: true, accessMode: true },

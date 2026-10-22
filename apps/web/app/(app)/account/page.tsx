@@ -37,6 +37,10 @@ function ProfileTab() {
   };
   const [form, setForm] = useState<ProfileForm>(empty);
   const [loaded, setLoaded] = useState(false);
+  // Changing the address a password reset goes to needs the password.
+  const [currentPassword, setCurrentPassword] = useState('');
+  const savedEmail = (profile as { email?: string } | undefined)?.email ?? '';
+  const emailChanged = loaded && form.email.trim().toLowerCase() !== savedEmail.toLowerCase();
   const set = <K extends keyof ProfileForm>(k: K, v: ProfileForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
@@ -61,8 +65,9 @@ function ProfileTab() {
   }, [profile, loaded]);
 
   const mutation = useMutation({
-    mutationFn: () => authApi.updateProfile(form),
+    mutationFn: () => authApi.updateProfile(emailChanged ? { ...form, currentPassword } : form),
     onSuccess: () => {
+      setCurrentPassword('');
       toast({ title: 'Profile updated' });
       qc.invalidateQueries({ queryKey: ['auth-profile'] });
       qc.invalidateQueries({ queryKey: ['members'] });
@@ -95,6 +100,16 @@ function ProfileTab() {
               <Label>Email</Label>
               <Input type="email" value={form.email} onChange={e => set('email', e.target.value)} />
             </div>
+            {emailChanged && (
+              <div className="space-y-1 col-span-2">
+                <Label>Current password</Label>
+                <Input
+                  type="password" autoComplete="current-password" value={currentPassword}
+                  onChange={e => setCurrentPassword(e.target.value)}
+                  placeholder="Required to change your email address"
+                />
+              </div>
+            )}
             <div className="space-y-1">
               <Label>Phone</Label>
               <Input value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="+1 555 555 0100" />
@@ -243,8 +258,9 @@ function MfaTab() {
     mutationFn: () => mfaApi.disable(disableCode),
     onSuccess: () => {
       setShowDisable(false); setDisableCode('');
-      qc.invalidateQueries({ queryKey: ['mfa-status'] });
-      toast({ title: 'Two-factor authentication disabled' });
+      // Turning 2FA off ends every session on the account, this one included.
+      toast({ title: 'Two-factor authentication disabled', description: 'Sign in again to continue.' });
+      setTimeout(() => { window.location.href = '/login'; }, 1200);
     },
     onError: (e: unknown) => {
       const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Invalid code';

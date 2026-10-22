@@ -5,10 +5,12 @@ import * as https from 'https';
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
-import { createHash } from 'crypto';
 import { Subject } from 'rxjs';
 import { latestRustdeskVersion } from '../common/rustdesk-release';
 import { compareVersions } from '../common/agent-contract';
+
+/** Root-owned; see deploy/sbin/rem0te-rustdesk-server-upgrade. */
+const RUSTDESK_SERVER_UPGRADER = '/usr/local/sbin/rem0te-rustdesk-server-upgrade';
 
 interface RustdeskServerAsset { name: string; url: string; sha256: string }
 interface RustdeskServerRelease { version: string; assets: RustdeskServerAsset[] }
@@ -495,7 +497,6 @@ export class UpdateService {
   // surfaced that the server was two releases behind.
 
   /** Where the .deb pair is staged. Fixed, because the sudoers rule names it. */
-  private readonly rustdeskServerStaging = '/var/lib/reboot-remote/rustdesk-server';
 
   private rustdeskServerCache: { release: RustdeskServerRelease; fetchedAt: number } | null = null;
 
@@ -556,17 +557,6 @@ export class UpdateService {
   /** Latest rustdesk-server version. Null if GitHub has not been reachable. */
   private async latestRustdeskServerVersion(): Promise<string | null> {
     return (await this.rustdeskServerRelease())?.version ?? null;
-  }
-
-  /** SHA-256 of a file on disk, as lowercase hex. */
-  private sha256File(file: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const hash = createHash('sha256');
-      const stream = fs.createReadStream(file);
-      stream.on('data', (c) => hash.update(c));
-      stream.on('error', reject);
-      stream.on('end', () => resolve(hash.digest('hex')));
-    });
   }
 
   /** `hbbs --version` → "1.1.16". Null when the binary is missing or mute. */
@@ -631,7 +621,6 @@ export class UpdateService {
     }
 
     const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
-    fs.mkdirSync(this.rustdeskServerStaging, { recursive: true });
 
     const debs = (['hbbs', 'hbbr'] as const).map((which) => {
       const assetName = `rustdesk-server-${which}_${latest}_${arch}.deb`;
@@ -641,37 +630,23 @@ export class UpdateService {
           `Release ${latest} does not publish ${assetName} with a checksum. Refusing to install it.`,
         );
       }
-      return { name: `${which}.deb`, asset };
+      return asset;
     });
 
-    // Download, then verify against the digest GitHub published for that asset
-    // before anything is handed to dpkg. A file that does not match is deleted
-    // rather than left in the staging directory the sudoers rule points at.
-    for (const deb of debs) {
-      const target = path.join(this.rustdeskServerStaging, deb.name);
-      await this.downloadTo(deb.asset.url, target);
-      const actual = await this.sha256File(target);
-      if (actual !== deb.asset.sha256) {
-        fs.unlinkSync(target);
-        await this.audit.log({
-          actorId: actor.userId, actorIp: actor.ip,
-          action: 'SETTINGS_UPDATED', resource: 'rustdesk_server', resourceId: deb.name,
-          meta: { refused: 'checksum_mismatch', expected: deb.asset.sha256, actual, version: latest },
-        });
-        throw new NotFoundException(
-          `${deb.asset.name} did not match the checksum GitHub published for it. Nothing was installed.`,
-        );
-      }
+    // Root downloads, verifies and installs; this process only names the
+    // version and the digests GitHub published. It used to download into a
+    // directory it owned and have sudo dpkg install whatever was there, which
+    // let anything running as this user install a package of its choosing —
+    // and a package's postinst runs as root.
+    if (!fs.existsSync(RUSTDESK_SERVER_UPGRADER)) {
+      throw new NotFoundException(
+        `${RUSTDESK_SERVER_UPGRADER} is not installed. Re-run the sudoers section of deploy/scripts/install.sh ` +
+        '(it installs the wrapper and the matching sudo rule), then try again.',
+      );
     }
-
     const noop = () => { /* no progress stream on this path */ };
-    // Fixed argument list, matching the sudoers rule exactly. dpkg is given
-    // both packages in one call because hbbs and hbbr must not be left on
-    // different versions if the second install fails.
     await this.runProc('sudo', [
-      '-n', '/usr/bin/dpkg', '-i',
-      path.join(this.rustdeskServerStaging, 'hbbs.deb'),
-      path.join(this.rustdeskServerStaging, 'hbbr.deb'),
+      '-n', RUSTDESK_SERVER_UPGRADER, latest, arch, debs[0].sha256, debs[1].sha256,
     ], noop, 'install', 0, 0);
 
     await this.runProc('sudo', [
@@ -689,35 +664,6 @@ export class UpdateService {
       version: latest,
       message: `rustdesk-server updated to ${latest}. Endpoints re-register within about 30 seconds.`,
     };
-  }
-
-  /** Straight HTTPS download to a path, following GitHub's release redirects. */
-  private downloadTo(url: string, target: string): Promise<void> {
-    const tmp = `${target}.part`;
-    return new Promise<void>((resolve, reject) => {
-      const out = fs.createWriteStream(tmp);
-      const get = (u: string, redirects = 0) => {
-        if (redirects > 5) return reject(new Error('Too many redirects'));
-        https.get(u, { headers: { 'User-Agent': 'reboot-remote' } }, (r) => {
-          if (r.statusCode && r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
-            r.resume();
-            return get(r.headers.location, redirects + 1);
-          }
-          if (r.statusCode !== 200) {
-            r.resume();
-            return reject(new Error(`Download failed with HTTP ${r.statusCode} for ${u}`));
-          }
-          r.pipe(out);
-          out.on('finish', () => out.close(() => resolve()));
-        }).on('error', reject);
-      };
-      get(url);
-    })
-      .then(() => { fs.renameSync(tmp, target); })
-      .catch((err) => {
-        try { fs.unlinkSync(tmp); } catch { /* nothing to clean up */ }
-        throw err;
-      });
   }
 
   // ── RustDesk client updates on managed endpoints ──────────────────────────

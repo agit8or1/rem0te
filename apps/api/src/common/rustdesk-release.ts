@@ -72,3 +72,48 @@ export async function latestRustdeskVersionOr(
 ): Promise<string> {
   return (await latestRustdeskVersion()) ?? fallback;
 }
+
+const SHA256_DIGEST_RE = /^sha256:([0-9a-f]{64})$/;
+const digestCache = new Map<string, string>();
+
+/**
+ * The SHA-256 GitHub publishes for one asset of a RustDesk client release,
+ * or null when GitHub is unreachable or the release carries no digest.
+ *
+ * The Windows installer runs the downloaded client as SYSTEM, so it pins the
+ * file to this digest rather than trusting whatever arrived over the wire.
+ * Digests of a published release do not change, so a hit is cached for the
+ * life of the process; a miss is not, and is retried on the next request.
+ */
+export function rustdeskAssetSha256(version: string, assetName: string): Promise<string | null> {
+  if (!TAG_RE.test(version) || !/^[A-Za-z0-9._-]+$/.test(assetName)) return Promise.resolve(null);
+  const key = `${version}/${assetName}`;
+  const hit = digestCache.get(key);
+  if (hit) return Promise.resolve(hit);
+
+  return new Promise((resolve) => {
+    const req = https.get(
+      `https://api.github.com/repos/rustdesk/rustdesk/releases/tags/${version}`,
+      { headers: { 'User-Agent': 'reboot-remote', Accept: 'application/vnd.github.v3+json' } },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try {
+            const assets = (JSON.parse(data).assets ?? []) as { name?: string; digest?: string }[];
+            const sha = SHA256_DIGEST_RE.exec(assets.find((a) => a.name === assetName)?.digest ?? '')?.[1] ?? null;
+            if (sha) digestCache.set(key, sha);
+            resolve(sha);
+          } catch {
+            resolve(null);
+          }
+        });
+      },
+    );
+    req.on('error', () => resolve(null));
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      req.destroy();
+      resolve(null);
+    });
+  });
+}

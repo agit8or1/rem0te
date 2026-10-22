@@ -92,7 +92,7 @@ export class QuickConnectService {
   }
 
   /** Throws with the specific reason rather than a generic 403. */
-  private async assertUsable(actor: ActorContext) {
+  async assertUsable(actor: ActorContext) {
     const status = await this.status(actor);
     if (!status.canUse) {
       await this.audit.log({

@@ -379,9 +379,18 @@ export function EndpointSpecs({
             <div className="font-medium">This computer cannot report its specs yet</div>
             <p className="text-muted-foreground text-xs mt-0.5">
               It enrolled before per-device secrets existed, so nothing it sends is
-              trusted beyond an online check. Re-run the installer on it and everything
-              below fills in on the next heartbeat.
+              trusted beyond an online check. Re-run the installer on it from an
+              enrollment link made for this computer, and everything below fills in on
+              the next heartbeat.
             </p>
+            <a
+              className="text-xs font-medium underline underline-offset-2 mt-1 inline-block"
+              href={`/endpoints/enroll?endpointId=${encodeURIComponent(endpointId)}${
+                typeof endpoint.customerId === 'string' ? `&businessId=${encodeURIComponent(endpoint.customerId)}` : ''
+              }`}
+            >
+              Make an enrollment link for this computer
+            </a>
           </div>
         </div>
       )}
