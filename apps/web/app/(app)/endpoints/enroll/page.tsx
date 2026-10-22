@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { businessesApi, enrollmentApi, usersApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
@@ -26,6 +26,18 @@ export default function AddComputerPage() {
   const [platform, setPlatform] = useState<'windows' | 'linux' | 'macos'>('windows');
   const [generated, setGenerated] = useState<{ token: string; url: string; command: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  // Set when arriving from a computer that needs its installer re-run: the
+  // token is then bound to that computer, which is what lets the claim rebind
+  // its device secret. Read from the URL after mount rather than through
+  // useSearchParams so the page still prerenders.
+  const [endpointId, setEndpointId] = useState<string | null>(null);
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const id = q.get('endpointId');
+    if (id && /^[a-z0-9]{10,40}$/.test(id)) setEndpointId(id);
+    const biz = q.get('businessId');
+    if (biz && /^[a-z0-9]{10,40}$/.test(biz)) setBusinessId(biz);
+  }, []);
 
   const { data: businessesData } = useQuery({
     queryKey: ['businesses', ''],
@@ -58,6 +70,7 @@ export default function AddComputerPage() {
     mutationFn: () =>
       enrollmentApi.createToken({
         businessId: businessId || undefined,
+        ...(endpointId ? { endpointId } : {}),
         accessMode,
         assignedUserIds: accessMode === 'ASSIGNED_USERS' ? assignedUserIds : [],
         description: `Managed ${platform} install (${accessMode === 'COMPANY_WIDE' ? 'company-wide' : assignedUserIds.length + ' user(s)'})`,
@@ -103,6 +116,13 @@ export default function AddComputerPage() {
         title="Downloads"
         description="Generate a one-time Managed Device Installer. Any computer that runs it is enrolled as a permanent managed computer belonging to the business you choose here."
       />
+
+      {endpointId && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+          This link re-enrolls an existing computer. Run it on that computer only: it
+          gives the machine a new device identity, and the computer keeps its history.
+        </div>
+      )}
 
       <Card>
         <CardHeader>

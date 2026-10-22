@@ -1,4 +1,13 @@
 your-domain.example.com {
+    # Uploaded branding. Served as inert files: a logo has no business running
+    # script, and these are same-origin with the console.
+    handle /uploads/* {
+        root * /opt/reboot-remote
+        header Content-Security-Policy "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox"
+        header X-Content-Type-Options nosniff
+        file_server
+    }
+
     # RustDesk over 443. With allow-websocket=Y and api-server=https://<host>,
     # the client resolves a domain rendezvous/relay to wss://<host>/ws/id and
     # wss://<host>/ws/relay on 443 (hbb_common check_ws). Proxying them to

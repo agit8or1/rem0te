@@ -78,6 +78,45 @@ check(
   'an argument-less fail2ban-client grant is a root shell (set <jail> action ... runs as root)',
 );
 
+// 4b. …and the two grants that were root shells are gone (0.18.22). Root-side
+//     argument checking lives in the wrappers under deploy/sbin; the sudoers
+//     file may name only those, never the binaries behind them.
+check(
+  'fail2ban-client and dpkg are reached only through the root-owned wrappers',
+  !/NOPASSWD: \/usr\/bin\/fail2ban-client/.test(sudoers) &&
+    !/NOPASSWD: \/usr\/bin\/dpkg/.test(sudoers) &&
+    /NOPASSWD: \/usr\/local\/sbin\/rem0te-f2b$/m.test(sudoers) &&
+    /NOPASSWD: \/usr\/local\/sbin\/rem0te-rustdesk-server-upgrade$/m.test(sudoers),
+  'a sudoers `*` matches spaces, so per-subcommand fail2ban rules admitted actionban; ' +
+  'dpkg -i on an API-writable path installs any package the API user drops there',
+);
+
+// 3b. A node with no stored secret is never bound by a heartbeat. First-sight
+//     binding made the secret worthless for exactly the nodes that lacked one.
+const heartbeatBody = enrollment.slice(enrollment.indexOf('async heartbeat('), enrollment.indexOf('async commandResult('));
+check(
+  'heartbeat never binds a first device secret to an existing node',
+  heartbeatBody.length > 0 &&
+    !/rustdeskNode\.update\(\{\s*where: \{ id: node\.id \},\s*data: \{ agentSecretHash/.test(heartbeatBody),
+  'binding belongs to claimEndpoint, which redeems an operator-issued token',
+);
+
+// 3c. Claim tokens are single-use under concurrency too.
+check(
+  'deviceClaimToken is consumed with a conditional update',
+  /deviceClaimToken\.updateMany\(\{[\s\S]{0,120}claimedAt: null/.test(enrollment),
+  'read-test-write lets two installers racing one token both enroll',
+);
+
+// 3d. Device-reported strings never reach the Connect .cmd unfiltered.
+const rustdeskSvc = read('apps/api/src/common/rustdesk.service.ts');
+check(
+  'buildConnectCmd reduces device-reported names to an inert charset',
+  /const endpointName = RustdeskService\.cmdSafe\(opts\.endpointName\)/.test(rustdeskSvc) &&
+    /const peerId = RustdeskService\.cmdSafe\(opts\.peerId\)/.test(rustdeskSvc),
+  'a hostname of `PC&<command>` ran <command> as the technician who clicked Connect',
+);
+
 // 5. The launcher talks only to the server it was built for.
 const launcher = read('apps/launcher/src-tauri/src/launch.rs');
 check(

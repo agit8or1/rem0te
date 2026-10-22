@@ -8,7 +8,7 @@ import { EndpointsService } from './endpoints.service';
 import { TrmmResolverService } from './trmm-resolver.service';
 import { RustdeskService } from '../common/rustdesk.service';
 import { latestRustdeskVersionOr } from '../common/rustdesk-release';
-import { CreateEndpointDto, UpdateEndpointDto, AddTagDto, AddAliasDto } from './dto/create-endpoint.dto';
+import { CreateEndpointDto, UpdateEndpointDto, AddTagDto, AddAliasDto, RedeemGrantDto } from './dto/create-endpoint.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
 import { RequireCapability } from '../common/decorators/require-capability.decorator';
@@ -132,7 +132,7 @@ export class EndpointsController {
   @Public()
   @HttpCode(HttpStatus.OK)
   @RateLimit(60)
-  async redeemGrant(@Body() body: { token: string }, @Req() req: Request) {
+  async redeemGrant(@Body() body: RedeemGrantDto, @Req() req: Request) {
     const data = await this.svc.redeemConnectionGrant(body.token, req.ip);
     return { success: true, data };
   }

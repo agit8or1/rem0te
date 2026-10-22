@@ -167,19 +167,63 @@ export class EnrollmentService {
     if (record.claimedAt) throw new BadRequestException('Token has already been used');
     if (record.expiresAt < new Date()) throw new BadRequestException('Token has expired');
 
+    // Consume the token before doing anything with it. The checks above read
+    // and the write used to come at the very end, so two installers racing
+    // the same token both passed and both enrolled. A conditional update is
+    // the single-use guarantee; the reads above only pick the error message.
+    const consumed = await this.prisma.deviceClaimToken.updateMany({
+      where: { id: record.id, claimedAt: null, expiresAt: { gte: new Date() } },
+      data: { claimedAt: new Date(), claimedByIp: claimedByIp ?? null },
+    });
+    if (consumed.count !== 1) throw new BadRequestException('Token has already been used');
+
+    try {
+      return await this.claimWithConsumedToken(dto, record, claimedByIp);
+    } catch (e) {
+      // A claim that failed half-way has enrolled nothing. Hand the token back
+      // so the operator is not forced to mint another for a typo-class error.
+      await this.prisma.deviceClaimToken.update({
+        where: { id: record.id },
+        data: { claimedAt: null, claimedByIp: null },
+      }).catch(() => { /* the original error is the one worth reporting */ });
+      throw e;
+    }
+  }
+
+  private async claimWithConsumedToken(
+    dto: ClaimEndpointDto,
+    record: NonNullable<Awaited<ReturnType<PrismaService['deviceClaimToken']['findUnique']>>>,
+    claimedByIp: string | undefined,
+  ) {
     // Check for duplicate RustDesk ID globally
     const existingNode = await this.prisma.rustdeskNode.findUnique({
       where: { rustdeskId: dto.rustdeskId },
     });
 
-    if (existingNode) {
-      if (existingNode.tenantId && existingNode.tenantId !== record.tenantId) {
-        throw new BadRequestException(`RustDesk ID ${dto.rustdeskId} is already registered to another Rem0te account`);
+    // Re-enrolling the very computer this token was minted for. An operator in
+    // its business chose this machine, so the claim may rebind its device
+    // secret — the recovery path for a node that has none, now that a
+    // heartbeat no longer binds one on first sight. Falls through to the
+    // update path below, which upserts the node by endpoint.
+    const reEnrolling = !!existingNode && !!record.endpointId && existingNode.endpointId === record.endpointId;
+
+    if (existingNode && !reEnrolling) {
+      // One message for every refusal: the installer only needs to know it
+      // was refused, and distinguishing "another account" from "this one"
+      // told a token holder which RustDesk IDs exist on the platform.
+      if (existingNode.tenantId) {
+        throw new BadRequestException(`RustDesk ID ${dto.rustdeskId} cannot be enrolled with this token`);
       }
-      if (existingNode.tenantId === record.tenantId) {
-        throw new BadRequestException(`RustDesk ID ${dto.rustdeskId} is already enrolled`);
+      // An unassigned node is a machine that heartbeated in on its own and
+      // bound a device secret doing so. Adopting or replacing it means
+      // proving that secret — otherwise anyone holding any business's token
+      // could pull another machine out of the pending pool by its ID.
+      if (
+        existingNode.agentSecretHash &&
+        (!dto.agentSecret || !this.secretMatches(existingNode.agentSecretHash, dto.agentSecret))
+      ) {
+        throw new BadRequestException(`RustDesk ID ${dto.rustdeskId} cannot be enrolled with this token`);
       }
-      // tenantId is null (unassigned)
       if (!record.endpointId) {
         // Adopt the unassigned node/endpoint into the token's business
         await this.prisma.rustdeskNode.update({
@@ -197,7 +241,7 @@ export class EnrollmentService {
         });
         await this.prisma.deviceClaimToken.update({
           where: { id: record.id },
-          data: { claimedAt: new Date(), claimedByIp: claimedByIp ?? null, endpointId: existingNode.endpointId },
+          data: { endpointId: existingNode.endpointId },
         });
         const endpoint = await this.prisma.endpoint.findUnique({ where: { id: existingNode.endpointId } });
         await this.audit.log({
@@ -328,14 +372,10 @@ export class EnrollmentService {
       }
     }
 
-    // Mark token as claimed
+    // The token was consumed up front; record what it enrolled.
     await this.prisma.deviceClaimToken.update({
       where: { id: record.id },
-      data: {
-        claimedAt: new Date(),
-        claimedByIp: claimedByIp ?? null,
-        endpointId: endpoint.id,
-      },
+      data: { endpointId: endpoint.id },
     });
 
     await this.audit.log({
@@ -382,16 +422,14 @@ export class EnrollmentService {
           throw new UnauthorizedException('This device is not recognised');
         }
         authenticated = true;
-      } else if (dto.agentSecret) {
-        // First sight: bind it. The window in which this can be claimed by
-        // someone else is the window before the machine's own installer is
-        // re-run, which is why the operator is told to re-run it.
-        await this.prisma.rustdeskNode.update({
-          where: { id: node.id },
-          data: { agentSecretHash: this.hashSecret(dto.agentSecret), agentSecretSetAt: new Date() },
-        });
-        authenticated = true;
       }
+      // A node with no stored secret is NOT bound here. It used to bind the
+      // first secret offered, which made the secret worth nothing for exactly
+      // the nodes that lacked one: whoever knew the RustDesk ID and heartbeated
+      // first became the device — receiving rotations and setting the password
+      // the console hands technicians. Binding happens only on a claim, which
+      // redeems an operator-issued token. Until its installer is re-run with
+      // one, such a node gets liveness and nothing else.
     }
 
     // Always accept the password sent by the endpoint. The prior first-write-
@@ -444,7 +482,7 @@ export class EnrollmentService {
       });
       return {
         found: false,
-        endpointId: endpoint.id,
+        authenticated: true,
         rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
       };
     }
@@ -577,6 +615,12 @@ export class EnrollmentService {
       }
     }
 
+    // An unauthenticated caller gets the liveness ack and nothing that would
+    // tell it which record a RustDesk ID belongs to.
+    if (!authenticated) {
+      return { found: true, authenticated: false, rotate: null, updateRustdesk: null, reinstallAgent: null, commands: [] };
+    }
+
     return {
       found: true,
       endpointId: node.endpointId,
@@ -640,8 +684,8 @@ export class EnrollmentService {
    * password the console hands out, and rewrite its hostname and address.
    *
    * The agent now sends a per-device secret. A node with a stored hash requires
-   * a match; a node without one binds the first secret it is offered, so a
-   * machine whose installer has been re-run authenticates itself from then on.
+   * a match; a node without one is bound only by a claim (an operator-issued
+   * token), so re-running its installer is how such a machine authenticates.
    * A caller that offers nothing is not the device as far as this server is
    * concerned, and gets a liveness ping and nothing else.
    */

@@ -35,7 +35,7 @@ export const authApi = {
     firstName?: string; lastName?: string; email?: string;
     phone?: string; jobTitle?: string;
     address?: string; city?: string; state?: string; country?: string; postalCode?: string;
-    timeZone?: string;
+    timeZone?: string; currentPassword?: string;
   }) => api.patch('/auth/profile', data),
   changePassword: (currentPassword: string, newPassword: string) =>
     api.post('/auth/change-password', { currentPassword, newPassword }),

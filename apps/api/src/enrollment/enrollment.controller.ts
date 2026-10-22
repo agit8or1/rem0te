@@ -4,7 +4,7 @@ import {
 } from '@nestjs/common';
 import { Request } from 'express';
 import { EnrollmentService } from './enrollment.service';
-import { CreateClaimTokenDto, ClaimEndpointDto, HeartbeatDto, CommandResultDto } from './dto/enrollment.dto';
+import { CreateClaimTokenDto, ClaimEndpointDto, HeartbeatDto, CommandResultDto, ConfirmRotationDto } from './dto/enrollment.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
 import { RequireCapability } from '../common/decorators/require-capability.decorator';
@@ -107,7 +107,7 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   @Public()
   @RateLimit(30)
   @HttpCode(HttpStatus.OK)
-  async confirmRotation(@Body() body: { rustdeskId: string; sha256: string; agentSecret?: string }) {
+  async confirmRotation(@Body() body: ConfirmRotationDto) {
     const result = await this.enrollment.confirmRotation(body.rustdeskId, body.sha256, body.agentSecret);
     return { success: true, data: result };
   }

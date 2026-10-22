@@ -1,0 +1,44 @@
+#!/bin/bash
+# rem0te-rustdesk-server-upgrade VERSION ARCH HBBS_SHA256 HBBR_SHA256
+#
+# Installed root:root 0755 at /usr/local/sbin/ and granted in
+# /etc/sudoers.d/reboot-remote. Installs the official rustdesk-server .deb pair
+# for VERSION.
+#
+# It replaces `sudo dpkg -i /var/lib/reboot-remote/rustdesk-server/{hbbs,hbbr}.deb`.
+# That directory belonged to the API user, so anything running as that user
+# could drop a package with a malicious postinst at those two names and have
+# dpkg run it as root. The API's checksum test ran in the same process it was
+# meant to protect against, so it protected nothing.
+#
+# Here the packages are downloaded by root, from a URL built from a validated
+# version string, into a directory only root can write, and checked against
+# the SHA-256 the API read from GitHub's release metadata before dpkg sees
+# them. The caller chooses the version and the digests but never the bytes:
+# the worst a hostile caller can do is install a different official release.
+set -euo pipefail
+
+refuse() { echo "rem0te-rustdesk-server-upgrade: $1" >&2; exit 64; }
+
+[[ "$#" -eq 4 ]] || refuse "usage: VERSION ARCH HBBS_SHA256 HBBR_SHA256"
+VERSION="$1"; ARCH="$2"; SHA_HBBS="$3"; SHA_HBBR="$4"
+[[ "$VERSION" =~ ^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$ ]] || refuse "bad version"
+[[ "$ARCH" =~ ^(amd64|arm64)$ ]]                         || refuse "bad arch"
+[[ "$SHA_HBBS" =~ ^[0-9a-f]{64}$ ]]                      || refuse "bad hbbs digest"
+[[ "$SHA_HBBR" =~ ^[0-9a-f]{64}$ ]]                      || refuse "bad hbbr digest"
+
+umask 077
+WORK=$(mktemp -d /var/tmp/rem0te-rustdesk-server.XXXXXXXX)
+trap 'rm -rf "$WORK"' EXIT
+
+BASE="https://github.com/rustdesk/rustdesk-server/releases/download/${VERSION}"
+for which in hbbs hbbr; do
+  curl -fsSL --proto '=https' --tlsv1.2 --max-time 300 \
+    -o "$WORK/${which}.deb" "${BASE}/rustdesk-server-${which}_${VERSION}_${ARCH}.deb"
+done
+
+echo "${SHA_HBBS}  $WORK/hbbs.deb" | sha256sum -c --status || refuse "hbbs checksum mismatch"
+echo "${SHA_HBBR}  $WORK/hbbr.deb" | sha256sum -c --status || refuse "hbbr checksum mismatch"
+
+# Both in one call so hbbs and hbbr cannot be left on different versions.
+/usr/bin/dpkg -i "$WORK/hbbs.deb" "$WORK/hbbr.deb"

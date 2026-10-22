@@ -31,10 +31,11 @@ export class LauncherController {
   @HttpCode(HttpStatus.OK)
   @RateLimit(20)
   async validateToken(@Req() req: Request) {
+    // Header only. A `?token=` fallback was accepted too, and a query string
+    // is written to the reverse proxy's access log — a bearer credential in
+    // a log file. The launcher has always sent the header.
     const authHeader = req.headers['authorization'];
-    const token = authHeader?.startsWith('Bearer ')
-      ? authHeader.slice(7)
-      : (req.query['token'] as string | undefined);
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
 
     if (!token) {
       return { success: false, message: 'No token provided' };

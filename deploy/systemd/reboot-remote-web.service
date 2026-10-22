@@ -17,6 +17,9 @@ SyslogIdentifier=reboot-remote-web
 
 Environment=NODE_ENV=production
 Environment=PORT=3000
+# Loopback only. Caddy is the only thing that should reach this; bound to
+# 0.0.0.0 it answered the LAN directly, past Caddy's TLS and headers.
+Environment=HOSTNAME=127.0.0.1
 EnvironmentFile=/etc/reboot-remote/web.env
 
 NoNewPrivileges=true

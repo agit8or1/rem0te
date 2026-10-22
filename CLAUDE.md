@@ -189,9 +189,13 @@ previous build's files 404s every browser that already had the app open.
   it. Enrolment lifecycle is `status`, connectivity is `isOnline`, and the
   dashboard counts `ACTIVE` rows and derives offline from the flag — so marking
   a disconnected machine OFFLINE hides it from the totals entirely.
-- **Generated PowerShell cannot be syntax-checked here.** There is no PowerShell
-  on the host. `RustdeskService.joinPs()` refuses the mistakes that are not
-  visible to a brace count; add to it rather than eyeballing.
+- **Generated PowerShell has no PowerShell to check it on the host.**
+  `RustdeskService.joinPs()` refuses the mistakes that are not visible to a
+  brace count; add to it rather than eyeballing. For a real parse, unpack the
+  portable `powershell-<v>-linux-x64.tar.gz` release into a scratch directory
+  (nothing is installed) and run
+  `[System.Management.Automation.Language.Parser]::ParseFile()` over a script
+  generated from `dist`. 0.18.22's installer changes were checked this way.
 - **hbbs logs nothing when a connection fails.** Use
   `deploy/scripts/hbbs-probe.py <id>`. Note it sends a real punch-hole, so the
   endpoint will dial the relay as a side effect.
@@ -208,6 +212,14 @@ accepted as a session, the device heartbeat trusting a RustDesk ID, an
 unrestricted `fail2ban-client` sudo grant, the launcher trusting a link's API
 address, and read-test-write on single-use tokens. Each one was a real finding
 in the 0.13.0 review; none of them threw, logged, or failed a test.
+
+The 0.18.22 review added four more: sudoers naming only the root-owned
+wrappers in `deploy/sbin`, never `fail2ban-client` or `dpkg`; no first-sight
+binding of a device secret on heartbeat; claim tokens consumed conditionally;
+and device-reported names reduced to an inert charset before they reach the
+Connect `.cmd`. Its behavioural proof is `apps/api/scripts/e2e-security-audit.mjs`.
+It writes fixtures, so run it against a scratch API and database
+(`API_BASE=http://127.0.0.1:3101/api/v1`), never port 3001.
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 

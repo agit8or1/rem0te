@@ -1,0 +1,39 @@
+#!/bin/bash
+# rem0te-f2b — the only way the Rem0te API reaches fail2ban-client as root.
+#
+# Installed root:root 0755 at /usr/local/sbin/rem0te-f2b and granted in
+# /etc/sudoers.d/reboot-remote. It replaces a list of per-subcommand sudoers
+# rules that looked tight and were not: in sudoers a `*` also matches spaces,
+# so `set [a-zA-Z0-9_-]* banip …*` matched
+#   set sshd action x actionban '<command>' banip 1
+# and an unrestricted fail2ban-client is a root shell (`actionban` runs its
+# command as root at the next ban). Anchored sudoers regexes would fix that but
+# need sudo 1.9.10, and Ubuntu 22.04 ships 1.9.9.
+#
+# So the argument list is checked here, whole and anchored, one shape per
+# operation the API performs. Anything else is refused without running
+# fail2ban-client at all.
+set -euo pipefail
+
+JAIL='^[A-Za-z0-9_-]{1,64}$'
+ADDR='^[0-9A-Fa-f.:/]{1,64}$'
+NUM='^[0-9]{1,9}$'
+
+refuse() { echo "rem0te-f2b: refused" >&2; exit 64; }
+
+case "$#" in
+  1) [[ "$1" == status ]] || refuse ;;
+  2) [[ "$1" == status && "$2" =~ $JAIL ]] || refuse ;;
+  3) [[ "$1" == get && "$2" =~ $JAIL && "$3" =~ ^(ignoreip|bantime|findtime|maxretry)$ ]] || refuse ;;
+  4)
+    [[ "$1" == set && "$2" =~ $JAIL ]] || refuse
+    case "$3" in
+      banip|unbanip|addignoreip|delignoreip) [[ "$4" =~ $ADDR ]] || refuse ;;
+      bantime|findtime|maxretry)             [[ "$4" =~ $NUM ]]  || refuse ;;
+      *) refuse ;;
+    esac
+    ;;
+  *) refuse ;;
+esac
+
+exec /usr/bin/fail2ban-client "$@"

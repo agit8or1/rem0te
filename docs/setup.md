@@ -45,11 +45,13 @@ sudo bash deploy/scripts/install.sh your-domain.example.com admin@example.com
 Replace `your-domain.example.com` with your actual domain (DNS must already point to this server). The email is for your platform admin account — if omitted it defaults to `admin@your-domain`.
 
 **The installer will:**
-- Install Node.js 20, pnpm, PostgreSQL, Redis, Caddy, fail2ban
+- Install Node.js 20, pnpm, PostgreSQL, Redis, Caddy, fail2ban, ufw
 - Download and install RustDesk server (`hbbs` + `hbbr`) and generate its keypair
 - Generate random secrets (JWT, encryption key, DB password)
 - Build the app from source
-- Configure Caddy with automatic HTTPS
+- Configure Caddy with automatic HTTPS (the bare server IP redirects to the domain rather than serving plain HTTP)
+- Turn on the firewall: inbound SSH, 80, 443 and RustDesk's 21115–21119 only
+- Install two root-owned sudo wrappers, `/usr/local/sbin/rem0te-f2b` and `/usr/local/sbin/rem0te-rustdesk-server-upgrade`, which are the only privileged commands the API may run besides restarting its own services
 - Run database migrations and seed the initial admin account
 - Start and enable all systemd services
 
@@ -146,6 +148,43 @@ After a schema change, regenerate the deployed Prisma client too:
 ```bash
 sudo -u reboot bash -c 'cd /opt/reboot-remote/api && ./node_modules/.bin/prisma generate'
 ```
+
+### Upgrading a server installed before 0.18.22
+
+0.18.22 changed three things the installer owns, so a server set up earlier
+keeps the old behaviour until they are re-applied. Each one was a finding in
+that release's security review ([SECURITY-AUDIT.md](SECURITY-AUDIT.md)).
+
+```bash
+cd /path/to/rem0te          # the checkout, at 0.18.22 or later
+
+# 1. The sudo wrappers, and a sudoers file that names only them. The old file
+#    let the API user reach root through fail2ban-client and `dpkg -i`.
+sudo install -m 0755 -o root -g root deploy/sbin/rem0te-f2b /usr/local/sbin/
+sudo install -m 0755 -o root -g root deploy/sbin/rem0te-rustdesk-server-upgrade /usr/local/sbin/
+sudo sed -n '/^cat > \/etc\/sudoers.d\/reboot-remote/,/^EOF$/p' deploy/scripts/install.sh \
+  | sed '1d;$d' > /tmp/reboot-remote.sudoers
+sudo visudo -c -f /tmp/reboot-remote.sudoers && \
+  sudo install -m 0440 -o root -g root /tmp/reboot-remote.sudoers /etc/sudoers.d/reboot-remote
+sudo rm -rf /var/lib/reboot-remote/rustdesk-server
+
+# 2. Next.js on loopback only.
+sudo cp deploy/systemd/reboot-remote-web.service /etc/systemd/system/
+echo 'HOSTNAME=127.0.0.1' | sudo tee -a /etc/reboot-remote/web.env
+sudo systemctl daemon-reload && sudo systemctl restart reboot-remote-web
+
+# 3. Caddy: replace the plain-HTTP site on the server's IP with a redirect,
+#    and serve /uploads with the sandboxing headers in deploy/caddy/Caddyfile.
+```
+
+Until step 1 is done the Security page's fail2ban controls still work (the API
+falls back to `fail2ban-client`), but the RustDesk server upgrade on the
+Updates page refuses to run and says why.
+
+**Computers enrolled before device secrets existed** (0.13.0) no longer bind a
+secret from their first heartbeat. They keep reporting online, but nothing they
+send is trusted until their installer is re-run from an enrollment link. The
+computer's Specs tab says *This computer cannot report its specs yet* for these.
 
 ### In-app updates are off by default
 
@@ -269,6 +308,8 @@ openssl rand -hex 32   # for ENCRYPTION_KEY (must be exactly 64 hex chars)
 
 ## Firewall (ufw)
 
+The installer does this for you, using whatever port `sshd` listens on. By hand:
+
 ```bash
 ufw allow 22/tcp        # SSH
 ufw allow 80/tcp        # HTTP
@@ -277,6 +318,8 @@ ufw allow 21115/tcp     # RustDesk
 ufw allow 21116/tcp
 ufw allow 21116/udp
 ufw allow 21117/tcp
+ufw allow 21118:21119/tcp  # RustDesk websocket (optional)
+ufw default deny incoming
 ufw enable
 ```
 

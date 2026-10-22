@@ -60,7 +60,7 @@ Admins and Business Owners are not confined by it; see
 
 | Method | Path | Access | Capability |
 |---|---|---|---|
-| `POST` | `/api/v1/auth/change-password` | signed in | — |
+| `POST` | `/api/v1/auth/change-password` | signed in, throttled | — |
 | `POST` | `/api/v1/auth/login` | public, throttled | — |
 | `POST` | `/api/v1/auth/logout` | signed in | — |
 | `GET` | `/api/v1/auth/me` | signed in | — |

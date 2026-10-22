@@ -59,7 +59,7 @@ apt-get install -y -qq \
   build-essential git \
   postgresql postgresql-contrib \
   redis-server \
-  fail2ban \
+  fail2ban ufw \
   debian-keyring debian-archive-keyring apt-transport-https
 
 # ─── Node.js 20 ──────────────────────────────────────────────────────────────
@@ -238,6 +238,7 @@ chmod 600 "${CONFIG_DIR}/api.env"
 cat > "${CONFIG_DIR}/web.env" << EOF
 NODE_ENV=production
 PORT=3000
+HOSTNAME=127.0.0.1
 NEXT_PUBLIC_API_URL=${SCHEME}://${DOMAIN}
 EOF
 chmod 600 "${CONFIG_DIR}/web.env"
@@ -281,35 +282,27 @@ http://${DOMAIN} {
 EOF
 else
   # HTTPS with automatic TLS via Let's Encrypt
-  # Also serve plain HTTP on the IP for LAN access
+  # The bare IP redirects to the domain rather than serving plain HTTP
   SERVER_IP=$(hostname -I | awk '{print $1}')
   cat > /etc/caddy/Caddyfile << EOF
-# LAN access via IP (plain HTTP)
+# LAN access via IP: redirect to the domain. This used to serve the whole
+# console and API over plain HTTP, which put every LAN sign-in on the wire
+# in cleartext.
 http://${SERVER_IP} {
-    handle /api/* {
-        reverse_proxy localhost:3001 {
-            transport http {
-                response_header_timeout 300s
-            }
-        }
-    }
-
-    handle /* {
-        reverse_proxy localhost:3000 {
-            header_up Host {http.request.header.host}
-        }
-    }
-
-    encode gzip
-
-    log {
-        output file /var/log/caddy/reboot-remote.log
-        format json
-    }
+    redir https://${DOMAIN}{uri} permanent
 }
 
 # External access via domain (HTTPS with auto TLS)
 ${DOMAIN} {
+    # Uploaded branding. Served as inert files: a logo has no business running
+    # script, and these are same-origin with the console.
+    handle /uploads/* {
+        root * /opt/reboot-remote
+        header Content-Security-Policy "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox"
+        header X-Content-Type-Options nosniff
+        file_server
+    }
+
     handle /api/* {
         reverse_proxy localhost:3001 {
             transport http {
@@ -370,6 +363,29 @@ EOF
 
 systemctl enable fail2ban
 systemctl restart fail2ban || true
+
+# ─── Firewall ────────────────────────────────────────────────────────────────
+# Default-deny inbound, then exactly what Rem0te serves: SSH, the portal, and
+# RustDesk's ports. Without this the API's own port, Next.js on 3000 and
+# anything else that ever binds a wildcard address is one misconfiguration
+# from being public. SSH is allowed on whatever port sshd actually listens on,
+# so a non-default port does not lock the installer's own session out.
+if command -v ufw >/dev/null 2>&1; then
+  step "Configuring firewall (ufw)…"
+  SSH_PORTS=$(sshd -T 2>/dev/null | awk '$1=="port"{print $2}' | sort -u)
+  for p in ${SSH_PORTS:-22}; do ufw allow "${p}/tcp" >/dev/null; done
+  ufw allow 80/tcp >/dev/null
+  ufw allow 443/tcp >/dev/null
+  ufw allow 443/udp >/dev/null          # HTTP/3
+  ufw allow 21115:21117/tcp >/dev/null  # hbbs NAT test + rendezvous, hbbr relay
+  ufw allow 21116/udp >/dev/null        # hbbs rendezvous (UDP)
+  ufw allow 21118:21119/tcp >/dev/null  # hbbs/hbbr websocket
+  ufw default deny incoming >/dev/null
+  ufw default allow outgoing >/dev/null
+  ufw --force enable >/dev/null
+else
+  warn "ufw is not installed; leaving the firewall as it is. Allow only 22, 80, 443 and 21115-21119."
+fi
 
 # ─── Build application from source ───────────────────────────────────────────
 step "Installing dependencies…"
@@ -449,26 +465,13 @@ systemctl enable reboot-remote-api reboot-remote-web caddy
 step "Configuring sudoers for service management…"
 cat > /etc/sudoers.d/reboot-remote << 'EOF'
 # Reboot Remote — narrowly-scoped sudo grants
-# fail2ban management. Pinned per subcommand, because an unrestricted
-# fail2ban-client is a root shell: `set <jail> addaction` plus
-# `set <jail> action <name> actionban "<command>"` runs that command as root the
-# next time the jail bans anything. The third argument is a literal keyword in
-# every rule below, so no action can be defined. Jail names and addresses are
-# also sanitised in security.service.ts; this is the half that holds even if
-# that sanitising is ever lost.
-reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client status
-reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client status [a-zA-Z0-9_-]*
-reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client get [a-zA-Z0-9_-]* ignoreip
-reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client get [a-zA-Z0-9_-]* bantime
-reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client get [a-zA-Z0-9_-]* findtime
-reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client get [a-zA-Z0-9_-]* maxretry
-reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client set [a-zA-Z0-9_-]* banip [0-9a-fA-F.\:/]*
-reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client set [a-zA-Z0-9_-]* unbanip [0-9a-fA-F.\:/]*
-reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client set [a-zA-Z0-9_-]* addignoreip [0-9a-fA-F.\:/]*
-reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client set [a-zA-Z0-9_-]* delignoreip [0-9a-fA-F.\:/]*
-reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client set [a-zA-Z0-9_-]* bantime [0-9]*
-reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client set [a-zA-Z0-9_-]* findtime [0-9]*
-reboot ALL=(root) NOPASSWD: /usr/bin/fail2ban-client set [a-zA-Z0-9_-]* maxretry [0-9]*
+# fail2ban management goes through a root-owned wrapper that checks the whole
+# argument list, anchored, one shape per operation. Per-subcommand rules here
+# were not enough: in sudoers `*` also matches spaces, so a pattern like
+# `set [a-zA-Z0-9_-]* banip …*` also matched `set <jail> action <a> actionban
+# '<cmd>' banip 1` — and actionban runs its command as root. See
+# deploy/sbin/rem0te-f2b.
+reboot ALL=(root) NOPASSWD: /usr/local/sbin/rem0te-f2b
 # One-time initial install of fail2ban only
 reboot ALL=(root) NOPASSWD: /usr/bin/apt-get install -y fail2ban
 # OS update workflow (admin-triggered)
@@ -479,21 +482,23 @@ reboot ALL=(root) NOPASSWD: /usr/bin/systemctl enable fail2ban
 reboot ALL=(root) NOPASSWD: /usr/bin/systemctl start fail2ban
 reboot ALL=(root) NOPASSWD: /usr/bin/systemctl restart reboot-remote-api reboot-remote-web
 reboot ALL=(root) NOPASSWD: /usr/bin/systemctl reload caddy
-# RustDesk server upgrades from the Updates page. Both paths are fixed, not
-# wildcards: the API downloads the release pair to exactly these two names and
-# dpkg may install nothing else. Both packages go in one call so hbbs and hbbr
-# cannot be left on different versions by a half-failed install.
-reboot ALL=(root) NOPASSWD: /usr/bin/dpkg -i /var/lib/reboot-remote/rustdesk-server/hbbs.deb /var/lib/reboot-remote/rustdesk-server/hbbr.deb
+# RustDesk server upgrades from the Updates page, through a root-owned wrapper
+# that downloads the official packages itself into a directory only root can
+# write and checks their digests before dpkg sees them. The API user is never
+# allowed to hand dpkg a file: a package's postinst runs as root.
+reboot ALL=(root) NOPASSWD: /usr/local/sbin/rem0te-rustdesk-server-upgrade
 reboot ALL=(root) NOPASSWD: /usr/bin/systemctl restart rustdesk-hbbs rustdesk-hbbr
 # Deny writing to sudoers via the reboot user under any circumstance
 reboot ALL=(root) NOPASSWD: !/usr/sbin/visudo, !/usr/bin/tee /etc/sudoers*
 EOF
 chmod 440 /etc/sudoers.d/reboot-remote
 
-# Staging directory for the rustdesk-server .deb pair the Updates page installs.
-# Owned by the API user so it can write there; the sudoers rule above is what
-# keeps dpkg pinned to these two filenames.
-install -d -m 750 -o reboot -g reboot /var/lib/reboot-remote/rustdesk-server
+# The two sudo wrappers. Root-owned and not writable by the API user — the
+# whole point is that the argument checks run in a file it cannot edit.
+install -m 0755 -o root -g root "${REPO_DIR}/deploy/sbin/rem0te-f2b" /usr/local/sbin/rem0te-f2b
+install -m 0755 -o root -g root "${REPO_DIR}/deploy/sbin/rem0te-rustdesk-server-upgrade" /usr/local/sbin/rem0te-rustdesk-server-upgrade
+# The old API-writable staging directory, from installs before 0.18.22.
+rm -rf /var/lib/reboot-remote/rustdesk-server
 # Validate before deploying so a bad edit cannot lock the server out of sudo
 if ! visudo -c -q -f /etc/sudoers.d/reboot-remote; then
   echo "sudoers file failed syntax check — refusing to leave it in place" >&2
