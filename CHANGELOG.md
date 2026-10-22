@@ -5,6 +5,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.23] — 2026-10-22 · *Handshake*
+
+### Dependencies
+
+Dependabot's production group (#58) and the Windows installer's Go module
+bump (#57), released together. No code changes; nothing here is a security
+fix.
+
+- **`next` 16.3.8 → 16.4.2.** The move to the 16.4 line that 0.18.19 held
+  back. React and React DOM 19.3.1, TanStack Query 5.104, lucide-react 1.61
+  and the Radix primitives move with it.
+- **API:** `@nestjs/*` 11.2.7, `@nestjs/throttler` 6.7.1, `zod` 4.6.7, and
+  `@anthropic-ai/sdk` 0.125 → 0.135. The SDK's one call site, the device
+  timeline summary, uses only `messages.create` and is unaffected.
+- **`nanoid` spec ^5 → ^6** is not a real upgrade: the workspace override
+  `nanoid >=5.1.7` already resolved 6.0.1 everywhere, and the API never
+  imports it.
+- **Launcher:** `@tauri-apps/api` 2.12, `plugin-deep-link` 2.6.
+- **Windows installer:** `golang.org/x/sys` 0.48.0 → 0.49.0. The served
+  binary is rebuilt.
+- Also folded in, per the devDependency rule: the development group (#62),
+  10 updates: `typescript-eslint` 8.71, `eslint-plugin-security` 4.2,
+  `eslint-config-next` 15.5.28, Playwright 1.64, `@tauri-apps/cli` 2.12,
+  `marked` 18.1, `@vitejs/plugin-react` 6.1.2.
+
+Checked against a scratch database before release: `security-regression`,
+`e2e-smoke`, `e2e-full`, `e2e-public-api`, `e2e-business-access` (82/82)
+and `e2e-security-audit` (48/48) all pass.
+
+**Deploying this needs the full production-dependency procedure:** regenerate
+the manifest (`pnpm deploy:manifest`), run `npm install --omit=dev` at the
+target, and rebuild and redeploy the web standalone for `next`.
+
+---
+
 ## [0.18.22] — 2026-10-22 · *Handshake*
 
 ### Security
