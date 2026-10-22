@@ -7,15 +7,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.18.23] — 2026-10-22 · *Handshake*
 
+### Security
+
+- **`next` 16.3.8 → 16.4.2** clears three advisories published on
+  2026-10-22, all affecting every 16.x up to 16.4.0 and fixed in 16.4.1:
+  GHSA-2464-fhr4-w9xw (critical: unauthenticated RCE in the Image
+  Optimization API when SVG files are used), GHSA-673q-mjm6-r5xr (critical:
+  unauthenticated RCE in `use cache` functions returning typed arrays) and
+  GHSA-p3m5-59mp-jv5r / CVE-2026-94482 (high: DoS in the App Router via
+  Server Actions). The web app has no `use cache` functions and no server
+  actions of its own, but `/_next/image` is live on every install, so the
+  SVG one is a real exposure. They were not caught by the `audit` job when
+  0.18.22 shipped because they had not been published yet. Dependabot's
+  production group happened to carry the fix.
+
 ### Dependencies
 
 Dependabot's production group (#58) and the Windows installer's Go module
-bump (#57), released together. No code changes; nothing here is a security
-fix.
+bump (#57), released together. No code changes.
 
-- **`next` 16.3.8 → 16.4.2.** The move to the 16.4 line that 0.18.19 held
-  back. React and React DOM 19.3.1, TanStack Query 5.104, lucide-react 1.61
-  and the Radix primitives move with it.
+- **`next` 16.4.2**, the move to the 16.4 line that 0.18.19 held back.
+  React and React DOM 19.3.1, TanStack Query 5.104, lucide-react 1.61 and
+  the Radix primitives move with it.
 - **API:** `@nestjs/*` 11.2.7, `@nestjs/throttler` 6.7.1, `zod` 4.6.7, and
   `@anthropic-ai/sdk` 0.125 → 0.135. The SDK's one call site, the device
   timeline summary, uses only `messages.create` and is unaffected.
