@@ -113,6 +113,7 @@ async function cleanup() {
   const endpointIds = [...new Set([...created.endpoints, ...nodes.map((n) => n.endpointId)])];
   await prisma.$transaction([
     prisma.note.deleteMany({ where: { authorId: { in: created.users } } }),
+    prisma.invitation.deleteMany({ where: { invitedById: { in: created.users } } }),
     prisma.computerAccess.deleteMany({ where: { OR: [{ userId: { in: created.users } }, { endpointId: { in: endpointIds } }] } }),
     prisma.connectionGrant.deleteMany({ where: { userId: { in: created.users } } }),
     prisma.launcherToken.deleteMany({ where: { userId: { in: created.users } } }),
@@ -374,6 +375,20 @@ try {
     fd.append('file', new Blob(['<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'], { type: 'image/svg+xml' }), 'x.svg');
     const r = await fetch(`${API}/platform/${tenantRow.id}/branding/logo`, { method: 'PATCH', headers: { cookie: cAdmin }, body: fd });
     check(r.status === 400, 'SVG refused', `HTTP ${r.status}`);
+  }
+
+  section('Sessions — a Business Owner\'s reset-access ends the user\'s sessions');
+  {
+    // Reset sets the user back to INVITED, which the JWT strategy does not
+    // refuse on its own; only sessionsValidAfter ends what was signed in.
+    // Last on purpose, and it reuses editorA's fixture session rather than
+    // signing in: login allows 10 a minute per IP and the suite is at that
+    // budget, so one more sign-in anywhere starves the MFA section.
+    check((await req('GET', '/auth/me', { cookie: cEditorA })).status === 200, 'session works before the reset');
+    const r = await req('POST', `/businesses/${bizA.id}/users/${editorA.id}/reset-access`, { cookie: cOwnerA });
+    check(r.status === 200 || r.status === 201, 'owner resets access', `HTTP ${r.status} ${JSON.stringify(r.body).slice(0, 160)}`);
+    await new Promise((res) => setTimeout(res, 1100));
+    check((await req('GET', '/auth/me', { cookie: cEditorA })).status === 401, 'pre-reset session refused');
   }
 } catch (e) {
   bad('suite crashed', e?.stack ?? String(e));

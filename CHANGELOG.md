@@ -5,6 +5,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.24] — 2026-10-22 · *Handshake*
+
+### Security
+
+- **A Business Owner's "reset access" left the user signed in.** Reset is
+  for an account believed compromised: it blanks the password, turns off
+  every MFA method, sets the user back to `INVITED` and issues a fresh
+  invitation. It did not end the user's sessions. The JWT strategy refuses
+  `DELETED` and `SUSPENDED` accounts but not `INVITED`, and this was the one
+  credential change 0.18.22 missed when it added `User.sessionsValidAfter`
+  to sign-out, password change and reset, and MFA changes. So whoever was
+  signed in when the owner reset the account stayed signed in until the
+  token expired. `resetUserAccess` now sets `sessionsValidAfter` in the same
+  transaction. Draft #47 (2026-10-02) had raised the same class of problem
+  for password resets, and its approach of tying each session to the stored
+  password hash would have caught this one too.
+- `e2e-security-audit.mjs` gains a check (now 51): an owner resets a user,
+  and the session that user held before the reset is refused. It fails
+  against 0.18.23 and passes here. It runs last and reuses an existing
+  fixture session instead of signing in, because login allows 10 attempts a
+  minute per IP and the suite is already at that budget. One more sign-in
+  anywhere earlier starves the MFA section's `startMfa()` of a partial
+  token, which shows up as a confusing 401 on "a fresh code signs in".
+
+API only; no schema change, no dependency change. Deploy `dist` and restart.
+
+---
+
 ## [0.18.23] — 2026-10-22 · *Handshake*
 
 ### Security
