@@ -10,6 +10,7 @@ import { RoleType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
+import { revocationInstant } from '../auth/session-revocation';
 import { CAP } from '../rbac/capabilities';
 import {
   DEFAULT_BUSINESS_USER_CAPABILITIES,
@@ -563,10 +564,12 @@ export class BusinessesService {
           expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
         },
       }),
-      // Invalidate the current password and every MFA method.
+      // Invalidate the current password, every MFA method, and every session
+      // signed with them. The JWT strategy does not refuse INVITED, so without
+      // sessionsValidAfter whoever was signed in stayed signed in.
       this.prisma.user.update({
         where: { id: targetUserId },
-        data: { passwordHash: '', status: 'INVITED' },
+        data: { passwordHash: '', status: 'INVITED', sessionsValidAfter: revocationInstant() },
       }),
       this.prisma.userMfaMethod.updateMany({
         where: { userId: targetUserId },
