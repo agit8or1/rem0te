@@ -900,17 +900,29 @@ export class EndpointsService {
     }
 
     const anthropic = new Anthropic({ apiKey });
-    const message = await anthropic.messages.create({
-      model: 'claude-opus-4-6',
-      max_tokens: 1024,
+    // Thinking is always on for this model and counts toward max_tokens, so
+    // the limit leaves room for it as well as the few paragraphs returned.
+    // A safety-classifier decline is retried server-side on the model
+    // Anthropic recommends for that category instead of coming back empty.
+    const message = await anthropic.beta.messages.create({
+      model: 'claude-opus-5-5',
+      max_tokens: 16000,
+      output_config: { effort: 'medium' },
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
       messages: [{
         role: 'user',
         content: `You are a technical support AI assistant. Based on the device information below, write a concise narrative summary (2–4 paragraphs) about this device: its current state, history, notable patterns, and anything a technician should know before working on it. Write in plain, direct prose — no bullet points, no headings, no markdown.\n\n${lines.join('\n')}`,
       }],
     });
 
+    // The reply can open with thinking blocks, so find the text by type. A
+    // refusal from the whole fallback chain has none; keep the old summary.
     const block = message.content.find((b) => b.type === 'text');
-    const text = block ? (block as Anthropic.TextBlock).text : '';
+    if (message.stop_reason === 'refusal' || !block) {
+      throw new InternalServerErrorException('The AI summary could not be generated for this device');
+    }
+    const text = block.text;
 
     await this.prisma.endpoint.update({ where: { id }, data: { aiTimeline: text } });
     return { text };

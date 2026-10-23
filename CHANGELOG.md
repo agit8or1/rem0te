@@ -5,6 +5,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.25] — 2026-10-23 · *Handshake*
+
+### Changed
+
+- **The computer timeline summary moves from `claude-opus-4-6` to
+  `claude-opus-5-5`.** The request changes with the model, not just the ID:
+  - **`max_tokens` 1024 → 16000.** Thinking is always on for Opus 5.5 and
+    counts toward `max_tokens` even though its text is not returned, so a
+    limit sized for a model without thinking can cut the summary off
+    mid-paragraph. The reply is still two to four paragraphs.
+  - **Effort set explicitly to `medium`.** That is Opus 5.5's default; it is
+    written down because Opus models before it defaulted to `high`.
+  - **Refusals.** A safety-classifier decline now comes back as
+    `stop_reason: "refusal"`. The request opts into server-side fallbacks
+    (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`), so a
+    decline is retried on the model Anthropic recommends for its category.
+    If the whole chain declines, or the reply has no text, the API returns
+    an error and keeps the previous summary. Before, it would have saved an
+    empty one.
+  - The text is found by block type, since the reply can now open with
+    `thinking` blocks.
+
+  Only runs where `ANTHROPIC_API_KEY` is set; without it the endpoint still
+  answers "not configured", as before.
+
+---
+
 ## [0.18.24] — 2026-10-22 · *Handshake*
 
 ### Security
