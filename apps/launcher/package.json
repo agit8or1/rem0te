@@ -1,6 +1,6 @@
 {
   "name": "@reboot-remote/launcher",
-  "version": "0.18.24",
+  "version": "0.18.25",
   "private": true,
   "type": "module",
   "scripts": {
