@@ -56,6 +56,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   computer's page offers Restore instead. Grants the archive deleted are not
   recreated, because nothing recorded them.
 
+### Security
+
+- **Production dependency advisories published since 0.18.25** (raised in
+  `pnpm-workspace.yaml` overrides): `body-parser` 2.4.0 and `multer` 2.5.0
+  (both high, request-handling DoS), `qs` 6.17.1 and `fast-uri` 3.1.9 (four
+  advisories, still held below 4.x). `deepmerge` (GHSA-gcqx-w48m-w2h4, low) has
+  no patched release and is reached only through `@nestjs/cli`'s build, so it is
+  ignored with a reason, like `braces`. The target's `package.json` is
+  regenerated and `npm install --omit=dev` re-run on deploy.
+
 ---
 
 ## [0.18.25] — 2026-10-23 · *Handshake*
