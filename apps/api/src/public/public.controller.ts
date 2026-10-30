@@ -381,19 +381,36 @@ if ($sd) {
 # claim binds whatever secret is sent — and a secret a non-administrator wrote
 # is one they know. Without a token nothing is bound: the server compares the
 # secret with the one it already holds, so a planted value can only fail.
-$PRIOR_SECRET = ''
-try {
-    $hbPrior = Get-Item -LiteralPath (Join-Path $STATEDIR 'heartbeat.dat') -Force -ErrorAction Stop
-    $hbUntrusted = ($planted -contains '*') -or ($planted -contains $hbPrior.FullName)
-    if (-not ($hbPrior.Attributes -band [IO.FileAttributes]::ReparsePoint) -and (-not $hbUntrusted -or -not $CLAIM_TOKEN)) {
-        $c = [string](Get-Content -LiteralPath $hbPrior.FullName -Raw -ErrorAction Stop | ConvertFrom-Json).agentSecret
-        if ($c -match '^[A-Za-z0-9_-]{20,128}$') { $PRIOR_SECRET = $c }
-    }
-} catch {}
+#
+# Read only AFTER the lockdown below, though, never before it: 0.18.22 through
+# 0.19.1 left every existing file in this directory with an empty DACL (see the
+# lockdown), so on a machine any of those installers ever ran on, heartbeat.dat
+# is unreadable until it is repaired - and a read that fails makes a new secret.
+# Reading after takeown is still safe: $planted was decided above, before
+# ownership changed hands, and nothing is deleted until the cleanup further on.
 if (-not (Test-Path -LiteralPath $STATEDIR)) { New-Item -ItemType Directory -Path $STATEDIR | Out-Null }
 & takeown.exe /F $STATEDIR /R /A /D Y *>$null
-& icacls.exe $STATEDIR /reset /T /C /Q *>$null
-& icacls.exe $STATEDIR /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /T /C /Q *>$null
+# The directory, and only the directory, gets the inheritable grant; everything
+# beneath it is then reset to inherit exactly that. Applying the grant with /T
+# instead, as 0.18.22 through 0.19.1 did, reaches files too - and on a file
+# icacls removes the inherited entries and then REFUSES the (OI)(CI) grant as
+# an invalid parameter, leaving an empty DACL that denies everyone, SYSTEM
+# included. Hidden behind *>$null, that broke every Windows machine the
+# installer ever re-ran on: heartbeat.ps1 could no longer be read by the task
+# that runs it (Last Result 1, no heartbeat at all), heartbeat.dat could not be
+# read for the old secret or rewritten with the new one, and the only thing
+# left talking to the server was the enrolment retry task, which deletes
+# itself on its first success. The reset below also repairs a machine in that
+# state: takeown above made Administrators the owner, and an owner may always
+# rewrite a DACL.
+& icacls.exe $STATEDIR /reset /C /Q *>$null
+& icacls.exe $STATEDIR /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /C /Q *>$null
+if (Get-ChildItem -LiteralPath $STATEDIR -Force -ErrorAction SilentlyContinue) {
+    # /L: act on a link itself, never its target. A link here was planted, and
+    # is removed by the cleanup below; until then it must not redirect an ACL
+    # change onto something outside this directory.
+    & icacls.exe "$STATEDIR\\*" /reset /T /L /C /Q *>$null
+}
 $acl = Get-Acl -LiteralPath $STATEDIR
 $foreign = @($acl.Access | Where-Object {
     $sid = try { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { '' }
@@ -403,6 +420,27 @@ if ($trusted -notcontains (OwnerSid $STATEDIR) -or $foreign.Count -gt 0) {
     Write-Host "ERROR: $STATEDIR could not be restricted to SYSTEM and Administrators. Refusing to continue." -ForegroundColor Red
     exit 3
 }
+# Prove the lockdown left every file usable, rather than trusting icacls -
+# whose failures are invisible here - to have done so. A file nobody can open
+# is a machine that silently stops reporting.
+function Test-Readable($path) {
+    try { [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite').Dispose(); return $true } catch { return $false }
+}
+$locked = @(Get-ChildItem -LiteralPath $STATEDIR -Recurse -Force -File -ErrorAction SilentlyContinue |
+    Where-Object { -not (Test-Readable $_.FullName) } | ForEach-Object { $_.FullName })
+if ($locked.Count -gt 0) {
+    Write-Host "ERROR: These files under $STATEDIR could not be repaired and nothing can read them: $($locked -join ', '). Refusing to continue." -ForegroundColor Red
+    exit 3
+}
+$PRIOR_SECRET = ''
+try {
+    $hbPrior = Get-Item -LiteralPath (Join-Path $STATEDIR 'heartbeat.dat') -Force -ErrorAction Stop
+    $hbUntrusted = ($planted -contains '*') -or ($planted -contains $hbPrior.FullName)
+    if (-not ($hbPrior.Attributes -band [IO.FileAttributes]::ReparsePoint) -and (-not $hbUntrusted -or -not $CLAIM_TOKEN)) {
+        $c = [string](Get-Content -LiteralPath $hbPrior.FullName -Raw -ErrorAction Stop | ConvertFrom-Json).agentSecret
+        if ($c -match '^[A-Za-z0-9_-]{20,128}$') { $PRIOR_SECRET = $c }
+    }
+} catch {}
 # A directory someone else created may hold anything, so none of it is kept.
 # Otherwise only the planted items go. Removing a link removes the link, not
 # what it points at. The scripts are rewritten below whatever happens here.
@@ -756,7 +794,7 @@ $hbFile = "$STATEDIR\\heartbeat.dat"
 # working because the server sends the browser an outdated password.
 # File is chmod 600 to SYSTEM+Administrators only.
 $hbPayload = [PSCustomObject]@{ host = $REM0TE_HOST; password = $PERM_PW; agentSecret = $AGENT_SECRET; agentVersion = $AGENT_VERSION } | ConvertTo-Json -Compress
-try { Set-Content -Path $hbFile -Value $hbPayload -Encoding UTF8; icacls $hbFile /inheritance:r /grant:r 'SYSTEM:(F)' 'Administrators:(F)' *>$null } catch {}
+try { Set-Content -Path $hbFile -Value $hbPayload -Encoding UTF8; icacls $hbFile /inheritance:r /grant:r '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' *>$null } catch {}
 
 $hbScript = "$STATEDIR\\heartbeat.ps1"
 $hbBody = @'
@@ -1064,6 +1102,12 @@ try {
 Set-Content -Path $hbScript -Value $hbBody -Encoding UTF8
 schtasks /Create /F /TN 'Rem0teHeartbeat' /SC MINUTE /MO 3 /RU SYSTEM /RL HIGHEST /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \`"$hbScript\`"" *>$null
 Log "  Heartbeat task installed: 'Rem0teHeartbeat' (every 3 minutes, persistent)."
+# The task runs as SYSTEM and reads both of these on every beat. If either is
+# unreadable the machine goes quiet with nothing on screen to say why, so say
+# it here, where someone is watching.
+foreach ($f in @($hbScript, $hbFile)) {
+    if (-not (Test-Readable $f)) { Log "  $f cannot be read - the heartbeat will not run. Re-run this installer." 'ERROR' }
+}
 
 if (-not $rdId -or -not $registered) {
     # Schedule a retry task. Runs every 5 minutes for up to 24 hours, then self-deletes.
@@ -1075,7 +1119,7 @@ if (-not $rdId -or -not $registered) {
         agentSecret = $AGENT_SECRET; agentVersion = $AGENT_VERSION
         expiresAt = (Get-Date).AddDays(1).ToString('o')
     } | ConvertTo-Json -Compress
-    try { Set-Content -Path $secretFile -Value $payload -Encoding UTF8; icacls $secretFile /inheritance:r /grant:r 'SYSTEM:(F)' 'Administrators:(F)' *>$null } catch {}
+    try { Set-Content -Path $secretFile -Value $payload -Encoding UTF8; icacls $secretFile /inheritance:r /grant:r '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' *>$null } catch {}
 
     $retryScript = "$STATEDIR\\retry-enroll.ps1"
     $retryBody = @'
