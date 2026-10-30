@@ -2,7 +2,7 @@
 
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
-Every route is prefixed with `/api/v1`. There are **199** of them across
+Every route is prefixed with `/api/v1`. There are **201** of them across
 **23** controllers.
 
 For request and response shapes, worked examples and error codes, see
@@ -132,6 +132,7 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/endpoints` | signed in | `COMPUTERS_ADD` |
 | `GET` | `/api/v1/endpoints/:id` | signed in | `COMPUTERS_VIEW` |
 | `PATCH` | `/api/v1/endpoints/:id` | signed in | `COMPUTERS_EDIT` |
+| `POST` | `/api/v1/endpoints/:id/accept-device-secret` | signed in, throttled | `COMPUTERS_EDIT` |
 | `GET` | `/api/v1/endpoints/:id/access` | signed in | `USERS_VIEW` |
 | `POST` | `/api/v1/endpoints/:id/access` | signed in | `USERS_MANAGE` |
 | `PATCH` | `/api/v1/endpoints/:id/access-mode` | signed in | `COMPUTERS_EDIT` |
@@ -149,6 +150,7 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/endpoints/:id/password` | signed in, throttled | `COMPUTERS_EDIT` |
 | `PATCH` | `/api/v1/endpoints/:id/password` | signed in | `COMPUTERS_EDIT` |
 | `POST` | `/api/v1/endpoints/:id/reinstall-agent` | signed in, throttled | `COMPUTERS_EDIT` |
+| `PATCH` | `/api/v1/endpoints/:id/restore` | signed in | `COMPUTERS_REMOVE` |
 | `POST` | `/api/v1/endpoints/:id/rotate-credential` | signed in | `COMPUTERS_EDIT` |
 | `POST` | `/api/v1/endpoints/:id/tags` | signed in | `COMPUTERS_EDIT` |
 | `DELETE` | `/api/v1/endpoints/:id/tags/:tag` | signed in | `COMPUTERS_EDIT` |

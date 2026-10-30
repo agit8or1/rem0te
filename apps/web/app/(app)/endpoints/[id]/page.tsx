@@ -16,7 +16,7 @@ import { EndpointEventLog } from '@/components/endpoints/endpoint-event-log';
 import { usePermissions, CAP } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
-import { PlayCircle, Archive, Pencil, Check, X, RefreshCw, Sparkles } from 'lucide-react';
+import { PlayCircle, Archive, ArchiveRestore, Pencil, Check, X, RefreshCw, Sparkles } from 'lucide-react';
 
 export default function EndpointDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -70,9 +70,19 @@ export default function EndpointDetailPage() {
   const archiveMutation = useMutation({
     mutationFn: () => endpointsApi.archive(id),
     onSuccess: () => {
-      toast({ title: 'Endpoint archived' });
+      toast({ title: 'Computer archived', description: 'Restore it from its page if that was a mistake.' });
       router.push('/endpoints');
     },
+    onError: () => toast({ title: 'Error', description: 'Failed to archive', variant: 'destructive' }),
+  });
+
+  const restoreMutation = useMutation({
+    mutationFn: () => endpointsApi.restore(id),
+    onSuccess: () => {
+      toast({ title: 'Computer restored' });
+      qc.invalidateQueries({ queryKey: ['endpoint', id] });
+    },
+    onError: () => toast({ title: 'Error', description: 'Failed to restore', variant: 'destructive' }),
   });
 
   const createNoteMutation = useMutation({
@@ -155,15 +165,32 @@ export default function EndpointDetailPage() {
             <PlayCircle className="h-4 w-4 mr-2" />
             Connect
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => archiveMutation.mutate()}
-            disabled={archiveMutation.isPending}
-          >
-            <Archive className="h-4 w-4 mr-2" />
-            Archive
-          </Button>
+          {ep.status === 'ARCHIVED' ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => restoreMutation.mutate()}
+              disabled={restoreMutation.isPending}
+            >
+              <ArchiveRestore className="h-4 w-4 mr-2" />
+              Restore
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                // One click used to archive outright, with no way back.
+                if (confirm(`Archive ${ep.name as string}? Nobody will be able to connect to it until it is restored.`)) {
+                  archiveMutation.mutate();
+                }
+              }}
+              disabled={archiveMutation.isPending}
+            >
+              <Archive className="h-4 w-4 mr-2" />
+              Archive
+            </Button>
+          )}
         </div>
       </PageHeader>
 

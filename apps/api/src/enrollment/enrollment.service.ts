@@ -15,6 +15,7 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { CAP } from '../rbac/capabilities';
 import { CreateClaimTokenDto, ClaimEndpointDto } from './dto/enrollment.dto';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
+import { CANDIDATE_LIVE_MS, CANDIDATE_SETTLE_MS } from './device-secret';
 
 const execFileAsync = promisify(execFile);
 
@@ -403,7 +404,7 @@ export class EnrollmentService {
     loggedOnUser?: string; uptimeSeconds?: number; lastBootAt?: string;
     cpuLoadPercent?: number; memoryTotalMb?: number; memoryFreeMb?: number;
     systemDiskTotalMb?: number; systemDiskFreeMb?: number;
-  }) {
+  }, remoteIp?: string) {
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { rustdeskId: dto.rustdeskId },
     });
@@ -413,6 +414,7 @@ export class EnrollmentService {
     if (node) {
       if (node.agentSecretHash) {
         if (!dto.agentSecret || !this.secretMatches(node.agentSecretHash, dto.agentSecret)) {
+          if (dto.agentSecret) await this.recordCandidateSecret(node.id, node, dto.agentSecret, remoteIp);
           await this.audit.log({
             tenantId: node.tenantId ?? undefined,
             action: 'ENDPOINT_HEARTBEAT_REJECTED',
@@ -494,6 +496,12 @@ export class EnrollmentService {
       where: { id: node.id },
       data: {
         lastSeenAt: new Date(),
+        // The bound secret matched again, so any candidate recorded while it
+        // did not is moot — and must not stay acceptable.
+        ...(authenticated && node.candidateSecretHash && {
+          candidateSecretHash: null, candidateSecretSeenAt: null, candidateSecretFirstAt: null,
+          candidateSecretIp: null, candidateSecretConflict: false,
+        }),
         ...(authenticated && dto.hostname !== undefined && { hostname: dto.hostname }),
         ...(authenticated && dto.platform !== undefined && { platform: dto.platform }),
         ...(authenticated && dto.rustdeskVersion !== undefined && { version: dto.rustdeskVersion }),
@@ -706,6 +714,50 @@ export class EnrollmentService {
     } catch {
       return 'unknown';
     }
+  }
+
+  /**
+   * Remember the secret a rejected heartbeat offered, so an operator can
+   * accept it (EndpointsService.acceptDeviceSecret). Nothing here trusts it.
+   *
+   * The legitimate case is one machine offering one new secret every three
+   * minutes. Anyone else who knows the RustDesk ID can offer a secret too, but
+   * not without the real machine continuing to offer its own — so a different
+   * secret arriving while the current candidate is still live marks the
+   * candidate as conflicted, and a conflicted candidate cannot be accepted
+   * until one secret has held alone for CANDIDATE_SETTLE_MS.
+   */
+  private async recordCandidateSecret(
+    nodeId: string,
+    node: { candidateSecretHash: string | null; candidateSecretSeenAt: Date | null;
+      candidateSecretFirstAt: Date | null; candidateSecretConflict: boolean },
+    offered: string,
+    remoteIp?: string,
+  ) {
+    const now = new Date();
+    const hash = this.hashSecret(offered);
+    const same = !!node.candidateSecretHash && this.secretMatches(node.candidateSecretHash, offered);
+    const live = !!node.candidateSecretSeenAt &&
+      now.getTime() - node.candidateSecretSeenAt.getTime() < CANDIDATE_LIVE_MS;
+    const data = same
+      ? {
+          candidateSecretSeenAt: now,
+          candidateSecretIp: remoteIp ?? null,
+          // A conflict clears once the same secret has been the only one
+          // offered for long enough.
+          ...(node.candidateSecretConflict && node.candidateSecretFirstAt &&
+            now.getTime() - node.candidateSecretFirstAt.getTime() >= CANDIDATE_SETTLE_MS
+            ? { candidateSecretConflict: false } : {}),
+        }
+      : {
+          candidateSecretHash: hash,
+          candidateSecretSeenAt: now,
+          candidateSecretFirstAt: now,
+          candidateSecretIp: remoteIp ?? null,
+          candidateSecretConflict: !!node.candidateSecretHash && live,
+        };
+    await this.prisma.rustdeskNode.update({ where: { id: nodeId }, data })
+      .catch(() => { /* best-effort: the rejection itself is what matters */ });
   }
 
   private hashSecret(secret: string): string {

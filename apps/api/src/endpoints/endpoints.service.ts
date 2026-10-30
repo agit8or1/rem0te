@@ -8,6 +8,7 @@ import * as path from 'path';
 import Anthropic from '@anthropic-ai/sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { CANDIDATE_LIVE_MS } from '../enrollment/device-secret';
 import { ConfigService } from '@nestjs/config';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { CAP, effectiveCapabilities } from '../rbac/capabilities';
@@ -344,6 +345,91 @@ export class EndpointsService {
       resource: 'endpoint', resourceId: id,
     });
     return endpoint;
+  }
+
+  /**
+   * Undo an archive. Archiving is one click on the device page, and before
+   * this there was no way back short of editing the database.
+   *
+   * Grants deleted by the archive are not restored — nothing recorded them —
+   * so an ASSIGNED_USERS computer comes back reachable only by those who can
+   * see every computer, and its users have to be assigned again.
+   */
+  async restore(actor: ActorContext, id: string) {
+    const existing = await this.acl.assertEndpointInScope(actor, id);
+    this.acl.assertCapability(actor, CAP.COMPUTERS_REMOVE);
+    if (existing.status !== 'ARCHIVED') throw new BadRequestException('This computer is not archived');
+
+    // Back to wherever its enrolment had got to: a machine still waiting for
+    // a business is PENDING_ENROLLMENT, everything else is ACTIVE.
+    const status = existing.customerId ? 'ACTIVE' : 'PENDING_ENROLLMENT';
+    const endpoint = await this.prisma.endpoint.update({ where: { id }, data: { status } });
+
+    await this.audit.log({
+      action: 'ENDPOINT_RESTORED', actorId: actor.userId, actorIp: actor.ip,
+      tenantId: existing.tenantId ?? undefined, customerId: existing.customerId ?? undefined,
+      resource: 'endpoint', resourceId: id, meta: { status },
+    });
+    return endpoint;
+  }
+
+  /**
+   * Accept the new device secret a computer has been heartbeating with since
+   * its bound one stopped matching. See EnrollmentService.recordCandidateSecret.
+   *
+   * This is the operator standing in for a claim token: the alternative is
+   * re-running the installer at the machine, which is exactly what someone
+   * cannot do when the machine they would connect to is the one locked out.
+   * It refuses a candidate that is stale (the machine is not offering it now)
+   * or conflicted (two different secrets were offered for this RustDesk ID).
+   */
+  async acceptDeviceSecret(actor: ActorContext, id: string) {
+    const endpoint = await this.acl.assertEndpointInScope(actor, id);
+    this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
+
+    const node = await this.prisma.rustdeskNode.findUnique({
+      where: { endpointId: id },
+      select: {
+        id: true, candidateSecretHash: true, candidateSecretSeenAt: true,
+        candidateSecretIp: true, candidateSecretConflict: true,
+      },
+    });
+    if (!node?.candidateSecretHash || !node.candidateSecretSeenAt) {
+      throw new BadRequestException('This computer is not offering a new device secret');
+    }
+    if (Date.now() - node.candidateSecretSeenAt.getTime() >= CANDIDATE_LIVE_MS) {
+      throw new BadRequestException(
+        'The new device secret has not been seen recently. Make sure the computer is on, wait for its next heartbeat, and try again.',
+      );
+    }
+    if (node.candidateSecretConflict) {
+      throw new ConflictException(
+        'More than one new device secret has been offered for this RustDesk ID, so it is not safe to accept either. ' +
+        'Re-run the installer on the computer from an enrollment link made for it.',
+      );
+    }
+
+    // Conditional on the candidate still being the one checked above, so a
+    // heartbeat replacing it between the read and the write cannot slip a
+    // different secret through.
+    const r = await this.prisma.rustdeskNode.updateMany({
+      where: { id: node.id, candidateSecretHash: node.candidateSecretHash, candidateSecretConflict: false },
+      data: {
+        agentSecretHash: node.candidateSecretHash,
+        agentSecretSetAt: new Date(),
+        candidateSecretHash: null, candidateSecretSeenAt: null, candidateSecretFirstAt: null,
+        candidateSecretIp: null, candidateSecretConflict: false,
+      },
+    });
+    if (r.count !== 1) throw new ConflictException('The offered secret changed while accepting it. Reload and try again.');
+
+    await this.audit.log({
+      tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
+      actorId: actor.userId, actorIp: actor.ip,
+      action: 'ENDPOINT_DEVICE_SECRET_ACCEPTED', resource: 'endpoint', resourceId: id,
+      meta: { offeredFrom: node.candidateSecretIp },
+    });
+    return { accepted: true };
   }
 
   async addTag(actor: ActorContext, id: string, tag: string) {
@@ -951,6 +1037,8 @@ export class EndpointsService {
         select: {
           version: true, updateTargetVersion: true, updateRequestedAt: true,
           agentSecretHash: true, reinstallRequestedAt: true, reinstallDispatchedAt: true,
+          candidateSecretSeenAt: true, candidateSecretFirstAt: true,
+          candidateSecretIp: true, candidateSecretConflict: true,
         },
       }),
       this.inventory.listCommands(id, 10),
@@ -988,6 +1076,19 @@ export class EndpointsService {
       // installer predates device secrets, so the server takes nothing it
       // says. Without this the UI can only show empty cards and no reason.
       agentBound: !!node?.agentSecretHash,
+      // The machine is heartbeating with a secret the server does not hold,
+      // so nothing it sends is accepted. Without this the page shows a
+      // computer that simply went offline.
+      secretMismatch: node?.candidateSecretSeenAt
+        ? {
+            firstSeenAt: node.candidateSecretFirstAt,
+            lastSeenAt: node.candidateSecretSeenAt,
+            fromIp: node.candidateSecretIp,
+            conflict: node.candidateSecretConflict,
+            acceptable: !node.candidateSecretConflict &&
+              Date.now() - node.candidateSecretSeenAt.getTime() < CANDIDATE_LIVE_MS,
+          }
+        : null,
       commands,
     };
   }

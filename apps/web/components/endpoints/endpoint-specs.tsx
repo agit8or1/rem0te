@@ -71,6 +71,11 @@ export interface InventoryPayload {
     reinstallDispatched: boolean;
   };
   agentBound: boolean;
+  // Heartbeats are arriving with a secret the server does not hold.
+  secretMismatch: {
+    firstSeenAt: string | null; lastSeenAt: string; fromIp: string | null;
+    conflict: boolean; acceptable: boolean;
+  } | null;
   commands: {
     id: string; type: string; status: string; error: string | null;
     requestedById: string | null; createdAt: string; completedAt: string | null;
@@ -332,6 +337,24 @@ export function EndpointSpecs({
     },
   });
 
+  const acceptSecret = useMutation({
+    mutationFn: () => endpointsApi.acceptDeviceSecret(endpointId),
+    onSuccess: () => {
+      toast({
+        title: 'Device secret accepted',
+        description: 'This computer reports in again on its next heartbeat — up to about three minutes.',
+      });
+      qc.invalidateQueries({ queryKey: ['endpoint-inventory', endpointId] });
+      qc.invalidateQueries({ queryKey: ['endpoint', endpointId] });
+    },
+    onError: (e: unknown) => {
+      const message =
+        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Could not accept the device secret';
+      toast({ title: 'Not accepted', description: message, variant: 'destructive' });
+    },
+  });
+
   const refresh = useMutation({
     mutationFn: () => endpointsApi.refreshInventory(endpointId),
     onSuccess: () => {
@@ -391,6 +414,44 @@ export function EndpointSpecs({
             >
               Make an enrollment link for this computer
             </a>
+          </div>
+        </div>
+      )}
+
+      {/* The machine is alive and calling in, but with a device secret the
+          server does not hold — so it shows offline and ignores every
+          request, including updates. */}
+      {data?.secretMismatch && (
+        <div className="flex items-start gap-2 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+          <div className="space-y-1">
+            <div className="font-medium">This computer is calling in with a new device secret</div>
+            <p className="text-muted-foreground text-xs">
+              Its heartbeats are being refused, so it shows offline and ignores updates and
+              refreshes. This usually means its installer re-ran and lost the old secret.
+              Last heartbeat {ago(data.secretMismatch.lastSeenAt)}
+              {data.secretMismatch.fromIp ? ` from ${data.secretMismatch.fromIp}` : ''}.
+              Accept it only if that address is where this computer really is.
+            </p>
+            {data.secretMismatch.conflict ? (
+              <p className="text-xs font-medium text-red-700 dark:text-red-400">
+                More than one new secret has been offered for this RustDesk ID, so neither can be
+                accepted. Re-run the installer on the computer from an enrollment link made for it.
+              </p>
+            ) : !data.secretMismatch.acceptable ? (
+              <p className="text-xs text-muted-foreground">
+                Not seen in the last 15 minutes. Turn the computer on and wait for its next heartbeat.
+              </p>
+            ) : null}
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-1"
+              onClick={() => acceptSecret.mutate()}
+              disabled={!data.secretMismatch.acceptable || acceptSecret.isPending}
+            >
+              Accept this device
+            </Button>
           </div>
         </div>
       )}

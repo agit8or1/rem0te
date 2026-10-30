@@ -93,6 +93,7 @@ export const endpointsApi = {
   create: (data: Record<string, unknown>) => api.post('/endpoints', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/endpoints/${id}`, data),
   archive: (id: string) => api.patch(`/endpoints/${id}/archive`),
+  restore: (id: string) => api.patch(`/endpoints/${id}/restore`),
   generateTimeline: (id: string) => api.post(`/endpoints/${id}/timeline/generate`),
   saveTimeline: (id: string, aiTimeline: string) => api.patch(`/endpoints/${id}`, { aiTimeline }),
   getPassword: (id: string) => api.get(`/endpoints/${id}/password`),
@@ -116,6 +117,9 @@ export const endpointsApi = {
   // keeping its config, password and enrolment. The only way to refresh the
   // agent on a computer whose RustDesk client is already current.
   reinstallAgent: (id: string) => api.post(`/endpoints/${id}/reinstall-agent`, {}),
+  // Trust the new device secret a computer is heartbeating with after its
+  // bound one stopped matching (e.g. an installer re-run that lost it).
+  acceptDeviceSecret: (id: string) => api.post(`/endpoints/${id}/accept-device-secret`, {}),
   requestEventLog: (
     id: string,
     query: { logName: string; levels?: number[]; maxEvents?: number; sinceHours?: number; providerName?: string },
