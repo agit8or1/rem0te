@@ -164,27 +164,43 @@ service-config fix.
 
 ## A computer went offline right after Update or Reinstall agent
 
-The machine is fine and still calling in, but its heartbeats are refused:
-the audit log shows `ENDPOINT_HEARTBEAT_REJECTED` with
-`reason: secret_mismatch` every three minutes from the moment the installer
-re-ran. Updates, refreshes and one-click Connect all stop working with it,
-because the installer also set a new RustDesk password the server never
-received.
+Two symptoms, one cause, in Windows installers 0.18.22 through 0.19.1:
 
-Cause: Windows installers before 0.19.0 lost the machine's device secret
-when re-run on a computer first enrolled before 0.18.22. The state-directory
-hardening treated the user-owned `C:\ProgramData\Rem0te` as planted, deleted
-`heartbeat.dat` with it, and generated a new secret. Fixed in 0.19.0: the
-secret is read before the directory is cleaned.
+- **Refused.** Heartbeats arrive and are rejected: the audit log shows
+  `ENDPOINT_HEARTBEAT_REJECTED` with `reason: secret_mismatch` from the moment
+  the installer re-ran.
+- **Silent.** Nothing arrives at all, often after one last successful
+  heartbeat. On the machine, `schtasks /Query /TN Rem0teHeartbeat /V /FO LIST`
+  shows the task running every three minutes with **Last Result: 1**, and even
+  an elevated Administrator gets *Access denied* reading
+  `C:\ProgramData\Rem0te\heartbeat.ps1`. `icacls C:\ProgramData\Rem0te /T`
+  lists the files under it with no permissions at all.
 
-To recover a machine already in this state, open it in **Computers**. The
-Overview tab shows *This computer is calling in with a new device secret*
-with the address its heartbeats come from. If that address is where the
-computer really is, press **Accept this device**. Its next heartbeat is
-accepted, and that heartbeat also delivers its new RustDesk password.
-Acceptance is refused if the secret has not been seen in 15 minutes, or if
-more than one new secret has been offered for the same RustDesk ID. In that
-case re-run the installer on the machine from an enrollment link made for it.
+Cause: the state-directory lockdown applied a folder-only grant to every file
+under `C:\ProgramData\Rem0te`. icacls removed each file's inherited
+permissions and then refused the grant, leaving files nobody can open,
+SYSTEM included. The heartbeat task could no longer read its own script. The
+installer could not read the old device secret, so it made a new one, and it
+could not save that either. The one-off enrolment retry task (`enroll.dat`,
+written later with correct permissions) was then the only thing still calling
+in, and it deletes itself on its first success. That is the "one last
+heartbeat". Updates and refreshes queued for the machine are never collected.
+Fixed in 0.19.2: the lockdown resets the files to inherit the directory's
+permissions, which also repairs a machine already in this state. Every file is
+then checked to be readable before the install goes on.
+
+To recover a machine already in this state:
+
+1. Re-run the installer on the machine from a 0.19.2 or later server. Pressing
+   **Update** is not enough, because the heartbeat that would act on it is not
+   running.
+2. Open the computer in **Computers**. If the Overview tab shows *This
+   computer is calling in with a new device secret*, and the address shown is
+   where the computer really is, press **Accept this device**. The secret the
+   repaired installer finds is usually not the one the server last bound.
+   Acceptance is refused if the secret has not been seen in 15 minutes, or if
+   more than one new secret has been offered for the same RustDesk ID. In that
+   case re-run the installer from an enrollment link made for that computer.
 
 ---
 

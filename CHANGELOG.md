@@ -5,6 +5,63 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.19.2] — 2026-10-30 · *Homecoming*
+
+### Fixed
+
+- **Re-running the Windows installer made the heartbeat unreadable, and the
+  machine went quiet.** The 0.18.22 state-directory lockdown ran
+  `icacls C:\ProgramData\Rem0te /inheritance:r /grant:r <SID>:(OI)(CI)F /T`.
+  `/T` applies that to every file as well as the directories. On a file icacls
+  strips the inherited permissions and then rejects the `(OI)(CI)` grant as
+  an invalid parameter, so every file already in the directory was left with
+  an empty DACL. Nobody could open it, SYSTEM and elevated Administrators
+  included. Output went to `$null`, so nothing showed.
+
+  What that did, on both production machines after the 16:10 UTC Update on
+  2026-10-30:
+  - `heartbeat.ps1` could not be read by the task that runs it. The task kept
+    firing every three minutes with **Last Result 1** and sent nothing.
+  - `heartbeat.dat` could not be read for the old device secret, so the
+    installer made a new one, and could not be rewritten to save it. *This,
+    not the "user-owned directory treated as planted" path 0.19.0 fixed, is
+    what produced the `secret_mismatch` lockout on these machines.* 0.19.0's
+    reordering was sound but could not help: the file it read first was
+    already unreadable from the 16:10 run.
+  - The installer's registration therefore failed, so it scheduled the
+    enrolment retry task with the new secret in a fresh, correctly permissioned
+    `enroll.dat`. Those retries were the only heartbeats the server saw from
+    then on. They looked like a working agent being refused. Once the secret
+    was accepted (20:47 UTC), each retry task's first success deleted it, as
+    designed, and the machine went silent. Queued inventory refreshes, update
+    scans and the RustDesk 1.5.0 upgrade were never collected, because the
+    retry script ignores the response. That is why the Updates page sat at
+    "Queued to v1.5.0".
+
+  The lockdown now grants the inheritable entries on the directory alone and
+  resets everything beneath it to inherit them (`icacls <dir>\* /reset /T /L`).
+  That also repairs a machine already in this state, because the preceding
+  `takeown /A` makes Administrators the owner and an owner can always rewrite
+  a DACL. `/L` makes the reset act on a planted link itself, not its target.
+  The old `/T` grant followed links. The installer then proves every file
+  under the directory can be opened, and refuses to continue (exit 3) if any
+  cannot, instead of trusting icacls. The previous device secret is now read
+  *after* the repair, so a damaged machine keeps the secret it has. `$planted`
+  is still decided before ownership changes, and nothing is deleted until
+  after the read. The per-file grants on `heartbeat.dat` and `enroll.dat` use
+  SIDs instead of the localised names `SYSTEM` and `Administrators`. After
+  writing the heartbeat files, the installer logs an error if either one
+  cannot be read.
+
+  Recovering a machine already affected means re-running the installer on it.
+  **Update** cannot reach it, because its heartbeat is not running. It will
+  usually then need **Accept this device** once. See *docs/troubleshooting.md →
+  A computer went offline right after Update or Reinstall agent*.
+
+  Checked by parsing the generated installer (with and without a claim token)
+  with PowerShell 7.4. The agent's heartbeat script is unchanged, so
+  `AGENT_CONTRACT_VERSION` stays at 0.17.0.
+
 ## [0.19.1] — 2026-10-30 · *Homecoming*
 
 ### Security
