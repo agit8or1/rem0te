@@ -277,6 +277,16 @@ export class EndpointsController {
     return { success: true, data: await this.svc.requestAgentReinstall(actor, id) };
   }
 
+  // Accept the new device secret a computer has been heartbeating with since
+  // its bound one stopped matching. See EndpointsService.acceptDeviceSecret.
+  @Post(':id/accept-device-secret')
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  @RateLimit(10)
+  @HttpCode(HttpStatus.OK)
+  async acceptDeviceSecret(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.svc.acceptDeviceSecret(actor, id) };
+  }
+
   // The last query run against this computer, so returning to the tab shows
   // what was already fetched instead of an empty form.
   @Get(':id/event-log/latest')
@@ -349,6 +359,13 @@ export class EndpointsController {
   @HttpCode(HttpStatus.OK)
   async archive(@Actor() actor: ActorContext, @Param('id') id: string) {
     return { success: true, data: await this.svc.archive(actor, id) };
+  }
+
+  @Patch(':id/restore')
+  @RequireCapability(CAP.COMPUTERS_REMOVE)
+  @HttpCode(HttpStatus.OK)
+  async restore(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.svc.restore(actor, id) };
   }
 
   @Post(':id/tags')

@@ -370,6 +370,26 @@ if ($sd) {
     } | ForEach-Object { $_.FullName })
     if ($trusted -notcontains (OwnerSid $STATEDIR)) { $planted += '*' }
 }
+# Read the device secret a previous install left BEFORE the cleanup below can
+# remove it. Every install before 0.18.22 created this directory as the user
+# who ran it, so on the first re-run after that release the whole directory
+# counted as planted and heartbeat.dat went with it: the installer made a new
+# secret, the server held the old one, and the machine was locked out for
+# good. That is how "Update" took machines offline.
+#
+# Whose file it is only matters when this run carries a claim token, because a
+# claim binds whatever secret is sent — and a secret a non-administrator wrote
+# is one they know. Without a token nothing is bound: the server compares the
+# secret with the one it already holds, so a planted value can only fail.
+$PRIOR_SECRET = ''
+try {
+    $hbPrior = Get-Item -LiteralPath (Join-Path $STATEDIR 'heartbeat.dat') -Force -ErrorAction Stop
+    $hbUntrusted = ($planted -contains '*') -or ($planted -contains $hbPrior.FullName)
+    if (-not ($hbPrior.Attributes -band [IO.FileAttributes]::ReparsePoint) -and (-not $hbUntrusted -or -not $CLAIM_TOKEN)) {
+        $c = [string](Get-Content -LiteralPath $hbPrior.FullName -Raw -ErrorAction Stop | ConvertFrom-Json).agentSecret
+        if ($c -match '^[A-Za-z0-9_-]{20,128}$') { $PRIOR_SECRET = $c }
+    }
+} catch {}
 if (-not (Test-Path -LiteralPath $STATEDIR)) { New-Item -ItemType Directory -Path $STATEDIR | Out-Null }
 & takeown.exe /F $STATEDIR /R /A /D Y *>$null
 & icacls.exe $STATEDIR /reset /T /C /Q *>$null
@@ -564,13 +584,10 @@ $PERM_PW = [Convert]::ToBase64String($rnd).Replace('+','A').Replace('/','B').Rep
 # alone — a number anyone who has connected to it knows — so the server would
 # hand a staged password rotation, in plaintext, to whoever asked with the right
 # number. The agent proves who it is with this instead. Reused if a previous
-# install left one, so re-running the installer does not orphan the binding the
-# server already holds; the file is SYSTEM+Administrators only.
-$AGENT_SECRET = ''
-try {
-    $prior = Get-Content "$STATEDIR\\heartbeat.dat" -Raw -ErrorAction Stop | ConvertFrom-Json
-    if ($prior.agentSecret) { $AGENT_SECRET = [string]$prior.agentSecret }
-} catch {}
+# install left one ($PRIOR_SECRET, read before the state directory was
+# cleaned), so re-running the installer does not orphan the binding the server
+# already holds; the file is SYSTEM+Administrators only.
+$AGENT_SECRET = $PRIOR_SECRET
 if (-not $AGENT_SECRET) {
     $srnd = New-Object byte[] 32
     [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($srnd)

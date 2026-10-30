@@ -87,6 +87,15 @@ with *Reinstall agent* on the computer's Overview tab, provided the machine has
 authenticated with a device secret; one that never has needs a single local
 run first. See [inventory.md](inventory.md). See [clients.md](clients.md#managed-installer--rem0te--enroll-computer).
 
+Archived computers are skipped when an update is staged.
+
+> **Before 0.19.0 an update could lock a Windows machine out.** Re-running
+> the installer on a computer first enrolled before 0.18.22 lost its device
+> secret, so every heartbeat after that was refused and the machine showed
+> offline. The installer no longer does this. Machines it already happened to
+> can be recovered from the console. See
+> [troubleshooting.md](troubleshooting.md#a-computer-went-offline-right-after-update-or-reinstall-agent).
+
 ---
 
 ## RustDesk server — hbbs and hbbr

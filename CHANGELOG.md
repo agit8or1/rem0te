@@ -5,6 +5,59 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.19.0] — 2026-10-30 · *Homecoming*
+
+### Fixed
+
+- **"Update" took Windows computers offline for good.** Staging a RustDesk
+  update tells each machine to re-run the installer. On a computer first
+  enrolled before 0.18.22, that re-run deleted its own device secret: the
+  0.18.22 state-directory hardening runs before the secret is read, and it
+  treats a `C:\ProgramData\Rem0te` created by the user who ran the original
+  install as planted and empties it. The installer then generated a new
+  secret. The server still held the old one and refused every heartbeat after
+  that (`ENDPOINT_HEARTBEAT_REJECTED`, `reason: secret_mismatch`). So the
+  machine showed offline, never reported the new RustDesk version (which is why
+  "the update did nothing"), and could not be reached with one-click Connect,
+  because the same run had set a RustDesk password the server never got. Both
+  production machines went this way at 16:10 UTC on 2026-10-30.
+
+  The installer now reads the previous secret *before* the directory is
+  cleaned. Whose file it came from only matters on a run that carries a claim
+  token: a claim binds whatever secret is sent, so a file a non-administrator
+  could have written is still not trusted then. Without a token nothing is
+  bound. The server compares the secret with the one it already holds, so a
+  planted value can only fail. The block was parsed with PowerShell 7.4 and
+  run against all four combinations of planted/trusted and token/no token.
+
+- **Archived computers were included in "update all".**
+
+### Added
+
+- **Recovery for a computer whose device secret changed.** A rejected
+  heartbeat's secret is now remembered on the node (migration 0018), and the
+  computer's Overview tab says it is calling in with a new secret, from which
+  address and when. **Accept this device** binds it
+  (`POST /endpoints/:id/accept-device-secret`, `computers:edit`, audited as
+  `ENDPOINT_DEVICE_SECRET_ACCEPTED`). Before this, the only way back was to
+  re-run the installer at the machine with a claim token, on a machine nobody
+  could now connect to. Acceptance is refused when the secret has not been
+  offered in the last 15 minutes. It is also refused when two different
+  secrets were offered for the RustDesk ID while one was live, because someone
+  who knows the ID can offer a secret too, but cannot stop the real machine
+  from offering its own. That conflict clears only after one secret has been
+  offered alone for an hour. The bind is a conditional update on the
+  candidate it checked, and a heartbeat that matches the bound secret again
+  discards any candidate.
+
+- **Restore for archived computers** (`PATCH /endpoints/:id/restore`,
+  `computers:remove`, audited as `ENDPOINT_RESTORED`). Archive was one click
+  with no confirmation and no way back. It now asks first, and an archived
+  computer's page offers Restore instead. Grants the archive deleted are not
+  recreated, because nothing recorded them.
+
+---
+
 ## [0.18.25] — 2026-10-23 · *Handshake*
 
 ### Changed

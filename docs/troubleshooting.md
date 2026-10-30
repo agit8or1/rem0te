@@ -162,6 +162,41 @@ service-config fix.
 
 ---
 
+## A computer went offline right after Update or Reinstall agent
+
+The machine is fine and still calling in, but its heartbeats are refused:
+the audit log shows `ENDPOINT_HEARTBEAT_REJECTED` with
+`reason: secret_mismatch` every three minutes from the moment the installer
+re-ran. Updates, refreshes and one-click Connect all stop working with it,
+because the installer also set a new RustDesk password the server never
+received.
+
+Cause: Windows installers before 0.19.0 lost the machine's device secret
+when re-run on a computer first enrolled before 0.18.22. The state-directory
+hardening treated the user-owned `C:\ProgramData\Rem0te` as planted, deleted
+`heartbeat.dat` with it, and generated a new secret. Fixed in 0.19.0: the
+secret is read before the directory is cleaned.
+
+To recover a machine already in this state, open it in **Computers**. The
+Overview tab shows *This computer is calling in with a new device secret*
+with the address its heartbeats come from. If that address is where the
+computer really is, press **Accept this device**. Its next heartbeat is
+accepted, and that heartbeat also delivers its new RustDesk password.
+Acceptance is refused if the secret has not been seen in 15 minutes, or if
+more than one new secret has been offered for the same RustDesk ID. In that
+case re-run the installer on the machine from an enrollment link made for it.
+
+---
+
+## A computer was archived by mistake
+
+Archived computers refuse every connection. Open the computer and press
+**Restore**. Grants removed by the archive are not brought back: a computer
+set to *Assigned users* needs its users assigned again. A *Company-wide*
+computer needs nothing more.
+
+---
+
 ## WebSocket routes answer but nothing works
 
 `/ws/id` and `/ws/relay` need **rustdesk-server 1.1.16 or newer**. 1.1.15

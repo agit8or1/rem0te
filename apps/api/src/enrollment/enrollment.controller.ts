@@ -84,7 +84,7 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   @HttpCode(HttpStatus.OK)
   async heartbeat(@Body() dto: HeartbeatDto, @Req() req: Request) {
     const ip = req.ip ?? req.socket?.remoteAddress;
-    const result = await this.enrollment.heartbeat({ ...dto, ipAddress: dto.ipAddress ?? ip });
+    const result = await this.enrollment.heartbeat({ ...dto, ipAddress: dto.ipAddress ?? ip }, ip);
     return { success: true, data: result };
   }
 

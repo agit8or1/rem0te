@@ -377,6 +377,14 @@ const SECTIONS: Section[] = [
           is not trusted to report at all. The Overview tab says which of the two is
           the case.
         </p>
+        <p className="font-medium text-foreground">If a computer went offline after an update</p>
+        <p>
+          Its installer re-ran and it is now calling in with a new device secret, which
+          the server refuses. The Overview tab shows the address those heartbeats come
+          from. If that address is right, press <strong>Accept this device</strong> and
+          the computer reports in on its next heartbeat. A computer archived by mistake
+          comes back with <strong>Restore</strong> on the same page.
+        </p>
       </div>
     ),
   },
