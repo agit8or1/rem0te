@@ -5,6 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.19.1] — 2026-10-30 · *Homecoming*
+
+### Security
+
+- **The multer pin did not reach the copy Nest loads.** The generated target
+  manifest folds a pin on a direct dependency into that dependency's range,
+  because npm refuses an override that disagrees with one (EOVERRIDE). It then
+  deleted the override, so the pin bound only the top-level copy.
+  `@nestjs/platform-express` depends on multer at an exact version, so after
+  0.19.0's `npm install` the target held `multer@2.5.0` at the top level and
+  the vulnerable `2.4.0` nested under platform-express. That nested copy is the
+  one Nest actually requires. The override is now emitted as `"$multer"`, npm's
+  reference to the direct dependency's own range, which binds nested copies
+  too and is accepted. Same for `nanoid`. Checked against the lockfile npm
+  resolves: one multer, 2.5.0.
+
+---
+
 ## [0.19.0] — 2026-10-30 · *Homecoming*
 
 ### Fixed
