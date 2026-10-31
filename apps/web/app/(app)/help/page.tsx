@@ -382,7 +382,8 @@ const SECTIONS: Section[] = [
           Its installer re-ran and it is now calling in with a new device secret, which
           the server refuses. The Overview tab shows the address those heartbeats come
           from. If that address is right, press <strong>Accept this device</strong> and
-          the computer reports in on its next heartbeat. If it is not calling in at
+          the computer reports in on its next heartbeat. Accepting also adopts the new
+          RustDesk password the reinstall reported, so Connect keeps working. If it is not calling in at
           all, an installer from before 0.19.2 left its heartbeat script unreadable:
           re-run the installer on the machine itself, since <strong>Update</strong>{' '}
           cannot reach it, then accept it as above. A computer archived by mistake

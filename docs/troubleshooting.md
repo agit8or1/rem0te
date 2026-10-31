@@ -205,6 +205,14 @@ To recover a machine already in this state:
    more than one new secret has been offered for the same RustDesk ID. In that
    case re-run the installer from an enrollment link made for that computer.
 
+   Since 0.19.5, accepting also adopts the RustDesk password the reinstall
+   reported with that secret. The installer sets a new password and reports it
+   once; before 0.19.5 that report was rejected and lost, so after Accept,
+   Connect sent the old password and RustDesk answered **wrong password**, with
+   no copy of the real one anywhere. A computer that was accepted on an older
+   server and now refuses its password needs the installer re-run at the
+   machine, or a password set in RustDesk there.
+
 ---
 
 ## A computer was archived by mistake

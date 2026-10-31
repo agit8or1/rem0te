@@ -5,6 +5,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.19.5] — 2026-10-31 · *Homecoming*
+
+### Fixed
+
+- **After a reinstall was accepted, Connect said "wrong password."** The
+  installer sets a new RustDesk password and reports it once, in the same
+  request that offers its device secret. If that secret no longer matched, the
+  server rejected the request and dropped the password with it. Pressing
+  **Accept this device** brought the heartbeat back but not the password:
+  the next accepted request was the installer's registration check, which
+  carries none. Connect kept sending the previous password, and the real one
+  existed nowhere but on the machine. This is what happened to DS-HOME1 on
+  2026-10-30, and the only way back was someone at the machine.
+
+  A rejected heartbeat now keeps the password it carried, AES-GCM encrypted,
+  next to its candidate secret (`RustdeskNode.candidatePassword`, migration
+  0019). Accept writes it into `permanentPassword` in the same conditional
+  update that binds the secret, and reports `passwordUpdated`, which is also
+  recorded in the audit entry. The password belongs to its secret:
+  - a later request with the same secret and no password leaves it alone;
+  - a different secret replaces it;
+  - a conflicted candidate can't be accepted, so its password can't be adopted.
+
+  An unauthenticated caller can still only offer a candidate, never decide one,
+  and no response returns the column.
+
+  The proof is `apps/api/scripts/e2e-candidate-password.mjs`, run against a
+  scratch stack: 14 checks covering the rejected reinstall, the password-less
+  check, Accept, the conflict refusal, and the column never appearing in a
+  response. `e2e-security-audit.mjs` still passes all 51.
+
+  This doesn't recover a password that was lost before 0.19.5. That machine
+  still needs its installer re-run on site.
+
+---
+
 ## [0.19.4] — 2026-10-31 · *Homecoming*
 
 ### Security

@@ -391,7 +391,7 @@ export class EndpointsService {
       where: { endpointId: id },
       select: {
         id: true, candidateSecretHash: true, candidateSecretSeenAt: true,
-        candidateSecretIp: true, candidateSecretConflict: true,
+        candidateSecretIp: true, candidateSecretConflict: true, candidatePassword: true,
       },
     });
     if (!node?.candidateSecretHash || !node.candidateSecretSeenAt) {
@@ -418,7 +418,11 @@ export class EndpointsService {
         agentSecretHash: node.candidateSecretHash,
         agentSecretSetAt: new Date(),
         candidateSecretHash: null, candidateSecretSeenAt: null, candidateSecretFirstAt: null,
-        candidateSecretIp: null, candidateSecretConflict: false,
+        candidateSecretIp: null, candidateSecretConflict: false, candidatePassword: null,
+        // The password the machine reported alongside this secret is the one
+        // RustDesk is using now. Keeping the old one is what made Connect
+        // answer "wrong password" after an accepted reinstall.
+        ...(node.candidatePassword ? { permanentPassword: node.candidatePassword } : {}),
       },
     });
     if (r.count !== 1) throw new ConflictException('The offered secret changed while accepting it. Reload and try again.');
@@ -427,9 +431,9 @@ export class EndpointsService {
       tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
       actorId: actor.userId, actorIp: actor.ip,
       action: 'ENDPOINT_DEVICE_SECRET_ACCEPTED', resource: 'endpoint', resourceId: id,
-      meta: { offeredFrom: node.candidateSecretIp },
+      meta: { offeredFrom: node.candidateSecretIp, passwordUpdated: !!node.candidatePassword },
     });
-    return { accepted: true };
+    return { accepted: true, passwordUpdated: !!node.candidatePassword };
   }
 
   async addTag(actor: ActorContext, id: string, tag: string) {

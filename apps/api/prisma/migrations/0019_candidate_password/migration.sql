@@ -1,0 +1,11 @@
+-- The password a rejected heartbeat carried, kept with the candidate secret.
+--
+-- An installer re-run sets a new RustDesk password and reports it in the same
+-- request that offers its device secret. When that secret no longer matched,
+-- the request was rejected and the password discarded; accepting the secret
+-- afterwards restored the heartbeat but not the password, so Connect sent the
+-- previous one and RustDesk answered "wrong password" with no copy of the
+-- real one anywhere (DS-HOME1, 2026-10-30). AES-GCM ciphertext like
+-- permanentPassword; applied only when an operator accepts the candidate.
+-- Nullable: additive and safe on a live database.
+ALTER TABLE "RustdeskNode" ADD COLUMN IF NOT EXISTS "candidatePassword" TEXT;
