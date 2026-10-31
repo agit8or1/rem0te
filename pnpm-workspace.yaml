@@ -49,7 +49,12 @@ overrides:
   #   <0.27.7  is required regardless: 0.27.7 dropped destructuring lowering for
   #            safari13 and fails the launcher build (0.27.6 ok, 0.27.7 not)
   'esbuild': '>=0.25.0 <0.27.3'
-  'glob': '>=12.0.0'
+  # GHSA-3g3m-2fjr-6pw4 (AbortSignal cancellation bypass), >=9.0.0 <=14.0.1.
+  # Reaches us only through @nestjs/cli (build time).
+  'glob': '>=14.0.2'
+  # GHSA-mrwp-f3q8-3g9p: custom credential headers followed cross-realm
+  # redirects. Reaches us through the web app's axios.
+  'follow-redirects': '>=1.16.2'
   'flatted': '>=3.4.2'
   'qs': '>=6.16.1'
   '@babel/core': '>=7.29.6'
@@ -104,3 +109,11 @@ auditConfig:
     # options. Not in any production install (`pnpm why deepmerge -r --prod`
     # is empty).
     - GHSA-gcqx-w48m-w2h4
+    # minimatch <11.0.1, globparts amplification DoS. The only patched release
+    # is 11.x and there is no backport to 3.x or 10.x. Every consumer is lint or
+    # build tooling (eslint 8/9, @eslint/*, eslint plugins, typescript-estree,
+    # fork-ts-checker); eslint calls minimatch 3's function export, so
+    # overriding to 11 crashes `pnpm lint` (tried in 0.19.4). Patterns come from
+    # this repository's own config. Not in any production install
+    # (`pnpm why minimatch -r --prod` is empty).
+    - GHSA-g3hv-75wg-m249

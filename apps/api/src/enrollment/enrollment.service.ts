@@ -16,6 +16,7 @@ import { CAP } from '../rbac/capabilities';
 import { CreateClaimTokenDto, ClaimEndpointDto } from './dto/enrollment.dto';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
 import { CANDIDATE_LIVE_MS, CANDIDATE_SETTLE_MS } from './device-secret';
+import { queryHbbsOnline } from './hbbs-presence';
 
 const execFileAsync = promisify(execFile);
 
@@ -855,11 +856,38 @@ export class EnrollmentService {
     }
   }
 
+  /**
+   * Liveness from two sources: the agent heartbeat (lastSeenAt) and hbbs.
+   * A machine RustDesk can reach is online even when its agent is silent —
+   * calling it offline sent operators to the machine for nothing. hbbs being
+   * unreachable degrades to heartbeat-only, exactly the old behaviour.
+   * lastSeenAt stays the agent's own check-in, so a dead agent is still
+   * visible on the device page.
+   */
   async markStaleEndpointsOffline(thresholdMinutes = 10) {
     const cutoff = new Date(Date.now() - thresholdMinutes * 60 * 1000);
+    const nodes = await this.prisma.rustdeskNode.findMany({
+      select: { rustdeskId: true, endpointId: true },
+    });
+    const online = await queryHbbsOnline(nodes.map((n) => n.rustdeskId), {
+      host: this.config.get<string>('HBBS_PRESENCE_HOST') || undefined,
+      port: Number(this.config.get<string>('HBBS_PRESENCE_PORT')) || undefined,
+    });
+    const reachable = online
+      ? nodes.filter((n) => online.has(n.rustdeskId)).map((n) => n.endpointId)
+      : [];
+    if (reachable.length > 0) {
+      await this.prisma.endpoint.updateMany({
+        where: { id: { in: reachable }, isOnline: false },
+        data: { isOnline: true },
+      });
+    }
     const result = await this.prisma.endpoint.updateMany({
       where: {
         isOnline: true,
+        id: { notIn: reachable },
+        // Unknown hbbs state must not take machines offline that only hbbs
+        // was keeping online: wait for the heartbeat window like before.
         lastSeenAt: { lt: cutoff },
       },
       data: { isOnline: false },

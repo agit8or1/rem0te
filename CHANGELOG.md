@@ -5,6 +5,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.19.4] — 2026-10-31 · *Homecoming*
+
+### Security
+
+- **follow-redirects 1.16.2** (GHSA-mrwp-f3q8-3g9p, high): custom credential
+  headers could follow a redirect to another origin. It reaches the web app
+  through axios, so this one ships. Pinned with `'follow-redirects': '>=1.16.2'`.
+- **glob 14.0.3** (GHSA-3g3m-2fjr-6pw4, moderate): the override floor moved
+  from `>=12.0.0` to `>=14.0.2`. Only @nestjs/cli uses it, at build time.
+- **minimatch GHSA-g3hv-75wg-m249 accepted, not fixed.** The only patched
+  release is 11.x, with no 3.x or 10.x backport. eslint calls minimatch 3's
+  function export, so forcing 11 crashes `pnpm lint`. Every consumer is lint
+  or build tooling and none is in a production install. The ignore entry in
+  `pnpm-workspace.yaml` gives the reasoning; take it out once eslint moves off
+  minimatch 3.
+
+All three advisories were published after 0.19.3 was cut, and they failed its
+`audit` job.
+
+---
+
+## [0.19.3] — 2026-10-31 · *Homecoming*
+
+### Fixed
+
+- **A machine RustDesk could reach was shown offline.** `Endpoint.isOnline`
+  came only from the Rem0te agent heartbeat, so the two Windows machines left
+  with an unreadable heartbeat by the 0.18.22 lockdown read "Offline" on every
+  page while hbbs had them registered and Connect reached them (it got as far
+  as RustDesk's password prompt). The staleness sweep now also asks hbbs, every
+  minute, which RustDesk IDs are registered — the `OnlineRequest` the RustDesk
+  client uses for its own online dots, sent to TCP 21115 from a non-loopback
+  address (`HBBS_PRESENCE_HOST`/`HBBS_PRESENCE_PORT` override). Registered
+  machines are marked online; only machines that are neither registered nor
+  heartbeating go offline. `lastSeenAt` is untouched, so a silent agent still
+  shows as an old "last seen". If hbbs cannot be asked the old heartbeat-only
+  behaviour applies. The sweep moved from every 5 minutes to every minute.
+
+---
+
 ## [0.19.2] — 2026-10-30 · *Homecoming*
 
 ### Fixed

@@ -143,10 +143,13 @@ They are different signals and both are correct.
 
 | Signal | Source | Lifetime |
 |---|---|---|
-| Rem0te's dot | HTTP heartbeat every ~3 min | Swept offline after ~10 min |
+| Rem0te's dot | Agent heartbeat **or** live hbbs registration (0.19.3+) | Re-checked every minute |
 | RustDesk | Live registration with hbbs, **in memory only** | Empty after any hbbs restart |
 
 A Connect depends only on the second. `hbbs-probe.py` reports the second.
+Since 0.19.3 the dot follows hbbs too, so this disagreement lasts at most a
+minute. Online with an old "last seen" means RustDesk is fine but the Rem0te
+agent is not checking in — re-run the installer from inside a session.
 
 ---
 
