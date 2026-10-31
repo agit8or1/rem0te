@@ -5,6 +5,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.19.6] — 2026-10-31 · *Homecoming*
+
+### Dependencies
+
+Production group (#78):
+
+- **`@anthropic-ai/sdk` 0.135.0 → 1.3.0.** This major moves every request from
+  API version `2023-06-01` to `2026-10-21`. The only caller is the device
+  timeline summary (`EndpointsService`). It was checked against the
+  [migration guide](https://platform.claude.com/docs/en/api/migration-2026-10-21)
+  and needs no code change:
+  - it sends no `temperature`, `top_p` or `top_k`, no documents and no
+    citations, and calls no Admin API;
+  - its one message is a `role: 'user'` literal, which type-checks under the
+    new per-role `MessageParam` union;
+  - it passes a single `apiKey` straight to api.anthropic.com, so moving the
+    key from `X-Api-Key` to `Authorization: Bearer`, and the one-credential
+    rule, change nothing.
+
+  A request intercepted offline went to the same URL with
+  `anthropic-version: 2026-10-21` and the key as a bearer token, and its body
+  was byte-for-byte the same; the reply parsed as before. Not checked live:
+  production has no `ANTHROPIC_API_KEY`, so the summary is off there. The SDK
+  is now Apache-2.0 (was MIT).
+- `@nestjs/common`, `@nestjs/core`, `@nestjs/platform-express` 11.2.7 → 11.2.8;
+  `nanoid` 6.0.1 → 6.0.2.
+- Web: `next` 16.4.2 → 16.4.3, `axios` 1.20.0 → 1.21.0 (`follow-redirects`
+  stays pinned at ≥1.16.2), `@tanstack/react-query` 5.104.5 → 5.105.0,
+  `lucide-react` 1.61.0 → 1.63.0.
+- Launcher: `@tauri-apps/plugin-deep-link` 2.6.2 → 2.6.3.
+
+Development only (#69, merged without its own release): `typescript-eslint`
+8.71.2 → 8.72.0, `@tauri-apps/cli` 2.12.3 → 2.12.4.
+
+---
+
 ## [0.19.5] — 2026-10-31 · *Homecoming*
 
 ### Fixed
