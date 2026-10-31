@@ -5,6 +5,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.19.4] — 2026-10-31 · *Homecoming*
+
+### Security
+
+- **follow-redirects 1.16.2** (GHSA-mrwp-f3q8-3g9p, high): custom credential
+  headers could follow a redirect to another origin. It reaches the web app
+  through axios, so this one ships. Pinned with `'follow-redirects': '>=1.16.2'`.
+- **glob 14.0.3** (GHSA-3g3m-2fjr-6pw4, moderate): the override floor moved
+  from `>=12.0.0` to `>=14.0.2`. Only @nestjs/cli uses it, at build time.
+- **minimatch GHSA-g3hv-75wg-m249 accepted, not fixed.** The only patched
+  release is 11.x, with no 3.x or 10.x backport. eslint calls minimatch 3's
+  function export, so forcing 11 crashes `pnpm lint`. Every consumer is lint
+  or build tooling and none is in a production install. The ignore entry in
+  `pnpm-workspace.yaml` gives the reasoning; take it out once eslint moves off
+  minimatch 3.
+
+All three advisories were published after 0.19.3 was cut, and they failed its
+`audit` job.
+
+---
+
 ## [0.19.3] — 2026-10-31 · *Homecoming*
 
 ### Fixed
