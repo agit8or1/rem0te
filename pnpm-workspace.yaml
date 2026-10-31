@@ -25,10 +25,11 @@ overrides:
   # "Cannot set properties of undefined (setting 'defaultMeta')".
   'ajv@>=7.0.0 <8.18.0': '>=8.18.0'
   'brace-expansion': '>=5.0.12'
-  # Back on the 3.x line. `>=3.1.1` was unbounded and had lifted ajv's
+  # Back on the 3.x line, floor raised to 3.1.9 for GHSA-333x-w4r6-6crp and
+  # three sibling advisories. `>=3.1.1` was unbounded and had lifted ajv's
   # `fast-uri ^3` onto 4.1.3, which carries GHSA-qw65-cvwx-89v3 and three
   # more advisories that only exist in 4.x. 3.x is unaffected by all of them.
-  'fast-uri': '^3.1.1'
+  'fast-uri': '>=3.1.9 <4.0.0'
   # Express's proxy trust: IPv4-mapped IPv6 addresses matched trust subnets
   # they are not in (GHSA-jqcg-44mw-7w3h). The API's TRUSTED_PROXIES depends on it.
   'proxy-addr': '>=2.0.8'
@@ -40,7 +41,7 @@ overrides:
   'file-type': '>=21.3.1'
   'path-to-regexp': '>=8.4.0'
   'lodash': '>=4.18.1'
-  'multer': '>=2.2.0'
+  'multer': '>=2.5.0'
   # Pinned into a window that clears both esbuild advisories while still
   # building the Tauri launcher, which targets safari13 (macOS 10.15 WKWebView):
   #   >=0.25.0 clears the dev-server request-forgery advisory
@@ -48,11 +49,16 @@ overrides:
   #   <0.27.7  is required regardless: 0.27.7 dropped destructuring lowering for
   #            safari13 and fails the launcher build (0.27.6 ok, 0.27.7 not)
   'esbuild': '>=0.25.0 <0.27.3'
-  'glob': '>=12.0.0'
+  # GHSA-3g3m-2fjr-6pw4 (AbortSignal cancellation bypass), >=9.0.0 <=14.0.1.
+  # Reaches us only through @nestjs/cli (build time).
+  'glob': '>=14.0.2'
+  # GHSA-mrwp-f3q8-3g9p: custom credential headers followed cross-realm
+  # redirects. Reaches us through the web app's axios.
+  'follow-redirects': '>=1.16.2'
   'flatted': '>=3.4.2'
-  'qs': '>=6.16.0'
+  'qs': '>=6.16.1'
   '@babel/core': '>=7.29.6'
-  'body-parser': '>=2.3.0'
+  'body-parser': '>=2.4.0'
   # Unbounded cache growth -> OOM. Reaches us only through
   # @nestjs/cli > fork-ts-checker-webpack-plugin > webpack.
   'browserslist': '>=4.28.7 <4.29.0'
@@ -97,3 +103,17 @@ auditConfig:
     # repository's own config. Not in any production install (`pnpm why braces
     # --prod` is empty).
     - GHSA-vfj7-8cjw-p6xm
+    # deepmerge <=4.3.1, prototype poisoning in mergeObject(). No patched
+    # release exists. Reached only through @nestjs/cli ->
+    # fork-ts-checker-webpack-plugin, i.e. the build, merging that plugin's own
+    # options. Not in any production install (`pnpm why deepmerge -r --prod`
+    # is empty).
+    - GHSA-gcqx-w48m-w2h4
+    # minimatch <11.0.1, globparts amplification DoS. The only patched release
+    # is 11.x and there is no backport to 3.x or 10.x. Every consumer is lint or
+    # build tooling (eslint 8/9, @eslint/*, eslint plugins, typescript-estree,
+    # fork-ts-checker); eslint calls minimatch 3's function export, so
+    # overriding to 11 crashes `pnpm lint` (tried in 0.19.4). Patterns come from
+    # this repository's own config. Not in any production install
+    # (`pnpm why minimatch -r --prod` is empty).
+    - GHSA-g3hv-75wg-m249

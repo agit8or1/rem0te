@@ -114,6 +114,8 @@ enum ActivityAction {
   ENDPOINT_INVENTORY_REFRESH_REQUESTED
   ENDPOINT_EVENT_LOG_REQUESTED
   ENDPOINT_AGENT_REINSTALL_REQUESTED
+  ENDPOINT_DEVICE_SECRET_ACCEPTED
+  ENDPOINT_RESTORED
   CONNECTION_GRANT_CREATED
   CONNECTION_GRANT_REDEEMED
   CONNECTION_GRANT_DENIED
@@ -601,6 +603,24 @@ model RustdeskNode {
   // until its installer is re-run.
   agentSecretHash   String?
   agentSecretSetAt  DateTime?
+
+  // A different secret this machine's RustDesk ID has been heartbeating with
+  // since its bound one stopped matching — typically an installer re-run that
+  // lost the old secret and made a new one. Never trusted on its own: an
+  // operator accepts it from the device page after checking the address it
+  // came from, and only while it is fresh and unambiguous. `Conflict` is set
+  // when two different secrets were offered inside the window, which is the
+  // one shape a hijack attempt cannot avoid, and blocks acceptance.
+  candidateSecretHash     String?
+  candidateSecretSeenAt   DateTime?
+  candidateSecretFirstAt  DateTime?
+  candidateSecretIp       String?
+  candidateSecretConflict Boolean   @default(false)
+  // AES-GCM ciphertext of the RustDesk password the candidate's heartbeat
+  // reported (an installer re-run sets a new one). Becomes permanentPassword
+  // when the candidate is accepted; without it the secret came back but the
+  // console kept handing out the old password. Never returned by any query.
+  candidatePassword       String?
 
   // Credential rotation staging. When the server issues a rotation:
   //   pendingPassword   = AES-GCM(new candidate)

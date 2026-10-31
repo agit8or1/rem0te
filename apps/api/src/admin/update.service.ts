@@ -726,7 +726,12 @@ export class UpdateService {
     if (!latest) throw new NotFoundException('Latest RustDesk version is unavailable right now');
 
     const nodes = await this.prisma.rustdeskNode.findMany({
-      where: endpointIds?.length ? { endpointId: { in: endpointIds } } : {},
+      // An archived computer is one nobody is meant to touch; "update all"
+      // re-ran the installer on one anyway.
+      where: {
+        ...(endpointIds?.length ? { endpointId: { in: endpointIds } } : {}),
+        endpoint: { status: { not: 'ARCHIVED' } },
+      },
       select: { id: true, endpointId: true, version: true, tenantId: true },
     });
     if (!nodes.length) throw new NotFoundException('No matching endpoints');

@@ -15,6 +15,8 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { CAP } from '../rbac/capabilities';
 import { CreateClaimTokenDto, ClaimEndpointDto } from './dto/enrollment.dto';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
+import { CANDIDATE_LIVE_MS, CANDIDATE_SETTLE_MS } from './device-secret';
+import { queryHbbsOnline } from './hbbs-presence';
 
 const execFileAsync = promisify(execFile);
 
@@ -403,7 +405,7 @@ export class EnrollmentService {
     loggedOnUser?: string; uptimeSeconds?: number; lastBootAt?: string;
     cpuLoadPercent?: number; memoryTotalMb?: number; memoryFreeMb?: number;
     systemDiskTotalMb?: number; systemDiskFreeMb?: number;
-  }) {
+  }, remoteIp?: string) {
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { rustdeskId: dto.rustdeskId },
     });
@@ -413,6 +415,7 @@ export class EnrollmentService {
     if (node) {
       if (node.agentSecretHash) {
         if (!dto.agentSecret || !this.secretMatches(node.agentSecretHash, dto.agentSecret)) {
+          if (dto.agentSecret) await this.recordCandidateSecret(node.id, node, dto.agentSecret, remoteIp, dto.password);
           await this.audit.log({
             tenantId: node.tenantId ?? undefined,
             action: 'ENDPOINT_HEARTBEAT_REJECTED',
@@ -494,6 +497,12 @@ export class EnrollmentService {
       where: { id: node.id },
       data: {
         lastSeenAt: new Date(),
+        // The bound secret matched again, so any candidate recorded while it
+        // did not is moot — and must not stay acceptable.
+        ...(authenticated && node.candidateSecretHash && {
+          candidateSecretHash: null, candidateSecretSeenAt: null, candidateSecretFirstAt: null,
+          candidateSecretIp: null, candidateSecretConflict: false, candidatePassword: null,
+        }),
         ...(authenticated && dto.hostname !== undefined && { hostname: dto.hostname }),
         ...(authenticated && dto.platform !== undefined && { platform: dto.platform }),
         ...(authenticated && dto.rustdeskVersion !== undefined && { version: dto.rustdeskVersion }),
@@ -708,6 +717,60 @@ export class EnrollmentService {
     }
   }
 
+  /**
+   * Remember the secret a rejected heartbeat offered, so an operator can
+   * accept it (EndpointsService.acceptDeviceSecret). Nothing here trusts it.
+   *
+   * The legitimate case is one machine offering one new secret every three
+   * minutes. Anyone else who knows the RustDesk ID can offer a secret too, but
+   * not without the real machine continuing to offer its own — so a different
+   * secret arriving while the current candidate is still live marks the
+   * candidate as conflicted, and a conflicted candidate cannot be accepted
+   * until one secret has held alone for CANDIDATE_SETTLE_MS.
+   */
+  private async recordCandidateSecret(
+    nodeId: string,
+    node: { candidateSecretHash: string | null; candidateSecretSeenAt: Date | null;
+      candidateSecretFirstAt: Date | null; candidateSecretConflict: boolean },
+    offered: string,
+    remoteIp?: string,
+    offeredPassword?: string,
+  ) {
+    const now = new Date();
+    // The password travels with the secret it came with. A later request with
+    // the same secret but no password (the installer's registration check, a
+    // heartbeat whose state file lost it) must not erase it; a different
+    // secret starts over, so one machine's password can never be accepted
+    // under another's secret.
+    const pw = offeredPassword ? { candidatePassword: this.encryptPassword(offeredPassword) } : {};
+    const hash = this.hashSecret(offered);
+    const same = !!node.candidateSecretHash && this.secretMatches(node.candidateSecretHash, offered);
+    const live = !!node.candidateSecretSeenAt &&
+      now.getTime() - node.candidateSecretSeenAt.getTime() < CANDIDATE_LIVE_MS;
+    const data = same
+      ? {
+          candidateSecretSeenAt: now,
+          candidateSecretIp: remoteIp ?? null,
+          ...pw,
+          // A conflict clears once the same secret has been the only one
+          // offered for long enough.
+          ...(node.candidateSecretConflict && node.candidateSecretFirstAt &&
+            now.getTime() - node.candidateSecretFirstAt.getTime() >= CANDIDATE_SETTLE_MS
+            ? { candidateSecretConflict: false } : {}),
+        }
+      : {
+          candidateSecretHash: hash,
+          candidateSecretSeenAt: now,
+          candidateSecretFirstAt: now,
+          candidateSecretIp: remoteIp ?? null,
+          candidateSecretConflict: !!node.candidateSecretHash && live,
+          candidatePassword: null,
+          ...pw,
+        };
+    await this.prisma.rustdeskNode.update({ where: { id: nodeId }, data })
+      .catch(() => { /* best-effort: the rejection itself is what matters */ });
+  }
+
   private hashSecret(secret: string): string {
     return createHash('sha256').update(secret).digest('hex');
   }
@@ -803,11 +866,38 @@ export class EnrollmentService {
     }
   }
 
+  /**
+   * Liveness from two sources: the agent heartbeat (lastSeenAt) and hbbs.
+   * A machine RustDesk can reach is online even when its agent is silent —
+   * calling it offline sent operators to the machine for nothing. hbbs being
+   * unreachable degrades to heartbeat-only, exactly the old behaviour.
+   * lastSeenAt stays the agent's own check-in, so a dead agent is still
+   * visible on the device page.
+   */
   async markStaleEndpointsOffline(thresholdMinutes = 10) {
     const cutoff = new Date(Date.now() - thresholdMinutes * 60 * 1000);
+    const nodes = await this.prisma.rustdeskNode.findMany({
+      select: { rustdeskId: true, endpointId: true },
+    });
+    const online = await queryHbbsOnline(nodes.map((n) => n.rustdeskId), {
+      host: this.config.get<string>('HBBS_PRESENCE_HOST') || undefined,
+      port: Number(this.config.get<string>('HBBS_PRESENCE_PORT')) || undefined,
+    });
+    const reachable = online
+      ? nodes.filter((n) => online.has(n.rustdeskId)).map((n) => n.endpointId)
+      : [];
+    if (reachable.length > 0) {
+      await this.prisma.endpoint.updateMany({
+        where: { id: { in: reachable }, isOnline: false },
+        data: { isOnline: true },
+      });
+    }
     const result = await this.prisma.endpoint.updateMany({
       where: {
         isOnline: true,
+        id: { notIn: reachable },
+        // Unknown hbbs state must not take machines offline that only hbbs
+        // was keeping online: wait for the heartbeat window like before.
         lastSeenAt: { lt: cutoff },
       },
       data: { isOnline: false },

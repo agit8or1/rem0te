@@ -5,6 +5,220 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.19.5] — 2026-10-31 · *Homecoming*
+
+### Fixed
+
+- **After a reinstall was accepted, Connect said "wrong password."** The
+  installer sets a new RustDesk password and reports it once, in the same
+  request that offers its device secret. If that secret no longer matched, the
+  server rejected the request and dropped the password with it. Pressing
+  **Accept this device** brought the heartbeat back but not the password:
+  the next accepted request was the installer's registration check, which
+  carries none. Connect kept sending the previous password, and the real one
+  existed nowhere but on the machine. This is what happened to DS-HOME1 on
+  2026-10-30, and the only way back was someone at the machine.
+
+  A rejected heartbeat now keeps the password it carried, AES-GCM encrypted,
+  next to its candidate secret (`RustdeskNode.candidatePassword`, migration
+  0019). Accept writes it into `permanentPassword` in the same conditional
+  update that binds the secret, and reports `passwordUpdated`, which is also
+  recorded in the audit entry. The password belongs to its secret:
+  - a later request with the same secret and no password leaves it alone;
+  - a different secret replaces it;
+  - a conflicted candidate can't be accepted, so its password can't be adopted.
+
+  An unauthenticated caller can still only offer a candidate, never decide one,
+  and no response returns the column.
+
+  The proof is `apps/api/scripts/e2e-candidate-password.mjs`, run against a
+  scratch stack: 14 checks covering the rejected reinstall, the password-less
+  check, Accept, the conflict refusal, and the column never appearing in a
+  response. `e2e-security-audit.mjs` still passes all 51.
+
+  This doesn't recover a password that was lost before 0.19.5. That machine
+  still needs its installer re-run on site.
+
+---
+
+## [0.19.4] — 2026-10-31 · *Homecoming*
+
+### Security
+
+- **follow-redirects 1.16.2** (GHSA-mrwp-f3q8-3g9p, high): custom credential
+  headers could follow a redirect to another origin. It reaches the web app
+  through axios, so this one ships. Pinned with `'follow-redirects': '>=1.16.2'`.
+- **glob 14.0.3** (GHSA-3g3m-2fjr-6pw4, moderate): the override floor moved
+  from `>=12.0.0` to `>=14.0.2`. Only @nestjs/cli uses it, at build time.
+- **minimatch GHSA-g3hv-75wg-m249 accepted, not fixed.** The only patched
+  release is 11.x, with no 3.x or 10.x backport. eslint calls minimatch 3's
+  function export, so forcing 11 crashes `pnpm lint`. Every consumer is lint
+  or build tooling and none is in a production install. The ignore entry in
+  `pnpm-workspace.yaml` gives the reasoning; take it out once eslint moves off
+  minimatch 3.
+
+All three advisories were published after 0.19.3 was cut, and they failed its
+`audit` job.
+
+---
+
+## [0.19.3] — 2026-10-31 · *Homecoming*
+
+### Fixed
+
+- **A machine RustDesk could reach was shown offline.** `Endpoint.isOnline`
+  came only from the Rem0te agent heartbeat, so the two Windows machines left
+  with an unreadable heartbeat by the 0.18.22 lockdown read "Offline" on every
+  page while hbbs had them registered and Connect reached them (it got as far
+  as RustDesk's password prompt). The staleness sweep now also asks hbbs, every
+  minute, which RustDesk IDs are registered — the `OnlineRequest` the RustDesk
+  client uses for its own online dots, sent to TCP 21115 from a non-loopback
+  address (`HBBS_PRESENCE_HOST`/`HBBS_PRESENCE_PORT` override). Registered
+  machines are marked online; only machines that are neither registered nor
+  heartbeating go offline. `lastSeenAt` is untouched, so a silent agent still
+  shows as an old "last seen". If hbbs cannot be asked the old heartbeat-only
+  behaviour applies. The sweep moved from every 5 minutes to every minute.
+
+---
+
+## [0.19.2] — 2026-10-30 · *Homecoming*
+
+### Fixed
+
+- **Re-running the Windows installer made the heartbeat unreadable, and the
+  machine went quiet.** The 0.18.22 state-directory lockdown ran
+  `icacls C:\ProgramData\Rem0te /inheritance:r /grant:r <SID>:(OI)(CI)F /T`.
+  `/T` applies that to every file as well as the directories. On a file icacls
+  strips the inherited permissions and then rejects the `(OI)(CI)` grant as
+  an invalid parameter, so every file already in the directory was left with
+  an empty DACL. Nobody could open it, SYSTEM and elevated Administrators
+  included. Output went to `$null`, so nothing showed.
+
+  What that did, on both production machines after the 16:10 UTC Update on
+  2026-10-30:
+  - `heartbeat.ps1` could not be read by the task that runs it. The task kept
+    firing every three minutes with **Last Result 1** and sent nothing.
+  - `heartbeat.dat` could not be read for the old device secret, so the
+    installer made a new one, and could not be rewritten to save it. *This,
+    not the "user-owned directory treated as planted" path 0.19.0 fixed, is
+    what produced the `secret_mismatch` lockout on these machines.* 0.19.0's
+    reordering was sound but could not help: the file it read first was
+    already unreadable from the 16:10 run.
+  - The installer's registration therefore failed, so it scheduled the
+    enrolment retry task with the new secret in a fresh, correctly permissioned
+    `enroll.dat`. Those retries were the only heartbeats the server saw from
+    then on. They looked like a working agent being refused. Once the secret
+    was accepted (20:47 UTC), each retry task's first success deleted it, as
+    designed, and the machine went silent. Queued inventory refreshes, update
+    scans and the RustDesk 1.5.0 upgrade were never collected, because the
+    retry script ignores the response. That is why the Updates page sat at
+    "Queued to v1.5.0".
+
+  The lockdown now grants the inheritable entries on the directory alone and
+  resets everything beneath it to inherit them (`icacls <dir>\* /reset /T /L`).
+  That also repairs a machine already in this state, because the preceding
+  `takeown /A` makes Administrators the owner and an owner can always rewrite
+  a DACL. `/L` makes the reset act on a planted link itself, not its target.
+  The old `/T` grant followed links. The installer then proves every file
+  under the directory can be opened, and refuses to continue (exit 3) if any
+  cannot, instead of trusting icacls. The previous device secret is now read
+  *after* the repair, so a damaged machine keeps the secret it has. `$planted`
+  is still decided before ownership changes, and nothing is deleted until
+  after the read. The per-file grants on `heartbeat.dat` and `enroll.dat` use
+  SIDs instead of the localised names `SYSTEM` and `Administrators`. After
+  writing the heartbeat files, the installer logs an error if either one
+  cannot be read.
+
+  Recovering a machine already affected means re-running the installer on it.
+  **Update** cannot reach it, because its heartbeat is not running. It will
+  usually then need **Accept this device** once. See *docs/troubleshooting.md →
+  A computer went offline right after Update or Reinstall agent*.
+
+  Checked by parsing the generated installer (with and without a claim token)
+  with PowerShell 7.4. The agent's heartbeat script is unchanged, so
+  `AGENT_CONTRACT_VERSION` stays at 0.17.0.
+
+## [0.19.1] — 2026-10-30 · *Homecoming*
+
+### Security
+
+- **The multer pin did not reach the copy Nest loads.** The generated target
+  manifest folds a pin on a direct dependency into that dependency's range,
+  because npm refuses an override that disagrees with one (EOVERRIDE). It then
+  deleted the override, so the pin bound only the top-level copy.
+  `@nestjs/platform-express` depends on multer at an exact version, so after
+  0.19.0's `npm install` the target held `multer@2.5.0` at the top level and
+  the vulnerable `2.4.0` nested under platform-express. That nested copy is the
+  one Nest actually requires. The override is now emitted as `"$multer"`, npm's
+  reference to the direct dependency's own range, which binds nested copies
+  too and is accepted. Same for `nanoid`. Checked against the lockfile npm
+  resolves: one multer, 2.5.0.
+
+---
+
+## [0.19.0] — 2026-10-30 · *Homecoming*
+
+### Fixed
+
+- **"Update" took Windows computers offline for good.** Staging a RustDesk
+  update tells each machine to re-run the installer. On a computer first
+  enrolled before 0.18.22, that re-run deleted its own device secret: the
+  0.18.22 state-directory hardening runs before the secret is read, and it
+  treats a `C:\ProgramData\Rem0te` created by the user who ran the original
+  install as planted and empties it. The installer then generated a new
+  secret. The server still held the old one and refused every heartbeat after
+  that (`ENDPOINT_HEARTBEAT_REJECTED`, `reason: secret_mismatch`). So the
+  machine showed offline, never reported the new RustDesk version (which is why
+  "the update did nothing"), and could not be reached with one-click Connect,
+  because the same run had set a RustDesk password the server never got. Both
+  production machines went this way at 16:10 UTC on 2026-10-30.
+
+  The installer now reads the previous secret *before* the directory is
+  cleaned. Whose file it came from only matters on a run that carries a claim
+  token: a claim binds whatever secret is sent, so a file a non-administrator
+  could have written is still not trusted then. Without a token nothing is
+  bound. The server compares the secret with the one it already holds, so a
+  planted value can only fail. The block was parsed with PowerShell 7.4 and
+  run against all four combinations of planted/trusted and token/no token.
+
+- **Archived computers were included in "update all".**
+
+### Added
+
+- **Recovery for a computer whose device secret changed.** A rejected
+  heartbeat's secret is now remembered on the node (migration 0018), and the
+  computer's Overview tab says it is calling in with a new secret, from which
+  address and when. **Accept this device** binds it
+  (`POST /endpoints/:id/accept-device-secret`, `computers:edit`, audited as
+  `ENDPOINT_DEVICE_SECRET_ACCEPTED`). Before this, the only way back was to
+  re-run the installer at the machine with a claim token, on a machine nobody
+  could now connect to. Acceptance is refused when the secret has not been
+  offered in the last 15 minutes. It is also refused when two different
+  secrets were offered for the RustDesk ID while one was live, because someone
+  who knows the ID can offer a secret too, but cannot stop the real machine
+  from offering its own. That conflict clears only after one secret has been
+  offered alone for an hour. The bind is a conditional update on the
+  candidate it checked, and a heartbeat that matches the bound secret again
+  discards any candidate.
+
+- **Restore for archived computers** (`PATCH /endpoints/:id/restore`,
+  `computers:remove`, audited as `ENDPOINT_RESTORED`). Archive was one click
+  with no confirmation and no way back. It now asks first, and an archived
+  computer's page offers Restore instead. Grants the archive deleted are not
+  recreated, because nothing recorded them.
+
+### Security
+
+- **Production dependency advisories published since 0.18.25** (raised in
+  `pnpm-workspace.yaml` overrides): `body-parser` 2.4.0 and `multer` 2.5.0
+  (both high, request-handling DoS), `qs` 6.17.1 and `fast-uri` 3.1.9 (four
+  advisories, still held below 4.x). `deepmerge` (GHSA-gcqx-w48m-w2h4, low) has
+  no patched release and is reached only through `@nestjs/cli`'s build, so it is
+  ignored with a reason, like `braces`. The target's `package.json` is
+  regenerated and `npm install --omit=dev` re-run on deploy.
+
+---
+
 ## [0.18.25] — 2026-10-23 · *Handshake*
 
 ### Changed

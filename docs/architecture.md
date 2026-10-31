@@ -169,12 +169,18 @@ presented as "sessions in progress" would read low; the tile says *relayed*.
 
 | Signal | Owner | Lifetime |
 |---|---|---|
-| `Endpoint.isOnline` | Rem0te — HTTP heartbeat every ~3 min | Swept to offline after ~10 min |
-| RustDesk peer registration | hbbs — **in memory only** | Empty after any hbbs restart |
+| Agent heartbeat (`Endpoint.lastSeenAt`) | Rem0te — HTTP heartbeat every ~3 min | Stale after 30 min |
+| RustDesk peer registration | hbbs — **in memory only** | 30 s; empty after any hbbs restart |
 
-A Connect depends on the second. They disagree often enough that
-`deploy/scripts/hbbs-probe.py` exists to ask hbbs directly rather than infer
-from the dot.
+Since 0.19.3 `Endpoint.isOnline` is true when **either** holds. Every minute the
+API sends hbbs the same `OnlineRequest` the RustDesk client uses for its
+address-book dots (TCP 21115, from a non-loopback address — hbbs treats
+loopback on that port as its text console; override with `HBBS_PRESENCE_HOST`
+/ `HBBS_PRESENCE_PORT`). A machine whose agent is broken but whose RustDesk is
+connected therefore shows online, which is what Connect actually needs; the
+device page's "last seen" stays the agent's own check-in so a dead agent is
+still visible. If hbbs cannot be asked, liveness falls back to heartbeat only.
+`deploy/scripts/hbbs-probe.py` still exists to test the full punch-hole path.
 
 ---
 

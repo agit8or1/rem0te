@@ -22,7 +22,8 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly enrollment: EnrollmentService) {}
 
   onModuleInit() {
-    // Run every 5 minutes
+    // Every minute: hbbs presence is near real-time (30 s registration
+    // window), and the heartbeat-staleness half is cheap.
     this.cleanupInterval = setInterval(() => {
       // Threshold is generous (30 min) because:
       //   * older installers that pre-date the Rem0teHeartbeat task ping
@@ -34,7 +35,7 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
       this.enrollment.markStaleEndpointsOffline(30).catch((e) =>
         this.logger.error('Stale endpoint cleanup failed', e),
       );
-    }, 5 * 60 * 1000);
+    }, 60 * 1000);
   }
 
   onModuleDestroy() {
@@ -84,7 +85,7 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   @HttpCode(HttpStatus.OK)
   async heartbeat(@Body() dto: HeartbeatDto, @Req() req: Request) {
     const ip = req.ip ?? req.socket?.remoteAddress;
-    const result = await this.enrollment.heartbeat({ ...dto, ipAddress: dto.ipAddress ?? ip });
+    const result = await this.enrollment.heartbeat({ ...dto, ipAddress: dto.ipAddress ?? ip }, ip);
     return { success: true, data: result };
   }
 

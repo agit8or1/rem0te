@@ -143,10 +143,13 @@ They are different signals and both are correct.
 
 | Signal | Source | Lifetime |
 |---|---|---|
-| Rem0te's dot | HTTP heartbeat every ~3 min | Swept offline after ~10 min |
+| Rem0te's dot | Agent heartbeat **or** live hbbs registration (0.19.3+) | Re-checked every minute |
 | RustDesk | Live registration with hbbs, **in memory only** | Empty after any hbbs restart |
 
 A Connect depends only on the second. `hbbs-probe.py` reports the second.
+Since 0.19.3 the dot follows hbbs too, so this disagreement lasts at most a
+minute. Online with an old "last seen" means RustDesk is fine but the Rem0te
+agent is not checking in — re-run the installer from inside a session.
 
 ---
 
@@ -159,6 +162,65 @@ endpoint to report the target version.
 
 Re-run the installer on those machines by hand. They need it anyway for the
 service-config fix.
+
+---
+
+## A computer went offline right after Update or Reinstall agent
+
+Two symptoms, one cause, in Windows installers 0.18.22 through 0.19.1:
+
+- **Refused.** Heartbeats arrive and are rejected: the audit log shows
+  `ENDPOINT_HEARTBEAT_REJECTED` with `reason: secret_mismatch` from the moment
+  the installer re-ran.
+- **Silent.** Nothing arrives at all, often after one last successful
+  heartbeat. On the machine, `schtasks /Query /TN Rem0teHeartbeat /V /FO LIST`
+  shows the task running every three minutes with **Last Result: 1**, and even
+  an elevated Administrator gets *Access denied* reading
+  `C:\ProgramData\Rem0te\heartbeat.ps1`. `icacls C:\ProgramData\Rem0te /T`
+  lists the files under it with no permissions at all.
+
+Cause: the state-directory lockdown applied a folder-only grant to every file
+under `C:\ProgramData\Rem0te`. icacls removed each file's inherited
+permissions and then refused the grant, leaving files nobody can open,
+SYSTEM included. The heartbeat task could no longer read its own script. The
+installer could not read the old device secret, so it made a new one, and it
+could not save that either. The one-off enrolment retry task (`enroll.dat`,
+written later with correct permissions) was then the only thing still calling
+in, and it deletes itself on its first success. That is the "one last
+heartbeat". Updates and refreshes queued for the machine are never collected.
+Fixed in 0.19.2: the lockdown resets the files to inherit the directory's
+permissions, which also repairs a machine already in this state. Every file is
+then checked to be readable before the install goes on.
+
+To recover a machine already in this state:
+
+1. Re-run the installer on the machine from a 0.19.2 or later server. Pressing
+   **Update** is not enough, because the heartbeat that would act on it is not
+   running.
+2. Open the computer in **Computers**. If the Overview tab shows *This
+   computer is calling in with a new device secret*, and the address shown is
+   where the computer really is, press **Accept this device**. The secret the
+   repaired installer finds is usually not the one the server last bound.
+   Acceptance is refused if the secret has not been seen in 15 minutes, or if
+   more than one new secret has been offered for the same RustDesk ID. In that
+   case re-run the installer from an enrollment link made for that computer.
+
+   Since 0.19.5, accepting also adopts the RustDesk password the reinstall
+   reported with that secret. The installer sets a new password and reports it
+   once; before 0.19.5 that report was rejected and lost, so after Accept,
+   Connect sent the old password and RustDesk answered **wrong password**, with
+   no copy of the real one anywhere. A computer that was accepted on an older
+   server and now refuses its password needs the installer re-run at the
+   machine, or a password set in RustDesk there.
+
+---
+
+## A computer was archived by mistake
+
+Archived computers refuse every connection. Open the computer and press
+**Restore**. Grants removed by the archive are not brought back: a computer
+set to *Assigned users* needs its users assigned again. A *Company-wide*
+computer needs nothing more.
 
 ---
 

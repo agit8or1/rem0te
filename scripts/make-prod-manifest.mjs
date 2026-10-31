@@ -74,13 +74,18 @@ const dependencies = { ...api.dependencies, prisma: prismaRange };
 // Dropping those overrides would be the easy fix and the wrong one: ^5.0.7
 // admits 5.0.7, which is the version the advisory is about. So the pin moves
 // into the dependency range as an intersection — `^5.0.7 >=5.1.7` is a single
-// semver range satisfied only by versions in both — and the override is
-// removed, which is the one form npm accepts without losing the pin.
+// semver range satisfied only by versions in both.
+//
+// The override itself becomes `$name`, npm's reference to the direct
+// dependency's own range. Removing it outright, as this used to, pinned only
+// the top-level copy: @nestjs/platform-express depends on multer at an exact
+// version, so the target ran a nested multer 2.4.0 next to the 2.5.0 the pin
+// asked for, and the advisory stayed live in the copy Nest actually loads.
 const intersected = [];
 for (const name of Object.keys(dependencies)) {
   if (!(name in overrides)) continue;
   dependencies[name] = `${dependencies[name]} ${overrides[name]}`;
-  delete overrides[name];
+  overrides[name] = `$${name}`;
   intersected.push(`${name} -> ${dependencies[name]}`);
 }
 if (process.env.VERBOSE) for (const line of intersected) console.error(`  pin folded into dependency: ${line}`);
