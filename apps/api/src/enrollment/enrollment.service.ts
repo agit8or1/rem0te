@@ -415,7 +415,7 @@ export class EnrollmentService {
     if (node) {
       if (node.agentSecretHash) {
         if (!dto.agentSecret || !this.secretMatches(node.agentSecretHash, dto.agentSecret)) {
-          if (dto.agentSecret) await this.recordCandidateSecret(node.id, node, dto.agentSecret, remoteIp);
+          if (dto.agentSecret) await this.recordCandidateSecret(node.id, node, dto.agentSecret, remoteIp, dto.password);
           await this.audit.log({
             tenantId: node.tenantId ?? undefined,
             action: 'ENDPOINT_HEARTBEAT_REJECTED',
@@ -501,7 +501,7 @@ export class EnrollmentService {
         // did not is moot — and must not stay acceptable.
         ...(authenticated && node.candidateSecretHash && {
           candidateSecretHash: null, candidateSecretSeenAt: null, candidateSecretFirstAt: null,
-          candidateSecretIp: null, candidateSecretConflict: false,
+          candidateSecretIp: null, candidateSecretConflict: false, candidatePassword: null,
         }),
         ...(authenticated && dto.hostname !== undefined && { hostname: dto.hostname }),
         ...(authenticated && dto.platform !== undefined && { platform: dto.platform }),
@@ -734,8 +734,15 @@ export class EnrollmentService {
       candidateSecretFirstAt: Date | null; candidateSecretConflict: boolean },
     offered: string,
     remoteIp?: string,
+    offeredPassword?: string,
   ) {
     const now = new Date();
+    // The password travels with the secret it came with. A later request with
+    // the same secret but no password (the installer's registration check, a
+    // heartbeat whose state file lost it) must not erase it; a different
+    // secret starts over, so one machine's password can never be accepted
+    // under another's secret.
+    const pw = offeredPassword ? { candidatePassword: this.encryptPassword(offeredPassword) } : {};
     const hash = this.hashSecret(offered);
     const same = !!node.candidateSecretHash && this.secretMatches(node.candidateSecretHash, offered);
     const live = !!node.candidateSecretSeenAt &&
@@ -744,6 +751,7 @@ export class EnrollmentService {
       ? {
           candidateSecretSeenAt: now,
           candidateSecretIp: remoteIp ?? null,
+          ...pw,
           // A conflict clears once the same secret has been the only one
           // offered for long enough.
           ...(node.candidateSecretConflict && node.candidateSecretFirstAt &&
@@ -756,6 +764,8 @@ export class EnrollmentService {
           candidateSecretFirstAt: now,
           candidateSecretIp: remoteIp ?? null,
           candidateSecretConflict: !!node.candidateSecretHash && live,
+          candidatePassword: null,
+          ...pw,
         };
     await this.prisma.rustdeskNode.update({ where: { id: nodeId }, data })
       .catch(() => { /* best-effort: the rejection itself is what matters */ });

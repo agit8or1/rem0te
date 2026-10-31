@@ -616,6 +616,11 @@ model RustdeskNode {
   candidateSecretFirstAt  DateTime?
   candidateSecretIp       String?
   candidateSecretConflict Boolean   @default(false)
+  // AES-GCM ciphertext of the RustDesk password the candidate's heartbeat
+  // reported (an installer re-run sets a new one). Becomes permanentPassword
+  // when the candidate is accepted; without it the secret came back but the
+  // console kept handing out the old password. Never returned by any query.
+  candidatePassword       String?
 
   // Credential rotation staging. When the server issues a rotation:
   //   pendingPassword   = AES-GCM(new candidate)
