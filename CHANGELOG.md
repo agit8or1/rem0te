@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.19.3] — 2026-10-31 · *Homecoming*
+
+### Fixed
+
+- **A machine RustDesk could reach was shown offline.** `Endpoint.isOnline`
+  came only from the Rem0te agent heartbeat, so the two Windows machines left
+  with an unreadable heartbeat by the 0.18.22 lockdown read "Offline" on every
+  page while hbbs had them registered and Connect reached them (it got as far
+  as RustDesk's password prompt). The staleness sweep now also asks hbbs, every
+  minute, which RustDesk IDs are registered — the `OnlineRequest` the RustDesk
+  client uses for its own online dots, sent to TCP 21115 from a non-loopback
+  address (`HBBS_PRESENCE_HOST`/`HBBS_PRESENCE_PORT` override). Registered
+  machines are marked online; only machines that are neither registered nor
+  heartbeating go offline. `lastSeenAt` is untouched, so a silent agent still
+  shows as an old "last seen". If hbbs cannot be asked the old heartbeat-only
+  behaviour applies. The sweep moved from every 5 minutes to every minute.
+
+---
+
 ## [0.19.2] — 2026-10-30 · *Homecoming*
 
 ### Fixed
