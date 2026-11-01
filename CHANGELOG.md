@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.19.9] — 2026-11-01 · *Homecoming*
 
+### Fixed
+
+- **The Connect and setup `.cmd` closed instantly (0.19.8 regression).** The
+  whole PowerShell script was passed on one `powershell -Command "…"` line.
+  0.19.8's elevated repair step made that line ~11,600 characters, and
+  cmd.exe refuses any line longer than 8191 ("The input line is too long"),
+  so the window closed before anything ran or could be read. hbbs saw no
+  connection attempt at all after 22:08. The script now sits after the
+  batch section's `exit /b`, under a marker, and a ~280-character loader
+  line has PowerShell read it back out of the `.cmd` itself. `wrapCmd()`
+  refuses to build any batch line over 2000 characters, so this cannot ship
+  again unnoticed.
+
 ### Removed
 
 - `apps/api/__APPDATA__/RustDesk/config/RustDesk2.toml`, committed by
