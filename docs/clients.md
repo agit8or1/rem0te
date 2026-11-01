@@ -70,10 +70,11 @@ signed-in users can fetch them.
 
 `rem0te-setup-rustdesk.cmd` — finds the RustDesk already on the machine, or
 fetches a portable copy into `%LOCALAPPDATA%\Rem0te`, and makes sure it uses
-this server and key. An installed RustDesk whose server or key is wrong is
-repaired with an elevated `rustdesk --config` — Windows asks for administrator
-permission once, and only when something actually needs fixing. It installs
-nothing and touches nothing else.
+this server and key. An installed RustDesk that is out of date, or whose
+server or key is wrong, is upgraded and repaired in one elevated step — Windows
+asks for administrator permission once, and only when something actually needs
+fixing (log: `%LOCALAPPDATA%\Rem0te\repair.log`). A machine with no RustDesk
+gets a portable copy; nothing is installed.
 
 Use it to prepare a machine ahead of time. Clicking **Connect** does the same
 work plus the connection, so this is for the case where you want the setup done

@@ -103,10 +103,17 @@ in `/var/log/rustdesk-server/hbbs.log`, where `<ip>` is the technician's
 machine. So a Key mismatch that starts "after a reinstall" usually means the
 technician's RustDesk was reinstalled with a bad key — most often from a
 preconfigured download the browser saved as `… (1).exe`, which before 0.19.7
-put ` (1)` into the key. From 0.19.7 Connect checks the installed client's
-server and key and, if either is wrong, repairs it with an elevated
-`rustdesk --config` (one UAC prompt). Declining falls back to a portable copy
-configured by its filename.
+put ` (1)` into the key. Reinstalling over it did not help either: with
+RustDesk already running, launching a new installer just hands off to the
+running copy, so the old version and the old key both stayed.
+
+From 0.19.8 Connect checks the installed client's version, server and key. If
+any is wrong it asks for administrator permission once, stops RustDesk,
+upgrades it with `--silent-install` when it is out of date, and rewrites the
+server and key in the service's and your own `RustDesk2.toml` (other settings
+are kept). The log is `%LOCALAPPDATA%\Rem0te\repair.log`. Declining falls
+back to a portable copy configured by its filename — quit RustDesk from the
+tray first, or the session is handed to the installed copy with the bad key.
 
 ---
 
