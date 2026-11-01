@@ -240,7 +240,8 @@ export class LauncherService {
   }
 
   /**
-   * Base64 `host=…,key=…,api=,relay=…` for `rustdesk --config <b64>`.
+   * `host=…,key=…,api=,relay=…,` for `rustdesk --config <arg>` (plain text —
+   * RustDesk does not parse a base64 form; see RustdeskServerConfig.configArg).
    *
    * The launcher used to spawn `rustdesk --connect <id>` and nothing else,
    * which quietly assumed the technician's RustDesk was already pointed at
@@ -254,7 +255,7 @@ export class LauncherService {
    * treats as "connect with whatever the client already has".
    */
   private async rustdeskLaunchConfig(): Promise<string | null> {
-    return (await this.rustdesk.serverConfig())?.configB64 ?? null;
+    return (await this.rustdesk.serverConfig())?.configArg ?? null;
   }
 
   /** Revoke an outstanding launcher token. Only its issuer's business may. */

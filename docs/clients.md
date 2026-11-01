@@ -69,9 +69,11 @@ signed-in users can fetch them.
 ### Set up this computer for Connect *(start here)*
 
 `rem0te-setup-rustdesk.cmd` — finds the RustDesk already on the machine, or
-fetches a portable copy into `%LOCALAPPDATA%\Rem0te`, and points it at this
-server with `rustdesk --config <base64>`. It installs nothing and touches
-nothing else.
+fetches a portable copy into `%LOCALAPPDATA%\Rem0te`, and makes sure it uses
+this server and key. An installed RustDesk whose server or key is wrong is
+repaired with an elevated `rustdesk --config` — Windows asks for administrator
+permission once, and only when something actually needs fixing. It installs
+nothing and touches nothing else.
 
 Use it to prepare a machine ahead of time. Clicking **Connect** does the same
 work plus the connection, so this is for the case where you want the setup done
@@ -89,14 +91,18 @@ window. A running client will not pick up the change.
 The stock RustDesk executable, renamed:
 
 ```
-rustdesk-host=remote.example.net,key=<base64>.exe
+rustdesk-host=remote.example.net,key=<base64>,.exe
 ```
 
 RustDesk parses its own filename on first run and configures itself from it.
 Use it on a machine with no RustDesk at all.
 
-**Do not rename it.** The filename *is* the configuration. If your browser
-saves it as `rustdesk (1).exe` it configures nothing — use the setup `.cmd`
+**Do not rename it.** The filename *is* the configuration. The trailing comma
+before `.exe` is deliberate: a browser that already has the file saves the next
+one as `… (1).exe`, and without the comma RustDesk read the key as
+`<base64> (1)`. The installer then wrote that key into the installed client's
+settings and every Connect from that machine failed with **Key mismatch**
+(before 0.19.7). If a browser renames it beyond a suffix, use the setup `.cmd`
 instead, which cannot be defeated this way.
 
 ### Unconfigured client
@@ -161,22 +167,17 @@ a signed `.app` would break its signature.
 All the automated paths above end in the same place, and you can do it directly:
 
 ```bat
-rustdesk.exe --config <base64>
+"C:\Program Files\RustDesk\rustdesk.exe" --config host=<your-host>,key=<public-key>,api=,relay=<your-host>,
 ```
 
-where the base64 decodes to:
+Two things RustDesk does not tell you when they are wrong:
 
-```
-host=<your-host>,key=<public-key>,api=,relay=<your-host>
-```
-
-Generate it:
-
-```bash
-HOST=remote.example.net
-KEY=$(cat /var/lib/rustdesk-server/id_ed25519.pub)
-printf 'host=%s,key=%s,api=,relay=%s' "$HOST" "$KEY" "$HOST" | base64 -w0
-```
+- **Run it from an elevated prompt, against an installed RustDesk.** Otherwise
+  it prints "Installation and administrative privileges required!" — where you
+  will not see it — and changes nothing.
+- **Plain text, not base64.** RustDesk only parses a string containing
+  `host=` (or a reversed-base64 licence). Rem0te sent plain base64 until 0.19.7
+  and every one of those `--config` calls was silently ignored.
 
 Or set it in the UI: RustDesk → **Settings → Network → ID/Relay Server**.
 ID Server and Relay Server both take the host; Key takes the public key.

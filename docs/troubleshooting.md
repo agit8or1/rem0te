@@ -92,6 +92,22 @@ cat /var/lib/rustdesk-server/id_ed25519.pub
 must equal Rem0te → Settings → RustDesk → Public Key. If you regenerated the
 server keypair, every client configured before that moment is now wrong.
 
+hbbs checks the key of the computer **making** the connection, not the one
+being connected to. hbbs logs it as
+
+```
+Authentication failed from <ip> for peer <id> - invalid key
+```
+
+in `/var/log/rustdesk-server/hbbs.log`, where `<ip>` is the technician's
+machine. So a Key mismatch that starts "after a reinstall" usually means the
+technician's RustDesk was reinstalled with a bad key — most often from a
+preconfigured download the browser saved as `… (1).exe`, which before 0.19.7
+put ` (1)` into the key. From 0.19.7 Connect checks the installed client's
+server and key and, if either is wrong, repairs it with an elevated
+`rustdesk --config` (one UAC prompt). Declining falls back to a portable copy
+configured by its filename.
+
 ---
 
 ## Connected, but the password is rejected

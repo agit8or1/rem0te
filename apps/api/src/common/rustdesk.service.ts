@@ -25,12 +25,32 @@ export interface RustdeskServerConfig {
   host: string;
   key: string;
   /**
-   * Base64 `host=…,key=…,api=,relay=…`, the argument to `rustdesk --config`.
-   * This is the documented way to point an already-installed client at a
-   * server without editing its TOML files, and it is what the installer, the
-   * launcher and the technician setup script all apply.
+   * `host=…,key=…,api=,relay=…,` — the argument to `rustdesk --config`.
+   *
+   * Plain text, NOT base64. RustDesk 1.4's `--config` hands its argument to
+   * `get_custom_server_from_string()`, which only understands two shapes: a
+   * string containing `host=`, or a *reversed* base64 JSON licence. Until
+   * 0.19.7 every caller sent plain base64 of this string, which matches
+   * neither, so `--config` parsed nothing and silently changed nothing — on
+   * every installer run, every launcher Connect and every setup.cmd.
+   *
+   * `--config` is also ignored unless the process is elevated *and* RustDesk
+   * is installed ("Installation and administrative privileges required!"),
+   * which is why Connect elevates it explicitly when a repair is needed.
    */
-  configB64: string;
+  configArg: string;
+  /**
+   * The executable name RustDesk configures itself from:
+   * `rustdesk-host=<host>,key=<key>,.exe`.
+   *
+   * The trailing comma is load-bearing. A browser that already has the file
+   * saves the next copy as `… (1).exe`, and RustDesk splits the name on
+   * commas: without the comma the key becomes `<key> (1)`, the installer
+   * writes that into the config, and hbbs rejects every connection the
+   * client makes with "Key mismatch". With it, ` (1)` is an empty trailing
+   * token RustDesk ignores.
+   */
+  exeName: string;
 }
 
 @Injectable()
@@ -61,8 +81,17 @@ export class RustdeskService {
     if (!HOSTNAME_RE.test(host)) return null;
     if (key && !BASE64_KEY_RE.test(key)) return null;
 
-    const plain = `host=${host},key=${key},api=,relay=${host}`;
-    return { host, key, configB64: Buffer.from(plain, 'utf8').toString('base64') };
+    return {
+      host,
+      key,
+      configArg: `host=${host},key=${key},api=,relay=${host},`,
+      exeName: RustdeskService.configuredExeName(host, key),
+    };
+  }
+
+  /** See {@link RustdeskServerConfig.exeName} for why it ends in `,.exe`. */
+  static configuredExeName(host: string, key: string): string {
+    return `rustdesk-host=${host},key=${key},.exe`;
   }
   /**
    * Join PowerShell statements with "; ", refusing anything the join would
@@ -141,7 +170,7 @@ export class RustdeskService {
     // rustdesk.com, reporting a healthy endpoint as "offline or does not
     // exist". Neither failed loudly. Use the mechanism that demonstrably
     // works rather than the one that looks tidier.
-    const cachedName = `rustdesk-host=${config.host},key=${config.key}.exe`;
+    const cachedName = config.exeName;
 
     const fetch = this.joinPs([
       `$dir = Join-Path $env:LOCALAPPDATA 'Rem0te'`,
@@ -183,7 +212,62 @@ export class RustdeskService {
       `$paths = @($env:ProgramFiles + '\\RustDesk\\rustdesk.exe', ${'${env:ProgramFiles(x86)}'} + '\\RustDesk\\rustdesk.exe')`,
       `$rd = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1`,
       `if (-not $rd) { $rd = (Get-Command rustdesk.exe -ErrorAction SilentlyContinue).Source }`,
+      `if ($rd) { ${this.repairInstalledRustdesk(config)} }`,
       `if (-not $rd) { ${fetch} }`,
+    ]);
+  }
+
+  /**
+   * PowerShell that makes an installed RustDesk use this server and key, or
+   * clears `$rd` so the caller falls back to the filename-configured copy.
+   *
+   * An installed client keeps whatever server settings it was installed with,
+   * and reinstalling does not necessarily fix them: RustDesk's installer
+   * copies the key out of its own filename, so a download the browser saved
+   * as `rustdesk-host=…,key=<key> (1).exe` installs with the key
+   * `<key> (1)` — and every Connect after that ends in "Key mismatch", which
+   * is hbbs refusing the *technician's* client, not the endpoint. That is how
+   * DS-HOME1 "broke" after a reinstall on 2026-11-01.
+   *
+   * The only supported way to rewrite an installed client's settings is
+   * `rustdesk --config`, and RustDesk ignores it unless it runs elevated. So:
+   * read the settings the client's session copy reports (RustDesk syncs the
+   * service config into the user's RustDesk2.toml), and only when they are
+   * wrong, ask for elevation once and apply them. Nothing is prompted for a
+   * client that is already right. A marker in %LOCALAPPDATA%\\Rem0te records a
+   * successful repair, so a machine whose session copy never materialises is
+   * not prompted on every Connect.
+   */
+  private repairInstalledRustdesk(config: RustdeskServerConfig): string {
+    return this.joinPs([
+      `$wantKey = '${config.key}'`,
+      `$wantHost = '${config.host}'`,
+      `$rcfg = Join-Path (Join-Path (Join-Path $env:APPDATA 'RustDesk') 'config') 'RustDesk2.toml'`,
+      `$rdir = Join-Path $env:LOCALAPPDATA 'Rem0te'`,
+      `New-Item -ItemType Directory -Force -Path $rdir | Out-Null`,
+      `$marker = Join-Path $rdir 'installed-rustdesk-config.txt'`,
+      // Reads `key = '…'` and `custom-rendezvous-server = '…'`. \\x27 and
+      // \\x22 stand in for the quote characters, because a double quote
+      // cannot appear anywhere in a script that cmd.exe passes through.
+      `$readCfg = { $r = @{ key = $null; host = $null; found = $false }; if (Test-Path $rcfg) { $r.found = $true; $t = Get-Content -Raw -LiteralPath $rcfg; if ($t -match '(?m)^\\s*key\\s*=\\s*[\\x27\\x22]([^\\x27\\x22]*)') { $r.key = $Matches[1] }; if ($t -match 'custom-rendezvous-server\\s*=\\s*[\\x27\\x22]([^\\x27\\x22:]*)') { $r.host = $Matches[1] } }; $r }`,
+      `$have = & $readCfg`,
+      `$good = ($have.key -eq $wantKey) -and ($have.host -eq $wantHost)`,
+      `$marked = (-not $have.found) -and (Test-Path $marker) -and ((Get-Content -Raw -LiteralPath $marker).Trim() -eq '${config.configArg}')`,
+      `if ($good -or $marked) { Write-Host 'Installed RustDesk already uses this server and key.' }`,
+      `if (-not ($good -or $marked)) { ${this.joinPs([
+        `Write-Host ''`,
+        `if ($have.host -ne $wantHost) { Write-Host ('Installed RustDesk points at ' + $(if ($have.host) { $have.host } else { 'no custom server' }) + ', not ' + $wantHost + '.') }`,
+        `if ($have.key -ne $wantKey) { Write-Host 'Installed RustDesk has a different server key (this is what causes Key mismatch).' }`,
+        `Write-Host 'Repairing it now - Windows will ask for administrator permission once.'`,
+        `$applied = $false`,
+        `try { $p = Start-Process -FilePath $rd -ArgumentList '--config', '${config.configArg}' -Verb RunAs -WindowStyle Hidden -PassThru; $applied = $p.WaitForExit(20000) } catch { Write-Host 'Administrator permission was not given.' }`,
+        // The new setting reaches the session copy through RustDesk's own
+        // config sync, which is not instant.
+        `if ($applied) { Start-Sleep -Seconds 3; $have = & $readCfg }`,
+        `$ok = $applied -and ((-not $have.found) -or (($have.key -eq $wantKey) -and ($have.host -eq $wantHost)))`,
+        `if ($ok) { Set-Content -LiteralPath $marker -Value '${config.configArg}' -Encoding ASCII; Write-Host 'Installed RustDesk now uses this server and key.' }`,
+        `if (-not $ok) { Write-Host 'Could not repair the installed RustDesk; using a separate copy configured for this server instead.'; Write-Host 'If RustDesk is running in the system tray, quit it first, or the session may still use the old settings.'; Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue; $rd = $null }`,
+      ])} }`,
     ]);
   }
 
@@ -289,22 +373,12 @@ export class RustdeskService {
    */
   buildSetupCmd(config: RustdeskServerConfig, clientVersion: string, clientDownloadUrl: string): string {
     const ps = this.withErrorReporting([
-      `$cfg = '${config.configB64}'`,
       this.findOrFetchRustdesk(config, clientVersion, clientDownloadUrl),
       `Write-Host ('Pointing ' + $rd + ' at ${config.host} ...')`,
       `Write-Host ('Using ' + $rd)`,
-      // A copy we fetched carries its configuration in its filename and needs
-      // nothing else. Only an installed RustDesk — which we must not
-      // reconfigure by overwriting its settings file — goes through
-      // `--config`, and even then the result is reported rather than assumed,
-      // because a silent failure here is indistinguishable from the bug this
-      // whole script exists to remove.
-      `if (-not $portable) { ${this.joinPs([
-        `$p = Start-Process -FilePath $rd -ArgumentList '--config', $cfg -PassThru`,
-        `$applied = $p.WaitForExit(15000)`,
-        `if ($applied) { Write-Host ('Server config applied (exit ' + $p.ExitCode + ').') }`,
-        `if (-not $applied) { Write-Host 'WARNING: --config did not exit within 15s; leaving it running rather than killing it mid-write.' }`,
-      ])} }`,
+      // A fetched copy is configured by its filename; an installed one was
+      // checked and, if needed, repaired with an elevated `--config` inside
+      // findOrFetchRustdesk(). Nothing further to apply here.
       `Write-Host ''`,
       `Write-Host ('Done. RustDesk at ' + $rd + ' now uses ${config.host}.')`,
       `Write-Host 'Close RustDesk if it is open, then use Connect in Rem0te.'`,
@@ -369,23 +443,16 @@ export class RustdeskService {
     const pwB64 = Buffer.from(password ?? '', 'utf8').toString('base64');
 
     const ps = this.withErrorReporting([
-      `$cfg = '${config.configB64}'`,
       `$peer = '${peerId}'`,
       `$pw = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${pwB64}'))`,
       this.findOrFetchRustdesk(config, clientVersion, clientDownloadUrl),
       `Write-Host 'Pointing RustDesk at ${config.host} ...'`,
       `Write-Host ('Using ' + $rd)`,
-      // A copy we fetched carries its configuration in its filename and needs
-      // nothing else. Only an installed RustDesk goes through `--config` —
-      // and the outcome is reported rather than assumed, because a silent
-      // failure here is indistinguishable from the bug this script exists to
-      // remove.
-      `if (-not $portable) { ${this.joinPs([
-        `$p = Start-Process -FilePath $rd -ArgumentList '--config', $cfg -PassThru`,
-        `$applied = $p.WaitForExit(15000)`,
-        `if ($applied) { Write-Host ('Server config applied (exit ' + $p.ExitCode + ').') }`,
-        `if (-not $applied) { Write-Host 'WARNING: --config did not exit within 15s; leaving it running rather than killing it mid-write.' }`,
-      ])} }`,
+      // A fetched copy is configured by its filename. An installed one was
+      // checked in findOrFetchRustdesk() and repaired with an elevated
+      // `--config` if its server or key was wrong — the unelevated `--config`
+      // that used to run here was always a no-op (RustDesk requires admin for
+      // it, and was also being handed a base64 form it cannot parse).
       `if ($portable) { Write-Host 'Configured by filename; no reconfiguration needed.' }`,
       // The config lands via IPC when a client is already running; give it a
       // moment before the connection request or that request uses the previous
