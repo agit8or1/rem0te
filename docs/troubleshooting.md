@@ -136,6 +136,12 @@ Every run writes a full log to:
 Open that. It survives the window closing, and it is the fastest way to see
 which step failed.
 
+If that log does not exist, PowerShell never started — cmd.exe rejected the
+file before running anything. Run the `.cmd` from an open Command Prompt
+instead of double-clicking it so the error stays on screen. (0.19.8 shipped a
+Connect script whose single command line exceeded cmd.exe's 8191-character
+limit and failed exactly this way; fixed in 0.19.9.)
+
 The script also pauses on failure now, so a window that closes instantly
 usually means something stopped it before PowerShell ever ran — see below.
 

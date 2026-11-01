@@ -414,19 +414,45 @@ export class RustdeskService {
    * support just broke should not also have to learn about
    * `Set-ExecutionPolicy`.
    *
-   * The PowerShell body must contain no double quotes and no percent signs —
-   * cmd.exe eats both before PowerShell ever sees them. Everything
-   * interpolated into it is either a constrained charset (hostname, base64,
-   * numeric peer id) or base64-encoded first.
+   * The script is NOT on the command line. It sits after the batch part's
+   * last line, under a marker, and PowerShell reads it back out of this very
+   * file. cmd.exe refuses any line over 8191 characters ("The input line is
+   * too long") and closes the window at once; 0.19.8's Connect script was
+   * ~11,600 characters on one `powershell -Command` line and died exactly
+   * that way, too fast to read. Batch parsing stops at `exit /b`, so cmd never
+   * sees the script lines at all.
+   *
+   * The body still contains no double quotes and no percent signs, as a
+   * margin, and everything interpolated into it is a constrained charset
+   * (hostname, base64, numeric peer id) or base64-encoded first.
    */
   private wrapCmd(title: string, comments: string[], ps: string, selfDelete: boolean): string {
+    if ([...ps].some((ch) => ch.charCodeAt(0) > 0x7e || (ch.charCodeAt(0) < 0x20 && !'\t\r\n'.includes(ch)))) {
+      // Windows PowerShell reads the file in the ANSI code page.
+      throw new Error('Connect .cmd PowerShell body must be ASCII');
+    }
+    if (ps.includes(RustdeskService.PS_MARKER)) {
+      throw new Error('PowerShell body contains the script marker');
+    }
+    // The marker is split in the loader so the only full occurrence in the
+    // file is the real one.
+    const half = RustdeskService.PS_MARKER.length / 2;
+    const m1 = RustdeskService.PS_MARKER.slice(0, half);
+    const m2 = RustdeskService.PS_MARKER.slice(half);
+    const loader =
+      `$t = [IO.File]::ReadAllText($env:REM0TE_SELF); ` +
+      `$m = '${m1}' + '${m2}'; ` +
+      `$i = $t.LastIndexOf($m); ` +
+      `if ($i -lt 0) { Write-Host 'Script body missing from this file.'; exit 1 }; ` +
+      `Invoke-Expression $t.Substring($i + $m.Length)`;
     const lines = [
       '@echo off',
       `title ${title}`,
       'rem',
       ...comments.map((c) => (c ? `rem  ${c}` : 'rem')),
       'rem',
-      `powershell -NoProfile -ExecutionPolicy Bypass -Command "${ps}"`,
+      'set "REM0TE_SELF=%~f0"',
+      `powershell -NoProfile -ExecutionPolicy Bypass -Command "${loader}"`,
       '',
       'rem  Hold the window open on failure. Without this the script reports an',
       'rem  error and closes in the same instant, which is indistinguishable',
@@ -445,9 +471,17 @@ export class RustdeskService {
         '',
       );
     }
+    // cmd.exe's hard limit is 8191 characters per line; fail the build long
+    // before that rather than ship a script that closes on launch.
+    const long = lines.find((l) => l.length > 2000);
+    if (long) throw new Error(`Batch line too long for cmd.exe (${long.length} chars): ${long.slice(0, 60)}`);
+    // Batch execution must never reach the script lines below.
+    lines.push('exit /b', RustdeskService.PS_MARKER, ps, '');
     // CRLF: a .cmd with bare LF endings loses the last token of every line.
     return lines.join('\r\n');
   }
+
+  private static readonly PS_MARKER = '::REM0TE-PS-BODY::';
 
   /** Letters, digits, dot, underscore, hyphen and space — inert in cmd.exe and PowerShell alike. */
   static cmdSafe(value: string): string {
