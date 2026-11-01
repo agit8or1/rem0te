@@ -61,7 +61,7 @@ export class DownloadsController {
           {
             id: 'configured',
             label: 'RustDesk client, preconfigured',
-            filename: `rustdesk-host=${config?.host ?? ''},key=${config?.key ?? ''}.exe`,
+            filename: RustdeskService.configuredExeName(config?.host ?? '', config?.key ?? ''),
             path: '/api/v1/downloads/rustdesk/configured',
             description:
               'A full RustDesk client that points itself at this server on first run — the config travels in the filename, so do not rename it. Use on a machine with no RustDesk yet.',
@@ -92,15 +92,16 @@ export class DownloadsController {
   /**
    * The same binary, renamed. RustDesk reads its server settings out of its own
    * filename, so this configures itself on first run — and loses that the
-   * moment a browser renames it to `rustdesk (1).exe`, which is why `setup.cmd`
-   * exists as the reliable path.
+   * moment it is renamed outright, which is why `setup.cmd` exists as the
+   * reliable path. A browser's ` (1)` suffix is survivable only because the
+   * name ends in `,.exe` — see RustdeskServerConfig.exeName.
    */
   @Get('rustdesk/configured')
   async configured(@Res() res: Response) {
     const config = await this.requireConfig();
     const version = await latestRustdeskVersionOr();
     const exePath = await this.rustdesk.cachedWindowsClient(version);
-    this.sendExe(res, exePath, `rustdesk-host=${config.host},key=${config.key}.exe`);
+    this.sendExe(res, exePath, config.exeName);
   }
 
   /**

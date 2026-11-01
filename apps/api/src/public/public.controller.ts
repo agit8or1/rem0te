@@ -270,11 +270,12 @@ export class PublicController {
     const claimToken = safeToken(enrollToken);
     version = safeVersion(version);
     const shaVal = /^[0-9a-f]{64}$/.test(clientSha256 ?? '') ? clientSha256! : '';
-    // Base64-encoded server config for `rustdesk.exe --config <base64>`. This is the
-    // documented mechanism to reconfigure an already-installed RustDesk without
-    // touching the TOML files. Format: host=...,key=...,relay=...,api=
-    const configPlain = `host=${hostVal},key=${keyVal},api=,relay=${hostVal}`;
-    const configB64 = Buffer.from(configPlain, 'utf8').toString('base64');
+    // Argument for `rustdesk.exe --config`. Plain text on purpose: RustDesk
+    // parses only a string containing `host=` (or a reversed-base64 licence),
+    // so the plain base64 this used to send was silently ignored and an
+    // existing install kept its old key. Trailing comma for the same reason as
+    // the filename below.
+    const configArg = `host=${hostVal},key=${keyVal},api=,relay=${hostVal},`;
     return `# Rem0te Managed Agent — Windows installer
 # Server: ${host ?? 'NOT CONFIGURED'}
 # Safe to re-run; existing installs will be reconfigured, not duplicated.
@@ -285,7 +286,7 @@ $ProgressPreference    = 'SilentlyContinue'
 # ── Constants (server-side embedded) ────────────────────────────────────────
 $REM0TE_HOST   = '${hostVal}'
 $REM0TE_KEY    = '${keyVal}'
-$REM0TE_CONFIG = '${configB64}'
+$REM0TE_CONFIG = '${configArg}'
 $CLAIM_TOKEN   = '${claimToken}'
 $VERSION       = '${version}'
 # SHA-256 GitHub published for this client build; empty if the server could
@@ -464,7 +465,10 @@ try { New-Item -ItemType Directory -Force -Path $SETUP_DIR | Out-Null } catch {}
 # filename encodes the server config. On install RustDesk parses its name and
 # atomically writes the server config — no TOML shotgun required.
 # https://rustdesk.com/docs/en/self-host/rustdesk-server-oss/install/#windows
-$installerName = "rustdesk-host=$REM0TE_HOST,key=$REM0TE_KEY.exe"
+# The trailing comma keeps the key intact if the name ever gains a suffix
+# (Windows' " (1)"): RustDesk splits on commas, so the suffix becomes an empty
+# trailing token instead of part of the key, which hbbs would reject.
+$installerName = "rustdesk-host=$REM0TE_HOST,key=$REM0TE_KEY,.exe"
 # Strip characters that are legal in RustDesk's config but illegal in Windows filenames.
 $installerName = ($installerName -replace '[<>:"/\\\\|?*]', '_')
 $INSTALLER = Join-Path $SETUP_DIR $installerName
@@ -528,8 +532,10 @@ foreach ($d in $wipeDirs) {
     Remove-Item "$d\\RustDesk2.toml" -Force -ErrorAction SilentlyContinue
 }
 
-# --config takes a base64-encoded 'host=X,key=Y,api=,relay=Z' string and rewrites
-# RustDesk2.toml + rendezvous_server atomically. Works on all RustDesk 1.4.x.
+# --config takes a plain 'host=X,key=Y,api=,relay=Z,' string (it ignores any
+# other form) and needs elevation, which this script has. A reinstall must not
+# inherit a previous install's server or key, so this and the RustDesk2.toml
+# writes below both overwrite unconditionally.
 & $RDEXE --config $REM0TE_CONFIG *>$null
 
 # RustDesk keeps SEPARATE configs for (a) the LocalSystem service and

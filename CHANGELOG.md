@@ -5,6 +5,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.19.7] — 2026-11-01 · *Homecoming*
+
+### Fixed
+
+- **"Key mismatch" connecting to DS-HOME1 after reinstalling RustDesk.** The
+  error was not about DS-HOME1. hbbs logged
+  `Authentication failed from 204.1.21.52 for peer 288409205 - invalid key` at
+  21:55:50, thirteen seconds after Connect and half a minute after the
+  preconfigured client was downloaded again from Downloads: hbbs checks the
+  key of the client *making* the connection, and the technician's freshly
+  reinstalled RustDesk had the wrong one. RustDesk splits its filename
+  `rustdesk-host=<host>,key=<key>.exe` on commas, so the copy a browser saves
+  as `… (1).exe` (it already had the first one) carries the key
+  `<key> (1)` — and RustDesk's installer writes that key into the installed
+  client's settings, replacing whatever was there.
+  - Every config-in-filename name now ends `,.exe` (Downloads, Quick Connect,
+    the Connect/setup portable copy, the managed installer's setup file), so a
+    ` (1)` suffix is an empty trailing token RustDesk ignores.
+  - **`rustdesk --config` never did anything.** Every caller (managed
+    installer, Connect `.cmd`, setup `.cmd`, desktop launcher) passed base64 of
+    `host=…,key=…`. RustDesk 1.4 only parses a string containing `host=` or a
+    *reversed*-base64 licence, so the argument was silently ignored; the
+    managed installer only worked because it also writes RustDesk2.toml
+    directly. It now passes the plain string, so a reinstall genuinely
+    overwrites the previous server and key.
+  - `--config` is also ignored unless it runs elevated against an installed
+    RustDesk, which the Connect and setup `.cmd`s never were. They now read the
+    installed client's server and key, and if either is wrong, apply
+    `--config` elevated (one UAC prompt, only when needed; a marker in
+    `%LOCALAPPDATA%\Rem0te` prevents repeat prompts). Declining falls back to
+    the portable copy, whose filename key takes precedence over any saved
+    setting.
+  - The Quick Start page's `--config` example used semicolons; RustDesk splits
+    on commas. Fixed.
+
+Existing technician machines repair themselves on the next Connect. DS-HOME1
+itself still has not checked in since 2026-10-30 and still needs its installer
+re-run on site.
+
 ## [0.19.6] — 2026-10-31 · *Homecoming*
 
 ### Dependencies

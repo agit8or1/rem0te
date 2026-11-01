@@ -75,7 +75,9 @@ export class QuickConnectPublicController {
    * That is achieved with RustDesk's documented config-in-filename mechanism:
    * the executable is delivered named
    *
-   *     rustdesk-host=<our-host>,key=<our-key>.exe
+   *     rustdesk-host=<our-host>,key=<our-key>,.exe
+   *
+   * (trailing comma so a browser's ` (1)` suffix cannot corrupt the key).
    *
    * and RustDesk reads its own filename on first run. Same binary RustDesk
    * ships — we are not reimplementing the client, only naming it.
@@ -107,7 +109,7 @@ export class QuickConnectPublicController {
     if (os === 'windows') {
       // Windows gets the real binary, preconfigured through its filename.
       const exePath = await this.rustdesk.cachedWindowsClient(version);
-      const filename = `rustdesk-host=${config.host},key=${config.key}.exe`;
+      const filename = RustdeskService.configuredExeName(config.host, config.key);
       const stat = fs.statSync(exePath);
 
       res.setHeader('Content-Type', 'application/vnd.microsoft.portable-executable');

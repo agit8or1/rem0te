@@ -20,7 +20,7 @@ struct ValidateResponse {
 struct ValidateData {
     #[serde(rename = "targetRustdeskId")]
     target_rustdesk_id: Option<String>,
-    /// Base64 `host=…,key=…,api=,relay=…` for `rustdesk --config`. Applied
+    /// `host=…,key=…,api=,relay=…,` (plain text) for `rustdesk --config`. Applied
     /// before connecting so the deep link works on a RustDesk that has never
     /// been pointed at this server. None when the platform has no relay host
     /// configured — then we connect with whatever the client already has.

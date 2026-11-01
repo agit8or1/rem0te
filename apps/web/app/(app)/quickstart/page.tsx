@@ -39,7 +39,9 @@ export default function QuickstartPage() {
   const publicKey = (settings?.rustdeskPublicKey as string) ?? '';
 
   const configCommand = relayHost
-    ? `rustdesk --config "host=${relayHost}${publicKey ? `;key=${publicKey}` : ''};relay-server=${relayHost}"`
+    // Commas, not semicolons: RustDesk splits this on ','. Must be run from an
+    // elevated prompt against an installed RustDesk or it is ignored.
+    ? `rustdesk --config "host=${relayHost},key=${publicKey},api=,relay=${relayHost},"`
     : null;
 
   const downloadPageUrl =
