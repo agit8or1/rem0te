@@ -336,6 +336,26 @@ function Stop-Rustdesk {
     Start-Sleep -Seconds 2
 }
 
+# Make the RustDesk service exist and run '"<exe>" --service', whatever an
+# interrupted or older install left behind (a missing service, or the
+# installer's one-shot '--import-config' form). Uses CIM/New-Service rather
+# than sc.exe: Windows PowerShell mangles the embedded quotes binPath= needs.
+function Ensure-RdService {
+    $svc = Get-CimInstance Win32_Service -Filter "Name='RustDesk'" -ErrorAction SilentlyContinue
+    $want = '"' + $RDEXE + '" --service'
+    if (-not $svc) {
+        try {
+            New-Service -Name 'RustDesk' -BinaryPathName $want -DisplayName 'RustDesk Service' -StartupType Automatic -ErrorAction Stop | Out-Null
+            Log "  Created RustDesk service: $want" 'WARN'
+        } catch { Log "  Could not create RustDesk service: $($_.Exception.Message)" 'WARN' }
+        return
+    }
+    if ($svc.PathName -notmatch '--service') {
+        $r = Invoke-CimMethod -InputObject $svc -MethodName Change -Arguments @{ PathName = $want; StartMode = 'Automatic' }
+        Log ("  RustDesk service was '" + $svc.PathName + "'; reset to --service (result " + $r.ReturnValue + ")") 'WARN'
+    }
+}
+
 Write-Host ''
 Write-Host '  Rem0te Managed Agent' -ForegroundColor Cyan
 Write-Host ''
@@ -516,12 +536,21 @@ $install = Start-Process -FilePath $INSTALLER -ArgumentList '--silent-install' -
 $install.WaitForExit(180000) | Out-Null
 # The release exe is a self-extracting wrapper: it can exit before the real
 # installer it launched has finished copying files.
+#
+# Do not stop RustDesk the moment the new file appears. Its installer goes on
+# to recreate the service: first pointed at a one-shot '--import-config',
+# then deleted and recreated as '--service'. Killing rustdesk.exe in between
+# (0.19.8 did, right here) leaves the service as the one-shot import, which
+# runs, exits and stays STOPPED — RustDesk offline, and --password below has
+# no service to talk to. Wait for the final '--service' form instead.
 $waited = 0
-while ($waited -lt 120) {
+while ($waited -lt 180) {
     $now = Get-RdVersion
-    if ($now -and $now -ge $want) { break }
+    $sp = (Get-CimInstance Win32_Service -Filter "Name='RustDesk'" -ErrorAction SilentlyContinue).PathName
+    if ($now -and $now -ge $want -and $sp -match '--service') { break }
     Start-Sleep -Seconds 3; $waited += 3
 }
+Log ("Service command line after install: " + $(if ($sp) { $sp } else { 'no service' }))
 if (-not (Test-Path $RDEXE)) { Fail "ERROR: Installation failed — $RDEXE not found after $waited s." 11 }
 $after = Get-RdVersion
 if ($after -and $after -ge $want) {
@@ -666,8 +695,13 @@ if (-not $AGENT_SECRET) {
 
 # ── [4/6] Start service and verify config ──────────────────────────────────
 Step 4 6 'Starting service...'
+Ensure-RdService
 & sc.exe config RustDesk start= auto 2>$null | Out-Null
 & sc.exe start RustDesk 2>$null | Out-Null
+# --password needs the service's IPC endpoint, which comes up a few seconds
+# after the service reports RUNNING. The retry loop below covers the rest.
+$sw = 0
+while ($sw -lt 30 -and (Get-Service RustDesk -ErrorAction SilentlyContinue).Status -ne 'Running') { Start-Sleep -Seconds 2; $sw += 2 }
 Start-Sleep -Seconds 4
 
 # Set the permanent password only now. --password talks to the RUNNING service
@@ -675,8 +709,41 @@ Start-Sleep -Seconds 4
 # service stopped it writes into the *calling user's* profile instead, which
 # the service never reads. Rem0te then hands out a password the endpoint never
 # had and one-click Connect fails with "wrong password".
-& $RDEXE --password $PERM_PW *>$null
-Start-Sleep -Seconds 1
+#
+# RustDesk prints "Done!" only when the service accepted it; otherwise it
+# prints the IPC error and writes the password into the *calling* profile
+# only. This used to run once with its output discarded, so a service that was
+# still starting left the endpoint on its old password while the heartbeat
+# reported the new one — DS-HOME1's "wrong password". Retry until RustDesk
+# confirms, or until the service's own RustDesk.toml shows the password
+# changed (in case this build's output cannot be captured).
+function Get-SvcPwLine {
+    foreach ($f in @("$svcDir\RustDesk.toml", "$sysDir\RustDesk.toml")) {
+        try {
+            $m = Select-String -LiteralPath $f -Pattern '^\s*password\s*=' -ErrorAction Stop | Select-Object -First 1
+            if ($m) { return ($f + '|' + $m.Line.Trim()) }
+        } catch {}
+    }
+    return ''
+}
+$pwBefore = Get-SvcPwLine
+$PW_APPLIED = $false
+for ($i = 1; $i -le 12; $i++) {
+    $pwOut = ''
+    try { $pwOut = (& $RDEXE --password $PERM_PW 2>&1 | Out-String).Trim() } catch { $pwOut = $_.Exception.Message }
+    Start-Sleep -Seconds 1
+    $pwAfter = Get-SvcPwLine
+    if ($pwOut -match 'Done' -or ($pwAfter -and $pwAfter -ne $pwBefore)) { $PW_APPLIED = $true; break }
+    Log ("  Password not applied yet (attempt $i): " + $(if ($pwOut) { $pwOut } else { 'no output' })) 'WARN'
+    Ensure-RdService
+    & sc.exe start RustDesk 2>$null | Out-Null
+    Start-Sleep -Seconds 5
+}
+if ($PW_APPLIED) {
+    Log "RustDesk permanent password applied (attempt $i)."
+} else {
+    Log "WARNING: RustDesk did not confirm the new password. Connect may report 'wrong password'; re-run this installer." 'WARN'
+}
 
 # Verify effective config across EVERY RustDesk2.toml the OS knows about —
 # not just $env:APPDATA. Detects service-vs-user divergence (service configured
@@ -740,6 +807,7 @@ if ($bad.Count -gt 0) {
     Stop-Rustdesk
     & $RDEXE --config $REM0TE_CONFIG *>$null
     Start-Sleep -Seconds 1
+    Ensure-RdService
     & sc.exe start RustDesk 2>$null | Out-Null
     Start-Sleep -Seconds 3
     $bad = Verify-AllConfigs
