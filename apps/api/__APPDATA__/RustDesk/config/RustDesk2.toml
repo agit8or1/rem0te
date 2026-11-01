@@ -1,0 +1,7 @@
+rendezvous_server = 'remote.agit8or.net:21116'
+
+[options]
+custom-rendezvous-server = 'remote.agit8or.net'
+relay-server = 'remote.agit8or.net'
+api-server = ''
+key = 'LJ9sE90+0o0PJNTteMcydVasm2obyRQ4VARR5riAVgQ='

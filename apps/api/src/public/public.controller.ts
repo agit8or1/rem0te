@@ -500,12 +500,38 @@ if ($RD_SHA256) {
 # ── [2/6] Stop existing RustDesk and install ───────────────────────────────
 Step 2 6 'Installing remote-support service...'
 Stop-Rustdesk
-$install = Start-Process -FilePath $INSTALLER -ArgumentList '/S' -PassThru -WindowStyle Hidden
-$install.WaitForExit(180000)
-# Wait for rustdesk.exe to appear (NSIS installer child processes may finish after the stub)
+# --silent-install, NOT /S. RustDesk's exe is not an NSIS installer and has
+# no /S switch: an unknown argument is ignored, so from v0.4.0 until 0.19.8
+# this step never replaced an existing install. The wait below then found the
+# OLD rustdesk.exe and carried on, which is why every "update" left endpoints
+# on the version they started with. Success is now the installed file's
+# version reaching $VERSION, not merely the file existing.
+function Get-RdVersion {
+    try { return [version]((Get-Item -LiteralPath $RDEXE -ErrorAction Stop).VersionInfo.ProductVersion -replace '[^0-9.].*$', '') } catch { return $null }
+}
+$want = [version]$VERSION
+$before = Get-RdVersion
+Log ("Installed RustDesk before: " + $(if ($before) { $before } else { 'none' }) + "; installing $VERSION")
+$install = Start-Process -FilePath $INSTALLER -ArgumentList '--silent-install' -PassThru -WindowStyle Hidden
+$install.WaitForExit(180000) | Out-Null
+# The release exe is a self-extracting wrapper: it can exit before the real
+# installer it launched has finished copying files.
 $waited = 0
-while (-not (Test-Path $RDEXE) -and $waited -lt 90) { Start-Sleep -Seconds 2; $waited += 2 }
+while ($waited -lt 120) {
+    $now = Get-RdVersion
+    if ($now -and $now -ge $want) { break }
+    Start-Sleep -Seconds 3; $waited += 3
+}
 if (-not (Test-Path $RDEXE)) { Fail "ERROR: Installation failed — $RDEXE not found after $waited s." 11 }
+$after = Get-RdVersion
+if ($after -and $after -ge $want) {
+    Log "RustDesk $after installed."
+} else {
+    # Not fatal: configuration below still has to happen, and the console keeps
+    # the update staged until the heartbeat reports the target version.
+    Log "WARNING: RustDesk is still $after after installing $VERSION; the upgrade did not take." 'WARN'
+}
+Stop-Rustdesk
 try { Remove-Item $INSTALLER -Force -ErrorAction SilentlyContinue } catch {}
 
 # ── [3/6] Apply Rem0te server configuration ────────────────────────────────

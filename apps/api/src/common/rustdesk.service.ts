@@ -172,103 +172,195 @@ export class RustdeskService {
     // works rather than the one that looks tidier.
     const cachedName = config.exeName;
 
-    const fetch = this.joinPs([
+    // Leaves `$pexe` holding the cached, filename-configured client. Used both
+    // as the portable fallback and as the installer for an upgrade.
+    const fetchExe = this.joinPs([
       `$dir = Join-Path $env:LOCALAPPDATA 'Rem0te'`,
       `New-Item -ItemType Directory -Force -Path $dir | Out-Null`,
-      `$rd = Join-Path $dir '${cachedName}'`,
+      `$pexe = Join-Path $dir '${cachedName}'`,
       // Size check as well as existence: a transfer killed part-way leaves a
       // file that exists and cannot run, and the retry would skip it forever.
+      // The version check replaces a cached copy left behind by an older
+      // release, which would otherwise be "the RustDesk already cached" forever.
       //
-      // Two independent `if`s rather than if/else. Every statement here is
-      // joined with "; ", and a semicolon terminates an if-statement — so
-      // `if (...) { }; else { }` parses as a bare `else`, which PowerShell
-      // reports as "The term 'else' is not recognized as the name of a
-      // cmdlet". joinPs() refuses to emit that shape at all.
-      `$cached = (Test-Path $rd) -and ((Get-Item $rd).Length -gt 20000000)`,
+      // Independent `if`s rather than if/else: every statement is joined with
+      // "; ", and `if (...) { }; else { }` parses as a bare `else`. joinPs()
+      // refuses to emit that shape at all.
+      `$cached = (Test-Path $pexe) -and ((Get-Item $pexe).Length -gt 20000000)`,
+      `if ($cached) { $cv = & $rdVer $pexe; if ($cv -and ($cv -lt [version]'${clientVersion}')) { Write-Host ('Cached RustDesk is ' + $cv + '; fetching ${clientVersion}.'); $cached = $false } }`,
       `if ($cached) { Write-Host 'Using the RustDesk already cached for Rem0te.' }`,
       `if (-not $cached) { ${this.joinPs([
-        `Write-Host 'Fetching RustDesk (one time, about 24 MB)...'`,
-        `$part = $rd + '.part'`,
+        `Write-Host 'Fetching RustDesk ${clientVersion} (about 25 MB)...'`,
+        `$part = $pexe + '.part'`,
         `$ok = $false`,
         `$prev = $ProgressPreference`,
         `$ProgressPreference = 'SilentlyContinue'`,
         `foreach ($u in ${sources}) { try { Invoke-WebRequest -Uri $u -OutFile $part -UseBasicParsing -TimeoutSec 600; $ok = $true; break } catch { } }`,
         `$ProgressPreference = $prev`,
         `if (-not $ok) { Write-Host 'Could not download RustDesk. Check this computer can reach the internet.'; Read-Host 'Press Enter to close'; exit 1 }`,
-        `Move-Item -Force $part $rd`,
+        `Move-Item -Force $part $pexe`,
       ])} }`,
       // Stale copies from before the name carried the config. They are inert
-      // once nothing points at them, but they are 24 MB each.
-      `Get-ChildItem -Path $dir -Filter 'rustdesk*.exe' | Where-Object { $_.FullName -ne $rd } | Remove-Item -Force -ErrorAction SilentlyContinue`,
-      // The name is the configuration, so a client that was previously left
-      // pointing somewhere else must not keep overriding it from disk.
-      `$stale = Join-Path (Join-Path (Join-Path $env:APPDATA 'RustDesk') 'config') 'RustDesk2.toml'`,
-      `if (Test-Path $stale) { Remove-Item -Force $stale -ErrorAction SilentlyContinue; Write-Host 'Cleared a previous RustDesk server setting.' }`,
+      // once nothing points at them, but they are 25 MB each.
+      `Get-ChildItem -Path $dir -Filter 'rustdesk*.exe' | Where-Object { $_.FullName -ne $pexe } | Remove-Item -Force -ErrorAction SilentlyContinue`,
+    ]);
+
+    const usePortable = this.joinPs([
+      fetchExe,
+      `$rd = $pexe`,
       `$portable = $true`,
     ]);
 
     return this.joinPs([
       `$portable = $false`,
+      // ProductVersion of a RustDesk exe, as a [version], or $null.
+      `$rdVer = { param($f) try { [version]((Get-Item -LiteralPath $f -ErrorAction Stop).VersionInfo.ProductVersion -replace '[^0-9.].*$', '') } catch { $null } }`,
       `$paths = @($env:ProgramFiles + '\\RustDesk\\rustdesk.exe', ${'${env:ProgramFiles(x86)}'} + '\\RustDesk\\rustdesk.exe')`,
       `$rd = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1`,
       `if (-not $rd) { $rd = (Get-Command rustdesk.exe -ErrorAction SilentlyContinue).Source }`,
-      `if ($rd) { ${this.repairInstalledRustdesk(config)} }`,
-      `if (-not $rd) { ${fetch} }`,
+      `if ($rd) { ${this.repairInstalledRustdesk(config, clientVersion, fetchExe)} }`,
+      `if (-not $rd) { ${usePortable} }`,
     ]);
   }
 
   /**
-   * PowerShell that makes an installed RustDesk use this server and key, or
-   * clears `$rd` so the caller falls back to the filename-configured copy.
+   * PowerShell that brings an installed RustDesk up to date and onto this
+   * server and key, or clears `$rd` so the caller falls back to the
+   * filename-configured portable copy.
    *
-   * An installed client keeps whatever server settings it was installed with,
-   * and reinstalling does not necessarily fix them: RustDesk's installer
-   * copies the key out of its own filename, so a download the browser saved
-   * as `rustdesk-host=…,key=<key> (1).exe` installs with the key
-   * `<key> (1)` — and every Connect after that ends in "Key mismatch", which
-   * is hbbs refusing the *technician's* client, not the endpoint. That is how
-   * DS-HOME1 "broke" after a reinstall on 2026-11-01.
+   * Why this exists (2026-11-01, DS-HOME1 "Key mismatch"): hbbs checks the key
+   * of the client *making* a connection. The technician's RustDesk had been
+   * installed from a download the browser saved as `…key=<key> (1).exe`, so
+   * its key was `<key> (1)`. Re-running a newer installer did not help — with
+   * RustDesk already running, launching the new exe just hands off to the
+   * running instance, so the install stayed at the old version with the old
+   * key, and the "portable fallback" handed its connection to that same
+   * running instance too.
    *
-   * The only supported way to rewrite an installed client's settings is
-   * `rustdesk --config`, and RustDesk ignores it unless it runs elevated. So:
-   * read the settings the client's session copy reports (RustDesk syncs the
-   * service config into the user's RustDesk2.toml), and only when they are
-   * wrong, ask for elevation once and apply them. Nothing is prompted for a
-   * client that is already right. A marker in %LOCALAPPDATA%\\Rem0te records a
-   * successful repair, so a machine whose session copy never materialises is
-   * not prompted on every Connect.
+   * Neither problem can be fixed unelevated. So when the installed client is
+   * older than the current release, or its server or key is wrong, one elevated
+   * step (a single UAC prompt, and only then) stops RustDesk, runs the
+   * filename-configured release with `--silent-install` if an upgrade is due,
+   * and rewrites the server settings directly in every RustDesk2.toml that
+   * matters — the service's and the user's — rather than trusting
+   * `rustdesk --config` and RustDesk's own config sync to get there. Other
+   * settings in those files are preserved.
+   *
+   * The elevated script is built here as ordinary PowerShell, carried as
+   * base64 (the .cmd forbids double quotes and percent signs, the elevated
+   * body needs both freedoms), and has this user's paths substituted in at
+   * run time before it is re-encoded for `-EncodedCommand`.
    */
-  private repairInstalledRustdesk(config: RustdeskServerConfig): string {
+  private repairInstalledRustdesk(config: RustdeskServerConfig, clientVersion: string, fetchExe: string): string {
+    const elevated = RustdeskService.elevatedRepairScript(config, clientVersion);
+    const elevatedB64 = Buffer.from(elevated, 'utf8').toString('base64');
     return this.joinPs([
       `$wantKey = '${config.key}'`,
       `$wantHost = '${config.host}'`,
       `$rcfg = Join-Path (Join-Path (Join-Path $env:APPDATA 'RustDesk') 'config') 'RustDesk2.toml'`,
       `$rdir = Join-Path $env:LOCALAPPDATA 'Rem0te'`,
       `New-Item -ItemType Directory -Force -Path $rdir | Out-Null`,
-      `$marker = Join-Path $rdir 'installed-rustdesk-config.txt'`,
       // Reads `key = '…'` and `custom-rendezvous-server = '…'`. \\x27 and
       // \\x22 stand in for the quote characters, because a double quote
       // cannot appear anywhere in a script that cmd.exe passes through.
       `$readCfg = { $r = @{ key = $null; host = $null; found = $false }; if (Test-Path $rcfg) { $r.found = $true; $t = Get-Content -Raw -LiteralPath $rcfg; if ($t -match '(?m)^\\s*key\\s*=\\s*[\\x27\\x22]([^\\x27\\x22]*)') { $r.key = $Matches[1] }; if ($t -match 'custom-rendezvous-server\\s*=\\s*[\\x27\\x22]([^\\x27\\x22:]*)') { $r.host = $Matches[1] } }; $r }`,
       `$have = & $readCfg`,
       `$good = ($have.key -eq $wantKey) -and ($have.host -eq $wantHost)`,
-      `$marked = (-not $have.found) -and (Test-Path $marker) -and ((Get-Content -Raw -LiteralPath $marker).Trim() -eq '${config.configArg}')`,
-      `if ($good -or $marked) { Write-Host 'Installed RustDesk already uses this server and key.' }`,
-      `if (-not ($good -or $marked)) { ${this.joinPs([
+      `$iv = & $rdVer $rd`,
+      `$outdated = (-not $iv) -or ($iv -lt [version]'${clientVersion}')`,
+      `Write-Host ('Installed RustDesk: ' + $rd + ' (version ' + $(if ($iv) { $iv } else { 'unknown' }) + ')')`,
+      `if ($good -and -not $outdated) { Write-Host 'Installed RustDesk is current and already uses this server and key.' }`,
+      `if (-not ($good -and -not $outdated)) { ${this.joinPs([
         `Write-Host ''`,
+        `if ($outdated) { Write-Host 'Installed RustDesk is older than ${clientVersion}; it will be upgraded.' }`,
         `if ($have.host -ne $wantHost) { Write-Host ('Installed RustDesk points at ' + $(if ($have.host) { $have.host } else { 'no custom server' }) + ', not ' + $wantHost + '.') }`,
         `if ($have.key -ne $wantKey) { Write-Host 'Installed RustDesk has a different server key (this is what causes Key mismatch).' }`,
+        `$pexe = $null`,
+        `if ($outdated) { ${fetchExe} }`,
+        `$result = Join-Path $rdir 'repair-result.txt'`,
+        `Remove-Item -LiteralPath $result -Force -ErrorAction SilentlyContinue`,
+        `$q = [string][char]39`,
+        `$body = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${elevatedB64}'))`,
+        `$body = $body.Replace('__APPDATA__', $env:APPDATA.Replace($q, $q + $q)).Replace('__RESULT__', $result.Replace($q, $q + $q)).Replace('__EXE__', $(if ($pexe) { $pexe.Replace($q, $q + $q) } else { '' }))`,
+        `$enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($body))`,
         `Write-Host 'Repairing it now - Windows will ask for administrator permission once.'`,
         `$applied = $false`,
-        `try { $p = Start-Process -FilePath $rd -ArgumentList '--config', '${config.configArg}' -Verb RunAs -WindowStyle Hidden -PassThru; $applied = $p.WaitForExit(20000) } catch { Write-Host 'Administrator permission was not given.' }`,
-        // The new setting reaches the session copy through RustDesk's own
-        // config sync, which is not instant.
-        `if ($applied) { Start-Sleep -Seconds 3; $have = & $readCfg }`,
-        `$ok = $applied -and ((-not $have.found) -or (($have.key -eq $wantKey) -and ($have.host -eq $wantHost)))`,
-        `if ($ok) { Set-Content -LiteralPath $marker -Value '${config.configArg}' -Encoding ASCII; Write-Host 'Installed RustDesk now uses this server and key.' }`,
-        `if (-not $ok) { Write-Host 'Could not repair the installed RustDesk; using a separate copy configured for this server instead.'; Write-Host 'If RustDesk is running in the system tray, quit it first, or the session may still use the old settings.'; Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue; $rd = $null }`,
+        `try { $p = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $enc -Verb RunAs -WindowStyle Hidden -PassThru; $applied = $p.WaitForExit(300000) } catch { Write-Host 'Administrator permission was not given.' }`,
+        `$res = $(if (Test-Path $result) { (Get-Content -Raw -LiteralPath $result).Trim() } else { '' })`,
+        `$have = & $readCfg`,
+        `$iv = & $rdVer $rd`,
+        `$ok = $applied -and ($res -like 'ok*') -and ($have.key -eq $wantKey) -and ($have.host -eq $wantHost)`,
+        `if ($ok) { Write-Host ('Installed RustDesk repaired (version ' + $iv + ', server ' + $wantHost + ', key ok).') }`,
+        `if ($ok -and ($iv -lt [version]'${clientVersion}')) { Write-Host 'WARNING: the upgrade did not take; connecting with the existing version.' }`,
+        `if ($applied -and -not $ok) { Write-Host ('Repair did not complete: ' + $(if ($res) { $res } else { 'no result' }) + '. Details: ' + (Join-Path $rdir 'repair.log')) }`,
+        `if (-not $ok) { Write-Host 'Using a separate copy configured for this server instead.'; Write-Host 'If RustDesk is running in the system tray, quit it first, or the session may still use the old settings.'; $rd = $null }`,
       ])} }`,
     ]);
+  }
+
+  /**
+   * The elevated half of {@link repairInstalledRustdesk}: ordinary PowerShell,
+   * run via `-EncodedCommand`. `__APPDATA__`, `__EXE__` and `__RESULT__` are
+   * substituted (single quotes already doubled) by the unelevated caller.
+   */
+  static elevatedRepairScript(config: RustdeskServerConfig, clientVersion: string): string {
+    const H = config.host;
+    const K = config.key;
+    return [
+      `$ErrorActionPreference = 'Continue'`,
+      `$result = '__RESULT__'`,
+      `$log = Join-Path (Split-Path $result -Parent) 'repair.log'`,
+      `function L($m) { try { Add-Content -LiteralPath $log -Value ((Get-Date -Format s) + ' ' + $m) } catch {} }`,
+      `function Done($m) { L $m; try { Set-Content -LiteralPath $result -Value $m -Encoding ASCII } catch {} }`,
+      `$RDEXE = Join-Path $env:ProgramFiles 'RustDesk\\rustdesk.exe'`,
+      `$exe = '__EXE__'`,
+      `function RdVer { try { [version]((Get-Item -LiteralPath $RDEXE -ErrorAction Stop).VersionInfo.ProductVersion -replace '[^0-9.].*$', '') } catch { $null } }`,
+      `function Stop-Rd { & sc.exe stop RustDesk 2>$null | Out-Null; & taskkill /F /IM rustdesk.exe /T 2>$null | Out-Null; Start-Sleep -Seconds 2 }`,
+      `L ('repair start; installed ' + (RdVer) + '; installer ' + $exe)`,
+      `Stop-Rd`,
+      `if ($exe -and (Test-Path -LiteralPath $exe)) {`,
+      `    $want = [version]'${clientVersion}'`,
+      // --silent-install: RustDesk's exe has no /S switch.
+      `    $p = Start-Process -FilePath $exe -ArgumentList '--silent-install' -PassThru -WindowStyle Hidden`,
+      `    $p.WaitForExit(180000) | Out-Null`,
+      `    $waited = 0`,
+      `    while ($waited -lt 120) { $v = RdVer; if ($v -and $v -ge $want) { break }; Start-Sleep -Seconds 3; $waited += 3 }`,
+      `    L ('after install: ' + (RdVer))`,
+      `    Stop-Rd`,
+      `}`,
+      // Rewrite only the server lines; keep every other setting the file has.
+      `function Set-RdCfg($dir) {`,
+      `    try {`,
+      `        New-Item -ItemType Directory -Force -Path $dir | Out-Null`,
+      `        $file = Join-Path $dir 'RustDesk2.toml'`,
+      `        $lines = @()`,
+      `        if (Test-Path -LiteralPath $file) { $lines = @(Get-Content -LiteralPath $file) }`,
+      `        $lines = @($lines | Where-Object { $_ -notmatch '^\\s*(key|custom-rendezvous-server|relay-server|api-server|rendezvous_server)\\s*=' })`,
+      `        $opts = @("custom-rendezvous-server = '${H}'", "relay-server = '${H}'", "api-server = ''", "key = '${K}'")`,
+      `        $idx = -1`,
+      `        for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\\s*\\[options\\]\\s*$') { $idx = $i; break } }`,
+      `        $head = @("rendezvous_server = '${H}:21116'")`,
+      `        if ($idx -lt 0) { $out = $head + $lines + @('', '[options]') + $opts }`,
+      `        else {`,
+      `            $before = @($lines[0..$idx])`,
+      `            $after = @(); if ($idx -lt $lines.Count - 1) { $after = @($lines[($idx + 1)..($lines.Count - 1)]) }`,
+      `            $out = $head + $before + $opts + $after`,
+      `        }`,
+      `        Set-Content -LiteralPath $file -Value $out -Encoding UTF8 -Force`,
+      `        L ('wrote ' + $file)`,
+      `        return $true`,
+      `    } catch { L ('FAILED ' + $dir + ': ' + $_.Exception.Message); return $false }`,
+      `}`,
+      `$dirs = @(`,
+      `    'C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Roaming\\RustDesk\\config',`,
+      `    'C:\\Windows\\System32\\config\\systemprofile\\AppData\\Roaming\\RustDesk\\config',`,
+      `    (Join-Path '__APPDATA__' 'RustDesk\\config')`,
+      `)`,
+      `$allOk = $true`,
+      `foreach ($d in $dirs) { if (-not (Set-RdCfg $d)) { $allOk = $false } }`,
+      `& sc.exe start RustDesk 2>$null | Out-Null`,
+      `if ($allOk) { Done ('ok ' + (RdVer)) } else { Done 'failed to write some config files' }`,
+    ].join('\r\n');
   }
 
   /**

@@ -5,6 +5,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.19.8] — 2026-11-01 · *Homecoming*
+
+### Fixed
+
+- **RustDesk was never actually upgraded — not on endpoints, not by the
+  installer.** Since v0.4.0 the managed installer ran the RustDesk release with
+  `/S`, an NSIS switch RustDesk does not have. RustDesk ignores unknown
+  arguments, so on a machine that already had RustDesk nothing was installed;
+  the step then waited for `rustdesk.exe` to exist, found the *old* one, and
+  carried on. Every staged "update" re-ran the installer and left the endpoint
+  on the version it started with (all of them still report 1.4.9 while 1.5.0
+  is current). The installer now uses `--silent-install` and waits for the
+  installed file's version to reach the target, logging a warning if it never
+  does. The update stays staged until the heartbeat reports the new version.
+- **"Key mismatch" persisted after 0.19.7.** At 22:08 the technician installed
+  the 1.5.0 preconfigured client and clicked Connect; hbbs rejected it again.
+  Two things were still wrong on the technician side:
+  - Launching a new RustDesk while one is already running hands off to the
+    running instance, so the "install" changed nothing — still the old version
+    with the `… (1)` key. The portable fallback handed its session to that
+    same instance, which is why it failed too.
+  - 0.19.7's elevated `rustdesk --config` relies on RustDesk syncing the
+    service's settings into the user's file within three seconds; it did not,
+    so the repair was judged failed.
+
+  Connect and the setup `.cmd` now check the installed client's version as
+  well as its server and key. When any is wrong, one elevated step (single UAC
+  prompt) stops RustDesk, upgrades it with `--silent-install` if it is out of
+  date, and rewrites the server lines directly in the service's and the user's
+  `RustDesk2.toml`, keeping every other setting, then restarts the service.
+  Log: `%LOCALAPPDATA%\Rem0te\repair.log`. The cached portable copy is also
+  refreshed when a newer release is out, instead of being reused forever.
+
 ## [0.19.7] — 2026-11-01 · *Homecoming*
 
 ### Fixed
