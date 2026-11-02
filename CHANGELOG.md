@@ -5,6 +5,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.19.10] — 2026-11-01 · *Homecoming*
+
+### Fixed
+
+- **0.19.8's real upgrade left the RustDesk service stopped.** RustDesk's
+  `--silent-install` recreates its service in stages: first as a one-shot
+  `"RustDesk.exe" --import-config "<user>\RustDesk.toml"`, which it starts,
+  stops and deletes, then as `"RustDesk.exe" --service`. The installer
+  stopped waiting the moment the new file version appeared and ran
+  `taskkill rustdesk.exe`, killing RustDesk's installer between those stages.
+  DS-HOME1's re-run at 22:30 showed it exactly: `service state: STOPPED`,
+  `BINARY_PATH_NAME ... --import-config ...`. RustDesk was offline and
+  `--password` had no service to reach. This never showed up before 0.19.8
+  because `/S` never installed anything. The installer (and Connect's elevated
+  repair) now waits until the service reads `--service`, and before every
+  service start `Ensure-RdService` recreates the service, or resets its
+  command line through CIM, if it is missing or in any other form.
+- **The Windows installer could report a password the endpoint never got
+  ("wrong password" on Connect).** `rustdesk --password` sets the permanent
+  password in the running service over IPC and prints `Done!` only if the
+  service accepted it; otherwise it prints the IPC error and writes the
+  password into the calling admin's profile, which the service never reads.
+  The installer ran it once, four seconds after starting the service, with
+  its output thrown away, and reported the new password to Rem0te regardless.
+  A service still starting up therefore left the endpoint on its old password
+  while Rem0te stored the new one. This is the DS-HOME1 "wrong password" from
+  2026-10-31, which became visible again once 0.19.7–0.19.9 cleared the Key
+  mismatch in front of it. The installer now retries for up to about 70
+  seconds, until RustDesk prints `Done!` or the service's own `RustDesk.toml`
+  shows the password changed, and logs a clear warning if it never does.
+
 ## [0.19.9] — 2026-11-01 · *Homecoming*
 
 ### Fixed

@@ -324,7 +324,10 @@ export class RustdeskService {
       `    $p = Start-Process -FilePath $exe -ArgumentList '--silent-install' -PassThru -WindowStyle Hidden`,
       `    $p.WaitForExit(180000) | Out-Null`,
       `    $waited = 0`,
-      `    while ($waited -lt 120) { $v = RdVer; if ($v -and $v -ge $want) { break }; Start-Sleep -Seconds 3; $waited += 3 }`,
+      // Wait for RustDesk's installer to finish recreating the service as
+      // --service; stopping it earlier strands the one-shot --import-config.
+      `    while ($waited -lt 180) { $v = RdVer; $sp = (Get-CimInstance Win32_Service -Filter "Name='RustDesk'" -ErrorAction SilentlyContinue).PathName; if ($v -and $v -ge $want -and $sp -match '--service') { break }; Start-Sleep -Seconds 3; $waited += 3 }`,
+      `    L ('service after install: ' + $sp)`,
       `    L ('after install: ' + (RdVer))`,
       `    Stop-Rd`,
       `}`,
@@ -358,6 +361,10 @@ export class RustdeskService {
       `)`,
       `$allOk = $true`,
       `foreach ($d in $dirs) { if (-not (Set-RdCfg $d)) { $allOk = $false } }`,
+      `$svc = Get-CimInstance Win32_Service -Filter "Name='RustDesk'" -ErrorAction SilentlyContinue`,
+      `$svcWant = '"' + $RDEXE + '" --service'`,
+      `if (-not $svc) { try { New-Service -Name 'RustDesk' -BinaryPathName $svcWant -DisplayName 'RustDesk Service' -StartupType Automatic -ErrorAction Stop | Out-Null; L 'created service' } catch { L ('could not create service: ' + $_.Exception.Message) } }`,
+      `if ($svc -and $svc.PathName -notmatch '--service') { $r = Invoke-CimMethod -InputObject $svc -MethodName Change -Arguments @{ PathName = $svcWant; StartMode = 'Automatic' }; L ('service was ' + $svc.PathName + '; reset (' + $r.ReturnValue + ')') }`,
       `& sc.exe start RustDesk 2>$null | Out-Null`,
       `if ($allOk) { Done ('ok ' + (RdVer)) } else { Done 'failed to write some config files' }`,
     ].join('\r\n');
