@@ -5,6 +5,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.19.11] — 2026-11-02 · *Homecoming*
+
+### Added
+
+- **RustDesk client versions on the dashboard.** Platform Admins now get a
+  *RustDesk clients* panel beside the map. It lists every client with its
+  online state, installed RustDesk version and update status, shows the latest
+  release, and has an **Update** button per row and **Update all**. It is the
+  same component as the one on the About page, in a compact layout that scrolls
+  inside the panel so the dashboard still fits on one screen. Each client name
+  links to its endpoint page.
+
+### Fixed
+
+- **A queued RustDesk update could re-run the installer forever.** A queued
+  update only cleared when the endpoint reported *exactly* the queued version.
+  The installer installs the latest release, though. An update queued for
+  1.5.0 that installed 1.5.1 never matched, so every heartbeat told the
+  endpoint to re-run the installer. It now clears once the endpoint reports the
+  target version or newer, and stops dispatching once it is there.
+- **An update queued before a newer release came out offered no way forward.**
+  The row read "Queued to v1.5.0" with only **Cancel**, even after 1.5.1 had
+  been released. Those rows are now flagged "(v1.5.1 out)" and also have
+  **Update**, which re-queues them for the latest release.
+
 ## [0.19.10] — 2026-11-01 · *Homecoming*
 
 ### Fixed

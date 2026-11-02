@@ -17,6 +17,7 @@ import { CreateClaimTokenDto, ClaimEndpointDto } from './dto/enrollment.dto';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
 import { CANDIDATE_LIVE_MS, CANDIDATE_SETTLE_MS } from './device-secret';
 import { queryHbbsOnline } from './hbbs-presence';
+import { compareVersions } from '../common/agent-contract';
 
 const execFileAsync = promisify(execFile);
 
@@ -507,13 +508,18 @@ export class EnrollmentService {
         ...(authenticated && dto.platform !== undefined && { platform: dto.platform }),
         ...(authenticated && dto.rustdeskVersion !== undefined && { version: dto.rustdeskVersion }),
         ...(encryptedPassword ? { permanentPassword: encryptedPassword } : {}),
-        // A staged update clears once the endpoint reports the target version.
-        // Comparing reported-vs-target rather than assuming success means a
-        // failed or partial install simply retries on the next heartbeat.
+        // A staged update clears once the endpoint reports the target version
+        // or newer. Comparing reported-vs-target rather than assuming success
+        // means a failed or partial install simply retries on the next
+        // heartbeat. "Or newer" matters: the installer installs the latest
+        // release, not the staged one, so an update staged for 1.5.0 that
+        // installed 1.5.1 never matched exactly and re-ran the installer on
+        // every heartbeat.
         ...(authenticated &&
         node.updateRequestedAt &&
         node.updateTargetVersion &&
-        dto.rustdeskVersion === node.updateTargetVersion
+        dto.rustdeskVersion &&
+        compareVersions(dto.rustdeskVersion, node.updateTargetVersion) >= 0
           ? { updateRequestedAt: null, updateTargetVersion: null }
           : {}),
         // A reinstall clears once the endpoint reports an agent matching this
@@ -575,7 +581,7 @@ export class EnrollmentService {
       authenticated &&
       node.updateRequestedAt &&
       node.updateTargetVersion &&
-      dto.rustdeskVersion !== node.updateTargetVersion
+      !(dto.rustdeskVersion && compareVersions(dto.rustdeskVersion, node.updateTargetVersion) >= 0)
         ? { targetVersion: node.updateTargetVersion }
         : null;
 
