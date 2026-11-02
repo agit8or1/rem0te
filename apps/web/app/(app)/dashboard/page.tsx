@@ -10,6 +10,7 @@ import { formatDate } from '@/lib/utils';
 import { usePermissions } from '@/lib/auth';
 import { MeterGauge, Sparkline, rate, size } from '@/components/common/gauge';
 import { ClientMap } from '@/components/dashboard/client-map';
+import { RustdeskUpdates } from '@/components/admin/rustdesk-updates';
 import Link from 'next/link';
 
 /**
@@ -163,6 +164,11 @@ export default function DashboardPage() {
             </div>
 
             <div className="flex flex-col gap-3 lg:min-h-0">
+              {/* Installed RustDesk version per client against the latest
+                  release, with Update per row. Platform Admin only: staging an
+                  update is an admin action and the API behind it is gated. */}
+              {isPlatformAdmin && <RustdeskUpdates isPlatformAdmin compact />}
+
               <Card className="flex flex-col lg:flex-1 lg:min-h-0 overflow-hidden">
                 <CardHeader className="py-2 shrink-0">
                   <CardTitle className="text-sm">Recent sessions</CardTitle>
