@@ -1,10 +1,12 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { SessionStatus } from '@prisma/client';
+import { OPEN_STATUSES } from '../sessions/session-transitions';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { PlatformSettingsService } from '../platform/platform-settings.service';
@@ -197,8 +199,10 @@ export class QuickConnectService {
       ? Math.round((now.getTime() - session.startedAt.getTime()) / 1000)
       : null;
 
-    const updated = await this.prisma.supportSession.update({
-      where: { id: sessionId },
+    // Only an open session can be ended, checked in the write itself so a
+    // second "end" (or a racing one) cannot overwrite the first outcome.
+    const u = await this.prisma.supportSession.updateMany({
+      where: { id: sessionId, status: { in: [...OPEN_STATUSES] } },
       data: {
         status: result === 'completed' ? SessionStatus.SESSION_COMPLETED
           : result === 'failed' ? SessionStatus.FAILED
@@ -206,6 +210,10 @@ export class QuickConnectService {
         completedAt: now,
         duration: duration ?? undefined,
       },
+    });
+    if (u.count === 0) throw new ConflictException(`Session is already ${session.status.toLowerCase()}`);
+    const updated = await this.prisma.supportSession.findUniqueOrThrow({
+      where: { id: sessionId },
       select: { id: true, status: true, duration: true, completedAt: true },
     });
 

@@ -108,6 +108,11 @@ auditConfig:
     # fork-ts-checker-webpack-plugin, i.e. the build, merging that plugin's own
     # options. Not in any production install (`pnpm why deepmerge -r --prod`
     # is empty).
+    # Rechecked 2026-11-06 (0.19.12): deepmerge 4.3.1 is still the latest
+    # release, and fork-ts-checker 9.1.0 is still its latest. @nestjs/cli 12
+    # makes fork-ts-checker an optional peer, which would drop deepmerge — but
+    # it needs @nestjs/schematics 12 (peer typescript >=6) and bundles
+    # typescript ~6.0, a compiler major for the whole API. Not taken here.
     - GHSA-gcqx-w48m-w2h4
     # minimatch <11.0.1, globparts amplification DoS. The only patched release
     # is 11.x and there is no backport to 3.x or 10.x. Every consumer is lint or
@@ -116,4 +121,10 @@ auditConfig:
     # overriding to 11 crashes `pnpm lint` (tried in 0.19.4). Patterns come from
     # this repository's own config. Not in any production install
     # (`pnpm why minimatch -r --prod` is empty).
+    # Rechecked 2026-11-06 (0.19.12): the 10.2.6 copy comes from
+    # @typescript-eslint/typescript-estree, and the latest of every parent
+    # still asks for 10.x (typescript-estree 8.72.1 ^10.2.2, eslint 10.14
+    # ^10.2.6, @eslint/config-array 0.23.5 ^10.2.4). Forcing 10 -> 11 is not a
+    # drop-in either: 11 removed `makeRe`, the `AST` export and
+    # `Minimatch#regexp`. Comes out when typescript-estree moves to 11.
     - GHSA-g3hv-75wg-m249

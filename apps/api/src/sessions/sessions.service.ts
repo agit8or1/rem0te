@@ -1,10 +1,16 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
 import { SessionStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
 import { CreateSessionDto, CompleteSessionDto, SessionEventDto } from './dto/create-session.dto';
+import {
+  CLOSE_FROM, EVENT_NAME_RE, EVENT_TRANSITIONS, OPEN_STATUSES, isTerminal,
+} from './session-transitions';
+
+/** Thrown inside a transaction to roll it back when a conditional write matched nothing. */
+class TransitionRefused extends Error {}
 
 /**
  * Support sessions.
@@ -22,10 +28,17 @@ export class SessionsService {
   ) {}
 
   /**
-   * Scope filter for every session query.
+   * READ scope for session queries.
    *
    * A Business User who cannot view history only ever sees sessions they ran
    * themselves — the business filter alone would show them their colleagues'.
+   *
+   * This is visibility only. `support:history_view` lets someone read their
+   * colleagues' sessions; it never lets them change one. Every mutation goes
+   * through `loadForMutation`, which applies this scope and then a separate
+   * write check. Until 0.19.12 complete/cancel/addEvent reused this filter as
+   * their authorization, so `computers:connect` + `support:history_view` was
+   * enough to close or inject events into another technician's session.
    */
   private sessionScope(actor: ActorContext, businessId?: string) {
     const scope = this.acl.resolveScope(actor, businessId);
@@ -34,6 +47,27 @@ export class SessionsService {
       ...(scope ? { customerId: scope } : {}),
       ...(canSeeOthers ? {} : { technicianId: actor.userId }),
     };
+  }
+
+  /**
+   * WRITE authorization: the technician who owns the session, or a
+   * supervisor — a Business Owner of the session's business, or a Platform
+   * Admin. The business boundary is the read scope's (`resolveScope`), so a
+   * Business Owner is never a supervisor of another business's sessions.
+   *
+   * A session the caller cannot see is 404, exactly as before; one they can
+   * see but not change is 403. Nothing is written for either.
+   */
+  private async loadForMutation(actor: ActorContext, id: string) {
+    const session = await this.prisma.supportSession.findFirst({
+      where: { id, ...this.sessionScope(actor) },
+      select: { id: true, tenantId: true, customerId: true, technicianId: true, status: true, startedAt: true },
+    });
+    if (!session) throw new NotFoundException('Session not found');
+    if (session.technicianId !== actor.userId && !this.acl.isBusinessOwner(actor)) {
+      throw new ForbiddenException('Only the technician who ran this session, or a Business Owner, can change it');
+    }
+    return session;
   }
 
   async findAll(
@@ -171,10 +205,9 @@ export class SessionsService {
   }
 
   async complete(actor: ActorContext, id: string, dto: CompleteSessionDto) {
-    const session = await this.findOne(actor, id);
-
-    if (session.status === SessionStatus.SESSION_COMPLETED || session.status === SessionStatus.CANCELED) {
-      throw new BadRequestException(`Session is already ${session.status.toLowerCase()}`);
+    const session = await this.loadForMutation(actor, id);
+    if (isTerminal(session.status)) {
+      throw new ConflictException(`Session is already ${session.status.toLowerCase()}`);
     }
 
     const now = new Date();
@@ -182,8 +215,10 @@ export class SessionsService {
       ? Math.round((now.getTime() - session.startedAt.getTime()) / 1000)
       : null;
 
-    const updated = await this.prisma.supportSession.update({
-      where: { id },
+    // Conditional on still being open: a concurrent close (or the sweeper)
+    // that got there first wins, and this one changes nothing.
+    const u = await this.prisma.supportSession.updateMany({
+      where: { id, status: { in: [...CLOSE_FROM] } },
       data: {
         status: SessionStatus.SESSION_COMPLETED,
         completedAt: now,
@@ -192,6 +227,7 @@ export class SessionsService {
         disposition: dto.disposition ?? undefined,
       },
     });
+    if (u.count === 0) throw new ConflictException('Session was closed by another request');
 
     await this.audit.log({
       tenantId: session.tenantId, customerId: session.customerId ?? undefined,
@@ -200,20 +236,20 @@ export class SessionsService {
       meta: { disposition: dto.disposition, duration },
     });
 
-    return updated;
+    return this.prisma.supportSession.findUnique({ where: { id } });
   }
 
   async cancel(actor: ActorContext, id: string) {
-    const session = await this.findOne(actor, id);
-
-    if (session.status === SessionStatus.SESSION_COMPLETED || session.status === SessionStatus.CANCELED) {
-      throw new BadRequestException(`Session is already ${session.status.toLowerCase()}`);
+    const session = await this.loadForMutation(actor, id);
+    if (isTerminal(session.status)) {
+      throw new ConflictException(`Session is already ${session.status.toLowerCase()}`);
     }
 
-    const updated = await this.prisma.supportSession.update({
-      where: { id },
+    const u = await this.prisma.supportSession.updateMany({
+      where: { id, status: { in: [...CLOSE_FROM] } },
       data: { status: SessionStatus.CANCELED, completedAt: new Date() },
     });
+    if (u.count === 0) throw new ConflictException('Session was closed by another request');
 
     await this.audit.log({
       tenantId: session.tenantId, customerId: session.customerId ?? undefined,
@@ -221,41 +257,73 @@ export class SessionsService {
       action: 'SESSION_CANCELED', resource: 'support_session', resourceId: id,
     });
 
-    return updated;
+    return this.prisma.supportSession.findUnique({ where: { id } });
   }
 
+  /**
+   * Record a technician event.
+   *
+   * State events (see EVENT_TRANSITIONS) move the session only forward and
+   * only from the states listed for them; anything else is refused with 409
+   * and writes nothing. Other event names are timeline annotations and are
+   * accepted only while the session is open. A closed session takes no new
+   * events of any kind.
+   *
+   * The status write and the event row are one transaction, and the write is
+   * conditional on the from-state, so a racing close cannot slip between the
+   * check and the write, and a refused transition leaves no orphan event row.
+   */
   async addEvent(actor: ActorContext, sessionId: string, dto: SessionEventDto) {
-    const session = await this.prisma.supportSession.findFirst({
-      where: { id: sessionId, ...this.sessionScope(actor) },
-      select: { id: true, startedAt: true },
-    });
-    if (!session) throw new NotFoundException('Session not found');
-
-    const event = await this.prisma.supportSessionEvent.create({
-      data: {
-        supportSessionId: sessionId,
-        event: dto.event,
-        metadata: dto.metadata ? (dto.metadata as Prisma.InputJsonValue) : undefined,
-      },
-    });
-
-    if (dto.event === 'client_opened') {
-      await this.prisma.supportSession.update({
-        where: { id: sessionId },
-        data: { status: SessionStatus.CLIENT_OPENED, startedAt: new Date() },
-      });
-    } else if (dto.event === 'client_closed') {
-      const now = new Date();
-      const duration = session.startedAt
-        ? Math.round((now.getTime() - session.startedAt.getTime()) / 1000)
-        : null;
-      await this.prisma.supportSession.update({
-        where: { id: sessionId },
-        data: { status: SessionStatus.SESSION_COMPLETED, completedAt: now, duration: duration ?? undefined },
-      });
+    if (typeof dto.event !== 'string' || !EVENT_NAME_RE.test(dto.event)) {
+      throw new BadRequestException('event must be a lower-case identifier');
+    }
+    const session = await this.loadForMutation(actor, sessionId);
+    if (isTerminal(session.status)) {
+      throw new ConflictException(`Session is already ${session.status.toLowerCase()}`);
     }
 
-    return event;
+    const transition = EVENT_TRANSITIONS[dto.event];
+    const now = new Date();
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        let u;
+        if (!transition) {
+          // Annotation: changes no status, but takes the row lock so it
+          // cannot land after a concurrent close commits.
+          u = await tx.supportSession.updateMany({
+            where: { id: sessionId, status: { in: [...OPEN_STATUSES] } },
+            data: { updatedAt: now },
+          });
+        } else if (transition.to === SessionStatus.CLIENT_OPENED) {
+          u = await tx.supportSession.updateMany({
+            where: { id: sessionId, status: { in: [...transition.from] } },
+            data: { status: SessionStatus.CLIENT_OPENED, startedAt: now },
+          });
+        } else {
+          // client_closed. startedAt is re-read under the lock the update
+          // takes, so the duration matches the start that was recorded.
+          const cur = await tx.supportSession.findUnique({ where: { id: sessionId }, select: { startedAt: true } });
+          const duration = cur?.startedAt ? Math.round((now.getTime() - cur.startedAt.getTime()) / 1000) : null;
+          u = await tx.supportSession.updateMany({
+            where: { id: sessionId, status: { in: [...transition.from] } },
+            data: { status: transition.to, completedAt: now, duration: duration ?? undefined },
+          });
+        }
+        if (u.count === 0) throw new TransitionRefused();
+        return tx.supportSessionEvent.create({
+          data: {
+            supportSessionId: sessionId,
+            event: dto.event,
+            metadata: dto.metadata ? (dto.metadata as Prisma.InputJsonValue) : undefined,
+          },
+        });
+      });
+    } catch (e) {
+      if (e instanceof TransitionRefused) {
+        throw new ConflictException(`Event ${dto.event} does not apply to this session in its current state`);
+      }
+      throw e;
+    }
   }
 
   async getStats(actor: ActorContext, days = 30, businessId?: string) {

@@ -72,7 +72,7 @@ Stored on `Membership.capabilities` as an allowlisted string array. The vocabula
 | | `computers:event_logs` | Read Windows event log entries from a computer they can see |
 | Support | `support:quick_connect` | Use Quick Connect |
 | | `support:sessions_view` | See sessions currently in progress |
-| | `support:history_view` | See past sessions for this business |
+| | `support:history_view` | See past sessions for this business — read only, see below |
 | Users | `users:view` | See the other people in this business |
 | | `users:manage` | Invite, disable and remove business users; set their permissions |
 | Audit | `audit:view` | See this business's audit history |
@@ -100,6 +100,12 @@ Three rules that are easy to assume the other way round:
   enough, which let a Business User read the password of a machine they had been given no access to.
 - **Making a computer company-wide needs `users:manage`**, the capability that grants access to one
   person, because it grants access to everyone in the business at once.
+- **`support:history_view` reads sessions; it never changes them.** Completing, cancelling or
+  posting an event to a session — and binding a launcher token to it — is for the technician who
+  ran it, a Business Owner of its business, or a Platform Admin. Anyone else who can see the session
+  gets a 403 and nothing is written. Before 0.19.12 the write paths reused the read filter, so
+  `computers:connect` plus `support:history_view` was enough to close a colleague's session or
+  write events into it.
 - **Membership alone shows the business's profile, not its inventory.** `GET /businesses/:id`
   includes the computer list only with `computers:view`.
 
