@@ -68,7 +68,12 @@ export default function SessionsPage() {
       toast({ title: 'Session cancelled' });
       qc.invalidateQueries({ queryKey: ['sessions'] });
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to cancel session', variant: 'destructive' }),
+    // 403: not this person's session to change; 409: already closed.
+    onError: (e: unknown) => toast({
+      title: 'Could not cancel session',
+      description: (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to cancel session',
+      variant: 'destructive',
+    }),
   });
 
   const connectMutation = useMutation({

@@ -23,7 +23,14 @@ import argon2 from 'argon2';
 import { randomBytes } from 'crypto';
 
 const prisma = new PrismaClient();
-const API = 'http://127.0.0.1:3001/api/v1';
+const API = process.env.API_BASE || 'http://127.0.0.1:3001/api/v1';
+// Every suite writes fixtures into DATABASE_URL and then talks to API: if the
+// two point at different stacks it silently mixes a scratch database with a
+// live API. Refuse the production address unless told otherwise.
+if (/:3001\b|:443\b|^https:/.test(API) && process.env.I_KNOW_THIS_IS_NOT_PRODUCTION !== '1') {
+  console.error(`Refusing to run against ${API}: this suite writes fixtures. Set API_BASE to a scratch stack.`);
+  process.exit(2);
+}
 const suffix = randomBytes(3).toString('hex');
 
 function jbody(v) { try { return typeof v === 'string' ? v.slice(0, 180) : JSON.stringify(v).slice(0, 180); } catch { return String(v).slice(0, 180); } }

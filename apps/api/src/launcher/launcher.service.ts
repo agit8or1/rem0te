@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { createHash } from 'crypto';
+import { PRE_CLIENT_STATUSES } from '../sessions/session-transitions';
 import { SessionStatus } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
@@ -84,11 +85,23 @@ export class LauncherService {
     }
 
     // A session id travels into the token and is written to when the token
-    // is redeemed, so it has to be one of this caller's business's sessions.
+    // is redeemed, so it is bound here to exactly one session: in the
+    // caller's business, run by the caller, still before its client opened,
+    // and for the same target the token launches. Until 0.19.12 only the
+    // business was checked, so a token could be pointed at a colleague's
+    // session (or a closed one) and its redemption written into it.
     if (dto.sessionId) {
       const scope = this.acl.resolveScope(actor);
       const session = await this.prisma.supportSession.findFirst({
-        where: { id: dto.sessionId, ...(scope ? { customerId: scope } : {}) },
+        where: {
+          id: dto.sessionId,
+          technicianId: actor.userId,
+          status: { in: [...PRE_CLIENT_STATUSES] },
+          ...(scope ? { customerId: scope } : {}),
+          ...(targetEndpointId
+            ? { endpointId: targetEndpointId }
+            : { isAdHoc: true, adHocRustdeskId: dto.adHocRustdeskId }),
+        },
         select: { id: true },
       });
       if (!session) throw new NotFoundException('Session not found');
@@ -200,19 +213,22 @@ export class LauncherService {
     // rather than asking the client to report something we already observed.
     if (record.supportSessionId) {
       try {
-        const session = await this.prisma.supportSession.findUnique({
-          where: { id: record.supportSessionId },
-          select: { id: true, status: true, customerId: true },
-        });
-        if (session && session.status !== SessionStatus.SESSION_COMPLETED) {
-          await this.prisma.supportSessionEvent.create({
-            data: { supportSessionId: session.id, event: 'client_opened' },
-          });
-          await this.prisma.supportSession.update({
-            where: { id: session.id },
+        // Forward-only and atomic: CLIENT_OPENED is written only if the
+        // session is still pre-client, in the same statement that checks it.
+        // Before 0.19.12 this refused only SESSION_COMPLETED, so redeeming a
+        // token for a CANCELED or FAILED session reopened it.
+        const sessionId = record.supportSessionId;
+        await this.prisma.$transaction(async (tx) => {
+          const u = await tx.supportSession.updateMany({
+            where: { id: sessionId, status: { in: [...PRE_CLIENT_STATUSES] } },
             data: { status: SessionStatus.CLIENT_OPENED, startedAt: new Date() },
           });
-        }
+          if (u.count === 1) {
+            await tx.supportSessionEvent.create({
+              data: { supportSessionId: sessionId, event: 'client_opened', metadata: { source: 'launcher_token' } },
+            });
+          }
+        });
       } catch (err) {
         // Telemetry must never block the launch the user is waiting on.
         this.logger.warn(`Could not record client_opened for session ${record.supportSessionId}: ${err}`);

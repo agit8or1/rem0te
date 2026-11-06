@@ -1,6 +1,6 @@
 {
   "name": "@reboot-remote/api",
-  "version": "0.19.11",
+  "version": "0.19.12",
   "private": true,
   "scripts": {
     "dev": "nest start --watch",

@@ -5,6 +5,85 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.19.12] — 2026-11-06 · *Homecoming*
+
+### Security
+
+- **`support:history_view` let a technician change other technicians'
+  sessions.** The sessions service used one filter both to decide which
+  sessions a person may *see* and which they may *change*. That filter drops
+  the "your own sessions only" restriction for anyone with
+  `support:history_view`, so `PATCH /sessions/:id/complete`, `/cancel` and
+  `POST /sessions/:id/events` accepted a colleague's session from anyone holding
+  `computers:connect` plus history view. Reading and writing are now separate.
+  The read filter is unchanged. Every write then checks that the caller is the
+  session's technician, a Business Owner of its business, or a Platform Admin.
+  A session someone can see but not change returns **403**; one they cannot see
+  still returns 404. Nothing is written in either case. Quick Connect's
+  `end` already had an ownership check and keeps it.
+- **A launcher token could be bound to someone else's session, or to a closed
+  one.** `POST /launcher/token` with a `sessionId` checked only that the
+  session was in the caller's business. Redeeming the token then wrote
+  `client_opened` into that session. The session must now belong to the
+  caller, be pre-client (pending, launch requested or launcher acknowledged),
+  and target the same computer or Quick Connect ID as the token. If not, the
+  request returns 404.
+- **Closed sessions could be reopened.** `client_opened` on
+  `/sessions/:id/events` set `CLIENT_OPENED` and a new `startedAt` whatever
+  the session's state. A completed session went back to open, and its
+  duration restarted. Launcher redemption refused only `SESSION_COMPLETED`, so
+  a canceled or failed session could be reopened by redeeming its token.
+  complete and cancel read the status, tested it, then wrote unconditionally,
+  so two closes racing each other could both succeed. All allowed transitions
+  now live in one table (`sessions/session-transitions.ts`):
+  - `COMPLETED`, `CANCELED` and `FAILED` are terminal.
+  - `client_opened` applies only before a client has opened.
+  - `client_closed` applies only after one has.
+  - Any other event name is a timeline annotation, accepted only while the
+    session is open.
+
+  Each status change is a conditional `updateMany` whose `WHERE` names the
+  allowed from-states. Where an event row is written, the change and the event
+  row are one transaction. A late, duplicated or out-of-order event changes
+  nothing and returns **409**; so does closing an already-closed session (this
+  was 400). Event names must be lower-case identifiers. `startedAt` is written
+  once, so a repeated `client_opened` can no longer move the start time or the
+  duration.
+- **Behavioural tests for these, run in CI.** All 15 static invariant checks
+  passed while these bugs were live, so the new tests exercise the behaviour
+  directly.
+  - `apps/api/scripts/unit-session-mutations.mjs` runs the compiled services
+    against an in-memory Prisma double, with no database. It covers 24 cases.
+    Against 0.19.11 code, 15 of them fail.
+  - `apps/api/scripts/e2e-session-mutations.mjs` covers the same ground over
+    HTTP against a scratch API and real Postgres. That includes concurrent
+    duplicate events and racing closes. It has 38 checks, and 24 of them fail
+    on 0.19.11.
+
+### Fixed
+
+- **Four e2e suites were hard-wired to the production API.** `e2e-smoke`,
+  `e2e-full`, `e2e-public-api` and `e2e-business-access` always called
+  `127.0.0.1:3001`, while their fixtures went to whatever `DATABASE_URL` named.
+  Pointed at a scratch database, they still sent requests to the live API. They
+  now read `API_BASE` and refuse port 3001, port 443 or `https://`, the same
+  guard `e2e-security-audit` already had.
+- The Sessions page now shows the server's reason when a cancel is refused,
+  instead of a generic "Failed to cancel session".
+
+### Dependencies
+
+- Rechecked the two accepted dev-tooling advisories. Both remain accepted and
+  neither is in the production install (`pnpm why --prod` is empty for both,
+  and `pnpm audit --prod` reports none).
+  - **deepmerge 4.3.1** (GHSA-gcqx-w48m-w2h4): it is still the latest release,
+    and no patched one exists. `@nestjs/cli` 12 would drop it, but it needs
+    TypeScript 6, so that upgrade is not taken here.
+  - **minimatch 10.2.6** (GHSA-g3hv-75wg-m249): the latest typescript-estree,
+    eslint and `@eslint/config-array` still all require 10.x. 11.x removes
+    `makeRe` and the `AST` export, so forcing it in is not compatible. The
+    reasons are recorded next to each ignore in `pnpm-workspace.yaml`.
+
 ## [0.19.11] — 2026-11-02 · *Homecoming*
 
 ### Added
