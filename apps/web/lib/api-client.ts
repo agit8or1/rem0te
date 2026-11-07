@@ -15,7 +15,10 @@ export const api = axios.create({
 api.interceptors.response.use(
   (res) => res,
   (error) => {
-    if (typeof window !== 'undefined' && error?.response?.status === 401) {
+    // Not on the sign-in pages themselves: a wrong password there is a 401,
+    // and redirecting would wipe the message and set returnTo=/login.
+    if (typeof window !== 'undefined' && error?.response?.status === 401
+      && !['/login', '/mfa'].includes(window.location.pathname)) {
       const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
       window.location.href = `/login?returnTo=${returnTo}`;
     }
@@ -341,4 +344,171 @@ export const notesApi = {
   create: (data: Record<string, unknown>) => api.post('/notes', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/notes/${id}`, data),
   delete: (id: string) => api.delete(`/notes/${id}`),
+};
+
+// ─── v0.20: step-up ──────────────────────────────────────────────────────────
+// Sensitive actions answer 403 { code: 'STEP_UP_REQUIRED' }. The interceptor
+// below asks the person to confirm it is them (StepUpDialog, mounted in the app
+// layout) and retries the request once. Nothing here grants anything: the
+// server re-checks the step-up cookie on the retried request.
+export const stepUpApi = {
+  status: () => api.get('/auth/step-up'),
+  verify: (data: { password?: string; totpCode?: string }) => api.post('/auth/step-up', data),
+  passkeyOptions: () => api.post('/auth/step-up/passkey/options'),
+  passkeyVerify: (response: unknown) => api.post('/auth/step-up/passkey', { response }),
+};
+
+type StepUpHandler = (action: string | undefined, message: string | undefined) => Promise<boolean>;
+let stepUpHandler: StepUpHandler | null = null;
+/** Registered by StepUpDialog. Resolves true once a step-up succeeded. */
+export function registerStepUpHandler(h: StepUpHandler | null) { stepUpHandler = h; }
+
+api.interceptors.response.use(undefined, async (error) => {
+  const res = error?.response;
+  const cfg = error?.config as (typeof error.config & { _stepUpRetried?: boolean }) | undefined;
+  if (res?.status === 403 && res.data?.code === 'STEP_UP_REQUIRED' && cfg && !cfg._stepUpRetried && stepUpHandler) {
+    const ok = await stepUpHandler(res.data?.action, res.data?.message);
+    if (ok) {
+      cfg._stepUpRetried = true;
+      return api.request(cfg);
+    }
+  }
+  return Promise.reject(error);
+});
+
+// ─── v0.20: which business a multi-business person is working in ────────────
+// The API honours the cookie only for the person's own business or one they
+// are currently assigned to; anything else silently acts as their own.
+export const BUSINESS_COOKIE = 'rem0te_business';
+export function setActiveBusiness(id: string | null) {
+  if (typeof document === 'undefined') return;
+  document.cookie = id
+    ? `${BUSINESS_COOKIE}=${encodeURIComponent(id)}; path=/; SameSite=Strict`
+    : `${BUSINESS_COOKIE}=; path=/; Max-Age=0; SameSite=Strict`;
+}
+
+// ─── v0.20: MSP technicians ──────────────────────────────────────────────────
+export const techniciansApi = {
+  me: () => api.get('/technicians/me'),
+  overview: () => api.get('/technicians/overview'),
+  vocabulary: () => api.get('/technicians/vocabulary'),
+  requestAccess: (data: Record<string, unknown>) => api.post('/technicians/access-requests', data),
+  approvals: () => api.get('/technicians/approvals'),
+  decide: (id: string, data: { decision: 'APPROVE' | 'DENY'; note?: string; capabilities?: string[]; endpointIds?: string[]; expiresAt?: string | null }) =>
+    api.post(`/technicians/approvals/${id}`, data),
+  setApprovalRequired: (businessId: string, required: boolean) =>
+    api.patch(`/technicians/businesses/${businessId}/approval-required`, { required }),
+  people: () => api.get('/technicians/people'),
+  effective: (userId: string) => api.get(`/technicians/people/${userId}/effective`),
+  setPlatformPermissions: (userId: string, permissions: string[]) =>
+    api.patch(`/technicians/people/${userId}/platform-permissions`, { permissions }),
+  assignments: (params?: Record<string, string>) => api.get('/technicians/assignments', { params }),
+  createAssignment: (data: Record<string, unknown>) => api.post('/technicians/assignments', data),
+  revokeAssignment: (id: string, reason?: string) => api.post(`/technicians/assignments/${id}/revoke`, { reason }),
+  groups: () => api.get('/technicians/groups'),
+  createGroup: (data: Record<string, unknown>) => api.post('/technicians/groups', data),
+  updateGroup: (id: string, data: Record<string, unknown>) => api.patch(`/technicians/groups/${id}`, data),
+  deleteGroup: (id: string) => api.delete(`/technicians/groups/${id}`),
+  addMember: (id: string, userId: string) => api.post(`/technicians/groups/${id}/members`, { userId }),
+  removeMember: (id: string, userId: string) => api.delete(`/technicians/groups/${id}/members/${userId}`),
+};
+
+// ─── v0.20: connection diagnostics ───────────────────────────────────────────
+export const diagnosticsApi = {
+  forEndpoint: (id: string) => api.get(`/endpoints/${id}/diagnostics`),
+  /** A redacted text report, downloaded by navigation. */
+  reportUrl: (id: string) => `${BASE_URL}/endpoints/${id}/diagnostics/report`,
+  /** The technician-side check (Windows .cmd), downloaded by navigation. */
+  helperUrl: (endpointId?: string) =>
+    `${BASE_URL}/diagnostics/technician/helper.cmd${endpointId ? `?endpointId=${encodeURIComponent(endpointId)}` : ''}`,
+  latestTechnicianReport: () => api.get('/diagnostics/technician/latest'),
+};
+
+// ─── v0.20: access review and offboarding ────────────────────────────────────
+export const offboardingApi = {
+  accessReview: (endpointId: string) => api.get(`/endpoints/${endpointId}/access-review`),
+  preview: (userId: string, businessId?: string) =>
+    api.get('/offboarding/preview', { params: { userId, ...(businessId ? { businessId } : {}) } }),
+  execute: (data: { userId: string; businessId?: string; suspendAccount?: boolean; rotateEndpointIds?: string[]; notes?: string }) =>
+    api.post('/offboarding', data),
+  list: (businessId?: string) => api.get('/offboarding', { params: businessId ? { businessId } : {} }),
+  get: (id: string) => api.get(`/offboarding/${id}`),
+  pendingRotations: (businessId?: string) =>
+    api.get('/offboarding/pending-rotations', { params: businessId ? { businessId } : {} }),
+};
+
+// ─── v0.20: support requests ─────────────────────────────────────────────────
+export const supportRequestsApi = {
+  getIntake: (businessId?: string) => api.get('/support-requests/intake', { params: businessId ? { businessId } : {} }),
+  setIntake: (enabled: boolean, regenerate = false, businessId?: string) =>
+    api.patch('/support-requests/intake', { enabled, regenerate }, { params: businessId ? { businessId } : {} }),
+  /** A signed-in business user asking for help. */
+  submit: (data: { description: string; endpointId?: string; phone?: string }) => api.post('/support-requests', data),
+  list: (params?: { businessId?: string; status?: string; mine?: boolean }) =>
+    api.get('/support-requests', { params: { ...params, mine: params?.mine ? '1' : undefined } }),
+  get: (id: string) => api.get(`/support-requests/${id}`),
+  handoffCandidates: (id: string) => api.get(`/support-requests/${id}/handoff-candidates`),
+  claim: (id: string, version: number) => api.post(`/support-requests/${id}/claim`, { version }),
+  handoff: (id: string, version: number, toUserId: string, note?: string) =>
+    api.post(`/support-requests/${id}/handoff`, { version, toUserId, note }),
+  release: (id: string, version: number) => api.post(`/support-requests/${id}/release`, { version }),
+  complete: (id: string, version: number, outcome?: string) => api.post(`/support-requests/${id}/complete`, { version, outcome }),
+  cancel: (id: string, version: number, outcome?: string) => api.post(`/support-requests/${id}/cancel`, { version, outcome }),
+};
+
+/** The customer side: no account, the link is the only key. */
+export const publicSupportApi = {
+  intake: (slug: string) => api.get(`/public/support/intake/${encodeURIComponent(slug)}`),
+  submit: (slug: string, data: Record<string, unknown>) => api.post(`/public/support/intake/${encodeURIComponent(slug)}`, data),
+  status: (token: string) => api.get(`/public/support/status/${encodeURIComponent(token)}`),
+  cancel: (token: string) => api.post(`/public/support/status/${encodeURIComponent(token)}/cancel`),
+};
+
+// ─── v0.20: staged endpoint updates ──────────────────────────────────────────
+export const rolloutsApi = {
+  list: () => api.get('/admin/rollouts'),
+  get: (id: string) => api.get(`/admin/rollouts/${id}`),
+  create: (data: Record<string, unknown>) => api.post('/admin/rollouts', data),
+  start: (id: string) => api.post(`/admin/rollouts/${id}/start`),
+  pause: (id: string) => api.post(`/admin/rollouts/${id}/pause`),
+  cancel: (id: string) => api.post(`/admin/rollouts/${id}/cancel`),
+  cancelJob: (jobId: string) => api.post(`/admin/rollouts/jobs/${jobId}/cancel`),
+  history: (endpointId: string) => api.get(`/admin/rollouts/endpoints/${endpointId}/history`),
+  pilotGroups: () => api.get('/admin/rollouts/pilot-groups'),
+  savePilotGroup: (data: { id?: string; name: string; description?: string; endpointIds: string[] }) =>
+    api.post('/admin/rollouts/pilot-groups', data),
+  pin: () => api.get('/admin/rollouts/pin'),
+  setPin: (version: string | null) => api.patch('/admin/rollouts/pin', { version }),
+};
+
+// ─── v0.20: SSO (OIDC) and passkeys ──────────────────────────────────────────
+export const ssoApi = {
+  // Sign-in page
+  providers: () => api.get('/auth/sso/providers'),
+  /** Navigate here (not an XHR): it redirects to the provider. */
+  startUrl: (id: string, returnTo?: string) =>
+    `${BASE_URL}/auth/sso/${encodeURIComponent(id)}/start${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ''}`,
+  // The signed-in person's own identities
+  identities: () => api.get('/auth/sso/identities'),
+  /** Returns { url } to navigate to; the provider round trip then links. */
+  link: (id: string, returnTo = '/account') => api.post(`/auth/sso/${encodeURIComponent(id)}/link`, { returnTo }),
+  unlink: (identityId: string) => api.delete(`/auth/sso/identities/${identityId}`),
+  // Platform Admin configuration
+  adminList: () => api.get('/sso/providers'),
+  create: (data: Record<string, unknown>) => api.post('/sso/providers', data),
+  update: (id: string, data: Record<string, unknown>) => api.patch(`/sso/providers/${id}`, data),
+  remove: (id: string) => api.delete(`/sso/providers/${id}`),
+  test: (id: string) => api.post(`/sso/providers/${id}/test`),
+  addMapping: (id: string, data: { groupValue: string; businessId: string; capabilities?: string[] }) =>
+    api.post(`/sso/providers/${id}/mappings`, data),
+  removeMapping: (id: string, mappingId: string) => api.delete(`/sso/providers/${id}/mappings/${mappingId}`),
+};
+
+export const passkeysApi = {
+  list: () => api.get('/auth/passkeys'),
+  registerOptions: () => api.post('/auth/passkeys/register/options'),
+  register: (response: unknown, name?: string) => api.post('/auth/passkeys/register', { response, name }),
+  remove: (id: string) => api.delete(`/auth/passkeys/${id}`),
+  loginOptions: () => api.post('/auth/passkeys/login/options'),
+  login: (response: unknown) => api.post('/auth/passkeys/login', { response }),
 };

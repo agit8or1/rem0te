@@ -7,8 +7,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { createHash } from 'crypto';
-import { PRE_CLIENT_STATUSES } from '../sessions/session-transitions';
-import { SessionStatus } from '@prisma/client';
+import { PRE_CLIENT_STATUSES } from '../sessions/session-state';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -18,6 +17,7 @@ import { RustdeskService } from '../common/rustdesk.service';
 import { IssueLauncherTokenDto } from './dto/launcher.dto';
 import { EndpointsService } from '../endpoints/endpoints.service';
 import { QuickConnectService } from '../quick-connect/quick-connect.service';
+import { SessionEventsService } from '../sessions/session-events.service';
 
 interface LauncherTokenPayload {
   sub: string;           // userId
@@ -25,6 +25,8 @@ interface LauncherTokenPayload {
   sessionId?: string;
   targetEndpointId?: string;
   targetRustdeskId?: string;
+  /** Business the token was minted in (signed, so not caller-controlled at redemption). */
+  businessId?: string;
   type: 'launcher';
 }
 
@@ -42,6 +44,7 @@ export class LauncherService {
     private readonly rustdesk: RustdeskService,
     private readonly endpoints: EndpointsService,
     private readonly quickConnect: QuickConnectService,
+    private readonly sessionEvents: SessionEventsService,
   ) {}
 
   /**
@@ -96,7 +99,7 @@ export class LauncherService {
         where: {
           id: dto.sessionId,
           technicianId: actor.userId,
-          status: { in: [...PRE_CLIENT_STATUSES] },
+          status: { in: PRE_CLIENT_STATUSES },
           ...(scope ? { customerId: scope } : {}),
           ...(targetEndpointId
             ? { endpointId: targetEndpointId }
@@ -121,6 +124,7 @@ export class LauncherService {
       ...(targetEndpointId ? { targetEndpointId } : {}),
       ...(targetRustdeskId ? { targetRustdeskId } : {}),
       ...(dto.sessionId ? { sessionId: dto.sessionId } : {}),
+      ...(actor.businessId ? { businessId: actor.businessId } : {}),
     };
 
     const launcherSecret = this.config.get<string>('LAUNCHER_TOKEN_SECRET');
@@ -189,6 +193,23 @@ export class LauncherService {
     if (record.usedAt) throw new UnauthorizedException('Token has already been used');
     if (record.expiresAt < new Date()) throw new UnauthorizedException('Token has expired');
 
+    // Re-run authorization NOW. The token was minted up to two minutes ago,
+    // and in that window the user may have been suspended, offboarded, had a
+    // technician assignment revoked or expire, or moved outside an access
+    // schedule. Possession of a once-valid token is not authority.
+    const authorized = await this.recheckAuthorization(record, payload);
+    if (!authorized.ok) {
+      await this.prisma.launcherToken.updateMany({
+        where: { id: record.id, usedAt: null }, data: { revokedAt: new Date() },
+      });
+      await this.audit.log({
+        tenantId: record.tenantId, actorId: record.userId, actorIp: clientIp,
+        action: 'CONNECTION_GRANT_DENIED', resource: 'launcher_token', resourceId: record.id,
+        meta: { reason: authorized.reason },
+      });
+      throw new UnauthorizedException('Authorization is no longer valid for this connection');
+    }
+
     // Mark as used, and let the database decide who got there first.
     //
     // This was a read, a test of `usedAt`, and then a write: two redemptions of
@@ -211,27 +232,18 @@ export class LauncherService {
     //
     // Redeeming the token IS the client opening, so the server records it here
     // rather than asking the client to report something we already observed.
+    // Redeeming the token is the launcher ACKNOWLEDGING the launch — the one
+    // thing the server observes directly. It used to be recorded as
+    // CLIENT_OPENED with a start time, i.e. as a session having begun, before
+    // the launcher had even spawned RustDesk.
     if (record.supportSessionId) {
       try {
-        // Forward-only and atomic: CLIENT_OPENED is written only if the
-        // session is still pre-client, in the same statement that checks it.
-        // Before 0.19.12 this refused only SESSION_COMPLETED, so redeeming a
-        // token for a CANCELED or FAILED session reopened it.
-        const sessionId = record.supportSessionId;
-        await this.prisma.$transaction(async (tx) => {
-          const u = await tx.supportSession.updateMany({
-            where: { id: sessionId, status: { in: [...PRE_CLIENT_STATUSES] } },
-            data: { status: SessionStatus.CLIENT_OPENED, startedAt: new Date() },
-          });
-          if (u.count === 1) {
-            await tx.supportSessionEvent.create({
-              data: { supportSessionId: sessionId, event: 'client_opened', metadata: { source: 'launcher_token' } },
-            });
-          }
-        });
+        await this.sessionEvents.record(record.supportSessionId, {
+          type: 'launcher_acknowledged', source: 'server', receivedAt: new Date(),
+        }, { dedupeKey: `launcher:${record.id}`, metadata: { via: 'launcher_token' } });
       } catch (err) {
         // Telemetry must never block the launch the user is waiting on.
-        this.logger.warn(`Could not record client_opened for session ${record.supportSessionId}: ${err}`);
+        this.logger.warn(`Could not record launcher acknowledgement for session ${record.supportSessionId}: ${err}`);
       }
     }
 
@@ -253,6 +265,32 @@ export class LauncherService {
       sessionId: record.supportSessionId,
       rustdeskConfig: await this.rustdeskLaunchConfig(),
     };
+  }
+
+  private async recheckAuthorization(
+    record: { userId: string; tenantId: string; targetEndpointId: string | null },
+    payload: LauncherTokenPayload,
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    if (record.targetEndpointId) {
+      const endpoint = await this.prisma.endpoint.findUnique({
+        where: { id: record.targetEndpointId }, select: { customerId: true },
+      });
+      if (!endpoint) return { ok: false, reason: 'endpoint_not_found' };
+      const actor = await this.endpoints.liveActor(record.userId, record.tenantId, endpoint.customerId);
+      if (!actor) return { ok: false, reason: 'user_inactive' };
+      return (await this.endpoints.canConnect(actor, record.targetEndpointId))
+        ? { ok: true } : { ok: false, reason: 'no_longer_authorized' };
+    }
+    // Ad-hoc (Quick Connect): the three switches and the capability, in the
+    // business the token was minted in.
+    const actor = await this.endpoints.liveActor(record.userId, record.tenantId, payload.businessId ?? null);
+    if (!actor) return { ok: false, reason: 'user_inactive' };
+    try {
+      await this.quickConnect.assertUsable(actor);
+      return { ok: true };
+    } catch {
+      return { ok: false, reason: 'quick_connect_not_usable' };
+    }
   }
 
   /**
@@ -279,7 +317,12 @@ export class LauncherService {
     const record = await this.prisma.launcherToken.findFirst({
       where: {
         id: tokenId,
-        ...(actor.isPlatformAdmin ? {} : { user: { memberships: { some: { customerId: actor.businessId ?? '__none__' } } } }),
+        ...(actor.isPlatformAdmin ? {} : {
+          OR: [
+            { userId: actor.userId },
+            { user: { memberships: { some: { customerId: actor.businessId ?? '__none__' } } } },
+          ],
+        }),
       },
     });
     if (!record) throw new NotFoundException('Token not found');

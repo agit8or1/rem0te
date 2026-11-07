@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-const PUBLIC_PREFIXES = ['/login', '/mfa', '/api/', '/_next/', '/favicon.ico'];
+// `/support/` (with the slash) is the customer side of support requests: an
+// intake form reached by a business's link and a status page reached by a
+// request's own token. With the slash, deliberately: `/support-requests` is the
+// signed-in queue and must not match.
+const PUBLIC_PREFIXES = ['/login', '/mfa', '/api/', '/_next/', '/favicon.ico', '/support/'];
 
 // `/quick` is the public "I need remote support" page. It must stay reachable
 // without an account — requiring one to receive a support session would defeat

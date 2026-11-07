@@ -118,9 +118,12 @@ facts that distinguish a firewall problem from a service that is not running.
 3. **Connect** — start a session with that machine.
 4. **Ad-hoc Session** — record a session against a machine that is not enrolled.
 
-A session that is started but never opens a client is marked failed after 30
-minutes, so the active count reflects reality rather than accumulating every
-attempt.
+Each session's status says what is actually known about it. *Client opened*
+means RustDesk started on your computer, not that you connected. *Connection
+confirmed* comes from the remote computer's agent, or from you. A launch that
+gets no further signal reads **Status unknown** after 30 minutes rather than
+pretending it failed or succeeded, and duration is shown only when it was
+measured. See [connecting.md](connecting.md#what-the-session-status-means-v020).
 
 ---
 
@@ -150,7 +153,37 @@ install retries instead of silently disappearing.
 
 ---
 
+## 8. Support requests
+
+Customers can ask for help through their business's support link, without an
+account. Requests appear under **Support Requests** if you hold
+`support:requests`.
+
+1. **Claim** a request to take it. If someone beat you to it, you are told who.
+2. Check **Matched computers**: computers in the business that match what the
+   customer wrote, limited to ones you can connect to.
+3. **Connect** through the computer's Connect button or Quick Connect.
+4. **Complete** it, or **Hand off** to a colleague, or **Release** it back.
+
+The customer's status page shows your first name and the status, nothing else.
+See [support-requests.md](support-requests.md).
+
+## 9. Working for several businesses
+
+If you have technician assignments, the sidebar shows a **business switcher**.
+Pick the business you are working in; everything you see is then that
+business, limited to what your assignment allows. **All assigned** gives an
+overview across all of them, and lists access that is not active right now and
+why (expired, outside its hours, awaiting approval). Ask for access to another
+business from there. See [technicians.md](technicians.md).
+
+---
+
 ## Troubleshooting
+
+**Start with Test connection.** Every computer's page has it. It checks the
+server, the computer and, with *Check my computer*, your own RustDesk, and says
+which one is wrong. See [connecting.md](connecting.md#test-connection-v020).
 
 **A computer shows Offline but the person says it is on.**
 Online is driven by the agent's 3-minute heartbeat, not by RustDesk. A machine

@@ -29,7 +29,15 @@ import {
   MonitorX,
   RefreshCw,
   Activity,
+  Inbox,
+  UserCog,
+  UserMinus,
+  UserCheck,
+  PackageCheck,
+  KeyRound,
+  LayoutGrid,
 } from 'lucide-react';
+import { BusinessSwitcher } from './business-switcher';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -69,6 +77,7 @@ const MAIN_NAV: NavItem[] = [
   { href: '/endpoints', label: 'Computers', icon: MonitorCheck, cap: CAP.COMPUTERS_VIEW },
   { href: '/users', label: 'Users', icon: Users, cap: CAP.USERS_VIEW },
   { href: '/sessions', label: 'Sessions', icon: PlayCircle, cap: CAP.SESSIONS_VIEW },
+  { href: '/support-requests', label: 'Support Requests', icon: Inbox, cap: CAP.SUPPORT_REQUESTS },
   { href: '/quick-connect', label: 'Quick Connect', icon: Zap, cap: CAP.QUICK_CONNECT },
   { href: '/endpoints/enroll', label: 'Enroll Computer', icon: Download, cap: CAP.COMPUTERS_ADD },
   // Clients for the technician's own machine. Separate from enrolment, which
@@ -92,6 +101,8 @@ const MAIN_NAV: NavItem[] = [
  */
 const PLATFORM_NAV: NavItem[] = [
   { href: '/admin/access', label: 'Access Control', icon: ShieldCheck },
+  { href: '/admin/sso', label: 'Single Sign-On', icon: KeyRound },
+  { href: '/admin/rollouts', label: 'Client Rollouts', icon: PackageCheck },
   { href: '/admin/security', label: 'Security', icon: Shield },
   { href: '/admin/unassigned', label: 'Unassigned Computers', icon: MonitorX },
   { href: '/admin/status', label: 'System Status', icon: Activity },
@@ -102,7 +113,9 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { resolvedTheme, setTheme } = useTheme();
-  const { user, can, isPlatformAdmin, isBusinessOwner, accessLevel, businessName } = usePermissions();
+  const {
+    user, can, isPlatformAdmin, isBusinessOwner, accessLevel, businessName, technician, assignedBusinesses, canManageTechnicians,
+  } = usePermissions();
 
   // Branding lives on the platform record and is readable only by the
   // operator; everyone else just gets the default mark.
@@ -244,8 +257,11 @@ export function Sidebar() {
         </div>
       </div>
 
+      <BusinessSwitcher />
+
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
         {MY_NAV.map(navLink)}
+        {assignedBusinesses.length > 0 && navLink({ href: '/technician', label: 'All Assigned', icon: LayoutGrid })}
 
         {mainItems.length > 0 && (
           <>
@@ -255,6 +271,10 @@ export function Sidebar() {
             {mainItems.map(navLink)}
             {/* A Business Owner configures their own business; the platform
                 operator configures the platform. Same slot, different scope. */}
+            {/* Offboarding is an owner's job in their own business, never in a
+                business reached through a technician assignment. */}
+            {isBusinessOwner && !technician && navLink({ href: '/offboarding', label: 'Offboarding', icon: UserMinus })}
+            {isBusinessOwner && !technician && navLink({ href: '/technician-approvals', label: 'Technician Approvals', icon: UserCheck })}
             {isBusinessOwner && navLink({
               href: '/settings',
               label: isPlatformAdmin ? 'Settings' : 'Business Settings',
@@ -263,12 +283,13 @@ export function Sidebar() {
           </>
         )}
 
-        {isPlatformAdmin && (
+        {(isPlatformAdmin || canManageTechnicians) && (
           <>
             <div className="pt-3 pb-0.5 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
               Platform
             </div>
-            {PLATFORM_NAV.map(navLink)}
+            {canManageTechnicians && navLink({ href: '/admin/technicians', label: 'Technicians', icon: UserCog })}
+            {isPlatformAdmin && PLATFORM_NAV.map(navLink)}
           </>
         )}
       </nav>

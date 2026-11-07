@@ -6,12 +6,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { SessionStatus } from '@prisma/client';
-import { OPEN_STATUSES } from '../sessions/session-transitions';
+import { SupportRequestsService } from '../support-requests/support-requests.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { PlatformSettingsService } from '../platform/platform-settings.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
+import { SessionEventsService } from '../sessions/session-events.service';
 
 /**
  * RustDesk IDs are 9-ish digits, usually shown grouped as "123 456 789".
@@ -24,6 +25,8 @@ export interface QuickConnectRequest {
   password: string;
   contactName?: string;
   issueDescription?: string;
+  /** Validated by the controller: a request this technician holds. */
+  supportRequestId?: string;
 }
 
 /**
@@ -51,6 +54,8 @@ export class QuickConnectService {
     private readonly audit: AuditService,
     private readonly acl: AccessControlService,
     private readonly platformSettings: PlatformSettingsService,
+    private readonly sessionEvents: SessionEventsService,
+    private readonly supportRequests: SupportRequestsService,
   ) {}
 
   // ── Availability ──────────────────────────────────────────────────────────
@@ -136,6 +141,13 @@ export class QuickConnectService {
 
     if (!actor.tenantId) throw new BadRequestException('No platform context');
 
+    // A request id is only accepted from the technician who claimed it, in
+    // this business; a stray or guessed id never attaches a session to
+    // someone else's request.
+    const supportRequestId = dto.supportRequestId
+      ? await this.supportRequests.forQuickConnect(actor, dto.supportRequestId)
+      : null;
+
     const session = await this.prisma.supportSession.create({
       data: {
         tenantId: actor.tenantId,
@@ -146,8 +158,17 @@ export class QuickConnectService {
         adHocRustdeskId: rustdeskId,
         contactName: dto.contactName ?? null,
         issueDescription: dto.issueDescription ?? null,
+        // A launch request, not a connection: Quick Connect machines have no
+        // Rem0te agent, so nothing on the remote side can confirm one. Only
+        // the technician's own report ("connected") can, and it is labelled
+        // as theirs.
         status: SessionStatus.LAUNCH_REQUESTED,
-        startedAt: new Date(),
+        launchRequestedAt: new Date(),
+        statusSource: 'server',
+        statusChangedAt: new Date(),
+        timingQuality: 'UNKNOWN',
+        supportRequestId,
+        events: { create: { event: 'launch_requested', source: 'server', dedupeKey: 'server:launch' } },
       },
       select: { id: true, createdAt: true },
     });
@@ -194,28 +215,22 @@ export class QuickConnectService {
       throw new ForbiddenException('That is not your session');
     }
 
-    const now = new Date();
-    const duration = session.startedAt
-      ? Math.round((now.getTime() - session.startedAt.getTime()) / 1000)
-      : null;
-
-    // Only an open session can be ended, checked in the write itself so a
-    // second "end" (or a racing one) cannot overwrite the first outcome.
-    const u = await this.prisma.supportSession.updateMany({
-      where: { id: sessionId, status: { in: [...OPEN_STATUSES] } },
-      data: {
-        status: result === 'completed' ? SessionStatus.SESSION_COMPLETED
-          : result === 'failed' ? SessionStatus.FAILED
-            : SessionStatus.CANCELED,
-        completedAt: now,
-        duration: duration ?? undefined,
-      },
+    // Through the state machine like every other session: a "completed"
+    // here is the technician's report, so no duration is computed from the
+    // launch time (it used to be, which put the time spent reading out an ID
+    // and password into the average session length).
+    const type = result === 'completed' ? 'technician_completed' : result === 'failed' ? 'technician_failed' : 'technician_canceled';
+    // A second (or racing) end does not overwrite the first outcome: it is
+    // refused, writes nothing, and answers 409.
+    const r = await this.sessionEvents.record(sessionId, { type, source: 'technician', receivedAt: new Date() }, {
+      actorId: actor.userId, dedupeKey: `technician:${type}`, requireApplied: true,
     });
-    if (u.count === 0) throw new ConflictException(`Session is already ${session.status.toLowerCase()}`);
+    if (!r.applied) throw new ConflictException('Session is already closed');
     const updated = await this.prisma.supportSession.findUniqueOrThrow({
       where: { id: sessionId },
-      select: { id: true, status: true, duration: true, completedAt: true },
+      select: { id: true, status: true, duration: true, completedAt: true, timingQuality: true },
     });
+    const duration = updated.duration;
 
     await this.audit.log({
       tenantId: session.tenantId,

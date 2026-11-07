@@ -2,7 +2,10 @@
 
 import { useState, useEffect, useRef, FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { authApi, platformApi } from '@/lib/api-client';
+import { authApi, platformApi, supportRequestsApi } from '@/lib/api-client';
+import { usePermissions } from '@/lib/auth';
+import { ConfirmDialog } from '@/components/common/confirm-dialog';
+import { Copy, RefreshCw } from 'lucide-react';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -201,6 +204,8 @@ export default function SettingsPage() {
         </TabsList>
 
         <TabsContent value="general" className="mt-4 space-y-4">
+          <SupportLinkCard />
+
           <Card>
             <CardHeader><CardTitle className="text-sm">General</CardTitle></CardHeader>
             <CardContent>
@@ -611,5 +616,138 @@ export default function SettingsPage() {
 
       </Tabs>
     </div>
+  );
+}
+
+// ─── Customer support link ───────────────────────────────────────────────────
+
+/**
+ * A Business Owner's public intake link (/support/<slug>). Shown only in the
+ * person's own business: never through a technician assignment, and not for
+ * a Platform Admin with no business, since the API refuses both.
+ */
+function SupportLinkCard() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const { user, isBusinessOwner, technician, businessId } = usePermissions();
+  const [confirmRegen, setConfirmRegen] = useState(false);
+  const show = !!user && isBusinessOwner && !technician && !!businessId;
+
+  const { data: intake, isLoading, isError } = useQuery<{
+    businessId: string; businessName: string; enabled: boolean; slug: string | null; url: string | null;
+  }>({
+    queryKey: ['support-intake', businessId],
+    queryFn: () => supportRequestsApi.getIntake().then((r) => r.data?.data),
+    enabled: show,
+    retry: false,
+  });
+
+  const save = useMutation({
+    mutationFn: (v: { enabled: boolean; regenerate: boolean }) => supportRequestsApi.setIntake(v.enabled, v.regenerate),
+    onSuccess: (res, v) => {
+      qc.setQueryData(['support-intake', businessId], res.data?.data);
+      toast({
+        title: v.regenerate ? 'New link created' : v.enabled ? 'Support link turned on' : 'Support link turned off',
+        description: v.regenerate ? 'The old link no longer works.' : undefined,
+      });
+      setConfirmRegen(false);
+    },
+    onError: (e: unknown) => {
+      toast({
+        title: 'Not saved',
+        description: (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to save',
+        variant: 'destructive',
+      });
+      setConfirmRegen(false);
+    },
+  });
+
+  if (!show || isError) return null;
+
+  // The API builds the URL from FRONTEND_URL; fall back to this origin if
+  // that is unset and only the slug came back.
+  const link = intake?.url && /^https?:\/\//.test(intake.url)
+    ? intake.url
+    : intake?.slug && typeof window !== 'undefined' ? `${window.location.origin}/support/${intake.slug}` : null;
+
+  async function copy() {
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      toast({ title: 'Link copied' });
+    } catch {
+      toast({ title: 'Could not copy', description: 'Select the link and copy it.', variant: 'destructive' });
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-sm">Customer support link</CardTitle></CardHeader>
+      <CardContent className="space-y-4 text-sm">
+        <p className="text-muted-foreground">
+          A public form where your customers can ask for help without an account. Requests appear under Support Requests.
+        </p>
+        {isLoading || !intake ? (
+          <p className="text-muted-foreground">Loading…</p>
+        ) : (
+          <>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="font-medium">Accept requests from the link</p>
+                <p className="text-xs text-muted-foreground">
+                  {intake.enabled ? 'On. Anyone with the link can send a request.' : 'Off. The link shows as not active.'}
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant={intake.enabled ? 'outline' : 'default'}
+                onClick={() => save.mutate({ enabled: !intake.enabled, regenerate: false })}
+                disabled={save.isPending}
+              >
+                {intake.enabled ? 'Turn off' : 'Turn on'}
+              </Button>
+            </div>
+
+            {link && (
+              <div className="space-y-2">
+                <Label htmlFor="support-link">Link</Label>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <Input id="support-link" readOnly value={link} className="font-mono text-xs" onFocus={(e) => e.currentTarget.select()} />
+                  <Button type="button" variant="outline" size="sm" className="h-10" onClick={copy}>
+                    <Copy className="h-3.5 w-3.5 mr-1" />
+                    Copy
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-10"
+                    onClick={() => setConfirmRegen(true)}
+                    disabled={save.isPending}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5 mr-1" />
+                    New link
+                  </Button>
+                </div>
+                {!intake.enabled && (
+                  <p className="text-xs text-muted-foreground">The link is off, so it will not accept requests until you turn it on.</p>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+
+      <ConfirmDialog
+        open={confirmRegen}
+        onOpenChange={setConfirmRegen}
+        title="Create a new link?"
+        description="The current link stops working straight away. Anyone you gave it to will need the new one."
+        confirmLabel="Create new link"
+        destructive
+        loading={save.isPending}
+        onConfirm={() => intake && save.mutate({ enabled: intake.enabled, regenerate: true })}
+      />
+    </Card>
   );
 }

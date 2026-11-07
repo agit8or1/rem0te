@@ -7,8 +7,7 @@ import type { Request, Response } from 'express';
 import { EndpointsService } from './endpoints.service';
 import { TrmmResolverService } from './trmm-resolver.service';
 import { RustdeskService } from '../common/rustdesk.service';
-import { latestRustdeskVersionOr } from '../common/rustdesk-release';
-import { CreateEndpointDto, UpdateEndpointDto, AddTagDto, AddAliasDto, RedeemGrantDto } from './dto/create-endpoint.dto';
+import { CreateEndpointDto, UpdateEndpointDto, AddTagDto, AddAliasDto, RedeemGrantDto, GrantAccessDto } from './dto/create-endpoint.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
 import { RequireCapability } from '../common/decorators/require-capability.decorator';
@@ -19,6 +18,8 @@ import type { ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
 import { RateLimit } from '../common/throttling';
+import { StepUpService } from '../auth/step-up.service';
+import { SessionEventsService } from '../sessions/session-events.service';
 
 /**
  * Computers.
@@ -34,6 +35,8 @@ export class EndpointsController {
     private readonly svc: EndpointsService,
     private readonly rustdesk: RustdeskService,
     private readonly trmm: TrmmResolverService,
+    private readonly stepUp: StepUpService,
+    private readonly sessionEvents: SessionEventsService,
   ) {}
 
   @Get('connected')
@@ -61,9 +64,14 @@ export class EndpointsController {
   @HttpCode(HttpStatus.OK)
   @RequireCapability(CAP.COMPUTERS_CONNECT)
   @RateLimit(30)
-  async connect(@Actor() actor: ActorContext, @Param('id') id: string) {
+  async connect(
+    @Actor() actor: ActorContext, @Param('id') id: string,
+    @Query('supportRequestId') supportRequestId?: string,
+  ) {
     const grant = await this.svc.createConnectionGrant(actor, id);
-    const info = await this.svc.connectInfo(actor, id);
+    const info = await this.svc.connectInfo(actor, id, {
+      supportRequestId: supportRequestId ? await this.svc.supportRequestForConnect(actor, supportRequestId, id) : undefined,
+    });
     return {
       success: true,
       data: {
@@ -95,8 +103,10 @@ export class EndpointsController {
     @Actor() actor: ActorContext,
     @Param('id') id: string,
     @Res() res: Response,
+    @Query('session') reuseSessionId?: string,
   ) {
-    const info = await this.svc.connectInfo(actor, id);
+    const info = await this.svc.connectInfo(actor, id, { reuseSessionId });
+    const telemetryToken = info.sessionId ? await this.sessionEvents.issueTelemetryToken(info.sessionId) : null;
     const config = await this.rustdesk.serverConfig();
     if (!config) {
       throw new ServiceUnavailableException(
@@ -114,7 +124,10 @@ export class EndpointsController {
       // eslint-disable-next-line no-control-regex -- control chars are exactly what this strips
       endpointName: String(name).replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').slice(0, 60),
       clientDownloadUrl: `${(process.env.PUBLIC_API_URL ?? '').replace(/\/$/, '')}/api/v1/public/quick-connect/download/windows`,
-      clientVersion: await latestRustdeskVersionOr(),
+      clientVersion: await this.rustdesk.pinnedOrLatestVersion(),
+      telemetry: telemetryToken
+        ? { url: `${(process.env.PUBLIC_API_URL ?? '').replace(/\/$/, '')}/api/v1/sessions/telemetry`, token: telemetryToken }
+        : null,
     });
 
     res.setHeader('Content-Type', 'application/octet-stream');
@@ -148,8 +161,8 @@ export class EndpointsController {
   @Post(':id/access')
   @RequireCapability(CAP.USERS_MANAGE)
   @HttpCode(HttpStatus.OK)
-  async grantAccess(@Actor() actor: ActorContext, @Param('id') id: string, @Body() body: { userId: string }) {
-    return { success: true, data: await this.svc.grantAccess(actor, id, body.userId) };
+  async grantAccess(@Actor() actor: ActorContext, @Param('id') id: string, @Body() body: GrantAccessDto) {
+    return { success: true, data: await this.svc.grantAccess(actor, id, body.userId, body) };
   }
 
   @Delete(':id/access/:userId')
@@ -187,12 +200,19 @@ export class EndpointsController {
     @Actor() actor: ActorContext,
     @CurrentUser() u: JwtPayload,
     @Param('id') id: string,
+    @Req() req: Request,
   ) {
     // Revealing a persistent credential requires MFA to have been satisfied
     // on this session, for anyone who has MFA configured.
     if (u.mfaVerified === false) {
       return { success: false, message: 'MFA required to reveal a computer password' };
     }
+    // Access first, so a person with no business here is refused rather
+    // than asked to re-authenticate. Then a recent re-authentication, when
+    // configured (on by default): a permanent password outlives the session
+    // that revealed it. getPassword re-checks access itself.
+    await this.svc.assertPasswordAccess(actor, id);
+    await this.stepUp.assert(req, 'credential.reveal');
     const password = await this.svc.getPassword(actor, id);
     return { success: true, data: { hasPassword: password !== null, password } };
   }

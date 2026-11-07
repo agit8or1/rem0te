@@ -5,6 +5,186 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.20.0] — 2026-11-07 · *Switchboard*
+
+Support operations: knowing why a connection fails, what a session actually
+did, who may reach a customer's computers and for how long, how a customer
+asks for help, how RustDesk gets updated, and what is left behind when
+someone leaves. Each feature states its limits in the product and in the docs;
+the [Limitations](#limitations-in-0200) below are the honest summary.
+
+### Upgrade notes
+
+- **Migration `0020_support_operations`** adds the tables below. Run
+  `prisma migrate deploy` and regenerate the Prisma client at the target (see
+  CLAUDE.md, *A schema change needs two more steps*).
+- **Two new production dependencies**: `openid-client` 6.8.8 and
+  `@simplewebauthn/server` 14.0.3. Regenerate the target manifest with
+  `pnpm deploy:manifest` and run `npm install --omit=dev` there, or the API
+  fails to start on its next restart.
+- **New optional settings**: `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGIN` (default
+  from `FRONTEND_URL`; passkeys are bound to that host name, so set it before
+  anyone registers one), and `OIDC_ALLOW_INSECURE_LOOPBACK` (development only).
+- **The agent contract is now 0.20.0.** Every managed computer on an older
+  agent shows as outdated until *Reinstall agent* is run. That is intended:
+  connection confirmation, session counting and version pinning need the new
+  agent.
+- **`POST /sessions/:id/events` accepts only `connected` and `failed`** from
+  a browser. `client_opened` and `client_closed` now answer 400: the client
+  side cannot prove a connection, and those events now come from the launcher,
+  the Connect script and the endpoint agent, each authenticated.
+- **Step-up is on by default** for password reveal, permission changes,
+  technician management, SSO configuration and passkey changes. Scripts that
+  call those routes need `POST /auth/step-up` first (see `stepUp()` in
+  `apps/api/scripts/e2e-security-audit.mjs`).
+
+### Added
+
+- **Connection diagnostics (*Test connection*).** `GET /endpoints/:id/diagnostics`
+  runs read-only checks across the server (RustDesk settings; hbbs 21116, hbbr
+  21117, NAT test 21115), the endpoint (heartbeat, device secret, agent and
+  RustDesk versions, live hbbs registration, stored-credential state, incoming
+  sessions) and the technician's own machine. That last one comes from a
+  read-only helper `.cmd` that reports back once with a single-use token, and
+  only whitelisted fields are stored. Every check says where the fault is.
+  Every suggested fix that would change something is marked as such and never
+  runs as part of the test. `…/diagnostics/report` is a redacted text report.
+- **Session states tied to evidence.** One state machine
+  (`sessions/session-state.ts`) decides every transition, and records which
+  source may emit which event. *Client opened* never implies a connection.
+  *Connection confirmed* comes from the endpoint agent (it counts RustDesk
+  `--cm` processes, and confirms only when exactly one launch can own the
+  connection) or from the technician, recorded as theirs. Timeouts give
+  *Status unknown*, not success or failure. Duration is recorded only when it
+  was measured from a confirmed start to an observed end, and `timingQuality`
+  says how any other times were obtained. Terminal states are final: a late
+  event is stored with `applied=false` and changes nothing. The 0.19.12
+  ownership and 409 guarantees are kept and now go through the same machine
+  (`session-transitions.ts` is gone).
+- **MSP technician access.** `TechnicianAssignment` and `TechnicianGroup`:
+  per business, per capability, optionally per computer, with an optional
+  start, expiry and weekly schedule in an explicit time zone. Everything is
+  re-evaluated on every request. A technician acting in a business is never
+  its owner. The `technicians:manage` platform permission (granted only by a
+  Platform Admin) delegates management. Self-service access requests need a
+  reason and an expiry. A Business Owner can require approval for their
+  business, and can narrow a request but not widen it. A business switcher
+  (`rem0te_business` cookie / `X-Rem0te-Business`, honoured only for a
+  business reachable right now) and an *All assigned* overview, each business
+  queried with its own scope. See `docs/technicians.md`.
+- **Customer support requests.** A per-business intake link (random 16-char
+  slug; disabled and unknown links look the same), a status link that shows
+  only status and the technician's first name, and a claim / hand-off /
+  release / complete queue with optimistic concurrency. Matched computers are
+  shown only if the viewer can connect to them. Quick Connect can carry
+  `supportRequestId`. Abuse limits: 5 per minute per address, 3 open per
+  address, 25 open per business, a honeypot and a minimum fill time (both
+  answered with a fake success), and the address is stored only as a keyed
+  hash. Waiting requests expire after 24 hours; closed ones are anonymized
+  after 30 days. See `docs/support-requests.md`.
+- **Controlled RustDesk and agent updates.** Rollouts with an exact version
+  and the GitHub SHA-256 pinned at creation (or explicit signature-only), pilot
+  batches, a maintenance window, deferral during sessions, bounded retries with
+  exponential backoff, a failure threshold that pauses the rollout (also
+  checked at every batch boundary), verify timeouts with a stated reason, and a
+  per-computer history. A job succeeds only on the approved version from an
+  authenticated heartbeat plus hbbs registration, or registration recorded as
+  *unavailable*. A supported-version pin applies to every installer, Connect
+  script and Quick Connect download. Windows only. No rollback; the recovery
+  procedure is in `docs/updates.md`.
+- **Access review and offboarding.** `GET /endpoints/:id/access-review` lists
+  everyone who can connect, how, and whether it works right now (with the
+  reason if not), computed by the same rules the connect path uses.
+  Offboarding (`/offboarding`, step-up `permissions.change`) previews what will
+  be revoked and **which RustDesk credentials the person obtained** (reveals,
+  released grants, launcher redemptions; refused reveals excluded), flags other
+  computers that share a password, and then revokes. Every refusal is decided
+  before the first write. Rotations are shown live and stay *pending* until
+  each computer confirms. A Business Owner can suspend an account only if their
+  business is all it has. See `docs/offboarding.md`.
+- **SSO (OIDC) and passkeys.** Authorization code + PKCE with a browser-bound
+  `state` and a `nonce`, via `openid-client`. Accounts are matched by issuer and
+  subject only, never by email. Accounts are linked by a signed-in user after
+  step-up; provisioning is opt-in, needs a verified email that is not already
+  in use, and gives no access unless a group mapping grants exactly one
+  business as a Business User. SSO still requires the account's TOTP.
+  Passkeys use `@simplewebauthn/server` with user verification required, and
+  serve for sign-in (counts as MFA) and step-up. Challenges are single-use, and
+  a signature counter that goes backwards is refused.
+  `scripts/auth-recovery.mjs` disables SSO, removes passkeys or SSO links, and
+  signs an account out, straight from the database. See `docs/sign-in.md`.
+- **Step-up authentication** for sensitive actions: a 10-minute token bound to
+  the user and the session, earned with a password, TOTP or passkey. Access is
+  checked before step-up is asked for.
+
+### Changed
+
+- Password reveal checks access before asking for step-up. Someone with no
+  access to the computer is refused outright instead of being asked to
+  re-authenticate first.
+- `AuthService` sign-in now goes through one path (`startSession`) for
+  password, SSO and passkey, so status, lockout and TOTP rules cannot drift
+  between methods. A password login for an account with no usable password
+  answers 401 instead of throwing.
+- The four e2e suites that write fixtures refuse to run against port 3001, 443
+  or any `https://` API (from 0.19.12), and the new suites carry the same guard.
+
+### Tests
+
+All run against a scratch API and database (`API_BASE=http://127.0.0.1:3101/api/v1`):
+
+| Suite | Checks |
+|---|---|
+| `unit-session-mutations.mjs` (in CI) | 30 |
+| `e2e-session-mutations.mjs` | 43 |
+| `e2e-security-audit.mjs` | 52 |
+| `e2e-business-access.mjs` | 83 |
+| `e2e-support-requests.mjs` (new) | 47 |
+| `e2e-offboarding.mjs` (new) | 62 |
+| `e2e-sso-passkeys.mjs` (new; mock OIDC provider + software authenticator) | 70 |
+| `e2e-rollouts.mjs` (new; endpoints simulated by heartbeats) | 45 |
+
+The web app was also smoke-tested in Chromium against the same scratch stack:
+26 page loads per theme (each new page, plus the changed endpoint, sessions, settings,
+account, login and public support pages) rendered as Platform Admin, Business
+Owner, technician and anonymous visitor, in light and dark. No page crashed or
+threw, and no API call returned 5xx. The only console errors were the 404 for
+a deliberately bad support link and 403s on Business Settings, which come from
+the platform-settings calls that page already made for a Business Owner before
+0.20. This was a render check; the e2e suites above verify the behaviour.
+
+`e2e-offboarding.mjs` caught a real defect before release: a refused account
+suspension had already disabled the membership. Validation now runs before
+any write.
+
+### Limitations in 0.20.0
+
+- The desktop launcher (Rust/Tauri) is unchanged and was not rebuilt.
+- Connection confirmation is a heuristic. It counts `rustdesk.exe --cm`
+  processes, so it cannot tell two simultaneous incoming sessions apart; with
+  more than one open launch on a computer it confirms neither.
+- Staged updates are Windows-only. There is no rollback.
+- SSO was tested against a standards-compliant mock provider, not Entra ID,
+  Google, Okta or any other real one. There is no single or back-channel
+  logout and no SSO-only mode.
+- Passkeys were tested with a software authenticator, not a real browser or
+  security key.
+- The technician-side diagnostics helper and the generated PowerShell were
+  parse-checked with PowerShell on Linux but not run on a real Windows machine.
+- There is no tray shortcut for customers to open a support request; they use
+  the link.
+- Someone who holds `technicians:manage` but is not a Platform Admin cannot
+  list businesses or computers, so the technician pages ask them to paste
+  business and computer IDs. Only Business Owners and Platform Admins can
+  decide approvals.
+- Removing a technician group also removes that group's assignments. There is
+  no way to delete a pilot group or to edit a rollout after it is created, and
+  a rollout that names no computers and no businesses targets every managed
+  computer.
+- An offboarding case stays open (never marked complete) while any of its
+  computers is unrotated or the person still has access through a technician
+  group. *Pending rotations* has to be scoped to one business.
+
 ## [0.19.12] — 2026-11-06 · *Homecoming*
 
 ### Security

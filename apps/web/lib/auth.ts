@@ -23,6 +23,7 @@ export const CAP = {
   QUICK_CONNECT: 'support:quick_connect',
   SESSIONS_VIEW: 'support:sessions_view',
   HISTORY_VIEW: 'support:history_view',
+  SUPPORT_REQUESTS: 'support:requests',
   USERS_VIEW: 'users:view',
   USERS_MANAGE: 'users:manage',
   AUDIT_VIEW: 'audit:view',
@@ -41,6 +42,14 @@ export interface CurrentUser {
   /** Effective capabilities — a Business Owner already has the full set here. */
   capabilities: Capability[];
   tenantId: string | null;
+  /** The person's own business (null for MSP technicians and Platform Admins). */
+  ownBusinessId?: string | null;
+  /** Set when this request acts in a business through a technician assignment. */
+  technician?: { businessId: string; businessName: string; endpointIds: string[] | null; sources: unknown[] } | null;
+  /** Businesses the person can switch into as a technician, right now. */
+  assignedBusinesses?: { id: string; name: string }[];
+  /** e.g. 'technicians:manage'. A Platform Admin is reported as holding all. */
+  platformPermissions?: string[];
 }
 
 export async function getCurrentUser(): Promise<CurrentUser | null> {
@@ -83,5 +92,8 @@ export function usePermissions() {
     accessLevel: user?.accessLevel ?? null,
     businessId: user?.businessId ?? null,
     businessName: user?.business?.name ?? null,
+    technician: user?.technician ?? null,
+    assignedBusinesses: user?.assignedBusinesses ?? [],
+    canManageTechnicians: !!user?.isPlatformAdmin || (user?.platformPermissions ?? []).includes('technicians:manage'),
   };
 }

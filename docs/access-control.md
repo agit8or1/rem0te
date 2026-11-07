@@ -157,6 +157,35 @@ and direct-API cross-business probing in both directions.
 
 ---
 
+## MSP technicians (v0.20)
+
+A technician who supports several businesses is not a fourth level. They are
+given **technician assignments**: per business, per capability, optionally per
+computer and time-limited or scheduled, re-checked on every request. Acting in
+a customer business through an assignment, a person is never that business's
+owner, whatever they are in their own. Full rules: [technicians.md](technicians.md).
+
+The `technicians:manage` **platform permission** lets someone other than a
+Platform Admin create and revoke assignments and manage technician groups. Only
+a Platform Admin can grant it. It does not make them a Platform Admin and gives
+them no access to any business.
+
+## Step-up (v0.20)
+
+Revealing a computer password, changing permissions, managing technicians, SSO
+configuration and passkey changes need a recent re-authentication on top of a
+valid session. Access is checked first, then step-up. See
+[sign-in.md](sign-in.md#step-up).
+
+## Access review and offboarding (v0.20)
+
+Each computer lists who can reach it and why; offboarding removes a person's
+access and reports which RustDesk credentials they obtained, so those can be
+rotated. Revocation alone never changes a password someone already saw. See
+[offboarding.md](offboarding.md).
+
+---
+
 ## Quick Connect
 
 Quick Connect is a **permission, not a role**. Three things must all be true:

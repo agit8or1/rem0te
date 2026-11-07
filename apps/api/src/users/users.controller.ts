@@ -19,8 +19,11 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
+import { StepUpService } from '../auth/step-up.service';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
@@ -77,7 +80,10 @@ class SetPlatformAdminDto {
 @Controller('users')
 @UseGuards(JwtAuthGuard, CapabilitiesGuard)
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly stepUp: StepUpService,
+  ) {}
 
   // ── Self ──────────────────────────────────────────────────────────────────
   // Declared before ':userId' routes so they are not swallowed by the param.
@@ -103,9 +109,11 @@ export class UsersController {
   @Patch(':userId/platform-admin')
   async setPlatformAdmin(
     @Actor() actor: ActorContext,
+    @Req() req: Request,
     @Param('userId') userId: string,
     @Body() dto: SetPlatformAdminDto,
   ) {
+    await this.stepUp.assert(req, 'permissions.change');
     return { success: true, data: await this.usersService.setPlatformAdmin(actor, userId, dto.enabled) };
   }
 
@@ -154,9 +162,11 @@ export class UsersController {
   @RequireCapability(CAP.USERS_MANAGE)
   async setLevel(
     @Actor() actor: ActorContext,
+    @Req() req: Request,
     @Param('userId') userId: string,
     @Body() dto: SetLevelDto,
   ) {
+    await this.stepUp.assert(req, 'permissions.change');
     return { success: true, data: await this.usersService.setLevel(actor, userId, dto.level) };
   }
 
@@ -164,9 +174,11 @@ export class UsersController {
   @RequireCapability(CAP.USERS_MANAGE)
   async setCapabilities(
     @Actor() actor: ActorContext,
+    @Req() req: Request,
     @Param('userId') userId: string,
     @Body() dto: SetCapabilitiesDto,
   ) {
+    await this.stepUp.assert(req, 'permissions.change');
     return { success: true, data: await this.usersService.setCapabilities(actor, userId, dto.capabilities) };
   }
 
@@ -175,9 +187,11 @@ export class UsersController {
   @RequireCapability(CAP.USERS_MANAGE)
   async setBusiness(
     @Actor() actor: ActorContext,
+    @Req() req: Request,
     @Param('userId') userId: string,
     @Body() dto: SetBusinessDto,
   ) {
+    await this.stepUp.assert(req, 'permissions.change');
     return { success: true, data: await this.usersService.setBusiness(actor, userId, dto.businessId ?? null) };
   }
 

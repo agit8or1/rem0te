@@ -42,3 +42,11 @@ export class RedeemGrantDto {
   // 32 random bytes, hex — exactly what createConnectionGrant mints.
   @IsString() @Matches(/^[0-9a-f]{64}$/, { message: 'token is malformed' }) token!: string;
 }
+
+export class GrantAccessDto {
+  @IsString() userId!: string;
+  /** Optional access window and weekly schedule — see rbac/schedule.ts. */
+  @IsOptional() @IsString() startsAt?: string | null;
+  @IsOptional() @IsString() expiresAt?: string | null;
+  @IsOptional() schedule?: unknown;
+}

@@ -11,6 +11,17 @@ import { RequireCapability } from '../common/decorators/require-capability.decor
 import { Actor } from '../common/decorators/actor.decorator';
 import type { ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
+import { Public } from '../common/decorators/public.decorator';
+import { RateLimit } from '../common/throttling';
+import { SessionEventsService } from './session-events.service';
+import { IsIn, IsOptional, IsString, Length } from 'class-validator';
+
+class SessionTelemetryDto {
+  @IsString() @Length(48, 48) token!: string;
+  @IsIn(['launcher_acknowledged', 'client_opened', 'client_launch_failed'])
+  event!: 'launcher_acknowledged' | 'client_opened' | 'client_launch_failed';
+  @IsOptional() @IsString() @Length(0, 200) detail?: string;
+}
 
 @Controller('sessions')
 @UseGuards(JwtAuthGuard, CapabilitiesGuard)
@@ -18,7 +29,10 @@ export class SessionsController implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SessionsController.name);
   private expiryInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private readonly sessions: SessionsService) {}
+  constructor(
+    private readonly sessions: SessionsService,
+    private readonly events: SessionEventsService,
+  ) {}
 
   onModuleInit() {
     // Sweep every 5 minutes. 30 min is generous: a technician who clicks
@@ -47,6 +61,22 @@ export class SessionsController implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy() {
     if (this.expiryInterval) clearInterval(this.expiryInterval);
+  }
+
+  /**
+   * Telemetry from a Connect script on the technician's computer.
+   *
+   * Public, because the script has no session cookie; authenticated by the
+   * per-session token embedded in that script, which names exactly one
+   * session. Reports only what that script can see: it started, and whether
+   * RustDesk started. It cannot report a connection — see session-state.ts.
+   */
+  @Post('telemetry')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(30)
+  async telemetry(@Body() dto: SessionTelemetryDto) {
+    return { success: true, data: await this.events.recordScriptTelemetry(dto.token, dto.event, dto.detail) };
   }
 
   @Get()

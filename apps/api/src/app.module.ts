@@ -14,6 +14,7 @@ import { GlobalExceptionFilter } from './common/filters/global-exception.filter'
 import { PrismaModule } from './prisma/prisma.module';
 import { CommonModule } from './common/common.module';
 import { AuthModule } from './auth/auth.module';
+import { StepUpModule } from './auth/step-up.service';
 import { MfaModule } from './mfa/mfa.module';
 import { RbacModule } from './rbac/rbac.module';
 import { AuditModule } from './audit/audit.module';
@@ -23,18 +24,26 @@ import { BusinessesModule } from './businesses/businesses.module';
 import { SitesModule } from './sites/sites.module';
 import { EndpointsModule } from './endpoints/endpoints.module';
 import { SessionsModule } from './sessions/sessions.module';
+import { SessionEventsModule } from './sessions/session-events.module';
 import { LauncherModule } from './launcher/launcher.module';
 import { EnrollmentModule } from './enrollment/enrollment.module';
 import { NotesModule } from './notes/notes.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { GeoipModule } from './geoip/geoip.module';
 import { AdminModule } from './admin/admin.module';
+import { DiagnosticsModule } from './diagnostics/diagnostics.module';
+import { SupportRequestsModule } from './support-requests/support-requests.module';
+import { OffboardingModule } from './offboarding/offboarding.module';
+import { SsoModule } from './sso/sso.module';
+import { PasskeysModule } from './passkeys/passkeys.module';
+import { UpdateRolloutModule } from './admin/update-rollout.service';
 import { PublicModule } from './public/public.module';
 import { ApiKeysModule } from './apikeys/apikeys.module';
 import { PublicApiModule } from './public-api/public-api.module';
 import { PlatformModule } from './platform/platform.module';
 import { QuickConnectModule } from './quick-connect/quick-connect.module';
 import { DownloadsModule } from './downloads/downloads.module';
+import { TechniciansModule } from './technicians/technicians.module';
 
 @Module({
   imports: [
@@ -64,6 +73,7 @@ import { DownloadsModule } from './downloads/downloads.module';
     RbacModule,
     AuditModule,
     AuthModule,
+    StepUpModule,
     MfaModule,
     TenantsModule,
     UsersModule,
@@ -71,18 +81,26 @@ import { DownloadsModule } from './downloads/downloads.module';
     SitesModule,
     EndpointsModule,
     SessionsModule,
+    SessionEventsModule,
     LauncherModule,
     EnrollmentModule,
     NotesModule,
     DashboardModule,
     GeoipModule,
     AdminModule,
+    UpdateRolloutModule,
+    DiagnosticsModule,
+    SupportRequestsModule,
+    OffboardingModule,
+    SsoModule,
+    PasskeysModule,
     PublicModule,
     ApiKeysModule,
     PublicApiModule,
     PlatformModule,
     QuickConnectModule,
     DownloadsModule,
+    TechniciansModule,
   ],
   providers: [
     {

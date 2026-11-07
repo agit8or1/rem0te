@@ -440,6 +440,82 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'test-connection',
+    title: 'Test Connection and Session Status',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          Every computer&apos;s page has a <strong className="text-foreground">Test connection</strong> panel. It
+          checks the server, the computer and — with <em>Check my computer</em> — the RustDesk on your own machine,
+          and says which one is wrong. Fixes that change something are labelled; the test itself changes nothing.
+          <em> Download report</em> gives a redacted copy safe to attach to a ticket.
+        </p>
+        <p>
+          A session&apos;s status names the evidence behind it. <strong className="text-foreground">Client opened</strong>{' '}
+          means RustDesk started on your computer — not that you connected.{' '}
+          <strong className="text-foreground">Connection confirmed</strong> comes from the remote computer&apos;s agent
+          (0.20.0 or later) or from you. With no confirming or failing signal, a session reads{' '}
+          <strong className="text-foreground">Status unknown</strong>, and its duration is shown only when it was measured.
+        </p>
+        <p>
+          More in <Link href="/docs/connecting" className="underline text-foreground">Connecting</Link>.
+        </p>
+      </div>
+    ),
+  },
+  {
+    id: 'technicians-and-requests',
+    title: 'MSP Technicians and Support Requests',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          A technician can be given access to a business without belonging to it: chosen capabilities, optionally
+          only some computers, optionally only until a date or during set hours. If you have such access, the
+          business switcher at the top of the menu chooses which business you are working in, and{' '}
+          <Link href="/technician" className="underline text-foreground">All Assigned</Link> shows them all — including
+          access that is not active right now and why.
+        </p>
+        <p>
+          Customers can ask for help through their business&apos;s support link, without an account. Requests appear
+          under <Link href="/support-requests" className="underline text-foreground">Support Requests</Link>: claim
+          one, connect, and complete or hand it off.
+        </p>
+        <p>
+          More in <Link href="/docs/technicians" className="underline text-foreground">MSP technicians</Link> and{' '}
+          <Link href="/docs/support-requests" className="underline text-foreground">Support requests</Link>.
+        </p>
+      </div>
+    ),
+  },
+  {
+    id: 'sign-in-and-offboarding',
+    title: 'Sign-in, Step-up and Offboarding',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          Some actions — revealing a computer password, changing permissions, managing technicians, SSO and passkey
+          changes — ask you to <strong className="text-foreground">confirm it&apos;s you</strong> with your password, an
+          authenticator code or a passkey. It lasts 10 minutes for that sign-in.
+        </p>
+        <p>
+          You can add passkeys and link a single sign-on provider from{' '}
+          <Link href="/account" className="underline text-foreground">My Account</Link>. Password sign-in always remains
+          available.
+        </p>
+        <p>
+          When someone leaves, <strong className="text-foreground">Offboarding</strong> removes their access and lists
+          which RustDesk passwords they had. Removing access does <strong className="text-foreground">not</strong>{' '}
+          change a password someone already saw — rotate those computers&apos; credentials. A rotation stays pending until
+          the computer checks in and confirms it.
+        </p>
+        <p>
+          More in <Link href="/docs/sign-in" className="underline text-foreground">Sign-in</Link> and{' '}
+          <Link href="/docs/offboarding" className="underline text-foreground">Offboarding</Link>.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'access-control',
     title: 'Access Control',
     content: (

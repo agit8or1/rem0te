@@ -136,18 +136,62 @@ export class AuthService {
       );
     }
 
-    if (!user.passwordHash) {
+    // `!…` marks an account with no password at all (provisioned through SSO).
+    if (!user.passwordHash || user.passwordHash.startsWith('!')) {
+      await this.audit.log({ action: 'LOGIN_FAILURE', actorId: user.id, actorIp: ip, meta: { reason: 'no_password' } });
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const valid = await argon2.verify(user.passwordHash, dto.password);
+    const valid = await argon2.verify(user.passwordHash, dto.password).catch(() => false);
     if (!valid) {
       await this.audit.log({ action: 'LOGIN_FAILURE', actorId: user.id, actorIp: ip, meta: { reason: 'invalid_password' } });
       await this.recordLoginFailure(user.id, ip);
       throw new UnauthorizedException('Invalid credentials');
     }
     this.clearLoginFailures(user.id);
+    return this.startSession(user, ip, userAgent, { method: 'password', mfaSatisfied: false });
+  }
 
+  /**
+   * Refuse a sign-in for an account that may not have one. Shared by every
+   * sign-in method, so SSO and passkeys can never reach a suspended account.
+   */
+  assertMaySignIn(user: { status: string }): void {
+    if (user.status === 'SUSPENDED') throw new UnauthorizedException('Account is suspended');
+    if (user.status === 'INVITED') throw new UnauthorizedException('Account setup not complete. Check your invitation email.');
+    if (user.status !== 'ACTIVE') throw new UnauthorizedException('Invalid credentials');
+  }
+
+  /**
+   * Sign in a user whose identity another method already proved (SSO, a
+   * passkey). The account rules are the same as for a password: status, then
+   * TOTP where the account has it or the tenant requires it — unless the
+   * method itself satisfied multi-factor (a user-verified passkey).
+   */
+  async signInVerifiedUser(userId: string, ip: string, userAgent: string, method: 'sso' | 'passkey', mfaSatisfied: boolean) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        memberships: { where: { isActive: true }, include: { tenant: { select: { id: true, name: true, slug: true } }, role: true } },
+        mfaMethods: { where: { type: 'TOTP', isActive: true } },
+      },
+    });
+    if (!user) throw new UnauthorizedException('Invalid credentials');
+    this.assertMaySignIn(user);
+    const locked = this.lockedFor(user.id);
+    if (locked > 0) throw new UnauthorizedException(`Too many failed sign-in attempts. Try again in ${Math.ceil(locked / 60)} minute(s).`);
+    return this.startSession(user, ip, userAgent, { method, mfaSatisfied });
+  }
+
+  private async startSession(
+    user: {
+      id: string; email: string; firstName: string | null; lastName: string | null; isPlatformAdmin: boolean; sessionsValidAfter?: Date | null;
+      memberships: { tenantId: string; customerId: string | null; capabilities: string[]; role: { type: unknown } }[];
+      mfaMethods: unknown[];
+    },
+    ip: string, userAgent: string,
+    opts: { method: 'password' | 'sso' | 'passkey'; mfaSatisfied: boolean },
+  ) {
     let tenantId: string | null = null;
     let roleType = null;
     let businessId: string | null = null;
@@ -159,7 +203,12 @@ export class AuthService {
       roleType = user.memberships[0].role.type;
       businessId = user.memberships[0].customerId ?? null;
       capabilities = user.memberships[0].capabilities ?? [];
-    } else if (user.memberships.length === 0 && user.isPlatformAdmin) {
+    } else if (user.memberships.length === 0) {
+      // Platform admins, and MSP technicians whose access is entirely through
+      // technician assignments, have no membership. The JWT strategy decides
+      // per request whether there is anything to act on; a user with neither
+      // a membership, an assignment nor a platform permission is refused
+      // there on the very first request.
       // Platform admins don't need a membership. Rem0te has one platform
       // operator; the businesses it manages are Customer rows. Fall back to
       // the platform container so an admin can create and manage businesses
@@ -189,7 +238,7 @@ export class AuthService {
       requireMfa = settings?.requireMfa ?? false;
     }
 
-    if (hasTotpMethod || requireMfa) {
+    if (!opts.mfaSatisfied && (hasTotpMethod || requireMfa)) {
       const partialToken = this.jwtService.sign(
         {
           sub: user.id, email: user.email, tenantId, roleType,
@@ -204,7 +253,7 @@ export class AuthService {
     await this.audit.log({
       action: 'LOGIN_SUCCESS', actorId: user.id,
       tenantId: tenantId ?? undefined, customerId: businessId ?? undefined,
-      actorIp: ip, actorAgent: userAgent,
+      actorIp: ip, actorAgent: userAgent, meta: { method: opts.method },
     });
 
     return {
@@ -366,8 +415,8 @@ export class AuthService {
     if (!newPassword || newPassword.length < 12) throw new BadRequestException('Password must be at least 12 characters');
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('User not found');
-    if (!user.passwordHash) throw new BadRequestException('No password set on this account');
-    const valid = await argon2.verify(user.passwordHash, currentPassword);
+    if (!user.passwordHash || user.passwordHash.startsWith('!')) throw new BadRequestException('No password set on this account');
+    const valid = await argon2.verify(user.passwordHash, currentPassword).catch(() => false);
     if (!valid) throw new UnauthorizedException('Current password is incorrect');
     const passwordHash = await argon2.hash(newPassword);
     const sessionsValidAfter = revocationInstant();
@@ -390,6 +439,36 @@ export class AuthService {
       { ...user, sessionsValidAfter }, tenantId, membership?.role.type ?? null, membership?.customerId ?? null, membership?.capabilities ?? [],
     );
     return { success: true, accessToken };
+  }
+
+  /**
+   * Re-authenticate an already signed-in user for a sensitive action.
+   * Password or a TOTP code; passkeys go through PasskeysController.
+   * Failures count toward the same lockout as sign-in.
+   */
+  async verifyStepUp(userId: string, input: { password?: string; totpCode?: string }, ip: string): Promise<string> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, passwordHash: true, status: true } });
+    if (!user || user.status !== 'ACTIVE') throw new UnauthorizedException('Account is not active');
+    const locked = this.lockedFor(user.id);
+    if (locked > 0) throw new UnauthorizedException(`Too many failed attempts. Try again in ${Math.ceil(locked / 60)} minute(s).`);
+
+    let ok = false;
+    let method = '';
+    if (input.totpCode) {
+      ok = await this.mfaService.verifyTotp(user.id, input.totpCode);
+      method = 'totp';
+    } else if (input.password) {
+      ok = !!user.passwordHash && await argon2.verify(user.passwordHash, input.password).catch(() => false);
+      method = 'password';
+    }
+    if (!ok) {
+      await this.recordLoginFailure(user.id, ip);
+      await this.audit.log({ action: 'STEP_UP_FAILED', actorId: user.id, actorIp: ip, meta: { method: method || 'none' } });
+      throw new UnauthorizedException('That did not match. Try again.');
+    }
+    this.clearLoginFailures(user.id);
+    await this.audit.log({ action: 'STEP_UP_VERIFIED', actorId: user.id, actorIp: ip, meta: { method } });
+    return method;
   }
 
   async revokeSessions(userId: string): Promise<void> {

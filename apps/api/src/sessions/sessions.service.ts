@@ -1,16 +1,15 @@
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
-import { SessionStatus, Prisma } from '@prisma/client';
+import { SessionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
 import { CreateSessionDto, CompleteSessionDto, SessionEventDto } from './dto/create-session.dto';
-import {
-  CLOSE_FROM, EVENT_NAME_RE, EVENT_TRANSITIONS, OPEN_STATUSES, isTerminal,
-} from './session-transitions';
+import { SessionEventsService } from './session-events.service';
+import { STATUS_LABEL, TERMINAL, type SessionStatusValue } from './session-state';
 
-/** Thrown inside a transaction to roll it back when a conditional write matched nothing. */
-class TransitionRefused extends Error {}
+/** Event names: plain identifiers, so they render inertly in the timeline. */
+const EVENT_NAME_RE = /^[a-z][a-z0-9_]{0,63}$/;
 
 /**
  * Support sessions.
@@ -25,6 +24,7 @@ export class SessionsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly acl: AccessControlService,
+    private readonly events: SessionEventsService,
   ) {}
 
   /**
@@ -155,16 +155,10 @@ export class SessionsService {
 
     const endpoint = await this.acl.assertEndpointInScope(actor, dto.endpointId!);
 
-    // Owners and admins may reach any computer in scope; everyone else needs
-    // a standing grant or a COMPANY_WIDE computer in their own business.
-    if (!this.acl.isBusinessOwner(actor)) {
-      const access = await this.prisma.computerAccess.findFirst({
-        where: { endpointId: endpoint.id, userId: actor.userId },
-        select: { id: true },
-      });
-      const authorized = !!access
-        || (endpoint.accessMode === 'COMPANY_WIDE' && endpoint.customerId === actor.businessId);
-
+    // Owners and admins may reach any computer in scope; technicians their
+    // assignment's; everyone else needs an active grant or COMPANY_WIDE.
+    {
+      const authorized = await this.acl.canReachEndpoint(actor, endpoint);
       if (!authorized) {
         await this.audit.log({
           tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
@@ -204,230 +198,204 @@ export class SessionsService {
     return session;
   }
 
+  /**
+   * The technician closes a session out. Their notes, disposition and any
+   * manually entered work time are kept on the row; the measured connection
+   * duration is NOT computed from this — a technician's click is a report,
+   * not a measurement (see session-state.ts).
+   */
   async complete(actor: ActorContext, id: string, dto: CompleteSessionDto) {
     const session = await this.loadForMutation(actor, id);
-    if (isTerminal(session.status)) {
-      throw new ConflictException(`Session is already ${session.status.toLowerCase()}`);
+    if (TERMINAL.includes(session.status as SessionStatusValue)) {
+      throw new ConflictException(`Session is already ${STATUS_LABEL[session.status as SessionStatusValue].toLowerCase()}`);
     }
-
-    const now = new Date();
-    const duration = session.startedAt
-      ? Math.round((now.getTime() - session.startedAt.getTime()) / 1000)
-      : null;
-
-    // Conditional on still being open: a concurrent close (or the sweeper)
-    // that got there first wins, and this one changes nothing.
-    const u = await this.prisma.supportSession.updateMany({
-      where: { id, status: { in: [...CLOSE_FROM] } },
+    // The transition first, refusing rather than recording if it no longer
+    // applies (a racing close won): then nothing at all is written, notes
+    // included.
+    const r = await this.events.record(id, { type: 'technician_completed', source: 'technician', receivedAt: new Date() }, {
+      actorId: actor.userId, dedupeKey: 'technician:completed', requireApplied: true,
+    });
+    if (!r.applied) throw new ConflictException('Session was closed by another request');
+    await this.prisma.supportSession.update({
+      where: { id },
       data: {
-        status: SessionStatus.SESSION_COMPLETED,
-        completedAt: now,
-        duration: duration ?? undefined,
         notes: dto.notes ?? undefined,
         disposition: dto.disposition ?? undefined,
+        ...(dto.manualWorkMinutes !== undefined ? { manualWorkMinutes: dto.manualWorkMinutes } : {}),
       },
     });
-    if (u.count === 0) throw new ConflictException('Session was closed by another request');
-
     await this.audit.log({
       tenantId: session.tenantId, customerId: session.customerId ?? undefined,
       actorId: actor.userId, actorIp: actor.ip,
       action: 'SESSION_COMPLETED', resource: 'support_session', resourceId: id,
-      meta: { disposition: dto.disposition, duration },
+      meta: { disposition: dto.disposition, manualWorkMinutes: dto.manualWorkMinutes ?? null, applied: r.applied },
     });
-
     return this.prisma.supportSession.findUnique({ where: { id } });
   }
 
   async cancel(actor: ActorContext, id: string) {
     const session = await this.loadForMutation(actor, id);
-    if (isTerminal(session.status)) {
-      throw new ConflictException(`Session is already ${session.status.toLowerCase()}`);
+    if (TERMINAL.includes(session.status as SessionStatusValue)) {
+      throw new ConflictException(`Session is already ${STATUS_LABEL[session.status as SessionStatusValue].toLowerCase()}`);
     }
-
-    const u = await this.prisma.supportSession.updateMany({
-      where: { id, status: { in: [...CLOSE_FROM] } },
-      data: { status: SessionStatus.CANCELED, completedAt: new Date() },
+    const r = await this.events.record(id, { type: 'technician_canceled', source: 'technician', receivedAt: new Date() }, {
+      actorId: actor.userId, dedupeKey: 'technician:canceled', requireApplied: true,
     });
-    if (u.count === 0) throw new ConflictException('Session was closed by another request');
-
+    if (!r.applied) throw new ConflictException('Session was closed by another request');
     await this.audit.log({
       tenantId: session.tenantId, customerId: session.customerId ?? undefined,
       actorId: actor.userId, actorIp: actor.ip,
       action: 'SESSION_CANCELED', resource: 'support_session', resourceId: id,
     });
-
     return this.prisma.supportSession.findUnique({ where: { id } });
   }
 
   /**
-   * Record a technician event.
+   * Events a signed-in technician may report from the browser.
    *
-   * State events (see EVENT_TRANSITIONS) move the session only forward and
-   * only from the states listed for them; anything else is refused with 409
-   * and writes nothing. Other event names are timeline annotations and are
-   * accepted only while the session is open. A closed session takes no new
-   * events of any kind.
+   * Only what a person can actually know: that they are connected (their
+   * word, recorded as source "technician"), or that it failed. The old
+   * `client_opened` / `client_closed` events are refused — a browser cannot
+   * observe either, and `client_closed` used to complete a session with a
+   * duration measured from the credential release.
    *
-   * The status write and the event row are one transaction, and the write is
-   * conditional on the from-state, so a racing close cannot slip between the
-   * check and the write, and a refused transition leaves no orphan event row.
+   * Authorization is the write check (`loadForMutation`), never the read
+   * scope, and a report that does not apply to the session's current state
+   * is a 409 that writes nothing (see 0.19.12).
    */
   async addEvent(actor: ActorContext, sessionId: string, dto: SessionEventDto) {
     if (typeof dto.event !== 'string' || !EVENT_NAME_RE.test(dto.event)) {
       throw new BadRequestException('event must be a lower-case identifier');
     }
+    const map: Record<string, 'connection_confirmed' | 'technician_failed'> = {
+      connected: 'connection_confirmed',
+      failed: 'technician_failed',
+    };
     const session = await this.loadForMutation(actor, sessionId);
-    if (isTerminal(session.status)) {
-      throw new ConflictException(`Session is already ${session.status.toLowerCase()}`);
+    if (TERMINAL.includes(session.status as SessionStatusValue)) {
+      throw new ConflictException(`Session is already ${STATUS_LABEL[session.status as SessionStatusValue].toLowerCase()}`);
     }
-
-    const transition = EVENT_TRANSITIONS[dto.event];
-    const now = new Date();
-    try {
-      return await this.prisma.$transaction(async (tx) => {
-        let u;
-        if (!transition) {
-          // Annotation: changes no status, but takes the row lock so it
-          // cannot land after a concurrent close commits.
-          u = await tx.supportSession.updateMany({
-            where: { id: sessionId, status: { in: [...OPEN_STATUSES] } },
-            data: { updatedAt: now },
-          });
-        } else if (transition.to === SessionStatus.CLIENT_OPENED) {
-          u = await tx.supportSession.updateMany({
-            where: { id: sessionId, status: { in: [...transition.from] } },
-            data: { status: SessionStatus.CLIENT_OPENED, startedAt: now },
-          });
-        } else {
-          // client_closed. startedAt is re-read under the lock the update
-          // takes, so the duration matches the start that was recorded.
-          const cur = await tx.supportSession.findUnique({ where: { id: sessionId }, select: { startedAt: true } });
-          const duration = cur?.startedAt ? Math.round((now.getTime() - cur.startedAt.getTime()) / 1000) : null;
-          u = await tx.supportSession.updateMany({
-            where: { id: sessionId, status: { in: [...transition.from] } },
-            data: { status: transition.to, completedAt: now, duration: duration ?? undefined },
-          });
-        }
-        if (u.count === 0) throw new TransitionRefused();
-        return tx.supportSessionEvent.create({
-          data: {
-            supportSessionId: sessionId,
-            event: dto.event,
-            metadata: dto.metadata ? (dto.metadata as Prisma.InputJsonValue) : undefined,
-          },
-        });
-      });
-    } catch (e) {
-      if (e instanceof TransitionRefused) {
-        throw new ConflictException(`Event ${dto.event} does not apply to this session in its current state`);
-      }
-      throw e;
+    const type = map[dto.event];
+    if (!type) {
+      throw new BadRequestException('Unsupported event. A technician can report "connected" or "failed".');
     }
+    const r = await this.events.record(sessionId, { type, source: 'technician', receivedAt: new Date() }, {
+      actorId: actor.userId, dedupeKey: `technician:${type}`, requireApplied: true,
+      metadata: dto.metadata ? { note: String((dto.metadata as { note?: unknown }).note ?? '').slice(0, 200) } : undefined,
+    });
+    if (!r.applied) {
+      throw new ConflictException(`"${dto.event}" does not apply to this session in its current state`);
+    }
+    return r;
   }
 
   async getStats(actor: ActorContext, days = 30, businessId?: string) {
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const scope = this.sessionScope(actor, businessId);
 
-    const [total, completed, active, canceled, avgDuration] = await Promise.all([
+    const [total, completed, confirmedActive, launchedUnconfirmed, canceled, unknown, failed, measured] = await Promise.all([
       this.prisma.supportSession.count({ where: { ...scope, createdAt: { gte: since } } }),
       this.prisma.supportSession.count({ where: { ...scope, status: SessionStatus.SESSION_COMPLETED, createdAt: { gte: since } } }),
-      this.prisma.supportSession.count({ where: { ...scope, status: { notIn: [SessionStatus.SESSION_COMPLETED, SessionStatus.FAILED, SessionStatus.CANCELED] } } }),
+      this.prisma.supportSession.count({ where: { ...scope, status: SessionStatus.SESSION_STARTED } }),
+      this.prisma.supportSession.count({
+        where: { ...scope, status: { in: [SessionStatus.LAUNCH_REQUESTED, SessionStatus.LAUNCHER_ACKNOWLEDGED, SessionStatus.CLIENT_OPENED] } },
+      }),
       this.prisma.supportSession.count({ where: { ...scope, status: SessionStatus.CANCELED, createdAt: { gte: since } } }),
+      this.prisma.supportSession.count({ where: { ...scope, status: SessionStatus.STATUS_UNKNOWN, createdAt: { gte: since } } }),
+      this.prisma.supportSession.count({ where: { ...scope, status: SessionStatus.FAILED, createdAt: { gte: since } } }),
+      // Only MEASURED rows: confirmed start and observed end, both from the
+      // endpoint. Legacy, reported and inferred timings never enter an average.
       this.prisma.supportSession.aggregate({
-        where: { ...scope, status: SessionStatus.SESSION_COMPLETED, duration: { not: null }, createdAt: { gte: since } },
+        where: { ...scope, timingQuality: 'MEASURED', duration: { not: null }, createdAt: { gte: since } },
         _avg: { duration: true },
+        _count: { duration: true },
       }),
     ]);
 
     return {
       total,
       completed,
-      active,
+      // "active" used to be every row not completed/failed/canceled, which
+      // counted every unconfirmed launch as a live session.
+      active: confirmedActive,
+      confirmedActive,
+      launchedUnconfirmed,
       canceled,
-      avgDurationSeconds: Math.round(avgDuration._avg?.duration ?? 0),
+      unknown,
+      failed,
+      avgDurationSeconds: measured._count.duration > 0 ? Math.round(measured._avg?.duration ?? 0) : null,
+      measuredSessions: measured._count.duration,
       periodDays: days,
     };
   }
 
   /**
-   * Fail sessions that were launched but whose client never opened.
+   * Close out launches that never produced a confirming or failing signal.
    *
-   * `create` writes a session as PENDING and only `addEvent` moves it to
-   * CLIENT_OPENED, so every Connect click that does not end in a working
-   * RustDesk connection leaves a row behind. getStats counts "active" as
-   * anything not in (SESSION_COMPLETED, FAILED, CANCELED), so those rows are
-   * reported as live sessions forever — ten failed clicks read as ten active
-   * sessions against a single endpoint.
+   * This used to mark them FAILED. That was a guess dressed as a verdict: a
+   * launch from a technician whose computer simply does not report back (an
+   * older Connect script, a launcher that only acknowledges) may well have
+   * connected. They are STATUS_UNKNOWN now, flagged as an inferred closure,
+   * with no end time and no duration.
    *
-   * Only sessions that never opened a client are expired: startedAt is still
-   * null, which rules out a genuinely long-running session a technician is
-   * still sitting in. CLIENT_OPENED and later are left alone deliberately —
-   * a real session has no upper bound we can guess at safely.
+   *   launched / acknowledged, nothing for 30 minutes   → unknown
+   *   client opened, never confirmed, for 12 hours      → unknown
    */
   async expireStaleSessions(thresholdMinutes = 30) {
-    const cutoff = new Date(Date.now() - thresholdMinutes * 60 * 1000);
-    const result = await this.prisma.supportSession.updateMany({
+    const now = Date.now();
+    const early = await this.prisma.supportSession.findMany({
       where: {
-        startedAt: null,
-        createdAt: { lt: cutoff },
-        // Ad-hoc rows are typed in by a person to record work against a machine
-        // that is not enrolled; nothing ever "opens a client" for them, so
-        // failing them just relabels every manual record as a failure. They are
-        // completed or cancelled by hand.
         isAdHoc: false,
-        status: {
-          in: [
-            SessionStatus.PENDING,
-            SessionStatus.LAUNCH_REQUESTED,
-            SessionStatus.LAUNCHER_ACKNOWLEDGED,
-          ],
-        },
+        status: { in: [SessionStatus.PENDING, SessionStatus.LAUNCH_REQUESTED, SessionStatus.LAUNCHER_ACKNOWLEDGED] },
+        createdAt: { lt: new Date(now - thresholdMinutes * 60_000) },
       },
-      data: { status: SessionStatus.FAILED, completedAt: new Date() },
+      select: { id: true },
+      take: 500,
     });
-    return result.count;
+    const opened = await this.prisma.supportSession.findMany({
+      where: {
+        status: SessionStatus.CLIENT_OPENED,
+        createdAt: { lt: new Date(now - 12 * 3600_000) },
+      },
+      select: { id: true },
+      take: 500,
+    });
+    let n = 0;
+    for (const s of [...early, ...opened]) {
+      const r = await this.events.record(s.id, { type: 'timeout_unknown', source: 'timeout', receivedAt: new Date() }, { dedupeKey: 'timeout:unknown' });
+      if (r.applied) n++;
+    }
+    return n;
   }
 
   /**
-   * Close out sessions that opened a client and were never heard from again.
+   * Close confirmed sessions nothing has reported on for a long time.
    *
-   * There is no signal that a RustDesk session ended. Rem0te hands out a
-   * credential and RustDesk carries the session; hbbs logs nothing for a
-   * connect, let alone a disconnect. So a row promoted to CLIENT_OPENED has
-   * nothing that will ever move it on, and `getStats` counts "active" as
-   * anything not in (SESSION_COMPLETED, FAILED, CANCELED) — which made every
-   * Connect click in the platform's history a permanently live session.
-   * Clicking Connect four times in one minute read as four ongoing sessions,
-   * and yesterday's read as ongoing too.
-   *
-   * `expireStaleSessions` deliberately does not touch these, and should not:
-   * those are clicks that never reached a client at all, and failing them is
-   * the right verdict. This one is the opposite case — a session that did
-   * start, and whose end we can only infer from time passing. It is recorded
-   * as completed rather than failed for that reason, and the threshold is
-   * generous on purpose: the cost of closing one early is a technician's
-   * genuinely-long session being marked done underneath them, which is worse
-   * than a stale row.
-   *
-   * `duration` is left null. We know when it started and we are guessing when
-   * it stopped, so writing a number here would put a fabricated figure into
-   * the average session length on the stats page.
+   * A session confirmed by the endpoint agent is re-confirmed on every
+   * heartbeat while it lasts, so one silent for an hour has an endpoint that
+   * stopped reporting; one confirmed by the technician has no such signal and
+   * gets 12 hours. Either way the end is INFERRED: endedAt is the last time
+   * anything reported it alive, and no duration is recorded.
    */
   async closeAbandonedSessions(thresholdHours = 12) {
-    const cutoff = new Date(Date.now() - thresholdHours * 60 * 60 * 1000);
-    const result = await this.prisma.supportSession.updateMany({
+    const now = Date.now();
+    const rows = await this.prisma.supportSession.findMany({
       where: {
-        // Keyed on when the session actually started, not when the row was
-        // created: those differ by the whole handshake on the launcher path.
-        startedAt: { lt: cutoff, not: null },
-        completedAt: null,
-        isAdHoc: false,
-        status: { in: [SessionStatus.CLIENT_OPENED, SessionStatus.SESSION_STARTED] },
+        status: SessionStatus.SESSION_STARTED,
+        OR: [
+          { statusSource: 'endpoint_agent', lastSignalAt: { lt: new Date(now - 60 * 60_000) } },
+          { NOT: { statusSource: 'endpoint_agent' }, lastSignalAt: { lt: new Date(now - thresholdHours * 3600_000) } },
+          { lastSignalAt: null, connectionConfirmedAt: { lt: new Date(now - thresholdHours * 3600_000) } },
+        ],
       },
-      data: { status: SessionStatus.SESSION_COMPLETED, completedAt: new Date() },
+      select: { id: true },
+      take: 500,
     });
-    return result.count;
+    let n = 0;
+    for (const s of rows) {
+      const r = await this.events.record(s.id, { type: 'timeout_ended', source: 'timeout', receivedAt: new Date() }, { dedupeKey: 'timeout:ended' });
+      if (r.applied) n++;
+    }
+    return n;
   }
 }

@@ -68,6 +68,18 @@ function encrypt(text) {
 const rid = () => String(100000000 + Math.floor(Math.random() * 800000000));
 const secret = () => randomBytes(24).toString('base64url');
 
+/**
+ * Re-authenticate a signed-in cookie for step-up-protected actions (v0.20).
+ * Returns the cookie with the short-lived step_up cookie added, so the
+ * assertions behind it test the route's real rules, not the step-up gate.
+ */
+async function stepUp(cookie, password = PW) {
+  const r = await req('POST', '/auth/step-up', { cookie, body: { password } });
+  const m = r.setCookie.match(/step_up=([^;]+)/);
+  if (r.status !== 200 || !m) throw new Error(`step-up failed: ${r.status} ${JSON.stringify(r.body)}`);
+  return `${cookie}; step_up=${m[1]}`;
+}
+
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
 const created = { users: [], businesses: [], endpoints: [], rustdeskIds: [] };
@@ -250,9 +262,13 @@ try {
     const lt = await req('POST', '/launcher/token', { cookie: cEditorA, body: { endpointId: epA.id } });
     check(lt.status === 404 || lt.status === 403, 'launcher token refused without a grant', `HTTP ${lt.status}`);
     await prisma.computerAccess.create({ data: { tenantId: tenant.id, endpointId: epA.id, userId: editorA.id } });
-    const pw2 = await req('GET', `/endpoints/${epA.id}/password`, { cookie: cEditorA });
-    check(pw2.status === 200, 'password reveal allowed once granted', `HTTP ${pw2.status}`);
-    const own = await req('GET', `/endpoints/${epA.id}/password`, { cookie: cOwnerA });
+    const pwNoStep = await req('GET', `/endpoints/${epA.id}/password`, { cookie: cEditorA });
+    check(pwNoStep.status === 403 && pwNoStep.body?.code === 'STEP_UP_REQUIRED',
+      'granted reveal still asks for step-up', `HTTP ${pwNoStep.status} ${pwNoStep.body?.code}`);
+    const cEditorAUp = await stepUp(cEditorA);
+    const pw2 = await req('GET', `/endpoints/${epA.id}/password`, { cookie: cEditorAUp });
+    check(pw2.status === 200, 'password reveal allowed once granted and stepped up', `HTTP ${pw2.status}`);
+    const own = await req('GET', `/endpoints/${epA.id}/password`, { cookie: await stepUp(cOwnerA) });
     check(own.status === 200, 'Business Owner still reaches it', `HTTP ${own.status}`);
   }
 

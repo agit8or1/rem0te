@@ -48,8 +48,8 @@ export class DashboardService {
       totalSessions30d, totalSessions7d, activeSessions, pendingSessions,
       recentSessions, recentActivity, sessionsByDay,
     ] = await Promise.all([
-      canSeeComputers ? this.prisma.endpoint.count({ where: { ...businessFilter, status: 'ACTIVE' } }) : 0,
-      canSeeComputers ? this.prisma.endpoint.count({ where: { ...businessFilter, isOnline: true, status: 'ACTIVE' } }) : 0,
+      canSeeComputers ? this.prisma.endpoint.count({ where: { ...businessFilter, ...this.acl.endpointRestrictionWhere(actor), status: 'ACTIVE' } }) : 0,
+      canSeeComputers ? this.prisma.endpoint.count({ where: { ...businessFilter, ...this.acl.endpointRestrictionWhere(actor), isOnline: true, status: 'ACTIVE' } }) : 0,
 
       actor.isPlatformAdmin
         ? this.prisma.customer.count({ where: { isArchived: false } })

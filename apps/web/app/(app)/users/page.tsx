@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Check, KeyRound, Loader2, MoreHorizontal, Plus, Search, ShieldOff,
-  Trash2, UserCheck, UserCog, UserX,
+  Trash2, UserCheck, UserCog, UserMinus, UserX,
 } from 'lucide-react';
 import { businessesApi, usersApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
@@ -60,7 +61,7 @@ function fullName(u: { firstName: string; lastName: string; email: string }) {
 export default function UsersPage() {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const { isPlatformAdmin, isBusinessOwner, businessId, businessName } = usePermissions();
+  const { isPlatformAdmin, isBusinessOwner, businessId, businessName, user: me } = usePermissions();
 
   const [search, setSearch] = useState('');
   const [businessFilter, setBusinessFilter] = useState<string>('all');
@@ -299,6 +300,13 @@ export default function UsersPage() {
                             ) : (
                               <DropdownMenuItem onClick={() => setActive.mutate({ userId: m.user.id, active: true })}>
                                 <UserCheck className="mr-2 h-4 w-4" /> Restore access
+                              </DropdownMenuItem>
+                            )}
+                            {m.user.id !== me?.id && (isPlatformAdmin || !m.user.isPlatformAdmin) && (
+                              <DropdownMenuItem asChild>
+                                <Link href={`/offboarding?userId=${encodeURIComponent(m.user.id)}${isPlatformAdmin && m.business ? `&businessId=${encodeURIComponent(m.business.id)}` : ''}`}>
+                                  <UserMinus className="mr-2 h-4 w-4" /> Offboard
+                                </Link>
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuItem

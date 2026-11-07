@@ -19,7 +19,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { Public } from '../common/decorators/public.decorator';
-import { latestRustdeskVersionOr, RUSTDESK_FALLBACK_VERSION, rustdeskAssetSha256 } from '../common/rustdesk-release';
+import { RUSTDESK_FALLBACK_VERSION, rustdeskAssetSha256 } from '../common/rustdesk-release';
+import { RustdeskService } from '../common/rustdesk.service';
+import { UpdateRolloutService } from '../admin/update-rollout.service';
 
 const INSTALLER_MAGIC = Buffer.from('REM0TE_INST_URL:');
 const INSTALLER_SLOT_SIZE = 256;
@@ -77,7 +79,11 @@ export class PublicController {
     }
   }
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rustdesk: RustdeskService,
+    private readonly rollouts: UpdateRolloutService,
+  ) {}
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -185,11 +191,26 @@ export class PublicController {
     @Query('token') enrollToken: string | undefined,
     @Res() res: Response,
     @Req() req: Request,
+    @Query('updateNonce') updateNonce?: string,
   ) {
     const settings = await this.getSettings();
     const host = settings?.rustdeskRelayHost ?? null;
     const key = settings?.rustdeskPublicKey ?? null;
-    const version = await latestRustdeskVersionOr();
+    // The platform pin if one is set, else the latest release — and for an
+    // installer fetched for a rollout job, exactly that rollout's approved
+    // version and digest. The nonce is the only input that can change the
+    // version, and it names one live dispatch; an unknown nonce changes
+    // nothing. The version is never taken from the query string.
+    let version = await this.rustdesk.pinnedOrLatestVersion();
+    let pinnedSha: string | null | undefined;
+    let jobNonce: string | null = null;
+    if (platform === 'windows.ps1' && updateNonce) {
+      const job = await this.rollouts.installerFetched(updateNonce);
+      if (job) {
+        jobNonce = updateNonce;
+        if (job.component === 'RUSTDESK') { version = job.version; pinnedSha = job.sha256; }
+      }
+    }
 
     // Validate enrollment token if provided — look up by SHA-256 hash
     let validatedToken: string | undefined;
@@ -206,8 +227,8 @@ export class PublicController {
     let filename: string;
 
     if (platform === 'windows.ps1') {
-      const sha = await rustdeskAssetSha256(version, `rustdesk-${version}-x86_64.exe`);
-      script = this.buildWindowsScript(version, host, key, validatedToken, sha);
+      const sha = pinnedSha !== undefined ? pinnedSha : await rustdeskAssetSha256(version, `rustdesk-${version}-x86_64.exe`);
+      script = this.buildWindowsScript(version, host, key, validatedToken, sha, jobNonce);
       contentType = 'text/plain; charset=utf-8';
       filename = 'install-rustdesk.ps1';
     } else if (platform === 'linux.sh') {
@@ -264,12 +285,14 @@ export class PublicController {
 
   private buildWindowsScript(
     version: string, host: string | null, key: string | null, enrollToken?: string, clientSha256?: string | null,
+    updateNonce?: string | null,
   ): string {
     const hostVal = safeHost(host);
     const keyVal = safeKey(key);
     const claimToken = safeToken(enrollToken);
     version = safeVersion(version);
     const shaVal = /^[0-9a-f]{64}$/.test(clientSha256 ?? '') ? clientSha256! : '';
+    const nonceVal = /^[A-Za-z0-9_-]{16,64}$/.test(updateNonce ?? '') ? updateNonce! : '';
     // Argument for `rustdesk.exe --config`. Plain text on purpose: RustDesk
     // parses only a string containing `host=` (or a reversed-base64 licence),
     // so the plain base64 this used to send was silently ignored and an
@@ -296,6 +319,9 @@ $RD_SHA256     = '${shaVal}'
 # heartbeat so the console can tell an agent too old to collect anything from a
 # machine that simply has not been asked yet.
 $AGENT_VERSION = '${this.agentVersion()}'
+# Nonce of the staged update this install is for, or empty. Echoed on every
+# heartbeat so the server can verify which install actually ran.
+$UPDATE_NONCE  = '${nonceVal}'
 
 $RDEXE = 'C:\\Program Files\\RustDesk\\rustdesk.exe'
 $LOGDIR = 'C:\\ProgramData\\Rem0te\\Logs'
@@ -893,7 +919,10 @@ $hbFile = "$STATEDIR\\heartbeat.dat"
 # --password change on the endpoint) desyncs and one-click Connect stops
 # working because the server sends the browser an outdated password.
 # File is chmod 600 to SYSTEM+Administrators only.
-$hbPayload = [PSCustomObject]@{ host = $REM0TE_HOST; password = $PERM_PW; agentSecret = $AGENT_SECRET; agentVersion = $AGENT_VERSION } | ConvertTo-Json -Compress
+$hbState = [ordered]@{ host = $REM0TE_HOST; password = $PERM_PW; agentSecret = $AGENT_SECRET; agentVersion = $AGENT_VERSION }
+# Set only when this install was run for a staged update (see UPDATE_NONCE).
+if ($UPDATE_NONCE) { $hbState['updateNonce'] = $UPDATE_NONCE }
+$hbPayload = [PSCustomObject]$hbState | ConvertTo-Json -Compress
 try { Set-Content -Path $hbFile -Value $hbPayload -Encoding UTF8; icacls $hbFile /inheritance:r /grant:r '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' *>$null } catch {}
 
 $hbScript = "$STATEDIR\\heartbeat.ps1"
@@ -924,6 +953,17 @@ try {
 # Include the current password so the server can keep its encrypted copy in
 # sync (needed for one-click Connect after any endpoint-side password change).
 if (\$state.password) { \$body['password'] = \$state.password }
+# Incoming RustDesk sessions right now. RustDesk starts one 'rustdesk.exe --cm'
+# connection-manager process per interactive session while someone is
+# connected, and none otherwise. The server uses this ONLY to confirm or end a
+# launch against this machine - it says that someone is connected, never who.
+try {
+    \$cmProcs = @(Get-CimInstance Win32_Process -Filter "Name='rustdesk.exe'" -ErrorAction Stop | Where-Object { \$_.CommandLine -match '--cm' })
+    \$body['rustdeskSessions'] = [int]\$cmProcs.Count
+} catch {}
+# The update this machine last installed, echoed back so the server can tie
+# the result to that rollout job. Written by the installer when it ran for one.
+if (\$state.updateNonce) { \$body['updateNonce'] = [string]\$state.updateNonce }
 # Live session state: who is at the console, and how long this machine has been
 # up. Two CIM queries, cheap enough to send on every beat, and they are the
 # first two things a technician looks at before connecting. The empty string is
@@ -1194,6 +1234,11 @@ try {
                 \$state | ConvertTo-Json -Compress | Set-Content \$STATE_FILE -Encoding UTF8
             } catch {}
             \$iu = 'https://' + \$state.host + '/api/v1/public/install/windows.ps1'
+            # A staged rollout names its job with a nonce. The server serves
+            # the exact approved version (and digest) for that nonce and no
+            # other, and the installer writes the nonce into heartbeat.dat so
+            # the next heartbeats prove which install ran.
+            if (\$upd.nonce -and ([string]\$upd.nonce -match '^[A-Za-z0-9_-]{16,64}\$')) { \$iu = \$iu + '?updateNonce=' + [string]\$upd.nonce }
             try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm '\$iu' | iex" *>\$null } catch {}
         }
     }

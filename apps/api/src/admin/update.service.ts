@@ -722,7 +722,12 @@ export class UpdateService {
     endpointIds: string[] | null,
     actor: { userId?: string; ip?: string },
   ) {
-    const latest = await latestRustdeskVersion();
+    // A supported-version pin wins over "latest": this one-click path must
+    // never stage a release newer than the one the operator approved.
+    const pin = (await this.prisma.platformSettings.findUnique({
+      where: { id: 'singleton' }, select: { rustdeskPinnedVersion: true },
+    }))?.rustdeskPinnedVersion ?? null;
+    const latest = pin ?? await latestRustdeskVersion();
     if (!latest) throw new NotFoundException('Latest RustDesk version is unavailable right now');
 
     const nodes = await this.prisma.rustdeskNode.findMany({

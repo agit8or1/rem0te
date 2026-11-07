@@ -29,6 +29,8 @@ export const CAP = {
   QUICK_CONNECT: 'support:quick_connect',
   SESSIONS_VIEW: 'support:sessions_view',
   HISTORY_VIEW: 'support:history_view',
+  // Seeing and working the support-request queue (claim, hand off, close).
+  SUPPORT_REQUESTS: 'support:requests',
 
   // Users
   USERS_VIEW: 'users:view',
@@ -75,6 +77,7 @@ export const CAPABILITY_GROUPS: {
       { key: CAP.QUICK_CONNECT, label: 'Use Quick Connect', description: 'Connect to a one-off computer using an ID and password the remote person reads out.' },
       { key: CAP.SESSIONS_VIEW, label: 'View active sessions', description: 'See sessions currently in progress.' },
       { key: CAP.HISTORY_VIEW, label: 'View session history', description: 'See past sessions for this business.' },
+      { key: CAP.SUPPORT_REQUESTS, label: 'Handle support requests', description: 'See the support request queue, claim requests, hand them off and close them.' },
     ],
   },
   {
@@ -113,6 +116,22 @@ export const LEGACY_OWNER_ROLES: RoleType[] = [RoleType.TENANT_OWNER, RoleType.T
 export function isOwnerRole(roleType: RoleType | null | undefined): boolean {
   if (!roleType) return false;
   return roleType === RoleType.BUSINESS_OWNER || LEGACY_OWNER_ROLES.includes(roleType);
+}
+
+/**
+ * What a technician assignment may grant inside a customer business.
+ *
+ * Everything except `users:manage`: administering who in the customer's own
+ * business has access is the customer's job (and Business Owner's), and an
+ * MSP technician who could edit the business's users could also hand
+ * themselves — or anyone in that business — access the assignment never gave.
+ */
+export const TECHNICIAN_ASSIGNABLE_CAPABILITIES: Capability[] =
+  ALL_BUSINESS_CAPABILITIES.filter((c) => c !== CAP.USERS_MANAGE);
+
+export function sanitizeTechnicianCapabilities(input: unknown): Capability[] {
+  const allowed = new Set<string>(TECHNICIAN_ASSIGNABLE_CAPABILITIES);
+  return sanitizeCapabilities(input).filter((c) => allowed.has(c));
 }
 
 /** Reject anything that is not a known capability before it reaches the database. */

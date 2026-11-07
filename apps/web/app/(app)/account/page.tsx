@@ -1,8 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect, useSyncExternalStore } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { authApi, mfaApi } from '@/lib/api-client';
+import { authApi, mfaApi, passkeysApi, ssoApi } from '@/lib/api-client';
+import { createPasskey, passkeysSupported, errorMessage } from '@/lib/webauthn';
+import { ssoErrorMessage } from '@/lib/sso-errors';
+import { ConfirmDialog } from '@/components/common/confirm-dialog';
+import { formatDate } from '@/lib/utils';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,7 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
-import { ShieldCheck, ShieldOff, KeyRound, User, Copy, Check } from 'lucide-react';
+import { ShieldCheck, ShieldOff, KeyRound, User, Copy, Check, Fingerprint, Link2, CheckCircle2, AlertTriangle, X } from 'lucide-react';
 import Image from 'next/image';
 
 // ─── Profile Tab ────────────────────────────────────────────────────────────
@@ -401,22 +406,278 @@ function MfaTab() {
   );
 }
 
+// ─── Passkeys Tab ────────────────────────────────────────────────────────────
+
+interface PasskeyRow { id: string; name: string | null; createdAt: string; lastUsedAt: string | null }
+
+const noSubscribe = () => () => {};
+
+function PasskeysTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  // false on the server and the first client render, so hydration matches.
+  const supported = useSyncExternalStore(noSubscribe, passkeysSupported, () => false);
+  const [name, setName] = useState('');
+  const [removing, setRemoving] = useState<PasskeyRow | null>(null);
+
+  const { data: passkeys = [], isLoading } = useQuery<PasskeyRow[]>({
+    queryKey: ['passkeys'],
+    queryFn: () => passkeysApi.list().then((r) => r.data?.data ?? []),
+  });
+
+  const add = useMutation({
+    mutationFn: async () => {
+      const opts = (await passkeysApi.registerOptions()).data?.data;
+      const response = await createPasskey(opts);
+      return passkeysApi.register(response, name.trim() || undefined);
+    },
+    onSuccess: () => {
+      setName('');
+      qc.invalidateQueries({ queryKey: ['passkeys'] });
+      toast({ title: 'Passkey added' });
+    },
+    onError: (e: unknown) => toast({ title: 'Passkey not added', description: errorMessage(e), variant: 'destructive' }),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => passkeysApi.remove(id),
+    onSuccess: () => {
+      setRemoving(null);
+      qc.invalidateQueries({ queryKey: ['passkeys'] });
+      toast({ title: 'Passkey removed' });
+    },
+    onError: (e: unknown) => toast({ title: 'Could not remove passkey', description: errorMessage(e), variant: 'destructive' }),
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><Fingerprint className="h-4 w-4" /> Passkeys</CardTitle>
+        <CardDescription>
+          Sign in with your device&apos;s fingerprint, face, PIN or a security key instead of a password.
+          A passkey that verifies you counts as two-factor authentication. Your password keeps working.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : passkeys.length === 0 ? (
+          <p className="text-sm text-muted-foreground">You have no passkeys.</p>
+        ) : (
+          <ul className="divide-y rounded-md border">
+            {passkeys.map((p) => (
+              <li key={p.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{p.name || 'Unnamed passkey'}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Added {formatDate(p.createdAt)} · {p.lastUsedAt ? `last used ${formatDate(p.lastUsedAt)}` : 'never used'}
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/5"
+                  onClick={() => setRemoving(p)}>
+                  Remove
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {supported ? (
+          <div className="flex flex-wrap items-end gap-2 max-w-md">
+            <div className="space-y-1 flex-1 min-w-[180px]">
+              <Label htmlFor="passkey-name">Name (optional)</Label>
+              <Input id="passkey-name" value={name} maxLength={60} placeholder="e.g. Work laptop"
+                onChange={(e) => setName(e.target.value)} />
+            </div>
+            <Button onClick={() => add.mutate()} disabled={add.isPending}>
+              {add.isPending ? 'Waiting for passkey…' : 'Add passkey'}
+            </Button>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            This browser does not support passkeys, so one cannot be added here. Try a current version of Chrome, Edge, Firefox or Safari.
+          </p>
+        )}
+      </CardContent>
+
+      <ConfirmDialog
+        open={!!removing}
+        onOpenChange={(o) => { if (!o) setRemoving(null); }}
+        title="Remove passkey?"
+        description={`“${removing?.name || 'Unnamed passkey'}” will no longer sign you in. You can still sign in with your password.`}
+        confirmLabel="Remove"
+        destructive
+        loading={remove.isPending}
+        onConfirm={() => removing && remove.mutate(removing.id)}
+      />
+    </Card>
+  );
+}
+
+// ─── Single sign-on Tab ──────────────────────────────────────────────────────
+
+interface IdentityRow {
+  id: string; email: string | null; linkedAt: string; lastLoginAt: string | null;
+  provider: { id: string; name: string; enabled: boolean };
+}
+
+function SsoTab() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [unlinking, setUnlinking] = useState<IdentityRow | null>(null);
+  const [linkingId, setLinkingId] = useState<string | null>(null);
+
+  const { data: identities = [], isLoading } = useQuery<IdentityRow[]>({
+    queryKey: ['sso-identities'],
+    queryFn: () => ssoApi.identities().then((r) => r.data?.data ?? []),
+  });
+  const { data: providers = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ['sso-providers-public'],
+    queryFn: () => ssoApi.providers().then((r) => r.data?.data ?? []),
+  });
+
+  const linkedProviderIds = new Set(identities.map((i) => i.provider.id));
+  const linkable = providers.filter((p) => !linkedProviderIds.has(p.id));
+
+  async function link(id: string) {
+    setLinkingId(id);
+    try {
+      const res = await ssoApi.link(id, '/account');
+      const url = res.data?.data?.url;
+      if (!url) throw new Error('The server did not return a sign-in address');
+      window.location.href = url;
+    } catch (e) {
+      setLinkingId(null);
+      toast({ title: 'Could not start linking', description: errorMessage(e), variant: 'destructive' });
+    }
+  }
+
+  const unlink = useMutation({
+    mutationFn: (id: string) => ssoApi.unlink(id),
+    onSuccess: () => {
+      setUnlinking(null);
+      qc.invalidateQueries({ queryKey: ['sso-identities'] });
+      toast({ title: 'Identity unlinked' });
+    },
+    onError: (e: unknown) => toast({ title: 'Could not unlink', description: errorMessage(e), variant: 'destructive' }),
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><Link2 className="h-4 w-4" /> Single sign-on</CardTitle>
+        <CardDescription>
+          Link an identity from your organisation&apos;s sign-in provider so you can use it here.
+          The link is made only by signing in at the provider from this page — never by matching email addresses.
+          Your password keeps working either way.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : identities.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No identities are linked to your account.</p>
+        ) : (
+          <ul className="divide-y rounded-md border">
+            {identities.map((i) => (
+              <li key={i.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">
+                    {i.provider.name}
+                    {!i.provider.enabled && <span className="ml-2 text-xs font-normal text-muted-foreground">(provider currently disabled)</span>}
+                  </p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {i.email ? `${i.email} · ` : ''}Linked {formatDate(i.linkedAt)} · {i.lastLoginAt ? `last sign-in ${formatDate(i.lastLoginAt)}` : 'not used to sign in yet'}
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/5"
+                  onClick={() => setUnlinking(i)}>
+                  Unlink
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {linkable.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {linkable.map((p) => (
+              <Button key={p.id} variant="outline" onClick={() => link(p.id)} disabled={linkingId !== null}>
+                <Link2 className="h-4 w-4 mr-2" />
+                {linkingId === p.id ? 'Redirecting…' : `Link ${p.name}`}
+              </Button>
+            ))}
+          </div>
+        )}
+        {providers.length === 0 && (
+          <p className="text-sm text-muted-foreground">No sign-in providers are enabled on this server.</p>
+        )}
+      </CardContent>
+
+      <ConfirmDialog
+        open={!!unlinking}
+        onOpenChange={(o) => { if (!o) setUnlinking(null); }}
+        title="Unlink identity?"
+        description={`You will no longer be able to sign in with ${unlinking?.provider.name ?? 'this provider'} until you link it again. Your password and passkeys are not affected.`}
+        confirmLabel="Unlink"
+        destructive
+        loading={unlink.isPending}
+        onConfirm={() => unlinking && unlink.mutate(unlinking.id)}
+      />
+    </Card>
+  );
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
+
+function AccountTabs() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const linked = params.get('sso') === 'linked';
+  const ssoError = ssoErrorMessage(params.get('sso_error'));
+  const dismiss = () => router.replace('/account');
+
+  return (
+    <>
+      {linked && (
+        <div role="status" className="flex items-start gap-2 rounded-md border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-200">
+          <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
+          <span className="flex-1">The identity was linked to your account. You can now sign in with that provider.</span>
+          <button onClick={dismiss} aria-label="Dismiss" className="opacity-70 hover:opacity-100"><X className="h-4 w-4" /></button>
+        </div>
+      )}
+      {ssoError && (
+        <div role="alert" className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+          <span className="flex-1">{ssoError}</span>
+          <button onClick={dismiss} aria-label="Dismiss" className="opacity-70 hover:opacity-100"><X className="h-4 w-4" /></button>
+        </div>
+      )}
+      <Tabs defaultValue={linked || ssoError ? 'sso' : 'profile'} className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="profile">Profile</TabsTrigger>
+          <TabsTrigger value="password">Password</TabsTrigger>
+          <TabsTrigger value="2fa">Two-Factor Auth</TabsTrigger>
+          <TabsTrigger value="passkeys">Passkeys</TabsTrigger>
+          <TabsTrigger value="sso">Single sign-on</TabsTrigger>
+        </TabsList>
+        <TabsContent value="profile"><ProfileTab /></TabsContent>
+        <TabsContent value="password"><PasswordTab /></TabsContent>
+        <TabsContent value="2fa"><MfaTab /></TabsContent>
+        <TabsContent value="passkeys"><PasskeysTab /></TabsContent>
+        <TabsContent value="sso"><SsoTab /></TabsContent>
+      </Tabs>
+    </>
+  );
+}
 
 export default function AccountPage() {
   return (
     <div className="p-6 space-y-6">
       <PageHeader title="My Account" description="Manage your profile, password, and security" />
-      <Tabs defaultValue="profile" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="profile">Profile</TabsTrigger>
-          <TabsTrigger value="password">Password</TabsTrigger>
-          <TabsTrigger value="2fa">Two-Factor Auth</TabsTrigger>
-        </TabsList>
-        <TabsContent value="profile"><ProfileTab /></TabsContent>
-        <TabsContent value="password"><PasswordTab /></TabsContent>
-        <TabsContent value="2fa"><MfaTab /></TabsContent>
-      </Tabs>
+      <Suspense fallback={<p className="text-sm text-muted-foreground">Loading…</p>}>
+        <AccountTabs />
+      </Suspense>
     </div>
   );
 }

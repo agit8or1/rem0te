@@ -4,11 +4,12 @@ import { AdminService } from './admin.service';
 import { SecurityController } from './security.controller';
 import { SecurityService } from './security.service';
 import { UpdateController } from './update.controller';
+import { RolloutsController } from './rollouts.controller';
 import { UpdateService } from './update.service';
 import { HostMetricsService } from './host-metrics.service';
 
 @Module({
-  controllers: [AdminController, SecurityController, UpdateController],
+  controllers: [AdminController, SecurityController, UpdateController, RolloutsController],
   providers: [AdminService, SecurityService, UpdateService, HostMetricsService],
 })
 export class AdminModule {}

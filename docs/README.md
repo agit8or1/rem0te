@@ -21,6 +21,10 @@ the product, searchable, under **Documentation** in the sidebar.
   pending Windows updates, and how to read a slice of its event log.
 - **[tactical-rmm.md](tactical-rmm.md)** — connecting and querying from inside
   Tactical RMM: URL Actions, agent matching, and the Collector Task.
+- **[support-requests.md](support-requests.md)** — the customer support link,
+  the status page, and the technician queue.
+- **[technicians.md](technicians.md)** — MSP technicians: per-business,
+  time-limited and scheduled access, groups, approval, the business switcher.
 
 ## Running it
 
@@ -30,6 +34,10 @@ the product, searchable, under **Documentation** in the sidebar.
 - **[architecture.md](architecture.md)** — what runs where, the data model, and
   the RustDesk configuration chain.
 - **[access-control.md](access-control.md)** — the permission model in full.
+- **[offboarding.md](offboarding.md)** — who can reach a computer and why, and
+  removing someone's access — including what revocation cannot undo.
+- **[sign-in.md](sign-in.md)** — passwords, SSO (OIDC), passkeys, step-up, and
+  recovering from a sign-in misconfiguration.
 
 ## Building on it
 

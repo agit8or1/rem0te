@@ -5,144 +5,102 @@ import {
   CheckCircle,
   XCircle,
   Clock,
-  AlertCircle,
+  HelpCircle,
+  MonitorPlay,
+  Ban,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /**
- * Session status, as the console can honestly describe it.
+ * Session status, using the same words as the API (STATUS_LABEL in
+ * apps/api/src/sessions/session-state.ts).
  *
- * Worth knowing before changing a label here: Rem0te's part of a session ends
- * when it hands out the credential. RustDesk carries the connection, and there
- * is no channel that reports back that a session started, or ended, or failed
- * after that point. So `client_opened` is not a step on the way to something —
- * it is where a working session stays until a sweeper closes it out on a
- * timer. Any label implying progress is a label that will be wrong forever.
+ * Each state is tied to the one signal that can move a session into it, so a
+ * label must never claim more than that signal shows:
+ *   - "Launch requested" / "Launcher acknowledged": a credential was handed
+ *     out, nothing has opened a client yet.
+ *   - "Client opened": RustDesk started on the technician's computer. That is
+ *     not a connection.
+ *   - "Connection confirmed": the endpoint agent saw a connection, or the
+ *     technician said so.
+ *   - "Status unknown": closed by a timeout with no confirming or failing
+ *     signal. It may well have connected; nothing says either way.
  */
-type SessionStatus =
-  | 'active'
-  | 'completed'
-  | 'failed'
-  | 'pending'
-  | 'connecting'
-  | 'disconnected'
-  | string;
+export const SESSION_STATUS_LABEL: Record<string, string> = {
+  PENDING: 'Recorded',
+  LAUNCH_REQUESTED: 'Launch requested',
+  LAUNCHER_ACKNOWLEDGED: 'Launcher acknowledged',
+  CLIENT_OPENED: 'Client opened',
+  SESSION_STARTED: 'Connection confirmed',
+  SESSION_COMPLETED: 'Disconnected',
+  FAILED: 'Failed',
+  CANCELED: 'Canceled',
+  STATUS_UNKNOWN: 'Status unknown',
+};
+
+/** Closed states. Mirrors TERMINAL in session-state.ts. */
+export const TERMINAL_SESSION_STATUSES = ['SESSION_COMPLETED', 'FAILED', 'CANCELED', 'STATUS_UNKNOWN'];
+
+export function isTerminalSessionStatus(status: string | null | undefined) {
+  return !!status && TERMINAL_SESSION_STATUSES.includes(status.toUpperCase());
+}
 
 interface StatusConfig {
-  label: string;
-  variant: 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning';
   icon: React.ElementType;
   className: string;
 }
 
-const SESSION_STATUS_MAP: Record<string, StatusConfig> = {
-  active: {
-    label: 'Active',
-    variant: 'default',
-    icon: Circle,
-    className: 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900 dark:text-green-100',
+const NEUTRAL = 'bg-muted text-muted-foreground border-border';
+const PRE_CLIENT = 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:border-amber-900';
+
+const STYLE: Record<string, StatusConfig> = {
+  PENDING: { icon: Clock, className: NEUTRAL },
+  LAUNCH_REQUESTED: { icon: Clock, className: PRE_CLIENT },
+  LAUNCHER_ACKNOWLEDGED: { icon: Clock, className: PRE_CLIENT },
+  CLIENT_OPENED: {
+    icon: MonitorPlay,
+    className: 'bg-sky-50 text-sky-800 border-sky-200 dark:bg-sky-950 dark:text-sky-200 dark:border-sky-900',
   },
-  session_started: {
-    label: 'Active',
-    variant: 'default',
+  SESSION_STARTED: {
     icon: Circle,
-    className: 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900 dark:text-green-100',
+    className: 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900 dark:text-green-100 dark:border-green-800',
   },
-  completed: {
-    label: 'Completed',
-    variant: 'secondary',
+  SESSION_COMPLETED: {
     icon: CheckCircle,
-    className: 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900 dark:text-blue-100',
+    className: 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900 dark:text-blue-100 dark:border-blue-800',
   },
-  session_completed: {
-    label: 'Completed',
-    variant: 'secondary',
-    icon: CheckCircle,
-    className: 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900 dark:text-blue-100',
-  },
-  failed: {
-    label: 'Failed',
-    variant: 'destructive',
+  FAILED: {
     icon: XCircle,
-    className: 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900 dark:text-red-100',
+    className: 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900 dark:text-red-100 dark:border-red-800',
   },
-  canceled: {
-    label: 'Canceled',
-    variant: 'secondary',
-    icon: XCircle,
-    className: 'bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-800 dark:text-gray-200',
-  },
-  pending: {
-    label: 'Connected / Waiting',
-    variant: 'outline',
-    icon: Circle,
-    className: 'bg-green-50 text-green-800 border-green-300 dark:bg-green-950 dark:text-green-200',
-  },
-  launch_requested: {
-    label: 'Connecting…',
-    variant: 'outline',
-    icon: Clock,
-    className: 'bg-orange-50 text-orange-800 border-orange-200 dark:bg-orange-900 dark:text-orange-100',
-  },
-  launcher_acknowledged: {
-    label: 'Connecting…',
-    variant: 'outline',
-    icon: Clock,
-    className: 'bg-orange-50 text-orange-800 border-orange-200 dark:bg-orange-900 dark:text-orange-100',
-  },
-  // Not "Connecting…". This is the furthest any session ever gets: Rem0te
-  // handed out the credential and the client was launched, and nothing after
-  // that reports back — RustDesk carries the session and hbbs logs nothing for
-  // a connect or a disconnect. Labelling the terminal state as an intermediate
-  // one meant every session a technician was sitting in, working, read as
-  // still trying to connect, and so did every session from the day before.
-  client_opened: {
-    label: 'Launched',
-    variant: 'outline',
-    icon: Circle,
-    className: 'bg-green-50 text-green-800 border-green-300 dark:bg-green-950 dark:text-green-200',
-  },
-  connecting: {
-    label: 'Connecting…',
-    variant: 'outline',
-    icon: Clock,
-    className: 'bg-orange-50 text-orange-800 border-orange-200 dark:bg-orange-900 dark:text-orange-100',
-  },
-  disconnected: {
-    label: 'Disconnected',
-    variant: 'secondary',
-    icon: AlertCircle,
-    className: 'bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-800 dark:text-gray-200',
+  CANCELED: { icon: Ban, className: NEUTRAL },
+  STATUS_UNKNOWN: {
+    icon: HelpCircle,
+    className: 'bg-zinc-100 text-zinc-700 border-zinc-300 border-dashed dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-700',
   },
 };
 
 interface SessionStatusBadgeProps {
-  status: SessionStatus;
+  status: string;
   className?: string;
 }
 
 export function SessionStatusBadge({ status, className }: SessionStatusBadgeProps) {
-  const normalizedStatus = status.toLowerCase();
-  const config = SESSION_STATUS_MAP[normalizedStatus] ?? {
-    label: status,
-    variant: 'outline' as const,
-    icon: Circle,
-    className: '',
-  };
-
+  const key = (status ?? '').toUpperCase();
+  const label = SESSION_STATUS_LABEL[key] ?? status;
+  const config = STYLE[key] ?? { icon: Circle, className: NEUTRAL };
   const Icon = config.icon;
-  const isPulse = normalizedStatus === 'pending';
 
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold',
+        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap',
         config.className,
         className,
       )}
     >
-      <Icon className={cn('h-3 w-3', isPulse && 'animate-pulse')} aria-hidden="true" />
-      {config.label}
+      <Icon className="h-3 w-3" aria-hidden="true" />
+      {label}
     </span>
   );
 }
