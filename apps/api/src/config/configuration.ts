@@ -30,6 +30,13 @@ const configSchema = z.object({
   FRONTEND_URL: z.string().default('http://localhost:3000'),
   PUBLIC_API_URL: z.string().default('http://localhost:3001'),
   APP_URL: z.string().default('http://localhost:3000'),
+  // Passkeys. Default: the host and origin of FRONTEND_URL, where the web app
+  // (and, through its rewrite, the API) is served.
+  WEBAUTHN_RP_ID: z.string().optional(),
+  WEBAUTHN_ORIGIN: z.string().optional(),
+  // Development only: let an OIDC provider on 127.0.0.1/localhost use plain
+  // HTTP. Every other issuer must be HTTPS whatever this says.
+  OIDC_ALLOW_INSECURE_LOOPBACK: z.enum(['true', 'false']).default('false'),
   CLAIM_TOKEN_TTL_HOURS: z.coerce.number().default(48),
   THROTTLE_TTL_SECONDS: z.coerce.number().default(60),
   THROTTLE_LIMIT: z.coerce.number().default(100),

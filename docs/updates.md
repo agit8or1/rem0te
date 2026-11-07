@@ -98,6 +98,94 @@ Archived computers are skipped when an update is staged.
 
 ---
 
+## Staged rollouts (v0.20)
+
+**Platform → Client Rollouts** controls **which** version, **when**, to
+**whom**, and what counts as done. One-click staging above is still there for
+a single machine. While a computer has a rollout job, the rollout owns its
+updates and one-click staging does not also fire.
+
+### Supported version pin
+
+*Supported version pin* makes every installer, Connect script and Quick
+Connect download install exactly that RustDesk version instead of the latest
+release. An exact `x.y.z` only. Clear it to go back to latest. Endpoints
+running an agent older than 0.20.0 ignore the pin, and a rollout that sees one
+install something newer marks that job failed (see below) rather than retrying.
+
+### A rollout
+
+Creating one resolves, up front:
+
+- **The exact version and artifact.** The target and the SHA-256 of
+  `rustdesk-<v>-x86_64.exe` are fetched from GitHub and stored. The installer
+  an endpoint fetches for its job installs that version with that digest,
+  never "latest". If GitHub publishes no digest, the rollout is refused unless
+  you allow **signature-only**, in which case the installer requires a valid
+  Authenticode signature instead. That is weaker: any signature Windows
+  reports as valid is accepted, and the signer is logged but not pinned.
+- **The targets.** Specific computers, whole businesses, or both. Both means
+  only the listed computers that are in the listed businesses. Neither means
+  **every** managed computer. A computer is
+  **skipped** with a reason if it is not Windows (staged updates are
+  Windows-only), has no device secret, is already on the target, would need a
+  downgrade, or is already in another rollout for the same component.
+- **Batches.** A pilot group goes first (batch 0), then the rest in batches of
+  the size you set.
+
+Agent rollouts can only target this server's own version: the server can only
+serve its own agent.
+
+### What happens
+
+| Job state | Moved there by |
+|---|---|
+| Requested | created; waiting for its batch, window, backoff or an idle session |
+| Dispatched | handed out in one heartbeat response; a concurrent heartbeat cannot dispatch it twice |
+| Installing | the endpoint fetched the installer for this job's nonce |
+| Awaiting verification | an **authenticated** heartbeat reports the approved version |
+| Succeeded | version reported, plus hbbs registration, or registration recorded as *unavailable* (not independently verified) |
+| Failed | attempts exhausted, or an outcome retrying cannot fix |
+| Canceled / Skipped | operator, or nothing to do |
+
+- **Deferral.** A job waits while the endpoint reports an incoming RustDesk
+  session, while a session on it is confirmed, outside the maintenance window,
+  and (by default) while a recent launch on it has not been confirmed or
+  closed.
+- **Retries are bounded.** An install that ran but left the old version, or a
+  job with no evidence before the verify timeout, retries with exponential
+  backoff up to *max attempts*, then fails. Nothing re-runs an installer on
+  every heartbeat.
+- **Newer than approved fails at once**, without retrying. It means the
+  endpoint's agent predates the pin.
+- **The failure threshold pauses the rollout.** It is checked on every failure
+  and again before each new batch, so a failed pilot stops the fleet.
+- **Cancel** stops jobs that have not been dispatched. A dispatched job cannot
+  be recalled, because the installer may already be running. It is marked
+  canceled and no longer tracked, so check that computer's reported version
+  afterwards.
+
+Each computer's page shows its update history with the evidence for every step.
+
+### Recovery (there is no rollback)
+
+RustDesk's installer has no tested downgrade, so Rem0te does not offer a
+rollback. If a version misbehaves:
+
+1. **Pause** the rollout (or cancel it). Nothing further is dispatched.
+2. **Set the version pin** to the last good version, so nothing newly installed
+   or re-run picks up the bad one.
+3. For an affected computer: **uninstall RustDesk on it first**, then re-run
+   the Rem0te installer, which installs the pinned version and keeps the
+   enrolment. The installer only ever upgrades. With a newer RustDesk present
+   it leaves it alone, so *Reinstall agent* by itself does not downgrade. The
+   uninstall needs someone at the machine, or a tool other than RustDesk:
+   uninstalling RustDesk over a RustDesk session ends that session.
+4. Check the computer's **Test connection** panel: registration, version and
+   heartbeat.
+
+---
+
 ## RustDesk server — hbbs and hbbr
 
 **Updates → RustDesk Server** shows the installed version of each binary

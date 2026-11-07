@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.19.12-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.20.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -24,6 +24,39 @@ server that keeps them organised and separate.
 <sub><i>The operator's view — every customer business, computer and session in one place. <a href="docs/images/github/dashboard-light.png">Full size</a> · <a href="docs/screenshots.md">34 more screenshots</a></i></sub>
 
 ---
+
+## What's new in 0.20
+
+**Find out why a connection fails, before anyone calls.** *Test connection*
+checks the server, the computer and your own RustDesk, says which one is wrong,
+and labels every fix that would change something.
+[connecting.md](docs/connecting.md#test-connection-v020)
+
+**Session states that mean what they say.** "Client opened" is not "connected";
+a connection is confirmed by the remote computer's agent or by you; anything
+unproven reads *Status unknown*, and duration appears only when it was measured.
+
+**MSP technicians, scoped.** Give a technician (or a group) one business, some
+capabilities, optionally some computers, optionally for a week or weekdays
+9–5, with Business Owner approval where wanted. A business switcher and an
+*All assigned* overview. [technicians.md](docs/technicians.md)
+
+**Customers can ask for help.** A per-business support link, a status page that
+reveals nothing else, and a queue technicians claim, hand off and close.
+[support-requests.md](docs/support-requests.md)
+
+**Controlled RustDesk updates.** Exact versions, pilot batches, maintenance
+windows, deferral during sessions, bounded retries, automatic pause on
+failures, and a supported-version pin. [updates.md](docs/updates.md#staged-rollouts-v020)
+
+**Access review and offboarding** that tell the truth: who can reach a
+computer and why, and when someone leaves, which RustDesk passwords they had —
+because revoking access does not change a password already seen.
+[offboarding.md](docs/offboarding.md)
+
+**SSO and passkeys.** OIDC sign-in matched by issuer and subject (never email),
+passkeys for sign-in and step-up, step-up for sensitive actions, and a
+recovery script. [sign-in.md](docs/sign-in.md)
 
 ## What's new in 0.18
 

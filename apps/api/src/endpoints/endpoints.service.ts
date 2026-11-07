@@ -12,6 +12,9 @@ import { CANDIDATE_LIVE_MS } from '../enrollment/device-secret';
 import { ConfigService } from '@nestjs/config';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { CAP, effectiveCapabilities } from '../rbac/capabilities';
+import { ActorResolverService } from '../rbac/actor-resolver.service';
+import { describeSchedule, parseSchedule } from '../rbac/schedule';
+import { Prisma } from '@prisma/client';
 import { AGENT_CONTRACT_VERSION, agentMeetsContract } from '../common/agent-contract';
 import type { CreateEndpointDto, UpdateEndpointDto } from './dto/create-endpoint.dto';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
@@ -36,6 +39,7 @@ export class EndpointsService {
     private readonly config: ConfigService,
     private readonly acl: AccessControlService,
     private readonly inventory: EndpointInventoryService,
+    private readonly actors: ActorResolverService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -109,7 +113,7 @@ export class EndpointsService {
   async findConnected(actor: ActorContext) {
     const scope = this.acl.resolveScope(actor);
     const rows = await this.prisma.endpoint.findMany({
-      where: { isOnline: true, status: 'ACTIVE', ...(scope ? { customerId: scope } : {}) },
+      where: { isOnline: true, status: 'ACTIVE', ...(scope ? { customerId: scope } : {}), ...this.acl.endpointRestrictionWhere(actor) },
       orderBy: { lastSeenAt: 'desc' },
       include: {
         customer: { select: { id: true, name: true } },
@@ -135,6 +139,7 @@ export class EndpointsService {
 
     const where: Record<string, unknown> = {
       ...(scope ? { customerId: scope } : {}),
+      ...this.acl.endpointRestrictionWhere(actor),
       // "unassigned" is a platform-admin-only view — a business can never own
       // a computer that belongs to no business.
       ...(!scope && params.businessId === 'null' ? { customerId: null } : {}),
@@ -477,15 +482,15 @@ export class EndpointsService {
    * and connect with it. Owners and Platform Admins reach everything in scope.
    */
   private async assertComputerReachable(actor: ActorContext, endpointId: string): Promise<void> {
-    if (this.acl.isBusinessOwner(actor)) return;
     const endpoint = await this.prisma.endpoint.findUnique({
-      where: { id: endpointId }, select: { accessMode: true, customerId: true },
+      where: { id: endpointId }, select: { id: true, accessMode: true, customerId: true },
     });
-    if (endpoint?.accessMode === 'COMPANY_WIDE' && endpoint.customerId === actor.businessId) return;
-    const access = await this.prisma.computerAccess.findFirst({
-      where: { endpointId, userId: actor.userId }, select: { id: true },
-    });
-    if (!access) throw new ForbiddenException('You have not been given access to this computer');
+    // Shared with authorizeConnect so expiry, schedules and technician
+    // computer lists apply to credential reveal and rotation exactly as they
+    // do to connecting.
+    if (!endpoint || !(await this.acl.canReachEndpoint(actor, endpoint))) {
+      throw new ForbiddenException('You have not been given access to this computer');
+    }
   }
 
   async setPassword(actor: ActorContext, id: string, password: string | null): Promise<void> {
@@ -501,10 +506,20 @@ export class EndpointsService {
     });
   }
 
-  async getPassword(actor: ActorContext, id: string): Promise<string | null> {
+  /**
+   * Who may reveal this computer's password. Separate so the controller can
+   * run it BEFORE asking for step-up: someone with no access is refused
+   * outright, not asked to re-authenticate first and refused after.
+   */
+  async assertPasswordAccess(actor: ActorContext, id: string) {
     const endpoint = await this.acl.assertEndpointInScope(actor, id);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
     await this.assertComputerReachable(actor, id);
+    return endpoint;
+  }
+
+  async getPassword(actor: ActorContext, id: string): Promise<string | null> {
+    const endpoint = await this.assertPasswordAccess(actor, id);
 
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { endpointId: id }, select: { permanentPassword: true },
@@ -517,6 +532,27 @@ export class EndpointsService {
       action: 'ENDPOINT_PASSWORD_REVEALED', resource: 'endpoint', resourceId: id,
     });
     return this.decryptPassword(node.permanentPassword);
+  }
+
+  /**
+   * A SHA-256 of each computer's current password, keyed by endpoint id —
+   * so offboarding can warn that several computers share one password
+   * (rotating one leaves the rest). The passwords themselves never leave
+   * this method, and the digests never leave the server.
+   */
+  async credentialFingerprints(endpointIds: string[]): Promise<Map<string, string>> {
+    const nodes = await this.prisma.rustdeskNode.findMany({
+      where: { endpointId: { in: endpointIds }, permanentPassword: { not: null } },
+      select: { endpointId: true, permanentPassword: true },
+    });
+    const out = new Map<string, string>();
+    for (const n of nodes) {
+      if (!n.endpointId || !n.permanentPassword) continue;
+      try {
+        out.set(n.endpointId, crypto.createHash('sha256').update(this.decryptPassword(n.permanentPassword)).digest('hex'));
+      } catch { /* undecryptable: cannot compare, so say nothing */ }
+    }
+    return out;
   }
 
   /**
@@ -594,18 +630,11 @@ export class EndpointsService {
       return { ok: false, reason: 'missing_connect_permission' };
     }
 
-    // Business Owners and Platform Admins may reach any computer in scope.
-    if (this.acl.isBusinessOwner(actor)) return { ok: true };
-
-    const access = await this.prisma.computerAccess.findFirst({
-      where: { endpointId, userId: actor.userId }, select: { id: true },
-    });
-    if (access) return { ok: true };
-
-    if (endpoint.accessMode === 'COMPANY_WIDE' && endpoint.customerId === actor.businessId) {
-      return { ok: true };
-    }
-    return { ok: false, reason: 'no_access' };
+    // Owners/admins: anything in scope. Technicians: their assignment's
+    // computers. Business Users: an active (dated, scheduled) grant or a
+    // COMPANY_WIDE computer. One decision, in AccessControlService.
+    if (await this.acl.canReachEndpoint(actor, endpoint)) return { ok: true };
+    return { ok: false, reason: actor.technician ? 'outside_technician_assignment' : 'no_access' };
   }
 
   /** authorizeConnect for callers outside this service (the launcher). */
@@ -685,26 +714,11 @@ export class EndpointsService {
     if (grant.user.status !== 'ACTIVE') throw new NotFoundException('Authorization no longer valid');
 
     // Rebuild the grantee's live context from the database rather than
-    // trusting anything recorded at mint time.
-    const membership = await this.prisma.membership.findFirst({
-      where: { userId: grant.userId, isActive: true },
-      select: { customerId: true, capabilities: true, role: { select: { type: true } } },
-    });
-    const granteeActor: ActorContext = {
-      userId: grant.userId,
-      email: grant.user.email,
-      tenantId: grant.tenantId,
-      businessId: membership?.customerId ?? null,
-      isPlatformAdmin: grant.user.isPlatformAdmin,
-      roleType: membership?.role.type ?? null,
-      // Recomputed through the same path every request uses.
-      capabilities: effectiveCapabilities({
-        isPlatformAdmin: grant.user.isPlatformAdmin,
-        roleType: membership?.role.type ?? null,
-        capabilities: membership?.capabilities ?? null,
-      }),
-      ip: actorIp,
-    };
+    // trusting anything recorded at mint time — acting in the computer's own
+    // business, so a technician assignment revoked, expired or outside its
+    // schedule since the grant was minted stops the redemption here.
+    const granteeActor = await this.liveActor(grant.userId, grant.tenantId, grant.endpoint.customerId, actorIp);
+    if (!granteeActor) throw new NotFoundException('Authorization no longer valid');
 
     const authz = await this.authorizeConnect(granteeActor, grant.endpointId);
     if (!authz.ok) {
@@ -751,10 +765,39 @@ export class EndpointsService {
   }
 
   /**
+   * A full ActorContext for a user with no request in hand, acting in
+   * `businessId` — the shape every authorization helper takes. Null when the
+   * user is not active.
+   */
+  async liveActor(userId: string, tenantId: string, businessId: string | null, ip?: string): Promise<ActorContext | null> {
+    const r = await this.actors.actorForBusiness(userId, tenantId, businessId, ip);
+    if (!r) return null;
+    return {
+      userId: r.user.id,
+      email: r.user.email,
+      tenantId: r.tenantId,
+      businessId: r.businessId,
+      isPlatformAdmin: r.user.isPlatformAdmin,
+      roleType: r.roleType,
+      capabilities: effectiveCapabilities({
+        isPlatformAdmin: r.user.isPlatformAdmin, roleType: r.roleType, capabilities: r.capabilities,
+      }),
+      ip,
+      ownBusinessId: r.ownBusinessId,
+      technician: r.technician,
+      assignedBusinessIds: r.assignedBusinessIds,
+      platformPermissions: r.platformPermissions,
+    };
+  }
+
+  /**
    * One-click Connect: returns the credentials the browser hands to the
    * launcher. Authorization is identical to the grant path.
    */
-  async connectInfo(actor: ActorContext, endpointId: string) {
+  async connectInfo(
+    actor: ActorContext, endpointId: string,
+    opts: { reuseSessionId?: string; supportRequestId?: string } = {},
+  ) {
     const authz = await this.authorizeConnect(actor, endpointId);
     if (!authz.ok) {
       await this.audit.log({
@@ -788,31 +831,50 @@ export class EndpointsService {
       meta: { via: 'connect' },
     });
 
-    // Record the connection as a session.
+    // Record the launch as a session — ONE per Connect.
     //
-    // Until now nothing did. The launcher promoted a session to CLIENT_OPENED,
-    // but the browser path — which is the one people actually use — created no
-    // session at all, so Recent Sessions only ever showed the ad-hoc records
-    // typed in by hand, which then aged into FAILED because nothing completed
-    // them either. Handing the credentials to a client IS the start of a
-    // session, and that is what CLIENT_OPENED means on the launcher path too.
+    // Releasing a credential is a launch request, not a connection: it was
+    // recorded as CLIENT_OPENED with a start time until 0.20.0, so every
+    // Connect click read as a session that had started, and the browser path
+    // created up to three rows per click (POST /connect, the page's own
+    // POST /sessions, then connect.cmd calling this again). The Connect
+    // script now reuses the session the click created, and reports its own
+    // progress against it with a token bound to that session alone.
     //
     // Best-effort: a bookkeeping failure must never stop someone connecting.
     let sessionId: string | null = null;
     try {
-      const s = await this.prisma.supportSession.create({
-        data: {
-          tenantId: endpoint.tenantId!,
-          customerId: endpoint.customerId,
-          technicianId: actor.userId,
-          endpointId: endpoint.id,
-          isAdHoc: false,
-          status: 'CLIENT_OPENED',
-          startedAt: new Date(),
-        },
-        select: { id: true },
-      });
-      sessionId = s.id;
+      if (opts.reuseSessionId) {
+        const existing = await this.prisma.supportSession.findFirst({
+          where: {
+            id: opts.reuseSessionId, endpointId: endpoint.id, technicianId: actor.userId,
+            status: 'LAUNCH_REQUESTED', createdAt: { gt: new Date(Date.now() - 10 * 60_000) },
+          },
+          select: { id: true },
+        });
+        sessionId = existing?.id ?? null;
+      }
+      if (!sessionId) {
+        const now = new Date();
+        const s = await this.prisma.supportSession.create({
+          data: {
+            tenantId: endpoint.tenantId!,
+            customerId: endpoint.customerId,
+            technicianId: actor.userId,
+            endpointId: endpoint.id,
+            isAdHoc: false,
+            status: 'LAUNCH_REQUESTED',
+            launchRequestedAt: now,
+            statusSource: 'server',
+            statusChangedAt: now,
+            timingQuality: 'UNKNOWN',
+            supportRequestId: opts.supportRequestId ?? null,
+            events: { create: { event: 'launch_requested', source: 'server', occurredAt: now, dedupeKey: 'server:launch' } },
+          },
+          select: { id: true },
+        });
+        sessionId = s.id;
+      }
     } catch (e) {
       this.logger.warn(`Could not record support session for ${endpointId}: ${(e as Error).message}`);
     }
@@ -831,6 +893,24 @@ export class EndpointsService {
     };
   }
 
+  /**
+   * A support request may be linked to a Connect only by the technician who
+   * holds it, in the same business as the computer. Returns the id to link,
+   * or throws NotFound — a request id is never trusted from the URL alone.
+   */
+  async supportRequestForConnect(actor: ActorContext, requestId: string, endpointId: string): Promise<string> {
+    const ep = await this.acl.assertEndpointInScope(actor, endpointId);
+    const r = await this.prisma.supportRequest.findFirst({
+      where: { id: requestId, customerId: ep.customerId ?? '__none__', claimedById: actor.userId, status: { in: ['CLAIMED', 'CONNECTING'] } },
+      select: { id: true },
+    });
+    if (!r) throw new NotFoundException('Support request not found or not claimed by you');
+    await this.prisma.supportRequest.updateMany({
+      where: { id: r.id, status: 'CLAIMED' }, data: { status: 'CONNECTING', endpointId },
+    });
+    return r.id;
+  }
+
   // ── Per-computer access grants ────────────────────────────────────────────
 
   async listAccess(actor: ActorContext, endpointId: string) {
@@ -844,7 +924,10 @@ export class EndpointsService {
     });
   }
 
-  async grantAccess(actor: ActorContext, endpointId: string, userId: string) {
+  async grantAccess(
+    actor: ActorContext, endpointId: string, userId: string,
+    window: { startsAt?: string | null; expiresAt?: string | null; schedule?: unknown } = {},
+  ) {
     const endpoint = await this.acl.assertEndpointInScope(actor, endpointId);
     this.acl.assertCapability(actor, CAP.USERS_MANAGE);
 
@@ -856,10 +939,23 @@ export class EndpointsService {
     });
     if (!membership) throw new NotFoundException('That user is not an active member of this business');
 
+    const startsAt = window.startsAt ? new Date(window.startsAt) : null;
+    const expiresAt = window.expiresAt ? new Date(window.expiresAt) : null;
+    if ((startsAt && isNaN(startsAt.getTime())) || (expiresAt && isNaN(expiresAt.getTime()))) {
+      throw new BadRequestException('Access window dates are not valid');
+    }
+    if (startsAt && expiresAt && expiresAt <= startsAt) throw new BadRequestException('The end must be after the start');
+    let schedule: ReturnType<typeof parseSchedule>;
+    try { schedule = parseSchedule(window.schedule); } catch (e) { throw new BadRequestException((e as Error).message); }
+    const windowData = {
+      startsAt, expiresAt, expiryAuditedAt: null,
+      schedule: schedule ? (schedule as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
+    };
+
     const row = await this.prisma.computerAccess.upsert({
       where: { userId_endpointId: { userId, endpointId } },
-      update: { grantedBy: actor.userId },
-      create: { tenantId: membership.tenantId, endpointId, userId, grantedBy: actor.userId },
+      update: { grantedBy: actor.userId, ...windowData },
+      create: { tenantId: membership.tenantId, endpointId, userId, grantedBy: actor.userId, ...windowData },
       include: { user: { select: { id: true, email: true, firstName: true, lastName: true } } },
     });
 
@@ -867,7 +963,7 @@ export class EndpointsService {
       tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
       actorId: actor.userId, actorIp: actor.ip,
       action: 'ENDPOINT_ACCESS_GRANTED', resource: 'endpoint', resourceId: endpointId,
-      meta: { userId },
+      meta: { userId, startsAt, expiresAt, schedule: describeSchedule(schedule) },
     });
     return row;
   }

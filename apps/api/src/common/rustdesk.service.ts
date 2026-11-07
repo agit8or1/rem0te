@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as https from 'https';
 import { PrismaService } from '../prisma/prisma.service';
+import { latestRustdeskVersionOr } from './rustdesk-release';
 
 /**
  * The two things every RustDesk-facing surface needs: where this server is,
@@ -87,6 +88,21 @@ export class RustdeskService {
       configArg: `host=${host},key=${key},api=,relay=${host},`,
       exeName: RustdeskService.configuredExeName(host, key),
     };
+  }
+
+  /**
+   * The RustDesk client version installers and Connect scripts should use:
+   * the platform's supported-version pin when one is set, otherwise the
+   * latest release. A pin stops a new upstream release from being picked up
+   * by every installer the moment it is published.
+   */
+  async pinnedOrLatestVersion(): Promise<string> {
+    const s = await this.prisma.platformSettings.findUnique({
+      where: { id: 'singleton' }, select: { rustdeskPinnedVersion: true },
+    }).catch(() => null);
+    const pin = s?.rustdeskPinnedVersion;
+    if (pin && /^\d+\.\d+\.\d+$/.test(pin)) return pin;
+    return latestRustdeskVersionOr();
   }
 
   /** See {@link RustdeskServerConfig.exeName} for why it ends in `,.exe`. */
@@ -558,8 +574,15 @@ export class RustdeskService {
     endpointName: string;
     clientDownloadUrl: string;
     clientVersion: string;
+    /** Per-session telemetry: where to report, and the token bound to that session. */
+    telemetry?: { url: string; token: string } | null;
   }): string {
     const { config, password, clientDownloadUrl, clientVersion } = opts;
+    // The URL and token land inside single-quoted PowerShell in a body that
+    // must contain no double quote or percent sign; anything outside a plain
+    // URL charset (or a non-hex token) and the script simply does not report.
+    const tel = opts.telemetry && /^https?:\/\/[A-Za-z0-9.:_/-]+$/.test(opts.telemetry.url) && /^[0-9a-f]{48}$/.test(opts.telemetry.token)
+      ? opts.telemetry : null;
     // Both of these come from the device: the hostname a machine reports about
     // itself and the RustDesk ID it registered with. They reach a `title` line
     // and `rem` comments, which cmd.exe parses for `&`, `|`, `^` and `%`, and
@@ -576,6 +599,13 @@ export class RustdeskService {
     const pwB64 = Buffer.from(password ?? '', 'utf8').toString('base64');
 
     const ps = this.withErrorReporting([
+      // Best-effort progress reports for THIS session (see SessionEventsService
+      // .recordScriptTelemetry). Bounded at 5 s and never fatal: a technician
+      // waiting on Connect must not wait on bookkeeping.
+      tel
+        ? `$tel = { param($e, $d) try { $b = @{ token = '${tel.token}'; event = $e; detail = [string]$d } | ConvertTo-Json -Compress; Invoke-RestMethod -Uri '${tel.url}' -Method Post -Body $b -ContentType 'application/json' -TimeoutSec 5 -UseBasicParsing | Out-Null } catch { } }`
+        : `$tel = { param($e, $d) }`,
+      `& $tel 'launcher_acknowledged' ''`,
       `$peer = '${peerId}'`,
       `$pw = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${pwB64}'))`,
       this.findOrFetchRustdesk(config, clientVersion, clientDownloadUrl),
@@ -601,8 +631,11 @@ export class RustdeskService {
       // a protocol link. The link form goes through the registered rustdesk://
       // handler, which only exists if RustDesk was installed — and the whole
       // point of the cached portable copy is that it was not.
-      `Start-Process -FilePath $rd -ArgumentList $uri`,
-      `Write-Host 'RustDesk should be opening now.'`,
+      // "Client opened" means exactly this: the RustDesk process was started.
+      // It is not a connection — the remote computer's agent is what reports
+      // that (session-state.ts).
+      `try { $proc = Start-Process -FilePath $rd -ArgumentList $uri -PassThru -ErrorAction Stop; & $tel 'client_opened' ([string]$proc.Id) } catch { & $tel 'client_launch_failed' ([string]$_.Exception.Message); throw }`,
+      `Write-Host 'RustDesk should be opening now. Rem0te will show the session as connected once the remote computer reports it.'`,
     ].join('; '));
 
     return this.wrapCmd(`Rem0te - connect to ${endpointName}`, [
@@ -614,6 +647,74 @@ export class RustdeskService {
       '',
       'This file contains a live credential and deletes itself when it',
       'finishes. Do not keep or share it.',
+    ], ps, true);
+  }
+
+  /**
+   * A READ-ONLY check of this technician's own computer, as a .cmd.
+   *
+   * A browser cannot inspect local configuration, and the Tauri launcher is
+   * not on every technician's machine, so the existing Connect-script
+   * mechanism is the local helper: same wrapper, same no-double-quote /
+   * no-percent / ASCII rules. It changes nothing, needs no elevation, starts
+   * no session, and reports back with a single-use token minted for this
+   * user. It sends the server address it found and whether the key MATCHES
+   * — never the key itself, nor any password.
+   */
+  buildTechnicianCheckCmd(opts: { config: RustdeskServerConfig; reportUrl: string; token: string; expectedVersion: string }): string {
+    const { config, token } = opts;
+    if (!/^https?:\/\/[A-Za-z0-9.:_/-]+$/.test(opts.reportUrl)) throw new Error('Report URL is not a plain URL');
+    if (!/^[0-9a-f]{48}$/.test(token)) throw new Error('Bad diagnostic token');
+    const keyB64 = Buffer.from(config.key, 'utf8').toString('base64');
+    const ps = this.withErrorReporting(this.joinPs([
+      `Write-Host 'Rem0te technician check - read-only. Nothing on this computer is changed.'`,
+      `Write-Host ''`,
+      `$wantHost = '${config.host}'`,
+      `$wantKey = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${keyB64}'))`,
+      `$r = [ordered]@{}`,
+      `$r.collectedAt = (Get-Date).ToUniversalTime().ToString('o')`,
+      `$r.os = [string][Environment]::OSVersion.VersionString`,
+      `$rdVer = { param($f) try { [string]((Get-Item -LiteralPath $f -ErrorAction Stop).VersionInfo.ProductVersion -replace '[^0-9.].*$', '') } catch { '' } }`,
+      `$paths = @($env:ProgramFiles + '\\RustDesk\\rustdesk.exe', ${'${env:ProgramFiles(x86)}'} + '\\RustDesk\\rustdesk.exe')`,
+      `$inst = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1`,
+      `$r.installed = [bool]$inst`,
+      `$r.installedPath = [string]$inst`,
+      `$r.installedVersion = $(if ($inst) { & $rdVer $inst } else { '' })`,
+      `$pdir = Join-Path $env:LOCALAPPDATA 'Rem0te'`,
+      `$pexe = Get-ChildItem -Path $pdir -Filter 'rustdesk*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1`,
+      `$r.portableCached = [bool]$pexe`,
+      `$r.portableVersion = $(if ($pexe) { & $rdVer $pexe.FullName } else { '' })`,
+      `$svc = Get-Service -Name 'RustDesk' -ErrorAction SilentlyContinue`,
+      `$r.serviceStatus = $(if ($svc) { [string]$svc.Status } else { 'absent' })`,
+      `$r.runningProcesses = @(Get-Process -Name 'rustdesk' -ErrorAction SilentlyContinue).Count`,
+      `$cfg = Join-Path (Join-Path (Join-Path $env:APPDATA 'RustDesk') 'config') 'RustDesk2.toml'`,
+      `$r.configFound = Test-Path -LiteralPath $cfg`,
+      `$haveKey = $null`,
+      `$r.configHost = ''`,
+      `if ($r.configFound) { $t = Get-Content -Raw -LiteralPath $cfg; if ($t -match '(?m)^\\s*key\\s*=\\s*[\\x27\\x22]([^\\x27\\x22]*)') { $haveKey = $Matches[1] }; if ($t -match 'custom-rendezvous-server\\s*=\\s*[\\x27\\x22]([^\\x27\\x22:]*)') { $r.configHost = $Matches[1] } }`,
+      `$r.hostMatches = ($r.configHost -eq $wantHost)`,
+      `$r.keyPresent = [bool]$haveKey`,
+      `$r.keyMatches = ($haveKey -eq $wantKey)`,
+      `$r.protocolHandler = Test-Path -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\rustdesk'`,
+      `$probe = { param($p) $c = New-Object System.Net.Sockets.TcpClient; try { $a = $c.BeginConnect($wantHost, $p, $null, $null); $ok = $a.AsyncWaitHandle.WaitOne(3000); if ($ok) { $c.EndConnect($a) }; $ok -and $c.Connected } catch { $false } finally { $c.Close() } }`,
+      `$r.tcp21116 = & $probe 21116`,
+      `$r.tcp21117 = & $probe 21117`,
+      `Write-Host ('Installed RustDesk : ' + $(if ($r.installed) { $r.installedPath + ' ' + $r.installedVersion } else { 'none' }))`,
+      `Write-Host ('Portable copy      : ' + $(if ($r.portableCached) { $r.portableVersion } else { 'none' }))`,
+      `Write-Host ('Server in config   : ' + $(if ($r.configHost) { $r.configHost } else { 'none' }) + $(if ($r.hostMatches) { ' (correct)' } else { ' (expected ' + $wantHost + ')' }))`,
+      `Write-Host ('Server key         : ' + $(if (-not $r.keyPresent) { 'not set' } elseif ($r.keyMatches) { 'matches' } else { 'DOES NOT MATCH' }))`,
+      `Write-Host ('Reach ' + $wantHost + ' 21116/21117 : ' + $r.tcp21116 + ' / ' + $r.tcp21117)`,
+      `$b = @{ token = '${token}'; report = $r } | ConvertTo-Json -Compress -Depth 4`,
+      `try { Invoke-RestMethod -Uri '${opts.reportUrl}' -Method Post -Body $b -ContentType 'application/json' -TimeoutSec 15 -UseBasicParsing | Out-Null; Write-Host ''; Write-Host 'Report sent. Go back to Rem0te and press Refresh on the Test Connection panel.' } catch { Write-Host ''; Write-Host ('Could not send the report: ' + $_.Exception.Message) }`,
+      `Read-Host 'Press Enter to close'`,
+    ]));
+    return this.wrapCmd('Rem0te - technician check', [
+      'Rem0te technician-side connection check.',
+      '',
+      'READ-ONLY: looks at the RustDesk installed on this computer, its',
+      'server settings, and whether this computer can reach the Rem0te',
+      'server ports. Changes nothing, starts no session, needs no admin.',
+      'Sends the result to Rem0te with a single-use token.',
     ], ps, true);
   }
 

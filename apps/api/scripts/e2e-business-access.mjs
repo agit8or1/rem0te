@@ -60,6 +60,18 @@ async function login(email) {
   return `access_token=${m[1]}`;
 }
 
+/**
+ * Re-authenticate a signed-in cookie for step-up-protected actions (v0.20).
+ * Returns the cookie with the short-lived step_up cookie added, so the
+ * assertions behind it test the route's real rules, not the step-up gate.
+ */
+async function stepUp(cookie, password = PW) {
+  const r = await req('POST', '/auth/step-up', { cookie, body: { password } });
+  const m = r.setCookie.match(/step_up=([^;]+)/);
+  if (r.status !== 200 || !m) throw new Error(`step-up failed: ${r.status} ${JSON.stringify(r.body)}`);
+  return `${cookie}; step_up=${m[1]}`;
+}
+
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
 const created = { users: [], businesses: [], endpoints: [] };
@@ -151,9 +163,10 @@ try {
   ok('two businesses, three users and two computers created');
 
   const cAdmin = await login(admin.email);
-  const cOwnerA = await login(ownerA.email);
-  const cUserA = await login(userA.email);
+  const cOwnerAPlain = await login(ownerA.email);
+  const cUserA = await stepUp(await login(userA.email));
   const cOwnerB = await login(ownerB.email);
+  const cOwnerA = await stepUp(cOwnerAPlain);
   ok('all four accounts can sign in');
 
   // ── Platform Admin ────────────────────────────────────────────────────────
@@ -219,6 +232,13 @@ try {
     const emails = (r.body?.data ?? []).map((m) => m.user.email);
     check(emails.includes(userA.email) && !emails.includes(ownerB.email),
       'sees ONLY their own people', `saw: ${JSON.stringify(emails)}`);
+  }
+  {
+    const r = await req('PATCH', `/users/${userA.id}/capabilities`, {
+      cookie: cOwnerAPlain, body: { capabilities: ['computers:view'] },
+    });
+    check(r.status === 403 && r.body?.code === 'STEP_UP_REQUIRED',
+      'changing permissions asks for step-up first', `HTTP ${r.status} ${r.body?.code}`);
   }
   {
     const r = await req('PATCH', `/users/${userA.id}/capabilities`, {

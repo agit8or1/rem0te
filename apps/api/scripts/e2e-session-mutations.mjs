@@ -133,8 +133,11 @@ try {
   });
   created.endpoints.push(ep.id);
 
-  const mkSession = (status = 'PENDING', extra = {}) => prisma.supportSession.create({
-    data: { tenantId: tenant.id, customerId: bizA.id, technicianId: alice.id, endpointId: ep.id, status, ...extra },
+  const mkSession = (status = 'LAUNCH_REQUESTED', extra = {}) => prisma.supportSession.create({
+    data: {
+      tenantId: tenant.id, customerId: bizA.id, technicianId: alice.id, endpointId: ep.id, status,
+      launchRequestedAt: new Date(Date.now() - 120_000), statusChangedAt: new Date(Date.now() - 120_000), ...extra,
+    },
   });
 
   const cAlice = await login(alice.email);
@@ -146,16 +149,15 @@ try {
   // ── 1. Viewing is not modifying ────────────────────────────────────────────
   section('history_view grants reading, not writing');
   {
-    const s = await mkSession('CLIENT_OPENED', { startedAt: new Date(Date.now() - 60_000) });
+    const s = await mkSession('CLIENT_OPENED');
     check((await req('GET', `/sessions/${s.id}`, { cookie: cMallory })).status === 200,
       'history viewer can read a colleague\'s session');
     const before = await snapshot(s.id);
     const attempts = [
       ['PATCH', `/sessions/${s.id}/complete`, { disposition: 'resolved', notes: 'not mine' }],
       ['PATCH', `/sessions/${s.id}/cancel`, undefined],
-      ['POST', `/sessions/${s.id}/events`, { event: 'client_closed' }],
-      ['POST', `/sessions/${s.id}/events`, { event: 'client_opened' }],
-      ['POST', `/sessions/${s.id}/events`, { event: 'forged_note', metadata: { x: 1 } }],
+      ['POST', `/sessions/${s.id}/events`, { event: 'connected' }],
+      ['POST', `/sessions/${s.id}/events`, { event: 'failed', metadata: { note: 'not mine' } }],
     ];
     for (const [m, p, b] of attempts) {
       const r = await req(m, p, { cookie: cMallory, body: b });
@@ -170,14 +172,14 @@ try {
 
   section('Cross-business stays denied');
   {
-    const s = await mkSession('PENDING');
+    const s = await mkSession('LAUNCH_REQUESTED');
     const before = await snapshot(s.id);
     for (const [who, c] of [['other business Owner', cOwnerB], ['other business history viewer', cBobB]]) {
       const codes = [
         (await req('GET', `/sessions/${s.id}`, { cookie: c })).status,
         (await req('PATCH', `/sessions/${s.id}/complete`, { cookie: c, body: {} })).status,
         (await req('PATCH', `/sessions/${s.id}/cancel`, { cookie: c })).status,
-        (await req('POST', `/sessions/${s.id}/events`, { cookie: c, body: { event: 'client_opened' } })).status,
+        (await req('POST', `/sessions/${s.id}/events`, { cookie: c, body: { event: 'connected' } })).status,
       ];
       check(codes.every((x) => x === 404), `${who}: read/complete/cancel/event all 404`, codes.join(','));
     }
@@ -186,33 +188,33 @@ try {
 
   section('Owners and supervisors keep their access');
   {
-    const s = await mkSession('PENDING');
-    const r1 = await req('POST', `/sessions/${s.id}/events`, { cookie: cAlice, body: { event: 'client_opened' } });
-    check(r1.status === 200, 'technician records client_opened on own session', `HTTP ${r1.status}`);
+    const s = await mkSession('LAUNCH_REQUESTED');
+    const r1 = await req('POST', `/sessions/${s.id}/events`, { cookie: cAlice, body: { event: 'connected' } });
+    check(r1.status === 200, 'technician reports connected on own session', `HTTP ${r1.status}`);
     const r2 = await req('PATCH', `/sessions/${s.id}/complete`, { cookie: cAlice, body: { disposition: 'resolved' } });
     check(r2.status === 200 && r2.body?.data?.status === 'SESSION_COMPLETED', 'technician completes own session', `HTTP ${r2.status}`);
 
-    const s2 = await mkSession('CLIENT_OPENED', { startedAt: new Date(Date.now() - 90_000) });
+    const s2 = await mkSession('CLIENT_OPENED');
     const r3 = await req('PATCH', `/sessions/${s2.id}/complete`, { cookie: cOwnerA, body: {} });
     check(r3.status === 200, 'Business Owner completes a technician\'s session in their business', `HTTP ${r3.status}`);
-    const d = (await prisma.supportSession.findUnique({ where: { id: s2.id } })).duration;
-    check(d >= 89 && d <= 120, 'duration measured from the recorded start', `duration=${d}`);
+    const row = await prisma.supportSession.findUnique({ where: { id: s2.id } });
+    check(row.duration === null && row.timingQuality !== 'MEASURED',
+      'a manual completion invents no measured duration', `duration=${row.duration} quality=${row.timingQuality}`);
 
-    const s3 = await mkSession('PENDING');
+    const s3 = await mkSession('LAUNCH_REQUESTED');
     const tok = await req('POST', '/launcher/token', { cookie: cAlice, body: { endpointId: ep.id, sessionId: s3.id } });
     check(tok.status === 201 || tok.status === 200, 'technician binds a launcher token to own pending session', `HTTP ${tok.status} ${JSON.stringify(tok.body).slice(0, 200)}`);
   }
 
   // ── 2. Transitions ─────────────────────────────────────────────────────────
   section('Terminal sessions stay closed');
-  for (const status of ['SESSION_COMPLETED', 'CANCELED', 'FAILED']) {
+  for (const status of ['SESSION_COMPLETED', 'CANCELED', 'FAILED', 'STATUS_UNKNOWN']) {
     const s = await mkSession(status, { startedAt: new Date(Date.now() - 120_000), completedAt: new Date(Date.now() - 60_000), duration: 60 });
     const before = await snapshot(s.id);
     const codes = [];
     for (const c of [cAlice, cOwnerA]) {
-      codes.push((await req('POST', `/sessions/${s.id}/events`, { cookie: c, body: { event: 'client_opened' } })).status);
-      codes.push((await req('POST', `/sessions/${s.id}/events`, { cookie: c, body: { event: 'client_closed' } })).status);
-      codes.push((await req('POST', `/sessions/${s.id}/events`, { cookie: c, body: { event: 'late_note' } })).status);
+      codes.push((await req('POST', `/sessions/${s.id}/events`, { cookie: c, body: { event: 'connected' } })).status);
+      codes.push((await req('POST', `/sessions/${s.id}/events`, { cookie: c, body: { event: 'failed' } })).status);
       codes.push((await req('PATCH', `/sessions/${s.id}/complete`, { cookie: c, body: {} })).status);
       codes.push((await req('PATCH', `/sessions/${s.id}/cancel`, { cookie: c })).status);
     }
@@ -224,66 +226,73 @@ try {
 
   section('Duplicate and out-of-order events');
   {
-    const s = await mkSession('PENDING');
-    const early = await req('POST', `/sessions/${s.id}/events`, { cookie: cAlice, body: { event: 'client_closed' } });
-    check(early.status === 409, 'client_closed before client_opened → 409', `HTTP ${early.status}`);
-    await req('POST', `/sessions/${s.id}/events`, { cookie: cAlice, body: { event: 'client_opened' } });
-    const start = (await prisma.supportSession.findUnique({ where: { id: s.id } })).startedAt;
+    const s = await mkSession('LAUNCH_REQUESTED');
+    const b0 = await snapshot(s.id);
+    for (const ev of ['client_opened', 'client_closed']) {
+      const r = await req('POST', `/sessions/${s.id}/events`, { cookie: cAlice, body: { event: ev } });
+      check(r.status === 400, `browser cannot claim ${ev} (it cannot observe it) → 400`, `HTTP ${r.status}`);
+    }
+    check(await snapshot(s.id) === b0, '… and nothing was written');
+    await req('POST', `/sessions/${s.id}/events`, { cookie: cAlice, body: { event: 'connected' } });
+    const confirmedAt = (await prisma.supportSession.findUnique({ where: { id: s.id } })).connectionConfirmedAt;
     const before = await snapshot(s.id);
-    const dup = await req('POST', `/sessions/${s.id}/events`, { cookie: cAlice, body: { event: 'client_opened' } });
-    check(dup.status === 409, 'repeated client_opened → 409', `HTTP ${dup.status}`);
-    check(await snapshot(s.id) === before, 'startedAt and event count unchanged by the repeat');
-    check(start instanceof Date, 'startedAt recorded once');
+    const dup = await req('POST', `/sessions/${s.id}/events`, { cookie: cAlice, body: { event: 'connected' } });
+    check(dup.status === 409, 'repeated connected → 409', `HTTP ${dup.status}`);
+    check(await snapshot(s.id) === before, 'confirmation time and event count unchanged by the repeat');
+    check(confirmedAt instanceof Date, 'connection confirmation recorded once');
   }
 
   section('Concurrency, on real Postgres');
   {
-    const s = await mkSession('PENDING');
+    const s = await mkSession('LAUNCH_REQUESTED');
     const rs = await Promise.all(Array.from({ length: 8 }, () =>
-      req('POST', `/sessions/${s.id}/events`, { cookie: cAlice, body: { event: 'client_opened' } })));
+      req('POST', `/sessions/${s.id}/events`, { cookie: cAlice, body: { event: 'connected' } })));
     const codes = rs.map((r) => r.status);
     check(codes.filter((x) => x === 200).length === 1 && codes.filter((x) => x === 409).length === 7,
-      '8 concurrent client_opened: exactly one applies, seven 409', codes.join(','));
+      '8 concurrent connected: exactly one applies, seven 409', codes.join(','));
     const n = await prisma.supportSessionEvent.count({ where: { supportSessionId: s.id } });
     check(n === 1, 'exactly one event row', `rows=${n}`);
 
-    const s2 = await mkSession('CLIENT_OPENED', { startedAt: new Date(Date.now() - 30_000) });
+    const s2 = await mkSession('CLIENT_OPENED');
     const [a, b, c2] = await Promise.all([
       req('PATCH', `/sessions/${s2.id}/complete`, { cookie: cAlice, body: {} }),
       req('PATCH', `/sessions/${s2.id}/cancel`, { cookie: cOwnerA }),
-      req('POST', `/sessions/${s2.id}/events`, { cookie: cAlice, body: { event: 'client_closed' } }),
+      req('POST', `/sessions/${s2.id}/events`, { cookie: cAlice, body: { event: 'failed' } }),
     ]);
     const okCount = [a, b, c2].filter((r) => r.status === 200).length;
-    check(okCount === 1, 'complete vs cancel vs client_closed racing: exactly one wins', `${a.status},${b.status},${c2.status}`);
+    check(okCount === 1, 'complete vs cancel vs failed racing: exactly one wins', `${a.status},${b.status},${c2.status}`);
 
-    const s3 = await mkSession('CLIENT_OPENED', { startedAt: new Date(Date.now() - 30_000) });
+    const s3 = await mkSession('CLIENT_OPENED');
     const rs3 = await Promise.all([
       req('PATCH', `/sessions/${s3.id}/complete`, { cookie: cAlice, body: {} }),
-      ...Array.from({ length: 5 }, () => req('POST', `/sessions/${s3.id}/events`, { cookie: cAlice, body: { event: 'late_note' } })),
+      ...Array.from({ length: 5 }, () => req('POST', `/sessions/${s3.id}/events`, { cookie: cAlice, body: { event: 'connected' } })),
     ]);
     const fin = await prisma.supportSession.findUnique({ where: { id: s3.id } });
-    const lateRows = await prisma.supportSessionEvent.findMany({ where: { supportSessionId: s3.id }, orderBy: { timestamp: 'asc' } });
-    const afterClose = lateRows.filter((e) => e.timestamp > fin.completedAt);
-    check(rs3[0].status === 200 && fin.status === 'SESSION_COMPLETED', 'complete applied');
-    check(afterClose.length === 0, 'no annotation landed after the close committed', `${afterClose.length} late rows`);
+    const rows = await prisma.supportSessionEvent.findMany({ where: { supportSessionId: s3.id } });
+    const okEvents = rs3.slice(1).filter((r) => r.status === 200).length;
+    check(rs3[0].status === 200 && fin.status === 'SESSION_COMPLETED', 'complete applied and the session stays completed', `${fin.status}`);
+    check(rows.length === 1 + okEvents && rows.every((e) => e.applied), 'every stored row is one that applied; refused reports left none',
+      `rows=${rows.length} ok=${okEvents}`);
   }
 
   section('Launcher redemption cannot reopen a closed session');
   {
-    const s = await mkSession('PENDING');
+    const s = await mkSession('LAUNCH_REQUESTED');
     const tok = await req('POST', '/launcher/token', { cookie: cAlice, body: { endpointId: ep.id, sessionId: s.id } });
     const raw = tok.body?.data?.token;
     check(!!raw, 'token issued for own pending session', JSON.stringify(tok.body).slice(0, 200));
     const cancel = await req('PATCH', `/sessions/${s.id}/cancel`, { cookie: cAlice });
     check(cancel.status === 200, 'session canceled before the launcher redeems');
-    const before = await snapshot(s.id);
     const v = await req('GET', '/launcher/validate', { headers: { authorization: `Bearer ${raw}` } });
     // Redemption itself may succeed (the token is valid and the computer is
     // still reachable); what it must not do is touch the closed session.
-    const after = JSON.parse(await snapshot(s.id));
-    const prev = JSON.parse(before);
-    check(after.status === 'CANCELED' && after.startedAt === prev.startedAt && after.events === prev.events,
-      'redeeming the token left the canceled session canceled, with no client_opened', `validate HTTP ${v.status}; status=${after.status} events=${after.events}`);
+    // v0.20 keeps the machine signal on the timeline as NOT applied; what
+    // matters is that the status and its evidence timestamps did not move.
+    const after = await prisma.supportSession.findUnique({ where: { id: s.id } });
+    const applied = await prisma.supportSessionEvent.count({ where: { supportSessionId: s.id, applied: true, event: 'launcher_acknowledged' } });
+    check(after.status === 'CANCELED' && after.launcherAckAt === null && after.clientOpenedAt === null,
+      'redeeming the token left the canceled session canceled, with no acknowledgement applied', `validate HTTP ${v.status}; status=${after.status} ack=${after.launcherAckAt}`);
+    check(applied === 0, 'the acknowledgement was not applied to the canceled session', `applied=${applied}`);
   }
 } catch (e) {
   fail++;

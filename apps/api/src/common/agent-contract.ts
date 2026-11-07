@@ -24,8 +24,10 @@
  *   0.15.0  reports its own version; handles reinstallAgent           (+44)
  *   0.16.x  no agent change                                            (0)
  *   0.17.0  CPU load, live memory and system-disk free space
+ *   0.20.0  incoming RustDesk session count (session confirmation); echoes
+ *           the update-rollout nonce and passes it to the installer
  */
-export const AGENT_CONTRACT_VERSION = '0.17.0';
+export const AGENT_CONTRACT_VERSION = '0.20.0';
 
 /**
  * Numeric-segment version compare; tolerates junk by treating it as 0.

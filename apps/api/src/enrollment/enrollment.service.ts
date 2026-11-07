@@ -14,6 +14,8 @@ import { ConfigService } from '@nestjs/config';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
 import { CreateClaimTokenDto, ClaimEndpointDto } from './dto/enrollment.dto';
+import { SessionEventsService } from '../sessions/session-events.service';
+import { UpdateRolloutService } from '../admin/update-rollout.service';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
 import { CANDIDATE_LIVE_MS, CANDIDATE_SETTLE_MS } from './device-secret';
 import { queryHbbsOnline } from './hbbs-presence';
@@ -33,6 +35,8 @@ export class EnrollmentService {
     private readonly config: ConfigService,
     private readonly acl: AccessControlService,
     private readonly inventory: EndpointInventoryService,
+    private readonly sessionEvents: SessionEventsService,
+    private readonly rollouts: UpdateRolloutService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -406,6 +410,7 @@ export class EnrollmentService {
     loggedOnUser?: string; uptimeSeconds?: number; lastBootAt?: string;
     cpuLoadPercent?: number; memoryTotalMb?: number; memoryFreeMb?: number;
     systemDiskTotalMb?: number; systemDiskFreeMb?: number;
+    rustdeskSessions?: number; updateNonce?: string;
   }, remoteIp?: string) {
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { rustdeskId: dto.rustdeskId },
@@ -507,6 +512,9 @@ export class EnrollmentService {
         ...(authenticated && dto.hostname !== undefined && { hostname: dto.hostname }),
         ...(authenticated && dto.platform !== undefined && { platform: dto.platform }),
         ...(authenticated && dto.rustdeskVersion !== undefined && { version: dto.rustdeskVersion }),
+        ...(authenticated && dto.rustdeskSessions !== undefined && {
+          rdSessionsActive: dto.rustdeskSessions, rdSessionsObservedAt: new Date(),
+        }),
         ...(encryptedPassword ? { permanentPassword: encryptedPassword } : {}),
         // A staged update clears once the endpoint reports the target version
         // or newer. Comparing reported-vs-target rather than assuming success
@@ -577,7 +585,7 @@ export class EnrollmentService {
     // Tell the endpoint to upgrade its RustDesk client when one is staged and
     // it is not already on the target. The endpoint re-runs the installer,
     // which is idempotent and pins whatever version this server serves.
-    const updateRustdesk =
+    let updateRustdesk: { targetVersion: string; nonce?: string } | null =
       authenticated &&
       node.updateRequestedAt &&
       node.updateTargetVersion &&
@@ -589,7 +597,7 @@ export class EnrollmentService {
     // upgrade — re-run the installer, which is idempotent and keeps the
     // machine's existing configuration, password and enrolment — but reachable
     // regardless of which RustDesk version the endpoint is on.
-    let reinstallAgent: { targetVersion: string } | null = null;
+    let reinstallAgent: { targetVersion: string; nonce?: string } | null = null;
     if (authenticated && node.reinstallRequestedAt) {
       reinstallAgent = { targetVersion: this.platformVersion() };
       // Recorded before the response goes out, so a request is only ever
@@ -599,6 +607,25 @@ export class EnrollmentService {
           where: { id: node.id },
           data: { reinstallDispatchedAt: new Date() },
         }).catch(() => { /* best-effort: never cost the endpoint its heartbeat */ });
+      }
+    }
+
+    // A staged rollout owns this computer's updates while it has a job here:
+    // exact version, batch, window, backoff and evidence all come from it,
+    // and the legacy one-click staging above must not also fire.
+    if (authenticated) {
+      try {
+        const managed = await this.rollouts.onHeartbeat({
+          endpointId: node.endpointId, rustdeskId: dto.rustdeskId, authenticated,
+          rustdeskVersion: dto.rustdeskVersion, agentVersion: dto.agentVersion, updateNonce: dto.updateNonce,
+          reportedPassword: !!dto.password, rdSessionsActive: dto.rustdeskSessions,
+        });
+        if (managed.managed) {
+          updateRustdesk = managed.updateRustdesk ?? null;
+          reinstallAgent = managed.reinstallAgent ?? null;
+        }
+      } catch (e) {
+        this.logger.warn(`Rollout step failed for endpoint ${node.endpointId}: ${String(e)}`);
       }
     }
 
@@ -628,6 +655,13 @@ export class EnrollmentService {
       } catch (e) {
         this.logger.warn(`Inventory step failed for endpoint ${node.endpointId}: ${String(e)}`);
       }
+    }
+
+    // Session evidence from the remote side. Only an authenticated heartbeat,
+    // and only for this machine's own sessions — see reconcileEndpointSignal.
+    if (authenticated && dto.rustdeskSessions !== undefined) {
+      await this.sessionEvents.reconcileEndpointSignal(node.endpointId, dto.rustdeskSessions, new Date())
+        .catch((e) => this.logger.warn(`Session reconcile failed for ${node.endpointId}: ${String(e)}`));
     }
 
     // An unauthenticated caller gets the liveness ack and nothing that would

@@ -4,7 +4,6 @@ import {
 import { Response } from 'express';
 import * as fs from 'fs';
 import { RustdeskService, type RustdeskServerConfig } from '../common/rustdesk.service';
-import { latestRustdeskVersionOr } from '../common/rustdesk-release';
 
 /**
  * Client downloads for the people doing the supporting.
@@ -41,7 +40,7 @@ export class DownloadsController {
   @Get()
   async manifest() {
     const config = await this.rustdesk.serverConfig();
-    const version = await latestRustdeskVersionOr();
+    const version = await this.rustdesk.pinnedOrLatestVersion();
     return {
       success: true,
       data: {
@@ -84,7 +83,7 @@ export class DownloadsController {
   /** Stock RustDesk, unmodified and unconfigured. */
   @Get('rustdesk/plain')
   async plain(@Res() res: Response) {
-    const version = await latestRustdeskVersionOr();
+    const version = await this.rustdesk.pinnedOrLatestVersion();
     const exePath = await this.rustdesk.cachedWindowsClient(version);
     this.sendExe(res, exePath, `rustdesk-${version}-x86_64.exe`);
   }
@@ -99,7 +98,7 @@ export class DownloadsController {
   @Get('rustdesk/configured')
   async configured(@Res() res: Response) {
     const config = await this.requireConfig();
-    const version = await latestRustdeskVersionOr();
+    const version = await this.rustdesk.pinnedOrLatestVersion();
     const exePath = await this.rustdesk.cachedWindowsClient(version);
     this.sendExe(res, exePath, config.exeName);
   }
@@ -115,7 +114,7 @@ export class DownloadsController {
   @Get('rustdesk/setup.cmd')
   async setupCmd(@Res() res: Response) {
     const config = await this.requireConfig();
-    const script = this.rustdesk.buildSetupCmd(config, await latestRustdeskVersionOr(), this.clientDownloadUrl());
+    const script = this.rustdesk.buildSetupCmd(config, await this.rustdesk.pinnedOrLatestVersion(), this.clientDownloadUrl());
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', 'attachment; filename="rem0te-setup-rustdesk.cmd"');
     res.setHeader('Cache-Control', 'no-store');

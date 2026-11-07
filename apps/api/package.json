@@ -1,6 +1,6 @@
 {
   "name": "@reboot-remote/api",
-  "version": "0.19.12",
+  "version": "0.20.0",
   "private": true,
   "scripts": {
     "dev": "nest start --watch",
@@ -23,6 +23,7 @@
     "@nestjs/schedule": "^6.1.1",
     "@nestjs/throttler": "^6.7.1",
     "@prisma/client": "^5.14.0",
+    "@simplewebauthn/server": "14.0.3",
     "@types/multer": "^2.3.0",
     "argon2": "^0.45.1",
     "class-transformer": "^0.5.1",
@@ -33,6 +34,7 @@
     "maxmind": "^5.0.7",
     "multer": "^2.4.0",
     "nanoid": "^6.0.2",
+    "openid-client": "6.8.8",
     "otplib": "^12.0.1",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",

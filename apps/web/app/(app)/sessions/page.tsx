@@ -3,33 +3,91 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { sessionsApi, endpointsApi } from '@/lib/api-client';
+import { api, sessionsApi, endpointsApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { SessionStatusBadge } from '@/components/sessions/session-status-badge';
+import {
+  SessionStatusBadge,
+  isTerminalSessionStatus,
+} from '@/components/sessions/session-status-badge';
+import { usePermissions, CAP } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate, formatDuration } from '@/lib/utils';
-import { Plus, PlayCircle, X, Monitor, Wifi, RefreshCw } from 'lucide-react';
+import { PlayCircle, X, Monitor, Wifi, RefreshCw, Zap, CheckCircle, Info } from 'lucide-react';
+
+type Row = Record<string, unknown>;
+
+function apiMessage(e: unknown, fallback: string) {
+  return (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message?.toString() ?? fallback;
+}
+
+/** What each recorded event means, in the API's own vocabulary. */
+const EVENT_LABEL: Record<string, string> = {
+  launch_requested: 'Launch requested',
+  launcher_acknowledged: 'Launcher acknowledged',
+  client_opened: 'RustDesk opened on the technician’s computer',
+  client_launch_failed: 'RustDesk failed to open',
+  connection_confirmed: 'Connection confirmed',
+  connection_observed_ambiguous: 'A connection was seen, but could not be tied to this launch',
+  disconnected: 'Disconnected',
+  technician_completed: 'Completed by technician',
+  technician_canceled: 'Canceled by technician',
+  technician_failed: 'Marked failed by technician',
+  timeout_unknown: 'Closed by timeout: no signal arrived',
+  timeout_ended: 'Closed by timeout: no end signal arrived',
+};
+
+const SOURCE_LABEL: Record<string, string> = {
+  server: 'server',
+  launcher: 'launcher',
+  connect_script: 'Connect script',
+  endpoint_agent: 'endpoint agent',
+  technician: 'technician',
+  timeout: 'timeout',
+};
+
+/**
+ * Duration is shown only when the API measured it: a confirmed start and an
+ * observed end, both from the endpoint. Everything else says why not.
+ */
+function durationInfo(s: Row): { real: boolean; text: string; why?: string } {
+  const quality = (s.timingQuality as string | undefined) ?? 'UNKNOWN';
+  const duration = s.duration as number | null | undefined;
+  if (quality === 'MEASURED' && typeof duration === 'number') {
+    return { real: true, text: formatDuration(duration) };
+  }
+  if (!isTerminalSessionStatus(s.status as string)) {
+    return { real: false, text: 'Unknown', why: 'The session is still open.' };
+  }
+  const why: Record<string, string> = {
+    REPORTED: 'The start or end came from a technician’s report, not from the computer, so no duration was measured.',
+    INFERRED: 'The end was inferred from a timeout because no end signal arrived, so no duration is claimed.',
+    LEGACY: 'Recorded before connection tracking: its times are launch times, not connection times.',
+    UNKNOWN: 'No connection start and end were observed by the computer.',
+  };
+  return { real: false, text: 'Unknown', why: why[quality] ?? why.UNKNOWN };
+}
 
 export default function SessionsPage() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [showCreate, setShowCreate] = useState(false);
-  const [adHocId, setAdHocId] = useState('');
-  const [contactName, setContactName] = useState('');
-  const [issue, setIssue] = useState('');
+  const { can } = usePermissions();
+  const canConnect = can(CAP.COMPUTERS_CONNECT);
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   const { data: sessionsData, isLoading: sessionsLoading } = useQuery({
     queryKey: ['sessions'],
@@ -43,73 +101,59 @@ export default function SessionsPage() {
     refetchInterval: 30_000,
   });
 
-  const createMutation = useMutation({
-    mutationFn: () =>
-      sessionsApi.create({
-        adHocRustdeskId: adHocId,
-        isAdHoc: true,
-        contactName: contactName || undefined,
-        issueDescription: issue || undefined,
-      }),
-    onSuccess: () => {
-      toast({ title: 'Session created' });
-      qc.invalidateQueries({ queryKey: ['sessions'] });
-      setShowCreate(false);
-      setAdHocId('');
-      setContactName('');
-      setIssue('');
-    },
-    onError: () => toast({ title: 'Error', description: 'Failed to create session', variant: 'destructive' }),
-  });
-
   const cancelMutation = useMutation({
     mutationFn: (id: string) => sessionsApi.cancel(id),
-    onSuccess: () => {
-      toast({ title: 'Session cancelled' });
+    onSuccess: (_r, id) => {
+      toast({ title: 'Session canceled' });
       qc.invalidateQueries({ queryKey: ['sessions'] });
+      qc.invalidateQueries({ queryKey: ['session', id] });
     },
     // 403: not this person's session to change; 409: already closed.
-    onError: (e: unknown) => toast({
-      title: 'Could not cancel session',
-      description: (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to cancel session',
-      variant: 'destructive',
-    }),
+    onError: (e: unknown, id) => {
+      toast({ title: 'Could not cancel session', description: apiMessage(e, 'Failed to cancel session'), variant: 'destructive' });
+      qc.invalidateQueries({ queryKey: ['sessions'] });
+      qc.invalidateQueries({ queryKey: ['session', id] });
+    },
   });
 
+  // Connect creates the session server-side (POST :id/connect returns its
+  // id); the Connect script is then told to reuse it, so one click is one
+  // session.
   const connectMutation = useMutation({
     mutationFn: (endpointId: string) => endpointsApi.connect(endpointId),
-    onSuccess: async (res) => {
-      const info = res.data?.data as { rustdeskId?: string; password?: string | null } | undefined;
-      const rdId = info?.rustdeskId;
-      if (!rdId) {
+    onSuccess: async (res, endpointId) => {
+      const info = res.data?.data as { rustdeskId?: string; password?: string | null; sessionId?: string | null } | undefined;
+      if (!info?.rustdeskId) {
         toast({ title: 'Computer not ready', description: 'This computer has not finished enrollment.', variant: 'destructive' });
         return;
       }
-      const pw = info?.password ?? null;
-      if (pw) {
-        try { await navigator.clipboard.writeText(pw); } catch { /* ignore */ }
+      if (info.password) {
+        try { await navigator.clipboard.writeText(info.password); } catch { /* ignore */ }
       }
-      const uri = pw
-        ? `rustdesk://connection/new/${rdId}?password=${encodeURIComponent(pw)}`
-        : `rustdesk://connection/new/${rdId}`;
-      window.location.href = uri;
+      const url = endpointsApi.connectScriptUrl(endpointId);
+      window.location.href = info.sessionId ? `${url}?session=${encodeURIComponent(info.sessionId)}` : url;
+      qc.invalidateQueries({ queryKey: ['sessions'] });
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to launch session', variant: 'destructive' }),
+    onError: (e: unknown) => toast({ title: 'Could not connect', description: apiMessage(e, 'Failed to start connection'), variant: 'destructive' }),
   });
 
-  const INACTIVE = ['SESSION_COMPLETED', 'FAILED', 'CANCELED'];
-  const sessions: Record<string, unknown>[] = sessionsData?.sessions ?? [];
-  const activeSessions = sessions.filter((s) => !INACTIVE.includes(s.status as string));
-  const connected: Record<string, unknown>[] = Array.isArray(connectedData) ? connectedData : [];
+  const sessions: Row[] = sessionsData?.sessions ?? [];
+  const activeSessions = sessions.filter((s) => !isTerminalSessionStatus(s.status as string));
+  const connected: Row[] = Array.isArray(connectedData) ? connectedData : [];
   const connectedCount = activeSessions.length + connected.length;
 
   return (
     <div className="p-6 space-y-6">
       <PageHeader title="Sessions" description="Connected clients and session history">
-        <Button size="sm" onClick={() => setShowCreate(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Ad-hoc Session
-        </Button>
+        {/* Ad-hoc sessions go through Quick Connect; POST /sessions refuses them. */}
+        {can(CAP.QUICK_CONNECT) && (
+          <Button size="sm" variant="outline" asChild>
+            <Link href="/quick-connect">
+              <Zap className="h-4 w-4 mr-2" />
+              Quick Connect
+            </Link>
+          </Button>
+        )}
       </PageHeader>
 
       <Tabs defaultValue="connected">
@@ -133,14 +177,14 @@ export default function SessionsPage() {
         <TabsContent value="connected" className="mt-4">
           <div className="space-y-5">
 
-            {/* Active / waiting sessions */}
+            {/* Open sessions: launched or confirmed, not yet closed */}
             {activeSessions.length > 0 && (
               <div className="space-y-3">
                 <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse inline-block" />
-                  Active Sessions ({activeSessions.length})
+                  <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />
+                  Open Sessions ({activeSessions.length})
                 </h2>
-                <div className="rounded-md border bg-background overflow-hidden">
+                <div className="rounded-md border bg-background overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b bg-muted/50">
@@ -178,31 +222,39 @@ export default function SessionsPage() {
                             </td>
                             <td className="px-4 py-3 text-right">
                               <div className="flex items-center justify-end gap-1">
-                                {(epId || rustdeskId) && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 px-2 text-xs gap-1"
+                                  onClick={() => setDetailId(s.id as string)}
+                                >
+                                  <Info className="h-3 w-3" />
+                                  Details
+                                </Button>
+                                {canConnect && epId && (
                                   <Button
                                     size="sm"
                                     variant="outline"
                                     className="h-7 px-2 text-xs gap-1"
-                                    onClick={() => {
-                                      if (epId) connectMutation.mutate(epId);
-                                      else window.location.href = `rustdesk://connection/new/${rustdeskId}`;
-                                    }}
+                                    onClick={() => connectMutation.mutate(epId)}
                                     disabled={connectMutation.isPending}
                                   >
                                     <PlayCircle className="h-3 w-3" />
                                     Connect
                                   </Button>
                                 )}
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-7 px-2 text-xs text-destructive hover:text-destructive gap-1"
-                                  onClick={() => cancelMutation.mutate(s.id as string)}
-                                  disabled={cancelMutation.isPending}
-                                >
-                                  <X className="h-3 w-3" />
-                                  Cancel
-                                </Button>
+                                {canConnect && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 px-2 text-xs text-destructive hover:text-destructive gap-1"
+                                    onClick={() => cancelMutation.mutate(s.id as string)}
+                                    disabled={cancelMutation.isPending}
+                                  >
+                                    <X className="h-3 w-3" />
+                                    Cancel
+                                  </Button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -257,7 +309,7 @@ export default function SessionsPage() {
                                 {ep.name as string}
                               </Link>
                             </span>
-                            <span className="flex-none w-2 h-2 rounded-full bg-green-500 animate-pulse" title="Online" />
+                            <span className="flex-none w-2 h-2 rounded-full bg-green-500" title="Online" />
                           </CardTitle>
                         </CardHeader>
                         <CardContent className="px-4 pb-3 pt-0 flex flex-col gap-2">
@@ -270,7 +322,7 @@ export default function SessionsPage() {
                           {lastSeen && (
                             <p className="text-[10px] text-muted-foreground">Last seen {formatDate(lastSeen)}</p>
                           )}
-                          {node?.rustdeskId && (
+                          {canConnect && node?.rustdeskId && (
                             <Button
                               size="sm"
                               className="w-full gap-1.5"
@@ -292,7 +344,7 @@ export default function SessionsPage() {
             {activeSessions.length === 0 && connected.length === 0 && !connectedLoading && (
               <div className="rounded-md border border-dashed py-12 text-center text-sm text-muted-foreground space-y-2">
                 <Wifi className="h-8 w-8 mx-auto opacity-30" />
-                <p>No active sessions or connected clients.</p>
+                <p>No open sessions or connected clients.</p>
               </div>
             )}
           </div>
@@ -303,13 +355,13 @@ export default function SessionsPage() {
           {sessionsLoading ? (
             <div className="text-sm text-muted-foreground">Loading…</div>
           ) : (
-            <div className="rounded-md border bg-background overflow-hidden">
+            <div className="rounded-md border bg-background overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-muted/50">
                     <th className="text-left px-4 py-3 font-medium">Endpoint / Target</th>
                     <th className="text-left px-4 py-3 font-medium">Started by</th>
-                    <th className="text-left px-4 py-3 font-medium">Started</th>
+                    <th className="text-left px-4 py-3 font-medium">Launched</th>
                     <th className="text-left px-4 py-3 font-medium">Duration</th>
                     <th className="text-left px-4 py-3 font-medium">Status</th>
                     <th className="text-left px-4 py-3 font-medium">Actions</th>
@@ -327,7 +379,8 @@ export default function SessionsPage() {
                       const ep = s.endpoint as { id: string; name: string } | null;
                       const tech = s.technician as { email: string } | null;
                       const status = s.status as string;
-                      const canCancel = status === 'ACTIVE' || status === 'PENDING';
+                      const open = !isTerminalSessionStatus(status);
+                      const dur = durationInfo(s);
                       return (
                         <tr key={s.id as string} className="hover:bg-muted/30">
                           <td className="px-4 py-3">
@@ -343,17 +396,26 @@ export default function SessionsPage() {
                           </td>
                           <td className="px-4 py-3 text-muted-foreground">{tech?.email ?? '—'}</td>
                           <td className="px-4 py-3 text-muted-foreground text-xs">
-                            {formatDate((s.startedAt as string) ?? (s.createdAt as string))}
+                            {formatDate((s.launchRequestedAt as string) ?? (s.createdAt as string))}
                           </td>
-                          <td className="px-4 py-3 text-muted-foreground">
-                            {formatDuration(s.duration as number)}
+                          <td className="px-4 py-3 text-muted-foreground" title={dur.why}>
+                            {dur.real ? dur.text : <span className="italic">{dur.text}</span>}
                           </td>
                           <td className="px-4 py-3">
                             <SessionStatusBadge status={status} />
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1">
-                              {ep && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs gap-1"
+                                onClick={() => setDetailId(s.id as string)}
+                              >
+                                <Info className="h-3 w-3" />
+                                Details
+                              </Button>
+                              {canConnect && ep && (
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -365,7 +427,7 @@ export default function SessionsPage() {
                                   Connect
                                 </Button>
                               )}
-                              {canCancel && (
+                              {canConnect && open && (
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -390,51 +452,242 @@ export default function SessionsPage() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Start Ad-hoc Session</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="rustdesk-id">RustDesk ID *</Label>
-              <Input
-                id="rustdesk-id"
-                placeholder="123456789"
-                value={adHocId}
-                onChange={(e) => setAdHocId(e.target.value)}
-              />
+      <SessionDetailDialog
+        id={detailId}
+        onClose={() => setDetailId(null)}
+        canChange={canConnect}
+        onCancel={(id) => cancelMutation.mutate(id)}
+        cancelPending={cancelMutation.isPending}
+      />
+    </div>
+  );
+}
+
+function SessionDetailDialog({
+  id, onClose, canChange, onCancel, cancelPending,
+}: {
+  id: string | null;
+  onClose: () => void;
+  canChange: boolean;
+  onCancel: (id: string) => void;
+  cancelPending: boolean;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [completing, setCompleting] = useState(false);
+  const [notes, setNotes] = useState('');
+  const [disposition, setDisposition] = useState('');
+  const [minutes, setMinutes] = useState('');
+
+  const { data: s, isLoading } = useQuery<Row>({
+    queryKey: ['session', id],
+    queryFn: () => sessionsApi.get(id!).then((r) => r.data?.data),
+    enabled: !!id,
+    refetchInterval: (q) => (q.state.data && !isTerminalSessionStatus(q.state.data.status as string) ? 10_000 : false),
+  });
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['sessions'] });
+    qc.invalidateQueries({ queryKey: ['session', id] });
+  };
+
+  const completeMutation = useMutation({
+    mutationFn: () => {
+      const m = minutes.trim() === '' ? undefined : Number(minutes);
+      return sessionsApi.complete(id!, {
+        ...(notes.trim() ? { notes: notes.trim() } : {}),
+        ...(disposition.trim() ? { disposition: disposition.trim() } : {}),
+        ...(m !== undefined && Number.isInteger(m) ? { manualWorkMinutes: m } : {}),
+      });
+    },
+    onSuccess: () => {
+      toast({ title: 'Session completed' });
+      setCompleting(false);
+      setNotes(''); setDisposition(''); setMinutes('');
+      refresh();
+    },
+    onError: (e: unknown) => {
+      toast({ title: 'Could not complete session', description: apiMessage(e, 'Failed to complete session'), variant: 'destructive' });
+      refresh();
+    },
+  });
+
+  // A technician's own report. Recorded as theirs, never as the computer's.
+  const reportMutation = useMutation({
+    mutationFn: (event: 'connected' | 'failed') => api.post(`/sessions/${id}/events`, { event }),
+    onSuccess: (_r, event) => {
+      toast({ title: event === 'connected' ? 'Recorded: you reported connected' : 'Recorded: you reported it failed' });
+      refresh();
+    },
+    onError: (e: unknown) => {
+      toast({ title: 'Not recorded', description: apiMessage(e, 'Failed to record'), variant: 'destructive' });
+      refresh();
+    },
+  });
+
+  const minutesValid = minutes.trim() === '' || (/^\d+$/.test(minutes.trim()) && Number(minutes) <= 1440);
+  const status = (s?.status as string) ?? '';
+  const open = !!s && !isTerminalSessionStatus(status);
+  const events = (s?.events as Row[] | undefined) ?? [];
+  const ep = s?.endpoint as { id: string; name: string; hostname?: string | null } | null | undefined;
+  const tech = s?.technician as { email: string; firstName?: string | null; lastName?: string | null } | null | undefined;
+  const dur = s ? durationInfo(s) : null;
+
+  return (
+    <Dialog open={!!id} onOpenChange={(o) => { if (!o) { setCompleting(false); onClose(); } }}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
+            Session
+            {s && <SessionStatusBadge status={status} />}
+          </DialogTitle>
+          <DialogDescription>
+            {ep ? ep.name : (s?.adHocRustdeskId as string | undefined) ? `Quick Connect · ${s?.adHocRustdeskId as string}` : ' '}
+          </DialogDescription>
+        </DialogHeader>
+
+        {isLoading || !s ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : (
+          <div className="space-y-5 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+              <Field label="Technician">{tech ? ([tech.firstName, tech.lastName].filter(Boolean).join(' ') || tech.email) : '—'}</Field>
+              <Field label="Contact">{(s.contactName as string) || '—'}</Field>
+              <Field label="Launch requested">{s.launchRequestedAt ? formatDate(s.launchRequestedAt as string) : '—'}</Field>
+              <Field label="Connection confirmed">{s.connectionConfirmedAt ? formatDate(s.connectionConfirmedAt as string) : '—'}</Field>
+              <Field label="Ended">
+                {s.endedAt ? `${formatDate(s.endedAt as string)}${s.endInferred ? ' (inferred)' : ''}` : '—'}
+              </Field>
+              <Field label="Duration">
+                {dur?.real ? dur.text : <span className="italic text-muted-foreground">Unknown</span>}
+              </Field>
+              {typeof s.manualWorkMinutes === 'number' && (
+                <Field label="Work time (entered)">{`${s.manualWorkMinutes as number} min`}</Field>
+              )}
+              {!!s.disposition && <Field label="Disposition">{s.disposition as string}</Field>}
             </div>
+
+            {dur && !dur.real && dur.why && (
+              <p className="text-xs text-muted-foreground rounded-md border bg-muted/40 px-3 py-2">
+                Duration unknown: {dur.why}
+              </p>
+            )}
+
+            {!!s.notes && (
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">Notes</p>
+                <p className="whitespace-pre-wrap">{s.notes as string}</p>
+              </div>
+            )}
+
             <div className="space-y-2">
-              <Label htmlFor="contact">Contact Name</Label>
-              <Input
-                id="contact"
-                placeholder="John Smith"
-                value={contactName}
-                onChange={(e) => setContactName(e.target.value)}
-              />
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Timeline</p>
+              {events.length === 0 ? (
+                <p className="text-muted-foreground text-xs">No events recorded.</p>
+              ) : (
+                <ol className="relative border-l pl-4 space-y-3">
+                  {events.map((e) => {
+                    const name = e.event as string;
+                    const at = (e.occurredAt as string | null) ?? (e.timestamp as string);
+                    const src = e.source as string | null;
+                    const applied = e.applied !== false;
+                    return (
+                      <li key={e.id as string} className="relative">
+                        <span
+                          className={`absolute -left-[21px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-background ${applied ? 'bg-primary' : 'bg-muted-foreground/40'}`}
+                          aria-hidden="true"
+                        />
+                        <p className={applied ? '' : 'text-muted-foreground'}>
+                          {EVENT_LABEL[name] ?? name}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDate(at)}
+                          {src ? ` · from ${SOURCE_LABEL[src] ?? src}` : ''}
+                          {!applied ? ' · recorded, changed nothing' : ''}
+                        </p>
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="issue">Issue Description</Label>
-              <Input
-                id="issue"
-                placeholder="Cannot print…"
-                value={issue}
-                onChange={(e) => setIssue(e.target.value)}
-              />
-            </div>
+
+            {open && canChange && completing && (
+              <div className="space-y-3 rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">
+                  Completing records your close-out. It does not measure a duration.
+                </p>
+                <div className="space-y-1.5">
+                  <Label htmlFor="s-notes">Notes</Label>
+                  <Textarea id="s-notes" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="s-disp">Disposition</Label>
+                    <Input id="s-disp" placeholder="e.g. Resolved" value={disposition} onChange={(e) => setDisposition(e.target.value)} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="s-min">Work time (minutes)</Label>
+                    <Input id="s-min" inputMode="numeric" value={minutes} onChange={(e) => setMinutes(e.target.value)} />
+                    {!minutesValid && <p className="text-xs text-destructive">Whole minutes, 0 to 1440.</p>}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
-            <Button
-              onClick={() => createMutation.mutate()}
-              disabled={!adHocId || createMutation.isPending}
-            >
-              {createMutation.isPending ? 'Creating…' : 'Create'}
-            </Button>
+        )}
+
+        {s && open && canChange && (
+          <DialogFooter className="flex-wrap gap-2 sm:justify-between">
+            {completing ? (
+              <>
+                <Button variant="outline" onClick={() => setCompleting(false)} disabled={completeMutation.isPending}>Back</Button>
+                <Button onClick={() => completeMutation.mutate()} disabled={!minutesValid || completeMutation.isPending}>
+                  {completeMutation.isPending ? 'Saving…' : 'Complete session'}
+                </Button>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {status !== 'SESSION_STARTED' && (
+                    <Button variant="outline" size="sm" onClick={() => reportMutation.mutate('connected')} disabled={reportMutation.isPending}>
+                      I&apos;m connected
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm" onClick={() => reportMutation.mutate('failed')} disabled={reportMutation.isPending}>
+                    It failed
+                  </Button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => onCancel(id!)}
+                    disabled={cancelPending}
+                  >
+                    <X className="h-3.5 w-3.5 mr-1" />
+                    Cancel session
+                  </Button>
+                  <Button size="sm" onClick={() => setCompleting(true)}>
+                    <CheckCircle className="h-3.5 w-3.5 mr-1" />
+                    Complete…
+                  </Button>
+                </div>
+              </>
+            )}
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-4 sm:block">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-right sm:text-left">{children}</p>
     </div>
   );
 }

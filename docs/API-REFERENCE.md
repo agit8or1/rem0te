@@ -2,8 +2,8 @@
 
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
-Every route is prefixed with `/api/v1`. There are **201** of them across
-**23** controllers.
+Every route is prefixed with `/api/v1`. There are **282** of them across
+**32** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -67,6 +67,8 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/auth/mfa/verify` | public, throttled | — |
 | `GET` | `/api/v1/auth/profile` | signed in | — |
 | `PATCH` | `/api/v1/auth/profile` | signed in | — |
+| `POST` | `/api/v1/auth/step-up` | signed in, throttled | — |
+| `GET` | `/api/v1/auth/step-up` | signed in | — |
 
 ## Businesses
 
@@ -110,6 +112,18 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/dashboard` | signed in | — |
 | `GET` | `/api/v1/dashboard/map` | signed in | — |
 | `GET` | `/api/v1/dashboard/platform` | signed in | — |
+
+## Diagnostics
+
+`apps/api/src/diagnostics/diagnostics.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/diagnostics/technician/helper.cmd` | signed in | `COMPUTERS_CONNECT` |
+| `GET` | `/api/v1/diagnostics/technician/latest` | signed in | `COMPUTERS_CONNECT` |
+| `POST` | `/api/v1/diagnostics/technician/report` | public, throttled | — |
+| `GET` | `/api/v1/endpoints/:id/diagnostics` | signed in | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/endpoints/:id/diagnostics/report` | signed in | `COMPUTERS_VIEW` |
 
 ## Client downloads
 
@@ -209,6 +223,34 @@ Admins and Business Owners are not confined by it; see
 | `DELETE` | `/api/v1/notes/:id` | signed in | `COMPUTERS_EDIT` |
 | `POST` | `/api/v1/notes/:id/comments` | signed in | `COMPUTERS_EDIT` |
 
+## Offboarding
+
+`apps/api/src/offboarding/offboarding.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/endpoints/:id/access-review` | signed in | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/offboarding` | signed in | — |
+| `POST` | `/api/v1/offboarding` | signed in | — |
+| `GET` | `/api/v1/offboarding/:id` | signed in | — |
+| `GET` | `/api/v1/offboarding/pending-rotations` | signed in | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/offboarding/preview` | signed in | — |
+
+## Passkeys
+
+`apps/api/src/passkeys/passkeys.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/auth/passkeys` | signed in | — |
+| `DELETE` | `/api/v1/auth/passkeys/:id` | signed in | — |
+| `POST` | `/api/v1/auth/passkeys/login` | public, throttled | — |
+| `POST` | `/api/v1/auth/passkeys/login/options` | public, throttled | — |
+| `POST` | `/api/v1/auth/passkeys/register` | signed in, throttled | — |
+| `POST` | `/api/v1/auth/passkeys/register/options` | signed in, throttled | — |
+| `POST` | `/api/v1/auth/step-up/passkey` | signed in, throttled | — |
+| `POST` | `/api/v1/auth/step-up/passkey/options` | signed in, throttled | — |
+
 ## Public (unauthenticated)
 
 `apps/api/src/public/public.controller.ts`
@@ -261,6 +303,25 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/public/quick-connect` | public | — |
 | `GET` | `/api/v1/public/quick-connect/download/:os` | public | — |
 
+## Rollouts
+
+`apps/api/src/admin/rollouts.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/admin/rollouts` | signed in | — |
+| `POST` | `/api/v1/admin/rollouts` | signed in | — |
+| `GET` | `/api/v1/admin/rollouts/:id` | signed in | — |
+| `POST` | `/api/v1/admin/rollouts/:id/cancel` | signed in | — |
+| `POST` | `/api/v1/admin/rollouts/:id/pause` | signed in | — |
+| `POST` | `/api/v1/admin/rollouts/:id/start` | signed in | — |
+| `GET` | `/api/v1/admin/rollouts/endpoints/:endpointId/history` | signed in | — |
+| `POST` | `/api/v1/admin/rollouts/jobs/:jobId/cancel` | signed in | — |
+| `GET` | `/api/v1/admin/rollouts/pilot-groups` | signed in | — |
+| `POST` | `/api/v1/admin/rollouts/pilot-groups` | signed in | — |
+| `GET` | `/api/v1/admin/rollouts/pin` | signed in | — |
+| `PATCH` | `/api/v1/admin/rollouts/pin` | signed in | — |
+
 ## Security
 
 `apps/api/src/admin/security.controller.ts`
@@ -299,6 +360,7 @@ Admins and Business Owners are not confined by it; see
 | `PATCH` | `/api/v1/sessions/:id/complete` | signed in | `COMPUTERS_CONNECT` |
 | `POST` | `/api/v1/sessions/:id/events` | signed in | `COMPUTERS_CONNECT` |
 | `GET` | `/api/v1/sessions/stats` | signed in | `SESSIONS_VIEW` |
+| `POST` | `/api/v1/sessions/telemetry` | public, throttled | — |
 
 ## Sites businessesbusinessIdsites
 
@@ -327,6 +389,88 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/sites/:id` | signed in | `COMPUTERS_VIEW` |
 | `PATCH` | `/api/v1/sites/:id` | signed in | `COMPUTERS_EDIT` |
 | `DELETE` | `/api/v1/sites/:id` | signed in | `COMPUTERS_REMOVE` |
+
+## Sso authsso
+
+`apps/api/src/sso/sso.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `POST` | `/api/v1/auth/sso/:id/link` | signed in, throttled | — |
+| `GET` | `/api/v1/auth/sso/:id/start` | public, throttled | — |
+| `GET` | `/api/v1/auth/sso/callback` | public, throttled | — |
+| `GET` | `/api/v1/auth/sso/identities` | signed in | — |
+| `DELETE` | `/api/v1/auth/sso/identities/:id` | signed in | — |
+| `GET` | `/api/v1/auth/sso/providers` | public, throttled | — |
+
+## Sso ssoproviders
+
+`apps/api/src/sso/sso.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/sso/providers` | signed in | — |
+| `POST` | `/api/v1/sso/providers` | signed in | — |
+| `PATCH` | `/api/v1/sso/providers/:id` | signed in | — |
+| `DELETE` | `/api/v1/sso/providers/:id` | signed in | — |
+| `POST` | `/api/v1/sso/providers/:id/mappings` | signed in | — |
+| `DELETE` | `/api/v1/sso/providers/:id/mappings/:mappingId` | signed in | — |
+| `POST` | `/api/v1/sso/providers/:id/test` | signed in, throttled | — |
+
+## Support requests publicsupport
+
+`apps/api/src/support-requests/support-requests.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/public/support/intake/:slug` | public, throttled | — |
+| `POST` | `/api/v1/public/support/intake/:slug` | public, throttled | — |
+| `GET` | `/api/v1/public/support/status/:token` | public, throttled | — |
+| `POST` | `/api/v1/public/support/status/:token/cancel` | public, throttled | — |
+
+## Support requests supportrequests
+
+`apps/api/src/support-requests/support-requests.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `POST` | `/api/v1/support-requests` | signed in, throttled | — |
+| `GET` | `/api/v1/support-requests` | signed in | `SUPPORT_REQUESTS` |
+| `GET` | `/api/v1/support-requests/:id` | signed in | `SUPPORT_REQUESTS` |
+| `POST` | `/api/v1/support-requests/:id/cancel` | signed in | `SUPPORT_REQUESTS` |
+| `POST` | `/api/v1/support-requests/:id/claim` | signed in | `SUPPORT_REQUESTS` |
+| `POST` | `/api/v1/support-requests/:id/complete` | signed in | `SUPPORT_REQUESTS` |
+| `POST` | `/api/v1/support-requests/:id/handoff` | signed in | `SUPPORT_REQUESTS` |
+| `GET` | `/api/v1/support-requests/:id/handoff-candidates` | signed in | `SUPPORT_REQUESTS` |
+| `POST` | `/api/v1/support-requests/:id/release` | signed in | `SUPPORT_REQUESTS` |
+| `GET` | `/api/v1/support-requests/intake` | signed in | — |
+| `PATCH` | `/api/v1/support-requests/intake` | signed in | — |
+
+## Technicians
+
+`apps/api/src/technicians/technicians.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `POST` | `/api/v1/technicians/access-requests` | signed in | — |
+| `GET` | `/api/v1/technicians/approvals` | signed in | — |
+| `POST` | `/api/v1/technicians/approvals/:id` | signed in | — |
+| `GET` | `/api/v1/technicians/assignments` | signed in | — |
+| `POST` | `/api/v1/technicians/assignments` | signed in | — |
+| `POST` | `/api/v1/technicians/assignments/:id/revoke` | signed in | — |
+| `PATCH` | `/api/v1/technicians/businesses/:businessId/approval-required` | signed in | — |
+| `GET` | `/api/v1/technicians/groups` | signed in | — |
+| `POST` | `/api/v1/technicians/groups` | signed in | — |
+| `PATCH` | `/api/v1/technicians/groups/:id` | signed in | — |
+| `DELETE` | `/api/v1/technicians/groups/:id` | signed in | — |
+| `POST` | `/api/v1/technicians/groups/:id/members` | signed in | — |
+| `DELETE` | `/api/v1/technicians/groups/:id/members/:userId` | signed in | — |
+| `GET` | `/api/v1/technicians/me` | signed in | — |
+| `GET` | `/api/v1/technicians/overview` | signed in | — |
+| `GET` | `/api/v1/technicians/people` | signed in | — |
+| `GET` | `/api/v1/technicians/people/:userId/effective` | signed in | — |
+| `PATCH` | `/api/v1/technicians/people/:userId/platform-permissions` | signed in | — |
+| `GET` | `/api/v1/technicians/vocabulary` | signed in | — |
 
 ## Tenants
 

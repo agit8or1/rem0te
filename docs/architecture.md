@@ -109,6 +109,21 @@ Full model in [access-control.md](access-control.md).
   or a proxy access log.
 - Audit log is append-only, and a failure to write it never breaks the request
   path.
+- **Step-up** (v0.20): a 10-minute HMAC token in an httpOnly `step_up` cookie,
+  bound to the user and to the session's `iat`, minted after a password, TOTP or
+  passkey check. Required per action (`PlatformSettings.stepUpActions`).
+- **SSO** (v0.20): OIDC authorization code + PKCE via `openid-client`;
+  `OidcLoginState` rows (single-use, 10 minutes) bound to the browser by a
+  `sso_state` cookie; identities in `ExternalIdentity`, keyed by
+  `(issuer, subject)` and never by email. Client secrets AES-256-GCM.
+- **Passkeys** (v0.20): `@simplewebauthn/server`; credentials are
+  `UserMfaMethod` rows of type `WEBAUTHN`; challenges in `WebAuthnChallenge`,
+  single-use, 5 minutes; user verification required.
+- **Technician scope** (v0.20): `TechnicianAssignment` rows (per user or
+  group, per business, capabilities, optional computers, window and schedule)
+  resolved on every request by `ActorResolverService`, which also honours the
+  `rem0te_business` cookie / `X-Rem0te-Business` header only for a business
+  the person can reach right now.
 
 ---
 

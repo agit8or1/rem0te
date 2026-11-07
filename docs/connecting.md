@@ -118,6 +118,53 @@ If you would rather prepare a machine in advance, **Downloads** →
 
 ---
 
+## What the session status means (v0.20)
+
+Rem0te hands out a credential and RustDesk carries the connection. Nothing in
+that handoff proves a remote desktop connection happened, so each status names
+the evidence behind it and nothing more:
+
+| Status | Means | Set by |
+|---|---|---|
+| Launch requested | a credential was released for this session | the server |
+| Launcher acknowledged | the launcher redeemed its token, or the Connect script checked in | the server |
+| Client opened | RustDesk started on the technician's computer. **Not** a connection | the launcher or Connect script |
+| Connection confirmed | a RustDesk connection is running on the remote computer, and this is the only launch it can belong to; or the technician said so (recorded as theirs) | the endpoint's agent (0.20.0+), or the technician |
+| Disconnected / ended | the connection ended (measured), the technician completed it (reported), or a timeout (inferred) | the agent, technician or timeout |
+| Failed / Canceled | reported failure before any confirmation / technician | |
+| Status unknown | no confirming or failing signal arrived in time: 30 minutes after a launch, 12 hours after a client opened | timeout |
+
+**Duration is shown only when it was measured**: a confirmed start and an
+observed end, both from the endpoint. Otherwise it reads *unknown* and the
+session says how the times it has were obtained. A finished session cannot be
+reopened; a late event is recorded but changes nothing. Confirmation from the
+endpoint needs an agent from 0.20.0, which counts RustDesk's incoming
+connection processes (`rustdesk.exe --cm`). This is a heuristic: it cannot tell
+two simultaneous incoming sessions apart, so with more than one open launch
+for a computer it confirms neither.
+
+## Test connection (v0.20)
+
+Every computer has a **Test connection** panel. It runs read-only checks and
+says, for each, what was found, where the problem is (server, endpoint or your
+computer) and what to do:
+
+- **Server**: RustDesk settings configured; hbbs (21116), hbbr (21117) and
+  the NAT test port (21115) reachable.
+- **Endpoint**: the agent's last heartbeat and device secret; agent and
+  RustDesk versions; live registration with hbbs; stored credential state;
+  incoming sessions.
+- **Your computer**: *Check my computer* downloads a read-only helper `.cmd`.
+  It reports this machine's RustDesk install, version, server address and key,
+  and whether it can reach the server. The result appears in the panel.
+
+Fixes that change something (reinstall the agent, accept a device secret,
+rotate the credential) are labeled as such and are never run by the test.
+*Download report* gives a text report with credentials, keys and addresses
+redacted, safe to attach to a ticket.
+
+---
+
 ## When it fails
 
 Work in this order. Each step rules something out for good.

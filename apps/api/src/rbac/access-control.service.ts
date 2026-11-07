@@ -7,6 +7,9 @@ import {
   isOwnerRole,
 } from './capabilities';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
+import type { TechnicianContext } from './actor-resolver.service';
+import { computerAccessActive } from './technician-access.service';
+import { PLATFORM_PERM, type PlatformPermission } from './platform-permissions';
 
 /**
  * The resolved identity of whoever is making the request, plus the business
@@ -27,6 +30,16 @@ export interface ActorContext {
   capabilities: Capability[];
   ip?: string;
   userAgent?: string;
+  /** The business on the user's own membership (businessId is the ACTIVE one). */
+  ownBusinessId?: string | null;
+  /**
+   * Set when this request acts in `businessId` through a technician
+   * assignment. `endpointIds` null = every computer in that business.
+   */
+  technician?: TechnicianContext | null;
+  /** Every business this user can currently reach as a technician. */
+  assignedBusinessIds?: string[];
+  platformPermissions?: PlatformPermission[];
 }
 
 export function buildActorContext(user: JwtPayload, ip?: string, userAgent?: string): ActorContext {
@@ -45,6 +58,10 @@ export function buildActorContext(user: JwtPayload, ip?: string, userAgent?: str
     }),
     ip,
     userAgent,
+    ownBusinessId: user.ownBusinessId ?? null,
+    technician: user.technician ?? null,
+    assignedBusinessIds: user.assignedBusinessIds ?? [],
+    platformPermissions: (user.platformPermissions ?? []) as PlatformPermission[],
   };
 }
 
@@ -138,15 +155,85 @@ export class AccessControlService {
     if (this.isBusinessOwner(actor)) {
       return scope ? { customerId: scope } : {};
     }
+    if (actor.technician) {
+      return { customerId: actor.technician.businessId, ...this.endpointRestrictionWhere(actor) };
+    }
+    const now = new Date();
     return {
       ...(scope ? { customerId: scope } : {}),
       OR: [
-        { computerAccess: { some: { userId: actor.userId } } },
+        {
+          computerAccess: {
+            some: {
+              userId: actor.userId,
+              // Date bounds are checked here; a weekly schedule cannot be
+              // expressed in SQL and is enforced by canReachEndpoint instead —
+              // seeing a computer outside its hours is not connecting to it.
+              AND: [
+                { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+                { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+              ],
+            },
+          },
+        },
         ...(actor.businessId
           ? [{ accessMode: 'COMPANY_WIDE' as const, customerId: actor.businessId }]
           : []),
       ],
     };
+  }
+
+  /**
+   * Extra `where` for any endpoint query: a technician whose assignment names
+   * specific computers sees only those. `{}` for everyone else (their own
+   * rules — business scope, grants — still apply on top).
+   */
+  endpointRestrictionWhere(actor: ActorContext): Prisma.EndpointWhereInput {
+    if (actor.technician?.endpointIds) return { id: { in: actor.technician.endpointIds } };
+    return {};
+  }
+
+  /**
+   * The per-computer half of every connect / credential decision.
+   *
+   * One implementation for: Business Owners and Platform Admins (anything in
+   * scope), technicians (their assignment's computers), and Business Users
+   * (an ACTIVE ComputerAccess grant — inside its dates and schedule — or a
+   * COMPANY_WIDE computer in their own business). Callers must already have
+   * confirmed business scope.
+   */
+  async canReachEndpoint(
+    actor: ActorContext,
+    endpoint: { id: string; customerId: string | null; accessMode: string },
+    at: Date = new Date(),
+  ): Promise<boolean> {
+    if (this.isBusinessOwner(actor)) return true;
+    if (actor.technician) {
+      if (endpoint.customerId !== actor.technician.businessId) return false;
+      return actor.technician.endpointIds === null || actor.technician.endpointIds.includes(endpoint.id);
+    }
+    if (endpoint.accessMode === 'COMPANY_WIDE' && endpoint.customerId === actor.businessId) return true;
+    const access = await this.prisma.computerAccess.findFirst({
+      where: { endpointId: endpoint.id, userId: actor.userId },
+      select: { startsAt: true, expiresAt: true, schedule: true },
+    });
+    return computerAccessActive(access, at);
+  }
+
+  // ── Platform permissions ──────────────────────────────────────────────────
+
+  hasPlatformPermission(actor: ActorContext, perm: PlatformPermission): boolean {
+    return actor.isPlatformAdmin || (actor.platformPermissions ?? []).includes(perm);
+  }
+
+  assertPlatformPermission(actor: ActorContext, perm: PlatformPermission): void {
+    if (!this.hasPlatformPermission(actor, perm)) {
+      throw new ForbiddenException(
+        perm === PLATFORM_PERM.TECHNICIANS_MANAGE
+          ? 'Managing technician access needs the "Manage technician access" platform permission'
+          : 'Platform permission required',
+      );
+    }
   }
 
   // ── Capabilities ──────────────────────────────────────────────────────────
@@ -198,6 +285,11 @@ export class AccessControlService {
 
     if (!actor.isPlatformAdmin) {
       if (!actor.businessId || endpoint.customerId !== actor.businessId) {
+        throw new NotFoundException('Computer not found');
+      }
+      // A technician assigned to named computers cannot address any other,
+      // even inside the same business — same NotFound as a foreign id.
+      if (actor.technician?.endpointIds && !actor.technician.endpointIds.includes(endpoint.id)) {
         throw new NotFoundException('Computer not found');
       }
     }

@@ -1,4 +1,4 @@
-import { IsBoolean, IsEmail, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEmail, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class CreateSessionDto {
   @IsOptional()
@@ -34,6 +34,13 @@ export class CompleteSessionDto {
   @IsOptional()
   @IsString()
   disposition?: string;
+
+  /** Technician-entered work time. Kept apart from the measured duration. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(24 * 60)
+  manualWorkMinutes?: number;
 }
 
 export class SessionEventDto {

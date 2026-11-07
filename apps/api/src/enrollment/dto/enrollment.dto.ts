@@ -107,6 +107,13 @@ export class HeartbeatDto {
   @IsOptional() @IsInt() @Min(0) memoryFreeMb?: number;
   @IsOptional() @IsInt() @Min(0) systemDiskTotalMb?: number;
   @IsOptional() @IsInt() @Min(0) systemDiskFreeMb?: number;
+
+  // Incoming RustDesk sessions on this machine right now (count of
+  // `rustdesk.exe --cm` connection-manager processes). Agents from 0.20.0.
+  @IsOptional() @IsInt() @Min(0) @Max(64) rustdeskSessions?: number;
+  // Set by the agent when the install it just ran was for a staged update,
+  // echoing the nonce it was handed. See UpdateRolloutService.
+  @IsOptional() @IsString() @Matches(/^[A-Za-z0-9_-]{16,64}$/) updateNonce?: string;
 }
 
 /**

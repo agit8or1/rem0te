@@ -19,6 +19,9 @@ class QuickConnectDto {
 
   @IsOptional() @IsString() @Length(0, 128)  contactName?: string;
   @IsOptional() @IsString() @Length(0, 1024) issueDescription?: string;
+
+  /** A support request the caller has claimed (checked server side). */
+  @IsOptional() @IsString() @Length(1, 64) supportRequestId?: string;
 }
 
 class EndSessionDto {

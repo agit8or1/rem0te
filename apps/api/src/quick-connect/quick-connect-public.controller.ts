@@ -6,7 +6,6 @@ import * as fs from 'fs';
 import { PrismaService } from '../prisma/prisma.service';
 import { Public } from '../common/decorators/public.decorator';
 import { PlatformSettingsService } from '../platform/platform-settings.service';
-import { latestRustdeskVersionOr } from '../common/rustdesk-release';
 import { RustdeskService } from '../common/rustdesk.service';
 
 /**
@@ -104,7 +103,7 @@ export class QuickConnectPublicController {
     if (!enabled[os]) throw new NotFoundException(`The ${os} Quick Connect client is not enabled`);
 
     const config = await this.rustdeskConfig();
-    const version = await latestRustdeskVersionOr();
+    const version = await this.rustdesk.pinnedOrLatestVersion();
 
     if (os === 'windows') {
       // Windows gets the real binary, preconfigured through its filename.

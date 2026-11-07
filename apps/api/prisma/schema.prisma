@@ -70,6 +70,9 @@ enum SessionStatus {
   SESSION_COMPLETED
   FAILED
   CANCELED
+  // No reliable evidence either way. Written by timeout cleanup for a launch
+  // that never produced a confirming or failing signal. See session-state.ts.
+  STATUS_UNKNOWN
 }
 
 enum NoteVisibility {
@@ -149,6 +152,48 @@ enum ActivityAction {
   QUICK_CONNECT_ENDED
   QUICK_CONNECT_DENIED
   QUICK_CONNECT_SETTING_CHANGED
+  TECHNICIAN_ASSIGNMENT_CREATED
+  TECHNICIAN_ASSIGNMENT_REQUESTED
+  TECHNICIAN_ASSIGNMENT_APPROVED
+  TECHNICIAN_ASSIGNMENT_DENIED
+  TECHNICIAN_ASSIGNMENT_REVOKED
+  TECHNICIAN_ASSIGNMENT_EXPIRED
+  TECHNICIAN_GROUP_CREATED
+  TECHNICIAN_GROUP_UPDATED
+  TECHNICIAN_GROUP_DELETED
+  TECHNICIAN_GROUP_MEMBER_ADDED
+  TECHNICIAN_GROUP_MEMBER_REMOVED
+  PLATFORM_PERMISSIONS_CHANGED
+  COMPUTER_ACCESS_EXPIRED
+  OFFBOARDING_STARTED
+  OFFBOARDING_STEP
+  DIAGNOSTICS_RUN
+  DIAGNOSTICS_REPORT_DOWNLOADED
+  TECHNICIAN_DIAGNOSTIC_SUBMITTED
+  SESSION_STATE_CHANGED
+  SUPPORT_REQUEST_SUBMITTED
+  SUPPORT_REQUEST_CLAIMED
+  SUPPORT_REQUEST_HANDED_OFF
+  SUPPORT_REQUEST_COMPLETED
+  SUPPORT_REQUEST_CANCELED
+  SUPPORT_INTAKE_CHANGED
+  UPDATE_ROLLOUT_CREATED
+  UPDATE_ROLLOUT_STARTED
+  UPDATE_ROLLOUT_PAUSED
+  UPDATE_ROLLOUT_RESUMED
+  UPDATE_ROLLOUT_CANCELED
+  UPDATE_JOB_SUCCEEDED
+  UPDATE_JOB_FAILED
+  SSO_PROVIDER_CHANGED
+  SSO_LOGIN
+  SSO_LOGIN_DENIED
+  SSO_LINKED
+  SSO_UNLINKED
+  PASSKEY_REGISTERED
+  PASSKEY_REMOVED
+  PASSKEY_LOGIN
+  STEP_UP_VERIFIED
+  STEP_UP_FAILED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -240,6 +285,13 @@ model User {
   // change, MFA change and sign-out; null means no revocation has happened.
   sessionsValidAfter DateTime?
 
+  // Platform-level permissions that are NOT Platform Admin. Today one value:
+  // `technicians:manage` — create technician groups and assign MSP staff to
+  // customer businesses. Deliberately separate from isPlatformAdmin (which
+  // also covers infrastructure settings) and from any business role. See
+  // src/rbac/platform-permissions.ts.
+  platformPermissions String[] @default([])
+
   // Contact and address information (all optional)
   phone      String?
   jobTitle   String?
@@ -250,20 +302,24 @@ model User {
   postalCode String?
   timeZone   String?
 
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  mfaMethods        UserMfaMethod[]
-  memberships       Membership[]
-  activityLogs      ActivityLog[]
-  notes             Note[]
-  noteComments      NoteComment[]
-  technicianDevices TechnicianDevice[]
-  launcherTokens    LauncherToken[]
-  supportSessions   SupportSession[]
-  invitationsSent   Invitation[]
-  computerAccess    ComputerAccess[]
-  connectionGrants  ConnectionGrant[]
+  mfaMethods             UserMfaMethod[]
+  memberships            Membership[]
+  activityLogs           ActivityLog[]
+  notes                  Note[]
+  noteComments           NoteComment[]
+  technicianDevices      TechnicianDevice[]
+  launcherTokens         LauncherToken[]
+  supportSessions        SupportSession[]
+  invitationsSent        Invitation[]
+  computerAccess         ComputerAccess[]
+  connectionGrants       ConnectionGrant[]
+  technicianAssignments  TechnicianAssignment[]  @relation("AssignmentUser")
+  technicianGroups       TechnicianGroupMember[]
+  externalIdentities     ExternalIdentity[]
+  claimedSupportRequests SupportRequest[]        @relation("SupportRequestClaimer")
 
   @@index([email])
 }
@@ -282,6 +338,12 @@ model UserMfaMethod {
   usedAt       DateTime?
   credentialId String?
   publicKey    Bytes?
+  // WebAuthn (passkey) bookkeeping. `signCount` is checked for regression on
+  // every assertion; `name` is the label the user gave it.
+  signCount    Int?
+  transports   String[]  @default([])
+  name         String?
+  lastUsedAt   DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -312,7 +374,7 @@ model Role {
 }
 
 model Permission {
-  id          String @id @default(cuid())
+  id          String  @id @default(cuid())
   resource    String
   action      String
   description String?
@@ -393,16 +455,29 @@ model Customer {
   isActive   Boolean @default(true)
   isArchived Boolean @default(false)
 
-  sites        Site[]
-  endpoints    Endpoint[]
-  noteRels     Note[]
-  portalUsers  Membership[]
+  sites       Site[]
+  endpoints   Endpoint[]
+  noteRels    Note[]
+  portalUsers Membership[]
 
   portalEnabled Boolean @default(false)
 
   // Per-business Quick Connect switch. Gated by the platform master switch
   // (PlatformSettings.quickConnectEnabled) — OFF at platform level wins.
   quickConnectEnabled Boolean @default(true)
+
+  // Technician assignments to this business need a Business Owner's approval
+  // before they take effect. Off by default; see technician-access.service.ts.
+  technicianApprovalRequired Boolean @default(false)
+
+  // Public support intake. The slug is random and unguessable: it is the only
+  // thing that ties an anonymous request to a business, so it must not be a
+  // name or an id. Regenerating it invalidates the old link.
+  supportIntakeEnabled Boolean @default(false)
+  supportIntakeSlug    String? @unique
+
+  technicianAssignments TechnicianAssignment[]
+  supportRequests       SupportRequest[]
 
   activityLogs    ActivityLog[]
   supportSessions SupportSession[]
@@ -498,7 +573,7 @@ model Endpoint {
   // Access mode: how the computer's remote-access authorization is scoped.
   //   ASSIGNED_USERS  → only users listed in ComputerAccess may connect
   //   COMPANY_WIDE    → any user in the same customer may connect (still subject to RBAC/GeoIP)
-  accessMode  EndpointAccessMode @default(ASSIGNED_USERS)
+  accessMode EndpointAccessMode @default(ASSIGNED_USERS)
 
   aiTimeline String?
 
@@ -523,9 +598,17 @@ model ComputerAccess {
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  grantedBy String?
-  createdAt DateTime  @default(now())
-  expiresAt DateTime?
+  grantedBy       String?
+  createdAt       DateTime  @default(now())
+  // Access window. Enforced at every sensitive operation (connect, credential
+  // release, grant and launcher-token redemption), not only when listed.
+  startsAt        DateTime?
+  expiresAt       DateTime?
+  // Optional weekly schedule { timeZone, windows: [{ days, start, end }] },
+  // evaluated in that IANA zone so DST is handled by the zone database.
+  schedule        Json?
+  // Set once the expiry has been written to the audit log.
+  expiryAuditedAt DateTime?
 
   @@unique([userId, endpointId])
   @@index([tenantId])
@@ -589,7 +672,7 @@ model RustdeskNode {
   version           String?
   hostname          String?
   publicKey         String?
-  permanentPassword String?   // AES-256-GCM encrypted, same format as TOTP secrets
+  permanentPassword String? // AES-256-GCM encrypted, same format as TOTP secrets
 
   // SHA-256 of the agent's device secret. The heartbeat used to identify a
   // machine by its RustDesk ID alone — a number printed in the RustDesk window
@@ -601,8 +684,8 @@ model RustdeskNode {
   // Null means a machine enrolled before this existed: it still reports online,
   // but nothing is written from its heartbeat and no rotation is handed to it
   // until its installer is re-run.
-  agentSecretHash   String?
-  agentSecretSetAt  DateTime?
+  agentSecretHash  String?
+  agentSecretSetAt DateTime?
 
   // A different secret this machine's RustDesk ID has been heartbeating with
   // since its bound one stopped matching — typically an installer re-run that
@@ -662,6 +745,13 @@ model RustdeskNode {
   reinstallRequestedBy  String?
   reinstallDispatchedAt DateTime?
 
+  // How many incoming RustDesk sessions the endpoint's agent saw on its last
+  // authenticated heartbeat (count of `rustdesk.exe --cm` connection-manager
+  // processes). Null = this agent does not report it. It says that SOMEONE is
+  // connected, never who — see sessions/session-reconciler.service.ts.
+  rdSessionsActive     Int?
+  rdSessionsObservedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -685,12 +775,12 @@ model ConnectionGrant {
   endpointId String
   endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
 
-  createdAt DateTime  @default(now())
-  expiresAt DateTime
-  usedAt    DateTime?
-  usedByIp  String?
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime
+  usedAt      DateTime?
+  usedByIp    String?
   createdByIp String?
-  purpose   String    @default("REMOTE_ACCESS")
+  purpose     String    @default("REMOTE_ACCESS")
 
   @@index([tenantId])
   @@index([endpointId])
@@ -705,10 +795,10 @@ model DeviceClaimToken {
   endpointId String?
   endpoint   Endpoint? @relation(fields: [endpointId], references: [id])
 
-  token        String    @unique
-  expiresAt    DateTime
-  claimedAt    DateTime?
-  claimedByIp  String?
+  token       String    @unique
+  expiresAt   DateTime
+  claimedAt   DateTime?
+  claimedByIp String?
 
   customerName String?
   siteName     String?
@@ -717,12 +807,12 @@ model DeviceClaimToken {
   // Managed-computer enrollment binding — set by the admin at token-mint time.
   // The endpoint that redeems this token cannot influence any of these values;
   // enrollment.service copies them onto the created endpoint + ComputerAccess.
-  customerId       String?
-  accessMode       EndpointAccessMode @default(ASSIGNED_USERS)
-  assignedUserIds  String[]            @default([])  // whitelisted user IDs (all must belong to the same customer)
-  endpointGroupId  String?
+  customerId      String?
+  accessMode      EndpointAccessMode @default(ASSIGNED_USERS)
+  assignedUserIds String[]           @default([]) // whitelisted user IDs (all must belong to the same customer)
+  endpointGroupId String?
 
-  createdAt DateTime @default(now())
+  createdAt   DateTime @default(now())
   createdById String?
 
   @@index([token])
@@ -899,13 +989,13 @@ enum EndpointCommandStatus {
 // ─── Technician Devices & Launcher ───────────────────────────────────────────
 
 model TechnicianDevice {
-  id          String  @id @default(cuid())
+  id          String    @id @default(cuid())
   userId      String
-  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   name        String
   platform    String
-  fingerprint String  @unique
-  isActive    Boolean @default(true)
+  fingerprint String    @unique
+  isActive    Boolean   @default(true)
   lastSeenAt  DateTime?
 
   launcherTokens LauncherToken[]
@@ -964,9 +1054,37 @@ model SupportSession {
   issueDescription String?
 
   status      SessionStatus @default(PENDING)
+  // Legacy columns. `startedAt` was written at credential release on the
+  // browser path, so on rows with timingQuality LEGACY it is a launch time,
+  // not a connection time. New code writes it only with connectionConfirmedAt.
   startedAt   DateTime?
   completedAt DateTime?
+  // Seconds of MEASURED connection: confirmed start to observed end. Null
+  // whenever either end was not observed. Never derived from a launch time.
   duration    Int?
+
+  // State evidence, one timestamp per step. See sessions/session-state.ts.
+  launchRequestedAt     DateTime?
+  launcherAckAt         DateTime?
+  clientOpenedAt        DateTime?
+  connectionConfirmedAt DateTime?
+  endedAt               DateTime?
+  endReason             String?
+  // True when the end (or the terminal state) was inferred from a timeout
+  // rather than observed.
+  endInferred           Boolean   @default(false)
+  statusSource          String?
+  statusChangedAt       DateTime?
+  lastSignalAt          DateTime?
+  // MEASURED | INFERRED | UNKNOWN | LEGACY
+  timingQuality         String    @default("UNKNOWN")
+  // Technician-entered work time. Separate from `duration` on purpose.
+  manualWorkMinutes     Int?
+  // SHA-256 of the per-session telemetry token embedded in a Connect script.
+  telemetryTokenHash    String?   @unique
+
+  supportRequestId String?
+  supportRequest   SupportRequest? @relation(fields: [supportRequestId], references: [id])
 
   notes       String?
   disposition String?
@@ -992,20 +1110,30 @@ model SupportSessionEvent {
   supportSessionId String
   supportSession   SupportSession @relation(fields: [supportSessionId], references: [id], onDelete: Cascade)
 
-  event     String
-  metadata  Json?
-  timestamp DateTime @default(now())
+  event      String
+  metadata   Json?
+  timestamp  DateTime  @default(now())
+  // Who reported it (server, launcher, connect_script, endpoint_agent,
+  // technician, timeout) and when it says it happened.
+  source     String?
+  occurredAt DateTime?
+  // Idempotency key. A duplicate delivery hits the unique index and is dropped.
+  dedupeKey  String?
+  // False when the event was recorded but changed nothing (late, duplicate in
+  // effect, or not a legal transition from the current state).
+  applied    Boolean   @default(true)
 
+  @@unique([supportSessionId, dedupeKey])
   @@index([supportSessionId])
 }
 
 // ─── Notes ────────────────────────────────────────────────────────────────────
 
 model Note {
-  id       String         @id @default(cuid())
+  id       String @id @default(cuid())
   tenantId String
   authorId String
-  author   User           @relation(fields: [authorId], references: [id])
+  author   User   @relation(fields: [authorId], references: [id])
 
   endpointId String?
   endpoint   Endpoint?       @relation(fields: [endpointId], references: [id])
@@ -1045,23 +1173,23 @@ model NoteComment {
 // ─── Activity Log ─────────────────────────────────────────────────────────────
 
 model ActivityLog {
-  id         String          @id @default(cuid())
+  id         String         @id @default(cuid())
   tenantId   String?
-  tenant     Tenant?         @relation(fields: [tenantId], references: [id])
+  tenant     Tenant?        @relation(fields: [tenantId], references: [id])
   // Business scope. A Business Owner's audit view filters on this column;
   // rows with a null customerId are platform-level events and are visible
   // to Platform Admins only.
   customerId String?
-  customer   Customer?       @relation(fields: [customerId], references: [id])
+  customer   Customer?      @relation(fields: [customerId], references: [id])
   actorId    String?
-  actor      User?           @relation(fields: [actorId], references: [id])
+  actor      User?          @relation(fields: [actorId], references: [id])
   actorIp    String?
   actorAgent String?
   action     ActivityAction
   resource   String?
   resourceId String?
   metadata   Json?
-  createdAt  DateTime        @default(now())
+  createdAt  DateTime       @default(now())
 
   @@index([tenantId])
   @@index([customerId])
@@ -1121,9 +1249,9 @@ model Invitation {
 // ─── Saved Views ──────────────────────────────────────────────────────────────
 
 model SavedView {
-  id        String  @id @default(cuid())
+  id        String   @id @default(cuid())
   tenantId  String
-  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   userId    String?
   name      String
   resource  String
@@ -1155,6 +1283,14 @@ model PlatformSettings {
   quickConnectMacos   Boolean @default(false)
   quickConnectLinux   Boolean @default(false)
 
+  // Supported RustDesk client version pin. When set, installers install
+  // exactly this release instead of "latest". Null = latest.
+  rustdeskPinnedVersion String?
+
+  // Actions that need a recent re-authentication (password, TOTP or passkey)
+  // on top of a valid session. See auth/step-up.service.ts for the vocabulary.
+  stepUpActions String[] @default(["credential.reveal", "permissions.change", "technicians.manage", "sso.configure", "passkey.manage"])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -1179,9 +1315,9 @@ model PlatformSecurityConfig {
 // ─── Tenant Policies ─────────────────────────────────────────────────────────
 
 model TenantPolicy {
-  id       String @id @default(cuid())
+  id       String  @id @default(cuid())
   tenantId String
-  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name     String
   resource String
   rules    Json
@@ -1191,4 +1327,407 @@ model TenantPolicy {
   updatedAt DateTime @updatedAt
 
   @@index([tenantId])
+}
+
+// ─── Technician access (MSP staff across selected businesses) ───────────────
+//
+// A technician is any user with an active TechnicianAssignment, directly or
+// through a TechnicianGroup. Assignments are created by holders of the
+// `technicians:manage` platform permission — never by a Business Owner — and
+// grant business capabilities in ONE business each. Effective access is
+// recomputed from these rows on every request; see
+// src/rbac/technician-access.service.ts for the overlap and expiry rules.
+
+model TechnicianGroup {
+  id           String   @id @default(cuid())
+  tenantId     String
+  name         String
+  description  String?
+  // Default capabilities for assignments made to this group.
+  capabilities String[] @default([])
+  createdById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  members     TechnicianGroupMember[]
+  assignments TechnicianAssignment[]
+
+  @@unique([tenantId, name])
+}
+
+model TechnicianGroupMember {
+  id        String          @id @default(cuid())
+  groupId   String
+  group     TechnicianGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  addedById String?
+  createdAt DateTime        @default(now())
+
+  @@unique([groupId, userId])
+  @@index([userId])
+}
+
+enum AssignmentApproval {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  DENIED
+}
+
+model TechnicianAssignment {
+  id         String           @id @default(cuid())
+  tenantId   String
+  customerId String
+  customer   Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  // Exactly one of userId / groupId.
+  userId     String?
+  user       User?            @relation("AssignmentUser", fields: [userId], references: [id], onDelete: Cascade)
+  groupId    String?
+  group      TechnicianGroup? @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  capabilities String[] @default([])
+  // Empty = every computer in the business; otherwise only these.
+  endpointIds  String[] @default([])
+
+  startsAt  DateTime?
+  expiresAt DateTime?
+  schedule  Json?
+  reason    String?
+
+  approvalStatus AssignmentApproval @default(NOT_REQUIRED)
+  requestedById  String?
+  decidedById    String?
+  decidedAt      DateTime?
+  decisionNote   String?
+
+  createdById     String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  revokedAt       DateTime?
+  revokedById     String?
+  revokeReason    String?
+  expiryAuditedAt DateTime?
+
+  @@index([userId])
+  @@index([groupId])
+  @@index([customerId])
+}
+
+// ─── Offboarding ─────────────────────────────────────────────────────────────
+
+model OffboardingCase {
+  id            String    @id @default(cuid())
+  tenantId      String?
+  subjectUserId String
+  // Business scope of the case; null when run by a technician manager for a
+  // technician account (platform-level).
+  customerId    String?
+  startedById   String
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  // Steps performed and the endpoints whose credentials were rotated.
+  // Rotation status is recomputed live, never stored as done.
+  steps         Json
+  notes         String?
+
+  @@index([subjectUserId])
+  @@index([customerId])
+}
+
+// ─── Technician-side diagnostics ─────────────────────────────────────────────
+//
+// A read-only helper script run on the technician's own computer reports what
+// it found here, authenticated by a single-use token minted for that user.
+
+model TechnicianDiagnostic {
+  id          String    @id @default(cuid())
+  userId      String
+  endpointId  String?
+  tokenHash   String    @unique
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime
+  submittedAt DateTime?
+  submittedIp String?
+  report      Json?
+
+  @@index([userId, createdAt])
+}
+
+// ─── Support requests (intake + waiting queue) ───────────────────────────────
+
+enum SupportRequestStatus {
+  WAITING
+  CLAIMED
+  CONNECTING
+  COMPLETED
+  CANCELED
+  EXPIRED
+}
+
+model SupportRequest {
+  id         String   @id @default(cuid())
+  tenantId   String
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  // Where it came from: PUBLIC (intake link) or PORTAL (signed-in business user).
+  origin        String  @default("PUBLIC")
+  submittedById String?
+
+  contactName        String?
+  contactEmail       String?
+  contactPhone       String?
+  description        String?
+  // PORTAL: an endpoint the submitter is authorised for. PUBLIC: never set
+  // from the request; the customer-reported RustDesk ID below is free text.
+  endpointId         String?
+  reportedRustdeskId String?
+  unmanaged          Boolean @default(false)
+
+  status      SupportRequestStatus @default(WAITING)
+  // Optimistic concurrency for claim / hand-off.
+  version     Int                  @default(0)
+  claimedById String?
+  claimedBy   User?                @relation("SupportRequestClaimer", fields: [claimedById], references: [id])
+  claimedAt   DateTime?
+  closedAt    DateTime?
+  outcome     String?
+
+  statusTokenHash String    @unique
+  statusExpiresAt DateTime
+  submitIpHash    String?
+  // When contact details were erased by retention.
+  anonymizedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events   SupportRequestEvent[]
+  sessions SupportSession[]
+
+  @@index([customerId, status])
+  @@index([status, createdAt])
+}
+
+model SupportRequestEvent {
+  id        String         @id @default(cuid())
+  requestId String
+  request   SupportRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  actorId   String?
+  event     String
+  detail    Json?
+  createdAt DateTime       @default(now())
+
+  @@index([requestId])
+}
+
+// ─── Controlled RustDesk / agent updates ─────────────────────────────────────
+
+enum UpdateComponent {
+  RUSTDESK
+  AGENT
+}
+
+enum RolloutStatus {
+  DRAFT
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELED
+}
+
+enum UpdateJobStatus {
+  REQUESTED
+  DISPATCHED
+  INSTALLING
+  AWAITING_VERIFICATION
+  SUCCEEDED
+  FAILED
+  CANCELED
+  SKIPPED
+}
+
+model UpdatePilotGroup {
+  id          String              @id @default(cuid())
+  name        String              @unique
+  description String?
+  createdAt   DateTime            @default(now())
+  members     UpdatePilotMember[]
+  rollouts    UpdateRollout[]
+}
+
+model UpdatePilotMember {
+  id         String           @id @default(cuid())
+  groupId    String
+  group      UpdatePilotGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  endpointId String
+
+  @@unique([groupId, endpointId])
+}
+
+model UpdateRollout {
+  id             String          @id @default(cuid())
+  name           String
+  component      UpdateComponent
+  // Exact version approved for this rollout, resolved at creation and never
+  // re-resolved. `artifact*` pin the exact file.
+  targetVersion  String
+  artifactName   String?
+  artifactSha256 String?
+  status         RolloutStatus   @default(DRAFT)
+
+  pilotGroupId          String?
+  pilotGroup            UpdatePilotGroup? @relation(fields: [pilotGroupId], references: [id])
+  batchSize             Int               @default(10)
+  // Highest batch released. Batch 0 is the pilot group.
+  currentBatch          Int               @default(0)
+  // Pause the rollout once this many jobs have failed. 0 = never.
+  failureThreshold      Int               @default(1)
+  maxAttempts           Int               @default(3)
+  backoffMinutes        Int               @default(30)
+  verifyTimeoutMinutes  Int               @default(60)
+  // { timeZone, windows: [{ days, start, end }] } or null = any time.
+  maintenanceWindow     Json?
+  // Defer devices whose session state is not known to be idle.
+  deferOnUnknownSession Boolean           @default(true)
+
+  pausedReason String?
+  createdById  String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  startedAt    DateTime?
+  completedAt  DateTime?
+  canceledAt   DateTime?
+
+  jobs UpdateJob[]
+}
+
+model UpdateJob {
+  id         String          @id @default(cuid())
+  rolloutId  String
+  rollout    UpdateRollout   @relation(fields: [rolloutId], references: [id], onDelete: Cascade)
+  endpointId String
+  customerId String?
+  batch      Int             @default(1)
+  status     UpdateJobStatus @default(REQUESTED)
+
+  attempts         Int       @default(0)
+  nextAttemptAt    DateTime?
+  dispatchedAt     DateTime?
+  dispatchNonce    String?   @unique
+  installStartedAt DateTime?
+  verifiedAt       DateTime?
+  completedAt      DateTime?
+  fromVersion      String?
+  installedVersion String?
+  failureReason    String?
+  deferReason      String?
+  // unchanged | reported | unknown — whether the endpoint re-reported its
+  // RustDesk credential after the install. Never the credential itself.
+  credentialSync   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events UpdateJobEvent[]
+
+  @@unique([rolloutId, endpointId])
+  @@index([endpointId, status])
+  @@index([status])
+}
+
+model UpdateJobEvent {
+  id        String           @id @default(cuid())
+  jobId     String
+  job       UpdateJob        @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  event     String
+  status    UpdateJobStatus?
+  detail    Json?
+  createdAt DateTime         @default(now())
+
+  @@index([jobId])
+}
+
+// ─── SSO (OIDC) ──────────────────────────────────────────────────────────────
+
+model OidcProvider {
+  id                String   @id @default(cuid())
+  name              String
+  // Must equal the `iss` the provider issues, exactly.
+  issuer            String   @unique
+  clientId          String
+  // AES-256-GCM; null for a public client (PKCE only).
+  clientSecretEnc   String?
+  // The single redirect URI registered at the provider. Matched exactly.
+  redirectUri       String
+  scopes            String   @default("openid email profile")
+  enabled           Boolean  @default(false)
+  // Create an account (with NO business membership and no permissions) for an
+  // unknown issuer+subject. Off by default. Never links to an existing account.
+  allowProvisioning Boolean  @default(false)
+  // Claim holding group ids for explicit group mappings (e.g. "groups").
+  groupsClaim       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  identities    ExternalIdentity[]
+  groupMappings OidcGroupMapping[]
+}
+
+model OidcGroupMapping {
+  id           String       @id @default(cuid())
+  providerId   String
+  provider     OidcProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  groupValue   String
+  // Grants a BUSINESS_USER membership in exactly this business with exactly
+  // these capabilities, only for a provisioned account with no membership.
+  customerId   String
+  capabilities String[]     @default([])
+  createdAt    DateTime     @default(now())
+
+  @@unique([providerId, groupValue])
+}
+
+model ExternalIdentity {
+  id          String       @id @default(cuid())
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  providerId  String
+  provider    OidcProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  issuer      String
+  subject     String
+  // Informational only. Never used to find or link an account.
+  email       String?
+  linkedAt    DateTime     @default(now())
+  lastLoginAt DateTime?
+
+  @@unique([issuer, subject])
+  @@index([userId])
+}
+
+model OidcLoginState {
+  id           String   @id @default(cuid())
+  stateHash    String   @unique
+  providerId   String
+  nonce        String
+  codeVerifier String
+  // LOGIN or LINK
+  purpose      String
+  userId       String?
+  returnTo     String?
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+}
+
+// ─── WebAuthn challenges ─────────────────────────────────────────────────────
+
+model WebAuthnChallenge {
+  id        String   @id @default(cuid())
+  challenge String   @unique
+  // REGISTER | LOGIN | STEP_UP
+  purpose   String
+  userId    String?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
 }

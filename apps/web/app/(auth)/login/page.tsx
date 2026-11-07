@@ -1,14 +1,27 @@
 'use client';
 
-import { Suspense, useState, useEffect, FormEvent } from 'react';
+import { Suspense, useState, useEffect, useSyncExternalStore, FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { authApi } from '@/lib/api-client';
+import axios from 'axios';
+import { useQuery } from '@tanstack/react-query';
+import { authApi, passkeysApi, ssoApi } from '@/lib/api-client';
+import { getPasskey, passkeysSupported, errorMessage } from '@/lib/webauthn';
+import { ssoErrorMessage } from '@/lib/sso-errors';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Download, Shield } from 'lucide-react';
+import { Download, Fingerprint, KeyRound, Shield } from 'lucide-react';
+
+// The shared client turns every 401 into a reload of /login, which on this
+// page would wipe the reason a passkey was refused ("not registered here").
+// The passkey assertion goes through a plain instance so the message shows.
+const bare = axios.create({ baseURL: '/api/v1', withCredentials: true, headers: { 'Content-Type': 'application/json' } });
+
+const noSubscribe = () => () => {};
+
+interface SsoProviderOption { id: string; name: string }
 
 interface Branding {
   portalTitle?: string | null;
@@ -43,6 +56,36 @@ function LoginForm() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
+  // false on the server and on the first client render, so hydration matches.
+  const canPasskey = useSyncExternalStore(noSubscribe, passkeysSupported, () => false);
+  const ssoError = ssoErrorMessage(params.get('sso_error'));
+
+  const { data: providers = [] } = useQuery<SsoProviderOption[]>({
+    queryKey: ['sso-providers-public'],
+    queryFn: () => ssoApi.providers().then((r) => r.data?.data ?? []),
+    retry: false,
+    staleTime: 60_000,
+  });
+
+  async function handlePasskey() {
+    setError('');
+    setPasskeyLoading(true);
+    try {
+      const opts = (await passkeysApi.loginOptions()).data?.data;
+      const response = await getPasskey(opts);
+      const res = await bare.post('/auth/passkeys/login', { response });
+      if (res.data?.data?.requiresMfa) {
+        router.push('/mfa');
+        return;
+      }
+      router.push(returnTo);
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Passkey sign-in failed'));
+    } finally {
+      setPasskeyLoading(false);
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -69,36 +112,75 @@ function LoginForm() {
     }
   }
 
+  const busy = loading || passkeyLoading;
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="space-y-2">
-        <Label htmlFor="email">Email</Label>
-        <Input
-          id="email"
-          type="email"
-          placeholder="you@example.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-          autoComplete="email"
-        />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="password">Password</Label>
-        <Input
-          id="password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-          autoComplete="current-password"
-        />
-      </div>
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      <Button type="submit" className="w-full" disabled={loading}>
-        {loading ? 'Signing in…' : 'Sign in'}
-      </Button>
-    </form>
+    <div className="space-y-4">
+      {ssoError && (
+        <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {ssoError}
+        </div>
+      )}
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            type="email"
+            placeholder="you@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoComplete="email"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="password">Password</Label>
+          <Input
+            id="password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            autoComplete="current-password"
+          />
+        </div>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <Button type="submit" className="w-full" disabled={busy}>
+          {loading ? 'Signing in…' : 'Sign in'}
+        </Button>
+      </form>
+      {(canPasskey || providers.length > 0) && (
+        <>
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <span className="h-px flex-1 bg-border" />
+            or
+            <span className="h-px flex-1 bg-border" />
+          </div>
+          <div className="space-y-2">
+            {canPasskey && (
+              <Button type="button" variant="outline" className="w-full" onClick={handlePasskey} disabled={busy}>
+                <Fingerprint className="h-4 w-4 mr-2" />
+                {passkeyLoading ? 'Waiting for passkey…' : 'Sign in with a passkey'}
+              </Button>
+            )}
+            {providers.map((p) => (
+              <Button
+                key={p.id}
+                type="button"
+                variant="outline"
+                className="w-full"
+                disabled={busy}
+                onClick={() => { window.location.href = ssoApi.startUrl(p.id, returnTo); }}
+              >
+                <KeyRound className="h-4 w-4 mr-2" />
+                Sign in with {p.name}
+              </Button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

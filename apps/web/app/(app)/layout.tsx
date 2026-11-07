@@ -1,4 +1,5 @@
 import { Sidebar } from '@/components/layout/sidebar';
+import { StepUpDialog } from '@/components/auth/step-up-dialog';
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -7,6 +8,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <main className="flex-1 overflow-y-auto bg-muted/20">
         {children}
       </main>
+      <StepUpDialog />
     </div>
   );
 }

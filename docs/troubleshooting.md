@@ -166,6 +166,49 @@ is one line and printing it would put the credential in the log.
 
 ---
 
+## A session says "Status unknown"
+
+Nothing confirmed or failed it within 30 minutes of the launch (or 12 hours
+after the client opened). That is the honest answer when the remote computer's
+agent is older than 0.20.0 and cannot report incoming connections, or when two
+launches for the same computer were open at once, so a connection could not be
+attributed to either. Complete the session yourself if you know how it went.
+
+## "Confirm it's you" keeps appearing
+
+That is step-up. It lasts 10 minutes and only for the sign-in it was made in, so
+it is asked for again after signing out and back in, or in another browser. If
+it never accepts a correct password, the account may be locked out after
+repeated failures: wait for the lockout to pass. See
+[sign-in.md](sign-in.md#step-up).
+
+## SSO sign-in fails
+
+The sign-in page explains the reason. The common ones:
+
+- **"No account is linked to that identity"**: SSO never matches by email.
+  Sign in with your password and link the provider from **My Account**.
+- **"An account with that email already exists"**: same fix. Provisioning
+  never takes over an existing account.
+- **"The provider's response could not be verified"**: issuer, client ID,
+  secret or redirect URI mismatch. Run **Test discovery** on the provider and
+  check that the redirect URI at the provider matches exactly.
+- **"did not start in this browser" / "expired"**: start again from the
+  sign-in page; the round trip must finish in the same browser within 10
+  minutes.
+
+If SSO is unusable for everyone: `node scripts/auth-recovery.mjs --disable-sso
+--yes` on the server. Password sign-in keeps working regardless.
+
+## A rotation stays "pending"
+
+The computer has not checked in since the new password was staged, so it has
+not applied it, and **the old password still works there**. An online computer
+picks it up within about 3 minutes. An offline one stays pending until it
+returns. **Offboarding → Pending rotations** lists every such computer.
+
+---
+
 ## An endpoint shows online in Rem0te but RustDesk says offline
 
 They are different signals and both are correct.

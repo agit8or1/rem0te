@@ -124,7 +124,7 @@ function TrmmLanding() {
     }
     try {
       const res = await endpointsApi.connect(endpointId);
-      const info = res.data?.data as { rustdeskId?: string; password?: string | null } | undefined;
+      const info = res.data?.data as { rustdeskId?: string; password?: string | null; sessionId?: string } | undefined;
       if (!info?.rustdeskId) {
         toast({
           title: 'Computer not ready',
@@ -136,7 +136,10 @@ function TrmmLanding() {
       if (info.password) {
         try { await navigator.clipboard.writeText(info.password); } catch { /* ignore */ }
       }
-      window.location.href = endpointsApi.connectScriptUrl(endpointId);
+      // Connect already created the session; hand it to the script so it is
+      // reused rather than a second one created.
+      const url = endpointsApi.connectScriptUrl(endpointId);
+      window.location.href = info.sessionId ? `${url}?session=${encodeURIComponent(info.sessionId)}` : url;
     } catch {
       toast({ title: 'Error', description: 'Could not start the connection', variant: 'destructive' });
     }

@@ -14,12 +14,20 @@ import type { ActorContext } from '../rbac/access-control.service';
 import { accessLevelLabel } from '../rbac/capabilities';
 import type { JwtPayload } from './strategies/jwt.strategy';
 import { RateLimit } from '../common/throttling';
+import { StepUpService } from './step-up.service';
+import { IsOptional, IsString, Length } from 'class-validator';
+
+class StepUpDto {
+  @IsOptional() @IsString() @Length(1, 256) password?: string;
+  @IsOptional() @IsString() @Length(6, 8) totpCode?: string;
+}
 
 @Controller('auth')
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly prisma: PrismaService,
+    private readonly stepUp: StepUpService,
   ) {}
 
   @Public()
@@ -104,6 +112,25 @@ export class AuthController {
         business,
         capabilities: actor.capabilities,
         tenantId: actor.tenantId,
+        // Multi-business context. `businessId` above is the business this
+        // request acts in; these say how it got there and what else is open.
+        ownBusinessId: actor.ownBusinessId ?? null,
+        technician: actor.technician
+          ? {
+              businessId: actor.technician.businessId,
+              businessName: actor.technician.businessName,
+              endpointIds: actor.technician.endpointIds,
+              sources: actor.technician.sources,
+            }
+          : null,
+        assignedBusinesses: actor.assignedBusinessIds?.length
+          ? await this.prisma.customer.findMany({
+              where: { id: { in: actor.assignedBusinessIds } },
+              select: { id: true, name: true },
+              orderBy: { name: 'asc' },
+            })
+          : [],
+        platformPermissions: actor.isPlatformAdmin ? ['technicians:manage'] : (actor.platformPermissions ?? []),
       },
     };
   }
@@ -149,6 +176,29 @@ export class AuthController {
     await this.authService.revokeSessions(user.sub);
     res.clearCookie('access_token');
     return { success: true };
+  }
+
+  /** Re-authenticate for a sensitive action. See step-up.service.ts. */
+  @UseGuards(JwtAuthGuard)
+  @Post('step-up')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(10)
+  async stepUpVerify(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: StepUpDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const method = await this.authService.verifyStepUp(user.sub, dto, req.ip ?? 'unknown');
+    const expiresAt = this.stepUp.issue(res, user.sub, user.iat, method);
+    return { success: true, data: { expiresAt, method } };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('step-up')
+  async stepUpStatus(@CurrentUser() user: JwtPayload, @Req() req: Request) {
+    const s = this.stepUp.read(req, user.sub, user.iat);
+    return { success: true, data: { active: !!s, expiresAt: s?.expiresAt ?? null, actions: await this.stepUp.enabledActions() } };
   }
 
   private setAuthCookie(res: Response, token: string) {
