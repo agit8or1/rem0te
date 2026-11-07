@@ -295,7 +295,7 @@ All configuration is via environment variables. See `apps/api/.env.example` for 
 | `JWT_SECRET` | Random secret for signing JWTs — min 32 chars |
 | `LAUNCHER_TOKEN_SECRET` | Random secret for desktop launcher tokens |
 | `ENCRYPTION_KEY` | 64 hex chars (32 bytes) for AES-256-GCM — encrypts TOTP secrets |
-| `FRONTEND_URL` | Public URL of the web app (e.g. `https://remote.example.com`) |
+| `FRONTEND_URL` | Public URL of the web app (e.g. `https://remote.example.com`). The starting value of the [public address](#public-address) |
 | `PUBLIC_API_URL` | Public URL of the API — usually same as `FRONTEND_URL` |
 
 Generate secrets with:
@@ -303,6 +303,32 @@ Generate secrets with:
 openssl rand -hex 32   # for JWT_SECRET, LAUNCHER_TOKEN_SECRET
 openssl rand -hex 32   # for ENCRYPTION_KEY (must be exactly 64 hex chars)
 ```
+
+---
+
+## Public address
+
+*Settings → General → Public address* (Platform Admin, needs [step-up](sign-in.md#step-up) `platform.configure`). Added in v0.21.
+
+This is the address people use to reach the server, such as `https://remote.example.com`. Every install has its own, and it ends up in things that leave the server:
+
+- customer support links and the SSO redirect after sign-in;
+- the passkey relying party, unless `WEBAUTHN_RP_ID` pins it;
+- launcher deep links, Quick Connect and Connect downloads, the Windows installer download and the diagnostics helper;
+- the only origin the API accepts cross-origin requests from (CORS).
+
+**Order of precedence:** the setting, if one is saved; otherwise `FRONTEND_URL` (web) and `PUBLIC_API_URL` (API) from `/etc/reboot-remote/api.env`; otherwise the development defaults. The settings card shows which one is in force. Clearing the setting goes back to the environment. One address serves both the web app and the API, as the supported reverse-proxy layout puts both on one host. An install that serves them from different hosts leaves the setting empty and keeps the two variables.
+
+**Saving checks the address first.** The server requests `<address>/api/v1/public/address-probe/<nonce>` with a nonce only this server knows, without following redirects, so a saved address is known to lead back here. If the check fails (DNS not switched yet, or the server cannot reach its own public address because the router does not support hairpin NAT), the card says why and offers *Save anyway*. In production the address must be `https://`, as installers and passkeys refuse plain http.
+
+**What changes when it changes:**
+
+- New links, downloads and installers use the new address at once. A support link already sent to a customer, or a Connect script already downloaded, still names the old one.
+- **Passkeys** are bound to the host name. If `WEBAUTHN_RP_ID` is not set, every registered passkey stops working when the host name changes; the card says how many there are.
+- **SSO:** the redirect URI registered at each provider must be updated to `<new address>/api/v1/auth/sso/callback`.
+- **Enrolled computers are not affected.** They check in through the RustDesk relay host (*Settings → RustDesk*), not this address.
+
+If a wrong address is saved, put it right from the card, or clear it from the server with `node dist/cli/auth-recovery.js --clear-public-url --yes` (see [sign-in.md](sign-in.md#recovery)). The API picks up the change within a minute, without a restart.
 
 ---
 

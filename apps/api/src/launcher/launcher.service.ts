@@ -18,6 +18,7 @@ import { IssueLauncherTokenDto } from './dto/launcher.dto';
 import { EndpointsService } from '../endpoints/endpoints.service';
 import { QuickConnectService } from '../quick-connect/quick-connect.service';
 import { SessionEventsService } from '../sessions/session-events.service';
+import { PublicUrlService } from '../platform/public-url.service';
 
 interface LauncherTokenPayload {
   sub: string;           // userId
@@ -45,6 +46,7 @@ export class LauncherService {
     private readonly endpoints: EndpointsService,
     private readonly quickConnect: QuickConnectService,
     private readonly sessionEvents: SessionEventsService,
+    private readonly urls: PublicUrlService,
   ) {}
 
   /**
@@ -162,7 +164,7 @@ export class LauncherService {
       meta: { targetRustdeskId, targetEndpointId },
     });
 
-    const apiUrl = this.config.get<string>('PUBLIC_API_URL') ?? 'http://localhost:3001';
+    const apiUrl = this.urls.api();
     // Use fragment (#) instead of query string — fragments are not sent to servers or logged by proxies
     const deepLink = `reboot-remote://launch#token=${signedToken}&api=${encodeURIComponent(apiUrl)}`;
 

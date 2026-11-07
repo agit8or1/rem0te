@@ -197,8 +197,13 @@ The sign-in page explains the reason. The common ones:
   sign-in page; the round trip must finish in the same browser within 10
   minutes.
 
-If SSO is unusable for everyone: `node scripts/auth-recovery.mjs --disable-sso
---yes` on the server. Password sign-in keeps working regardless.
+If SSO is unusable for everyone, run on the server:
+
+```bash
+sudo bash -c 'set -a; . /etc/reboot-remote/api.env; set +a; cd /opt/reboot-remote/api && node dist/cli/auth-recovery.js --disable-sso --yes'
+```
+
+Password sign-in keeps working regardless. See [sign-in.md](sign-in.md#recovery).
 
 ## A rotation stays "pending"
 

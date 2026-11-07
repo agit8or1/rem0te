@@ -516,6 +516,29 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'public-address',
+    title: "The Server's Public Address",
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          The address people use to reach this server, such as <code className="text-foreground">https://remote.example.com</code>.
+          Support links, sign-in redirects, passkeys, launcher links and installer downloads are all built from it. A
+          Platform Admin sets it in{' '}
+          <Link href="/settings" className="underline text-foreground">Settings → General → Public address</Link>; until
+          then the server uses <code className="text-foreground">FRONTEND_URL</code> from its environment file.
+        </p>
+        <p>
+          Saving checks that the address really leads back to this server. Changing the host name stops existing
+          passkeys working (unless <code className="text-foreground">WEBAUTHN_RP_ID</code> is set) and means updating the
+          redirect URI at each SSO provider. Enrolled computers are not affected.
+        </p>
+        <p>
+          More in <Link href="/docs/setup#public-address" className="underline text-foreground">Setup → Public address</Link>.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'access-control',
     title: 'Access Control',
     content: (

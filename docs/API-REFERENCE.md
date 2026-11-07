@@ -2,8 +2,8 @@
 
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
-Every route is prefixed with `/api/v1`. There are **282** of them across
-**32** controllers.
+Every route is prefixed with `/api/v1`. There are **286** of them across
+**34** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -282,6 +282,24 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/pub/v1/users` | public | — |
 | `POST` | `/api/v1/pub/v1/users/invite` | public | — |
 | `GET` | `/api/v1/pub/v1/whoami` | public | — |
+
+## Public url adminpublicaddress
+
+`apps/api/src/platform/public-url.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/admin/public-address` | signed in | — |
+| `PUT` | `/api/v1/admin/public-address` | signed in, throttled | — |
+| `POST` | `/api/v1/admin/public-address/check` | signed in, throttled | — |
+
+## Public url publicaddressprobe
+
+`apps/api/src/platform/public-url.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/public/address-probe/:nonce` | public, throttled | — |
 
 ## Quick Connect
 

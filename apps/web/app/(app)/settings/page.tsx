@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authApi, platformApi, supportRequestsApi } from '@/lib/api-client';
 import { usePermissions } from '@/lib/auth';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
+import { PublicAddressCard } from '@/components/settings/public-address-card';
 import { Copy, RefreshCw } from 'lucide-react';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
@@ -204,6 +205,7 @@ export default function SettingsPage() {
         </TabsList>
 
         <TabsContent value="general" className="mt-4 space-y-4">
+          <PublicAddressCard />
           <SupportLinkCard />
 
           <Card>
@@ -664,7 +666,7 @@ function SupportLinkCard() {
 
   if (!show || isError) return null;
 
-  // The API builds the URL from FRONTEND_URL; fall back to this origin if
+  // The API builds the URL from the public address; fall back to this origin if
   // that is unset and only the slug came back.
   const link = intake?.url && /^https?:\/\//.test(intake.url)
     ? intake.url

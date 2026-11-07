@@ -9,6 +9,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
+import { PublicUrlService } from '../platform/public-url.service';
 
 const CHALLENGE_TTL_MS = 5 * 60_000;
 const MAX_PASSKEYS = 10;
@@ -27,7 +28,8 @@ type Purpose = 'REGISTER' | 'LOGIN' | 'STEP_UP';
  *     borrowed session cannot plant a permanent way back in.
  *
  * Relying party: WEBAUTHN_RP_ID / WEBAUTHN_ORIGIN, defaulting to the host and
- * origin of FRONTEND_URL — the browser-visible address of the web app.
+ * origin of the server's public address (Settings → General, else FRONTEND_URL)
+ * — the browser-visible address of the web app.
  */
 @Injectable()
 export class PasskeysService implements OnModuleInit, OnModuleDestroy {
@@ -39,6 +41,7 @@ export class PasskeysService implements OnModuleInit, OnModuleDestroy {
     private readonly audit: AuditService,
     private readonly config: ConfigService,
     private readonly auth: AuthService,
+    private readonly urls: PublicUrlService,
   ) {}
 
   onModuleInit() {
@@ -51,7 +54,7 @@ export class PasskeysService implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy() { if (this.timer) clearInterval(this.timer); }
 
   rp() {
-    const front = new URL(this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:3000');
+    const front = new URL(this.urls.web());
     return {
       rpID: this.config.get<string>('WEBAUTHN_RP_ID') || front.hostname,
       origin: this.config.get<string>('WEBAUTHN_ORIGIN') || front.origin,

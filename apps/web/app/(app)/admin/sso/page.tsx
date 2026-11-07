@@ -528,7 +528,7 @@ export default function SsoAdminPage() {
             <li>Password sign-in always remains available, whatever is configured here. Two-factor rules still apply to SSO sign-ins.</li>
             <li>
               If a provider misbehaves, disable every provider from the server, in the API directory:
-              {' '}<code className="text-xs bg-muted rounded px-1">node scripts/auth-recovery.mjs --disable-sso --yes</code>
+              {' '}<code className="text-xs bg-muted rounded px-1">node dist/cli/auth-recovery.js --disable-sso --yes</code>
             </li>
             <li>Tested against a standards-compliant OpenID Connect provider; no provider-specific behaviour is assumed.</li>
           </ul>

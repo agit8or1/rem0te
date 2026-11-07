@@ -20,6 +20,7 @@ import type { JwtPayload } from '../auth/strategies/jwt.strategy';
 import { RateLimit } from '../common/throttling';
 import { StepUpService } from '../auth/step-up.service';
 import { SessionEventsService } from '../sessions/session-events.service';
+import { PublicUrlService } from '../platform/public-url.service';
 
 /**
  * Computers.
@@ -37,6 +38,7 @@ export class EndpointsController {
     private readonly trmm: TrmmResolverService,
     private readonly stepUp: StepUpService,
     private readonly sessionEvents: SessionEventsService,
+    private readonly urls: PublicUrlService,
   ) {}
 
   @Get('connected')
@@ -123,10 +125,10 @@ export class EndpointsController {
       // Content-Disposition header and a `title` line inside the script.
       // eslint-disable-next-line no-control-regex -- control chars are exactly what this strips
       endpointName: String(name).replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').slice(0, 60),
-      clientDownloadUrl: `${(process.env.PUBLIC_API_URL ?? '').replace(/\/$/, '')}/api/v1/public/quick-connect/download/windows`,
+      clientDownloadUrl: `${this.urls.apiConfigured() ?? ''}/api/v1/public/quick-connect/download/windows`,
       clientVersion: await this.rustdesk.pinnedOrLatestVersion(),
       telemetry: telemetryToken
-        ? { url: `${(process.env.PUBLIC_API_URL ?? '').replace(/\/$/, '')}/api/v1/sessions/telemetry`, token: telemetryToken }
+        ? { url: `${this.urls.apiConfigured() ?? ''}/api/v1/sessions/telemetry`, token: telemetryToken }
         : null,
     });
 

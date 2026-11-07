@@ -445,7 +445,7 @@ try {
 
   // ───────────────────────────────────────────────────────────────────────
   section('Recovery script');
-  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'auth-recovery.mjs');
+  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'cli', 'auth-recovery.js');
   const dry = execFileSync(process.execPath, [script, '--disable-sso'], { env: process.env, encoding: 'utf8' });
   check(/Would disable/.test(dry) && (await prisma.oidcProvider.findUnique({ where: { id: pid } })).enabled === true, 'dry run changes nothing', dry);
   const wet = execFileSync(process.execPath, [script, '--disable-sso', '--yes'], { env: process.env, encoding: 'utf8' });

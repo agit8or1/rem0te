@@ -2,7 +2,6 @@ import {
   Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Req, Res,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { ConfigService } from '@nestjs/config';
 import { IsArray, IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
 import { SsoError, SsoService } from './sso.service';
 import { Public } from '../common/decorators/public.decorator';
@@ -15,6 +14,7 @@ import type { JwtPayload } from '../auth/strategies/jwt.strategy';
 import {
   SSO_STATE_COOKIE, clearSsoStateCookie, safeReturnTo, setAccessCookie, setPartialCookie, setSsoStateCookie,
 } from '../auth/cookies';
+import { PublicUrlService } from '../platform/public-url.service';
 
 export class ProviderDto {
   @IsOptional() @IsString() @MaxLength(80) name?: string;
@@ -96,11 +96,11 @@ export class SsoAuthController {
   constructor(
     private readonly svc: SsoService,
     private readonly stepUp: StepUpService,
-    private readonly config: ConfigService,
+    private readonly urls: PublicUrlService,
   ) {}
 
   private web(path: string) {
-    return `${(this.config.get<string>('FRONTEND_URL') ?? '').replace(/\/+$/, '')}${path}`;
+    return `${this.urls.web()}${path}`;
   }
 
   @Public()

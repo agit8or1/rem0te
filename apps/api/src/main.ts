@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import { PublicUrlService } from './platform/public-url.service';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
@@ -36,7 +37,6 @@ async function bootstrap() {
 
   const config = app.get(ConfigService);
   const port = config.get<number>('PORT') ?? config.get<number>('API_PORT') ?? 3001;
-  const frontendUrl = config.get<string>('FRONTEND_URL') ?? 'http://localhost:3000';
   const nodeEnv = config.get<string>('NODE_ENV') ?? 'development';
 
   // Trusted-proxy configuration for req.ip resolution.
@@ -98,8 +98,14 @@ async function bootstrap() {
   app.use(cookieParser());
 
   // CORS — allow frontend origin with credentials
+  // The allowed origin follows the public address setting (Settings → General),
+  // so it is resolved per request rather than fixed at boot.
+  const publicUrls = app.get(PublicUrlService);
   app.enableCors({
-    origin: frontendUrl,
+    origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean | string) => void) => {
+      if (!origin) return cb(null, false);
+      cb(null, publicUrls.corsOrigins().includes(origin) ? origin : false);
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],

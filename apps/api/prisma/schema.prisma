@@ -1289,7 +1289,13 @@ model PlatformSettings {
 
   // Actions that need a recent re-authentication (password, TOTP or passkey)
   // on top of a valid session. See auth/step-up.service.ts for the vocabulary.
-  stepUpActions String[] @default(["credential.reveal", "permissions.change", "technicians.manage", "sso.configure", "passkey.manage"])
+  stepUpActions String[] @default(["credential.reveal", "permissions.change", "technicians.manage", "sso.configure", "passkey.manage", "platform.configure"])
+
+  // The address people and computers use to reach this server, as an origin
+  // (`https://remote.example.com`). When set it replaces FRONTEND_URL and
+  // PUBLIC_API_URL everywhere a link is built; null falls back to them.
+  // See platform/public-url.service.ts.
+  publicUrl String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

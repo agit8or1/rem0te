@@ -9,6 +9,7 @@ import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { TechnicianAccessService } from '../rbac/technician-access.service';
 import { CAP, effectiveCapabilities } from '../rbac/capabilities';
+import { PublicUrlService } from '../platform/public-url.service';
 
 /**
  * Customer support requests: a waiting queue in front of Connect and Quick
@@ -83,6 +84,7 @@ export class SupportRequestsService implements OnModuleInit, OnModuleDestroy {
     private readonly audit: AuditService,
     private readonly acl: AccessControlService,
     private readonly techAccess: TechnicianAccessService,
+    private readonly urls: PublicUrlService,
   ) {}
 
   onModuleInit() {
@@ -107,7 +109,7 @@ export class SupportRequestsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private intakeView(c: { id: string; name: string; supportIntakeEnabled: boolean; supportIntakeSlug: string | null }) {
-    const base = (process.env.FRONTEND_URL ?? '').replace(/\/$/, '');
+    const base = this.urls.webConfigured() ?? '';
     return {
       businessId: c.id, businessName: c.name, enabled: c.supportIntakeEnabled, slug: c.supportIntakeSlug,
       url: c.supportIntakeSlug ? `${base}/support/${c.supportIntakeSlug}` : null,

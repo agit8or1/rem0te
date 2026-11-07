@@ -288,6 +288,25 @@ export const adminApi = {
   search: (q: string) => api.get('/admin/search', { params: { q } }),
 };
 
+// ─── Public address (Settings → General) ─────────────────────────────────────
+export interface PublicAddressInfo {
+  effective: string;
+  effectiveApi: string;
+  source: 'setting' | 'environment' | 'default';
+  setting: string | null;
+  environment: { FRONTEND_URL: string | null; PUBLIC_API_URL: string | null };
+  webauthnRpIdPinned: boolean;
+  passkeys: number;
+}
+export interface PublicAddressCheck { address: string; reachable: boolean; sameServer: boolean; detail: string }
+export const publicAddressApi = {
+  get: () => api.get<{ data: PublicAddressInfo }>('/admin/public-address'),
+  check: (url: string) => api.post<{ data: PublicAddressCheck }>('/admin/public-address/check', { url }),
+  /** null clears the setting. 409 ADDRESS_UNVERIFIED unless the check passes or saveUnverified. */
+  set: (url: string | null, saveUnverified = false) =>
+    api.put<{ data: PublicAddressInfo & { check: PublicAddressCheck | null } }>('/admin/public-address', { url, saveUnverified }),
+};
+
 // ─── Update ───────────────────────────────────────────────────────────────────
 // ─── Technician client downloads ──────────────────────────────────────────
 // Authenticated, unlike the Quick Connect downloads: these are for the people
