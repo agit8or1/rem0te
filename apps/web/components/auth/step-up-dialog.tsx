@@ -17,6 +17,7 @@ const ACTION_LABEL: Record<string, string> = {
   'technicians.manage': 'manage technician access',
   'sso.configure': 'change single sign-on settings',
   'passkey.manage': 'add or remove a passkey',
+  'platform.configure': "change the server's public address",
 };
 
 /**

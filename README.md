@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.20.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.21.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -24,6 +24,15 @@ server that keeps them organised and separate.
 <sub><i>The operator's view — every customer business, computer and session in one place. <a href="docs/images/github/dashboard-light.png">Full size</a> · <a href="docs/screenshots.md">34 more screenshots</a></i></sub>
 
 ---
+
+## What's new in 0.21
+
+**Set the server's address in the app.** Every install is reached at its own
+address, and support links, sign-in redirects, passkeys, launcher links and
+installer downloads are built from it. It used to live only in the server's
+environment file; now a Platform Admin sets it in *Settings → General*, and
+the server checks the address really leads back to it before saving.
+[setup.md](docs/setup.md#public-address)
 
 ## What's new in 0.20
 

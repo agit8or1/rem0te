@@ -5,6 +5,113 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.21.0] — 2026-11-07 · *Signpost*
+
+The server's public address becomes a setting. Every install is reached at a
+different address, and until now the only place to say what it was were
+`FRONTEND_URL` and `PUBLIC_API_URL` in `/etc/reboot-remote/api.env`: root-only,
+edited over SSH, and applied only by an API restart. This mattered on the
+reference server, where 0.20.0 went live with `FRONTEND_URL` still set to the
+LAN address `http://192.168.22.87`. Passkeys derive their relying party from
+it and browsers refuse an IP address there, so passkeys could not work, and
+SSO would have sent people back to an address they could not reach.
+
+### Upgrade notes
+
+- Migration `0021_public_address`: adds `PlatformSettings.publicUrl` and turns
+  the new step-up action `platform.configure` on for the existing settings row.
+  Run `prisma migrate deploy` and `prisma generate` at the target.
+- No dependency changes.
+- Nothing changes on upgrade: with the setting empty the API uses
+  `FRONTEND_URL` / `PUBLIC_API_URL` exactly as before.
+
+### Added
+
+- **Settings → General → Public address** (Platform Admin). Shows the address
+  in use and where it comes from (this setting, the environment, or the
+  development default), and warns when the page is being viewed at a different
+  address. Saving needs step-up (`platform.configure`). Clearing goes back to
+  the environment.
+- **Order of precedence:** the setting, then `FRONTEND_URL` / `PUBLIC_API_URL`,
+  then the development defaults. One address serves the web app and the API,
+  as the supported layout puts both on one host. An install that splits them
+  leaves the setting empty.
+- **Reachability check before saving.** The server requests
+  `<address>/api/v1/public/address-probe/<nonce>`, with a nonce only this
+  process knows and redirects not followed, so a saved address is proven to
+  lead back to *this* server, not merely to something that answers. A failed
+  check returns `409 ADDRESS_UNVERIFIED` with the reason, and the card offers
+  *Save anyway* for an address that is right but cannot be reached from the
+  server itself (DNS not switched yet, no hairpin NAT). The probe route is
+  public, rate-limited, and answers only whether a nonce was issued here.
+- The card states what a change affects: links and downloads already handed
+  out keep the old address; the SSO redirect URI must be updated at each
+  provider; passkeys stop working if the host name changes and
+  `WEBAUTHN_RP_ID` does not pin it (with the count, and a confirmation before
+  saving); enrolled computers are unaffected, as they check in through the
+  RustDesk relay host.
+- `auth-recovery --clear-public-url` clears a wrong address from the server, and
+  `--status` shows it. The running API picks up a change made this way within
+  a minute.
+- Security invariant 9: only `PublicUrlService` (plus the config schema and the
+  recovery CLI, which only prints it) may read `FRONTEND_URL` or
+  `PUBLIC_API_URL`. A link built from the raw variable would silently ignore
+  the setting.
+
+### Changed
+
+- Every link the API builds now comes from `PublicUrlService`: customer support
+  links, the SSO post-login redirect and suggested redirect URI, the passkey
+  RP ID and origin defaults, launcher deep links, Connect and Quick Connect
+  download links, session telemetry, the Windows installer's embedded URL
+  (still https-only in production, still preferred over request headers), the
+  public API's install commands and the diagnostics helper.
+- CORS allows the current public address and `FRONTEND_URL`, resolved per
+  request, so a change applies without a restart.
+
+### Fixed
+
+- **The recovery tool was not on deployed servers.** 0.20.0 shipped it as
+  `apps/api/scripts/auth-recovery.mjs` and documented
+  `cd /opt/reboot-remote/api && node scripts/auth-recovery.mjs`, but a deploy
+  copies `dist/`, never `scripts/`, so the command did not exist where it was
+  needed. It now lives in `src/cli/` and is compiled to
+  `dist/cli/auth-recovery.js`. The docs also loaded the environment from
+  `/opt/reboot-remote/api/.env`, which does not exist; the API's environment is
+  `/etc/reboot-remote/api.env` (root-only), and the docs now say so.
+
+- **The step-up prompt never said what it was for.** The API's
+  `STEP_UP_REQUIRED` answer names the action (`credential.reveal`,
+  `permissions.change`, …) so the dialog can say *To reveal a computer
+  password, confirm your identity*, but the global exception filter rebuilt
+  every error body from `code` and `message` alone and dropped it. Every
+  prompt since 0.20.0 read *For this action*. The filter now passes `action`
+  through, and only as a `word.word` identifier.
+
+### Tests
+
+- New `e2e-public-address.mjs`, 43 checks, against a scratch API and database.
+  It covers who may read or change the address, with access checked before
+  validation and step-up; eight malformed addresses refused; step-up on save
+  and clear; the check telling this server from another server that answers,
+  a redirect and nothing listening; 409 without `saveUnverified`; the audit
+  record; support link, SSO redirect URI, launcher deep link, CORS and passkey
+  RP ID following the setting without a restart; clearing; and the recovery
+  CLI, including the running API seeing its change.
+- `e2e-sso-passkeys.mjs` runs the recovery tool from `dist/cli/`.
+
+### Limitations
+
+- One address for web and API. Installs that serve them from different hosts
+  keep using the two environment variables.
+- The reachability check runs from the server, so behind a router without
+  hairpin NAT a correct address fails it; *Save anyway* is the way through.
+- Changing the address does not rewrite anything already handed out: support
+  links sent to customers, downloaded Connect scripts, SSO redirect URIs
+  registered at providers.
+
+---
+
 ## [0.20.0] — 2026-11-07 · *Switchboard*
 
 Support operations: knowing why a connection fails, what a session actually

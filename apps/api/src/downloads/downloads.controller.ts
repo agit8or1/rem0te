@@ -4,6 +4,7 @@ import {
 import { Response } from 'express';
 import * as fs from 'fs';
 import { RustdeskService, type RustdeskServerConfig } from '../common/rustdesk.service';
+import { PublicUrlService } from '../platform/public-url.service';
 
 /**
  * Client downloads for the people doing the supporting.
@@ -24,7 +25,7 @@ import { RustdeskService, type RustdeskServerConfig } from '../common/rustdesk.s
  */
 @Controller('downloads')
 export class DownloadsController {
-  constructor(private readonly rustdesk: RustdeskService) {}
+  constructor(private readonly rustdesk: RustdeskService, private readonly urls: PublicUrlService) {}
 
   private async requireConfig(): Promise<RustdeskServerConfig> {
     const config = await this.rustdesk.serverConfig();
@@ -131,6 +132,6 @@ export class DownloadsController {
   }
 
   private clientDownloadUrl(): string {
-    return `${(process.env.PUBLIC_API_URL ?? '').replace(/\/$/, '')}/api/v1/public/quick-connect/download/windows`;
+    return `${this.urls.apiConfigured() ?? ''}/api/v1/public/quick-connect/download/windows`;
   }
 }

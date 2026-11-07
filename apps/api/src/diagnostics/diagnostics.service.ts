@@ -10,6 +10,7 @@ import { EnrollmentService } from '../enrollment/enrollment.service';
 import { queryHbbsOnline } from '../enrollment/hbbs-presence';
 import { agentMeetsContract, AGENT_CONTRACT_VERSION, compareVersions } from '../common/agent-contract';
 import { CANDIDATE_LIVE_MS } from '../enrollment/device-secret';
+import { PublicUrlService } from '../platform/public-url.service';
 
 /**
  * Outcome of one check. Deliberately not a boolean:
@@ -112,6 +113,7 @@ export class DiagnosticsService {
     private readonly acl: AccessControlService,
     private readonly rustdesk: RustdeskService,
     private readonly enrollment: EnrollmentService,
+    private readonly urls: PublicUrlService,
   ) {}
 
   async run(actor: ActorContext, endpointId: string) {
@@ -466,8 +468,8 @@ export class DiagnosticsService {
   async technicianHelper(actor: ActorContext, endpointId?: string): Promise<string> {
     const config = await this.rustdesk.serverConfig();
     if (!config) throw new BadRequestException('No RustDesk server is configured yet');
-    const base = (process.env.PUBLIC_API_URL ?? '').replace(/\/$/, '');
-    if (!base) throw new BadRequestException('PUBLIC_API_URL is not set, so the helper has nowhere to report');
+    const base = this.urls.apiConfigured();
+    if (!base) throw new BadRequestException('The server\'s public address is not set (Settings → General), so the helper has nowhere to report');
     const token = randomBytes(24).toString('hex');
     await this.prisma.technicianDiagnostic.create({
       data: {

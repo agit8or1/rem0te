@@ -12,6 +12,7 @@ import { AuthService } from '../auth/auth.service';
 import type { ActorContext } from '../rbac/access-control.service';
 import { sanitizeCapabilities } from '../rbac/capabilities';
 import { safeReturnTo } from '../auth/cookies';
+import { PublicUrlService } from '../platform/public-url.service';
 
 const STATE_TTL_MS = 10 * 60_000;
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -46,7 +47,7 @@ export interface ProviderInput {
  * The rest of sign-in is the password path's: account status, the lockout,
  * and TOTP when the account has it or the tenant requires it. Password
  * sign-in stays available whatever is configured here, and
- * scripts/auth-recovery.mjs disables every provider from the host.
+ * dist/cli/auth-recovery.js (src/cli/auth-recovery.ts) disables every provider from the host.
  */
 @Injectable()
 export class SsoService implements OnModuleInit, OnModuleDestroy {
@@ -60,6 +61,7 @@ export class SsoService implements OnModuleInit, OnModuleDestroy {
     private readonly audit: AuditService,
     private readonly config: ConfigService,
     private readonly auth: AuthService,
+    private readonly urls: PublicUrlService,
   ) {
     this.key = Buffer.from(this.config.get<string>('ENCRYPTION_KEY') ?? '', 'hex');
   }
@@ -121,8 +123,7 @@ export class SsoService implements OnModuleInit, OnModuleDestroy {
 
   /** The redirect URI to register at the provider, for the admin form. */
   suggestedRedirectUri() {
-    const base = (this.config.get<string>('FRONTEND_URL') ?? '').replace(/\/+$/, '');
-    return `${base}/api/v1/auth/sso/callback`;
+    return `${this.urls.web()}/api/v1/auth/sso/callback`;
   }
 
   async listProviders(actor: ActorContext) {

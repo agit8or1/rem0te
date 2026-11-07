@@ -14,6 +14,7 @@ import { EnrollmentService } from '../enrollment/enrollment.service';
 import { buildActorContext, type ActorContext } from '../rbac/access-control.service';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
 import { RateLimit } from '../common/throttling';
+import { PublicUrlService } from '../platform/public-url.service';
 
 // ── DTOs ─────────────────────────────────────────────────────────────────────
 
@@ -62,6 +63,7 @@ export class PublicApiController {
     private readonly businesses: BusinessesService,
     private readonly endpoints: EndpointsService,
     private readonly enrollment: EnrollmentService,
+    private readonly urls: PublicUrlService,
     // No direct Prisma access on purpose — every read and write goes through
     // the same services the web app uses, so the same business-isolation and
     // audit behaviour applies to API-key callers.
@@ -176,7 +178,7 @@ export class PublicApiController {
       },
     );
     const platform = dto.platform ?? 'windows';
-    const base = (process.env.PUBLIC_API_URL ?? '').replace(/\/+$/, '') || `${req.protocol}://${req.get('host')}`;
+    const base = this.urls.apiConfigured() || `${req.protocol}://${req.get('host')}`;
     const paths: Record<string, { path: string; cmd: string }> = {
       windows: { path: `/api/v1/public/install/win/${record.token}`, cmd: `irm ${base}/api/v1/public/install/win/${record.token} | iex` },
       linux:   { path: `/api/v1/public/install/linux/${record.token}`, cmd: `curl -fsSL ${base}/api/v1/public/install/linux/${record.token} | sudo bash` },

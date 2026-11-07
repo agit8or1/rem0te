@@ -15,6 +15,7 @@ import { PrismaService } from '../prisma/prisma.service';
  *   technicians.manage   technician assignments, groups, platform permissions
  *   sso.configure        OIDC provider configuration and account linking
  *   passkey.manage       adding or removing a passkey
+ *   platform.configure   changing the server's public address
  *
  * The proof is a short-lived HMAC token in an httpOnly, SameSite=strict cookie,
  * bound to the user and to the session it was earned in (the access token's
@@ -31,6 +32,7 @@ export const STEP_UP_ACTIONS = [
   'technicians.manage',
   'sso.configure',
   'passkey.manage',
+  'platform.configure',
 ] as const;
 export type StepUpAction = (typeof STEP_UP_ACTIONS)[number];
 

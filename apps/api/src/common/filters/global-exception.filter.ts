@@ -21,6 +21,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = 'Internal server error';
     let code = 'INTERNAL_ERROR';
+    // STEP_UP_REQUIRED names the action, so the client can say what is being
+    // confirmed. Carried through only as a short identifier.
+    let action: string | undefined;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -33,6 +36,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
           ? (r['message'] as string[]).join('; ')
           : ((r['message'] as string) ?? message);
         code = (r['code'] as string) ?? this.statusToCode(status);
+        if (typeof r['action'] === 'string' && /^[a-z]+\.[a-z]+$/.test(r['action'])) action = r['action'];
       }
       code = code ?? this.statusToCode(status);
     } else if (exception instanceof Prisma.PrismaClientKnownRequestError) {
@@ -59,6 +63,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       statusCode: status,
       code,
       message,
+      ...(action ? { action } : {}),
       path: request.url,
       timestamp: new Date().toISOString(),
     });

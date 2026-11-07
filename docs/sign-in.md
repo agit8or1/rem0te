@@ -39,7 +39,7 @@ After the provider, the rest of sign-in is the same as for a password: account s
 - A signature counter that goes backwards (a cloned authenticator) is refused.
 - Adding or removing a passkey needs step-up (`passkey.manage`).
 
-The relying party is the web app's address: `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGIN`, defaulting to the host and origin of `FRONTEND_URL`. Passkeys are bound to that host name, so changing it later makes every existing passkey unusable. Browsers do not allow an IP address as an RP ID; use a host name (`localhost` in development).
+The relying party is the web app's address: `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGIN`, defaulting to the host and origin of the server's [public address](setup.md#public-address) (*Settings → General*, else `FRONTEND_URL`). Passkeys are bound to that host name, so changing it later makes every existing passkey unusable, unless `WEBAUTHN_RP_ID` pins it. Browsers do not allow an IP address as an RP ID; use a host name (`localhost` in development).
 
 ## Step-up
 
@@ -52,23 +52,27 @@ Some actions need you to confirm it is you, even with a valid session: re-enter 
 | `technicians.manage` | technician assignments, groups and platform permissions |
 | `sso.configure` | SSO provider changes; linking and unlinking your own SSO identity |
 | `passkey.manage` | adding or removing a passkey |
+| `platform.configure` | changing the server's public address (*Settings → General*) |
 
 All are on by default (`PlatformSettings.stepUpActions`). The API answers `403` with `code: STEP_UP_REQUIRED` and the web app prompts. Access is always checked **first**, so someone with no business doing the action is refused outright, not asked to re-authenticate.
 
 ## Recovery
 
-If SSO or passkeys go wrong, run this on the server (it talks to the database directly and works with the API down):
+If SSO, passkeys or the [public address](setup.md#public-address) go wrong, run this on the server. It talks to the database directly and works with the API down. The environment file is readable only by root, so start a root shell with it loaded:
 
 ```bash
-cd /opt/reboot-remote/api && set -a && . ./.env && set +a
-node scripts/auth-recovery.mjs --status
-node scripts/auth-recovery.mjs --disable-sso --yes             # every provider off
-node scripts/auth-recovery.mjs --remove-passkeys a@b.com --yes # that account's passkeys
-node scripts/auth-recovery.mjs --unlink-sso a@b.com --yes      # that account's SSO links
-node scripts/auth-recovery.mjs --sign-out a@b.com --yes        # end every session
+sudo bash -c 'set -a; . /etc/reboot-remote/api.env; set +a; cd /opt/reboot-remote/api && exec bash'
+node dist/cli/auth-recovery.js --status
+node dist/cli/auth-recovery.js --disable-sso --yes             # every provider off
+node dist/cli/auth-recovery.js --remove-passkeys a@b.com --yes # that account's passkeys
+node dist/cli/auth-recovery.js --unlink-sso a@b.com --yes      # that account's SSO links
+node dist/cli/auth-recovery.js --sign-out a@b.com --yes        # end every session
+node dist/cli/auth-recovery.js --clear-public-url --yes        # back to FRONTEND_URL / PUBLIC_API_URL
 ```
 
 Without `--yes` it prints what it would do and changes nothing. Every change is written to the audit log.
+
+0.20.0 documented this as `node scripts/auth-recovery.mjs`, but `scripts/` is not part of a deployed server; from 0.21.0 the tool is compiled into `dist/`.
 
 ## Limitations
 

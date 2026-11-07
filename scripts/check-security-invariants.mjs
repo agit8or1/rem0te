@@ -198,6 +198,26 @@ check(
   `these advisory pins vanish from the npm install at the target: ${lost.join(', ')}`,
 );
 
+// 9. Every link this server hands out is built from the one public address
+//    (0.21). The installer download, launcher deep links and Connect scripts
+//    embed it, and those run elevated or carry credentials. A new code path
+//    reading FRONTEND_URL / PUBLIC_API_URL directly would silently ignore the
+//    Settings → General value, and is where a "fall back to the Host header"
+//    shortcut tends to creep in. Only PublicUrlService and the config schema
+//    may read them (and the recovery CLI, which only prints them).
+const ENV_READERS = new Set([
+  'apps/api/src/platform/public-url.service.ts',
+  'apps/api/src/config/configuration.ts',
+  'apps/api/src/cli/auth-recovery.ts',
+]);
+const rawReaders = walk('apps/api/src').filter((f) => !ENV_READERS.has(f) && !f.endsWith('.spec.ts')).filter((f) =>
+  /process\.env\.(FRONTEND_URL|PUBLIC_API_URL)\b|get<[^>]*>\(\s*['"](FRONTEND_URL|PUBLIC_API_URL)['"]/.test(read(f)));
+check(
+  'the public address is read only through PublicUrlService',
+  rawReaders.length === 0,
+  `read the address via PublicUrlService (web()/api()/…Configured()), not the environment: ${rawReaders.join(', ')}`,
+);
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

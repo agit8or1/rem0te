@@ -22,6 +22,7 @@ import { Public } from '../common/decorators/public.decorator';
 import { RUSTDESK_FALLBACK_VERSION, rustdeskAssetSha256 } from '../common/rustdesk-release';
 import { RustdeskService } from '../common/rustdesk.service';
 import { UpdateRolloutService } from '../admin/update-rollout.service';
+import { PublicUrlService } from '../platform/public-url.service';
 
 const INSTALLER_MAGIC = Buffer.from('REM0TE_INST_URL:');
 const INSTALLER_SLOT_SIZE = 256;
@@ -83,6 +84,7 @@ export class PublicController {
     private readonly prisma: PrismaService,
     private readonly rustdesk: RustdeskService,
     private readonly rollouts: UpdateRolloutService,
+    private readonly urls: PublicUrlService,
   ) {}
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -240,11 +242,11 @@ export class PublicController {
       contentType = 'text/plain; charset=utf-8';
       filename = 'install-rustdesk-macos.sh';
     } else if (platform === 'windows.exe') {
-      // Prefer the configured public URL over spoofable request headers. Falling back
-      // to headers only if PUBLIC_API_URL is unset. The URL is embedded inside the
+      // Prefer the configured public address (setting, then PUBLIC_API_URL) over
+      // spoofable request headers. Falling back to headers only if neither is set. The URL is embedded inside the
       // installer and controls where the customer's machine fetches the PowerShell
       // script from, so header trust is a supply-chain risk.
-      const configuredBase = process.env.PUBLIC_API_URL?.replace(/\/+$/, '');
+      const configuredBase = this.urls.apiConfigured() ?? undefined;
       // https only outside development: this URL is baked into an installer that
       // pipes whatever it fetches into an elevated PowerShell, so plaintext here
       // is a root shell for anyone on the path. The installer binary refuses a
