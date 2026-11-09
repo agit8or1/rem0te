@@ -1,6 +1,6 @@
 {
   "name": "@reboot-remote/api",
-  "version": "0.21.0",
+  "version": "0.21.1",
   "private": true,
   "scripts": {
     "dev": "nest start --watch",
@@ -13,7 +13,7 @@
     "lint:fix": "eslint . --fix"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^1.3.0",
+    "@anthropic-ai/sdk": "^1.6.0",
     "@nestjs/common": "^11.2.8",
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.2.8",
@@ -25,16 +25,16 @@
     "@prisma/client": "^5.14.0",
     "@simplewebauthn/server": "14.0.3",
     "@types/multer": "^2.3.0",
-    "argon2": "^0.45.1",
+    "argon2": "^0.45.2",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "cookie-parser": "^1.4.6",
     "helmet": "^8.3.0",
     "ioredis": "^6.0.0",
-    "maxmind": "^5.0.7",
+    "maxmind": "^5.0.8",
     "multer": "^2.4.0",
     "nanoid": "^6.0.2",
-    "openid-client": "6.8.8",
+    "openid-client": "6.8.9",
     "otplib": "^12.0.1",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
