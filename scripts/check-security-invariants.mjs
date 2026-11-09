@@ -339,6 +339,27 @@ check(
   check('trust client refuses plain-http mirrors outside tests', /u\.Scheme != "https" && !\(cfg\.AllowInsecureHTTP/.test(client), 'https enforcement removed');
 }
 
+// 13. Security Features view (0.25). The view is the answer an MSP owner reads
+//     to decide what is protected, so it must neither leak configuration nor
+//     overstate an endpoint restriction.
+{
+  const svc = read('apps/api/src/security-controls/security-features.service.ts');
+  check('Security Features refuses every technician context', /if \(actor\.technician\) throw new ForbiddenException/.test(svc),
+    'a technician acting in a business must not read its security configuration');
+  check('a Business Owner sees only their own business', /businessId && businessId !== actor\.businessId\) throw new ForbiddenException/.test(svc),
+    'an owner must not scope the view to another business');
+  check('clipboard and file transfer report no effective state', !/out\['clipboard'\]|out\['file-transfer'\]/.test(svc),
+    'nothing observes them; an effective value would claim an endpoint restriction that does not exist');
+  const cat = read('apps/api/src/security-controls/security-features.ts');
+  for (const id of ['clipboard', 'file-transfer', 'elevation', 'remote-shell', 'chat', 'mdm', 'backup-recovery', 'scripts-fixes']) {
+    check(`catalog lists ${id} as unavailable`, new RegExp(`id: '${id}',[^\\n]*status: 'unavailable'`).test(cat), `${id} must not be presented as available`);
+  }
+  check('session length is advisory, not enforced', /id: 'session-length',[^\n]*status: 'advisory'/.test(cat), 'nothing ends a session');
+  const page = read('apps/web/app/(app)/endpoints/[id]/page.tsx');
+  check('View only is offered only in a technician context', /\{technician && \(\s*<Button[\s\S]{0,400}mutate\('view_only'\)/.test(page),
+    'for members view-only is not applied; the button must not imply it is');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

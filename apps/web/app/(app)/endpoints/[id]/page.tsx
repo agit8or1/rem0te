@@ -29,7 +29,7 @@ export default function EndpointDetailPage() {
   const router = useRouter();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { can, isPlatformAdmin } = usePermissions();
+  const { can, isPlatformAdmin, technician } = usePermissions();
 
   const [newNote, setNewNote] = useState('');
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
@@ -82,15 +82,17 @@ export default function EndpointDetailPage() {
       if (pw) {
         try { await navigator.clipboard.writeText(pw); } catch { /* ignore */ }
       }
-      // A preset-backed launch never releases the permanent password: RustDesk
-      // asks at the endpoint instead. Say so, rather than leaving the
-      // technician wondering why nothing was copied.
+      // A preset-backed launch never releases the permanent password. The
+      // shipped endpoint configuration accepts only that password
+      // (verification-method = use-permanent-password), so nothing will prompt
+      // at the computer — say what is actually true. The session-length limit
+      // is policy text: nothing on the endpoint ends the session.
       if (!pw || info?.maxSessionMinutes) {
         toast({
           title: info?.mode === 'view_only' ? 'Starting a view-only session' : 'Starting the session',
           description: [
-            !pw ? 'No password is released for this launch; RustDesk will prompt at the computer.' : null,
-            info?.maxSessionMinutes ? `This session is limited to ${info.maxSessionMinutes} minutes.` : null,
+            !pw ? 'No password is released for this launch. A computer installed by Rem0te accepts only its permanent password, so RustDesk may not be able to sign in.' : null,
+            info?.maxSessionMinutes ? `Policy limit: ${info.maxSessionMinutes} minutes. Nothing on the computer enforces it — end the session when the time is up.` : null,
           ].filter(Boolean).join(' '),
         });
       }
@@ -222,16 +224,24 @@ export default function EndpointDetailPage() {
             <PlayCircle className="h-4 w-4 mr-2" />
             Connect
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            title="Watch the screen without control. Refused if this computer cannot enforce view-only."
-            onClick={() => launchMutation.mutate('view_only')}
-            disabled={launchMutation.isPending || !(ep.rustdeskNode as { rustdeskId?: string } | null)?.rustdeskId}
-          >
-            <Eye className="h-4 w-4 mr-2" />
-            View only
-          </Button>
+          {/* View-only is enforced only for preset-backed technician grants,
+              and only by refusing a launch the computer cannot restrict. For a
+              Business Owner, Business User or Platform Admin the server has
+              never applied it — RustDesk opened with full control — so the
+              button is not offered to them rather than implying a restriction
+              that does not exist (0.25.0). */}
+          {technician && (
+            <Button
+              size="sm"
+              variant="outline"
+              title="Asks for a view-only launch. For a preset-based assignment it is refused unless this computer reports it can enforce view-only, and no shipped agent reports that yet. A custom assignment with Connect opens a normal session."
+              onClick={() => launchMutation.mutate('view_only')}
+              disabled={launchMutation.isPending || !(ep.rustdeskNode as { rustdeskId?: string } | null)?.rustdeskId}
+            >
+              <Eye className="h-4 w-4 mr-2" />
+              View only
+            </Button>
+          )}
           {ep.status === 'ARCHIVED' ? (
             <Button
               size="sm"
