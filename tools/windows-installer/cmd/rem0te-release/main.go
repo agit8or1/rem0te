@@ -8,6 +8,7 @@
 //	                        -targets-key targets.pem -snapshot-key snapshot.pem -timestamp-key timestamp.pem
 //	rem0te-release release  -repo DIR -targets-key targets.pem -snapshot-key snapshot.pem -timestamp-key timestamp.pem \
 //	                        -add windows/install.ps1=./install.ps1 -add windows/rem0te-agent.exe=./rem0te-agent.exe
+//	                        [-add approval/keys.json=./keys.json]   (from `approval-signer keys`; checked before signing)
 //	rem0te-release refresh  -repo DIR -timestamp-key timestamp.pem [-snapshot-key snapshot.pem]
 //	rem0te-release rotate-root -repo DIR -old-root-key r1.pem -old-root-key r2.pem [-new-root-key n1.pem ...] \
 //	                        [-replace targets=newtargets.pub.pem]
@@ -29,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agit8or1/rem0te/windows-installer/internal/action"
 	"github.com/agit8or1/rem0te/windows-installer/internal/release"
 	"github.com/agit8or1/rem0te/windows-installer/internal/trust"
 	"github.com/theupdateframework/go-tuf/v2/metadata"
@@ -214,6 +216,21 @@ func doRelease(args []string) error {
 		name, p, ok := strings.Cut(a, "=")
 		if !ok {
 			return fmt.Errorf("-add wants name=path")
+		}
+		// The approval key list is read by every agent before it will run an
+		// action; refuse to sign one the agent would reject anyway.
+		if name == action.KeysTarget {
+			raw, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			keys, err := action.ParseKeys(raw)
+			if err != nil {
+				return fmt.Errorf("%s: %w (generate it with `approval-signer keys`)", p, err)
+			}
+			for _, k := range keys {
+				fmt.Printf("approval key %s\n", k.Kid)
+			}
 		}
 		specs = append(specs, release.TargetSpec{Name: name, File: p, Custom: cm[name]})
 	}

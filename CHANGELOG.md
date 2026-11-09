@@ -5,6 +5,156 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.26.0] — 2026-11-09 · *Countersign*
+
+**The first approved fix: start a Windows computer's Print Spooler, once, after people on an approval roster
+authorize that exact plan with a passkey.** It is the only action, and the portal can't make it happen alone. The
+portal proposes and delivers. A separate approval signer, holding its own key and roster, signs only plans that
+passkeys approved. The agent checks everything again and runs a job at most once.
+
+**Status: fixture-tested.** No real Windows workstation, real authenticator or real ClientSt0r has run it yet. See
+*What has been proven* in `docs/approved-actions.md`.
+
+### Added
+
+- **The catalog** (`apps/api/src/actions/catalog.ts`, and the agent's compiled-in copy in
+  `tools/windows-installer/internal/action/catalog.go`) holds one entry: `windows.service.start@1`,
+  `{"service":"Spooler"}`.
+  - No action takes a command, script, path or URL.
+  - Credential extraction, backup removal, disabling defenses, admin grants and disk wipes are named as never
+    available, so a request for them is refused by name. It isn't switched off; there is nothing to request.
+  - The startup type isn't changed, so a disabled spooler stays disabled.
+- **The approval signer** (`apps/api/src/approval-signer/`, `deploy/systemd/rem0te-approval-signer.service`).
+  - **Isolation.**
+    - A separate process under its own Unix user (`rem0te-approver`) with its own state directory (0700),
+      Ed25519 key, roster, policy and decision log.
+    - It runs from a root-owned install built by `apps/api/scripts/build-approval-signer.mjs`. That script copies
+      exactly the files the signer loads and refuses if they ever include Nest, Prisma or a portal module.
+  - **Listeners.**
+    - Internal on 127.0.0.1:3202, for the portal: submit a plan, read status, cancel.
+    - Public on 3201, on **its own origin**: the approval page.
+  - **Approval.**
+    - Each decision is a user-verified WebAuthn assertion against the roster's public key, with a single-use
+      challenge, the signer's own origin and RP ID, and a counter that must move forward.
+    - The challenge is derived from the plan digest, the decision and the role, so the passkey signature covers
+      the plan the approver saw.
+    - The requester can't approve.
+    - Customer sign-off must come from a different person.
+  - **Restarts.**
+    - Passkey counters are kept per credential (`counters/`) rather than by rewriting the roster. A counter save
+      could otherwise undo a concurrent `roster disable`.
+    - State, including used challenges, survives a restart.
+  - **Operator CLI:** `keygen`, `keys`, `roster add|list|disable`, `policy set`.
+    - `roster add` requires the approver's fingerprint, read from their own screen
+      (`--confirm-fingerprint`).
+- **Two-person rule and customer sign-off.**
+  - A workstation needs 1 approval. Anything else needs 2 from different people.
+  - The agent recomputes the risk from its own Windows product type, so a plan that understates it is refused
+    (`risk_understated`).
+  - Customer sign-off is a per-business signer policy, re-derived by the signer. A plan whose stated policy
+    disagrees with it is refused (`policy_mismatch`).
+  - An AI suggestion from ClientSt0r gets no shortcut.
+- **What is signed:** canonical JSON prefixed `rem0te-action-plan-v1\n`, covering:
+  - the action version and parameters;
+  - the agent build's sha256;
+  - the business, hostname, device class, RustDesk ID and device-secret hash;
+  - the requester and origin;
+  - the policy;
+  - every approver and their credential;
+  - the window (at most 24 h) and a single-use job id.
+- **The agent** (`rem0te-agent.exe action --job --envelope`, `internal/action`).
+  - **Keys.** It trusts approval keys only from the signed update target `approval/keys.json`, fetched through
+    the 0.24 trust chain. `rem0te-release -add approval/keys.json=` refuses a key list the agent would reject.
+  - **Order of checks.** Journal first; then signature, key id, strict plan, catalog, identity (RustDesk ID +
+    secret hash), window, its own build, and approvals.
+  - **At most once.** It journals `executing` (fsync + rename) before starting the service, so a re-delivered
+    job gets the recorded result. A job interrupted mid-action is reported `uncertain`, with the state seen now,
+    and is never run again.
+  - **Clock skew.** A plan that is not valid yet is not consumed, so a clock disagreement delays the job instead
+    of burning it.
+  - **Verification.** It checks the service 10 s and 30 s after starting it. A result is the service state seen;
+    it never says a document printed.
+  - **Delivery.** The signed installer's heartbeat hook delivers at most 3 envelopes per beat and reports results,
+    which are deleted once acknowledged. The legacy installer is unchanged and never receives actions.
+- **Portal lifecycle** (`apps/api/src/actions/`, migration `0025_approved_actions`).
+  - **States:** AWAITING_APPROVAL → APPROVED → DISPATCHED → SUCCEEDED / FAILED / REFUSED_BY_ENDPOINT /
+    NOT_EXECUTED / UNKNOWN, plus REJECTED / CANCELED / EXPIRED.
+  - **Rechecked at the first delivery:**
+    - business, identity and device class;
+    - the requester's live access and access level;
+    - the fleet-abuse pause.
+    A failed recheck cancels the plan and audits `ACTION_DISPATCH_BLOCKED`.
+  - **No result after 30 minutes** marks the job UNKNOWN, and it is re-delivered while the window is open.
+  - **Reconciliation.**
+    - An UNKNOWN job blocks new requests for that action on that computer (`409 ACTION_UNRECONCILED`) until the
+      requester, a Business Owner or a Platform Admin records what they found (`POST /actions/:id/reconcile`).
+    - That is allowed only once the computer can no longer run the job: it has answered, or the window has closed.
+  - **There is no approve route.**
+  - **New capability:** `actions:request` (*Request approved actions*). It never approves.
+- **Actions tab on a computer's page.**
+  - Shows the queued-documents warning, a reason and a confirmation before the request.
+  - History rows show the approval-page link, cancel, the observed result and the reconcile form.
+- **Account → Passkeys** shows each passkey's approval fingerprint and the export an operator enrolls.
+- **ClientSt0r proposals** (`POST`/`GET /api/integration/v1/action-proposals`).
+  - New delegation scopes `actions:propose` / `actions:read`.
+  - Strict schemas (`action-proposal-request`, `action-proposal`) with no command field. A hostname target is a
+    schema error.
+  - Idempotent per peer and key.
+  - Portal refusal codes are passed through and audited.
+  - `capabilities.features.actions` lists proposable actions only when a signer is configured.
+- **Security Features:** a new *Approved actions* row (layer *Approval signer*), with its effective state: signer
+  configured, agents reporting support, and 30-day job counts by outcome.
+- **Security invariants §14**:
+  - the signer loads no Nest, Prisma or portal module, and no portal module imports it;
+  - no approve route;
+  - the portal never loads an approval key;
+  - the agent catalog is Spooler-only;
+  - the portal catalog has no free-form parameter;
+  - the journal is written before execution;
+  - no DTO array of objects lacks `@Type` (below).
+
+### Fixed
+
+- **Command results from the agent arrived with an empty event list.** With `enableImplicitConversion`,
+  class-transformer turned `events?: unknown[]` on the command-result DTO into `[[]]`, so `EVENT_LOG_QUERY`
+  results were stored with no events. Production's last stored events were on 2026-09-18, so a dependency move
+  since then exposed it.
+  - **Fix:** `@Type(() => Object)` on that field and on the new `actionResults`.
+  - **Regression guard:** the invariant above fails CI on any untyped object array in a DTO.
+
+### Tests
+
+- `go test ./...`: every agent refusal, replay, crash and journal path.
+- `unit-approval-signer.mjs`, 65 checks, with synthetic ES256 passkeys through the real `@simplewebauthn/server`
+  verification. It is in CI.
+- `e2e-approved-action.mjs`, 76 checks: portal + signer + the agent's real decision code (`rem0te-action-sim`)
+  against a simulated Windows. It covers:
+  - the roster ceremony;
+  - single and dual approval;
+  - Birch customer sign-off;
+  - lost acknowledgement and replay after restart;
+  - an uncertain outcome followed by reconciliation;
+  - requester revocation;
+  - expiry;
+  - forged and tampered envelopes planted in the database;
+  - ClientSt0r proposals.
+
+  It needs the Go binaries, so it runs locally, not in CI.
+- `e2e-security-features` (37), `e2e-integration` (77), `e2e-signed-updates` (46) and `e2e-presets` (112) pass
+  unchanged.
+
+### Deploy
+
+This is a schema change. Apply `0025_approved_actions`, rsync `prisma/`, run `prisma generate` at the target, then
+chown, as in CLAUDE.md. No production npm dependency of the API moved.
+
+The signer is a new install (`docs/approved-actions.md` → *Setting it up*). Until `APPROVAL_SIGNER_INTERNAL_URL` is
+set, the feature is inert: the Actions tab says the signer isn't configured, and ClientSt0r sees no proposable
+actions. Agents need a 0.26 signed build, and `approval/keys.json` signed into the repository, before any computer
+is offered the action.
+
+---
+
 ## [0.25.1] — 2026-11-09 · *Witness*
 
 **Dependency patch: `golang.org/x/crypto` 0.50.0 → 0.52.0 in the Windows agent, plus one lint-time override.**

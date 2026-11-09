@@ -20,7 +20,7 @@ The canonical interface between **ClientSt0r** and **rem0te**. rem0te owns it.
 |---|---|
 | Ticket-only analysis, optional device evidence, model comparison | **Fixture-tested** (`apps/api/scripts/e2e-integration.mjs`, simulated ClientSt0r) |
 | Paired lab with a real ClientSt0r | **Not yet done** |
-| Approved actions (`features.actions`) | **Empty.** Nothing in this contract executes anything |
+| Action proposals (`features.actions`, `/action-proposals`, rem0te ≥ 0.26) | **Fixture-tested** (`apps/api/scripts/e2e-approved-action.mjs`, simulated ClientSt0r and agent). ClientSt0r proposes; it cannot approve or execute. Lists `windows.service.start@1` (Print Spooler) only while an approval signer is configured, otherwise empty |
 
 ## Trust
 
@@ -93,11 +93,35 @@ Staff-only. Each result separates:
 - `untrusted_input_flags`: prompt-injection patterns found in the ticket.
 - `partial_failures`: per profile.
 
+## Action proposals (0.26)
+
+A proposal is a request, made as the delegated technician (scope `actions:propose`), for one catalog action on
+one mapped computer named by its immutable rem0te id. rem0te runs it through the same path as the portal's
+Request button — the catalog, that technician's live access to that computer, the approval signer — and returns
+an `approval_url`.
+
+- **Proposing authorizes nothing.** The plan is approved on rem0te's approval signer, a separate process on its
+  own origin, by people on its roster, each with a user-verified passkey; never by the proposer, and in the number
+  the catalog sets (one for a standard workstation, two for anything else) plus customer sign-off where that
+  business's policy requires it. The agent on the computer verifies the signer's signature with a key it gets
+  from the offline-rooted update chain, so neither ClientSt0r nor rem0te's portal can substitute one.
+- **`origin: ai_suggestion`** is shown to the approvers as an AI suggestion and gets no shortcut.
+- **The vocabulary is the catalog.** There is no command, script, path or URL field. Anything not in the catalog
+  is `ACTION_NOT_IN_CATALOG`, and credential extraction, removing backups, disabling defenses, admin grants, disk
+  wipes and arbitrary commands are never in it.
+- **Results say what was observed.** `observed` carries the agent's service-state readings; a started Print
+  Spooler is not evidence that any document printed.
+- Poll `GET /action-proposals/{job_id}` (scope `actions:read`).
+
 ## Error codes
 
 `NOT_CONFIGURED` 404 · `UNAUTHENTICATED` 401 · `REPLAYED` 401 · `DELEGATION_INVALID` 401 · `FORBIDDEN` 403 ·
 `NOT_FOUND` 404 · `INVALID_REQUEST` 400 · `IDEMPOTENCY_CONFLICT` 409 · `TOO_LARGE` 413 · `RATE_LIMITED` 429 ·
 `INTERNAL` 500.
+
+Action proposals add rem0te's own refusal codes (400/403/409): `ACTION_NOT_IN_CATALOG`, `PARAMS_NOT_ALLOWED`,
+`ACTION_NOT_GRANTED`, `PROTECTED_DEVICE_CLASS`, `ENDPOINT_NOT_READY`, `ACTION_PENDING`, `ACTION_UNRECONCILED`,
+`APPROVAL_SIGNER_ERROR`, `APPROVAL_SIGNER_REFUSED`.
 
 Job / run error codes: `ACTOR_REVOKED`, `PEER_REMOVED`, `EXPIRED`, `ENDPOINT_NOT_AVAILABLE`,
 `ALL_PROFILES_FAILED`, `GATEWAY_UNREACHABLE`, `GATEWAY_UNAVAILABLE`, `GATEWAY_REFUSED`,

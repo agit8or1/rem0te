@@ -14,6 +14,7 @@ import { StatusIndicator } from '@/components/common/status-indicator';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { EndpointSpecs } from '@/components/endpoints/endpoint-specs';
 import { EndpointEventLog } from '@/components/endpoints/endpoint-event-log';
+import { EndpointActions } from '@/components/endpoints/endpoint-actions';
 import { EndpointUpdateHistory } from '@/components/rollouts/endpoint-update-history';
 import { usePermissions, CAP } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -289,6 +290,12 @@ export default function EndpointDetailPage() {
           {can(CAP.COMPUTERS_VIEW) && (
             <TabsTrigger value="diagnostics">Test connection</TabsTrigger>
           )}
+          {/* Shown to anyone who can see the computer: whether they may
+              REQUEST is decided by the server (role, preset, device class),
+              and approving is never possible from this page. */}
+          {can(CAP.COMPUTERS_VIEW) && (
+            <TabsTrigger value="actions">Actions</TabsTrigger>
+          )}
           {showReview && (
             <TabsTrigger value="access-review">Access review</TabsTrigger>
           )}
@@ -351,6 +358,12 @@ export default function EndpointDetailPage() {
             {tab === 'diagnostics' && (
               <DiagnosticsPanel endpointId={id} canConnect={can(CAP.COMPUTERS_CONNECT)} />
             )}
+          </TabsContent>
+        )}
+
+        {can(CAP.COMPUTERS_VIEW) && (
+          <TabsContent value="actions" className="mt-4">
+            {tab === 'actions' && <EndpointActions endpointId={id} isOnline={!!(ep.isOnline as boolean)} />}
           </TabsContent>
         )}
 

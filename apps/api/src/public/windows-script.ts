@@ -43,6 +43,7 @@ interface Variant {
   download: string;
   updateHook: string;
   channelReport: string;
+  actionHook: string;
 }
 
 function assertSafe(value: string, re: RegExp, what: string): string {
@@ -95,6 +96,8 @@ try {
 } catch { Fail "ERROR: Download failed: $($_.Exception.Message)" 10 }`,
     updateHook: `try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm '\$iu' | iex" *>\$null } catch {}`,
     channelReport: "$body['updateChannel'] = 'legacy'",
+    // Approved actions need the signed agent; a legacy machine is never sent one.
+    actionHook: '# Approved actions: not on the legacy channel.',
   };
   return template(v, host);
 }
@@ -146,6 +149,47 @@ try {
     $ast = Get-Content -Raw 'C:\\ProgramData\\Rem0te\\agent-status.json' -ErrorAction Stop | ConvertFrom-Json
     if ([int]$ast.trustRootVersion -gt 0) { $body['trustRootVersion'] = [int]$ast.trustRootVersion }
     if ([int]$ast.targetsVersion -gt 0) { $body['targetsVersion'] = [int]$ast.targetsVersion }
+    # Approved actions (0.26): which catalog actions this signed build runs,
+    # and which build it is - the portal offers nothing an agent does not list.
+    if ([string]$ast.agentSha256 -cmatch '^[0-9a-f]{64}$') { $body['agentSha256'] = [string]$ast.agentSha256 }
+    $acts = @(@($ast.actions) | Where-Object { [string]$_ -cmatch '^[a-z0-9.]{3,64}@[0-9]{1,4}$' } | Select-Object -First 16 | ForEach-Object { [string]$_ })
+    if ($acts.Count -gt 0) { $body['agentActions'] = $acts }
+} catch {}
+# Results the agent wrote for approved actions, until the portal acknowledges them.
+$ACT_RESULTS = 'C:\\ProgramData\\Rem0te\\actions\\results'
+try {
+    $ars = @()
+    foreach ($rf in @(Get-ChildItem -LiteralPath $ACT_RESULTS -Filter '*.json' -File -ErrorAction Stop | Select-Object -First 10)) {
+        if ($rf.BaseName -cnotmatch '^[0-9a-f]{32}$') { continue }
+        try { $ars += (Get-Content -Raw -LiteralPath $rf.FullName -ErrorAction Stop | ConvertFrom-Json) } catch {}
+    }
+    if ($ars.Count -gt 0) { $body['actionResults'] = $ars }
+} catch {}`,
+    // Each delivered envelope is handed to the signed agent, which verifies
+    // the signature against keys from the signed update chain, the target, the
+    // window, the approvals and its own journal before anything runs. The
+    // portal's word is not consulted; an envelope is data, never code.
+    actionHook: `try {
+    foreach ($ack in @($resp.data.actionAcks)) {
+        $aj = [string]$ack
+        if ($aj -cmatch '^[0-9a-f]{32}$') { Remove-Item -LiteralPath (Join-Path $ACT_RESULTS "$aj.json") -Force -ErrorAction SilentlyContinue }
+    }
+} catch {}
+try {
+    $agentExe = Join-Path $env:ProgramFiles 'Rem0te\\rem0te-agent.exe'
+    $inbox = 'C:\\ProgramData\\Rem0te\\actions\\inbox'
+    foreach ($aj in @($resp.data.actions | Select-Object -First 3)) {
+        $jid = [string]$aj.jobId
+        if ($jid -cnotmatch '^[0-9a-f]{32}$' -or -not $aj.envelope) { continue }
+        if (-not (Test-Path -LiteralPath $agentExe)) { break }
+        if (-not (Test-Path -LiteralPath $inbox)) { New-Item -ItemType Directory -Force -Path $inbox | Out-Null }
+        $ef = Join-Path $inbox "$jid.json"
+        # ASCII: every envelope field is base64 or an identifier, and Windows
+        # PowerShell 5 would otherwise prefix a BOM.
+        ($aj.envelope | ConvertTo-Json -Compress -Depth 4) | Set-Content -LiteralPath $ef -Encoding ASCII
+        try { & $agentExe action --job $jid --envelope $ef *>$null } catch {}
+        Remove-Item -LiteralPath $ef -Force -ErrorAction SilentlyContinue
+    }
 } catch {}`,
   };
   return template(v, 'set by the signed agent');
@@ -846,7 +890,9 @@ try {
         \$body['systemDiskFreeMb'] = [int]([math]::Round(([double]\$ld.FreeSpace) / 1048576))
     }
 } catch {}
-\$body = \$body | ConvertTo-Json -Compress
+# Depth 6: action results carry an 'observed' map, which the default depth of
+# 2 would flatten into a string the portal rejects.
+\$body = \$body | ConvertTo-Json -Compress -Depth 6
 \$resp = \$null
 try { \$resp = Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/heartbeat') -Method Post -Body \$body -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop } catch { exit 0 }
 # Apply any pending credential rotation. Server sends back { rotate: { password, sha256 } }
@@ -1078,6 +1124,7 @@ try {
         }
     }
 } catch {}
+${v.actionHook}
 '@
 Set-Content -Path $hbScript -Value $hbBody -Encoding UTF8
 schtasks /Create /F /TN 'Rem0teHeartbeat' /SC MINUTE /MO 3 /RU SYSTEM /RL HIGHEST /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \`"$hbScript\`"" *>$null

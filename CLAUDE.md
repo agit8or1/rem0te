@@ -221,6 +221,16 @@ Connect `.cmd`. Its behavioural proof is `apps/api/scripts/e2e-security-audit.mj
 It writes fixtures, so run it against a scratch API and database
 (`API_BASE=http://127.0.0.1:3101/api/v1`), never port 3001.
 
+0.26.0 added §14 for approved actions: the approval signer loads no Nest,
+Prisma or portal module and the portal never imports it or loads its key; there
+is no approve route; the agent catalog is Spooler-only and journals before it
+executes; and no DTO array of objects lacks `@Type(() => Object)` —
+class-transformer's implicit conversion silently turns those into `[[]]`, which
+is how command-result events went missing in production. The signer is its own
+install (`apps/api/scripts/build-approval-signer.mjs`), never run from the
+portal's `dist`. Its behavioural proof is `apps/api/scripts/e2e-approved-action.mjs`
+(needs `RELEASE_BIN` and `ACTION_SIM` built from `tools/windows-installer`).
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

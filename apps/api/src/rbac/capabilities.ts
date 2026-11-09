@@ -43,6 +43,12 @@ export const CAP = {
   // submit read-only ticket analysis for this business and read its staff-only
   // findings. It confers nothing else — no session, no command, no approval.
   TICKET_ANALYSIS: 'integration:ticket_analysis',
+
+  // Approved actions (v0.26). Lets a person REQUEST a catalog action on a
+  // computer they can reach. It never approves anything: approval belongs to
+  // people on the approval signer's roster, which is not a capability and is
+  // not stored in this database.
+  ACTIONS_REQUEST: 'actions:request',
 } as const;
 
 export type Capability = (typeof CAP)[keyof typeof CAP];
@@ -102,6 +108,12 @@ export const CAPABILITY_GROUPS: {
     group: 'Integration',
     items: [
       { key: CAP.TICKET_ANALYSIS, label: 'Ticket analysis (ClientSt0r)', description: 'Submit read-only ticket analysis from ClientSt0r for this business and read the staff-only findings. Grants no remote access and no actions.' },
+    ],
+  },
+  {
+    group: 'Actions',
+    items: [
+      { key: CAP.ACTIONS_REQUEST, label: 'Request approved actions', description: 'Ask for a catalog action (such as starting the Print Spooler) on a computer they can reach. Nothing runs until people on the approval roster approve it with their passkeys; this permission never approves.' },
     ],
   },
 ];

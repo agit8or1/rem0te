@@ -19,7 +19,7 @@
  * preset-backed technicians.
  */
 export type FeatureStatus = 'enforced' | 'partial' | 'advisory' | 'unavailable';
-export type Layer = 'portal' | 'launcher' | 'endpoint-agent' | 'endpoint-rustdesk' | 'technician-rustdesk' | 'offline-signing' | 'none';
+export type Layer = 'portal' | 'launcher' | 'endpoint-agent' | 'endpoint-rustdesk' | 'technician-rustdesk' | 'offline-signing' | 'approval-signer' | 'none';
 export type FeatureGroup = 'reach' | 'session' | 'evidence' | 'guardrails' | 'updates' | 'integration' | 'roadmap';
 export interface SecurityFeature {
   id: string;
@@ -308,13 +308,27 @@ export const SECURITY_FEATURES: SecurityFeature[] = [
     gap: 'Fixture-tested only; not yet run on a real Windows lab machine. No Authenticode signature, so the first download is trusted as downloaded. Legacy agents trust the portal until migrated. Customer policy in the database is not signed.',
   },
 
+  // ── Approved actions (0.26) ───────────────────────────────────────────────
+  {
+    id: 'approved-actions', group: 'guardrails', name: 'Approved actions (Print Spooler only)', status: 'partial',
+    protects: 'An AI suggestion, a technician, a compromised portal or a compromised database changing a customer computer without independent human approval.',
+    scope: 'One catalog action: start the Windows Print Spooler once (windows.service.start@1), on one computer, by signed Windows agents. Nothing else can be requested; there is no command, script, path or URL parameter anywhere.',
+    enforcedAt: ['portal', 'approval-signer', 'endpoint-agent', 'offline-signing'],
+    enforcement: 'The portal only proposes. A separate approval signer — its own process, Unix user, key, roster and policy, on its own origin — signs the exact plan (action version, agent build, parameters, immutable target, policy, approvers, window, single-use job id) only after user-verified passkey approvals from roster members who are not the requester: one for a standard workstation, two distinct for anything else, plus a distinct customer sign-off where that business requires it. The agent verifies that signature with keys from the offline-rooted update chain, recomputes risk from its own product type, checks its own identity, the window and its build, journals the job before acting and never runs a job id twice. The portal rechecks the requester\'s live access, the device and the fleet limits before delivering. An uncertain outcome blocks retries until a person reconciles it.',
+    default: 'Off until an approval signer is configured (APPROVAL_SIGNER_INTERNAL_URL) and its keys are published as approval/keys.json in the signed repository.',
+    prerequisites: ['Approval signer installed and keyed', 'Approvers enrolled on its roster (fingerprint ceremony)', 'approval/keys.json signed into the update repository', 'Agents on the published 0.26+ signed build'],
+    link: { href: DOC('approved-actions'), label: 'Approved actions' },
+    evidence: ['tools/windows-installer/internal/action/action_test.go', 'apps/api/scripts/unit-approval-signer.mjs', 'apps/api/scripts/e2e-approved-action.mjs', 'scripts/check-security-invariants.mjs § 14'],
+    gap: 'Fixture-tested only: the agent\'s decision code against a simulated Windows, and synthetic passkeys. Not yet run on a real lab workstation. The result shows the service state, never that a document printed. A compromised portal can still delay, cancel or withhold delivery (denial of service), and could re-deliver an envelope the agent has already consumed (which it answers from its journal).',
+  },
+
   // ── Integration ───────────────────────────────────────────────────────────
   {
     id: 'integration', group: 'integration', name: 'ClientSt0r ticket analysis (AI-assisted)', status: 'enforced',
     protects: 'A ticket system or AI model reaching an endpoint through rem0te.',
     scope: 'Jobs from ClientSt0r under contract ticket-rmm-v1.',
     enforcedAt: ['portal'],
-    enforcement: 'rem0te authorizes every job itself: a signed request, an explicit organization → business and technician → user mapping, the delegated technician\'s live access rebuilt from the database (never Platform Admin), integration:ticket_analysis, a reachable computer, and a fleet-limit admission — rechecked before each model call. A job reads bounded evidence only. It offers no actions, and its next steps are text (executable: false). A mapped ticket is context, never authority.',
+    enforcement: 'rem0te authorizes every job itself: a signed request, an explicit organization → business and technician → user mapping, the delegated technician\'s live access rebuilt from the database (never Platform Admin), integration:ticket_analysis, a reachable computer, and a fleet-limit admission — rechecked before each model call. A job reads bounded evidence only, and its next steps are text (executable: false). From 0.26 ClientSt0r may also propose the one catalog action, as the delegated technician; a proposal authorizes nothing (see Approved actions). A mapped ticket is context, never authority.',
     default: 'Off until INTEGRATION_PEERS_FILE is configured.',
     prerequisites: ['Peers file and keys on the server', 'Organization and technician mappings'],
     link: { href: DOC('integration-clientst0r'), label: 'ClientSt0r integration' },
@@ -328,20 +342,20 @@ export const SECURITY_FEATURES: SecurityFeature[] = [
     protects: 'Commands running on a customer computer outside any session.',
     scope: '—',
     enforcedAt: ['none'],
-    enforcement: 'rem0te has no command or script channel. The agent collects only an allowlisted set: inventory refresh, update scan, event-log query. Any terminal inside a RustDesk session is RustDesk\'s own feature, governed by the installed RustDesk version\'s defaults; rem0te neither restricts nor records it.',
+    enforcement: 'rem0te has no command or script channel. The agent collects only an allowlisted set — inventory refresh, update scan, event-log query — and runs only compiled-in catalog actions (one, in 0.26). Any terminal inside a RustDesk session is RustDesk\'s own feature, governed by the installed RustDesk version\'s defaults; rem0te neither restricts nor records it.',
     default: 'Not built.',
     prerequisites: ['A signed, versioned action catalog', 'Independent approval per action', 'Per-request signed intent verified on the endpoint', 'Output capture into the audit trail'],
     link: { href: DOC('security-model', 'roadmap-not-in-this-build'), label: 'Roadmap' },
     evidence: [],
   },
   {
-    id: 'scripts-fixes', group: 'roadmap', name: 'Approved actions, fixes and patches', status: 'unavailable',
-    protects: 'Endpoint changes made without an independent approver.',
+    id: 'scripts-fixes', group: 'roadmap', name: 'Scripts, further fixes and patches', status: 'unavailable',
+    protects: 'Endpoint changes beyond the one catalog action.',
     scope: '—',
     enforcedAt: ['none'],
-    enforcement: 'Presets record fix and patch eligibility only; nothing can be dispatched. The first planned action is starting the Print Spooler on one lab workstation, with job-approval signing kept separate from release signing.',
+    enforcement: 'Only the Print Spooler start exists (see Approved actions). Presets record patch eligibility only. Each further action ships as a new catalog version compiled into a new signed agent build, with its own warnings and verification; scripts are not planned as a free-form channel.',
     default: 'Not built.',
-    prerequisites: ['Job-approval signing key held apart from portal administration', 'Endpoint verification of approval before execution'],
+    prerequisites: ['A catalog entry per action, versioned', 'Its own verification step on the endpoint'],
     link: { href: DOC('security-model', 'roadmap-not-in-this-build'), label: 'Roadmap' },
     evidence: [],
   },

@@ -408,7 +408,7 @@ function MfaTab() {
 
 // ─── Passkeys Tab ────────────────────────────────────────────────────────────
 
-interface PasskeyRow { id: string; name: string | null; createdAt: string; lastUsedAt: string | null }
+interface PasskeyRow { id: string; name: string | null; createdAt: string; lastUsedAt: string | null; approvalFingerprint: string | null; approvalExport: string | null }
 
 const noSubscribe = () => () => {};
 
@@ -472,6 +472,23 @@ function PasskeysTab() {
                   <p className="text-xs text-muted-foreground">
                     Added {formatDate(p.createdAt)} · {p.lastUsedAt ? `last used ${formatDate(p.lastUsedAt)}` : 'never used'}
                   </p>
+                  {/* For the approval roster (v0.26). The operator adds this
+                      passkey to the approval signer only after you read this
+                      fingerprint back to them from YOUR screen. Public data. */}
+                  {p.approvalFingerprint && (
+                    <details className="mt-1">
+                      <summary className="text-xs text-muted-foreground cursor-pointer">
+                        Approval fingerprint <span className="font-mono text-foreground">{p.approvalFingerprint}</span>
+                      </summary>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        To approve actions, give the operator the export below and read this fingerprint to them yourself. It holds only your passkey&apos;s public key.
+                      </p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <code className="text-[11px] break-all bg-muted rounded px-1.5 py-1 max-w-md">{p.approvalExport}</code>
+                        <Button variant="outline" size="sm" onClick={() => { void navigator.clipboard?.writeText(p.approvalExport ?? ''); }}>Copy</Button>
+                      </div>
+                    </details>
+                  )}
                 </div>
                 <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/5"
                   onClick={() => setRemoving(p)}>

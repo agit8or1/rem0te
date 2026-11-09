@@ -95,6 +95,15 @@ jobs:
       - name: Signed installer tests
         run: node apps/api/scripts/unit-signed-installer.mjs
 
+      # The approval signer (0.26), standalone: synthetic ES256 passkeys through
+      # the real WebAuthn verification — origin, RP ID, user verification,
+      # challenge reuse, counter regression, quorum, customer sign-off — and a
+      # check that its standalone install still loads no Nest or Prisma.
+      - name: Approval signer tests
+        run: |
+          node apps/api/scripts/unit-approval-signer.mjs
+          node apps/api/scripts/build-approval-signer.mjs --list
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.
@@ -150,7 +159,9 @@ jobs:
       # the agent's install/update/migrate flow, including the attack drills —
       # tampered target, forged targets, rollback, freeze, mix-and-match,
       # stolen timestamp key, root rotation, downgrade, relay repointing.
-      - name: Signed update chain tests
+      # And the approved-action verifier (0.26): every refusal, replay after
+      # restart, interruption mid-action, and the at-most-once journal.
+      - name: Signed update chain and approved-action tests
         working-directory: tools/windows-installer
         run: go test ./...
       - name: Build for Windows

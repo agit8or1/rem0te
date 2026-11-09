@@ -7,9 +7,12 @@ info:
     configuration and provider keys) and rem0te (endpoint evidence, analysis
     orchestration, and — in later milestones — independently approved actions).
 
-    Milestone 1 is read-only ticket analysis. No route in this contract can
-    open a session, issue a launcher token, queue an endpoint command, or
-    approve or execute anything.
+    Milestone 1 is read-only ticket analysis. From rem0te 0.26 ClientSt0r may
+    also PROPOSE a catalog action (`/action-proposals`). No route in this
+    contract can open a session, issue a launcher token, queue an endpoint
+    command, or approve or execute anything: a proposal becomes a plan that
+    only people on rem0te's approval-signer roster can authorize, with their
+    passkeys, on the signer's own origin.
 
     Every request in both directions is signed (see README.md, "Request
     signatures"). Requests that act for a technician also carry a delegation
@@ -127,6 +130,54 @@ paths:
                   job_id: { type: string, format: uuid }
                   last_event_sequence: { type: integer }
                   events: { type: array, items: { $ref: './schemas/signed-event.schema.json' } }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/integration/v1/action-proposals:
+    post:
+      tags: [rem0te]
+      summary: Propose a catalog action on a mapped computer (authorizes nothing)
+      description: |
+        Delegation scope `actions:propose`, `req_sha256` bound to the canonical
+        body after defaults. The delegated technician's live access to the
+        computer is checked exactly as for a request made in the portal.
+        Only catalog actions (capabilities `features.actions`) are accepted:
+        there is no field for a command, script, path or URL, and anything
+        else is refused with `ACTION_NOT_IN_CATALOG`. The response carries the
+        `approval_url` to show; approval happens there, by passkey, and an
+        `ai_suggestion` needs exactly the approvals a technician's request does.
+        Same `idempotency_key` + same payload → 200 with the original proposal
+        and `idempotent-replayed: true`; different payload → 409.
+        Refusals carry rem0te's codes: `ACTION_NOT_IN_CATALOG`,
+        `PARAMS_NOT_ALLOWED`, `ACTION_NOT_GRANTED`, `PROTECTED_DEVICE_CLASS`,
+        `ENDPOINT_NOT_READY`, `ACTION_PENDING`, `ACTION_UNRECONCILED`,
+        `APPROVAL_SIGNER_ERROR`, `APPROVAL_SIGNER_REFUSED`.
+      security: [{ serviceSignature: [], delegation: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: './schemas/action-proposal-request.schema.json' } } }
+      responses:
+        '201':
+          description: Proposal accepted, awaiting approval
+          content: { application/json: { schema: { $ref: './schemas/action-proposal.schema.json' } } }
+        '200':
+          description: Idempotent replay of an earlier proposal
+          content: { application/json: { schema: { $ref: './schemas/action-proposal.schema.json' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /api/integration/v1/action-proposals/{job_id}:
+    get:
+      tags: [rem0te]
+      summary: Proposal status and what the computer reported
+      description: Delegation scope `actions:read`. Another peer's or business's proposal is 404. `observed` is what the agent saw, never more — a started spooler is not a printed document.
+      security: [{ serviceSignature: [], delegation: [] }]
+      parameters:
+        - { name: job_id, in: path, required: true, schema: { type: string, pattern: '^[a-f0-9]{32}$' } }
+      responses:
+        '200':
+          description: The proposal
+          content: { application/json: { schema: { $ref: './schemas/action-proposal.schema.json' } } }
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
   /api/integration/v1/inference:

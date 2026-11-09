@@ -40,6 +40,7 @@ const ORDER = [
   ['technician-access.md', 'Technician access and abuse prevention'],
   ['updates.md', 'Updates'],
   ['update-signing.md', 'Update signing'],
+  ['approved-actions.md', 'Approved actions'],
   ['setup.md', 'Setup and operations'],
   ['architecture.md', 'Architecture'],
   ['security-model.md', 'Security model: who can reach a computer'],

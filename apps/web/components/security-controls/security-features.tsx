@@ -9,7 +9,7 @@ import { usePermissions } from '@/lib/auth';
 import { apiError, Chip, CHIP } from './shared';
 
 type Status = 'enforced' | 'partial' | 'advisory' | 'unavailable';
-type Layer = 'portal' | 'launcher' | 'endpoint-agent' | 'endpoint-rustdesk' | 'technician-rustdesk' | 'offline-signing' | 'none';
+type Layer = 'portal' | 'launcher' | 'endpoint-agent' | 'endpoint-rustdesk' | 'technician-rustdesk' | 'offline-signing' | 'approval-signer' | 'none';
 interface Feature {
   id: string; group: string; name: string; status: Status; protects: string; scope: string;
   enforcedAt: Layer[]; enforcement: string; default: string; prerequisites: string[];
@@ -26,7 +26,7 @@ const STATUS: Record<Status, { label: string; className: string; help: string }>
 };
 const LAYER: Record<Layer, string> = {
   portal: 'Portal (API)', launcher: 'Launcher', 'endpoint-agent': 'Endpoint agent', 'endpoint-rustdesk': 'Endpoint RustDesk',
-  'technician-rustdesk': "Technician's RustDesk", 'offline-signing': 'Offline signing', none: 'Nothing',
+  'technician-rustdesk': "Technician's RustDesk", 'offline-signing': 'Offline signing', 'approval-signer': 'Approval signer', none: 'Nothing',
 };
 const SOURCE: Record<string, string> = {
   code: 'from the code', 'portal-policy': 'portal policy', 'endpoint-reports': 'observed from endpoint reports',

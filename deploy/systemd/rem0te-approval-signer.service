@@ -1,0 +1,56 @@
+[Unit]
+Description=rem0te approval signer (approved actions, v0.26)
+Documentation=https://github.com/agit8or1/rem0te/blob/main/docs/approved-actions.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Its own user. Not `reboot`: the portal must not be able to read the key,
+# the roster or the policy, or rewrite this process's code.
+User=rem0te-approver
+Group=rem0te-approver
+# Root-owned, read-only install from apps/api/scripts/build-approval-signer.mjs.
+# Never /opt/reboot-remote/api: that tree is writable by the portal's user.
+WorkingDirectory=/opt/rem0te-approver
+EnvironmentFile=/etc/rem0te-approver/signer.env
+ExecStart=/usr/bin/node dist/approval-signer/main.js serve
+Restart=on-failure
+RestartSec=5
+
+# State: key, roster, policy, jobs, challenges, counters. 0700, this user only.
+StateDirectory=rem0te-approver
+StateDirectoryMode=0700
+UMask=0077
+
+# It needs two loopback listeners and its state directory. No database, no
+# outbound network, nothing else.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+ReadOnlyPaths=/etc/rem0te-approver
+InaccessiblePaths=/etc/reboot-remote /opt/reboot-remote
+
+[Install]
+WantedBy=multi-user.target

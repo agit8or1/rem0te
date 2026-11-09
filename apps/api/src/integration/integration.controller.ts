@@ -9,6 +9,7 @@ import { CONTRACT, MAX_DELEGATION_TTL_S, MAX_JOB_TTL_S, MAX_REQUEST_BYTES } from
 import { IntegrationExceptionFilter } from './errors';
 import { IntegrationAuthGuard, type IntegrationRequest } from './integration-auth.guard';
 import { IntegrationJobsService } from './jobs.service';
+import { ActionProposalsService } from './action-proposals.service';
 import { loadTrust } from './peers';
 
 export const DELEGATION_HEADER = 'rem0te-delegation';
@@ -38,7 +39,7 @@ function version(): string {
 // every request still costs a signature check and a nonce insert.
 @Throttle({ [THROTTLER_BURST]: { limit: 100, ttl: 1000 }, [THROTTLER_MAIN]: { limit: 3000, ttl: 60_000 } })
 export class IntegrationController {
-  constructor(private readonly jobs: IntegrationJobsService) {}
+  constructor(private readonly jobs: IntegrationJobsService, private readonly proposals: ActionProposalsService) {}
 
   @Get('capabilities')
   capabilities(@Req() req: IntegrationRequest) {
@@ -53,9 +54,10 @@ export class IntegrationController {
         ticket_analysis: true,
         model_comparison: true,
         endpoint_evidence: ['inventory', 'heartbeat'],
-        // Nothing executable in this release. Approved catalog actions arrive
-        // with their own signing root, separate from this surface.
-        actions: [],
+        // Catalog actions that may be PROPOSED (v0.26). Proposing authorizes
+        // nothing: approval is a passkey quorum on rem0te's approval signer,
+        // and the agent verifies that signature, not this surface.
+        actions: this.proposals.proposable(),
       },
       model_profiles: peer.modelProfiles,
       limits: {
@@ -88,6 +90,28 @@ export class IntegrationController {
   async events(@Req() req: IntegrationRequest, @Param('job_id') jobId: string, @Query('after') after?: string) {
     const n = after && /^\d{1,9}$/.test(after) ? Number(after) : 0;
     return this.jobs.events(req.integrationPeer!, jobId, n, header(req, DELEGATION_HEADER));
+  }
+}
+
+@Controller('api/integration/v1')
+@Public()
+@UseGuards(IntegrationAuthGuard)
+@UseFilters(IntegrationExceptionFilter)
+@Throttle({ [THROTTLER_BURST]: { limit: 20, ttl: 1000 }, [THROTTLER_MAIN]: { limit: 300, ttl: 60_000 } })
+export class IntegrationActionsController {
+  constructor(private readonly proposals: ActionProposalsService) {}
+
+  @Post('action-proposals')
+  @HttpCode(201)
+  async propose(@Req() req: IntegrationRequest, @Res({ passthrough: true }) res: Response) {
+    const out = await this.proposals.propose(req.integrationPeer!, req.body, header(req, DELEGATION_HEADER));
+    if (out.replayed) { res.status(200); res.setHeader('idempotent-replayed', 'true'); }
+    return out.proposal;
+  }
+
+  @Get('action-proposals/:job_id')
+  async get(@Req() req: IntegrationRequest, @Param('job_id') jobId: string) {
+    return this.proposals.get(req.integrationPeer!, jobId, header(req, DELEGATION_HEADER));
   }
 }
 

@@ -36,6 +36,9 @@ the product, searchable, under **Documentation** in the sidebar.
   and the roadmap. The same controls, with effective state, are in Settings → Security → Security Features.
 - **[update-signing.md](update-signing.md)** — the offline-signed update chain (0.24): what a compromised portal can
   and cannot do, key ceremony, shipping a release, signed-only containment, migrating legacy agents, rotation, recovery.
+- **[approved-actions.md](approved-actions.md)** — the first approved action (0.26): starting the Print Spooler once,
+  approved by passkey on a separate approval signer and verified by the agent; setup, the roster ceremony, results,
+  reconciliation, and what is and is not proven.
 - **[technician-access.md](technician-access.md)** — technician presets (L1/L2/L3),
   launch policy, protected device classes, fleet-abuse limits, independent
   review of trust changes, and what this build can and cannot enforce.

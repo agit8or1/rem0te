@@ -360,6 +360,57 @@ check(
     'for members view-only is not applied; the button must not imply it is');
 }
 
+// 14. Approved actions (0.26). A compromised portal or database alone must
+//     not be able to make a computer act, so the signer stays out of the
+//     portal's code, the portal has no way to approve, and the agent runs only
+//     what it compiles in, at most once.
+{
+  const signerDir = 'apps/api/src/approval-signer';
+  const signerFiles = readdirSync(join(ROOT, signerDir)).filter((f) => f.endsWith('.ts')).map((f) => `${signerDir}/${f}`);
+  const ALLOWED_IMPORT = /^(node:|crypto$|\.\/|@simplewebauthn\/server$|zod$|\.\.\/actions\/catalog$|\.\.\/integration\/crypto$)/;
+  const importsOf = (src) => [...src.matchAll(/(?:from|require\()\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
+  const bad = [];
+  for (const f of [...signerFiles, 'apps/api/src/actions/catalog.ts', 'apps/api/src/integration/crypto.ts']) {
+    const own = f.startsWith(signerDir) ? ALLOWED_IMPORT : /^(node:|crypto$|zod$|\.\/crypto$|\.\.\/integration\/crypto$)/;
+    for (const i of importsOf(read(f))) if (!own.test(i)) bad.push(`${f} imports ${i}`);
+  }
+  check('approval signer loads no Nest, Prisma or portal module', signerFiles.length >= 4 && bad.length === 0,
+    bad.join('; ') || 'approval-signer sources not found');
+  const portal = walk('apps/api/src').filter((f) => !f.startsWith(signerDir));
+  const reachIn = portal.filter((f) => /from ['"][./]*approval-signer\//.test(read(f)));
+  check('no portal module imports the approval signer', reachIn.length === 0, `imports it: ${reachIn.join(', ')}`);
+  const ctl = read('apps/api/src/actions/actions.controller.ts');
+  const routes = [...ctl.matchAll(/@(?:Get|Post|Put|Patch|Delete)\('([^']*)'\)/g)].map((m) => m[1]);
+  check('the portal has no approve route', routes.length > 0 && !routes.some((r) => /approv|sign/i.test(r)) && !walk('apps/api/src').filter((f) => /controller\.ts$/.test(f)).some((f) => /@(?:Post|Put|Patch)\('[^']*approve/i.test(read(f)) && !/trust|grant|elevation|technician|support/i.test(f)),
+    `actions routes: ${routes.join(', ')}`);
+  check('the portal never reads an approval private key', !portal.some((f) => /APPROVAL_SIGNER_DIR|signing\.key|loadSigningKey/.test(read(f))),
+    'only the signer may load the job-approval key');
+  const goCat = read('tools/windows-installer/internal/action/catalog.go');
+  const goIds = [...goCat.matchAll(/ID: "([^"]+)"/g)].map((m) => m[1]);
+  check('agent catalog is windows.service.start for the Spooler only',
+    goIds.length === 1 && goIds[0] === 'windows.service.start' && /const ServiceName = "Spooler"/.test(goCat) && /s == ServiceName/.test(goCat),
+    `agent catalog ids: ${goIds.join(', ')}`);
+  const tsCat = read('apps/api/src/actions/catalog.ts');
+  check('portal catalog has no command, script, path or URL parameter', !/\b(command|script|path|url|args|cmd)\s*:/i.test(tsCat.replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, '')),
+    'the catalog must not grow a free-form parameter');
+  const act = read('tools/windows-installer/internal/action/action.go');
+  const iExec = act.indexOf('State: "executing"'), iRun = act.indexOf('r := execute(plan, o)'), iJournal = act.indexOf('readJournal(o, jobID)');
+  check('agent journals a job before executing it, and consults the journal first',
+    iJournal > 0 && iExec > iJournal && iRun > iExec && /if err := writeJournal\(o, journal\{JobID: jobID, State: "executing"[\s\S]{0,120}return Result\{\}, fmt\.Errorf/.test(act),
+    'the journal write must precede execute() and a failed write must stop it');
+  // class-transformer's implicit conversion turns an untyped array of objects
+  // into [[]] — silently. It broke command-result events in production.
+  const untyped = [];
+  for (const f of walk('apps/api/src').filter((f) => /dto/.test(f))) {
+    const lines = read(f).split('\n');
+    lines.forEach((l, n) => {
+      if (/^\s*(?:@[^\n]*\s)?\w+\??:\s*(?:unknown|object|any|Record<[^>]+>)\[\];/.test(l) && !/@Type\(|@ValidateNested/.test(lines.slice(Math.max(0, n - 3), n + 1).filter((x) => !/^\s*(\/\/|\*|\/\*)/.test(x)).join('\n')))
+        untyped.push(`${f}:${n + 1}`);
+    });
+  }
+  check('no DTO array of objects without @Type', untyped.length === 0, `class-transformer will turn these into [[]]: ${untyped.join(', ')}`);
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

@@ -4,9 +4,10 @@ rem0te can analyse a ClientSt0r ticket, optionally with evidence from one enroll
 **staff-only** findings and draft replies. This is contract **ticket-rmm-v1**, defined in
 [`docs/contracts/ticket-rmm-v1/`](contracts/ticket-rmm-v1/README.md).
 
-> **Status (0.22.0): fixture-tested, read-only.** Every behaviour on this page is exercised against a
-> simulated ClientSt0r by `apps/api/scripts/e2e-integration.mjs`. It has **not** yet run paired with a real
-> ClientSt0r, and nothing in it executes anything on a computer.
+> **Status (0.26.0): fixture-tested.** Every behaviour on this page is exercised against a simulated
+> ClientSt0r by `apps/api/scripts/e2e-integration.mjs` and `e2e-approved-action.mjs`. It has **not** yet run
+> paired with a real ClientSt0r. Ticket analysis is read-only. An [action proposal](#proposing-an-approved-action-026)
+> runs nothing until people on the approval roster approve it, outside ClientSt0r.
 
 ## Who owns what
 
@@ -27,7 +28,8 @@ build, uptime, memory and system-disk headroom, pending updates and reboot-requi
 gateway once per profile; return a signed result.
 
 **Cannot:** run a shell or any command, fetch any URL except the two in the peers file, open a remote session,
-issue a launcher token, queue an endpoint command, reveal a credential, or approve anything. The worker
+issue a launcher token, queue an endpoint command, reveal a credential, or approve anything. (Proposing a
+catalog action, below, is a separate route, and it can't approve anything either.) The worker
 process does not load the modules that do those things, and `scripts/check-security-invariants.mjs` fails
 CI if that changes.
 
@@ -138,3 +140,34 @@ assignments need it granted. Removing it stops in-flight jobs before their next 
 
 Audit actions: `INTEGRATION_JOB_ACCEPTED`, `INTEGRATION_JOB_REJECTED`, `INTEGRATION_JOB_FINISHED`,
 `INTEGRATION_MAPPING_CHANGED`.
+
+## Proposing an approved action (0.26)
+
+ClientSt0r can **propose** a catalog action on one computer, today only `windows.service.start@1` with
+`{"service":"Spooler"}`. It can't approve, dispatch or run one. The proposal goes through the same path as the
+portal's own **Request approval** button, as the delegated technician, and it gets the same live access check
+and the same approval signer.
+
+| Route | Delegation scope | What it does |
+|---|---|---|
+| `POST /api/integration/v1/action-proposals` | `actions:propose` | Creates a plan awaiting approval, and returns its `approval_url` and `plan_digest` |
+| `GET /api/integration/v1/action-proposals/{job_id}` | `actions:read` | Status, outcome and what the computer observed |
+
+`GET /capabilities` lists the proposable actions under `features.actions`. The list is empty until an approval
+signer is configured.
+
+- **No command field, ever.** The request schema is strict: an `action` names a catalog id and version, and
+  `params` must equal the catalog's. A `command`, a `script`, or a target given as a hostname is a schema
+  error.
+- **An AI suggestion gets no shortcut.** `origin: "ai_suggestion"` with a `ticket_ref` is shown to the
+  approvers as such, and needs exactly the approvals a person's request needs.
+- **Idempotent.** The same `idempotency_key` returns the same proposal; a different request under it is
+  `409 IDEMPOTENCY_CONFLICT`.
+- **Refusals pass through with the portal's codes:** `ACTION_NOT_IN_CATALOG`, `PARAMS_NOT_ALLOWED`,
+  `ACTION_NOT_GRANTED`, `PROTECTED_DEVICE_CLASS`, `ENDPOINT_NOT_READY`, `ACTION_PENDING`,
+  `ACTION_UNRECONCILED`. Each is audited as `ACTION_DISPATCH_BLOCKED` with `stage: proposal`.
+
+The technician needs **Request approved actions** (`actions:request`) in that business, in addition to the
+mapping. Show `approval_url` to the people who will approve. Approval happens there, never in ClientSt0r.
+The whole lifecycle is described in [approved-actions.md](approved-actions.md).
+

@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.25.1-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.26.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -65,6 +65,15 @@ it, its default and its limits: **Settings → Security → Security Features**,
 [docs/security-model.md](docs/security-model.md).
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
+
+## What's new in 0.26
+
+**Fix one thing without connecting, after people approve it.** The first approved action starts a Windows
+computer's Print Spooler, once. Approvers authorize the exact plan with a passkey, on a separate approval page
+that the portal neither serves nor controls. Servers need two approvers, and a business can require its own
+sign-off. The computer re-checks the signature, its own identity, the window and the approvals before it runs the
+job, at most once. A result reports the service state, never that a document printed. ClientSt0r can propose an
+action but never approve one. [approved-actions.md](docs/approved-actions.md)
 
 ## What's new in 0.21
 

@@ -1,7 +1,5 @@
-import {
-  IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsIP, IsISO8601, IsObject,
-  IsOptional, IsString, Length, Matches, Max, Min,
-} from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsIP, IsISO8601, IsObject, IsOptional, IsString, Length, Matches, Max, Min, ArrayMaxSize } from 'class-validator';
 
 export enum EndpointAccessMode {
   ASSIGNED_USERS = 'ASSIGNED_USERS',
@@ -120,6 +118,16 @@ export class HeartbeatDto {
   @IsOptional() @IsIn(['signed', 'legacy']) updateChannel?: 'signed' | 'legacy';
   @IsOptional() @IsInt() @Min(1) @Max(1_000_000) trustRootVersion?: number;
   @IsOptional() @IsInt() @Min(1) @Max(1_000_000_000) targetsVersion?: number;
+  // Approved actions (0.26): the catalog actions the signed agent can execute
+  // ("windows.service.start@1"), the digest of the agent build reporting them,
+  // and the results of envelopes it was handed. Results are validated field by
+  // field in ActionsService; the array itself is bounded here.
+  @IsOptional() @IsArray() @ArrayMaxSize(16) @IsString({ each: true }) @Matches(/^[a-z0-9.]{3,64}@[0-9]{1,4}$/, { each: true }) agentActions?: string[];
+  @IsOptional() @IsString() @Matches(/^[0-9a-f]{64}$/) agentSha256?: string;
+  // @Type(() => Object): without it, enableImplicitConversion turns every
+  // element of an untyped array into an empty array, and the results arrive
+  // as [[]]. Validated element by element by ActionsService.recordResults.
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @Type(() => Object) actionResults?: unknown[];
 }
 
 /**
@@ -151,7 +159,9 @@ export class CommandResultDto {
   @IsOptional() @IsString() @Length(0, 2000) error?: string;
   @IsOptional() @IsObject() inventory?: Record<string, unknown>;
   @IsOptional() @IsObject() updates?: Record<string, unknown>;
-  @IsOptional() @IsArray() events?: unknown[];
+  // @Type(() => Object): see actionResults above — without it every event
+  // arrived as an empty array (fixed in 0.26.0).
+  @IsOptional() @IsArray() @Type(() => Object) events?: unknown[];
 }
 
 export class ClaimEndpointDto {

@@ -1,3 +1,4 @@
+import { ActionsService } from '../actions/actions.service';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import {
   Injectable,
@@ -39,6 +40,7 @@ export class EnrollmentService {
     private readonly sessionEvents: SessionEventsService,
     private readonly rollouts: UpdateRolloutService,
     private readonly updateTrust: UpdateTrustService,
+    private readonly actions: ActionsService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -414,6 +416,7 @@ export class EnrollmentService {
     systemDiskTotalMb?: number; systemDiskFreeMb?: number;
     rustdeskSessions?: number; updateNonce?: string;
     updateChannel?: 'signed' | 'legacy'; trustRootVersion?: number; targetsVersion?: number;
+    agentActions?: string[]; agentSha256?: string; actionResults?: unknown[];
   }, remoteIp?: string) {
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { rustdeskId: dto.rustdeskId },
@@ -569,6 +572,10 @@ export class EnrollmentService {
         trustRootVersion: dto.updateChannel === 'signed' ? dto.trustRootVersion ?? null : null,
         targetsVersion: dto.updateChannel === 'signed' ? dto.targetsVersion ?? null : null,
         trustReportedAt: new Date(),
+        // Approved actions (0.26): only a signed agent can execute a plan, so
+        // a legacy agent's claim is discarded rather than stored.
+        agentActions: dto.updateChannel === 'signed' ? dto.agentActions ?? [] : [],
+        agentSha256: dto.updateChannel === 'signed' ? dto.agentSha256 ?? null : null,
       }),
     };
 
@@ -692,6 +699,21 @@ export class EnrollmentService {
         .catch((e) => this.logger.warn(`Session reconcile failed for ${node.endpointId}: ${String(e)}`));
     }
 
+    // Approved actions (0.26): record what the agent reports about envelopes
+    // it was handed, then hand it any that are due. Authenticated, signed
+    // agents only — and the portal is only a courier here: the agent verifies
+    // every envelope against the approval key from the signed update chain.
+    let actions: { jobId: string; envelope: unknown }[] = [];
+    let actionAcks: string[] = [];
+    if (authenticated) {
+      try {
+        if (dto.actionResults?.length) actionAcks = await this.actions.recordResults(node.endpointId, dto.actionResults);
+        if (dto.updateChannel === 'signed') actions = await this.actions.forHeartbeat(node.endpointId);
+      } catch (e) {
+        this.logger.warn(`Action step failed for endpoint ${node.endpointId}: ${String(e)}`);
+      }
+    }
+
     // An unauthenticated caller gets the liveness ack and nothing that would
     // tell it which record a RustDesk ID belongs to.
     if (!authenticated) {
@@ -709,6 +731,8 @@ export class EnrollmentService {
       updateRustdesk,
       reinstallAgent,
       commands,
+      actions,
+      actionAcks,
       rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
     };
   }

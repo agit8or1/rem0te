@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, UnauthorizedException,
 } from '@nestjs/common';
@@ -131,8 +132,29 @@ export class PasskeysService implements OnModuleInit, OnModuleDestroy {
     return { id: row.id, name: row.name, createdAt: row.createdAt };
   }
 
+  /**
+   * The person's own passkeys. Each carries an `approvalExport`: the public
+   * half and a fingerprint, which an operator adds to the approval signer's
+   * roster (v0.26) only after this person reads the fingerprint back to them.
+   * Public keys only — nothing here authenticates as anyone.
+   */
   async list(userId: string) {
-    return (await this.credentials(userId)).map((c) => ({ id: c.id, name: c.name, createdAt: c.createdAt, lastUsedAt: c.lastUsedAt }));
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { firstName: true, lastName: true, email: true } });
+    const name = [user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.email || userId;
+    const rows = await this.prisma.userMfaMethod.findMany({
+      where: { userId, type: 'WEBAUTHN', isActive: true },
+      select: { id: true, credentialId: true, publicKey: true, name: true, createdAt: true, lastUsedAt: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map((c) => {
+      const pk = c.publicKey ? Buffer.from(c.publicKey).toString('base64url') : null;
+      const fp = c.credentialId && pk ? createHash('sha256').update(`${c.credentialId}:${pk}`).digest('hex').slice(0, 16).replace(/(.{4})(?!$)/g, '$1-') : null;
+      return {
+        id: c.id, name: c.name, createdAt: c.createdAt, lastUsedAt: c.lastUsedAt,
+        approvalFingerprint: fp,
+        approvalExport: fp ? JSON.stringify({ userId, name, credentialId: c.credentialId, publicKey: pk }) : null,
+      };
+    });
   }
 
   async remove(userId: string, id: string, ip?: string) {

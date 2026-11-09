@@ -253,7 +253,10 @@ export const CONTROL_STATUS: Record<keyof PresetPolicy, { label: string; locked?
   enrollment: { label: 'Enrollment', locked: 'A tier never grants enrollment.' },
   scripts: { label: 'Scripts', locked: 'No preset runs scripts; there is no signed script catalog.' },
   patches: { label: 'Staged patch work', unavailable: 'Patch installation is not implemented; requests are recorded only.' },
-  fixRequests: { label: 'Request catalog fixes', unavailable: 'No signed fix catalog exists yet; nothing can be dispatched.' },
+  // Since 0.26 a request can become a signed plan: the catalog has one action
+  // (start the Print Spooler). Requesting is all a tier grants — approval is
+  // the approval signer's roster, and fixApproval stays locked off.
+  fixRequests: { label: 'Request catalog actions (approved by the roster, never by the tier)' },
   fixApproval: { label: 'Approve fixes', locked: 'A tier never approves. Independent review is a separate designation.' },
   fleetExecution: { label: 'Fleet execution', locked: 'Off for all tiers.' },
   maxSessionMinutes: { label: 'Maximum session length (minutes)' },

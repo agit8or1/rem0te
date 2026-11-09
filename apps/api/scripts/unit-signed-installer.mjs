@@ -56,7 +56,17 @@ check('signed variant pins the agent version literally', signed.includes("$AGENT
 check('signed variant makes the RustDesk digest mandatory', /\$RD_SHA256\s+= Need 'rustdeskSha256'/.test(signed));
 check('legacy variant still carries its update hook (documented, contained by trust mode)', /irm '\$iu' \| iex/.test(legacy));
 check('legacy heartbeat reports updateChannel=legacy', legacy.includes("$body['updateChannel'] = 'legacy'"));
-check('both variants share the body (same line count ±40)', Math.abs(legacy.split('\n').length - signed.split('\n').length) < 40);
+// ±80: the signed variant also carries the approved-action hook (0.26).
+check('both variants share the body (same line count ±80)', Math.abs(legacy.split('\n').length - signed.split('\n').length) < 80);
+// Approved actions (0.26): the signed heartbeat hands envelopes to the signed
+// agent and nothing else; the legacy heartbeat never runs one.
+check('signed heartbeat hands envelopes to rem0te-agent.exe action', /& \$agentExe action --job \$jid --envelope \$ef/.test(signed));
+check('signed heartbeat validates the job id before using it in a path', signed.includes("$jid -cnotmatch '^[0-9a-f]{32}$'"));
+check('signed heartbeat reports agentActions and agentSha256', signed.includes("$body['agentActions']") && signed.includes("$body['agentSha256']"));
+check('signed heartbeat reports actionResults and deletes acknowledged ones', signed.includes("$body['actionResults']") && signed.includes('$resp.data.actionAcks'));
+check('heartbeat body serialises nested results (ConvertTo-Json -Depth 6)', /\$body = \$body \| ConvertTo-Json -Compress -Depth 6/.test(signed));
+check('legacy heartbeat has no action hook', !/agentExe action/.test(legacy) && !legacy.includes("$body['agentActions']"));
+check('the action hook runs nothing but the agent (no iex, no script block from the response)', !/\$resp\.data\.actions[^\n]*(iex|Invoke-Expression|ScriptBlock|& \$aj)/i.test(signed));
 check('signed build is deterministic', buildSignedWindowsScript('0.24.0') === signed);
 let threw = false;
 try { buildSignedWindowsScript("0.24.0'; calc") } catch { threw = true }
