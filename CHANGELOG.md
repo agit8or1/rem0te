@@ -5,6 +5,52 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.21.1] — 2026-11-09 · *Signpost*
+
+Dependency release: Dependabot's November production group (#90), plus the
+development group (#91) that landed on `main` without a release of its own.
+No code changes and no new surface.
+
+### Upgrade notes
+
+- **Production dependencies changed — the target manifest must be regenerated.**
+  `pnpm deploy:manifest -o /tmp/prod-package.json`, confirm
+  `npm install --omit=dev --package-lock-only` exits 0 against it (it does for
+  this set), copy it to `/opt/reboot-remote/api/package.json` and run
+  `npm install --omit=dev` there *before* restarting the API. Rsyncing `dist`
+  alone puts code compiled against these versions onto the old libraries, and
+  that only shows on the next restart.
+- No migration.
+
+### Changed
+
+- **API:** `@anthropic-ai/sdk` 1.3.0 → 1.6.0, `argon2` 0.45.1 → 0.45.2,
+  `maxmind` 5.0.7 → 5.0.8, `openid-client` 6.8.8 → 6.8.9 (still pinned
+  exactly — it backs SSO, and its patch releases are taken deliberately).
+  The SDK's 1.5/1.6 releases add per-status error classes and set each error's
+  `name` to its class name; nothing here matches on `error.name`, so the
+  endpoint-summary path is unaffected.
+- **Web:** `next` 16.4.3 → 16.4.5, `@tanstack/react-query` 5.105.0 → 5.106.1,
+  `lucide-react` 1.63.0 → 1.70.0.
+- **Development only (#91, no runtime effect):** `@types/node` 26.6.6,
+  `eslint-plugin-security` 4.2.1, `typescript-eslint` 8.72.1,
+  `@vitejs/plugin-react` 6.2.1, `vite` 8.3.6, `@playwright/test` / `playwright`
+  1.65.0, `autoprefixer` 10.6.2, `eslint-config-next` 15.5.29, `marked` 18.1.3,
+  `postcss` 8.5.32.
+
+  #91 had no CI run at all when it was opened — GitHub never emitted the
+  `pull_request` event for it, so the PR sat `BLOCKED` with zero checks rather
+  than failing. Closing and reopening it re-emitted the event without
+  rewriting Dependabot's branch.
+
+- #90 itself was closed rather than merged: once #91 landed, its lockfile
+  conflicted, and its `package.json` files were snapshots from before #91, so
+  taking them whole would have silently reverted the dev bumps. The seven
+  production ranges were reapplied on top of `main` and the lockfile
+  regenerated.
+
+---
+
 ## [0.21.0] — 2026-11-07 · *Signpost*
 
 The server's public address becomes a setting. Every install is reached at a
