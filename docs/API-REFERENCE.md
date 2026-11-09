@@ -2,8 +2,9 @@
 
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
-Every route is prefixed with `/api/v1`. There are **286** of them across
-**34** controllers.
+Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
+integration, under `/api/integration/v1`). There are **296** of them across
+**36** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -188,6 +189,30 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/enrollment/tokens` | signed in | `COMPUTERS_VIEW` |
 | `POST` | `/api/v1/enrollment/tokens` | signed in | `COMPUTERS_ADD` |
 | `DELETE` | `/api/v1/enrollment/tokens/:id` | signed in | `COMPUTERS_REMOVE` |
+
+## Integration
+
+`apps/api/src/integration/integration.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/integration/v1/capabilities` | signed peer (ticket-rmm-v1) | — |
+| `POST` | `/api/integration/v1/jobs` | signed peer (ticket-rmm-v1) | — |
+| `GET` | `/api/integration/v1/jobs/:job_id` | signed peer (ticket-rmm-v1) | — |
+| `GET` | `/api/integration/v1/jobs/:job_id/events` | signed peer (ticket-rmm-v1) | — |
+
+## Integration admin
+
+`apps/api/src/integration/integration-admin.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/admin/integration/mappings` | Platform Admin | — |
+| `POST` | `/api/v1/admin/integration/mappings/organizations` | Platform Admin | — |
+| `DELETE` | `/api/v1/admin/integration/mappings/organizations/:id` | Platform Admin | — |
+| `POST` | `/api/v1/admin/integration/mappings/technicians` | Platform Admin | — |
+| `DELETE` | `/api/v1/admin/integration/mappings/technicians/:id` | Platform Admin | — |
+| `GET` | `/api/v1/admin/integration/peers` | Platform Admin | — |
 
 ## Launcher
 

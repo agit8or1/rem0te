@@ -5,6 +5,118 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.22.0] — 2026-11-09 · *Courier*
+
+First milestone of the ClientSt0r ↔ rem0te integration: **read-only ticket
+analysis** under a new versioned contract, **ticket-rmm-v1**
+(`docs/contracts/ticket-rmm-v1/`). ClientSt0r owns the ticket, the customer
+conversation, AI configuration and every provider key; rem0te maps its
+organizations and technicians to businesses and users, runs the job, checks
+every model output and returns staff-only findings. Nothing in this release
+executes anything on a computer.
+
+**Status: fixture-tested** against a simulated ClientSt0r
+(`apps/api/scripts/e2e-integration.mjs`, 77 checks). It has not run paired
+with a real ClientSt0r, and it is not a production readiness claim.
+
+### Upgrade notes
+
+- **Migration `0022_integration_ticket_analysis`.** Five new tables, one enum,
+  four `ActivityAction` values. Additive; no existing row changes. Run
+  `prisma migrate deploy`, then rsync `prisma/` to the target and
+  `prisma generate` there (CLAUDE.md, *A schema change needs two more steps*),
+  or the API throws `Unknown field … on model …`.
+- **No production dependency changed** — the target manifest does not need
+  regenerating.
+- **Off until configured.** Without `INTEGRATION_PEERS_FILE` every
+  `/api/integration/v1` route answers 404 `NOT_CONFIGURED` and the worker
+  idles. Setup: `docs/integration-clientst0r.md`.
+- **New capability `integration:ticket_analysis`.** Business Owners hold it
+  automatically (owners are computed, not stored). No Business User or
+  technician assignment gains it on upgrade.
+- **Optional new unit** `deploy/systemd/reboot-remote-integration-worker.service`;
+  `INTEGRATION_WORKER_INLINE=true` runs the worker in the API process instead.
+
+### Added
+
+- **`GET /api/integration/v1/capabilities`, `POST /api/integration/v1/jobs`,
+  `GET /api/integration/v1/jobs/{job_id}`, `GET /api/integration/v1/jobs/{job_id}/events`.**
+  Mounted outside the `/api/v1` prefix. Every request is Ed25519-signed over
+  audience, method, path, timestamp, nonce and body hash; nonces are persisted,
+  so a captured request is refused even after a restart. Optional mTLS pinning
+  via the fronting proxy.
+- **Delegated technician identity.** A ≤ 5-minute, single-use, audience-bound
+  JWS minted with a *separate* ClientSt0r delegation key. The submit token is
+  bound to the sha256 of the canonical payload. The body's
+  `organization_id`/`technician_id` must match the token. The user's access to
+  the business is rebuilt from the database at intake, on every poll, and by
+  the worker before every model call. A role revoked mid-job stops the job
+  (`ACTOR_REVOKED`) before the next paid call. The integration never acts as
+  Platform Admin.
+- **Idempotency.** Same key + same payload returns the original job (200,
+  `idempotent-replayed: true`); a changed payload is 409. Six concurrent
+  identical submits produce one job.
+- **Durable worker** (`dist/integration/worker.main.js`). Postgres queue with
+  `FOR UPDATE SKIP LOCKED` leases. A killed worker's job is re-claimed when the
+  lease lapses, and model profiles that already finished are not bought again.
+  Expired jobs never reach the gateway.
+- **Model comparison.** Up to three ClientSt0r profiles per job. Category and
+  top-hypothesis disagreements are reported, partial failures are listed per
+  profile, and the result reports the most cautious confidence any model gave.
+- **Untrusted-input handling.** Prompt-injection patterns are flagged. A model
+  "fact" citing evidence that does not resolve becomes an `unsupported_claim`.
+  Unknown output fields are dropped and counted. Next steps are text
+  (`executable: false`), and those touching credential extraction, disabling
+  defenses, deleting backups, admin grants, disk wipes or arbitrary commands
+  are labelled. Link hosts in draft replies are listed. A gateway response is
+  accepted only if it is signed over our nonce and echoes this exact request,
+  job, organization and profile.
+- **Optional endpoint evidence**, addressed by immutable endpoint id, never by
+  hostname. It covers heartbeat freshness, agent version, OS build, uptime,
+  memory and system-disk headroom, pending updates and reboot-required. IP,
+  MAC, serial, logged-on user and domain are never sent, and device-reported
+  names are reduced to an inert charset.
+- **Signed, sequenced event outbox** pushed to ClientSt0r with backoff for up
+  to 7 days, and readable by scoped polling. A lost acknowledgement costs a
+  duplicate delivery, never a lost result.
+- **Peer trust lives in a root-owned file**, not the database: keys,
+  audiences, the only two outbound URLs (https, no redirects), allowed
+  profiles. A database or portal-admin compromise cannot add a peer, swap a key
+  or redirect the worker.
+- **Platform Admin mapping routes** under `/api/v1/admin/integration`, behind
+  step-up (`technicians.manage`).
+- Contract package: OpenAPI, 11 JSON Schemas **generated** from the runtime zod
+  schemas (`scripts/gen-integration-contracts.mjs`, `--check` in CI), and 19
+  fixtures produced by rem0te's own code paths.
+- Tests: `apps/api/scripts/unit-integration.mjs` (35, no database, in CI);
+  `apps/api/scripts/e2e-integration.mjs` (77, scratch database + simulated
+  ClientSt0r).
+- `scripts/check-security-invariants.mjs` section 10 pins down the following.
+  The integration never spawns a process. It has one outbound call site, which
+  takes its URL from a Peer. The worker imports nothing that can launch,
+  command or approve. Peers are never read from the database. Replay
+  protection is one atomic insert. The delegated actor is never Platform Admin.
+  Next steps are never executable.
+
+### Changed
+
+- `main.ts` keeps the raw request body (`rawBody: true`) so signatures are
+  checked over the exact bytes received.
+- `scripts/gen-api-reference.mjs` understands controllers mounted outside the
+  global prefix and labels class-level `IntegrationAuthGuard` /
+  `PlatformAdminGuard` routes.
+
+### Known gaps (not in this release)
+
+- No signed bootstrap/update chain yet. Every endpoint code path still trusts
+  TLS plus whatever the portal serves. This is why no privileged or
+  executable job exists. Approved actions wait for an independently rooted
+  update and approval signing chain.
+- The existing device AI timeline still uses `ANTHROPIC_API_KEY` on the rem0te
+  host. The integration path uses no provider key.
+
+---
+
 ## [0.21.1] — 2026-11-09 · *Signpost*
 
 Dependency release: Dependabot's November production group (#90), plus the

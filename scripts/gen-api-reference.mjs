@@ -33,7 +33,10 @@ function walk(dir) {
 
 /** Join a controller prefix and a route path into one clean absolute path. */
 function joinPath(prefix, route) {
-  const parts = [GLOBAL_PREFIX, prefix, route]
+  // A controller mounted at `api/...` is excluded from the global prefix in
+  // main.ts (the ticket-rmm-v1 integration has its own versioned path).
+  const outside = String(prefix ?? '').replace(/^\/+/, '').startsWith('api/');
+  const parts = [outside ? '' : GLOBAL_PREFIX, prefix, route]
     .filter((p) => p !== undefined && p !== null && p !== '')
     .map((p) => String(p).replace(/^\/+|\/+$/g, ''))
     .filter(Boolean);
@@ -71,6 +74,9 @@ function parseFile(file) {
     const classLine = block.findIndex((l) => /export class/.test(l));
     const classDecorators = block.slice(0, classLine === -1 ? 1 : classLine).join('\n');
     const classPublic = /@Public\(\)/.test(classDecorators);
+    // Class-level guards that change who may call the route at all.
+    const classAccess = /@UseGuards\(IntegrationAuthGuard\)/.test(classDecorators) ? 'signed peer (ticket-rmm-v1)'
+      : /@UseGuards\(PlatformAdminGuard\)/.test(classDecorators) ? 'Platform Admin' : null;
 
     const routes = [];
     let pending = [];
@@ -104,6 +110,7 @@ function parseFile(file) {
             method: verb,
             path: joinPath(prefix, route),
             public: isPublic,
+            access: classAccess,
             capability: cap?.match(/CAP\.([A-Z0-9_]+)/)?.[1] ?? null,
             throttled,
             handler,
@@ -168,7 +175,8 @@ const lines = [
   '',
   '_Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._',
   '',
-  `Every route is prefixed with \`${GLOBAL_PREFIX}\`. There are **${all.length}** of them across`,
+  `Every route is prefixed with \`${GLOBAL_PREFIX}\` unless its path is shown in full (the ticket-rmm-v1`,
+  'integration, under `/api/integration/v1`). There are **${all.length}** of them across'.replace('${all.length}', String(all.length)),
   `**${controllers.length}** controllers.`,
   '',
   'For request and response shapes, worked examples and error codes, see',
@@ -197,7 +205,7 @@ for (const c of controllers) {
   lines.push(`\`${c.file}\`${c.prefixes.length > 1 ? ` — mounted at ${c.prefixes.map((p) => `\`/${p}\``).join(' and ')}` : ''}`, '');
   lines.push('| Method | Path | Access | Capability |', '|---|---|---|---|');
   for (const r of c.routes.sort((a, b) => a.path.localeCompare(b.path))) {
-    const access = r.public ? 'public' : 'signed in';
+    const access = r.access ?? (r.public ? 'public' : 'signed in');
     const cap = r.capability ? `\`${r.capability}\`` : '—';
     lines.push(`| \`${r.method}\` | \`${r.path}\` | ${access}${r.throttled ? ', throttled' : ''} | ${cap} |`);
   }
