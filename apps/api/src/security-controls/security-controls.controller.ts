@@ -14,7 +14,7 @@ import { PolicyAdminService } from './policy-admin.service';
 import { TemporaryAccessService } from './temporary-access.service';
 import { TrustChangeService } from './trust-change.service';
 import { assertFresh } from './review';
-import { SECURITY_FEATURES } from './security-features';
+import { SecurityFeaturesService } from './security-features.service';
 
 class CloneDto { @IsString() @Length(1, 100) name!: string }
 class PresetDto {
@@ -66,6 +66,7 @@ export class SecurityControlsController {
     private readonly trust: TrustChangeService,
     private readonly stepUp: StepUpService,
     private readonly acl: AccessControlService,
+    private readonly features: SecurityFeaturesService,
   ) {}
 
   private fresh(req: Request): string | null {
@@ -74,10 +75,14 @@ export class SecurityControlsController {
   }
   private requireFresh(req: Request) { assertFresh(this.fresh(req)); }
 
+  /**
+   * The Security Features view. Platform Admins and technicians:manage see the
+   * platform or any business; a Business Owner sees their own business; every
+   * technician context and every Business User is refused (see the service).
+   */
   @Get('catalog')
-  catalog(@Actor() actor: ActorContext) {
-    this.acl.assertPlatformAdmin(actor);
-    return { success: true, data: SECURITY_FEATURES };
+  async catalog(@Actor() actor: ActorContext, @Query('businessId') businessId?: string) {
+    return { success: true, data: await this.features.catalog(actor, businessId) };
   }
 
   // ── Presets ───────────────────────────────────────────────────────────────

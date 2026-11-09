@@ -494,6 +494,16 @@ const SECTIONS: Section[] = [
           More in <Link href="/docs/update-signing" className="underline text-foreground">Update signing</Link>.
         </p>
         <p>
+          <strong className="text-foreground">What Connect does and does not control.</strong> Rem0te decides who may
+          launch a session to which computer and records it; RustDesk carries the session. Once connected, clipboard,
+          file transfer and chat are RustDesk&apos;s own defaults, a computer installed by Rem0te accepts its password
+          without asking the person at it, and nothing ends a session from the portal. <em>Client opened</em> is not a
+          connection; <em>Connection confirmed</em> comes from the computer&apos;s agent or from you. Platform Admins,
+          technician managers and Business Owners can see every control and its effective state under Settings →
+          Security → Security Features. More in{' '}
+          <Link href="/docs/security-model" className="underline text-foreground">Security model</Link>.
+        </p>
+        <p>
           Customers can ask for help through their business&apos;s support link, without an account. Requests appear
           under <Link href="/support-requests" className="underline text-foreground">Support Requests</Link>: claim
           one, connect, and complete or hand it off.

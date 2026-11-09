@@ -9,11 +9,11 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.24.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.25.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
-[Quick start](#quick-start) · [Screenshots](docs/screenshots.md) · [Walkthrough](#watch-the-walkthrough) · [Documentation](docs/README.md) · [Security](#security) · [MSPReboot](https://mspreboot.com)
+[Quick start](#quick-start) · [How access is protected](#how-rem0te-protects-customer-access) · [Screenshots](docs/screenshots.md) · [Walkthrough](#watch-the-walkthrough) · [Documentation](docs/README.md) · [Security](#security) · [MSPReboot](https://mspreboot.com)
 
 </div>
 
@@ -24,6 +24,47 @@ server that keeps them organised and separate.
 <sub><i>The operator's view — every customer business, computer and session in one place. <a href="docs/images/github/dashboard-light.png">Full size</a> · <a href="docs/screenshots.md">34 more screenshots</a></i></sub>
 
 ---
+
+## How rem0te protects customer access
+
+**Which technician can reach this customer's PC?** Only someone the server says yes to, for that one
+computer, at that moment. Hiding a button is not how it works.
+
+Take two customers, *Acme* and *Birch*, that both have a PC named `FRONTDESK`:
+
+- **The right machine is chosen by its id, never its name.** Connect, the password, the launcher token and
+  the session all name one computer's database id. The list a person picks from contains only computers of
+  the business they are working in, re-read from the database on every request. A technician assigned to Acme
+  sees one FRONTDESK.
+- **Without access, nothing is released.** If that technician opens Birch's FRONTDESK by URL or API, they get
+  the same *404 Computer not found* as for an id that does not exist, and the attempt is audited.
+- **Within Acme, it depends who is asking.**
+  - A Business User needs `computers:connect` and a grant for that PC.
+  - An L1/L2/L3 preset technician never receives the password. Interactive control needs a temporary grant
+    that someone else approved.
+  - On endpoints as shipped, preset launches are **refused**, because the computer cannot enforce consent or
+    view-only. The portal does not open something it cannot restrict.
+- **Enrollment is bound to one business.** The installer link carries a single-use, expiring token minted in
+  that business. Every heartbeat authenticates with a per-device secret, not the RustDesk ID, and nothing a
+  device reports can move it to another business.
+
+**What evidence will I have afterwards?**
+
+- Audit entries for every password reveal, launch grant, refusal, launcher token and session change.
+- A session record that says how each step is known: *Client opened* is not a connection; *Connection
+  confirmed* comes from the endpoint's agent, or from the technician, recorded as theirs.
+- A per-person list of the passwords they have seen.
+
+**What you will not have.** Rem0te authorizes the *launch*. RustDesk carries the session. So the portal
+cannot see what happens inside a session or end it, and anyone holding a computer's password can connect
+without the portal. That is why offboarding tells you which passwords to rotate.
+
+Clipboard, file transfer and view-only for business members are RustDesk defaults, not Rem0te restrictions.
+So are terminal and chat, and Rem0te ships no remote shell of its own. Each control, the layer that enforces
+it, its default and its limits: **Settings → Security → Security Features**, and
+[docs/security-model.md](docs/security-model.md).
+
+Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
 
 ## What's new in 0.21
 
@@ -307,6 +348,8 @@ client configuration targets the RustDesk **1.4.x** client series.
 
 - **Report a vulnerability:** follow [SECURITY.md](.github/SECURITY.md) and do
   **not** open a public issue. Private reporting is enabled on this repository.
+- **Who can reach a computer, and the evidence you get:**
+  [docs/security-model.md](docs/security-model.md).
 - **What is enforced:** [docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md) records
   the review passes. This is an **internal review by the project, not an
   independent third-party audit**.

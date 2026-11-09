@@ -339,6 +339,18 @@ export default function SettingsPage() {
 
         <TabsContent value="security" className="mt-4 space-y-4">
           <Card>
+            <CardHeader><CardTitle className="text-sm">Security Features</CardTitle></CardHeader>
+            <CardContent className="flex flex-wrap items-center justify-between gap-3">
+              <p className="max-w-xl text-sm text-muted-foreground">
+                Read-only: every safeguard, the layer that enforces it, its default, what it needs, and — where the
+                server can observe it — the effective state. Anything it cannot observe reads Unknown.
+              </p>
+              <Button variant="outline" onClick={() => router.push('/settings/security/features')}>
+                <ShieldCheck className="mr-2 h-4 w-4" />Open Security Features
+              </Button>
+            </CardContent>
+          </Card>
+          <Card>
             <CardHeader><CardTitle className="text-sm">Technician Access</CardTitle></CardHeader>
             <CardContent className="flex flex-wrap items-center justify-between gap-3">
               <p className="max-w-xl text-sm text-muted-foreground">

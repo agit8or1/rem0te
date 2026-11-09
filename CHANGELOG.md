@@ -5,6 +5,94 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.25.0] — 2026-11-09 · *Witness*
+
+**"Which technician can reach this customer's PC, and what evidence will I have afterwards?" — answered from the
+code, not the brochure.** A trace of every launch path for this release found the documentation and the UI claiming
+restrictions that only ever applied to preset-backed technicians. This release corrects the claims, adds a view that
+says what each control actually does, and pins the claims with a test. **No permission changed**: every person can
+reach exactly what they could in 0.24.0.
+
+### What the trace found (and is now documented, not changed)
+
+- **View-only was never applied to Business Owners, Business Users, custom assignments or Platform Admins.**
+  `AccessPolicyService.evaluateLaunch` approves every non-technician before it looks at the mode, so a view-only
+  request released the permanent password and RustDesk opened with full control. The computer page offered them a
+  *View only* button with the tooltip "Refused if this computer cannot enforce view-only". The button is now shown
+  only in a technician context, where it is enforced (by refusal). `e2e-security-features.mjs` pins the member
+  behaviour as a documented limitation so the docs cannot drift from it.
+- **An ordinary Connect is unattended in effect.** The installer sets `verification-method = use-permanent-password`
+  and no per-feature options, so the endpoint accepts its password with nobody asked, whatever
+  `unattendedAccess: off` says. That setting refuses only an explicit unattended launch.
+- **A preset launch said "RustDesk will prompt at the computer". It will not.** It now says that no password was
+  released and that a computer installed by Rem0te accepts only its permanent password.
+- **"This session is limited to N minutes" limited nothing.** It now reads as a policy limit that nothing on the
+  computer enforces.
+- A refused `connect.cmd` is recorded as `ENDPOINT_PASSWORD_REVEALED` with `meta.denied`; filter on the metadata.
+  A Platform Admin with no business selected is matched across every business by the Tactical RMM hostname
+  resolver (which answers *ambiguous* rather than guessing). Both documented.
+
+### Added
+
+- **Settings → Security → Security Features** (also the *Security features* tab in Admin → Security).
+  - A compact, read-only table: what each control protects, the layer that enforces it (portal, launcher, endpoint
+    agent, endpoint RustDesk, the technician's RustDesk, offline signing, or nothing), its shipped default, its
+    prerequisites and a link to the setting or the docs. Expand a row for the mechanism, the limitation and the
+    evidence.
+  - Grouped as *Who can reach a computer*, *What a session can do*, *What you will have afterwards*, guardrails,
+    updates, integration, and *Not in this build*.
+  - The *Effective* column comes only from what the server can observe, and names its source: portal policy,
+    counts of endpoint reports, the mirror, server configuration, or the code itself. Anything it cannot observe,
+    such as clipboard and file transfer, reads **Unknown**. Session evidence counts the last 30 days' launches,
+    confirmations and measured durations.
+  - Who sees it: Platform Admins and `technicians:manage` holders, for the platform or any business (the same as
+    `GET /security-controls/policy` already allowed). A Business Owner sees their own business only. Business Users
+    and every technician context get 403.
+  - The catalog's static text was previously Platform Admin only. It is the same text as the public docs.
+- **Session modes as separate rows**: attended consent, unattended, view-only, keyboard and mouse, clipboard, file
+  transfer, elevation, session length. Each one states what applies to members and to preset technicians.
+- **Roadmap rows, all Unavailable**: background terminal and PowerShell, approved actions and fixes (the first
+  planned is the Print Spooler lab action), chat with the user, mobile device management, and backup with verified
+  recovery. They say what each needs before it ships. Rem0te has no command channel beyond inventory refresh, update
+  scan and event-log query. Any terminal or chat inside a RustDesk session is RustDesk's own feature, governed by
+  its defaults and not recorded.
+- **`docs/security-model.md`**: the portal / RustDesk / endpoint boundary; why permission to launch is not a
+  connection; a worked example with two customers that both have a FRONTDESK; what each session mode really does,
+  per actor; roles and presets side by side; the same evidence rule for signed updates, jobs, replay protection,
+  fleet limits and ClientSt0r analysis; and the roadmap.
+- **README: "How rem0te protects customer access"**, near the top, with the same example, linking to the operator
+  guide and to private vulnerability reporting.
+- `apps/api/scripts/e2e-security-features.mjs`, 37 checks against a scratch stack with synthetic data:
+  - who may see which scope: signed out, Platform Admin, technician manager, Business Owner (own business only),
+    Business User, and an L2 technician scoped to one business;
+  - Unknown where nothing is observed, and simulated endpoint reports counted per business;
+  - the FRONTDESK scenario: a 404 across businesses, `TEMPORARY_GRANT_REQUIRED`,
+    `ENDPOINT_CANNOT_ENFORCE_VIEW_ONLY`, and the audit rows for each.
+- Security invariants §13 (13 checks):
+  - the view refuses technician contexts;
+  - an owner cannot widen the scope;
+  - clipboard and file transfer carry no effective state;
+  - the roadmap rows stay Unavailable;
+  - session length stays advisory;
+  - the View only button stays technician-only.
+
+### Changed
+
+- `GET /security-controls/catalog` takes `?businessId=` and returns `{ scope, features[] }`, each feature with
+  `effective` (or `null`).
+- `docs/technician-access.md`:
+  - members' modes are not applied;
+  - the session length is not enforced;
+  - *Disconnected* is observed, not enforced;
+  - the "release signing not built" item now points at 0.24's update chain and lists what remains (Authenticode,
+    CI provenance, hardware-backed keys).
+- `/help` explains what Connect does and does not control.
+
+### Upgrade notes
+
+No migration and no configuration change. Business Owners will see a new *Security Features* card under Settings →
+Security. Members who used *View only* will no longer see it: it never restricted their sessions.
+
 ## [0.24.0] — 2026-11-09 · *Keystone*
 
 **An offline-signed update chain for Windows agents.** Every Windows agent since 0.8.1 updated by piping this

@@ -557,7 +557,7 @@ export const updateTrustApi = {
 };
 
 export const securityControlsApi = {
-  catalog: () => api.get('/security-controls/catalog'),
+  catalog: (businessId?: string) => api.get('/security-controls/catalog', { params: businessId ? { businessId } : {} }),
   // Presets
   presets: () => api.get('/security-controls/presets'),
   clonePreset: (id: string, name: string) => api.post(`/security-controls/presets/${id}/clone`, { name }),

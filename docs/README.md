@@ -31,6 +31,9 @@ the product, searchable, under **Documentation** in the sidebar.
 
 ## Running it
 
+- **[security-model.md](security-model.md)** — which technician can reach a customer's PC and what evidence you will
+  have afterwards: the portal / RustDesk / endpoint boundary, what each session mode really does, roles vs presets,
+  and the roadmap. The same controls, with effective state, are in Settings → Security → Security Features.
 - **[update-signing.md](update-signing.md)** — the offline-signed update chain (0.24): what a compromised portal can
   and cannot do, key ceremony, shipping a release, signed-only containment, migrating legacy agents, rotation, recovery.
 - **[technician-access.md](technician-access.md)** — technician presets (L1/L2/L3),

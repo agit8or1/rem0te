@@ -42,6 +42,7 @@ const ORDER = [
   ['update-signing.md', 'Update signing'],
   ['setup.md', 'Setup and operations'],
   ['architecture.md', 'Architecture'],
+  ['security-model.md', 'Security model: who can reach a computer'],
   ['access-control.md', 'Access control'],
   ['offboarding.md', 'Access review and offboarding'],
   ['sign-in.md', 'Sign-in, SSO and passkeys'],

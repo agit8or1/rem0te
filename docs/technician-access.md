@@ -46,7 +46,7 @@ Every way of starting a session goes through one decision (`AccessPolicyService.
 1. **Paused identity** gets nothing.
 2. **Protected device class** (below): denied for everyone.
 3. **Unattended** mode: refused while the policy says off.
-4. Business members and Platform Admins: the pre-0.23 decision, unchanged.
+4. Business members and Platform Admins: the pre-0.23 decision, unchanged. **The requested mode is not applied to them**: a view-only or elevated request is approved with the permanent password and RustDesk opens with full control. Since 0.25.0 the View only button is offered only in a technician context, so it no longer implies otherwise.
 5. Custom technician assignments with `computers:connect` on this computer: unchanged.
 6. **Preset-backed** technicians:
    - **view-only** needs a preset that allows it on this device class, *and* an endpoint that reports it can enforce view-only and (when consent is required) attended consent;
@@ -63,7 +63,10 @@ RustDesk's view-only, clipboard and file-transfer switches are toggles on the **
 
 - every view-only and every consent-gated launch is **blocked** with `ENDPOINT_CANNOT_ENFORCE_VIEW_ONLY` / `ENDPOINT_CANNOT_ENFORCE_CONSENT`;
 - clipboard and file transfer are **Unavailable**;
-- endpoint-confirmed session termination is **not implemented** (RustDesk does not report it).
+- the session length is shown at launch but **nothing ends the session**;
+- the endpoint agent can observe that an incoming RustDesk connection ended (its process count reaches zero), but nothing on the endpoint can **terminate** a session.
+
+For everyone who is not a preset technician, the same configuration means the computer accepts its permanent password with nobody asked, so an ordinary Connect is unattended in effect. See [security-model.md](security-model.md#what-each-session-mode-really-does).
 
 The test suite simulates an enforcing endpoint by writing `sessionEnforcement` directly. **None of these restrictions has been live-verified against RustDesk.**
 
@@ -152,7 +155,7 @@ Every mutation under `/security-controls` needs a fresh re-authentication, **wha
 ## Not built (shown as Unavailable)
 
 - **Windows privileged helper.** None exists, so elevation cannot be enabled anywhere. Before one ships, it needs authenticated named-pipe IPC with a SID-restricted DACL, per-request signed intent from the portal, no arbitrary command surface, and tests for impersonation and pipe squatting.
-- **Release signing and provenance.** Installers are generated per request by the API, not built by CI, and there is no signing workflow. Before one ships: isolate PR builds from signing secrets, pin workflow actions to commit SHAs, publish provenance and verify it at install, refuse installers built from forks, and separate signing keys per channel.
+- **Authenticode signing and CI provenance.** The offline-rooted update chain shipped in 0.24 ([update-signing.md](update-signing.md)); Authenticode signing of the agent, CI-built provenance and hardware-backed keys have not.
 - **Device attestation for managed admin workstations** (see above).
 - **A scheduler entry point.** There is none in this build; when one is added it must call `AbuseGuardService.admit()`.
 
