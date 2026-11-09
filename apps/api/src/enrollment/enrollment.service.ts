@@ -1,3 +1,4 @@
+import { UpdateTrustService } from '../update-trust/update-trust.service';
 import {
   Injectable,
   NotFoundException,
@@ -37,6 +38,7 @@ export class EnrollmentService {
     private readonly inventory: EndpointInventoryService,
     private readonly sessionEvents: SessionEventsService,
     private readonly rollouts: UpdateRolloutService,
+    private readonly updateTrust: UpdateTrustService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -411,6 +413,7 @@ export class EnrollmentService {
     cpuLoadPercent?: number; memoryTotalMb?: number; memoryFreeMb?: number;
     systemDiskTotalMb?: number; systemDiskFreeMb?: number;
     rustdeskSessions?: number; updateNonce?: string;
+    updateChannel?: 'signed' | 'legacy'; trustRootVersion?: number; targetsVersion?: number;
   }, remoteIp?: string) {
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { rustdeskId: dto.rustdeskId },
@@ -558,6 +561,15 @@ export class EnrollmentService {
       // The address decides where the machine appears on the dashboard map and
       // what the audit trail records, so it is the device's to report or nobody's.
       ...(authenticated && dto.ipAddress !== undefined && { ipAddress: dto.ipAddress }),
+      // Update channel (0.24). Self-reported, and only ever used to decide what
+      // the portal withholds from a legacy agent — claiming "signed" gets an
+      // agent less from the portal, never more.
+      ...(authenticated && {
+        updateChannel: dto.updateChannel === 'signed' ? 'signed' : 'legacy',
+        trustRootVersion: dto.updateChannel === 'signed' ? dto.trustRootVersion ?? null : null,
+        targetsVersion: dto.updateChannel === 'signed' ? dto.targetsVersion ?? null : null,
+        trustReportedAt: new Date(),
+      }),
     };
 
     await this.prisma.endpoint.update({
@@ -626,6 +638,22 @@ export class EnrollmentService {
         }
       } catch (e) {
         this.logger.warn(`Rollout step failed for endpoint ${node.endpointId}: ${String(e)}`);
+      }
+    }
+
+    // Containment of the legacy update path (0.24). A legacy agent acts on
+    // either flag by piping the portal's windows.ps1 into a SYSTEM shell; in
+    // signed_only it is handed nothing to run, or — when portal-mediated
+    // migration is allowed — only the reinstall flag, which fetches the
+    // migration script in place of an installer.
+    if (authenticated) {
+      const gate = await this.updateTrust.gateForHeartbeat(dto.updateChannel === 'signed' ? 'signed' : 'legacy');
+      if (gate === 'withhold') {
+        updateRustdesk = null;
+        reinstallAgent = null;
+      } else if (gate === 'migrate') {
+        updateRustdesk = null;
+        reinstallAgent = { targetVersion: this.platformVersion() };
       }
     }
 

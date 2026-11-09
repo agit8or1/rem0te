@@ -351,6 +351,18 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
           <Card>
+            <CardHeader><CardTitle className="text-sm">Update Signing</CardTitle></CardHeader>
+            <CardContent className="flex flex-wrap items-center justify-between gap-3">
+              <p className="max-w-xl text-sm text-muted-foreground">
+                The offline-signed update repository this portal mirrors, which agents verify what they install, and
+                whether legacy agents may still run portal-served installers.
+              </p>
+              <Button variant="outline" onClick={() => router.push('/settings/security/update-signing')}>
+                <ShieldCheck className="mr-2 h-4 w-4" />Open Update Signing
+              </Button>
+            </CardContent>
+          </Card>
+          <Card>
             <CardHeader><CardTitle className="text-sm">Security Policy</CardTitle></CardHeader>
             <CardContent>
               <form

@@ -31,6 +31,8 @@ the product, searchable, under **Documentation** in the sidebar.
 
 ## Running it
 
+- **[update-signing.md](update-signing.md)** — the offline-signed update chain (0.24): what a compromised portal can
+  and cannot do, key ceremony, shipping a release, signed-only containment, migrating legacy agents, rotation, recovery.
 - **[technician-access.md](technician-access.md)** — technician presets (L1/L2/L3),
   launch policy, protected device classes, fleet-abuse limits, independent
   review of trust changes, and what this build can and cannot enforce.

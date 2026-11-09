@@ -5,6 +5,126 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.24.0] — 2026-11-09 · *Keystone*
+
+**An offline-signed update chain for Windows agents.** Every Windows agent since 0.8.1 updated by piping this
+portal's `windows.ps1` into a SYSTEM PowerShell (`irm … | iex`), whenever a heartbeat said so. That made the portal
+and its database the root of trust for every machine. Whoever controlled either could run anything, anywhere, at the
+next heartbeat. The RustDesk digest that installer checked came from the same response as the code checking it.
+
+0.24 moves the root of trust off the portal. Agents built with a trust root run only files signed offline by keys the
+portal never holds, and the portal becomes a mirror.
+
+**Status: fixture-tested.**
+- The Go tests drive the real release tool and the real go-tuf client through every attack below.
+- An end-to-end suite runs the mirror and containment against a scratch API.
+- The signed installer is parsed, and its parameter block executed, with real PowerShell.
+- **No Windows machine has run it**, in a lab or in production. Pilot it on one lab machine first.
+
+### Upgrade notes
+
+- **Migration `0024_signed_updates`.** Additive:
+  - `Endpoint.updateChannel`, `trustRootVersion`, `targetsVersion` and `trustReportedAt`;
+  - `PlatformSettings.updateTrustMode` (default `legacy_allowed`) and `legacyPortalMigration` (default false).
+  - Deploy it with the usual schema-change steps (CLAUDE.md, *A schema change needs two more steps*).
+- **Nothing changes until you opt in.** With no `UPDATE_REPO_DIR`, the portal behaves exactly as 0.23:
+  - the legacy installer (whose output is byte-identical apart from two lines that record `updateChannel = 'legacy'`);
+  - the legacy bootstrap download;
+  - legacy heartbeats.
+- **No production dependency changed.** The Go module gains go-tuf v2.4.2 and sigstore v1.10.6. These are build-time
+  only for the agent; nothing is added to the API's manifest.
+- **The agent binary is about 15 MB** (was 2.2 MB), because of go-tuf's verification dependencies. Build release
+  binaries with `-trimpath -ldflags "-s -w"`.
+
+### Added
+
+- **`rem0te-release`** (`tools/windows-installer/cmd/rem0te-release`), the offline repository tool:
+  - `keygen`, `pubkey`, `init`, `release`, `refresh`, `rotate-root`, `status`, and `verify` (local, or `-mirror` for a
+    deployed portal through the real client);
+  - root 2-of-3 by default, with separate targets, snapshot and timestamp keys; a key reused across roles is refused;
+  - consistent snapshots, and versions are never overwritten;
+  - a root rotation is refused if clients trusting the previous root would reject it.
+- **`rem0te-agent.exe`** (`tools/windows-installer`), the same binary as the downloadable bootstrap:
+  - commands `install`, `migrate`, `update` and `status`;
+  - Stage 1: fetch the signed agent into `Program Files\Rem0te`, then run it.
+  - Stage 2: refuse unless its own SHA-256 is the signed one; fetch the signed `windows/install.ps1` and the signed
+    RustDesk build into a SYSTEM/Administrators-only directory; write a parameters file; run the script.
+  - Trusted metadata persists in `ProgramData\Rem0te\tuf`, so rollback and freeze protection survive restarts, and a
+    replaced binary carrying an older root can't make the machine forget a rotation.
+  - A RustDesk downgrade is refused unless the target is signed `allowDowngrade`.
+  - **An installed agent keeps the relay host and key it pinned at install.** A portal asking for a different relay is
+    reported (`relayChangeRequested`), never applied. Otherwise a compromised portal could repoint the fleet without
+    touching signed code.
+  - A build without a trust root (CI or dev, `trustroot/root.json` = `{}`) keeps the legacy behaviour and says so.
+- **Signed installer variant** (`apps/api/src/public/windows-script.ts`). The installer template moved out of the
+  controller unchanged, and both variants share one body. The signed variant:
+  - takes a mandatory `-ParamsFile`, and validates every field again with case-sensitive allowlists;
+  - copies the agent-verified RustDesk build instead of downloading it, with the digest mandatory;
+  - has a heartbeat hook that runs `rem0te-agent.exe update [--nonce]` instead of `irm | iex`;
+  - reports `updateChannel`, `trustRootVersion` and `targetsVersion` on each heartbeat.
+  - `apps/api/scripts/build-signed-installer.mjs` writes it deterministically for the release signer.
+- **Portal mirror:**
+  - `GET /api/v1/public/updates/metadata/:file` and `GET /api/v1/public/updates/targets/*path` serve `UPDATE_REPO_DIR`
+    byte-for-byte;
+  - strict names, realpath containment (symlinks refused), and `timestamp.json` served `no-store`.
+- **`GET /api/v1/public/install/windows-params.json`**: data only. It offers only RustDesk builds that signed targets
+  list, and for a staged job exactly that job's version.
+- **Settings → Security → Update Signing** (`GET /admin/update-trust`, `PUT /admin/update-trust/mode`):
+  - the repository as served: role versions, expiry warnings and targets;
+  - the trust mode;
+  - the Windows agent inventory: legacy agents, and signed agents behind the current root.
+- **Containment.** In `signed_only`:
+  - heartbeats hand legacy agents no reinstall or update trigger;
+  - `windows.ps1` serves a refusal that runs nothing;
+  - the Windows download is the signed agent.
+  - With `legacyPortalMigration`, legacy agents get only the reinstall trigger, and `windows.ps1` becomes a short script
+    that downloads the signed agent, checks the digest the portal pins, and runs `migrate`. That run trusts the portal
+    once.
+  - Tightening applies at once. Loosening (back to `legacy_allowed`, or turning portal migration on) is a trust change
+    (`update_trust`) needing an independent reviewer and fresh authentication.
+- **Migration path** independent of the portal: `rem0te-agent.exe migrate --portal <host>` from the official release,
+  through GPO, Intune or locally.
+  - It keeps enrollment, the device secret, the RustDesk configuration and password, and the scheduled tasks.
+  - It pins the relay the machine already uses.
+- **Tests:**
+  - `tools/windows-installer/internal/trust/chain_test.go`, the attack drills: tampered target (same length, so only
+    the digest catches it), forged targets from a compromised portal holding the online keys, rollback after restart,
+    freeze after expiry and recovery by refresh, mix-and-match, stolen timestamp key, two root rotations with a
+    targets-key replacement, an under-signed rotation, an older embedded root, key reuse, invalid target names.
+  - `internal/agent/agent_test.go`: only signed code runs, stage 2 refuses an unsigned self, unsigned and downgraded
+    RustDesk builds are refused, relay pinning on update, migration pins the prior relay, nonce mismatch, hostile
+    parameters, a tampered agent binary, the slot parser.
+  - `apps/api/scripts/unit-signed-installer.mjs`, in CI: 42 checks, including PowerShell parsing both variants and
+    their heartbeats, and executing the signed parameter block against 15 hostile parameter files.
+  - `apps/api/scripts/e2e-signed-updates.mjs`: 46 checks against a scratch API, with the real Go client verifying
+    through the API mirror.
+  - `scripts/check-security-invariants.mjs` § 12: 13 static checks.
+  - CI now runs `go test ./...` in the installer job, and the signed-installer tests in the check job.
+- Docs: new [update-signing.md](docs/update-signing.md), covering the key ceremony, releases, timestamp refresh,
+  containment, migration, rotation and recovery. Also updates.md, architecture.md, troubleshooting.md and the in-app
+  help.
+
+### Changed
+
+- **Security features catalog.** *Release signing* is now **partial** (*Signed agent updates, offline-rooted*), with
+  the remaining gaps listed.
+- `buildWindowsScript` in `public.controller.ts` is now a thin wrapper around `buildLegacyWindowsScript`. The legacy
+  output was diffed against the 0.23 template for identical inputs. The only differences are the two
+  `updateChannel` / `$RD_LOCAL` lines.
+
+### Not built (this milestone)
+
+- **Authenticode signing of the agent binary.** Windows doesn't vouch for a first download, so a first install trusts
+  the file it was given. Use the official release through GPO or Intune for an independent first install.
+- CI-built provenance for release artifacts, hardware-backed signing keys, and an automated timestamp-signer service.
+- Signing for the Linux and macOS installers, and for the technician-side Connect / setup `.cmd` scripts. Their
+  RustDesk downloads still carry no digest check. Found in the trace for this release, and not changed.
+- Signed customer policy: a database compromise can still change policy, just not code.
+- Job-approval signing and the first approved action (Print Spooler). That is the next milestone, gated on this one.
+- A paired-lab run on real Windows: install, migrate a 0.19–0.23 agent, update, rotate.
+
+---
+
 ## [0.23.0] — 2026-11-09 · *Gatehouse*
 
 **Technician access presets and abuse prevention.** Three shipped tiers

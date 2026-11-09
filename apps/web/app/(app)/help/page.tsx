@@ -486,6 +486,14 @@ const SECTIONS: Section[] = [
           <Link href="/docs/technician-access" className="underline text-foreground">Technician access</Link>.
         </p>
         <p>
+          From 0.24, Windows agents can update through a <strong className="text-foreground">signed update chain</strong>:
+          they run only files signed offline by your release signer, so this portal cannot make them install anything
+          else. Platform Admins see which computers are still on the older update path, and can stop the portal handing
+          those anything to run, under{' '}
+          <Link href="/settings/security/update-signing" className="underline text-foreground">Settings → Security → Update Signing</Link>.
+          More in <Link href="/docs/update-signing" className="underline text-foreground">Update signing</Link>.
+        </p>
+        <p>
           Customers can ask for help through their business&apos;s support link, without an account. Requests appear
           under <Link href="/support-requests" className="underline text-foreground">Support Requests</Link>: claim
           one, connect, and complete or hand it off.

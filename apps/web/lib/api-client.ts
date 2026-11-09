@@ -549,6 +549,13 @@ export type InspectAction =
   | 'launch_view_only' | 'launch_control' | 'launch_elevated' | 'launch_unattended' | 'clipboard' | 'file_transfer'
   | 'scripts' | 'patches' | 'fix_request' | 'fix_approval' | 'fleet_execution' | 'approve_requests';
 
+// Signed update chain (0.24): mirror status, trust mode, agent inventory.
+export const updateTrustApi = {
+  get: () => api.get('/admin/update-trust'),
+  setMode: (mode: 'legacy_allowed' | 'signed_only', legacyPortalMigration: boolean) =>
+    api.put('/admin/update-trust/mode', { mode, legacyPortalMigration }),
+};
+
 export const securityControlsApi = {
   catalog: () => api.get('/security-controls/catalog'),
   // Presets

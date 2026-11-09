@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **326** of them across
-**37** controllers.
+integration, under `/api/integration/v1`). There are **331** of them across
+**39** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -286,6 +286,7 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/public/install/linux/:token` | public | — |
 | `GET` | `/api/v1/public/install/mac/:token` | public | — |
 | `GET` | `/api/v1/public/install/win/:token` | public | — |
+| `GET` | `/api/v1/public/install/windows-params.json` | public | — |
 | `GET` | `/api/v1/public/rustdesk-config` | public | — |
 
 ## Public API (API-key authenticated)
@@ -587,6 +588,24 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/admin/update/rustdesk-server` | signed in | — |
 | `POST` | `/api/v1/admin/update/rustdesk/:endpointId/cancel` | signed in | — |
 | `GET` | `/api/v1/admin/update/version` | signed in | — |
+
+## Update trust adminupdatetrust
+
+`apps/api/src/update-trust/update-trust.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/admin/update-trust` | signed in | — |
+| `PUT` | `/api/v1/admin/update-trust/mode` | signed in | — |
+
+## Update trust publicupdates
+
+`apps/api/src/update-trust/update-trust.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/public/updates/metadata/:file` | public | — |
+| `GET` | `/api/v1/public/updates/targets/*path` | public | — |
 
 ## Users
 
