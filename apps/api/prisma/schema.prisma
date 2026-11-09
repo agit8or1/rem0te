@@ -194,6 +194,10 @@ enum ActivityAction {
   PASSKEY_LOGIN
   STEP_UP_VERIFIED
   STEP_UP_FAILED
+  INTEGRATION_JOB_ACCEPTED
+  INTEGRATION_JOB_REJECTED
+  INTEGRATION_JOB_FINISHED
+  INTEGRATION_MAPPING_CHANGED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -1736,4 +1740,151 @@ model WebAuthnChallenge {
   userId    String?
   createdAt DateTime @default(now())
   expiresAt DateTime
+}
+
+// ─── Ticket ↔ RMM integration (contract ticket-rmm-v1) ───────────────────────
+//
+// ClientSt0r owns tickets, customer communication and every AI provider key.
+// rem0te accepts analysis jobs from it, runs them through ClientSt0r's
+// restricted inference gateway and returns staff-only findings. Peer trust
+// (keys, URLs, audiences) is NOT in this database — it is a root-owned file,
+// INTEGRATION_PEERS_FILE — so a database write cannot add a peer, swap a key
+// or point the worker at a new URL. What lives here is the explicit mapping
+// from a peer's organizations and technicians to rem0te businesses and users,
+// the jobs, and the signed event outbox. See docs/integration-clientst0r.md.
+
+/// One ClientSt0r organization ↔ one rem0te business, per peer.
+model IntegrationOrgMapping {
+  id            String    @id @default(cuid())
+  peerId        String
+  externalOrgId String
+  customerId    String
+  tenantId      String
+  createdById   String
+  createdAt     DateTime  @default(now())
+  revokedAt     DateTime?
+
+  @@unique([peerId, externalOrgId])
+  @@unique([peerId, customerId])
+  @@index([customerId])
+}
+
+/// One ClientSt0r technician (inside one organization) ↔ one rem0te user.
+/// The user's live access to the mapped business is re-checked on every
+/// request and again by the worker; a mapping grants nothing on its own.
+model IntegrationTechnicianMapping {
+  id                   String    @id @default(cuid())
+  peerId               String
+  externalOrgId        String
+  externalTechnicianId String
+  userId               String
+  createdById          String
+  createdAt            DateTime  @default(now())
+  revokedAt            DateTime?
+
+  @@unique([peerId, externalOrgId, externalTechnicianId])
+  @@index([userId])
+}
+
+enum IntegrationJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  PARTIAL
+  FAILED
+  EXPIRED
+}
+
+model IntegrationJob {
+  id                   String               @id
+  peerId               String
+  tenantId             String
+  customerId           String
+  actorUserId          String
+  externalOrgId        String
+  externalTechnicianId String
+  ticketId             String
+  ticketRevision       Int
+  endpointId           String?
+  modelProfiles        String[]
+  correlationId        String
+  idempotencyKey       String
+  /// sha256 of the canonical request body — same key + different hash = 409.
+  payloadSha256        String
+  /// The ticket snapshot and options, bounded at intake. Untrusted content.
+  input                Json
+  status               IntegrationJobStatus @default(QUEUED)
+  attempts             Int                  @default(0)
+  nextAttemptAt        DateTime             @default(now())
+  leaseOwner           String?
+  leaseExpiresAt       DateTime?
+  result               Json?
+  errorCode            String?
+  errorMessage         String?
+  expiresAt            DateTime
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  completedAt          DateTime?
+  lastEventSequence    Int                  @default(0)
+
+  runs   IntegrationJobRun[]
+  events IntegrationEvent[]
+
+  @@unique([peerId, idempotencyKey])
+  @@index([status, nextAttemptAt])
+  @@index([customerId, createdAt])
+}
+
+/// One model profile's attempt at a job. Persisted per profile so a worker
+/// that dies mid-job resumes without re-buying the profiles that finished.
+model IntegrationJobRun {
+  id             String         @id @default(cuid())
+  jobId          String
+  job            IntegrationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  modelProfile   String
+  status         String         @default("PENDING") // PENDING | SUCCEEDED | FAILED
+  attempts       Int            @default(0)
+  requestId      String?
+  resolvedModel  String?
+  output         Json?
+  usage          Json?
+  errorCode      String?
+  errorMessage   String?
+  latencyMs      Int?
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([jobId, modelProfile])
+}
+
+/// Signed, per-job sequenced outbox. Delivered to the peer's events URL with
+/// retries; also readable by polling, so a lost callback loses nothing.
+model IntegrationEvent {
+  id                String         @id
+  jobId             String
+  job               IntegrationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  peerId            String
+  sequence          Int
+  type              String
+  body              Json
+  signature         String
+  keyId             String
+  createdAt         DateTime       @default(now())
+  deliveryAttempts  Int            @default(0)
+  nextDeliveryAt    DateTime       @default(now())
+  ackedAt           DateTime?
+  lastDeliveryError String?
+
+  @@unique([jobId, sequence])
+  @@index([ackedAt, nextDeliveryAt])
+}
+
+/// Replay protection that survives a restart: request nonces and delegation
+/// token ids, each kept until it could no longer be accepted anyway.
+model IntegrationReplayGuard {
+  key       String   @id // "<peer>:nonce:<n>" or "<peer>:jti:<jti>"
+  jobId     String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
 }

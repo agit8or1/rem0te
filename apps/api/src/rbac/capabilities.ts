@@ -38,6 +38,11 @@ export const CAP = {
 
   // Audit
   AUDIT_VIEW: 'audit:view',
+
+  // Integration (contract ticket-rmm-v1). Lets a mapped ClientSt0r technician
+  // submit read-only ticket analysis for this business and read its staff-only
+  // findings. It confers nothing else — no session, no command, no approval.
+  TICKET_ANALYSIS: 'integration:ticket_analysis',
 } as const;
 
 export type Capability = (typeof CAP)[keyof typeof CAP];
@@ -91,6 +96,12 @@ export const CAPABILITY_GROUPS: {
     group: 'Audit',
     items: [
       { key: CAP.AUDIT_VIEW, label: 'View business audit log', description: "See this business's audit history." },
+    ],
+  },
+  {
+    group: 'Integration',
+    items: [
+      { key: CAP.TICKET_ANALYSIS, label: 'Ticket analysis (ClientSt0r)', description: 'Submit read-only ticket analysis from ClientSt0r for this business and read the staff-only findings. Grants no remote access and no actions.' },
     ],
   },
 ];

@@ -34,6 +34,7 @@ const ORDER = [
   ['clients.md', 'Clients'],
   ['inventory.md', 'Inventory and event logs'],
   ['tactical-rmm.md', 'Tactical RMM'],
+  ['integration-clientst0r.md', 'ClientSt0r integration'],
   ['support-requests.md', 'Support requests'],
   ['technicians.md', 'MSP technicians'],
   ['updates.md', 'Updates'],

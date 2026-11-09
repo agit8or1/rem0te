@@ -27,6 +27,7 @@ export const CAP = {
   USERS_VIEW: 'users:view',
   USERS_MANAGE: 'users:manage',
   AUDIT_VIEW: 'audit:view',
+  TICKET_ANALYSIS: 'integration:ticket_analysis',
 } as const;
 
 export type Capability = (typeof CAP)[keyof typeof CAP];

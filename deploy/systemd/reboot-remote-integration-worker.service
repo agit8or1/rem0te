@@ -1,0 +1,36 @@
+[Unit]
+Description=Rem0te ticket-analysis integration worker (contract ticket-rmm-v1)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=reboot
+Group=reboot
+WorkingDirectory=/opt/reboot-remote/api
+EnvironmentFile=/etc/reboot-remote/api.env
+ExecStart=/usr/bin/node dist/integration/worker.main.js
+Restart=on-failure
+RestartSec=5
+
+# The worker reads the database and POSTs to two URLs from the peers file.
+# It needs nothing else, so it gets nothing else.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+ReadOnlyPaths=/etc/reboot-remote
+
+[Install]
+WantedBy=multi-user.target

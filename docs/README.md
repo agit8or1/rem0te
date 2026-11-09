@@ -21,6 +21,9 @@ the product, searchable, under **Documentation** in the sidebar.
   pending Windows updates, and how to read a slice of its event log.
 - **[tactical-rmm.md](tactical-rmm.md)** — connecting and querying from inside
   Tactical RMM: URL Actions, agent matching, and the Collector Task.
+- **[integration-clientst0r.md](integration-clientst0r.md)** — ClientSt0r ticket
+  analysis (contract ticket-rmm-v1): staff-only findings, what a job can and
+  cannot touch, peers file, mappings. Contract: [contracts/ticket-rmm-v1](contracts/ticket-rmm-v1/README.md).
 - **[support-requests.md](support-requests.md)** — the customer support link,
   the status page, and the technician queue.
 - **[technicians.md](technicians.md)** — MSP technicians: per-business,

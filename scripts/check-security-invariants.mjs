@@ -218,6 +218,50 @@ check(
   `read the address via PublicUrlService (web()/api()/…Configured()), not the environment: ${rawReaders.join(', ')}`,
 );
 
+// 10. Ticket ↔ RMM integration (0.22). The worker turns untrusted tickets and
+//     model output into results; what keeps that read-only is that nothing it
+//     can reach can do anything else. These hold the boundary in place.
+{
+  const dir = 'apps/api/src/integration';
+  const files = walk(dir);
+  const src = Object.fromEntries(files.map((f) => [f, read(f)]));
+  const imports = (f) => [...src[f].matchAll(/from\s+'([^']+)'/g)].map((m) => m[1]);
+
+  // a) No shell, no process spawning, anywhere in the integration.
+  const shell = files.filter((f) => /child_process|\bexecSync\b|\bspawn\(|\bexecFile\(/.test(src[f]));
+  check('integration code never spawns a process', shell.length === 0, shell.join(', '));
+
+  // b) Exactly one outbound HTTP call site, and it takes a Peer, not a URL.
+  const fetchers = files.filter((f) => /\bfetch\(|\bhttps?\.request\(|axios|got\(/.test(src[f]));
+  check('integration has one outbound HTTP call site (signer.ts)', fetchers.length === 1 && fetchers[0].endsWith('/signer.ts'), fetchers.join(', '));
+  check('signedPost targets only a peer-file URL', /const url = which === 'inference' \? peer\.inferenceUrl : peer\.eventsUrl;/.test(src[`${dir}/signer.ts`]) && /redirect: 'error'/.test(src[`${dir}/signer.ts`]),
+    'signedPost must take its URL from the Peer and refuse redirects');
+
+  // c) The worker and its module reach nothing that opens a session, issues a
+  //    launcher token, queues an endpoint command or approves anything.
+  const FORBIDDEN = /(sessions|launcher|quick-connect|enrollment|endpoints\/|endpoint-inventory|connection|admin\/|apikeys|downloads|public\/)/;
+  for (const f of [`${dir}/worker.service.ts`, `${dir}/worker.module.ts`, `${dir}/worker.main.ts`, `${dir}/gateway.client.ts`, `${dir}/analysis.ts`, `${dir}/delegation.service.ts`]) {
+    const bad = imports(f).filter((i) => FORBIDDEN.test(i));
+    check(`${f.split('/').pop()} imports nothing that can launch, command or approve`, bad.length === 0, bad.join(', '));
+  }
+  check('worker writes no endpoint commands', !/endpointCommand|rustdeskNode\.update|supportSession|launcherToken|connectionGrant/.test(src[`${dir}/worker.service.ts`]),
+    'the worker must not touch endpointCommand / sessions / launcher / grants');
+
+  // d) Peer trust is never read from or written to the database.
+  const dbPeers = files.filter((f) => /prisma\.integrationPeer|integrationPeer\.(create|update|upsert)/.test(src[f]));
+  check('peer keys and URLs come from the peers file, not the database', dbPeers.length === 0, dbPeers.join(', '));
+
+  // e) Every integration route is behind the signature guard.
+  const ctl = src[`${dir}/integration.controller.ts`];
+  check('IntegrationController is guarded by IntegrationAuthGuard at class level', /@UseGuards\(IntegrationAuthGuard\)\s*\n\s*@UseFilters/.test(ctl), 'class-level @UseGuards(IntegrationAuthGuard) missing');
+  // f) Nonces and jtis are consumed with an atomic insert, never read-then-write.
+  check('replay guard consumes with one atomic insert', /createMany\(\{[\s\S]*skipDuplicates: true/.test(src[`${dir}/replay-guard.service.ts`]), 'consume() must be a single INSERT … ON CONFLICT DO NOTHING');
+  // g) The integration never acts as Platform Admin.
+  check('delegated actor is never Platform Admin', /isPlatformAdmin: false,/.test(src[`${dir}/delegation.service.ts`]), 'DelegationService.checkActor must pin isPlatformAdmin: false');
+  // h) Next steps are text.
+  check('analysis next steps are never executable', /executable: false, requires_human_approval: true/.test(src[`${dir}/analysis.ts`]) && /executable: z\.literal\(false\)/.test(src[`${dir}/contract.ts`]), 'next_steps must be executable:false in both code and schema');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

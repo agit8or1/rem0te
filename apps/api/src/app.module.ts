@@ -44,6 +44,7 @@ import { PlatformModule } from './platform/platform.module';
 import { QuickConnectModule } from './quick-connect/quick-connect.module';
 import { DownloadsModule } from './downloads/downloads.module';
 import { TechniciansModule } from './technicians/technicians.module';
+import { IntegrationModule } from './integration/integration.module';
 
 @Module({
   imports: [
@@ -101,6 +102,7 @@ import { TechniciansModule } from './technicians/technicians.module';
     QuickConnectModule,
     DownloadsModule,
     TechniciansModule,
+    IntegrationModule,
   ],
   providers: [
     {

@@ -54,8 +54,18 @@ endpoint's credential.
 | `caddy` | TLS termination and reverse proxy | 80, 443 |
 | `postgresql` | Everything Rem0te knows | local |
 | `redis` | Sessions and rate limiting | local |
+| `reboot-remote-integration-worker` | Optional (0.22). ClientSt0r ticket-analysis worker; no HTTP listener | — |
 
 No Docker. Deployment is systemd units and a build on disk.
+
+### The integration worker is deliberately small
+
+`dist/integration/worker.main.js` loads Prisma, RBAC and audit and nothing else —
+no sessions, launcher, enrollment, endpoint-command or admin modules — so a job
+built from an untrusted ticket has no code path to any of them. Its only outbound
+HTTP goes to the two URLs in the root-owned peers file, with redirects refused.
+`scripts/check-security-invariants.mjs` (section 10) holds both properties. See
+[integration-clientst0r.md](integration-clientst0r.md).
 
 ### hbbs and hbbr are locked to the server key
 

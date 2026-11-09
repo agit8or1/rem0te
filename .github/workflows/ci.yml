@@ -75,6 +75,15 @@ jobs:
       - name: Session mutation tests
         run: node apps/api/scripts/unit-session-mutations.mjs
 
+      # Contract ticket-rmm-v1: the JSON Schemas ClientSt0r validates against are
+      # generated from the runtime zod schemas; drift between them, or a fixture
+      # that no longer parses, fails here. Then the signing, trust-file and
+      # analysis rules, against the compiled code with no database.
+      - name: Integration contract and unit tests
+        run: |
+          node scripts/gen-integration-contracts.mjs --check
+          node apps/api/scripts/unit-integration.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.

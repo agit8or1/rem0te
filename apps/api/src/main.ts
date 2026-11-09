@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { PublicUrlService } from './platform/public-url.service';
-import { ValidationPipe } from '@nestjs/common';
+import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import * as cookieParser from 'cookie-parser';
@@ -25,6 +25,9 @@ function readVersion(): { version: string; commit: string; buildDate: string } {
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: ['error', 'warn', 'log'],
+    // The integration routes verify an Ed25519 signature over the exact bytes
+    // received, so the raw body must survive JSON parsing (req.rawBody).
+    rawBody: true,
   });
 
   // Endpoints POST collected event-log pages here, and the default Express
@@ -121,8 +124,16 @@ async function bootstrap() {
     }),
   );
 
-  // Global prefix
-  app.setGlobalPrefix('api/v1');
+  // Global prefix. The ticket-rmm-v1 integration lives at /api/integration/v1
+  // (its own versioned contract, docs/contracts/ticket-rmm-v1) and is excluded.
+  app.setGlobalPrefix('api/v1', {
+    exclude: [
+      { path: 'api/integration/v1/capabilities', method: RequestMethod.GET },
+      { path: 'api/integration/v1/jobs', method: RequestMethod.POST },
+      { path: 'api/integration/v1/jobs/:job_id', method: RequestMethod.GET },
+      { path: 'api/integration/v1/jobs/:job_id/events', method: RequestMethod.GET },
+    ],
+  });
 
   const httpServer = await app.listen(port, '127.0.0.1');
   // Node's default keepAliveTimeout is 5s — shorter than Caddy's connection pool.
