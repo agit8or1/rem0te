@@ -476,6 +476,16 @@ const SECTIONS: Section[] = [
           access that is not active right now and why.
         </p>
         <p>
+          Most technician access is now an <strong className="text-foreground">access level</strong>: L1 Help Desk,
+          L2 Technician or L3 Senior. No level gives Remote connect or a computer&apos;s password. View-only works only
+          where the computer can enforce it, and interactive control needs a{' '}
+          <strong className="text-foreground">temporary grant</strong>: request it from the computer&apos;s page, have
+          someone else approve it, then activate it with a fresh sign-in. If Connect is refused, the message says why.
+          Domain controllers, hypervisors, backup servers and the Rem0te host are refused to everyone. Unusually broad
+          activity pauses your privileged access until someone else clears it. More in{' '}
+          <Link href="/docs/technician-access" className="underline text-foreground">Technician access</Link>.
+        </p>
+        <p>
           Customers can ask for help through their business&apos;s support link, without an account. Requests appear
           under <Link href="/support-requests" className="underline text-foreground">Support Requests</Link>: claim
           one, connect, and complete or hand it off.

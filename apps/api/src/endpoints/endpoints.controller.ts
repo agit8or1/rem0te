@@ -1,3 +1,4 @@
+import type { LaunchMode } from '../security-controls/access-policy.service';
 import {
   Controller, Get, Post, Patch, Delete,
   Body, Param, Query, Req, Res, UseGuards, HttpCode, HttpStatus,
@@ -29,6 +30,12 @@ import { PublicUrlService } from '../platform/public-url.service';
  * on is resolved inside EndpointsService for every single route — a path
  * parameter naming another business's computer produces a 404, not a leak.
  */
+function parseLaunchMode(raw: string | undefined): LaunchMode {
+  if (raw === undefined || raw === '' || raw === 'control') return 'control';
+  if (raw === 'view_only' || raw === 'elevated' || raw === 'unattended') return raw;
+  throw new BadRequestException('mode must be control, view_only, elevated or unattended');
+}
+
 @Controller('endpoints')
 @UseGuards(JwtAuthGuard, CapabilitiesGuard)
 export class EndpointsController {
@@ -62,16 +69,21 @@ export class EndpointsController {
    * and also returns the credentials for the current browser flow. Both paths
    * run the same authorization check and both are audited.
    */
+  // No @RequireCapability(computers:connect): a preset-backed technician holds
+  // no such capability by design, and authorizeConnect decides every actor —
+  // members still need computers:connect there, exactly as before.
   @Post(':id/connect')
   @HttpCode(HttpStatus.OK)
-  @RequireCapability(CAP.COMPUTERS_CONNECT)
   @RateLimit(30)
   async connect(
     @Actor() actor: ActorContext, @Param('id') id: string,
     @Query('supportRequestId') supportRequestId?: string,
+    @Query('mode') mode?: string,
   ) {
-    const grant = await this.svc.createConnectionGrant(actor, id);
+    const launchMode = parseLaunchMode(mode);
+    const grant = await this.svc.createConnectionGrant(actor, id, launchMode);
     const info = await this.svc.connectInfo(actor, id, {
+      mode: launchMode,
       supportRequestId: supportRequestId ? await this.svc.supportRequestForConnect(actor, supportRequestId, id) : undefined,
     });
     return {
@@ -99,15 +111,15 @@ export class EndpointsController {
    * endpoint's password at all.
    */
   @Get(':id/connect.cmd')
-  @RequireCapability(CAP.COMPUTERS_CONNECT)
   @RateLimit(30)
   async connectScript(
     @Actor() actor: ActorContext,
     @Param('id') id: string,
     @Res() res: Response,
     @Query('session') reuseSessionId?: string,
+    @Query('mode') mode?: string,
   ) {
-    const info = await this.svc.connectInfo(actor, id, { reuseSessionId });
+    const info = await this.svc.connectInfo(actor, id, { reuseSessionId, mode: parseLaunchMode(mode), admit: true });
     const telemetryToken = info.sessionId ? await this.sessionEvents.issueTelemetryToken(info.sessionId) : null;
     const config = await this.rustdesk.serverConfig();
     if (!config) {

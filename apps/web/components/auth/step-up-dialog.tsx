@@ -18,6 +18,9 @@ const ACTION_LABEL: Record<string, string> = {
   'sso.configure': 'change single sign-on settings',
   'passkey.manage': 'add or remove a passkey',
   'platform.configure': "change the server's public address",
+  // v0.23 security controls: always re-authenticate, whatever is enabled.
+  'fresh.auth': 'change technician access or security controls',
+  'fresh.auth.passkey': 'activate a protected-device exception',
 };
 
 /**
@@ -43,6 +46,10 @@ export function StepUpDialog() {
     }));
     return () => registerStepUpHandler(null);
   }, []);
+
+  // A protected-device exception accepts only a passkey; offering a password
+  // there would succeed here and then be refused by the retried request.
+  const passkeyOnly = action === 'fresh.auth.passkey';
 
   function finish(ok: boolean) {
     const r = resolver.current;
@@ -85,6 +92,19 @@ export function StepUpDialog() {
             confirm your identity. This lasts 10 minutes for this sign-in only.
           </DialogDescription>
         </DialogHeader>
+        {passkeyOnly ? (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              This action needs a passkey. Passwords and authenticator codes are not accepted for it.
+            </p>
+            {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
+            <DialogFooter>
+              <Button type="button" onClick={usePasskey} disabled={busy || !passkeysSupported()}>
+                <KeyRound className="mr-2 h-4 w-4" />{busy ? 'Checking…' : 'Use a passkey'}
+              </Button>
+            </DialogFooter>
+          </div>
+        ) : (
         <form onSubmit={submit} className="space-y-3">
           <div className="space-y-1.5">
             <Label htmlFor="stepup-value">{mode === 'password' ? 'Password' : 'Authenticator code'}</Label>
@@ -108,6 +128,7 @@ export function StepUpDialog() {
             <Button type="submit" disabled={busy || !value}>{busy ? 'Checking…' : 'Confirm'}</Button>
           </DialogFooter>
         </form>
+        )}
       </DialogContent>
     </Dialog>
   );

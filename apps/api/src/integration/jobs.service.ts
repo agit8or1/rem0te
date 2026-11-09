@@ -1,3 +1,5 @@
+import { AccessPolicyService } from '../security-controls/access-policy.service';
+import { AbuseGuardService } from '../security-controls/abuse-guard.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
@@ -6,7 +8,7 @@ import { AuditService } from '../audit/audit.service';
 import { JobRequest, MAX_JOB_TTL_S, type DelegationClaims } from './contract';
 import { canonicalJson, sha256Hex } from './crypto';
 import { DelegationService } from './delegation.service';
-import { E } from './errors';
+import { E, IntegrationError } from './errors';
 import type { Peer } from './peers';
 import { ReplayGuardService } from './replay-guard.service';
 import { appendEvent, toJob } from './job-view';
@@ -25,6 +27,8 @@ export class IntegrationJobsService {
     private readonly audit: AuditService,
     private readonly delegation: DelegationService,
     private readonly replay: ReplayGuardService,
+    private readonly policy: AccessPolicyService,
+    private readonly abuse: AbuseGuardService,
   ) {}
 
   /**
@@ -78,6 +82,19 @@ export class IntegrationJobsService {
 
     let endpointId: string | null = null;
     if (body.endpoint) endpointId = (await this.delegation.assertEndpoint(who.actor, body.endpoint.rem0te_endpoint_id)).id;
+
+    // Fleet limits (v0.23): analysis reads endpoint evidence, so it counts —
+    // against the delegated technician (the same counter as their UI and
+    // launcher work, so a split across entry points still adds up) and
+    // against the peer as a whole. Idempotent replays returned above are not
+    // counted twice.
+    for (const [identity, tier] of [[`user:${who.actor.userId}`, this.policy.tierFor(who.actor, endpointId)], [`peer:${peer.id}`, 'integration']] as const) {
+      const r = await this.abuse.admit({ identity, tier, kind: 'EVIDENCE', endpointId, customerId: who.customerId, entryPoint: 'integration' });
+      if (!r.ok) {
+        await this.reject(peer, claims, r.reason === 'identity_paused' ? 'IDENTITY_PAUSED' : 'THRESHOLD_TRIPPED');
+        throw new IntegrationError(403, r.reason === 'identity_paused' ? 'IDENTITY_PAUSED' : 'THRESHOLD_TRIPPED', r.message);
+      }
+    }
 
     const jobId = randomUUID();
     if (!(await this.replay.consume(this.delegation.jtiKey(peer, claims), this.delegation.jtiExpiry(claims), jobId))) {

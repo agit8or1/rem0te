@@ -327,6 +327,20 @@ sudo tcpdump -i any -nn 'udp port 21116'
 
 ---
 
+## Connect is refused with a reason (v0.23)
+
+The launch policy answers 403 with a code and a sentence; the UI shows the sentence. Most often:
+
+| Code | Meaning | What to do |
+|---|---|---|
+| `ENDPOINT_CANNOT_ENFORCE_VIEW_ONLY` / `ENDPOINT_CANNOT_ENFORCE_CONSENT` | The computer's agent does not report that it can enforce view-only or attended consent. No shipped agent does yet. | Expected for preset-backed technicians. A business member or a custom assignment with Remote connect can still connect as before. |
+| `TEMPORARY_GRANT_REQUIRED` | Preset-backed control needs an activated temporary grant. | Request it, have someone else approve it, then activate it with a fresh sign-in. |
+| `PROTECTED_DEVICE_CLASS` | The computer is a domain controller, hypervisor, backup server or RMM host. | Nobody can connect interactively without an approved, activated exception from a managed admin workstation. Device attestation does not exist yet, so this cannot currently be satisfied. Check the device class is right (*Settings → Security → Technician Access*). |
+| `IDENTITY_PAUSED` | An activity limit was reached and the identity is paused. | Someone else clears it under *Pauses & alerts*. Suppressing the alert does not lift it. |
+| `CONTROL_NOT_GRANTED` / `VIEW_ONLY_NOT_GRANTED` | The person's tier does not include it on this computer. | Use the inspector to see which grant applies. |
+
+A queued inventory or event-log command that ends `FAILED` with *"the person who requested this is no longer allowed to"* was re-checked at dispatch after its requester was demoted, revoked or paused. It was never sent to the computer.
+
 ## Services
 
 ```bash

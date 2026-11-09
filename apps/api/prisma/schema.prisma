@@ -198,6 +198,20 @@ enum ActivityAction {
   INTEGRATION_JOB_REJECTED
   INTEGRATION_JOB_FINISHED
   INTEGRATION_MAPPING_CHANGED
+  TECHNICIAN_PRESET_CHANGED
+  ACCESS_POLICY_CHANGED
+  TRUST_CHANGE_REQUESTED
+  TRUST_CHANGE_DECIDED
+  TEMPORARY_ACCESS_REQUESTED
+  TEMPORARY_ACCESS_DECIDED
+  TEMPORARY_ACCESS_ACTIVATED
+  PRIVILEGED_WORK_DENIED
+  IDENTITY_PAUSED
+  IDENTITY_PAUSE_CLEARED
+  MAINTENANCE_EXCEPTION_CHANGED
+  ALERT_SUPPRESSION_CHANGED
+  DEVICE_CLASS_CHANGED
+  SECURITY_ALERT_RAISED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -579,6 +593,17 @@ model Endpoint {
   //   COMPANY_WIDE    → any user in the same customer may connect (still subject to RBAC/GeoIP)
   accessMode EndpointAccessMode @default(ASSIGNED_USERS)
 
+  // v0.23: what kind of machine this is. Protected classes (domain
+  // controllers, hypervisors, backup servers, the RMM host) are default-deny
+  // for interactive and elevated access. Set by an admin; the migration only
+  // ever classifies WORKSTATION / SERVER from the reported OS caption.
+  deviceClass DeviceClass @default(UNKNOWN)
+  // v0.23: which session restrictions THIS endpoint can enforce itself
+  // (view-only, clipboard, file transfer, attended consent), as reported by
+  // its agent. Null = unknown, which is treated as "cannot enforce". No agent
+  // reports it yet, so every restriction that depends on it is blocked.
+  sessionEnforcement Json?
+
   aiTimeline String?
 
   createdAt DateTime @default(now())
@@ -785,6 +810,9 @@ model ConnectionGrant {
   usedByIp    String?
   createdByIp String?
   purpose     String    @default("REMOTE_ACCESS")
+  // v0.23: the mode the launch was authorized for; redemption re-evaluates
+  // exactly this mode, never a wider one.
+  launchMode  String    @default("control")
 
   @@index([tenantId])
   @@index([endpointId])
@@ -1000,6 +1028,9 @@ model TechnicianDevice {
   platform    String
   fingerprint String    @unique
   isActive    Boolean   @default(true)
+  // v0.23: a managed admin workstation. Required for any exception to the
+  // protected-device-class rule. Setting it widens trust → independent review.
+  isManagedAdminWorkstation Boolean @default(false)
   lastSeenAt  DateTime?
 
   launcherTokens LauncherToken[]
@@ -1028,6 +1059,7 @@ model LauncherToken {
   targetEndpointId String?
   targetRustdeskId String?
   targetAlias      String?
+  launchMode       String    @default("control")
 
   createdAt DateTime @default(now())
 
@@ -1404,6 +1436,11 @@ model TechnicianAssignment {
   expiresAt DateTime?
   schedule  Json?
   reason    String?
+
+  // v0.23: the preset this assignment was made from. Null = a custom
+  // assignment (everything made before 0.23), evaluated exactly as before.
+  presetId String?
+  preset   TechnicianPreset? @relation(fields: [presetId], references: [id])
 
   approvalStatus AssignmentApproval @default(NOT_REQUIRED)
   requestedById  String?
@@ -1887,4 +1924,163 @@ model IntegrationReplayGuard {
   createdAt DateTime @default(now())
 
   @@index([expiresAt])
+}
+
+// ─── v0.23: technician access presets and abuse prevention ──────────────────
+
+enum DeviceClass {
+  UNKNOWN
+  WORKSTATION
+  SERVER
+  DOMAIN_CONTROLLER
+  HYPERVISOR
+  BACKUP_SERVER
+  RMM_HOST
+}
+
+/// L1 / L2 / L3 and admin clones of them. Built-ins are seeded by migration
+/// 0023 and restored by "Reset defaults"; `policy` is validated by
+/// src/security-controls/presets.ts on every write.
+model TechnicianPreset {
+  id           String   @id @default(cuid())
+  key          String   @unique
+  name         String
+  tier         String // L1 | L2 | L3
+  builtIn      Boolean  @default(false)
+  description  String   @default("")
+  capabilities String[] @default([])
+  policy       Json
+  clonedFromId String?
+  version      Int      @default(1)
+  createdById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  assignments TechnicianAssignment[]
+}
+
+/// Platform-wide technician access policy (one row, id 'singleton'), and a
+/// per-business row that may only TIGHTEN it.
+model AccessPolicy {
+  id         String   @id // 'singleton' or 'business:<customerId>'
+  customerId String?  @unique
+  controls   Json
+  version    Int      @default(1)
+  updatedById String?
+  updatedAt  DateTime @updatedAt
+}
+
+/// Time-limited control / elevation / protected-class exception for one
+/// technician on one computer. Needs an independent approver (never the
+/// requester) and is activated with a fresh step-up.
+model TemporaryAccessRequest {
+  id              String    @id @default(cuid())
+  userId          String
+  customerId      String
+  endpointId      String
+  mode            String // CONTROL | ELEVATION | PROTECTED_EXCEPTION
+  reason          String
+  durationMinutes Int
+  status          String    @default("PENDING") // PENDING | APPROVED | DENIED | REVOKED
+  decidedById     String?
+  decidedAt       DateTime?
+  decisionNote    String?
+  activatedAt     DateTime?
+  expiresAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([userId, endpointId, status])
+  @@index([customerId, status])
+}
+
+/// One admitted unit of privileged work. Counted under a per-identity
+/// advisory lock, so concurrent requests cannot both squeeze under a cap.
+model PrivilegedActivity {
+  id         String   @id @default(cuid())
+  identity   String // user:<id> | peer:<id>
+  kind       String // LAUNCH | WRITE | EVIDENCE
+  endpointId String?
+  customerId String?
+  entryPoint String // ui | api | launcher | scheduler | integration
+  at         DateTime @default(now())
+
+  @@index([identity, at])
+}
+
+/// New privileged work for this identity is refused until someone else clears it.
+model IdentityPause {
+  id          String    @id @default(cuid())
+  identity    String
+  reason      String
+  details     Json?
+  createdAt   DateTime  @default(now())
+  clearedAt   DateTime?
+  clearedById String?
+
+  @@index([identity, clearedAt])
+}
+
+/// Lets an identity exceed its cap for approved targets only, until expiry.
+model MaintenanceException {
+  id            String    @id @default(cuid())
+  identity      String
+  endpointIds   String[]
+  kinds         String[]
+  reason        String
+  requestedById String
+  approvedById  String?
+  status        String    @default("PENDING") // PENDING | APPROVED | DENIED | REVOKED
+  startsAt      DateTime  @default(now())
+  expiresAt     DateTime
+  createdAt     DateTime  @default(now())
+
+  @@index([identity, status])
+}
+
+/// Silences notifications only. A suppression never lifts a pause, and a
+/// pause is raised whether or not its alert is suppressed.
+model AlertSuppression {
+  id          String    @id @default(cuid())
+  identity    String?
+  kind        String
+  reason      String
+  until       DateTime
+  createdById String
+  createdAt   DateTime  @default(now())
+  revokedAt   DateTime?
+}
+
+model SecurityAlert {
+  id          String    @id @default(cuid())
+  kind        String
+  identity    String?
+  customerId  String?
+  details     Json
+  suppressed  Boolean   @default(false)
+  delivered   Boolean   @default(false)
+  deliveryError String?
+  createdAt   DateTime  @default(now())
+  acknowledgedAt DateTime?
+  acknowledgedById String?
+
+  @@index([createdAt])
+}
+
+/// A widening change to trust: approvers, alert/recovery contacts,
+/// unattended access, security limits, presets. Applied only when someone
+/// other than the requester approves it. `before`/`after` never hold secrets.
+model TrustChangeRequest {
+  id            String    @id @default(cuid())
+  kind          String
+  target        String
+  before        Json
+  after         Json
+  payload       Json
+  requestedById String
+  status        String    @default("PENDING") // PENDING | APPLIED | DENIED | SUPERSEDED
+  reviewedById  String?
+  reviewedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([status, createdAt])
 }

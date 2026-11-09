@@ -1,3 +1,5 @@
+import { AccessPolicyService } from '../security-controls/access-policy.service';
+import { AbuseGuardService } from '../security-controls/abuse-guard.service';
 import {
   BadRequestException,
   ConflictException,
@@ -56,7 +58,22 @@ export class QuickConnectService {
     private readonly platformSettings: PlatformSettingsService,
     private readonly sessionEvents: SessionEventsService,
     private readonly supportRequests: SupportRequestsService,
+    private readonly policy: AccessPolicyService,
+    private readonly abuse: AbuseGuardService,
   ) {}
+
+  /**
+   * Quick Connect launches count against the same fleet limits as every
+   * other launch (no computer id — an ad-hoc target — but the business and
+   * the launch itself do count), and a paused identity gets none.
+   */
+  async admitLaunch(actor: ActorContext, entryPoint: 'ui' | 'launcher') {
+    const r = await this.abuse.admit({
+      identity: `user:${actor.userId}`, tier: this.policy.tierFor(actor, null), kind: 'LAUNCH',
+      endpointId: null, customerId: actor.businessId, entryPoint,
+    });
+    if (!r.ok) throw new ForbiddenException({ code: r.reason.toUpperCase(), message: r.message });
+  }
 
   // ── Availability ──────────────────────────────────────────────────────────
 
@@ -130,6 +147,7 @@ export class QuickConnectService {
    */
   async connect(actor: ActorContext, dto: QuickConnectRequest) {
     await this.assertUsable(actor);
+    await this.admitLaunch(actor, 'ui');
 
     const rustdeskId = dto.rustdeskId.replace(/[\s-]/g, '');
     if (!RUSTDESK_ID_RE.test(rustdeskId)) {

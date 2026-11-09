@@ -6,7 +6,7 @@ import { authApi, platformApi, supportRequestsApi } from '@/lib/api-client';
 import { usePermissions } from '@/lib/auth';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { PublicAddressCard } from '@/components/settings/public-address-card';
-import { Copy, RefreshCw } from 'lucide-react';
+import { Copy, RefreshCw, ShieldCheck } from 'lucide-react';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -337,7 +337,19 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="security" className="mt-4">
+        <TabsContent value="security" className="mt-4 space-y-4">
+          <Card>
+            <CardHeader><CardTitle className="text-sm">Technician Access</CardTitle></CardHeader>
+            <CardContent className="flex flex-wrap items-center justify-between gap-3">
+              <p className="max-w-xl text-sm text-muted-foreground">
+                L1 / L2 / L3 presets, the platform access policy, the effective-access inspector, and the independent-review
+                queue for changes that widen trust.
+              </p>
+              <Button variant="outline" onClick={() => router.push('/settings/security/technician-access')}>
+                <ShieldCheck className="mr-2 h-4 w-4" />Open Technician Access
+              </Button>
+            </CardContent>
+          </Card>
           <Card>
             <CardHeader><CardTitle className="text-sm">Security Policy</CardTitle></CardHeader>
             <CardContent>

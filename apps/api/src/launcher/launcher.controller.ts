@@ -18,9 +18,10 @@ import { RateLimit } from '../common/throttling';
 export class LauncherController {
   constructor(private readonly launcher: LauncherService) {}
 
+  // Decided in the service: a preset-backed technician holds no
+  // computers:connect, and members are still required to.
   @Post('token')
-  @UseGuards(JwtAuthGuard, CapabilitiesGuard)
-  @RequireCapability(CAP.COMPUTERS_CONNECT)
+  @UseGuards(JwtAuthGuard)
   async issueToken(@Actor() actor: ActorContext, @Body() dto: IssueLauncherTokenDto) {
     const result = await this.launcher.issueToken(actor, dto);
     return { success: true, data: result };

@@ -84,6 +84,11 @@ jobs:
           node scripts/gen-integration-contracts.mjs --check
           node apps/api/scripts/unit-integration.mjs
 
+      # Technician presets and the launch policy (0.23): every branch of
+      # evaluateLaunch against the compiled code, with in-memory stand-ins.
+      - name: Presets and launch-policy unit tests
+        run: node apps/api/scripts/unit-presets.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.

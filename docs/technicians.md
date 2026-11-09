@@ -30,6 +30,8 @@ An assignment names:
 
 All of this is re-evaluated on **every request**, not stored in the session. An assignment that expires, leaves its schedule, or is revoked stops working on the technician's next click, even mid-session. This matches how a suspended account is handled.
 
+**Presets (v0.23).** An assignment is either created from a preset (L1 Help Desk, L2 Technician, L3 Senior, or a clone) or given explicit capabilities. Asking for neither gives **L1 Help Desk**. A preset-backed assignment's capabilities are derived live from the preset and never include Remote connect or credential access: sessions come from the launch policy and temporary grants instead. Explicit-capability (custom) assignments, including every assignment made before 0.23, behave as they always did. Capability and computer scope are taken from the **same** assignment, so overlapping grants no longer combine. A manager cannot assign themselves, or a group they belong to, and cannot add themselves to a group. See [technician-access.md](technician-access.md).
+
 A technician acting in a customer business through an assignment is **never a Business Owner there**, whatever role they hold in their own business. They get the assignment's capabilities and nothing more.
 
 ### Temporary access
@@ -52,4 +54,5 @@ Anyone with at least one live assignment sees a **business switcher** at the top
 ## See also
 
 - [Access control](access-control.md): the three levels and the business boundary.
+- [Technician access](technician-access.md): presets, the launch policy, protected device classes and fleet-abuse limits.
 - [Offboarding](offboarding.md): removing a technician everywhere at once.
