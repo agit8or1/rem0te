@@ -5,6 +5,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.25.1] — 2026-11-09 · *Witness*
+
+**Dependency patch: `golang.org/x/crypto` 0.50.0 → 0.52.0 in the Windows agent, plus one lint-time override.**
+No behaviour change. Supersedes Dependabot's #97, which moved `go.mod` but no version — and this module is compiled
+into `rem0te-agent.exe` and `rem0te-release`, so it is a production change and gets a release.
+
+- **`golang.org/x/crypto` 0.52.0** (and `golang.org/x/term` 0.43.0, which it requires). Dependabot raised 13 alerts
+  against 0.50.0 — eight critical — all of them in `ssh`, `ssh/agent` and `ssh/knownhosts`. **None reached a shipped
+  binary**: `go list -deps` for the agent (`GOOS=windows`) and for `rem0te-release` links only `nacl/secretbox`,
+  `scrypt`, `pbkdf2`, `salsa20`, `poly1305` and the standard library's vendored `cryptobyte`/`chacha20poly1305`,
+  pulled by go-tuf and sigstore for key handling. Bumped anyway, so the alerts close and the next import of `ssh`
+  does not start from a vulnerable floor. `go vet` (linux and windows) and `go test ./...` pass unchanged. The new
+  agent build reaches endpoints only when it is signed into the update repository with `rem0te-release`.
+- **`minimatch` 10.2.6 → 11.0.3 (override, development only).** GHSA-g3hv-75wg-m249, a glob-pattern amplification
+  DoS covering `>=7.0.0 <11.0.1`. The only affected copy came from `@typescript-eslint/typescript-estree` (asks for
+  `^10`), which runs at lint time. The override in `pnpm-workspace.yaml` is scoped to the 10 line: the 3.1.5 copies
+  eslint 8 and 9 use are outside the advisory, and forcing them onto a new major is how the ajv override once
+  broke eslint. Both lints pass on 11.
+- **`deepmerge` 4.3.1 — not fixed, dismissed.** GHSA-gcqx-w48m-w2h4 (prototype poisoning in `mergeObject()`) has no
+  patched release. It reaches us only through `@nestjs/cli` › `fork-ts-checker-webpack-plugin`, which merges its
+  own build options at compile time; nothing reaches it with untrusted input, and it is not in the production
+  manifest. The alert is dismissed with that reason; revisit when a fix ships or `@nestjs/cli` drops it.
+
+Deploy: no API or web code changed, and no production npm dependency moved, so the target's `node_modules` and
+manifest are untouched. Rebuild and re-sign the agent to ship the x/crypto bump to endpoints.
+
+---
+
 ## [0.25.0] — 2026-11-09 · *Witness*
 
 **"Which technician can reach this customer's PC, and what evidence will I have afterwards?" — answered from the

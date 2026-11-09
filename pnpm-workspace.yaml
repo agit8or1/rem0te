@@ -52,6 +52,11 @@ overrides:
   # GHSA-3g3m-2fjr-6pw4 (AbortSignal cancellation bypass), >=9.0.0 <=14.0.1.
   # Reaches us only through @nestjs/cli (build time).
   'glob': '>=14.0.2'
+  # GHSA-g3hv-75wg-m249 (globparts amplification DoS), >=7.0.0 <11.0.1.
+  # Reaches us only through @typescript-eslint/typescript-estree (lint time),
+  # which asks for ^10. Scoped to the 10 line: the 3.x copies eslint 8/9 use
+  # are outside the advisory and must not be forced onto a new major.
+  'minimatch@>=10.0.0 <11.0.1': '>=11.0.1 <12.0.0'
   # GHSA-mrwp-f3q8-3g9p: custom credential headers followed cross-realm
   # redirects. Reaches us through the web app's axios.
   'follow-redirects': '>=1.16.2'
