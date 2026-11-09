@@ -77,8 +77,14 @@ export const endpointsApi = {
   // Employee-facing: only computers this user is authorized to connect to.
   mine: () => api.get('/endpoints/mine'),
   // Employee-facing Connect — checks ComputerAccess, returns
-  // { rustdeskId, password, grantToken, launchUri }.
-  connect: (id: string) => api.post(`/endpoints/${id}/connect`),
+  // { rustdeskId, password, grantToken, launchUri, mode, accessPath,
+  // maxSessionMinutes }. v0.23: `password` is null for a preset-backed launch
+  // (RustDesk then prompts at the endpoint), and a refusal is a 403 with
+  // { code, message } — e.g. TEMPORARY_GRANT_REQUIRED, PROTECTED_DEVICE_CLASS,
+  // ENDPOINT_CANNOT_ENFORCE_VIEW_ONLY, IDENTITY_PAUSED — whose message is meant
+  // to be shown as it is.
+  connect: (id: string, mode?: 'view_only' | 'control') =>
+    api.post(`/endpoints/${id}/connect`, undefined, { params: mode ? { mode } : {} }),
   // Redeem a ConnectionGrant token — the launcher path (browser fallback OK too).
   redeemGrant: (token: string) => api.post(`/endpoints/grants/redeem`, { token }),
   // Admin: stage a credential rotation. Old password stays valid until the
@@ -530,4 +536,53 @@ export const passkeysApi = {
   remove: (id: string) => api.delete(`/auth/passkeys/${id}`),
   loginOptions: () => api.post('/auth/passkeys/login/options'),
   login: (response: unknown) => api.post('/auth/passkeys/login', { response }),
+};
+
+// ─── v0.23: technician access presets and security controls ─────────────────
+// Settings → Security → Technician Access, the Security Features catalog, and
+// a technician's own temporary-access requests. Every mutation here except the
+// revoke routes needs fresh authentication; the step-up interceptor above
+// prompts and retries. A widening change comes back as
+// { pendingReview: true, request } rather than being applied.
+export type InspectAction =
+  | 'view_inventory' | 'support_requests' | 'event_logs' | 'diagnostics' | 'credential_reveal' | 'enrollment'
+  | 'launch_view_only' | 'launch_control' | 'launch_elevated' | 'launch_unattended' | 'clipboard' | 'file_transfer'
+  | 'scripts' | 'patches' | 'fix_request' | 'fix_approval' | 'fleet_execution' | 'approve_requests';
+
+export const securityControlsApi = {
+  catalog: () => api.get('/security-controls/catalog'),
+  // Presets
+  presets: () => api.get('/security-controls/presets'),
+  clonePreset: (id: string, name: string) => api.post(`/security-controls/presets/${id}/clone`, { name }),
+  previewPreset: (id: string, policy: Record<string, unknown>) => api.post(`/security-controls/presets/${id}/preview`, { policy }),
+  updatePreset: (id: string, data: { name?: string; description?: string; policy: Record<string, unknown> }) =>
+    api.put(`/security-controls/presets/${id}`, data),
+  resetPreset: (id: string) => api.post(`/security-controls/presets/${id}/reset`),
+  deletePreset: (id: string) => api.delete(`/security-controls/presets/${id}`),
+  // Platform policy
+  policy: () => api.get('/security-controls/policy'),
+  setPolicy: (policy: Record<string, unknown>) => api.put('/security-controls/policy', policy),
+  // Read-only views
+  inspect: (q: { userId: string; businessId: string; endpointId?: string; action: InspectAction }) =>
+    api.get('/security-controls/inspect', { params: q }),
+  upgradePreview: () => api.get('/security-controls/upgrade-preview'),
+  // Independent review
+  trustChanges: (status?: string) => api.get('/security-controls/trust-changes', { params: status ? { status } : {} }),
+  decideTrustChange: (id: string, decision: 'APPROVE' | 'DENY') =>
+    api.post(`/security-controls/trust-changes/${id}/decision`, { decision }),
+  // Temporary access
+  temporaryAccess: (params?: { status?: string; mine?: boolean }) =>
+    api.get('/security-controls/temporary-access', {
+      params: { ...(params?.status ? { status: params.status } : {}), ...(params?.mine ? { mine: 'true' } : {}) },
+    }),
+  requestTemporaryAccess: (data: { endpointId: string; mode: 'CONTROL' | 'ELEVATION' | 'PROTECTED_EXCEPTION'; reason: string; durationMinutes: number }) =>
+    api.post('/security-controls/temporary-access', data),
+  decideTemporaryAccess: (id: string, decision: 'APPROVE' | 'DENY', note?: string) =>
+    api.post(`/security-controls/temporary-access/${id}/decision`, { decision, ...(note ? { note } : {}) }),
+  activateTemporaryAccess: (id: string) => api.post(`/security-controls/temporary-access/${id}/activate`),
+  revokeTemporaryAccess: (id: string) => api.post(`/security-controls/temporary-access/${id}/revoke`),
+  // Pauses and alerts
+  pauses: () => api.get('/security-controls/pauses'),
+  clearPause: (id: string) => api.post(`/security-controls/pauses/${id}/clear`),
+  alerts: () => api.get('/security-controls/alerts'),
 };

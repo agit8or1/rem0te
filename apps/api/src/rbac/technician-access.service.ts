@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { type Capability, sanitizeTechnicianCapabilities } from './capabilities';
+import { PresetPolicy, presetCapabilities } from '../security-controls/presets';
 import { describeSchedule, isWithinDates, parseSchedule, storedScheduleAllows } from './schedule';
 
 /**
@@ -22,6 +23,10 @@ export interface TechnicianGrantSource {
   expiresAt: Date | null;
   schedule: string | null;
   approval: string;
+  /** v0.23: the preset behind this grant, or null for a custom assignment. */
+  presetId: string | null;
+  presetTier: string | null;
+  presetPolicy: PresetPolicy | null;
 }
 
 export interface InactiveGrant extends TechnicianGrantSource {
@@ -96,15 +101,25 @@ export class TechnicianAccessService implements OnModuleInit, OnModuleDestroy {
       include: {
         customer: { select: { id: true, name: true, isActive: true, isArchived: true } },
         group: { select: { id: true, name: true, capabilities: true } },
+        preset: { select: { id: true, tier: true, policy: true } },
       },
       orderBy: { createdAt: 'asc' },
     });
   }
 
   private toSource(a: Awaited<ReturnType<TechnicianAccessService['loadGrants']>>[number]): TechnicianGrantSource {
-    const caps = sanitizeTechnicianCapabilities(
-      a.capabilities.length > 0 ? a.capabilities : (a.group?.capabilities ?? []),
-    );
+    // A preset-backed grant takes its capabilities from the preset's policy,
+    // live — never from the copy stored on the assignment — so tightening a
+    // preset tightens every grant made from it. A preset whose stored policy
+    // no longer validates grants nothing (fail closed).
+    let presetPolicy: PresetPolicy | null = null;
+    if (a.preset) {
+      const parsed = PresetPolicy.safeParse(a.preset.policy);
+      presetPolicy = parsed.success ? parsed.data : null;
+    }
+    const caps = a.preset
+      ? (presetPolicy ? sanitizeTechnicianCapabilities(presetCapabilities(presetPolicy)) : [])
+      : sanitizeTechnicianCapabilities(a.capabilities.length > 0 ? a.capabilities : (a.group?.capabilities ?? []));
     let schedule: string | null;
     try { schedule = describeSchedule(parseSchedule(a.schedule)); } catch { schedule = 'invalid schedule (denies access)'; }
     return {
@@ -119,6 +134,9 @@ export class TechnicianAccessService implements OnModuleInit, OnModuleDestroy {
       expiresAt: a.expiresAt,
       schedule,
       approval: a.approvalStatus,
+      presetId: a.preset?.id ?? null,
+      presetTier: a.preset?.tier ?? null,
+      presetPolicy,
     };
   }
 

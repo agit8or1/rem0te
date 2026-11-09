@@ -170,6 +170,19 @@ Platform Admin create and revoke assignments and manage technician groups. Only
 a Platform Admin can grant it. It does not make them a Platform Admin and gives
 them no access to any business.
 
+## Presets, protected devices and abuse limits (v0.23)
+
+Technician assignments can be created from **presets** (L1/L2/L3) that grant
+read-side capabilities only. Sessions for preset-backed technicians come from
+the **launch policy**: view-only only where the endpoint can enforce it,
+control only by an independently approved, freshly activated temporary
+grant, and never the permanent password. **Protected device classes**
+(domain controllers, hypervisors, backup servers, the RMM host) are denied
+interactively to everyone, Platform Admin included. **Fleet-abuse limits**
+count distinct computers and businesses per identity across every entry
+point and pause the identity on a trip. Changes that widen trust go to
+**independent review**. Full rules: [technician-access.md](technician-access.md).
+
 ## Step-up (v0.20)
 
 Revealing a computer password, changing permissions, managing technicians, SSO

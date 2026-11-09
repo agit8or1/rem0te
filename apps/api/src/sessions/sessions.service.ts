@@ -158,7 +158,7 @@ export class SessionsService {
     // Owners and admins may reach any computer in scope; technicians their
     // assignment's; everyone else needs an active grant or COMPANY_WIDE.
     {
-      const authorized = await this.acl.canReachEndpoint(actor, endpoint);
+      const authorized = await this.acl.canReachEndpoint(actor, endpoint, undefined, CAP.COMPUTERS_CONNECT);
       if (!authorized) {
         await this.audit.log({
           tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,

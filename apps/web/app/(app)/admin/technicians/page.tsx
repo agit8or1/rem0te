@@ -1,12 +1,13 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle, CalendarClock, Check, Clock, KeyRound, Loader2, Pencil, Plus, Search,
   ShieldCheck, Trash2, UserCog, UserMinus, Users, X,
 } from 'lucide-react';
-import { businessesApi, endpointsApi, techniciansApi } from '@/lib/api-client';
+import { businessesApi, endpointsApi, securityControlsApi, techniciansApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -105,6 +106,9 @@ interface Group {
   members: { id: string; userId: string; user: UserRef }[];
   assignments: { id: string; customer: { id: string; name: string } }[];
 }
+
+interface PresetLite { id: string; key: string; name: string; tier: string; builtIn: boolean; description: string }
+const CUSTOM_PRESET = '__custom__';
 
 interface EndpointLite { id: string; name: string; hostname?: string | null; isOnline?: boolean }
 
@@ -949,6 +953,8 @@ function CreateAssignmentDialog({
     startsAt: '', expiresAt: '', scheduled: false,
     schedule: { timeZone: browserTimeZone(), windows: [{ days: [1, 2, 3, 4, 5], start: '08:00', end: '18:00' }] } as Schedule,
     reason: '', personFilter: '',
+    // null = not chosen yet, which means the L1 Help Desk preset.
+    presetChoice: null as string | null,
   });
   const [f, setF] = useState(blank);
   const [wasOpen, setWasOpen] = useState(false);
@@ -966,6 +972,22 @@ function CreateAssignmentDialog({
     enabled: open,
   });
 
+  // v0.23: an assignment is made from a preset (capabilities derived on every
+  // request, never connect or credential) or, deliberately, from custom
+  // capabilities as before.
+  const { data: presetList, isError: presetsFailed } = useQuery<{ presets: PresetLite[] }>({
+    queryKey: ['security-controls', 'presets'],
+    queryFn: () => securityControlsApi.presets().then((r) => r.data?.data),
+    enabled: open,
+    retry: false,
+  });
+  const presets = presetList?.presets ?? [];
+  const l1 = presets.find((p) => p.key === 'l1-help-desk') ?? presets.find((p) => p.builtIn && p.tier === 'L1');
+  // Presets unreadable (or none seeded): fall back to custom rather than block.
+  const presetChoice = f.presetChoice ?? (l1?.id ?? (presetList || presetsFailed ? CUSTOM_PRESET : ''));
+  const custom = presetChoice === CUSTOM_PRESET;
+  const chosenPreset = presets.find((p) => p.id === presetChoice);
+
   const businessId = f.businessIdManual.trim() || f.businessId;
   const group = groups.find((g) => g.id === f.groupId);
   const shownPeople = people
@@ -976,7 +998,8 @@ function CreateAssignmentDialog({
     if (f.target === 'user' && !f.userId) return 'Choose a person.';
     if (f.target === 'group' && !f.groupId) return 'Choose a group.';
     if (!businessId) return 'Choose a business.';
-    if (f.capabilities.length === 0 && !(f.target === 'group' && (group?.capabilities.length ?? 0) > 0)) return 'Choose at least one permission.';
+    if (!presetChoice) return 'Loading access levels…';
+    if (custom && f.capabilities.length === 0 && !(f.target === 'group' && (group?.capabilities.length ?? 0) > 0)) return 'Choose at least one permission.';
     if (!f.whole && f.endpointIds.length === 0) return 'Pick at least one computer, or choose the whole business.';
     if (f.startsAt && f.expiresAt && new Date(f.expiresAt) <= new Date(f.startsAt)) return 'The end must be after the start.';
     if (f.scheduled) return scheduleProblem(f.schedule);
@@ -987,7 +1010,9 @@ function CreateAssignmentDialog({
     mutationFn: () => techniciansApi.createAssignment({
       ...(f.target === 'user' ? { userId: f.userId } : { groupId: f.groupId }),
       businessId,
-      ...(f.capabilities.length ? { capabilities: f.capabilities } : {}),
+      ...(custom
+        ? (f.capabilities.length ? { capabilities: f.capabilities } : {})
+        : { presetId: presetChoice }),
       ...(f.whole ? {} : { endpointIds: f.endpointIds }),
       startsAt: fromLocalInput(f.startsAt),
       expiresAt: fromLocalInput(f.expiresAt),
@@ -1076,12 +1101,31 @@ function CreateAssignmentDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label>Permissions in that business</Label>
-            {f.target === 'group' && group && group.capabilities.length > 0 && f.capabilities.length === 0 && (
-              <p className="text-xs text-muted-foreground">Nothing chosen: the group&apos;s {group.capabilities.length} default permission(s) will be copied.</p>
-            )}
-            <CapabilityPicker groups={vocab.capabilityGroups} value={f.capabilities} onChange={(v) => setF({ ...f, capabilities: v })} />
+            <Label>Access level</Label>
+            <Select value={presetChoice} onValueChange={(v) => setF({ ...f, presetChoice: v })}>
+              <SelectTrigger><SelectValue placeholder="Loading access levels…" /></SelectTrigger>
+              <SelectContent>
+                {presets.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}{p.builtIn ? '' : ' (custom preset)'}</SelectItem>)}
+                <SelectItem value={CUSTOM_PRESET}>Custom capabilities</SelectItem>
+              </SelectContent>
+            </Select>
+            {chosenPreset?.description && <p className="text-xs text-muted-foreground">{chosenPreset.description}</p>}
+            <p className="text-xs text-muted-foreground">
+              New technicians start at L1. No preset grants Remote connect or credential access: interactive control is only
+              ever a temporary, independently approved grant. Presets are managed under{' '}
+              <Link href="/settings/security/technician-access" className="underline underline-offset-2">Settings → Security → Technician Access</Link>.
+            </p>
           </div>
+
+          {custom && (
+            <div className="space-y-1.5">
+              <Label>Permissions in that business</Label>
+              {f.target === 'group' && group && group.capabilities.length > 0 && f.capabilities.length === 0 && (
+                <p className="text-xs text-muted-foreground">Nothing chosen: the group&apos;s {group.capabilities.length} default permission(s) will be copied.</p>
+              )}
+              <CapabilityPicker groups={vocab.capabilityGroups} value={f.capabilities} onChange={(v) => setF({ ...f, capabilities: v })} />
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label>Computers</Label>

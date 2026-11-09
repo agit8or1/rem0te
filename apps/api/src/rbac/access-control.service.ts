@@ -42,6 +42,25 @@ export interface ActorContext {
   platformPermissions?: PlatformPermission[];
 }
 
+/**
+ * Does ONE active technician grant give `capability` on `endpointId`?
+ *
+ * Capability and computer scope must come from the same grant. The merged
+ * `technician.capabilities` / `technician.endpointIds` are a union taken
+ * separately, so a grant of `computers:view` on every computer plus a grant of
+ * `computers:connect` on one server used to read as "connect anywhere".
+ * Every per-computer decision for a technician goes through this instead.
+ */
+export function technicianGrantAllows(
+  technician: TechnicianContext,
+  capability: Capability | null,
+  endpointId: string,
+): boolean {
+  return technician.sources.some((s) =>
+    (capability === null || (s.capabilities as string[]).includes(capability))
+    && (s.endpointIds === null || s.endpointIds.includes(endpointId)));
+}
+
 export function buildActorContext(user: JwtPayload, ip?: string, userAgent?: string): ActorContext {
   const isPlatformAdmin = user.isPlatformAdmin === true;
   return {
@@ -188,9 +207,15 @@ export class AccessControlService {
    * specific computers sees only those. `{}` for everyone else (their own
    * rules — business scope, grants — still apply on top).
    */
-  endpointRestrictionWhere(actor: ActorContext): Prisma.EndpointWhereInput {
-    if (actor.technician?.endpointIds) return { id: { in: actor.technician.endpointIds } };
-    return {};
+  endpointRestrictionWhere(actor: ActorContext, capability: Capability = 'computers:view'): Prisma.EndpointWhereInput {
+    const t = actor.technician;
+    if (!t) return {};
+    // Only grants that carry the capability contribute computers — a
+    // connect-only grant on one server does not make it show in the list.
+    const granting = t.sources.filter((s) => (s.capabilities as string[]).includes(capability));
+    if (granting.length === 0) return { id: { in: [] } };
+    if (granting.some((s) => s.endpointIds === null)) return {};
+    return { id: { in: [...new Set(granting.flatMap((s) => s.endpointIds ?? []))] } };
   }
 
   /**
@@ -206,11 +231,13 @@ export class AccessControlService {
     actor: ActorContext,
     endpoint: { id: string; customerId: string | null; accessMode: string },
     at: Date = new Date(),
+    /** For technicians: the capability that must come from the SAME grant as the computer. */
+    capability: Capability | null = null,
   ): Promise<boolean> {
     if (this.isBusinessOwner(actor)) return true;
     if (actor.technician) {
       if (endpoint.customerId !== actor.technician.businessId) return false;
-      return actor.technician.endpointIds === null || actor.technician.endpointIds.includes(endpoint.id);
+      return technicianGrantAllows(actor.technician, capability, endpoint.id);
     }
     if (endpoint.accessMode === 'COMPANY_WIDE' && endpoint.customerId === actor.businessId) return true;
     const access = await this.prisma.computerAccess.findFirst({
@@ -276,7 +303,7 @@ export class AccessControlService {
    * Deliberately raises NotFound rather than Forbidden: a caller poking at
    * another business's ids learns nothing about whether they exist.
    */
-  async assertEndpointInScope(actor: ActorContext, endpointId: string) {
+  async assertEndpointInScope(actor: ActorContext, endpointId: string, capability: Capability | null = null) {
     const endpoint = await this.prisma.endpoint.findUnique({
       where: { id: endpointId },
       select: { id: true, customerId: true, tenantId: true, status: true, accessMode: true, name: true },
@@ -289,7 +316,7 @@ export class AccessControlService {
       }
       // A technician assigned to named computers cannot address any other,
       // even inside the same business — same NotFound as a foreign id.
-      if (actor.technician?.endpointIds && !actor.technician.endpointIds.includes(endpoint.id)) {
+      if (actor.technician && !technicianGrantAllows(actor.technician, capability, endpoint.id)) {
         throw new NotFoundException('Computer not found');
       }
     }

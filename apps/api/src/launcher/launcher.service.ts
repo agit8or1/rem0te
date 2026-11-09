@@ -4,7 +4,9 @@ import {
   BadRequestException,
   UnauthorizedException,
   Logger,
+  ForbiddenException,
 } from '@nestjs/common';
+import type { LaunchMode } from '../security-controls/access-policy.service';
 import { JwtService } from '@nestjs/jwt';
 import { createHash } from 'crypto';
 import { PRE_CLIENT_STATUSES } from '../sessions/session-state';
@@ -60,7 +62,10 @@ export class LauncherService {
     if (!dto.endpointId && !dto.adHocRustdeskId) {
       throw new BadRequestException('Either endpointId or adHocRustdeskId is required');
     }
-    this.acl.assertCapability(actor, CAP.COMPUTERS_CONNECT);
+    // Members need computers:connect here as everywhere; a technician is
+    // decided per computer by authorizeConnect (a preset holds no connect).
+    if (!actor.technician || dto.adHocRustdeskId) this.acl.assertCapability(actor, CAP.COMPUTERS_CONNECT);
+    const mode = (dto.mode ?? 'control') as LaunchMode;
 
     let targetRustdeskId = dto.adHocRustdeskId ?? null;
     const targetEndpointId = dto.endpointId ?? null;
@@ -68,10 +73,13 @@ export class LauncherService {
     if (dto.endpointId) {
       // Confirms the computer is inside the caller's business before anything
       // else is read from it.
-      await this.acl.assertEndpointInScope(actor, dto.endpointId);
+      await this.acl.assertEndpointInScope(actor, dto.endpointId, actor.technician ? CAP.COMPUTERS_VIEW : CAP.COMPUTERS_CONNECT);
       // The same decision as every other way of connecting: business scope
       // alone let a Business User with no grant on this computer launch it.
-      if (!(await this.endpoints.canConnect(actor, dto.endpointId))) {
+      // Counted against the fleet limits here, where the credential is minted.
+      const decision = await this.endpoints.canConnect(actor, dto.endpointId, { mode, via: 'launcher', admit: 'launcher', stage: 'launcher_issue' });
+      if (!decision.ok) {
+        if (decision.message) throw new ForbiddenException({ code: decision.reason.toUpperCase(), status: decision.status, message: decision.message });
         throw new NotFoundException('Computer not found');
       }
       const endpoint = await this.prisma.endpoint.findUnique({
@@ -87,6 +95,7 @@ export class LauncherService {
       // platform switch, business switch, and the capability. Checking only
       // the capability here let a launcher token bypass both switches.
       await this.quickConnect.assertUsable(actor);
+      await this.quickConnect.admitLaunch(actor, 'launcher');
     }
 
     // A session id travels into the token and is written to when the token
@@ -150,6 +159,7 @@ export class LauncherService {
         targetEndpointId,
         targetRustdeskId,
         supportSessionId: dto.sessionId ?? null,
+        launchMode: mode,
       },
     });
 
@@ -161,7 +171,7 @@ export class LauncherService {
       action: 'LAUNCHER_TOKEN_ISSUED',
       resource: 'launcher_token',
       resourceId: record.id,
-      meta: { targetRustdeskId, targetEndpointId },
+      meta: { targetRustdeskId, targetEndpointId, mode },
     });
 
     const apiUrl = this.urls.api();
@@ -265,12 +275,13 @@ export class LauncherService {
       targetRustdeskId: record.targetRustdeskId,
       targetEndpointId: record.targetEndpointId,
       sessionId: record.supportSessionId,
+      mode: record.launchMode,
       rustdeskConfig: await this.rustdeskLaunchConfig(),
     };
   }
 
   private async recheckAuthorization(
-    record: { userId: string; tenantId: string; targetEndpointId: string | null },
+    record: { userId: string; tenantId: string; targetEndpointId: string | null; launchMode: string },
     payload: LauncherTokenPayload,
   ): Promise<{ ok: true } | { ok: false; reason: string }> {
     if (record.targetEndpointId) {
@@ -280,8 +291,9 @@ export class LauncherService {
       if (!endpoint) return { ok: false, reason: 'endpoint_not_found' };
       const actor = await this.endpoints.liveActor(record.userId, record.tenantId, endpoint.customerId);
       if (!actor) return { ok: false, reason: 'user_inactive' };
-      return (await this.endpoints.canConnect(actor, record.targetEndpointId))
-        ? { ok: true } : { ok: false, reason: 'no_longer_authorized' };
+      // Same mode it was minted for; pause and protected class re-checked.
+      const d = await this.endpoints.canConnect(actor, record.targetEndpointId, { mode: record.launchMode as LaunchMode, via: 'launcher', stage: 'launcher_redeem' });
+      return d.ok ? { ok: true } : { ok: false, reason: d.reason };
     }
     // Ad-hoc (Quick Connect): the three switches and the capability, in the
     // business the token was minted in.

@@ -23,6 +23,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { SecurityFeaturesTab } from '@/components/security-controls/security-features';
 
 // ─── Country list ────────────────────────────────────────────────────────────
 
@@ -1636,6 +1637,7 @@ export default function SecurityPage() {
           <TabsTrigger value="tls">TLS / Certs</TabsTrigger>
           <TabsTrigger value="os-updates">OS Updates</TabsTrigger>
           <TabsTrigger value="code-audit">Code Audit</TabsTrigger>
+          <TabsTrigger value="features">Security features</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -1660,6 +1662,10 @@ export default function SecurityPage() {
 
         <TabsContent value="code-audit">
           <CodeAuditTab />
+        </TabsContent>
+
+        <TabsContent value="features">
+          <SecurityFeaturesTab />
         </TabsContent>
       </Tabs>
     </div>

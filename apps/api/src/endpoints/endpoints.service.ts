@@ -1,3 +1,5 @@
+import { AccessPolicyService, type LaunchMode } from '../security-controls/access-policy.service';
+import { AbuseGuardService, type AdmitRequest } from '../security-controls/abuse-guard.service';
 import {
   Injectable, NotFoundException, ConflictException,
   InternalServerErrorException, BadRequestException, ForbiddenException, Logger,
@@ -11,7 +13,7 @@ import { AuditService } from '../audit/audit.service';
 import { CANDIDATE_LIVE_MS } from '../enrollment/device-secret';
 import { ConfigService } from '@nestjs/config';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
-import { CAP, effectiveCapabilities } from '../rbac/capabilities';
+import { CAP } from '../rbac/capabilities';
 import { ActorResolverService } from '../rbac/actor-resolver.service';
 import { describeSchedule, parseSchedule } from '../rbac/schedule';
 import { Prisma } from '@prisma/client';
@@ -28,6 +30,17 @@ import { EndpointInventoryService } from '../endpoint-inventory/endpoint-invento
  * Platform Admins are the only actors who see across businesses, and that is
  * decided inside AccessControlService, never here.
  */
+export interface ConnectOptions {
+  mode?: LaunchMode;
+  via?: 'browser' | 'launcher';
+  /** Count this as a launch against the fleet limits, from this entry point. */
+  admit?: AdmitRequest['entryPoint'];
+  stage?: 'authorize' | 'grant' | 'connect' | 'redeem' | 'launcher_issue' | 'launcher_redeem';
+}
+export type ConnectDecision =
+  | { ok: true; mode: LaunchMode; revealCredential: boolean; path: string; maxSessionMinutes: number | null }
+  | { ok: false; reason: string; message?: string; status?: string };
+
 @Injectable()
 export class EndpointsService {
   private readonly logger = new Logger(EndpointsService.name);
@@ -40,6 +53,8 @@ export class EndpointsService {
     private readonly acl: AccessControlService,
     private readonly inventory: EndpointInventoryService,
     private readonly actors: ActorResolverService,
+    private readonly policy: AccessPolicyService,
+    private readonly abuse: AbuseGuardService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -286,7 +301,7 @@ export class EndpointsService {
   }
 
   async update(actor: ActorContext, id: string, dto: UpdateEndpointDto) {
-    const existing = await this.acl.assertEndpointInScope(actor, id);
+    const existing = await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
 
     // Only a Platform Admin may move a computer between businesses.
@@ -336,7 +351,7 @@ export class EndpointsService {
   }
 
   async archive(actor: ActorContext, id: string) {
-    const existing = await this.acl.assertEndpointInScope(actor, id);
+    const existing = await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_REMOVE);
     this.acl.assertCapability(actor, CAP.COMPUTERS_REMOVE);
 
     const endpoint = await this.prisma.endpoint.update({ where: { id }, data: { status: 'ARCHIVED' } });
@@ -361,7 +376,7 @@ export class EndpointsService {
    * see every computer, and its users have to be assigned again.
    */
   async restore(actor: ActorContext, id: string) {
-    const existing = await this.acl.assertEndpointInScope(actor, id);
+    const existing = await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_REMOVE);
     this.acl.assertCapability(actor, CAP.COMPUTERS_REMOVE);
     if (existing.status !== 'ARCHIVED') throw new BadRequestException('This computer is not archived');
 
@@ -389,8 +404,9 @@ export class EndpointsService {
    * or conflicted (two different secrets were offered for this RustDesk ID).
    */
   async acceptDeviceSecret(actor: ActorContext, id: string) {
-    const endpoint = await this.acl.assertEndpointInScope(actor, id);
+    const endpoint = await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
+    await this.admitWrite(actor, id);
 
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { endpointId: id },
@@ -442,7 +458,7 @@ export class EndpointsService {
   }
 
   async addTag(actor: ActorContext, id: string, tag: string) {
-    await this.acl.assertEndpointInScope(actor, id);
+    await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
     try {
       await this.prisma.endpointTag.create({ data: { endpointId: id, tag } });
@@ -452,13 +468,13 @@ export class EndpointsService {
   }
 
   async removeTag(actor: ActorContext, id: string, tag: string) {
-    await this.acl.assertEndpointInScope(actor, id);
+    await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
     await this.prisma.endpointTag.deleteMany({ where: { endpointId: id, tag } });
   }
 
   async addAlias(actor: ActorContext, id: string, alias: string, isPrimary = false) {
-    await this.acl.assertEndpointInScope(actor, id);
+    await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
     if (isPrimary) {
       await this.prisma.endpointAlias.updateMany({ where: { endpointId: id, isPrimary: true }, data: { isPrimary: false } });
@@ -467,7 +483,7 @@ export class EndpointsService {
   }
 
   async removeAlias(actor: ActorContext, id: string, aliasId: string) {
-    await this.acl.assertEndpointInScope(actor, id);
+    await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
     await this.prisma.endpointAlias.deleteMany({ where: { id: aliasId, endpointId: id } });
   }
@@ -488,15 +504,16 @@ export class EndpointsService {
     // Shared with authorizeConnect so expiry, schedules and technician
     // computer lists apply to credential reveal and rotation exactly as they
     // do to connecting.
-    if (!endpoint || !(await this.acl.canReachEndpoint(actor, endpoint))) {
+    if (!endpoint || !(await this.acl.canReachEndpoint(actor, endpoint, undefined, CAP.COMPUTERS_EDIT))) {
       throw new ForbiddenException('You have not been given access to this computer');
     }
   }
 
   async setPassword(actor: ActorContext, id: string, password: string | null): Promise<void> {
-    await this.acl.assertEndpointInScope(actor, id);
+    await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
     await this.assertComputerReachable(actor, id);
+    await this.admitWrite(actor, id);
 
     const node = await this.prisma.rustdeskNode.findUnique({ where: { endpointId: id }, select: { id: true } });
     if (!node) throw new NotFoundException('No RustDesk node linked to this computer');
@@ -512,9 +529,10 @@ export class EndpointsService {
    * outright, not asked to re-authenticate first and refused after.
    */
   async assertPasswordAccess(actor: ActorContext, id: string) {
-    const endpoint = await this.acl.assertEndpointInScope(actor, id);
+    const endpoint = await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
     await this.assertComputerReachable(actor, id);
+    await this.admitWrite(actor, id);
     return endpoint;
   }
 
@@ -562,9 +580,10 @@ export class EndpointsService {
    * that confirmation, so Connect keeps working throughout.
    */
   async rotateCredential(actor: ActorContext, endpointId: string) {
-    const endpoint = await this.acl.assertEndpointInScope(actor, endpointId);
+    const endpoint = await this.acl.assertEndpointInScope(actor, endpointId, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
     await this.assertComputerReachable(actor, endpointId);
+    await this.admitWrite(actor, endpointId);
 
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { endpointId }, select: { id: true, agentSecretHash: true },
@@ -602,13 +621,14 @@ export class EndpointsService {
    * Order matters: business scope first (can this actor see this computer at
    * all), then the connect capability, then the per-computer grant.
    */
-  private async authorizeConnect(
+  async authorizeConnect(
     actor: ActorContext,
     endpointId: string,
-  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    opts: ConnectOptions = {},
+  ): Promise<ConnectDecision> {
     const endpoint = await this.prisma.endpoint.findUnique({
       where: { id: endpointId },
-      select: { id: true, customerId: true, tenantId: true, accessMode: true, status: true },
+      select: { id: true, customerId: true, tenantId: true, accessMode: true, status: true, deviceClass: true, sessionEnforcement: true },
     });
     if (!endpoint) return { ok: false, reason: 'endpoint_not_found' };
 
@@ -626,20 +646,76 @@ export class EndpointsService {
 
     if (endpoint.status === 'ARCHIVED') return { ok: false, reason: 'endpoint_archived' };
 
-    if (!this.acl.can(actor, CAP.COMPUTERS_CONNECT)) {
-      return { ok: false, reason: 'missing_connect_permission' };
+    // Business members and admins need computers:connect, as before. A
+    // technician is decided by the launch policy below: a preset grants no
+    // computers:connect at all, and a custom assignment's connect is honoured
+    // only on the computers that same assignment covers.
+    if (!actor.technician && !this.acl.can(actor, CAP.COMPUTERS_CONNECT)) {
+      // 403 with a reason, as the route guard gave before 0.23: business
+      // scope has already passed, so this reveals nothing about existence.
+      return { ok: false, reason: 'missing_connect_permission', status: 'denied', message: 'Your role in this business does not include Remote connect.' };
     }
 
     // Owners/admins: anything in scope. Technicians: their assignment's
     // computers. Business Users: an active (dated, scheduled) grant or a
     // COMPANY_WIDE computer. One decision, in AccessControlService.
-    if (await this.acl.canReachEndpoint(actor, endpoint)) return { ok: true };
-    return { ok: false, reason: actor.technician ? 'outside_technician_assignment' : 'no_access' };
+    const reachCap = actor.technician ? CAP.COMPUTERS_VIEW : CAP.COMPUTERS_CONNECT;
+    if (!(await this.acl.canReachEndpoint(actor, endpoint, undefined, reachCap))) {
+      return { ok: false, reason: actor.technician ? 'outside_technician_assignment' : 'no_access' };
+    }
+
+    // v0.23 launch policy: pause, protected classes, per-mode enforcement.
+    const mode = opts.mode ?? 'control';
+    const decision = await this.policy.evaluateLaunch(actor, endpoint, mode, { via: opts.via ?? 'browser', technicianDeviceId: null });
+    if (!decision.ok) {
+      await this.audit.log({
+        tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
+        actorId: actor.userId, actorIp: actor.ip,
+        action: 'PRIVILEGED_WORK_DENIED', resource: 'endpoint', resourceId: endpoint.id,
+        meta: { stage: opts.stage ?? 'authorize', mode, reason: decision.reason },
+      });
+      return { ok: false, reason: decision.reason, message: decision.message, status: decision.status };
+    }
+
+    // Count it, atomically, against the identity's fleet limits — once per
+    // launch, at the point the launch credential is minted.
+    if (opts.admit) {
+      const admitted = await this.abuse.admit({
+        identity: `user:${actor.userId}`, tier: decision.tier, kind: 'LAUNCH',
+        endpointId: endpoint.id, customerId: endpoint.customerId, entryPoint: opts.admit,
+      });
+      if (!admitted.ok) return { ok: false, reason: admitted.reason, message: admitted.message, status: 'denied' };
+    }
+    return { ok: true, mode, revealCredential: decision.revealCredential, path: decision.path, maxSessionMinutes: decision.maxSessionMinutes };
+  }
+
+  /**
+   * Count work on a computer against the actor's fleet limits: WRITE for a
+   * state-changing command or a credential change/release, EVIDENCE for
+   * read-only collection (inventory, event logs). Same counter as launches, so
+   * forty small jobs across forty computers trip the same cap one big job would.
+   */
+  private async admitWrite(actor: ActorContext, endpointId: string, kind: 'WRITE' | 'EVIDENCE' = 'WRITE') {
+    const ep = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { customerId: true } });
+    const customerId = ep?.customerId ?? null;
+    const r = await this.abuse.admit({
+      identity: `user:${actor.userId}`, tier: this.policy.tierFor(actor, endpointId), kind,
+      endpointId, customerId, entryPoint: 'ui',
+    });
+    if (!r.ok) throw new ForbiddenException({ code: r.reason.toUpperCase(), message: r.message });
+  }
+
+  /** Throw the decision as a 403 the UI can explain, or the indistinguishable 404. */
+  private refuse(d: Extract<ConnectDecision, { ok: false }>): never {
+    if (d.message) throw new ForbiddenException({ code: d.reason.toUpperCase(), status: d.status, message: d.message });
+    // Deliberately indistinguishable from "does not exist" — probing another
+    // business's ids must not reveal whether they are real.
+    throw new NotFoundException('Computer not found');
   }
 
   /** authorizeConnect for callers outside this service (the launcher). */
-  async canConnect(actor: ActorContext, endpointId: string): Promise<boolean> {
-    return (await this.authorizeConnect(actor, endpointId)).ok;
+  async canConnect(actor: ActorContext, endpointId: string, opts: ConnectOptions = {}): Promise<ConnectDecision> {
+    return this.authorizeConnect(actor, endpointId, opts);
   }
 
   /**
@@ -647,8 +723,8 @@ export class EndpointsService {
    * holds the opaque token; the launcher redeems it over authenticated HTTPS
    * to obtain the actual RustDesk credentials.
    */
-  async createConnectionGrant(actor: ActorContext, endpointId: string) {
-    const authz = await this.authorizeConnect(actor, endpointId);
+  async createConnectionGrant(actor: ActorContext, endpointId: string, mode: LaunchMode = 'control') {
+    const authz = await this.authorizeConnect(actor, endpointId, { mode, admit: 'ui', stage: 'grant' });
     if (!authz.ok) {
       await this.audit.log({
         tenantId: actor.tenantId ?? undefined, customerId: actor.businessId ?? undefined,
@@ -656,9 +732,7 @@ export class EndpointsService {
         action: 'CONNECTION_GRANT_DENIED', resource: 'endpoint', resourceId: endpointId,
         meta: { denied: authz.reason },
       });
-      // Deliberately indistinguishable from "does not exist" — probing another
-      // business's ids must not reveal whether they are real.
-      throw new NotFoundException('Computer not found');
+      this.refuse(authz);
     }
 
     const endpoint = await this.prisma.endpoint.findUnique({
@@ -677,6 +751,7 @@ export class EndpointsService {
         endpointId,
         expiresAt,
         createdByIp: actor.ip ?? null,
+        launchMode: mode,
       },
       select: { id: true, expiresAt: true },
     });
@@ -685,7 +760,7 @@ export class EndpointsService {
       tenantId: endpoint?.tenantId ?? undefined, customerId: endpoint?.customerId ?? undefined,
       actorId: actor.userId, actorIp: actor.ip,
       action: 'CONNECTION_GRANT_CREATED', resource: 'connection_grant', resourceId: grant.id,
-      meta: { endpointId },
+      meta: { endpointId, mode, path: authz.path, credentialReleased: authz.revealCredential },
     });
     return { grantId: grant.id, token, expiresAt: grant.expiresAt };
   }
@@ -720,7 +795,7 @@ export class EndpointsService {
     const granteeActor = await this.liveActor(grant.userId, grant.tenantId, grant.endpoint.customerId, actorIp);
     if (!granteeActor) throw new NotFoundException('Authorization no longer valid');
 
-    const authz = await this.authorizeConnect(granteeActor, grant.endpointId);
+    const authz = await this.authorizeConnect(granteeActor, grant.endpointId, { mode: grant.launchMode as LaunchMode, via: 'launcher', stage: 'redeem' });
     if (!authz.ok) {
       await this.audit.log({
         tenantId: grant.tenantId, customerId: grant.endpoint.customerId ?? undefined,
@@ -733,7 +808,9 @@ export class EndpointsService {
 
     const rdId = grant.endpoint.rustdeskNode?.rustdeskId;
     if (!rdId) throw new NotFoundException('Computer is not enrolled');
-    const password = grant.endpoint.rustdeskNode?.permanentPassword
+    // A preset-backed launch never receives the permanent password: it would
+    // outlive the grant and allow a direct reconnect the portal never sees.
+    const password = authz.revealCredential && grant.endpoint.rustdeskNode?.permanentPassword
       ? this.decryptPassword(grant.endpoint.rustdeskNode.permanentPassword)
       : null;
 
@@ -749,12 +826,14 @@ export class EndpointsService {
       tenantId: grant.tenantId, customerId: grant.endpoint.customerId ?? undefined,
       actorId: grant.userId, actorIp,
       action: 'CONNECTION_GRANT_REDEEMED', resource: 'connection_grant', resourceId: grant.id,
-      meta: { endpointId: grant.endpointId },
+      meta: { endpointId: grant.endpointId, mode: grant.launchMode, credentialReleased: !!password },
     });
 
     return {
       rustdeskId: rdId,
       password,
+      mode: authz.mode,
+      maxSessionMinutes: authz.maxSessionMinutes,
       computer: {
         id: grant.endpoint.id,
         name: grant.endpoint.name,
@@ -770,25 +849,9 @@ export class EndpointsService {
    * user is not active.
    */
   async liveActor(userId: string, tenantId: string, businessId: string | null, ip?: string): Promise<ActorContext | null> {
-    const r = await this.actors.actorForBusiness(userId, tenantId, businessId, ip);
-    if (!r) return null;
-    return {
-      userId: r.user.id,
-      email: r.user.email,
-      tenantId: r.tenantId,
-      businessId: r.businessId,
-      isPlatformAdmin: r.user.isPlatformAdmin,
-      roleType: r.roleType,
-      capabilities: effectiveCapabilities({
-        isPlatformAdmin: r.user.isPlatformAdmin, roleType: r.roleType, capabilities: r.capabilities,
-      }),
-      ip,
-      ownBusinessId: r.ownBusinessId,
-      technician: r.technician,
-      assignedBusinessIds: r.assignedBusinessIds,
-      platformPermissions: r.platformPermissions,
-    };
+    return this.actors.contextFor(userId, tenantId, businessId, ip);
   }
+
 
   /**
    * One-click Connect: returns the credentials the browser hands to the
@@ -796,9 +859,22 @@ export class EndpointsService {
    */
   async connectInfo(
     actor: ActorContext, endpointId: string,
-    opts: { reuseSessionId?: string; supportRequestId?: string } = {},
+    opts: { reuseSessionId?: string; supportRequestId?: string; mode?: LaunchMode; admit?: boolean } = {},
   ) {
-    const authz = await this.authorizeConnect(actor, endpointId);
+    const mode = opts.mode ?? 'control';
+    // A Connect script reusing the session its own click created is the same
+    // launch, already counted when that click minted its grant. Only a real,
+    // recent, still-pending session of this actor on this computer qualifies,
+    // so an invented id cannot be used to dodge the count.
+    let admit = opts.admit;
+    if (admit && opts.reuseSessionId) {
+      const prior = await this.prisma.supportSession.findFirst({
+        where: { id: opts.reuseSessionId, endpointId, technicianId: actor.userId, status: 'LAUNCH_REQUESTED', createdAt: { gt: new Date(Date.now() - 10 * 60_000) } },
+        select: { id: true },
+      });
+      if (prior) admit = false;
+    }
+    const authz = await this.authorizeConnect(actor, endpointId, { mode, admit: admit ? 'ui' : undefined, stage: 'connect' });
     if (!authz.ok) {
       await this.audit.log({
         tenantId: actor.tenantId ?? undefined, customerId: actor.businessId ?? undefined,
@@ -806,7 +882,7 @@ export class EndpointsService {
         action: 'ENDPOINT_PASSWORD_REVEALED', resource: 'endpoint', resourceId: endpointId,
         meta: { denied: authz.reason },
       });
-      throw new NotFoundException('Computer not found');
+      this.refuse(authz);
     }
 
     const endpoint = await this.prisma.endpoint.findUnique({
@@ -820,16 +896,18 @@ export class EndpointsService {
       throw new NotFoundException('Computer is not yet enrolled to accept connections');
     }
 
-    const password = endpoint.rustdeskNode.permanentPassword
+    const password = authz.revealCredential && endpoint.rustdeskNode.permanentPassword
       ? this.decryptPassword(endpoint.rustdeskNode.permanentPassword)
       : null;
 
-    await this.audit.log({
-      tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
-      actorId: actor.userId, actorIp: actor.ip,
-      action: 'ENDPOINT_PASSWORD_REVEALED', resource: 'endpoint', resourceId: endpointId,
-      meta: { via: 'connect' },
-    });
+    if (password) {
+      await this.audit.log({
+        tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
+        actorId: actor.userId, actorIp: actor.ip,
+        action: 'ENDPOINT_PASSWORD_REVEALED', resource: 'endpoint', resourceId: endpointId,
+        meta: { via: 'connect', mode },
+      });
+    }
 
     // Record the launch as a session — ONE per Connect.
     //
@@ -883,6 +961,9 @@ export class EndpointsService {
       rustdeskId: endpoint.rustdeskNode.rustdeskId,
       password,
       hasPassword: !!password,
+      mode,
+      accessPath: authz.path,
+      maxSessionMinutes: authz.maxSessionMinutes,
       sessionId,
       computer: {
         id: endpoint.id,
@@ -914,7 +995,7 @@ export class EndpointsService {
   // ── Per-computer access grants ────────────────────────────────────────────
 
   async listAccess(actor: ActorContext, endpointId: string) {
-    await this.acl.assertEndpointInScope(actor, endpointId);
+    await this.acl.assertEndpointInScope(actor, endpointId, CAP.USERS_VIEW);
     this.acl.assertCapability(actor, CAP.USERS_VIEW);
 
     return this.prisma.computerAccess.findMany({
@@ -928,7 +1009,7 @@ export class EndpointsService {
     actor: ActorContext, endpointId: string, userId: string,
     window: { startsAt?: string | null; expiresAt?: string | null; schedule?: unknown } = {},
   ) {
-    const endpoint = await this.acl.assertEndpointInScope(actor, endpointId);
+    const endpoint = await this.acl.assertEndpointInScope(actor, endpointId, CAP.USERS_MANAGE);
     this.acl.assertCapability(actor, CAP.USERS_MANAGE);
 
     // The grantee must belong to the same business as the computer. Without
@@ -969,7 +1050,7 @@ export class EndpointsService {
   }
 
   async revokeAccess(actor: ActorContext, endpointId: string, userId: string) {
-    const endpoint = await this.acl.assertEndpointInScope(actor, endpointId);
+    const endpoint = await this.acl.assertEndpointInScope(actor, endpointId, CAP.USERS_MANAGE);
     this.acl.assertCapability(actor, CAP.USERS_MANAGE);
 
     await this.prisma.computerAccess.deleteMany({ where: { endpointId, userId } });
@@ -982,7 +1063,7 @@ export class EndpointsService {
   }
 
   async setAccessMode(actor: ActorContext, endpointId: string, mode: 'ASSIGNED_USERS' | 'COMPANY_WIDE') {
-    const endpoint = await this.acl.assertEndpointInScope(actor, endpointId);
+    const endpoint = await this.acl.assertEndpointInScope(actor, endpointId, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
     // COMPANY_WIDE grants every member of the business at once, so it needs
     // the same capability as granting one of them (grantAccess).
@@ -1026,7 +1107,7 @@ export class EndpointsService {
   // ── AI timeline ───────────────────────────────────────────────────────────
 
   async generateTimeline(actor: ActorContext, id: string): Promise<{ text: string }> {
-    await this.acl.assertEndpointInScope(actor, id);
+    await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
 
     const endpoint = await this.prisma.endpoint.findUnique({
@@ -1126,7 +1207,7 @@ export class EndpointsService {
    * release this server serves.
    */
   async getInventory(actor: ActorContext, id: string) {
-    await this.acl.assertEndpointInScope(actor, id);
+    await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_VIEW);
     this.acl.assertCapability(actor, CAP.COMPUTERS_VIEW);
 
     const [inventory, endpointRow, node, commands] = await Promise.all([
@@ -1212,8 +1293,9 @@ export class EndpointsService {
    * than spinning as though this were synchronous.
    */
   async requestInventoryRefresh(actor: ActorContext, id: string) {
-    const endpoint = await this.acl.assertEndpointInScope(actor, id);
+    const endpoint = await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_VIEW);
     this.acl.assertCapability(actor, CAP.COMPUTERS_VIEW);
+    await this.admitWrite(actor, id, 'EVIDENCE'); // read-only collection: device/business caps, not the write cap
 
     const staged = [];
     for (const type of ['INVENTORY_REFRESH', 'UPDATE_SCAN'] as const) {
@@ -1244,8 +1326,9 @@ export class EndpointsService {
    * after the fact — which log, how far back, and who asked.
    */
   async requestEventLog(actor: ActorContext, id: string, params: Record<string, unknown>) {
-    const endpoint = await this.acl.assertEndpointInScope(actor, id);
+    const endpoint = await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EVENT_LOGS);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EVENT_LOGS);
+    await this.admitWrite(actor, id, 'EVIDENCE'); // read-only collection: device/business caps, not the write cap
 
     // Throws on an unknown log name or an out-of-range bound before anything
     // is written, so a rejected request leaves no row behind.
@@ -1289,8 +1372,9 @@ export class EndpointsService {
    * installs software on somebody's machine.
    */
   async requestAgentReinstall(actor: ActorContext, id: string) {
-    const endpoint = await this.acl.assertEndpointInScope(actor, id);
+    const endpoint = await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
+    await this.admitWrite(actor, id);
 
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { endpointId: id },
@@ -1340,7 +1424,7 @@ export class EndpointsService {
    * who could ask, not who could read the answer.
    */
   async latestEventLog(actor: ActorContext, id: string) {
-    await this.acl.assertEndpointInScope(actor, id);
+    await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EVENT_LOGS);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EVENT_LOGS);
     return this.inventory.latestEventLog(id);
   }
@@ -1354,12 +1438,13 @@ export class EndpointsService {
    * could see the computer could read the answer.
    */
   async getCommand(actor: ActorContext, id: string, commandId: string) {
-    await this.acl.assertEndpointInScope(actor, id);
+    await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_VIEW);
     this.acl.assertCapability(actor, CAP.COMPUTERS_VIEW);
 
     const cmd = await this.inventory.getCommand(id, commandId);
     if (!cmd) throw new NotFoundException('Request not found');
     if (cmd.type === 'EVENT_LOG_QUERY') {
+      await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EVENT_LOGS);
       this.acl.assertCapability(actor, CAP.COMPUTERS_EVENT_LOGS);
     }
     return cmd;

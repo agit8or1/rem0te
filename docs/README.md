@@ -31,6 +31,9 @@ the product, searchable, under **Documentation** in the sidebar.
 
 ## Running it
 
+- **[technician-access.md](technician-access.md)** — technician presets (L1/L2/L3),
+  launch policy, protected device classes, fleet-abuse limits, independent
+  review of trust changes, and what this build can and cannot enforce.
 - **[setup.md](setup.md)** — installation, configuration, ports, operations.
 - **[updates.md](updates.md)** — the three things that can be out of date
   (Rem0te, the RustDesk clients, hbbs/hbbr) and how each is updated.

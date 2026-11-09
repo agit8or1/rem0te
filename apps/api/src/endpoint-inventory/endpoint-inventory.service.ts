@@ -1,3 +1,7 @@
+import { ActorResolverService } from '../rbac/actor-resolver.service';
+import { AccessControlService } from '../rbac/access-control.service';
+import { CAP } from '../rbac/capabilities';
+import { AbuseGuardService } from '../security-controls/abuse-guard.service';
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { Prisma, EndpointCommandType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -143,7 +147,32 @@ function arr(v: unknown, max: number): unknown[] {
 export class EndpointInventoryService {
   private readonly logger = new Logger(EndpointInventoryService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly actors: ActorResolverService,
+    private readonly acl: AccessControlService,
+    private readonly abuse: AbuseGuardService,
+  ) {}
+
+  /**
+   * Is the person who queued this command still allowed to have it run, now?
+   * A command can sit for its whole TTL waiting for the machine to come
+   * online; in that time the requester may have been demoted, had the
+   * assignment revoked, or been paused. Automatic collections (no requester)
+   * are the server's own and always pass.
+   */
+  private async requesterStillAllowed(cmd: { requestedById: string | null; type: EndpointCommandType; tenantId: string | null }, endpoint: { id: string; customerId: string | null; accessMode: string; tenantId: string | null }): Promise<string | null> {
+    if (!cmd.requestedById) return null;
+    if (await this.abuse.isPaused(`user:${cmd.requestedById}`)) return 'requester_paused';
+    const tenantId = cmd.tenantId ?? endpoint.tenantId;
+    if (!tenantId) return 'no_tenant';
+    const actor = await this.actors.contextFor(cmd.requestedById, tenantId, endpoint.customerId);
+    if (!actor) return 'requester_inactive';
+    if (!actor.isPlatformAdmin && actor.businessId !== endpoint.customerId) return 'requester_out_of_business';
+    const cap = cmd.type === 'EVENT_LOG_QUERY' ? CAP.COMPUTERS_EVENT_LOGS : CAP.COMPUTERS_VIEW;
+    if (!actor.technician && !actor.capabilities.includes(cap)) return 'requester_lost_capability';
+    return (await this.acl.canReachEndpoint(actor, endpoint as never, undefined, cap)) ? null : 'requester_lost_access';
+  }
 
   // --- Ingest ---------------------------------------------------------------
 
@@ -437,8 +466,18 @@ export class EndpointInventoryService {
       take: COMMANDS_PER_HEARTBEAT,
     });
 
+    const endpointRow = due.length ? await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { id: true, customerId: true, accessMode: true, tenantId: true } }) : null;
     const handOut: { id: string; type: EndpointCommandType; params: unknown }[] = [];
     for (const cmd of due) {
+      // Re-authorize at dispatch, not only when it was queued.
+      const why = endpointRow ? await this.requesterStillAllowed(cmd, endpointRow) : 'endpoint_missing';
+      if (why) {
+        await this.prisma.endpointCommand.update({
+          where: { id: cmd.id },
+          data: { status: 'FAILED', error: `Not dispatched: the person who requested this is no longer allowed to (${why}).`, completedAt: new Date() },
+        });
+        continue;
+      }
       if (cmd.dispatchCount >= MAX_DISPATCHES) {
         await this.prisma.endpointCommand.update({
           where: { id: cmd.id },

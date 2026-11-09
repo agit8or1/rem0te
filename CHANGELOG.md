@@ -5,6 +5,147 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.23.0] — 2026-11-09 · *Gatehouse*
+
+**Technician access presets and abuse prevention.** Three shipped tiers
+(L1 Help Desk, L2 Technician, L3 Senior) say what a technician may do in a
+business; a single launch policy decides every session start; protected
+device classes, fleet-abuse limits and independent review of trust changes
+apply to everyone, Platform Admins included. Operator page:
+`docs/technician-access.md`. Admin screen: *Settings → Security → Technician
+Access*; every safeguard, its enforcement status and its evidence are in
+*Admin → Security → Security features*.
+
+**Status: fixture-tested.** `apps/api/scripts/e2e-presets.mjs` (112 checks
+against a running API and a scratch database) and `unit-presets.mjs` (26, in
+CI). **No RustDesk restriction was live-verified.** View-only and attended
+consent are honoured only where an endpoint reports it can enforce them
+(`Endpoint.sessionEnforcement`); no shipped agent does, so the tests simulate
+it by writing the column. In this build every preset-backed view-only or
+consent-gated launch is therefore *blocked with a reason*. It is never opened
+with more.
+
+### Upgrade notes
+
+- **Migration `0023_technician_presets`.** New tables `TechnicianPreset`,
+  `AccessPolicy`, `TemporaryAccessRequest`, `PrivilegedActivity`,
+  `IdentityPause`, `MaintenanceException`, `AlertSuppression`, `SecurityAlert`,
+  `TrustChangeRequest`; enum `DeviceClass`; columns `Endpoint.deviceClass`,
+  `Endpoint.sessionEnforcement`, `TechnicianAssignment.presetId`,
+  `TechnicianDevice.isManagedAdminWorkstation`, and `launchMode` on
+  `ConnectionGrant` / `LauncherToken`; fourteen `ActivityAction` values.
+  Additive, except a back-fill: `deviceClass` becomes `SERVER` where the
+  inventory OS caption contains "Server", `WORKSTATION` where there is other
+  inventory, `UNKNOWN` otherwise. **It never assigns a protected class** —
+  mark domain controllers, hypervisors, backup servers and the RMM host
+  yourself. Run `prisma migrate deploy`, rsync `prisma/`, and `prisma generate`
+  at the target (CLAUDE.md, *A schema change needs two more steps*).
+- **No production dependency changed.**
+- **Existing assignments are unchanged.** Every assignment made before 0.23 is
+  *custom* and keeps its capabilities, including Remote connect and credential
+  reveal. *Upgrade impact* lists them and flags those holding connect or edit.
+  Business members and Platform Admins connect as before — except to a
+  protected device class, and except while paused.
+- Built-in presets and the platform policy are seeded on startup,
+  create-only, so an admin's edits survive restarts and upgrades.
+- With a single Platform Admin and no independent reviewer, nothing that
+  widens trust can be approved. Appoint a second person before you need to.
+
+### Added
+
+- **Presets.** A preset-backed assignment's capabilities are derived live
+  from the preset: `computers:view` and `support:requests`, plus
+  `computers:event_logs` for L2/L3 — never `computers:connect`, `:edit`,
+  `:add`, `:remove`, `quick_connect` or `users:manage` (checked by
+  `check-security-invariants.mjs` § 11). Clone, edit (with a preview of what
+  changes and how many assignments it affects), reset to shipped defaults.
+  Locked controls (credential reveal, enrollment, scripts, fix approval, fleet
+  execution) cannot move; unenforceable ones (clipboard, file transfer,
+  standing elevation, unattended) cannot be turned on. A new assignment with
+  neither a preset nor capabilities gets **L1**.
+- **Launch policy** (`AccessPolicyService.evaluateLaunch`), applied inside
+  `authorizeConnect` so `POST /connect`, `connect.cmd`, grant redemption and
+  the launcher (at issue *and* redemption) share it. Modes `control`,
+  `view_only`, `elevated`, `unattended` (`?mode=` / launcher `mode`). The mode
+  is stored on the grant or token and re-evaluated at redemption. **A
+  preset-backed launch never receives the permanent password**, so there is no
+  credential to reconnect with directly. Refusals are 403 with a code and a
+  sentence the UI shows.
+- **Temporary access**: request → independent decision (fresh auth) →
+  activation by the requester (fresh auth; a passkey for protected-device
+  exceptions). Approved-but-not-activated grants do nothing; activation
+  re-checks eligibility; expiry is enforced at every launch.
+- **Protected device classes.** Domain controller, hypervisor, backup server
+  and RMM host are always protected (`SERVER` optional): interactive access is
+  denied to everyone unless an approved, activated exception exists *and* the
+  launch comes through the launcher from a managed admin workstation.
+- **Fleet-abuse limits** (`AbuseGuardService`). Launches, writes and evidence
+  reads from the UI, launcher, Quick Connect and the ClientSt0r integration
+  (counted for the delegated technician and the peer) are admitted under a
+  per-identity Postgres advisory lock that counts distinct computers and
+  businesses, launches and writes in the window. A trip pauses the identity
+  and alerts the configured webhooks. Pause and alert suppression are
+  separate. Maintenance exceptions name computers, kinds of work and an
+  expiry, and need an approver other than requester and beneficiary.
+- **Independent review of trust widening** (`TrustChangeRequest`): alert
+  destinations, independent-reviewer designation, thresholds and window,
+  unattended / clipboard / file transfer / consent, protected classes,
+  device-class downgrade, managed-workstation designation, preset widening.
+  The previous contacts are notified on request and decision. Webhook URLs are
+  treated as secrets — shown and recorded as label, origin and ref only.
+- **Business Owner tightening** of their own business's policy; the effective
+  value is always the stricter of platform and business.
+- **Effective access inspector** (technician + business + computer + action →
+  decision, reasons, grants) and **upgrade impact** report.
+- **Security Features catalog** (`GET /security-controls/catalog`) with scope,
+  enforcement status and evidence for every safeguard.
+- `approvals:review` platform permission ("Independent reviewer").
+- `scripts/unit-presets.mjs` (CI), `scripts/e2e-presets.mjs`,
+  `check-security-invariants.mjs` § 11.
+
+### Changed
+
+- **Capability and computer scope now come from the same grant.**
+  `canReachEndpoint` / `assertEndpointInScope` take the capability being
+  exercised and require one assignment to carry both. Before, a technician
+  with event logs on one computer (group grant) and inventory on the whole
+  business (direct grant) got event logs on every computer.
+- `@RequireCapability(computers:connect)` was removed from `POST
+  /endpoints/:id/connect`, `GET /endpoints/:id/connect.cmd` and `POST
+  /launcher/token`. The decision moved into `authorizeConnect`, which still
+  requires `computers:connect` of members (403 with a reason, as before) and
+  decides technicians by grant.
+- **Queued endpoint commands are re-authorized at heartbeat dispatch.** One
+  whose requester was demoted, revoked or paused is not handed out and is
+  marked `FAILED` with the reason.
+- No self-assignment: a manager cannot assign themselves or a group they are
+  in, or add themselves to a group; nobody appoints themselves a reviewer.
+- `ActorResolverService.contextFor()` builds a request-less `ActorContext`;
+  `EndpointsService.liveActor` uses it.
+
+### Not built — shown as *Unavailable*
+
+- **Endpoint enforcement of view-only / consent.** No agent reports
+  `sessionEnforcement`; clipboard and file transfer are client-side RustDesk
+  toggles; endpoint-confirmed session termination is not reported by RustDesk.
+- **Managed-workstation attestation.** The launcher carries no device key, so
+  the protected-class exception can be approved and activated but never
+  satisfied: protected computers are unreachable interactively, fail-closed.
+- **Windows privileged helper** (elevation) and **release signing /
+  provenance**: neither component exists. The catalog lists what each needs
+  before it ships.
+
+### Found by the stolen-session drill, not fixed here
+
+- A stolen Platform Admin session (cookie, no password) can still **create an
+  enrollment token** (201). Appointing an approver, removing alert contacts,
+  revealing a backup server's password and controlling it were all refused.
+  Enrollment is used by API keys and installers, so gating it needs its own
+  change.
+- 40 single-device inventory refreshes from that session stayed under the
+  Platform Admin cap (60) and did not pause it. Lower `thresholds.platformAdmin`
+  if that is too generous for your fleet.
+
 ## [0.22.0] — 2026-11-09 · *Courier*
 
 First milestone of the ClientSt0r ↔ rem0te integration: **read-only ticket

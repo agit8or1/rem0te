@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **296** of them across
-**36** controllers.
+integration, under `/api/integration/v1`). There are **326** of them across
+**37** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -156,8 +156,8 @@ Admins and Business Owners are not confined by it; see
 | `DELETE` | `/api/v1/endpoints/:id/aliases/:aliasId` | signed in | `COMPUTERS_EDIT` |
 | `PATCH` | `/api/v1/endpoints/:id/archive` | signed in | `COMPUTERS_REMOVE` |
 | `GET` | `/api/v1/endpoints/:id/commands/:commandId` | signed in | `COMPUTERS_VIEW` |
-| `POST` | `/api/v1/endpoints/:id/connect` | signed in, throttled | `COMPUTERS_CONNECT` |
-| `GET` | `/api/v1/endpoints/:id/connect.cmd` | signed in, throttled | `COMPUTERS_CONNECT` |
+| `POST` | `/api/v1/endpoints/:id/connect` | signed in, throttled | — |
+| `GET` | `/api/v1/endpoints/:id/connect.cmd` | signed in, throttled | — |
 | `POST` | `/api/v1/endpoints/:id/event-log` | signed in, throttled | `COMPUTERS_EVENT_LOGS` |
 | `GET` | `/api/v1/endpoints/:id/event-log/latest` | signed in | `COMPUTERS_EVENT_LOGS` |
 | `GET` | `/api/v1/endpoints/:id/inventory` | signed in | `COMPUTERS_VIEW` |
@@ -220,7 +220,7 @@ Admins and Business Owners are not confined by it; see
 
 | Method | Path | Access | Capability |
 |---|---|---|---|
-| `POST` | `/api/v1/launcher/token` | signed in | `COMPUTERS_CONNECT` |
+| `POST` | `/api/v1/launcher/token` | signed in | — |
 | `PATCH` | `/api/v1/launcher/token/:id/revoke` | signed in | `COMPUTERS_CONNECT` |
 | `GET` | `/api/v1/launcher/validate` | public, throttled | — |
 
@@ -389,6 +389,43 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/admin/security/os-updates/status` | signed in | — |
 | `GET` | `/api/v1/admin/security/tls` | signed in | — |
 | `POST` | `/api/v1/admin/security/tls/renew` | signed in | — |
+
+## Security controls
+
+`apps/api/src/security-controls/security-controls.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `POST` | `/api/v1/security-controls/alert-suppressions` | signed in | — |
+| `POST` | `/api/v1/security-controls/alert-suppressions/:id/revoke` | signed in | — |
+| `GET` | `/api/v1/security-controls/alerts` | signed in | — |
+| `GET` | `/api/v1/security-controls/catalog` | signed in | — |
+| `PATCH` | `/api/v1/security-controls/endpoints/:id/device-class` | signed in | — |
+| `GET` | `/api/v1/security-controls/inspect` | signed in | — |
+| `GET` | `/api/v1/security-controls/maintenance-exceptions` | signed in | — |
+| `POST` | `/api/v1/security-controls/maintenance-exceptions` | signed in | — |
+| `POST` | `/api/v1/security-controls/maintenance-exceptions/:id/decision` | signed in | — |
+| `POST` | `/api/v1/security-controls/maintenance-exceptions/:id/revoke` | signed in | — |
+| `GET` | `/api/v1/security-controls/pauses` | signed in | — |
+| `POST` | `/api/v1/security-controls/pauses/:id/clear` | signed in | — |
+| `GET` | `/api/v1/security-controls/policy` | signed in | — |
+| `PUT` | `/api/v1/security-controls/policy` | signed in | — |
+| `PUT` | `/api/v1/security-controls/policy/business/:businessId` | signed in | — |
+| `GET` | `/api/v1/security-controls/presets` | signed in | — |
+| `PUT` | `/api/v1/security-controls/presets/:id` | signed in | — |
+| `DELETE` | `/api/v1/security-controls/presets/:id` | signed in | — |
+| `POST` | `/api/v1/security-controls/presets/:id/clone` | signed in | — |
+| `POST` | `/api/v1/security-controls/presets/:id/preview` | signed in | — |
+| `POST` | `/api/v1/security-controls/presets/:id/reset` | signed in | — |
+| `PATCH` | `/api/v1/security-controls/technician-devices/:id/managed` | signed in | — |
+| `POST` | `/api/v1/security-controls/temporary-access` | signed in | — |
+| `GET` | `/api/v1/security-controls/temporary-access` | signed in | — |
+| `POST` | `/api/v1/security-controls/temporary-access/:id/activate` | signed in | — |
+| `POST` | `/api/v1/security-controls/temporary-access/:id/decision` | signed in | — |
+| `POST` | `/api/v1/security-controls/temporary-access/:id/revoke` | signed in | — |
+| `GET` | `/api/v1/security-controls/trust-changes` | signed in | — |
+| `POST` | `/api/v1/security-controls/trust-changes/:id/decision` | signed in | — |
+| `GET` | `/api/v1/security-controls/upgrade-preview` | signed in | — |
 
 ## Support sessions
 

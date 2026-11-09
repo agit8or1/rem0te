@@ -20,8 +20,9 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import {
   PlayCircle, Archive, ArchiveRestore, Pencil, Check, X, RefreshCw, Sparkles,
-  CheckCircle2, XCircle, AlertTriangle, HelpCircle, Info, Clock, Download, Laptop, ShieldAlert,
+  CheckCircle2, XCircle, AlertTriangle, HelpCircle, Info, Clock, Download, Laptop, ShieldAlert, Eye,
 } from 'lucide-react';
+import { TemporaryAccessCard } from '@/components/security-controls/temporary-access-card';
 
 export default function EndpointDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -62,10 +63,16 @@ export default function EndpointDetailPage() {
 
   // Prefer the direct browser-launch path (rustdesk:// with password) — one click
   // for anyone with access, and does not require the desktop launcher.
+  // v0.23: a refusal that a temporary grant would lift opens the request form.
+  const [grantRequired, setGrantRequired] = useState<string | null>(null);
   const launchMutation = useMutation({
-    mutationFn: () => endpointsApi.connect(id),
-    onSuccess: async (res) => {
-      const info = res.data?.data as { rustdeskId?: string; password?: string | null; sessionId?: string | null } | undefined;
+    mutationFn: (mode?: 'view_only') => endpointsApi.connect(id, mode),
+    onSuccess: async (res, mode) => {
+      setGrantRequired(null);
+      const info = res.data?.data as {
+        rustdeskId?: string; password?: string | null; sessionId?: string | null;
+        mode?: string; accessPath?: string; maxSessionMinutes?: number | null;
+      } | undefined;
       const rdId = info?.rustdeskId;
       if (!rdId) {
         toast({ title: 'Computer not ready', description: 'This computer has not finished enrollment.', variant: 'destructive' });
@@ -75,16 +82,46 @@ export default function EndpointDetailPage() {
       if (pw) {
         try { await navigator.clipboard.writeText(pw); } catch { /* ignore */ }
       }
+      // A preset-backed launch never releases the permanent password: RustDesk
+      // asks at the endpoint instead. Say so, rather than leaving the
+      // technician wondering why nothing was copied.
+      if (!pw || info?.maxSessionMinutes) {
+        toast({
+          title: info?.mode === 'view_only' ? 'Starting a view-only session' : 'Starting the session',
+          description: [
+            !pw ? 'No password is released for this launch; RustDesk will prompt at the computer.' : null,
+            info?.maxSessionMinutes ? `This session is limited to ${info.maxSessionMinutes} minutes.` : null,
+          ].filter(Boolean).join(' '),
+        });
+      }
       // See my-computers/page.tsx: a bare rustdesk:// link cannot carry the
       // server address, so it only works on a client that already knows this
       // server. The script installs RustDesk if needed, configures it, then
       // connects — and deletes itself afterwards. POST :id/connect already
       // recorded the session; `?session=` makes the script reuse it rather
       // than create a second one.
+      const q = new URLSearchParams();
+      if (info?.sessionId) q.set('session', info.sessionId);
+      if (mode) q.set('mode', mode);
       const url = endpointsApi.connectScriptUrl(id);
-      window.location.href = info?.sessionId ? `${url}?session=${encodeURIComponent(info.sessionId)}` : url;
+      const qs = q.toString();
+      window.location.href = qs ? `${url}?${qs}` : url;
     },
-    onError: (e: unknown) => toast({ title: 'Error', description: apiMessage(e, 'Failed to start connection'), variant: 'destructive' }),
+    // A 403 from connect carries { code, message } written to be read as it
+    // is — protected device class, a view-only launch the endpoint cannot
+    // enforce, a paused identity — so show it verbatim.
+    onError: (e: unknown) => {
+      const r = (e as { response?: { status?: number; data?: { code?: string } } })?.response;
+      if (r?.status === 403 && r.data?.code === 'TEMPORARY_GRANT_REQUIRED') {
+        setGrantRequired(apiMessage(e, 'Interactive control needs a temporary grant.'));
+        return;
+      }
+      toast({
+        title: r?.status === 403 ? 'Connection refused' : 'Error',
+        description: apiMessage(e, 'Failed to start connection'),
+        variant: 'destructive',
+      });
+    },
   });
 
   const archiveMutation = useMutation({
@@ -179,11 +216,21 @@ export default function EndpointDetailPage() {
         <div className="flex gap-2">
           <Button
             size="sm"
-            onClick={() => launchMutation.mutate()}
+            onClick={() => launchMutation.mutate(undefined)}
             disabled={launchMutation.isPending || !(ep.rustdeskNode as { rustdeskId?: string } | null)?.rustdeskId}
           >
             <PlayCircle className="h-4 w-4 mr-2" />
             Connect
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            title="Watch the screen without control. Refused if this computer cannot enforce view-only."
+            onClick={() => launchMutation.mutate('view_only')}
+            disabled={launchMutation.isPending || !(ep.rustdeskNode as { rustdeskId?: string } | null)?.rustdeskId}
+          >
+            <Eye className="h-4 w-4 mr-2" />
+            View only
           </Button>
           {ep.status === 'ARCHIVED' ? (
             <Button
@@ -213,6 +260,13 @@ export default function EndpointDetailPage() {
           )}
         </div>
       </PageHeader>
+
+      <TemporaryAccessCard
+        endpointId={id}
+        refusal={grantRequired}
+        onDismiss={() => setGrantRequired(null)}
+        onConnect={() => launchMutation.mutate(undefined)}
+      />
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>

@@ -37,6 +37,7 @@ const ORDER = [
   ['integration-clientst0r.md', 'ClientSt0r integration'],
   ['support-requests.md', 'Support requests'],
   ['technicians.md', 'MSP technicians'],
+  ['technician-access.md', 'Technician access and abuse prevention'],
   ['updates.md', 'Updates'],
   ['setup.md', 'Setup and operations'],
   ['architecture.md', 'Architecture'],

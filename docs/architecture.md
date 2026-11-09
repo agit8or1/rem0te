@@ -134,6 +134,19 @@ Full model in [access-control.md](access-control.md).
   resolved on every request by `ActorResolverService`, which also honours the
   `rem0te_business` cookie / `X-Rem0te-Business` header only for a business
   the person can reach right now.
+- **Presets and the launch policy** (v0.23): `TechnicianPreset` rows give a
+  preset-backed assignment its capabilities live; capability and computer
+  scope are evaluated per grant (`technicianGrantAllows`).
+  `AccessPolicyService.evaluateLaunch` runs inside
+  `EndpointsService.authorizeConnect`, so connect, `connect.cmd`, grant
+  redemption and the launcher (issue and redemption) share one decision; the
+  launch mode is stored on `ConnectionGrant` / `LauncherToken` and re-checked
+  at redemption. `AbuseGuardService.admit` counts privileged work in
+  `PrivilegedActivity` under a per-identity `pg_advisory_xact_lock`, writing an
+  `IdentityPause` on a trip. Trust-widening changes are `TrustChangeRequest`
+  rows applied only by a second person. Queued `EndpointCommand`s are
+  re-authorized at heartbeat dispatch. See
+  [technician-access.md](technician-access.md).
 
 ---
 

@@ -9,6 +9,8 @@ import { CAP, isOwnerRole, sanitizeTechnicianCapabilities, TECHNICIAN_ASSIGNABLE
 import { PLATFORM_PERM, sanitizePlatformPermissions } from '../rbac/platform-permissions';
 import { TechnicianAccessService } from '../rbac/technician-access.service';
 import { parseSchedule } from '../rbac/schedule';
+import { TrustChangeService } from '../security-controls/trust-change.service';
+import { PresetPolicy, presetCapabilities } from '../security-controls/presets';
 
 export interface AssignmentInput {
   userId?: string;
@@ -20,6 +22,8 @@ export interface AssignmentInput {
   expiresAt?: string | null;
   schedule?: unknown;
   reason?: string;
+  /** v0.23: create from a preset. Omitted with no capabilities → L1 Help Desk. */
+  presetId?: string;
 }
 
 /**
@@ -44,6 +48,7 @@ export class TechniciansService {
     private readonly audit: AuditService,
     private readonly acl: AccessControlService,
     private readonly access: TechnicianAccessService,
+    private readonly trust: TrustChangeService,
   ) {}
 
   // ── Self ──────────────────────────────────────────────────────────────────
@@ -172,6 +177,16 @@ export class TechniciansService {
   async createAssignment(actor: ActorContext, input: AssignmentInput, opts: { selfRequest?: boolean } = {}) {
     if (!opts.selfRequest) this.assertManager(actor);
     if (!!input.userId === !!input.groupId) throw new BadRequestException('Assign to exactly one of a user or a group');
+    // No self-assignment and no self-promotion: a manager cannot put
+    // themselves, or a group they are in, on a business. A technician's own
+    // access request is the one path for that, and it always needs approval.
+    if (!opts.selfRequest) {
+      if (input.userId === actor.userId) throw new ForbiddenException({ code: 'SELF_ASSIGNMENT', message: 'You cannot create an assignment for yourself. Another manager must, or request access and have it approved.' });
+      if (input.groupId) {
+        const member = await this.prisma.technicianGroupMember.findFirst({ where: { groupId: input.groupId, userId: actor.userId }, select: { userId: true } });
+        if (member) throw new ForbiddenException({ code: 'SELF_ASSIGNMENT', message: 'You are a member of this group; assigning it would grant you access. Another manager must.' });
+      }
+    }
 
     const business = await this.prisma.customer.findUnique({
       where: { id: input.businessId },
@@ -194,8 +209,27 @@ export class TechniciansService {
     // A group assignment with no capabilities of its own takes a SNAPSHOT of
     // the group's defaults. Editing the group later must not silently widen
     // assignments that were created (or approved) under the old set.
+    //
+    // v0.23: an assignment is either PRESET-backed (capabilities derived live
+    // from the preset — never connect/edit) or CUSTOM (explicit capabilities,
+    // the pre-0.23 behaviour, unchanged). Asking for neither gives L1 Help
+    // Desk, the least privileged tier — never a guess from the group.
     const explicit = sanitizeTechnicianCapabilities(input.capabilities ?? []);
-    const capabilities = explicit.length > 0 ? explicit : sanitizeTechnicianCapabilities(groupCaps);
+    if (input.presetId && explicit.length) throw new BadRequestException('Choose a preset or explicit capabilities, not both');
+    let presetId: string | null = null;
+    let capabilities: string[];
+    if (explicit.length) capabilities = explicit;
+    else if (!input.presetId && groupCaps.length) capabilities = sanitizeTechnicianCapabilities(groupCaps);
+    else {
+      const preset = input.presetId
+        ? await this.prisma.technicianPreset.findUnique({ where: { id: input.presetId } })
+        : await this.prisma.technicianPreset.findUnique({ where: { key: 'l1-help-desk' } });
+      if (!preset) throw new NotFoundException(input.presetId ? 'Preset not found' : 'The L1 Help Desk preset is missing; restart the API to re-seed it');
+      const parsed = PresetPolicy.safeParse(preset.policy);
+      if (!parsed.success) throw new BadRequestException('That preset\'s stored policy is invalid');
+      presetId = preset.id;
+      capabilities = presetCapabilities(parsed.data);
+    }
     if (capabilities.length === 0) {
       throw new BadRequestException(
         `Choose at least one capability. Assignable: ${TECHNICIAN_ASSIGNABLE_CAPABILITIES.join(', ')}`,
@@ -214,6 +248,7 @@ export class TechniciansService {
         userId: input.userId ?? null,
         groupId: input.groupId ?? null,
         capabilities,
+        presetId,
         endpointIds,
         startsAt, expiresAt,
         schedule: schedule ? (schedule as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
@@ -229,7 +264,7 @@ export class TechniciansService {
       action: opts.selfRequest ? 'TECHNICIAN_ASSIGNMENT_REQUESTED' : 'TECHNICIAN_ASSIGNMENT_CREATED',
       resource: 'technician_assignment', resourceId: row.id,
       meta: {
-        userId: row.userId, groupId: row.groupId, capabilities, endpointCount: endpointIds.length,
+        userId: row.userId, groupId: row.groupId, capabilities, presetId, endpointCount: endpointIds.length,
         startsAt, expiresAt, scheduled: !!schedule, approval: row.approvalStatus,
       },
     });
@@ -460,6 +495,8 @@ export class TechniciansService {
 
   async addMember(actor: ActorContext, groupId: string, userId: string) {
     this.assertManager(actor);
+    // Joining a group is joining its assignments: the same self-promotion rule.
+    if (userId === actor.userId) throw new ForbiddenException({ code: 'SELF_ASSIGNMENT', message: 'You cannot add yourself to a technician group. Another manager must.' });
     const u = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, status: true, isPlatformAdmin: true } });
     if (!u || u.status === 'DELETED') throw new NotFoundException('User not found');
     const m = await this.prisma.technicianGroupMember.upsert({
@@ -524,6 +561,16 @@ export class TechniciansService {
     const clean = sanitizePlatformPermissions(perms);
     const before = await this.prisma.user.findUnique({ where: { id: userId }, select: { platformPermissions: true } });
     if (!before) throw new NotFoundException('User not found');
+    // Appointing an independent reviewer widens who can approve; it goes to
+    // independent review itself. Removing it (or anything) applies at once.
+    const addsReviewer = clean.includes(PLATFORM_PERM.APPROVALS_REVIEW) && !before.platformPermissions.includes(PLATFORM_PERM.APPROVALS_REVIEW);
+    if (addsReviewer) {
+      if (userId === actor.userId) throw new ForbiddenException({ code: 'SELF_ASSIGNMENT', message: 'You cannot appoint yourself an independent reviewer' });
+      return this.trust.request(actor, {
+        kind: 'platform_permissions', target: userId, before: before.platformPermissions, after: clean,
+        payload: { permissions: clean }, widening: ['approvals:review granted'],
+      });
+    }
     const u = await this.prisma.user.update({
       where: { id: userId }, data: { platformPermissions: clean },
       select: { id: true, platformPermissions: true },

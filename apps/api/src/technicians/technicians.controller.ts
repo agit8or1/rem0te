@@ -24,6 +24,7 @@ class AssignmentDto {
   // Validated structurally by parseSchedule().
   @IsOptional() schedule?: unknown;
   @IsOptional() @IsString() @Length(0, 500) reason?: string;
+  @IsOptional() @IsString() @Length(1, 64) presetId?: string;
 }
 
 class AccessRequestDto {

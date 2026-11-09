@@ -133,8 +133,7 @@ export class DelegationService {
       where: { id: endpointId }, select: { id: true, customerId: true, accessMode: true, status: true },
     });
     if (!ep || ep.customerId !== actor.businessId || ep.status === 'ARCHIVED') throw E.invalid('Endpoint not found');
-    if (actor.technician?.endpointIds && !actor.technician.endpointIds.includes(ep.id)) throw E.invalid('Endpoint not found');
-    if (!(await this.acl.canReachEndpoint(actor, ep))) throw E.invalid('Endpoint not found');
+    if (!(await this.acl.canReachEndpoint(actor, ep, undefined, CAP.TICKET_ANALYSIS))) throw E.invalid('Endpoint not found');
     return ep;
   }
 }

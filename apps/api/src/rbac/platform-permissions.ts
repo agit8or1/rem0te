@@ -13,6 +13,11 @@
  */
 export const PLATFORM_PERM = {
   TECHNICIANS_MANAGE: 'technicians:manage',
+  // v0.23: designated independent reviewer. May approve another person's
+  // temporary-access request, maintenance exception or trust change — never
+  // their own. Separate from any technician tier: an L3 preset alone grants
+  // no approval. Granting it widens trust, so it needs independent review.
+  APPROVALS_REVIEW: 'approvals:review',
 } as const;
 
 export type PlatformPermission = (typeof PLATFORM_PERM)[keyof typeof PLATFORM_PERM];
@@ -25,6 +30,12 @@ export const PLATFORM_PERMISSION_LABELS: Record<PlatformPermission, { label: str
     description:
       'Create technician groups and assign MSP staff to customer businesses (including temporary contractor access). ' +
       'Does not grant access to any business by itself and does not include infrastructure or platform settings.',
+  },
+  'approvals:review': {
+    label: 'Independent reviewer',
+    description:
+      "Approve someone else's temporary control, protected-device exception, maintenance exception or trust change. " +
+      'Never their own. Grants no access to any business and no ability to act on a computer.',
   },
 };
 

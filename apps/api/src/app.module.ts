@@ -1,3 +1,4 @@
+import { SecurityControlsModule } from './security-controls/security-controls.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -73,6 +74,7 @@ import { IntegrationModule } from './integration/integration.module';
     CommonModule,
     RbacModule,
     AuditModule,
+    SecurityControlsModule,
     AuthModule,
     StepUpModule,
     MfaModule,

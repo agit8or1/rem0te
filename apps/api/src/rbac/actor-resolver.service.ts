@@ -3,6 +3,8 @@ import { RoleType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TechnicianAccessService, type TechnicianBusinessScope } from './technician-access.service';
 import { sanitizePlatformPermissions } from './platform-permissions';
+import { effectiveCapabilities } from './capabilities';
+import type { ActorContext } from './access-control.service';
 
 /** Header (or cookie) naming the business a multi-business user is working in. */
 export const ACTIVE_BUSINESS_HEADER = 'x-rem0te-business';
@@ -102,6 +104,23 @@ export class ActorResolverService {
       tenantId,
       ip,
       ...extras,
+    };
+  }
+
+  /**
+   * actorForBusiness, shaped as the ActorContext every authorization helper
+   * takes. For decisions made with no request in hand: grant and launcher
+   * redemption, command dispatch, the access inspector.
+   */
+  async contextFor(userId: string, tenantId: string, businessId: string | null, ip?: string): Promise<ActorContext | null> {
+    const r = await this.actorForBusiness(userId, tenantId, businessId, ip);
+    if (!r) return null;
+    return {
+      userId: r.user.id, email: r.user.email, tenantId: r.tenantId, businessId: r.businessId,
+      isPlatformAdmin: r.user.isPlatformAdmin, roleType: r.roleType,
+      capabilities: effectiveCapabilities({ isPlatformAdmin: r.user.isPlatformAdmin, roleType: r.roleType, capabilities: r.capabilities }),
+      ip, ownBusinessId: r.ownBusinessId, technician: r.technician,
+      assignedBusinessIds: r.assignedBusinessIds, platformPermissions: r.platformPermissions,
     };
   }
 }

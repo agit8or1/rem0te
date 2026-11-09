@@ -262,6 +262,40 @@ check(
   check('analysis next steps are never executable', /executable: false, requires_human_approval: true/.test(src[`${dir}/analysis.ts`]) && /executable: z\.literal\(false\)/.test(src[`${dir}/contract.ts`]), 'next_steps must be executable:false in both code and schema');
 }
 
+// 11. Technician presets and abuse prevention (0.23). Each of these is a
+//     protection that would fail open without a single error.
+{
+  const presets = read('apps/api/src/security-controls/presets.ts');
+  const derive = presets.match(/export function presetCapabilities[\s\S]*?\n\}/)?.[0] ?? '';
+  // a) A preset can never yield connect / edit / add / remove / quick connect / users:manage.
+  check('presetCapabilities() never names a launch, credential or admin capability',
+    derive.length > 0 && !/COMPUTERS_(CONNECT|EDIT|ADD|REMOVE)|QUICK_CONNECT|USERS_MANAGE/.test(derive),
+    'presetCapabilities must derive only view / support / event-log capabilities');
+  // b) Capability and computer scope come from the SAME grant.
+  const acl = read('apps/api/src/rbac/access-control.service.ts');
+  check('technician reach is decided per grant (technicianGrantAllows)',
+    /export function technicianGrantAllows[\s\S]*?s\.capabilities[\s\S]*?s\.endpointIds/.test(acl) && /canReachEndpoint[\s\S]*?technicianGrantAllows\(/.test(acl),
+    'canReachEndpoint must test capability and endpoint scope on one source');
+  // c) Every way of starting a session goes through the launch policy.
+  const eps = read('apps/api/src/endpoints/endpoints.service.ts');
+  check('authorizeConnect consults AccessPolicyService.evaluateLaunch', /this\.policy\.evaluateLaunch\(/.test(eps), 'the launch policy is not applied');
+  check('connect never releases the password unless the policy says so',
+    (eps.match(/authz\.revealCredential && /g) ?? []).length >= 2, 'both connectInfo and grant redemption must gate decryptPassword on authz.revealCredential');
+  const launcher = read('apps/api/src/launcher/launcher.service.ts');
+  check('launcher issue and redemption re-run the launch policy with the minted mode',
+    /admit: 'launcher'/.test(launcher) && /mode: record\.launchMode/.test(launcher), 'launcher must admit at issue and re-evaluate the recorded mode at redemption');
+  // d) Admission is serialised per identity.
+  const guard = read('apps/api/src/security-controls/abuse-guard.service.ts');
+  check('abuse guard serialises admission on a per-identity advisory lock',
+    /pg_advisory_xact_lock\(hashtextextended\(/.test(guard) && /\$transaction\(async/.test(guard), 'admit() must lock and count inside one transaction');
+  // e) Nobody approves their own request.
+  const review = read('apps/api/src/security-controls/review.ts');
+  check('independent review refuses the requester', /actor\.userId === requesterId/.test(review), 'assertIndependentReviewer must refuse the requester');
+  // f) Suppressing an alert never touches a pause.
+  const alerts = read('apps/api/src/security-controls/alerts.service.ts');
+  check('alert suppression never clears a pause', !/identityPause/.test(alerts), 'alerts.service.ts must not read or write IdentityPause');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);
