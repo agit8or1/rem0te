@@ -89,6 +89,12 @@ jobs:
       - name: Presets and launch-policy unit tests
         run: node apps/api/scripts/unit-presets.mjs
 
+      # The two Windows installer variants (0.24): static checks on the signed
+      # one, and — with the runner's pwsh — a parse of both plus execution of
+      # the signed parameter block against hostile parameter files.
+      - name: Signed installer tests
+        run: node apps/api/scripts/unit-signed-installer.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.
@@ -140,6 +146,13 @@ jobs:
         with:
           go-version-file: tools/windows-installer/go.mod
           cache-dependency-path: tools/windows-installer/go.sum
+      # The signed update chain (0.24): release tooling, the go-tuf client and
+      # the agent's install/update/migrate flow, including the attack drills —
+      # tampered target, forged targets, rollback, freeze, mix-and-match,
+      # stolen timestamp key, root rotation, downgrade, relay repointing.
+      - name: Signed update chain tests
+        working-directory: tools/windows-installer
+        run: go test ./...
       - name: Build for Windows
         working-directory: tools/windows-installer
         env:

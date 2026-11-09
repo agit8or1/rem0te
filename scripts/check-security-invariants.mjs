@@ -296,6 +296,49 @@ check(
   check('alert suppression never clears a pause', !/identityPause/.test(alerts), 'alerts.service.ts must not read or write IdentityPause');
 }
 
+// 12. Signed update chain (0.24). The portal is a mirror that holds no key;
+//     the signed installer runs nothing the portal chose; the legacy path is
+//     contained when the platform says signed_only.
+{
+  const ws = read('apps/api/src/public/windows-script.ts');
+  const signedFn = ws.match(/export function buildSignedWindowsScript[\s\S]*?\n\}\n\nfunction template/)?.[0] ?? '';
+  // a) The signed variant's own slots carry no iex, no download, no portal value.
+  check('signed installer variant has no iex / download / Invoke-Expression',
+    signedFn.length > 0 && !/\biex\b|Invoke-Expression|Invoke-WebRequest|github\.com/i.test(signedFn),
+    'buildSignedWindowsScript must not fetch or evaluate anything');
+  check('signed installer heartbeat hook runs rem0te-agent.exe update',
+    /updateHook:[\s\S]*?rem0te-agent\.exe[\s\S]*?@\('update'\)/.test(signedFn), 'the signed heartbeat must update only through the verifying agent');
+  // b) The mirror never signs and never reads a key.
+  const mirror = [read('apps/api/src/update-trust/update-trust.service.ts'), read('apps/api/src/update-trust/update-trust.controller.ts')].join('\n');
+  check('update mirror holds no signing code or key material',
+    !/createSign|\.sign\(|privateKey|PRIVATE KEY|ed25519|keygen/i.test(mirror), 'the portal must only serve the offline-signed repository');
+  check('update mirror resolves paths inside the repository after realpath',
+    /realpathSync\(base\)/.test(mirror) && /real\.startsWith\(realBase \+ path\.sep\)/.test(mirror), 'targetPath/metadataPath must refuse symlink and traversal escapes');
+  check('timestamp.json is served no-store', /'no-store'/.test(mirror), 'a cacheable timestamp turns a CDN into a freeze attack');
+  // c) Containment: the heartbeat withholds legacy update triggers in signed_only,
+  //    and windows.ps1 serves no installer there.
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  check('heartbeat consults the update-trust gate for legacy agents',
+    /updateTrust\.gateForHeartbeat\(/.test(enr) && /gate === 'withhold'[\s\S]{0,120}updateRustdesk = null;[\s\S]{0,40}reinstallAgent = null;/.test(enr),
+    'signed_only must withhold reinstall/update from legacy agents');
+  const pub = read('apps/api/src/public/public.controller.ts');
+  check('windows.ps1 serves only a refusal or the pinned migration script in signed_only',
+    /trustMode\.mode === 'signed_only'[\s\S]{0,700}buildMigrationScript\([\s\S]{0,120}SIGNED_ONLY_REFUSAL[\s\S]{0,400}return;/.test(pub),
+    'the legacy installer must not be served in signed_only');
+  // d) Loosening goes through independent review.
+  const ut = read('apps/api/src/update-trust/update-trust.service.ts');
+  check('loosening update trust is a reviewed trust change', /widening\.length\)[\s\S]{0,80}this\.trust\.request\(actor, \{ kind: 'update_trust'/.test(ut),
+    'legacy_allowed / portal migration must go to an independent reviewer');
+  // e) The agent's stage 2 refuses to run from anything but the signed binary,
+  //    and an update keeps the pinned relay.
+  const agent = read('tools/windows-installer/internal/agent/agent.go');
+  check('agent stage 2 verifies its own digest against signed metadata', /selfSum != agentT\.SHA256/.test(agent), 'stage 2 must refuse an unsigned self');
+  check('agent update keeps the pinned relay', /case haveExisting:[\s\S]{0,120}return existing,/.test(agent), 'a portal must not repoint an installed agent');
+  check('agent refuses an unsigned RustDesk downgrade', /CompareVersions\(prm\.RustdeskVersion, cur\) < 0 && !rdT\.DowngradeAllowed\(\)/.test(agent), 'downgrade protection removed');
+  const client = read('tools/windows-installer/internal/trust/client.go');
+  check('trust client refuses plain-http mirrors outside tests', /u\.Scheme != "https" && !\(cfg\.AllowInsecureHTTP/.test(client), 'https enforcement removed');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

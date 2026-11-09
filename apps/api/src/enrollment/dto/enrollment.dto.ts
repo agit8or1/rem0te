@@ -1,5 +1,5 @@
 import {
-  IsArray, IsBoolean, IsEnum, IsInt, IsIP, IsISO8601, IsObject,
+  IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsIP, IsISO8601, IsObject,
   IsOptional, IsString, Length, Matches, Max, Min,
 } from 'class-validator';
 
@@ -114,6 +114,12 @@ export class HeartbeatDto {
   // Set by the agent when the install it just ran was for a staged update,
   // echoing the nonce it was handed. See UpdateRolloutService.
   @IsOptional() @IsString() @Matches(/^[A-Za-z0-9_-]{16,64}$/) updateNonce?: string;
+  // Signed update chain (0.24): which path this agent updates through, and the
+  // signing root and targets versions it last verified. Agents before 0.24
+  // send none of these and are treated as legacy.
+  @IsOptional() @IsIn(['signed', 'legacy']) updateChannel?: 'signed' | 'legacy';
+  @IsOptional() @IsInt() @Min(1) @Max(1_000_000) trustRootVersion?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(1_000_000_000) targetsVersion?: number;
 }
 
 /**

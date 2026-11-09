@@ -67,6 +67,24 @@ HTTP goes to the two URLs in the root-owned peers file, with redirects refused.
 `scripts/check-security-invariants.mjs` (section 10) holds both properties. See
 [integration-clientst0r.md](integration-clientst0r.md).
 
+### The portal mirrors updates; it does not sign them (0.24)
+
+Agent code reaches Windows endpoints through a TUF repository signed **offline** with `rem0te-release`
+(`tools/windows-installer`). The API only serves the copy under `UPDATE_REPO_DIR`:
+- the metadata and targets come from `update-trust/update-trust.service.ts`;
+- the parameters route, `/public/install/windows-params.json`, carries data only.
+
+`rem0te-agent.exe` verifies everything against a root compiled into it and runs only signed targets. The legacy
+`windows.ps1` route, which every pre-0.24 heartbeat pipes into a SYSTEM PowerShell, is contained by the platform's
+update-trust mode. Section 12 of `scripts/check-security-invariants.mjs` holds the static properties:
+- no signing code or key in the mirror;
+- realpath containment;
+- a no-store timestamp;
+- no `iex` or download in the signed installer;
+- the heartbeat gate.
+
+See [update-signing.md](update-signing.md).
+
 ### hbbs and hbbr are locked to the server key
 
 Both run with `-k _`, which reads `/var/lib/rustdesk-server/id_ed25519.pub` and
@@ -259,6 +277,8 @@ still visible. If hbbs cannot be asked, liveness falls back to heartbeat only.
   and are rsynced across.
 - **Client chunks are added, never deleted, on deploy.** Deleting them breaks
   every browser that already had the app open.
+- **No signing key on the portal host.** The update repository is signed offline. A key here would mean a
+  compromised portal could ship code, which is exactly what the signed chain exists to prevent.
 - **Failures in telemetry never block the user.** Audit writes and session
   events are best-effort by design.
 

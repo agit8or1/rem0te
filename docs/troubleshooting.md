@@ -341,6 +341,23 @@ The launch policy answers 403 with a code and a sentence; the UI shows the sente
 
 A queued inventory or event-log command that ends `FAILED` with *"the person who requested this is no longer allowed to"* was re-checked at dispatch after its requester was demoted, revoked or paused. It was never sent to the computer.
 
+## Signed updates refused (v0.24)
+
+Signed agents log to `C:\ProgramData\Rem0te\Logs\agent.log`, and `rem0te-agent.exe status` prints their trust state.
+The failures follow the TUF spec and fail closed:
+
+| Agent log says | Meaning | Fix |
+|---|---|---|
+| `signed metadata refused … expired` | The repository's timestamp (or another role) lapsed | `rem0te-release refresh`, then sync to `UPDATE_REPO_DIR` |
+| `… bad version number … must be >= N` | The portal serves older metadata than the agent already accepted | Sync the current repository. Never restore old metadata |
+| `… not a signed release` / `… is not a signed target` | The pin, rollout or file isn't in signed targets | Sign it, or change the pin |
+| `… older than installed …` | A downgrade without `allowDowngrade` | Sign the rollback explicitly, or don't downgrade |
+| `stage 2 is running … not the signed agent` | Something other than the signed binary claimed stage 2 | Re-run `migrate` from an official release |
+| `no relay pin on this machine` | The machine never migrated | Run `rem0te-agent.exe migrate --portal <host>` |
+
+A **legacy** agent whose *Update* or *Reinstall agent* never happens while the platform is *signed only* is being
+contained on purpose. Migrate it. See [update-signing.md](update-signing.md#moving-existing-agents).
+
 ## Services
 
 ```bash

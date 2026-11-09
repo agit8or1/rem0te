@@ -39,6 +39,7 @@ const ORDER = [
   ['technicians.md', 'MSP technicians'],
   ['technician-access.md', 'Technician access and abuse prevention'],
   ['updates.md', 'Updates'],
+  ['update-signing.md', 'Update signing'],
   ['setup.md', 'Setup and operations'],
   ['architecture.md', 'Architecture'],
   ['access-control.md', 'Access control'],

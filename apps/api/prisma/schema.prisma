@@ -571,6 +571,14 @@ model Endpoint {
   // rendered by the UI, and stored nowhere, so the device page showed a dash
   // for it on every machine ever enrolled.
   agentVersion String?
+  // Which update path this machine's agent reports (`signed` or `legacy`;
+  // null = never reported, i.e. legacy), and the update-signing root and
+  // targets versions it last verified. Self-reported on authenticated
+  // heartbeats: it decides what the portal *withholds*, never what it sends.
+  updateChannel     String?
+  trustRootVersion  Int?
+  targetsVersion    Int?
+  trustReportedAt   DateTime?
 
   isManaged  Boolean   @default(false)
   isOnline   Boolean   @default(false)
@@ -1332,6 +1340,16 @@ model PlatformSettings {
   // PUBLIC_API_URL everywhere a link is built; null falls back to them.
   // See platform/public-url.service.ts.
   publicUrl String?
+
+  // Signed update chain (0.24). `legacy_allowed`: agents on the legacy path
+  // keep receiving portal-served installer re-runs. `signed_only`: the portal
+  // stops handing legacy agents anything to execute, and the legacy installer
+  // route refuses. Loosening it goes through independent trust review.
+  updateTrustMode       String  @default("legacy_allowed")
+  // In signed_only, let legacy agents fetch a one-time migration script from
+  // the portal. That one run trusts the portal (as every legacy run does);
+  // afterwards the machine verifies everything. Off = GPO/Intune/local only.
+  legacyPortalMigration Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

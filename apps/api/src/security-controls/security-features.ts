@@ -65,10 +65,10 @@ export const SECURITY_FEATURES: SecurityFeature[] = [
     gap: 'Before any helper ships: authenticated named-pipe IPC with a SID-restricted DACL, per-request signed intent from the portal, no arbitrary command surface, and tests for impersonation and pipe squatting.',
   },
   {
-    id: 'release-signing', name: 'Release signing and provenance', status: 'unavailable',
-    scope: 'Agent and installer releases.',
-    enforcement: 'None — no release-signing workflow exists. Installers are generated per-request by the API, not built by CI.',
-    evidence: [],
-    gap: 'Isolate PR builds from signing secrets, pin workflow actions to commit SHAs, publish provenance and verify it at install, refuse installers built from forks, separate signing keys per channel.',
+    id: 'release-signing', name: 'Signed agent updates (offline-rooted)', status: 'partial',
+    scope: 'Windows agents that run rem0te-agent.exe (installed by a signed-build download, GPO/Intune, or migration). Not legacy agents, not Linux/macOS, not the technician-side Connect script.',
+    enforcement: 'TUF repository (go-tuf v2) written offline by rem0te-release: root 2-of-3 by default, separate targets (release-signing), snapshot and timestamp keys; the portal holds none of them and only mirrors the files. The agent executes only signed targets — itself (stage 2 checks its own digest), windows/install.ps1 and the RustDesk build — with expiry, rollback and mix-and-match protection that persists across restarts, refuses unsigned RustDesk downgrades, and keeps the relay it pinned at install. In signed_only the portal hands legacy agents nothing to execute; loosening that is a reviewed trust change.',
+    evidence: ['tools/windows-installer/internal/trust/chain_test.go', 'tools/windows-installer/internal/agent/agent_test.go', 'apps/api/scripts/e2e-signed-updates.mjs', 'apps/api/scripts/unit-signed-installer.mjs', 'scripts/check-security-invariants.mjs § 12'],
+    gap: 'Not yet: Authenticode signing of the agent binary (Windows itself does not vouch for the first download), CI-built provenance/attestation of release artifacts, hardware-backed signing keys, and a paired-lab run on real Windows. Legacy agents trust the portal until they are migrated, and portal-mediated migration trusts it once. A first install trusts the downloaded file. Linux/macOS installers are unsigned. Customer policy in the database is not signed.',
   },
 ];

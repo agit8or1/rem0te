@@ -9,7 +9,7 @@ import { ControlsStore } from './controls.store';
 import { AccessControls, PresetPolicy, presetCapabilities } from './presets';
 import { assertIndependentReviewer } from './review';
 
-export type TrustKind = 'access_policy' | 'preset' | 'platform_permissions' | 'device_class' | 'managed_workstation';
+export type TrustKind = 'access_policy' | 'preset' | 'platform_permissions' | 'device_class' | 'managed_workstation' | 'update_trust';
 
 /**
  * Changes that WIDEN trust — who approves, who is told, what a tier may do,
@@ -120,6 +120,16 @@ export class TrustChangeService {
       }
       case 'managed_workstation': {
         await this.prisma.technicianDevice.update({ where: { id: target }, data: { isManagedAdminWorkstation: (value as { managed: boolean }).managed } });
+        return;
+      }
+      case 'update_trust': {
+        // Loosening the signed-update containment (0.24). Re-validated here:
+        // the payload was written by the requester, approved by someone else.
+        const v = value as { mode?: string; legacyPortalMigration?: unknown };
+        if (v.mode !== 'legacy_allowed' && v.mode !== 'signed_only') throw new BadRequestException('Unknown update trust mode');
+        const data = { updateTrustMode: v.mode, legacyPortalMigration: v.legacyPortalMigration === true };
+        await this.prisma.platformSettings.upsert({ where: { id: 'singleton' }, update: data, create: { id: 'singleton', ...data } });
+        await this.audit.log({ action: 'PLATFORM_SETTINGS_UPDATED', resource: 'update_trust', resourceId: 'singleton', meta: { after: data, viaTrustReview: true } });
         return;
       }
       default: throw new BadRequestException('Unknown trust change');

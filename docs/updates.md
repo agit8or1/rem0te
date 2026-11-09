@@ -98,6 +98,15 @@ Archived computers are skipped when an update is staged.
 
 ---
 
+## Signed updates (v0.24)
+
+Windows agents that run `rem0te-agent.exe` update only through the offline-signed repository this portal mirrors:
+- *Update* and *Reinstall agent* still trigger them.
+- What they install is decided by signed metadata, not by the portal.
+- Older agents keep updating the legacy way until they migrate, or until the platform is set to *signed only*.
+
+All of this is described in [update-signing.md](update-signing.md).
+
 ## Staged rollouts (v0.20)
 
 **Platform → Client Rollouts** controls **which** version, **when**, to
@@ -183,6 +192,13 @@ rollback. If a version misbehaves:
    uninstalling RustDesk over a RustDesk session ends that session.
 4. Check the computer's **Test connection** panel: registration, version and
    heartbeat.
+
+**Agents on the signed chain (0.24)** work differently:
+- The installer refuses an older RustDesk build unless the release signer signed that build with
+  `allowDowngrade`. There, a rollback is the signer's decision and needs no uninstall.
+- A pin or rollout can only name a build that the signed metadata lists.
+
+See [update-signing.md](update-signing.md).
 
 ---
 

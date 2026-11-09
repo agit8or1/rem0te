@@ -23,6 +23,8 @@ import { RUSTDESK_FALLBACK_VERSION, rustdeskAssetSha256 } from '../common/rustde
 import { RustdeskService } from '../common/rustdesk.service';
 import { UpdateRolloutService } from '../admin/update-rollout.service';
 import { PublicUrlService } from '../platform/public-url.service';
+import { buildLegacyWindowsScript } from './windows-script';
+import { UpdateTrustService } from '../update-trust/update-trust.service';
 
 const INSTALLER_MAGIC = Buffer.from('REM0TE_INST_URL:');
 const INSTALLER_SLOT_SIZE = 256;
@@ -34,6 +36,46 @@ const HOSTNAME_RE = /^[a-zA-Z0-9._-]{1,253}$/;
 const BASE64_RE = /^[A-Za-z0-9+/]{16,512}={0,2}$/;
 const HEX_TOKEN_RE = /^[A-Fa-f0-9]{16,128}$/;
 const VERSION_RE = /^[a-zA-Z0-9._+-]{1,32}$/;
+
+// host or host:port, matching what the signed agent accepts (agent.ValidPortal).
+function validPortalHost(h: string): boolean {
+  const [host, port, extra] = h.split(':');
+  if (extra !== undefined || !HOSTNAME_RE.test(host) || host.includes('..')) return false;
+  return port === undefined || /^[1-9][0-9]{0,4}$/.test(port);
+}
+
+// What a legacy agent's heartbeat gets from windows.ps1 in signed_only mode
+// when portal-mediated migration is off. It runs as SYSTEM and does nothing.
+const SIGNED_ONLY_REFUSAL = `# Rem0te: this portal installs and updates only through the signed agent.
+# Migrate this machine with rem0te-agent.exe (docs/update-signing.md), or
+# download the installer from the portal again.
+Write-Output 'Refused: signed-only update policy. Nothing was changed.'
+exit 1
+`;
+
+// One-time migration of a legacy agent to the signed chain. This run trusts
+// the portal, exactly as every legacy run does: the digest is pinned here,
+// by the portal. Everything after it — the agent binary re-verifying itself
+// in stage 2, the installer, RustDesk, every later update — is verified
+// against the offline-signed root compiled into that binary.
+function buildMigrationScript(portalHost: string, agentSha256: string): string {
+  if (!validPortalHost(portalHost) || !/^[0-9a-f]{64}$/.test(agentSha256)) {
+    throw new BadRequestException('Cannot build a migration script from these values');
+  }
+  return `# Rem0te: migrate this machine to the signed update chain (one time).
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$dir = Join-Path $env:ProgramData 'Rem0te\setup\migrate'
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+icacls $dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' *>$null
+$exe = Join-Path $dir 'rem0te-agent.exe'
+Invoke-WebRequest -UseBasicParsing -Uri 'https://${portalHost}/api/v1/public/updates/targets/windows/${agentSha256}.rem0te-agent.exe' -OutFile $exe
+if ((Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash.ToLower() -ne '${agentSha256}') { Remove-Item -LiteralPath $exe -Force; exit 12 }
+& $exe migrate --portal '${portalHost}'
+exit $LASTEXITCODE
+`;
+}
 
 function safeHost(host: string | null): string {
   if (!host) return '';
@@ -85,6 +127,7 @@ export class PublicController {
     private readonly rustdesk: RustdeskService,
     private readonly rollouts: UpdateRolloutService,
     private readonly urls: PublicUrlService,
+    private readonly updateTrust: UpdateTrustService,
   ) {}
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -186,6 +229,41 @@ export class PublicController {
     return this.getInstallScript('macos.sh', token, res, req);
   }
 
+  /**
+   * Parameters for the signed installer (0.24): data, never code. The signed
+   * agent fetches these, validates every field, and passes them to the signed
+   * `windows/install.ps1` in a file. The relay host and key here are used on
+   * first install only; an installed agent keeps the relay it pinned.
+   *
+   * The RustDesk version is the platform pin or latest — or, for a staged
+   * rollout job, exactly that job's version — and only ever a version the
+   * release signer published: the agent refuses anything else anyway.
+   */
+  @Get('install/windows-params.json')
+  @Public()
+  async windowsParams(@Query('updateNonce') updateNonce: string | undefined, @Res() res: Response) {
+    const settings = await this.getSettings();
+    const host = settings?.rustdeskRelayHost ?? null;
+    const key = settings?.rustdeskPublicKey ?? null;
+    if (!host || !key || !HOSTNAME_RE.test(host) || !BASE64_RE.test(key)) {
+      res.status(503).json({ success: false, code: 'RELAY_NOT_CONFIGURED', message: 'The relay host and key are not configured.' });
+      return;
+    }
+    const signed = this.updateTrust.signedRustdeskVersions();
+    let version = await this.rustdesk.pinnedOrLatestVersion();
+    let nonce = '';
+    if (updateNonce && /^[A-Za-z0-9_-]{16,64}$/.test(updateNonce)) {
+      const job = await this.rollouts.installerFetched(updateNonce);
+      if (job) {
+        nonce = updateNonce;
+        if (job.component === 'RUSTDESK') version = job.version;
+      }
+    }
+    if (!nonce && !signed.includes(version) && signed.length) version = signed[0];
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ success: true, data: { schema: 'rem0te-install-params/1', host, key, rustdeskVersion: version, ...(nonce ? { updateNonce: nonce } : {}) } });
+  }
+
   @Get('install/:platform')
   @Public()
   async getInstallScript(
@@ -229,6 +307,23 @@ export class PublicController {
     let filename: string;
 
     if (platform === 'windows.ps1') {
+      // Containment (0.24). This route is what every legacy agent's heartbeat
+      // pipes into a SYSTEM PowerShell. In signed_only it serves no installer:
+      // either the one-time migration to the signed agent (when an operator
+      // has allowed portal-mediated migration) or a refusal.
+      const trustMode = await this.updateTrust.mode();
+      if (trustMode.mode === 'signed_only') {
+        const agentT = this.updateTrust.agentTarget();
+        const portalHost = this.portalHostFor(req, host);
+        script = trustMode.legacyPortalMigration && agentT && portalHost
+          ? buildMigrationScript(portalHost, agentT.sha256)
+          : SIGNED_ONLY_REFUSAL;
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Content-Disposition', 'inline; filename="install-rustdesk.ps1"');
+        res.setHeader('Cache-Control', 'no-store');
+        res.send(script);
+        return;
+      }
       const sha = pinnedSha !== undefined ? pinnedSha : await rustdeskAssetSha256(version, `rustdesk-${version}-x86_64.exe`);
       script = this.buildWindowsScript(version, host, key, validatedToken, sha, jobNonce);
       contentType = 'text/plain; charset=utf-8';
@@ -285,1162 +380,45 @@ export class PublicController {
 
   // ── Script templates ──────────────────────────────────────────────────────
 
+  // The template lives in ./windows-script.ts, shared with the signed build
+  // (`windows/install.ps1`) so the two variants cannot drift apart.
   private buildWindowsScript(
     version: string, host: string | null, key: string | null, enrollToken?: string, clientSha256?: string | null,
     updateNonce?: string | null,
   ): string {
-    const hostVal = safeHost(host);
-    const keyVal = safeKey(key);
-    const claimToken = safeToken(enrollToken);
-    version = safeVersion(version);
-    const shaVal = /^[0-9a-f]{64}$/.test(clientSha256 ?? '') ? clientSha256! : '';
-    const nonceVal = /^[A-Za-z0-9_-]{16,64}$/.test(updateNonce ?? '') ? updateNonce! : '';
-    // Argument for `rustdesk.exe --config`. Plain text on purpose: RustDesk
-    // parses only a string containing `host=` (or a reversed-base64 licence),
-    // so the plain base64 this used to send was silently ignored and an
-    // existing install kept its old key. Trailing comma for the same reason as
-    // the filename below.
-    const configArg = `host=${hostVal},key=${keyVal},api=,relay=${hostVal},`;
-    return `# Rem0te Managed Agent — Windows installer
-# Server: ${host ?? 'NOT CONFIGURED'}
-# Safe to re-run; existing installs will be reconfigured, not duplicated.
+    // Validated here first so a bad setting is a 400, not a 500.
+    safeHost(host); safeKey(key); safeToken(enrollToken);
+    return buildLegacyWindowsScript({
+      version: safeVersion(version), host, key, enrollToken, clientSha256, updateNonce,
+      agentVersion: this.agentVersion(), fallbackVersion: RUSTDESK_FALLBACK_VERSION,
+    });
+  }
 
-$ErrorActionPreference = 'Continue'
-$ProgressPreference    = 'SilentlyContinue'
-
-# ── Constants (server-side embedded) ────────────────────────────────────────
-$REM0TE_HOST   = '${hostVal}'
-$REM0TE_KEY    = '${keyVal}'
-$REM0TE_CONFIG = '${configArg}'
-$CLAIM_TOKEN   = '${claimToken}'
-$VERSION       = '${version}'
-# SHA-256 GitHub published for this client build; empty if the server could
-# not reach GitHub, in which case the Authenticode signature is required.
-$RD_SHA256     = '${shaVal}'
-# The Rem0te platform version that generated this installer. Reported on every
-# heartbeat so the console can tell an agent too old to collect anything from a
-# machine that simply has not been asked yet.
-$AGENT_VERSION = '${this.agentVersion()}'
-# Nonce of the staged update this install is for, or empty. Echoed on every
-# heartbeat so the server can verify which install actually ran.
-$UPDATE_NONCE  = '${nonceVal}'
-
-$RDEXE = 'C:\\Program Files\\RustDesk\\rustdesk.exe'
-$LOGDIR = 'C:\\ProgramData\\Rem0te\\Logs'
-$LOG = "$LOGDIR\\install.log"
-$STATEDIR = 'C:\\ProgramData\\Rem0te'
-# Under the locked-down state directory, not $env:TEMP: on the SYSTEM reinstall
-# path that is C:\\Windows\\Temp, where any local user can plant a file at
-# the name the client is about to be downloaded to and executed from.
-$SETUP_DIR = "$STATEDIR\\setup"
-
-# ── Helpers ─────────────────────────────────────────────────────────────────
-function Log([string]$msg, [string]$level = 'INFO') {
-    try { if (-not (Test-Path $LOGDIR)) { New-Item -ItemType Directory -Force -Path $LOGDIR | Out-Null } } catch {}
-    $ts = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-    $line = "[$ts] [$level] $msg"
-    try { Add-Content -Path $LOG -Value $line -ErrorAction SilentlyContinue } catch {}
-    switch ($level) {
-        'ERROR' { Write-Host $msg -ForegroundColor Red }
-        'WARN'  { Write-Host $msg -ForegroundColor Yellow }
-        'OK'    { Write-Host $msg -ForegroundColor Green }
-        default { Write-Host $msg }
+  // Which address a migration script tells the agent to use: the configured
+  // public address when there is one, otherwise the relay host (which is what
+  // the legacy heartbeat already talks to). Never a request header.
+  private portalHostFor(_req: Request, relayHost: string | null): string | null {
+    const configured = this.urls.apiConfigured();
+    if (configured) {
+      try {
+        const u = new URL(configured);
+        if (u.protocol === 'https:' && validPortalHost(u.host)) return u.host;
+      } catch { /* fall through */ }
     }
-}
-function Step([int]$n, [int]$total, [string]$msg) { Log ("[$n/$total] " + $msg) }
-function Fail([string]$msg, [int]$code = 1) {
-    Log $msg 'ERROR'
-    Log "Install log: $LOG" 'ERROR'
-    exit $code
-}
-function IsInteractive { return [Environment]::UserInteractive -and $Host.Name -notmatch 'ServerRemoteHost' }
-function TestAdmin {
-    $me = [Security.Principal.WindowsIdentity]::GetCurrent()
-    return ([Security.Principal.WindowsPrincipal]$me).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
-function Stop-Rustdesk {
-    & sc.exe stop RustDesk 2>$null | Out-Null
-    & taskkill /F /IM rustdesk.exe /T 2>$null | Out-Null
-    Start-Sleep -Seconds 2
-}
-
-# Make the RustDesk service exist and run '"<exe>" --service', whatever an
-# interrupted or older install left behind (a missing service, or the
-# installer's one-shot '--import-config' form). Uses CIM/New-Service rather
-# than sc.exe: Windows PowerShell mangles the embedded quotes binPath= needs.
-function Ensure-RdService {
-    $svc = Get-CimInstance Win32_Service -Filter "Name='RustDesk'" -ErrorAction SilentlyContinue
-    $want = '"' + $RDEXE + '" --service'
-    if (-not $svc) {
-        try {
-            New-Service -Name 'RustDesk' -BinaryPathName $want -DisplayName 'RustDesk Service' -StartupType Automatic -ErrorAction Stop | Out-Null
-            Log "  Created RustDesk service: $want" 'WARN'
-        } catch { Log "  Could not create RustDesk service: $($_.Exception.Message)" 'WARN' }
-        return
-    }
-    if ($svc.PathName -notmatch '--service') {
-        $r = Invoke-CimMethod -InputObject $svc -MethodName Change -Arguments @{ PathName = $want; StartMode = 'Automatic' }
-        Log ("  RustDesk service was '" + $svc.PathName + "'; reset to --service (result " + $r.ReturnValue + ")") 'WARN'
-    }
-}
-
-Write-Host ''
-Write-Host '  Rem0te Managed Agent' -ForegroundColor Cyan
-Write-Host ''
-
-if (-not (TestAdmin)) { Write-Host 'ERROR: Run this script as Administrator.' -ForegroundColor Red; exit 2 }
-
-# ── Lock down the state directory before anything is written to it ─────────
-# A SYSTEM scheduled task runs heartbeat.ps1 from here every three minutes, and
-# the agent secret lives here. ProgramData is writable by every local user, and
-# New-Item -Force on a directory that already exists changes nothing — so a
-# standard user who created C:\\ProgramData\\Rem0te (or a heartbeat.ps1 inside
-# it) first stayed its owner, kept write access, and ran code as SYSTEM within
-# three minutes. Every write below also has to land in a directory the user
-# cannot redirect, so a junction in place of the directory is removed first.
-# Identities are SIDs, not names: 'Administrators' is localised.
-$trusted = @('S-1-5-18', 'S-1-5-32-544')
-function OwnerSid($path) {
-    try { return (Get-Acl -LiteralPath $path).GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { return '' }
-}
-$sd = Get-Item -LiteralPath $STATEDIR -Force -ErrorAction SilentlyContinue
-if ($sd -and ($sd.Attributes -band [IO.FileAttributes]::ReparsePoint)) { [IO.Directory]::Delete($STATEDIR); $sd = $null }
-# Note what a non-administrator could have planted BEFORE taking ownership,
-# which erases the evidence: anything owned by someone other than SYSTEM or
-# Administrators, and any link. What a previous install wrote (the agent
-# secret in heartbeat.dat among it) is owned by SYSTEM or Administrators and
-# survives, so a re-run keeps the machine's identity.
-$planted = @()
-if ($sd) {
-    $planted = @(Get-ChildItem -LiteralPath $STATEDIR -Recurse -Force -ErrorAction SilentlyContinue | Where-Object {
-        ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-        ($_.PSObject.Properties['LinkType'] -and $_.LinkType) -or
-        ($trusted -notcontains (OwnerSid $_.FullName))
-    } | ForEach-Object { $_.FullName })
-    if ($trusted -notcontains (OwnerSid $STATEDIR)) { $planted += '*' }
-}
-# Read the device secret a previous install left BEFORE the cleanup below can
-# remove it. Every install before 0.18.22 created this directory as the user
-# who ran it, so on the first re-run after that release the whole directory
-# counted as planted and heartbeat.dat went with it: the installer made a new
-# secret, the server held the old one, and the machine was locked out for
-# good. That is how "Update" took machines offline.
-#
-# Whose file it is only matters when this run carries a claim token, because a
-# claim binds whatever secret is sent — and a secret a non-administrator wrote
-# is one they know. Without a token nothing is bound: the server compares the
-# secret with the one it already holds, so a planted value can only fail.
-#
-# Read only AFTER the lockdown below, though, never before it: 0.18.22 through
-# 0.19.1 left every existing file in this directory with an empty DACL (see the
-# lockdown), so on a machine any of those installers ever ran on, heartbeat.dat
-# is unreadable until it is repaired - and a read that fails makes a new secret.
-# Reading after takeown is still safe: $planted was decided above, before
-# ownership changed hands, and nothing is deleted until the cleanup further on.
-if (-not (Test-Path -LiteralPath $STATEDIR)) { New-Item -ItemType Directory -Path $STATEDIR | Out-Null }
-& takeown.exe /F $STATEDIR /R /A /D Y *>$null
-# The directory, and only the directory, gets the inheritable grant; everything
-# beneath it is then reset to inherit exactly that. Applying the grant with /T
-# instead, as 0.18.22 through 0.19.1 did, reaches files too - and on a file
-# icacls removes the inherited entries and then REFUSES the (OI)(CI) grant as
-# an invalid parameter, leaving an empty DACL that denies everyone, SYSTEM
-# included. Hidden behind *>$null, that broke every Windows machine the
-# installer ever re-ran on: heartbeat.ps1 could no longer be read by the task
-# that runs it (Last Result 1, no heartbeat at all), heartbeat.dat could not be
-# read for the old secret or rewritten with the new one, and the only thing
-# left talking to the server was the enrolment retry task, which deletes
-# itself on its first success. The reset below also repairs a machine in that
-# state: takeown above made Administrators the owner, and an owner may always
-# rewrite a DACL.
-& icacls.exe $STATEDIR /reset /C /Q *>$null
-& icacls.exe $STATEDIR /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /C /Q *>$null
-if (Get-ChildItem -LiteralPath $STATEDIR -Force -ErrorAction SilentlyContinue) {
-    # /L: act on a link itself, never its target. A link here was planted, and
-    # is removed by the cleanup below; until then it must not redirect an ACL
-    # change onto something outside this directory.
-    & icacls.exe "$STATEDIR\\*" /reset /T /L /C /Q *>$null
-}
-$acl = Get-Acl -LiteralPath $STATEDIR
-$foreign = @($acl.Access | Where-Object {
-    $sid = try { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { '' }
-    $_.AccessControlType -eq 'Allow' -and $trusted -notcontains $sid
-})
-if ($trusted -notcontains (OwnerSid $STATEDIR) -or $foreign.Count -gt 0) {
-    Write-Host "ERROR: $STATEDIR could not be restricted to SYSTEM and Administrators. Refusing to continue." -ForegroundColor Red
-    exit 3
-}
-# Prove the lockdown left every file usable, rather than trusting icacls -
-# whose failures are invisible here - to have done so. A file nobody can open
-# is a machine that silently stops reporting.
-function Test-Readable($path) {
-    try { [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite').Dispose(); return $true } catch { return $false }
-}
-$locked = @(Get-ChildItem -LiteralPath $STATEDIR -Recurse -Force -File -ErrorAction SilentlyContinue |
-    Where-Object { -not (Test-Readable $_.FullName) } | ForEach-Object { $_.FullName })
-if ($locked.Count -gt 0) {
-    Write-Host "ERROR: These files under $STATEDIR could not be repaired and nothing can read them: $($locked -join ', '). Refusing to continue." -ForegroundColor Red
-    exit 3
-}
-$PRIOR_SECRET = ''
-try {
-    $hbPrior = Get-Item -LiteralPath (Join-Path $STATEDIR 'heartbeat.dat') -Force -ErrorAction Stop
-    $hbUntrusted = ($planted -contains '*') -or ($planted -contains $hbPrior.FullName)
-    if (-not ($hbPrior.Attributes -band [IO.FileAttributes]::ReparsePoint) -and (-not $hbUntrusted -or -not $CLAIM_TOKEN)) {
-        $c = [string](Get-Content -LiteralPath $hbPrior.FullName -Raw -ErrorAction Stop | ConvertFrom-Json).agentSecret
-        if ($c -match '^[A-Za-z0-9_-]{20,128}$') { $PRIOR_SECRET = $c }
-    }
-} catch {}
-# A directory someone else created may hold anything, so none of it is kept.
-# Otherwise only the planted items go. Removing a link removes the link, not
-# what it points at. The scripts are rewritten below whatever happens here.
-if ($planted -contains '*') {
-    Get-ChildItem -LiteralPath $STATEDIR -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-} else {
-    foreach ($p in $planted) { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue }
-}
-foreach ($f in @('heartbeat.ps1', 'setup')) {
-    Remove-Item -LiteralPath (Join-Path $STATEDIR $f) -Recurse -Force -ErrorAction SilentlyContinue
-}
-
-Log "Rem0te installer starting. server=$REM0TE_HOST version=$VERSION claim=$($CLAIM_TOKEN.Length -gt 0)"
-
-# ── [1/6] Download ─────────────────────────────────────────────────────────
-Step 1 6 'Preparing installer...'
-try { New-Item -ItemType Directory -Force -Path $SETUP_DIR | Out-Null } catch {}
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-# The RustDesk MSP-config-in-filename technique: name the setup exe so its own
-# filename encodes the server config. On install RustDesk parses its name and
-# atomically writes the server config — no TOML shotgun required.
-# https://rustdesk.com/docs/en/self-host/rustdesk-server-oss/install/#windows
-# The trailing comma keeps the key intact if the name ever gains a suffix
-# (Windows' " (1)"): RustDesk splits on commas, so the suffix becomes an empty
-# trailing token instead of part of the key, which hbbs would reject.
-$installerName = "rustdesk-host=$REM0TE_HOST,key=$REM0TE_KEY,.exe"
-# Strip characters that are legal in RustDesk's config but illegal in Windows filenames.
-$installerName = ($installerName -replace '[<>:"/\\\\|?*]', '_')
-$INSTALLER = Join-Path $SETUP_DIR $installerName
-$dlUrl = "https://github.com/rustdesk/rustdesk/releases/download/$VERSION/rustdesk-$VERSION-x86_64.exe"
-Log "Downloading $dlUrl -> $INSTALLER"
-try {
-    Invoke-WebRequest -Uri $dlUrl -OutFile $INSTALLER -UseBasicParsing
-} catch { Fail "ERROR: Download failed: $($_.Exception.Message)" 10 }
-
-# This file is about to run elevated. Pin it to the digest GitHub published for
-# the release, or — when the server could not fetch that — require a valid
-# Authenticode signature. Either failing means it is not the RustDesk release.
-$actualSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $INSTALLER).Hash.ToLower()
-if ($RD_SHA256) {
-    if ($actualSha -ne $RD_SHA256) {
-        Remove-Item -LiteralPath $INSTALLER -Force -ErrorAction SilentlyContinue
-        Fail "ERROR: The downloaded RustDesk client does not match the published checksum (got $actualSha). Nothing was installed." 12
-    }
-    Log "Client checksum verified ($actualSha)."
-} else {
-    $sig = Get-AuthenticodeSignature -LiteralPath $INSTALLER
-    if ($sig.Status -ne 'Valid') {
-        Remove-Item -LiteralPath $INSTALLER -Force -ErrorAction SilentlyContinue
-        Fail "ERROR: No published checksum was available and the client's signature is $($sig.Status). Nothing was installed." 12
-    }
-    Log "Client signature verified ($($sig.SignerCertificate.Subject))."
-}
-
-# ── [2/6] Stop existing RustDesk and install ───────────────────────────────
-Step 2 6 'Installing remote-support service...'
-Stop-Rustdesk
-# --silent-install, NOT /S. RustDesk's exe is not an NSIS installer and has
-# no /S switch: an unknown argument is ignored, so from v0.4.0 until 0.19.8
-# this step never replaced an existing install. The wait below then found the
-# OLD rustdesk.exe and carried on, which is why every "update" left endpoints
-# on the version they started with. Success is now the installed file's
-# version reaching $VERSION, not merely the file existing.
-function Get-RdVersion {
-    try { return [version]((Get-Item -LiteralPath $RDEXE -ErrorAction Stop).VersionInfo.ProductVersion -replace '[^0-9.].*$', '') } catch { return $null }
-}
-$want = [version]$VERSION
-$before = Get-RdVersion
-Log ("Installed RustDesk before: " + $(if ($before) { $before } else { 'none' }) + "; installing $VERSION")
-$install = Start-Process -FilePath $INSTALLER -ArgumentList '--silent-install' -PassThru -WindowStyle Hidden
-$install.WaitForExit(180000) | Out-Null
-# The release exe is a self-extracting wrapper: it can exit before the real
-# installer it launched has finished copying files.
-#
-# Do not stop RustDesk the moment the new file appears. Its installer goes on
-# to recreate the service: first pointed at a one-shot '--import-config',
-# then deleted and recreated as '--service'. Killing rustdesk.exe in between
-# (0.19.8 did, right here) leaves the service as the one-shot import, which
-# runs, exits and stays STOPPED — RustDesk offline, and --password below has
-# no service to talk to. Wait for the final '--service' form instead.
-$waited = 0
-while ($waited -lt 180) {
-    $now = Get-RdVersion
-    $sp = (Get-CimInstance Win32_Service -Filter "Name='RustDesk'" -ErrorAction SilentlyContinue).PathName
-    if ($now -and $now -ge $want -and $sp -match '--service') { break }
-    Start-Sleep -Seconds 3; $waited += 3
-}
-Log ("Service command line after install: " + $(if ($sp) { $sp } else { 'no service' }))
-if (-not (Test-Path $RDEXE)) { Fail "ERROR: Installation failed — $RDEXE not found after $waited s." 11 }
-$after = Get-RdVersion
-if ($after -and $after -ge $want) {
-    Log "RustDesk $after installed."
-} else {
-    # Not fatal: configuration below still has to happen, and the console keeps
-    # the update staged until the heartbeat reports the target version.
-    Log "WARNING: RustDesk is still $after after installing $VERSION; the upgrade did not take." 'WARN'
-}
-Stop-Rustdesk
-try { Remove-Item $INSTALLER -Force -ErrorAction SilentlyContinue } catch {}
-
-# ── [3/6] Apply Rem0te server configuration ────────────────────────────────
-Step 3 6 "Configuring server ($REM0TE_HOST)..."
-# Stop the service so the CLI writes directly to the config, not via a running-service IPC race.
-Stop-Rustdesk
-
-# RustDesk's service stores its data under ServiceProfiles\LocalService even
-# though the service runs as LocalSystem — confirmed from the log path it
-# actually writes (…\ServiceProfiles\LocalService\AppData\Roaming\RustDesk\log).
-# This previously said \LocalSystem, which is not a real Windows profile (that
-# tree holds LocalService and NetworkService), so the write landed in a
-# directory nothing reads. The service therefore ran on a DEFAULT config
-# pointing at the public rustdesk.com rendezvous while every check here passed,
-# and the machine never contacted our hbbs at all.
-$svcDir = 'C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Roaming\\RustDesk\\config'
-$sysDir = 'C:\\Windows\\System32\\config\\systemprofile\\AppData\\Roaming\\RustDesk\\config'
-
-# Wipe any pre-existing RustDesk2.toml that might be pointing at public rustdesk.com
-# servers from a prior manual install. We leave RustDesk.toml alone so the assigned
-# device id (if any) survives; --config below will populate the new server settings.
-$wipeDirs = @($svcDir, $sysDir, "$env:APPDATA\\RustDesk\\config", 'C:\\ProgramData\\RustDesk\\config')
-foreach ($d in $wipeDirs) {
-    Remove-Item "$d\\RustDesk2.toml" -Force -ErrorAction SilentlyContinue
-}
-
-# --config takes a plain 'host=X,key=Y,api=,relay=Z,' string (it ignores any
-# other form) and needs elevation, which this script has. A reinstall must not
-# inherit a previous install's server or key, so this and the RustDesk2.toml
-# writes below both overwrite unconditionally.
-& $RDEXE --config $REM0TE_CONFIG *>$null
-
-# RustDesk keeps SEPARATE configs for (a) the LocalSystem service and
-# (b) every interactive Windows user's GUI. If we only fix the service the
-# desktop GUI keeps displaying "For faster connection, please set up your
-# own server" and can even initiate connections against public rustdesk.com
-# rendezvous. So: write the authoritative RustDesk2.toml into
-#   - service profile (LocalSystem + systemprofile — for the running service)
-#   - every real user profile that has AppData
-#   - C:\\Users\\Default so any future new user gets the Rem0te config
-$toml = @"
-rendezvous_server = '$($REM0TE_HOST):21116'
-nat_type = 1
-serial = 3
-
-[options]
-custom-rendezvous-server = '$REM0TE_HOST'
-relay-server = '$REM0TE_HOST'
-api-server = ''
-key = '$REM0TE_KEY'
-verification-method = 'use-permanent-password'
-"@
-
-$configTargets = New-Object System.Collections.Generic.List[string]
-$configTargets.Add($svcDir) | Out-Null
-$configTargets.Add($sysDir) | Out-Null
-
-# Every user profile the OS knows about — from ProfileList registry, not from
-# a naive C:\\Users scan (that missed domain profiles / picked up junk like Public).
-# Also collect (dir, sid) pairs so we can icacls the file grant afterwards —
-# if we write as SYSTEM the file is SYSTEM-owned and the interactive user's
-# RustDesk process can't necessarily read it, which is EXACTLY why the "set
-# up your own server" warning keeps returning: the GUI reads its own config,
-# doesn't see us in it, and shows the tip.
-$userSids = @{}
-try {
-    $profileList = Get-ChildItem 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList' -ErrorAction Stop
-    foreach ($p in $profileList) {
-        $sid = Split-Path $p.Name -Leaf
-        # Skip well-known system SIDs: S-1-5-18 LocalSystem, S-1-5-19 LocalService, S-1-5-20 NetworkService
-        if ($sid -in @('S-1-5-18','S-1-5-19','S-1-5-20')) { continue }
-        $pip = (Get-ItemProperty -Path $p.PSPath -Name 'ProfileImagePath' -ErrorAction SilentlyContinue).ProfileImagePath
-        if (-not $pip) { continue }
-        $ad = Join-Path $pip 'AppData\\Roaming\\RustDesk\\config'
-        if (Test-Path (Split-Path $ad)) {
-            $configTargets.Add($ad) | Out-Null
-            $userSids[$ad] = $sid
-        }
-    }
-} catch { Log "  Could not enumerate user profiles: $($_.Exception.Message)" 'WARN' }
-
-# C:\\Users\\Default so future first-logins inherit the Rem0te config
-$defaultDir = 'C:\\Users\\Default\\AppData\\Roaming\\RustDesk\\config'
-if (Test-Path 'C:\\Users\\Default') { $configTargets.Add($defaultDir) | Out-Null }
-
-# De-dupe
-$configTargets = [System.Linq.Enumerable]::Distinct([string[]]$configTargets)
-
-foreach ($d in $configTargets) {
-    try {
-        New-Item -ItemType Directory -Force -Path $d | Out-Null
-        $file = "$d\\RustDesk2.toml"
-        $toml | Set-Content $file -Encoding UTF8 -Force
-        # Grant the profile-owning user READ access. Without this the file
-        # is SYSTEM-owned and the interactive RustDesk GUI cannot read it,
-        # which is why "For faster connection..." keeps coming back.
-        $sid = $userSids[$d]
-        if ($sid) {
-            & icacls $file /grant ('*' + $sid + ':R') *>$null
-            & icacls $d    /grant ('*' + $sid + ':(OI)(CI)R') *>$null
-        }
-        Log "  Wrote config: $file"
-    } catch {
-        Log "  Skip (no access): $d — $($_.Exception.Message)" 'WARN'
-    }
-}
-
-# Kill any running RustDesk GUI/tray so it re-reads the new config on next start.
-Get-Process -Name rustdesk -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 } | ForEach-Object {
-    try { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue } catch {}
-}
-
-# Set a strong internal password so the endpoint accepts authenticated Rem0te
-# sessions. Not displayed to the operator; stored server-side by heartbeat.
-$rnd = New-Object byte[] 24
-[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($rnd)
-$PERM_PW = [Convert]::ToBase64String($rnd).Replace('+','A').Replace('/','B').Replace('=','').Substring(0,20)
-
-# Device secret. The heartbeat used to identify this machine by its RustDesk ID
-# alone — a number anyone who has connected to it knows — so the server would
-# hand a staged password rotation, in plaintext, to whoever asked with the right
-# number. The agent proves who it is with this instead. Reused if a previous
-# install left one ($PRIOR_SECRET, read before the state directory was
-# cleaned), so re-running the installer does not orphan the binding the server
-# already holds; the file is SYSTEM+Administrators only.
-$AGENT_SECRET = $PRIOR_SECRET
-if (-not $AGENT_SECRET) {
-    $srnd = New-Object byte[] 32
-    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($srnd)
-    $AGENT_SECRET = [Convert]::ToBase64String($srnd).Replace('+','-').Replace('/','_').Replace('=','')
-}
-
-# ── [4/6] Start service and verify config ──────────────────────────────────
-Step 4 6 'Starting service...'
-Ensure-RdService
-& sc.exe config RustDesk start= auto 2>$null | Out-Null
-& sc.exe start RustDesk 2>$null | Out-Null
-# --password needs the service's IPC endpoint, which comes up a few seconds
-# after the service reports RUNNING. The retry loop below covers the rest.
-$sw = 0
-while ($sw -lt 30 -and (Get-Service RustDesk -ErrorAction SilentlyContinue).Status -ne 'Running') { Start-Sleep -Seconds 2; $sw += 2 }
-Start-Sleep -Seconds 4
-
-# Set the permanent password only now. --password talks to the RUNNING service
-# over IPC so the credential lands in the service's own profile; run with the
-# service stopped it writes into the *calling user's* profile instead, which
-# the service never reads. Rem0te then hands out a password the endpoint never
-# had and one-click Connect fails with "wrong password".
-#
-# RustDesk prints "Done!" only when the service accepted it; otherwise it
-# prints the IPC error and writes the password into the *calling* profile
-# only. This used to run once with its output discarded, so a service that was
-# still starting left the endpoint on its old password while the heartbeat
-# reported the new one — DS-HOME1's "wrong password". Retry until RustDesk
-# confirms, or until the service's own RustDesk.toml shows the password
-# changed (in case this build's output cannot be captured).
-function Get-SvcPwLine {
-    foreach ($f in @("$svcDir\RustDesk.toml", "$sysDir\RustDesk.toml")) {
-        try {
-            $m = Select-String -LiteralPath $f -Pattern '^\s*password\s*=' -ErrorAction Stop | Select-Object -First 1
-            if ($m) { return ($f + '|' + $m.Line.Trim()) }
-        } catch {}
-    }
-    return ''
-}
-$pwBefore = Get-SvcPwLine
-$PW_APPLIED = $false
-for ($i = 1; $i -le 12; $i++) {
-    $pwOut = ''
-    try { $pwOut = (& $RDEXE --password $PERM_PW 2>&1 | Out-String).Trim() } catch { $pwOut = $_.Exception.Message }
-    Start-Sleep -Seconds 1
-    $pwAfter = Get-SvcPwLine
-    if ($pwOut -match 'Done' -or ($pwAfter -and $pwAfter -ne $pwBefore)) { $PW_APPLIED = $true; break }
-    Log ("  Password not applied yet (attempt $i): " + $(if ($pwOut) { $pwOut } else { 'no output' })) 'WARN'
-    Ensure-RdService
-    & sc.exe start RustDesk 2>$null | Out-Null
-    Start-Sleep -Seconds 5
-}
-if ($PW_APPLIED) {
-    Log "RustDesk permanent password applied (attempt $i)."
-} else {
-    Log "WARNING: RustDesk did not confirm the new password. Connect may report 'wrong password'; re-run this installer." 'WARN'
-}
-
-# Verify effective config across EVERY RustDesk2.toml the OS knows about —
-# not just $env:APPDATA. Detects service-vs-user divergence (service configured
-# for Rem0te but the interactive user's GUI still pointed at rustdesk.com).
-function Get-AllConfigs {
-    $paths = @("$svcDir\\RustDesk2.toml", "$sysDir\\RustDesk2.toml")
-    try {
-        $profileList = Get-ChildItem 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList' -ErrorAction Stop
-        foreach ($p in $profileList) {
-            $sid = Split-Path $p.Name -Leaf
-            if ($sid -in @('S-1-5-18','S-1-5-19','S-1-5-20')) { continue }
-            $pip = (Get-ItemProperty -Path $p.PSPath -Name 'ProfileImagePath' -ErrorAction SilentlyContinue).ProfileImagePath
-            if ($pip) { $paths += (Join-Path $pip 'AppData\\Roaming\\RustDesk\\config\\RustDesk2.toml') }
-        }
-    } catch {}
-    return ($paths | Where-Object { Test-Path $_ })
-}
-function Get-ConfigServer([string]$path) {
-    $c = Get-Content $path -Raw -ErrorAction SilentlyContinue
-    if (-not $c) { return $null }
-    $r = $null; $cs = $null; $k = $null
-    if ($c -match 'custom-rendezvous-server\\s*=\\s*[''"]([^''"]+)[''"]') { $cs = $Matches[1] }
-    if ($c -match 'rendezvous_server\\s*=\\s*[''"]([^''"]+)[''"]') { $r = $Matches[1] }
-    if ($c -match '(?m)^\\s*key\\s*=\\s*[''"]([^''"]*)[''"]') { $k = $Matches[1] }
-    return [PSCustomObject]@{ path = $path; rendezvous = $r; customRendezvous = $cs; key = $k }
-}
-function Verify-AllConfigs {
-    $bad = @()
-    foreach ($p in (Get-AllConfigs)) {
-        $s = Get-ConfigServer $p
-        if (-not $s) { continue }
-        $host_ok = ($s.customRendezvous -eq $REM0TE_HOST)
-        # rendezvous_server may be blank on first run or contain host:port
-        $rz_ok  = (-not $s.rendezvous) -or ($s.rendezvous -like "$REM0TE_HOST*")
-        # hbbs/hbbr run with -k, so a missing or wrong key means the client is
-        # rejected at registration: RustDesk looks "running" locally but never
-        # appears on the server and the machine is invisible in Rem0te. That is
-        # indistinguishable from "offline" in the UI, so verify it like the host.
-        $key_ok = ($s.key -eq $REM0TE_KEY)
-        $public = ($s.rendezvous -match 'rustdesk\\.com') -or ($s.customRendezvous -match 'rustdesk\\.com')
-        if (-not $host_ok -or -not $rz_ok -or -not $key_ok -or $public) {
-            $bad += $s
-            Log ("  BAD: " + $s.path + " -> custom=" + $s.customRendezvous + " rz=" + $s.rendezvous + " key=" + $(if ($key_ok) { 'ok' } else { 'MISMATCH' })) 'WARN'
-        } else {
-            Log ("  OK:  " + $s.path + " -> custom=" + $s.customRendezvous + " rz=" + $s.rendezvous + " key=ok")
-        }
-    }
-    return $bad
-}
-$bad = Verify-AllConfigs
-if ($bad.Count -gt 0) {
-    # Repair: rewrite bad files, then re-verify.
-    Log "  Repairing $($bad.Count) config file(s)..." 'WARN'
-    foreach ($b in $bad) {
-        try {
-            $dir = Split-Path $b.path -Parent
-            New-Item -ItemType Directory -Force -Path $dir | Out-Null
-            $toml | Set-Content $b.path -Encoding UTF8 -Force
-        } catch {}
-    }
-    Stop-Rustdesk
-    & $RDEXE --config $REM0TE_CONFIG *>$null
-    Start-Sleep -Seconds 1
-    Ensure-RdService
-    & sc.exe start RustDesk 2>$null | Out-Null
-    Start-Sleep -Seconds 3
-    $bad = Verify-AllConfigs
-}
-if ($bad.Count -gt 0) {
-    $stillPublic = $bad | Where-Object { ($_.rendezvous -match 'rustdesk\\.com') -or ($_.customRendezvous -match 'rustdesk\\.com') }
-    if ($stillPublic) {
-        Fail "ERROR: RustDesk still uses a public server after repair. Refusing to report success." 20
-    }
-    $stillBadKey = $bad | Where-Object { $_.key -ne $REM0TE_KEY }
-    if ($stillBadKey) {
-        Fail "ERROR: RustDesk key does not match the server key after repair; hbbs would reject this client. Refusing to report success." 21
-    }
-}
-Log "  Server config verified across $((Get-AllConfigs).Count) profile(s)."
-
-# ── [5/6] Acquire RustDesk device ID ───────────────────────────────────────
-Step 5 6 'Waiting for device identity...'
-function Get-RustdeskId {
-    # Primary: ask the running RustDesk directly.
-    try {
-        $out = & $RDEXE --get-id 2>$null | Out-String
-        if ($out -match '([0-9]{6,15})') { return $Matches[1] }
-    } catch {}
-    # Fallback: read the id from any RustDesk.toml the service has written.
-    $paths = @(
-        "$svcDir\\RustDesk.toml",
-        "$sysDir\\RustDesk.toml",
-        "$env:APPDATA\\RustDesk\\config\\RustDesk.toml"
-    )
-    foreach ($p in $paths) {
-        if (Test-Path $p) {
-            $c = Get-Content $p -Raw -ErrorAction SilentlyContinue
-            if ($c -match 'id\\s*=\\s*[''"]([0-9]{6,15})[''"]') { return $Matches[1] }
-        }
-    }
-    return ''
-}
-$rdId = ''
-$deadline = (Get-Date).AddSeconds(120)
-while (-not $rdId -and (Get-Date) -lt $deadline) {
-    $rdId = Get-RustdeskId
-    if (-not $rdId) { Start-Sleep -Seconds 3 }
-}
-
-# ── [6/6] Register with Rem0te ─────────────────────────────────────────────
-Step 6 6 'Registering with Rem0te...'
-function Register([string]$id) {
-    $body = @{ rustdeskId = $id; hostname = $env:COMPUTERNAME; platform = 'Windows'; osVersion = [Environment]::OSVersion.VersionString; password = $PERM_PW; agentSecret = $AGENT_SECRET; agentVersion = $AGENT_VERSION }
-    if ($CLAIM_TOKEN) {
-        $body['token'] = $CLAIM_TOKEN
-        $json = $body | ConvertTo-Json -Compress
-        try {
-            Invoke-RestMethod -Uri "https://$REM0TE_HOST/api/v1/enrollment/claim" -Method Post -Body $json -ContentType 'application/json' -UseBasicParsing -ErrorAction Stop -TimeoutSec 15 | Out-Null
-            return 'CLAIMED'
-        } catch {
-            Log "  Claim failed: $($_.Exception.Message) — falling back to heartbeat" 'WARN'
-        }
-        $body.Remove('token') | Out-Null
-    }
-    $json = $body | ConvertTo-Json -Compress
-    try {
-        Invoke-RestMethod -Uri "https://$REM0TE_HOST/api/v1/enrollment/heartbeat" -Method Post -Body $json -ContentType 'application/json' -UseBasicParsing -ErrorAction Stop -TimeoutSec 15 | Out-Null
-        return 'HEARTBEAT'
-    } catch {
-        Log "  Heartbeat failed: $($_.Exception.Message)" 'WARN'
-        return ''
-    }
-}
-
-$registered = ''
-if ($rdId) { $registered = Register $rdId }
-
-# ── Install a persistent Rem0teHeartbeat scheduled task ────────────────────
-# RustDesk pings hbbs on its own but Rem0te has no direct visibility into
-# hbbs's online state. A tiny 3-min heartbeat keeps Endpoint.isOnline true
-# in the Rem0te DB (the API's stale-sweeper marks endpoints offline after
-# ~10 minutes without one). Persistent, self-repairing, SYSTEM context.
-try { New-Item -ItemType Directory -Force -Path $STATEDIR | Out-Null } catch {}
-$hbFile = "$STATEDIR\\heartbeat.dat"
-# Store the current RustDesk password too so every heartbeat can keep the
-# server's stored copy in sync. Without this a re-install (or a manual
-# --password change on the endpoint) desyncs and one-click Connect stops
-# working because the server sends the browser an outdated password.
-# File is chmod 600 to SYSTEM+Administrators only.
-$hbState = [ordered]@{ host = $REM0TE_HOST; password = $PERM_PW; agentSecret = $AGENT_SECRET; agentVersion = $AGENT_VERSION }
-# Set only when this install was run for a staged update (see UPDATE_NONCE).
-if ($UPDATE_NONCE) { $hbState['updateNonce'] = $UPDATE_NONCE }
-$hbPayload = [PSCustomObject]$hbState | ConvertTo-Json -Compress
-try { Set-Content -Path $hbFile -Value $hbPayload -Encoding UTF8; icacls $hbFile /inheritance:r /grant:r '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' *>$null } catch {}
-
-$hbScript = "$STATEDIR\\heartbeat.ps1"
-$hbBody = @'
-\$ErrorActionPreference = 'Continue'; \$ProgressPreference = 'SilentlyContinue'
-\$STATE_FILE = 'C:\\ProgramData\\Rem0te\\heartbeat.dat'
-try { \$state = Get-Content \$STATE_FILE -Raw | ConvertFrom-Json } catch { exit 0 }
-\$RDEXE = 'C:\\Program Files\\RustDesk\\rustdesk.exe'
-\$id = ''
-try { \$out = & \$RDEXE --get-id 2>\$null | Out-String; if (\$out -match '([0-9]{6,15})') { \$id = \$Matches[1] } } catch {}
-if (-not \$id) { exit 0 }
-\$body = @{ rustdeskId = \$id; hostname = \$env:COMPUTERNAME; platform = 'Windows' }
-# Identifies this machine to the server. Without it the heartbeat is treated as
-# an anonymous liveness ping: online state is refreshed and nothing else, no
-# credential rotation is handed back, and no inventory is written.
-if (\$state.agentSecret) { \$body['agentSecret'] = \$state.agentSecret }
-# Which Rem0te agent this is - the platform version whose installer wrote this
-# script. Read from state rather than hardcoded into the body so a machine that
-# upgraded reports the new version without this line changing.
-if (\$state.agentVersion) { \$body['agentVersion'] = [string]\$state.agentVersion }
-# Installed RustDesk version, read from the binary rather than by spawning it.
-# Normalised to three segments: FileVersion reports 1.4.9.0 while the server
-# compares against the GitHub release tag 1.4.9.
-try {
-    \$vi = (Get-Item \$RDEXE -ErrorAction Stop).VersionInfo.FileVersion
-    if (\$vi -match '([0-9]+\\.[0-9]+\\.[0-9]+)') { \$body['rustdeskVersion'] = \$Matches[1] }
-} catch {}
-# Include the current password so the server can keep its encrypted copy in
-# sync (needed for one-click Connect after any endpoint-side password change).
-if (\$state.password) { \$body['password'] = \$state.password }
-# Incoming RustDesk sessions right now. RustDesk starts one 'rustdesk.exe --cm'
-# connection-manager process per interactive session while someone is
-# connected, and none otherwise. The server uses this ONLY to confirm or end a
-# launch against this machine - it says that someone is connected, never who.
-try {
-    \$cmProcs = @(Get-CimInstance Win32_Process -Filter "Name='rustdesk.exe'" -ErrorAction Stop | Where-Object { \$_.CommandLine -match '--cm' })
-    \$body['rustdeskSessions'] = [int]\$cmProcs.Count
-} catch {}
-# The update this machine last installed, echoed back so the server can tie
-# the result to that rollout job. Written by the installer when it ran for one.
-if (\$state.updateNonce) { \$body['updateNonce'] = [string]\$state.updateNonce }
-# Live session state: who is at the console, and how long this machine has been
-# up. Two CIM queries, cheap enough to send on every beat, and they are the
-# first two things a technician looks at before connecting. The empty string is
-# a deliberate value - it means nobody is signed in, and it has to clear the
-# name the console last showed rather than leave a user there who left an hour
-# ago.
-try {
-    \$cs0 = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
-    if (\$cs0.UserName) { \$body['loggedOnUser'] = [string]\$cs0.UserName } else { \$body['loggedOnUser'] = '' }
-} catch {}
-try {
-    \$os0 = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
-    if (\$os0.LastBootUpTime) {
-        \$body['lastBootAt'] = \$os0.LastBootUpTime.ToUniversalTime().ToString('o')
-        \$body['uptimeSeconds'] = [int]((Get-Date) - \$os0.LastBootUpTime).TotalSeconds
-    }
-    # Memory every beat, not only on the six-hourly inventory pass. A gauge
-    # reading six hours stale is worse than no gauge, because it looks current.
-    # Both values are already on this object - they cost nothing extra here.
-    if (\$os0.TotalVisibleMemorySize) { \$body['memoryTotalMb'] = [int]([math]::Round(([double]\$os0.TotalVisibleMemorySize) / 1024)) }
-    if (\$os0.FreePhysicalMemory) { \$body['memoryFreeMb'] = [int]([math]::Round(([double]\$os0.FreePhysicalMemory) / 1024)) }
-} catch {}
-# Processor load. LoadPercentage is a short sample the CIM provider maintains,
-# so this is a property read rather than a counter this script has to time.
-# Averaged across sockets, because a two-socket box reports one figure each.
-try {
-    \$loads = @()
-    foreach (\$cp in (Get-CimInstance Win32_Processor -ErrorAction Stop)) {
-        if (\$null -ne \$cp.LoadPercentage) { \$loads += [int]\$cp.LoadPercentage }
-    }
-    if (\$loads.Count -gt 0) {
-        \$sum = 0
-        foreach (\$l in \$loads) { \$sum += \$l }
-        \$body['cpuLoadPercent'] = [int]([math]::Round(\$sum / \$loads.Count))
-    }
-} catch {}
-# Free space on the system volume, for the same reason as memory above. Only
-# the volume Windows booted from; the full per-disk list stays on the slower
-# inventory pass, where capacity that never changes belongs.
-try {
-    \$sysDrive = \$env:SystemDrive
-    \$ld = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='\$sysDrive'" -ErrorAction Stop
-    if (\$ld -and \$ld.Size) {
-        \$body['systemDiskTotalMb'] = [int]([math]::Round(([double]\$ld.Size) / 1048576))
-        \$body['systemDiskFreeMb'] = [int]([math]::Round(([double]\$ld.FreeSpace) / 1048576))
-    }
-} catch {}
-\$body = \$body | ConvertTo-Json -Compress
-\$resp = \$null
-try { \$resp = Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/heartbeat') -Method Post -Body \$body -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop } catch { exit 0 }
-# Apply any pending credential rotation. Server sends back { rotate: { password, sha256 } }
-# when a rotation is staged. We apply it to RustDesk via --password (service must be running)
-# and confirm to the server so it swaps pending->active. Failure keeps the OLD password.
-try {
-    \$rot = \$resp.data.rotate
-    if (\$rot -and \$rot.password -and \$rot.sha256) {
-        # Compute local sha of what we are about to apply so we do not confirm a bad payload
-        \$bytes = [Text.Encoding]::UTF8.GetBytes(\$rot.password)
-        \$sha = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash(\$bytes)).Replace('-','').ToLower()
-        if (\$sha -eq \$rot.sha256) {
-            & \$RDEXE --password \$rot.password *>\$null
-            Start-Sleep -Seconds 1
-            \$confirm = @{ rustdeskId = \$id; sha256 = \$sha; agentSecret = \$state.agentSecret } | ConvertTo-Json -Compress
-            \$confirmed = \$false
-            try {
-                \$cr = Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/confirm-rotation') -Method Post -Body \$confirm -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
-                \$confirmed = [bool]\$cr.data.confirmed
-            } catch {}
-            # Persist the new password locally, but ONLY once the server has
-            # swapped pending->active. Every heartbeat re-sends \$state.password
-            # and the server takes it verbatim, so leaving the old value here
-            # would clobber the rotated password back to the install-time one
-            # roughly three minutes later - permanently desyncing RustDesk from
-            # Rem0te while both ends believe they agree. If the confirm failed
-            # we deliberately keep the old value: the server still has the
-            # rotation pending and will re-offer it on the next heartbeat.
-            if (\$confirmed) {
-                try {
-                    \$state.password = \$rot.password
-                    \$state | ConvertTo-Json -Compress | Set-Content \$STATE_FILE -Encoding UTF8
-                } catch {}
-            }
-        }
-    }
-} catch {}
-# ---- Collection commands -------------------------------------------------
-# There is no push channel to this machine, so the server stages work and the
-# heartbeat response carries it. Every command is one of three fixed, read-only
-# collections. There is deliberately no "run this script" type: the server
-# cannot make this agent do anything but describe the machine it runs on.
-function Send-Rem0teResult(\$cmdId, \$ok, \$extra, \$err) {
-    \$payload = @{ rustdeskId = \$id; agentSecret = \$state.agentSecret; commandId = [string]\$cmdId; ok = [bool]\$ok }
-    if (\$err) { \$payload['error'] = [string]\$err }
-    if (\$extra) { foreach (\$k in \$extra.Keys) { \$payload[\$k] = \$extra[\$k] } }
-    # Depth is not optional. ConvertTo-Json defaults to 2, which renders the
-    # nested disk / adapter / event objects as the literal text
-    # "System.Collections.Hashtable" and throws away the whole collection.
-    \$json = \$payload | ConvertTo-Json -Depth 8 -Compress
-    try { Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/command-result') -Method Post -Body \$json -ContentType 'application/json' -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop | Out-Null } catch {}
-}
-function Get-Rem0teInventory {
-    \$cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
-    \$os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
-    \$bi = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
-    \$cpu = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
-    \$enc = Get-CimInstance Win32_SystemEnclosure -ErrorAction SilentlyContinue | Select-Object -First 1
-    # Only the values worth telling a technician apart. Anything else reports
-    # its raw SMBIOS number, which is still more use than "Other".
-    \$chassisNames = @{ 3 = 'Desktop'; 4 = 'Low Profile Desktop'; 5 = 'Pizza Box'; 6 = 'Mini Tower'; 7 = 'Tower'; 8 = 'Portable'; 9 = 'Laptop'; 10 = 'Notebook'; 11 = 'Handheld'; 12 = 'Docking Station'; 13 = 'All In One'; 14 = 'Sub Notebook'; 15 = 'Space Saving'; 17 = 'Server'; 23 = 'Rack Mount'; 30 = 'Tablet'; 31 = 'Convertible'; 32 = 'Detachable' }
-    \$chassis = ''
-    foreach (\$c in @(\$enc.ChassisTypes)) {
-        if (\$c) {
-            \$ct = [int]\$c
-            if (\$chassisNames[\$ct]) { \$chassis = [string]\$chassisNames[\$ct] } else { \$chassis = 'Type ' + [string]\$ct }
-            break
-        }
-    }
-    \$disks = @()
-    foreach (\$d in (Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction SilentlyContinue)) {
-        \$disks += @{ drive = [string]\$d.DeviceID; label = [string]\$d.VolumeName; fsType = [string]\$d.FileSystem; totalBytes = [double]\$d.Size; freeBytes = [double]\$d.FreeSpace }
-    }
-    \$gpus = @()
-    foreach (\$g in (Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue)) {
-        \$res = ''
-        if (\$g.CurrentHorizontalResolution) { \$res = [string]\$g.CurrentHorizontalResolution + 'x' + [string]\$g.CurrentVerticalResolution }
-        \$gpus += @{ name = [string]\$g.Name; driverVersion = [string]\$g.DriverVersion; resolution = \$res }
-    }
-    \$nets = @()
-    foreach (\$n in (Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'IPEnabled=True' -ErrorAction SilentlyContinue)) {
-        # First IPv4 only. The IPAddress property is an array that mixes v4 and
-        # v6, and a colon is the cheapest way to tell them apart without a
-        # regex escape that a template literal would eat.
-        \$v4 = ''
-        foreach (\$a in @(\$n.IPAddress)) { if (\$a -and -not ([string]\$a).Contains(':')) { \$v4 = [string]\$a; break } }
-        \$gw = ''
-        foreach (\$a in @(\$n.DefaultIPGateway)) { if (\$a) { \$gw = [string]\$a; break } }
-        \$nets += @{ name = [string]\$n.Description; mac = [string]\$n.MACAddress; ipv4 = \$v4; gateway = \$gw; dhcp = [bool]\$n.DHCPEnabled }
-    }
-    \$tz = ''
-    try { \$tz = (Get-TimeZone -ErrorAction Stop).Id } catch {}
-    \$biosDate = \$null
-    if (\$bi -and \$bi.ReleaseDate) { \$biosDate = \$bi.ReleaseDate.ToUniversalTime().ToString('o') }
-    \$installed = \$null
-    if (\$os -and \$os.InstallDate) { \$installed = \$os.InstallDate.ToUniversalTime().ToString('o') }
-    return @{
-        manufacturer = [string]\$cs.Manufacturer
-        model = [string]\$cs.Model
-        serialNumber = [string]\$bi.SerialNumber
-        chassisType = \$chassis
-        biosVersion = [string]\$bi.SMBIOSBIOSVersion
-        biosDate = \$biosDate
-        osCaption = [string]\$os.Caption
-        osBuild = [string]\$os.BuildNumber
-        osArch = [string]\$os.OSArchitecture
-        osInstalledAt = \$installed
-        domain = [string]\$cs.Domain
-        timezone = \$tz
-        cpuModel = [string]\$cpu.Name
-        cpuCores = [int]\$cpu.NumberOfCores
-        cpuThreads = [int]\$cpu.NumberOfLogicalProcessors
-        cpuMhz = [int]\$cpu.MaxClockSpeed
-        memoryTotalMb = [int]([math]::Round(([double]\$cs.TotalPhysicalMemory) / 1048576))
-        memoryFreeMb = [int]([math]::Round(([double]\$os.FreePhysicalMemory) / 1024))
-        disks = \$disks
-        gpus = \$gpus
-        networks = \$nets
-    }
-}
-function Get-Rem0tePendingUpdates {
-    # Asking the Windows Update agent takes tens of seconds and goes to the
-    # network, which is why this is its own command on a slow cadence rather
-    # than part of the inventory pass.
-    \$pending = @()
-    \$session = New-Object -ComObject Microsoft.Update.Session
-    \$searcher = \$session.CreateUpdateSearcher()
-    \$found = \$searcher.Search('IsInstalled=0 and IsHidden=0')
-    foreach (\$u in \$found.Updates) {
-        if (\$pending.Count -ge 100) { break }
-        \$kb = ''
-        foreach (\$k in @(\$u.KBArticleIDs)) { if (\$k) { \$kb = 'KB' + [string]\$k; break } }
-        \$pending += @{ title = [string]\$u.Title; kb = \$kb; severity = [string]\$u.MsrcSeverity; sizeBytes = [double]\$u.MaxDownloadSize }
-    }
-    \$reboot = \$false
-    try { \$reboot = [bool](New-Object -ComObject Microsoft.Update.SystemInfo).RebootRequired } catch {}
-    return @{ pending = \$pending; rebootRequired = \$reboot }
-}
-function Get-Rem0teEventLog(\$p) {
-    # The server validates these too. Checking again here is not redundant:
-    # this is the process that actually reads the log, and it should not be
-    # able to be talked into reading one nobody authorised.
-    \$allowed = @('Application','System','Security','Setup','Windows PowerShell')
-    if (-not \$p) { throw 'No query supplied' }
-    \$logName = [string]\$p.logName
-    if (-not (\$allowed -contains \$logName)) { throw ('Log not permitted: ' + \$logName) }
-    \$hours = [int]\$p.sinceHours; if (\$hours -lt 1) { \$hours = 24 }; if (\$hours -gt 336) { \$hours = 336 }
-    \$max = [int]\$p.maxEvents; if (\$max -lt 1) { \$max = 50 }; if (\$max -gt 200) { \$max = 200 }
-    \$filter = @{ LogName = \$logName; StartTime = (Get-Date).AddHours(-1 * \$hours) }
-    # \`if (\$l)\` would silently drop level 0, which is what nearly every
-    # Security log entry is - and dropping it turns "show me the Security log"
-    # into an empty table.
-    \$levels = @()
-    foreach (\$l in @(\$p.levels)) { if (\$null -ne \$l) { \$levels += [int]\$l } }
-    if (\$levels.Count -gt 0) { \$filter['Level'] = \$levels }
-    if (\$p.providerName) { \$filter['ProviderName'] = [string]\$p.providerName }
-    \$raw = @()
-    # A filter that matches nothing is an error to Get-WinEvent, not an empty
-    # result - and "show me Critical events from the last hour" matches nothing
-    # on a healthy machine most of the time. Keyed on the error id rather than
-    # the message, which is localised.
-    try { \$raw = @(Get-WinEvent -FilterHashtable \$filter -MaxEvents \$max -ErrorAction Stop) }
-    catch { if (\$_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*') { throw } }
-    \$out = @()
-    foreach (\$e in \$raw) {
-        \$m = [string]\$e.Message
-        if (\$m.Length -gt 2000) { \$m = \$m.Substring(0, 2000) }
-        \$out += @{ timeCreated = \$e.TimeCreated.ToUniversalTime().ToString('o'); eventId = [int]\$e.Id; level = [int]\$e.Level; provider = [string]\$e.ProviderName; message = \$m }
-    }
-    return \$out
-}
-# Nothing is collected for a heartbeat that could not identify itself: without
-# the device secret the result POST would be refused anyway, and the server
-# hands out no commands in the first place.
-if (\$state.agentSecret) {
-    foreach (\$cmd in @(\$resp.data.commands)) {
-        if (-not \$cmd -or -not \$cmd.id) { continue }
-        try {
-            switch ([string]\$cmd.type) {
-                'INVENTORY_REFRESH' { Send-Rem0teResult \$cmd.id \$true @{ inventory = (Get-Rem0teInventory) } \$null }
-                'UPDATE_SCAN' { Send-Rem0teResult \$cmd.id \$true @{ updates = (Get-Rem0tePendingUpdates) } \$null }
-                'EVENT_LOG_QUERY' { Send-Rem0teResult \$cmd.id \$true @{ events = @(Get-Rem0teEventLog \$cmd.params) } \$null }
-                default { Send-Rem0teResult \$cmd.id \$false \$null ('Unknown command type: ' + [string]\$cmd.type) }
-            }
-        } catch {
-            # Reported rather than swallowed. A command that fails silently is
-            # indistinguishable from an agent too old to understand it, and the
-            # console would keep showing "waiting" for something already dead.
-            Send-Rem0teResult \$cmd.id \$false \$null ([string]\$_.Exception.Message)
-        }
-    }
-}
-# Apply a staged RustDesk upgrade. The server keeps sending
-# { updateRustdesk: { targetVersion } } until the endpoint reports that
-# version back, so a failed install retries rather than being lost. Re-running
-# the installer IS the mechanism: it is idempotent, pins the version this
-# server serves, and its only Read-Host is guarded by IsInteractive so it
-# cannot block a SYSTEM task. It also rewrites this script, which is how an
-# endpoint picks up a newer agent.
-#
-# The 30-minute floor matters. Without it, any install that does not land on
-# exactly the target version becomes a reinstall - and a ~40 MB download -
-# every three minutes, indefinitely.
-try {
-    # Two reasons to re-run the installer, one mechanism:
-    #   updateRustdesk  - the server staged a newer RustDesk client
-    #   reinstallAgent  - an operator asked for the agent itself to be
-    #                     refreshed, which a version comparison cannot ask for
-    #                     because the client may already be current
-    # Re-running is idempotent: it keeps this machine's server config, its
-    # permanent password and its enrolment, and rewrites this script.
-    \$upd = \$resp.data.updateRustdesk
-    if (-not (\$upd -and \$upd.targetVersion)) { \$upd = \$resp.data.reinstallAgent }
-    if (\$upd -and \$upd.targetVersion) {
-        \$last = \$null
-        try { if (\$state.lastUpdateAttempt) { \$last = [DateTime]\$state.lastUpdateAttempt } } catch {}
-        if (-not \$last -or ((Get-Date) - \$last).TotalMinutes -ge 30) {
-            try {
-                \$state | Add-Member -NotePropertyName lastUpdateAttempt -NotePropertyValue ((Get-Date).ToString('o')) -Force
-                \$state | ConvertTo-Json -Compress | Set-Content \$STATE_FILE -Encoding UTF8
-            } catch {}
-            \$iu = 'https://' + \$state.host + '/api/v1/public/install/windows.ps1'
-            # A staged rollout names its job with a nonce. The server serves
-            # the exact approved version (and digest) for that nonce and no
-            # other, and the installer writes the nonce into heartbeat.dat so
-            # the next heartbeats prove which install ran.
-            if (\$upd.nonce -and ([string]\$upd.nonce -match '^[A-Za-z0-9_-]{16,64}\$')) { \$iu = \$iu + '?updateNonce=' + [string]\$upd.nonce }
-            try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm '\$iu' | iex" *>\$null } catch {}
-        }
-    }
-} catch {}
-'@
-Set-Content -Path $hbScript -Value $hbBody -Encoding UTF8
-schtasks /Create /F /TN 'Rem0teHeartbeat' /SC MINUTE /MO 3 /RU SYSTEM /RL HIGHEST /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \`"$hbScript\`"" *>$null
-Log "  Heartbeat task installed: 'Rem0teHeartbeat' (every 3 minutes, persistent)."
-# The task runs as SYSTEM and reads both of these on every beat. If either is
-# unreadable the machine goes quiet with nothing on screen to say why, so say
-# it here, where someone is watching.
-foreach ($f in @($hbScript, $hbFile)) {
-    if (-not (Test-Readable $f)) { Log "  $f cannot be read - the heartbeat will not run. Re-run this installer." 'ERROR' }
-}
-
-if (-not $rdId -or -not $registered) {
-    # Schedule a retry task. Runs every 5 minutes for up to 24 hours, then self-deletes.
-    Log "  Immediate registration incomplete; scheduling retry task." 'WARN'
-    try { New-Item -ItemType Directory -Force -Path $STATEDIR | Out-Null } catch {}
-    $secretFile = "$STATEDIR\\enroll.dat"
-    $payload = [PSCustomObject]@{
-        host = $REM0TE_HOST; token = $CLAIM_TOKEN; password = $PERM_PW
-        agentSecret = $AGENT_SECRET; agentVersion = $AGENT_VERSION
-        expiresAt = (Get-Date).AddDays(1).ToString('o')
-    } | ConvertTo-Json -Compress
-    try { Set-Content -Path $secretFile -Value $payload -Encoding UTF8; icacls $secretFile /inheritance:r /grant:r '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' *>$null } catch {}
-
-    $retryScript = "$STATEDIR\\retry-enroll.ps1"
-    $retryBody = @'
-\$ErrorActionPreference = 'Continue'; \$ProgressPreference = 'SilentlyContinue'
-\$state = Get-Content 'C:\\ProgramData\\Rem0te\\enroll.dat' -Raw | ConvertFrom-Json
-if ((Get-Date) -gt [DateTime]\$state.expiresAt) { schtasks /Delete /TN 'Rem0teEnrollment' /F | Out-Null; Remove-Item 'C:\\ProgramData\\Rem0te\\enroll.dat' -Force -ErrorAction SilentlyContinue; exit 0 }
-\$RDEXE = 'C:\\Program Files\\RustDesk\\rustdesk.exe'
-\$id = ''
-try { \$out = & \$RDEXE --get-id 2>\$null | Out-String; if (\$out -match '([0-9]{6,15})') { \$id = \$Matches[1] } } catch {}
-if (-not \$id) { exit 0 }
-\$body = @{ rustdeskId = \$id; hostname = \$env:COMPUTERNAME; platform = 'Windows'; password = \$state.password }
-if (\$state.agentSecret) { \$body['agentSecret'] = \$state.agentSecret }
-if (\$state.agentVersion) { \$body['agentVersion'] = [string]\$state.agentVersion }
-if (\$state.token) { \$body['token'] = \$state.token }
-\$json = \$body | ConvertTo-Json -Compress
-\$endpoint = if (\$state.token) { 'enrollment/claim' } else { 'enrollment/heartbeat' }
-try {
-    Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/' + \$endpoint) -Method Post -Body \$json -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop | Out-Null
-    Remove-Item 'C:\\ProgramData\\Rem0te\\enroll.dat' -Force -ErrorAction SilentlyContinue
-    schtasks /Delete /TN 'Rem0teEnrollment' /F | Out-Null
-} catch {}
-'@
-    Set-Content -Path $retryScript -Value $retryBody -Encoding UTF8
-    schtasks /Create /F /TN 'Rem0teEnrollment' /SC MINUTE /MO 5 /RU SYSTEM /RL HIGHEST /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \`"$retryScript\`"" *>$null
-    Log "  Retry task installed: 'Rem0teEnrollment' (every 5 minutes for 24 hours)."
-} else {
-    # Success path: no secret spills to disk.
-    Log "  Registered ($registered) as $rdId" 'OK'
-}
-
-# ── Local diagnostics ──────────────────────────────────────────────────────
-# sc.exe start succeeds silently when a service is already stuck or is
-# crash-looping, and rustdesk.exe --get-id reads the config file directly, so
-# it answers even when the service is dead. Between them an install can look
-# completely healthy while nothing is listening or dialling out. Capture the
-# facts that actually discriminate, and print them on failure.
-function Test-Port([int]$port) {
-    try {
-        $c = New-Object Net.Sockets.TcpClient
-        $iar = $c.BeginConnect($REM0TE_HOST, $port, $null, $null)
-        $ok = $iar.AsyncWaitHandle.WaitOne(5000, $false)
-        $r = ($ok -and $c.Connected)
-        $c.Close()
-        return $r
-    } catch { return $false }
-}
-function Get-RustdeskDiag {
-    $out = @()
-    try {
-        $q = (& sc.exe query RustDesk 2>&1 | Out-String)
-        if ($q -match 'STATE\\s+:\\s+\\d+\\s+(\\w+)') { $out += 'service state: ' + $Matches[1] }
-        else { $out += 'service state: NOT INSTALLED (sc.exe query returned no STATE)' }
-    } catch { $out += 'service state: query failed' }
-    try { $out += 'rustdesk processes running: ' + @(Get-Process rustdesk -ErrorAction SilentlyContinue).Count } catch {}
-    # Which account the service runs as decides which profile RustDesk reads its
-    # config from. We write SYSTEM's profile (System32\\config\\systemprofile);
-    # if the service runs as LOCAL SERVICE or a named account it is reading a
-    # config we never wrote, which looks exactly like this: service RUNNING,
-    # files on disk perfect, and nothing ever dialled out.
-    try {
-        $qc = (& sc.exe qc RustDesk 2>&1 | Out-String)
-        foreach ($ln in ($qc -split '\\r?\\n')) {
-            if ($ln -match 'SERVICE_START_NAME|BINARY_PATH_NAME') { $out += 'sc qc: ' + $ln.Trim() }
-        }
-    } catch {}
-    # RustDesk's own log is the only place that says which rendezvous server the
-    # RUNNING process actually picked up, and why a connection failed.
-    $logDirs = @(
-        'C:\\Windows\\System32\\config\\systemprofile\\AppData\\Roaming\\RustDesk\\log',
-        'C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Roaming\\RustDesk\\log',
-        'C:\\Windows\\ServiceProfiles\\NetworkService\\AppData\\Roaming\\RustDesk\\log',
-        (Join-Path $env:APPDATA 'RustDesk\\log')
-    )
-    foreach ($ld in $logDirs) {
-        try {
-            if (-not (Test-Path $ld)) { continue }
-            $f = Get-ChildItem $ld -Filter *.log -Recurse -ErrorAction SilentlyContinue |
-                 Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            if ($f) {
-                $out += 'log ' + $f.FullName + ' (' + $f.LastWriteTime + '):'
-                foreach ($l in (Get-Content $f.FullName -Tail 8 -ErrorAction SilentlyContinue)) { $out += '    ' + $l }
-            }
-        } catch {}
-    }
-    $out += 'tcp 443 (heartbeat/websocket): ' + $(if (Test-Port 443) { 'open' } else { 'BLOCKED' })
-    $out += 'tcp 21116 (rendezvous): ' + $(if (Test-Port 21116) { 'open' } else { 'BLOCKED' })
-    try {
-        $ev = Get-EventLog -LogName Application -Source RustDesk -Newest 3 -ErrorAction SilentlyContinue
-        foreach ($e in $ev) { $out += 'event: ' + $e.TimeGenerated + ' ' + ($e.Message -replace '\\s+',' ').Substring(0, [Math]::Min(160, $e.Message.Length)) }
-    } catch {}
-    return $out
-}
-$diag = Get-RustdeskDiag
-foreach ($d in $diag) { Log ('  ' + $d) }
-
-# ── Verify RustDesk actually reached the server ────────────────────────────
-# Config-on-disk and a Rem0te heartbeat both prove nothing about the path that
-# actually matters. RustDesk can be perfectly configured, heartbeat happily
-# over 443, and still never reach hbbs - the machine then shows as "offline"
-# forever and Connect cannot work, while this installer cheerfully reports
-# success. Ask the server whether hbbs has genuinely seen this peer.
-# $regState: $true registered, $false definitely not, $null unknown.
-function Test-Registered([string]$id) {
-    $b = @{ rustdeskId = $id; hostname = $env:COMPUTERNAME; platform = 'Windows'; agentSecret = $AGENT_SECRET } | ConvertTo-Json -Compress
-    try {
-        $r = Invoke-RestMethod -Uri "https://$REM0TE_HOST/api/v1/enrollment/heartbeat" -Method Post -Body $b -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
-        return $r.data.rustdeskRegistered
-    } catch { return $null }
-}
-$regState = $null
-if ($rdId) {
-    Log '  Waiting for RustDesk to reach the server...'
-    $regDeadline = (Get-Date).AddSeconds(90)
-    while ((Get-Date) -lt $regDeadline) {
-        $regState = Test-Registered $rdId
-        if ($regState -eq $true) { break }
-        Start-Sleep -Seconds 5
-    }
-    if ($regState -eq $true) {
-        Log "  Server confirms RustDesk registered as $rdId" 'OK'
-    } elseif ($regState -eq $false) {
-        Log '  Server has NEVER seen this device on its rendezvous port.' 'WARN'
-    } else {
-        Log '  Could not verify registration with the server (unknown).' 'WARN'
-    }
-}
-
-# ── Summary ────────────────────────────────────────────────────────────────
-Write-Host ''
-Write-Host '  ─────────────────────────────────────────────' -ForegroundColor Green
-if ($regState -eq $false) {
-    Fail @"
-ERROR: RustDesk never reached $REM0TE_HOST.
-
-  Everything local is correct - the service is installed, all config files
-  point at $REM0TE_HOST with the right key, and this machine can reach the
-  Rem0te API over 443. But the server has never seen this device register,
-  so remote control cannot work and Connect will fail.
-
-  Local diagnostics:
-$(($diag | ForEach-Object { '    ' + $_ }) -join [Environment]::NewLine)
-
-  If the service state is not RUNNING, that is the cause - RustDesk is not
-  dialling out at all. If it IS running and 21116 is BLOCKED while 443 is
-  open, outbound filtering is the cause: the server can proxy RustDesk over
-  443 (/ws/id and /ws/relay are already routed to hbbs/hbbr), but hbbs 1.1.15
-  accepts the upgrade and drops the connection, so that path is not usable
-  until the server is upgraded.
-
-  Refusing to report success for a device nobody can connect to.
-"@ 22
-}
-if ($rdId -and $registered) {
-    Write-Host '  Rem0te installed successfully' -ForegroundColor Green
-} elseif ($rdId) {
-    Write-Host '  Rem0te installed. Registration will retry in background.' -ForegroundColor Yellow
-} else {
-    Write-Host '  Rem0te installed. Device ID not yet assigned — retry task will finish enrollment.' -ForegroundColor Yellow
-}
-Write-Host '  ─────────────────────────────────────────────' -ForegroundColor Green
-Write-Host ''
-Write-Host "  Device:   $env:COMPUTERNAME"
-Write-Host "  Server:   $REM0TE_HOST"
-if ($rdId) { Write-Host "  Device ID: $rdId" }
-Write-Host "  Log:      $LOG"
-Write-Host ''
-
-if (IsInteractive) { try { Read-Host 'Press Enter to close' | Out-Null } catch {} }
-exit 0
-`;
+    return relayHost && HOSTNAME_RE.test(relayHost) ? relayHost : null;
   }
 
   private async serveWindowsExe(psUrl: string, res: Response): Promise<void> {
-    const exePath = path.join(this.projectRoot, 'dist', 'windows-installer.exe');
+    // With a signed repository, the download is the signed agent binary
+    // itself (the same bytes as target windows/rem0te-agent.exe, slot aside),
+    // which verifies everything it installs. Without one, the legacy
+    // bootstrap from dist/ — and in signed_only there is no legacy bootstrap.
+    const agentT = this.updateTrust.agentTarget();
+    if (!agentT && (await this.updateTrust.mode()).mode === 'signed_only') {
+      res.status(503).json({ success: false, code: 'SIGNED_AGENT_UNAVAILABLE', message: 'This portal installs only the signed agent, and the update repository has no windows/rem0te-agent.exe target.' });
+      return;
+    }
+    const exePath = agentT?.path ?? path.join(this.projectRoot, 'dist', 'windows-installer.exe');
     let binary: Buffer;
     try {
       binary = await fs.promises.readFile(exePath);
