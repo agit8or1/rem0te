@@ -7,6 +7,8 @@ import { AlertEvent, AlertTicketLink, CONTRACT, type ALERT_EVENT_TYPES } from '.
 import { loadTrust, type Peer } from '../integration/peers';
 import { signAlertEvent } from '../integration/signer';
 import { E, IntegrationError } from '../integration/errors';
+import { patchSummaryFor } from '../patching/summary-db';
+import { redactedPatchSummary } from '../patching/summary';
 
 type AlertEventType = (typeof ALERT_EVENT_TYPES)[number];
 
@@ -17,7 +19,7 @@ const INCLUDE = {
 type Row = Prisma.MonitorAlertGetPayload<{ include: typeof INCLUDE }>;
 
 /** The contract's view of an alert. Only sanitised, rem0te-built fields. */
-export function toContractAlert(a: Row) {
+export function toContractAlert(a: Row, patchSummary: ReturnType<typeof redactedPatchSummary> | null = null) {
   return {
     alert_id: a.id,
     monitor: a.ruleKey.slice(0, 64),
@@ -34,6 +36,7 @@ export function toContractAlert(a: Row) {
     resolved_at: a.resolvedAt?.toISOString() ?? null,
     outage_alert_id: a.parentId,
     ticket: a.ticketId ? { id: a.ticketId, url: a.ticketUrl } : null,
+    patch_summary: patchSummary,
   };
 }
 
@@ -64,6 +67,7 @@ export class AlertEventsService {
     const a = await this.prisma.monitorAlert.findUnique({ where: { id: alertId }, include: INCLUDE });
     if (!a?.customerId) return 0;
     const maps = await this.prisma.integrationOrgMapping.findMany({ where: { customerId: a.customerId, revokedAt: null } });
+    const patch = await this.patchFor(a);
     let n = 0;
     for (const m of maps) {
       if (!trust.peers.has(m.peerId)) continue;
@@ -74,7 +78,7 @@ export class AlertEventsService {
           const seq = await tx.integrationOrgMapping.update({ where: { id: m.id }, data: { lastAlertSequence: { increment: 1 } }, select: { lastAlertSequence: true } });
           const ev: AlertEvent = {
             contract: CONTRACT, event_id: randomUUID(), sequence: seq.lastAlertSequence, type,
-            occurred_at: new Date().toISOString(), peer_id: m.peerId, organization_id: m.externalOrgId, alert: toContractAlert(a),
+            occurred_at: new Date().toISOString(), peer_id: m.peerId, organization_id: m.externalOrgId, alert: toContractAlert(a, patch),
           };
           AlertEvent.parse(ev); // never sign something the contract would refuse
           const sig = signAlertEvent(ev);
@@ -89,6 +93,12 @@ export class AlertEventsService {
     }
     if (n) await this.prisma.monitorAlertEvent.create({ data: { alertId, type: 'ticket_event', detail: { event: type, organizations: n } } });
     return n;
+  }
+
+  /** The redacted patch summary a REBOOT_PENDING computer alert carries (contract revision 2). */
+  private async patchFor(a: Row) {
+    if (a.kind !== 'REBOOT_PENDING' || !a.endpointId) return null;
+    return redactedPatchSummary(await patchSummaryFor(this.prisma, a.endpointId));
   }
 
   private async mapping(peer: Peer, org: string | undefined) {
@@ -122,7 +132,7 @@ export class AlertEventsService {
 
   async get(peer: Peer, org: string | undefined, alertId: string) {
     const { a } = await this.scoped(peer, org ?? '', alertId);
-    return toContractAlert(a);
+    return toContractAlert(a, await this.patchFor(a));
   }
 
   /**
@@ -135,7 +145,7 @@ export class AlertEventsService {
     if (!p.success) throw E.invalid(p.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ').slice(0, 300));
     const { a, m } = await this.scoped(peer, p.data.organization_id, alertId);
     if (a.ticketId) {
-      if (a.ticketId === p.data.ticket_id && a.ticketPeerId === peer.id) return { replayed: true, alert: toContractAlert(a) };
+      if (a.ticketId === p.data.ticket_id && a.ticketPeerId === peer.id) return { replayed: true, alert: toContractAlert(a, await this.patchFor(a)) };
       throw new IntegrationError(409, 'TICKET_ALREADY_LINKED', 'This alert is already linked to a different ticket');
     }
     const r = await this.prisma.monitorAlert.updateMany({
@@ -150,6 +160,6 @@ export class AlertEventsService {
     });
     await this.emit(a.id, 'alert.updated');
     const fresh = await this.prisma.monitorAlert.findUnique({ where: { id: a.id }, include: INCLUDE });
-    return { replayed: false, alert: toContractAlert(fresh!) };
+    return { replayed: false, alert: toContractAlert(fresh!, await this.patchFor(fresh!)) };
   }
 }

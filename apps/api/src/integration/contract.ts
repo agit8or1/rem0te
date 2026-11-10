@@ -11,6 +11,14 @@
 import { z } from 'zod';
 
 export const CONTRACT = 'ticket-rmm-v1' as const;
+/**
+ * Additive revisions of ticket-rmm-v1. A peer reads `contract_revision` from
+ * /capabilities and uses nothing newer than it understands.
+ *   1 — rem0te 0.25–0.29: jobs, events, action proposals (0.26), alerts (0.29).
+ *   2 — rem0te 0.30: `contract_revision` and `organizations` (the explicit
+ *       organization → business binding, with pause state) in /capabilities.
+ */
+export const CONTRACT_REVISION = 2 as const;
 
 /** Opaque identifier from the peer: ticket id, org id, technician id, … */
 const ExtId = z.string().min(1).max(128).regex(/^[A-Za-z0-9._:@-]+$/, 'identifier charset');
@@ -254,11 +262,29 @@ export const SignedEvent = z.object({
   signature: z.object({ alg: z.literal('Ed25519'), kid: z.string(), sig: z.string() }).strict(),
 }).strict();
 
+/**
+ * One mapped organization of the calling peer (revision 2). The binding is
+ * `(peer, organization_id) → business`, one to one in both directions: a peer
+ * serving several businesses has one organization per business, and every
+ * request names its organization — never a business id, never a name. The
+ * business id and name are shown so a peer operator can check the mapping;
+ * they are not accepted anywhere as input.
+ */
+export const CapabilityOrganization = z.object({
+  organization_id: z.string(),
+  business_id: z.string(),
+  business_name: z.string(),
+  /** Containment kinds stopped for this business right now (global pauses included); [] when none. No reasons. */
+  paused: z.array(z.enum(['actions', 'remote', 'updates', 'integration'])),
+}).strict();
+
 export const Capabilities = z.object({
   contract: z.literal(CONTRACT),
+  contract_revision: z.number().int().min(1),
   rem0te_version: z.string(),
   audience: z.string(),
   peer_id: z.string(),
+  organizations: z.array(CapabilityOrganization),
   features: z.object({
     ticket_analysis: z.boolean(),
     model_comparison: z.boolean(),
@@ -347,6 +373,32 @@ export type ActionProposal = z.infer<typeof ActionProposal>;
 
 export const ALERT_EVENT_TYPES = ['alert.raised', 'alert.updated', 'alert.resolved'] as const;
 
+/**
+ * Revision 2: the redacted patch summary a ticket for a REBOOT_PENDING alert
+ * carries — KB numbers, states, ages and labels only. No update titles, error
+ * text, user names, addresses or registry values. Built by
+ * apps/api/src/patching/summary.ts (redactedPatchSummary).
+ */
+const Kb = z.string().regex(/^KB[0-9]{4,10}$/);
+export const PatchSummary = z.object({
+  evidence_source: z.enum(['signed_agent_scan', 'standard_agent_scan', 'none']),
+  evidence_at: IsoDate.nullable(),
+  evidence_age_hours: z.number().min(0).nullable(),
+  freshness: z.enum(['fresh', 'stale', 'none']),
+  last_boot_at: IsoDate.nullable(),
+  /** `unknown` from the standard agent, which does not read update policy. */
+  managed_by: z.enum(['rem0te_or_windows_update', 'external', 'unknown']),
+  /** Labels: "WSUS", "Windows Update for Business policy", "MDM (Intune) update policy", "Configuration Manager". */
+  managers: z.array(z.string().max(64)).max(4),
+  reboot_required: z.boolean().nullable(),
+  pending_count: z.number().int().min(0),
+  pending_kbs: z.array(Kb).max(20),
+  confirmed_kbs: z.array(Kb).max(20),
+  failed_kbs: z.array(Kb).max(20),
+  awaiting_confirmation_kbs: z.array(Kb).max(20),
+  deploy_available: z.boolean(),
+}).strict();
+
 export const Alert = z.object({
   alert_id: z.string().min(1).max(64),
   /** A monitor key at the business, e.g. "offline", "disk-free", or "site-outage". */
@@ -366,6 +418,8 @@ export const Alert = z.object({
   /** Set for a computer alert grouped under a site outage. */
   outage_alert_id: z.string().max(64).nullable(),
   ticket: z.object({ id: ExtId, url: z.string().url().max(500).nullable() }).strict().nullable(),
+  /** Revision 2. Set on REBOOT_PENDING alerts for a computer; null otherwise. */
+  patch_summary: PatchSummary.nullable(),
 }).strict();
 
 export const AlertEvent = z.object({
@@ -411,6 +465,7 @@ export const CONTRACT_SCHEMAS = {
   'inference-response': InferenceResponse,
   'analysis-output': AnalysisOutput,
   'capabilities': Capabilities,
+  'patch-summary': PatchSummary,
   'action-proposal-request': ActionProposalRequest,
   'action-proposal': ActionProposal,
   'error': ErrorBody,

@@ -5,12 +5,14 @@ import * as path from 'path';
 import { Public } from '../common/decorators/public.decorator';
 import { Throttle } from '@nestjs/throttler';
 import { THROTTLER_BURST, THROTTLER_MAIN } from '../common/throttling';
-import { CONTRACT, MAX_DELEGATION_TTL_S, MAX_JOB_TTL_S, MAX_REQUEST_BYTES } from './contract';
+import { CONTRACT, CONTRACT_REVISION, MAX_DELEGATION_TTL_S, MAX_JOB_TTL_S, MAX_REQUEST_BYTES } from './contract';
 import { IntegrationExceptionFilter } from './errors';
 import { IntegrationAuthGuard, type IntegrationRequest } from './integration-auth.guard';
 import { IntegrationJobsService } from './jobs.service';
 import { ActionProposalsService } from './action-proposals.service';
 import { loadTrust } from './peers';
+import { PrismaService } from '../prisma/prisma.service';
+import { KINDS, activePause } from '../containment/pause';
 import { AlertEventsService } from '../monitoring/alert-events.service';
 
 export const DELEGATION_HEADER = 'rem0te-delegation';
@@ -40,17 +42,30 @@ function version(): string {
 // every request still costs a signature check and a nonce insert.
 @Throttle({ [THROTTLER_BURST]: { limit: 100, ttl: 1000 }, [THROTTLER_MAIN]: { limit: 3000, ttl: 60_000 } })
 export class IntegrationController {
-  constructor(private readonly jobs: IntegrationJobsService, private readonly proposals: ActionProposalsService) {}
+  constructor(private readonly jobs: IntegrationJobsService, private readonly proposals: ActionProposalsService, private readonly prisma: PrismaService) {}
 
   @Get('capabilities')
-  capabilities(@Req() req: IntegrationRequest) {
+  async capabilities(@Req() req: IntegrationRequest) {
     const peer = req.integrationPeer!;
     const self = loadTrust()!.self;
+    const maps = await this.prisma.integrationOrgMapping.findMany({
+      where: { peerId: peer.id, revokedAt: null }, orderBy: { externalOrgId: 'asc' },
+      select: { externalOrgId: true, customerId: true },
+    });
+    const names = new Map((await this.prisma.customer.findMany({ where: { id: { in: maps.map((m) => m.customerId) } }, select: { id: true, name: true } })).map((c) => [c.id, c.name]));
+    const organizations = [];
+    for (const m of maps) {
+      const paused = [];
+      for (const k of KINDS) if (await activePause(this.prisma, k, m.customerId)) paused.push(k);
+      organizations.push({ organization_id: m.externalOrgId, business_id: m.customerId, business_name: names.get(m.customerId) ?? '', paused });
+    }
     return {
       contract: CONTRACT,
+      contract_revision: CONTRACT_REVISION,
       rem0te_version: version(),
       audience: peer.audience,
       peer_id: peer.id,
+      organizations,
       features: {
         ticket_analysis: true,
         model_comparison: true,

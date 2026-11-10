@@ -41,3 +41,6 @@ playwright-report/
 test-results/
 storage-state*.json
 *.webm
+
+# Python bytecode (scripts/clientst0r-interop)
+__pycache__/

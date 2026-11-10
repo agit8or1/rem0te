@@ -108,6 +108,11 @@ doesn't move until you do.
   every 12 hours and on **Scan now**. A computer without the signed agent shows that list on its **Patches** tab:
   offered updates with KB, severity and size, and whether a restart is pending. It is read-only. It never feeds a
   deployment, because installing needs the signed agent and its fuller scan below.
+- **Patch status (0.30).** The Patches tab leads with a summary for every agent: the evidence (signed scan,
+  standard read-only scan, or none) with its age and **fresh / stale / unknown** (stale is older than 36 hours), last
+  successful scan, last boot, who manages patching (WSUS, Intune, WUfB, ConfigMgr, or *unknown* from the standard
+  agent), relevant KBs, whether each update from a recent plan was **confirmed by a later scan**, and why deploying
+  is or isn't available. Fields and test status: [What each agent can do](capabilities.md).
 - **Posture.** The signed agent scans Windows Update (`rem0te-agent.exe patch-scan`) at most every 12 hours, when the
   portal asks (**Scan now** on the computer's **Patches** tab, or **Refresh inventory**), and no more than once every 30
   minutes. The scan reports offered updates, the last 50 history entries, pending-restart signals (component servicing,

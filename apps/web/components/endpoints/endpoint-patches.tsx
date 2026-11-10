@@ -26,7 +26,19 @@ interface PatchUpdate {
   downloaded: boolean; rebootBehavior: number; sizeBytes: number; installable: boolean; notInstallableBecause: string | null;
 }
 interface History { updateId: string; revision: number; kb?: string; title: string; result: string; hresult?: string; operation: string; date: string }
+/** Built by apps/api/src/patching/summary.ts (0.30). */
+interface Summary {
+  evidence: { source: 'signed_agent_scan' | 'standard_agent_scan' | 'none'; at: string | null; ageHours: number | null; freshness: 'fresh' | 'stale' | 'none'; lastSuccessfulScanAt: string | null };
+  lastBootAt: string | null; restartedSinceLastInstall: boolean | null;
+  online: { isOnline: boolean; lastSeenAt: string | null };
+  managedBy: { state: 'rem0te_or_windows_update' | 'external' | 'unknown'; managers: { id: string; label: string; explanation: string }[]; explanation: string | null };
+  rebootRequired: boolean | null; pendingCount: number; relevantKbs: string[];
+  confirmations: { kb: string | null; title: string; state: string; detail: string | null; confirmedByLaterScan: boolean; resultAt: string | null }[];
+  deploy: { possible: boolean; reason: string | null };
+  warnings: string[];
+}
 interface Patches {
+  summary: Summary;
   supported: boolean; scannedAt: string | null; scanRequestedAt: string | null; scanPending: boolean; error: string | null;
   managers: { id: string; label: string }[]; autoUpdate: string | null;
   reboot: { pending: boolean; sources: string[] } | null;
@@ -39,6 +51,53 @@ const REBOOT_SOURCE: Record<string, string> = {
 };
 const RESULT: Record<string, 'success' | 'destructive' | 'warning' | 'outline'> = { succeeded: 'success', succeeded_with_errors: 'warning', failed: 'destructive', aborted: 'destructive', in_progress: 'outline', unknown: 'outline' };
 const size = (b: number) => (b >= 1 << 30 ? `${(b / (1 << 30)).toFixed(1)} GB` : `${Math.max(1, Math.round(b / (1 << 20)))} MB`);
+
+const SOURCE: Record<Summary['evidence']['source'], string> = { signed_agent_scan: 'Signed agent scan', standard_agent_scan: 'Standard agent scan (read-only)', none: 'No scan received' };
+const FRESH: Record<Summary['evidence']['freshness'], 'success' | 'warning' | 'outline'> = { fresh: 'success', stale: 'warning', none: 'outline' };
+const MANAGED: Record<Summary['managedBy']['state'], string> = { rem0te_or_windows_update: 'Windows Update (rem0te can deploy)', external: 'Managed elsewhere', unknown: 'Unknown' };
+const age = (h: number | null) => (h == null ? '' : h < 1 ? 'under an hour old' : h < 48 ? `${Math.round(h)} h old` : `${Math.round(h / 24)} days old`);
+
+/** The evidence first: where it came from, how old it is, and who manages updates here. */
+function PatchSummaryCard({ s }: { s: Summary }) {
+  const row = (k: string, v: React.ReactNode) => (<div className="flex flex-wrap gap-x-2"><dt className="text-muted-foreground w-44 shrink-0">{k}</dt><dd className="min-w-0">{v}</dd></div>);
+  return (
+    <Card data-testid="patch-summary">
+      <CardHeader className="pb-3"><CardTitle className="text-sm">Patch status</CardTitle></CardHeader>
+      <CardContent className="space-y-3 text-xs">
+        <dl className="space-y-1.5">
+          {row('Evidence', <span className="flex flex-wrap items-center gap-2">{SOURCE[s.evidence.source]}<Badge variant={FRESH[s.evidence.freshness]} className="text-[10px]">{s.evidence.freshness === 'none' ? 'unknown' : s.evidence.freshness}</Badge>{s.evidence.at && <span className="text-muted-foreground">{formatDate(s.evidence.at)} · {age(s.evidence.ageHours)}</span>}</span>)}
+          {row('Last successful scan', s.evidence.lastSuccessfulScanAt ? formatDate(s.evidence.lastSuccessfulScanAt) : 'none')}
+          {row('Last boot', s.lastBootAt ? formatDate(s.lastBootAt) : 'unknown')}
+          {row('Connection', s.online.isOnline ? 'online' : `offline${s.online.lastSeenAt ? ` since ${formatDate(s.online.lastSeenAt)}` : ''}`)}
+          {row('Restart pending', s.rebootRequired == null ? 'unknown' : s.rebootRequired ? 'yes' : 'no')}
+          {row('Who manages patching', <span>{s.managedBy.state === 'external' ? s.managedBy.managers.map((m) => m.label).join(', ') : MANAGED[s.managedBy.state]}</span>)}
+          {row('Relevant KBs', s.relevantKbs.length ? s.relevantKbs.join(', ') : s.evidence.source === 'none' ? 'unknown' : 'none offered')}
+          {row('Deploy from rem0te', s.deploy.possible ? 'available' : <span className="text-muted-foreground">{s.deploy.reason}</span>)}
+        </dl>
+        {s.managedBy.explanation && s.managedBy.state !== 'rem0te_or_windows_update' && (
+          <p className="rounded-md border p-2 text-muted-foreground">{s.managedBy.explanation}</p>
+        )}
+        {s.warnings.filter((w) => w !== s.managedBy.explanation).map((w) => (
+          <p key={w} className="flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />{w}</p>
+        ))}
+        {s.confirmations.length > 0 && (
+          <div className="space-y-1">
+            <p className="font-medium">Installed by an approved plan</p>
+            {s.confirmations.map((c, i) => (
+              <div key={`${c.kb ?? c.title}-${i}`} className="flex flex-wrap items-center gap-2">
+                <strong>{c.kb ?? c.title}</strong>
+                <Badge variant={c.confirmedByLaterScan ? 'success' : c.state === 'failed' ? 'destructive' : 'outline'} className="text-[10px]">
+                  {c.confirmedByLaterScan ? 'confirmed by a later scan' : c.state.replace(/_/g, ' ')}
+                </Badge>
+                {c.detail && <span className="text-muted-foreground">{c.detail}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 export function EndpointPatches({ endpointId }: { endpointId: string }) {
   const { toast } = useToast();
@@ -64,6 +123,7 @@ export function EndpointPatches({ endpointId }: { endpointId: string }) {
     const b = p.basic;
     return (
       <div className="space-y-4">
+        <PatchSummaryCard s={p.summary} />
         <Card>
           <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Windows Update</CardTitle>
@@ -106,6 +166,7 @@ export function EndpointPatches({ endpointId }: { endpointId: string }) {
   const installable = p.updates.filter((u) => u.installable);
   return (
     <div className="space-y-4">
+      <PatchSummaryCard s={p.summary} />
       <Card>
         <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Windows Update</CardTitle>

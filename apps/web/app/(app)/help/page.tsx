@@ -585,6 +585,16 @@ const SECTIONS: Section[] = [
           <Link href="/docs/staged-patching" className="underline text-foreground">Staged patching</Link>.
         </p>
         <p>
+          From 0.30, the <em>Patches</em> tab starts with <strong className="text-foreground">Patch status</strong>:
+          where the evidence came from (signed agent, standard agent read-only, or nothing yet), how old it is and
+          whether it is <em>stale</em> (over 36 hours), the last successful scan and last boot, who manages patching
+          (WSUS or Intune mean rem0te will not deploy; the standard agent cannot tell, so it says <em>unknown</em>), the
+          relevant KBs, and whether a later scan confirmed each installed update. A <em>restart pending</em> alert sent
+          to ClientSt0r carries a redacted copy for the ticket. What each agent type can do, and what has been tested
+          on real Windows, is in{' '}
+          <Link href="/docs/capabilities" className="underline text-foreground">What each agent can do</Link>.
+        </p>
+        <p>
           From 0.28, writes can be <strong className="text-foreground">paused</strong> while an incident is looked at:
           approved actions, remote connections, agent updates and ClientSt0r jobs, for every business or for one. A red
           strip at the top of the page says what is stopped and why; a refused click says <em>CONTAINED</em>. A Business

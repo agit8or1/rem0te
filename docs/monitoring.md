@@ -155,7 +155,8 @@ With **Offer alerts to ClientSt0r** on, alerts at or above the chosen
 severity are sent to ClientSt0r as signed alert events (`alert.raised`,
 `alert.updated`, `alert.resolved`). `alert.raised` is sent when the first
 notification would be, so a maintenance window holds it as well. ClientSt0r decides whether to open a
-ticket and links it back; the alert then shows the ticket. Details and the
+ticket and links it back; the alert then shows the ticket. A *restart pending* alert also carries a redacted
+patch summary (0.30) for the ticket. Details and the
 contract routes are in [the ClientSt0r integration](integration-clientst0r.md).
 
 ## Change history and software
