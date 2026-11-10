@@ -237,6 +237,15 @@ async function all() {
     check(forged.body?.data?.patchPostureAck === null && !inv2?.patchPosture, 'a posture with an unknown field is refused whole: not stored, not acknowledged', msg(forged));
     const legacy = await req('POST', '/enrollment/heartbeat', { body: { rustdeskId: r1a.rid, agentSecret: r1a.secret, hostname: 'R1-A', platform: 'Windows', patchPosture: scan(r1a) } });
     check(legacy.body?.data?.patchPostureAck == null && !(await prisma.endpointInventory.findUnique({ where: { endpointId: r1a.id } }))?.patchPosture, 'a legacy-channel heartbeat\'s posture is ignored');
+    // 0.29.1: without a signed posture, the Patches tab shows the standard agent's UPDATE_SCAN result.
+    await prisma.endpointInventory.upsert({
+      where: { endpointId: r1a.id },
+      create: { endpointId: r1a.id, pendingUpdates: [{ title: 'Basic CU', kb: 'KB5099999', severity: 'Critical', sizeBytes: 1 }], pendingUpdateCount: 1, rebootRequired: true, updatesCheckedAt: new Date() },
+      update: { pendingUpdates: [{ title: 'Basic CU', kb: 'KB5099999', severity: 'Critical', sizeBytes: 1 }], pendingUpdateCount: 1, rebootRequired: true, updatesCheckedAt: new Date() },
+    });
+    const basic = await req('GET', `/endpoints/${r1a.id}/patches`, { s: S.owen, business: acme.id });
+    check(basic.status === 200 && basic.body?.data?.basic?.updates?.[0]?.kb === 'KB5099999' && basic.body.data.basic.rebootRequired === true && (basic.body.data.updates ?? []).length === 0,
+      'with no signed posture, the Patches view shows the standard scan as `basic` — and nothing installable', msg(basic));
     const first = await heartbeat(r1b);
     check(first.body?.data?.patchScan === true, 'a signed agent with no posture is asked to scan', msg(first));
     for (const pc of [r1a, r1b, r1c, wsus, birchPc]) await heartbeat(pc, { patchPosture: scan(pc) });

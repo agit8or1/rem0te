@@ -104,6 +104,10 @@ doesn't move until you do.
 
 ## On the computer
 
+- **Every agent shows updates (0.29.1).** The standard agent, on either channel, answers the inventory's update scan
+  every 12 hours and on **Scan now**. A computer without the signed agent shows that list on its **Patches** tab:
+  offered updates with KB, severity and size, and whether a restart is pending. It is read-only. It never feeds a
+  deployment, because installing needs the signed agent and its fuller scan below.
 - **Posture.** The signed agent scans Windows Update (`rem0te-agent.exe patch-scan`) at most every 12 hours, when the
   portal asks (**Scan now** on the computer's **Patches** tab, or **Refresh inventory**), and no more than once every 30
   minutes. The scan reports offered updates, the last 50 history entries, pending-restart signals (component servicing,
