@@ -46,6 +46,8 @@ export interface HeartbeatFacts {
   updateNonce?: string;
   reportedPassword: boolean;
   rdSessionsActive?: number;
+  /** v0.28: an "updates" containment pause covers this computer — dispatch nothing. */
+  contained?: boolean;
 }
 
 /**
@@ -478,7 +480,8 @@ export class UpdateRolloutService implements OnModuleInit, OnModuleDestroy {
       if (r.status !== 'RUNNING' || j.batch > r.currentBatch) continue;
       if (j.nextAttemptAt && j.nextAttemptAt > now) continue;
 
-      const defer = await this.deferReason(f, r.deferOnUnknownSession, r.maintenanceWindow, now);
+      // v0.28: an "updates" containment pause defers dispatch like a closed window.
+      const defer = f.contained ? 'contained' : await this.deferReason(f, r.deferOnUnknownSession, r.maintenanceWindow, now);
       if (defer) {
         if (j.deferReason !== defer) {
           await this.prisma.updateJob.update({ where: { id: j.id }, data: { deferReason: defer } });

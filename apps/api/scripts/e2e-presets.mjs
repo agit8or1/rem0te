@@ -409,7 +409,7 @@ async function main() {
     const listed = await req('GET', '/security-controls/trust-changes', { s: A1 });
     check(!JSON.stringify(listed.body).includes('SECRET'), 'nor recorded in the trust-change list');
     const audit = await prisma.activityLog.findMany({ where: { action: { in: ['TRUST_CHANGE_REQUESTED', 'TRUST_CHANGE_DECIDED', 'ACCESS_POLICY_CHANGED'] }, createdAt: { gt: new Date(Date.now() - 600_000) } } });
-    check(audit.length >= 2 && !JSON.stringify(audit).includes('SECRET'), 'before/after recorded in the audit log without the secret');
+    check(audit.length >= 2 && !JSON.stringify(audit, (k, v) => (typeof v === 'bigint' ? v.toString() : v)).includes('SECRET'), 'before/after recorded in the audit log without the secret');
     // Replace the destination: the OLD contact must hear about it.
     const before = hooks.a.length;
     const replace = { ...shown, alertDestinations: [{ kind: 'webhook', url: `${HOOK}/new/T1/OTHER`, label: 'soc-new' }] };

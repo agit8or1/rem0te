@@ -1,3 +1,4 @@
+import './common/bigint-json';
 import { NestFactory } from '@nestjs/core';
 import { PublicUrlService } from './platform/public-url.service';
 import { RequestMethod, ValidationPipe } from '@nestjs/common';
@@ -8,6 +9,7 @@ import helmet from 'helmet';
 import * as fs from 'fs';
 import * as path from 'path';
 import { AppModule } from './app.module';
+
 
 function readVersion(): { version: string; commit: string; buildDate: string } {
   let version = '0.0.0';
@@ -88,6 +90,7 @@ async function bootstrap() {
       '/api/v1/public/rustdesk-config',
       '/api/v1/enrollment/heartbeat',
       '/api/v1/enrollment/confirm-rotation',
+      '/api/v1/healthz', // v0.28: the external monitor must still see the portal in maintenance
     ];
     if (allowlist.some((p) => path === p || path.startsWith(p + '/'))) return next();
     res.status(503).json({

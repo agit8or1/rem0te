@@ -71,6 +71,7 @@ func (s *sim) Sleep(time.Duration)                     {}
 func main() {
 	state := flag.String("state", "", "agent state directory (journal and results)")
 	keysPath := flag.String("keys", "", "approval/keys.json")
+	pausePath := flag.String("pause", "", "control/pause.json (the signed pause), if published")
 	job := flag.String("job", "", "job id")
 	envPath := flag.String("envelope", "", "envelope JSON file")
 	rid := flag.String("rustdesk-id", "", "this machine's RustDesk ID")
@@ -153,6 +154,17 @@ func main() {
 	p := &sim{state: cur, stopAfter: *stops, product: *pt, rid: *rid, sec: *secret, self: *self}
 	o := action.Options{StateDir: *state, Keys: keys, Platform: p, Now: time.Now,
 		Checks: []time.Duration{time.Millisecond, time.Millisecond}, WUAWait: time.Second}
+	if *pausePath != "" {
+		raw, err := os.ReadFile(*pausePath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		if o.Pause, err = action.ParsePause(raw); err != nil {
+			fmt.Fprintln(os.Stderr, "pause:", err)
+			os.Exit(2)
+		}
+	}
 	if wua != nil {
 		o.WUA, o.Registry = wua, reg
 	}

@@ -3,7 +3,9 @@
  *
  *   internal  (127.0.0.1 only; the portal):  POST /internal/v1/plans,
  *             GET /internal/v1/plans/:id, POST /internal/v1/plans/:id/cancel,
- *             GET /internal/v1/policy/:businessId, GET /internal/v1/keys
+ *             GET /internal/v1/policy/:businessId, GET /internal/v1/keys,
+ *             GET/POST /internal/v1/pauses (v0.28: the portal may ADD a
+ *             pause; nothing over HTTP clears one — that is the operator CLI)
  *   public    (behind the reverse proxy, on its OWN origin — not the
  *             portal's, so no script the portal serves can reach into it):
  *             GET /approve/:id, GET /approve/:id/state,
@@ -86,11 +88,26 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       if (req.method === 'GET' && url.pathname === '/internal/v1/keys') return send(res, 200, keysDocument([k]));
       const pm = url.pathname.match(/^\/internal\/v1\/policy\/([A-Za-z0-9_-]{8,64})$/);
       if (req.method === 'GET' && pm) return send(res, 200, policyFor(store.policy(), pm[1]));
+      if (url.pathname === '/internal/v1/pauses') {
+        if (req.method === 'GET') return send(res, 200, { pauses: store.pauses().filter((p) => !p.clearedAt) });
+        if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
+        const b = await body(req) as { scope?: string; businessId?: string; reason?: string; ref?: string };
+        const scope = b.scope === 'global' ? 'global' : b.scope === 'business' ? 'business' : null;
+        if (!scope || (scope === 'business' && !/^[A-Za-z0-9_-]{8,64}$/.test(b.businessId ?? '')) || typeof b.reason !== 'string' || b.reason.length < 3) throw new Refused('bad_request', 'scope, businessId (for a business) and reason are required');
+        const p = await store.exclusive(() => store.addPause({
+          scope, ...(scope === 'business' ? { businessId: b.businessId } : {}), reason: [...(b.reason ?? '').slice(0, 200)].map((c) => (c < ' ' ? ' ' : c)).join(''),
+          setBy: 'portal', ...(typeof b.ref === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(b.ref) ? { ref: b.ref } : {}), at: now().toISOString(),
+        }));
+        console.log(`[approval-signer] paused (${p.scope}${p.businessId ? ` ${p.businessId}` : ''}) at the portal's request: ${p.reason}`);
+        return send(res, 201, { id: p.id });
+      }
       if (!m) return send(res, 404, { error: 'not_found' });
       if (req.method === 'POST' && !m[1]) {
         const b = await body(req) as { plan?: unknown };
         const out = await store.exclusive(() => {
           const { plan, digest } = admitPlan(b.plan, store.policy(), now());
+          const held = store.activePause(plan.targets[0]?.businessId ?? null);
+          if (held) throw new Refused('paused', `the approval signer is paused${held.scope === 'business' ? ' for this business' : ''}: ${held.reason}`);
           const existing = store.job(plan.jobId);
           if (existing) {
             if (existing.digest !== digest) throw new Refused('job_id_reused', 'a different plan already has this job id');
@@ -142,6 +159,10 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       if (req.headers.origin !== cfg.origin) throw new Refused('not_authorized', 'cross-origin request refused');
       const b = await body(req) as { decision?: string; role?: string; challengeId?: string; assertion?: AuthenticationResponseJSON };
 
+      // v0.28: while paused, nobody can decide, so nothing is signed.
+      const held = store.activePause(j.plan.targets[0]?.businessId ?? null);
+      if (held) throw new Refused('paused', `approvals are paused${held.scope === 'business' ? ' for this business' : ''}: ${held.reason}`);
+
       if (m[2] === '/challenge') {
         const decision = b.decision === 'reject' ? 'reject' : b.decision === 'approve' ? 'approve' : null;
         const role = b.role === 'customer' ? 'customer' : b.role === 'approver' ? 'approver' : null;
@@ -172,6 +193,7 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
         } catch (e) { throw new Refused('not_authorized', `passkey verification failed: ${(e as Error).message.slice(0, 120)}`); }
         if (!v.verified) throw new Refused('not_authorized', 'passkey verification failed');
         store.saveCounter(credentialSha256(member), v.authenticationInfo.newCounter);
+        if (store.activePause(cur.plan.targets[0]?.businessId ?? null)) throw new Refused('paused', 'approvals were paused while you decided');
         const status = recordDecision(cur, member, c.role as Role, c.decision, now());
         if (status === 'SIGNED') signJob(cur, k, now());
         store.saveJob(cur);

@@ -363,6 +363,18 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
           <Card>
+            <CardHeader><CardTitle className="text-sm">Containment</CardTitle></CardHeader>
+            <CardContent className="flex flex-wrap items-center justify-between gap-3">
+              <p className="max-w-xl text-sm text-muted-foreground">
+                Stop approved actions, remote connections, agent updates and ClientSt0r jobs — for every business or one —
+                while an incident is investigated. Also shows whether the audit log is intact.
+              </p>
+              <Button variant="outline" onClick={() => router.push('/settings/security/containment')}>
+                <ShieldCheck className="mr-2 h-4 w-4" />Open Containment
+              </Button>
+            </CardContent>
+          </Card>
+          <Card>
             <CardHeader><CardTitle className="text-sm">Update Signing</CardTitle></CardHeader>
             <CardContent className="flex flex-wrap items-center justify-between gap-3">
               <p className="max-w-xl text-sm text-muted-foreground">

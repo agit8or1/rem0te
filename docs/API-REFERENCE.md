@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **348** of them across
-**42** controllers.
+integration, under `/api/integration/v1`). There are **355** of them across
+**45** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -68,6 +68,15 @@ Admins and Business Owners are not confined by it; see
 |---|---|---|---|
 | `GET` | `/api/v1/audit` | signed in | `AUDIT_VIEW` |
 
+## Audit chain
+
+`apps/api/src/audit/audit-chain.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/audit/integrity` | signed in | — |
+| `POST` | `/api/v1/audit/integrity/verify` | signed in | — |
+
 ## Authentication
 
 `apps/api/src/auth/auth.controller.ts`
@@ -116,6 +125,17 @@ Admins and Business Owners are not confined by it; see
 | `PATCH` | `/api/v1/customers/:id/users/:userId/capabilities` | signed in | `USERS_MANAGE` |
 | `POST` | `/api/v1/customers/:id/users/:userId/reset-access` | signed in | `USERS_MANAGE` |
 | `GET` | `/api/v1/customers/capability-catalog` | signed in | — |
+
+## Containment
+
+`apps/api/src/containment/containment.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/containment` | signed in | — |
+| `GET` | `/api/v1/containment/banner` | signed in | — |
+| `POST` | `/api/v1/containment/pauses` | signed in | — |
+| `POST` | `/api/v1/containment/pauses/:id/clear` | signed in | — |
 
 ## Dashboard
 
@@ -202,6 +222,14 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/enrollment/tokens` | signed in | `COMPUTERS_VIEW` |
 | `POST` | `/api/v1/enrollment/tokens` | signed in | `COMPUTERS_ADD` |
 | `DELETE` | `/api/v1/enrollment/tokens/:id` | signed in | `COMPUTERS_REMOVE` |
+
+## Health
+
+`apps/api/src/health/health.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/healthz` | signed in | — |
 
 ## Integration admin
 

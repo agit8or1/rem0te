@@ -336,6 +336,32 @@ export const SECURITY_FEATURES: SecurityFeature[] = [
     gap: 'Fixture-tested only: the agent\'s real decision code against a simulated Windows Update and registry, and synthetic passkeys. The Windows Update script is parsed by PowerShell in CI but has not run against a real Windows Update service. Rem0te never restarts computers, so "restart required" waits for a person. Effective is what the computer reports; it does not prove a vulnerability is gone. Uninstall (rollback) is not built.',
   },
 
+  // ── Containment and evidence (0.28) ───────────────────────────────────────
+  {
+    id: 'containment', group: 'guardrails', name: 'Containment: write pause and business suspension', status: 'partial',
+    protects: 'An incident spreading while people work out what happened: a phished account, a compromised technician, a misbehaving integration or a portal that may itself be compromised.',
+    scope: 'Four kinds of write: approved actions (including patch plans), remote connections (Connect and Quick Connect), agent and RustDesk update instructions, and ClientSt0r jobs. A pause is global, or for one business. Viewing, reporting and the audit log keep working.',
+    enforcedAt: ['portal', 'approval-signer', 'endpoint-agent', 'offline-signing'],
+    enforcement: 'Portal: every write path asks before it acts (action requests and the dispatch of already-approved plans, every connection, Quick Connect admission, heartbeat update and reinstall flags and rollout dispatch, integration submit and worker). Setting a pause needs no fresh authentication; lifting one does. A business\'s own suspension is lifted only by that business\'s owner; an MSP pause only by someone other than whoever set it. Approval signer: a pause covering actions is sent to it, and it then refuses new plans and every approval decision; the portal can add a pause there but has no way to lift one — that is the signer operator\'s CLI. Agent: control/pause.json, published with the offline release keys, makes agents refuse approved actions (and optionally the update command) whatever the portal delivers; an unreadable listed pause is treated as a pause.',
+    default: 'Nothing paused. The portal pause is available to Platform Admins, technician managers and Business Owners as soon as 0.28 is installed.',
+    prerequisites: ['For the signer layer: the 0.28 approval signer build', 'For the agent layer: the offline release keys and agents on a 0.28+ signed build'],
+    link: { href: DOC('containment'), label: 'Containment' },
+    evidence: ['apps/api/scripts/e2e-containment.mjs', 'tools/windows-installer/internal/action/pause_test.go', 'tools/windows-installer/internal/agent/agent_test.go', 'scripts/check-security-invariants.mjs § 16'],
+    gap: 'A compromised portal can ignore its own pause; the signer and signed-pause layers are what hold then. Withholding a newer signed pause works until the signed timestamp expires (7 days by default). An agent that has already started an action finishes it. Alert suppression during an incident is not built (it belongs with monitoring). Fixture-tested only.',
+  },
+  {
+    id: 'audit-chain', group: 'evidence', name: 'Tamper-evident audit log', status: 'partial',
+    protects: 'Someone with database access quietly editing or deleting the record of what happened.',
+    scope: 'Every audit log entry, from the first.',
+    enforcedAt: ['portal', 'offline-signing'],
+    enforcement: 'Each entry is hashed onto the one before it within seconds of being written (sequence, time, action, actor, address, resource, metadata and the business, user and tenant it named). A database trigger refuses any change to a sealed entry except clearing a reference to a deleted user or business. The chain is recomputed at start and hourly, and a break raises an alert. Entries are streamed off the host (AUDIT_EXPORT_FILE / AUDIT_EXPORT_URL) with Ed25519-signed checkpoints, and rem0te-audit verify --export compares the two entry by entry — which is what catches someone who rewrote the whole chain in the database.',
+    default: 'Sealing and verification are on. Export and signed checkpoints are off until configured.',
+    prerequisites: ['AUDIT_EXPORT_URL or AUDIT_EXPORT_FILE on storage the portal host cannot rewrite', 'AUDIT_CHECKPOINT_KEY_FILE, with the public key kept off the host'],
+    link: { href: DOC('containment', 'the-tamper-evident-audit-log'), label: 'Audit integrity' },
+    evidence: ['apps/api/scripts/unit-audit-chain.mjs', 'apps/api/scripts/e2e-containment.mjs', 'scripts/check-security-invariants.mjs § 16'],
+    gap: 'Detects, does not prevent: a database superuser can still delete rows or drop the trigger, and is caught by verification and the export, not stopped. It cannot prove an event was ever logged. Without an export, an attacker who rewrites every hash is not detected. The checkpoint key on the host signs whatever the host says.',
+  },
+
   // ── Integration ───────────────────────────────────────────────────────────
   {
     id: 'integration', group: 'integration', name: 'ClientSt0r ticket analysis (AI-assisted)', status: 'enforced',

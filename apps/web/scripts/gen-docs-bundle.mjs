@@ -42,6 +42,8 @@ const ORDER = [
   ['update-signing.md', 'Update signing'],
   ['approved-actions.md', 'Approved actions'],
   ['staged-patching.md', 'Staged patching'],
+  ['containment.md', 'Containment and audit integrity'],
+  ['incident-recovery.md', 'Incident recovery'],
   ['setup.md', 'Setup and operations'],
   ['architecture.md', 'Architecture'],
   ['security-model.md', 'Security model: who can reach a computer'],

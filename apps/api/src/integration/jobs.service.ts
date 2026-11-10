@@ -1,4 +1,5 @@
 import { AccessPolicyService } from '../security-controls/access-policy.service';
+import { activePause, pauseMessage } from '../containment/pause';
 import { AbuseGuardService } from '../security-controls/abuse-guard.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -71,6 +72,14 @@ export class IntegrationJobsService {
       await this.reject(peer, claims, 'NO_ACCESS');
       throw e;
     });
+
+    // v0.28: integration jobs stopped by a global pause or a suspension of
+    // this business. Refused before anything is recorded or counted.
+    const paused = await activePause(this.prisma, 'integration', who.customerId);
+    if (paused) {
+      await this.reject(peer, claims, 'CONTAINED');
+      throw new IntegrationError(423, 'CONTAINED', pauseMessage(paused, 'integration'));
+    }
 
     const notAllowed = body.model_profiles.filter((p) => !peer.modelProfiles.includes(p));
     if (notAllowed.length) throw E.invalid(`Model profile not offered: ${notAllowed.join(', ')}`);

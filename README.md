@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.27.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.28.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -65,6 +65,18 @@ it, its default and its limits: **Settings → Security → Security Features**,
 [docs/security-model.md](docs/security-model.md).
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
+
+## What's new in 0.28
+
+**Stop writes during an incident, in three places.** A global write pause, or a suspension of one business, stops
+approved actions (including plans already approved), remote connections, agent updates and ClientSt0r jobs. A
+Business Owner can suspend their own business, and the MSP can't lift that. An MSP pause is lifted by a second
+person, always with a fresh sign-in. The approval signer keeps its own copy, which only its operator can lift.
+A signed `control/pause.json`, published from the release machine, makes the agents refuse even if the portal is
+compromised. **The audit log is tamper-evident.** Entries are hash-chained, a database trigger guards them, and
+the chain is verified hourly. It can be streamed off the host with signed checkpoints and checked against that
+copy with `rem0te-audit verify`. `/api/v1/healthz` and `rem0te-external-check.py` let a monitor on another
+machine watch it. [containment.md](docs/containment.md) · [incident-recovery.md](docs/incident-recovery.md)
 
 ## What's new in 0.27
 

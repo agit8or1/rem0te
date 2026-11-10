@@ -13,6 +13,7 @@ import {
   APPROVALS_REQUIRED, CATALOG, Envelope, MAX_WINDOW_HOURS, PLAN_SCHEMA, Plan, catalogEntry, planDigest, type CatalogAction,
 } from './catalog';
 import { SignerClient } from './signer.client';
+import { ContainmentService } from '../containment/containment.service';
 
 /**
  * Approved actions, portal side (v0.26; one plan, many computers since
@@ -111,6 +112,7 @@ export class ActionsService {
     private readonly abuse: AbuseGuardService,
     private readonly updateTrust: UpdateTrustService,
     private readonly signer: SignerClient,
+    private readonly containment: ContainmentService,
   ) {}
 
   catalog() {
@@ -469,7 +471,14 @@ export class ActionsService {
       if (job.status === 'AWAITING_APPROVAL') continue;
       if (!['APPROVED', 'DISPATCHED', 'UNKNOWN'].includes(job.status)) { await this.rollup(job.id, now); continue; }
       const action = catalogEntry(job.actionId, job.actionVersion);
+      // v0.28: while actions are paused for this business (or everywhere),
+      // nothing is handed over — not a first delivery, not a re-delivery. A
+      // pending plan waits, and expires unrun if its window closes first. The
+      // deadline below still runs, so a plan already delivered can still be
+      // marked uncertain.
+      const held = !!(await this.containment.blocking('actions', job.customerId));
       if (t.status === 'PENDING') {
+        if (held) continue;
         if (now < job.notBefore) continue; // not yet; nothing to say
         const blocked = now >= job.notAfter ? 'window_closed' : await this.dispatchBlock(job, endpointId);
         if (blocked) {
@@ -490,6 +499,7 @@ export class ActionsService {
           await this.prisma.actionTarget.updateMany({ where: { id: t.id, status: 'DISPATCHED' }, data: { status: 'UNKNOWN', statusReason: `no result from the computer within ${Math.round(deadline / 60_000)} minutes; reconciling from its journal` } });
           await this.rollup(job.id, now);
         }
+        if (held) continue;
         await this.prisma.actionTarget.update({ where: { id: t.id }, data: { deliveries: { increment: 1 }, lastDeliveredAt: now } });
         await this.prisma.actionJob.update({ where: { id: job.id }, data: { deliveries: { increment: 1 }, lastDeliveredAt: now } });
         out.push({ jobId: job.id, envelope: job.envelope });
@@ -511,7 +521,7 @@ export class ActionsService {
     if (!live || (live.businessId !== j.customerId && !live.isPlatformAdmin)) return 'requester_no_longer_authorized';
     if (!(await this.acl.canReachEndpoint(live, ep))) return 'requester_no_longer_authorized';
     const d = await this.policy.evaluateAction(live, ep, plan.policy.risk);
-    if (!d.ok) return d.reason === 'identity_paused' ? 'requester_paused' : d.reason === 'protected_device_class' ? 'protected_device_class' : 'requester_no_longer_authorized';
+    if (!d.ok) return d.reason === 'identity_paused' ? 'requester_paused' : d.reason === 'protected_device_class' ? 'protected_device_class' : d.reason === 'contained' ? 'contained' : 'requester_no_longer_authorized';
     if (plan.targets.length === 1) {
       const admitted = await this.abuse.admit({ identity: `user:${j.requestedById}`, tier: d.tier, kind: 'WRITE', endpointId: ep.id, customerId: ep.customerId, entryPoint: j.via === 'clientst0r' ? 'integration' : 'ui' });
       if (!admitted.ok) return admitted.reason;

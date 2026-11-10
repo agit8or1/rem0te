@@ -244,6 +244,30 @@ The Go tests rehearse:
 - a replaced binary carrying an older embedded root, which doesn't make the machine forget a rotation it already
   followed.
 
+## Publishing a signed pause
+
+From 0.28 the repository can carry `control/pause.json`, a pause signed with the same targets key as everything
+else. Agents on a 0.28+ signed build read it from the signed targets and **refuse approved actions** for the businesses
+or computers it names, and optionally **refuse the update command** everywhere. The portal mirrors it like any
+target, so it cannot forge, alter or quietly drop it. It is the containment layer that holds when the portal itself
+may be compromised. See [Containment](containment.md).
+
+```bash
+# pause approved actions for one business (repeat -business / -computer as needed), or -actions for all
+rem0te-release pause-file -out pause.json -reason 'Incident 7: approvals under review' -business <businessId>
+# stop the update command on every computer too
+rem0te-release pause-file -out pause.json -reason 'Incident 7' -actions -updates
+rem0te-release release -repo repo -targets-key targets.pem -snapshot-key snapshot.pem -timestamp-key timestamp.pem \
+  -add control/pause.json=pause.json
+# lift it: publish one that pauses nothing
+rem0te-release pause-file -out pause.json -none
+```
+
+`release` refuses a `control/pause.json` that does not parse as `rem0te-pause/1`. An agent that sees it listed but
+can't fetch or parse it treats every action and the update command as paused. Withholding a *newer* pause only works
+until the signed timestamp expires (7 days by default), after which agents refuse the repository altogether. An
+update pause can't be narrowed to a business: the update command runs before the agent knows which business it serves.
+
 ## Recovery
 
 | Symptom | Cause | Fix |

@@ -6,6 +6,7 @@
  * Same environment file as the API (DATABASE_URL, INTEGRATION_PEERS_FILE).
  * Safe to run more than one: jobs are claimed with leases.
  */
+import '../common/bigint-json';
 import { NestFactory } from '@nestjs/core';
 import { IntegrationWorkerModule } from './worker.module';
 import { IntegrationWorkerService } from './worker.service';

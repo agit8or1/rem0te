@@ -15,6 +15,7 @@ import { PlatformSettingsService } from '../platform/platform-settings.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
 import { SessionEventsService } from '../sessions/session-events.service';
+import { ContainmentService } from '../containment/containment.service';
 
 /**
  * RustDesk IDs are 9-ish digits, usually shown grouped as "123 456 789".
@@ -60,6 +61,7 @@ export class QuickConnectService {
     private readonly supportRequests: SupportRequestsService,
     private readonly policy: AccessPolicyService,
     private readonly abuse: AbuseGuardService,
+    private readonly containment: ContainmentService,
   ) {}
 
   /**
@@ -68,6 +70,8 @@ export class QuickConnectService {
    * the launch itself do count), and a paused identity gets none.
    */
   async admitLaunch(actor: ActorContext, entryPoint: 'ui' | 'launcher') {
+    // v0.28: ad-hoc connections stop under a global pause or a suspension of this business.
+    await this.containment.assertOpen('remote', actor.businessId);
     const r = await this.abuse.admit({
       identity: `user:${actor.userId}`, tier: this.policy.tierFor(actor, null), kind: 'LAUNCH',
       endpointId: null, customerId: actor.businessId, entryPoint,

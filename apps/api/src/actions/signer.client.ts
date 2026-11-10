@@ -37,4 +37,7 @@ export class SignerClient {
     return this.call<{ status?: string; digest?: string; decisions?: { name: string; role: string; decision: string; at: string }[]; envelope?: { schema: string; kid: string; plan: string; sig: string } | null; error?: string }>('GET', `/internal/v1/plans/${jobId}`);
   }
   cancel(jobId: string) { return this.call<{ status?: string }>('POST', `/internal/v1/plans/${jobId}/cancel`); }
+  /** v0.28: ask the signer to hold a pause. It cannot be asked to lift one; its operator does that. */
+  pause(p: { scope: 'global' | 'business'; businessId?: string; reason: string; ref: string }) { return this.call<{ id?: string; error?: string }>('POST', '/internal/v1/pauses', p); }
+  pauses() { return this.call<{ pauses?: { id: string; scope: string; businessId?: string; reason: string; setBy: string; at: string; ref?: string }[] }>('GET', '/internal/v1/pauses'); }
 }

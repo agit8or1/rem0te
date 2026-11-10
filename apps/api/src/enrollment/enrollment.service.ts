@@ -18,6 +18,7 @@ import { CAP } from '../rbac/capabilities';
 import { CreateClaimTokenDto, ClaimEndpointDto } from './dto/enrollment.dto';
 import { SessionEventsService } from '../sessions/session-events.service';
 import { UpdateRolloutService } from '../admin/update-rollout.service';
+import { ContainmentService } from '../containment/containment.service';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
 import { CANDIDATE_LIVE_MS, CANDIDATE_SETTLE_MS } from './device-secret';
 import { queryHbbsOnline } from './hbbs-presence';
@@ -41,6 +42,7 @@ export class EnrollmentService {
     private readonly rollouts: UpdateRolloutService,
     private readonly updateTrust: UpdateTrustService,
     private readonly actions: ActionsService,
+    private readonly containment: ContainmentService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -605,8 +607,13 @@ export class EnrollmentService {
     // Tell the endpoint to upgrade its RustDesk client when one is staged and
     // it is not already on the target. The endpoint re-runs the installer,
     // which is idempotent and pins whatever version this server serves.
+    // v0.28: an "updates" pause (global, or this business) withholds both, and
+    // is asked before anything records the request as delivered.
+    const updatesHeld = authenticated
+      ? !!(await this.containment.blocking('updates', (await this.prisma.endpoint.findUnique({ where: { id: node.endpointId }, select: { customerId: true } }))?.customerId ?? null))
+      : false;
     let updateRustdesk: { targetVersion: string; nonce?: string } | null =
-      authenticated &&
+      authenticated && !updatesHeld &&
       node.updateRequestedAt &&
       node.updateTargetVersion &&
       !(dto.rustdeskVersion && compareVersions(dto.rustdeskVersion, node.updateTargetVersion) >= 0)
@@ -618,7 +625,7 @@ export class EnrollmentService {
     // machine's existing configuration, password and enrolment — but reachable
     // regardless of which RustDesk version the endpoint is on.
     let reinstallAgent: { targetVersion: string; nonce?: string } | null = null;
-    if (authenticated && node.reinstallRequestedAt) {
+    if (authenticated && !updatesHeld && node.reinstallRequestedAt) {
       reinstallAgent = { targetVersion: this.platformVersion() };
       // Recorded before the response goes out, so a request is only ever
       // considered satisfiable after the endpoint has genuinely been told.
@@ -638,7 +645,7 @@ export class EnrollmentService {
         const managed = await this.rollouts.onHeartbeat({
           endpointId: node.endpointId, rustdeskId: dto.rustdeskId, authenticated,
           rustdeskVersion: dto.rustdeskVersion, agentVersion: dto.agentVersion, updateNonce: dto.updateNonce,
-          reportedPassword: !!dto.password, rdSessionsActive: dto.rustdeskSessions,
+          reportedPassword: !!dto.password, rdSessionsActive: dto.rustdeskSessions, contained: updatesHeld,
         });
         if (managed.managed) {
           updateRustdesk = managed.updateRustdesk ?? null;
@@ -663,6 +670,13 @@ export class EnrollmentService {
         updateRustdesk = null;
         reinstallAgent = { targetVersion: this.platformVersion() };
       }
+    }
+
+    // v0.28: updates paused everywhere or for this business. Nothing is
+    // started; a staged rollout simply does not advance on this computer.
+    if (updatesHeld) {
+      updateRustdesk = null;
+      reinstallAgent = null;
     }
 
     // Live session state, and whatever collection work is queued for this

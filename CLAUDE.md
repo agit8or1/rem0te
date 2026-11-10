@@ -196,6 +196,13 @@ previous build's files 404s every browser that already had the app open.
   (nothing is installed) and run
   `[System.Management.Automation.Language.Parser]::ParseFile()` over a script
   generated from `dist`. 0.18.22's installer changes were checked this way.
+- **`ActivityLog` rows are sealed (0.28).** A trigger refuses any UPDATE of a
+  sealed row except nulling `tenantId` / `customerId` / `actorId`, and
+  `seq` is a BigInt — `JSON.stringify` on a raw Prisma row throws unless
+  `common/bigint-json` is imported (the API and worker entry points do).
+  Test clean-ups that `DELETE` audit rows are detected as deletions: on a
+  scratch database the chain reports them for good, which is expected; never
+  run them against production.
 - **hbbs logs nothing when a connection fails.** Use
   `deploy/scripts/hbbs-probe.py <id>`. Note it sends a real punch-hole, so the
   endpoint will dial the relay as a side effect.
@@ -242,6 +249,17 @@ check now expects exactly the two actions. Its behavioural proof is
 the sim takes `-wua` / `-registry` fixture files). An `ActionJob` is now one
 signed plan with an `ActionTarget` row per computer; `endpointId` on the job is
 only the first target, so per-computer state lives on the target.
+
+0.28.0 added §16 for containment and evidence: the signer has no HTTP route
+that lifts a pause, lifting a portal pause needs `assertFresh`, the
+customer-suspension and SAME_PERSON rules hold, every write path consults
+containment (evaluateAction, evaluateLaunch, forHeartbeat, heartbeat update
+flags and rollout dispatch, Quick Connect admission, integration submit and
+worker), the agent checks the signed pause before journaling *executing*, an
+unreadable listed pause fails closed, the audit trigger is in migration 0027,
+and `/healthz` gives no detail without `HEALTH_TOKEN`. Its behavioural proof is
+`apps/api/scripts/e2e-containment.mjs` (same `RELEASE_BIN` / `ACTION_SIM`; the
+sim takes `-pause`).
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 

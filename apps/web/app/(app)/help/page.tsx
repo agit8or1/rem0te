@@ -516,6 +516,16 @@ const SECTIONS: Section[] = [
           <Link href="/docs/staged-patching" className="underline text-foreground">Staged patching</Link>.
         </p>
         <p>
+          From 0.28, writes can be <strong className="text-foreground">paused</strong> while an incident is looked at:
+          approved actions, remote connections, agent updates and ClientSt0r jobs, for every business or for one. A red
+          strip at the top of the page says what is stopped and why; a refused click says <em>CONTAINED</em>. A Business
+          Owner can suspend their own business, and only they can lift that. A pause set by the MSP is lifted by someone
+          other than whoever set it, always with a fresh sign-in. The audit log is now tamper-evident: every entry is
+          chained to the one before it and checked hourly. See{' '}
+          <Link href="/settings/security/containment" className="underline text-foreground">Settings → Security → Containment</Link>{' '}
+          and <Link href="/docs/containment" className="underline text-foreground">Containment</Link>.
+        </p>
+        <p>
           <strong className="text-foreground">What Connect does and does not control.</strong> Rem0te decides who may
           launch a session to which computer and records it; RustDesk carries the session. Once connected, clipboard,
           file transfer and chat are RustDesk&apos;s own defaults, a computer installed by Rem0te accepts its password

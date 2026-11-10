@@ -92,6 +92,9 @@ enum ActivityAction {
   PATCH_DEPLOYMENT_UPDATED
   PATCH_RING_REQUESTED
   PATCH_SCAN_REQUESTED
+  CONTAINMENT_PAUSED
+  CONTAINMENT_CLEARED
+  AUDIT_CHAIN_ALERT
   LOGIN_SUCCESS
   LOGIN_FAILURE
   LOGOUT
@@ -516,6 +519,7 @@ model Customer {
   updatedAt        DateTime          @updatedAt
   actionJobs       ActionJob[]
   patchDeployments PatchDeployment[]
+  containmentPauses ContainmentPause[]
 
   @@index([tenantId])
   @@index([tenantId, name])
@@ -1263,6 +1267,17 @@ model ActivityLog {
   resourceId String?
   metadata   Json?
   createdAt  DateTime       @default(now())
+  // v0.28: the tamper-evident chain. seq orders the chain; the sealer fills
+  // chainHash = sha256(previous hash + this entry) a few seconds after the
+  // insert, with sealedRefs holding tenantId/customerId/actorId as they were
+  // (a business or user deletion may later null them; nothing else may
+  // change a sealed row — a trigger refuses it), and chainGap naming any
+  // sequence numbers that never committed before this row.
+  seq        BigInt         @unique @default(autoincrement())
+  chainHash  String?
+  sealedRefs Json?
+  chainGap   Json?
+  sealedAt   DateTime?
 
   @@index([tenantId])
   @@index([customerId])
@@ -2289,4 +2304,66 @@ model PatchDeployment {
   jobs             ActionJob[]
 
   @@index([customerId, createdAt])
+}
+
+// ─── Containment (v0.28) ─────────────────────────────────────────────────────
+
+enum ContainmentScope {
+  GLOBAL
+  BUSINESS
+}
+
+/// A pause on writes. GLOBAL stops them everywhere; BUSINESS for one business.
+/// kinds ⊆ actions | remote | updates | integration. Set by the MSP (Platform
+/// Admin, technicians:manage) or by the business itself (a Business Owner).
+/// A customer's own suspension is lifted only by that customer; an MSP pause
+/// only by someone other than whoever set it.
+model ContainmentPause {
+  id                String           @id @default(cuid())
+  scope             ContainmentScope
+  customerId        String?
+  customer          Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  kinds             String[]
+  reason            String
+  setById           String
+  setBy             String // msp | customer
+  createdAt         DateTime         @default(now())
+  /// The approval signer was asked to hold the same pause; only its operator lifts it there.
+  signerRequestedAt DateTime?
+  signerResult      String?
+  clearedAt         DateTime?
+  clearedById       String?
+  clearReason       String?
+
+  @@index([scope, clearedAt])
+  @@index([customerId, clearedAt])
+}
+
+// ─── Audit chain (v0.28) ─────────────────────────────────────────────────────
+
+/// One row: where the sealer, exporter and verifier have got to.
+model AuditChainState {
+  id                 String    @id // "chain"
+  headSeq            BigInt    @default(0)
+  headHash           String    @default("0000000000000000000000000000000000000000000000000000000000000000")
+  sealedAt           DateTime?
+  exportedThroughSeq BigInt    @default(0)
+  exportedAt         DateTime?
+  exportError        String?
+  verifiedAt         DateTime?
+  verifiedThroughSeq BigInt    @default(0)
+  verifyResult       Json?
+  updatedAt          DateTime  @updatedAt
+}
+
+/// A signed statement of the chain head, exported off the host.
+model AuditCheckpoint {
+  id        String   @id @default(cuid())
+  seq       BigInt
+  hash      String
+  at        DateTime @default(now())
+  keyId     String?
+  signature String?
+
+  @@index([seq])
 }

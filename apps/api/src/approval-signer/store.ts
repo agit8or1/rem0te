@@ -9,6 +9,8 @@
  *   <dir>/jobs/<id>.json    one per plan; decisions and the envelope
  *   <dir>/challenges/<id>.json  single-use WebAuthn challenges
  *   <dir>/counters/<sha>.json   each passkey's signature counter
+ *   <dir>/pauses/<id>.json      pauses (v0.28): created by the operator CLI or at the
+ *                               portal's request; cleared only by the operator CLI
  *
  * The serving process never writes roster.json or policy.json: those belong
  * to the operator CLI. Counters live apart so that saving one can never
@@ -28,7 +30,7 @@ const ID = /^[a-f0-9]{32}$/;
 export class SignerStore {
   private chain: Promise<unknown> = Promise.resolve();
   constructor(readonly dir: string) {
-    for (const d of ['jobs', 'challenges', 'counters']) mkdirSync(path.join(dir, d), { recursive: true, mode: 0o700 });
+    for (const d of ['jobs', 'challenges', 'counters', 'pauses']) mkdirSync(path.join(dir, d), { recursive: true, mode: 0o700 });
   }
 
   /** Run fn with every other mutation waiting. */
@@ -68,4 +70,26 @@ export class SignerStore {
     this.write(path.join(this.dir, 'counters', `${credentialSha256}.json`), { counter });
   }
   saveChallenge(c: Challenge) { this.write(path.join(this.dir, 'challenges', `${c.id}.json`), c); }
+
+  // ── Pauses (v0.28) ────────────────────────────────────────────────────────
+  // One file each, so the serving process (which only ever creates one) and
+  // the operator CLI (which clears) never overwrite each other's write.
+  pauses(): Pause[] {
+    return readdirSync(path.join(this.dir, 'pauses')).filter((f) => /^[a-f0-9]{16}\.json$/.test(f))
+      .map((f) => this.read<Pause>(path.join(this.dir, 'pauses', f))).filter((p): p is Pause => !!p);
+  }
+  activePause(businessId: string | null): Pause | null {
+    return this.pauses().filter((p) => !p.clearedAt && (p.scope === 'global' || (businessId && p.businessId === businessId))).sort((a, b) => (a.scope === b.scope ? 0 : a.scope === 'global' ? -1 : 1))[0] ?? null;
+  }
+  addPause(p: Omit<Pause, 'id'>): Pause {
+    const full: Pause = { id: randomBytes(8).toString('hex'), ...p };
+    writeFileSync(path.join(this.dir, 'pauses', `${full.id}.json`), JSON.stringify(full, null, 2), { mode: 0o600, flag: 'wx' });
+    return full;
+  }
+  savePause(p: Pause) { if (!/^[a-f0-9]{16}$/.test(p.id)) throw new Error('bad pause id'); this.write(path.join(this.dir, 'pauses', `${p.id}.json`), p); }
+}
+
+export interface Pause {
+  id: string; scope: 'global' | 'business'; businessId?: string; reason: string;
+  setBy: 'operator' | 'portal'; ref?: string; at: string; clearedAt?: string; clearReason?: string;
 }

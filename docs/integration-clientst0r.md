@@ -134,6 +134,7 @@ assignments need it granted. Removing it stops in-flight jobs before their next 
 | 401 `REPLAYED` | Nonce or delegation `jti` reused — retries must sign afresh |
 | 403 on submit | Organization or technician not mapped, no current access to the business, or capability missing |
 | 409 `IDEMPOTENCY_CONFLICT` | Same idempotency key, different payload (for example a new ticket revision) |
+| 423 `CONTAINED` on submit, or job `failed` / `CONTAINED` | ClientSt0r jobs are paused for that business or globally ([Containment](containment.md)). Retry after the pause is lifted; queued jobs are ended, not held |
 | Job `failed` / `ACTOR_REVOKED` | The technician lost access while the job ran |
 | Run `RESPONSE_SIGNATURE_INVALID` / `RESPONSE_MISMATCH` | Gateway response not signed for this request, or echoes a different job/org/profile |
 | Events not arriving | Check `lastDeliveryError` on `IntegrationEvent`; ClientSt0r can always poll `GET /jobs/{id}/events` |
@@ -165,7 +166,7 @@ signer is configured.
   `409 IDEMPOTENCY_CONFLICT`.
 - **Refusals pass through with the portal's codes:** `ACTION_NOT_IN_CATALOG`, `PARAMS_NOT_ALLOWED`,
   `ACTION_NOT_GRANTED`, `PROTECTED_DEVICE_CLASS`, `ENDPOINT_NOT_READY`, `ACTION_PENDING`,
-  `ACTION_UNRECONCILED`. Each is audited as `ACTION_DISPATCH_BLOCKED` with `stage: proposal`.
+  `ACTION_UNRECONCILED`, and `CONTAINED` while actions are paused. Each is audited as `ACTION_DISPATCH_BLOCKED` with `stage: proposal`.
 
 The technician needs **Request approved actions** (`actions:request`) in that business, in addition to the
 mapping. Show `approval_url` to the people who will approve. Approval happens there, never in ClientSt0r.

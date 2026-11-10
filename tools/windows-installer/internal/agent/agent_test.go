@@ -376,3 +376,38 @@ func TestParseSlotURL(t *testing.T) {
 		}
 	}
 }
+
+// v0.28: a signed pause stops the update command before anything is fetched
+// or run, and a pause that cannot be read is treated as a pause.
+func TestSignedPauseStopsUpdate(t *testing.T) {
+	p, f, o := setup(t, agent.ModeInstall)
+	if _, err := agent.Run(o, f); err != nil {
+		t.Fatal(err)
+	}
+	u := o
+	u.Mode, u.ClaimToken, u.Nonce = agent.ModeUpdate, "", nonce
+	f.opts = u
+	p.publish(map[string][]byte{"control/pause.json": []byte(`{"schema":"rem0te-pause/1","issuedAt":"2026-11-10T00:00:00Z","reason":"incident 7","actions":{"all":true},"updates":{"all":true}}`)}, nil)
+	f.ranScript = ""
+	if _, err := agent.Run(u, f); !errors.Is(err, agent.ErrRefuse) || !strings.Contains(err.Error(), "incident 7") {
+		t.Fatalf("got %v", err)
+	}
+	if f.ranScript != "" {
+		t.Fatal("the installer ran under a signed pause")
+	}
+	_, pz, err := agent.ActionTrust(u, f)
+	if err == nil {
+		// approval/keys.json is not published in this fixture; the pause is read only alongside keys.
+		t.Logf("keys present; pause %+v", pz)
+	}
+
+	p.publish(map[string][]byte{"control/pause.json": []byte(`{"schema":"rem0te-pause/1","issuedAt":"2026-11-10T00:00:00Z","reason":"","actions":{"all":false},"updates":{"all":false}}`)}, nil)
+	if code, err := agent.Run(u, f); err != nil || code != 0 {
+		t.Fatalf("after lifting: %d %v", code, err)
+	}
+
+	p.publish(map[string][]byte{"control/pause.json": []byte(`not json`)}, nil)
+	if _, err := agent.Run(u, f); !errors.Is(err, agent.ErrRefuse) || !strings.Contains(err.Error(), "could not be read") {
+		t.Fatalf("unreadable pause must fail closed, got %v", err)
+	}
+}

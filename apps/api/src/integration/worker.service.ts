@@ -11,6 +11,7 @@
  * events. It cannot run a shell, fetch an arbitrary URL, open a session or
  * approve anything, because none of those is reachable from here.
  */
+import { activePause } from '../containment/pause';
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { IntegrationJobStatus, Prisma } from '@prisma/client';
 import { hostname } from 'os';
@@ -99,6 +100,10 @@ export class IntegrationWorkerService implements OnModuleDestroy {
     const access = await this.delegation.checkActor(job.peerId, job.externalOrgId, job.externalTechnicianId);
     if (!access.ok || access.customerId !== job.customerId) {
       return this.finish(jobId, 'FAILED', null, 'ACTOR_REVOKED', access.ok ? 'Mapping now points at a different business' : access.message);
+    }
+    // v0.28: a job queued before a pause does not run under one.
+    if (await activePause(this.prisma, 'integration', job.customerId)) {
+      return this.finish(jobId, 'FAILED', null, 'CONTAINED', 'Integration jobs are paused for this business; submit again once the pause is lifted.');
     }
     if (job.attempts === 1) await this.prisma.$transaction((tx) => appendEvent(tx, jobId, 'job.running'));
 

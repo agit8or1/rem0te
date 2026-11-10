@@ -8,6 +8,6 @@ import { SignerClient } from './signer.client';
 @Module({
   controllers: [ActionsController],
   providers: [ActionsService, SignerClient],
-  exports: [ActionsService],
+  exports: [ActionsService, SignerClient],
 })
 export class ActionsModule {}
