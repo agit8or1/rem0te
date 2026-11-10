@@ -205,6 +205,8 @@ async function all() {
   const r1b = await mkPc(acme, 'R1-B', [CU], { installed: [id(NET)] });
   const r1c = await mkPc(acme, 'R1-C', [CU, NET], { results: { [key(CU)]: { resultCode: 4, hresult: '0x80240022' } } });
   const wsus = await mkPc(acme, 'WSUS-PC', [CU], {}, { strings: { 'SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate|WUServer': 'http://wsus.acme.example.com:8530' }, dwords: { 'SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU|UseWUServer': 1 } });
+  // 0.30: an Intune (MDM) update ring, as the PolicyManager key records it. Offered nothing, so the deployment counts below are unchanged.
+  const intune = await mkPc(acme, 'INTUNE-PC', [], {}, { dwords: { 'SOFTWARE\\Microsoft\\PolicyManager\\current\\device\\Update|DeferQualityUpdatesPeriodInDays': 7 } });
   const birchPc = await mkPc(birch, 'CANARY', [CU]);
   check(true, 'Acme: CANARY, R1-A, R1-B (has .NET already), R1-C (CU will fail), WSUS-PC (WSUS-managed); Birch: its own CANARY');
 
@@ -246,15 +248,32 @@ async function all() {
     const basic = await req('GET', `/endpoints/${r1a.id}/patches`, { s: S.owen, business: acme.id });
     check(basic.status === 200 && basic.body?.data?.basic?.updates?.[0]?.kb === 'KB5099999' && basic.body.data.basic.rebootRequired === true && (basic.body.data.updates ?? []).length === 0,
       'with no signed posture, the Patches view shows the standard scan as `basic` — and nothing installable', msg(basic));
+    const bs = basic.body?.data?.summary;
+    check(bs?.evidence.source === 'standard_agent_scan' && bs.evidence.freshness === 'fresh' && bs.managedBy.state === 'unknown' && bs.relevantKbs[0] === 'KB5099999' && bs.rebootRequired === true && bs.deploy.possible === false && /signed agent/.test(bs.deploy.reason),
+      '0.30 summary, standard agent: evidence source and age, KB, restart pending, who manages patching UNKNOWN, deploying needs the signed agent', msg(basic));
     const first = await heartbeat(r1b);
     check(first.body?.data?.patchScan === true, 'a signed agent with no posture is asked to scan', msg(first));
-    for (const pc of [r1a, r1b, r1c, wsus, birchPc]) await heartbeat(pc, { patchPosture: scan(pc) });
+    for (const pc of [r1a, r1b, r1c, wsus, intune, birchPc]) await heartbeat(pc, { patchPosture: scan(pc) });
     const view = await req('GET', `/endpoints/${canary.id}/patches`, { s: S.owen, business: acme.id });
     const byKb = Object.fromEntries((view.body?.data?.updates ?? []).map((x) => [x.kb ?? x.title, x]));
     check(view.status === 200 && byKb.KB5044284?.installable === true && byKb['Contoso - Display - 31.0.101']?.installable === false && byKb.KB5044777?.installable === false,
       'the computer\'s Patches view: the CU installable; the driver and the optional preview are not, with why', msg(view));
     const w = await req('GET', `/endpoints/${wsus.id}/patches`, { s: S.owen, business: acme.id });
     check(w.body?.data?.managers?.[0]?.label === 'WSUS', 'WSUS-PC shows its updates are managed by WSUS', msg(w));
+    const ws = w.body?.data?.summary;
+    check(ws?.evidence.source === 'signed_agent_scan' && ws.managedBy.state === 'external' && ws.managedBy.managers[0]?.label === 'WSUS' && /WSUS server/.test(ws.managedBy.explanation) && ws.deploy.possible === false,
+      '0.30 summary, externally managed (WSUS, from the agent\'s real registry check): named, explained, no deployment offered', msg(w));
+    const im = await req('GET', `/endpoints/${intune.id}/patches`, { s: S.owen, business: acme.id });
+    const is = im.body?.data?.summary;
+    check(is?.managedBy.state === 'external' && is.managedBy.managers.some((m) => m.label === 'MDM (Intune) update policy') && /Intune/.test(is.managedBy.explanation), '0.30 summary, externally managed (Intune MDM update policy in the simulated registry)', msg(im));
+    // Offline, with old evidence: the agent's last scan was 80 hours ago (time moved in the database; nothing else changed).
+    const inv0 = await prisma.endpointInventory.findUnique({ where: { endpointId: wsus.id }, select: { patchScannedAt: true } });
+    await prisma.endpoint.update({ where: { id: wsus.id }, data: { isOnline: false, lastSeenAt: new Date(Date.now() - 79 * 3600_000) } });
+    await prisma.endpointInventory.update({ where: { endpointId: wsus.id }, data: { patchScannedAt: new Date(Date.now() - 80 * 3600_000) } });
+    const off = (await req('GET', `/endpoints/${wsus.id}/patches`, { s: S.owen, business: acme.id })).body?.data?.summary;
+    check(off?.evidence.freshness === 'stale' && off.evidence.ageHours >= 79 && off.online.isOnline === false && off.warnings.some((x) => /hours old, and the computer is offline/.test(x)), '0.30 summary, offline: the evidence is shown stale, with its age, and the computer offline', JSON.stringify(off?.evidence));
+    await prisma.endpoint.update({ where: { id: wsus.id }, data: { isOnline: true, lastSeenAt: new Date() } });
+    await prisma.endpointInventory.update({ where: { endpointId: wsus.id }, data: { patchScannedAt: inv0.patchScannedAt } });
     const refresh = await req('POST', `/endpoints/${canary.id}/inventory/refresh`, { s: S.owen, business: acme.id });
     const asked = await heartbeat(canary);
     check(refresh.status < 300 && asked.body?.data?.patchScan === true, 'Refresh inventory asks a signed agent for a new patch scan', msg(asked));
@@ -316,6 +335,9 @@ async function all() {
     const st = Object.fromEntries((out?.updates ?? []).map((x) => [x.kb ?? x.updateId, x.state]));
     check(c.delivered.length === 1 && out.outcome === 'restart_required' && st.KB5044284 === 'restart_required' && st.KB5044099 === 'installed', 'the canary installs both: the CU needs a restart, .NET does not', JSON.stringify(out));
     check(wuaNow(canary).rebootRequired === true, 'the computer was not restarted: its restart is still pending');
+    const cs1 = (await req('GET', `/endpoints/${canary.id}/patches`, { s: S.owen, business: acme.id })).body?.data?.summary;
+    const cuc1 = cs1?.confirmations.find((x) => x.kb === 'KB5044284');
+    check(cs1?.rebootRequired === true && cuc1?.state === 'restart_required' && cuc1.confirmedByLaterScan === false, '0.30 summary, restart required: pending, and the CU is not confirmed', JSON.stringify(cs1?.confirmations));
     const d = (await req('GET', `/patching/deployments/${dep.id}`, { s: S.owen, business: acme.id })).body.data;
     const m = Object.fromEntries(d.rings[0].computers[0].updates.map((x) => [x.key, x.state]));
     check(d.rings[0].gate.reason === 'canary_not_effective' && m[key(CU)] === 'restart_required' && m[key(NET)] === 'installed', 'until the canary restarts, the CU is "restart required", .NET "installed" (not yet confirmed), and the gate holds', JSON.stringify(d.rings[0].gate) + JSON.stringify(m));
@@ -332,6 +354,8 @@ async function all() {
     const d = (await req('GET', `/patching/deployments/${dep.id}`, { s: S.owen, business: acme.id })).body.data;
     const m = Object.fromEntries(d.rings[0].computers[0].updates.map((x) => [x.key, x.state]));
     check(m[key(CU)] === 'effective' && d.rings[0].gate.ok && d.next.ring === 1 && d.next.canRequest, 'after the restart, a later scan confirms both effective; ring 1 may be requested', JSON.stringify(d.rings[0].gate) + JSON.stringify(d.next));
+    const cs2 = (await req('GET', `/endpoints/${canary.id}/patches`, { s: S.owen, business: acme.id })).body?.data?.summary;
+    check(cs2?.rebootRequired === false && cs2.confirmations.find((x) => x.kb === 'KB5044284')?.confirmedByLaterScan === true, '0.30 summary, restart completed: nothing pending, and the CU is confirmed by a later scan', JSON.stringify(cs2?.confirmations));
   }
 
   section('Ring 1: three computers, one plan, one approval');
@@ -351,6 +375,8 @@ async function all() {
     check(b.outs[0]?.outcome === 'uncertain' && bst.KB5044284 === 'unknown', 'R1-B: the installer died — "uncertain", never "failed"; what it installed is not known', JSON.stringify(b.outs[0]));
     const cst = (c.outs[0]?.updates ?? []).find((x) => x.kb === 'KB5044284');
     check(c.outs[0]?.outcome === 'partial' && cst?.state === 'failed' && cst.hresult === '0x80240022', 'R1-C: the CU failed with Windows\' own HRESULT; .NET installed (partial)', JSON.stringify(c.outs[0]));
+    const rs = (await req('GET', `/endpoints/${r1c.id}/patches`, { s: S.owen, business: acme.id })).body?.data?.summary;
+    check(rs?.confirmations.find((x) => x.kb === 'KB5044284')?.state === 'failed' && !rs.confirmations.find((x) => x.kb === 'KB5044284').confirmedByLaterScan, '0.30 summary, failed update: the CU is reported failed, not confirmed', JSON.stringify(rs?.confirmations));
     const j = await prisma.actionJob.findUnique({ where: { id: ring1.id }, include: { targets: true } });
     check(j.status === 'UNKNOWN' && j.targets.find((t) => t.endpointId === r1b.id).status === 'UNKNOWN', 'the ring plan is UNKNOWN while one computer is uncertain', j.status);
     const d = (await req('GET', `/patching/deployments/${dep.id}`, { s: S.owen, business: acme.id })).body.data;

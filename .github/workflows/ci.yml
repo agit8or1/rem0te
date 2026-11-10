@@ -117,6 +117,12 @@ jobs:
       - name: Monitoring tests
         run: node apps/api/scripts/unit-monitoring.mjs
 
+      # Patch status (0.30): the Patches tab summary and the redacted ticket
+      # summary for restart required/completed, failed, offline/stale, WSUS and
+      # Intune, the standard agent and no evidence, against the contract schema.
+      - name: Patch summary tests
+        run: node apps/api/scripts/unit-patch-summary.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.

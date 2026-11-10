@@ -8,6 +8,7 @@ import { AccessPolicyService } from '../security-controls/access-policy.service'
 import { ActionsService } from '../actions/actions.service';
 import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, UPDATE_ID_RE, UPDATE_INSTALL } from '../actions/catalog';
 import { MANAGER_LABEL, Posture, eligibility, idKey, updateState, type UpdateState } from './posture';
+import { patchSummaryFor, type PatchSummary } from './summary-db';
 
 /**
  * Staged Windows patching (v0.27).
@@ -95,6 +96,7 @@ export class PatchingService {
     const p = Posture.safeParse(inv?.patchPosture);
     const posture = p.success ? p.data : null;
     return {
+      summary: await this.summaryFor(endpointId),
       supported: ep?.updateChannel === 'signed' && !!ep.agentActions?.includes(`${UPDATE_INSTALL.id}@${UPDATE_INSTALL.version}`),
       scannedAt: inv?.patchScannedAt ?? null,
       scanRequestedAt: ep?.patchScanRequestedAt ?? null,
@@ -114,6 +116,15 @@ export class PatchingService {
         updates: Array.isArray(inv?.pendingUpdates) ? (inv.pendingUpdates as { title: string; kb: string | null; severity: string | null; sizeBytes: number | null }[]) : [],
       },
     };
+  }
+
+  /**
+   * The evidence-and-age summary of one computer (0.30): what the Patches tab
+   * leads with, and — redacted — what a linked ticket is told. No access check:
+   * callers check scope (endpointPatches) or are rem0te itself (alert events).
+   */
+  summaryFor(endpointId: string, now = new Date()): Promise<PatchSummary> {
+    return patchSummaryFor(this.prisma, endpointId, now);
   }
 
   // ── Building a deployment ─────────────────────────────────────────────────
