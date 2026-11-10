@@ -146,7 +146,7 @@ function harness({ controls = D, paused = false, temporary = [], devices = [] } 
   };
   const store = { effective: async () => controls, platform: async () => controls };
   const abuse = { isPaused: async () => paused };
-  return new AccessPolicyService(prisma, store, abuse, {});
+  return new AccessPolicyService(prisma, store, abuse, {}, { blocking: async () => null }); // 0.28: nothing paused
 }
 const src = (k, extra = {}) => ({ assignmentId: `as-${k}`, presetId: k ? `p-${k}` : null, presetTier: k, presetPolicy: k ? tier(k) : null, capabilities: k ? P.presetCapabilities(tier(k)) : [], endpointIds: null, ...extra });
 const techActor = (...sources) => ({ userId: 'u1', isPlatformAdmin: false, technician: { sources }, capabilities: [] });

@@ -42,6 +42,11 @@ the product, searchable, under **Documentation** in the sidebar.
 - **[staged-patching.md](staged-patching.md)** — Windows updates in stages (0.27): a canary, then rings, each a
   signed plan two approvers authorize; what is installed and refused, the promotion gate, what *effective* means,
   and what is and is not proven.
+- **[containment.md](containment.md)** — stopping writes during an incident (0.28): a global write pause and
+  per-business suspension, enforced by the portal, the approval signer and a signed pause the agents obey; the
+  tamper-evident audit log, its off-host export and verification; watching from outside.
+- **[incident-recovery.md](incident-recovery.md)** — the runbook: a compromised account, portal or database; key
+  rotation; restoring from backup and checking the audit chain against the export.
 - **[technician-access.md](technician-access.md)** — technician presets (L1/L2/L3),
   launch policy, protected device classes, fleet-abuse limits, independent
   review of trust changes, and what this build can and cannot enforce.

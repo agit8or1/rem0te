@@ -64,6 +64,8 @@ func main() {
 		err = verify(args)
 	case "pubkey":
 		err = pubkey(args)
+	case "pause-file":
+		err = pauseFile(args)
 	default:
 		usage()
 	}
@@ -232,6 +234,19 @@ func doRelease(args []string) error {
 				fmt.Printf("approval key %s\n", k.Kid)
 			}
 		}
+		// The signed pause (v0.28): an agent that cannot read it treats
+		// itself as paused, so refuse to sign one it would misread.
+		if name == action.PauseTarget {
+			raw, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			pz, err := action.ParsePause(raw)
+			if err != nil {
+				return fmt.Errorf("%s: %w (write it with `rem0te-release pause-file`)", p, err)
+			}
+			fmt.Printf("signed pause: actions all=%v businesses=%d computers=%d; updates all=%v\n", pz.Actions.All, len(pz.Actions.Businesses), len(pz.Actions.Computers), pz.Updates.All)
+		}
 		specs = append(specs, release.TargetSpec{Name: name, File: p, Custom: cm[name]})
 	}
 	if err := release.Open(*repo).Release(release.ReleaseOptions{Add: specs, Remove: removes, TargetsKeys: tk, SnapshotKey: sk, TimestampKey: tsk, TargetsExpiry: *exp}); err != nil {
@@ -364,4 +379,42 @@ func verify(args []string) error {
 	}
 	fmt.Printf("verified: root v%d, targets v%d, %d target(s)\n", c.RootVersion(), c.TargetsVersion(), len(c.Targets()))
 	return nil
+}
+
+// pauseFile writes control/pause.json (v0.28). Publish it with
+//
+//	rem0te-release release ... -add control/pause.json=FILE
+//
+// and lift it by publishing one that pauses nothing (pause-file -none).
+func pauseFile(args []string) error {
+	fs := flag.NewFlagSet("pause-file", flag.ExitOnError)
+	out := fs.String("out", "", "file to write")
+	reason := fs.String("reason", "", "why (shown on every refusal)")
+	actionsAll := fs.Bool("actions", false, "pause approved actions on every computer")
+	updatesAll := fs.Bool("updates", false, "pause the update command on every computer")
+	none := fs.Bool("none", false, "pause nothing (lifts an earlier pause)")
+	var biz, rid multi
+	fs.Var(&biz, "business", "pause approved actions for this business id (repeatable)")
+	fs.Var(&rid, "computer", "pause approved actions on this RustDesk ID (repeatable)")
+	fs.Parse(args)
+	if *out == "" {
+		return fmt.Errorf("-out is required")
+	}
+	paused := *actionsAll || *updatesAll || len(biz) > 0 || len(rid) > 0
+	if paused == *none {
+		return fmt.Errorf("say what to pause (-actions, -updates, -business, -computer), or -none to lift")
+	}
+	if paused && len(*reason) < 3 {
+		return fmt.Errorf("-reason is required")
+	}
+	p := action.Pause{Schema: action.PauseSchema, IssuedAt: time.Now().UTC().Format(time.RFC3339), Reason: *reason,
+		Actions: action.PauseScope{All: *actionsAll, Businesses: biz, Computers: rid}, Updates: action.PauseScope{All: *updatesAll}}
+	raw, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		return err
+	}
+	if _, err := action.ParsePause(raw); err != nil {
+		return err
+	}
+	return os.WriteFile(*out, append(raw, '\n'), 0o644)
 }

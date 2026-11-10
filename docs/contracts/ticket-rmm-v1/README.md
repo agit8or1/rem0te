@@ -116,8 +116,12 @@ an `approval_url`.
 ## Error codes
 
 `NOT_CONFIGURED` 404 · `UNAUTHENTICATED` 401 · `REPLAYED` 401 · `DELEGATION_INVALID` 401 · `FORBIDDEN` 403 ·
-`NOT_FOUND` 404 · `INVALID_REQUEST` 400 · `IDEMPOTENCY_CONFLICT` 409 · `TOO_LARGE` 413 · `RATE_LIMITED` 429 ·
-`INTERNAL` 500.
+`NOT_FOUND` 404 · `INVALID_REQUEST` 400 · `IDEMPOTENCY_CONFLICT` 409 · `TOO_LARGE` 413 · `CONTAINED` 423 ·
+`RATE_LIMITED` 429 · `INTERNAL` 500.
+
+`CONTAINED` (rem0te 0.28+) means the operator has paused this kind of work for the organization's business, or for
+every business, during an incident. It is not a client error: retry later. A job already queued when the pause is set
+ends `failed` with `CONTAINED`.
 
 Action proposals add rem0te's own refusal codes (400/403/409): `ACTION_NOT_IN_CATALOG`, `PARAMS_NOT_ALLOWED`,
 `ACTION_NOT_GRANTED`, `PROTECTED_DEVICE_CLASS`, `ENDPOINT_NOT_READY`, `ACTION_PENDING`, `ACTION_UNRECONCILED`,

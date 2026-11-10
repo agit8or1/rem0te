@@ -9,6 +9,9 @@
  *        --approve '*'|<businessId,...> [--customer <businessId,...>] --confirm-fingerprint XXXX-XXXX-XXXX-XXXX
  *   node dist/approval-signer/main.js roster disable --user <id>
  *   node dist/approval-signer/main.js policy set --business <id> --customer-signoff required|not_required
+ *   node dist/approval-signer/main.js pause list
+ *   node dist/approval-signer/main.js pause set --global|--business <id> --reason '<why>'
+ *   node dist/approval-signer/main.js pause clear --id <id> --reason '<why>'
  *
  * Environment: APPROVAL_SIGNER_DIR, APPROVAL_ORIGIN, APPROVAL_RP_ID,
  * APPROVAL_PUBLIC_PORT (3201), APPROVAL_INTERNAL_PORT (3202).
@@ -104,6 +107,34 @@ switch (cmd) {
     console.log(JSON.stringify(p, null, 2));
     break;
   }
+  case 'pause': {
+    // v0.28. The portal can ask this process to pause; only this CLI lifts one.
+    if (sub === 'list') {
+      for (const p of store.pauses().sort((a, b) => a.at.localeCompare(b.at))) {
+        console.log(`${p.id}  ${p.clearedAt ? `cleared ${p.clearedAt}` : 'ACTIVE'}  ${p.scope}${p.businessId ? ` ${p.businessId}` : ''}  by ${p.setBy}${p.ref ? ` (${p.ref})` : ''} at ${p.at}: ${p.reason}`);
+      }
+      break;
+    }
+    if (sub === 'set') {
+      const business = arg('business');
+      if (!process.argv.includes('--global') && !business) die('pause set --global|--business <id> --reason <why>');
+      const reason = arg('reason') || die('--reason is required');
+      const p = store.addPause({ scope: business ? 'business' : 'global', ...(business ? { businessId: business } : {}), reason, setBy: 'operator', at: new Date().toISOString() });
+      console.log(`paused ${p.id}`);
+      break;
+    }
+    if (sub === 'clear') {
+      const id = arg('id') || die('--id is required');
+      const reason = arg('reason') || die('--reason is required');
+      const p = store.pauses().find((x) => x.id === id) || die(`no pause ${id}`);
+      if (p.clearedAt) die(`${id} was already cleared at ${p.clearedAt}`);
+      store.savePause({ ...p, clearedAt: new Date().toISOString(), clearReason: reason });
+      console.log(`cleared ${id}`);
+      break;
+    }
+    die('pause list|set|clear');
+    break;
+  }
   default:
-    die('usage: main.js serve|keygen|keys|roster list|roster add|roster disable|policy set');
+    die('usage: main.js serve|keygen|keys|roster list|roster add|roster disable|policy set|pause list|set|clear');
 }

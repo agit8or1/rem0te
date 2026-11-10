@@ -7,6 +7,8 @@ import { ActorResolverService } from '../rbac/actor-resolver.service';
 import { CAP, effectiveCapabilities, isOwnerRole, type Capability } from '../rbac/capabilities';
 import { AbuseGuardService, type ThresholdKey } from './abuse-guard.service';
 import { ControlsStore } from './controls.store';
+import { ContainmentService } from '../containment/containment.service';
+import { pauseMessage } from '../containment/pause';
 import { BUILT_IN_PRESETS, PresetPolicy, presetCapabilities, type AccessControls } from './presets';
 
 export type LaunchMode = 'view_only' | 'control' | 'elevated' | 'unattended';
@@ -46,6 +48,7 @@ export class AccessPolicyService {
     private readonly controls: ControlsStore,
     private readonly abuse: AbuseGuardService,
     private readonly actors: ActorResolverService,
+    private readonly containment: ContainmentService,
   ) {}
 
   /** Which threshold row applies to this actor on this computer. */
@@ -77,6 +80,17 @@ export class AccessPolicyService {
    */
   async evaluateAction(actor: ActorContext, ep: { id: string; customerId: string | null; deviceClass: DeviceClass }, risk: 'low' | 'high')
     : Promise<{ ok: true; tier: ThresholdKey } | { ok: false; reason: string; message: string }> {
+    const d = await this.evaluateActionAccess(actor, ep, risk);
+    if (!d.ok) return d;
+    // v0.28: a global write pause, or a suspension of this business. Asked
+    // after access, so nobody outside the business learns of a suspension.
+    const paused = await this.containment.blocking('actions', ep.customerId);
+    if (paused) return { ok: false, reason: 'contained', message: pauseMessage(paused, 'actions') };
+    return d;
+  }
+
+  private async evaluateActionAccess(actor: ActorContext, ep: { id: string; customerId: string | null; deviceClass: DeviceClass }, risk: 'low' | 'high')
+    : Promise<{ ok: true; tier: ThresholdKey } | { ok: false; reason: string; message: string }> {
     const controls = await this.controls.effective(ep.customerId);
     if (await this.abuse.isPaused(`user:${actor.userId}`)) return { ok: false, reason: 'identity_paused', message: 'Your privileged access is paused after an activity limit was reached.' };
     if ((controls.protectedClasses as string[]).includes(ep.deviceClass)) {
@@ -102,6 +116,16 @@ export class AccessPolicyService {
   }
 
   async evaluateLaunch(actor: ActorContext, ep: EndpointForLaunch, mode: LaunchMode, ctx: LaunchContext): Promise<LaunchDecision> {
+    const d = await this.evaluateLaunchAccess(actor, ep, mode, ctx);
+    if (!d.ok) return d;
+    // v0.28: remote connections stopped by a global pause or a suspension of
+    // this business — asked after access, as for actions.
+    const paused = await this.containment.blocking('remote', ep.customerId);
+    if (paused) return { ok: false, status: 'denied', reason: 'contained', message: pauseMessage(paused, 'remote') };
+    return d;
+  }
+
+  private async evaluateLaunchAccess(actor: ActorContext, ep: EndpointForLaunch, mode: LaunchMode, ctx: LaunchContext): Promise<LaunchDecision> {
     const controls = await this.controls.effective(ep.customerId);
     const tier = this.tierFor(actor, ep.id);
 

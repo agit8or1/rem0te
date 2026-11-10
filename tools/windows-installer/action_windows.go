@@ -64,13 +64,13 @@ func cmdAction(args []string) int {
 	// Keys first, and from the signed chain only. If they cannot be had the
 	// job is not consumed: nothing is journaled or reported, the portal marks
 	// it uncertain after its timeout and re-delivers, and this tries again.
-	keys, err := agent.ApprovalKeys(agent.Options{PortalHost: pinnedPortal(), Root: embeddedRoot, Paths: paths}, wp)
+	keys, pause, err := agent.ActionTrust(agent.Options{PortalHost: pinnedPortal(), Root: embeddedRoot, Paths: paths}, wp)
 	if err != nil {
 		fmt.Fprintf(out, "  action %s: approval keys unavailable: %v\n", *job, err)
 		return 4
 	}
 	r, err := action.Run(*job, raw, action.Options{StateDir: paths.StateDir, Keys: keys, Platform: &winActions{paths: paths}, Now: time.Now,
-		WUA: winWUA{paths: paths}, Registry: winRegistry{}})
+		WUA: winWUA{paths: paths}, Registry: winRegistry{}, Pause: pause})
 	if err != nil {
 		fmt.Fprintf(out, "  action %s: %v\n", *job, err)
 		return 5

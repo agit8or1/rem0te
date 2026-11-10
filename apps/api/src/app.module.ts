@@ -2,6 +2,9 @@ import { SecurityControlsModule } from './security-controls/security-controls.mo
 import { UpdateTrustModule } from './update-trust/update-trust.module';
 import { ActionsModule } from './actions/actions.module';
 import { PatchingModule } from './patching/patching.module';
+import { ContainmentModule } from './containment/containment.module';
+import { AuditChainModule } from './audit/audit-chain.module';
+import { HealthModule } from './health/health.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -81,6 +84,9 @@ import { IntegrationModule } from './integration/integration.module';
     UpdateTrustModule,
     ActionsModule,
     PatchingModule,
+    ContainmentModule,
+    AuditChainModule,
+    HealthModule,
     AuthModule,
     StepUpModule,
     MfaModule,

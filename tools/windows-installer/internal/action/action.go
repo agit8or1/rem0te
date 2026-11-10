@@ -171,6 +171,8 @@ type Options struct {
 	Registry patch.Registry
 	// How long an install waits for a scan in progress; 20 minutes by default.
 	WUAWait time.Duration
+	// The signed pause (control/pause.json), or nil when none is published.
+	Pause *Pause
 }
 
 var jobRE = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -239,6 +241,18 @@ func Run(jobID string, envelope []byte, o Options) (Result, error) {
 		}
 		writeJournal(o, journal{JobID: jobID, State: "done", At: o.now().UTC().Format(time.RFC3339), Result: &r})
 		return report(o, r)
+	}
+
+	// 1b. The signed pause (v0.28). Checked once the plan is known to be
+	// genuine and for this computer, so the refusal names a real job. Final,
+	// like any refusal: once the pause is lifted, request it again.
+	if o.Pause != nil {
+		rid, _, _ := o.Platform.DeviceIdentity()
+		if o.Pause.ActionsPaused(plan.Targets[0].BusinessID, rid) {
+			r := Result{JobID: jobID, Outcome: "refused", Reason: "paused", Detail: "actions are paused by the signed pause (" + o.Pause.IssuedAt + "): " + o.Pause.Reason}
+			writeJournal(o, journal{JobID: jobID, State: "done", At: o.now().UTC().Format(time.RFC3339), Result: &r})
+			return report(o, r)
+		}
 	}
 
 	// 2. Consume the job before acting on it.

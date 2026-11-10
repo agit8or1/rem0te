@@ -167,6 +167,26 @@ export class SecurityFeaturesService {
       source: 'endpoint-reports',
     };
 
+    // Containment: what is paused right now, for this scope.
+    const pauses = await this.prisma.containmentPause.findMany({
+      where: { clearedAt: null, ...(businessId ? { OR: [{ scope: 'GLOBAL' }, { customerId: businessId }] } : {}) },
+      select: { scope: true, kinds: true },
+    });
+    out['containment'] = {
+      state: pauses.length ? `${pauses.length} active pause${pauses.length === 1 ? '' : 's'}${pauses.some((p) => p.scope === 'GLOBAL') ? ' (including a global one)' : ''}` : 'Nothing paused',
+      detail: pauses.length ? `Paused: ${[...new Set(pauses.flatMap((p) => p.kinds))].join(', ')}. Settings → Security → Containment.` : `Signer layer ${signer ? 'available (signer configured)' : 'unavailable (no signer configured)'}. Agent layer: a signed control/pause.json, published from the release machine.`,
+      source: 'portal-policy',
+    };
+    // The audit chain: what the last verification found. Platform-wide.
+    const chain = await this.prisma.auditChainState.findUnique({ where: { id: 'chain' } });
+    const v = chain?.verifyResult as { ok?: boolean; checked?: number } | null;
+    const sinks = [process.env.AUDIT_EXPORT_FILE && 'file', process.env.AUDIT_EXPORT_URL && 'url'].filter(Boolean).join(' + ');
+    out['audit-chain'] = {
+      state: !chain?.verifiedAt ? 'Not yet verified' : v?.ok ? `Intact · ${v.checked ?? 0} entries verified` : 'BROKEN — see Audit log → Integrity',
+      detail: `Sealed through entry ${chain?.headSeq ?? 0}. Export: ${sinks || 'not configured'}${chain?.exportError ? ' (failing)' : ''}. Checkpoints: ${process.env.AUDIT_CHECKPOINT_KEY_FILE ? 'signed' : 'unsigned'}.`,
+      source: 'server-config',
+    };
+
     // Not built: the code is the state.
     for (const id of ['elevation', 'remote-shell', 'chat', 'scripts-fixes', 'mdm', 'backup-recovery']) {
       out[id] = { state: 'Not available in this build', source: 'code' };

@@ -236,11 +236,14 @@ a passkey. A rejection is final.
 | `ENDPOINT_NOT_READY` | No enrolled identity, a legacy agent, an agent that doesn't report the action, or a build other than the published one |
 | `ACTION_PENDING` | An earlier request on this computer is still unresolved |
 | `ACTION_UNRECONCILED` | An earlier outcome is uncertain. Reconcile it first |
-| `APPROVAL_SIGNER_ERROR`, `APPROVAL_SIGNER_REFUSED`, `APPROVAL_SIGNER_UNREACHABLE` | The signer didn't answer, or refused the plan (e.g. `policy_mismatch` after a policy change) |
+| `APPROVAL_SIGNER_ERROR`, `APPROVAL_SIGNER_REFUSED`, `APPROVAL_SIGNER_UNREACHABLE` | The signer didn't answer, or refused the plan (e.g. `policy_mismatch` after a policy change, or `paused` while the signer holds a pause) |
+| `CONTAINED` | Actions are paused for this business, or globally ([Containment](containment.md)). An approved plan is held, not canceled, and is delivered when the pause is lifted |
 
 Agent refusal reasons: `bad_signature`, `unknown_key`, `bad_plan`, `job_mismatch`, `not_signed`, `unknown_action`,
 `params_not_allowed`, `bad_targets`, `wrong_target`, `not_yet_valid`, `expired`, `artifact_mismatch`,
-`risk_understated`, `too_few_approvals`, `requester_approved`, `no_customer_signoff`.
+`risk_understated`, `too_few_approvals`, `requester_approved`, `no_customer_signoff`, `paused` (0.28: a signed
+`control/pause.json` covers this business or computer. Like every refusal it is final: lifting the pause doesn't revive
+the job; request it again).
 
 ## What has been proven, and what hasn't
 

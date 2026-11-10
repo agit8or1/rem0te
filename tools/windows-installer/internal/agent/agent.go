@@ -174,6 +174,18 @@ func Run(o Options, p Platform) (int, error) {
 		writeStatus(o, Status{Channel: "signed", LastResult: "metadata-refused: " + err.Error()})
 		return 0, err
 	}
+	// v0.28: the signed pause stops the update command (stage 1 only: a
+	// stage 2 already running finishes the install it verified).
+	if !o.Stage2 {
+		// A listed pause the agent cannot read — including because its state
+		// directory cannot be secured — is a pause (fail closed).
+		dir := filepath.Join(o.Paths.StateDir, "actions")
+		dirErr := p.SecureDir(dir)
+		if pz := signedPause(c, dir, dirErr); pz.UpdatesPaused() {
+			writeStatus(o, Status{Channel: "signed", LastResult: "paused: " + pz.Reason})
+			return 0, fmt.Errorf("%w: updates are paused by the signed pause (%s): %s", ErrRefuse, pz.IssuedAt, pz.Reason)
+		}
+	}
 	if !o.Stage2 {
 		return stage1(o, p, c)
 	}
@@ -448,24 +460,72 @@ func FileSHA256(p string) (string, error) {
 // (v0.26): the only place the agent learns which keys may sign action plans.
 // The portal cannot substitute one; it is a target like the agent binary.
 func ApprovalKeys(o Options, p Platform) ([]action.Key, error) {
-	if !ValidPortal(o.PortalHost) {
-		return nil, fmt.Errorf("%w: portal host %q is not a hostname", ErrRefuse, o.PortalHost)
+	k, _, err := ActionTrust(o, p)
+	return k, err
+}
+
+// signedPause reads control/pause.json when the signed targets list it
+// (v0.28). Listed but unreadable means paused: fail closed.
+func signedPause(c *trust.Client, dir string, dirErr error) *action.Pause {
+	listed := false
+	for _, t := range c.Targets() {
+		if t == action.PauseTarget {
+			listed = true
+		}
 	}
-	c, err := o.trustClient(p)
-	if err != nil {
-		return nil, err
+	if !listed {
+		return nil
 	}
-	dir := filepath.Join(o.Paths.StateDir, "actions")
-	if err := p.SecureDir(dir); err != nil {
-		return nil, err
+	closed := &action.Pause{Schema: action.PauseSchema, IssuedAt: time.Now().UTC().Format(time.RFC3339), Reason: "the signed pause could not be read",
+		Actions: action.PauseScope{All: true}, Updates: action.PauseScope{All: true}}
+	if dirErr != nil {
+		return closed
 	}
-	dst := filepath.Join(dir, "keys.json")
-	if _, err := c.Fetch(action.KeysTarget, dst); err != nil {
-		return nil, err
+	dst := filepath.Join(dir, "pause.json")
+	if _, err := c.Fetch(action.PauseTarget, dst); err != nil {
+		return closed
 	}
 	raw, err := os.ReadFile(dst)
 	if err != nil {
-		return nil, err
+		return closed
 	}
-	return action.ParseKeys(raw)
+	pz, err := action.ParsePause(raw)
+	if err != nil {
+		return closed
+	}
+	return pz
+}
+
+// ActionTrust is ApprovalKeys plus the signed pause, from one refresh of the
+// signed metadata.
+func ActionTrust(o Options, p Platform) ([]action.Key, *action.Pause, error) {
+	keys, pz, err := actionTrust(o, p)
+	return keys, pz, err
+}
+
+func actionTrust(o Options, p Platform) ([]action.Key, *action.Pause, error) {
+	if !ValidPortal(o.PortalHost) {
+		return nil, nil, fmt.Errorf("%w: portal host %q is not a hostname", ErrRefuse, o.PortalHost)
+	}
+	c, err := o.trustClient(p)
+	if err != nil {
+		return nil, nil, err
+	}
+	dir := filepath.Join(o.Paths.StateDir, "actions")
+	if err := p.SecureDir(dir); err != nil {
+		return nil, nil, err
+	}
+	dst := filepath.Join(dir, "keys.json")
+	if _, err := c.Fetch(action.KeysTarget, dst); err != nil {
+		return nil, nil, err
+	}
+	raw, err := os.ReadFile(dst)
+	if err != nil {
+		return nil, nil, err
+	}
+	keys, err := action.ParseKeys(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	return keys, signedPause(c, dir, nil), nil
 }

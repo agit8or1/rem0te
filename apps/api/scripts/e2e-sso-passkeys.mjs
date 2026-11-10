@@ -381,7 +381,9 @@ try {
   r = await req('POST', '/auth/passkeys/register', { cookie: cVicUp, body: { response: regResp, name: 'again' } });
   check(r.status === 401, 'a registration response cannot be replayed', `${r.status}`);
   r = await req('GET', '/auth/passkeys', { cookie: cVic });
-  check(r.body.data.length === 1 && !JSON.stringify(r.body).includes('publicKey'), 'listed without key material');
+  // Since 0.26 each passkey carries approvalExport — its PUBLIC key, for the
+  // approval-signer roster ceremony. Nothing else may carry key material.
+  check(r.body.data.length === 1 && !JSON.stringify(r.body.data.map(({ approvalExport, ...rest }) => rest)).includes('publicKey'), 'listed without key material (outside the public-key approval export)');
   const pkId = r.body.data[0].id;
 
   section('Passkeys: sign-in');

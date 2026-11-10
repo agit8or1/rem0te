@@ -447,6 +447,64 @@ check(
     'POST /endpoints/:id/actions must refuse windows.update.install');
 }
 
+// 16. Containment and evidence (0.28). A pause is enforced at three layers
+//     and each layer can only be lifted by its own operator; the audit chain
+//     is guarded in the database, and health detail needs a token.
+{
+  const sigSrv = read('apps/api/src/approval-signer/server.ts');
+  const pauseRoute = sigSrv.slice(sigSrv.indexOf("url.pathname === '/internal/v1/pauses'"), sigSrv.indexOf("url.pathname === '/internal/v1/pauses'") + 1400);
+  check('the approval signer has no HTTP route that lifts a pause',
+    pauseRoute.length > 100 && !/clearedAt\s*:/.test(pauseRoute) && !/savePause\(/.test(sigSrv) && !/\/internal\/v1\/pauses\/[^']*clear/.test(sigSrv),
+    'only the signer CLI (main.ts pause clear) may clear a pause');
+  check('the signer refuses plans and decisions while paused',
+    /throw new Refused\('paused'/.test(sigSrv) && (sigSrv.match(/activePause\(/g) ?? []).length >= 3,
+    'plan submit, challenge and decide must each consult the pause');
+  const cctl = read('apps/api/src/containment/containment.controller.ts');
+  const clearFn = cctl.slice(cctl.indexOf("@Post('pauses/:id/clear')"));
+  check('lifting a portal pause needs fresh authentication', /assertFresh\(/.test(clearFn.slice(0, 600)), 'POST containment/pauses/:id/clear must call assertFresh');
+  const csvc = read('apps/api/src/containment/containment.service.ts');
+  check('a customer\'s own suspension is lifted only by that customer; an MSP pause by a second person',
+    /p\.setBy === 'customer'[\s\S]{0,200}isOwnerOf\(actor, p\.customerId\)/.test(csvc) && /actor\.userId === p\.setById[\s\S]{0,80}SAME_PERSON/.test(csvc),
+    'clear() must keep the CUSTOMER_SUSPENSION and SAME_PERSON rules');
+  const pol = read('apps/api/src/security-controls/access-policy.service.ts');
+  const asvc = read('apps/api/src/actions/actions.service.ts');
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const qc = read('apps/api/src/quick-connect/quick-connect.service.ts');
+  const jobs = read('apps/api/src/integration/jobs.service.ts');
+  const worker = read('apps/api/src/integration/worker.service.ts');
+  const roll = read('apps/api/src/admin/update-rollout.service.ts');
+  const missing = [
+    [/async evaluateAction\([\s\S]{0,800}containment\.blocking\('actions'/.test(pol), 'evaluateAction (requests and dispatch recheck)'],
+    [/async evaluateLaunch\([\s\S]{0,400}containment\.blocking\('remote'/.test(pol), 'evaluateLaunch (every connection)'],
+    [/const held = !!\(await this\.containment\.blocking\('actions'/.test(asvc) && (asvc.match(/if \(held\) continue;/g) ?? []).length >= 2, 'forHeartbeat (delivery and re-delivery held)'],
+    [/const updatesHeld = authenticated[\s\S]{0,200}containment\.blocking\('updates'/.test(enr) && /authenticated && !updatesHeld && node\.reinstallRequestedAt/.test(enr) && /contained: updatesHeld/.test(enr) && /f\.contained \? 'contained'/.test(roll), 'heartbeat update / reinstall / rollout flags'],
+    [/async admitLaunch\([\s\S]{0,200}containment\.assertOpen\('remote'/.test(qc), 'Quick Connect admission'],
+    [/activePause\(this\.prisma, 'integration'/.test(jobs) && /activePause\(/.test(worker), 'integration submit and worker'],
+  ].filter(([ok]) => !ok).map(([, n]) => n);
+  check('every write path consults containment', missing.length === 0, `missing: ${missing.join('; ')}`);
+  const act = read('tools/windows-installer/internal/action/action.go');
+  const iPause = act.indexOf('o.Pause.ActionsPaused('), iExecJ = act.indexOf('State: "executing"'), iVerify = act.indexOf('// 1b.');
+  check('the agent checks the signed pause after verifying the plan and before journaling it as executing',
+    iPause > 0 && iVerify > 0 && iPause > iVerify && iExecJ > iPause, 'action.Run must refuse "paused" before the executing journal entry');
+  const ag = read('tools/windows-installer/internal/agent/agent.go');
+  const sp = ag.slice(ag.indexOf('func signedPause('), ag.indexOf('func signedPause(') + 1200);
+  check('a listed signed pause that cannot be read is a pause (fail closed)',
+    (sp.match(/return closed/g) ?? []).length >= 4 && /Actions: action\.PauseScope\{All: true\}, Updates: action\.PauseScope\{All: true\}/.test(sp),
+    'signedPause must return the all-paused value on every read or parse failure');
+  const pz = read('tools/windows-installer/internal/action/pause.go');
+  check('the signed pause is parsed strictly', /DisallowUnknownFields\(\)/.test(pz) && /d\.More\(\)/.test(pz), 'unknown fields and trailing data must be refused');
+  const mig = read('apps/api/prisma/migrations/0027_containment_audit_chain/migration.sql');
+  check('sealed audit entries are guarded by a database trigger',
+    /CREATE TRIGGER "ActivityLog_sealed_guard" BEFORE UPDATE ON "ActivityLog"/.test(mig) && /IF OLD\."chainHash" IS NULL THEN/i.test(mig),
+    'migration 0027 must install rem0te_audit_sealed_guard');
+  const hc = read('apps/api/src/health/health.controller.ts');
+  check('/healthz says only up or down without its token',
+    /if \(!this\.authorized\(token\)\) \{[\s\S]{0,200}return \{ status: 'ok' \};/.test(hc) && /timingSafeEqual\(/.test(hc) && /want\.length < 24/.test(hc),
+    'detail must need HEALTH_TOKEN (24+ chars, compared in constant time)');
+  const chain = read('apps/api/src/audit/chain.ts');
+  check('the audit chain module loads no Nest or Prisma client', !/from '@nestjs|from '@prisma\/client'/.test(chain), 'chain.ts is shared with the verify CLI and must stay plain');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

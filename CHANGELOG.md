@@ -5,6 +5,212 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.28.0] — 2026-11-10 · *Bulkhead*
+
+**Containment and evidence: stop writes during an incident, in three places that don't trust each other, and
+keep an audit log that shows if it was tampered with.** A **global write pause**, or a **suspension of one
+business**, stops four kinds of write:
+- approved actions, including plans already approved;
+- remote connections;
+- agent update instructions;
+- ClientSt0r jobs.
+
+The portal enforces it on every write path. The **approval signer** keeps its own copy, which the portal can add
+but never lift. A **signed `control/pause.json`**, published from the release machine, makes the agents refuse
+whatever a compromised portal delivers. The audit log is **hash-chained** and guarded by a database trigger. It is
+verified hourly and can be streamed off the host with signed checkpoints, and `rem0te-audit verify --export`
+compares the two copies.
+
+**Status: fixture-tested.** The portal pause and the audit chain are active as soon as 0.28 is installed. The
+signer layer needs the 0.28 signer build. The agent layer needs a 0.28 signed agent build published through the
+offline chain. No real Windows agent has refused under a signed pause yet. Alert suppression during an incident is
+**not built**: it belongs with monitoring and is deferred to that milestone. See *What has been proven* in
+`docs/containment.md`.
+
+### Added
+
+- **Containment in the portal** (`apps/api/src/containment/`, migration `0027_containment_audit_chain`).
+  - `ContainmentPause`: a global or business scope, the kinds (`actions`, `remote`, `updates`, `integration`), a
+    reason, who set it and as whom (`msp` / `customer`), the signer's answer, and when, by whom and why it was
+    lifted.
+  - **Rules:**
+    - a global pause is set by a Platform Admin or a technician manager (not in a technician context);
+    - a business pause is set by them or by a Business Owner of that business;
+    - **a business's own suspension is lifted only by an owner of that business**, and the MSP can't lift it
+      (`CUSTOMER_SUSPENSION`);
+    - an MSP pause is lifted only by someone other than whoever set it (`SAME_PERSON`), and an owner can't lift it
+      (`MSP_SUSPENSION`);
+    - setting needs no step-up, lifting always does (`assertFresh`);
+    - technicians can't see or change containment.
+  - **Enforcement.** Every check comes *after* access, so outsiders aren't told a business is suspended.
+    - **Actions:** `evaluateAction` refuses with `403 CONTAINED`. That covers requests, ClientSt0r proposals,
+      patch deployments and rings, and the dispatch recheck, which maps it to `contained` rather than
+      `requester_no_longer_authorized`.
+    - **Approved plans:** `forHeartbeat` **holds** them. Pending targets aren't delivered and nothing is
+      re-delivered. They aren't canceled, and the result deadline still runs.
+    - **Connections:** `evaluateLaunch` refuses every connection: Connect, connection grants, launcher issue and
+      redeem.
+    - **Quick Connect:** `admitLaunch` refuses.
+    - **Updates:** the heartbeat withholds `updateRustdesk` and `reinstallAgent`. **It checks before
+      `reinstallDispatchedAt` is written**, so a held reinstall is never recorded as sent. Rollout dispatch is
+      deferred with reason `contained`, like a closed maintenance window. Evidence for jobs already in flight is
+      still recorded.
+    - **ClientSt0r:** submit answers `423 CONTAINED`, and the worker ends a queued job `FAILED`/`CONTAINED`.
+  - **Routes:** `GET /containment`, `GET /containment/banner`, `POST /containment/pauses` and
+    `POST /containment/pauses/:id/clear`. Every set and lift is audited (`CONTAINMENT_PAUSED`,
+    `CONTAINMENT_CLEARED`).
+- **The approval signer's copy** (`approval-signer/store.ts`, `server.ts`, `main.ts`).
+  - Pauses are files in `pauses/`.
+  - `GET`/`POST /internal/v1/pauses` let the portal **list and add** them. There is no route that lifts one.
+  - While one applies, the signer refuses:
+    - plan submission (`paused`);
+    - the public challenge and decide routes;
+    - and, checked again just before it records, a decision that was already in progress.
+  - CLI: `pause list | set --global|--business <id> --reason | clear --id --reason`.
+  - The portal sends any pause covering actions automatically, and records `held as <id>`, `refused: …` or
+    `unreachable`. Its own pause holds either way.
+- **The signed pause on the agent** (`internal/action/pause.go`, `action.go`, `internal/agent/agent.go`).
+  - **Format:** `control/pause.json` (`rem0te-pause/1`), parsed strictly: unknown fields, trailing data, a bad id or
+    a reason over 300 are refused. `updates` is all-or-nothing, because the update command runs before the agent
+    knows its business.
+  - **Actions:** a covered business or RustDesk ID refuses an approved action with `paused`, after signature
+    verification and before the *executing* journal entry. Like every refusal it is final.
+  - **Updates:** the update command is refused (`ErrRefuse`) before anything is fetched.
+  - **Fail closed:** a pause that is listed but can't be fetched or parsed, or whose state directory can't be
+    secured, counts as pausing everything.
+  - **Tooling:** `rem0te-release pause-file` writes one (`-actions`, `-updates`, `-business`, `-computer`, `-none`),
+    and `release` validates any `control/pause.json` it is given. `rem0te-action-sim` takes `-pause`.
+- **Tamper-evident audit log** (`apps/api/src/audit/chain.ts`, `audit-chain.service.ts`).
+  - **Columns:** `ActivityLog` gains `seq` (BIGINT), `chainHash`, `sealedRefs`, `chainGap` and `sealedAt`. Existing
+    rows are numbered by `(createdAt, id)` in the migration, not in physical order.
+  - **Sealing:** every 5 s, under advisory lock 728001, `hash(n) = sha256(hash(n-1) + "\n" + canonical(entry))`.
+    The entry covers seq, id, time, action, IP, agent, resource, metadata and the tenant, business and user ids.
+    A sequence number that never committed is declared in the next entry after 30 s, so any other gap is a
+    deletion.
+  - **Trigger:** `rem0te_audit_sealed_guard` refuses any UPDATE of a sealed row, except setting `tenantId`,
+    `customerId` or `actorId` to NULL (deleting a business or user). Deletes are detected, not prevented.
+  - **Verify:** at start (+20 s), hourly, and on demand (`POST /audit/integrity/verify`). It reports `altered`,
+    `deleted`, `reference_changed`, `unsealed_in_chain`, `checkpoint_mismatch` and `checkpoint_signature`. On the
+    transition to broken, the API logs `AUDIT CHAIN BROKEN` and writes `AUDIT_CHAIN_ALERT`.
+  - **Export:** NDJSON (`rem0te-audit-export/1`) to `AUDIT_EXPORT_FILE` and/or `AUDIT_EXPORT_URL` (HTTPS or
+    loopback, bearer `AUDIT_EXPORT_TOKEN`, redirects refused). The export position doesn't advance on a failure,
+    so a sink must accept a repeated line.
+  - **Checkpoints:** every `AUDIT_CHECKPOINT_INTERVAL_SECONDS` (900), Ed25519-signed with
+    `AUDIT_CHECKPOINT_KEY_FILE` when set. `AUDIT_SEALER=off` disables sealing in that process.
+  - `GET /audit/integrity` is for Platform Admins and technician managers.
+- **`rem0te-audit` CLI** (`dist/cli/rem0te-audit.js`, needs no running API):
+  - `verify [--export FILE] [--pub KEY]` compares the database chain against an off-host export entry by entry,
+    which is what catches a full rewrite;
+  - `verify-export FILE` needs no database;
+  - `keygen --out FILE`;
+  - `containment list | clear --id --reason [--yes]` is the host escape hatch, audited.
+
+  Exit status: 0 intact, 1 problem, 2 usage.
+- **`/api/v1/healthz`** answers `{"status":"ok"}` (503 if the database is down) and nothing more. With
+  `x-rem0te-health-token` equal to `HEALTH_TOKEN` (24+ characters, compared in constant time), it adds:
+  - the version and the database;
+  - whether the signer answers;
+  - seal, export and verify lags and the verify result;
+  - containment counts.
+
+  It carries no names, ids or addresses, and answers in maintenance mode.
+- **`deploy/scripts/rem0te-external-check.py`**: standard library only, for a machine other than the portal host. It
+  checks:
+  - the portal's healthz detail;
+  - the audit lags and verify result;
+  - that the signer and hbbs (TCP) answer.
+
+  It exits non-zero on any problem.
+- **Web:**
+  - Settings → Security → **Containment**: active pauses and lifting them, setting one, the signer's copy, recent
+    history, and an audit-integrity card with *Verify now*;
+  - a red banner on every page while a pause applies to you;
+  - a Containment card on the Settings security tab.
+- **Security Features:** a *Containment* row and a *Tamper-evident audit log* row, both partial, with effective
+  state (active pauses; the last verify, the sealed head, export and signing).
+- **Security invariants §16:**
+  - no signer route lifts a pause;
+  - the signer refuses while paused;
+  - lifting needs step-up;
+  - the customer and second-person rules hold;
+  - every write path consults containment;
+  - the agent checks the pause before journaling *executing*;
+  - a listed pause fails closed;
+  - the pause is parsed strictly;
+  - the trigger is in 0027;
+  - healthz gives no detail without its token;
+  - `chain.ts` loads no Nest or Prisma.
+- **Docs:** `docs/containment.md` and `docs/incident-recovery.md` (both new, in the in-app bundle), with updates to
+  `update-signing.md` (publishing a signed pause), `approved-actions.md` (`CONTAINED`, `paused`),
+  `integration-clientst0r.md` and the ticket-rmm-v1 contract README (`CONTAINED` 423), `security-model.md`,
+  `README.md`, `/help` and `CLAUDE.md`.
+
+### Changed
+
+- `BigInt.prototype.toJSON` returns the decimal string (`src/common/bigint-json.ts`), imported first by the API
+  and the integration worker. Without it, every route returning audit rows would throw `Do not know how to
+  serialize a BigInt` once `seq` exists. Scripts that `JSON.stringify` raw Prisma audit rows need a replacer.
+  `e2e-presets` got one.
+- A `ForbiddenException` with code `CONTAINED` is a new answer from action, connect and Quick Connect routes.
+
+### Tests
+
+- **`e2e-containment.mjs`**, 70 checks, against a scratch database, the signer and `rem0te-action-sim`. It covers:
+  - every rule above;
+  - each write path blocked for Acme while Birch carries on;
+  - a held reinstall not recorded as sent;
+  - the signer refusing after the portal pause is lifted, until its CLI clears it;
+  - an approved plan held and then delivered;
+  - the agent refusing under a signed pause fetched through the mirror, final from the journal;
+  - a malformed pause refused at release time;
+  - sealing, the trigger (an edit refused, a reference repointed refused, a reference nulled allowed);
+  - a deletion detected in the database and against the export;
+  - signed checkpoints, and the wrong key detected;
+  - the host CLI dry run and `--yes`;
+  - `/healthz` with no token, the wrong token and the right one.
+
+  **It deletes one audit row on purpose**, so the scratch chain reports that deletion afterwards.
+- **`unit-audit-chain.mjs`**, 33 checks: canonical JSON, every tamper kind, declared versus forged gaps, nulled
+  versus changed references, checkpoint signatures, the export checker (mid-chain start, repeated lines, dropped and
+  edited lines), and a full database rewrite still differing from the export.
+- **Go:** `internal/action/pause_test.go` (strict parsing; refused for a business, a computer and all; final;
+  checked after the signature) and `internal/agent` (an update refused under a signed pause, run again once lifted,
+  and an unreadable pause failing closed).
+- **Unchanged suites still pass:**
+  - `e2e-approved-action` (76), `e2e-staged-patching` (59), `e2e-integration` (77), `e2e-presets` (112);
+  - `e2e-security-features` (37, now requiring the two new rows), `e2e-signed-updates` (46), `e2e-rollouts` (45);
+  - `e2e-business-access` (83), `e2e-offboarding` (62), `e2e-public-address` (43), `e2e-security-audit` (52);
+  - `e2e-session-mutations` (43), `e2e-support-requests` (47), `e2e-sso-passkeys` (70), `e2e-candidate-password`, `e2e-full`,
+    `e2e-public-api`, `e2e-smoke`, `security-regression`;
+  - `unit-approval-signer` (65), `unit-integration` (35), `unit-presets` (26), `unit-session-mutations` (30),
+    `unit-signed-installer` (51).
+- **Test fixes:**
+  - `unit-presets` constructs the access policy with a containment stub.
+  - `e2e-sso-passkeys`' "listed without key material" excludes `approvalExport`, which has deliberately carried
+    the passkey's *public* key since 0.26.
+- `docs/API-REFERENCE.md` was regenerated and checked against the runtime route table: 355 routes.
+
+### Deploy
+
+**This is a schema change.**
+- Take a dump first.
+- Apply `0027_containment_audit_chain`. It numbers existing audit rows and installs the trigger. The API seals
+  them after it starts, 500 per pass every 5 s.
+- rsync `prisma/`, run `prisma generate` at the target, then chown, as in CLAUDE.md.
+- No production npm dependency moved.
+
+New optional settings in `/etc/reboot-remote/api.env`:
+- `HEALTH_TOKEN`;
+- `AUDIT_EXPORT_FILE` / `AUDIT_EXPORT_URL` / `AUDIT_EXPORT_TOKEN`;
+- `AUDIT_CHECKPOINT_KEY_FILE` (create it with `node dist/cli/rem0te-audit.js keygen --out …` and keep the printed
+  public key off the host);
+- `AUDIT_CHECKPOINT_INTERVAL_SECONDS`, `AUDIT_SEALER`.
+
+The approval signer's pause routes need the 0.28 signer build. An older signer answers 404, which the portal records
+as `refused`. The agent layer needs a 0.28 signed agent published.
+
+---
+
 ## [0.27.0] — 2026-11-10 · *Bellwether*
 
 **Staged Windows patching: install named Windows updates on a canary, then on rings, each ring one signed plan

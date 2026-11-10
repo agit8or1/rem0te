@@ -588,6 +588,22 @@ export const updateTrustApi = {
     api.put('/admin/update-trust/mode', { mode, legacyPortalMigration }),
 };
 
+// Containment (0.28): global write pause and business suspension. Setting
+// needs no step-up; lifting does (the interceptor prompts and retries).
+export type ContainmentKind = 'actions' | 'remote' | 'updates' | 'integration';
+export const containmentApi = {
+  state: () => api.get('/containment'),
+  banner: () => api.get('/containment/banner'),
+  set: (data: { scope: 'global' | 'business'; businessId?: string; kinds: ContainmentKind[]; reason: string }) => api.post('/containment/pauses', data),
+  clear: (id: string, reason: string) => api.post(`/containment/pauses/${id}/clear`, { reason }),
+};
+
+// Tamper-evident audit log (0.28).
+export const auditIntegrityApi = {
+  get: () => api.get('/audit/integrity'),
+  verify: () => api.post('/audit/integrity/verify'),
+};
+
 export const securityControlsApi = {
   catalog: (businessId?: string) => api.get('/security-controls/catalog', { params: businessId ? { businessId } : {} }),
   // Presets

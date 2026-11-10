@@ -104,6 +104,12 @@ jobs:
           node apps/api/scripts/unit-approval-signer.mjs
           node apps/api/scripts/build-approval-signer.mjs --list
 
+      # The tamper-evident audit chain (0.28): every tamper kind, gaps,
+      # checkpoint signatures and the export checker, against the compiled
+      # chain module with no database.
+      - name: Audit chain tests
+        run: node apps/api/scripts/unit-audit-chain.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.
