@@ -203,8 +203,26 @@ deliberately not a git repository. Without `SOURCE_DIR` the About page reports
 that in-app updates are unavailable, and why, rather than offering a button
 that dies on its first command.
 
-The updater also refuses any release tag that is not GPG-signed with a key in
-the service account's keyring. Sign releases with `git tag -s`, or update
+The updater also refuses any release tag that is not signed by **the pinned
+release key** (0.30.1). Before 0.30.1 it accepted a signature from any key in the
+service account's keyring. Now it needs both:
+
+```bash
+# /etc/reboot-remote/api.env
+UPDATE_SIGNING_KEY_FINGERPRINT=0123456789ABCDEF0123456789ABCDEF01234567   # full fingerprint, not a key id
+UPDATE_GNUPGHOME=/etc/reboot-remote/release-keyring                     # used for nothing else
+```
+
+```bash
+sudo install -d -m 700 -o reboot -g reboot /etc/reboot-remote/release-keyring
+sudo -u reboot gpg --homedir /etc/reboot-remote/release-keyring --import release-key.asc
+sudo -u reboot gpg --homedir /etc/reboot-remote/release-keyring --fingerprint   # compare out of band
+```
+
+The tag is checked with `git verify-tag --raw` against that keyring, and gpg's
+status lines must show exactly one good, valid signature whose key (or primary
+key) is the pinned fingerprint; an expired or revoked key is refused. Without
+both settings the About page says why in-app updates are unavailable. Or update
 manually.
 
 

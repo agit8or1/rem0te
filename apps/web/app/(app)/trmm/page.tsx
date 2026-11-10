@@ -124,7 +124,7 @@ function TrmmLanding() {
     }
     try {
       const res = await endpointsApi.connect(endpointId);
-      const info = res.data?.data as { rustdeskId?: string; password?: string | null; sessionId?: string } | undefined;
+      const info = res.data?.data as { rustdeskId?: string; sessionId?: string } | undefined;
       if (!info?.rustdeskId) {
         toast({
           title: 'Computer not ready',
@@ -132,9 +132,6 @@ function TrmmLanding() {
           variant: 'destructive',
         });
         return;
-      }
-      if (info.password) {
-        try { await navigator.clipboard.writeText(info.password); } catch { /* ignore */ }
       }
       // Connect already created the session; hand it to the script so it is
       // reused rather than a second one created.

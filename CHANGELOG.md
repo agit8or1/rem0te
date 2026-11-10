@@ -5,6 +5,60 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.30.1] — 2026-11-10 · *Plumbline*
+
+### Security
+
+- Security hardening.
+
+### Changed
+
+- **Connect asks you to confirm it is you** (step-up) when the launch uses the computer's password, once per
+  10 minutes, as revealing the password already did. The password is no longer part of the Connect response.
+- **With an authenticator enrolled, step-up needs its code or a passkey**; the password alone is refused. A session
+  that began before the authenticator was enrolled must sign in again before revealing a computer's password.
+- **Audit entries cannot be changed once written** (migration `0029_audit_insert_only`), not only once sealed.
+- **CI runs every end-to-end suite** in a new `e2e` job against a disposable Postgres (`scripts/run-e2e.sh`).
+
+### Fixed
+
+Three bugs that running every suite in sequence on one fresh database turned up:
+
+- **An alert raised before any notification policy existed waited up to an hour after a policy was set.** With no
+  policy, the sweep parks an open alert for its hourly recheck; saving a policy cleared the policy cache but left
+  the alert parked, so the first notification arrived late. Saving a policy now re-arms open, unsuppressed alerts
+  in its scope (the escalation claim still prevents a second send). The monitoring suite's delivery check failed
+  roughly one run in two, depending on whether a 2-second sweep landed before the test set its policy; it now
+  waits for the alert to be parked first, so it fails every time without the fix.
+- **A staged rollout could plan a fleet batch made only of skipped computers.** Skipped computers (non-Windows,
+  no device secret, already on target) took a batch slot, and batches followed whatever order the database
+  returned. The plan is now ordered by computer name and skipped computers take no slot. Symptom: a rollout
+  whose batch 1 "succeeded" without updating anything, and an e2e check that failed on some runs only.
+- **`rem0te-audit verify-export --pub` reported every checkpoint written before a checkpoint key was configured**
+  as `checkpoint_signature`, so turning signing on left the export failing for good. Unsigned checkpoints anchor
+  nothing; they are now counted and shown (as the database check already treated them), and a checkpoint whose
+  signature does not verify is still a problem.
+
+### Upgrade notes
+
+- **Schema change:** `prisma migrate deploy`, rsync `prisma/`, `npx prisma generate` at the target. No dependency
+  changes.
+- **In-app updates now need two settings,** or the About page reports them unavailable:
+  `UPDATE_SIGNING_KEY_FINGERPRINT` (the release key's full fingerprint) and `UPDATE_GNUPGHOME` (a keyring used only
+  for it). See `docs/setup.md`, "In-app updates are off by default".
+- Turning on off-host audit export and signed checkpoints is now written up step by step in `docs/containment.md`.
+
+### Verification
+
+- New: `apps/api/scripts/e2e-credentials.mjs` (44 checks) and `apps/api/scripts/unit-update-signing.mjs` (16, with
+  real gpg keys and a signed tag; in CI). Invariants §19 (10 checks), each confirmed to fail when its guard is
+  removed.
+- `e2e-security-features`, `e2e-presets`, `e2e-full` and `e2e-candidate-password` updated for the new Connect
+  behaviour.
+- `scripts/run-e2e.sh` also runs 0.30.0's `e2e-ticket-workflow` (with `RELEASE_BIN`), so the CI `e2e` job covers it.
+- Regression checks for the three fixes: `e2e-monitoring` (108), `e2e-rollouts` (46) and `unit-audit-chain` (35);
+  each new check fails on 0.29.0's build.
+
 ## [0.30.0] — 2026-11-10 · *Plumbline*
 
 **Patch status you can trust, and a ticket integration whose contract is pinned down and tested end to end.**

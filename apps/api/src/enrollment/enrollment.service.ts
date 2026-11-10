@@ -221,6 +221,7 @@ export class EnrollmentService {
     // heartbeat no longer binds one on first sight. Falls through to the
     // update path below, which upserts the node by endpoint.
     const reEnrolling = !!existingNode && !!record.endpointId && existingNode.endpointId === record.endpointId;
+    let adoptedEndpointId: string | null = null;
 
     if (existingNode && !reEnrolling) {
       // One message for every refusal: the installer only needs to know it
@@ -240,34 +241,12 @@ export class EnrollmentService {
         throw new BadRequestException(`RustDesk ID ${dto.rustdeskId} cannot be enrolled with this token`);
       }
       if (!record.endpointId) {
-        // Adopt the unassigned node/endpoint into the token's business
-        await this.prisma.rustdeskNode.update({
-          where: { id: existingNode.id },
-          data: {
-            tenantId: record.tenantId,
-            ...(dto.agentSecret
-              ? { agentSecretHash: this.hashSecret(dto.agentSecret), agentSecretSetAt: new Date() }
-              : {}),
-          },
-        });
-        await this.prisma.endpoint.update({
-          where: { id: existingNode.endpointId },
-          data: { tenantId: record.tenantId, status: 'ACTIVE' },
-        });
-        await this.prisma.deviceClaimToken.update({
-          where: { id: record.id },
-          data: { endpointId: existingNode.endpointId },
-        });
-        const endpoint = await this.prisma.endpoint.findUnique({ where: { id: existingNode.endpointId } });
-        await this.audit.log({
-          tenantId: record.tenantId,
-          action: 'ENDPOINT_CLAIMED',
-          resource: 'endpoint',
-          resourceId: existingNode.endpointId,
-          actorIp: claimedByIp,
-          meta: { rustdeskId: dto.rustdeskId, hostname: dto.hostname },
-        });
-        return { endpoint, tenantId: record.tenantId };
+        // Adopt the unassigned node/endpoint into the token's business. It
+        // takes the same path as a re-enrolment below, so the token's
+        // business, group, access mode, assigned users, password and hostname
+        // all apply — returning early here used to leave the adopted computer
+        // with only a tenant, outside the business the token was minted for.
+        adoptedEndpointId = existingNode.endpointId;
       } else {
         // Token has endpointId — delete the unassigned duplicate and proceed with normal token flow
         await this.prisma.rustdeskNode.delete({ where: { id: existingNode.id } });
@@ -275,8 +254,9 @@ export class EnrollmentService {
       }
     }
 
-    let endpoint = record.endpointId
-      ? await this.prisma.endpoint.findUnique({ where: { id: record.endpointId } })
+    const boundEndpointId = record.endpointId ?? adoptedEndpointId;
+    let endpoint = boundEndpointId
+      ? await this.prisma.endpoint.findUnique({ where: { id: boundEndpointId } })
       : null;
 
     if (endpoint) {
@@ -291,6 +271,9 @@ export class EnrollmentService {
           lastSeenAt: new Date(),
           isOnline: true,
           status: 'ACTIVE',
+          tenantId: record.tenantId,
+          // A pooled computer was named by its own heartbeat; name it as a fresh enrolment would.
+          ...(adoptedEndpointId && dto.hostname ? { name: dto.hostname } : {}),
           ...(record.customerId ? { customerId: record.customerId } : {}),
           ...(record.endpointGroupId ? { endpointGroupId: record.endpointGroupId } : {}),
           accessMode: record.accessMode,
@@ -344,6 +327,7 @@ export class EnrollmentService {
         ...(encryptedPassword ? { permanentPassword: encryptedPassword } : {}),
       },
       update: {
+        tenantId: record.tenantId,
         rustdeskId: dto.rustdeskId,
         hostname: dto.hostname ?? undefined,
         platform: dto.platform ?? undefined,
@@ -405,6 +389,7 @@ export class EnrollmentService {
         customerId: record.customerId,
         accessMode: record.accessMode,
         assignedUsers: record.assignedUserIds.length,
+        ...(adoptedEndpointId ? { adoptedFromPool: true } : {}),
       },
     });
 

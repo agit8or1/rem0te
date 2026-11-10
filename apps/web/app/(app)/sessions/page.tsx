@@ -122,13 +122,10 @@ export default function SessionsPage() {
   const connectMutation = useMutation({
     mutationFn: (endpointId: string) => endpointsApi.connect(endpointId),
     onSuccess: async (res, endpointId) => {
-      const info = res.data?.data as { rustdeskId?: string; password?: string | null; sessionId?: string | null } | undefined;
+      const info = res.data?.data as { rustdeskId?: string; sessionId?: string | null } | undefined;
       if (!info?.rustdeskId) {
         toast({ title: 'Computer not ready', description: 'This computer has not finished enrollment.', variant: 'destructive' });
         return;
-      }
-      if (info.password) {
-        try { await navigator.clipboard.writeText(info.password); } catch { /* ignore */ }
       }
       const url = endpointsApi.connectScriptUrl(endpointId);
       window.location.href = info.sessionId ? `${url}?session=${encodeURIComponent(info.sessionId)}` : url;

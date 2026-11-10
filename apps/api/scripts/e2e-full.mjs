@@ -13,7 +13,8 @@
 //      for John, and has an encrypted permanentPassword.
 //   7. Logs in as John.
 //   8. GET /endpoints/mine returns the new computer.
-//   9. POST /endpoints/:id/connect returns { rustdeskId, password }.
+//   9. POST /endpoints/:id/connect needs a step-up, returns { rustdeskId, grantToken }
+//      and never the password; the launcher grant redeems to the decrypted password.
 //  10. Cleans up.
 //
 // If any step fails, exits non-zero.
@@ -161,13 +162,21 @@ try {
   log('john /endpoints/mine', mine, Array.isArray(mine.body?.data) && mine.body.data.some((e) => e.id === endpointId));
   assert(Array.isArray(mine.body?.data) && mine.body.data.some((e) => e.id === endpointId), 'John does not see the assigned computer');
 
-  // 9. Connect — returns rustdeskId + password
-  const connect = await req('POST', `/endpoints/${endpointId}/connect`, {}, johnCookie);
+  // 9. Connect — a launch that carries the password needs a fresh step-up,
+  // and returns a single-use launcher grant, never the password itself.
+  const bare = await req('POST', `/endpoints/${endpointId}/connect`, {}, johnCookie);
+  assert(bare.status === 403 && bare.body?.code === 'STEP_UP_REQUIRED', `connect without step-up should be 403 STEP_UP_REQUIRED, got ${bare.status}`);
+  const up = await req('POST', '/auth/step-up', { password: johnPw }, johnCookie);
+  const stepCookie = (up.setCookie.match(/step_up=[^;]+/) ?? [])[0];
+  assert(up.status === 200 && stepCookie, 'step-up failed');
+  const connect = await req('POST', `/endpoints/${endpointId}/connect`, {}, `${johnCookie}; ${stepCookie}`);
   log('john connect', connect, connect.status === 200);
   assert(connect.status === 200, 'connect failed');
   assert(connect.body?.data?.rustdeskId === rustdeskId, 'connect returned wrong rustdeskId');
-  assert(connect.body?.data?.password === 'endpoint-generated-pw-abc123', 'connect returned wrong password');
-  console.log('  ✓ Connect returned correct rustdeskId + decrypted password');
+  assert(!('password' in (connect.body?.data ?? {})), 'connect returned a password field');
+  const redeemed = await req('POST', '/endpoints/grants/redeem', { token: connect.body?.data?.grantToken });
+  assert(redeemed.status === 200 && redeemed.body?.data?.password === 'endpoint-generated-pw-abc123', 'grant did not redeem to the decrypted password');
+  console.log('  ✓ Connect returned the rustdeskId and a grant (no password); the grant redeemed to the decrypted password');
 
   console.log('\n✓ FULL END-TO-END PROOF PASSED');
 } catch (err) {

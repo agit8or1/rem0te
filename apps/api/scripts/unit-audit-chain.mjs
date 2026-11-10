@@ -104,6 +104,11 @@ check('a non-Ed25519 key is refused', threw);
 { const lines = exportOf(rows).trim().split('\n').map((l) => JSON.parse(l)); lines[3].entry = lines[3].entry.replace('USER_LOGIN', 'USER_LOGOUT'); const x = c.verifyExport(lines.map((l) => JSON.stringify(l)).join('\n')); check('an edited export entry is detected', !x.ok && x.problems.some((p) => p.seq === lines[3].seq)); }
 { const x = c.verifyExport(exportOf(rows, [{ ...cp, hash: 'f'.repeat(64) }])); check('export checkpoint mismatch detected', x.problems.some((p) => p.kind === 'checkpoint_mismatch')); }
 { const x = c.verifyExport(exportOf(rows, [cp]), generateKeyPairSync('ed25519').publicKey); check('export checkpoint under the wrong key detected', x.problems.some((p) => p.kind === 'checkpoint_signature')); }
+// A checkpoint written before a key was configured carries no signature: it is
+// counted, not a problem (as in the database check) — a key turned on later
+// must not leave the export failing for good. A bad signature still fails.
+{ const x = c.verifyExport(exportOf(rows, [{ ...cp, keyId: null, signature: null }, cp]), publicKey); check('an unsigned (pre-key) checkpoint is counted, not a problem', x.ok && x.unsignedCheckpoints === 1, JSON.stringify(x.problems)); }
+{ const x = c.verifyExport(exportOf(rows, [{ ...cp, signature: Buffer.alloc(64).toString('base64') }]), publicKey); check('a checkpoint with a signature that does not verify is still a problem', x.problems.some((p) => p.kind === 'checkpoint_signature')); }
 { const lines = exportOf(rows).trim().split('\n'); const x = c.verifyExport(lines.slice(4).join('\n')); check('an export that starts mid-chain is checked from its first entry', x.ok && x.startSeq === '6' && x.entries === 3, JSON.stringify(x.problems)); }
 { const lines = exportOf(rows).trim().split('\n'); const x = c.verifyExport([...lines.slice(0, 2), ...lines.slice(3)].join('\n')); check('a dropped line mid-file is still detected', !x.ok); }
 // The point of the export: a full database rewrite still differs from it.

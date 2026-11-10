@@ -143,6 +143,11 @@ tenant-isolation, password-leak, and rustdesk-node scoping fixes. Run with
   The plaintext password is only reachable through the dedicated audited
   route `GET /endpoints/:id/password`, which now requires MFA-verified
   sessions, is throttled, and emits `ENDPOINT_PASSWORD_REVEALED`.
+  *(Updated 0.30.1.)* The same release also happens in the Connect script
+  (`GET /endpoints/:id/connect.cmd`) and to the desktop launcher when it redeems
+  a single-use grant. Both now need the same step-up and MFA check as the
+  route above, and are recorded as `ENDPOINT_PASSWORD_REVEALED` before the
+  password leaves; `POST /endpoints/:id/connect` itself never returns it.
 - **Regression test**: asserts the response has `hasPassword=true` and
   no `permanentPassword` field.
 

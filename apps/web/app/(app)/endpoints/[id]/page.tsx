@@ -69,8 +69,8 @@ export default function EndpointDetailPage() {
       notesApi.list({ endpointId: id }).then((r) => r.data?.data ?? []),
   });
 
-  // Prefer the direct browser-launch path (rustdesk:// with password) — one click
-  // for anyone with access, and does not require the desktop launcher.
+  // One click: POST :id/connect (step-up when the launch carries the
+  // computer's password), then the Connect script, which carries it.
   // v0.23: a refusal that a temporary grant would lift opens the request form.
   const [grantRequired, setGrantRequired] = useState<string | null>(null);
   const launchMutation = useMutation({
@@ -78,7 +78,7 @@ export default function EndpointDetailPage() {
     onSuccess: async (res, mode) => {
       setGrantRequired(null);
       const info = res.data?.data as {
-        rustdeskId?: string; password?: string | null; sessionId?: string | null;
+        rustdeskId?: string; hasPassword?: boolean; sessionId?: string | null;
         mode?: string; accessPath?: string; maxSessionMinutes?: number | null;
       } | undefined;
       const rdId = info?.rustdeskId;
@@ -86,10 +86,9 @@ export default function EndpointDetailPage() {
         toast({ title: 'Computer not ready', description: 'This computer has not finished enrollment.', variant: 'destructive' });
         return;
       }
-      const pw = info?.password ?? null;
-      if (pw) {
-        try { await navigator.clipboard.writeText(pw); } catch { /* ignore */ }
-      }
+      // The browser never receives the password (0.30.1): the Connect script
+      // carries it, released after the step-up POST :id/connect just asked for.
+      const pw = info?.hasPassword === true;
       // A preset-backed launch never releases the permanent password. The
       // shipped endpoint configuration accepts only that password
       // (verification-method = use-permanent-password), so nothing will prompt

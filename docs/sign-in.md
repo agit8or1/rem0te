@@ -45,9 +45,13 @@ The relying party is the web app's address: `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGI
 
 Some actions need you to confirm it is you, even with a valid session: re-enter your password, a TOTP code, or use a passkey. The confirmation lasts 10 minutes and applies only to the sign-in it was made in.
 
+**With an authenticator enrolled, the password alone is not accepted (0.30.1).** Use the authenticator code or a passkey; the API answers `401 TOTP_REQUIRED` to a password, and the dialog offers only the code. Otherwise a stolen session plus a known password would be enough.
+
+**A session remembers whether its sign-in passed a second factor.** A sign-in that went through the authenticator, or a passkey sign-in, is MFA-verified; a password or SSO sign-in by someone with no authenticator is not. Revealing a computer's password needs an MFA-verified session from anyone who has an authenticator, so a session that began before the authenticator was enrolled must sign in again (`403 MFA_REQUIRED`).
+
 | Action | Protects |
 |---|---|
-| `credential.reveal` | revealing a computer's stored RustDesk password |
+| `credential.reveal` | revealing a computer's stored RustDesk password, and any Connect that releases it (the launcher grant or the Connect script) |
 | `permissions.change` | changing a user's permissions or level, approving technician access, offboarding |
 | `technicians.manage` | technician assignments, groups and platform permissions |
 | `sso.configure` | SSO provider changes; linking and unlinking your own SSO identity |

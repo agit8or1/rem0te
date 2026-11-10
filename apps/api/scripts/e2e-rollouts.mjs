@@ -129,6 +129,7 @@ try {
   const F3 = await device(T, biz.id, 'ro-f3');
   const L1 = await device(T, biz.id, 'ro-linux', { platform: 'linux' });
   const N1 = await device(T, biz.id, 'ro-nosecret', { secret: false });
+  const Z1 = await device(T, biz.id, 'ro-zulu');
   const cAdmin = await login(admin.email);
   const cOwner = await login(owner.email);
 
@@ -164,6 +165,15 @@ try {
   r = await req('POST', '/admin/rollouts', { cookie: cAdmin, body: { name: `dup-${sfx}`, component: 'RUSTDESK', targetVersion: TARGET, endpointIds: [P1.id], allowSignatureOnly: true } });
   if (r.status === 201) created.rollouts.push(r.body.data.id);
   check(r.status === 201 && r.body.data.jobs[0].status === 'SKIPPED' && /already_in_another_rollout/.test(r.body.data.jobs[0].failureReason), 'a computer already in a rollout is skipped by a second one', j(r.body?.data?.jobs?.[0]));
+
+  // Skipped computers take no batch slot, and the plan does not depend on the
+  // order the database happens to return rows in: 'ro-zulu' sorts after the
+  // two skipped computers, and must still be in the first fleet batch.
+  r = await req('POST', '/admin/rollouts', { cookie: cAdmin, body: { name: `skip-${sfx}`, component: 'RUSTDESK', targetVersion: TARGET, endpointIds: [N1.id, Z1.id, L1.id], batchSize: 1, allowSignatureOnly: true } });
+  if (r.status === 201) created.rollouts.push(r.body.data.id);
+  const zj = r.body?.data?.jobs?.find((x) => x.endpointId === Z1.id);
+  check(r.status === 201 && zj?.status === 'REQUESTED' && zj.batch === 1, 'skipped computers take no batch slot', j(r.body?.data?.jobs?.map((x) => [x.status, x.batch])));
+  if (r.status === 201) { await req('POST', `/admin/rollouts/${r.body.data.id}/cancel`, { cookie: cAdmin }); }
 
   let hb = await beat(P1);
   check(!hb.updateRustdesk, 'nothing dispatched before start', j(hb.updateRustdesk));

@@ -36,7 +36,10 @@ Rem0te does not restrict those defaults on the endpoint, and it does not record 
 When the portal says yes, it does one of two things:
 
 - releases the computer's **permanent password** (Business Owners, Business Users, custom technician
-  assignments, Platform Admins);
+  assignments, Platform Admins). Since 0.30.1 it is never in the Connect response itself: it travels in the
+  Connect script or a single-use launcher grant, either needs a fresh step-up (`credential.reveal`), and each
+  release is recorded as `ENDPOINT_PASSWORD_REVEALED` before the password leaves — if that record cannot be
+  written, the release is refused;
 - or, for preset-backed technicians, releases a **90-second, single-use grant** that never carries the
   password.
 
@@ -71,7 +74,7 @@ Either one is permission to launch, nothing more. Two things follow:
 | Dana | Clicks Connect on **Acme's** FRONTDESK | **403 `TEMPORARY_GRANT_REQUIRED`**: L2 control needs a temporary grant, approved by someone else and activated with fresh authentication | `CONNECTION_GRANT_DENIED` / `PRIVILEGED_WORK_DENIED` |
 | Dana | Same, with an activated grant | **403 `ENDPOINT_CANNOT_ENFORCE_CONSENT`**: policy requires the user's consent, and no shipped endpoint can enforce it | as above |
 | Dana | Clicks View only | **403 `ENDPOINT_CANNOT_ENFORCE_VIEW_ONLY`** | as above |
-| Pat | Clicks Connect on Acme's FRONTDESK | The password and a Connect script are released, and the session record starts | `ENDPOINT_PASSWORD_REVEALED` (via connect), `CONNECTION_GRANT_CREATED`, `SESSION_LAUNCHED`, then state changes |
+| Pat | Clicks Connect on Acme's FRONTDESK, confirms it is them (step-up) | A Connect script carrying the password is released, and the session record starts | `CONNECTION_GRANT_CREATED`, `ENDPOINT_PASSWORD_REVEALED` (via connect_script, or via launcher when a launcher grant is redeemed), `SESSION_LAUNCHED`, then state changes |
 | Pat | Tries Birch's FRONTDESK | **404**, as for Dana | `CONNECTION_GRANT_DENIED` |
 
 So, on endpoints as shipped, a **preset-backed technician cannot open an interactive session at all**. The

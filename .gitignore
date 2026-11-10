@@ -44,3 +44,6 @@ storage-state*.json
 
 # Python bytecode (scripts/clientst0r-interop)
 __pycache__/
+
+# scripts/run-e2e.sh output
+/.e2e-logs/

@@ -5,6 +5,7 @@ import * as https from 'https';
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
+import { checkTagSignature, normalizeFingerprint } from './tag-signature';
 import { Subject } from 'rxjs';
 import { latestRustdeskVersion } from '../common/rustdesk-release';
 import { compareVersions } from '../common/agent-contract';
@@ -275,7 +276,27 @@ export class UpdateService {
         reason: `SOURCE_DIR (${this.sourceDir}) is not a git checkout, so there is nothing to fetch a release into.`,
       };
     }
+    const key = this.releaseKey();
+    if (!key.ok) return { ready: false, reason: key.reason };
     return { ready: true, reason: null };
+  }
+
+  /**
+   * The pinned release signing key: its fingerprint (UPDATE_SIGNING_KEY_FINGERPRINT)
+   * and a keyring that exists only for verifying releases (UPDATE_GNUPGHOME).
+   * Without both, the updater does not run — the service account's own
+   * keyring trusts whatever has ever been imported into it.
+   */
+  private releaseKey(): { ok: true; fingerprint: string; gnupgHome: string } | { ok: false; reason: string } {
+    const fingerprint = normalizeFingerprint(process.env.UPDATE_SIGNING_KEY_FINGERPRINT);
+    const gnupgHome = process.env.UPDATE_GNUPGHOME;
+    if (!fingerprint) {
+      return { ok: false, reason: 'UPDATE_SIGNING_KEY_FINGERPRINT is not set to a full key fingerprint. Pin the release signing key before enabling in-app updates.' };
+    }
+    if (!gnupgHome || !path.isAbsolute(gnupgHome) || !fs.existsSync(gnupgHome)) {
+      return { ok: false, reason: 'UPDATE_GNUPGHOME must name an existing directory holding only the release signing key (a keyring used for nothing else).' };
+    }
+    return { ok: true, fingerprint, gnupgHome };
   }
 
   /**
@@ -354,15 +375,20 @@ export class UpdateService {
         // installed or the tag is unsigned, refuse — better to fail than blindly
         // build attacker-controlled code with elevated privileges.
         emit('verify', `Verifying tag signature…`, 22);
-        try {
-          await this.runProc('git', ['tag', '--verify', tag], emit, 'verify', 22, 24);
-        } catch {
+        const key = this.releaseKey();
+        if (!key.ok) { fail('verify', `Refusing to apply update — ${key.reason}`); return; }
+        // A dedicated keyring and the pinned fingerprint: a signature from any
+        // other key — one imported into some keyring for another reason — is
+        // refused. gpg's status lines are checked, not just its exit code.
+        const out = await this.capture('git', ['-c', 'gpg.program=gpg', '-c', 'gpg.format=openpgp', 'verify-tag', '--raw', tag], { GNUPGHOME: key.gnupgHome });
+        const verdict = out.code === 0 ? checkTagSignature(out.stderr, key.fingerprint) : { ok: false as const, reason: 'the tag is unsigned or its signature does not verify' };
+        if (!verdict.ok) {
           fail('verify',
-            `Refusing to apply update — tag ${tag} is unsigned or the signature is not trusted. ` +
-            `Either sign releases with git tag -s and add the maintainer key to the server's GPG keyring, ` +
-            `or update the server manually.`);
+            `Refusing to apply update — tag ${tag}: ${verdict.reason}. ` +
+            `Releases must be signed (git tag -s) by the key pinned in UPDATE_SIGNING_KEY_FINGERPRINT; otherwise update the server manually.`);
           return;
         }
+        emit('verify', `Tag ${tag} is signed by the pinned release key ${verdict.signer}`, 24);
 
         emit('checkout', `Checking out ${tag}…`, 25);
         await this.runProc('git', ['checkout', tag], emit, 'checkout', 25, 40);
@@ -430,6 +456,18 @@ export class UpdateService {
     })();
 
     return subject;
+  }
+
+  /** Run a command and collect its output; never throws for a non-zero exit. */
+  private capture(cmd: string, args: string[], env: Record<string, string>): Promise<{ code: number | null; stdout: string; stderr: string }> {
+    return new Promise((resolve) => {
+      const proc = spawn(cmd, args, { cwd: this.sourceDir ?? this.projectRoot, shell: false, env: { ...process.env, ...env } });
+      let stdout = '', stderr = '';
+      proc.stdout.on('data', (d: Buffer) => { if (stdout.length < 65_536) stdout += d.toString(); });
+      proc.stderr.on('data', (d: Buffer) => { if (stderr.length < 65_536) stderr += d.toString(); });
+      proc.on('close', (code) => resolve({ code, stdout, stderr }));
+      proc.on('error', () => resolve({ code: null, stdout, stderr }));
+    });
   }
 
   private runProc(

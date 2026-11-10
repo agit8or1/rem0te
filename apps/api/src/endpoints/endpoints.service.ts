@@ -36,6 +36,13 @@ export interface ConnectOptions {
   /** Count this as a launch against the fleet limits, from this entry point. */
   admit?: AdmitRequest['entryPoint'];
   stage?: 'authorize' | 'grant' | 'connect' | 'redeem' | 'launcher_issue' | 'launcher_redeem';
+  /**
+   * Called once the launch is allowed and before it is counted, with whether
+   * it would release this computer's permanent password. The routes use it to
+   * demand a fresh step-up for that — the same one Reveal needs — so a
+   * refusal there neither counts a launch nor mints anything.
+   */
+  credentialGate?: () => Promise<void>;
 }
 export type ConnectDecision =
   | { ok: true; mode: LaunchMode; revealCredential: boolean; path: string; maxSessionMinutes: number | null }
@@ -536,6 +543,11 @@ export class EndpointsService {
     return endpoint;
   }
 
+  /** Whether this person has an active authenticator (TOTP) enrolled. */
+  async userHasMfa(userId: string): Promise<boolean> {
+    return (await this.prisma.userMfaMethod.count({ where: { userId, type: 'TOTP', isActive: true } })) > 0;
+  }
+
   async getPassword(actor: ActorContext, id: string): Promise<string | null> {
     const endpoint = await this.assertPasswordAccess(actor, id);
 
@@ -544,7 +556,7 @@ export class EndpointsService {
     });
     if (!node?.permanentPassword) return null;
 
-    await this.audit.log({
+    await this.audit.logOrFail({
       tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
       actorId: actor.userId, actorIp: actor.ip,
       action: 'ENDPOINT_PASSWORD_REVEALED', resource: 'endpoint', resourceId: id,
@@ -677,6 +689,11 @@ export class EndpointsService {
       return { ok: false, reason: decision.reason, message: decision.message, status: decision.status };
     }
 
+    if (opts.credentialGate && decision.revealCredential) {
+      const node = await this.prisma.rustdeskNode.findUnique({ where: { endpointId }, select: { permanentPassword: true } });
+      if (node?.permanentPassword) await opts.credentialGate();
+    }
+
     // Count it, atomically, against the identity's fleet limits — once per
     // launch, at the point the launch credential is minted.
     if (opts.admit) {
@@ -723,8 +740,8 @@ export class EndpointsService {
    * holds the opaque token; the launcher redeems it over authenticated HTTPS
    * to obtain the actual RustDesk credentials.
    */
-  async createConnectionGrant(actor: ActorContext, endpointId: string, mode: LaunchMode = 'control') {
-    const authz = await this.authorizeConnect(actor, endpointId, { mode, admit: 'ui', stage: 'grant' });
+  async createConnectionGrant(actor: ActorContext, endpointId: string, mode: LaunchMode = 'control', credentialGate?: () => Promise<void>) {
+    const authz = await this.authorizeConnect(actor, endpointId, { mode, admit: 'ui', stage: 'grant', credentialGate });
     if (!authz.ok) {
       await this.audit.log({
         tenantId: actor.tenantId ?? undefined, customerId: actor.businessId ?? undefined,
@@ -756,7 +773,7 @@ export class EndpointsService {
       select: { id: true, expiresAt: true },
     });
 
-    await this.audit.log({
+    await this.audit.logOrFail({
       tenantId: endpoint?.tenantId ?? undefined, customerId: endpoint?.customerId ?? undefined,
       actorId: actor.userId, actorIp: actor.ip,
       action: 'CONNECTION_GRANT_CREATED', resource: 'connection_grant', resourceId: grant.id,
@@ -822,12 +839,20 @@ export class EndpointsService {
       data: { usedAt: new Date(), usedByIp: actorIp ?? null },
     });
     if (claimed.count === 0) throw new NotFoundException('Grant already used');
-    await this.audit.log({
+    await this.audit.logOrFail({
       tenantId: grant.tenantId, customerId: grant.endpoint.customerId ?? undefined,
       actorId: grant.userId, actorIp,
       action: 'CONNECTION_GRANT_REDEEMED', resource: 'connection_grant', resourceId: grant.id,
       meta: { endpointId: grant.endpointId, mode: grant.launchMode, credentialReleased: !!password },
     });
+    if (password) {
+      await this.audit.logOrFail({
+        tenantId: grant.tenantId, customerId: grant.endpoint.customerId ?? undefined,
+        actorId: grant.userId, actorIp,
+        action: 'ENDPOINT_PASSWORD_REVEALED', resource: 'endpoint', resourceId: grant.endpointId,
+        meta: { via: 'launcher', grantId: grant.id, mode: grant.launchMode },
+      });
+    }
 
     return {
       rustdeskId: rdId,
@@ -859,7 +884,16 @@ export class EndpointsService {
    */
   async connectInfo(
     actor: ActorContext, endpointId: string,
-    opts: { reuseSessionId?: string; supportRequestId?: string; mode?: LaunchMode; admit?: boolean } = {},
+    opts: {
+      reuseSessionId?: string; supportRequestId?: string; mode?: LaunchMode; admit?: boolean;
+      /**
+       * Hand over the permanent password. Only the Connect script asks, and
+       * only behind credentialGate; POST :id/connect never does — the browser
+       * gets a single-use launcher grant instead.
+       */
+      releaseCredential?: boolean;
+      credentialGate?: () => Promise<void>;
+    } = {},
   ) {
     const mode = opts.mode ?? 'control';
     // A Connect script reusing the session its own click created is the same
@@ -874,13 +908,16 @@ export class EndpointsService {
       });
       if (prior) admit = false;
     }
-    const authz = await this.authorizeConnect(actor, endpointId, { mode, admit: admit ? 'ui' : undefined, stage: 'connect' });
+    const authz = await this.authorizeConnect(actor, endpointId, {
+      mode, admit: admit ? 'ui' : undefined, stage: 'connect',
+      credentialGate: opts.releaseCredential ? opts.credentialGate : undefined,
+    });
     if (!authz.ok) {
       await this.audit.log({
         tenantId: actor.tenantId ?? undefined, customerId: actor.businessId ?? undefined,
         actorId: actor.userId, actorIp: actor.ip,
-        action: 'ENDPOINT_PASSWORD_REVEALED', resource: 'endpoint', resourceId: endpointId,
-        meta: { denied: authz.reason },
+        action: opts.releaseCredential ? 'ENDPOINT_PASSWORD_REVEALED' : 'CONNECTION_GRANT_DENIED', resource: 'endpoint', resourceId: endpointId,
+        meta: { denied: authz.reason, stage: 'connect' },
       });
       this.refuse(authz);
     }
@@ -896,17 +933,20 @@ export class EndpointsService {
       throw new NotFoundException('Computer is not yet enrolled to accept connections');
     }
 
-    const password = authz.revealCredential && endpoint.rustdeskNode.permanentPassword
-      ? this.decryptPassword(endpoint.rustdeskNode.permanentPassword)
-      : null;
-
-    if (password) {
-      await this.audit.log({
+    // Whether this launch carries the password, and — only when the caller
+    // asked and passed the gate — the password itself. The reveal is
+    // recorded before it is decrypted for the response, and a failed record
+    // refuses the request.
+    const credentialAvailable = authz.revealCredential && !!endpoint.rustdeskNode.permanentPassword;
+    let password: string | null = null;
+    if (credentialAvailable && opts.releaseCredential) {
+      await this.audit.logOrFail({
         tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
         actorId: actor.userId, actorIp: actor.ip,
         action: 'ENDPOINT_PASSWORD_REVEALED', resource: 'endpoint', resourceId: endpointId,
-        meta: { via: 'connect', mode },
+        meta: { via: 'connect_script', mode },
       });
+      password = this.decryptPassword(endpoint.rustdeskNode.permanentPassword!);
     }
 
     // Record the launch as a session — ONE per Connect.
@@ -960,7 +1000,9 @@ export class EndpointsService {
     return {
       rustdeskId: endpoint.rustdeskNode.rustdeskId,
       password,
-      hasPassword: !!password,
+      // True when this launch can sign in with the computer's password: the
+      // Connect script will carry it (after step-up), as will a launcher grant.
+      hasPassword: credentialAvailable,
       mode,
       accessPath: authz.path,
       maxSessionMinutes: authz.maxSessionMinutes,

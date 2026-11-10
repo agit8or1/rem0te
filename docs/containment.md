@@ -123,6 +123,38 @@ doesn't prevent. A database superuser can still delete rows or drop the trigger,
 stopped. It cannot prove an event was ever logged. A checkpoint key on the host signs whatever the host says;
 its value is that the **public** key, kept elsewhere, pins checkpoints made before a compromise.
 
+### Turning on off-host export and signed checkpoints
+
+Neither is on until configured, and without them the chain detects tampering only as long as the host itself is
+trusted. To turn both on:
+
+1. **Make the checkpoint key** on the host, and copy the public key it prints somewhere the host cannot change
+   (your password manager, a ticket, the off-host log store):
+
+   ```bash
+   sudo -u reboot node /opt/reboot-remote/api/dist/cli/rem0te-audit.js keygen --out /etc/reboot-remote/audit-checkpoint.pem
+   sudo chmod 600 /etc/reboot-remote/audit-checkpoint.pem
+   ```
+2. **Choose a sink the portal host cannot rewrite**: an append-only mount or a log shipper's spool for
+   `AUDIT_EXPORT_FILE`, or an HTTPS collector for `AUDIT_EXPORT_URL` (with `AUDIT_EXPORT_TOKEN`).
+3. **Set them** in `/etc/reboot-remote/api.env`:
+
+   ```bash
+   AUDIT_CHECKPOINT_KEY_FILE=/etc/reboot-remote/audit-checkpoint.pem
+   AUDIT_EXPORT_FILE=/var/log/rem0te-audit/export.ndjson     # and/or AUDIT_EXPORT_URL=https://…
+   ```
+4. **Restart** the API (`sudo systemctl restart reboot-remote-api`). Within one checkpoint interval
+   (`AUDIT_CHECKPOINT_INTERVAL_SECONDS`, 15 minutes by default) **Settings → Security → Containment** (audit integrity) shows
+   checkpoints as signed, and the sink starts receiving entries.
+5. **Verify from elsewhere**, with the public key from step 1 saved as `audit-checkpoint.pub`:
+   `node dist/cli/rem0te-audit.js verify-export export.ndjson --pub audit-checkpoint.pub` (below).
+   Checkpoints written before the key was configured carry no signature; they are counted on the summary line
+   ("N unsigned, from before a checkpoint key was configured") and are not problems. A checkpoint that *has* a
+   signature which does not verify under the key is.
+
+Entries are insert-only from the moment they are written (0.30.1): the database refuses any change to an entry's
+content, sealed or not, except setting its business, tenant or actor to nothing when those are deleted.
+
 ### Configuration
 
 | Variable | Meaning |

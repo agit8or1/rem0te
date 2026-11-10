@@ -286,7 +286,7 @@ async function main() {
     report.push(`view-only on an endpoint with no enforcement report → ${vo.status} ${code(vo) ?? ''}`);
     await prisma.endpoint.update({ where: { id: eps['WS-A1'].id }, data: { sessionEnforcement: { viewOnly: true, attendedConsent: true, reportedAt: new Date().toISOString(), simulated: true } } });
     const vo2 = await req('POST', `/endpoints/${eps['WS-A1'].id}/connect?mode=view_only`, { s: T2, business: A });
-    check(vo2.status === 200 && vo2.body.data.password === null && vo2.body.data.mode === 'view_only', '[simulated enforcement] view-only allowed, and NO permanent password released', msg(vo2));
+    check(vo2.status === 200 && vo2.body.data.hasPassword === false && !('password' in vo2.body.data) && vo2.body.data.mode === 'view_only', '[simulated enforcement] view-only allowed, and NO permanent password released', msg(vo2));
     const srv = await req('POST', `/endpoints/${eps['SRV-A1'].id}/connect?mode=view_only`, { s: T2, business: A });
     check(srv.status === 403, 'view-only is for standard workstations only (server refused)', msg(srv));
     const ctl = await req('POST', `/endpoints/${eps['WS-A1'].id}/connect`, { s: T2, business: A });
@@ -316,7 +316,7 @@ async function main() {
     const act = await req('POST', `/security-controls/temporary-access/${rid}/activate`, { s: T2s, business: A });
     check(act.status === 200 && act.body.data.activatedAt, 'activated with fresh authentication', msg(act));
     const now = await req('POST', `/endpoints/${eps['WS-A1'].id}/connect`, { s: T2, business: A });
-    check(now.status === 200 && now.body.data.password === null && now.body.data.accessPath === 'preset', '[simulated consent] control allowed — and still no permanent password (no direct reconnect)', msg(now));
+    check(now.status === 200 && !('password' in now.body.data) && now.body.data.hasPassword === false && now.body.data.accessPath === 'preset', '[simulated consent] control allowed — and still no permanent password (no direct reconnect)', msg(now));
     const elsewhere = await req('POST', `/endpoints/${eps['WS-A2'].id}/connect`, { s: T2, business: A });
     check(elsewhere.status === 403, 'the grant covers that one computer only', msg(elsewhere));
     // Session expiry.
@@ -329,7 +329,7 @@ async function main() {
   {
     await prisma.endpoint.update({ where: { id: eps['SRV-A1'].id }, data: { sessionEnforcement: { viewOnly: true, attendedConsent: true, simulated: true } } });
     const vo = await req('POST', `/endpoints/${eps['SRV-A1'].id}/connect?mode=view_only`, { s: T3, business: A });
-    check(vo.status === 200 && vo.body.data.password === null, '[simulated] view-only on a server', msg(vo));
+    check(vo.status === 200 && vo.body.data.hasPassword === false && !('password' in vo.body.data), '[simulated] view-only on a server', msg(vo));
     const ctl = await req('POST', `/endpoints/${eps['SRV-A1'].id}/connect`, { s: T3, business: A });
     check(ctl.status === 403 && /TEMPORARY_GRANT_REQUIRED/.test(msg(ctl)), 'control only by temporary grant', msg(ctl));
     const el = await req('POST', '/security-controls/temporary-access', { s: T3, business: A, body: { endpointId: eps['SRV-A1'].id, mode: 'ELEVATION', reason: 'needs admin rights', durationMinutes: 15 } });
@@ -354,9 +354,13 @@ async function main() {
     check(insp5.body.data?.decision === 'allowed', 'inspector: event_logs on WS-A5 allowed, naming the group grant', msg(insp5));
     const duA = await req('POST', `/endpoints/${eps['WS-A2'].id}/connect`, { s: DU, business: A });
     check(duA.status === 403, 'dual user acting in A as L1: no control, despite computers:connect in their own business', msg(duA));
-    const duB = await req('POST', `/endpoints/${eps['FRONTDESK-01-B'].id}/connect`, { s: DU, business: B });
-    check(duB.status === 200 && typeof duB.body.data.password === 'string', 'dual user in their own business B: unchanged member behaviour', msg(duB));
-    const custom = await req('POST', `/endpoints/${eps['WS-A3'].id}/connect`, { s: TC, business: A });
+    // 0.30.1: a member launch carries the password, so it needs a fresh
+    // step-up and returns a grant — never the password itself.
+    const duB0 = await req('POST', `/endpoints/${eps['FRONTDESK-01-B'].id}/connect`, { s: DU, business: B });
+    check(duB0.status === 403 && code(duB0) === 'STEP_UP_REQUIRED', 'dual user in their own business B: a member launch needs a step-up', msg(duB0));
+    const duB = await req('POST', `/endpoints/${eps['FRONTDESK-01-B'].id}/connect`, { s: await stepUp(DU), business: B });
+    check(duB.status === 200 && duB.body.data.hasPassword === true && !('password' in duB.body.data), '…then member behaviour: the grant carries the password, the response does not', msg(duB));
+    const custom = await req('POST', `/endpoints/${eps['WS-A3'].id}/connect`, { s: await stepUp(TC), business: A });
     check(custom.status === 200 && custom.body.data.accessPath === 'legacy_assignment', 'custom pre-0.23 assignment with connect: unchanged', msg(custom));
     const insp2 = await req('GET', `/security-controls/inspect?userId=${t2.id}&businessId=${B}&endpointId=${eps['FRONTDESK-01-B'].id}&action=view_inventory`, { s: M });
     check(insp2.body.data?.decision === 'denied', 'inspector: L2 has no path into business B', msg(insp2));
@@ -503,7 +507,7 @@ async function main() {
     check(mxOk.status === 200, 'second admin approves the exception');
     const clr = await req('POST', `/security-controls/pauses/${pause.id}/clear`, { s: A2s });
     check(clr.status === 200, 'an independent admin clears the pause');
-    const inEx = await req('POST', `/endpoints/${fleet[10].id}/connect`, { s: BU, business: A });
+    const inEx = await req('POST', `/endpoints/${fleet[10].id}/connect`, { s: await stepUp(BU), business: A });
     check(inEx.status === 200, 'a computer named in the exception: allowed past the cap', msg(inEx));
     const outEx = await req('POST', `/endpoints/${fleet[20].id}/connect`, { s: BU, business: A });
     check(outEx.status === 403, 'a computer not in the exception: trips the cap again', msg(outEx));

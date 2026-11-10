@@ -284,6 +284,10 @@ async function all() {
   check(r.status === 200 && r.data.visible === true, 'but Tom\'s preset does carry monitoring:alerts', msg(r));
 
   section('Notification: the global policy, fresh authentication and destination rules');
+  // Let the sweep see the alert first, with no policy in place: it parks it
+  // for an hour. Setting a policy must wake it, not leave it parked (0.30.1).
+  const parked = await until(async () => { const x = await prisma.monitorAlert.findUnique({ where: { id: ea.id } }); return x && x.nextCheckAt.getTime() > Date.now() + 30 * 60_000; });
+  check(!!parked, 'with no policy yet, the sweep parks the open alert', '');
   const hookUrl = `http://127.0.0.1:${HOOK_PORT}/hook`;
   const policy = { scope: 'global', levels: [{ afterMinutes: 0, minSeverity: 'WARNING', destinations: [{ label: 'on-call', url: `${hookUrl}/l0` }] }, { afterMinutes: 30, minSeverity: 'CRITICAL', destinations: [{ label: 'lead', url: `${hookUrl}/l1` }] }], ticketing: { enabled: true, minSeverity: 'WARNING' } };
   r = await req('PUT', '/monitoring/notify-policy', { s: S.mgr, body: policy });
@@ -307,7 +311,7 @@ async function all() {
   check(r.status === 200 && /…$/.test(r.data.global.levels[0].destinations[0].url), 'someone who cannot set the policy sees destination hosts, not full URLs', msg(r));
   const hookFor = (id) => hooks.filter((h) => h.body?.alert?.id === id);
   const got = await until(async () => hookFor(ea.id).length > 0);
-  check(got && hookFor(ea.id)[0].path === '/hook/l0' && hookFor(ea.id)[0].body.type === 'alert.notify', 'the open CRITICAL event alert is delivered to level 0', JSON.stringify(hooks.slice(-3)));
+  check(got && hookFor(ea.id)[0].path === '/hook/l0' && hookFor(ea.id)[0].body.type === 'alert.notify', 'the open CRITICAL event alert is delivered to level 0', JSON.stringify({ hooks: hooks.slice(-3), alert: await prisma.monitorAlert.findUnique({ where: { id: ea.id } }) }));
   // Birch: a disk alert under Birch's own (empty) policy.
   await heartbeat(fdB, live(5_000));
   const bAlert = await openAlert(fdB.id, 'disk-free');
@@ -499,6 +503,6 @@ all().catch((e) => { fail++; failures.push(`crashed: ${e.stack ?? e}`); console.
   .finally(async () => {
     await cleanup();
     console.log(`\n${fail ? '\x1b[31m' : '\x1b[32m'}${pass} passed, ${fail} failed\x1b[0m`);
-    if (failures.length) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }
+    if (failures.length) { for (const f of failures) console.log(`  - ${f}`); if (api?.log) console.log(`\n── API output (last 6000 characters)\n${api.log.slice(-6000)}`); process.exit(1); }
     process.exit(0);
   });

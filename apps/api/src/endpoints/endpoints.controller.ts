@@ -2,7 +2,7 @@ import type { LaunchMode } from '../security-controls/access-policy.service';
 import {
   Controller, Get, Post, Patch, Delete,
   Body, Param, Query, Req, Res, UseGuards, HttpCode, HttpStatus,
-  ServiceUnavailableException, BadRequestException,
+  ServiceUnavailableException, BadRequestException, ForbiddenException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { EndpointsService } from './endpoints.service';
@@ -77,19 +77,29 @@ export class EndpointsController {
   @RateLimit(30)
   async connect(
     @Actor() actor: ActorContext, @Param('id') id: string,
+    @CurrentUser() u: JwtPayload, @Req() req: Request,
     @Query('supportRequestId') supportRequestId?: string,
     @Query('mode') mode?: string,
   ) {
     const launchMode = parseLaunchMode(mode);
-    const grant = await this.svc.createConnectionGrant(actor, id, launchMode);
+    // The grant releases the permanent password to the launcher, so minting
+    // one that would needs the same fresh step-up as Reveal. It also primes
+    // the step-up the Connect script download right after this needs.
+    const grant = await this.svc.createConnectionGrant(actor, id, launchMode, () => this.credentialGate(req, u));
     const info = await this.svc.connectInfo(actor, id, {
       mode: launchMode,
       supportRequestId: supportRequestId ? await this.svc.supportRequestForConnect(actor, supportRequestId, id) : undefined,
     });
+    // Never the password itself: the browser holds only the single-use,
+    // 90-second launcher grant. The password reaches a person through
+    // GET :id/password or the Connect script, both behind step-up and audited
+    // as a reveal.
+    const { password: _withheld, ...rest } = info;
+    void _withheld;
     return {
       success: true,
       data: {
-        ...info,
+        ...rest,
         grantToken: grant.token,
         grantExpiresAt: grant.expiresAt,
         launchUri: `rem0te://connect/${grant.token}`,
@@ -116,10 +126,18 @@ export class EndpointsController {
     @Actor() actor: ActorContext,
     @Param('id') id: string,
     @Res() res: Response,
+    @CurrentUser() u: JwtPayload,
+    @Req() req: Request,
     @Query('session') reuseSessionId?: string,
     @Query('mode') mode?: string,
   ) {
-    const info = await this.svc.connectInfo(actor, id, { reuseSessionId, mode: parseLaunchMode(mode), admit: true });
+    // The script carries the permanent password, so it is a reveal: the same
+    // MFA check and fresh step-up as GET :id/password, and the same audit
+    // entry, written before the password is read out.
+    const info = await this.svc.connectInfo(actor, id, {
+      reuseSessionId, mode: parseLaunchMode(mode), admit: true,
+      releaseCredential: true, credentialGate: () => this.credentialGate(req, u),
+    });
     const telemetryToken = info.sessionId ? await this.sessionEvents.issueTelemetryToken(info.sessionId) : null;
     const config = await this.rustdesk.serverConfig();
     if (!config) {
@@ -207,6 +225,18 @@ export class EndpointsController {
     return { success: true, data: await this.svc.rotateCredential(actor, id) };
   }
 
+  /**
+   * What releasing a computer's permanent password needs, wherever it is
+   * released: a session that satisfied MFA if this person has MFA, and a
+   * fresh step-up (credential.reveal).
+   */
+  private async credentialGate(req: Request, u: JwtPayload): Promise<void> {
+    if (u.mfaVerified !== true && await this.svc.userHasMfa(u.sub)) {
+      throw new ForbiddenException({ code: 'MFA_REQUIRED', message: 'Sign in again with your authenticator to reveal a computer password.' });
+    }
+    await this.stepUp.assert(req, 'credential.reveal');
+  }
+
   @Get(':id/password')
   @RequireCapability(CAP.COMPUTERS_EDIT)
   @RateLimit(10)
@@ -216,17 +246,12 @@ export class EndpointsController {
     @Param('id') id: string,
     @Req() req: Request,
   ) {
-    // Revealing a persistent credential requires MFA to have been satisfied
-    // on this session, for anyone who has MFA configured.
-    if (u.mfaVerified === false) {
-      return { success: false, message: 'MFA required to reveal a computer password' };
-    }
     // Access first, so a person with no business here is refused rather
-    // than asked to re-authenticate. Then a recent re-authentication, when
-    // configured (on by default): a permanent password outlives the session
-    // that revealed it. getPassword re-checks access itself.
+    // than asked to re-authenticate. Then MFA and a recent re-authentication
+    // (on by default): a permanent password outlives the session that
+    // revealed it. getPassword re-checks access itself.
     await this.svc.assertPasswordAccess(actor, id);
-    await this.stepUp.assert(req, 'credential.reveal');
+    await this.credentialGate(req, u);
     const password = await this.svc.getPassword(actor, id);
     return { success: true, data: { hasPassword: password !== null, password } };
   }

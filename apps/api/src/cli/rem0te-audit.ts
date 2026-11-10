@@ -77,7 +77,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === 'verify-export') {
     if (!sub || sub.startsWith('--')) throw new UsageError('verify-export needs a FILE');
     const r = verifyExport(readFileSync(sub, 'utf8'), pubFrom(val('--pub')));
-    console.log(`export: ${r.entries} entries, seq ${r.startSeq}–${r.headSeq}, ${r.checkpoints} checkpoints — ${r.ok ? 'intact' : 'PROBLEMS'}`);
+    console.log(`export: ${r.entries} entries, seq ${r.startSeq}–${r.headSeq}, ${r.checkpoints} checkpoints${r.unsignedCheckpoints ? ` (${r.unsignedCheckpoints} unsigned, from before a checkpoint key was configured)` : ''} — ${r.ok ? 'intact' : 'PROBLEMS'}`);
     report('export', r.problems);
     return r.ok ? 0 : 1;
   }
@@ -100,18 +100,20 @@ async function main(argv: string[]): Promise<number> {
       }
       const state = await prisma.auditChainState.findUnique({ where: { id: 'chain' } });
       if (state && st.prevSeq < state.headSeq) st.problems.push({ seq: state.headSeq.toString(), kind: 'deleted', detail: `the head is ${state.headSeq} but the last sealed entry is ${st.prevSeq}` });
+      let unsignedCps = 0;
       for (const c of await prisma.auditCheckpoint.findMany({ orderBy: { seq: 'asc' } })) {
         if (db.get(c.seq.toString()) !== c.hash) st.problems.push({ seq: c.seq.toString(), kind: 'checkpoint_mismatch', detail: 'checkpoint hash differs from the entry' });
-        if (pub && !checkCheckpoint({ seq: c.seq.toString(), hash: c.hash, at: c.at.toISOString(), keyId: c.keyId, signature: c.signature }, pub)) st.problems.push({ seq: c.seq.toString(), kind: 'checkpoint_signature', detail: c.signature ? 'not signed by the given key' : 'unsigned' });
+        if (!c.signature) unsignedCps++;
+        else if (pub && !checkCheckpoint({ seq: c.seq.toString(), hash: c.hash, at: c.at.toISOString(), keyId: c.keyId, signature: c.signature }, pub)) st.problems.push({ seq: c.seq.toString(), kind: 'checkpoint_signature', detail: 'not signed by the given key' });
       }
       const unsealed = await prisma.activityLog.count({ where: { chainHash: null } });
-      console.log(`database: ${st.checked} sealed entries through seq ${st.prevSeq}, ${unsealed} not yet sealed — ${st.problems.length ? 'PROBLEMS' : 'intact'}`);
+      console.log(`database: ${st.checked} sealed entries through seq ${st.prevSeq}, ${unsealed} not yet sealed${unsignedCps ? `, ${unsignedCps} unsigned checkpoints (written before a checkpoint key was configured)` : ''} — ${st.problems.length ? 'PROBLEMS' : 'intact'}`);
       report('database', st.problems);
       let bad = st.problems.length > 0;
       const exportFile = val('--export');
       if (exportFile) {
         const x = verifyExport(readFileSync(exportFile, 'utf8'), pub);
-        console.log(`export:   ${x.entries} entries, seq ${x.startSeq}–${x.headSeq}, ${x.checkpoints} checkpoints — ${x.ok ? 'intact' : 'PROBLEMS'}`);
+        console.log(`export:   ${x.entries} entries, seq ${x.startSeq}–${x.headSeq}, ${x.checkpoints} checkpoints${x.unsignedCheckpoints ? ` (${x.unsignedCheckpoints} unsigned, from before a checkpoint key was configured)` : ''} — ${x.ok ? 'intact' : 'PROBLEMS'}`);
         report('export', x.problems);
         const diff: Problem[] = [];
         for (const [seq, h] of x.hashes) {
