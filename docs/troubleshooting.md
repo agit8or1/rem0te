@@ -178,8 +178,14 @@ attributed to either. Complete the session yourself if you know how it went.
 
 That is step-up. It lasts 10 minutes and only for the sign-in it was made in, so
 it is asked for again after signing out and back in, or in another browser. If
-it never accepts a correct password, the account may be locked out after
-repeated failures: wait for the lockout to pass. See
+your account has an authenticator, only its code (or a passkey) is accepted —
+not your password. If it never accepts a correct code or password, the account
+may be locked out after repeated failures: wait for the lockout to pass.
+
+Clicking **Connect** asks for it too when the launch carries the computer's
+password (0.30.1). *"Sign in again with your authenticator to reveal a computer
+password"* means this session began before your authenticator was set up: sign
+out and back in. See
 [sign-in.md](sign-in.md#step-up).
 
 ## SSO sign-in fails

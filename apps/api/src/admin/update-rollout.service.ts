@@ -180,6 +180,8 @@ export class UpdateRolloutService implements OnModuleInit, OnModuleDestroy {
         id: true, customerId: true, platform: true, agentVersion: true,
         rustdeskNode: { select: { version: true, agentSecretHash: true } },
       },
+      // A stable order, so the same request plans the same batches.
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
     });
     if (endpoints.length === 0) throw new NotFoundException('No matching computers');
 
@@ -208,7 +210,9 @@ export class UpdateRolloutService implements OnModuleInit, OnModuleDestroy {
       else if (!e.rustdeskNode?.agentSecretHash) skip = 'device_not_authenticated (re-run installer first)';
       else if (from && compareVersions(from, target) === 0) skip = 'already_on_target';
       else if (component === 'RUSTDESK' && from && compareVersions(from, target) > 0) skip = 'newer_than_target (downgrade not supported)';
-      const batch = pilotIds.has(e.id) ? 0 : 1 + Math.floor(idx++ / batchSize);
+      // A skipped computer takes no slot: otherwise a batch can be all
+      // skips, which releases nothing and still counts as a stage.
+      const batch = pilotIds.has(e.id) ? 0 : 1 + Math.floor((skip ? idx : idx++) / batchSize);
       jobs.push({
         endpointId: e.id, customerId: e.customerId, batch,
         status: skip ? 'SKIPPED' : 'REQUESTED', failureReason: skip, fromVersion: from,

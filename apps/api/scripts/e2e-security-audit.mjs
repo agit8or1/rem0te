@@ -190,7 +190,9 @@ try {
       body: { rustdeskId: epA.rustdeskId, agentSecret: epSecret, hostname: `PC&calc.exe^|'x` },
     });
     check(hb.status === 200, 'authenticated heartbeat accepted', `HTTP ${hb.status}`);
-    const cmd = await req('GET', `/endpoints/${epA.id}/connect.cmd`, { cookie: cOwnerA });
+    // The script carries the password, so it needs a step-up (0.30.1); this
+    // section tests what goes into it, not the gate.
+    const cmd = await req('GET', `/endpoints/${epA.id}/connect.cmd`, { cookie: await stepUp(cOwnerA) });
     check(cmd.status === 200, 'connect.cmd served', `HTTP ${cmd.status} ${cmd.text.slice(0, 200)}`);
     const title = (cmd.text.match(/^title .*$/m) ?? [''])[0];
     check(title && !/[&|^%'"<>]/.test(title), 'title line carries no cmd metacharacter', title);

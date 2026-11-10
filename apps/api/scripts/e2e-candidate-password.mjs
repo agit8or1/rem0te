@@ -21,8 +21,18 @@ const token = tok.j?.data?.token ?? tok.j?.data?.rawToken ?? tok.j?.token; ok(!!
 const rid = '9' + String(Date.now()).slice(-8);
 const cl = await call('POST', '/enrollment/claim', { token, rustdeskId: rid, hostname: 'CANDPW', platform: 'Windows', password: 'OldPassword000000001', agentSecret: 'secretA'.padEnd(43, 'a') }, false);
 const epId = cl.j?.data?.endpoint?.id ?? cl.j?.data?.endpointId ?? cl.j?.data?.id; ok(cl.status < 300 && epId, 'claim ' + cl.status + ' ' + epId);
-const pw = async () => (await call('POST', `/endpoints/${epId}/connect`)).j?.data?.password;
-ok(await pw() === 'OldPassword000000001', 'connect hands out the claimed password');
+// The live password, read the way a person reads it: step-up, then GET /password
+// (0.30.1: Connect no longer returns it).
+let stepUp = '';
+const pw = async () => {
+  if (!stepUp) {
+    const r = await fetch(B + '/auth/step-up', { method: 'POST', headers: { 'content-type': 'application/json', cookie }, body: JSON.stringify({ password: process.env.SEED_ADMIN_PASSWORD }) });
+    stepUp = (r.headers.getSetCookie?.() ?? []).find((c) => c.startsWith('step_up='))?.split(';')[0] ?? '';
+  }
+  const r = await fetch(B + `/endpoints/${epId}/password`, { headers: { cookie: `${cookie}; ${stepUp}` } });
+  return (await r.json().catch(() => null))?.data?.password;
+};
+ok(await pw() === 'OldPassword000000001', 'the claimed password is the live one');
 const secB = 'secretB'.padEnd(43, 'b');
 // Installer re-run: Register heartbeat with the new secret + new password -> rejected.
 const h1 = await call('POST', '/enrollment/heartbeat', { rustdeskId: rid, agentSecret: secB, password: 'NewPassword000000002' }, false);
@@ -33,7 +43,7 @@ const h2 = await call('POST', '/enrollment/heartbeat', { rustdeskId: rid, agentS
 ok(h2.status === 401, 'password-less check also rejected (' + h2.status + ')');
 const acc = await call('POST', `/endpoints/${epId}/accept-device-secret`);
 ok(acc.status < 300 && acc.j?.data?.passwordUpdated === true, 'accept reports passwordUpdated ' + acc.status + ' ' + JSON.stringify(acc.j?.data ?? acc.j));
-ok(await pw() === 'NewPassword000000002', 'connect now hands out the password the reinstall reported');
+ok(await pw() === 'NewPassword000000002', 'the live password is now the one the reinstall reported');
 const h3 = await call('POST', '/enrollment/heartbeat', { rustdeskId: rid, agentSecret: secB }, false);
 ok(h3.status < 300, 'accepted secret heartbeats (' + h3.status + ')');
 // A different secret replaces the candidate and its password; a candidate without a password leaves the live one.

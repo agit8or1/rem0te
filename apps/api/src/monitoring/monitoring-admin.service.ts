@@ -399,6 +399,14 @@ export class MonitoringAdminService {
     const levels = d.data.levels as unknown as Prisma.InputJsonValue, ticketing = d.data.ticketing as unknown as Prisma.InputJsonValue;
     const row = await this.prisma.monitorNotifyPolicy.upsert({ where: { scopeKey }, create: { scopeKey, customerId, levels, ticketing, updatedById: a.userId }, update: { levels, ticketing, updatedById: a.userId } });
     this.mon.forgetPolicies();
+    // Open alerts the sweep already looked at were parked until their next
+    // level fell due — an hour out when there was no policy. Without this, an
+    // alert raised before the policy existed waits that hour to be announced.
+    // The escalation claim in notifyOne keeps a re-check from sending twice.
+    await this.prisma.monitorAlert.updateMany({
+      where: { state: 'OPEN', suppressed: false, nextCheckAt: { gt: new Date() }, ...(customerId ? { customerId } : {}) },
+      data: { nextCheckAt: new Date() },
+    });
     await this.audit.log({
       action: 'MONITOR_NOTIFY_POLICY_CHANGED', customerId: customerId ?? undefined, actorId: a.userId, actorIp: a.ip, resource: 'monitor_notify_policy', resourceId: row.id,
       // Hosts only: a webhook URL's path is often its secret.

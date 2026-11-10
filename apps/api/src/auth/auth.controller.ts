@@ -159,7 +159,7 @@ export class AuthController {
     @Body() body: ChangePasswordDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.authService.changePassword(user.sub, body.currentPassword, body.newPassword);
+    const result = await this.authService.changePassword(user.sub, body.currentPassword, body.newPassword, user.mfaVerified === true);
     // Every other session ended with the old password; this one carries on
     // with a token minted after the revocation.
     this.setAuthCookie(res, result.accessToken);
@@ -198,7 +198,7 @@ export class AuthController {
   @Get('step-up')
   async stepUpStatus(@CurrentUser() user: JwtPayload, @Req() req: Request) {
     const s = this.stepUp.read(req, user.sub, user.iat);
-    return { success: true, data: { active: !!s, expiresAt: s?.expiresAt ?? null, actions: await this.stepUp.enabledActions() } };
+    return { success: true, data: { active: !!s, expiresAt: s?.expiresAt ?? null, actions: await this.stepUp.enabledActions(), totpRequired: await this.authService.hasTotp(user.sub) } };
   }
 
   private setAuthCookie(res: Response, token: string) {

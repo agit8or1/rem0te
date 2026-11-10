@@ -48,7 +48,11 @@ There are three, and they are not equivalent.
 
 ### 1. The Connect button — a downloaded script
 
-Clicking **Connect** hands you one file, named for the target machine. It uses
+Clicking **Connect** asks you to confirm it is you when the launch carries the
+computer's password (step-up, `credential.reveal` — once per 10 minutes), then
+hands you one file, named for the target machine. The password is in that file
+and nowhere else: the browser never receives it, and releasing it is recorded as
+a reveal (0.30.1). It uses
 the RustDesk already on the computer — or fetches a portable copy once into
 `%LOCALAPPDATA%\Rem0te` — points it at this server, then opens the session
 with the password applied. It deletes itself afterwards, because it carries a

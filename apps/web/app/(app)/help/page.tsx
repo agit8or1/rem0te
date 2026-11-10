@@ -227,6 +227,10 @@ const SECTIONS: Section[] = [
             ) and click <strong className="text-foreground">Connect</strong>.
           </li>
           <li>
+            If the connection uses the computer&apos;s password, you are asked to confirm it&apos;s you first (once
+            every 10 minutes). The password goes into the file below and nowhere else.
+          </li>
+          <li>
             Your browser downloads a small file named for that machine. Run it. It uses the
             RustDesk already on your computer — or fetches a portable copy once — points it at
             this server, and opens the session with the password applied.
@@ -632,9 +636,11 @@ const SECTIONS: Section[] = [
     content: (
       <div className="space-y-3 text-sm text-muted-foreground">
         <p>
-          Some actions — revealing a computer password, changing permissions, managing technicians, SSO and passkey
-          changes — ask you to <strong className="text-foreground">confirm it&apos;s you</strong> with your password, an
-          authenticator code or a passkey. It lasts 10 minutes for that sign-in.
+          Some actions — revealing a computer password (including a Connect that uses it), changing permissions,
+          managing technicians, SSO and passkey changes — ask you to{' '}
+          <strong className="text-foreground">confirm it&apos;s you</strong> with your password, an authenticator code
+          or a passkey. If you have an authenticator, its code or a passkey is required — your password alone is not
+          enough. It lasts 10 minutes for that sign-in.
         </p>
         <p>
           You can add passkeys and link a single sign-on provider from{' '}

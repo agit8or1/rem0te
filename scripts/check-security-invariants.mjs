@@ -557,6 +557,47 @@ check(
   check('screenshots.mjs refuses any database but reboot_remote_docs', /DATABASE_URL[^\n]*includes\('reboot_remote_docs'\)/.test(read('apps/web/scripts/screenshots.mjs')), 'it seeds a user and changes relay settings');
 }
 
+// 19. Credential release, audit integrity, step-up and the updater (0.30.1).
+{
+  const ctl = read('apps/api/src/endpoints/endpoints.controller.ts');
+  const svc = read('apps/api/src/endpoints/endpoints.service.ts');
+  const connect = ctl.slice(ctl.indexOf("@Post(':id/connect')"), ctl.indexOf("@Get(':id/connect.cmd')"));
+  check('POST :id/connect withholds the password and gates a credential-carrying grant',
+    /password: _withheld/.test(connect) && /createConnectionGrant\(actor, id, launchMode, \(\) => this\.credentialGate\(req, u\)\)/.test(connect) && !/releaseCredential/.test(connect),
+    'Connect must strip `password` from connectInfo, never ask for releaseCredential, and pass credentialGate to the grant');
+  const script = ctl.slice(ctl.indexOf("@Get(':id/connect.cmd')"), ctl.indexOf("@Post('grants/redeem')"));
+  check('the Connect script releases the password only through credentialGate',
+    /releaseCredential: true, credentialGate: \(\) => this\.credentialGate\(req, u\)/.test(script), 'connect.cmd embeds the password: it is a reveal');
+  const gate = ctl.slice(ctl.indexOf('private async credentialGate'), ctl.indexOf("@Get(':id/password')"));
+  check('credentialGate checks MFA and the credential.reveal step-up',
+    /userHasMfa/.test(gate) && /stepUp\.assert\(req, 'credential\.reveal'\)/.test(gate), 'the same gate as Reveal');
+  check('authorizeConnect runs credentialGate before a launch is counted',
+    svc.indexOf('opts.credentialGate && decision.revealCredential') > 0 && svc.indexOf('opts.credentialGate && decision.revealCredential') < svc.indexOf('if (opts.admit) {'),
+    'a refused step-up must not count a launch');
+  // Every audit write of a released password is the strict one.
+  const reveals = [...svc.matchAll(/await this\.audit\.(log|logOrFail)\(\{[^}]*?action: '?ENDPOINT_PASSWORD_REVEALED/g)].map((m) => m[1]);
+  check('every ENDPOINT_PASSWORD_REVEALED for a release uses logOrFail', reveals.length >= 3 && reveals.every((k) => k === 'logOrFail'), `found ${reveals.join(', ') || 'none'}`);
+  check('AuditService.logOrFail rethrows', /async logOrFail[\s\S]{0,400}throw new ServiceUnavailableException/.test(read('apps/api/src/audit/audit.service.ts')), 'a reveal nobody can see afterwards must be refused');
+
+  // The latest definition of the audit guard checks content before the
+  // "not sealed yet" early return.
+  const migDir = join(ROOT, 'apps/api/prisma/migrations');
+  const guards = readdirSync(migDir).sort().filter((d) => { try { return /rem0te_audit_sealed_guard\(\) RETURNS trigger/.test(readFileSync(join(migDir, d, 'migration.sql'), 'utf8')); } catch { return false; } });
+  const latest = guards.length ? readFileSync(join(migDir, guards[guards.length - 1], 'migration.sql'), 'utf8') : '';
+  const early = latest.search(/IF OLD\."chainHash" IS NULL THEN RETURN NEW/);
+  check('audit entries are insert-only: content is checked before the unsealed early return',
+    early > 0 && latest.slice(0, early).includes('NEW."metadata"::text IS DISTINCT FROM OLD."metadata"::text'), `latest guard: ${guards[guards.length - 1] ?? 'none'}`);
+
+  const auth = read('apps/api/src/auth/auth.service.ts');
+  check('a session token never asserts mfaVerified: true unconditionally', !/mfaVerified: true,/.test(auth.slice(auth.indexOf('private issueFullToken'))), 'mfaVerified must come from the sign-in');
+  check('step-up refuses the password when an authenticator is enrolled', /hasTotp && !input\.totpCode[\s\S]{0,300}TOTP_REQUIRED/.test(auth), 'verifyStepUp');
+
+  const upd = read('apps/api/src/admin/update.service.ts');
+  check('the panel updater verifies against the pinned key in a dedicated keyring',
+    !/'tag', '--verify'/.test(upd) && /'verify-tag', '--raw'/.test(upd) && /GNUPGHOME: key\.gnupgHome/.test(upd) && /checkTagSignature\(/.test(upd),
+    'plain `git tag --verify` trusts any key in the service account\'s keyring');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

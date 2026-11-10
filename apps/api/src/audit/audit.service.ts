@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ActivityAction, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -41,25 +41,45 @@ export class AuditService {
   constructor(private readonly prisma: PrismaService) {}
 
   async log(params: LogParams): Promise<void> {
-    const metadata = params.metadata ?? params.meta ?? undefined;
     try {
-      await this.prisma.activityLog.create({
-        data: {
-          action: params.action,
-          actorId: params.actorId ?? null,
-          tenantId: params.tenantId ?? null,
-          customerId: params.customerId ?? null,
-          actorIp: params.actorIp ?? null,
-          actorAgent: params.actorAgent ?? null,
-          resource: params.resource ?? null,
-          resourceId: params.resourceId ?? null,
-          metadata: metadata ? (metadata as Prisma.InputJsonValue) : undefined,
-        },
-      });
+      await this.write(params);
     } catch (err) {
-      // Audit failures must never crash the primary request path.
+      // Audit failures must never crash the primary request path — except
+      // where the record IS the control: see logOrFail.
       this.logger.error('Failed to write audit log', err);
     }
+  }
+
+  /**
+   * Write the entry or refuse the request. For releasing a credential (a
+   * password reveal, a connect that hands one over): a reveal nobody can see
+   * afterwards is the one outcome worse than a refused reveal, so callers
+   * write this BEFORE the secret leaves and let a failure abort the request.
+   */
+  async logOrFail(params: LogParams): Promise<void> {
+    try {
+      await this.write(params);
+    } catch (err) {
+      this.logger.error(`Audit write failed; refusing ${params.action}`, err);
+      throw new ServiceUnavailableException({ code: 'AUDIT_UNAVAILABLE', message: 'This was not done: the audit log could not be written. Try again shortly.' });
+    }
+  }
+
+  private async write(params: LogParams): Promise<void> {
+    const metadata = params.metadata ?? params.meta ?? undefined;
+    await this.prisma.activityLog.create({
+      data: {
+        action: params.action,
+        actorId: params.actorId ?? null,
+        tenantId: params.tenantId ?? null,
+        customerId: params.customerId ?? null,
+        actorIp: params.actorIp ?? null,
+        actorAgent: params.actorAgent ?? null,
+        resource: params.resource ?? null,
+        resourceId: params.resourceId ?? null,
+        metadata: metadata ? (metadata as Prisma.InputJsonValue) : undefined,
+      },
+    });
   }
 
   async query(params: QueryParams) {

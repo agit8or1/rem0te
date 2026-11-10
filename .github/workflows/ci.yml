@@ -123,6 +123,12 @@ jobs:
       - name: Patch summary tests
         run: node apps/api/scripts/unit-patch-summary.mjs
 
+      # The panel updater's release-tag check (0.30.1): real gpg keys and a
+      # real signed tag, one keyring holding the release key AND another, so
+      # the pinned check is tested against exactly the case it exists for.
+      - name: Updater signature tests
+        run: node apps/api/scripts/unit-update-signing.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.
@@ -130,6 +136,62 @@ jobs:
         run: |
           pnpm --filter @reboot-remote/launcher exec tsc --noEmit
           pnpm --filter @reboot-remote/launcher build
+
+  # The end-to-end suites, against a disposable Postgres. Until 0.30.1 these
+  # ran only by hand while .github/SECURITY.md said CI ran them. Each suite
+  # starts the compiled API itself (or scripts/run-e2e.sh starts one per
+  # suite) against this job's throwaway database, migrated and seeded fresh.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rem0te
+          POSTGRES_PASSWORD: rem0te-ci-only
+          POSTGRES_DB: rem0te_e2e_scratch
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U rem0te" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://rem0te:rem0te-ci-only@127.0.0.1:5432/rem0te_e2e_scratch
+    steps:
+      - uses: actions/checkout@v7
+      # No `version:` — declared once, by `packageManager` (see the check job).
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: tools/windows-installer/go.mod
+          cache-dependency-path: tools/windows-installer/go.sum
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Generate Prisma client and build the API
+        run: |
+          pnpm db:generate
+          pnpm --filter @reboot-remote/api build
+      # The release tool and the agent's decision code, for the suites that
+      # drive them (approved actions, staged patching, containment, signed updates).
+      - name: Build release tool and action simulator
+        working-directory: tools/windows-installer
+        run: |
+          go build -o "$RUNNER_TEMP/rem0te-release" ./cmd/rem0te-release
+          go build -o "$RUNNER_TEMP/rem0te-action-sim" ./cmd/rem0te-action-sim
+          echo "RELEASE_BIN=$RUNNER_TEMP/rem0te-release" >> "$GITHUB_ENV"
+          echo "ACTION_SIM=$RUNNER_TEMP/rem0te-action-sim" >> "$GITHUB_ENV"
+      - name: End-to-end suites
+        run: scripts/run-e2e.sh
+      - name: Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: .e2e-logs/
+          retention-days: 7
 
   audit:
     runs-on: ubuntu-latest

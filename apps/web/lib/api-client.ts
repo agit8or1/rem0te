@@ -109,9 +109,11 @@ export const endpointsApi = {
   // Employee-facing: only computers this user is authorized to connect to.
   mine: () => api.get('/endpoints/mine'),
   // Employee-facing Connect — checks ComputerAccess, returns
-  // { rustdeskId, password, grantToken, launchUri, mode, accessPath,
-  // maxSessionMinutes }. v0.23: `password` is null for a preset-backed launch
-  // (RustDesk then prompts at the endpoint), and a refusal is a 403 with
+  // { rustdeskId, hasPassword, grantToken, launchUri, mode, accessPath,
+  // maxSessionMinutes }. Never the password itself (0.30.1): it travels in the
+  // Connect script or the launcher grant, and a launch that carries it needs a
+  // step-up (403 STEP_UP_REQUIRED, which the interceptor below answers).
+  // hasPassword is false for a preset-backed launch, and a refusal is a 403 with
   // { code, message } — e.g. TEMPORARY_GRANT_REQUIRED, PROTECTED_DEVICE_CLASS,
   // ENDPOINT_CANNOT_ENFORCE_VIEW_ONLY, IDENTITY_PAUSED — whose message is meant
   // to be shown as it is.

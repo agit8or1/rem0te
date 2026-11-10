@@ -249,7 +249,9 @@ export class AuthService {
       return { requiresMfa: true, mfaEnrolled: hasTotpMethod, partialToken };
     }
 
-    const token = this.issueFullToken(user, tenantId, roleType, businessId, capabilities);
+    // A passkey sign-in satisfies MFA itself; a password or SSO sign-in that
+    // reached here did not pass a second factor (none is enrolled or required).
+    const token = this.issueFullToken(user, tenantId, roleType, businessId, capabilities, opts.mfaSatisfied);
     await this.audit.log({
       action: 'LOGIN_SUCCESS', actorId: user.id,
       tenantId: tenantId ?? undefined, customerId: businessId ?? undefined,
@@ -305,6 +307,7 @@ export class AuthService {
       matchingMembership?.role.type ?? payload.roleType,
       matchingMembership?.customerId ?? null,
       matchingMembership?.capabilities ?? [],
+      true, // the TOTP code above
     );
     return {
       accessToken: token,
@@ -327,8 +330,10 @@ export class AuthService {
     user: { id: string; email: string; isPlatformAdmin: boolean; sessionsValidAfter?: Date | null },
     tenantId: string | null,
     roleType: unknown,
-    businessId?: string | null,
-    capabilities?: string[] | null,
+    businessId: string | null | undefined,
+    capabilities: string[] | null | undefined,
+    /** Whether THIS sign-in passed a second factor. Never assumed. */
+    mfaVerified: boolean,
   ): string {
     const payload: JwtPayload = {
       sub: user.id,
@@ -336,7 +341,7 @@ export class AuthService {
       tenantId,
       roleType: roleType as JwtPayload['roleType'],
       isPlatformAdmin: user.isPlatformAdmin,
-      mfaVerified: true,
+      mfaVerified,
       businessId: businessId ?? null,
       // Legacy alias so a token minted here still resolves on older code paths.
       customerId: businessId ?? null,
@@ -411,7 +416,7 @@ export class AuthService {
     return updated;
   }
 
-  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+  async changePassword(userId: string, currentPassword: string, newPassword: string, mfaVerified = false) {
     if (!newPassword || newPassword.length < 12) throw new BadRequestException('Password must be at least 12 characters');
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('User not found');
@@ -437,6 +442,8 @@ export class AuthService {
     }
     const accessToken = this.issueFullToken(
       { ...user, sessionsValidAfter }, tenantId, membership?.role.type ?? null, membership?.customerId ?? null, membership?.capabilities ?? [],
+      // The replacement keeps what the session it replaces had proven.
+      mfaVerified,
     );
     return { success: true, accessToken };
   }
@@ -451,6 +458,15 @@ export class AuthService {
     if (!user || user.status !== 'ACTIVE') throw new UnauthorizedException('Account is not active');
     const locked = this.lockedFor(user.id);
     if (locked > 0) throw new UnauthorizedException(`Too many failed attempts. Try again in ${Math.ceil(locked / 60)} minute(s).`);
+
+    // An enrolled authenticator is the stronger proof; accepting the
+    // password instead would let anyone holding a stolen session AND the
+    // password step up without it. Passkeys go through their own route.
+    const hasTotp = await this.hasTotp(user.id);
+    if (hasTotp && !input.totpCode) {
+      await this.audit.log({ action: 'STEP_UP_FAILED', actorId: user.id, actorIp: ip, meta: { method: input.password ? 'password' : 'none', reason: 'totp_required' } });
+      throw new UnauthorizedException({ code: 'TOTP_REQUIRED', message: 'Your account has an authenticator: enter its code, or use a passkey.' });
+    }
 
     let ok = false;
     let method = '';
@@ -469,6 +485,11 @@ export class AuthService {
     this.clearLoginFailures(user.id);
     await this.audit.log({ action: 'STEP_UP_VERIFIED', actorId: user.id, actorIp: ip, meta: { method } });
     return method;
+  }
+
+  /** Whether step-up for this person must use the authenticator rather than the password. */
+  async hasTotp(userId: string): Promise<boolean> {
+    return (await this.prisma.userMfaMethod.count({ where: { userId, type: 'TOTP', isActive: true } })) > 0;
   }
 
   async revokeSessions(userId: string): Promise<void> {

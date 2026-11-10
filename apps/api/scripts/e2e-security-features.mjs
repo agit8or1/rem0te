@@ -220,19 +220,34 @@ async function main() {
     const dpw = await prisma.activityLog.findFirst({ where: { actorId: dana.id, action: 'PRIVILEGED_WORK_DENIED', resourceId: fdA.id, createdAt: { gte: before } } });
     check(!!dpw, 'the refused launch is audited (PRIVILEGED_WORK_DENIED)');
 
+    // 0.30.1: Connect never returns the permanent password, and a launch that
+    // would release it (to the launcher or in the Connect script) needs the
+    // same fresh step-up as Reveal.
+    const bare = await req('POST', `/endpoints/${fdA.id}/connect`, { s: S.pat });
+    check(bare.status === 403 && code(bare) === 'STEP_UP_REQUIRED', 'Pat → Acme\'s FRONTDESK without a fresh step-up: 403 STEP_UP_REQUIRED (the launch would release the password)', msg(bare));
+    const grantsBefore = await prisma.connectionGrant.count({ where: { userId: pat.id } });
+    check(grantsBefore === 0, '…and nothing was minted for the refused attempt', String(grantsBefore));
+    S.pat = await stepUp(S.pat);
     const pc = await req('POST', `/endpoints/${fdA.id}/connect`, { s: S.pat });
-    check(pc.status === 200 && !!pc.body.data?.password && !!pc.body.data?.grantToken, 'Pat → Acme\'s FRONTDESK: password and a single-use grant released', msg(pc));
+    check(pc.status === 200 && !('password' in (pc.body.data ?? {})) && pc.body.data?.hasPassword === true && /^[0-9a-f]{64}$/.test(pc.body.data?.grantToken ?? ''),
+      'with step-up: 200 with a single-use grant and hasPassword — and no password field at all', msg(pc));
     const pb = await req('POST', `/endpoints/${fdB.id}/connect`, { s: S.pat });
     check(pb.status === 404, 'Pat → Birch\'s FRONTDESK: 404', msg(pb));
     await sleep(300);
-    const rev = await prisma.activityLog.findFirst({ where: { actorId: pat.id, action: 'ENDPOINT_PASSWORD_REVEALED', resourceId: fdA.id, createdAt: { gte: before } } });
-    check(!!rev && !rev.metadata?.denied, 'Pat\'s release is audited as ENDPOINT_PASSWORD_REVEALED');
+    const early = await prisma.activityLog.findFirst({ where: { actorId: pat.id, action: 'ENDPOINT_PASSWORD_REVEALED', resourceId: fdA.id, createdAt: { gte: before } } });
+    check(!early, 'Connect itself records no reveal: nothing was revealed');
     const grants = await prisma.activityLog.findMany({ where: { actorId: pat.id, action: 'CONNECTION_GRANT_CREATED', createdAt: { gte: before } } });
-    check(grants.some((g) => g.metadata?.endpointId === fdA.id && g.metadata?.credentialReleased === true), '…and CONNECTION_GRANT_CREATED for that computer, recording that the credential was released');
+    check(grants.some((g) => g.metadata?.endpointId === fdA.id && g.metadata?.credentialReleased === true), 'CONNECTION_GRANT_CREATED for that computer records that the grant will release the credential');
+    const red = await req('POST', '/endpoints/grants/redeem', { body: { token: pc.body.data.grantToken } });
+    check(red.status === 200 && red.body.data?.password === 'pw-' + acme.name, 'the launcher redeems the grant and receives the password', msg(red));
+    const rev = await prisma.activityLog.findFirst({ where: { actorId: pat.id, action: 'ENDPOINT_PASSWORD_REVEALED', resourceId: fdA.id, createdAt: { gte: before } } });
+    check(!!rev && rev.metadata?.via === 'launcher', '…and that release is audited as ENDPOINT_PASSWORD_REVEALED (via launcher)', JSON.stringify(rev?.metadata));
+    const again = await req('POST', '/endpoints/grants/redeem', { body: { token: pc.body.data.grantToken } });
+    check(again.status === 404 && !again.body?.data?.password, 'redeeming the same grant again: 404, no password', msg(again));
 
     // Documented as NOT applied for members: pin that, so the docs cannot drift from it.
     const pv = await req('POST', `/endpoints/${fdA.id}/connect?mode=view_only`, { s: S.pat });
-    check(pv.status === 200 && !!pv.body.data?.password, 'DOCUMENTED LIMITATION: a Business User\'s view-only request is approved with the full password (not applied)', msg(pv));
+    check(pv.status === 200 && pv.body.data?.hasPassword === true && !('password' in (pv.body.data ?? {})), 'DOCUMENTED LIMITATION: a Business User\'s view-only request is approved and its grant carries the full password (not applied)', msg(pv));
   }
 }
 

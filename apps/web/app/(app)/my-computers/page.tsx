@@ -56,14 +56,10 @@ export default function MyComputersPage() {
       // id. The Connect script is told to reuse that session, so one click is
       // one session; nothing else here creates one.
       const res = await endpointsApi.connect(c.id);
-      const info = res.data?.data as { rustdeskId?: string; password?: string | null; sessionId?: string | null } | undefined;
+      const info = res.data?.data as { rustdeskId?: string; sessionId?: string | null } | undefined;
       if (!info?.rustdeskId) {
         toast({ title: 'Computer not ready', description: 'This computer has not finished enrollment.', variant: 'destructive' });
         return;
-      }
-      // Best-effort: the password on the clipboard, for a client that asks.
-      if (info.password) {
-        try { await navigator.clipboard.writeText(info.password); } catch { /* ignore */ }
       }
       // Hand over a file that does the whole job rather than a bare
       // rustdesk:// link.

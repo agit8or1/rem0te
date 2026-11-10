@@ -35,6 +35,9 @@ export function StepUpDialog() {
   const [value, setValue] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // With an authenticator enrolled the server refuses the password for
+  // step-up, so do not offer it.
+  const [totpOnly, setTotpOnly] = React.useState(false);
   const resolver = React.useRef<((ok: boolean) => void) | null>(null);
 
   React.useEffect(() => {
@@ -42,7 +45,10 @@ export function StepUpDialog() {
       // A second prompt while one is open joins the first.
       const prev = resolver.current;
       resolver.current = (ok) => { prev?.(ok); resolve(ok); };
-      setAction(a); setValue(''); setError(null); setMode('password'); setOpen(true);
+      setAction(a); setValue(''); setError(null); setMode('password'); setTotpOnly(false); setOpen(true);
+      stepUpApi.status().then((r) => {
+        if (r.data?.data?.totpRequired) { setTotpOnly(true); setMode('totp'); }
+      }).catch(() => { /* the server still decides; the form just offers less */ });
     }));
     return () => registerStepUpHandler(null);
   }, []);
@@ -114,10 +120,14 @@ export function StepUpDialog() {
               value={value} onChange={(e) => setValue(e.target.value)} disabled={busy}
             />
           </div>
+          {totpOnly ? (
+            <p className="text-xs text-muted-foreground">Your account has an authenticator, so its code (or a passkey) is needed here — not your password.</p>
+          ) : (
           <button type="button" className="text-xs text-muted-foreground underline-offset-2 hover:underline"
             onClick={() => { setMode(mode === 'password' ? 'totp' : 'password'); setValue(''); setError(null); }}>
             {mode === 'password' ? 'Use an authenticator code instead' : 'Use your password instead'}
           </button>
+          )}
           {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
           <DialogFooter className="gap-2 sm:gap-2">
             {passkeysSupported() && (

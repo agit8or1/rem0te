@@ -146,6 +146,13 @@ export type ExportLine =
 
 export interface ExportCheck {
   ok: boolean; entries: number; startSeq: string; checkpoints: number; headSeq: string; headHash: string;
+  /**
+   * Checkpoints with no signature at all — written before a checkpoint key was
+   * configured. They anchor nothing, so they are counted, not reported as
+   * problems (the database check treats them the same way). A checkpoint that
+   * carries a signature which does not verify IS a problem.
+   */
+  unsignedCheckpoints: number;
   /** seq → hash, for comparing against the database. */
   hashes: Map<string, string>;
   problems: Problem[];
@@ -164,6 +171,7 @@ export function verifyExport(text: string, pub?: KeyObject): ExportCheck {
   const hashes = new Map<string, string>();
   let prevSeq = 0n, prevHash = GENESIS, entries = 0, checkpoints = 0, startSeq = '0';
   const cps: Checkpoint[] = [];
+  let unsignedCheckpoints = 0;
   let lineNo = 0;
   for (const raw of text.split('\n')) {
     lineNo++;
@@ -200,7 +208,8 @@ export function verifyExport(text: string, pub?: KeyObject): ExportCheck {
   for (const c of cps) {
     const h = hashes.get(c.seq);
     if (h !== c.hash) add({ seq: c.seq, kind: 'checkpoint_mismatch', detail: h ? 'checkpoint hash differs from the exported entry' : 'checkpoint names an entry the export does not hold' });
-    if (pub && !checkCheckpoint(c, pub)) add({ seq: c.seq, kind: 'checkpoint_signature', detail: 'checkpoint is not signed by the given key' });
+    if (!c.signature) unsignedCheckpoints++;
+    else if (pub && !checkCheckpoint(c, pub)) add({ seq: c.seq, kind: 'checkpoint_signature', detail: 'checkpoint is not signed by the given key' });
   }
-  return { ok: problems.length === 0, entries, startSeq, checkpoints, headSeq: prevSeq.toString(), headHash: prevHash, hashes, problems };
+  return { ok: problems.length === 0, entries, startSeq, checkpoints, unsignedCheckpoints, headSeq: prevSeq.toString(), headHash: prevHash, hashes, problems };
 }
