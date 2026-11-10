@@ -4,10 +4,14 @@ rem0te can analyse a ClientSt0r ticket, optionally with evidence from one enroll
 **staff-only** findings and draft replies. This is contract **ticket-rmm-v1**, defined in
 [`docs/contracts/ticket-rmm-v1/`](contracts/ticket-rmm-v1/README.md).
 
-> **Status (0.26.0): fixture-tested.** Every behaviour on this page is exercised against a simulated
-> ClientSt0r by `apps/api/scripts/e2e-integration.mjs` and `e2e-approved-action.mjs`. It has **not** yet run
-> paired with a real ClientSt0r. Ticket analysis is read-only. An [action proposal](#proposing-an-approved-action-026)
-> runs nothing until people on the approval roster approve it, outside ClientSt0r.
+> **Status (0.30.0): proved against a reference peer; the real ClientSt0r does not pair yet.** Every behaviour
+> on this page is exercised against a simulated ClientSt0r by `e2e-integration.mjs` and `e2e-approved-action.mjs`,
+> and the whole workflow by `e2e-ticket-workflow.mjs`, with the real API, worker and approval signer. Run against
+> ClientSt0r 3.17.659's own code (`interop-clientst0r.mjs`), pairing fails: ClientSt0r signs with HMAC and expects
+> another capabilities and job shape. The four measured gaps, and what ClientSt0r should consume, are in
+> [CLIENTST0R.md](contracts/ticket-rmm-v1/CLIENTST0R.md). Ticket analysis is read-only. An
+> [action proposal](#proposing-an-approved-action-026) runs nothing until people on the approval roster approve
+> it, outside ClientSt0r.
 
 ## Who owns what
 
@@ -199,5 +203,25 @@ which business is which organization.
   only if the alert is still open. Planned work does not open tickets.
 - **Containment does not stop alert events.** They report; they change nothing on a computer.
 
-The schemas and fixtures are in the [contract](contracts/ticket-rmm-v1/README.md).
+- **Patch summary (0.30).** A *restart pending* alert carries `patch_summary`, a redacted summary of the
+  computer's Patches tab: evidence source and age, freshness, last boot, who manages patching, restart pending,
+  pending KB numbers and which KBs were confirmed by a later scan, failed or await confirmation. No update titles,
+  error text, identifiers, user names or addresses. See [What each agent can do](capabilities.md).
+
+## Which business a request is for
+
+The binding is `(peer, organization_id) → business`, one to one, created here by a Platform Admin with step-up.
+A ClientSt0r serving several customers is **one peer with one organization per customer**; every request names its
+`organization_id`, and computers are named by `rem0te_endpoint_id`, never by name, so two customers' `FRONTDESK`
+PCs never meet. `GET /capabilities` (contract revision 2) lists the calling peer's `organizations`, each with
+`business_id`, `business_name` and the containment kinds in force (`paused`), so the peer can check the mapping.
+
+## Examples and the version to build against
+
+`docs/contracts/ticket-rmm-v1/examples/` holds real signed exchanges recorded from rem0te by
+`e2e-ticket-workflow.mjs --write-examples`, with the TEST-ONLY keys that verify them;
+`gen-integration-contracts.mjs --check` re-verifies every one in CI. ClientSt0r should build against revision 2,
+rem0te 0.30.0.
+
+The schemas, fixtures and examples are in the [contract](contracts/ticket-rmm-v1/README.md).
 

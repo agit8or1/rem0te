@@ -44,6 +44,7 @@ const ORDER = [
   ['connecting.md', 'Connecting', 'Connecting and clients', 'What happens when you click Connect, and why the three connect paths differ.'],
   ['clients.md', 'Clients', 'Connecting and clients', 'Every RustDesk client Rem0te hands out, who it is for, and how it finds this server.'],
   ['support-requests.md', 'Support requests', 'Connecting and clients', 'The customer support link, the status page and the technician queue.'],
+  ['capabilities.md', 'What each agent can do', 'Computers and monitoring', 'Capabilities by agent type, what needs configuring, and what has been tested on real Windows.'],
   ['inventory.md', 'Inventory and event logs', 'Computers and monitoring', 'Specs, installed software, change history, pending updates and event-log slices.'],
   ['monitoring.md', 'Monitoring and alerts', 'Computers and monitoring', 'Monitors, inheritance, alerts, site outages, maintenance windows and escalation.'],
   ['updates.md', 'Updates', 'Computers and monitoring', 'Updating the portal, RustDesk and the agent, and client rollouts.'],

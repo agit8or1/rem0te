@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.29.1-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.30.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -65,6 +65,17 @@ it, its default and its limits: **Settings → Security → Security Features**,
 [docs/security-model.md](docs/security-model.md).
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
+
+## What's new in 0.30
+
+**Patch status you can trust the age of.** Each computer's Patches tab now leads with its evidence: which agent
+reported it, when, and whether that is fresh, stale or unknown. Then last boot, restart pending, the relevant KBs,
+and who manages patching — WSUS, Intune and the rest, with what each means, or *unknown* from the standard agent,
+never "nobody". Each update from an approved plan shows whether a later scan confirmed it. A *restart pending*
+alert sent to ClientSt0r carries a redacted copy of the summary for the ticket. **The ticket ↔ RMM contract is
+published with signed examples** from a real run, and capabilities now name each organization's business and
+pause state. The whole workflow is proved end to end against a reference peer. Against the real ClientSt0r it is
+measured not to work yet. [capabilities.md](docs/capabilities.md) · [CLIENTST0R.md](docs/contracts/ticket-rmm-v1/CLIENTST0R.md)
 
 ## What's new in 0.29
 
@@ -376,7 +387,15 @@ client configuration targets the RustDesk **1.4.x** client series.
 
 ### Limitations
 
-- **Not an RMM.** No patch management, software inventory, ticketing or monitoring.
+- **Part of an RMM, not all of one.** Rem0te monitors computers, keeps a software inventory and change history,
+  reports Windows Update status, deploys Windows updates in approved stages, and hands alerts and ticket analysis
+  to ClientSt0r. It has no scripting or remote shell, no third-party patching, no software deployment and no
+  backup. What works depends on the agent: the standard agent reports patches **read-only**, deploying needs the
+  signed agent and the approval signer, and Linux and macOS get remote access only. None of the signed-agent
+  patching has run on real Windows yet. [What each agent can do](docs/capabilities.md) has the full table.
+- **ClientSt0r cannot pair yet.** Rem0te implements the ticket-rmm-v1 contract, and ClientSt0r 3.17.659 speaks
+  a different protocol: four measured gaps, listed in
+  [CLIENTST0R.md](docs/contracts/ticket-rmm-v1/CLIENTST0R.md).
 - **No in-browser remote control** — a local RustDesk client is required.
 - **One RustDesk server per instance.** Relay host and public key are
   platform-wide settings, not per-business.
@@ -417,6 +436,7 @@ in-app updater is **off by default** and requires a GPG-signed release tag.
 | [Technician Guide](docs/technician-guide.md) | Day-to-day use — connecting, Quick Connect, enrolling. |
 | [Connecting](docs/connecting.md) | What happens when you click Connect. |
 | [Clients](docs/clients.md) | Every RustDesk client Rem0te hands out. |
+| [What each agent can do](docs/capabilities.md) | Capabilities by agent type, configuration, and what is tested on real Windows. |
 | [Inventory & event logs](docs/inventory.md) | What a computer reports about itself, and reading its Windows event log. |
 | [Tactical RMM](docs/tactical-rmm.md) | Connecting and querying from inside Tactical RMM. |
 | [Setup](docs/setup.md) | Installing and operating a server. |

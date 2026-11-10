@@ -18,6 +18,9 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   is for, and how it learns where this server is.
 - **[connecting.md](connecting.md)** — what actually happens when you click
   Connect, the three connect paths, and why they are not equivalent.
+- **[capabilities.md](capabilities.md)** — what each agent type can do (standard,
+  signed, Linux/macOS, Quick Connect), what needs configuring first, and what has
+  been tested on real Windows versus simulated (0.30).
 - **[inventory.md](inventory.md)** — the specs a managed computer reports, its
   installed software and change history, its pending Windows updates, and how
   to read a slice of its event log.

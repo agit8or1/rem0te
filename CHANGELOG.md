@@ -5,6 +5,75 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.30.0] — 2026-11-10 · *Plumbline*
+
+**Patch status you can trust, and a ticket integration whose contract is pinned down and tested end to end.**
+
+### Added
+
+- **Patch status on every computer's Patches tab.**
+  - It leads with the evidence:
+    - its source: *Signed agent scan*, *Standard agent scan (read-only)* or *No scan received*;
+    - its time and age, marked **fresh**, **stale** (older than 36 hours, which is three missed 12-hour scans) or **unknown**;
+    - the last *successful* scan (a signed scan that errored doesn't count);
+    - last boot, and online or offline since when.
+  - Then what follows from it:
+    - restart pending, which is *unknown* rather than *no* when nothing was received;
+    - who manages patching: WSUS, Intune/MDM, WUfB policy or ConfigMgr, each with what it means. The standard agent doesn't read update policy, so it shows *Unknown*;
+    - the relevant KB numbers;
+    - for each update installed by a recent plan, whether a **later scan confirmed** it;
+    - whether rem0te can deploy here, and if not, why.
+  - Only the `effective` state counts as confirmed: a scan after the install that no longer offers the update, shows no restart pending, and has Windows Update's history recording it. `restart_required` is shown as awaiting confirmation, never as done.
+  - `GET /endpoints/:id/patches` returns it as `summary`, built by the pure `patching/summary.ts` from the stored posture, inventory and recent plan targets.
+  - The standard agent's results stay read-only. Deploying still needs the signed agent and a fresh signed scan.
+- **A redacted patch summary in the linked ticket.**
+  - A REBOOT_PENDING alert's contract body carries `patch_summary`, in alert events and in the alert and ticket-link responses. Every other alert carries `null`.
+  - It holds:
+    - the evidence source, age and freshness, and last boot;
+    - `managed_by`, with manager labels;
+    - restart pending;
+    - pending, confirmed, failed and awaiting-confirmation KB numbers.
+  - It never carries update titles, error text, computer identifiers, user names, addresses or registry values.
+- **ticket-rmm-v1 revision 2.**
+  - `/capabilities` now returns `contract_revision` and `organizations`. For every organization the calling peer is mapped to, it gives the `business_id`, `business_name` and the containment kinds in force.
+  - The `(peer, organization_id) → business` binding is now visible to a peer serving several businesses. It's displayed, never accepted: no route takes a business id.
+  - New schema: `patch-summary`. Revisions only add fields.
+- **Signed examples generated from the real implementation.**
+  - `docs/contracts/ticket-rmm-v1/examples/` holds 11 exchanges recorded from a running rem0te by `e2e-ticket-workflow.mjs --write-examples`, signed with fixed-seed TEST-ONLY keys published in `examples/keys/`. They cover both request directions, delegation tokens, response signatures, and job and alert events.
+  - `gen-integration-contracts.mjs --check` verifies every signature, `req_sha256` binding and schema, so an example that drifts from the code fails CI.
+  - These replace the 0.29 signed-alert fixture and its throwaway key.
+- **`e2e-ticket-workflow.mjs`** (53 checks): the real API, worker and approval signer, with a contract-conformant reference peer on loopback. It covers:
+  - pairing, and refusal of an HMAC-signed request;
+  - ticket analysis returned;
+  - two customers with identically named PCs;
+  - a revoked technician, an offline endpoint and a paused business (`423 CONTAINED`);
+  - an AI suggestion or ticket referral producing only a plan *awaiting approval*, with no approve route, nothing delivered to the device, the catalog enforced and cross-business ids refused;
+  - one alert → one ticket → resolved on the same ticket;
+  - an API and worker restart with redelivery and no duplicate;
+  - the audit trail.
+- **`interop-clientst0r.mjs`**: runs ClientSt0r's own code (its Django, processor and `ticket_rmm` modules, on a disposable sqlite) against a real rem0te on a scratch database.
+  - Against ClientSt0r 3.17.659 (`a5f8382`), it measured four gaps: HMAC request signing, capabilities shape and tenant pin, callback verification, and job payload shape. Pairing fails at the first.
+  - Recorded in `docs/contracts/ticket-rmm-v1/clientst0r-interop.json`, and explained, with what ClientSt0r should consume, in `CLIENTST0R.md`.
+- **`docs/capabilities.md`**: what each agent type can do, what needs configuring, and what has been tested on real Windows, simulated, or only with fixtures. It also lists the lab work still outstanding.
+- `e2e-staged-patching.mjs` (67 checks, up from 60) gained the summary cases against the agent's real code:
+  - standard agent;
+  - WSUS, and an Intune update ring;
+  - offline with stale evidence;
+  - restart required, then restart completed and confirmed;
+  - a failed install.
+- `unit-patch-summary.mjs` (27 checks) covers the same cases without a database, and runs in CI.
+
+### Changed
+
+- The README no longer says rem0te has "no patch management, software inventory, ticketing or monitoring". It now says which parts of an RMM it does, which agent each needs, and that ClientSt0r cannot pair until it adopts the contract.
+- `docs/integration-clientst0r.md`, `staged-patching.md`, `monitoring.md`, the contract README and `/help` describe the patch summary, the business binding and the interop status.
+
+### Not done (needs a lab)
+
+- Real Windows 11 and Server 2022 runs of the five patch cases. The "Real Windows" column in `docs/capabilities.md` stays **No** until then.
+- A real authenticator on the approval roster.
+- ClientSt0r paired after it adopts revision 2.
+
 ## [0.29.1] — 2026-11-10 · *Lighthouse*
 
 ### Fixed
