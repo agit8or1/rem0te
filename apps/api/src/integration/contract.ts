@@ -265,6 +265,8 @@ export const Capabilities = z.object({
     endpoint_evidence: z.array(z.enum(['inventory', 'heartbeat'])),
     /** Catalog actions that may be proposed, as "id@version"; empty when no approval signer is configured. */
     actions: z.array(z.string()),
+    /** v0.29: monitoring alert events, polling and ticket linkage (see Alert*). */
+    alerts: z.boolean(),
   }).strict(),
   model_profiles: z.array(z.string()),
   limits: z.object({
@@ -334,6 +336,65 @@ export const ActionProposal = z.object({
 }).strict();
 export type ActionProposal = z.infer<typeof ActionProposal>;
 
+// ── Monitoring alerts (v0.29) ───────────────────────────────────────────────
+//
+// rem0te tells ClientSt0r about monitoring alerts for a mapped organization,
+// when that business's notification policy turns ticketing on. Events are
+// signed like job events, sequenced per organization, pushed to the peer's
+// events URL and recoverable by polling. ClientSt0r answers by linking the
+// ticket it opened. Linking grants nothing: it does not acknowledge,
+// resolve, suppress or reach the computer.
+
+export const ALERT_EVENT_TYPES = ['alert.raised', 'alert.updated', 'alert.resolved'] as const;
+
+export const Alert = z.object({
+  alert_id: z.string().min(1).max(64),
+  /** A monitor key at the business, e.g. "offline", "disk-free", or "site-outage". */
+  monitor: z.string().max(64),
+  kind: z.enum(['OFFLINE', 'DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH', 'SERVICE_STOPPED', 'EVENT_MATCH', 'REBOOT_PENDING', 'SITE_OUTAGE']),
+  severity: z.enum(['info', 'warning', 'critical']),
+  state: z.enum(['open', 'acknowledged', 'resolved']),
+  /** Built by rem0te from sanitised fields. Computer names are device-reported: display as text. */
+  title: Text(300),
+  rem0te_endpoint_id: z.string().max(64).nullable(),
+  computer_name: Text(128).nullable(),
+  site_name: Text(128).nullable(),
+  first_seen_at: IsoDate,
+  last_seen_at: IsoDate,
+  occurrences: z.number().int().min(1),
+  resolved_at: IsoDate.nullable(),
+  /** Set for a computer alert grouped under a site outage. */
+  outage_alert_id: z.string().max(64).nullable(),
+  ticket: z.object({ id: ExtId, url: z.string().url().max(500).nullable() }).strict().nullable(),
+}).strict();
+
+export const AlertEvent = z.object({
+  contract: z.literal(CONTRACT),
+  event_id: z.string().uuid(),
+  /** Per (peer, organization), from 1, no gaps. */
+  sequence: z.number().int().min(1),
+  type: z.enum(ALERT_EVENT_TYPES),
+  occurred_at: IsoDate,
+  peer_id: z.string(),
+  organization_id: z.string(),
+  alert: Alert,
+}).strict();
+export type AlertEvent = z.infer<typeof AlertEvent>;
+
+export const SignedAlertEvent = z.object({
+  alert_event: AlertEvent,
+  signature: z.object({ alg: z.literal('Ed25519'), kid: z.string(), sig: z.string() }).strict(),
+}).strict();
+
+/** POST /api/integration/v1/alerts/{alert_id}/ticket */
+export const AlertTicketLink = z.object({
+  contract: z.literal(CONTRACT),
+  organization_id: ExtId,
+  ticket_id: ExtId,
+  /** https only. Shown to rem0te users as a link, so it must be the peer's own ticket page. */
+  ticket_url: z.string().url().max(500).refine((u) => u.startsWith('https://'), 'https only').nullable().default(null),
+}).strict();
+
 export const ErrorBody = z.object({
   error: z.object({ code: z.string(), message: z.string() }).strict(),
 }).strict();
@@ -353,6 +414,10 @@ export const CONTRACT_SCHEMAS = {
   'action-proposal-request': ActionProposalRequest,
   'action-proposal': ActionProposal,
   'error': ErrorBody,
+  'alert': Alert,
+  'alert-event': AlertEvent,
+  'signed-alert-event': SignedAlertEvent,
+  'alert-ticket-link': AlertTicketLink,
 } as const;
 
 export const MAX_JOB_TTL_S = 24 * 3600;

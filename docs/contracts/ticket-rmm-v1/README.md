@@ -20,6 +20,7 @@ The canonical interface between **ClientSt0r** and **rem0te**. rem0te owns it.
 |---|---|
 | Ticket-only analysis, optional device evidence, model comparison | **Fixture-tested** (`apps/api/scripts/e2e-integration.mjs`, simulated ClientSt0r) |
 | Paired lab with a real ClientSt0r | **Not yet done** |
+| Alert events and ticket links (`features.alerts`, `/alerts/*`, rem0te ≥ 0.29) | **Fixture-tested** (`apps/api/scripts/e2e-monitoring.mjs`, simulated ClientSt0r events endpoint). Not yet run against a real ClientSt0r |
 | Action proposals (`features.actions`, `/action-proposals`, rem0te ≥ 0.26) | **Fixture-tested** (`apps/api/scripts/e2e-approved-action.mjs`, simulated ClientSt0r and agent). ClientSt0r proposes; it cannot approve or execute. Lists `windows.service.start@1` (Print Spooler) only while an approval signer is configured, otherwise empty |
 
 ## Trust
@@ -113,6 +114,32 @@ an `approval_url`.
   Spooler is not evidence that any document printed.
 - Poll `GET /action-proposals/{job_id}` (scope `actions:read`).
 
+## Alert events (0.29)
+
+rem0te tells ClientSt0r about monitoring alerts so it can open a ticket, and ClientSt0r says which ticket it
+opened. `features.alerts` is `true` from 0.29.
+
+- **Which alerts.** Only in a business whose notification policy has *Offer alerts to ClientSt0r* on, and at or
+  above that policy's severity floor. The first event for an alert is always `alert.raised`; `alert.updated`
+  (acknowledged, escalated, ticket linked) and `alert.resolved` follow only for alerts the peer was sent a
+  raise for. Every route below is limited to those alerts, in organizations mapped to the calling peer.
+- **Signed, sequenced, pushed.** Each event is signed with rem0te's key over
+  `rem0te-alert-event-v1\n{canonical alert_event}` — a different prefix from job events, so neither signature
+  can stand in for the other — sequenced per (peer, organization) from 1 with no gaps, and POSTed as
+  `{alert_event, signature}` to the same `eventsUrl` as job events, with the same retry. Schema:
+  `signed-alert-event`; fixture: `fixtures/signed-alert-event.raised.json`, verifiable with
+  `fixtures/fixture-alert-signing-key.pub.pem`.
+- **Recovering a gap.** `GET /api/integration/v1/alerts/events?organization_id=…&after={last sequence}`
+  returns up to 100 signed events, oldest first. `GET /api/integration/v1/alerts/{alert_id}?organization_id=…`
+  is the alert now.
+- **Linking a ticket.** `POST /api/integration/v1/alerts/{alert_id}/ticket` with
+  `{contract, organization_id, ticket_id, ticket_url}` (schema `alert-ticket-link`; `ticket_url` https only).
+  The same ticket again is `200` with `idempotent-replayed: true`; a different one is `409
+  TICKET_ALREADY_LINKED`. Linking grants nothing and does not acknowledge or resolve the alert.
+- **No delegation token.** These are service-level: nothing here acts for a technician or reaches a computer.
+- Computer and site names in `title`, `computer_name` and `site_name` are device- or customer-supplied text.
+  Display them as text.
+
 ## Error codes
 
 `NOT_CONFIGURED` 404 · `UNAUTHENTICATED` 401 · `REPLAYED` 401 · `DELEGATION_INVALID` 401 · `FORBIDDEN` 403 ·
@@ -126,6 +153,8 @@ ends `failed` with `CONTAINED`.
 Action proposals add rem0te's own refusal codes (400/403/409): `ACTION_NOT_IN_CATALOG`, `PARAMS_NOT_ALLOWED`,
 `ACTION_NOT_GRANTED`, `PROTECTED_DEVICE_CLASS`, `ENDPOINT_NOT_READY`, `ACTION_PENDING`, `ACTION_UNRECONCILED`,
 `APPROVAL_SIGNER_ERROR`, `APPROVAL_SIGNER_REFUSED`.
+
+Alert routes add `TICKET_ALREADY_LINKED` 409.
 
 Job / run error codes: `ACTOR_REVOKED`, `PEER_REMOVED`, `EXPIRED`, `ENDPOINT_NOT_AVAILABLE`,
 `ALL_PROFILES_FAILED`, `GATEWAY_UNREACHABLE`, `GATEWAY_UNAVAILABLE`, `GATEWAY_REFUSED`,

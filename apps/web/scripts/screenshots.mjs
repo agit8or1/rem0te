@@ -2,7 +2,7 @@
 // Rem0te documentation screenshot pipeline.
 //
 // - Seeds a fresh platform-admin user in the dev DB.
-// - Uses Playwright (headless Chromium) against http://127.0.0.1:3000.
+// - Uses Playwright (headless Chromium) against the isolated docs stack (default http://127.0.0.1:4000).
 // - Captures in light theme. THEMES below says why dark is not written.
 // - Writes to docs/screenshots/{page}-{theme}.png.
 // - Cleans up the throwaway user at the end.
@@ -11,7 +11,8 @@
 // matching common credential patterns (ghp_*, rk_*, etc.) via CSS masking
 // before capture. Never runs against production.
 //
-// Usage:  cd apps/web && DATABASE_URL=postgresql://... node scripts/screenshots.mjs
+// Usage:  cd apps/web && DATABASE_URL=postgresql://…/reboot_remote_docs WEB_URL=http://127.0.0.1:4000 node scripts/screenshots.mjs
+//         ONLY=guide/alerts,guide/docs-index  (optional: capture just these)
 
 import { chromium } from 'playwright';
 import { createRequire } from 'module';
@@ -19,6 +20,7 @@ import { randomBytes } from 'crypto';
 import { mkdir } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { applyMasks } from './capture-masks.mjs';
 
 // Playwright lives in apps/web; Prisma and argon2 live in apps/api. Rather than
 // duplicate either dependency, resolve the API-side ones against the API's own
@@ -30,7 +32,18 @@ const argon2 = apiRequire('argon2');
 
 const prisma = new PrismaClient();
 
-const WEB = process.env.WEB_URL ?? 'http://127.0.0.1:3000';
+const WEB = process.env.WEB_URL ?? 'http://127.0.0.1:4000';
+
+// This script seeds a user (and, on an empty database, demo businesses) and
+// changes relay settings for the run. Refuse anything that could be live —
+// the same guard as capture-media.mjs, plus the database name the demo-data
+// module insists on. See docs/screenshots.md ("Regenerating these").
+if (/:(3000|443)\b/.test(WEB) || /^https:\/\//.test(WEB)) {
+  throw new Error(`Refusing to capture against ${WEB} — point WEB_URL at the isolated demo stack`);
+}
+if (!(process.env.DATABASE_URL ?? '').includes('reboot_remote_docs')) {
+  throw new Error('Refusing to run: DATABASE_URL is not the reboot_remote_docs database');
+}
 const OUT_DIR = process.env.OUT_DIR ?? path.resolve(HERE, '../../../docs/screenshots');
 const VIEWPORT = { width: 1440, height: 900 };
 
@@ -107,9 +120,114 @@ const CALLOUT_PAGES = [
     callouts: [
       { find: 'a[href="/docs"]' },
       { find: 'input[aria-label="Search the documentation"]' },
+      { find: '[data-testid="docs-index"] section' },
+    ],
+  },
+  // 0.29 — documentation search with highlighted results.
+  {
+    name: 'guide/docs-search',
+    path: '/docs',
+    before: async (page) => { await page.fill('[data-testid="docs-search"]', 'maintenance window'); await page.waitForTimeout(400); },
+    callouts: [
+      { find: '[data-testid="docs-search"]' },
+      { find: '[data-testid="docs-results"] a' },
+    ],
+  },
+  {
+    name: 'guide/docs-article',
+    height: 1100,
+    path: '/docs/monitoring',
+    callouts: [
+      { find: 'nav[aria-label="Documentation"]' },
+      { find: '[data-testid="docs-toc"]' },
+      { find: { text: 'min read', tag: 'span' } },
+    ],
+  },
+  // 0.29 — monitoring and alerts.
+  {
+    name: 'guide/alerts',
+    height: 1240,
+    path: '/alerts',
+    before: async (page) => {
+      await page.waitForSelector('text=Tacoma warehouse', { timeout: 15_000 });
+      await page.click('button:has-text("Tacoma warehouse")');
+      await page.waitForSelector('[data-testid="alert-detail"]', { timeout: 10_000 });
+      await page.waitForTimeout(500);
+    },
+    callouts: [
+      { find: 'a[href="/alerts"]' },
+      { find: '[data-testid="alerts-summary"]' },
+      { find: '[data-testid="alerts-filters"]' },
+      { find: { text: 'Computers in this outage' } },
+      { find: { text: 'Acknowledge', tag: 'button' } },
+    ],
+  },
+  {
+    name: 'guide/monitoring-settings',
+    path: '/settings/monitoring',
+    before: async (page) => {
+      await page.waitForSelector('#mon-business', { timeout: 15_000 });
+      await page.selectOption('#mon-business', { label: 'Harbor Logistics' });
+      await page.waitForSelector('text=Label printing', { timeout: 10_000 });
+      await page.waitForTimeout(500);
+    },
+    callouts: [
+      { find: '#mon-business' },
+      { find: '[role="tablist"]' },
+      { find: { text: 'Add recommended', tag: 'button' } },
+      { find: { text: 'overridden below', tag: 'div' } },
+      { find: { text: 'Switch off for this business', tag: 'button' } },
+    ],
+  },
+  {
+    name: 'guide/monitoring-notify',
+    height: 1000,
+    path: '/settings/monitoring',
+    before: async (page) => {
+      await page.waitForSelector('[role="tablist"]', { timeout: 15_000 });
+      await page.click('[role="tab"]:has-text("Notifications")');
+      await page.waitForSelector('[data-testid="mon-policy"] input', { timeout: 10_000 });
+      await page.waitForTimeout(400);
+    },
+    callouts: [
+      { find: { text: 'Level 1', tag: 'div' } },
+      { find: { text: 'Level 2', tag: 'div' } },
+      { find: { text: 'Offer alerts to ClientSt0r', tag: 'label' } },
+      { find: { text: 'Save (re-authenticate)', tag: 'button' } },
+    ],
+  },
+  {
+    name: 'guide/endpoint-monitoring',
+    height: 1500,
+    path: '@endpoint:HARB-DISPATCH-01?tab=monitoring',
+    before: async (page) => { await page.waitForSelector('[data-testid="endpoint-monitoring"]', { timeout: 15_000 }); await page.waitForTimeout(500); },
+    callouts: [
+      { find: '[role="tab"][data-state="active"]' },
+      { find: '[data-testid="mon-effect"]' },
+      { find: '[data-testid="mon-changes"]' },
+      { find: '[data-testid="mon-software"]' },
+    ],
+  },
+  {
+    name: 'guide/api-keys',
+    height: 1000,
+    path: '/settings/api-keys',
+    before: async (page) => {
+      await page.waitForSelector('#ak-business', { timeout: 15_000 });
+      await page.selectOption('#ak-business', { label: 'Harbor Logistics' });
+      await page.fill('#ak-name', 'PSA sync');
+      await page.waitForTimeout(400);
+    },
+    callouts: [
+      { find: '#ak-business' },
+      { find: '#ak-name' },
+      { find: '[data-testid="apikey-create"] fieldset' },
+      { find: { text: 'Create key', tag: 'button' } },
+      { find: '[data-testid="apikey-list"]' },
     ],
   },
 ];
+const ONLY = (process.env.ONLY ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
 // Captured without signing in — it is the page someone who needs help lands on.
 // Light only. Nothing consumes a dark capture: the app has no theme-based image
@@ -146,8 +264,24 @@ const DEMO_COMPUTERS = [
  * the moment anything reflowed.
  */
 async function captureWithCallouts(page, spec, outDir, theme) {
-  await page.goto(`${WEB}${spec.path}`, { waitUntil: 'networkidle', timeout: 20_000 });
+  // "@endpoint:<name>?query" resolves to that demo computer's page.
+  let target = spec.path;
+  const m = /^@endpoint:([^?]+)(\?.*)?$/.exec(target);
+  if (m) {
+    const e = await prisma.endpoint.findFirst({ where: { name: m[1] }, select: { id: true } });
+    if (!e) throw new Error(`demo computer ${m[1]} not found`);
+    target = `/endpoints/${e.id}${m[2] ?? ''}`;
+  }
+  try {
+    await page.goto(`${WEB}${target}`, { waitUntil: 'networkidle', timeout: 20_000 });
+  } catch { /* long-polling pages never go idle; the waits below are what matter */ }
   await page.waitForTimeout(600);
+  if (spec.before) await spec.before(page);
+  // The app scrolls inside <main>, so a "full page" screenshot is only ever
+  // the viewport. A spec with `height` grows the viewport instead, before the
+  // callouts are measured, so targets below the fold are drawn and captured.
+  if (spec.height) { await page.setViewportSize({ width: VIEWPORT.width, height: spec.height }); await page.waitForTimeout(400); }
+  await applyMasks(page);
 
   const drawn = await page.evaluate((callouts) => {
     const old = document.getElementById('rem0te-callouts');
@@ -214,6 +348,7 @@ async function captureWithCallouts(page, spec, outDir, theme) {
   await mkdir(path.dirname(file), { recursive: true });
   await page.screenshot({ path: file, fullPage: true });
   await page.evaluate(() => document.getElementById('rem0te-callouts')?.remove());
+  if (spec.height) await page.setViewportSize(VIEWPORT);
 
   const expected = spec.callouts.length;
   console.log(
@@ -250,7 +385,18 @@ async function main() {
   const demoUserIds = [];
   const demoEndpointIds = [];
 
-  for (const b of DEMO_BUSINESSES) {
+  // The docs database normally already carries the full demo estate
+  // (prisma/_docs-demo-data.ts and _docs-demo-monitoring.ts). Seed the small
+  // set below only into an empty one, so the guide images and the gallery
+  // show the same businesses.
+  const seedDemo = (await prisma.customer.count()) === 0;
+  if (!seedDemo) {
+    const existing = await prisma.endpoint.findMany({ take: 5, orderBy: { name: 'asc' }, select: { id: true } });
+    for (const e of existing) {
+      await prisma.computerAccess.create({ data: { tenantId: tenant.id, endpointId: e.id, userId: admin.id, grantedBy: admin.id } });
+    }
+  }
+  if (seedDemo) for (const b of DEMO_BUSINESSES) {
     const biz = await prisma.customer.create({
       data: { ...b, tenantId: tenant.id, isActive: true, quickConnectEnabled: true },
     });
@@ -267,7 +413,7 @@ async function main() {
     ['casey.front', 'Casey', 'Lindqvist', 2, userRole,  ['computers:view']],
   ];
   const stubHash = await argon2.hash(randomBytes(24).toString('hex'), { type: argon2.argon2id });
-  for (const [handle, first, last, bizIdx, role, caps] of demoPeople) {
+  for (const [handle, first, last, bizIdx, role, caps] of seedDemo ? demoPeople : []) {
     if (!role) continue;
     const u = await prisma.user.create({
       data: {
@@ -284,7 +430,7 @@ async function main() {
     });
   }
 
-  for (const [name, platform, osVersion, online] of DEMO_COMPUTERS) {
+  for (const [name, platform, osVersion, online] of seedDemo ? DEMO_COMPUTERS : []) {
     const bizIdx = name.startsWith('ACME') ? 0 : name.startsWith('SMITH') ? 1 : 2;
     const ep = await prisma.endpoint.create({
       data: {
@@ -381,7 +527,7 @@ async function main() {
         html.classList.add(t);
       }, theme);
 
-      for (const p of PAGES) {
+      for (const p of ONLY.length ? [] : PAGES) {
         const url = `${WEB}${p.path}`;
         try {
           await page.goto(url, { waitUntil: 'networkidle', timeout: 20_000 });
@@ -390,6 +536,7 @@ async function main() {
         }
         // Small settle for React query / animations
         await page.waitForTimeout(1200);
+        await applyMasks(page);
         // Redact any potentially-secret text that snuck onto the page.
         await page.addStyleTag({ content: `
           :is(code,pre,input[type=password]) { filter: none; }
@@ -400,6 +547,7 @@ async function main() {
         console.log(`  ✓ ${p.name}/${theme} → ${file}`);
       }
       for (const spec of CALLOUT_PAGES) {
+        if (ONLY.length && !ONLY.includes(spec.name)) continue;
         try {
           const ok = await captureWithCallouts(page, spec, OUT_DIR, theme);
           if (!ok) calloutMisses.push(`${spec.name}/${theme}`);
@@ -415,7 +563,7 @@ async function main() {
     for (const theme of THEMES) {
       const anon = await browser.newContext({ viewport: VIEWPORT, colorScheme: theme, ignoreHTTPSErrors: true });
       const anonPage = await anon.newPage();
-      for (const p of PUBLIC_PAGES) {
+      for (const p of ONLY.length ? [] : PUBLIC_PAGES) {
         try {
           await anonPage.goto(`${WEB}${p.path}`, { waitUntil: 'networkidle', timeout: 20_000 });
         } catch {

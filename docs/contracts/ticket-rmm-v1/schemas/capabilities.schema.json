@@ -39,13 +39,17 @@
           "items": {
             "type": "string"
           }
+        },
+        "alerts": {
+          "type": "boolean"
         }
       },
       "required": [
         "ticket_analysis",
         "model_comparison",
         "endpoint_evidence",
-        "actions"
+        "actions",
+        "alerts"
       ],
       "additionalProperties": false
     },

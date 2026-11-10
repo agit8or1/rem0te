@@ -1018,6 +1018,18 @@ function Get-Rem0teInventory {
         foreach (\$a in @(\$n.DefaultIPGateway)) { if (\$a) { \$gw = [string]\$a; break } }
         \$nets += @{ name = [string]\$n.Description; mac = [string]\$n.MACAddress; ipv4 = \$v4; gateway = \$gw; dhcp = [bool]\$n.DHCPEnabled }
     }
+    # Installed software (0.29), from the uninstall keys - the list Settings
+    # and Programs and Features show. Read-only registry reads; system
+    # components and update entries are skipped, and the server keeps 500.
+    \$sw = @()
+    foreach (\$rk in @('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*', 'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*')) {
+        foreach (\$ue in @(Get-ItemProperty -Path \$rk -ErrorAction SilentlyContinue)) {
+            if (-not \$ue.DisplayName) { continue }
+            if (\$ue.SystemComponent -eq 1 -or \$ue.ParentKeyName -or \$ue.ReleaseType) { continue }
+            \$sw += @{ name = [string]\$ue.DisplayName; version = [string]\$ue.DisplayVersion; publisher = [string]\$ue.Publisher; installedOn = [string]\$ue.InstallDate }
+            if (\$sw.Count -ge 600) { break }
+        }
+    }
     \$tz = ''
     try { \$tz = (Get-TimeZone -ErrorAction Stop).Id } catch {}
     \$biosDate = \$null
@@ -1046,6 +1058,7 @@ function Get-Rem0teInventory {
         disks = \$disks
         gpus = \$gpus
         networks = \$nets
+        software = \$sw
     }
 }
 function Get-Rem0tePendingUpdates {
@@ -1119,6 +1132,61 @@ if (\$state.agentSecret) {
             Send-Rem0teResult \$cmd.id \$false \$null ([string]\$_.Exception.Message)
         }
     }
+}
+# ---- Monitoring (0.29) ------------------------------------------------------
+# The server names the services to read and the event queries to count. Every
+# name and log is checked against fixed rules here before it is used - this
+# is the process that does the reading - and nothing is changed: a service is
+# read with Get-Service, events are counted with Get-WinEvent. One report per
+# beat, only when the server asked for one, only with the device secret.
+if (\$state.agentSecret -and \$resp -and \$resp.data -and \$resp.data.monitor) {
+    try {
+        \$mon = \$resp.data.monitor
+        \$svcOut = @()
+        foreach (\$sn in @(\$mon.services | Select-Object -First 32)) {
+            \$n = [string]\$sn
+            if (\$n -notmatch '^[A-Za-z0-9_.-]{1,64}\$') { continue }
+            \$sv = Get-Service -Name \$n -ErrorAction SilentlyContinue
+            if (\$sv) { \$svcOut += @{ name = \$n; status = [string]\$sv.Status; startType = [string]\$sv.StartType } }
+            else { \$svcOut += @{ name = \$n; status = 'Missing'; startType = 'Unknown' } }
+        }
+        \$allowedLogs = @('Application','System','Security','Setup','Windows PowerShell')
+        \$evOut = @()
+        \$nowUtc = (Get-Date).ToUniversalTime()
+        foreach (\$q in @(\$mon.events | Select-Object -First 8)) {
+            \$k = [string]\$q.key
+            if (\$k -notmatch '^[a-z0-9][a-z0-9._-]{0,63}\$') { continue }
+            \$ln = [string]\$q.log
+            if (-not (\$allowedLogs -contains \$ln)) { continue }
+            # 'since' is this script's own clock from its last report, echoed
+            # back by the server - so a skewed clock cannot open a gap. Never
+            # more than a day back; the first query looks back 15 minutes.
+            \$start = \$nowUtc.AddMinutes(-15)
+            if (\$q.since) { try { \$s0 = ([DateTime]::Parse([string]\$q.since)).ToUniversalTime(); if (\$s0 -gt \$nowUtc.AddDays(-1) -and \$s0 -lt \$nowUtc) { \$start = \$s0 } } catch {} }
+            \$f = @{ LogName = \$ln; StartTime = \$start.ToLocalTime() }
+            \$ids = @(); foreach (\$i in @(\$q.ids)) { if (\$null -ne \$i) { \$ids += [int]\$i } }
+            if (\$ids.Count -gt 0) { \$f['Id'] = \$ids }
+            \$lv = @(); foreach (\$l in @(\$q.levels)) { if (\$null -ne \$l) { \$lv += [int]\$l } }
+            if (\$lv.Count -gt 0) { \$f['Level'] = \$lv }
+            if (\$q.provider -and ([string]\$q.provider -match '^[A-Za-z0-9 _./-]{1,128}\$')) { \$f['ProviderName'] = [string]\$q.provider }
+            \$hits = @()
+            \$qok = \$true
+            # No match is an error to Get-WinEvent, not an empty result.
+            try { \$hits = @(Get-WinEvent -FilterHashtable \$f -MaxEvents 100 -ErrorAction Stop) } catch { if (\$_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*') { \$qok = \$false } }
+            if (-not \$qok) { continue }
+            \$item = @{ key = \$k; checkedAt = \$nowUtc.ToString('o'); count = [int]\$hits.Count }
+            if (\$hits.Count -gt 0) {
+                \$h = \$hits[0]
+                \$m = [string]\$h.Message
+                if (\$m.Length -gt 300) { \$m = \$m.Substring(0, 300) }
+                \$item['newestAt'] = \$h.TimeCreated.ToUniversalTime().ToString('o')
+                \$item['sample'] = @{ eventId = [int]\$h.Id; level = [int]\$h.Level; provider = [string]\$h.ProviderName; message = \$m }
+            }
+            \$evOut += \$item
+        }
+        \$mr = @{ rustdeskId = \$id; agentSecret = \$state.agentSecret; services = \$svcOut; events = \$evOut } | ConvertTo-Json -Compress -Depth 6
+        Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/monitor-report') -Method Post -Body \$mr -ContentType 'application/json' -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop | Out-Null
+    } catch {}
 }
 # Apply a staged RustDesk upgrade. The server keeps sending
 # { updateRustdesk: { targetVersion } } until the endpoint reports that

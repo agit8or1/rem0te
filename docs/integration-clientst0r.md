@@ -172,3 +172,32 @@ The technician needs **Request approved actions** (`actions:request`) in that bu
 mapping. Show `approval_url` to the people who will approve. Approval happens there, never in ClientSt0r.
 The whole lifecycle is described in [approved-actions.md](approved-actions.md).
 
+## Alerts and tickets (0.29)
+
+rem0te can offer monitoring alerts to ClientSt0r so it opens a ticket, and show that ticket on the alert. Turn it
+on per business, or globally, in **Settings → Monitoring → Notifications → Offer alerts to ClientSt0r**, with a
+severity floor (critical by default). Only alerts at or above it are sent. Nothing else is needed on the rem0te
+side: the peer's existing `eventsUrl` receives the alert events, and the existing organization mapping decides
+which business is which organization.
+
+| Route | What it does |
+|---|---|
+| (push) `POST {eventsUrl}` | `{alert_event, signature}` — `alert.raised`, `alert.updated`, `alert.resolved` |
+| `GET /api/integration/v1/alerts/events?organization_id=&after=` | Signed alert events after a sequence, for a gap |
+| `GET /api/integration/v1/alerts/{alert_id}?organization_id=` | The alert now |
+| `POST /api/integration/v1/alerts/{alert_id}/ticket` | Record the ticket opened for it |
+
+- **Service-level, not delegated.** No technician token: nothing here acts for a person or reaches a computer.
+  The only write is the ticket link, and it grants nothing.
+- **One ticket per alert.** A different ticket for an already-linked alert is `409 TICKET_ALREADY_LINKED`;
+  changing it is done in rem0te.
+- **What ClientSt0r learns.** The alert title, severity, state, the computer's and site's names, the rem0te
+  computer id and the times. Not inventory, not event-log text beyond the alert title.
+- **When it is sent.** `alert.raised` goes out with the first notification level, so it waits like a
+  notification does: offline alerts are held for three minutes, an alert grouped under an open site outage is
+  never sent on its own (the outage is), and a **maintenance window holds it until the window ends** — and then
+  only if the alert is still open. Planned work does not open tickets.
+- **Containment does not stop alert events.** They report; they change nothing on a computer.
+
+The schemas and fixtures are in the [contract](contracts/ticket-rmm-v1/README.md).
+

@@ -12,7 +12,8 @@
     ],
     "actions": [
       "windows.service.start@1"
-    ]
+    ],
+    "alerts": true
   },
   "model_profiles": [
     "triage-fast",

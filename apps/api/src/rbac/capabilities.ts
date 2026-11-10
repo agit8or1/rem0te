@@ -49,6 +49,15 @@ export const CAP = {
   // people on the approval signer's roster, which is not a capability and is
   // not stored in this database.
   ACTIONS_REQUEST: 'actions:request',
+
+  // Monitoring (v0.29). Seeing alerts for the computers you can already see,
+  // and acknowledging or resolving them. Grants nothing on the computer.
+  ALERTS_VIEW: 'monitoring:alerts',
+  // Setting monitors and maintenance windows for this business. Who is
+  // NOTIFIED is not this capability: notification destinations are set by a
+  // Business Owner (or the MSP) with fresh authentication, because pointing
+  // alerts somewhere is a way to read a business's machine names out.
+  MONITORING_CONFIGURE: 'monitoring:configure',
 } as const;
 
 export type Capability = (typeof CAP)[keyof typeof CAP];
@@ -108,6 +117,13 @@ export const CAPABILITY_GROUPS: {
     group: 'Integration',
     items: [
       { key: CAP.TICKET_ANALYSIS, label: 'Ticket analysis (ClientSt0r)', description: 'Submit read-only ticket analysis from ClientSt0r for this business and read the staff-only findings. Grants no remote access and no actions.' },
+    ],
+  },
+  {
+    group: 'Monitoring',
+    items: [
+      { key: CAP.ALERTS_VIEW, label: 'See and work alerts', description: 'See monitoring alerts for the computers they can see, and acknowledge or resolve them.' },
+      { key: CAP.MONITORING_CONFIGURE, label: 'Configure monitoring', description: 'Add and change monitors and maintenance windows for this business. Who gets notified is set by a Business Owner.' },
     ],
   },
   {

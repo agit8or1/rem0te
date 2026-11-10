@@ -1,7 +1,8 @@
 # Rem0te documentation
 
 Start with the page that matches what you are doing. All of this is also inside
-the product, searchable, under **Documentation** in the sidebar.
+the product under **Documentation** in the sidebar, as a grouped index with a
+contents panel on every page and search across all of it (press <kbd>/</kbd>).
 
 ## Something is broken
 
@@ -18,7 +19,11 @@ the product, searchable, under **Documentation** in the sidebar.
 - **[connecting.md](connecting.md)** — what actually happens when you click
   Connect, the three connect paths, and why they are not equivalent.
 - **[inventory.md](inventory.md)** — the specs a managed computer reports, its
-  pending Windows updates, and how to read a slice of its event log.
+  installed software and change history, its pending Windows updates, and how
+  to read a slice of its event log.
+- **[monitoring.md](monitoring.md)** — monitors (offline, disk, CPU, memory,
+  services, event log, pending restart), inheritance, alerts, site outages,
+  maintenance windows, escalation and ClientSt0r tickets (0.29).
 - **[tactical-rmm.md](tactical-rmm.md)** — connecting and querying from inside
   Tactical RMM: URL Actions, agent matching, and the Collector Task.
 - **[integration-clientst0r.md](integration-clientst0r.md)** — ClientSt0r ticket

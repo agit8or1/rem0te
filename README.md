@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.28.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.29.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -65,6 +65,18 @@ it, its default and its limits: **Settings → Security → Security Features**,
 [docs/security-model.md](docs/security-model.md).
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
+
+## What's new in 0.29
+
+**Know when a computer needs you.** Monitors watch for a computer offline, a disk nearly full, the processor or
+memory pinned, a Windows service stopped, matching events in an event log and a restart pending for days. They are
+inherited global → business → site → computer. One alert per problem: repeats are counted, and a site that loses
+three or more computers raises one site outage instead of a page per machine. Maintenance windows hold
+notifications for planned work, and are not containment. Up to four escalation levels notify webhooks, and
+alerts can be offered to ClientSt0r, which links back the ticket it opens. Every computer gains installed software
+and a change history. **Settings → API keys** is a new screen (keys could only be made through the API before).
+**The documentation is reorganised:** a grouped index, a contents panel on every page, search with highlighting
+(press <kbd>/</kbd>), and annotated screenshots of the main screens. [monitoring.md](docs/monitoring.md)
 
 ## What's new in 0.28
 

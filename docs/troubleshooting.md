@@ -386,9 +386,24 @@ sidebar, searchable across every page.
 ![Documentation, with search](screenshots/guide/docs.png)
 
 1. **Documentation** in the sidebar.
-2. The search box. It matches across every page and returns the section, not
-   just the page — searching *offline or does not exist* lands on the section
-   above.
+2. The search box — press <kbd>/</kbd> from anywhere on a documentation page.
+   It matches across every page and returns the section, not just the page —
+   searching *offline or does not exist* lands on the section above.
+3. The index: every page, grouped by what you are doing, with a line on what
+   each is for.
+
+![Search results with the matched words highlighted](screenshots/guide/docs-search.png)
+
+1. Type two or more letters; matches are highlighted.
+2. Each result names its group, page and section. ↑ ↓ move between them,
+   Enter opens one, Esc clears the search.
+
+![A documentation page: the grouped page list, the contents of this page, and the reading time](screenshots/guide/docs-article.png)
+
+1. Every page, grouped. Below a wide screen this is the **All pages** button.
+2. **On this page** follows where you are. On narrower screens it is a
+   collapsible list at the top of the page.
+3. Reading time. Every page ends with links to the previous and next page.
 
 ---
 

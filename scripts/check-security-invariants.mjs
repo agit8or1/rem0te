@@ -505,6 +505,58 @@ check(
   check('the audit chain module loads no Nest or Prisma client', !/from '@nestjs|from '@prisma\/client'/.test(chain), 'chain.ts is shared with the verify CLI and must stay plain');
 }
 
+// 17. Monitoring (0.29). Read-side only: the agent's monitor block reads and
+//     counts and changes nothing, the server keeps only what it asked for,
+//     a maintenance window never touches containment or security alerts,
+//     notification destinations need fresh authentication, and linking a
+//     ClientSt0r ticket grants nothing.
+{
+  const ws = read('apps/api/src/public/windows-script.ts');
+  const blk = ws.slice(ws.indexOf('# ---- Monitoring (0.29)'), ws.indexOf('# Apply a staged RustDesk upgrade.'));
+  check('the heartbeat\'s monitor block only reads (Get-Service, Get-WinEvent) and posts one report',
+    blk.length > 500 && !/(Start|Stop|Restart|Set|Suspend|Resume)-Service|Invoke-Expression|\biex\b|Start-Process|Remove-|Clear-EventLog|wevtutil|sc(\.exe)? (config|stop|start)/i.test(blk)
+      && (blk.match(/Invoke-RestMethod/g) ?? []).length === 1 && /enrollment\/monitor-report/.test(blk),
+    'the monitor block must not change a service, run a process or clear a log');
+  check('the monitor block checks every service name and log before using it',
+    /-notmatch '\^\[A-Za-z0-9_\.-\]\{1,64\}\\\$'/.test(blk) && /\$allowedLogs -contains \\\$ln/.test(blk.replace(/\\\$allowedLogs/g, '$allowedLogs')),
+    'service names must match the fixed charset and logs the fixed list');
+  const eng = read('apps/api/src/monitoring/engine.ts');
+  check('the server keeps only the services and event keys it asked about',
+    /export function sanitizeReport\([\s\S]{0,700}wantSvc\.get\(name\.toLowerCase\(\)\)[\s\S]{0,200}if \(!canon/.test(eng) && /if \(!wantEv\.has\(key\)/.test(eng),
+    'sanitizeReport must drop unrequested services and event keys');
+  check('an event monitor must name ids, levels or a provider, on an allowed log',
+    /log: z\.enum\(MONITOR_EVENT_LOGS\)/.test(eng) && /ids\.length > 0 \|\| p\.levels\.length > 0 \|\| !!p\.provider/.test(eng), 'EVENT_MATCH params');
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const mr = enr.slice(enr.indexOf('async monitorReport('), enr.indexOf('async monitorReport(') + 900);
+  check('a monitor report needs the device secret', /secretMatches\(node\.agentSecretHash, dto\.agentSecret\)/.test(mr) && /UnauthorizedException/.test(mr), 'monitor-report must authenticate like command-result');
+  check('only an authenticated heartbeat is handed monitor queries', /if \(authenticated\) \{\s*try \{\s*await this\.monitoring\.onLiveSample/.test(enr), 'heartbeatConfig must be gated on authenticated');
+  const mon = [read('apps/api/src/monitoring/monitoring.service.ts'), read('apps/api/src/monitoring/monitoring-admin.service.ts'), read('apps/api/src/monitoring/alert-events.service.ts'), eng].join('\n');
+  check('monitoring never sets or lifts a containment pause, or touches security alerts',
+    !/containmentPause\.|securityAlert\.|alertSuppression\./.test(mon), 'maintenance windows are MonitorSuppression only');
+  const mctl = read('apps/api/src/monitoring/monitoring.controller.ts');
+  check('changing who is notified needs fresh authentication', /@Put\('notify-policy'\)[\s\S]{0,200}this\.fresh\(req\)/.test(mctl) && /assertFresh\(/.test(mctl), 'PUT monitoring/notify-policy must call assertFresh');
+  check('business notification destinations must be public HTTPS hosts', /isIP\(h\)[\s\S]{0,120}localhost/.test(read('apps/api/src/monitoring/monitoring-admin.service.ts')), 'checkDestination must refuse IP literals and internal names for business policies');
+  check('one open alert per problem is enforced in the database',
+    /CREATE UNIQUE INDEX "MonitorAlert_dedup_open" ON "MonitorAlert"\("dedupKey"\) WHERE "state" <> 'RESOLVED'/.test(read('apps/api/prisma/migrations/0028_monitoring/migration.sql')), 'migration 0028 partial unique index');
+  const ae = read('apps/api/src/monitoring/alert-events.service.ts');
+  const link = ae.slice(ae.indexOf('async linkTicket('));
+  check('linking a ClientSt0r ticket acknowledges, resolves and suppresses nothing',
+    link.length > 200 && !/state:\s*'(ACKNOWLEDGED|RESOLVED)'|suppressed:|acknowledgedAt|resolvedAt/.test(link.slice(0, 2500)), 'linkTicket may only set the ticket fields');
+  check('alert events sign under their own prefix', /rem0te-alert-event-v1\\n/.test(read('apps/api/src/integration/crypto.ts')), 'alertEventSigningString must differ from job events');
+}
+
+// 18. Capture scripts (0.29). Every script that seeds or drives the UI for
+//     documentation media refuses a production-looking target before it
+//     touches anything. screenshots.mjs had no such guard and defaulted to
+//     port 3000 — the production web port — until 0.29.
+{
+  for (const f of ['apps/web/scripts/screenshots.mjs', 'apps/web/scripts/capture-media.mjs', 'apps/web/scripts/capture-video.mjs']) {
+    const src = read(f);
+    check(`${f.split('/').pop()} refuses https and ports 3000/443`, /:\(3000\|443\)\\b/.test(src) && /https:\\\/\\\//.test(src) && /throw new Error\(`Refusing/.test(src), `${f} must throw before capturing against a production-looking WEB_URL`);
+  }
+  check('screenshots.mjs refuses any database but reboot_remote_docs', /DATABASE_URL[^\n]*includes\('reboot_remote_docs'\)/.test(read('apps/web/scripts/screenshots.mjs')), 'it seeds a user and changes relay settings');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

@@ -11,6 +11,7 @@ import { IntegrationAuthGuard, type IntegrationRequest } from './integration-aut
 import { IntegrationJobsService } from './jobs.service';
 import { ActionProposalsService } from './action-proposals.service';
 import { loadTrust } from './peers';
+import { AlertEventsService } from '../monitoring/alert-events.service';
 
 export const DELEGATION_HEADER = 'rem0te-delegation';
 
@@ -58,6 +59,8 @@ export class IntegrationController {
         // nothing: approval is a passkey quorum on rem0te's approval signer,
         // and the agent verifies that signature, not this surface.
         actions: this.proposals.proposable(),
+        // v0.29: alert events, polling and ticket linkage.
+        alerts: true,
       },
       model_profiles: peer.modelProfiles,
       limits: {
@@ -112,6 +115,41 @@ export class IntegrationActionsController {
   @Get('action-proposals/:job_id')
   async get(@Req() req: IntegrationRequest, @Param('job_id') jobId: string) {
     return this.proposals.get(req.integrationPeer!, jobId, header(req, DELEGATION_HEADER));
+  }
+}
+
+/**
+ * Monitoring alerts (v0.29). Service-level: no delegated technician, because
+ * nothing here acts on a computer or for a person. Every route is scoped to
+ * an organization mapped to the calling peer, and to alerts that peer was
+ * sent an `alert.raised` for. Linking a ticket is the only write, and it
+ * grants nothing.
+ */
+@Controller('api/integration/v1/alerts')
+@Public()
+@UseGuards(IntegrationAuthGuard)
+@UseFilters(IntegrationExceptionFilter)
+@Throttle({ [THROTTLER_BURST]: { limit: 50, ttl: 1000 }, [THROTTLER_MAIN]: { limit: 1200, ttl: 60_000 } })
+export class IntegrationAlertsController {
+  constructor(private readonly alerts: AlertEventsService) {}
+
+  @Get('events')
+  async events(@Req() req: IntegrationRequest, @Query('organization_id') org?: string, @Query('after') after?: string) {
+    const n = after && /^\d{1,9}$/.test(after) ? Number(after) : 0;
+    return this.alerts.poll(req.integrationPeer!, org, n);
+  }
+
+  @Get(':alert_id')
+  async get(@Req() req: IntegrationRequest, @Param('alert_id') id: string, @Query('organization_id') org?: string) {
+    return this.alerts.get(req.integrationPeer!, org, id);
+  }
+
+  @Post(':alert_id/ticket')
+  @HttpCode(201)
+  async link(@Req() req: IntegrationRequest, @Param('alert_id') id: string, @Res({ passthrough: true }) res: Response) {
+    const out = await this.alerts.linkTicket(req.integrationPeer!, id, req.body);
+    if (out.replayed) { res.status(200); res.setHeader('idempotent-replayed', 'true'); }
+    return out.alert;
   }
 }
 

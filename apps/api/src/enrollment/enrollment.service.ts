@@ -18,6 +18,7 @@ import { CAP } from '../rbac/capabilities';
 import { CreateClaimTokenDto, ClaimEndpointDto } from './dto/enrollment.dto';
 import { SessionEventsService } from '../sessions/session-events.service';
 import { UpdateRolloutService } from '../admin/update-rollout.service';
+import { MonitoringService } from '../monitoring/monitoring.service';
 import { ContainmentService } from '../containment/containment.service';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
 import { CANDIDATE_LIVE_MS, CANDIDATE_SETTLE_MS } from './device-secret';
@@ -43,6 +44,7 @@ export class EnrollmentService {
     private readonly updateTrust: UpdateTrustService,
     private readonly actions: ActionsService,
     private readonly containment: ContainmentService,
+    private readonly monitoring: MonitoringService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -707,6 +709,19 @@ export class EnrollmentService {
       }
     }
 
+    // Monitoring (0.29): the resource monitors read the sample just written,
+    // and the agent is told which services and event queries to report on.
+    // Best-effort for the same reason as inventory: never cost the liveness ping.
+    let monitor: Awaited<ReturnType<MonitoringService['heartbeatConfig']>> = null;
+    if (authenticated) {
+      try {
+        await this.monitoring.onLiveSample(node.endpointId);
+        monitor = await this.monitoring.heartbeatConfig(node.endpointId);
+      } catch (e) {
+        this.logger.warn(`Monitoring step failed for endpoint ${node.endpointId}: ${String(e)}`);
+      }
+    }
+
     // Session evidence from the remote side. Only an authenticated heartbeat,
     // and only for this machine's own sessions — see reconcileEndpointSignal.
     if (authenticated && dto.rustdeskSessions !== undefined) {
@@ -762,8 +777,31 @@ export class EnrollmentService {
       actionAcks,
       patchPostureAck,
       patchScan,
+      monitor,
       rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
     };
+  }
+
+  /**
+   * The agent's monitor report (0.29). Device secret required: a report is
+   * evidence the console acts on, and without the secret anyone who knows a
+   * RustDesk ID could raise — or clear — a customer's alerts.
+   */
+  async monitorReport(dto: { rustdeskId: string; agentSecret: string; services?: unknown[]; events?: unknown[] }) {
+    const node = await this.prisma.rustdeskNode.findUnique({
+      where: { rustdeskId: dto.rustdeskId },
+      select: { id: true, tenantId: true, endpointId: true, agentSecretHash: true },
+    });
+    if (!node?.agentSecretHash || !this.secretMatches(node.agentSecretHash, dto.agentSecret)) {
+      await this.audit.log({
+        tenantId: node?.tenantId ?? undefined,
+        action: 'ENDPOINT_HEARTBEAT_REJECTED',
+        resource: 'endpoint', resourceId: node?.endpointId,
+        meta: { rustdeskId: dto.rustdeskId, reason: 'monitor_report_unauthenticated' },
+      });
+      throw new UnauthorizedException('This device is not recognised');
+    }
+    return this.monitoring.ingestReport(node.endpointId, { services: dto.services, events: dto.events });
   }
 
   /**

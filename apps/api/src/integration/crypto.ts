@@ -121,3 +121,8 @@ export function constantTimeEqualHex(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   return timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
+
+/** Alert events (v0.29) sign under their own prefix, so one can never be replayed as a job event or the reverse. */
+export function alertEventSigningString(event: unknown): string {
+  return `rem0te-alert-event-v1\n${canonicalJson(event)}`;
+}

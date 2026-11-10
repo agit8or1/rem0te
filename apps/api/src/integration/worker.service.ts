@@ -260,5 +260,38 @@ export class IntegrationWorkerService implements OnModuleDestroy {
           : { deliveryAttempts: attempts, ackedAt: new Date(), lastDeliveryError: null },
       });
     }
+    await this.deliverAlertEvents(trust);
+  }
+
+  /**
+   * Monitoring alert events (v0.29), to the same events URL, under their own
+   * envelope key (`alert_event`) and signing prefix. Same rules: 2xx is the
+   * ack, anything else backs off, and the peer recovers by polling
+   * GET /api/integration/v1/alerts/events.
+   */
+  private async deliverAlertEvents(trust: NonNullable<ReturnType<typeof loadTrust>>) {
+    const due = await this.prisma.integrationAlertEvent.findMany({
+      where: { ackedAt: null, nextDeliveryAt: { lte: new Date() } }, orderBy: [{ createdAt: 'asc' }, { sequence: 'asc' }], take: 20,
+    });
+    for (const ev of due) {
+      const peer: Peer | undefined = trust.peers.get(ev.peerId);
+      if (!peer) continue;
+      if (Date.now() - ev.createdAt.getTime() > EVENT_GIVE_UP_MS) {
+        await this.prisma.integrationAlertEvent.update({ where: { id: ev.id }, data: { nextDeliveryAt: new Date(8640000000000000), lastDeliveryError: 'gave up; recover by polling' } });
+        continue;
+      }
+      let error: string | null = null;
+      try {
+        const r = await signedPost(peer, 'events', JSON.stringify({ alert_event: ev.body, signature: { alg: 'Ed25519', kid: ev.keyId, sig: ev.signature } }), 10_000, 16 * 1024);
+        if (r.status < 200 || r.status >= 300) error = `HTTP ${r.status}`;
+      } catch (e) { error = (e as Error).name || 'network error'; }
+      const attempts = ev.deliveryAttempts + 1;
+      await this.prisma.integrationAlertEvent.update({
+        where: { id: ev.id },
+        data: error
+          ? { deliveryAttempts: attempts, lastDeliveryError: error, nextDeliveryAt: new Date(Date.now() + Math.min(3600_000, 2000 * 2 ** attempts)) }
+          : { deliveryAttempts: attempts, ackedAt: new Date(), lastDeliveryError: null },
+      });
+    }
   }
 }

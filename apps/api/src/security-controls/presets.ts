@@ -90,7 +90,8 @@ export const BUILT_IN_PRESETS: { key: string; tier: Tier; name: string; descript
 /** What a preset grants as business capabilities. Read-side only, by construction. */
 export function presetCapabilities(p: PresetPolicy): Capability[] {
   const caps: Capability[] = [];
-  if (p.inventoryView === 'allowed') caps.push(CAP.COMPUTERS_VIEW);
+  // v0.29: alerts are about the same computers the inventory shows.
+  if (p.inventoryView === 'allowed') caps.push(CAP.COMPUTERS_VIEW, CAP.ALERTS_VIEW);
   if (p.supportRequests === 'allowed') caps.push(CAP.SUPPORT_REQUESTS);
   if (p.eventLogs === 'allowed') caps.push(CAP.COMPUTERS_EVENT_LOGS);
   return caps;

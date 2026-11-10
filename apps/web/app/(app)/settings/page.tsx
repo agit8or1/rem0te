@@ -6,7 +6,7 @@ import { authApi, platformApi, supportRequestsApi } from '@/lib/api-client';
 import { usePermissions } from '@/lib/auth';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { PublicAddressCard } from '@/components/settings/public-address-card';
-import { Copy, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Copy, KeyRound, RefreshCw, ShieldCheck, Siren } from 'lucide-react';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -197,6 +197,7 @@ export default function SettingsPage() {
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
+          <TabsTrigger value="monitoring">Monitoring &amp; API</TabsTrigger>
           <TabsTrigger value="quick-connect">Quick Connect</TabsTrigger>
           <TabsTrigger value="rustdesk">RustDesk</TabsTrigger>
           <TabsTrigger value="branding">Branding</TabsTrigger>
@@ -333,6 +334,33 @@ export default function SettingsPage() {
               <a href="/quick" target="_blank" rel="noopener noreferrer" className="text-sm font-mono underline">
                 /quick
               </a>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="monitoring" className="mt-4 space-y-4">
+          <Card>
+            <CardHeader><CardTitle className="text-sm">Monitoring</CardTitle></CardHeader>
+            <CardContent className="flex flex-wrap items-center justify-between gap-3">
+              <p className="max-w-xl text-sm text-muted-foreground">
+                Monitors (offline, disk, CPU, memory, services, event log, pending restart), inherited global → business →
+                site → computer; maintenance windows; and who is notified, with escalation and ClientSt0r tickets.
+              </p>
+              <Button variant="outline" onClick={() => router.push('/settings/monitoring')}>
+                <Siren className="mr-2 h-4 w-4" />Open Monitoring
+              </Button>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader><CardTitle className="text-sm">API keys</CardTitle></CardHeader>
+            <CardContent className="flex flex-wrap items-center justify-between gap-3">
+              <p className="max-w-xl text-sm text-muted-foreground">
+                Keys for the public API (/api/v1/pub/v1). Each belongs to one business, carries only the scopes you pick,
+                and is shown once when it is created.
+              </p>
+              <Button variant="outline" onClick={() => router.push('/settings/api-keys')}>
+                <KeyRound className="mr-2 h-4 w-4" />Open API keys
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>

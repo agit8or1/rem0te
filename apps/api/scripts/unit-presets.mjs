@@ -29,15 +29,15 @@ const t = (name, fn) => tests.push([name, fn]);
 const tier = (k) => P.BUILT_IN_PRESETS.find((p) => p.tier === k).policy;
 
 // ── Presets ─────────────────────────────────────────────────────────────────
-t('L1 grants inventory and support requests only', () => {
-  assert.deepEqual(P.presetCapabilities(tier('L1')).sort(), ['computers:view', 'support:requests']);
+t('L1 grants inventory, its alerts (0.29) and support requests only', () => {
+  assert.deepEqual(P.presetCapabilities(tier('L1')).sort(), ['computers:view', 'monitoring:alerts', 'support:requests']);
   const p = tier('L1');
   for (const k of ['eventLogs', 'remoteViewOnly', 'remoteControl', 'elevation', 'unattended', 'clipboard', 'fileTransfer', 'patches', 'fixRequests']) assert.equal(p[k], 'off', k);
   assert.equal(p.diagnostics, 'off');
 });
 t('L2 adds event logs, basic diagnostics, view-only, control-by-request, low-risk fix requests', () => {
   const p = tier('L2');
-  assert.deepEqual(P.presetCapabilities(p).sort(), ['computers:event_logs', 'computers:view', 'support:requests']);
+  assert.deepEqual(P.presetCapabilities(p).sort(), ['computers:event_logs', 'computers:view', 'monitoring:alerts', 'support:requests']);
   assert.equal(p.diagnostics, 'basic'); assert.equal(p.remoteViewOnly, 'allowed'); assert.equal(p.remoteControl, 'request');
   assert.equal(p.fixRequests, 'low_risk'); assert.equal(p.elevation, 'off'); assert.equal(p.standardWorkstationsOnly, true);
 });

@@ -203,6 +203,14 @@ previous build's files 404s every browser that already had the app open.
   Test clean-ups that `DELETE` audit rows are detected as deletions: on a
   scratch database the chain reports them for good, which is expected; never
   run them against production.
+- **The monitoring sweep acts on every alert in the database** (every 60 s;
+  `MONITOR_SWEEP=off` stops it). A scratch API pointed at a database with
+  demo or fixture alerts will resolve, group and notify them. Run the docs
+  stack's API with `MONITOR_SWEEP=off`, and never give a scratch database a
+  notification policy with a real destination.
+- **A maintenance window is not containment.** `MonitorSuppression` only
+  holds notifications (and ClientSt0r's `alert.raised`); it never touches
+  `ContainmentPause`. Keep them apart — §17 checks it.
 - **hbbs logs nothing when a connection fails.** Use
   `deploy/scripts/hbbs-probe.py <id>`. Note it sends a real punch-hole, so the
   endpoint will dial the relay as a side effect.
@@ -261,6 +269,22 @@ and `/healthz` gives no detail without `HEALTH_TOKEN`. Its behavioural proof is
 `apps/api/scripts/e2e-containment.mjs` (same `RELEASE_BIN` / `ACTION_SIM`; the
 sim takes `-pause`).
 
+0.29.0 added §17 for monitoring: the agent's monitor block only reads
+(`Get-Service`, `Get-WinEvent`) and checks every service name and log against
+a charset before using it, the server keeps only the services and event keys
+it asked about, event monitors must name ids, levels or a provider, the
+monitor report needs the device secret and only an authenticated heartbeat is
+handed monitor queries, monitoring never sets or lifts containment, changing
+who is notified needs `assertFresh`, business destinations are public HTTPS
+hosts, one open alert per problem is a partial unique index, and linking a
+ClientSt0r ticket grants nothing. §18 checks that every capture script refuses
+https and ports 3000/443, and that `screenshots.mjs` refuses any database but
+`reboot_remote_docs`. Unit proof: `apps/api/scripts/unit-monitoring.mjs` (set
+`PWSH` to also run the agent's monitor block under pwsh against stubs).
+Behavioural proof: `apps/api/scripts/e2e-monitoring.mjs` — it refuses a
+database that already has global monitors or a global notification policy,
+because the sweep acts on everything in it.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs
@@ -284,7 +308,7 @@ Two audiences, two toolchains, and they do not share files:
 
 | Script | Writes | Consumed by |
 |---|---|---|
-| `apps/web/scripts/screenshots.mjs` | `docs/screenshots/` | The in-app docs at `/docs` — numbered-callout guide images |
+| `apps/web/scripts/screenshots.mjs` | `docs/screenshots/` | The in-app docs at `/docs` — numbered-callout guide images (each one followed by a numbered key in the markdown) |
 | `apps/web/scripts/capture-media.mjs` | `docs/images/github/` | The GitHub gallery, `docs/screenshots.md` |
 | `apps/web/scripts/capture-video.mjs` | `media/raw/*.webm` | `scripts/build-video.sh` |
 | `scripts/build-video.sh` | `media/*.mp4`, `media/poster*.png` | GitHub **release assets** |
@@ -295,9 +319,11 @@ The rule is root-anchored (`/media/`) on purpose — a bare `media/` also matche
 `docs/media/`, which holds the walkthrough transcript and captions and *is*
 tracked.
 
-**Never capture against production.** Both capture scripts refuse an `https://`
-target or port 3000/443 outright, and `prisma/_docs-demo-data.ts` refuses any
-database whose name is not `reboot_remote_docs`. Those guards are the safety
+**Never capture against production.** All three capture scripts refuse an
+`https://` target or port 3000/443 outright (§18), `screenshots.mjs` also
+refuses any database but `reboot_remote_docs`, and `prisma/_docs-demo-data.ts`
+and `_docs-demo-monitoring.ts` refuse any database whose name is not
+`reboot_remote_docs`. Masking is shared: `apps/web/scripts/capture-masks.mjs`. Those guards are the safety
 net, not the plan — stand up the isolated stack described in
 `docs/screenshots.md` ("Regenerating these").
 

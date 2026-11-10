@@ -291,7 +291,7 @@ sudo -u postgres createdb reboot_remote_docs
 cd apps/api
 DATABASE_URL=postgresql://…/reboot_remote_docs npx prisma migrate deploy
 DATABASE_URL=… npx tsx prisma/seed.ts
-DATABASE_URL=… npx tsx prisma/_docs-demo-data.ts
+DATABASE_URL=… ENCRYPTION_KEY=… npx tsx prisma/_docs-demo-data.ts
 
 # 2. Run the API and web against it on non-production ports (4001 / 4000).
 #    `output: 'standalone'` bakes the API rewrite in at build time, so patch
@@ -301,6 +301,8 @@ DATABASE_URL=… npx tsx prisma/_docs-demo-data.ts
 #    how recently a device checked in, and the API sweeps the flag as data
 #    ages — without this the dashboard counts stop matching the inventory.
 DATABASE_URL=… npx tsx prisma/_docs-demo-refresh.ts   # run from apps/api
+DATABASE_URL=… npx tsx prisma/_docs-demo-monitoring.ts # monitors, alerts, a site outage, API keys
+# Run the demo API with MONITOR_SWEEP=off, or it re-evaluates those alerts.
 WEB_URL=http://127.0.0.1:4000 EMAIL=… PASSWORD=… \
   node apps/web/scripts/capture-media.mjs          # gallery -> docs/images/github/
 WEB_URL=http://127.0.0.1:4000 EMAIL=… PASSWORD=… \
@@ -314,7 +316,17 @@ written to a script, a manifest, or the repository.
 
 `apps/web/scripts/screenshots.mjs` is a **different** tool and is still in use:
 it produces the numbered-callout images embedded in the in-app documentation
-under `docs/screenshots/`. This gallery and that guide do not share files.
+under `docs/screenshots/`. This gallery and that guide do not share files. It
+runs against the same stack and refuses any other database:
+
+```bash
+DATABASE_URL=…/reboot_remote_docs WEB_URL=http://127.0.0.1:4000 \
+  node apps/web/scripts/screenshots.mjs            # guide -> docs/screenshots/
+ONLY=guide/alerts,guide/api-keys …                 # just some of them
+```
+
+Each guide image is followed in the markdown by a numbered list explaining
+its callouts; keep the two in step when a callout is added or moved.
 
 Masking happens in the browser DOM immediately before each shutter and never
 writes to the database:

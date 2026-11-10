@@ -393,6 +393,74 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'monitoring-and-alerts',
+    title: 'Monitoring and Alerts',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          Rem0te watches managed computers and raises an alert when one needs a person: offline, a
+          system disk nearly full, the processor or memory pinned, a Windows service stopped, matching
+          events in an event log, or a restart pending for days. Alerts are under{' '}
+          <Link href="/alerts" className="underline text-foreground">Alerts</Link> in the sidebar, and
+          each computer has a <strong className="text-foreground">Monitoring</strong> tab with its own
+          alerts, the monitors in effect, its change history and installed software.
+        </p>
+        <p className="font-medium text-foreground">Monitoring only reads</p>
+        <p>
+          A monitor never changes a computer. It uses what the agent already sends on its heartbeat,
+          plus the services and event-log queries a monitor asks about.
+        </p>
+        <p className="font-medium text-foreground">Setting it up</p>
+        <p>
+          <Link href="/settings/monitoring" className="underline text-foreground">Settings → Monitoring</Link>.
+          Start with <strong className="text-foreground">Add recommended</strong>. Monitors are inherited:
+          global, then business, then site, then computer; a monitor with the same key lower down replaces
+          the one above it, and a disabled one switches it off there.
+        </p>
+        <p className="font-medium text-foreground">One alert per problem</p>
+        <p>
+          A repeat raises the count on the open alert instead of making another. When three or more
+          computers at a site are offline and they are at least half of it, one site-outage alert gathers
+          them. <strong className="text-foreground">Acknowledge</strong> stops escalation;{' '}
+          <strong className="text-foreground">Resolve</strong> closes it with a note. Most alerts also
+          resolve themselves when the problem clears.
+        </p>
+        <p className="font-medium text-foreground">Maintenance windows are not containment</p>
+        <p>
+          A maintenance window holds notifications for planned work — alerts are still recorded. To stop
+          changes reaching computers during an incident, use{' '}
+          <Link href="/settings/security/containment" className="underline text-foreground">Containment</Link>.
+        </p>
+        <p className="font-medium text-foreground">Who is told</p>
+        <p>
+          Up to four escalation levels, each with webhook destinations, under the Notifications tab, and
+          optionally a ticket in ClientSt0r. Changing who is notified asks you to confirm it is you.
+          See <Link href="/docs/monitoring" className="underline text-foreground">Monitoring and alerts</Link>.
+        </p>
+      </div>
+    ),
+  },
+  {
+    id: 'api-keys',
+    title: 'API Keys',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          Integrations (a PSA, an asset system, your own scripts) use the public API at{' '}
+          <code className="text-foreground">/api/v1/pub/v1</code> with an API key. Create one under{' '}
+          <Link href="/settings/api-keys" className="underline text-foreground">Settings → API keys</Link>.
+        </p>
+        <p>
+          A key belongs to one business and can do only what its scopes allow — tick only what the
+          integration needs. It is shown once, when it is created; only a hash is kept, so a lost key is
+          revoked and replaced. Revoking takes effect at once. Keys are managed by a Business Owner, or by a
+          Platform Admin for any business. See the{' '}
+          <Link href="/docs/public-api" className="underline text-foreground">API guide</Link>.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'connect-troubleshooting',
     title: 'Connect Says the Computer Is Offline',
     content: (

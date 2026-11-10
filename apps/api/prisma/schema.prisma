@@ -95,6 +95,12 @@ enum ActivityAction {
   CONTAINMENT_PAUSED
   CONTAINMENT_CLEARED
   AUDIT_CHAIN_ALERT
+  MONITOR_RULE_CHANGED
+  MONITOR_SUPPRESSION_CHANGED
+  MONITOR_NOTIFY_POLICY_CHANGED
+  MONITOR_ALERT_ACKNOWLEDGED
+  MONITOR_ALERT_RESOLVED
+  MONITOR_ALERT_TICKET_LINKED
   LOGIN_SUCCESS
   LOGIN_FAILURE
   LOGOUT
@@ -515,11 +521,14 @@ model Customer {
   supportSessions SupportSession[]
   apiKeys         ApiKey[]
 
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-  actionJobs       ActionJob[]
-  patchDeployments PatchDeployment[]
-  containmentPauses ContainmentPause[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  actionJobs          ActionJob[]
+  patchDeployments    PatchDeployment[]
+  containmentPauses   ContainmentPause[]
+  monitorRules        MonitorRule[]
+  monitorAlerts       MonitorAlert[]
+  monitorSuppressions MonitorSuppression[]
 
   @@index([tenantId])
   @@index([tenantId, name])
@@ -544,7 +553,10 @@ model Site {
   contactPhone String?
   isActive     Boolean @default(true)
 
-  endpoints Endpoint[]
+  endpoints           Endpoint[]
+  monitorRules        MonitorRule[]
+  monitorAlerts       MonitorAlert[]
+  monitorSuppressions MonitorSuppression[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -613,6 +625,10 @@ model Endpoint {
   rustdeskNode      RustdeskNode?
   enrollment        EndpointEnrollment?
   inventory         EndpointInventory?
+  monitorRules      MonitorRule[]
+  monitorAlerts     MonitorAlert[]
+  monitorStates     EndpointMonitorState[]
+  changes           EndpointChange[]
   commands          EndpointCommand[]
   aliases           EndpointAlias[]
   tags              EndpointTag[]
@@ -989,6 +1005,15 @@ model EndpointInventory {
   // history, pending-restart sources and competing update managers.
   patchPosture       Json?
   patchScannedAt     DateTime?
+
+  // v0.29 monitoring: the last monitor report (service states and event-rule
+  // matches, sanitised) and the software list from the inventory pass.
+  //   monitorReport { services: [{ name, status, startType }], events: [{ key, checkedAt, count, newestAt, sample }] }
+  //   software      [{ name, version, publisher, installedOn }]
+  monitorReport     Json?
+  monitorReportedAt DateTime?
+  software          Json?
+  softwareCount     Int?
 
   // When the last full inventory pass landed. Null means the endpoint has
   // never run one: its installer predates this feature and needs re-running.
@@ -1854,14 +1879,16 @@ model WebAuthnChallenge {
 
 /// One ClientSt0r organization ↔ one rem0te business, per peer.
 model IntegrationOrgMapping {
-  id            String    @id @default(cuid())
-  peerId        String
-  externalOrgId String
-  customerId    String
-  tenantId      String
-  createdById   String
-  createdAt     DateTime  @default(now())
-  revokedAt     DateTime?
+  id                String    @id @default(cuid())
+  peerId            String
+  externalOrgId     String
+  customerId        String
+  tenantId          String
+  createdById       String
+  createdAt         DateTime  @default(now())
+  revokedAt         DateTime?
+  /// v0.29: the last alert event sequence handed out for this organization.
+  lastAlertSequence Int       @default(0)
 
   @@unique([peerId, externalOrgId])
   @@unique([peerId, customerId])
@@ -2366,4 +2393,221 @@ model AuditCheckpoint {
   signature String?
 
   @@index([seq])
+}
+
+// ─── Monitoring and alerts (v0.29) ───────────────────────────────────────────
+
+enum MonitorKind {
+  OFFLINE
+  DISK_FREE
+  CPU_HIGH
+  MEMORY_HIGH
+  SERVICE_STOPPED
+  EVENT_MATCH
+  REBOOT_PENDING
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum AlertState {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+/// A monitor, at one scope: global (every business), a business, a site or
+/// one computer. `scopeKey` is "global" | "b:<id>" | "s:<id>" | "e:<id>".
+/// For a computer, the most specific rule with the same `key` wins, and a
+/// disabled one switches the inherited monitor off for that scope.
+model MonitorRule {
+  id          String        @id @default(cuid())
+  scopeKey    String
+  customerId  String?
+  customer    Customer?     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  siteId      String?
+  site        Site?         @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  endpointId  String?
+  endpoint    Endpoint?     @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  key         String
+  kind        MonitorKind
+  name        String
+  enabled     Boolean       @default(true)
+  severity    AlertSeverity @default(WARNING)
+  params      Json
+  createdById String
+  updatedById String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@unique([scopeKey, key])
+  @@index([customerId])
+}
+
+/// One problem on one computer (or one site, for SITE_OUTAGE). At most one
+/// row per `dedupKey` is not RESOLVED — a partial unique index in migration
+/// 0028 enforces it — so a repeat bumps `occurrences` instead of a new alert.
+model MonitorAlert {
+  id               String              @id @default(cuid())
+  tenantId         String?
+  customerId       String?
+  customer         Customer?           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  siteId           String?
+  site             Site?               @relation(fields: [siteId], references: [id], onDelete: SetNull)
+  endpointId       String?
+  endpoint         Endpoint?           @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  ruleId           String?
+  ruleKey          String
+  kind             String // a MonitorKind, or SITE_OUTAGE
+  dedupKey         String
+  severity         AlertSeverity
+  state            AlertState          @default(OPEN)
+  title            String
+  detail           Json
+  firstSeenAt      DateTime            @default(now())
+  lastSeenAt       DateTime            @default(now())
+  occurrences      Int                 @default(1)
+  /// Notifications wait until this time: the offline correlation hold, or the end of a suppression.
+  notifyFrom       DateTime            @default(now())
+  /// When the notification pass next looks at this alert (a level coming due, a window ending).
+  nextCheckAt      DateTime            @default(now())
+  escalationLevel  Int                 @default(0) // levels already notified
+  lastNotifiedAt   DateTime?
+  suppressed       Boolean             @default(false)
+  suppressionId    String?
+  parentId         String?
+  parent           MonitorAlert?       @relation("AlertOutage", fields: [parentId], references: [id], onDelete: SetNull)
+  children         MonitorAlert[]      @relation("AlertOutage")
+  acknowledgedAt   DateTime?
+  acknowledgedById String?
+  resolvedAt       DateTime?
+  resolvedById     String? // null = resolved by the monitor itself
+  resolveNote      String?
+  ticketPeerId     String?
+  ticketId         String?
+  ticketUrl        String?
+  ticketLinkedAt   DateTime?
+  events           MonitorAlertEvent[]
+
+  @@index([customerId, state])
+  @@index([endpointId, state])
+  @@index([siteId, kind, state])
+  @@index([state, nextCheckAt])
+  @@index([dedupKey])
+}
+
+/// What happened to an alert: raised, repeated (counted, not logged),
+/// notified, notify_failed, escalated, suppressed, grouped, acknowledged,
+/// resolved, ticket_linked, ticket_event.
+model MonitorAlertEvent {
+  id        String       @id @default(cuid())
+  alertId   String
+  alert     MonitorAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  type      String
+  actorId   String?
+  detail    Json?
+  createdAt DateTime     @default(now())
+
+  @@index([alertId, createdAt])
+}
+
+/// A maintenance window: alerts in scope are still raised and shown, but
+/// nobody is notified or escalated to and nothing goes to ClientSt0r. It is
+/// not a containment pause, never lifts one, and never touches security alerts.
+model MonitorSuppression {
+  id          String    @id @default(cuid())
+  scopeKey    String
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  siteId      String?
+  site        Site?     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  endpointId  String?
+  ruleKeys    String[]
+  reason      String
+  startsAt    DateTime
+  endsAt      DateTime
+  createdById String
+  createdAt   DateTime  @default(now())
+  revokedAt   DateTime?
+  revokedById String?
+
+  @@index([customerId, endsAt])
+  @@index([endsAt])
+}
+
+/// Who hears about alerts, and when. One per scope: "global", or "b:<id>"
+/// (a business's own policy replaces the global one for that business).
+///   levels    [{ afterMinutes, minSeverity, destinations: [{ label, url }] }]
+///   ticketing { enabled, minSeverity }   — alert events to mapped ClientSt0r orgs
+model MonitorNotifyPolicy {
+  id          String   @id @default(cuid())
+  scopeKey    String   @unique
+  customerId  String?
+  levels      Json
+  ticketing   Json
+  updatedById String
+  updatedAt   DateTime @updatedAt
+}
+
+/// Per computer and monitor key: the counters a rule needs between samples.
+model EndpointMonitorState {
+  endpointId  String
+  endpoint    Endpoint  @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  ruleKey     String
+  breachCount Int       @default(0)
+  okCount     Int       @default(0)
+  breachSince DateTime?
+  /// For event rules: the agent's own clock at its last query, echoed back as `since`.
+  checkedAt   String?
+  lastMatchAt DateTime?
+  lastValue   Json?
+  updatedAt   DateTime  @updatedAt
+
+  @@id([endpointId, ruleKey])
+}
+
+/// Change history from the inventory pass: hardware, OS, disks, network
+/// adapters and installed software. The first pass is the baseline and
+/// records nothing.
+model EndpointChange {
+  id         String   @id @default(cuid())
+  endpointId String
+  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  customerId String?
+  category   String // hardware | os | disk | network | software
+  change     String // added | removed | changed
+  subject    String
+  before     String?
+  after      String?
+  detectedAt DateTime @default(now())
+
+  @@index([endpointId, detectedAt])
+  @@index([customerId, detectedAt])
+}
+
+/// Signed alert events for ClientSt0r, sequenced per (peer, organization).
+/// Delivered by the integration worker to the peer's events URL, and
+/// recoverable by polling GET /api/integration/v1/alerts/events.
+model IntegrationAlertEvent {
+  id                String    @id // event_id (uuid)
+  peerId            String
+  externalOrgId     String
+  sequence          Int
+  alertId           String
+  type              String
+  body              Json
+  signature         String
+  keyId             String
+  createdAt         DateTime  @default(now())
+  deliveryAttempts  Int       @default(0)
+  nextDeliveryAt    DateTime  @default(now())
+  ackedAt           DateTime?
+  lastDeliveryError String?
+
+  @@unique([peerId, externalOrgId, sequence])
+  @@index([ackedAt, nextDeliveryAt])
+  @@index([alertId])
 }

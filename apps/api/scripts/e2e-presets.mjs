@@ -215,7 +215,7 @@ async function main() {
   {
     const r = await assign({ userId: tNew.id, businessId: bizA.id });
     check(r.status === 201 && r.body.data.presetId === presets.L1.id, 'no preset and no capabilities → L1 Help Desk', msg(r));
-    check(JSON.stringify(r.body.data.capabilities.sort()) === JSON.stringify(['computers:view', 'support:requests']), 'L1 assignment carries view + support only');
+    check(JSON.stringify(r.body.data.capabilities.sort()) === JSON.stringify(['computers:view', 'monitoring:alerts', 'support:requests']), 'L1 assignment carries view, its alerts (0.29) and support only');
     const mine = await req('POST', '/technicians/assignments', { s: Ms, body: { userId: mgr.id, businessId: bizA.id } });
     check(mine.status === 403 && code(mine) === 'SELF_ASSIGNMENT', 'a manager cannot assign themselves', msg(mine));
     const g = await req('POST', '/technicians/groups', { s: Ms, body: { name: `pr-group-${sfx}`, capabilities: ['computers:view'] } });

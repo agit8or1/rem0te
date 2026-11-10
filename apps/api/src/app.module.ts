@@ -4,6 +4,7 @@ import { ActionsModule } from './actions/actions.module';
 import { PatchingModule } from './patching/patching.module';
 import { ContainmentModule } from './containment/containment.module';
 import { AuditChainModule } from './audit/audit-chain.module';
+import { MonitoringModule } from './monitoring/monitoring.module';
 import { HealthModule } from './health/health.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
@@ -86,6 +87,7 @@ import { IntegrationModule } from './integration/integration.module';
     PatchingModule,
     ContainmentModule,
     AuditChainModule,
+    MonitoringModule,
     HealthModule,
     AuthModule,
     StepUpModule,

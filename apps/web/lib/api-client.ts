@@ -641,3 +641,45 @@ export const securityControlsApi = {
   clearPause: (id: string) => api.post(`/security-controls/pauses/${id}/clear`),
   alerts: () => api.get('/security-controls/alerts'),
 };
+
+// Monitoring and alerts (0.29).
+export type MonitorScope = 'global' | 'business' | 'site' | 'endpoint';
+export type Severity = 'INFO' | 'WARNING' | 'CRITICAL';
+export type MonitorKindId = 'OFFLINE' | 'DISK_FREE' | 'CPU_HIGH' | 'MEMORY_HIGH' | 'SERVICE_STOPPED' | 'EVENT_MATCH' | 'REBOOT_PENDING';
+const bq = (businessId?: string | null) => ({ params: businessId ? { businessId } : {} });
+export const monitoringApi = {
+  summary: (businessId?: string | null) => api.get('/monitoring/summary', bq(businessId)),
+  alerts: (q: { state?: string; severity?: string; endpointId?: string; kind?: string; before?: string; limit?: number; businessId?: string | null }) => {
+    const params: Record<string, string | number> = {};
+    for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== null && v !== '') params[k] = v as string | number;
+    return api.get('/monitoring/alerts', { params });
+  },
+  alert: (id: string, businessId?: string | null) => api.get(`/monitoring/alerts/${id}`, bq(businessId)),
+  acknowledge: (id: string, note?: string) => api.post(`/monitoring/alerts/${id}/acknowledge`, note ? { note } : {}),
+  resolve: (id: string, note: string) => api.post(`/monitoring/alerts/${id}/resolve`, { note }),
+  rules: (businessId?: string | null) => api.get('/monitoring/rules', bq(businessId)),
+  createRule: (data: { scope: MonitorScope; businessId?: string; siteId?: string; endpointId?: string; key: string; kind: MonitorKindId; name: string; enabled?: boolean; severity: Severity; params: Record<string, unknown> }) =>
+    api.post('/monitoring/rules', data),
+  addRecommended: (scope: 'global' | 'business', businessId?: string) => api.post('/monitoring/rules/recommended', businessId ? { scope, businessId } : { scope }),
+  updateRule: (id: string, data: { name?: string; enabled?: boolean; severity?: Severity; params?: Record<string, unknown> }) => api.patch(`/monitoring/rules/${id}`, data),
+  deleteRule: (id: string) => api.delete(`/monitoring/rules/${id}`),
+  suppressions: (businessId?: string | null) => api.get('/monitoring/suppressions', bq(businessId)),
+  createSuppression: (data: { scope: MonitorScope; businessId?: string; siteId?: string; endpointId?: string; ruleKeys: string[]; reason: string; startsAt?: string; endsAt: string }) =>
+    api.post('/monitoring/suppressions', data),
+  revokeSuppression: (id: string) => api.post(`/monitoring/suppressions/${id}/revoke`),
+  policy: (businessId?: string | null) => api.get('/monitoring/notify-policy', bq(businessId)),
+  setPolicy: (data: { scope: 'global' | 'business'; businessId?: string; levels: { afterMinutes: number; minSeverity: Severity; destinations: { label: string; url: string }[] }[]; ticketing: { enabled: boolean; minSeverity: Severity } }) =>
+    api.put('/monitoring/notify-policy', data),
+  endpoint: (id: string) => api.get(`/monitoring/endpoints/${id}`),
+};
+
+// API keys for the public API (/api/v1/pub/v1, docs/PUBLIC-API.md). The raw key is returned once, at creation.
+export const API_KEY_SCOPES = [
+  'companies:read', 'companies:write', 'users:read', 'users:write',
+  'computers:read', 'computers:write', 'sessions:read', 'enrollment:write', 'audit:read',
+] as const;
+export const apiKeysApi = {
+  list: (businessId?: string | null) => api.get('/apikeys', bq(businessId)),
+  create: (data: { name: string; scopes: string[]; expiresInDays?: number; businessId?: string }) => api.post('/apikeys', data),
+  revoke: (id: string) => api.delete(`/apikeys/${id}`),
+};

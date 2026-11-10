@@ -5,6 +5,195 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.29.0] — 2026-11-10 · *Lighthouse*
+
+**Monitoring and alerts: know when a computer needs a person, once per problem, and tell the right people.**
+Monitors cover:
+- a computer offline;
+- a system disk nearly full;
+- processor or memory pinned;
+- a Windows service stopped;
+- matching events in an event log;
+- a restart pending for days.
+
+They are inherited global → business → site → computer. Alerts are deduplicated in the database. A site losing most
+of its computers raises one **site outage** instead of a page per machine. **Maintenance windows** hold
+notifications, and are deliberately not containment. Up to four **escalation** levels notify webhooks, and alerts
+can be offered to **ClientSt0r**, which links back its ticket. Inventory gains **installed software** and a
+**change history**. Also in this release:
+- **Settings → API keys**, a screen that didn't exist; `PUBLIC-API.md` described one anyway;
+- a reorganised **documentation viewer**;
+- **annotated screenshots** of the main screens.
+
+**Status: fixture-tested.** Every monitoring path is covered against a scratch database and a simulated agent and
+ClientSt0r. The agent's monitor and software collection has run under pwsh against stubs, **not on real Windows**.
+Alert events have not been exchanged with a real ClientSt0r. Nothing monitors until monitors exist: install
+leaves the set empty, and **Add recommended** is one click.
+
+### Added
+
+- **Monitors** (`apps/api/src/monitoring/`, migration `0028_monitoring`).
+  - **Models:**
+    - `MonitorRule`: a scope key (`global`, `b:<business>`, `s:<site>` or `e:<computer>`), a key, a kind, a
+      severity and parameters.
+    - Kinds: `OFFLINE`, `DISK_FREE`, `CPU_HIGH`, `MEMORY_HIGH`, `SERVICE_STOPPED`, `EVENT_MATCH` and
+      `REBOOT_PENDING`.
+    - Parameters are validated per kind with zod (`engine.ts` `PARAMS`).
+  - **Inheritance:** for each key the most specific rule wins. A disabled rule switches the inherited one off at its
+    scope. A computer's page shows the rules in effect and where each came from.
+  - **Event-log monitors** must name ids, levels or a provider, on System, Application, Security or Setup.
+    A monitor on every event in a log is refused (`INVALID_PARAMS`).
+  - **Recommended set:** offline, disk free, CPU, memory, restart pending, and disk errors (System 7, 11, 51, 153).
+    It is created only when someone clicks **Add recommended**, and each one is an ordinary audited rule.
+  - **Limits:** at most 64 rules per scope, 32 services and 8 event queries per computer.
+- **The agent's part** (`public/windows-script.ts`), only on authenticated heartbeats.
+  - The heartbeat response gains `monitor: {v:1, services, events}`.
+  - The agent reads those services (`Get-Service`, names checked against `^[A-Za-z0-9_.-]{1,64}$`) and runs those
+    event queries (`Get-WinEvent`, allowed logs only, `MaxEvents 100`, one sample truncated to 300 characters,
+    `since` echoed from its own previous report). It POSTs one report to
+    `POST /enrollment/monitor-report`, which needs the device secret, is rate limited (30) and keeps only the
+    services and keys it asked for (`sanitizeReport`).
+  - The block reads and counts; it changes nothing.
+- **Alerts** (`MonitorAlert`, `MonitorAlertEvent`, `EndpointMonitorState`).
+  - **One open alert per problem:** a partial unique index on `dedupKey` where state ≠ `RESOLVED`. A repeat raises
+    `occurrences` and `lastSeenAt`. A lost race (P2002) is retried as a repeat.
+  - **Clearing:** live monitors clear after two good samples, and event monitors after `clearAfterMinutes` quiet.
+    Offline clears when the computer reports. Resolving by hand needs a note.
+  - **Sweep:** every 60 s (`MONITOR_SWEEP_SECONDS`, off with `MONITOR_SWEEP=off`). It runs offline and
+    restart-pending evaluation, event clearing, orphan clean-up, outage correlation, then notification. Two API
+    processes are safe: creation loses on the index, and each notification level is claimed by compare-and-set on
+    `escalationLevel` before it is sent.
+  - **Offline hold:** offline alerts wait 3 minutes before notifying (`MONITOR_OFFLINE_HOLD_SECONDS`), so a
+    restart pages nobody.
+  - **Site outage:** at a site with at least 3 computers, 3 or more offline that are at least half of it raise one
+    critical `SITE_OUTAGE` and group the offline alerts under it. The grouped ones aren't notified on their own
+    while it is open. It clears below a quarter, or below 2. Resolving it lets the alerts still open be notified
+    normally.
+- **Maintenance windows** (`MonitorSuppression`).
+  - Scoped to a business, or global, optionally to some monitor keys. At most 14 days long, starting at most 90
+    days ahead.
+  - **Alerts are still raised and shown**, marked *maintenance*. Notification and ClientSt0r's `alert.raised` are
+    held until the window ends, and only sent if the alert is still open. Ending a window early releases them at
+    once.
+  - **Never touches `ContainmentPause` or `SecurityAlert`** (invariant §17). Containment in turn leaves monitoring
+    running.
+- **Notifications** (`MonitorNotifyPolicy`).
+  - **Levels:** up to four, each with `afterMinutes`, a minimum severity and up to five destinations. Each
+    destination gets a JSON POST, with a 5 s timeout and no redirects, through `validatePeerUrl`.
+  - **Which policy:** a business's own policy if it has one, otherwise the global one.
+  - **Escalation:** acknowledging stops it. Resolving tells every level that was notified.
+  - **Who may change it:** a Business Owner of that business or the MSP, always with **fresh authentication**
+    (`assertFresh`).
+  - **Business destinations** must be https on a public host name: no IP literals, `localhost` or internal
+    suffixes. The audit log records hosts only, because a webhook path is often its secret. People who can't
+    change the policy see shortened URLs.
+- **ClientSt0r alert events** (contract ticket-rmm-v1, `features.alerts: true`).
+  - **Opt-in:** *Offer alerts to ClientSt0r* in the notification policy, with a severity floor.
+  - **Events:** `alert.raised`, then `alert.updated` / `alert.resolved` only after a raise.
+    - Sequenced per (peer, organization) through `IntegrationOrgMapping.lastAlertSequence`.
+    - Signed over `rem0te-alert-event-v1\n…`, a different prefix from job events.
+    - Pushed by the worker to the peer's `eventsUrl` with the existing retry.
+  - **Routes:**
+    - `GET /api/integration/v1/alerts/events?organization_id=&after=`;
+    - `GET /api/integration/v1/alerts/:alert_id`;
+    - `POST /api/integration/v1/alerts/:alert_id/ticket`. It is idempotent for the same ticket; a different one is
+      `409 TICKET_ALREADY_LINKED`.
+    - Service-signed only: no delegation, nothing reaches a computer, and linking grants nothing.
+  - New schemas `alert`, `alert-event`, `signed-alert-event` and `alert-ticket-link`, with fixtures. The signed one
+    verifies against `fixture-alert-signing-key.pub.pem`.
+- **Software inventory and change history** (`EndpointChange`, `EndpointInventory.software`).
+  - **Software:** the agent reads the 64- and 32-bit uninstall keys, skipping system components, child entries and
+    updates (600 at most). The server keeps 500.
+  - **Change history:** each inventory is diffed with the previous one for hardware, OS, disks, network adapters
+    and software (`diffInventory`). The first pass is the baseline. A list the agent didn't report isn't compared,
+    so upgrading an agent doesn't log every program as new.
+- **Permissions:** `monitoring:alerts` (see alerts) and `monitoring:configure`. Presets that allow inventory viewing
+  also grant `monitoring:alerts`.
+  - A Business User sees computer alerts only for computers they can see, and never a site outage.
+  - A technician sees alerts within the computers their grant names.
+  - Global monitors and windows are the MSP's: a Platform Admin, or a technician manager outside a technician
+    context.
+- **Routes** under `/monitoring`:
+  - `summary`;
+  - alerts: list, one, `acknowledge`, `resolve`;
+  - rules: CRUD and `recommended`;
+  - `suppressions` and their `revoke`;
+  - `notify-policy`;
+  - `endpoints/:id`.
+
+  Audited as `MONITOR_RULE_CHANGED`, `MONITOR_SUPPRESSION_CHANGED`, `MONITOR_NOTIFY_POLICY_CHANGED`,
+  `MONITOR_ALERT_ACKNOWLEDGED`, `MONITOR_ALERT_RESOLVED` and `MONITOR_ALERT_TICKET_LINKED`.
+- **Web:**
+  - **Alerts** in the sidebar: totals, filters, and an expandable alert with its history, grouped computers,
+    ticket, acknowledge and resolve.
+  - **Settings → Monitoring:** monitors with inheritance and *Switch off for this business*, maintenance windows,
+    and notifications.
+  - A **Monitoring** tab on every computer, reachable with `?tab=` on the computer page.
+  - **Settings → Monitoring & API** cards.
+  - A *Monitoring* feature on Security Features.
+- **Settings → API keys** (`/settings/api-keys`). Until now there was no screen: keys could only be created with
+  `POST /api/v1/apikeys`, while `PUBLIC-API.md` sent people to an "Administration → API Keys" page that never
+  existed. The page lists keys (prefix, scopes, last use, expiry) and creates one with scopes and an expiry,
+  showing the key once with a Copy button. It revokes with a confirmation. Platform Admins pick the business.
+- **Documentation viewer** (`/docs`).
+  - A **grouped index** landing page with a line on each page. Groups and summaries live in `gen-docs-bundle.mjs`
+    `ORDER`, and a group not in `GROUPS` fails the build.
+  - A grouped sidebar, with an *All pages* button below a wide screen.
+  - **On this page**, which follows the scroll, plus reading time and previous / next links.
+  - Heading anchors, with **heading ids de-duplicated per page**. A second "Setup" used to share the first one's id,
+    so its contents link went to the wrong place.
+  - Search highlights matches, opens with <kbd>/</kbd>, and moves with ↑ ↓ Enter Esc. It searches 4,000 characters
+    of each section, up from 1,200, so late paragraphs are findable.
+  - Images are figures with captions that open full size, and wide tables scroll in their own box.
+- **Annotated screenshots** of the alerts page, monitoring settings, notifications, a computer's Monitoring tab,
+  API keys, and the documentation index, search and pages. Each is followed by a numbered key. They are generated
+  by `screenshots.mjs` against the docs stack, with new demo data in `prisma/_docs-demo-monitoring.ts`.
+- New page `docs/monitoring.md`. Updated: inventory, containment (*a maintenance window is not containment*),
+  integration-clientst0r, the contract README and OpenAPI, PUBLIC-API, troubleshooting, README, `/help`, and
+  screenshots.md.
+
+### Fixed
+
+- **`screenshots.mjs` had no production guard and defaulted to port 3000**, the production web port. It seeds a
+  user and rewrites relay settings for the run, then restores them. It now refuses https, ports 3000 and 443, and
+  any database but `reboot_remote_docs`, like the other capture scripts. Invariant §18 checks all three.
+  Masking moved to a shared `capture-masks.mjs`, and it now also masks `rk_` API keys.
+- **`rem0te-audit verify-export` could hide a bad checkpoint signature.** It printed the first 20 problems in seq
+  order, so on a log with more than 20 deletions, a signature that didn't verify fell into "… and N more". That is
+  the one finding that says the copy itself can't be trusted. Checkpoint problems are now listed first, and the
+  overflow line counts each kind. `e2e-containment` caught it on the scratch database.
+- `containment.md` said alert suppression wasn't built. It is now, as maintenance windows, documented as separate
+  from containment.
+
+### Verification
+
+- `apps/api/scripts/unit-monitoring.mjs`:
+  - 91 checks: engine, inheritance, evaluators, outage decisions, escalation timing, the inventory diff, and the
+    software and report sanitisers;
+  - plus 9 with `PWSH` set, which run the agent's monitor block under pwsh against stubbed `Get-Service`,
+    `Get-WinEvent` and `Invoke-RestMethod`.
+- `apps/api/scripts/e2e-monitoring.mjs`: 107 checks against a scratch API, with a webhook receiver and a stand-in
+  ClientSt0r events endpoint.
+- Invariants §17 (12 checks) and §18 (4). The new §17 service-name check was confirmed to fail when its guard was
+  removed, and §18's when a guard was weakened.
+- Migration `0028_monitoring` applied to an empty database and to the scratch database.
+- Both generated Windows scripts parse under pwsh.
+- The full regression set was re-run against the scratch database, and all suites pass:
+  - containment 70, presets 112, approved-action 76, staged-patching 59, integration 77, security-features 37,
+    signed-updates 46, business-access 83, offboarding 62, security-audit 52, session-mutations 43,
+    support-requests 47, public-address 43, rollouts 45, sso-passkeys 70;
+  - smoke, full, public-api, candidate-password and security-regression.
+- `presets` needed its capability lists to include `monitoring:alerts`. `containment` needed the `rem0te-audit` ordering fix above.
+
+### Upgrade notes
+
+- **Schema change:** run `prisma migrate deploy`, rsync `prisma/` and run `npx prisma generate` at the target.
+- **No dependency changes.**
+- Nothing monitors until monitors exist. Open **Settings → Monitoring** and **Add recommended**, then set
+  **Notifications**.
+- Agents report software and run monitor queries from their next heartbeat after the 0.29 script reaches them.
+  Re-run the installer, or let the agent update.
+
 ## [0.28.0] — 2026-11-10 · *Bulkhead*
 
 **Containment and evidence: stop writes during an incident, in three places that don't trust each other, and
