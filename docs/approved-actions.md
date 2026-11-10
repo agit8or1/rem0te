@@ -4,6 +4,10 @@ rem0te 0.26 can make one change on a customer computer outside a remote session:
 once**. It happens only after people on an approval roster have authorized that exact plan with a passkey, on a page
 the portal does not serve, and only on a computer whose agent checks all of it again before anything runs.
 
+From 0.27 the catalog has a second action, **installing named Windows updates**, which is requested only through a
+staged deployment of a canary and rings. See [Staged patching](staged-patching.md). The rest of this page describes
+the Print Spooler action, and the machinery both actions share.
+
 That is the whole catalog. You can't request a command, a script, a path, a URL, another service, or a change to the
 spooler's startup type. Credential extraction, removing backups, disabling defenses, granting admin rights and wiping
 disks aren't in the catalog and never will be. They aren't switched off; nothing exists to request them.
@@ -248,7 +252,7 @@ Agent refusal reasons: `bad_signature`, `unknown_key`, `bad_plan`, `job_mismatch
 
 ## Known limits
 
-- One action, on one computer per plan, on Windows only.
+- Two actions, on Windows only. The Print Spooler start names one computer per plan; an update ring names up to 25.
 - A compromised portal can delay, cancel or withhold delivery. It can't sign or alter a plan.
 - The signer is a single process with file state. Back up `/var/lib/rem0te-approver`; losing the key means
   generating a new one and publishing a new `approval/keys.json`. Plans signed by the old key are then refused.

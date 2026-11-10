@@ -18,6 +18,13 @@ export function renderApprovalPage(v: View, nonce: string): string {
   const t = p.targets[0];
   const row = (k: string, val: string) => `<tr><th>${esc(k)}</th><td>${val}</td></tr>`;
   const fmt = (iso: string) => `${esc(new Date(iso).toUTCString())}`;
+  const computers = p.targets.length === 1
+    ? `${esc(t.hostname)} <span class="mut">(${esc(t.deviceClass.toLowerCase())}, RustDesk ID ${esc(t.rustdeskId)})</span>`
+    : `<strong>${p.targets.length} computers</strong><ul>${p.targets.map((x) => `<li>${esc(x.hostname)} <span class="mut">(${esc(x.deviceClass.toLowerCase())}, RustDesk ID ${esc(x.rustdeskId)})</span></li>`).join('')}</ul>`;
+  const dep = p.display?.deployment;
+  const updates = p.display?.updates?.length
+    ? `<table class="inner"><tr><th>Update</th><th>Classification</th><th>Severity</th></tr>${p.display.updates.map((u) => `<tr><td>${u.kb ? `<strong>${esc(u.kb)}</strong> ` : ''}${esc(u.title)}<br><code>${esc(u.updateId)} rev ${esc(u.revision)}</code></td><td>${esc(u.className ?? 'unknown')}</td><td>${esc(u.severity ?? '—')}</td></tr>`).join('')}</table><p class="mut">Titles and KBs are as the computers reported them. Each computer installs an update only if Windows Update itself offers it as a security, critical, rollup or ordinary update.</p>`
+    : '';
   const needs = [`${p.policy.approvalsRequired} approver${p.policy.approvalsRequired > 1 ? 's' : ''} (${p.policy.risk} impact)`]
     .concat(p.policy.customerSignoff ? ['customer sign-off from this business'] : []).join(' + ');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -29,7 +36,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;mar
 h1{font-size:20px;margin:0 0 4px} .mut{color:var(--mut)} table{border-collapse:collapse;width:100%;margin:12px 0}
 th,td{text-align:left;vertical-align:top;padding:6px 8px;border-top:1px solid var(--bd)} th{width:34%;color:var(--mut);font-weight:500}
 .warn{background:var(--warnbg);color:var(--warn);border-radius:6px;padding:10px 12px;margin:12px 0} .warn li{margin:4px 0}
-code{font-size:12px;word-break:break-all} button{font:inherit;padding:8px 14px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--fg);cursor:pointer;margin-right:8px}
+code{font-size:12px;word-break:break-all} table.inner{margin:6px 0} table.inner th{width:auto} ul{margin:4px 0;padding-left:20px} button{font:inherit;padding:8px 14px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--fg);cursor:pointer;margin-right:8px}
 button.primary{background:var(--fg);color:var(--bg)} #msg{margin-top:12px} .ok{color:var(--ok)} select{font:inherit;padding:6px}
 </style></head><body>
 <p class="mut">Rem0te approval — this page is served by the approval signer, not the portal.</p>
@@ -38,8 +45,9 @@ button.primary{background:var(--fg);color:var(--bg)} #msg{margin-top:12px} .ok{c
 <div class="warn"><strong>Before you approve</strong><ul>${v.action.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div>
 <table>
 ${row('Customer', esc(t.businessName))}
-${row('Computer', `${esc(t.hostname)} <span class="mut">(${esc(t.deviceClass.toLowerCase())}, RustDesk ID ${esc(t.rustdeskId)})</span>`)}
-${row('Action', `<code>${esc(p.action.id)}@${esc(p.action.version)}</code> with <code>${esc(JSON.stringify(p.params))}</code>`)}
+${dep ? row('Deployment', `${esc(dep.name)} — <strong>${dep.ring === 0 ? 'canary (ring 0)' : `ring ${esc(dep.ring)}`}</strong> of ${esc(dep.rings)}`) : ''}
+${row(p.targets.length === 1 ? 'Computer' : 'Computers', computers)}
+${row('Action', updates ? `<code>${esc(p.action.id)}@${esc(p.action.version)}</code>, never restarting${updates}` : `<code>${esc(p.action.id)}@${esc(p.action.version)}</code> with <code>${esc(JSON.stringify(p.params))}</code>`)}
 ${row('Requested by', `${esc(p.requestedBy.name)} <span class="mut">via ${esc(p.requestedBy.via)}</span>`)}
 ${row('Origin', p.origin.kind === 'ai_suggestion' ? `<strong>AI suggestion</strong>${p.origin.ticketRef ? ` from ticket ${esc(p.origin.ticketRef)}` : ''} — nothing runs without your explicit approval` : 'Technician')}
 ${row('Reason', esc(p.reason))}

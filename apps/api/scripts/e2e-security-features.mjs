@@ -96,7 +96,7 @@ const REQUIRED_IDS = [
   'business-isolation', 'enrollment-binding', 'computer-scope', 'presets', 'protected-classes', 'launch-authorization',
   'attended-consent', 'unattended', 'view-only', 'input-control', 'clipboard', 'file-transfer', 'elevation', 'session-length',
   'session-evidence', 'credential-audit', 'replay-protection', 'fleet-abuse', 'trust-review', 'release-signing', 'integration',
-  'remote-shell', 'scripts-fixes', 'approved-actions', 'chat', 'mdm', 'backup-recovery',
+  'remote-shell', 'scripts-fixes', 'approved-actions', 'staged-patching', 'chat', 'mdm', 'backup-recovery',
 ];
 
 async function main() {

@@ -6,7 +6,16 @@
 //
 //	rem0te-action-sim -state DIR -keys keys.json -job ID -envelope FILE \
 //	    -rustdesk-id 123456789 -secret S -product-type 1 -self-sha HEX \
-//	    [-service stopped|running|disabled] [-stops-after N]
+//	    [-service stopped|running|disabled] [-stops-after N] \
+//	    [-wua wua.json] [-registry registry.json]
+//
+//	rem0te-action-sim -scan -wua wua.json [-registry registry.json]     posture, as patch-scan writes it
+//	rem0te-action-sim -restart -wua wua.json                            what a restart does to pending updates
+//
+// -wua is a patch.FakeWUA (offered, installed, superseded, results, fail),
+// read before and written back after, so an install changes what the next
+// scan sees. -registry is a patch.FakeRegistry (WSUS, Configuration Manager,
+// pending-restart keys).
 //
 // It prints the Result as JSON. The state directory carries the journal, so
 // running it twice with the same job is a replay, as on a real machine.
@@ -22,6 +31,7 @@ import (
 	"time"
 
 	"github.com/agit8or1/rem0te/windows-installer/internal/action"
+	"github.com/agit8or1/rem0te/windows-installer/internal/patch"
 )
 
 type sim struct {
@@ -69,11 +79,55 @@ func main() {
 	self := flag.String("self-sha", "", "sha256 of 'this' agent build")
 	svc := flag.String("service", "stopped", "Spooler state before the action: stopped, running, disabled")
 	stops := flag.Int("stops-after", 0, "the service stops again after N state reads (0 = stays up)")
+	wuaPath := flag.String("wua", "", "simulated Windows Update state (patch.FakeWUA JSON)")
+	regPath := flag.String("registry", "", "simulated registry (patch.FakeRegistry JSON)")
+	scan := flag.Bool("scan", false, "print this computer's patch posture and exit")
+	restart := flag.Bool("restart", false, "simulate a restart (clears pending restarts) and exit")
 	flag.Parse()
 
 	fail := func(err error) {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
+	}
+	var wua *patch.FakeWUA
+	reg := &patch.FakeRegistry{}
+	if *wuaPath != "" {
+		wua = &patch.FakeWUA{}
+		if b, err := os.ReadFile(*wuaPath); err == nil {
+			if err := json.Unmarshal(b, wua); err != nil {
+				fail(err)
+			}
+		}
+	}
+	if *regPath != "" {
+		b, err := os.ReadFile(*regPath)
+		if err != nil {
+			fail(err)
+		}
+		if err := json.Unmarshal(b, reg); err != nil {
+			fail(err)
+		}
+	}
+	saveWUA := func() {
+		if wua != nil {
+			wua.Calls = nil
+			b, _ := json.Marshal(wua)
+			_ = os.WriteFile(*wuaPath, b, 0o600)
+		}
+	}
+	if *scan || *restart {
+		if wua == nil {
+			fail(errors.New("-scan and -restart need -wua"))
+		}
+		if *restart {
+			wua.Restart()
+			reg.Keys = nil
+			saveWUA()
+			return
+		}
+		out, _ := json.Marshal(patch.Scan(wua, reg, time.Now()))
+		fmt.Println(string(out))
+		return
 	}
 	kr, err := os.ReadFile(*keysPath)
 	if err != nil {
@@ -97,11 +151,16 @@ func main() {
 		cur = string(b)
 	}
 	p := &sim{state: cur, stopAfter: *stops, product: *pt, rid: *rid, sec: *secret, self: *self}
-	r, err := action.Run(*job, env, action.Options{StateDir: *state, Keys: keys, Platform: p, Now: time.Now,
-		Checks: []time.Duration{time.Millisecond, time.Millisecond}})
+	o := action.Options{StateDir: *state, Keys: keys, Platform: p, Now: time.Now,
+		Checks: []time.Duration{time.Millisecond, time.Millisecond}, WUAWait: time.Second}
+	if wua != nil {
+		o.WUA, o.Registry = wua, reg
+	}
+	r, err := action.Run(*job, env, o)
 	if err != nil {
 		fail(err)
 	}
+	saveWUA()
 	_ = os.WriteFile(sf, []byte(p.state), 0o600)
 	out, _ := json.Marshal(r)
 	fmt.Println(string(out))

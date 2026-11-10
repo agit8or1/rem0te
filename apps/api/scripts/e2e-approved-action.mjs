@@ -418,7 +418,8 @@ async function all() {
     // The agent died mid-action: its journal says "executing".
     mkdirSync(path.join(fdA.state, 'actions', 'journal'), { recursive: true });
     writeFileSync(path.join(fdA.state, 'actions', 'journal', `${job2.id}.json`), JSON.stringify({ jobId: job2.id, state: 'executing', at: new Date().toISOString() }));
-    await prisma.actionJob.update({ where: { id: job2.id }, data: { dispatchedAt: new Date(Date.now() - 31 * 60_000) } });
+    // 0.27: the deadline runs per computer, from that computer's delivery.
+    await prisma.actionTarget.update({ where: { jobId_endpointId: { jobId: job2.id, endpointId: fdA.id } }, data: { dispatchedAt: new Date(Date.now() - 31 * 60_000) } });
     const hbLate = await heartbeat(fdA);
     const row = await prisma.actionJob.findUnique({ where: { id: job2.id } });
     check(row.status === 'UNKNOWN' && (hbLate.body?.data?.actions ?? []).some((d) => d.jobId === job2.id), 'no result in 30 minutes → UNKNOWN, envelope re-delivered to reconcile');
@@ -522,6 +523,7 @@ async function all() {
         id, tenantId: tenant.id, customerId: acme.id, endpointId: fdA.id, actionId: 'windows.service.start', actionVersion: 1, params: { service: 'Spooler' }, reason: 'forged in the database',
         origin: 'technician', via: 'portal', requestedById: dana.id, status: 'DISPATCHED', dispatchedAt: new Date(), risk: 'low', approvalsRequired: 1, customerSignoff: false,
         notBefore: new Date(Date.now() - 60_000), notAfter: new Date(Date.now() + 3600_000), plan: p, digest: 'f'.repeat(64), approvalUrl: 'x', envelope: env,
+        targets: { create: [{ endpointId: fdA.id, status: 'DISPATCHED', dispatchedAt: new Date() }] },
       } });
     }
     const hb = await heartbeat(fdA);

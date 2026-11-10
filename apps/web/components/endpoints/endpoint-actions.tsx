@@ -38,7 +38,14 @@ interface Job {
   result: { observed?: Record<string, string>; detail?: string; reason?: string } | null; resultAt: string | null;
   reconciled: { at: string; byId: string; note: string } | null;
   createdAt: string;
+  // v0.27: one plan can name several computers (a patch ring). From one
+  // computer's page the list carries that computer's row only, plus ringSize.
+  deploymentId: string | null; ring: number | null; ringSize?: number;
+  targets: { endpointId: string; hostname: string | null; status: string; statusReason: string | null; outcome: string | null;
+    result: JobResult | null; reconciled: { at: string; note: string } | null }[];
 }
+type JobResult = { observed?: Record<string, string>; detail?: string; reason?: string; updates?: { updateId: string; kb?: string; state: string; reason?: string; hresult?: string }[] };
+const UPDATE_ACTION = 'windows.update.install';
 
 const STATUS: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning' }> = {
   AWAITING_APPROVAL: { label: 'Awaiting approval', variant: 'warning' },
@@ -75,7 +82,8 @@ export function EndpointActions({ endpointId, isOnline }: { endpointId: string; 
   });
   const refresh = () => qc.invalidateQueries({ queryKey: ['endpoint-actions', endpointId] });
 
-  const action = catalog?.actions[0];
+  // Updates are requested through a staged deployment, never one computer at a time from here.
+  const action = catalog?.actions.find((a) => a.id === 'windows.service.start');
   const request = useMutation({
     mutationFn: () => actionsApi.request(endpointId, { actionId: action!.id, version: action!.version, params: { service: 'Spooler' }, reason: reason.trim() }),
     onSuccess: () => { setReason(''); setConfirmed(false); refresh(); toast({ title: 'Requested', description: 'Nothing runs until the approvers authorize it on the approval page.' }); },
@@ -98,7 +106,7 @@ export function EndpointActions({ endpointId, isOnline }: { endpointId: string; 
     );
   }
 
-  const pending = jobs.find((j) => ['AWAITING_APPROVAL', 'APPROVED', 'DISPATCHED'].includes(j.status) || (j.status === 'UNKNOWN' && !j.reconciled));
+  const pending = jobs.find((j) => j.action.id !== UPDATE_ACTION && (['AWAITING_APPROVAL', 'APPROVED', 'DISPATCHED'].includes(j.status) || (j.status === 'UNKNOWN' && !j.reconciled)));
 
   return (
     <div className="space-y-4">
@@ -157,10 +165,18 @@ export function EndpointActions({ endpointId, isOnline }: { endpointId: string; 
 
 function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => void; onChanged: () => void }) {
   const { toast } = useToast();
-  const [found, setFound] = useState<'running' | 'stopped' | 'other'>('running');
+  const isUpdate = j.action.id === UPDATE_ACTION;
+  const choices = isUpdate ? (['installed', 'not_installed', 'other'] as const) : (['running', 'stopped', 'other'] as const);
+  const [found, setFound] = useState<(typeof choices)[number]>(choices[0]);
   const [note, setNote] = useState('');
+  // This computer's row of the plan; for a single-computer plan it is the plan.
+  const mine = j.targets?.[0];
+  const uncertain = mine ? mine.status === 'UNKNOWN' && !mine.reconciled : j.status === 'UNKNOWN' && !j.reconciled;
+  const result = (mine?.result ?? j.result) as JobResult | null;
+  const outcome = mine?.outcome ?? j.outcome;
+  const reconciled = mine?.reconciled ?? j.reconciled;
   const reconcile = useMutation({
-    mutationFn: () => actionsApi.reconcile(j.id, { found, note: note.trim() }),
+    mutationFn: () => actionsApi.reconcile(j.id, { found, note: note.trim(), ...(mine && j.targets.length >= 1 && (j.ringSize ?? 1) > 1 ? { endpointId: mine.endpointId } : {}) }),
     onSuccess: () => { setNote(''); onChanged(); },
     onError: (e) => toast({ title: 'Not recorded', description: apiMessage(e, 'Could not reconcile.'), variant: 'destructive' }),
   });
@@ -173,6 +189,11 @@ function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => voi
           <span className="text-xs text-muted-foreground">{formatDate(j.createdAt)}</span>
           {j.origin === 'ai_suggestion' && <Badge variant="outline" className="text-xs">AI suggestion{j.ticketRef ? ` · ${j.ticketRef}` : ''}</Badge>}
           {j.via === 'clientst0r' && <Badge variant="outline" className="text-xs">via ClientSt0r</Badge>}
+          {j.deploymentId && (
+            <Link href={`/patching/${j.deploymentId}`} className="text-xs underline">
+              {j.ring === 0 ? 'Patch canary' : `Patch ring ${j.ring}`}{(j.ringSize ?? 1) > 1 ? ` · ${j.ringSize} computers` : ''}
+            </Link>
+          )}
         </div>
         <div className="flex gap-2">
           {j.status === 'AWAITING_APPROVAL' && (
@@ -189,28 +210,37 @@ function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => voi
       </p>
       {j.approvers?.length ? <p className="text-xs text-muted-foreground">Approved by {j.approvers.map((a) => `${a.name}${a.role === 'customer' ? ' (customer)' : ''}`).join(', ')}</p> : null}
       {j.statusReason && <p className="text-xs text-muted-foreground">Reason: {j.statusReason.replace(/_/g, ' ')}</p>}
-      {j.result && (
+      {(j.ringSize ?? 1) > 1 && mine && <p className="text-xs text-muted-foreground">This computer: {mine.status.toLowerCase().replace(/_/g, ' ')}{mine.statusReason ? ` (${mine.statusReason.replace(/_/g, ' ')})` : ''}</p>}
+      {result && (
         <p className="text-xs">
-          Computer reported <strong>{j.outcome?.replace(/_/g, ' ')}</strong>
-          {j.result.reason ? ` (${j.result.reason.replace(/_/g, ' ')})` : ''}
-          {j.result.observed ? ` — observed: ${Object.entries(j.result.observed).map(([k, v]) => `${k} ${v}`).join(', ')}` : ''}. This shows the service state only, not that anything printed.
+          Computer reported <strong>{outcome?.replace(/_/g, ' ')}</strong>
+          {result.reason ? ` (${result.reason.replace(/_/g, ' ')})` : ''}
+          {result.observed && !isUpdate ? ` — observed: ${Object.entries(result.observed).map(([k, v]) => `${k} ${v}`).join(', ')}` : ''}
+          {isUpdate ? '. An install is confirmed only by a later scan; see the deployment.' : '. This shows the service state only, not that anything printed.'}
         </p>
       )}
+      {result?.updates?.length ? (
+        <ul className="text-xs list-disc pl-5">
+          {result.updates.map((u) => <li key={u.updateId}>{u.kb ?? u.updateId}: {u.state.replace(/_/g, ' ')}{u.reason ? ` — ${u.reason}` : ''}{u.hresult && u.state === 'failed' ? ` (${u.hresult})` : ''}</li>)}
+        </ul>
+      ) : null}
       <p className="text-[11px] text-muted-foreground font-mono break-all">plan {j.digest}</p>
-      {j.status === 'UNKNOWN' && !j.reconciled && (
+      {uncertain && (
         <div className="rounded-md border border-destructive/40 p-2 space-y-2">
-          <p className="text-xs">The outcome is uncertain — the computer may or may not have started the spooler. It will not run this again. Check the computer, then record what you found; no new request is accepted until you do.</p>
+          <p className="text-xs">{isUpdate
+            ? 'The outcome is uncertain — the computer may or may not have installed these updates. It will not run this again. Check Settings › Windows Update › Update history on the computer, then record what you found; the deployment does not move on until you do.'
+            : 'The outcome is uncertain — the computer may or may not have started the spooler. It will not run this again. Check the computer, then record what you found; no new request is accepted until you do.'}</p>
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            Found the spooler
-            {(['running', 'stopped', 'other'] as const).map((f) => (
-              <label key={f} className="flex items-center gap-1"><input type="radio" name={`found-${j.id}`} checked={found === f} onChange={() => setFound(f)} />{f}</label>
+            {isUpdate ? 'Found the updates' : 'Found the spooler'}
+            {choices.map((f) => (
+              <label key={f} className="flex items-center gap-1"><input type="radio" name={`found-${j.id}`} checked={found === f} onChange={() => setFound(f)} />{f.replace(/_/g, ' ')}</label>
             ))}
           </div>
           <Textarea rows={2} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} placeholder="How you checked, e.g. services.msc on FRONTDESK" />
           <Button size="sm" variant="outline" disabled={note.trim().length < 3 || reconcile.isPending} onClick={() => reconcile.mutate()}>Record and reconcile</Button>
         </div>
       )}
-      {j.reconciled && <p className="text-xs text-muted-foreground">Reconciled {formatDate(j.reconciled.at)}: {j.reconciled.note}</p>}
+      {reconciled && <p className="text-xs text-muted-foreground">Reconciled {formatDate(reconciled.at)}: {reconciled.note}</p>}
     </div>
   );
 }

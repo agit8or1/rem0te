@@ -39,6 +39,9 @@ the product, searchable, under **Documentation** in the sidebar.
 - **[approved-actions.md](approved-actions.md)** — the first approved action (0.26): starting the Print Spooler once,
   approved by passkey on a separate approval signer and verified by the agent; setup, the roster ceremony, results,
   reconciliation, and what is and is not proven.
+- **[staged-patching.md](staged-patching.md)** — Windows updates in stages (0.27): a canary, then rings, each a
+  signed plan two approvers authorize; what is installed and refused, the promotion gate, what *effective* means,
+  and what is and is not proven.
 - **[technician-access.md](technician-access.md)** — technician presets (L1/L2/L3),
   launch policy, protected device classes, fleet-abuse limits, independent
   review of trust changes, and what this build can and cannot enforce.

@@ -231,6 +231,18 @@ install (`apps/api/scripts/build-approval-signer.mjs`), never run from the
 portal's `dist`. Its behavioural proof is `apps/api/scripts/e2e-approved-action.mjs`
 (needs `RELEASE_BIN` and `ACTION_SIM` built from `tools/windows-installer`).
 
+0.27.0 added §15 for staged patching: the agent's update params are closed
+(`updates` + `reboot: "never"`), its update risk is always high, `wua.ps1` has
+no restart, `AcceptEula`, `Invoke-Expression` or download-and-run, the agent
+checks other update managers before installing, the patching API has no
+approve route, the canary gate requires *effective*, and updates cannot be
+requested one computer at a time (`ACTION_NOT_DIRECT`). §14's agent-catalog
+check now expects exactly the two actions. Its behavioural proof is
+`apps/api/scripts/e2e-staged-patching.mjs` (same `RELEASE_BIN` / `ACTION_SIM`;
+the sim takes `-wua` / `-registry` fixture files). An `ActionJob` is now one
+signed plan with an `ActionTarget` row per computer; `endpointId` on the job is
+only the first target, so per-computer state lives on the target.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

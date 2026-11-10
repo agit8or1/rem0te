@@ -51,6 +51,11 @@ func cmdAction(args []string) int {
 	out := io.MultiWriter(os.Stderr, logf)
 
 	raw, err := readSmall(*envPath, maxEnvelopeBytes)
+	// The heartbeat starts this detached and cannot clean up after it: the
+	// envelope is in memory now, so its file goes — but only from the inbox.
+	if filepath.Dir(filepath.Clean(*envPath)) == filepath.Join(paths.StateDir, "actions", "inbox") {
+		_ = os.Remove(*envPath)
+	}
 	if err != nil {
 		fmt.Fprintf(out, "  action %s: envelope unreadable: %v\n", *job, err)
 		return 4
@@ -64,7 +69,8 @@ func cmdAction(args []string) int {
 		fmt.Fprintf(out, "  action %s: approval keys unavailable: %v\n", *job, err)
 		return 4
 	}
-	r, err := action.Run(*job, raw, action.Options{StateDir: paths.StateDir, Keys: keys, Platform: &winActions{paths: paths}, Now: time.Now})
+	r, err := action.Run(*job, raw, action.Options{StateDir: paths.StateDir, Keys: keys, Platform: &winActions{paths: paths}, Now: time.Now,
+		WUA: winWUA{paths: paths}, Registry: winRegistry{}})
 	if err != nil {
 		fmt.Fprintf(out, "  action %s: %v\n", *job, err)
 		return 5

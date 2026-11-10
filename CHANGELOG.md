@@ -5,6 +5,195 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.27.0] — 2026-11-10 · *Bellwether*
+
+**Staged Windows patching: install named Windows updates on a canary, then on rings, each ring one signed plan
+that two people on the approval roster authorize with a passkey.** A ring can't be requested until the canary
+reports every update *effective* (no longer offered, recorded in Windows' own history, no restart pending), the
+ring before it is within its failure threshold, and its soak time has passed. Over the threshold, the deployment
+pauses itself. The computer decides what to install from Windows Update's own answer, never from the plan's
+titles. It refuses outright when WSUS, Windows Update for Business policy, MDM or Configuration Manager manages
+it, and it never restarts.
+
+**Status: fixture-tested.** The agent's real decision code ran against a simulated Windows Update and registry.
+The Windows Update script is parsed by PowerShell but hasn't run against a real Windows Update service. See *What
+has been proven* in `docs/staged-patching.md`.
+
+### Added
+
+- **A second catalog action, `windows.update.install@1`** (`apps/api/src/actions/catalog.ts`,
+  `tools/windows-installer/internal/action/catalog.go`, `updates.go`).
+  - **Parameters are closed:** exactly `{"updates":[{"updateId","revision"}…], "reboot":"never"}`, 1–20 unique
+    identities. There's no KB, title, URL or file in the parameters.
+  - **Always high impact:** two distinct approvers, whatever the device, and never the requester.
+  - **Rings:** a plan may name up to 25 computers (the Spooler action stays at one). The agent checks that it is
+    one of them, by RustDesk ID and secret hash, and that no RustDesk or endpoint ID appears twice.
+  - **Not direct:** `POST /endpoints/:id/actions` refuses it (`400 ACTION_NOT_DIRECT`). Updates go through a
+    deployment.
+- **Windows Update on the agent** (`internal/patch`, `patch_windows.go`).
+  - A fixed `wua.ps1` is compiled into the signed agent and run by Windows PowerShell 5.1 with
+    `-NoProfile -NonInteractive -ExecutionPolicy Bypass`, with three modes:
+    - **scan** reports offered updates and history;
+    - **lookup** asks about the named identities, including superseded ones;
+    - **install** downloads, then installs with `ForceQuiet`.
+  - **It never** calls `AcceptEula`, restarts, or runs downloaded text. Scans time out after 15 minutes, installs
+    after 4 hours.
+  - **Eligibility, decided on the computer:**
+    - only Security Updates, Critical Updates, Update Rollups and Updates;
+    - never drivers, upgrades, feature packs, service packs, tools or definitions;
+    - never `BrowseOnly`, user-input or unaccepted-EULA updates.
+  - **Strict parsing:** the parsers refuse script answers about identities nobody asked for.
+  - **Other update managers**, read from the registry: WSUS (`WUServer` plus `UseWUServer=1`), WUfB policy values,
+    `PolicyManager\current\device\Update`, and the `CcmExec` service. If any is present, the whole plan is refused
+    with `managed_elsewhere`, before anything else is checked.
+  - **Pending restart**, from four sources: component servicing, Windows Update, `PendingFileRenameOperations`,
+    and the update agent's own answer.
+  - **Per-update outcome:**
+    - `installed`, `restart_required` or `already_installed`;
+    - `superseded`, `not_offered` or `excluded`;
+    - `failed`, with Windows' HRESULT;
+    - `unknown` (a script crash is never `failed`) or `not_attempted`.
+  - **Overall outcome:** `succeeded`, `restart_required`, `no_change`, `partial`, `failed` or `uncertain`.
+- **Detached execution, with locks** (`internal/flock`).
+  - The signed installer's heartbeat hook now starts `rem0te-agent.exe action` detached, so a long download
+    doesn't hold up the heartbeat.
+  - **Per-job lock:** a re-delivery while the job runs is answered `in_progress`. Nothing is journaled or reported.
+  - **Windows Update lock:** a scan and an install never run together. The install waits up to 20 minutes, then
+    refuses `update_agent_busy`.
+  - **Journal:** as for 0.26, it is written before installing. A re-delivered plan is answered from it, and
+    Windows Update isn't asked again.
+  - The envelope file is removed only if it is in the agent's own inbox.
+- **Patch posture.**
+  - `rem0te-agent.exe patch-scan` writes `patch\posture.json` (`rem0te-patch-posture/1`).
+  - The signed heartbeat sends it while it is unacknowledged, and the portal acknowledges that exact `scannedAt`.
+  - **The portal asks for a scan** (`patchScan`) when there is none, when the last is older than 12 h, or after
+    *Refresh inventory* / *Scan now*. The agent scans at most every 30 minutes.
+  - **What the portal keeps:**
+    - posture from signed, authenticated heartbeats only;
+    - every field bounded, unknown fields refused whole;
+    - nothing more than 10 minutes in the future;
+    - only scans newer than the one it has.
+  - It also feeds the inventory page's pending-update count and reboot flag.
+- **Deployments** (`apps/api/src/patching/`, migration `0026_staged_patching`).
+  - **Shape:** a name, 1–20 updates, and 1–5 rings, where ring 0 is exactly one computer and later rings hold up
+    to 25. Plus soak hours (default 24), failures allowed per ring (default 0) and the window each ring may run in.
+  - **Refused at creation:**
+    - a computer in another business (404);
+    - one whose updates are managed elsewhere (`MANAGED_ELSEWHERE`);
+    - one with no scan (`NO_PATCH_POSTURE`) or not ready;
+    - an update nobody is offered (`UPDATE_NOT_OFFERED`);
+    - an update that isn't installable (`UPDATE_NOT_INSTALLABLE`);
+    - a requester without high-impact rights (an L2 technician, for example: `ACTION_NOT_GRANTED`).
+  - **The gate**, in order: `in_progress`, `ring_not_run`, `unreconciled`, `too_many_failures`,
+    `canary_not_effective`, `canary_proved_nothing`, `soaking`, `passed`. Requesting a ring while
+    the gate before it is closed returns `409 RING_GATE`.
+  - **Auto-pause.** A ring over its threshold pauses the deployment. *Resume* allows only a retry of that same
+    ring, as a new plan with new approvals and optional exclusions with reasons. It doesn't re-pause over the plan
+    it resumed past.
+  - **Completed** when the last ring passes.
+  - **Cancel** cancels any ring plan still awaiting approval, or approved but not yet delivered.
+  - **Per update, per computer, the states are:**
+    - before the result: `awaiting approval`, `scheduled`, `delivered`;
+    - after it: `installed`, `restart required`, `effective`, `superseded`, `not offered`, `excluded`, `failed`,
+      `refused`, `not executed`, `unknown`, `canceled`.
+    - `effective` needs a scan taken after the result, as above. An update a later scan offers again is `failed`.
+  - **Routes:**
+    - `GET /endpoints/:id/patches`;
+    - `GET /patching/candidates`;
+    - `GET`/`POST /patching/deployments`, `GET /patching/deployments/:id`;
+    - `POST /patching/deployments/:id/rings/:ring/request`;
+    - `POST /patching/deployments/:id/pause`, `/resume`, `/cancel`.
+
+    There is no approve route.
+- **Per-computer plan targets** (`ActionTarget`).
+  - **Model:** an `ActionJob` is now one signed plan, with one target row per computer for delivery, result and
+    reconciliation. The job's status is rolled up from its targets.
+  - **Rechecked per computer at its first delivery:** identity, device class, business and the requester's live
+    access. A computer whose identity changed since approval is canceled (`device_identity_changed`), and the rest
+    of the ring proceeds.
+  - **Fleet-limit admission:** a ring is admitted once, at request time. A single computer is still admitted at
+    dispatch.
+  - **Result deadline**, per action: 30 minutes for the spooler, 6 hours for updates.
+  - **Reconciling a ring names the computer:** `POST /actions/:id/reconcile` takes `endpointId`, with `found`
+    `installed` or `not_installed`.
+  - **Migration backfill:** `0026` creates a target for every existing job, mapping its status. It was tested in a
+    rolled-back transaction against every `ActionJobStatus`. Production has no jobs.
+- **Approval page:** it lists every computer in a ring, the deployment and ring (*canary (ring 0)*, *ring x of
+  y*), and a table of the updates (KB, title, ID and revision, classification, severity), noting that titles are
+  as the computers reported them. These come from a new signed but never-consulted `display` field in the plan.
+  The agent's plan struct accepts it and never reads it.
+- **Web.**
+  - **Patching** in the menu: deployments per business; *New deployment*, which picks from offered updates and
+    assigns rings; a deployment page with the update × computer matrix, gate reasons, the approval link, *Request
+    ring* with exclusions, per-computer reconcile, and pause, resume and cancel.
+  - **A *Patches* tab** on every computer: posture, other managers, pending restart, offered updates with why each
+    is or isn't installable, Windows' update history, and *Scan now*.
+  - **The *Actions* tab** shows ring plans as this computer's row, links to the deployment, lists per-update
+    results, and offers the update reconcile choices. It no longer assumes the first catalog entry is the spooler.
+- **Security Features:** a *Staged Windows patching* row, partial, with its effective state (agents reporting
+  `windows.update.install@1`, and 30-day deployment counts). The *Approved actions* row and the roadmap rows
+  now say there are two actions.
+- **Security invariants §15:**
+  - closed update params;
+  - update risk always high;
+  - no restart, licence acceptance or download-and-run in `wua.ps1`;
+  - managers and eligibility checked before installing;
+  - the classification allowlist;
+  - no approve route on patching;
+  - the canary and threshold gates;
+  - `ACTION_NOT_DIRECT`.
+
+  §14's agent-catalog check now expects exactly the two actions.
+- **Docs:** `docs/staged-patching.md` (new, in the in-app bundle), with updates to `approved-actions.md`,
+  `security-model.md`, `README.md`, `/help` and `CLAUDE.md`. `docs/API-REFERENCE.md` was regenerated and checked
+  against the runtime route table: 348 routes.
+
+### Tests
+
+- **Go**, `internal/patch`, `internal/flock` and `internal/action`:
+  - eligibility, manager and restart detection;
+  - parser refusals;
+  - every per-update state;
+  - crash → unknown;
+  - the Windows Update lock;
+  - replay, and a second process seeing `in_progress`;
+  - ring targets, and `managed_elsewhere`.
+
+  `wua.ps1` is parsed by PowerShell and checked for banned cmdlets.
+- **`e2e-staged-patching.mjs`**, 59 checks: portal, signer and `rem0te-action-sim` with `-wua`/`-registry`
+  fixtures. It covers:
+  - posture ingest, acknowledgement and refusal, and legacy posture ignored;
+  - scan requests;
+  - every creation refusal;
+  - the canary, with two approvals and the requester refused;
+  - restart required → restart → effective;
+  - a three-computer ring with a crash (`uncertain`) and a failure (HRESULT), reconciled;
+  - auto-pause, resume, and a retry with an exclusion;
+  - an identity changed after approval;
+  - replay;
+  - a ring plan tampered to add a computer (`bad_signature`) and the genuine plan on an unnamed computer
+    (`wrong_target`);
+  - cancel, and business isolation.
+
+  It needs the Go binaries, so it runs locally, not in CI.
+- `e2e-approved-action` (76) passes after the per-target refactor. Its planted forged jobs now carry a target row,
+  and the 30-minute deadline is set on the target. `unit-signed-installer` (51) checks the detached hook, the
+  posture send and `patch-scan`, and that the legacy installer has neither.
+- `e2e-security-features` (37), `e2e-integration` (77), `e2e-presets` (112), `e2e-signed-updates` (46), `unit-approval-signer` (65),
+  `unit-presets` (26), `unit-integration` (35) and `unit-session-mutations` (30) pass.
+
+### Deploy
+
+This is a schema change. Apply `0026_staged_patching`, rsync `prisma/`, run `prisma generate` at the target, then
+chown, as in CLAUDE.md. No production npm dependency of the API moved. There are no new server settings.
+
+The feature stays inert until approved actions are set up (the approval signer isn't installed in production yet).
+Even then, a computer is offered nothing until it runs a **0.27 signed agent build**, published through the
+offline-signed chain. Older signed agents report only `windows.service.start@1`, so they are not ready for updates.
+The detached action hook and posture reporting arrive with the regenerated signed installer script.
+
+---
+
 ## [0.26.0] — 2026-11-09 · *Countersign*
 
 **The first approved fix: start a Windows computer's Print Spooler, once, after people on an approval roster

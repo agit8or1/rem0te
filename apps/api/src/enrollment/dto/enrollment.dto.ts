@@ -128,6 +128,9 @@ export class HeartbeatDto {
   // element of an untyped array into an empty array, and the results arrive
   // as [[]]. Validated element by element by ActionsService.recordResults.
   @IsOptional() @IsArray() @ArrayMaxSize(10) @Type(() => Object) actionResults?: unknown[];
+  // Staged patching (0.27): the signed agent's patch-scan posture, validated
+  // field by field in EndpointInventoryService.recordPatchPosture.
+  @IsOptional() @IsObject() @Type(() => Object) patchPosture?: Record<string, unknown>;
 }
 
 /**

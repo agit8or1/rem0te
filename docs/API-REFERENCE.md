@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **339** of them across
-**41** controllers.
+integration, under `/api/integration/v1`). There are **348** of them across
+**42** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -297,6 +297,22 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/auth/passkeys/register/options` | signed in, throttled | — |
 | `POST` | `/api/v1/auth/step-up/passkey` | signed in, throttled | — |
 | `POST` | `/api/v1/auth/step-up/passkey/options` | signed in, throttled | — |
+
+## Patching
+
+`apps/api/src/patching/patching.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/endpoints/:id/patches` | signed in | — |
+| `GET` | `/api/v1/patching/candidates` | signed in | — |
+| `GET` | `/api/v1/patching/deployments` | signed in | — |
+| `POST` | `/api/v1/patching/deployments` | signed in, throttled | — |
+| `GET` | `/api/v1/patching/deployments/:id` | signed in | — |
+| `POST` | `/api/v1/patching/deployments/:id/cancel` | signed in | — |
+| `POST` | `/api/v1/patching/deployments/:id/pause` | signed in | — |
+| `POST` | `/api/v1/patching/deployments/:id/resume` | signed in | — |
+| `POST` | `/api/v1/patching/deployments/:id/rings/:ring/request` | signed in, throttled | — |
 
 ## Public (unauthenticated)
 

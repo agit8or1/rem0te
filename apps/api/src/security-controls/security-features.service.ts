@@ -155,6 +155,18 @@ export class SecurityFeaturesService {
       source: 'endpoint-reports',
     };
 
+    // Staged patching: deployments recorded, and what agents report.
+    const [patchSupporting, deployments] = await Promise.all([
+      this.prisma.endpoint.count({ where: { ...aScope, status: 'ACTIVE', agentActions: { has: 'windows.update.install@1' } } }),
+      this.prisma.patchDeployment.groupBy({ by: ['status'], where: { ...aScope, createdAt: { gte: since } }, _count: { _all: true } }),
+    ]);
+    const dCounts = deployments.map((g) => `${g._count._all} ${g.status.toLowerCase()}`).join(', ');
+    out['staged-patching'] = {
+      state: signer ? `${patchSupporting} of ${total} computers can install approved updates` : 'No approval signer configured',
+      detail: `Last 30 days, ${where}: ${dCounts ? `deployments ${dCounts}` : 'no deployments'}. Support is what signed agents report; each computer still asks Windows Update itself before installing.`,
+      source: 'endpoint-reports',
+    };
+
     // Not built: the code is the state.
     for (const id of ['elevation', 'remote-shell', 'chat', 'scripts-fixes', 'mdm', 'backup-recovery']) {
       out[id] = { state: 'Not available in this build', source: 'code' };
