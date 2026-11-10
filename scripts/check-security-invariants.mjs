@@ -387,16 +387,17 @@ check(
     'only the signer may load the job-approval key');
   const goCat = read('tools/windows-installer/internal/action/catalog.go');
   const goIds = [...goCat.matchAll(/ID: "([^"]+)"/g)].map((m) => m[1]);
-  check('agent catalog is windows.service.start for the Spooler only',
-    goIds.length === 1 && goIds[0] === 'windows.service.start' && /const ServiceName = "Spooler"/.test(goCat) && /s == ServiceName/.test(goCat),
+  // 0.27 added windows.update.install (§ 15). Anything further is a review.
+  check('agent catalog is the Spooler start and Windows update install, nothing else',
+    goIds.length === 2 && goIds[0] === 'windows.service.start' && goIds[1] === 'windows.update.install' && /const ServiceName = "Spooler"/.test(goCat) && /s == ServiceName/.test(goCat),
     `agent catalog ids: ${goIds.join(', ')}`);
   const tsCat = read('apps/api/src/actions/catalog.ts');
   check('portal catalog has no command, script, path or URL parameter', !/\b(command|script|path|url|args|cmd)\s*:/i.test(tsCat.replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, '')),
     'the catalog must not grow a free-form parameter');
   const act = read('tools/windows-installer/internal/action/action.go');
-  const iExec = act.indexOf('State: "executing"'), iRun = act.indexOf('r := execute(plan, o)'), iJournal = act.indexOf('readJournal(o, jobID)');
+  const iExec = act.indexOf('State: "executing"'), iRun = act.indexOf('r := Lookup(plan.Action.ID, plan.Action.Version).Execute(plan, o)'), iJournal = act.indexOf('readJournal(o, jobID)');
   check('agent journals a job before executing it, and consults the journal first',
-    iJournal > 0 && iExec > iJournal && iRun > iExec && /if err := writeJournal\(o, journal\{JobID: jobID, State: "executing"[\s\S]{0,120}return Result\{\}, fmt\.Errorf/.test(act),
+    iJournal > 0 && iExec > iJournal && iRun > iExec && /if err := writeJournal\(o, journal\{JobID: jobID, State: "executing"[\s\S]{0,240}return Result\{\}, fmt\.Errorf/.test(act),
     'the journal write must precede execute() and a failed write must stop it');
   // class-transformer's implicit conversion turns an untyped array of objects
   // into [[]] — silently. It broke command-result events in production.
@@ -409,6 +410,41 @@ check(
     });
   }
   check('no DTO array of objects without @Type', untyped.length === 0, `class-transformer will turn these into [[]]: ${untyped.join(', ')}`);
+}
+
+// 15. Staged Windows patching (0.27). An update plan can name only Windows
+//     Update identities, installs only what Windows Update itself offers as
+//     eligible, never restarts or accepts a licence, and can never be
+//     approved or promoted past its canary by the portal alone.
+{
+  const upd = read('tools/windows-installer/internal/action/updates.go');
+  check('agent update params are closed: exactly updates + reboot "never", each {updateId, revision}',
+    /len\(p\) != 2 \|\| p\["reboot"\] != "never"/.test(upd) && /!ok \|\| len\(m\) != 2/.test(upd),
+    'the update action must not accept any other parameter');
+  const goCat = read('tools/windows-installer/internal/action/catalog.go');
+  const updEntry = goCat.slice(goCat.indexOf('ID: "windows.update.install"'));
+  check('agent update risk is always high, whatever the device', /Risk:\s*func\([^)]*\) string \{\s*return "high"\s*\}/.test(updEntry),
+    'an update install must always need two approvers');
+  const ps = read('tools/windows-installer/internal/patch/wua.ps1').replace(/^\s*#.*$/gm, '');
+  const banned = ['Restart-Computer', 'shutdown', 'AcceptEula', 'Invoke-Expression', 'iex ', 'Invoke-WebRequest', 'DownloadString', 'Start-Process', 'Set-ItemProperty', 'New-ItemProperty'].filter((b) => ps.toLowerCase().includes(b.toLowerCase()));
+  check('the Windows Update script never restarts, accepts a licence or runs downloaded text', banned.length === 0, `wua.ps1 contains: ${banned.join(', ')}`);
+  const inst = read('tools/windows-installer/internal/patch/install.go');
+  const iMgr = inst.indexOf('if m := Managers(reg); len(m) > 0'), iInstall = inst.indexOf('w.Run("install"');
+  check('the agent refuses a computer managed by WSUS / WUfB / MDM / ConfigMgr before installing anything',
+    iMgr > 0 && iInstall > iMgr && /Eligible\(/.test(inst), 'Managers() and Eligible() must be checked before the install call');
+  const elig = read('tools/windows-installer/internal/patch/patch.go');
+  check('the agent installs only security, critical, rollup and ordinary updates',
+    /var Installable = map\[string\]string\{[\s\S]{0,600}\}/.test(elig) && !/ebfc1fc5-71a4-4f7b-9aca-3b9a503104a0[^\n]*Installable|Installable[^}]*ebfc1fc5/.test(elig),
+    'drivers (and other classifications) must not be in the allowlist');
+  const pctl = read('apps/api/src/patching/patching.controller.ts');
+  check('the patching API has no approve or sign route', !/@(?:Get|Post|Put|Patch|Delete)\('[^']*(approv|sign)/i.test(pctl), 'approval happens on the approval signer only');
+  const psvc = read('apps/api/src/patching/patching.service.ts');
+  check('the canary gate requires every update effective, and a ring over threshold is retried, never promoted past',
+    /reason: 'canary_not_effective'/.test(psvc) && /g\.reason === 'too_many_failures'\) return \{ ring: i, canRequest: true/.test(psvc),
+    'promotion must be gated on the canary and on the failure threshold');
+  const asvc = read('apps/api/src/actions/actions.service.ts');
+  check('updates cannot be requested one computer at a time, around the deployment', /ACTION_NOT_DIRECT/.test(asvc) && /direct: false/.test(read('apps/api/src/actions/catalog.ts')),
+    'POST /endpoints/:id/actions must refuse windows.update.install');
 }
 
 if (failures.length > 0) {

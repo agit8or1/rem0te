@@ -310,16 +310,30 @@ export const SECURITY_FEATURES: SecurityFeature[] = [
 
   // ── Approved actions (0.26) ───────────────────────────────────────────────
   {
-    id: 'approved-actions', group: 'guardrails', name: 'Approved actions (Print Spooler only)', status: 'partial',
+    id: 'approved-actions', group: 'guardrails', name: 'Approved actions (Print Spooler; Windows updates)', status: 'partial',
     protects: 'An AI suggestion, a technician, a compromised portal or a compromised database changing a customer computer without independent human approval.',
-    scope: 'One catalog action: start the Windows Print Spooler once (windows.service.start@1), on one computer, by signed Windows agents. Nothing else can be requested; there is no command, script, path or URL parameter anywhere.',
+    scope: 'Two catalog actions, run by signed Windows agents: start the Windows Print Spooler once (windows.service.start@1) on one computer, and from 0.27 install named Windows updates (windows.update.install@1) on the computers of one patch ring, requested only through a staged deployment (see Staged Windows patching). Nothing else can be requested; there is no command, script, path or URL parameter anywhere.',
     enforcedAt: ['portal', 'approval-signer', 'endpoint-agent', 'offline-signing'],
     enforcement: 'The portal only proposes. A separate approval signer — its own process, Unix user, key, roster and policy, on its own origin — signs the exact plan (action version, agent build, parameters, immutable target, policy, approvers, window, single-use job id) only after user-verified passkey approvals from roster members who are not the requester: one for a standard workstation, two distinct for anything else, plus a distinct customer sign-off where that business requires it. The agent verifies that signature with keys from the offline-rooted update chain, recomputes risk from its own product type, checks its own identity, the window and its build, journals the job before acting and never runs a job id twice. The portal rechecks the requester\'s live access, the device and the fleet limits before delivering. An uncertain outcome blocks retries until a person reconciles it.',
     default: 'Off until an approval signer is configured (APPROVAL_SIGNER_INTERNAL_URL) and its keys are published as approval/keys.json in the signed repository.',
-    prerequisites: ['Approval signer installed and keyed', 'Approvers enrolled on its roster (fingerprint ceremony)', 'approval/keys.json signed into the update repository', 'Agents on the published 0.26+ signed build'],
+    prerequisites: ['Approval signer installed and keyed', 'Approvers enrolled on its roster (fingerprint ceremony)', 'approval/keys.json signed into the update repository', 'Agents on the published 0.26+ signed build (0.27+ for updates)'],
     link: { href: DOC('approved-actions'), label: 'Approved actions' },
     evidence: ['tools/windows-installer/internal/action/action_test.go', 'apps/api/scripts/unit-approval-signer.mjs', 'apps/api/scripts/e2e-approved-action.mjs', 'scripts/check-security-invariants.mjs § 14'],
     gap: 'Fixture-tested only: the agent\'s decision code against a simulated Windows, and synthetic passkeys. Not yet run on a real lab workstation. The result shows the service state, never that a document printed. A compromised portal can still delay, cancel or withhold delivery (denial of service), and could re-deliver an envelope the agent has already consumed (which it answers from its journal).',
+  },
+
+  // ── Staged Windows patching (0.27) ────────────────────────────────────────
+  {
+    id: 'staged-patching', group: 'guardrails', name: 'Staged Windows patching', status: 'partial',
+    protects: 'A bad Windows update, a compromised portal or database, or an impatient technician reaching every computer at once, or installing something nobody approved.',
+    scope: 'Security, critical, rollup and ordinary Windows updates on signed Windows agents, named by Windows Update identity and revision (at most 20 per plan). Not drivers, feature upgrades, optional or preview updates, anything needing a licence or user input, third-party software, or computers whose updates are managed by WSUS, Windows Update for Business policy, MDM or Configuration Manager.',
+    enforcedAt: ['portal', 'approval-signer', 'endpoint-agent', 'offline-signing'],
+    enforcement: 'A deployment is a canary (ring 0, exactly one computer) and up to four further rings of at most 25. Each ring is one signed plan naming every computer, always high impact: two distinct roster approvers with passkeys, never the requester. The next ring cannot be requested until the canary reports every update effective (a later scan no longer offers it, Windows\' history records it, no restart pending), the ring is within its failure threshold, any uncertain computer is reconciled and the soak time has passed; over the threshold the deployment pauses itself. Each computer checks the signature, that it is named, and that no other update manager owns it, then asks Windows Update itself whether each update is offered and eligible; the plan\'s titles are never consulted. It never restarts the computer, never accepts a licence, runs detached under a lock, and journals before installing, so a re-delivered plan is answered, not re-run.',
+    default: 'Off until approved actions are (approval signer configured) and agents run the 0.27 signed build.',
+    prerequisites: ['Approved actions configured', 'Agents on the published 0.27+ signed build, reporting patch posture', 'A canary computer that is offered the updates'],
+    link: { href: DOC('staged-patching'), label: 'Staged patching' },
+    evidence: ['tools/windows-installer/internal/patch/patch_test.go', 'tools/windows-installer/internal/action/updates_test.go', 'apps/api/scripts/e2e-staged-patching.mjs', 'scripts/check-security-invariants.mjs § 15'],
+    gap: 'Fixture-tested only: the agent\'s real decision code against a simulated Windows Update and registry, and synthetic passkeys. The Windows Update script is parsed by PowerShell in CI but has not run against a real Windows Update service. Rem0te never restarts computers, so "restart required" waits for a person. Effective is what the computer reports; it does not prove a vulnerability is gone. Uninstall (rollback) is not built.',
   },
 
   // ── Integration ───────────────────────────────────────────────────────────
@@ -342,7 +356,7 @@ export const SECURITY_FEATURES: SecurityFeature[] = [
     protects: 'Commands running on a customer computer outside any session.',
     scope: '—',
     enforcedAt: ['none'],
-    enforcement: 'rem0te has no command or script channel. The agent collects only an allowlisted set — inventory refresh, update scan, event-log query — and runs only compiled-in catalog actions (one, in 0.26). Any terminal inside a RustDesk session is RustDesk\'s own feature, governed by the installed RustDesk version\'s defaults; rem0te neither restricts nor records it.',
+    enforcement: 'rem0te has no command or script channel. The agent collects only an allowlisted set — inventory refresh, update scan, event-log query — and runs only compiled-in catalog actions (two, in 0.27). Any terminal inside a RustDesk session is RustDesk\'s own feature, governed by the installed RustDesk version\'s defaults; rem0te neither restricts nor records it.',
     default: 'Not built.',
     prerequisites: ['A signed, versioned action catalog', 'Independent approval per action', 'Per-request signed intent verified on the endpoint', 'Output capture into the audit trail'],
     link: { href: DOC('security-model', 'roadmap-not-in-this-build'), label: 'Roadmap' },
@@ -350,10 +364,10 @@ export const SECURITY_FEATURES: SecurityFeature[] = [
   },
   {
     id: 'scripts-fixes', group: 'roadmap', name: 'Scripts, further fixes and patches', status: 'unavailable',
-    protects: 'Endpoint changes beyond the one catalog action.',
+    protects: 'Endpoint changes beyond the two catalog actions.',
     scope: '—',
     enforcedAt: ['none'],
-    enforcement: 'Only the Print Spooler start exists (see Approved actions). Presets record patch eligibility only. Each further action ships as a new catalog version compiled into a new signed agent build, with its own warnings and verification; scripts are not planned as a free-form channel.',
+    enforcement: 'Only the Print Spooler start and Windows update installs exist (see Approved actions and Staged Windows patching). Drivers, feature upgrades, third-party software and reboots are not built. Each further action ships as a new catalog version compiled into a new signed agent build, with its own warnings and verification; scripts are not planned as a free-form channel.',
     default: 'Not built.',
     prerequisites: ['A catalog entry per action, versioned', 'Its own verification step on the endpoint'],
     link: { href: DOC('security-model', 'roadmap-not-in-this-build'), label: 'Roadmap' },

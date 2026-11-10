@@ -15,6 +15,7 @@ import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { EndpointSpecs } from '@/components/endpoints/endpoint-specs';
 import { EndpointEventLog } from '@/components/endpoints/endpoint-event-log';
 import { EndpointActions } from '@/components/endpoints/endpoint-actions';
+import { EndpointPatches } from '@/components/endpoints/endpoint-patches';
 import { EndpointUpdateHistory } from '@/components/rollouts/endpoint-update-history';
 import { usePermissions, CAP } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -296,6 +297,9 @@ export default function EndpointDetailPage() {
           {can(CAP.COMPUTERS_VIEW) && (
             <TabsTrigger value="actions">Actions</TabsTrigger>
           )}
+          {can(CAP.COMPUTERS_VIEW) && (
+            <TabsTrigger value="patches">Patches</TabsTrigger>
+          )}
           {showReview && (
             <TabsTrigger value="access-review">Access review</TabsTrigger>
           )}
@@ -364,6 +368,12 @@ export default function EndpointDetailPage() {
         {can(CAP.COMPUTERS_VIEW) && (
           <TabsContent value="actions" className="mt-4">
             {tab === 'actions' && <EndpointActions endpointId={id} isOnline={!!(ep.isOnline as boolean)} />}
+          </TabsContent>
+        )}
+
+        {can(CAP.COMPUTERS_VIEW) && (
+          <TabsContent value="patches" className="mt-4">
+            {tab === 'patches' && <EndpointPatches endpointId={id} />}
           </TabsContent>
         )}
 

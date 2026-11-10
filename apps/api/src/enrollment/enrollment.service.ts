@@ -417,6 +417,7 @@ export class EnrollmentService {
     rustdeskSessions?: number; updateNonce?: string;
     updateChannel?: 'signed' | 'legacy'; trustRootVersion?: number; targetsVersion?: number;
     agentActions?: string[]; agentSha256?: string; actionResults?: unknown[];
+    patchPosture?: Record<string, unknown>;
   }, remoteIp?: string) {
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { rustdeskId: dto.rustdeskId },
@@ -705,12 +706,24 @@ export class EnrollmentService {
     // every envelope against the approval key from the signed update chain.
     let actions: { jobId: string; envelope: unknown }[] = [];
     let actionAcks: string[] = [];
+    // Staged patching (0.27): take the signed agent's posture, and ask for a
+    // new scan when the last one is stale or someone asked for one.
+    let patchPostureAck: string | null = null;
+    let patchScan = false;
     if (authenticated) {
       try {
         if (dto.actionResults?.length) actionAcks = await this.actions.recordResults(node.endpointId, dto.actionResults);
         if (dto.updateChannel === 'signed') actions = await this.actions.forHeartbeat(node.endpointId);
       } catch (e) {
         this.logger.warn(`Action step failed for endpoint ${node.endpointId}: ${String(e)}`);
+      }
+      if (dto.updateChannel === 'signed') {
+        try {
+          if (dto.patchPosture) patchPostureAck = await this.inventory.recordPatchPosture(node.endpointId, dto.patchPosture);
+          patchScan = await this.inventory.patchScanDue(node.endpointId);
+        } catch (e) {
+          this.logger.warn(`Patch posture step failed for endpoint ${node.endpointId}: ${String(e)}`);
+        }
       }
     }
 
@@ -733,6 +746,8 @@ export class EnrollmentService {
       commands,
       actions,
       actionAcks,
+      patchPostureAck,
+      patchScan,
       rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
     };
   }

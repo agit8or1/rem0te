@@ -37,6 +37,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/agit8or1/rem0te/windows-installer/internal/flock"
+	"github.com/agit8or1/rem0te/windows-installer/internal/patch"
 )
 
 const (
@@ -125,9 +128,12 @@ type Plan struct {
 		NotBefore string `json:"notBefore"`
 		NotAfter  string `json:"notAfter"`
 	} `json:"window"`
-	CreatedAt string     `json:"createdAt"`
-	Approvers []Approver `json:"approvers"`
-	SignedAt  *string    `json:"signedAt"`
+	// Display: what the approver was shown (update KBs and titles). Signed,
+	// and deliberately never read here: decisions come from Windows Update.
+	Display   json.RawMessage `json:"display,omitempty"`
+	CreatedAt string          `json:"createdAt"`
+	Approvers []Approver      `json:"approvers"`
+	SignedAt  *string         `json:"signedAt"`
 }
 
 // Result is what the heartbeat reports. Observations only.
@@ -139,13 +145,18 @@ type Result struct {
 	Observed    map[string]string `json:"observed,omitempty"`
 	ExecutedAt  string            `json:"executedAt,omitempty"`
 	AgentSHA256 string            `json:"agentSha256,omitempty"`
+	// Updates and Reboot: windows.update.install only.
+	Updates []patch.Outcome `json:"updates,omitempty"`
+	Reboot  *patch.Reboot   `json:"reboot,omitempty"`
 }
 
 type journal struct {
-	JobID  string  `json:"jobId"`
-	State  string  `json:"state"` // executing | done
-	At     string  `json:"at"`
-	Result *Result `json:"result,omitempty"`
+	JobID         string  `json:"jobId"`
+	State         string  `json:"state"` // executing | done
+	At            string  `json:"at"`
+	ActionID      string  `json:"actionId,omitempty"`
+	ActionVersion int     `json:"actionVersion,omitempty"`
+	Result        *Result `json:"result,omitempty"`
 }
 
 type Options struct {
@@ -155,6 +166,11 @@ type Options struct {
 	Now      func() time.Time
 	// Verification delays after starting; 10s and 30s by default.
 	Checks []time.Duration
+	// Windows Update (windows.update.install); nil where not available.
+	WUA      patch.WUA
+	Registry patch.Registry
+	// How long an install waits for a scan in progress; 20 minutes by default.
+	WUAWait time.Duration
 }
 
 var jobRE = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -176,11 +192,25 @@ func Run(jobID string, envelope []byte, o Options) (Result, error) {
 	if !jobRE.MatchString(jobID) {
 		return Result{}, ErrBadJob
 	}
-	for _, d := range []string{"journal", "results"} {
+	for _, d := range []string{"journal", "results", "locks"} {
 		if err := os.MkdirAll(o.dir(d), 0o700); err != nil {
 			return Result{}, err
 		}
 	}
+	// 0. One process per job. A long action (an update install) outlives many
+	// heartbeats, and each re-delivers the envelope: those find the lock held
+	// and leave, reporting nothing. The OS releases the lock when its holder
+	// exits, however it exits — so "executing" in the journal with the lock
+	// free means the agent died mid-action.
+	lk, err := flock.TryLock(filepath.Join(o.dir("locks"), jobID+".lock"))
+	if errors.Is(err, flock.ErrBusy) {
+		return Result{JobID: jobID, Outcome: "in_progress", Detail: "already running on this computer"}, nil
+	}
+	if err != nil {
+		return Result{}, err
+	}
+	defer lk.Release()
+
 	// 1. The journal first: at most once, ever.
 	if j, ok := readJournal(o, jobID); ok {
 		if j.State == "done" && j.Result != nil {
@@ -188,8 +218,10 @@ func Run(jobID string, envelope []byte, o Options) (Result, error) {
 		}
 		r := Result{JobID: jobID, Outcome: "uncertain", Reason: "interrupted",
 			Detail: "the agent stopped while this action was running; it will not run it again"}
-		if st, err := o.Platform.ServiceState(ServiceName); err == nil {
-			r.Observed = map[string]string{"now": st}
+		if a := Lookup(j.ActionID, j.ActionVersion); a != nil && a.Interrupted != nil {
+			r.Observed = a.Interrupted(o)
+		} else if st, err := o.Platform.ServiceState(ServiceName); err == nil && j.ActionID == "" {
+			r.Observed = map[string]string{"now": st} // journals written by 0.26
 		}
 		writeJournal(o, journal{JobID: jobID, State: "done", At: o.now().UTC().Format(time.RFC3339), Result: &r})
 		return report(o, r)
@@ -210,10 +242,10 @@ func Run(jobID string, envelope []byte, o Options) (Result, error) {
 	}
 
 	// 2. Consume the job before acting on it.
-	if err := writeJournal(o, journal{JobID: jobID, State: "executing", At: o.now().UTC().Format(time.RFC3339)}); err != nil {
+	if err := writeJournal(o, journal{JobID: jobID, State: "executing", At: o.now().UTC().Format(time.RFC3339), ActionID: plan.Action.ID, ActionVersion: plan.Action.Version}); err != nil {
 		return Result{}, fmt.Errorf("journal: %w", err)
 	}
-	r := execute(plan, o)
+	r := Lookup(plan.Action.ID, plan.Action.Version).Execute(plan, o)
 	r.JobID = jobID
 	writeJournal(o, journal{JobID: jobID, State: "done", At: o.now().UTC().Format(time.RFC3339), Result: &r})
 	return report(o, r)
@@ -262,14 +294,27 @@ func verify(jobID string, raw []byte, o Options) (*Plan, *Result) {
 	if !a.ParamsOK(p.Params) {
 		return nil, refuse("params_not_allowed", "parameters outside the catalog")
 	}
-	if len(p.Targets) != 1 {
-		return nil, refuse("bad_targets", "exactly one target per plan")
+	if len(p.Targets) < 1 || len(p.Targets) > a.MaxTargets {
+		return nil, refuse("bad_targets", fmt.Sprintf("this action allows 1 to %d targets per plan", a.MaxTargets))
+	}
+	ids, eps := map[string]bool{}, map[string]bool{}
+	for _, t := range p.Targets {
+		if ids[t.RustdeskID] || eps[t.EndpointID] {
+			return nil, refuse("bad_targets", "a computer is named twice")
+		}
+		ids[t.RustdeskID], eps[t.EndpointID] = true, true
 	}
 	rid, sec, err := o.Platform.DeviceIdentity()
 	if err != nil || rid == "" || sec == "" {
 		return nil, refuse("no_identity", "this machine cannot read its own enrolled identity")
 	}
-	if p.Targets[0].RustdeskID != rid || !strings.EqualFold(p.Targets[0].DeviceSecretSHA256, sec) {
+	mine := false
+	for _, t := range p.Targets {
+		if t.RustdeskID == rid && strings.EqualFold(t.DeviceSecretSHA256, sec) {
+			mine = true
+		}
+	}
+	if !mine {
 		return nil, refuse("wrong_target", "this plan names a different computer")
 	}
 	nb, e1 := time.Parse(time.RFC3339Nano, p.Window.NotBefore)
@@ -292,9 +337,9 @@ func verify(jobID string, raw []byte, o Options) (*Plan, *Result) {
 	if err != nil {
 		return nil, refuse("no_product_type", "cannot tell whether this computer is a workstation")
 	}
-	local := a.Risk(pt)
+	local := a.Risk(pt, len(p.Targets))
 	if local == "high" && p.Policy.Risk != "high" {
-		return nil, refuse("risk_understated", "this computer is not a workstation, so the plan needed high-impact approval")
+		return nil, refuse("risk_understated", "this is a high-impact action here, so the plan needed high-impact approval")
 	}
 	need := MinApprovals[local]
 	if p.Policy.ApprovalsRequired > need {
@@ -329,7 +374,7 @@ func verify(jobID string, raw []byte, o Options) (*Plan, *Result) {
 	return &p, nil
 }
 
-func execute(p *Plan, o Options) Result {
+func startSpooler(p *Plan, o Options) Result {
 	r := Result{ExecutedAt: o.now().UTC().Format(time.RFC3339), Observed: map[string]string{}}
 	if s, err := o.Platform.SelfSHA256(); err == nil {
 		r.AgentSHA256 = s

@@ -73,7 +73,26 @@ export const actionsApi = {
     api.post(`/endpoints/${endpointId}/actions`, body),
   get: (id: string) => api.get(`/actions/${id}`),
   cancel: (id: string) => api.post(`/actions/${id}/cancel`),
-  reconcile: (id: string, body: { found: 'running' | 'stopped' | 'other'; note: string }) => api.post(`/actions/${id}/reconcile`, body),
+  reconcile: (id: string, body: { found: 'running' | 'stopped' | 'installed' | 'not_installed' | 'other'; note: string; endpointId?: string }) =>
+    api.post(`/actions/${id}/reconcile`, body),
+};
+
+// ─── Staged patching (v0.27) ─────────────────────────────────────────────────
+// Requests and views only. Each ring is a signed plan approved on the approval
+// signer like any other action; nothing here can approve one.
+export interface UpdateIdentity { updateId: string; revision: number }
+export const patchingApi = {
+  endpoint: (endpointId: string) => api.get(`/endpoints/${endpointId}/patches`),
+  candidates: (businessId: string) => api.get('/patching/candidates', { params: { businessId } }),
+  list: (businessId: string) => api.get('/patching/deployments', { params: { businessId } }),
+  get: (id: string) => api.get(`/patching/deployments/${id}`),
+  create: (body: { businessId: string; name: string; updates: UpdateIdentity[]; rings: string[][]; soakHours: number; failureThreshold: number; windowHours: number }) =>
+    api.post('/patching/deployments', body),
+  requestRing: (id: string, ring: number, body: { reason: string; startsInMinutes?: number; exclude?: { endpointId: string; why: string }[] }) =>
+    api.post(`/patching/deployments/${id}/rings/${ring}/request`, body),
+  pause: (id: string, reason: string) => api.post(`/patching/deployments/${id}/pause`, { reason }),
+  resume: (id: string, reason: string) => api.post(`/patching/deployments/${id}/resume`, { reason }),
+  cancel: (id: string, reason: string) => api.post(`/patching/deployments/${id}/cancel`, { reason }),
 };
 
 // ─── Endpoints ───────────────────────────────────────────────────────────────

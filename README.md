@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.26.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.27.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -65,6 +65,16 @@ it, its default and its limits: **Settings → Security → Security Features**,
 [docs/security-model.md](docs/security-model.md).
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
+
+## What's new in 0.27
+
+**Windows updates in stages, a canary first.** A deployment names Microsoft security, critical, rollup and ordinary
+updates and the computers in each ring. Ring 0 is one canary computer. Each ring is one plan that two people on the
+approval roster approve with a passkey, and the next ring can't be requested until the canary reports every update
+*effective*: no longer offered, recorded in Windows' history, no restart pending. Too many failures and the
+deployment pauses itself. Each computer asks Windows Update itself what it may install, and refuses to install
+anything if WSUS, Intune or Configuration Manager manages it. It never restarts. A *Patches* tab on every computer
+shows what Windows Update offers it. [staged-patching.md](docs/staged-patching.md)
 
 ## What's new in 0.26
 

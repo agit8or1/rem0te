@@ -504,6 +504,18 @@ const SECTIONS: Section[] = [
           More in <Link href="/docs/approved-actions" className="underline text-foreground">Approved actions</Link>.
         </p>
         <p>
+          From 0.27, Windows updates can be installed in stages from{' '}
+          <Link href="/patching" className="underline text-foreground">Patching</Link>: one{' '}
+          <strong className="text-foreground">canary</strong> computer first, then rings. Each ring is one plan that two
+          people on the approval roster approve with a passkey, and the next ring cannot be requested until the canary
+          reports every update <em>effective</em> (installed, no longer offered, no restart pending). Rem0te never
+          restarts a computer, so &ldquo;restart required&rdquo; waits for someone to restart it. Only security,
+          critical, rollup and ordinary Microsoft updates are installed; drivers, feature upgrades, optional updates and
+          computers managed by WSUS, Intune or Configuration Manager are refused. Each computer&apos;s{' '}
+          <em>Patches</em> tab shows what Windows Update offers it. More in{' '}
+          <Link href="/docs/staged-patching" className="underline text-foreground">Staged patching</Link>.
+        </p>
+        <p>
           <strong className="text-foreground">What Connect does and does not control.</strong> Rem0te decides who may
           launch a session to which computer and records it; RustDesk carries the session. Once connected, clipboard,
           file transfer and chat are RustDesk&apos;s own defaults, a computer installed by Rem0te accepts its password

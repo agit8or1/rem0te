@@ -5,6 +5,7 @@ import { AbuseGuardService } from '../security-controls/abuse-guard.service';
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { Prisma, EndpointCommandType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { Posture } from '../patching/posture';
 
 /**
  * What a managed computer knows about itself, and the queue that asks it.
@@ -283,6 +284,44 @@ export class EndpointInventoryService {
       rebootRequired: bool(r.rebootRequired),
       updatesCheckedAt: new Date(),
     });
+  }
+
+  /**
+   * The signed agent's patch-scan (v0.27), from an authenticated heartbeat.
+   * Stored whole for patching, and summarised into the fields the inventory
+   * page already shows, so the two never disagree. Returns the scan time to
+   * acknowledge, or null if the posture was refused.
+   */
+  async recordPatchPosture(endpointId: string, raw: unknown): Promise<string | null> {
+    const p = Posture.safeParse(raw);
+    if (!p.success) return null;
+    const scannedAt = new Date(p.data.scannedAt);
+    // A device clock far in the future would pin "newest scan" forever.
+    if (scannedAt.getTime() > Date.now() + 10 * 60_000) return null;
+    const cur = await this.prisma.endpointInventory.findUnique({ where: { endpointId }, select: { patchScannedAt: true } });
+    if (cur?.patchScannedAt && cur.patchScannedAt.getTime() >= scannedAt.getTime()) return p.data.scannedAt; // already have it (or newer)
+    await this.upsert(endpointId, {
+      patchPosture: p.data as unknown as Prisma.InputJsonValue,
+      patchScannedAt: scannedAt,
+      ...(p.data.error ? {} : {
+        pendingUpdates: p.data.updates.map((u) => ({ title: u.title, kb: u.kb ?? null, severity: u.severity || null, sizeBytes: u.sizeBytes })),
+        pendingUpdateCount: p.data.updates.length,
+        rebootRequired: p.data.reboot.pending,
+        updatesCheckedAt: scannedAt,
+      }),
+    });
+    return p.data.scannedAt;
+  }
+
+  /** Whether the heartbeat should ask the signed agent for a patch scan. */
+  async patchScanDue(endpointId: string, staleHours = UPDATE_SCAN_STALE_HOURS): Promise<boolean> {
+    const [inv, ep] = await Promise.all([
+      this.prisma.endpointInventory.findUnique({ where: { endpointId }, select: { patchScannedAt: true } }),
+      this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { patchScanRequestedAt: true } }),
+    ]);
+    const at = inv?.patchScannedAt;
+    if (!at || Date.now() - at.getTime() > staleHours * 3_600_000) return true;
+    return !!ep?.patchScanRequestedAt && ep.patchScanRequestedAt > at;
   }
 
   private sanitizeDisks(v: unknown) {

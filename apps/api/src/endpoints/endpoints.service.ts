@@ -1307,6 +1307,8 @@ export class EndpointsService {
       });
       if (cmd) staged.push({ id: cmd.id, type: cmd.type });
     }
+    // A signed agent also runs a full patch scan (0.27) on its next heartbeat.
+    await this.prisma.endpoint.updateMany({ where: { id, updateChannel: 'signed' }, data: { patchScanRequestedAt: new Date() } });
 
     await this.audit.log({
       tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,

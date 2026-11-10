@@ -22,6 +22,7 @@
 //	rem0te-agent.exe update  [--portal HOST] [--nonce N] signed update (heartbeat)
 //	rem0te-agent.exe status                              trust state as JSON
 //	rem0te-agent.exe action --job ID --envelope FILE     approved catalog action (heartbeat, v0.26)
+//	rem0te-agent.exe patch-scan                          read-only Windows Update posture (heartbeat, v0.27)
 package main
 
 import (
@@ -200,6 +201,9 @@ func legacyBootstrap(url string) int {
 func subcommand(args []string) int {
 	if args[0] == "action" {
 		return cmdAction(args[1:])
+	}
+	if args[0] == "patch-scan" {
+		return cmdPatchScan(args[1:])
 	}
 	mode := agent.Mode(args[0])
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)

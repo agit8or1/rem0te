@@ -8,11 +8,11 @@ import { canonicalJson } from '../integration/crypto';
  * the Windows agent (tools/windows-installer/internal/action/catalog.go),
  * which is the copy that decides what actually runs.
  *
- * There is exactly one action in this release. It is deliberately the
- * smallest useful change a technician makes: starting one Windows service on
- * one workstation. Nothing here can carry a command line, a script, a path or
- * a URL — parameters are closed enums — so an AI suggestion, a ticket or a
- * compromised portal cannot turn a catalog entry into arbitrary execution.
+ * Two actions. Starting one Windows service on one workstation (0.26), and
+ * installing named Windows updates on a ring of computers (0.27). Nothing here
+ * can carry a command line, a script, a path or a URL — parameters are closed
+ * enums or update identities — so an AI suggestion, a ticket or a compromised
+ * portal cannot turn a catalog entry into arbitrary execution.
  */
 
 export const PLAN_SCHEMA = 'rem0te-action-plan/1';
@@ -36,6 +36,12 @@ export interface CatalogAction {
   doesNotProve: string[];
   /** Risk from the plan alone: target class and count. */
   risk(targets: { deviceClass: string }[]): Risk;
+  /** How many computers one signed plan may name. */
+  maxTargets: number;
+  /** How long after delivery a missing result becomes UNKNOWN. */
+  resultDeadlineMinutes: number;
+  /** Requestable one computer at a time from its Actions tab (false: only through its own workflow). */
+  direct: boolean;
 }
 
 export const SERVICE_START: CatalogAction = {
@@ -52,15 +58,51 @@ export const SERVICE_START: CatalogAction = {
   doesNotProve: ['that any document printed', 'that the printer works', 'why the spooler had stopped'],
   // Anything but a single standard workstation is high impact: two approvers.
   risk: (targets) => (targets.length !== 1 || targets.some((t) => t.deviceClass !== 'WORKSTATION') ? 'high' : 'low'),
+  maxTargets: 1,
+  resultDeadlineMinutes: 30,
+  direct: true,
 };
 
-export const CATALOG: CatalogAction[] = [SERVICE_START];
+export const UPDATE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** Most updates one plan names; the agent enforces the same (patch.MaxPerPlan). */
+export const MAX_UPDATES_PER_PLAN = 20;
+/** Most computers in one ring plan; the agent enforces the same (action.MaxRingTargets). */
+export const MAX_RING_TARGETS = 25;
+
+export const UpdateIdentity = z.object({ updateId: z.string().regex(UPDATE_ID_RE), revision: z.number().int().min(1).max(1_000_000) }).strict();
+
+export const UPDATE_INSTALL: CatalogAction = {
+  id: 'windows.update.install',
+  version: 1,
+  title: 'Install Windows updates',
+  description: 'Downloads and installs the named Windows updates from Windows Update on each named computer, then reports each update\'s result. It never restarts a computer.',
+  params: z.object({
+    updates: z.array(UpdateIdentity).min(1).max(MAX_UPDATES_PER_PLAN)
+      .refine((u) => new Set(u.map((x) => `${x.updateId}@${x.revision}`)).size === u.length, 'duplicate update'),
+    reboot: z.literal('never'),
+  }).strict(),
+  warnings: [
+    'Installing updates changes the computer. An update can break a driver or an application, and some cannot be uninstalled.',
+    'Many updates need a restart before they take effect. This plan never restarts a computer: until someone restarts it, it keeps running the old code and reports "restart required".',
+    'Updates download from Microsoft. People using the computer may notice it slow down while they install.',
+    'Each computer installs only the named updates that Windows Update offers it and that are security, critical, rollup or ordinary updates. Drivers, feature upgrades and optional updates are never installed, and no licence is accepted on anyone\'s behalf.',
+  ],
+  verification: 'Each computer reports what Windows Update said for every named update, and whether a restart is pending. A later scan, after any restart, shows whether the update took effect.',
+  doesNotProve: ['that the update fixed any problem', 'that applications still work afterwards', 'that the computer has been restarted'],
+  // Software installation is high impact on any computer, at any count.
+  risk: () => 'high',
+  maxTargets: MAX_RING_TARGETS,
+  resultDeadlineMinutes: 6 * 60,
+  direct: false,
+};
+
+export const CATALOG: CatalogAction[] = [SERVICE_START, UPDATE_INSTALL];
 export const catalogEntry = (id: string, version: number) => CATALOG.find((a) => a.id === id && a.version === version) ?? null;
 
 /** Approvals required by risk. The agent enforces the same minimums. */
 export const APPROVALS_REQUIRED: Record<Risk, number> = { low: 1, high: 2 };
-/** This release: one computer per job, whatever the catalog allows. */
-export const MAX_TARGETS = 1;
+/** The most any action allows; each action sets its own (maxTargets). */
+export const MAX_TARGETS = MAX_RING_TARGETS;
 /** Longest window a requester may ask for. */
 export const MAX_WINDOW_HOURS = 24;
 
@@ -106,6 +148,20 @@ export const Plan = z.object({
     customerSignoff: z.boolean(),
   }).strict(),
   window: z.object({ notBefore: Iso, notAfter: Iso }).strict(),
+  /**
+   * What the approver is shown about the parameters (v0.27): an update's KB
+   * and title, as the computers reported them. Signed with everything else,
+   * but never consulted by the agent, which decides from Windows Update's own
+   * answer — so a misleading title can mislabel an update, never widen what
+   * is installed.
+   */
+  display: z.object({
+    updates: z.array(z.object({
+      updateId: z.string().regex(UPDATE_ID_RE), revision: z.number().int(), kb: z.string().max(16).nullable(),
+      title: z.string().max(300), className: z.string().max(64).nullable(), severity: z.string().max(32).nullable(),
+    }).strict()).max(MAX_UPDATES_PER_PLAN),
+    deployment: z.object({ id: Id, name: z.string().max(120), ring: z.number().int().min(0).max(9), rings: z.number().int().min(1).max(10) }).strict().nullable(),
+  }).strict().optional(),
   createdAt: Iso,
   /** Filled in by the signer when the quorum is met. */
   approvers: z.array(Approver).max(6),
@@ -128,6 +184,9 @@ export function validatePlanAction(p: Plan): { ok: true; action: CatalogAction }
   const a = catalogEntry(p.action.id, p.action.version);
   if (!a) return { ok: false, reason: 'unknown_action' };
   if (!a.params.safeParse(p.params).success) return { ok: false, reason: 'params_not_allowed' };
+  if (p.targets.length > a.maxTargets) return { ok: false, reason: 'too_many_targets' };
+  const eps = new Set(p.targets.map((t) => t.endpointId)), rids = new Set(p.targets.map((t) => t.rustdeskId));
+  if (eps.size !== p.targets.length || rids.size !== p.targets.length) return { ok: false, reason: 'duplicate_target' };
   const risk = a.risk(p.targets);
   if (p.policy.risk !== risk) return { ok: false, reason: 'risk_mismatch' };
   if (p.policy.approvalsRequired < APPROVALS_REQUIRED[risk]) return { ok: false, reason: 'too_few_approvals_required' };

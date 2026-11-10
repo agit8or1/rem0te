@@ -77,6 +77,8 @@ const MAIN_NAV: NavItem[] = [
   { href: '/endpoints', label: 'Computers', icon: MonitorCheck, cap: CAP.COMPUTERS_VIEW },
   { href: '/users', label: 'Users', icon: Users, cap: CAP.USERS_VIEW },
   { href: '/sessions', label: 'Sessions', icon: PlayCircle, cap: CAP.SESSIONS_VIEW },
+  // Staged Windows patching (v0.27). Requests only; each ring is approved on the approval signer.
+  { href: '/patching', label: 'Patching', icon: ShieldCheck, cap: CAP.COMPUTERS_VIEW },
   { href: '/support-requests', label: 'Support Requests', icon: Inbox, cap: CAP.SUPPORT_REQUESTS },
   { href: '/quick-connect', label: 'Quick Connect', icon: Zap, cap: CAP.QUICK_CONNECT },
   { href: '/endpoints/enroll', label: 'Enroll Computer', icon: Download, cap: CAP.COMPUTERS_ADD },

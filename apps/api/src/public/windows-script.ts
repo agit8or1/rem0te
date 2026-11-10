@@ -164,6 +164,22 @@ try {
         try { $ars += (Get-Content -Raw -LiteralPath $rf.FullName -ErrorAction Stop | ConvertFrom-Json) } catch {}
     }
     if ($ars.Count -gt 0) { $body['actionResults'] = $ars }
+} catch {}
+# Patch posture (0.27): the agent's last read-only patch-scan, sent until the
+# portal acknowledges that scan.
+$PATCH_DIR = 'C:\\ProgramData\\Rem0te\\patch'
+$POSTURE_ACK = Join-Path $PATCH_DIR 'posture.acked'
+try {
+    $pf = Join-Path $PATCH_DIR 'posture.json'
+    if (Test-Path -LiteralPath $pf) {
+        $pj = Get-Content -Raw -LiteralPath $pf -ErrorAction Stop
+        if ($pj.Length -le 600000) {
+            $po = $pj | ConvertFrom-Json
+            $acked = ''
+            try { $acked = ([string](Get-Content -Raw -LiteralPath $POSTURE_ACK -ErrorAction Stop)).Trim() } catch {}
+            if ([string]$po.scannedAt -and ($acked -cne [string]$po.scannedAt)) { $body['patchPosture'] = $po }
+        }
+    }
 } catch {}`,
     // Each delivered envelope is handed to the signed agent, which verifies
     // the signature against keys from the signed update chain, the target, the
@@ -187,8 +203,27 @@ try {
         # ASCII: every envelope field is base64 or an identifier, and Windows
         # PowerShell 5 would otherwise prefix a BOM.
         ($aj.envelope | ConvertTo-Json -Compress -Depth 4) | Set-Content -LiteralPath $ef -Encoding ASCII
-        try { & $agentExe action --job $jid --envelope $ef *>$null } catch {}
-        Remove-Item -LiteralPath $ef -Force -ErrorAction SilentlyContinue
+        # Detached (0.27): an update install outlives many heartbeats. The
+        # agent reads the envelope, removes it from the inbox, and holds a lock
+        # for the job while it runs; a re-delivery finds the lock and leaves.
+        try { Start-Process -FilePath $agentExe -ArgumentList @('action', '--job', $jid, '--envelope', $ef) -WindowStyle Hidden } catch {}
+    }
+} catch {}
+try {
+    $pa = [string]$resp.data.patchPostureAck
+    if ($pa -cmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]{8,18}Z$') { Set-Content -LiteralPath $POSTURE_ACK -Value $pa -Encoding ASCII }
+} catch {}
+try {
+    # The portal can ask for a read-only scan; at most one start every 30 minutes.
+    if ($resp.data.patchScan -eq $true -and (Test-Path -LiteralPath $agentExe)) {
+        if (-not (Test-Path -LiteralPath $PATCH_DIR)) { New-Item -ItemType Directory -Force -Path $PATCH_DIR | Out-Null }
+        $stamp = Join-Path $PATCH_DIR 'scan.started'
+        $last = $null
+        try { $last = (Get-Item -LiteralPath $stamp -ErrorAction Stop).LastWriteTimeUtc } catch {}
+        if (-not $last -or ((Get-Date).ToUniversalTime() - $last).TotalMinutes -ge 30) {
+            Set-Content -LiteralPath $stamp -Value '' -Encoding ASCII
+            Start-Process -FilePath $agentExe -ArgumentList @('patch-scan') -WindowStyle Hidden
+        }
     }
 } catch {}`,
   };

@@ -88,6 +88,10 @@ enum ActivityAction {
   ACTION_RESULT
   ACTION_CANCELED
   ACTION_RECONCILED
+  PATCH_DEPLOYMENT_CREATED
+  PATCH_DEPLOYMENT_UPDATED
+  PATCH_RING_REQUESTED
+  PATCH_SCAN_REQUESTED
   LOGIN_SUCCESS
   LOGIN_FAILURE
   LOGOUT
@@ -508,12 +512,13 @@ model Customer {
   supportSessions SupportSession[]
   apiKeys         ApiKey[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  actionJobs       ActionJob[]
+  patchDeployments PatchDeployment[]
 
   @@index([tenantId])
   @@index([tenantId, name])
-  actionJobs        ActionJob[]
 }
 
 model Site {
@@ -578,20 +583,24 @@ model Endpoint {
   // field was accepted by the heartbeat DTO, named in the service signature,
   // rendered by the UI, and stored nowhere, so the device page showed a dash
   // for it on every machine ever enrolled.
-  agentVersion String?
+  agentVersion         String?
   // Which update path this machine's agent reports (`signed` or `legacy`;
   // null = never reported, i.e. legacy), and the update-signing root and
   // targets versions it last verified. Self-reported on authenticated
   // heartbeats: it decides what the portal *withholds*, never what it sends.
-  updateChannel     String?
-  trustRootVersion  Int?
-  targetsVersion    Int?
-  trustReportedAt   DateTime?
+  updateChannel        String?
+  trustRootVersion     Int?
+  targetsVersion       Int?
+  trustReportedAt      DateTime?
   // Approved actions (v0.26): what the signed agent says it can execute, and
   // the digest of the agent build that said it. Self-reported; it decides
   // only whether the portal offers a signed plan — the agent verifies it.
-  agentActions      String[]  @default([])
-  agentSha256       String?
+  agentActions         String[]  @default([])
+  agentSha256          String?
+  // Staged patching (v0.27): when someone asked for a fresh Windows Update
+  // scan. The heartbeat asks the agent to scan until a posture newer than
+  // this arrives.
+  patchScanRequestedAt DateTime?
 
   isManaged  Boolean   @default(false)
   isOnline   Boolean   @default(false)
@@ -609,6 +618,7 @@ model Endpoint {
   computerAccess    ComputerAccess[]
   connectionGrants  ConnectionGrant[]
   actionJobs        ActionJob[]
+  actionTargets     ActionTarget[]
 
   // Access mode: how the computer's remote-access authorization is scoped.
   //   ASSIGNED_USERS  → only users listed in ComputerAccess may connect
@@ -619,7 +629,7 @@ model Endpoint {
   // controllers, hypervisors, backup servers, the RMM host) are default-deny
   // for interactive and elevated access. Set by an admin; the migration only
   // ever classifies WORKSTATION / SERVER from the reported OS caption.
-  deviceClass DeviceClass @default(UNKNOWN)
+  deviceClass        DeviceClass @default(UNKNOWN)
   // v0.23: which session restrictions THIS endpoint can enforce itself
   // (view-only, clipboard, file transfer, attended consent), as reported by
   // its agent. Null = unknown, which is treated as "cannot enforce". No agent
@@ -970,6 +980,11 @@ model EndpointInventory {
   pendingUpdateCount Int?
   rebootRequired     Boolean?
   updatesCheckedAt   DateTime?
+  // v0.27: the signed agent's full Windows Update posture (patch-scan):
+  // offered updates with identities and classifications, installation
+  // history, pending-restart sources and competing update managers.
+  patchPosture       Json?
+  patchScannedAt     DateTime?
 
   // When the last full inventory pass landed. Null means the endpoint has
   // never run one: its installer predates this feature and needs re-running.
@@ -1043,17 +1058,17 @@ enum EndpointCommandStatus {
 // ─── Technician Devices & Launcher ───────────────────────────────────────────
 
 model TechnicianDevice {
-  id          String    @id @default(cuid())
-  userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name        String
-  platform    String
-  fingerprint String    @unique
-  isActive    Boolean   @default(true)
+  id                        String    @id @default(cuid())
+  userId                    String
+  user                      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                      String
+  platform                  String
+  fingerprint               String    @unique
+  isActive                  Boolean   @default(true)
   // v0.23: a managed admin workstation. Required for any exception to the
   // protected-device-class rule. Setting it widens trust → independent review.
-  isManagedAdminWorkstation Boolean @default(false)
-  lastSeenAt  DateTime?
+  isManagedAdminWorkstation Boolean   @default(false)
+  lastSeenAt                DateTime?
 
   launcherTokens LauncherToken[]
 
@@ -1907,20 +1922,20 @@ model IntegrationJob {
 /// One model profile's attempt at a job. Persisted per profile so a worker
 /// that dies mid-job resumes without re-buying the profiles that finished.
 model IntegrationJobRun {
-  id             String         @id @default(cuid())
-  jobId          String
-  job            IntegrationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  modelProfile   String
-  status         String         @default("PENDING") // PENDING | SUCCEEDED | FAILED
-  attempts       Int            @default(0)
-  requestId      String?
-  resolvedModel  String?
-  output         Json?
-  usage          Json?
-  errorCode      String?
-  errorMessage   String?
-  latencyMs      Int?
-  updatedAt      DateTime       @updatedAt
+  id            String         @id @default(cuid())
+  jobId         String
+  job           IntegrationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  modelProfile  String
+  status        String         @default("PENDING") // PENDING | SUCCEEDED | FAILED
+  attempts      Int            @default(0)
+  requestId     String?
+  resolvedModel String?
+  output        Json?
+  usage         Json?
+  errorCode     String?
+  errorMessage  String?
+  latencyMs     Int?
+  updatedAt     DateTime       @updatedAt
 
   @@unique([jobId, modelProfile])
 }
@@ -1994,12 +2009,12 @@ model TechnicianPreset {
 /// Platform-wide technician access policy (one row, id 'singleton'), and a
 /// per-business row that may only TIGHTEN it.
 model AccessPolicy {
-  id         String   @id // 'singleton' or 'business:<customerId>'
-  customerId String?  @unique
-  controls   Json
-  version    Int      @default(1)
+  id          String   @id // 'singleton' or 'business:<customerId>'
+  customerId  String?  @unique
+  controls    Json
+  version     Int      @default(1)
   updatedById String?
-  updatedAt  DateTime @updatedAt
+  updatedAt   DateTime @updatedAt
 }
 
 /// Time-limited control / elevation / protected-class exception for one
@@ -2054,17 +2069,17 @@ model IdentityPause {
 
 /// Lets an identity exceed its cap for approved targets only, until expiry.
 model MaintenanceException {
-  id            String    @id @default(cuid())
+  id            String   @id @default(cuid())
   identity      String
   endpointIds   String[]
   kinds         String[]
   reason        String
   requestedById String
   approvedById  String?
-  status        String    @default("PENDING") // PENDING | APPROVED | DENIED | REVOKED
-  startsAt      DateTime  @default(now())
+  status        String   @default("PENDING") // PENDING | APPROVED | DENIED | REVOKED
+  startsAt      DateTime @default(now())
   expiresAt     DateTime
-  createdAt     DateTime  @default(now())
+  createdAt     DateTime @default(now())
 
   @@index([identity, status])
 }
@@ -2083,16 +2098,16 @@ model AlertSuppression {
 }
 
 model SecurityAlert {
-  id          String    @id @default(cuid())
-  kind        String
-  identity    String?
-  customerId  String?
-  details     Json
-  suppressed  Boolean   @default(false)
-  delivered   Boolean   @default(false)
-  deliveryError String?
-  createdAt   DateTime  @default(now())
-  acknowledgedAt DateTime?
+  id               String    @id @default(cuid())
+  kind             String
+  identity         String?
+  customerId       String?
+  details          Json
+  suppressed       Boolean   @default(false)
+  delivered        Boolean   @default(false)
+  deliveryError    String?
+  createdAt        DateTime  @default(now())
+  acknowledgedAt   DateTime?
   acknowledgedById String?
 
   @@index([createdAt])
@@ -2143,21 +2158,21 @@ enum ActionJobStatus {
 
 model ActionJob {
   /// 32 hex — the single-use job id bound into the signed plan.
-  id                String          @id
+  id                String           @id
   tenantId          String?
   customerId        String
-  customer          Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer          Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
   endpointId        String
-  endpoint          Endpoint        @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  endpoint          Endpoint         @relation(fields: [endpointId], references: [id], onDelete: Cascade)
   actionId          String
   actionVersion     Int
   params            Json
   reason            String
-  origin            String          // technician | ai_suggestion
-  via               String          // portal | clientst0r
+  origin            String // technician | ai_suggestion
+  via               String // portal | clientst0r
   ticketRef         String?
   requestedById     String
-  status            ActionJobStatus @default(AWAITING_APPROVAL)
+  status            ActionJobStatus  @default(AWAITING_APPROVAL)
   statusReason      String?
   risk              String
   approvalsRequired Int
@@ -2170,7 +2185,7 @@ model ActionJob {
   envelope          Json?
   approvers         Json?
   dispatchedAt      DateTime?
-  deliveries        Int             @default(0)
+  deliveries        Int              @default(0)
   lastDeliveredAt   DateTime?
   outcome           String?
   result            Json?
@@ -2182,11 +2197,96 @@ model ActionJob {
   reconcileNote     String?
   integrationPeer   String?
   integrationKey    String?
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  // v0.27: one row per computer the signed plan names. endpointId above is
+  // the first of them, kept for the single-computer views.
+  targets           ActionTarget[]
+  deploymentId      String?
+  deployment        PatchDeployment? @relation(fields: [deploymentId], references: [id], onDelete: SetNull)
+  ring              Int?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 
   @@unique([integrationPeer, integrationKey])
+  @@index([deploymentId])
   @@index([endpointId, status])
   @@index([customerId, createdAt])
   @@index([status])
+}
+
+// ─── Staged patching (v0.27) ────────────────────────────────────────────────
+
+enum ActionTargetStatus {
+  // Named in the plan; not delivered yet (or not approved yet).
+  PENDING
+  DISPATCHED
+  SUCCEEDED
+  FAILED
+  REFUSED_BY_ENDPOINT
+  NOT_EXECUTED
+  UNKNOWN
+  // The plan was rejected, canceled or expired, or the recheck at dispatch
+  // removed this computer.
+  CANCELED
+}
+
+/// Delivery and result for one computer of one signed plan.
+model ActionTarget {
+  id              String             @id @default(cuid())
+  jobId           String
+  job             ActionJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  endpointId      String
+  endpoint        Endpoint           @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  status          ActionTargetStatus @default(PENDING)
+  statusReason    String?
+  dispatchedAt    DateTime?
+  deliveries      Int                @default(0)
+  lastDeliveredAt DateTime?
+  outcome         String?
+  result          Json?
+  resultAt        DateTime?
+  reconciledById  String?
+  reconciledAt    DateTime?
+  reconcileNote   String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@unique([jobId, endpointId])
+  @@index([endpointId, status])
+}
+
+enum PatchDeploymentStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELED
+}
+
+/// A set of Windows updates rolled out ring by ring. Each ring is one signed
+/// plan (an ActionJob) that the approval roster approves on its own: the
+/// portal can never widen a rollout without a new approval.
+model PatchDeployment {
+  id               String                @id @default(cuid())
+  tenantId         String?
+  customerId       String
+  customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  name             String
+  /// [{ updateId, revision, kb, title, className, severity }]
+  updates          Json
+  /// [{ endpointIds: string[] }] — ring 0 is the canary, exactly one computer.
+  rings            Json
+  soakHours        Int                   @default(24)
+  /// Failed computers a ring may have before the deployment pauses itself.
+  failureThreshold Int                   @default(0)
+  windowHours      Int                   @default(8)
+  status           PatchDeploymentStatus @default(ACTIVE)
+  pausedReason     String?
+  /// The ring plan a person resumed past after it tripped the failure
+  /// threshold: it does not pause the deployment again.
+  resumedOverJobId String?
+  createdById      String
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  jobs             ActionJob[]
+
+  @@index([customerId, createdAt])
 }
