@@ -5,6 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.29.1] — 2026-11-10 · *Lighthouse*
+
+### Fixed
+
+- **A computer's Patches tab showed nothing unless it ran the signed agent.**
+  - **Symptom:** every production computer showed only *"This computer's agent does not report Windows Update posture.
+    It needs the signed agent (update channel `signed`) from 0.27 or later"*. Production runs the `legacy_allowed`
+    channel, so no computer has the signed agent, and the tab was a dead end on all of them.
+  - **Cause:** the tab only read the signed agent's `patch-scan` posture. But every agent already answers the
+    inventory's `UPDATE_SCAN`, every 12 hours and on **Scan now**, with the offered updates (title, KB, severity, size)
+    and the reboot flag. That data was stored and never shown there.
+  - **Fix:** `GET /endpoints/:id/patches` returns it as `basic` when no signed posture exists. The tab shows it with a
+    working **Scan now** that polls for the result, and says that *installing* through a deployment needs the signed
+    agent.
+  - `e2e-staged-patching` gained a check for this (60 passed).
+  - Nothing about installing changes. `basic` is read-only and never feeds a deployment, whose eligibility checks need
+    the signed scan's update ids, classifications and manager detection.
+
 ## [0.29.0] — 2026-11-10 · *Lighthouse*
 
 **Monitoring and alerts: know when a computer needs a person, once per problem, and tell the right people.**

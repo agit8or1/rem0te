@@ -580,7 +580,8 @@ const SECTIONS: Section[] = [
           restarts a computer, so &ldquo;restart required&rdquo; waits for someone to restart it. Only security,
           critical, rollup and ordinary Microsoft updates are installed; drivers, feature upgrades, optional updates and
           computers managed by WSUS, Intune or Configuration Manager are refused. Each computer&apos;s{' '}
-          <em>Patches</em> tab shows what Windows Update offers it. More in{' '}
+          <em>Patches</em> tab shows what Windows Update offers it. Every agent reports this; installing through a
+          deployment needs the signed agent. More in{' '}
           <Link href="/docs/staged-patching" className="underline text-foreground">Staged patching</Link>.
         </p>
         <p>

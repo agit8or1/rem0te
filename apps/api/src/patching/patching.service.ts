@@ -89,7 +89,7 @@ export class PatchingService {
   async endpointPatches(actor: ActorContext, endpointId: string) {
     await this.acl.assertEndpointInScope(actor, endpointId);
     const [inv, ep] = await Promise.all([
-      this.prisma.endpointInventory.findUnique({ where: { endpointId }, select: { patchPosture: true, patchScannedAt: true } }),
+      this.prisma.endpointInventory.findUnique({ where: { endpointId }, select: { patchPosture: true, patchScannedAt: true, pendingUpdates: true, rebootRequired: true, updatesCheckedAt: true } }),
       this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { updateChannel: true, agentActions: true, patchScanRequestedAt: true } }),
     ]);
     const p = Posture.safeParse(inv?.patchPosture);
@@ -105,6 +105,14 @@ export class PatchingService {
       reboot: posture?.reboot ?? null,
       updates: (posture?.updates ?? []).map((u) => ({ ...u, ...(() => { const e = eligibility(u); return { installable: e.ok, notInstallableBecause: e.reason }; })() })),
       history: posture?.history ?? [],
+      // Every agent, signed or not, answers the inventory's UPDATE_SCAN (every
+      // 12 hours, or on Scan now). Without a signed posture this is what the
+      // tab shows: read-only, and never a source for a deployment.
+      basic: posture ? null : {
+        checkedAt: inv?.updatesCheckedAt ?? null,
+        rebootRequired: inv?.rebootRequired ?? null,
+        updates: Array.isArray(inv?.pendingUpdates) ? (inv.pendingUpdates as { title: string; kb: string | null; severity: string | null; sizeBytes: number | null }[]) : [],
+      },
     };
   }
 

@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { endpointsApi, patchingApi } from '@/lib/api-client';
@@ -30,6 +31,7 @@ interface Patches {
   managers: { id: string; label: string }[]; autoUpdate: string | null;
   reboot: { pending: boolean; sources: string[] } | null;
   updates: PatchUpdate[]; history: History[];
+  basic: { checkedAt: string | null; rebootRequired: boolean | null; updates: { title: string; kb: string | null; severity: string | null; sizeBytes: number | null }[] } | null;
 }
 
 const REBOOT_SOURCE: Record<string, string> = {
@@ -41,23 +43,64 @@ const size = (b: number) => (b >= 1 << 30 ? `${(b / (1 << 30)).toFixed(1)} GB` :
 export function EndpointPatches({ endpointId }: { endpointId: string }) {
   const { toast } = useToast();
   const qc = useQueryClient();
+  // A basic scan has no request marker on the server, so poll for a while after Scan now.
+  const [waitUntil, setWaitUntil] = useState(0);
   const { data: p, isLoading } = useQuery({
     queryKey: ['endpoint-patches', endpointId],
     queryFn: () => patchingApi.endpoint(endpointId).then((r) => r.data.data as Patches),
-    refetchInterval: (q) => ((q.state.data as Patches | undefined)?.scanPending ? 20_000 : false),
+    refetchInterval: (q) => ((q.state.data as Patches | undefined)?.scanPending || Date.now() < waitUntil ? 20_000 : false),
   });
   const rescan = useMutation({
     mutationFn: () => endpointsApi.refreshInventory(endpointId),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['endpoint-patches', endpointId] }); toast({ title: 'Scan requested', description: 'The computer scans at its next check-in and reports back.' }); },
+    onSuccess: () => { setWaitUntil(Date.now() + 10 * 60_000); qc.invalidateQueries({ queryKey: ['endpoint-patches', endpointId] }); toast({ title: 'Scan requested', description: 'The computer scans at its next check-in and reports back.' }); },
     onError: () => toast({ title: 'Not requested', variant: 'destructive' }),
   });
 
   if (isLoading || !p) return <p className="text-sm text-muted-foreground">Loading…</p>;
   if (!p.supported && !p.scannedAt) {
+    // Every agent answers the inventory's update scan (every 12 hours, or on
+    // Scan now), so there is always something to show. Installing through a
+    // deployment is what needs the signed agent — not seeing the updates.
+    const b = p.basic;
     return (
-      <Card><CardContent className="pt-6 text-sm text-muted-foreground">
-        This computer&apos;s agent does not report Windows Update posture. It needs the signed agent (update channel <code>signed</code>) from 0.27 or later — see <Link className="underline" href="/docs/staged-patching">Staged patching</Link>.
-      </CardContent></Card>
+      <div className="space-y-4">
+        <Card>
+          <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
+            <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Windows Update</CardTitle>
+            <Button size="sm" variant="outline" disabled={rescan.isPending} onClick={() => rescan.mutate()}>
+              {rescan.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1" />}Scan now
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <p className="text-xs text-muted-foreground">
+              {b?.checkedAt ? `Last scanned ${formatDate(b.checkedAt)}` : 'Not scanned yet — the agent scans automatically within 12 hours of its first check-in.'}
+            </p>
+            {b?.rebootRequired && (
+              <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending. Rem0te never restarts a computer.</p>
+            )}
+            {b?.checkedAt && <p className="text-xs">{b.updates.length === 0 ? 'Windows Update offers nothing.' : `${b.updates.length} update${b.updates.length === 1 ? '' : 's'} offered.`}</p>}
+            <p className="text-xs text-muted-foreground">
+              Reported by the standard agent. Installing these through a <Link className="underline" href="/patching">patch deployment</Link> needs the signed agent (update channel <code>signed</code>), which runs only plans approved on the roster — see <Link className="underline" href="/docs/staged-patching">Staged patching</Link>.
+            </p>
+          </CardContent>
+        </Card>
+        {b && b.updates.length > 0 && (
+          <Card>
+            <CardHeader className="pb-3"><CardTitle className="text-sm">Offered</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
+              {b.updates.map((u, i) => (
+                <div key={`${u.kb ?? ''}-${i}`} className="rounded-md border p-2 text-xs space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">{u.kb && <strong>{u.kb}</strong>}<span>{u.title}</span></div>
+                  <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                    {u.severity && <Badge variant={u.severity === 'Critical' ? 'destructive' : 'outline'} className="text-[10px]">{u.severity}</Badge>}
+                    {u.sizeBytes ? <span>{size(u.sizeBytes)}</span> : null}
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+      </div>
     );
   }
   const installable = p.updates.filter((u) => u.installable);
