@@ -6,6 +6,7 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { Prisma, EndpointCommandType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { Posture } from '../patching/posture';
+import { diffInventory, sanitizeSoftware, type InvSnapshot } from '../monitoring/engine';
 
 /**
  * What a managed computer knows about itself, and the queue that asks it.
@@ -220,12 +221,24 @@ export class EndpointInventoryService {
     await this.upsert(endpointId, data);
   }
 
-  /** A full inventory pass, from an INVENTORY_REFRESH command result. */
+  /**
+   * A full inventory pass, from an INVENTORY_REFRESH command result.
+   *
+   * v0.29: also the software list (agents from 0.29), and change history —
+   * what differs from the previous pass is written to EndpointChange. The
+   * first pass is the baseline and records nothing, and a list the agent did
+   * not send this time is not compared (see diffInventory).
+   */
   async recordInventory(endpointId: string, raw: unknown): Promise<void> {
     if (!raw || typeof raw !== 'object') return;
     const r = raw as Record<string, unknown>;
+    const prev = await this.prisma.endpointInventory.findUnique({
+      where: { endpointId },
+      select: { collectedAt: true, manufacturer: true, model: true, serialNumber: true, biosVersion: true, cpuModel: true, cpuCores: true, memoryTotalMb: true, osCaption: true, osBuild: true, domain: true, disks: true, networks: true, software: true },
+    });
+    const software = sanitizeSoftware(r.software);
 
-    await this.upsert(endpointId, {
+    const data = {
       manufacturer: str(r.manufacturer, 128),
       model: str(r.model, 128),
       serialNumber: str(r.serialNumber, 128),
@@ -252,8 +265,31 @@ export class EndpointInventoryService {
       gpus: this.sanitizeGpus(r.gpus),
       networks: this.sanitizeNetworks(r.networks),
 
+      ...(software ? { software: software as unknown as Prisma.InputJsonValue, softwareCount: software.length } : {}),
       collectedAt: new Date(),
+    };
+    await this.upsert(endpointId, data);
+
+    // Change history. Memory is compared in whole GB, so the live free-memory
+    // writes to memoryTotalMb's neighbour never read as a hardware change.
+    const snap = (x: Record<string, unknown>, sw: unknown): InvSnapshot => ({
+      manufacturer: x.manufacturer as string, model: x.model as string, serialNumber: x.serialNumber as string, biosVersion: x.biosVersion as string,
+      cpuModel: x.cpuModel as string, cpuCores: x.cpuCores as number, memoryTotalGb: typeof x.memoryTotalMb === 'number' ? Math.round(x.memoryTotalMb / 1024) : null,
+      osCaption: x.osCaption as string, osBuild: x.osBuild as string, domain: x.domain as string,
+      disks: Array.isArray(x.disks) ? (x.disks as { drive: string; totalBytes: number | null }[]) : null,
+      networks: Array.isArray(x.networks) ? (x.networks as { name: string; mac: string | null }[]) : null,
+      software: Array.isArray(sw) ? (sw as { name: string; version: string | null; publisher: string | null }[]) : null,
     });
+    if (!prev?.collectedAt) return;
+    try {
+      const changes = diffInventory(snap(prev as unknown as Record<string, unknown>, prev.software), snap(data, software ?? null));
+      if (changes.length) {
+        const ep = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { customerId: true } });
+        await this.prisma.endpointChange.createMany({ data: changes.map((c) => ({ endpointId, customerId: ep?.customerId ?? null, ...c, subject: c.subject.slice(0, 200), before: c.before?.slice(0, 200) ?? null, after: c.after?.slice(0, 200) ?? null })) });
+      }
+    } catch (e) {
+      this.logger.warn(`change history for ${endpointId}: ${String(e)}`);
+    }
   }
 
   /** The result of an UPDATE_SCAN command. */

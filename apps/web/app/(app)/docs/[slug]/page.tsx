@@ -15,8 +15,8 @@ export default async function DocPage({ params }: { params: Promise<{ slug: stri
   if (!page) notFound();
 
   return (
-    <div className="space-y-6">
-      <PageHeader title={page.title} description={`docs/${page.file}`} />
+    <div className="space-y-6 p-4 md:p-6">
+      <PageHeader title={page.title} description={page.summary} />
       <DocsBrowser>
         <DocArticle slug={slug} />
       </DocsBrowser>

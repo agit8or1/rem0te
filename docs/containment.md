@@ -20,8 +20,13 @@ A refusal in the portal is `403` with code `CONTAINED` and the pause's reason. I
 nobody outside a business learns that it is suspended.
 
 What a pause does not do: it doesn't end a remote session already running, or stop an agent that has already
-started an action, and it doesn't hide anything. **Alert suppression during an incident is not built.** It belongs
-with monitoring, which isn't in this build.
+started an action, and it doesn't hide anything. It also doesn't touch **monitoring**: alerts keep being raised and
+notified during a pause, because that is when you most want them.
+
+The reverse holds too. A **maintenance window** ([monitoring](monitoring.md#maintenance-windows)) only holds
+*notifications* — who is told about an alert. It never pauses writes and never stops anything reaching a computer.
+The two are separate on purpose: one is planned quiet, the other is an incident brake, and neither can be used as
+the other.
 
 ## Who can set and lift
 
@@ -167,4 +172,5 @@ a stopped signer. It also notices the portal stopping altogether.
 ## See also
 
 - [Incident recovery](incident-recovery.md): the runbook.
+- [Monitoring and alerts](monitoring.md): maintenance windows, which are not containment.
 - [Approved actions](approved-actions.md), [Staged patching](staged-patching.md), [Update signing](update-signing.md).

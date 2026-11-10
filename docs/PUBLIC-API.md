@@ -10,9 +10,20 @@ All endpoints require an **API key** in the `Authorization` header:
 Authorization: Bearer rk_<48-hex>
 ```
 
-Keys are minted from **Administration → API Keys** in the web UI or via the
-admin API `POST /api/v1/apikeys`. The raw key is shown **once** at creation;
+Keys are created under **Settings → Monitoring & API → API keys**
+(`/settings/api-keys`, added in 0.29 — before that the screen did not exist
+and keys could only be made with the admin API `POST /api/v1/apikeys`, which
+still works). A Business Owner creates keys for their own business; a Platform
+Admin picks the business. The raw key is shown **once** at creation;
 server-side we store only a SHA-256 hash. Keys support:
+
+![Settings → API keys: business, name, scopes, and the key list](screenshots/guide/api-keys.png)
+
+1. **Business** — Platform Admins only; a key always belongs to one business.
+2. A name you will recognise in the audit log.
+3. Scopes — tick only what the integration needs.
+4. **Create key** — the key is shown once, with a Copy button.
+5. Existing keys: prefix, scopes, last use, expiry, and **Revoke**.
 
 - **name** — human label
 - **businessId** — the business the key belongs to. **Required.** A key acts as a

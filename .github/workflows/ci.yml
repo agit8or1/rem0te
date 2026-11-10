@@ -110,6 +110,13 @@ jobs:
       - name: Audit chain tests
         run: node apps/api/scripts/unit-audit-chain.mjs
 
+      # Monitoring (0.29): rule inheritance, evaluators, outage correlation,
+      # escalation timing, the inventory diff and the report sanitisers against
+      # the compiled engine — and, with the runner's pwsh, the agent's monitor
+      # block executed against stubbed Get-Service / Get-WinEvent.
+      - name: Monitoring tests
+        run: node apps/api/scripts/unit-monitoring.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.

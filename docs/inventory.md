@@ -54,6 +54,8 @@ rather than merging them.
 | Signed-in user, uptime, last boot, **CPU load, free memory, free system-disk space** | **Every heartbeat** (~3 min) | Three CIM queries |
 | Full specs — CPU, memory, disks, GPUs, adapters, BIOS, chassis, serial | **Every 6 hours**, or on request | A handful of CIM queries |
 | Windows Update pending patches | **Every 12 hours**, or on request | Tens of seconds, and network |
+| Installed software (0.29) — name, version, publisher, install date | With the full specs | Two registry reads (64- and 32-bit uninstall keys) |
+| Monitored services and event-log queries (0.29) | **Every heartbeat**, only those a monitor asks for | One `Get-Service`, one bounded `Get-WinEvent` per query |
 
 The Windows Update scan is the expensive one. It starts the Windows Update
 agent and goes out to whatever update source the machine is pointed at, which
@@ -221,8 +223,24 @@ numbers.
 
 ---
 
+## Software and change history (0.29)
+
+From 0.29 the inventory includes **installed software**: what Windows lists under Programs and Features, from
+the 64- and 32-bit uninstall registry keys, skipping system components and updates, up to 500 entries. It is
+shown on the computer's **Monitoring** tab with a filter.
+
+Each inventory is also **compared with the one before**. Hardware, operating system, disks, network adapters and
+software that were added, removed or changed are recorded as a change history on the same tab — *software added:
+7-Zip 24.08*, *memory changed: 16 GB → 32 GB*. The first inventory is the baseline and records nothing; a list an
+older agent does not report (software, before 0.29) is not compared, so upgrading an agent does not log every
+program as newly installed.
+
+Monitors — offline, disk, CPU, memory, services, event-log matches, pending restart — and alerts are described in
+[monitoring.md](monitoring.md).
+
 ## See also
 
+- [monitoring.md](monitoring.md) — monitors and alerts built on this data
 - [clients.md](clients.md) — the managed installer and what it puts on a machine
 - [updates.md](updates.md) — the other three things that can be out of date
 - [access-control.md](access-control.md) — the capability model

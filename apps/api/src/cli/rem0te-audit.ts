@@ -46,9 +46,17 @@ function pubFrom(file: string | undefined): KeyObject | undefined {
   if (k.asymmetricKeyType !== 'ed25519') throw new UsageError('--pub must be an Ed25519 public key');
   return k;
 }
+// Checkpoint problems first: a bad or missing signature says the copy itself
+// cannot be trusted, and it must not be pushed past the 20-line cut by a run
+// of ordinary deletions (0.29 — e2e-containment caught exactly that).
+const RANK: Record<Problem['kind'], number> = { checkpoint_signature: 0, checkpoint_mismatch: 1, altered: 2, reference_changed: 3, unsealed_in_chain: 4, deleted: 5 };
 const report = (label: string, problems: Problem[]) => {
-  for (const p of problems.slice(0, 20)) console.log(`  ${label} seq ${p.seq}: ${p.kind} — ${p.detail}`);
-  if (problems.length > 20) console.log(`  … and ${problems.length - 20} more`);
+  const ordered = [...problems].sort((a, b) => RANK[a.kind] - RANK[b.kind]);
+  for (const p of ordered.slice(0, 20)) console.log(`  ${label} seq ${p.seq}: ${p.kind} — ${p.detail}`);
+  if (problems.length > 20) {
+    const counts = Object.entries(problems.reduce<Record<string, number>>((m, p) => ({ ...m, [p.kind]: (m[p.kind] ?? 0) + 1 }), {})).map(([k, n]) => `${n} ${k}`).join(', ');
+    console.log(`  … and ${problems.length - 20} more (${counts} in all)`);
+  }
 };
 
 async function main(argv: string[]): Promise<number> {

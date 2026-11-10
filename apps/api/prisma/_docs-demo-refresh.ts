@@ -28,6 +28,9 @@ const ago = (ms: number) => new Date(Date.now() - ms);
  */
 const OFFLINE = new Set([
   'NWD-XRAY-WS', 'CASC-RECEPTION', 'CASC-TAX-SEASON', 'HARB-WAREHOUSE-2',
+  // 0.29: with HARB-WAREHOUSE-2 these make the Tacoma warehouse site outage
+  // that _docs-demo-monitoring.ts records (3 of its 4 computers offline).
+  'HARB-WAREHOUSE-1', 'HARB-YARD-KIOSK',
   'HARB-OPS-MB', 'CRV-LAB-PC', 'PSL-PARTNER-MB', 'ACF-ESTIMATING',
 ]);
 

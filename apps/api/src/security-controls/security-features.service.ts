@@ -167,6 +167,18 @@ export class SecurityFeaturesService {
       source: 'endpoint-reports',
     };
 
+    // Monitoring: monitors and open alerts in this scope.
+    const [mRules, mOpen, mSup] = await Promise.all([
+      this.prisma.monitorRule.count({ where: { enabled: true, ...(businessId ? { OR: [{ scopeKey: 'global' }, { customerId: businessId }] } : {}) } }),
+      this.prisma.monitorAlert.count({ where: { state: { in: ['OPEN', 'ACKNOWLEDGED'] }, ...(businessId ? { customerId: businessId } : {}) } }),
+      this.prisma.monitorSuppression.count({ where: { revokedAt: null, startsAt: { lte: new Date() }, endsAt: { gt: new Date() }, ...(businessId ? { OR: [{ scopeKey: 'global' }, { customerId: businessId }] } : {}) } }),
+    ]);
+    out['monitoring'] = {
+      state: mRules ? `${mRules} monitor${mRules === 1 ? '' : 's'} in effect · ${mOpen} active alert${mOpen === 1 ? '' : 's'}` : 'No monitors configured',
+      detail: `${mSup ? `${mSup} maintenance window${mSup === 1 ? '' : 's'} open now. ` : ''}Settings → Monitoring.`,
+      source: 'portal-policy',
+    };
+
     // Containment: what is paused right now, for this scope.
     const pauses = await this.prisma.containmentPause.findMany({
       where: { clearedAt: null, ...(businessId ? { OR: [{ scope: 'GLOBAL' }, { customerId: businessId }] } : {}) },

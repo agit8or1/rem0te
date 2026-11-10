@@ -347,7 +347,7 @@ export const SECURITY_FEATURES: SecurityFeature[] = [
     prerequisites: ['For the signer layer: the 0.28 approval signer build', 'For the agent layer: the offline release keys and agents on a 0.28+ signed build'],
     link: { href: DOC('containment'), label: 'Containment' },
     evidence: ['apps/api/scripts/e2e-containment.mjs', 'tools/windows-installer/internal/action/pause_test.go', 'tools/windows-installer/internal/agent/agent_test.go', 'scripts/check-security-invariants.mjs § 16'],
-    gap: 'A compromised portal can ignore its own pause; the signer and signed-pause layers are what hold then. Withholding a newer signed pause works until the signed timestamp expires (7 days by default). An agent that has already started an action finishes it. Alert suppression during an incident is not built (it belongs with monitoring). Fixture-tested only.',
+    gap: 'A compromised portal can ignore its own pause; the signer and signed-pause layers are what hold then. Withholding a newer signed pause works until the signed timestamp expires (7 days by default). An agent that has already started an action finishes it. Maintenance windows (0.29, Monitoring) silence alert notifications only; they never lift or set a pause. Fixture-tested only.',
   },
   {
     id: 'audit-chain', group: 'evidence', name: 'Tamper-evident audit log', status: 'partial',
@@ -360,6 +360,19 @@ export const SECURITY_FEATURES: SecurityFeature[] = [
     link: { href: DOC('containment', 'the-tamper-evident-audit-log'), label: 'Audit integrity' },
     evidence: ['apps/api/scripts/unit-audit-chain.mjs', 'apps/api/scripts/e2e-containment.mjs', 'scripts/check-security-invariants.mjs § 16'],
     gap: 'Detects, does not prevent: a database superuser can still delete rows or drop the trigger, and is caught by verification and the export, not stopped. It cannot prove an event was ever logged. Without an export, an attacker who rewrites every hash is not detected. The checkpoint key on the host signs whatever the host says.',
+  },
+
+  {
+    id: 'monitoring', group: 'evidence', name: 'Monitoring, alerts and maintenance windows', status: 'partial',
+    protects: 'A computer, service or site failing with nobody told — and alert noise or a maintenance window hiding a real problem.',
+    scope: 'Computers with monitors in effect (global, business, site or computer scope; the most specific wins).',
+    enforcedAt: ['portal', 'endpoint-agent'],
+    enforcement: 'Read-side only. The heartbeat hands an authenticated agent the services to read and event queries to count; the agent checks every name and log against fixed rules and changes nothing, and the server keeps only what it asked for. One open alert per problem (a database index enforces it); offline alerts wait a few minutes so a site going dark is one outage alert. Notification and escalation go to webhooks set by a Business Owner or the MSP with fresh authentication (business destinations: public HTTPS hosts only). A maintenance window silences notification and escalation, never the alert itself, and never touches a containment pause or a security alert. Alert events to ClientSt0r are signed and sequenced per organization; a linked ticket grants nothing.',
+    default: 'No monitors exist until someone adds them (Settings → Monitoring offers a recommended set). Nobody is notified until a policy names destinations.',
+    prerequisites: ['Monitors at some scope', 'A notification policy with destinations', 'Service and event monitors need agents from 0.29 (re-run the installer)'],
+    link: { href: DOC('monitoring'), label: 'Monitoring' },
+    evidence: ['apps/api/scripts/unit-monitoring.mjs', 'apps/api/scripts/e2e-monitoring.mjs', 'scripts/check-security-invariants.mjs § 17'],
+    gap: 'Fixture-tested only: the PowerShell monitor block has run against stubs, not a real Windows service manager or event log. Webhook delivery is best-effort (no retry queue); a destination that is down misses that notification, which the alert history records. Restart-pending age counts from when rem0te first saw it. No e-mail or SMS channel.',
   },
 
   // ── Integration ───────────────────────────────────────────────────────────

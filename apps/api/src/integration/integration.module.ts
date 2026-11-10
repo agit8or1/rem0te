@@ -1,6 +1,6 @@
 import { Module, OnApplicationBootstrap } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
-import { IntegrationActionsController, IntegrationController } from './integration.controller';
+import { IntegrationActionsController, IntegrationAlertsController, IntegrationController } from './integration.controller';
 import { ActionProposalsService } from './action-proposals.service';
 import { IntegrationAdminController } from './integration-admin.controller';
 import { IntegrationAuthGuard } from './integration-auth.guard';
@@ -17,7 +17,7 @@ import { IntegrationWorkerService } from './worker.service';
  */
 @Module({
   imports: [AuditModule],
-  controllers: [IntegrationController, IntegrationActionsController, IntegrationAdminController],
+  controllers: [IntegrationController, IntegrationActionsController, IntegrationAlertsController, IntegrationAdminController],
   providers: [IntegrationAuthGuard, IntegrationJobsService, ActionProposalsService, DelegationService, ReplayGuardService, IntegrationWorkerService],
 })
 export class IntegrationModule implements OnApplicationBootstrap {

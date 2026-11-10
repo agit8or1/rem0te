@@ -16,6 +16,7 @@ import { EndpointSpecs } from '@/components/endpoints/endpoint-specs';
 import { EndpointEventLog } from '@/components/endpoints/endpoint-event-log';
 import { EndpointActions } from '@/components/endpoints/endpoint-actions';
 import { EndpointPatches } from '@/components/endpoints/endpoint-patches';
+import { EndpointMonitoring } from '@/components/monitoring/endpoint-monitoring';
 import { EndpointUpdateHistory } from '@/components/rollouts/endpoint-update-history';
 import { usePermissions, CAP } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -40,6 +41,11 @@ export default function EndpointDetailPage() {
   const [timelineEditing, setTimelineEditing] = useState(false);
   const [timelineDraft, setTimelineDraft] = useState('');
   const [tab, setTab] = useState('overview');
+  // ?tab=monitoring (and the others) opens that tab — alert links and the docs screenshots use it.
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('tab');
+    if (t) setTab(t);
+  }, []);
 
   // Access review lists people, so it needs users:view as well. Fetched up
   // front so a 403 (or any error) can hide the tab without a flash of it.
@@ -300,6 +306,9 @@ export default function EndpointDetailPage() {
           {can(CAP.COMPUTERS_VIEW) && (
             <TabsTrigger value="patches">Patches</TabsTrigger>
           )}
+          {can(CAP.COMPUTERS_VIEW) && (
+            <TabsTrigger value="monitoring">Monitoring</TabsTrigger>
+          )}
           {showReview && (
             <TabsTrigger value="access-review">Access review</TabsTrigger>
           )}
@@ -374,6 +383,12 @@ export default function EndpointDetailPage() {
         {can(CAP.COMPUTERS_VIEW) && (
           <TabsContent value="patches" className="mt-4">
             {tab === 'patches' && <EndpointPatches endpointId={id} />}
+          </TabsContent>
+        )}
+
+        {can(CAP.COMPUTERS_VIEW) && (
+          <TabsContent value="monitoring" className="mt-4">
+            {tab === 'monitoring' && <EndpointMonitoring endpointId={id} />}
           </TabsContent>
         )}
 

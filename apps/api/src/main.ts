@@ -137,6 +137,9 @@ async function bootstrap() {
       { path: 'api/integration/v1/jobs/:job_id/events', method: RequestMethod.GET },
       { path: 'api/integration/v1/action-proposals', method: RequestMethod.POST },
       { path: 'api/integration/v1/action-proposals/:job_id', method: RequestMethod.GET },
+      { path: 'api/integration/v1/alerts/events', method: RequestMethod.GET },
+      { path: 'api/integration/v1/alerts/:alert_id', method: RequestMethod.GET },
+      { path: 'api/integration/v1/alerts/:alert_id/ticket', method: RequestMethod.POST },
     ],
   });
 

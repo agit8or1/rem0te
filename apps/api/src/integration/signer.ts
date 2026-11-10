@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'crypto';
 import { loadTrust, type Peer } from './peers';
-import { eventSigningString, HDR, requestSigningString, responseSigningString, sha256Hex, signEd25519, verifyEd25519 } from './crypto';
+import { alertEventSigningString, eventSigningString, HDR, requestSigningString, responseSigningString, sha256Hex, signEd25519, verifyEd25519 } from './crypto';
 
 /** rem0te's own key, from the peers file. Used for events and outbound requests only. */
 export function selfKey() {
@@ -12,6 +12,11 @@ export function selfKey() {
 export function signEvent(event: unknown): { alg: 'Ed25519'; kid: string; sig: string } {
   const s = selfKey();
   return { alg: 'Ed25519', kid: s.keyId, sig: signEd25519(s.privateKey, eventSigningString(event)) };
+}
+
+export function signAlertEvent(event: unknown): { alg: 'Ed25519'; kid: string; sig: string } {
+  const s = selfKey();
+  return { alg: 'Ed25519', kid: s.keyId, sig: signEd25519(s.privateKey, alertEventSigningString(event)) };
 }
 
 export interface SignedFetchResult { status: number; body: Buffer; headers: Headers; nonce: string }

@@ -167,6 +167,27 @@ export class CommandResultDto {
   @IsOptional() @IsArray() @Type(() => Object) events?: unknown[];
 }
 
+/**
+ * A monitor report (v0.29): the states of the services the heartbeat asked
+ * about, and the match counts for its event queries. Bounded here, and
+ * sanitised field by field — and only for services and event keys the
+ * server actually asked for — in monitoring/engine.ts sanitizeReport.
+ */
+export class MonitorReportDto {
+  @IsString()
+  @Matches(/^[0-9]{6,15}$/, { message: 'rustdeskId must be numeric' })
+  rustdeskId!: string;
+
+  @IsString()
+  @Length(16, 128)
+  @Matches(/^[A-Za-z0-9_-]+$/, { message: 'agentSecret must be URL-safe base64' })
+  agentSecret!: string;
+
+  // @Type(() => Object): see actionResults above.
+  @IsOptional() @IsArray() @ArrayMaxSize(64) @Type(() => Object) services?: unknown[];
+  @IsOptional() @IsArray() @ArrayMaxSize(16) @Type(() => Object) events?: unknown[];
+}
+
 export class ClaimEndpointDto {
   @IsString()
   @Length(1, 256)
