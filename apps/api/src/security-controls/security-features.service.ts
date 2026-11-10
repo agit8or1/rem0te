@@ -140,6 +140,21 @@ export class SecurityFeaturesService {
       ? { state: 'Misconfigured', detail: 'INTEGRATION_PEERS_FILE is set but does not load.', source: 'server-config' }
       : { state: trust ? 'Configured (read-only analysis)' : 'Not configured', detail: trust ? 'Peers file loaded. Jobs collect bounded evidence only; nothing executes on a computer.' : 'INTEGRATION_PEERS_FILE is not set.', source: 'server-config' };
 
+    // Approved actions: whether a signer is configured is server config;
+    // support and outcomes are what agents and jobs actually recorded.
+    const aScope = businessId ? { customerId: businessId } : {};
+    const [supporting, jobs] = await Promise.all([
+      this.prisma.endpoint.count({ where: { ...aScope, status: 'ACTIVE', agentActions: { has: 'windows.service.start@1' } } }),
+      this.prisma.actionJob.groupBy({ by: ['status'], where: { ...aScope, createdAt: { gte: since } }, _count: { _all: true } }),
+    ]);
+    const signer = !!process.env.APPROVAL_SIGNER_INTERNAL_URL;
+    const counts = jobs.map((g) => `${g._count._all} ${g.status.toLowerCase().replace(/_/g, ' ')}`).join(', ');
+    out['approved-actions'] = {
+      state: signer ? `Signer configured · ${supporting} of ${total} computers support it` : 'No approval signer configured',
+      detail: `Last 30 days, ${where}: ${counts || 'no requests'}. Support is what signed agents report; whether a given plan runs is decided on the computer.`,
+      source: 'endpoint-reports',
+    };
+
     // Not built: the code is the state.
     for (const id of ['elevation', 'remote-shell', 'chat', 'scripts-fixes', 'mdm', 'backup-recovery']) {
       out[id] = { state: 'Not available in this build', source: 'code' };

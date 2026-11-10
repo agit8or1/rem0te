@@ -1,0 +1,40 @@
+import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+
+/**
+ * The portal's view of the approval signer (v0.26): its internal listener on
+ * loopback. The portal can propose, poll and cancel. Nothing here can decide
+ * or sign — that needs passkeys on the signer's own roster.
+ */
+@Injectable()
+export class SignerClient {
+  base(): string | null {
+    const u = process.env.APPROVAL_SIGNER_INTERNAL_URL;
+    if (!u) return null;
+    try {
+      const url = new URL(u);
+      // Loopback only: the internal listener is never exposed.
+      if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) return null;
+      return url.origin;
+    } catch { return null; }
+  }
+  configured() { return !!this.base(); }
+
+  private async call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<{ status: number; body: T }> {
+    const b = this.base();
+    if (!b) throw new ServiceUnavailableException({ code: 'APPROVAL_SIGNER_NOT_CONFIGURED', message: 'Approved actions need the approval signer (APPROVAL_SIGNER_INTERNAL_URL).' });
+    let r: Response;
+    try {
+      r = await fetch(`${b}${path}`, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, redirect: 'error', signal: AbortSignal.timeout(10_000) });
+    } catch {
+      throw new ServiceUnavailableException({ code: 'APPROVAL_SIGNER_UNREACHABLE', message: 'The approval signer is not answering.' });
+    }
+    return { status: r.status, body: (await r.json().catch(() => ({}))) as T };
+  }
+
+  policy(businessId: string) { return this.call<{ customerSignoff: boolean }>('GET', `/internal/v1/policy/${encodeURIComponent(businessId)}`); }
+  submit(plan: unknown) { return this.call<{ jobId?: string; digest?: string; status?: string; approvalUrl?: string; error?: string; message?: string }>('POST', '/internal/v1/plans', { plan }); }
+  status(jobId: string) {
+    return this.call<{ status?: string; digest?: string; decisions?: { name: string; role: string; decision: string; at: string }[]; envelope?: { schema: string; kid: string; plan: string; sig: string } | null; error?: string }>('GET', `/internal/v1/plans/${jobId}`);
+  }
+  cancel(jobId: string) { return this.call<{ status?: string }>('POST', `/internal/v1/plans/${jobId}/cancel`); }
+}

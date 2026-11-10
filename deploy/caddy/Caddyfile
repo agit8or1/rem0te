@@ -47,3 +47,29 @@ your-domain.example.com {
         format json
     }
 }
+
+# Approval signer (v0.26), on its OWN origin — never a path on the portal's.
+# Same-origin with the portal, any script the portal served could drive the
+# approval page; on a separate origin it cannot. Only the public listener is
+# proxied: /approve/* only. The internal listener (127.0.0.1:3202) is the
+# portal's and is never exposed. Set APPROVAL_ORIGIN=https://approve.your-domain.example.com
+# and APPROVAL_RP_ID=approve.your-domain.example.com in /etc/rem0te-approver/signer.env.
+#approve.your-domain.example.com {
+#    handle /approve/* {
+#        reverse_proxy 127.0.0.1:3201
+#    }
+#    handle {
+#        respond 404
+#    }
+#    header {
+#        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+#        X-Content-Type-Options nosniff
+#        X-Frame-Options DENY
+#        Referrer-Policy no-referrer
+#        -Server
+#    }
+#    log {
+#        output file /var/log/caddy/rem0te-approver.log
+#        format json
+#    }
+#}

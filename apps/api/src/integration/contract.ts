@@ -64,7 +64,7 @@ export type JobRequest = z.infer<typeof JobRequest>;
 
 // ── Delegated technician identity (JWS, EdDSA) ──────────────────────────────
 
-export const DELEGATION_SCOPES = ['ticket_analysis:submit', 'ticket_analysis:read'] as const;
+export const DELEGATION_SCOPES = ['ticket_analysis:submit', 'ticket_analysis:read', 'actions:propose', 'actions:read'] as const;
 export const DelegationClaims = z.object({
   iss: ExtId,                 // peer id
   aud: z.string().min(1).max(256),
@@ -263,6 +263,7 @@ export const Capabilities = z.object({
     ticket_analysis: z.boolean(),
     model_comparison: z.boolean(),
     endpoint_evidence: z.array(z.enum(['inventory', 'heartbeat'])),
+    /** Catalog actions that may be proposed, as "id@version"; empty when no approval signer is configured. */
     actions: z.array(z.string()),
   }).strict(),
   model_profiles: z.array(z.string()),
@@ -274,6 +275,64 @@ export const Capabilities = z.object({
   }).strict(),
   signing_keys: z.array(z.object({ kid: z.string(), alg: z.literal('Ed25519'), public_key_pem: z.string() }).strict()),
 }).strict();
+
+// ── Action proposals (v0.26) ────────────────────────────────────────────────
+//
+// ClientSt0r may PROPOSE a catalog action on a mapped computer. Proposing is
+// all it can do: the proposal becomes a plan on rem0te's approval signer, and
+// nothing runs until roster approvers authorize that exact plan with their
+// passkeys on the signer's own origin. There is no field for a command, a
+// script, a path or a URL — only a catalog action id, its version and
+// parameters the catalog validates.
+
+export const ActionProposalRequest = z.object({
+  contract: z.literal(CONTRACT),
+  idempotency_key: z.string().min(8).max(128).regex(/^[A-Za-z0-9._:-]+$/),
+  organization_id: ExtId,
+  technician_id: ExtId,
+  /** An immutable rem0te endpoint id — never a hostname. */
+  rem0te_endpoint_id: z.string().min(1).max(64).regex(/^[a-z0-9]+$/),
+  action: z.object({ id: z.string().min(3).max(64).regex(/^[a-z0-9.]+$/), version: z.number().int().min(1).max(9999) }).strict(),
+  params: z.record(z.string().max(64), z.union([z.string().max(200), z.number(), z.boolean()])).refine((o) => Object.keys(o).length <= 8, 'too many params'),
+  reason: z.string().min(3).max(500),
+  /** Who suggested it. An AI suggestion gets exactly the same approvals as a technician's. */
+  origin: z.enum(['ai_suggestion', 'technician']),
+  ticket_ref: z.string().min(1).max(200).regex(/^[A-Za-z0-9._:#/-]+$/).nullable().default(null),
+  starts_in_minutes: z.number().int().min(0).max(1440).default(0),
+  window_hours: z.number().int().min(1).max(24).default(4),
+}).strict();
+export type ActionProposalRequest = z.infer<typeof ActionProposalRequest>;
+
+export const ACTION_PROPOSAL_STATUSES = [
+  'awaiting_approval', 'approved', 'rejected', 'canceled', 'expired', 'dispatched',
+  'succeeded', 'failed', 'refused_by_endpoint', 'not_executed', 'unknown',
+] as const;
+
+export const ActionProposal = z.object({
+  contract: z.literal(CONTRACT),
+  idempotency_key: z.string(),
+  job_id: z.string().regex(/^[a-f0-9]{32}$/),
+  status: z.enum(ACTION_PROPOSAL_STATUSES),
+  status_reason: z.string().nullable(),
+  rem0te_endpoint_id: z.string(),
+  action: z.object({ id: z.string(), version: z.number().int() }).strict(),
+  origin: z.enum(['ai_suggestion', 'technician']),
+  ticket_ref: z.string().nullable(),
+  risk: z.enum(['low', 'high']),
+  approvals_required: z.number().int(),
+  customer_signoff: z.boolean(),
+  /** Where people with a passkey on the roster approve. ClientSt0r shows it; it cannot act on it. */
+  approval_url: z.string(),
+  /** sha256 of the canonical plan the approvers are shown. */
+  plan_digest: z.string().regex(/^[a-f0-9]{64}$/),
+  window: z.object({ not_before: IsoDate, not_after: IsoDate }).strict(),
+  /** What the computer reported, verbatim — never more than it observed. */
+  outcome: z.enum(['succeeded', 'already_running', 'failed', 'refused', 'not_executed', 'uncertain']).nullable(),
+  observed: z.record(z.string(), z.string()).nullable(),
+  created_at: IsoDate,
+  updated_at: IsoDate,
+}).strict();
+export type ActionProposal = z.infer<typeof ActionProposal>;
 
 export const ErrorBody = z.object({
   error: z.object({ code: z.string(), message: z.string() }).strict(),
@@ -291,6 +350,8 @@ export const CONTRACT_SCHEMAS = {
   'inference-response': InferenceResponse,
   'analysis-output': AnalysisOutput,
   'capabilities': Capabilities,
+  'action-proposal-request': ActionProposalRequest,
+  'action-proposal': ActionProposal,
   'error': ErrorBody,
 } as const;
 

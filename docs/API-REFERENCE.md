@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **331** of them across
-**39** controllers.
+integration, under `/api/integration/v1`). There are **339** of them across
+**41** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -23,6 +23,19 @@ Admins and Business Owners are not confined by it; see
 **Throttled** routes have a per-route rate limit on top of the global one.
 
 ---
+
+## Actions
+
+`apps/api/src/actions/actions.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/actions/:id` | signed in | — |
+| `POST` | `/api/v1/actions/:id/cancel` | signed in | — |
+| `POST` | `/api/v1/actions/:id/reconcile` | signed in, throttled | — |
+| `GET` | `/api/v1/actions/catalog` | signed in | — |
+| `GET` | `/api/v1/endpoints/:id/actions` | signed in | — |
+| `POST` | `/api/v1/endpoints/:id/actions` | signed in, throttled | — |
 
 ## Administration
 
@@ -190,17 +203,6 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/enrollment/tokens` | signed in | `COMPUTERS_ADD` |
 | `DELETE` | `/api/v1/enrollment/tokens/:id` | signed in | `COMPUTERS_REMOVE` |
 
-## Integration
-
-`apps/api/src/integration/integration.controller.ts`
-
-| Method | Path | Access | Capability |
-|---|---|---|---|
-| `GET` | `/api/integration/v1/capabilities` | signed peer (ticket-rmm-v1) | — |
-| `POST` | `/api/integration/v1/jobs` | signed peer (ticket-rmm-v1) | — |
-| `GET` | `/api/integration/v1/jobs/:job_id` | signed peer (ticket-rmm-v1) | — |
-| `GET` | `/api/integration/v1/jobs/:job_id/events` | signed peer (ticket-rmm-v1) | — |
-
 ## Integration admin
 
 `apps/api/src/integration/integration-admin.controller.ts`
@@ -213,6 +215,26 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/admin/integration/mappings/technicians` | Platform Admin | — |
 | `DELETE` | `/api/v1/admin/integration/mappings/technicians/:id` | Platform Admin | — |
 | `GET` | `/api/v1/admin/integration/peers` | Platform Admin | — |
+
+## Integration apiintegrationv
+
+`apps/api/src/integration/integration.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/integration/v1/capabilities` | signed peer (ticket-rmm-v1) | — |
+| `POST` | `/api/integration/v1/jobs` | signed peer (ticket-rmm-v1) | — |
+| `GET` | `/api/integration/v1/jobs/:job_id` | signed peer (ticket-rmm-v1) | — |
+| `GET` | `/api/integration/v1/jobs/:job_id/events` | signed peer (ticket-rmm-v1) | — |
+
+## Integration apiintegrationv
+
+`apps/api/src/integration/integration.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `POST` | `/api/integration/v1/action-proposals` | signed peer (ticket-rmm-v1) | — |
+| `GET` | `/api/integration/v1/action-proposals/:job_id` | signed peer (ticket-rmm-v1) | — |
 
 ## Launcher
 

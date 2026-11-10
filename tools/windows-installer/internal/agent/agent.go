@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agit8or1/rem0te/windows-installer/internal/action"
 	"github.com/agit8or1/rem0te/windows-installer/internal/trust"
 )
 
@@ -243,6 +244,9 @@ type Status struct {
 	LastCheck        time.Time `json:"lastCheck"`
 	LastResult       string    `json:"lastResult"`
 	RelayChangeAsked bool      `json:"relayChangeRequested,omitempty"`
+	// Actions this build can execute (v0.26), as "id@version". The heartbeat
+	// reports them; the portal offers nothing an agent does not list.
+	Actions []string `json:"actions,omitempty"`
 }
 
 func stage2(o Options, p Platform, c *trust.Client) (int, error) {
@@ -420,6 +424,9 @@ func readPin(path string) (Pin, bool) {
 
 func writeStatus(o Options, s Status) {
 	s.LastCheck = o.now().UTC()
+	if s.AgentSHA256 != "" {
+		s.Actions = action.Supported()
+	}
 	raw, _ := json.Marshal(s)
 	_ = os.WriteFile(o.Paths.StatusFile(), raw, 0o600)
 }
@@ -435,4 +442,30 @@ func FileSHA256(p string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// ApprovalKeys fetches approval/keys.json through the signed update chain
+// (v0.26): the only place the agent learns which keys may sign action plans.
+// The portal cannot substitute one; it is a target like the agent binary.
+func ApprovalKeys(o Options, p Platform) ([]action.Key, error) {
+	if !ValidPortal(o.PortalHost) {
+		return nil, fmt.Errorf("%w: portal host %q is not a hostname", ErrRefuse, o.PortalHost)
+	}
+	c, err := o.trustClient(p)
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(o.Paths.StateDir, "actions")
+	if err := p.SecureDir(dir); err != nil {
+		return nil, err
+	}
+	dst := filepath.Join(dir, "keys.json")
+	if _, err := c.Fetch(action.KeysTarget, dst); err != nil {
+		return nil, err
+	}
+	raw, err := os.ReadFile(dst)
+	if err != nil {
+		return nil, err
+	}
+	return action.ParseKeys(raw)
 }

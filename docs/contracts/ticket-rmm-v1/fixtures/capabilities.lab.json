@@ -1,6 +1,6 @@
 {
   "contract": "ticket-rmm-v1",
-  "rem0te_version": "0.22.0",
+  "rem0te_version": "0.26.0",
   "audience": "rem0te:lab",
   "peer_id": "clientst0r-lab",
   "features": {
@@ -10,7 +10,9 @@
       "inventory",
       "heartbeat"
     ],
-    "actions": []
+    "actions": [
+      "windows.service.start@1"
+    ]
   },
   "model_profiles": [
     "triage-fast",

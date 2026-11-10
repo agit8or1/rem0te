@@ -494,6 +494,16 @@ const SECTIONS: Section[] = [
           More in <Link href="/docs/update-signing" className="underline text-foreground">Update signing</Link>.
         </p>
         <p>
+          From 0.26, one change can be made on a Windows computer without a remote session:{' '}
+          <strong className="text-foreground">starting the Print Spooler, once</strong>, from the computer&apos;s{' '}
+          <em>Actions</em> tab. Nothing runs until people on the approval roster approve that exact plan with a passkey,
+          on a separate approval page this portal does not serve; servers need two approvers, and some businesses also
+          require their own sign-off. The computer checks the approvals itself and runs it at most once. Documents
+          already in the print queue may print immediately and cannot be recalled. A result says whether the service
+          was running, never that anything printed; an uncertain outcome must be reconciled before you can ask again.
+          More in <Link href="/docs/approved-actions" className="underline text-foreground">Approved actions</Link>.
+        </p>
+        <p>
           <strong className="text-foreground">What Connect does and does not control.</strong> Rem0te decides who may
           launch a session to which computer and records it; RustDesk carries the session. Once connected, clipboard,
           file transfer and chat are RustDesk&apos;s own defaults, a computer installed by Rem0te accepts its password

@@ -69,6 +69,38 @@ export class AccessPolicyService {
     return !!actor.technician && this.covering(actor.technician.sources, endpointId).some((s) => !s.presetId && (s.capabilities as string[]).includes(cap));
   }
 
+  /**
+   * May this actor REQUEST a catalog action on this computer (v0.26)? Asked at
+   * request time and again, for the requester's live access, at dispatch.
+   * Approval is not decided here — it belongs to the approval signer's
+   * roster — so an allowed answer only means "may ask".
+   */
+  async evaluateAction(actor: ActorContext, ep: { id: string; customerId: string | null; deviceClass: DeviceClass }, risk: 'low' | 'high')
+    : Promise<{ ok: true; tier: ThresholdKey } | { ok: false; reason: string; message: string }> {
+    const controls = await this.controls.effective(ep.customerId);
+    if (await this.abuse.isPaused(`user:${actor.userId}`)) return { ok: false, reason: 'identity_paused', message: 'Your privileged access is paused after an activity limit was reached.' };
+    if ((controls.protectedClasses as string[]).includes(ep.deviceClass)) {
+      return { ok: false, reason: 'protected_device_class', message: `This computer is a protected ${ep.deviceClass.replace(/_/g, ' ').toLowerCase()}; no catalog action can target it in this release.` };
+    }
+    const tier = this.tierFor(actor, ep.id);
+    if (!actor.technician) {
+      if (actor.isPlatformAdmin) return { ok: true, tier };
+      if (actor.businessId !== ep.customerId) return { ok: false, reason: 'wrong_business', message: 'Computer not found' };
+      if (!(actor.capabilities as string[]).includes(CAP.ACTIONS_REQUEST) && !isOwnerRole(actor.roleType)) {
+        return { ok: false, reason: 'action_not_granted', message: 'Your role in this business does not include requesting actions.' };
+      }
+      return { ok: true, tier };
+    }
+    const cover = this.covering(actor.technician.sources, ep.id);
+    if (cover.some((s) => !s.presetId && (s.capabilities as string[]).includes(CAP.ACTIONS_REQUEST))) return { ok: true, tier };
+    const eligible = cover.filter((s) => s.presetPolicy && (s.presetPolicy.fixRequests === 'higher_risk' || (risk === 'low' && s.presetPolicy.fixRequests === 'low_risk'))
+      && (!s.presetPolicy.standardWorkstationsOnly || ep.deviceClass === 'WORKSTATION'));
+    if (!eligible.length) {
+      return { ok: false, reason: 'action_not_granted', message: risk === 'high' ? 'Your access level does not include requesting higher-risk actions on this computer.' : 'Your access level does not include requesting actions on this computer.' };
+    }
+    return { ok: true, tier };
+  }
+
   async evaluateLaunch(actor: ActorContext, ep: EndpointForLaunch, mode: LaunchMode, ctx: LaunchContext): Promise<LaunchDecision> {
     const controls = await this.controls.effective(ep.customerId);
     const tier = this.tierFor(actor, ep.id);
@@ -208,7 +240,11 @@ export class AccessPolicyService {
       case 'clipboard': case 'file_transfer': return r('unavailable', 'enforced on the technician\'s RustDesk client, not the endpoint; no per-session control exists');
       case 'scripts': case 'fleet_execution': return r('denied', 'locked off for every tier; no signed script catalog exists');
       case 'patches': return policyOf('patches').includes('request') ? r('unavailable', 'eligible to request, but patch installation is not implemented') : r('denied');
-      case 'fix_request': return policyOf('fixRequests').some((v) => v !== 'off') ? r('unavailable', `eligible (${policyOf('fixRequests').join(', ')}), but no signed fix catalog exists`) : r('denied');
+      case 'fix_request': {
+        if (!ep) return r('denied', 'name a computer');
+        const d = await this.evaluateAction(actor, ep, ep.deviceClass === 'WORKSTATION' ? 'low' : 'high');
+        return d.ok ? r('allowed', 'may REQUEST catalog actions; approval comes from the approval signer roster, never from this grant') : r('denied', d.message);
+      }
       case 'fix_approval': return r('denied', 'a tier never approves fixes');
       case 'approve_requests': return (live.platformPermissions ?? []).includes('approvals:review') || live.user.isPlatformAdmin
         ? r('allowed', 'independent reviewer (never for own requests)') : r('denied', 'not designated an independent reviewer');

@@ -81,6 +81,13 @@ enum NoteVisibility {
 }
 
 enum ActivityAction {
+  ACTION_REQUESTED
+  ACTION_APPROVAL_UPDATED
+  ACTION_DISPATCHED
+  ACTION_DISPATCH_BLOCKED
+  ACTION_RESULT
+  ACTION_CANCELED
+  ACTION_RECONCILED
   LOGIN_SUCCESS
   LOGIN_FAILURE
   LOGOUT
@@ -506,6 +513,7 @@ model Customer {
 
   @@index([tenantId])
   @@index([tenantId, name])
+  actionJobs        ActionJob[]
 }
 
 model Site {
@@ -579,6 +587,11 @@ model Endpoint {
   trustRootVersion  Int?
   targetsVersion    Int?
   trustReportedAt   DateTime?
+  // Approved actions (v0.26): what the signed agent says it can execute, and
+  // the digest of the agent build that said it. Self-reported; it decides
+  // only whether the portal offers a signed plan — the agent verifies it.
+  agentActions      String[]  @default([])
+  agentSha256       String?
 
   isManaged  Boolean   @default(false)
   isOnline   Boolean   @default(false)
@@ -595,6 +608,7 @@ model Endpoint {
   deviceClaimTokens DeviceClaimToken[]
   computerAccess    ComputerAccess[]
   connectionGrants  ConnectionGrant[]
+  actionJobs        ActionJob[]
 
   // Access mode: how the computer's remote-access authorization is scoped.
   //   ASSIGNED_USERS  → only users listed in ComputerAccess may connect
@@ -2101,4 +2115,78 @@ model TrustChangeRequest {
   createdAt     DateTime  @default(now())
 
   @@index([status, createdAt])
+}
+
+// ─── Approved actions (v0.26) ────────────────────────────────────────────────
+//
+// One catalog action on one computer, approved by people on the approval
+// signer's roster and signed by that separate process. The portal stores the
+// plan and the envelope; it cannot make one — see docs/approved-actions.md.
+
+enum ActionJobStatus {
+  AWAITING_APPROVAL
+  APPROVED
+  REJECTED
+  CANCELED
+  EXPIRED
+  DISPATCHED
+  SUCCEEDED
+  FAILED
+  // The endpoint refused the envelope (signature, target, window, artifact…).
+  REFUSED_BY_ENDPOINT
+  // Dispatched, and the agent's journal later showed it never ran.
+  NOT_EXECUTED
+  // Dispatched with no result yet past its deadline. Still reconciling: the
+  // envelope keeps being offered and the agent answers from its journal.
+  UNKNOWN
+}
+
+model ActionJob {
+  /// 32 hex — the single-use job id bound into the signed plan.
+  id                String          @id
+  tenantId          String?
+  customerId        String
+  customer          Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  endpointId        String
+  endpoint          Endpoint        @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  actionId          String
+  actionVersion     Int
+  params            Json
+  reason            String
+  origin            String          // technician | ai_suggestion
+  via               String          // portal | clientst0r
+  ticketRef         String?
+  requestedById     String
+  status            ActionJobStatus @default(AWAITING_APPROVAL)
+  statusReason      String?
+  risk              String
+  approvalsRequired Int
+  customerSignoff   Boolean
+  notBefore         DateTime
+  notAfter          DateTime
+  plan              Json
+  digest            String
+  approvalUrl       String
+  envelope          Json?
+  approvers         Json?
+  dispatchedAt      DateTime?
+  deliveries        Int             @default(0)
+  lastDeliveredAt   DateTime?
+  outcome           String?
+  result            Json?
+  resultAt          DateTime?
+  /// An uncertain outcome blocks any new request for this action on this
+  /// computer until a person records what they found (POST /actions/:id/reconcile).
+  reconciledById    String?
+  reconciledAt      DateTime?
+  reconcileNote     String?
+  integrationPeer   String?
+  integrationKey    String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@unique([integrationPeer, integrationKey])
+  @@index([endpointId, status])
+  @@index([customerId, createdAt])
+  @@index([status])
 }
