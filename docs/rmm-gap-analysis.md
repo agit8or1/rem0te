@@ -50,10 +50,14 @@ bundled into `/docs`. Integration work is tracked separately in
 
 ## Not implemented
 
-- **Script library and automation engine:** the library and its review now exist (immutable hashed versions, static
-  warnings, independent approval bound to the content hash; [script-library.md](script-library.md), I). Not
-  implemented: running a script at all, and so signing, scheduling, job queue, bulk runs, output capture and
-  redaction, retries. Running waits for the signed agent's real-Windows testing. This is still the largest gap.
+- **Script library and automation engine:** the library and its review exist (immutable hashed versions, static
+  warnings, independent approval bound to the content hash; [script-library.md](script-library.md), I). **0.34
+  runs an approved version** on up to 25 Windows computers as the signed action `windows.script.run@1`: the version's
+  SHA-256 must be on the approval signer's own allowlist (two passkey approvals there, revocable one-way), each run
+  needs two more approvers who did not write it, arguments are typed and checked by the portal, the signer and the
+  agent, and output (64 KB per stream, redacted twice, kept 90 days) appears on the device history. Evidence **S**
+  with real PowerShell 7 on Linux (`e2e-script-run.mjs`, Go tests under pwsh); **never run on real Windows**. Not
+  implemented: scheduling, a job queue beyond one plan, retries, Linux and macOS scripts.
 - **Software deployment:** catalog, verified packages, install/uninstall jobs, detection rules, version compliance.
   Inventory only.
 - **Linux and macOS beyond read-only reporting:** no installed-software list, service or event monitoring,
@@ -125,7 +129,7 @@ owner's approval.
 | 6 | Revision 3 items ClientSt0r acknowledges | P0 | Blocked on ClientSt0r (coordination §9) |
 | 7 | Guided Add Device — **built (0.32)** | P1 | |
 | 8 | Maintenance actions for the signed catalog (restart an approved service, schedule a reboot, collect logs) | P1 | Built in 0.32 (`windows.service.restart`, `windows.reboot.schedule` / `.cancel`, `windows.logs.collect`); **S only** — needs real-Windows testing of the signed agent |
-| 9 | Script library with review and immutable approval binding | P1 | Largest new surface. Design note first |
+| 9 | Script library with review and immutable approval binding | P1 | Library and review built in 0.32; running approved versions through the signed catalog (`windows.script.run@1`, signer-side hash allowlist) in 0.34; **S only** (PowerShell 7 on Linux) — needs real-Windows testing of the signed agent |
 | 10 | Reports: patch compliance, agent coverage, alert frequency | P1/P2 | |
 | 11 | Linux and macOS heartbeat and inventory | P2 | Linux done in 0.32 (`e2e-linux-agent.mjs`), macOS in 0.33 (`e2e-macos-agent.mjs`, against stubs); both integration-tested only, real-endpoint tests outstanding |
 | 11b | ~~Patch approval policies and maintenance-window rollouts; install from the Patches tab; production setup runbook and pre-flight~~ **Done in 0.32** (fixture-tested only). Left: a restart rule (a §15 change to the agent's closed params), agent-signed results, and a run on real Windows | P1 | Deployments were created and approved by hand, ring by ring |

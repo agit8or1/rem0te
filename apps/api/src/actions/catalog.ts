@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { canonicalJson } from '../integration/crypto';
+import { MAX_SCRIPT_OUTPUT_BYTES, ScriptBlock, ScriptRunParams, TIMEOUT_MINUTES, scriptPlanProblem } from './script-run';
 
 /**
  * The approved-action catalog (v0.26) and the canonical plan an approver
@@ -8,14 +9,17 @@ import { canonicalJson } from '../integration/crypto';
  * the Windows agent (tools/windows-installer/internal/action/catalog.go),
  * which is the copy that decides what actually runs.
  *
- * Six actions. Starting the Print Spooler on one computer (0.26); installing
- * named Windows updates on a ring of computers (0.27); and four maintenance
+ * Seven actions. Starting the Print Spooler on one computer (0.26); installing
+ * named Windows updates on a ring of computers (0.27); four maintenance
  * actions (0.32): restarting one service from a fixed allowlist, scheduling a
- * warned restart, canceling it, and collecting a fixed set of logs. Nothing
- * here can carry a command line, a script, a path or a URL — parameters are
- * closed enums, bounded integers or update identities — so an AI suggestion, a
- * ticket or a compromised portal cannot turn a catalog entry into arbitrary
- * execution.
+ * warned restart, canceling it, and collecting a fixed set of logs; and
+ * (0.34) running one approved script-library version whose exact SHA-256
+ * is on the approval signer's own allowlist. Nothing here can carry a
+ * command line, a path or a URL, and the script action names a hash, not
+ * text — parameters are closed enums, bounded integers, update identities or
+ * typed script arguments checked against a reviewed schema — so an AI
+ * suggestion, a ticket or a compromised portal cannot turn a catalog entry
+ * into arbitrary execution.
  */
 
 export const PLAN_SCHEMA = 'rem0te-action-plan/1';
@@ -247,7 +251,40 @@ export const LOGS_COLLECT: CatalogAction = {
   acknowledge: 'I understand that the collected text may include personal details that redaction does not catch.',
 };
 
-export const CATALOG: CatalogAction[] = [SERVICE_START, UPDATE_INSTALL, SERVICE_RESTART, REBOOT_SCHEDULE, REBOOT_CANCEL, LOGS_COLLECT];
+// ── Running an approved library script (0.34) ───────────────────────────────
+// The one entry whose effect is not fixed by the catalog: it runs a script.
+// It can only name a library version whose exact SHA-256 the approval signer
+// put on its OWN allowlist after its approvers read the content
+// (script-run.ts, docs/script-library.md). Parameters are closed — a
+// version, its hash, typed arguments, a timeout from a fixed list — and the
+// arguments are checked against the version's declared schema by the
+// portal, the signer and the agent. Always high impact; never offered to
+// ClientSt0r; requested through the script-run module, not the Actions tab.
+
+export const SCRIPT_RUN: CatalogAction = {
+  id: 'windows.script.run', // = SCRIPT_RUN_ACTION; written out so the catalog's ids read as one list (§ 14)
+  version: 1,
+  title: 'Run an approved script',
+  description: `Runs one approved script-library version, whose exact SHA-256 the approval signer has on its own allowlist, as SYSTEM in Windows PowerShell (no profile, not interactive) in a fresh temporary folder, with the declared arguments. Stopped at the timeout (${TIMEOUT_MINUTES.join(', ')} minutes); the first ${MAX_SCRIPT_OUTPUT_BYTES / 1024} KB of each of its output and error streams are kept, redacted.`,
+  params: ScriptRunParams,
+  warnings: [
+    'The script runs as SYSTEM with full PowerShell: it can do anything an administrator can on each computer. The timeout, the output limits and the temporary folder limit accidents; they do not stop a script that means harm. Read the script before you approve.',
+    'The agent runs exactly the bytes whose SHA-256 is shown here and refuses any others. Approving this plan approves those bytes, with these arguments, on these computers.',
+    'A script stopped at its timeout may have done part of its work. Everything it started is stopped with it.',
+    'Its output can contain personal details redaction does not catch. Output is kept for 90 days and shown on each computer\'s Actions tab.',
+  ],
+  verification: 'Each computer reports the script\'s exit code, whether it was stopped at the timeout, how long it ran, and its output and errors (bounded and redacted, on the computer and again on receipt).',
+  doesNotProve: ['that the script did what its description says', 'that a zero exit code means success, unless the script makes it so', 'that nothing else changed'],
+  risk: () => 'high',
+  maxTargets: MAX_RING_TARGETS,
+  // The longest timeout, plus a heartbeat or two either side.
+  resultDeadlineMinutes: 90,
+  direct: false,
+  integration: false,
+  acknowledge: 'I understand that this runs the script as SYSTEM on every computer named, and that a stopped script may have done part of its work.',
+};
+
+export const CATALOG: CatalogAction[] = [SERVICE_START, UPDATE_INSTALL, SERVICE_RESTART, REBOOT_SCHEDULE, REBOOT_CANCEL, LOGS_COLLECT, SCRIPT_RUN];
 
 /** The log sources windows.logs.collect returns, in order; the agent sends the same. */
 export const LOG_SOURCES = ['system_errors', 'application_errors', 'agent_journal', 'agent_log', 'rustdesk_log'] as const;
@@ -320,6 +357,12 @@ export const Plan = z.object({
     /** 0.32: the patch policy this plan was signed under, if any (the signer checks it is the one it holds). */
     policy: z.object({ id: z.string().regex(/^[a-f0-9]{32}$/), name: z.string().max(120), digest: Hex64 }).strict().optional(),
   }).strict().optional(),
+  /**
+   * 0.34, windows.script.run only: the signer's allowlist entry for the
+   * version it runs (script-run.ts ScriptBlock). Bound by the signature; the
+   * signer refuses a plan whose block is not exactly its entry.
+   */
+  script: ScriptBlock.optional(),
   createdAt: Iso,
   /** Filled in by the signer when the quorum is met. */
   approvers: z.array(Approver).max(6),
@@ -342,6 +385,8 @@ export function validatePlanAction(p: Plan): { ok: true; action: CatalogAction }
   const a = catalogEntry(p.action.id, p.action.version);
   if (!a) return { ok: false, reason: 'unknown_action' };
   if (!a.params.safeParse(p.params).success) return { ok: false, reason: 'params_not_allowed' };
+  const sp = scriptPlanProblem(p);
+  if (sp) return { ok: false, reason: sp };
   if (p.targets.length > a.maxTargets) return { ok: false, reason: 'too_many_targets' };
   const eps = new Set(p.targets.map((t) => t.endpointId)), rids = new Set(p.targets.map((t) => t.rustdeskId));
   if (eps.size !== p.targets.length || rids.size !== p.targets.length) return { ok: false, reason: 'duplicate_target' };

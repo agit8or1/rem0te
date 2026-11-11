@@ -21,7 +21,7 @@
 //	rem0te-agent.exe migrate [--portal HOST]             legacy agent → signed chain, keeps enrolment
 //	rem0te-agent.exe update  [--portal HOST] [--nonce N] signed update (heartbeat)
 //	rem0te-agent.exe status                              trust state as JSON
-//	rem0te-agent.exe action --job ID --envelope FILE     approved catalog action (heartbeat, v0.26)
+//	rem0te-agent.exe action --job ID --envelope FILE [--script FILE]  approved catalog action (heartbeat, v0.26; --script v0.34)
 //	rem0te-agent.exe patch-scan                          read-only Windows Update posture (heartbeat, v0.27)
 package main
 

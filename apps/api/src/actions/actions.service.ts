@@ -14,6 +14,8 @@ import {
   APPROVALS_REQUIRED, CATALOG, Envelope, LOG_SOURCES, MAX_WINDOW_HOURS, PLAN_SCHEMA, Plan, catalogEntry, planDigest, type CatalogAction,
 } from './catalog';
 import { sanitizeLogs } from './logs';
+import { SCRIPT_RUN_ACTION, scriptPlanProblem, type ScriptBlock } from './script-run';
+import { ScriptAgentResult, sanitizeScriptOutput, scriptSummary } from './script-output';
 import { SignerClient } from './signer.client';
 import { ContainmentService } from '../containment/containment.service';
 
@@ -69,7 +71,7 @@ const PatchOutcome = z.object({
 
 export const AgentResult = z.object({
   jobId: z.string().regex(/^[a-f0-9]{32}$/),
-  outcome: z.enum(['succeeded', 'already_running', 'failed', 'refused', 'not_executed', 'uncertain', 'restart_required', 'partial', 'no_change']),
+  outcome: z.enum(['succeeded', 'already_running', 'failed', 'refused', 'not_executed', 'uncertain', 'restart_required', 'partial', 'no_change', 'timed_out']),
   reason: z.string().max(200).optional(),
   detail: z.string().max(500).optional(),
   observed: z.record(z.string(), z.string().max(80)).optional(),
@@ -82,12 +84,16 @@ export const AgentResult = z.object({
   logs: z.array(z.object({
     source: z.enum(LOG_SOURCES), text: z.string().max(16_384), truncated: z.boolean(), note: z.string().max(300).optional(),
   }).strict()).max(LOG_SOURCES.length).optional(),
+  // windows.script.run (0.34). Base64, bounded here; decoded, redacted again
+  // and capped by sanitizeScriptOutput, and stored apart from the result.
+  script: ScriptAgentResult.optional(),
 }).strict();
 export type AgentResult = z.infer<typeof AgentResult>;
 
 const STATUS_FOR: Record<AgentResult['outcome'], ActionTargetStatus> = {
   succeeded: 'SUCCEEDED', already_running: 'SUCCEEDED', restart_required: 'SUCCEEDED', no_change: 'SUCCEEDED',
   failed: 'FAILED', partial: 'FAILED', refused: 'REFUSED_BY_ENDPOINT', not_executed: 'NOT_EXECUTED', uncertain: 'UNKNOWN',
+  timed_out: 'FAILED',
 };
 
 type Ep = NonNullable<Awaited<ReturnType<ActionsService['endpointFor']>>>;
@@ -112,6 +118,8 @@ export interface PlanRequest {
    * inside that policy, and refuses it otherwise; nobody is asked to approve.
    */
   underPolicy?: { policyId: string; digest: string; evidence: unknown };
+  /** 0.34, windows.script.run: the signer's allowlist entry for the version (script-run.ts ScriptBlock). */
+  script?: ScriptBlock;
 }
 
 @Injectable()
@@ -211,7 +219,9 @@ export class ActionsService {
     }
     if (!action.direct) {
       await this.acl.assertEndpointInScope(actor, endpointId);
-      throw new BadRequestException({ code: 'ACTION_NOT_DIRECT', message: 'Windows updates are installed through a patch deployment, ring by ring, not one computer at a time.' });
+      throw new BadRequestException({ code: 'ACTION_NOT_DIRECT', message: action.id === SCRIPT_RUN_ACTION
+        ? 'Scripts are run from an approved version in the script library, which names the script and its allowlist entry.'
+        : 'Windows updates are installed through a patch deployment, ring by ring, not one computer at a time.' });
     }
     const job = await this.createPlan(actor, {
       action, endpointIds: [endpointId], params: dto.params, reason: dto.reason, startsInMinutes: dto.startsInMinutes, windowHours: dto.windowHours, origin, integration,
@@ -293,12 +303,16 @@ export class ActionsService {
       policy: { risk, approvalsRequired: APPROVALS_REQUIRED[risk], customerSignoff: !!signerPolicy.body.customerSignoff },
       window: { notBefore: notBefore.toISOString(), notAfter: notAfter.toISOString() },
       ...(r.display ? { display: r.display } : {}),
+      ...(r.script ? { script: r.script } : {}),
       createdAt: now.toISOString(),
       approvers: [],
       signedAt: null,
     };
     const check = Plan.safeParse(plan);
     if (!check.success) throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: 'A computer\'s identity is incomplete; it cannot be named in a plan.' });
+    // 0.34: the script rules the signer and the agent apply, applied here first (§ 33).
+    const scriptProblem = scriptPlanProblem(check.data);
+    if (scriptProblem) throw new BadRequestException({ code: 'PARAMS_NOT_ALLOWED', message: `This plan does not describe its script consistently (${scriptProblem}).` });
     const submitted = r.underPolicy
       ? await this.signer.submitUnderPolicy(r.underPolicy.policyId, { plan, policyDigest: r.underPolicy.digest, evidence: r.underPolicy.evidence })
       : await this.signer.submit(plan);
@@ -343,6 +357,11 @@ export class ActionsService {
       return { ...rest, logsWithheld: `Collected text needs ${a?.requiresCapability ?? 'a capability you do not hold'}.` } as Prisma.JsonValue;
     };
     const names = new Map((await this.prisma.endpoint.findMany({ where: { id: { in: targets.map((t) => t.endpointId) } }, select: { id: true, name: true, hostname: true } })).map((e) => [e.id, e.hostname ?? e.name]));
+    // 0.34: a script run's output lives apart from its result (90-day retention); shown to whoever may see the job.
+    const outputs = j.actionId === SCRIPT_RUN_ACTION
+      ? new Map((await this.prisma.scriptRunOutput.findMany({ where: { targetId: { in: targets.map((t) => t.id) } } })).map((o) => [o.targetId, o]))
+      : new Map<string, never>();
+    const script = j.actionId === SCRIPT_RUN_ACTION ? (j.plan as unknown as Plan).script ?? null : null;
     return {
       id: j.id, status: j.status, statusReason: j.statusReason, endpointId: j.endpointId, businessId: j.customerId,
       action: { id: j.actionId, version: j.actionVersion, title: a?.title ?? j.actionId, warnings: a?.warnings ?? [] },
@@ -352,10 +371,12 @@ export class ActionsService {
       approvers: j.approvers, dispatchedAt: j.dispatchedAt, deliveries: j.deliveries, outcome: j.outcome, result: shown(j.result), resultAt: j.resultAt,
       reconciled: j.reconciledAt ? { at: j.reconciledAt, byId: j.reconciledById, note: j.reconcileNote } : null,
       deploymentId: j.deploymentId, ring: j.ring,
+      script: script ? { name: script.name, version: script.version, scriptId: script.scriptId, versionId: script.versionId, contentSha256: script.contentSha256 } : undefined,
       targets: targets.map((t) => ({
         endpointId: t.endpointId, hostname: names.get(t.endpointId) ?? null, status: t.status, statusReason: t.statusReason,
         deliveries: t.deliveries, dispatchedAt: t.dispatchedAt, outcome: t.outcome, result: shown(t.result), resultAt: t.resultAt,
         reconciled: t.reconciledAt ? { at: t.reconciledAt, byId: t.reconciledById, note: t.reconcileNote } : null,
+        ...(script ? { scriptOutput: scriptOutputView(outputs.get(t.id), t.resultAt) } : {}),
       })),
       createdAt: j.createdAt, updatedAt: j.updatedAt,
     };
@@ -518,12 +539,12 @@ export class ActionsService {
    * are the same envelope, which the agent answers from its journal or its
    * lock and never runs twice.
    */
-  async forHeartbeat(endpointId: string, now = new Date()): Promise<{ jobId: string; envelope: unknown }[]> {
+  async forHeartbeat(endpointId: string, now = new Date()): Promise<{ jobId: string; envelope: unknown; script?: { content: string } }[]> {
     const rows = await this.prisma.actionTarget.findMany({
       where: { endpointId, status: { in: OPEN_TARGET }, result: { equals: Prisma.DbNull }, reconciledAt: null, job: { status: { in: LIVE_JOB } } },
       orderBy: { createdAt: 'asc' }, take: 10,
     });
-    const out: { jobId: string; envelope: unknown }[] = [];
+    const out: { jobId: string; envelope: unknown; script?: { content: string } }[] = [];
     for (const t of rows) {
       if (out.length >= MAX_DELIVER) break;
       const job = await this.refresh((await this.prisma.actionJob.findUnique({ where: { id: t.jobId } }))!);
@@ -551,7 +572,7 @@ export class ActionsService {
         await this.prisma.actionJob.updateMany({ where: { id: job.id, status: 'APPROVED' }, data: { status: 'DISPATCHED', dispatchedAt: now } });
         await this.prisma.actionJob.update({ where: { id: job.id }, data: { deliveries: { increment: 1 }, lastDeliveredAt: now } });
         await this.audit.log({ tenantId: job.tenantId ?? undefined, customerId: job.customerId, actorId: job.requestedById, action: 'ACTION_DISPATCHED', resource: 'action_job', resourceId: job.id, meta: { endpointId } });
-        out.push({ jobId: job.id, envelope: job.envelope });
+        out.push({ jobId: job.id, envelope: job.envelope, ...(await this.scriptFor(job)) });
       } else {
         const deadline = (action?.resultDeadlineMinutes ?? 30) * 60_000;
         if (t.status === 'DISPATCHED' && t.dispatchedAt && now.getTime() - t.dispatchedAt.getTime() > deadline) {
@@ -561,10 +582,23 @@ export class ActionsService {
         if (held) continue;
         await this.prisma.actionTarget.update({ where: { id: t.id }, data: { deliveries: { increment: 1 }, lastDeliveredAt: now } });
         await this.prisma.actionJob.update({ where: { id: job.id }, data: { deliveries: { increment: 1 }, lastDeliveredAt: now } });
-        out.push({ jobId: job.id, envelope: job.envelope });
+        out.push({ jobId: job.id, envelope: job.envelope, ...(await this.scriptFor(job)) });
       }
     }
     return out;
+  }
+
+  /**
+   * 0.34: the script content handed to the agent beside a script run's
+   * envelope. The portal is only a courier here: the agent hashes these bytes
+   * and refuses them unless they are exactly the signed SHA-256. The version
+   * row is immutable (migration 0035's trigger), so this is what was approved.
+   */
+  private async scriptFor(job: ActionJob): Promise<{ script?: { content: string } }> {
+    if (job.actionId !== SCRIPT_RUN_ACTION) return {};
+    const id = (job.params as { scriptVersionId?: unknown } | null)?.scriptVersionId;
+    const v = typeof id === 'string' ? await this.prisma.scriptVersion.findUnique({ where: { id }, select: { content: true } }) : null;
+    return v ? { script: { content: Buffer.from(v.content, 'utf8').toString('base64') } } : {};
   }
 
   /** Everything that could have changed for this computer between approval and its first delivery. */
@@ -605,15 +639,34 @@ export class ActionsService {
       // Collected text only for the action that collects it, redacted again
       // here (the agent's redaction is not trusted) and capped.
       if (r.logs) r.logs = t.job.actionId === 'windows.logs.collect' ? sanitizeLogs(r.logs) : undefined;
+      // 0.34: a script's output only for a script run, redacted again here,
+      // and stored apart (ScriptRunOutput, 90 days); the result keeps a summary.
+      const script = r.script && t.job.actionId === SCRIPT_RUN_ACTION ? r.script : null;
+      const stored = { ...r, script: script ? scriptSummary(script) : undefined };
       const u = await this.prisma.actionTarget.updateMany({
         where: { id: t.id, status: { in: ['DISPATCHED', 'UNKNOWN'] }, result: { equals: Prisma.DbNull } },
-        data: { status: STATUS_FOR[r.outcome], outcome: r.outcome, statusReason: r.reason ?? null, result: r as unknown as Prisma.InputJsonValue, resultAt: new Date() },
+        data: { status: STATUS_FOR[r.outcome], outcome: r.outcome, statusReason: r.reason ?? null, result: stored as unknown as Prisma.InputJsonValue, resultAt: new Date() },
       });
+      if (u.count && script) {
+        const o = sanitizeScriptOutput(script);
+        const job = await this.prisma.actionJob.findUnique({ where: { id: r.jobId }, select: { customerId: true, params: true } });
+        await this.prisma.scriptRunOutput.create({ data: {
+          targetId: t.id, jobId: r.jobId, endpointId, customerId: job!.customerId, scriptVersionId: String((job!.params as { scriptVersionId?: unknown }).scriptVersionId ?? ''), contentSha256: script.contentSha256,
+          exitCode: o.exitCode, timedOut: o.timedOut, durationMs: o.durationMs, stdout: o.stdout.text, stderr: o.stderr.text,
+          stdoutBytes: o.stdoutBytes, stderrBytes: o.stderrBytes, stdoutTruncated: o.stdout.truncated, stderrTruncated: o.stderr.truncated,
+        } }).catch((e) => this.log.warn(`script output for ${r.jobId}/${endpointId} not stored: ${(e as Error).message}`));
+      }
       if (u.count) {
         const j = await this.rollup(r.jobId);
-        await this.audit.log({ tenantId: j.tenantId ?? undefined, customerId: j.customerId, action: 'ACTION_RESULT', resource: 'action_job', resourceId: j.id, meta: { endpointId, outcome: r.outcome, reason: r.reason ?? null, observed: r.observed ?? null, updates: r.updates?.map((x) => `${x.kb ?? x.updateId}:${x.state}`) ?? null, logs: r.logs?.map((x) => `${x.source}:${x.text.length}${x.truncated ? '+' : ''}`) ?? null } });
+        await this.audit.log({ tenantId: j.tenantId ?? undefined, customerId: j.customerId, action: 'ACTION_RESULT', resource: 'action_job', resourceId: j.id, meta: { endpointId, outcome: r.outcome, reason: r.reason ?? null, observed: r.observed ?? null, updates: r.updates?.map((x) => `${x.kb ?? x.updateId}:${x.state}`) ?? null, logs: r.logs?.map((x) => `${x.source}:${x.text.length}${x.truncated ? '+' : ''}`) ?? null, script: script ? { exitCode: script.exitCode, timedOut: script.timedOut, contentSha256: script.contentSha256, stdoutBytes: script.stdoutBytes, stderrBytes: script.stderrBytes } : null } });
       }
     }
     return acks;
   }
+}
+
+/** A run's stored output as the portal shows it; pruned after 90 days. */
+function scriptOutputView(o: { exitCode: number | null; timedOut: boolean; durationMs: number | null; stdout: string; stderr: string; stdoutBytes: number; stderrBytes: number; stdoutTruncated: boolean; stderrTruncated: boolean; createdAt: Date } | undefined, resultAt: Date | null) {
+  if (!o) return resultAt ? { pruned: true } : null;
+  return { exitCode: o.exitCode, timedOut: o.timedOut, durationMs: o.durationMs, stdout: o.stdout, stderr: o.stderr, stdoutBytes: o.stdoutBytes, stderrBytes: o.stderrBytes, stdoutTruncated: o.stdoutTruncated, stderrTruncated: o.stderrTruncated, recordedAt: o.createdAt };
 }

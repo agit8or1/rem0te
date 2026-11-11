@@ -271,6 +271,172 @@ check('a canceled plan cannot be approved', r.status === 409);
 const cancelSigned = await j(`${INTERNAL}/internal/v1/plans/${p1.jobId}/cancel`, { method: 'POST' });
 check('canceling a signed plan does not unsign it (the portal stops delivery instead)', cancelSigned.body.status === 'SIGNED');
 
+// ── 0.34: the script allowlist, and runs against it ────────────────────────
+{
+  const sr = require(join(dist, 'actions', 'script-run.js'));
+  const hex32 = () => randomBytes(16).toString('hex');
+  const CONTENT = 'param([Parameter(Mandatory)][string]$Name, [int]$Count = 1)\nfor ($i = 0; $i -lt $Count; $i++) { Write-Output "hello $Name" }\n';
+  const DECLS = [
+    { name: 'Name', type: 'string', required: true, charset: 'identifier', maxLength: 32 },
+    { name: 'Count', type: 'integer', required: false, min: 1, max: 5 },
+  ];
+  const AUTHOR = { userId: 'user_author01', name: 'Ann (author)' };
+  const REVIEWER = { userId: 'user_review01', name: 'Rob (library reviewer)' };
+  function proposal({ content = CONTENT, biz = BIZ_A, contributors = [AUTHOR], proposedBy = { userId: people.requester.userId, name: people.requester.name }, ...over } = {}) {
+    return {
+      allowlistId: hex32(), scriptId: 'scr_' + hex32().slice(0, 12), versionId: 'ver_' + hex32().slice(0, 12), name: 'Say hello', version: 1, description: 'Greets',
+      businessId: biz, businessName: biz ? (biz === BIZ_A ? 'Acme' : 'Birch') : null, language: 'powershell', targetOs: 'windows', risk: 'medium',
+      parameters: DECLS, contentSha256: sr.sha256Hex(content), content, contributors,
+      reviewedBy: { ...REVIEWER, at: new Date().toISOString() }, proposedBy, ...over,
+    };
+  }
+  const propose = (p) => j(`${INTERNAL}/internal/v1/scripts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ proposal: p }) });
+  const scrPost = (id, path, b, origin = ORIGIN) => j(`${PUBLIC}/approve/script/${id}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...(origin ? { origin } : {}) }, body: JSON.stringify(b) });
+  async function decideScript(id, who, decision = 'approve') {
+    const c = await scrPost(id, '/challenge', { decision });
+    if (c.status !== 200) return c;
+    return scrPost(id, '/decide', { challengeId: c.body.challengeId, assertion: who.assert(c.body.options, { origin: ORIGIN }) });
+  }
+  function runPlan(prop, { args = { Name: 'world' }, timeoutMinutes = 5, block, biz = BIZ_A, ...over } = {}) {
+    const b = block ?? sr.scriptBlockOf(prop);
+    return plan({
+      biz, deviceClass: 'WORKSTATION', risk: 'high', approvalsRequired: 2,
+      action: { id: 'windows.script.run', version: 1 },
+      params: { scriptVersionId: prop.versionId, sha256: b.contentSha256, parameters: args, timeoutMinutes },
+      script: b, ...over,
+    });
+  }
+
+  // Proposal: the signer hashes the content itself.
+  const bad = proposal();
+  bad.contentSha256 = sr.sha256Hex('Write-Output "something else"');
+  let r = await propose(bad);
+  check('a proposal whose content does not hash to the named SHA-256 is refused', r.status === 409 && r.body?.error === 'hash_mismatch', JSON.stringify(r.body));
+  r = await propose({ ...proposal(), status: 'ACTIVE' });
+  check('a proposal cannot carry its own status (strict schema)', r.status === 409 && r.body?.error === 'invalid_script', JSON.stringify(r.body));
+  r = await propose(proposal({ contributors: [AUTHOR, REVIEWER] }));
+  check('a proposal whose library reviewer is a contributor is refused', r.status === 409 && r.body?.error === 'invalid_script', JSON.stringify(r.body));
+
+  const pa = proposal();
+  r = await propose(pa);
+  check('a valid proposal is admitted awaiting two approvals, with the signer-computed hash', r.status === 201 && r.body.status === 'AWAITING_APPROVAL' && r.body.contentSha256 === sr.sha256Hex(CONTENT) && r.body.approvalUrl === `${ORIGIN}/approve/script/${pa.allowlistId}`, JSON.stringify(r.body));
+  r = await propose(pa);
+  check('the same proposal again returns the same entry', r.status === 201 && r.body.id === pa.allowlistId);
+  r = await propose({ ...pa, content: CONTENT + '# edited\n', contentSha256: sr.sha256Hex(CONTENT + '# edited\n') });
+  check('the portal cannot edit an entry by re-proposing under its id', r.status === 409 && r.body?.error === 'script_id_reused', JSON.stringify(r.body));
+  for (const [m, path] of [['POST', '/approve'], ['POST', '/activate'], ['PUT', ''], ['PATCH', ''], ['DELETE', '']]) {
+    r = await j(`${INTERNAL}/internal/v1/scripts/${pa.allowlistId}${path}`, { method: m, headers: { 'content-type': 'application/json' }, body: m === 'DELETE' ? undefined : JSON.stringify({ status: 'ACTIVE' }) });
+    check(`the internal listener has no ${m} ${path || '/'} that changes an entry`, r.status === 405 || r.status === 404, `${r.status}`);
+  }
+  check('nothing on the internal listener activated it', (await j(`${INTERNAL}/internal/v1/scripts/${pa.allowlistId}`)).body.status === 'AWAITING_APPROVAL');
+
+  const pageRes = await fetch(`${PUBLIC}/approve/script/${pa.allowlistId}`);
+  const spage = await pageRes.text();
+  check('the allowlist page shows the content and the signer-computed hash, under a nonce CSP',
+    spage.includes('hello $Name') && spage.includes(sr.sha256Hex(CONTENT)) && /script-src 'nonce-/.test(pageRes.headers.get('content-security-policy') || ''), spage.slice(0, 200));
+
+  // A run before the entry is ACTIVE.
+  r = await submit(runPlan(pa));
+  check('a run of a script awaiting allowlist approval is refused', r.status === 409 && r.body?.error === 'script_not_allowlisted', JSON.stringify(r.body));
+  r = await submit(runPlan(proposal()));
+  check('a run of a script never proposed is refused', r.status === 409 && r.body?.error === 'script_not_allowlisted', JSON.stringify(r.body));
+
+  r = await decideScript(pa.allowlistId, people.requester);
+  check('the proposer cannot approve the allowlist entry', r.status === 403 && r.body?.error === 'requester_cannot_approve', JSON.stringify(r.body));
+  r = await decideScript(pa.allowlistId, people.birchOnly);
+  check('an approver for another business cannot approve the entry', r.status === 403 && r.body?.error === 'not_authorized', JSON.stringify(r.body));
+  r = await scrPost(pa.allowlistId, '/challenge', { decision: 'approve' }, 'https://evil.example.com');
+  check('a cross-origin allowlist challenge is refused', r.status === 403);
+  r = await decideScript(pa.allowlistId, people.olivia);
+  check('one approval does not add a script to the allowlist', r.status === 200 && r.body.status === 'AWAITING_APPROVAL', JSON.stringify(r.body));
+  r = await decideScript(pa.allowlistId, people.olivia);
+  check('the same approver cannot count twice for an allowlist entry', r.status === 409, JSON.stringify(r.body));
+  r = await decideScript(pa.allowlistId, people.quinn);
+  check('a second, different approver makes the entry ACTIVE', r.status === 200 && r.body.status === 'ACTIVE', JSON.stringify(r.body));
+  check('the entry is on disk in the signer\'s own directory', existsSync(join(dir, 'scripts', `${pa.allowlistId}.json`)));
+
+  // Contributors cannot approve the entry.
+  const pc = proposal({ contributors: [{ userId: people.quinn.userId, name: people.quinn.name }] });
+  await propose(pc);
+  r = await decideScript(pc.allowlistId, people.quinn);
+  check('a contributor cannot approve the allowlist entry for their own script', r.status >= 400 && r.body?.error === 'contributor_cannot_approve', JSON.stringify(r.body));
+
+  // A global script needs approvers for every business.
+  const pg = proposal({ biz: null });
+  await propose(pg);
+  r = await decideScript(pg.allowlistId, people.quinn);
+  check('an approver for one business cannot add a global script', r.status === 403 && r.body?.error === 'not_authorized', JSON.stringify(r.body));
+
+  // Runs of the ACTIVE entry.
+  for (const [name, p, code] of [
+    ['a block that is not the allowlisted one (contributors dropped)', runPlan(pa, { block: { ...sr.scriptBlockOf(pa), contributors: ['user_someone1'] } }), 'script_mismatch'],
+    ['a block with a hash for other content', runPlan(pa, { block: (() => { const b = sr.scriptBlockOf(pa); const h = sr.sha256Hex('other'); return { ...b, contentSha256: h, definitionSha256: sr.definitionSha256({ ...b, contentSha256: h }) }; })() }), null],
+    ['parameters widened in the block', runPlan(pa, { block: (() => { const b = sr.scriptBlockOf(pa); const parameters = [{ ...DECLS[0], charset: 'safe_text' }, DECLS[1]]; return { ...b, parameters, definitionSha256: sr.definitionSha256({ ...b, parameters }) }; })() }), 'script_mismatch'],
+    ['an argument outside its charset (injection)', runPlan(pa, { args: { Name: 'x"; Remove-Item C:\\ -Recurse; "' } }), 'arguments_not_allowed'],
+    ['an undeclared argument', runPlan(pa, { args: { Name: 'world', Command: 'whoami' } }), 'arguments_not_allowed'],
+    ['a missing required argument', runPlan(pa, { args: { Count: 2 } }), 'arguments_not_allowed'],
+    ['an integer passed as a string', runPlan(pa, { args: { Name: 'world', Count: '2' } }), null],
+    ['an integer out of range', runPlan(pa, { args: { Name: 'world', Count: 99 } }), 'arguments_not_allowed'],
+    ['a timeout off the list', runPlan(pa, { timeoutMinutes: 45 }), null],
+    ['a business script on another business\'s computer', runPlan(pa, { biz: BIZ_B }), null],
+    ['a run claimed as low risk with one approver', runPlan(pa, { risk: 'low', approvalsRequired: 1 }), 'risk_mismatch'],
+    ['a run with no script block', (() => { const p = runPlan(pa); delete p.script; return p; })(), null],
+    ['a script block on another action', plan({ script: sr.scriptBlockOf(pa) }), null],
+  ]) {
+    r = await submit(p);
+    check(`a script run is refused for ${name}`, r.status === 409 && (!code || r.body?.error === code), JSON.stringify(r.body));
+  }
+
+  const run1 = runPlan(pa, { args: { Name: 'world', Count: 2 } });
+  r = await submit(run1);
+  check('a run of the ACTIVE entry with conforming arguments is admitted', r.status === 201 && r.body.status === 'AWAITING_APPROVAL', JSON.stringify(r.body));
+  const rhtml = await (await fetch(`${PUBLIC}/approve/${run1.jobId}`)).text();
+  check('the run approval page shows the script content from the signer\'s allowlist and its hash', rhtml.includes('hello $Name') && rhtml.includes(sr.sha256Hex(CONTENT)) && /SYSTEM/.test(rhtml));
+  r = await decide(run1.jobId, people.olivia);
+  check('one approval does not sign a script run', r.status === 200 && r.body.status === 'AWAITING_APPROVAL', JSON.stringify(r.body));
+  r = await decide(run1.jobId, people.quinn);
+  const signedRun = verifyEnvelope(r.body?.envelope ?? (await j(`${INTERNAL}/internal/v1/plans/${run1.jobId}`)).body?.envelope);
+  check('two distinct approvers sign it; the envelope carries the script block, its hash and the arguments',
+    r.body?.status === 'SIGNED' && signedRun?.script?.contentSha256 === sr.sha256Hex(CONTENT) && signedRun.params.parameters.Count === 2 && signedRun.script.contributors[0] === AUTHOR.userId && signedRun.approvers.length === 2, JSON.stringify(r.body).slice(0, 200));
+
+  // A contributor cannot approve a run of their script.
+  const pq = proposal({ content: CONTENT + '# quinn\'s copy\n', contributors: [{ userId: people.quinn.userId, name: people.quinn.name }], proposedBy: { userId: 'user_portal01', name: 'Portal' } });
+  await propose(pq);
+  await decideScript(pq.allowlistId, people.olivia);
+  r = await decideScript(pq.allowlistId, people.requester);
+  check('(an entry for quinn\'s script is ACTIVE)', r.body?.status === 'ACTIVE', JSON.stringify(r.body));
+  const run2 = runPlan(pq);
+  await submit(run2);
+  r = await decide(run2.jobId, people.quinn);
+  check('the script\'s author cannot approve a run of it (SAME_PERSON)', r.status >= 400 && r.body?.error === 'contributor_cannot_approve', JSON.stringify(r.body));
+
+  // Revocation is one-way.
+  const run3 = runPlan(pa);
+  await submit(run3);
+  await decide(run3.jobId, people.olivia);
+  r = await j(`${INTERNAL}/internal/v1/scripts/${pa.allowlistId}/revoke`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}) });
+  check('a revocation needs a reason', r.status === 409 || r.status === 400, `${r.status}`);
+  r = await j(`${INTERNAL}/internal/v1/scripts/${pa.allowlistId}/revoke`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'found a bug' }) });
+  check('the portal can revoke an entry', r.status === 200 && r.body.status === 'REVOKED', JSON.stringify(r.body));
+  r = await decide(run3.jobId, people.quinn);
+  check('a run admitted before the revocation is not signed after it', r.status === 409 && r.body?.error === 'script_revoked', JSON.stringify(r.body));
+  r = await submit(runPlan(pa));
+  check('a new run of a revoked script is refused', r.status === 409 && r.body?.error === 'script_revoked', JSON.stringify(r.body));
+  r = await propose(proposal());
+  check('the same content cannot be proposed again under a new id after revocation', r.status === 409 && r.body?.error === 'script_revoked', JSON.stringify(r.body));
+  check('the revocation is a write-once file keyed by content hash', existsSync(join(dir, 'script-revocations', `${sr.sha256Hex(CONTENT)}.json`)));
+  r = await scrPost(pa.allowlistId, '/challenge', { decision: 'approve' });
+  check('a revoked entry takes no further decisions', r.status === 409 && r.body?.error === 'not_awaiting', JSON.stringify(r.body));
+  check('the run that was already signed stays signed (the portal stops delivery; the agent re-checks the hash)', (await j(`${INTERNAL}/internal/v1/plans/${run1.jobId}`)).body.status === 'SIGNED');
+
+  // The CLI lists and revokes, from the signer's host.
+  const cliS = (args) => spawnSync(process.execPath, [join(dist, 'approval-signer', 'main.js'), ...args], { encoding: 'utf8', env: { ...process.env, APPROVAL_SIGNER_DIR: dir } });
+  let o = cliS(['script', 'list']);
+  check('`script list` shows each entry with its status and hash', o.status === 0 && o.stdout.includes(pq.allowlistId) && /REVOKED/.test(o.stdout) && /ACTIVE/.test(o.stdout) && o.stdout.includes(sr.sha256Hex(CONTENT)), o.stderr || o.stdout.slice(0, 300));
+  o = cliS(['script', 'revoke', '--id', pq.allowlistId, '--reason', 'operator test']);
+  check('`script revoke` on the signer host revokes', o.status === 0 && JSON.parse(readFileSync(join(dir, 'scripts', `${pq.allowlistId}.json`), 'utf8')) && (await j(`${INTERNAL}/internal/v1/scripts/${pq.allowlistId}`)).body.status === 'REVOKED', o.stderr);
+}
+
 // ── restart: state survives, a used challenge stays used ───────────────────
 const p8 = plan();
 await submit(p8);

@@ -12,8 +12,9 @@ import { ScriptLibraryService } from './script-library.service';
  *
  * There is deliberately no route here that runs, sends or schedules a
  * script, and none can be added without failing §23 of the security
- * invariants: a script would run only as a signed action, approved on the
- * approval signer and verified by the signed agent (docs/script-library.md).
+ * invariants: a script runs only as a signed action (0.34: the script-run
+ * module's windows.script.run@1), approved on the approval signer and
+ * verified by the signed agent (docs/script-library.md).
  * A review decision is a record in this database, not an authorization any
  * computer accepts.
  */

@@ -3,9 +3,11 @@ package action
 import "time"
 
 // The agent's copy of the catalog (v0.26). It is compiled in, so a plan can
-// only ever name something this file implements: there is no command, script,
-// path or URL parameter anywhere, and no way to add one without shipping a new
-// signed agent build through the offline-rooted update chain.
+// only ever name something this file implements: there is no command, path or
+// URL parameter anywhere, and no way to add one without shipping a new signed
+// agent build through the offline-rooted update chain. The one action that
+// runs a script (v0.34) names its SHA-256, never its text: the bytes come
+// beside the envelope and are refused unless they hash to the signed value.
 //
 // Keep in step with apps/api/src/actions/catalog.ts; the portal and signer
 // copy decides what can be proposed, this copy decides what can run.
@@ -118,6 +120,21 @@ var catalog = []Action{
 		Precheck:    needMaint,
 		Execute:     collectLogs,
 		Interrupted: func(map[string]any, Options) map[string]string { return nil },
+	},
+	{
+		// Run one approved library script (v0.34). The parameters name a
+		// version, its content SHA-256, typed arguments and a timeout from a
+		// fixed list; the plan's signed script block carries the declared
+		// parameters and the contributors. Precheck refuses content that does
+		// not hash to the signed SHA-256, arguments outside the declared
+		// schema, and a contributor among the approvers. High impact on any
+		// computer: two approvers, always.
+		ID: "windows.script.run", Version: 1, MaxTargets: MaxRingTargets,
+		ParamsOK:    scriptParamsOK,
+		Risk:        func(int, int) string { return "high" },
+		Precheck:    scriptPrecheck,
+		Execute:     runScript,
+		Interrupted: scriptInterrupted,
 	},
 }
 

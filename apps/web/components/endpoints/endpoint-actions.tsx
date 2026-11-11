@@ -29,6 +29,10 @@ import { AlertTriangle, ExternalLink, Loader2, ShieldCheck, Wrench } from 'lucid
  * the maintenance actions: restart an allowlisted service, schedule or cancel
  * a restart, collect logs). Parameters are only ever one of the values the
  * catalog lists; the server and the agent check them again.
+ *
+ * 0.34: script runs (windows.script.run) are requested from an approved
+ * version in the script library, not here, but appear in this history with
+ * the script's name, exit code and its redacted output.
  */
 
 interface CatalogAction {
@@ -50,18 +54,25 @@ interface Job {
   result: { observed?: Record<string, string>; detail?: string; reason?: string } | null; resultAt: string | null;
   reconciled: { at: string; byId: string; note: string } | null;
   createdAt: string;
+  // 0.34: a script run names its script; each target carries its output (or that it was pruned).
+  script?: { name: string; version: number; scriptId: string; versionId: string; contentSha256: string };
   // v0.27: one plan can name several computers (a patch ring). From one
   // computer's page the list carries that computer's row only, plus ringSize.
   deploymentId: string | null; ring: number | null; ringSize?: number;
   targets: { endpointId: string; hostname: string | null; status: string; statusReason: string | null; outcome: string | null;
-    result: JobResult | null; reconciled: { at: string; note: string } | null }[];
+    result: JobResult | null; reconciled: { at: string; note: string } | null; scriptOutput?: ScriptOutput | { pruned: true } | null }[];
 }
 type JobResult = {
   observed?: Record<string, string>; detail?: string; reason?: string;
   updates?: { updateId: string; kb?: string; state: string; reason?: string; hresult?: string }[];
   logs?: LogSection[]; logsWithheld?: string;
 };
+type ScriptOutput = {
+  exitCode: number | null; timedOut: boolean; durationMs: number | null; stdout: string; stderr: string;
+  stdoutBytes: number; stderrBytes: number; stdoutTruncated: boolean; stderrTruncated: boolean; recordedAt: string;
+};
 const UPDATE_ACTION = 'windows.update.install';
+const SCRIPT_ACTION = 'windows.script.run';
 /** The Print Spooler start has one fixed parameter value; no choice is offered. */
 const FIXED_PARAMS: Record<string, Record<string, unknown>> = { 'windows.service.start': { service: 'Spooler' } };
 const PLACEHOLDER: Record<string, string> = {
@@ -92,6 +103,9 @@ function reconcileFor(actionId: string, observed?: Record<string, string>) {
     case 'windows.reboot.cancel':
       return { label: 'Found', choices: ['restart_scheduled', 'no_restart_scheduled', 'other'] as const,
         text: 'The outcome is uncertain — Windows may or may not have a restart pending. It will not run this again. Check the computer (a restart warning on screen, or ask the person there), then record what you found; no new request for this action is accepted until you do.' };
+    case SCRIPT_ACTION:
+      return { label: 'Found', choices: ['other'] as const,
+        text: 'The outcome is uncertain — the agent stopped while the script was running, so it may have done part of its work, and its output was not kept. It will not run this again. Check the computer for what the script changes, then record what you found; no new run of a script on this computer is accepted until you do.' };
     case 'windows.logs.collect':
       return { label: 'Found', choices: ['other'] as const,
         text: 'The outcome is uncertain — the agent stopped while collecting. Nothing was changed on the computer. Record that you have seen this; no new collection is accepted until you do.' };
@@ -109,6 +123,7 @@ const RESULT_CAVEAT: Record<string, string> = {
   'windows.reboot.schedule': '. This shows that Windows accepted the restart, not that the computer restarted; a new boot time in the inventory shows that.',
   'windows.reboot.cancel': '. This shows what Windows answered when asked to cancel.',
   'windows.logs.collect': '. Redacted on the computer and again on receipt.',
+  [SCRIPT_ACTION]: '. An exit code is what the script returned, not proof that it did what it says.',
 };
 
 const STATUS: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning' }> = {
@@ -301,7 +316,7 @@ function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => voi
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Badge variant={s.variant}>{s.label}</Badge>
-          <span className="text-xs font-medium">{j.action.title}{typeof j.params?.service === 'string' && j.action.id !== 'windows.service.start' ? ` · ${j.params.service}` : ''}{typeof j.params?.delayMinutes === 'number' ? ` · ${j.params.delayMinutes}-minute warning` : ''}</span>
+          <span className="text-xs font-medium">{j.action.title}{j.script ? ` · ${j.script.name} v${j.script.version}` : ''}{typeof j.params?.service === 'string' && j.action.id !== 'windows.service.start' ? ` · ${j.params.service}` : ''}{typeof j.params?.delayMinutes === 'number' ? ` · ${j.params.delayMinutes}-minute warning` : ''}</span>
           <span className="text-xs text-muted-foreground">{formatDate(j.createdAt)}</span>
           {j.origin === 'ai_suggestion' && <Badge variant="outline" className="text-xs">AI suggestion{j.ticketRef ? ` · ${j.ticketRef}` : ''}</Badge>}
           {j.via === 'clientst0r' && <Badge variant="outline" className="text-xs">via ClientSt0r</Badge>}
@@ -350,6 +365,7 @@ function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => voi
           ))}
         </div>
       ) : null}
+      {j.action.id === SCRIPT_ACTION && mine?.scriptOutput !== undefined && <ScriptOutputView out={mine.scriptOutput} />}
       {result?.updates?.length ? (
         <ul className="text-xs list-disc pl-5">
           {result.updates.map((u) => <li key={u.updateId}>{u.kb ?? u.updateId}: {u.state.replace(/_/g, ' ')}{u.reason ? ` — ${u.reason}` : ''}{u.hresult && u.state === 'failed' ? ` (${u.hresult})` : ''}</li>)}
@@ -370,6 +386,30 @@ function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => voi
         </div>
       )}
       {reconciled && <p className="text-xs text-muted-foreground">Reconciled {formatDate(reconciled.at)}: {reconciled.note}</p>}
+    </div>
+  );
+}
+
+function ScriptOutputView({ out }: { out: ScriptOutput | { pruned: true } | null }) {
+  if (!out) return null;
+  if ('pruned' in out) return <p className="text-xs text-muted-foreground" data-testid="script-output-pruned">Output pruned: run output is kept for 90 days.</p>;
+  const stream = (label: string, text: string, bytes: number, truncated: boolean) => (
+    <details className="rounded border">
+      <summary className="cursor-pointer px-2 py-1 text-xs">
+        {label}<span className="text-muted-foreground"> · {bytes.toLocaleString()} bytes{truncated ? ', first 64 KB kept' : ''}</span>
+      </summary>
+      {text ? <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all border-t bg-muted/30 p-2 text-[11px] leading-snug">{text}</pre> : <p className="border-t p-2 text-xs text-muted-foreground">Empty.</p>}
+    </details>
+  );
+  return (
+    <div className="space-y-1" data-testid="script-output">
+      <p className="text-xs">
+        {out.timedOut ? 'Stopped at its timeout' : `Exit code ${out.exitCode ?? 'unknown'}`}
+        {out.durationMs !== null ? ` · ran ${(out.durationMs / 1000).toFixed(1)} s` : ''}
+        <span className="text-muted-foreground"> · redacted on the computer and again on receipt</span>
+      </p>
+      {stream('Output', out.stdout, out.stdoutBytes, out.stdoutTruncated)}
+      {stream('Errors', out.stderr, out.stderrBytes, out.stderrTruncated)}
     </div>
   );
 }

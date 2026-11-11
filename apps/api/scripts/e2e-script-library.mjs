@@ -139,7 +139,7 @@ async function all() {
   check(r.status === 403, 'a technician whose grant names computers gets no library rights, even with the capabilities', msg(r));
   for (const k of ['abe', 'rae', 'owen', 'tess', 'rita', 'admin1']) {
     r = await req('GET', '/scripts', { s: S[k] });
-    check(r.status === 200 && Array.isArray(r.data?.scripts) && r.data.execution?.available === false, `${k}: 200, and the response says scripts cannot run`, msg(r));
+    check(r.status === 200 && Array.isArray(r.data?.scripts) && r.data.execution?.available === true && /signed/.test(r.data.execution.how ?? '') && /real Windows/.test(r.data.execution.proven ?? ''), `${k}: 200, and the response says how scripts run (signed) and what is not proven`, msg(r));
   }
 
   section('Writing: scope, refusals before anything is stored');

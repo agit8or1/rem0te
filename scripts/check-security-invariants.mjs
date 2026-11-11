@@ -373,13 +373,14 @@ check(
 {
   const signerDir = 'apps/api/src/approval-signer';
   const signerFiles = readdirSync(join(ROOT, signerDir)).filter((f) => f.endsWith('.ts')).map((f) => `${signerDir}/${f}`);
-  const ALLOWED_IMPORT = /^(node:|crypto$|\.\/|@simplewebauthn\/server$|zod$|\.\.\/actions\/catalog$|\.\.\/actions\/patch-policy$|\.\.\/integration\/crypto$)/;
+  const ALLOWED_IMPORT = /^(node:|crypto$|\.\/|@simplewebauthn\/server$|zod$|\.\.\/actions\/catalog$|\.\.\/actions\/patch-policy$|\.\.\/actions\/script-run$|\.\.\/integration\/crypto$)/;
   const importsOf = (src) => [...src.matchAll(/(?:from|require\()\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
   const bad = [];
   // 0.32: the patch-policy evaluator (and the posture module it judges with)
-  // run inside the signer, so they are held to the same rule.
-  for (const f of [...signerFiles, 'apps/api/src/actions/catalog.ts', 'apps/api/src/integration/crypto.ts', 'apps/api/src/actions/patch-policy.ts', 'apps/api/src/patching/posture.ts']) {
-    const own = f.startsWith(signerDir) ? ALLOWED_IMPORT : /^(node:|crypto$|zod$|\.\/crypto$|\.\/catalog$|\.\.\/actions\/catalog$|\.\.\/patching\/posture$|\.\.\/integration\/crypto$)/;
+  // run inside the signer, so they are held to the same rule; 0.34 the
+  // script-run rules (argument schema, plan block, allowlist proposal).
+  for (const f of [...signerFiles, 'apps/api/src/actions/catalog.ts', 'apps/api/src/integration/crypto.ts', 'apps/api/src/actions/patch-policy.ts', 'apps/api/src/patching/posture.ts', 'apps/api/src/actions/script-run.ts']) {
+    const own = f.startsWith(signerDir) ? ALLOWED_IMPORT : /^(node:|crypto$|zod$|\.\/crypto$|\.\/catalog$|\.\/script-run$|\.\.\/actions\/catalog$|\.\.\/patching\/posture$|\.\.\/integration\/crypto$)/;
     for (const i of importsOf(read(f))) if (!own.test(i)) bad.push(`${f} imports ${i}`);
   }
   check('approval signer loads no Nest, Prisma or portal module', signerFiles.length >= 4 && bad.length === 0,
@@ -396,9 +397,10 @@ check(
   const goCat = read('tools/windows-installer/internal/action/catalog.go');
   const goIds = [...goCat.matchAll(/ID: "([^"]+)"/g)].map((m) => m[1]);
   // 0.27 added windows.update.install (§ 15); 0.32 the four maintenance
-  // actions. The list is exact and ordered: anything further is a review.
-  const CATALOG_IDS = ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect'];
-  check('agent catalog is exactly the Spooler start, update install, service restart, restart schedule/cancel and log collection',
+  // actions; 0.34 windows.script.run (§ 33). The list is exact and ordered:
+  // anything further is a review.
+  const CATALOG_IDS = ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect', 'windows.script.run'];
+  check('agent catalog is exactly the Spooler start, update install, service restart, restart schedule/cancel, log collection and approved-script run',
     goIds.join(',') === CATALOG_IDS.join(',') && /const ServiceName = "Spooler"/.test(goCat) && /s == ServiceName/.test(goCat),
     `agent catalog ids: ${goIds.join(', ')}`);
   const tsCat = read('apps/api/src/actions/catalog.ts');
@@ -409,11 +411,13 @@ check(
     `portal catalog ids: ${tsIds.join(', ')}; CATALOG = [${tsList}]`);
   // Every agent entry's parameters are one of the closed forms below, and
   // nothing else: a fixed service, update identities, an allowlisted service,
-  // a bounded integer, or no parameters at all.
+  // a bounded integer, no parameters at all, or (0.34) a script version, its
+  // hash, typed arguments and a timeout from a fixed list (§ 33 holds that
+  // form to its rules).
   const entries = goCat.slice(goCat.indexOf('var catalog = []Action{')).split(/\n\t\{\n/).slice(1);
   const CLOSED = [/ParamsOK: func\(p map\[string\]any\) bool \{\s*if len\(p\) != 1 \{\s*return false\s*\}\s*s, ok := p\["service"\]\.\(string\)\s*return ok && s == ServiceName/,
     /ParamsOK:\s+updateParamsOK,/, /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return RestartService\(p\) != "" \},/,
-    /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return RestartDelay\(p\) != 0 \},/, /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return len\(p\) == 0 \},/];
+    /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return RestartDelay\(p\) != 0 \},/, /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return len\(p\) == 0 \},/, /ParamsOK:\s+scriptParamsOK,/];
   const openParams = entries.filter((e) => !CLOSED.some((re) => re.test(e))).map((e) => (e.match(/ID: "([^"]+)"/) ?? [])[1] ?? '?');
   check('every agent catalog entry has closed parameters', entries.length === CATALOG_IDS.length && openParams.length === 0, `not closed: ${openParams.join(', ')}`);
   const maint = read('tools/windows-installer/internal/action/maintenance.go');
@@ -440,10 +444,14 @@ check(
       && [...read('tools/windows-installer/action_windows.go').matchAll(/runSystem32\([^,]+, "([^"]+)"/g)].map((m) => m[1]).every((x) => x === 'shutdown.exe' || x === 'wevtutil.exe')
       && (read('tools/windows-installer/action_windows.go').match(/exec\.Command(?:Context)?\(/g) ?? []).length === 2,
     'maintenance must not grow a way to run something else');
-  check('the maintenance actions are not offered to ClientSt0r', (tsCat.match(/integration: false,/g) ?? []).length === 4 && /proposable\(\): string\[\] \{[^}]{0,200}CATALOG\.filter\(\(a\) => a\.integration\)\.map/.test(read('apps/api/src/integration/action-proposals.service.ts'))
+  check('the maintenance actions and the script run are not offered to ClientSt0r', (tsCat.match(/integration: false,/g) ?? []).length === 5 && /export const SCRIPT_RUN: CatalogAction = \{[\s\S]{0,2000}?\bintegration: false,/.test(tsCat) && /proposable\(\): string\[\] \{[^}]{0,200}CATALOG\.filter\(\(a\) => a\.integration\)\.map/.test(read('apps/api/src/integration/action-proposals.service.ts'))
       && /if \(!catalogEntry\(body\.action\.id, body\.action\.version\)\?\.integration\)/.test(read('apps/api/src/integration/action-proposals.service.ts')),
     'advertising them changes the ticket-rmm contract');
-  check('portal catalog has no command, script, path or URL parameter', !/\b(command|script|path|url|args|cmd)\s*:/i.test(tsCat.replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, '')),
+  // 0.34: the plan's one `script:` field is the signed ScriptBlock — hashes,
+  // ids and declared parameters, never text — and is allowed once, exactly.
+  const tsCatCode = tsCat.replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, '');
+  check('portal catalog has no command, script, path or URL parameter',
+    (tsCatCode.match(/^ {2}script: ScriptBlock\.optional\(\),$/gm) ?? []).length === 1 && !/\b(command|script|path|url|args|cmd)\s*:/i.test(tsCatCode.replace(/^ {2}script: ScriptBlock\.optional\(\),$/m, '')),
     'the catalog must not grow a free-form parameter');
   const act = read('tools/windows-installer/internal/action/action.go');
   const iExec = act.indexOf('State: "executing"'), iRun = act.indexOf('r := Lookup(plan.Action.ID, plan.Action.Version).Execute(plan, o)'), iJournal = act.indexOf('readJournal(o, jobID)');
@@ -818,7 +826,9 @@ check(
   const files = readdirSync(join(ROOT, dir)).filter((f) => f.endsWith('.ts')).map((f) => `${dir}/${f}`);
   const src = Object.fromEntries(files.map((f) => [f, read(f)]));
   const code = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
-  const ALLOWED = /^(node:crypto|zod|express|@nestjs\/common|@prisma\/client|\.\/(definition|static-checks|script-library\.(service|controller))|\.\.\/(prisma\/prisma\.service|audit\/audit\.(service|module)|rbac\/(access-control\.service|capabilities|platform-permissions)|security-controls\/review|common\/guards\/jwt-auth\.guard|common\/decorators\/actor\.decorator|common\/throttling|auth\/step-up\.service))$/;
+  // 0.34: the pure parameter/hash rules live in actions/script-run (zod and
+  // node:crypto only, also loaded by the signer); the library takes them from there.
+  const ALLOWED = /^(node:crypto|zod|express|@nestjs\/common|@prisma\/client|\.\/(definition|static-checks|script-library\.(service|controller))|\.\.\/(prisma\/prisma\.service|audit\/audit\.(service|module)|rbac\/(access-control\.service|capabilities|platform-permissions)|security-controls\/review|common\/guards\/jwt-auth\.guard|common\/decorators\/actor\.decorator|common\/throttling|auth\/step-up\.service|actions\/script-run))$/;
   const importsOf = (s) => [...s.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s*['"]([^'"]+)['"]|\b(?:require|import)\(\s*['"]([^'"]+)['"]/gm)].map((m) => m[1] ?? m[2]);
   const badImports = files.flatMap((f) => importsOf(src[f]).filter((i) => !ALLOWED.test(i)).map((i) => `${f} imports ${i}`));
   const touches = files.flatMap((f) => [...code(src[f]).matchAll(/\b(actionJob|actionTarget|ActionsService|SignerClient|createPlan|endpointCommand|diagnosticRun|rustdeskNode|EnrollmentService|DiagnosticsCatalogService|PatchingService|heartbeat|forHeartbeat|envelope)\b|\.endpoint\./gi)].map((m) => `${f}: ${m[0]}`));
@@ -831,8 +841,14 @@ check(
   const ctl = src[`${dir}/script-library.controller.ts`] ?? '';
   const routes = [...ctl.matchAll(/@(Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)')?\s*\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''}`);
   const EXPECT = ['GET ', 'POST ', 'GET :id', 'GET :id/diff', 'POST :id/versions', 'GET :id/versions/:version', 'POST :id/versions/:version/submit', 'POST :id/versions/:version/withdraw', 'POST :id/versions/:version/review'];
+  // 0.34: the one other controller with script routes is the script-run
+  // module's, and its routes are exactly these (§ 33 checks what they do).
+  const RUN_CTL = 'apps/api/src/script-run/script-run.controller.ts';
+  const runRoutes = [...read(RUN_CTL).matchAll(/@(Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)')?\s*\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''}`);
+  const RUN_EXPECT = ['GET versions/:versionId', 'POST versions/:versionId/allowlist', 'POST versions/:versionId/allowlist/revoke', 'POST '];
   const elsewhere = walk('apps/api/src').filter((f) => /controller\.ts$/.test(f) && !f.startsWith(dir))
-    .filter((f) => /@(?:Get|Post|Put|Patch|Delete)\('[^']*scripts?\b|@Controller\(\s*\[?\s*'[^']*scripts?\b/i.test(read(f)));
+    .filter((f) => /@(?:Get|Post|Put|Patch|Delete)\('[^']*scripts?\b|@Controller\(\s*\[?\s*'[^']*scripts?\b/i.test(read(f)))
+    .filter((f) => !(f === RUN_CTL && /@Controller\('script-runs'\)/.test(read(f)) && JSON.stringify(runRoutes) === JSON.stringify(RUN_EXPECT)));
   check('the script library has no run route, here or anywhere else',
     /@Controller\('scripts'\)/.test(ctl) && JSON.stringify(routes) === JSON.stringify(EXPECT) && !routes.some((r) => /run|exec|dispatch|deploy|send|schedule|push|approve/i.test(r)) && elsewhere.length === 0,
     `routes: ${routes.join(', ')}${elsewhere.length ? `; other controllers with script routes: ${elsewhere.join(', ')}` : ''}`);
@@ -1441,6 +1457,113 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('macOS is a read-only agent platform for every console refusal',
     /if \(isMacPlatform\(platform\)\) return 'macOS';/.test(plat) && /'MACOS_AGENT_READ_ONLY'/.test(plat),
     'readOnlyAgentOs must return macOS for a Mac, with its own refusal code');
+}
+
+// 33. Running approved scripts (0.34): windows.script.run@1. A script runs as
+//     SYSTEM with full PowerShell, so everything rests on WHICH bytes run and
+//     WHO agreed. No run without an APPROVED library version and an ACTIVE
+//     entry on the approval signer's own allowlist, which only two passkey
+//     approvals on the signer's origin can create and the portal can neither
+//     write nor un-revoke; the typed argument schema is checked by the
+//     portal, the signer and the agent, with the same closed charsets; the
+//     agent never builds a command line from anything in a plan; and output
+//     is redacted on the computer and again by the portal before it is
+//     stored. Behavioural proof: apps/api/scripts/e2e-script-run.mjs (real
+//     PowerShell 7 through the sim) and unit-approval-signer.mjs.
+{
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const runSvc = code(read('apps/api/src/script-run/script-run.service.ts'));
+  const req = runSvc.slice(runSvc.indexOf('async requestRun('));
+  const iApproved = req.search(/if \(v\.status !== 'APPROVED' \|\| !v\.decidedById\) throw new ConflictException\(\{ code: 'NOT_APPROVED'/);
+  const iActive = req.search(/const entry = \(await this\.entries\(v\.id\)\)\.find\(\(e\) => e\.status === 'ACTIVE'\);\s*if \(!entry\) throw new ConflictException\(\{ code: 'SCRIPT_NOT_ALLOWLISTED'/);
+  const iPlan = req.indexOf('this.actions.createPlan(');
+  const core = code(read('apps/api/src/approval-signer/core.ts'));
+  const server = code(read('apps/api/src/approval-signer/server.ts'));
+  const assertFn = core.slice(core.indexOf('export function assertScriptAllowed('), core.indexOf('export function rolesFor('));
+  check('no run without an APPROVED version and an ACTIVE entry on the signer\'s own allowlist (portal asks; the signer decides at admission and again at signing)',
+    iApproved > 0 && iActive > iApproved && iPlan > iActive
+      && /if \(p\.action\.id === SCRIPT_RUN_ACTION\) assertScriptAllowed\(p, scripts\);/.test(core)
+      && /if \(!s \|\| !entry\) throw new Refused\('script_not_allowlisted'/.test(assertFn) && /if \(st === 'REVOKED'\) throw new Refused\('script_revoked'/.test(assertFn)
+      && /if \(st !== 'ACTIVE'\) throw new Refused\('script_not_allowlisted'/.test(assertFn)
+      && /if \(canonical\(s\) !== canonical\(scriptBlockOf\(entry\.proposal\)\)\) throw new Refused\('script_mismatch'/.test(assertFn)
+      && /admitPlan\(b\.plan, store\.policy\(\), now\(\), \(id\) => store\.scriptEntry\(id\)\)/.test(server)
+      && /if \(cur\.plan\.action\.id === SCRIPT_RUN_ACTION && c\.decision === 'approve'\) assertScriptAllowed\(cur\.plan, \(id\) => store\.scriptEntry\(id\)\);/.test(server),
+    'requestRun must refuse a non-APPROVED version and a missing ACTIVE entry before createPlan; the signer must check its own entry (exact block, ACTIVE, not revoked) at admission and before signing');
+
+  const internal = server.slice(server.indexOf('async function internalScript('), server.indexOf('// ── internal: patch policies'));
+  const store = code(read('apps/api/src/approval-signer/store.ts'));
+  const client = code(read('apps/api/src/actions/signer.client.ts'));
+  const clientPaths = [...client.matchAll(/this\.call<[^>]*>\('(GET|POST|PUT|PATCH|DELETE)', `?'?(\/internal\/v1\/scripts[^'`,]*)/g)].map((m) => `${m[1]} ${m[2].replace(/\$\{[^}]+\}/g, ':id')}`);
+  const decide = core.slice(core.indexOf('export function recordScriptDecision('));
+  const scriptCore = core.slice(core.indexOf('export function admitScriptProposal('), core.indexOf('export function recordScriptDecision(') + decide.slice(1).search(/\nexport |$/) + 1);
+  check('the portal cannot write the signer\'s allowlist: propose, read and revoke only; ACTIVE only from two passkey approvals; revocation is write-once by content hash',
+    /if \(req\.method !== 'POST' \|\| sub !== 'revoke'\) return send\(res, 405/.test(internal)
+      && /const r = admitScriptProposal\(b\.proposal, now\(\)\);/.test(internal) && /if \(store\.scriptRevocation\(r\.contentSha256\)\) throw new Refused\('script_revoked'/.test(internal)
+      && /throw new Refused\('script_id_reused'/.test(internal)
+      && /id: p\.allowlistId, status: 'AWAITING_APPROVAL'/.test(core) && /if \(sha !== p\.contentSha256\) throw new Refused\('hash_mismatch'/.test(core)
+      && (scriptCore.match(/status = 'ACTIVE'|status: 'ACTIVE'/g) ?? []).length === 1 && /\.size >= SCRIPT_ALLOWLIST_APPROVALS\) r\.status = 'ACTIVE';/.test(decide)
+      && /export const SCRIPT_ALLOWLIST_APPROVALS = 2;/.test(read('apps/api/src/actions/script-run.ts'))
+      && (server.match(/recordScriptDecision\(/g) ?? []).length === 1 && /const member = await verifiedMember\(c, b\.assertion\);[\s\S]{0,200}recordScriptDecision\(cur, member,/.test(server)
+      && /'script-revocations', `\$\{contentSha256\}\.json`\), JSON\.stringify\(rev, null, 2\), \{ mode: 0o600, flag: 'wx' \}/.test(store)
+      && !/this\.write\([^)]*'script-revocations'/.test(store) && !/unlinkSync|rmSync|\bunlink\(|\brm\(/.test(store)
+      && JSON.stringify(clientPaths.sort()) === JSON.stringify(['GET /internal/v1/scripts/:id', 'POST /internal/v1/scripts', 'POST /internal/v1/scripts/:id/revoke']),
+    `signer client script calls: ${clientPaths.join(', ')}`);
+
+  const goScript = read('tools/windows-installer/internal/action/script.go');
+  const tsRun = read('apps/api/src/actions/script-run.ts');
+  const tsCs = Object.fromEntries([...((tsRun.match(/export const CHARSETS = \{([\s\S]*?)\} as const;/) ?? [])[1] ?? '').matchAll(/(\w+): \/(.+?)\/,$/gm)].map((m) => [m[1], m[2]]));
+  const goCs = Object.fromEntries([...((goScript.match(/scriptCharsets = map\[string\]\*regexp\.Regexp\{([\s\S]*?)\n\t\}/) ?? [])[1] ?? '').matchAll(/"(\w+)":\s+regexp\.MustCompile\(`([^`]+)`\)/g)].map((m) => [m[1], m[2]]));
+  const tsTimeouts = (tsRun.match(/export const TIMEOUT_MINUTES = \[([^\]]+)\] as const;/) ?? [])[1]?.replace(/\s/g, '');
+  const goTimeouts = (goScript.match(/var ScriptTimeouts = \[\]int\{([^}]+)\}/) ?? [])[1]?.replace(/\s/g, '');
+  const pre = goScript.slice(goScript.indexOf('func scriptPrecheck('), goScript.indexOf('const scriptWrapper'));
+  const actSvc = code(read('apps/api/src/actions/actions.service.ts'));
+  check('the argument schema is checked by the portal, the signer and the agent, with the same closed charsets and timeouts',
+    Object.keys(tsCs).length === 4 && JSON.stringify(tsCs) === JSON.stringify(goCs)
+      && tsTimeouts === '1,5,10,15,30' && goTimeouts === tsTimeouts
+      && /const why = argumentsProblem\(decls, d\.parameters\);[\s\S]{0,300}throw new BadRequestException\(\{ code: 'PARAMS_NOT_ALLOWED'/.test(req)
+      && /const scriptProblem = scriptPlanProblem\(check\.data\);\s*if \(scriptProblem\) throw/.test(actSvc)
+      && /const sp = scriptPlanProblem\(p\);\s*if \(sp\) return \{ ok: false, reason: sp \};/.test(read('apps/api/src/actions/catalog.ts'))
+      && /if \(argumentsProblem\(s\.parameters, params\.data\.parameters\)\) return 'arguments_not_allowed';/.test(tsRun)
+      && /const why = argumentsProblem\(entry\.proposal\.parameters, \(p\.params as \{ parameters\?: unknown \}\)\.parameters\);\s*if \(why\) throw new Refused\('arguments_not_allowed'/.test(assertFn)
+      && /if why := declsProblem\(s\.Parameters\); why != "" \{\s*return refuse\("bad_declarations"/.test(pre) && /if why := argumentsProblem\(s\.Parameters, args\); why != "" \{\s*return refuse\("arguments_not_allowed"/.test(pre)
+      && /if hex\.EncodeToString\(sum\[:\]\) != s\.ContentSHA256 \{\s*return refuse\("content_mismatch"/.test(pre)
+      && /if ap\.UserID == c \{\s*return refuse\("contributor_approved"/.test(pre),
+    `charsets portal ${JSON.stringify(tsCs)} agent ${JSON.stringify(goCs)}; timeouts ${tsTimeouts} / ${goTimeouts}`);
+
+  const actDir = 'tools/windows-installer/internal/action';
+  const execFiles = readdirSync(join(ROOT, actDir)).filter((f) => f.endsWith('.go') && !f.endsWith('_test.go') && /exec\.Command|"os\/exec"/.test(read(`${actDir}/${f}`)));
+  const se = read(`${actDir}/scriptexec.go`);
+  const wrapper = (goScript.match(/const scriptWrapper = `([\s\S]*?)`/) ?? [])[1] ?? '';
+  const aw = read('tools/windows-installer/action_windows.go');
+  check('the agent never builds a command line: one fixed PowerShell invocation, a fixed wrapper, arguments as data in params.json',
+    JSON.stringify(execFiles.sort()) === JSON.stringify(['scriptexec.go', 'scriptexec_unix.go', 'scriptexec_windows.go'])
+      && (se.match(/exec\.Command(?:Context)?\(/g) ?? []).length === 1 && /cmd := exec\.Command\(h\.PowerShell, scriptArgs\(wrapper\)\.\.\.\)/.test(se)
+      && /return \[\]string\{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", wrapper\}/.test(se)
+      && !/exec\.Command/.test(read(`${actDir}/scriptexec_unix.go`) + read(`${actDir}/scriptexec_windows.go`))
+      && /run := o\.Scripts\.RunPowerShell\(dir, filepath\.Join\(dir, "run\.ps1"\), timeoutOf\(p, o\), MaxScriptOutput\)/.test(goScript)
+      && /"run\.ps1": \[\]byte\(scriptWrapper\)/.test(goScript) && /pj, _ := json\.Marshal\(args\)/.test(goScript)
+      && /ConvertFrom-Json/.test(wrapper) && /& \(Join-Path \$here 'script\.ps1'\) @bound/.test(wrapper) && !/Invoke-Expression|\biex\b|-Command|\[scriptblock\]|ExpandString|Start-Process/i.test(wrapper)
+      && /o\.Scripts = action\.ExecHost\{PowerShell: filepath\.Join\(d, "WindowsPowerShell", "v1\.0", "powershell\.exe"\)\}/.test(aw),
+    `files that start a process: ${execFiles.join(', ')}`);
+
+  const out = code(read('apps/api/src/actions/script-output.ts'));
+  const rec = actSvc.slice(actSvc.indexOf('async recordResults('));
+  check('script output is redacted twice — on the computer and again by the portal — and only the redacted copy is stored',
+    /sr\.Stdout, sr\.StdoutTruncated = streamOut\(run\.Stdout, run\.StdoutTotal\)/.test(goScript) && /sr\.Stderr, sr\.StderrTruncated = streamOut\(run\.Stderr, run\.StderrTotal\)/.test(goScript)
+      && /func streamOut\(b \[\]byte, total int64\) \(string, bool\) \{\s*s := RedactLog\(/.test(goScript)
+      && /const red = redactLog\(decoded\);\s*const text = headBytes\(red, MAX_SCRIPT_OUTPUT_BYTES\);/.test(out)
+      && /stdout: sanitizeStream\(r\.stdout, r\.stdoutTruncated\), stderr: sanitizeStream\(r\.stderr, r\.stderrTruncated\)/.test(out)
+      && /const stored = \{ \.\.\.r, script: script \? scriptSummary\(script\) : undefined \};/.test(rec)
+      && /const o = sanitizeScriptOutput\(script\);[\s\S]{0,800}stdout: o\.stdout\.text, stderr: o\.stderr\.text,/.test(rec)
+      && (rec.match(/scriptRunOutput\.create\(/g) ?? []).length === 1,
+    'streamOut must call RedactLog; recordResults must store sanitizeScriptOutput\'s text, and the target row only the summary');
+
+  const mig = read('apps/api/prisma/migrations/0050_script_run/migration.sql');
+  check('run output is kept 90 days and pruned by its own sweep',
+    /export const SCRIPT_OUTPUT_RETENTION_DAYS = 90;/.test(tsRun) && /if \(process\.env\.SCRIPT_OUTPUT_SWEEP === 'off'\) return;/.test(runSvc)
+      && /scriptRunOutput\.deleteMany\(\{ where: \{ createdAt: \{ lt: new Date\(now\.getTime\(\) - SCRIPT_OUTPUT_RETENTION_DAYS \* 86_400_000\) \} \} \}\)/.test(runSvc)
+      && /octet_length\("stdout"\) <= 65536/.test(mig) && /octet_length\("stderr"\) <= 65536/.test(mig),
+    'SCRIPT_OUTPUT_RETENTION_DAYS = 90, the prune query, and the 64 KiB column limits');
 }
 
 if (failures.length > 0) {

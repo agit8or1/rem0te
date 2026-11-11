@@ -14,7 +14,8 @@ import { staticCheck } from './static-checks';
  * The script library (docs/script-library.md): scripts, immutable versions
  * and review. It stores, hashes, checks and records. It never runs a script,
  * and it has no way to: it creates no action job, talks to no agent and no
- * signer, and the invariants (§23) keep it that way.
+ * signer, and the invariants (§23) keep it that way. Runs (0.34) are the
+ * script-run module's, which reads approved versions from the database.
  *
  *   DRAFT ─author submits─▶ IN_REVIEW ─reviewer─▶ APPROVED | REJECTED (final)
  *     ▲                        │
@@ -179,7 +180,13 @@ export class ScriptLibraryService {
         canCreateGlobal: actor.isPlatformAdmin,
         businessId: scope,
       },
-      execution: { available: false, why: 'Scripts can only run through the signed agent and the approval signer, and that path has not been validated on real Windows yet.' },
+      // 0.34: an approved version can be run, but not from here — through the
+      // script-run module, as a signed catalog action (docs/script-library.md).
+      execution: {
+        available: true,
+        how: 'An approved version runs only as a signed action: the approval signer adds its exact SHA-256 to its own allowlist, two approvers who did not write it approve each run, and the signed agent checks the hash before it runs.',
+        proven: 'Tested against PowerShell 7 on Linux through the agent\'s own decision code. Not yet run on a real Windows computer.',
+      },
     };
   }
 
@@ -214,7 +221,8 @@ export class ScriptLibraryService {
     const author = view === 'full' && this.canAuthor(actor, s) && v.authorId === actor.userId;
     return {
       script: { id: s.id, name: s.name, scope: s.scope.toLowerCase(), businessId: s.customerId, businessName: s.customer?.name ?? null },
-      version: v.version, status: v.status,
+      // The version's id: what the script-run routes (0.34) take.
+      id: v.id, version: v.version, status: v.status,
       basedOn: base ? (view === 'approved_only' && base.status !== 'APPROVED' ? null : base.version) : null,
       description: v.description, language: v.language, targetOs: v.targetOs, risk: v.risk, parameters: v.parameters as unknown as ParameterDecl[],
       content: v.content, contentBytes: v.contentBytes, contentSha256: v.contentSha256, definitionSha256: v.definitionSha256,
@@ -231,7 +239,7 @@ export class ScriptLibraryService {
           : v.status !== 'IN_REVIEW' ? 'Only a version in review can be approved or rejected.' : null,
         canEdit: view === 'full' && this.canAuthor(actor, s),
       },
-      execution: { available: false },
+      execution: { available: v.status === 'APPROVED' },
     };
   }
 

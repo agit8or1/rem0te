@@ -253,12 +253,12 @@ async function all() {
   for (const ep of [fd, old]) await heartbeat(ep);
   await req('POST', '/enrollment/heartbeat', { body: { rustdeskId: std.rid, agentSecret: std.secret, hostname: std.hostname, platform: 'Windows' } });
 
-  section('Catalog: six actions; the four new ones closed, high impact, not offered to ClientSt0r');
+  section('Catalog: the six actions here (plus 0.34\'s script run); the four maintenance ones closed, high impact, not offered to ClientSt0r');
   {
     const cat = await req('GET', '/actions/catalog', { s: S.sam, business: acme.id });
     const acts = cat.body?.data?.actions ?? [];
     const by = Object.fromEntries(acts.map((a) => [a.id, a]));
-    check(acts.map((a) => `${a.id}@${a.version}`).join(',') === ALL_ACTIONS.join(','), 'GET /actions/catalog lists exactly the six, in order', acts.map((a) => a.id).join(','));
+    check(acts.map((a) => `${a.id}@${a.version}`).join(',') === [...ALL_ACTIONS, 'windows.script.run@1'].join(','), 'GET /actions/catalog lists exactly the six, in order, then 0.34\'s windows.script.run', acts.map((a) => a.id).join(','));
     check(['windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect'].every((id) => by[id]?.workstationRisk === 'high' && by[id]?.direct === true),
       'each maintenance action is high impact even on a standard workstation, and requestable from the computer');
     check(by['windows.service.restart']?.choice?.options.map((o) => o.value).join(',') === 'Spooler,wuauserv,BITS,W32Time,WinRM,RustDesk', 'restart offers exactly the allowlist', JSON.stringify(by['windows.service.restart']?.choice));

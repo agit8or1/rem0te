@@ -11,7 +11,7 @@
 # RELEASE_BIN and ACTION_SIM (built from tools/windows-installer) enable the
 # suites that drive the Windows agent's decision code; without them those
 # suites are reported as SKIPPED and the run fails — set E2E_ALLOW_SKIP=1 to
-# accept that (never in CI).
+# accept that (never in CI). script-run also needs pwsh (PWSH, or on PATH).
 #
 # The suites write fixtures. Never point this at a database you care about.
 set -uo pipefail
@@ -63,6 +63,10 @@ for t in containment approved-action staged-patching maintenance-actions patch-p
   if [[ -n "${RELEASE_BIN:-}" && -n "${ACTION_SIM:-}" ]]; then run "$t" node "scripts/e2e-$t.mjs"
   else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM not set)\n' "$t"; skipped+=("$t"); fi
 done
+# Script runs (0.34) also need real PowerShell: PowerShell 7 (pwsh) runs the
+# script under the agent's decision code. PWSH, or pwsh on PATH (the CI image has it).
+if [[ -n "${RELEASE_BIN:-}" && -n "${ACTION_SIM:-}" ]] && { [[ -n "${PWSH:-}" ]] || command -v pwsh >/dev/null; }; then run script-run node scripts/e2e-script-run.mjs
+else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM / pwsh not available)\n' script-run; skipped+=(script-run); fi
 
 echo "── suites against a scratch API (one API per suite: the login throttle is per process)"
 PORT="${E2E_API_PORT:-3101}"

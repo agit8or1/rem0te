@@ -61,7 +61,13 @@ check('legacy heartbeat reports updateChannel=legacy', legacy.includes("$body['u
 check('both variants share the body (same line count ±120)', Math.abs(legacy.split('\n').length - signed.split('\n').length) < 120);
 // Approved actions (0.26): the signed heartbeat hands envelopes to the signed
 // agent and nothing else; the legacy heartbeat never runs one.
-check('signed heartbeat hands envelopes to rem0te-agent.exe action, detached', /Start-Process -FilePath \$agentExe -ArgumentList @\('action', '--job', \$jid, '--envelope', \$ef\)/.test(signed));
+check('signed heartbeat hands envelopes to rem0te-agent.exe action, detached',
+  /\$aargs = @\('action', '--job', \$jid, '--envelope', \$ef\)/.test(signed) && /Start-Process -FilePath \$agentExe -ArgumentList \$aargs -WindowStyle Hidden/.test(signed));
+// 0.34: a script run's content is handed over as a file of base64, never on the
+// command line, and only when it is base64 and bounded; the agent hashes it.
+check('signed heartbeat hands a script run\'s content over as a bounded base64 file, never as an argument',
+  /if \(\$sc -and \$sc\.Length -le 100000 -and \$sc -cmatch '\^\[A-Za-z0-9\+\/\]\+=\{0,2\}\$'\) \{\s*\$sf = Join-Path \$inbox "\$jid\.script"\s*Set-Content -LiteralPath \$sf -Value \$sc -Encoding ASCII -NoNewline\s*\$aargs \+= @\('--script', \$sf\)/.test(signed)
+    && !/--script', \$sc/.test(signed) && !legacy.includes('--script'));
 check('signed heartbeat reports patch posture and runs only patch-scan when asked', signed.includes("$body['patchPosture'] = $po") && /\$resp\.data\.patchScan -eq \$true[\s\S]{0,600}-ArgumentList @\('patch-scan'\)/.test(signed));
 check('legacy heartbeat neither reports posture nor scans', !legacy.includes('patchPosture') && !legacy.includes('patch-scan'));
 check('signed heartbeat validates the job id before using it in a path', signed.includes("$jid -cnotmatch '^[0-9a-f]{32}$'"));

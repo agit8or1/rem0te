@@ -851,9 +851,15 @@ const SECTIONS: Section[] = [
           own SHA-256. A version goes from draft to review to approved or rejected, and someone other than everyone who
           wrote it must approve it, with a fresh sign-in. Before you approve, the page shows warnings for things like{' '}
           <code>Invoke-Expression</code>, downloads, encoded commands, credentials and disabling Defender. They&apos;re
-          warnings, not a verdict. <strong className="text-foreground">Scripts can&apos;t run yet</strong>: they&apos;ll
-          only run through the signed agent and the approval roster, and that path hasn&apos;t been tested on real Windows.
-          Writing needs <em>Write scripts</em>; reviewing needs <em>Review scripts</em>. More in{' '}
+          warnings, not a verdict. <strong className="text-foreground">Running a script (0.34)</strong>: on an approved
+          version, <em>Run this version</em> first proposes it to the approval signer, where two approvers who didn&apos;t
+          write it add its exact SHA-256 to the signer&apos;s own allowlist. Then you can request a run on up to 25 Windows
+          computers, with typed arguments and a timeout of 1 to 30 minutes; two more approvers approve each run on the
+          signer&apos;s page. The signed agent checks the hash before it runs anything, as SYSTEM, and each computer&apos;s
+          Actions tab shows the exit code and the first 64 KB of output, redacted, for 90 days. Revoking is permanent.
+          It has been tested with PowerShell 7 on Linux, <strong className="text-foreground">not yet on a real Windows
+          computer</strong>. Writing needs <em>Write scripts</em>; reviewing, proposing and revoking need <em>Review
+          scripts</em>; requesting a run also needs <em>Request approved actions</em>. More in{' '}
           <Link href="/docs/script-library" className="underline text-foreground">Script library</Link>.
         </p>
         <p>

@@ -59,8 +59,9 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   signed plan two approvers authorize; what is installed and refused, the promotion gate, what *effective* means,
   and what is and is not proven.
 - **[script-library.md](script-library.md)**: the script library. PowerShell scripts with immutable, hashed
-  versions, static-check warnings, and review by someone other than the author. Scripts can't run yet; the page
-  explains the signed path they'll take and the threat model.
+  versions, static-check warnings, and review by someone other than the author. From 0.34 an approved version
+  runs on Windows as the signed action `windows.script.run@1`, only once its hash is on the approval signer's own
+  allowlist; the page covers that path, its limits, the threat model, and that it hasn't run on real Windows yet.
   and what is and is not proven. Since 0.32 it also covers installing from one computer's Patches tab and patch
   policies, which are approved once and then signed ring by ring by the signer inside a maintenance window.
 - **[patching-setup.md](patching-setup.md)** — turning on signed patching in production, in order (0.32): signed
