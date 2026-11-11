@@ -218,11 +218,11 @@ const SECTIONS: Section[] = [
           <li>
             Open{' '}
             <Link href="/endpoints" className="underline text-foreground">
-              Computers
+              Devices
             </Link>{' '}
             (or{' '}
             <Link href="/my-computers" className="underline text-foreground">
-              My Computers
+              Devices → My devices
             </Link>
             ) and click <strong className="text-foreground">Connect</strong>.
           </li>
@@ -339,7 +339,7 @@ const SECTIONS: Section[] = [
           A managed computer&apos;s page shows what it has reported about itself:
           hardware, storage, network adapters, who is signed in, how long it has been
           up, and how many Windows updates it is waiting on. Open it from{' '}
-          <Link href="/endpoints" className="underline text-foreground">Computers</Link> and
+          <Link href="/endpoints" className="underline text-foreground">Devices</Link> and
           look at the <strong className="text-foreground">Overview</strong> tab.
         </p>
         <p className="font-medium text-foreground">Nothing here is live</p>
@@ -492,7 +492,7 @@ const SECTIONS: Section[] = [
           <li>
             To prepare a machine in advance, use{' '}
             <Link href="/downloads" className="underline text-foreground">
-              Downloads
+              Remote Support → Technician client
             </Link>{' '}
             → <em>Set up this computer for Connect</em>.
           </li>
@@ -599,6 +599,14 @@ const SECTIONS: Section[] = [
           <Link href="/docs/capabilities" className="underline text-foreground">What each agent can do</Link>.
         </p>
         <p>
+          From 0.31 the menu is organised by job: <strong className="text-foreground">Dashboard</strong>,{' '}
+          <strong className="text-foreground">Devices</strong> (all devices, your own, adding one),{' '}
+          <strong className="text-foreground">Alerts</strong>, <strong className="text-foreground">Patching</strong>,{' '}
+          <strong className="text-foreground">Remote Support</strong> (sessions, Quick Connect, support requests and the
+          technician client) and <strong className="text-foreground">Settings</strong>, which holds users, the audit log
+          and platform administration. Help and the documentation are at the bottom of the menu.
+        </p>
+        <p>
           From 0.28, writes can be <strong className="text-foreground">paused</strong> while an incident is looked at:
           approved actions, remote connections, agent updates and ClientSt0r jobs, for every business or for one. A red
           strip at the top of the page says what is stopped and why; a refused click says <em>CONTAINED</em>. A Business
@@ -620,7 +628,7 @@ const SECTIONS: Section[] = [
         </p>
         <p>
           Customers can ask for help through their business&apos;s support link, without an account. Requests appear
-          under <Link href="/support-requests" className="underline text-foreground">Support Requests</Link>: claim
+          under <Link href="/support-requests" className="underline text-foreground">Remote Support → Support requests</Link>: claim
           one, connect, and complete or hand it off.
         </p>
         <p>
@@ -738,7 +746,7 @@ const SECTIONS: Section[] = [
           <li>It shows a Remote ID and a password; they read both to you.</li>
           <li>
             You enter them under{' '}
-            <Link href="/quick-connect" className="underline text-foreground">Quick Connect</Link>{' '}
+            <Link href="/quick-connect" className="underline text-foreground">Remote Support → Quick Connect</Link>{' '}
             and connect.
           </li>
           <li>They close the client when you are done, which ends their availability.</li>
@@ -782,8 +790,10 @@ export default function HelpPage() {
 
   return (
     <div className="p-6 space-y-4 max-w-2xl">
-      <PageHeader title="Help &amp; Docs" description="How Reboot Remote and RustDesk work together.">
-        <div className="flex gap-2">
+      <PageHeader title="Help &amp; Docs" description="Quick answers here; the full guides are in the documentation.">
+        <div className="flex items-center gap-2">
+          <Link href="/docs" className="text-xs font-medium text-primary hover:underline">Full documentation</Link>
+          <span className="text-xs text-muted-foreground">·</span>
           <button
             onClick={expandAll}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors"

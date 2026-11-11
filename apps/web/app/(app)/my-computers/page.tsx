@@ -93,7 +93,7 @@ export default function MyComputersPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-4xl">
-      <PageHeader title="My Computers" description="Computers you're authorized to connect to.">
+      <PageHeader title="My devices" description="Devices you are authorized to connect to.">
         {canRequestSupport && (
           <Button size="sm" variant="outline" onClick={() => setRequestOpen(true)}>
             <LifeBuoy className="h-4 w-4 mr-2" />

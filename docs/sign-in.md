@@ -8,7 +8,7 @@ Password sign-in always works. Nothing on this page can switch it off, so a brok
 
 ## Single sign-on (OIDC)
 
-**Platform → Single Sign-On** (Platform Admin). Rem0te is an OpenID Connect relying party. It uses the authorization code flow with PKCE, a `state` bound to the browser by a cookie, and a `nonce`. The ID token is verified with [openid-client](https://github.com/panva/openid-client).
+**Settings → Single sign-on** (Platform Admin). Rem0te is an OpenID Connect relying party. It uses the authorization code flow with PKCE, a `state` bound to the browser by a cookie, and a `nonce`. The ID token is verified with [openid-client](https://github.com/panva/openid-client).
 
 ### Setting up a provider
 

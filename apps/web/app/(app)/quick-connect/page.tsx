@@ -101,7 +101,7 @@ export default function QuickConnectPage() {
 
   if (!status?.canUse) {
     return (
-      <div className="space-y-6">
+      <div className="p-6 space-y-6">
         <PageHeader title="Quick Connect" description="Temporary support access." />
         <Card>
           <CardContent className="p-8 text-center">
@@ -115,7 +115,7 @@ export default function QuickConnectPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="p-6 space-y-6">
       <PageHeader
         title="Quick Connect"
         description="Connect to a computer that is not a managed device, using an ID and password the person reads out to you."

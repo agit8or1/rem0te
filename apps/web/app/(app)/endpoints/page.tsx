@@ -67,7 +67,7 @@ export default function EndpointsPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <PageHeader title="Enrolled Clients" description="Permanently enrolled remote devices — installed via the enrollment script">
+      <PageHeader title="Devices" description="Every enrolled device in the businesses you can see.">
         <Button size="sm" variant="outline" onClick={() => setShowLinkModal(true)}>
           <Link2 className="h-4 w-4 mr-2" />
           Generate Enrollment Link
@@ -84,7 +84,7 @@ export default function EndpointsPage() {
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search endpoints…"
+            placeholder="Search devices…"
             className="pl-9"
             value={search}
             onChange={(e) => setSearch(e.target.value)}

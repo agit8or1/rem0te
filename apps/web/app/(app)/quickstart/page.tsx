@@ -382,7 +382,7 @@ function StepReady() {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          Your Reboot Remote environment is set up. Here&apos;s a summary of what you&apos;ve
+          Your Rem0te environment is set up. Here&apos;s a summary of what you&apos;ve
           configured:
         </p>
 

@@ -3,7 +3,7 @@
 What a managed computer reports about itself, how it gets here, and how to ask
 it for a slice of its Windows event log.
 
-All of it lives on a computer's page, under **Computers → *the machine* →
+All of it lives on a computer's page, under **Devices → *the machine* →
 Overview** and **Event Log**.
 
 ---
@@ -95,7 +95,7 @@ actually upgrades the agent.
 
 ### Upgrading the agent
 
-**Computers → *the machine* → Overview → Reinstall agent** re-runs the
+**Devices → *the machine* → Overview → Reinstall agent** re-runs the
 installer on the next heartbeat. The installer is idempotent: it keeps the
 server configuration, the permanent password and the enrolment, and replaces
 the heartbeat script. That is what upgrades the agent.
@@ -134,7 +134,7 @@ bump that constant in the same commit.
 
 ## Event logs
 
-**Computers → *the machine* → Event Log** requests a page of one Windows event
+**Devices → *the machine* → Event Log** requests a page of one Windows event
 log. Pick the log, a time range, the levels, and how many of the most recent
 events you want; the request is queued and the table fills in when the machine
 answers.

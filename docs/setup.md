@@ -101,7 +101,7 @@ Then send anyone who needs help to `https://<your-host>/quick`.
 
 ## Enrolling a Device
 
-1. Go to **Downloads** (or **Businesses → [Business] → Downloads**).
+1. Go to **Devices → Add device** (or **Businesses → [Business] → Downloads**).
 2. Pick the business the computer belongs to and who should be able to reach it, then generate the
    installer link. The binding is fixed at this point — the machine that runs it cannot choose a
    different business.

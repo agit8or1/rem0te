@@ -300,7 +300,7 @@ export default function AboutPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-3xl">
-      <PageHeader title="About" description="System information, versions, and updates" />
+      <PageHeader title="Updates and version" description="System information, versions, and updates" />
 
       {/* App identity */}
       <Card>

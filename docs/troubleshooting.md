@@ -44,7 +44,7 @@ install, or an auto-update that replaced a configured build — asks
 RustDesk if the machine has none, points it at this server, and opens the
 session. Run it once and subsequent connects work directly.
 
-Or, from **Downloads**, run *Set up this computer for Connect*.
+Or, from **Remote Support → Technician client**, run *Set up this computer for Connect*.
 
 Still failing after that:
 
@@ -280,7 +280,7 @@ To recover a machine already in this state:
 1. Re-run the installer on the machine from a 0.19.2 or later server. Pressing
    **Update** is not enough, because the heartbeat that would act on it is not
    running.
-2. Open the computer in **Computers**. If the Overview tab shows *This
+2. Open the computer in **Devices**. If the Overview tab shows *This
    computer is calling in with a new device secret*, and the address shown is
    where the computer really is, press **Accept this device**. The secret the
    repaired installer finds is usually not the one the server last bound.
@@ -386,12 +386,12 @@ sudo -u postgres psql reboot_remote -c \
 
 ## Searching this from inside the product
 
-Everything on this page is also in the app, under **Documentation** in the
-sidebar, searchable across every page.
+Everything on this page is also in the app, under **Help & docs → Full documentation**
+at the bottom of the sidebar, searchable across every page.
 
 ![Documentation, with search](screenshots/guide/docs.png)
 
-1. **Documentation** in the sidebar.
+1. **Help & docs** at the bottom of the sidebar, then **Full documentation**.
 2. The search box — press <kbd>/</kbd> from anywhere on a documentation page.
    It matches across every page and returns the section, not just the page —
    searching *offline or does not exist* lands on the section above.

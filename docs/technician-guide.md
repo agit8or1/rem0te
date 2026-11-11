@@ -29,7 +29,7 @@ next. Recovery codes work here too, and each one is single-use.
 
 ## 2. Find a computer
 
-**Computers** lists every machine enrolled in the businesses you can see.
+**Devices** lists every machine enrolled in the businesses you can see.
 
 ![Computers list](screenshots/guide/tech-02-computers.png)
 
@@ -74,7 +74,7 @@ when.
 
 ## 4. Help someone who is not enrolled
 
-Use **Quick Connect** for one-off help where nothing should be installed
+Use **Remote Support → Quick Connect** for one-off help where nothing should be installed
 permanently — a machine you do not manage, or a person you are helping once.
 
 ![Quick Connect](screenshots/guide/tech-04-quick-connect.png)
@@ -94,7 +94,7 @@ Rem0te does not store the Quick Connect password and never displays it again.
 
 ## 5. Enrol a new computer
 
-From **Computers → Enroll Client** you get a one-line PowerShell command to run
+From **Devices → Enroll Client** you get a one-line PowerShell command to run
 on the target machine as Administrator. It installs RustDesk, points it at this
 server, sets a managed password, and registers the machine.
 
@@ -156,7 +156,7 @@ install retries instead of silently disappearing.
 ## 8. Support requests
 
 Customers can ask for help through their business's support link, without an
-account. Requests appear under **Support Requests** if you hold
+account. Requests appear under **Remote Support → Support requests** if you hold
 `support:requests`.
 
 1. **Claim** a request to take it. If someone beat you to it, you are told who.

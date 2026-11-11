@@ -3,41 +3,11 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
-  LayoutDashboard,
-  Monitor,
-  PlayCircle,
-  FileText,
-  Settings,
-  LogOut,
-  Shield,
-  Zap,
-  Sun,
-  Moon,
-  Download,
-  HardDriveDownload,
-  BookOpen,
-  LifeBuoy,
-  ShieldCheck,
-  Info,
-  UserCircle,
-  Heart,
-  Star,
-  Users,
-  Globe,
-  Building2,
-  MonitorCheck,
-  MonitorX,
-  RefreshCw,
-  Activity,
-  Inbox,
-  Siren,
-  UserCog,
-  UserMinus,
-  UserCheck,
-  PackageCheck,
-  KeyRound,
-  LayoutGrid,
+  Settings, LogOut, Shield, Sun, Moon, BookOpen, Info, UserCircle, Heart, Star, Users, Globe,
+  ChevronDown, ChevronRight, type LucideIcon,
 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { NAV, locate, under, visibleItems, type NavCtx, type NavSection } from './nav-model';
 import { BusinessSwitcher } from './business-switcher';
 import {
   DropdownMenu,
@@ -50,76 +20,23 @@ import { cn } from '@/lib/utils';
 import { authApi, platformApi, updateApi } from '@/lib/api-client';
 import { useQuery } from '@tanstack/react-query';
 import { useTheme } from '@/lib/theme-provider';
-import { usePermissions, CAP, type Capability } from '@/lib/auth';
+import { usePermissions } from '@/lib/auth';
 
 type NavItem = {
   href: string;
   label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  /** Omit to always show; otherwise the user must hold this capability. */
-  cap?: Capability;
-  /** Platform Admin only. */
-  platformOnly?: boolean;
+  icon: LucideIcon;
 };
 
-/** Always visible — every signed-in person has some computers of their own. */
-const MY_NAV: NavItem[] = [
-  { href: '/my-computers', label: 'My Computers', icon: Monitor },
-];
-
-/**
- * The working section. Each entry declares the capability it needs, so a
- * Business User only ever sees the parts they can actually use — no
- * hand-maintained per-role menus.
- */
-const MAIN_NAV: NavItem[] = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/businesses', label: 'Businesses', icon: Building2, platformOnly: true },
-  { href: '/endpoints', label: 'Computers', icon: MonitorCheck, cap: CAP.COMPUTERS_VIEW },
-  { href: '/users', label: 'Users', icon: Users, cap: CAP.USERS_VIEW },
-  { href: '/sessions', label: 'Sessions', icon: PlayCircle, cap: CAP.SESSIONS_VIEW },
-  // Monitoring alerts (v0.29). Read-side: an alert never reaches a computer.
-  { href: '/alerts', label: 'Alerts', icon: Siren, cap: CAP.ALERTS_VIEW },
-  // Staged Windows patching (v0.27). Requests only; each ring is approved on the approval signer.
-  { href: '/patching', label: 'Patching', icon: ShieldCheck, cap: CAP.COMPUTERS_VIEW },
-  { href: '/support-requests', label: 'Support Requests', icon: Inbox, cap: CAP.SUPPORT_REQUESTS },
-  { href: '/quick-connect', label: 'Quick Connect', icon: Zap, cap: CAP.QUICK_CONNECT },
-  { href: '/endpoints/enroll', label: 'Enroll Computer', icon: Download, cap: CAP.COMPUTERS_ADD },
-  // Clients for the technician's own machine. Separate from enrolment, which
-  // prepares the computer being supported: the Connect button uses whatever
-  // RustDesk is installed here, so this is where that gets configured.
-  { href: '/downloads', label: 'Downloads', icon: HardDriveDownload },
-  { href: '/audit', label: 'Audit Log', icon: FileText, cap: CAP.AUDIT_VIEW },
-  // The in-app documentation was reachable from exactly one place — a link at
-  // the bottom of the Quick Start wizard — which meant that in practice nobody
-  // found it.
-  { href: '/docs', label: 'Documentation', icon: BookOpen },
-  { href: '/help', label: 'Help', icon: LifeBuoy },
-];
-
-/**
- * Operator-only infrastructure.
- *
- * "Updates" points at /about because that is where the version check, update
- * runner and changelog actually live; /admin/status is host health (CPU,
- * memory, systemd units), which is a different question.
- */
-const PLATFORM_NAV: NavItem[] = [
-  { href: '/admin/access', label: 'Access Control', icon: ShieldCheck },
-  { href: '/admin/sso', label: 'Single Sign-On', icon: KeyRound },
-  { href: '/admin/rollouts', label: 'Client Rollouts', icon: PackageCheck },
-  { href: '/admin/security', label: 'Security', icon: Shield },
-  { href: '/admin/unassigned', label: 'Unassigned Computers', icon: MonitorX },
-  { href: '/admin/status', label: 'System Status', icon: Activity },
-  { href: '/about', label: 'Updates', icon: RefreshCw },
-];
+/** Whether the Settings group was left open, per browser. A convenience only. */
+const SETTINGS_OPEN_KEY = 'nav.settingsOpen';
 
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { resolvedTheme, setTheme } = useTheme();
   const {
-    user, can, isPlatformAdmin, isBusinessOwner, accessLevel, businessName, technician, assignedBusinesses, canManageTechnicians,
+    user, can, isPlatformAdmin, isBusinessOwner, accessLevel, technician, assignedBusinesses, canManageTechnicians,
   } = usePermissions();
 
   // Branding lives on the platform record and is readable only by the
@@ -156,16 +73,80 @@ export function Sidebar() {
   const ThemeIcon = resolvedTheme === 'dark' ? Moon : Sun;
   const themeLabel = resolvedTheme === 'dark' ? 'Dark' : 'Light';
 
-  function visible(item: NavItem) {
-    if (item.platformOnly) return isPlatformAdmin;
-    if (!item.cap) return true;
-    return can(item.cap);
+  const ctx: NavCtx = {
+    can, isPlatformAdmin, isBusinessOwner, technician: !!technician,
+    hasAssignments: assignedBusinesses.length > 0, canManageTechnicians,
+  };
+  const here = locate(pathname);
+
+  // Settings opens by itself on a settings page; otherwise it stays as the
+  // person left it.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  useEffect(() => {
+    try { setSettingsOpen(window.localStorage.getItem(SETTINGS_OPEN_KEY) === '1'); } catch { /* storage unavailable */ }
+  }, []);
+  const inSettings = here?.section.id === 'settings';
+  function toggleSettings() {
+    const next = !settingsOpen;
+    setSettingsOpen(next);
+    try { window.localStorage.setItem(SETTINGS_OPEN_KEY, next ? '1' : '0'); } catch { /* storage unavailable */ }
+  }
+
+  const linkClass = (active: boolean) => cn(
+    'flex items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+    active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+  );
+
+  /** One sidebar row for a section: link and hub open their first visible page. */
+  function sectionLink(section: NavSection) {
+    const items = visibleItems(section, ctx);
+    if (!items.length) return null;
+    const { icon: Icon } = section;
+    // A Business User without the device list still has their own devices.
+    const label = section.id === 'devices' && items[0].href === '/my-computers' ? 'My devices' : section.label;
+    return (
+      <Link key={section.id} href={items[0].href} className={linkClass(here?.section.id === section.id)}
+        data-nav={section.id}>
+        <Icon className="h-4 w-4" />
+        {label}
+      </Link>
+    );
+  }
+
+  function settingsGroup(section: NavSection) {
+    const items = visibleItems(section, ctx);
+    if (!items.length) return null;
+    const open = settingsOpen || inSettings;
+    const Chevron = open ? ChevronDown : ChevronRight;
+    return (
+      <div key={section.id}>
+        <button type="button" onClick={toggleSettings} aria-expanded={open} data-nav="settings"
+          className={cn(linkClass(false), 'w-full', inSettings && 'text-foreground')}>
+          <Settings className="h-4 w-4" />
+          <span className="flex-1 text-left">Settings</span>
+          <Chevron className="h-3.5 w-3.5" />
+        </button>
+        {open && (
+          <div className="mt-0.5 space-y-0.5 pl-4">
+            {items.map((i) => {
+              const active = here?.leaf?.href === i.href;
+              const { icon: Icon } = i;
+              return (
+                <Link key={i.href} href={i.href} className={cn(linkClass(active), 'py-1 text-[13px]')}>
+                  <Icon className="h-3.5 w-3.5" />
+                  {i.label}
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
   }
 
   function navLink(item: NavItem) {
     const { href, label, icon: Icon } = item;
-    const active = pathname === href
-      || (href !== '/settings' && href !== '/endpoints' && pathname.startsWith(`${href}/`));
+    const active = under(pathname, href);
     return (
       <Link
         key={href}
@@ -230,8 +211,6 @@ export function Sidebar() {
     retry: false,
   });
 
-  const mainItems = MAIN_NAV.filter(visible);
-  const sectionLabel = isPlatformAdmin ? 'Administration' : businessName ?? 'My Business';
 
   return (
     <aside className="flex h-screen w-60 flex-col border-r bg-background">
@@ -264,44 +243,18 @@ export function Sidebar() {
 
       <BusinessSwitcher />
 
-      <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
-        {MY_NAV.map(navLink)}
-        {assignedBusinesses.length > 0 && navLink({ href: '/technician', label: 'All Assigned', icon: LayoutGrid })}
-
-        {mainItems.length > 0 && (
-          <>
-            <div className="pt-3 pb-0.5 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 truncate">
-              {sectionLabel}
-            </div>
-            {mainItems.map(navLink)}
-            {/* A Business Owner configures their own business; the platform
-                operator configures the platform. Same slot, different scope. */}
-            {/* Offboarding is an owner's job in their own business, never in a
-                business reached through a technician assignment. */}
-            {isBusinessOwner && !technician && navLink({ href: '/offboarding', label: 'Offboarding', icon: UserMinus })}
-            {isBusinessOwner && !technician && navLink({ href: '/technician-approvals', label: 'Technician Approvals', icon: UserCheck })}
-            {isBusinessOwner && navLink({
-              href: '/settings',
-              label: isPlatformAdmin ? 'Settings' : 'Business Settings',
-              icon: Settings,
-            })}
-          </>
-        )}
-
-        {(isPlatformAdmin || canManageTechnicians) && (
-          <>
-            <div className="pt-3 pb-0.5 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-              Platform
-            </div>
-            {canManageTechnicians && navLink({ href: '/admin/technicians', label: 'Technicians', icon: UserCog })}
-            {isPlatformAdmin && PLATFORM_NAV.map(navLink)}
-          </>
-        )}
+      <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5" aria-label="Main">
+        {NAV.map((section) => (section.kind === 'group' ? settingsGroup(section) : sectionLink(section)))}
       </nav>
 
       <div className="border-t p-2 space-y-0.5">
         {navLink({ href: '/account', label: 'My Account', icon: UserCircle })}
-        {/* Platform Admins reach the same page as "Updates" above. */}
+        {/* Help and Documentation were two main-menu entries for one need. */}
+        <Link href="/help" className={linkClass(under(pathname, '/help') || under(pathname, '/docs'))}>
+          <BookOpen className="h-4 w-4" />
+          Help &amp; docs
+        </Link>
+        {/* Platform Admins reach the same page as Settings → Updates. */}
         {!isPlatformAdmin && navLink({ href: '/about', label: 'About', icon: Info })}
         {supportMenu()}
         <button

@@ -113,7 +113,7 @@ export default function AddComputerPage() {
   return (
     <div className="p-6 space-y-6 max-w-3xl">
       <PageHeader
-        title="Downloads"
+        title="Add device"
         description="Generate a one-time Managed Device Installer. Any computer that runs it is enrolled as a permanent managed computer belonging to the business you choose here."
       />
 

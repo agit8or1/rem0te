@@ -10,7 +10,7 @@ separately, from different places, and confusing them wastes time.
 | **RustDesk server (hbbs/hbbr)** | Updates → *RustDesk Server* | **Every endpoint reads offline for ~30s** |
 
 All three live at **/about** in the UI, reachable from the sidebar as
-**Updates** (Platform Admin only). The running version is also in the sidebar
+**Settings → Updates** (Platform Admin only). The running version is also in the sidebar
 footer and on the About page, for everyone signed in — "which version are you
 on?" is the first question asked about every problem.
 
@@ -85,7 +85,7 @@ Those machines need the installer re-run — which they need anyway, for the
 service-config fix in v0.8.2. From v0.15.0 that can be done from the console
 with *Reinstall agent* on the computer's Overview tab, provided the machine has
 authenticated with a device secret; one that never has needs a single local
-run first. See [inventory.md](inventory.md). See [clients.md](clients.md#managed-installer--rem0te--enroll-computer).
+run first. See [inventory.md](inventory.md). See [clients.md](clients.md#managed-installer-rem0te-devices-add-device).
 
 Archived computers are skipped when an update is staged.
 
@@ -109,7 +109,7 @@ All of this is described in [update-signing.md](update-signing.md).
 
 ## Staged rollouts (v0.20)
 
-**Platform → Client Rollouts** controls **which** version, **when**, to
+**Settings → Client rollouts** controls **which** version, **when**, to
 **whom**, and what counts as done. One-click staging above is still there for
 a single machine. While a computer has a rollout job, the rollout owns its
 updates and one-click staging does not also fire.

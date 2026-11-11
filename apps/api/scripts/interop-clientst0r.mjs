@@ -66,7 +66,7 @@ const env = { ...process.env, NODE_ENV: 'test', PORT: String(PORT), DATABASE_URL
   JWT_SECRET: randomBytes(32).toString('hex'), LAUNCHER_TOKEN_SECRET: randomBytes(32).toString('hex'), ENCRYPTION_KEY: randomBytes(32).toString('hex'),
   MONITOR_SWEEP: 'off', AUDIT_SEALER: 'off', HBBS_PRESENCE_HOST: '127.0.0.2', VERSION_FILE: path.join(root, 'version.json') };
 let api;
-let biz;
+let biz, birch; const iopEndpoints = [], iopKeys = [];
 try {
   const tenant = await prisma.tenant.findFirst();
   biz = await prisma.customer.create({ data: { tenantId: tenant.id, name: `IOP Acme ${sfx}` } });
@@ -116,12 +116,39 @@ try {
   const jr = JobRequest.safeParse(csJob);
   const issues = jr.success ? [] : jr.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`);
   check(!jr.success, 'GAP 4 — job payload: the body processor.job_payload builds does not satisfy rem0te\'s job-request schema', issues.slice(0, 8).join('; '));
+
+  // Path A: ClientSt0r's RMM provider syncs computers through rem0te's public
+  // API with a business-scoped key. Its own provider code, against real rem0te.
+  console.log('\nPath A — device sync through the public API (ClientSt0r\'s Rem0teProvider)');
+  birch = await prisma.customer.create({ data: { tenantId: tenant.id, name: `IOP Birch ${sfx}` } });
+  const mk = async (customerId, name, isOnline) => { const e = await prisma.endpoint.create({ data: { tenantId: tenant.id, customerId, name, hostname: name, platform: 'Windows', status: 'ACTIVE', isOnline, isManaged: true, accessMode: 'COMPANY_WIDE', lastSeenAt: new Date(Date.now() - (isOnline ? 0 : 3 * 86400_000)), deviceClass: 'WORKSTATION' } }); iopEndpoints.push(e.id); return e; };
+  const aFront = await mk(biz.id, 'FRONTDESK', true), aBack = await mk(biz.id, 'BACKOFFICE', false), bFront = await mk(birch.id, 'FRONTDESK', true);
+  const owner = await prisma.user.findFirst({ where: { isPlatformAdmin: true } }) ?? await prisma.user.findFirst();
+  const mkKey = async (customerId) => { const raw = `rk_${randomBytes(24).toString('hex')}`; const k = await prisma.apiKey.create({ data: { tenantId: tenant.id, customerId, createdById: owner.id, name: `iop ${sfx}`, keyHash: createHash('sha256').update(raw).digest('hex'), keyPrefix: raw.slice(0, 12), scopes: ['computers:read'] } }); iopKeys.push(k.id); return raw; };
+  const invEnv = { ...csEnv, CS_API_KEY: await mkKey(biz.id), CS_API_KEY_OTHER: await mkKey(birch.id), CS_REPORT: path.join(work, 'inventory.json') };
+  const inv = spawnSync(PY, [path.join(root, 'scripts/clientst0r-interop/drive_inventory.py')], { cwd: CS, env: invEnv, encoding: 'utf8', timeout: 300_000 });
+  check(inv.status === 0, 'the driver ran ClientSt0r\'s Rem0teProvider', (inv.stderr || inv.stdout).slice(-1500));
+  const invRep = existsSync(invEnv.CS_REPORT) ? JSON.parse(readFileSync(invEnv.CS_REPORT, 'utf8')) : { steps: [] };
+  const I = Object.fromEntries(invRep.steps.map((s) => [s.step, s]));
+  check(I.whoami?.ok && I.whoami.result?.businessId === biz.id, 'whoami: the key names its own business', JSON.stringify(I.whoami));
+  check(I.test_connection?.ok && I.test_connection.result === true, 'test_connection passes with the computers:read scope', JSON.stringify(I.test_connection));
+  const devs = I.list_devices?.result ?? [];
+  const ids = devs.map((d) => d.external_id).sort();
+  check(I.list_devices?.ok && JSON.stringify(ids) === JSON.stringify([aFront.id, aBack.id].sort()), 'list_devices returns exactly this business\'s two computers — not the other business\'s FRONTDESK', JSON.stringify(I.list_devices).slice(0, 600));
+  check(!ids.includes(bFront.id), 'the identically named FRONTDESK in another business is never listed');
+  const f = devs.find((d) => d.external_id === aFront.id), b = devs.find((d) => d.external_id === aBack.id);
+  check(f?.device_name === 'FRONTDESK' && f.os_type === 'windows' && f.is_online === true && f.client_id === biz.id && b?.is_online === false, 'normalised: name, Windows, online/offline and business carried over; external_id is rem0te\'s computer id', JSON.stringify(devs));
+  check(I.business_pinned?.result === biz.id, 'the connection pins the key\'s business on first sync', JSON.stringify(I.business_pinned));
+  check(I.console_url?.result === `${ROOT}/endpoints/abc`, 'the device link opens rem0te\'s own computer page (the technician\'s rem0te sign-in decides access)', JSON.stringify(I.console_url));
+  check(I.other_business_key?.ok === false && /different business/.test(I.other_business_key.error ?? ''), 'a key for another business on the same connection stops the sync instead of re-filing computers', JSON.stringify(I.other_business_key));
+
   const report = {
     generated_by: 'apps/api/scripts/interop-clientst0r.mjs', generated_at: new Date().toISOString(),
     rem0te_version: JSON.parse(readFileSync(path.join(root, 'version.json'), 'utf8')).version,
     clientst0r: { version: csVersion, commit: csCommit },
     steps: rep.steps.map((s) => ({ ...s, ...(s.stored ? { stored: { ok: s.stored.ok, error: s.stored.error } } : {}) })),
     job_request_issues: issues,
+    path_a_inventory_sync: invRep.steps.map(({ trace, ...s }) => s),
   };
   if (process.argv.includes('--write-report') && fail === 0) {
     writeFileSync(path.join(root, 'docs/contracts/ticket-rmm-v1/clientst0r-interop.json'), JSON.stringify(report, null, 2) + '\n');
@@ -131,6 +158,7 @@ try {
   fail++; failures.push(`crashed: ${e.stack ?? e}`); console.error(e); if (api) console.error(api.log.slice(-2000));
 } finally {
   if (api && api.exitCode === null) await new Promise((r) => { api.once('exit', r); api.kill('SIGTERM'); });
+  try { if (iopKeys.length) await prisma.apiKey.deleteMany({ where: { id: { in: iopKeys } } }); if (iopEndpoints.length) await prisma.endpoint.deleteMany({ where: { id: { in: iopEndpoints } } }); if (birch) await prisma.customer.delete({ where: { id: birch.id } }); } catch (e) { console.error('cleanup A:', e.message); }
   try { if (biz) { await prisma.integrationOrgMapping.deleteMany({ where: { customerId: biz.id } }); await prisma.customer.delete({ where: { id: biz.id } }); } } catch (e) { console.error('cleanup:', e.message); }
   await prisma.$disconnect();
   rmSync(work, { recursive: true, force: true });

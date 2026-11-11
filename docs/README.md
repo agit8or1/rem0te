@@ -1,7 +1,7 @@
 # Rem0te documentation
 
 Start with the page that matches what you are doing. All of this is also inside
-the product under **Documentation** in the sidebar, as a grouped index with a
+the product under **Help & docs → Full documentation** in the sidebar, as a grouped index with a
 contents panel on every page and search across all of it (press <kbd>/</kbd>).
 
 ## Something is broken

@@ -76,6 +76,7 @@ if (badGroup) { console.error(`✗ ${badGroup[0]}: group "${badGroup[2]}" is not
 // help a reader of the app, it belongs in ORDER instead.
 const NOT_IN_APP = new Set([
   'github-about.md', // GitHub About panel copy + settings checklist, for maintainers
+  'rmm-gap-analysis.md', // Planning record for maintainers: what works, what doesn't, what is next
   // The GitHub gallery. Its images live in docs/images/github/, which this
   // script does not copy (it only mirrors docs/screenshots/), so bundling the
   // page would put 30 broken images inside /docs. It is a repository landing
