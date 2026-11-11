@@ -610,6 +610,35 @@ authentication, the database refusing direct tampering, no action job created, a
 
 ---
 
+## [0.31.1] — 2026-11-11 · *Workbench*
+
+### Fixed
+- **The Linux and macOS installers exited before doing anything.** Both scripts run under `set -euo pipefail`, and
+  their first real line generated the device password with `tr -dc … < /dev/urandom | head -c 12`. Once `head` has
+  its 12 bytes it exits, `tr` dies of SIGPIPE, `pipefail` makes the pipeline's status 141, and `set -e` ends the
+  script on the assignment, silently and with nothing installed. The device-secret line (`head -c 43`) had the same
+  flaw. `bash -n` was the only check either script ever had, and it can't see this. All four lines now end
+  `|| true` inside the substitution, so the output is kept and the status is ignored. Found while building the
+  0.33 macOS agent, whose e2e suite runs the generated script under `pipefail`. **Any Linux or Mac that someone
+  tried to enrol with 0.31.0 or earlier got nothing, and needs the installer run again.**
+- **The dashboard's device map looked removed.** 0.31.0 moved the map below the tiles behind a small
+  *Show device locations* link, and the link started closed, so the map never appeared unless someone found the
+  link. Owners reported it as missing. The map now shows by default. *Hide device locations* folds it away, and
+  that choice is remembered in the browser (`localStorage` key `dashboard.map`). It is a per-viewer convenience,
+  never a permission: when storage is blocked the map simply shows. `docs/setup.md` and
+  `docs/technician-guide.md` describe it.
+
+### Upgrade notes
+- API and web. No schema or dependency change: rebuild both, rsync `dist` and the web build, copy `version.json`
+  and `CHANGELOG.md`, and restart both units.
+
+### Verification
+- `pnpm -r lint`, `tsc --noEmit` and both builds pass, and the security invariants and `check-versions.mjs` pass.
+- Under `bash -c 'set -euo pipefail; …'`, the old password line exits 141. The fixed lines reach the next statement with
+  12- and 43-character values.
+
+---
+
 ## [0.31.0] — 2026-11-11 · *Workbench*
 
 The first increment of the RMM overhaul: the technician's screens, reorganised around the work. The plan and the

@@ -129,6 +129,13 @@ function sandbox(name, { secret, rid: rustdeskId }) {
     fs.writeFileSync(path.join(dir, 'bin', c), `#!/bin/sh\necho "${c} $*" >> '${markers}'\nexit 0\n`);
     fs.chmodSync(path.join(dir, 'bin', c), 0o755);
   }
+  // `rpm -q rustdesk` is a legitimate read the agent makes when dpkg has no
+  // answer. A host rpm (GitHub's Ubuntu runners ship one) expands its macros
+  // through `bash -c`, which would trip the bash marker without the agent
+  // running bash at all. So rpm is a stub here: "not installed", as on a host
+  // without the package.
+  fs.writeFileSync(path.join(dir, 'bin', 'rpm'), '#!/bin/sh\necho "package rustdesk is not installed"\nexit 1\n');
+  fs.chmodSync(path.join(dir, 'bin', 'rpm'), 0o755);
   for (const t of TOOLS) { const p = which(t); if (p) fs.symlinkSync(p, path.join(dir, 'min', t)); }
   return { dir, markers, file: (f) => path.join(dir, f) };
 }
