@@ -1,18 +1,18 @@
 # Server sizing
 
-*Added in 0.33.* How big a server to give Rem0te for 50, 250, 1,000 and 5,000 computers, and why.
+*Added in 0.33; heartbeat figures re-measured in 0.34.* How big a server to give Rem0te for 50, 250, 1,000 and 5,000 computers, and why.
 
 Every figure here is labelled:
 
 - **measured** — taken on 2026-11-11 with `apps/api/scripts/bench-heartbeat.mjs` (a load script that starts its
   own API against a scratch database) or by inserting and rolling back synthetic rows in a scratch PostgreSQL 16
-  database. The host was a shared 16-core, 8 GB Ubuntu 24.04 machine running other work (load average 4–5), so
-  treat measured CPU and latency as *this host under load*, not a lower bound.
+  database. The host was a shared 16-core, 8 GB Ubuntu 24.04 machine running other work (load average 4–5 in
+  0.33, 3–17 during the 0.34 runs), so treat measured CPU and latency as *this host under load*, not a lower bound.
 - **estimated** — worked out from a measured figure and a cadence in the code, or from RustDesk's documented
   behaviour. Nothing labelled estimated was observed on a real fleet.
 
-Nothing here has been observed on a production fleet of these sizes. The largest measured run was 2,000
-synthetic computers.
+Nothing here has been observed on a production fleet of these sizes. The largest measured run was 5,000
+synthetic computers (0.34).
 
 ## The short answer
 
@@ -20,8 +20,8 @@ synthetic computers.
 |---|---|---|---|---|---|
 | 50 | 2 | 2 GB | 20 GB | same host, defaults | Anything that runs Ubuntu 22.04 runs this |
 | 250 | 2 | 4 GB | 40 GB | same host, `shared_buffers` 512 MB | |
-| 1,000 | 4 | 8 GB | 80 GB | same host, `shared_buffers` 2 GB | Heartbeats use about 0.4 of a core |
-| 5,000 | 8 | 16 GB | 200 GB | separate host or dedicated cores, `shared_buffers` 4 GB | **At the measured limit of one API process — see below** |
+| 1,000 | 4 | 8 GB | 80 GB | same host, `shared_buffers` 2 GB | Heartbeats use about 0.2 of a core |
+| 5,000 | 8 | 16 GB | 200 GB | separate host or dedicated cores, `shared_buffers` 4 GB | One API process measured 49–72 heartbeats/s against the 27.8 needed — see below |
 
 The disk column is for a year of history with room for backups and client downloads; the database part of it is
 far smaller (see *Database growth*). Relay bandwidth depends on concurrent remote sessions, not on the number of
@@ -32,41 +32,51 @@ computers, and is sized separately.
 The Windows agent heartbeats every **3 minutes** (`Rem0teHeartbeat` scheduled task). That is the only work every
 enrolled computer does all the time.
 
-| Computers | Heartbeats per second (estimated: N ÷ 180) | API CPU for them (estimated from the measured 70 ms each) |
+| Computers | Heartbeats per second (estimated: N ÷ 180) | API CPU for them (estimated from the measured ≈ 35 ms each; ≈ 50 ms at 5,000) |
 |---|---|---|
-| 50 | 0.3 | 2% of one core |
-| 250 | 1.4 | 10% of one core |
-| 1,000 | 5.6 | 39% of one core |
-| 5,000 | 27.8 | 1.9 cores |
+| 50 | 0.3 | 1% of one core |
+| 250 | 1.4 | 5% of one core |
+| 1,000 | 5.6 | 20% of one core |
+| 5,000 | 27.8 | 1.4 cores |
 
-Per steady-state heartbeat (nothing due; measured, 1,000–2,000 computers, rounds after warm-up):
+Per steady-state heartbeat (nothing due; measured in 0.34, 1,000 computers, rounds after warm-up, load average
+3–11; 0.33's figures in brackets):
 
 | What | Measured |
 |---|---|
-| API CPU, total | **≈ 70 ms** (60 ms in the Node process including Prisma's query engine, 11 ms in a `sqlite3` child process) |
-| PostgreSQL CPU (the backends serving the API) | ≈ 9 ms |
-| Database work | ≈ 24 transactions, 23–28 rows read, 4 rows updated, ≈ 0 inserted, 90–190 buffer hits |
+| API CPU, total | **≈ 35–39 ms** [≈ 70 ms]; 61–71 ms in one run at load average 10. All of it in the Node process, including Prisma's query engine: no `sqlite3` child per heartbeat since 0.34 (see below) |
+| PostgreSQL CPU (the backends serving the API) | ≈ 7–9 ms [≈ 9 ms] |
+| Database work | ≈ 24–27 transactions, 4 rows updated, ≈ 0 inserted [unchanged] |
 | Request / response body | 451 B / 369 B of JSON (plus HTTP and TLS overhead) |
-| Latency at 4 in flight | p50 160 ms, p95 290–490 ms |
-| Latency at 16 in flight | p50 330–370 ms, p95 680–840 ms |
-| **Throughput of one API process** | **18–23 /s at 4 in flight; 34–41 /s at 16 in flight** |
-| API memory (RSS) | ≈ 300 MB idle, 350–470 MB under this load |
+| Latency at 4 in flight | p50 45–50 ms, p95 55–140 ms [p50 160 ms, p95 290–490 ms] |
+| Latency at 16 in flight | p50 113–126 ms, p95 150–255 ms [p50 330–370 ms, p95 680–840 ms] |
+| **Throughput of one API process** | **61–83 /s at 4 in flight; 109–136 /s at 16 in flight** (61–71 /s in the run at load average 10) [18–23 /s; 34–41 /s] |
+| API memory (RSS) | ≈ 300 MB idle, 415–510 MB under this load |
+
+At 5,000 computers (measured, 16 in flight, two rounds, load average 6–7): **49–72 heartbeats a second at 46–51 ms
+of API CPU each**, p50 190–245 ms, RSS ≈ 575 MB. The 0.33 build on the same host and fleet, immediately after (load
+average 11–15): 26–34 a second at 84–118 ms.
 
 A heartbeat inserts nothing in steady state: it updates the computer's node, endpoint and live-state rows. The
 growth comes from the work it hands out (inventory every 6 hours, update scans every 12 hours) and from people.
 
-### Why 5,000 is at the edge
+### 5,000 computers on one API process
 
-5,000 computers need 27.8 heartbeats a second, sustained. One API process measured 18–41 a second on this host,
-depending on how many arrive at once. So 5,000 computers are inside what one process did, but without headroom —
-and after an outage every agent comes back within the same few minutes.
+5,000 computers need 27.8 heartbeats a second, sustained. In 0.33 one API process measured 18–41 a second, which
+fit without headroom. Most of that cost was one thing: **every heartbeat ran a `sqlite3` process** to ask hbbs's
+peer table whether the computer's RustDesk ID had ever registered (`peerRegisteredWithHbbs`). The query was
+trivial; starting a process for it was not, and it cost the Node process as much again as the child.
 
-Most of the cost is one thing: **every heartbeat runs a `sqlite3` process** to ask whether hbbs has seen the
-computer's RustDesk ID (`peerRegisteredWithHbbs` in `enrollment.service.ts`). As an experiment (a patched build, not
-shipped), skipping that lookup took API CPU from ≈ 70 ms to ≈ 42 ms per heartbeat and throughput at 4 in flight from
-18–23 /s to 41–49 /s. The query itself is trivial; most of the cost is starting a process for it. Until
-that lookup is batched or cached, plan 5,000 computers as "measured to fit, not proven", and watch heartbeat
-latency in the API log.
+Since 0.34 one `sqlite3` reads the whole peer table at most once every `HBBS_PEER_CACHE_SECONDS` (default 10,
+clamped to 1–30) and every heartbeat in between answers from memory — one process per 10 seconds instead of 28 a
+second. The answer cannot be staler than that window; an unreadable database still answers *unknown* (see
+[architecture.md](architecture.md)). Measured at 5,000 computers, one process did 49–72 heartbeats a second: 1.8–2.6×
+what 5,000 need, on a host that was busy with other work.
+
+That headroom is for the steady state. After an outage every agent comes back within the same few minutes, and a
+computer's first heartbeat with its inventory costs ≈ 77 ms of API CPU (**measured** at 5,000 in 0.34), so a fleet
+reconnecting at once is still worth watching: heartbeat latency is in the API log. More than 5,000 has not been
+measured.
 
 Running two API processes behind the proxy is **not supported**: the stale-device sweep, monitoring sweep,
 client-update sweep and audit sealer run inside the API process and would run twice. More cores help PostgreSQL
@@ -75,7 +85,7 @@ and the web process, not the API's single event loop.
 ### First contact and inventory
 
 A computer's first heartbeat and its first inventory (a synthetic 150-application list) cost ≈ 110–125 ms of API
-CPU together (**measured**), and the inventory upload took 55–115 ms. The inventory request is ≈ 14 KB of JSON
+CPU together in 0.33 and ≈ 77 ms in 0.34 at 5,000 computers (**measured**), and the inventory upload took 55–125 ms. The inventory request is ≈ 14 KB of JSON
 (**measured** for 150 applications). Enrolling a few hundred computers in an hour is not a sizing concern; a mass
 re-install across 5,000 computers is, for the same reason as above.
 
@@ -178,6 +188,6 @@ DATABASE_URL=postgresql://…/rem0te_bench_test \
   node scripts/bench-heartbeat.mjs
 ```
 
-It creates synthetic computers with bound device secrets and a scratch hbbs peer database (so the `sqlite3` lookup
-runs as it would in production, without touching the real one), warms them up with one inventory each, measures
+It creates synthetic computers with bound device secrets and a scratch hbbs peer database (so the shared `sqlite3`
+peer read runs as it would in production, without touching the real one), warms them up with one inventory each, measures
 steady-state heartbeats, prints table sizes, and removes its fixtures. It needs `sqlite3` installed.

@@ -27,6 +27,7 @@ import { EndpointInventoryService } from '../endpoint-inventory/endpoint-invento
 import { CANDIDATE_LIVE_MS, CANDIDATE_SETTLE_MS } from './device-secret';
 import { withDeviceText } from './device-text';
 import { queryHbbsOnline } from './hbbs-presence';
+import { HbbsPeerSnapshot, PEER_SNAPSHOT_SQL, parsePeerIds } from './hbbs-peer-snapshot';
 import { compareVersions } from '../common/agent-contract';
 import { assertFresh } from '../security-controls/review';
 import { MetricsService } from '../metrics/metrics.service';
@@ -1201,29 +1202,47 @@ export class EnrollmentService {
    * truth. We shell out to the sqlite3 CLI rather than take a dependency:
    * node:sqlite does not exist on the Node 20 this service runs under, and
    * better-sqlite3 would mean a compiled native module for one read-only
-   * query. The id is validated as digits before it reaches the SQL text.
+   * query.
+   *
+   * Since 0.34 the read is shared: one sqlite3 reads every digits-only peer ID
+   * at most once per HBBS_PEER_CACHE_SECONDS (default 10, clamped to 1–30) and
+   * every heartbeat in that window answers from it — see hbbs-peer-snapshot.ts
+   * for why that cannot make an unregistered ID look registered for longer
+   * than the window. It was one process per heartbeat, which was most of the
+   * API's CPU at 5,000 computers.
    *
    * Returns null — never throws, never false — when the question cannot be
    * answered (hbbs on another host, file unreadable, sqlite3 absent, WAL
    * unreadable). Callers MUST treat null as "unknown", not as a failure:
    * refusing an install because we could not read a file would be worse than
-   * the bug this exists to catch.
+   * the bug this exists to catch. A failed read discards any earlier snapshot,
+   * so it is null for everyone, never an older answer.
    */
   async peerRegisteredWithHbbs(rustdeskId: string): Promise<boolean | null> {
-    if (!/^[0-9]{6,15}$/.test(rustdeskId)) return null;
-    const dbPath =
-      this.config.get<string>('RUSTDESK_DB_PATH') ??
-      '/var/lib/rustdesk-server/db_v2.sqlite3';
-    try {
-      const { stdout } = await execFileAsync(
-        'sqlite3',
-        [`file:${dbPath}?mode=ro`, `SELECT 1 FROM peer WHERE id='${rustdeskId}' LIMIT 1;`],
-        { timeout: 3000 },
+    return this.hbbsPeers.has(rustdeskId);
+  }
+
+  private _hbbsPeers: HbbsPeerSnapshot | null = null;
+  private get hbbsPeers(): HbbsPeerSnapshot {
+    if (!this._hbbsPeers) {
+      const dbPath =
+        this.config.get<string>('RUSTDESK_DB_PATH') ??
+        '/var/lib/rustdesk-server/db_v2.sqlite3';
+      const seconds = Number(this.config.get<string>('HBBS_PEER_CACHE_SECONDS'));
+      this._hbbsPeers = new HbbsPeerSnapshot(
+        async () => {
+          const { stdout } = await execFileAsync(
+            'sqlite3',
+            [`file:${dbPath}?mode=ro`, PEER_SNAPSHOT_SQL],
+            // 5,000 IDs are ~60 KB; 16 MB is over a million.
+            { timeout: 3000, maxBuffer: 16 * 1024 * 1024 },
+          );
+          return parsePeerIds(stdout);
+        },
+        Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined,
       );
-      return stdout.trim() === '1';
-    } catch {
-      return null;
     }
+    return this._hbbsPeers;
   }
 
   /**

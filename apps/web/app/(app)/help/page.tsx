@@ -104,8 +104,9 @@ const SECTIONS: Section[] = [
           How big a server to use for 50, 250, 1,000 or 5,000 computers — CPU, memory, disk and PostgreSQL, with the
           measured cost of a heartbeat and how fast the database grows — is in{' '}
           <Link href="/docs/server-sizing" className="underline text-foreground">Server sizing</Link>. In short: 2 vCPU
-          and 2–4 GB up to a few hundred computers, 4 vCPU and 8 GB for 1,000. At 5,000 a single API process is near its
-          measured limit; read the page before planning that size.
+          and 2–4 GB up to a few hundred computers, 4 vCPU and 8 GB for 1,000, 8 vCPU and 16 GB for 5,000. Since 0.34 a
+          heartbeat no longer starts a process to ask the RustDesk ID server about the computer, and one API process
+          measured roughly twice the rate 5,000 computers need; more than 5,000 has not been measured.
         </p>
       </div>
     ),
