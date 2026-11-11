@@ -210,6 +210,33 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'device-list',
+    title: 'The Device List',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          <Link href="/endpoints" className="underline text-foreground">Devices</Link> lists every device you can
+          see — online ones first, then by name. Search, filters, sorting and paging all run on the server, so they
+          cover every device, not just the page on screen. Click a column heading to sort by it.
+        </p>
+        <p>
+          <strong className="text-foreground">Health</strong> is the worst open monitoring alert;{' '}
+          <strong className="text-foreground">Pending patches</strong> comes from the last update scan; CPU, RAM,
+          disk and the logged-in user come from the last heartbeat. Each shows its age, and a value that is stale —
+          a resource sample older than 15 minutes, an update scan older than 36 hours — is greyed: it is what the
+          device last reported, not what it is doing now. Health and alerts need the monitoring:alerts permission.
+        </p>
+        <p>
+          <strong className="text-foreground">Columns</strong> and row density are remembered in this browser.{' '}
+          <strong className="text-foreground">Views</strong> save the current filters, sort and columns under a
+          name — in this browser only; they are not shared. <strong className="text-foreground">Export CSV</strong>{' '}
+          downloads the whole filtered view (up to 10,000 devices), contains only what you can see, and is recorded
+          in the audit log.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'connect-flow',
     title: 'Connecting to a Computer',
     content: (

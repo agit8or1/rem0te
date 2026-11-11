@@ -241,6 +241,27 @@ program as newly installed.
 Monitors — offline, disk, CPU, memory, services, event-log matches, pending restart — and alerts are described in
 [monitoring.md](monitoring.md).
 
+## On the device list (0.31)
+
+The **Devices** list shows a summary of the same stored data, one row per device, without opening each one:
+
+| Column | Source | Stale after |
+|---|---|---|
+| Logged-in user | `loggedOnUser` from the live sample | 15 minutes (greyed with the sample) |
+| CPU / RAM / disk | `cpuLoadPercent`, `memoryFreeMb`/`memoryTotalMb`, `systemDiskFreeMb`/`systemDiskTotalMb`, sampled at `liveSampledAt` | 15 minutes — five missed three-minute heartbeats |
+| Pending patches, *restart* | the signed agent's patch scan (`patchPosture`) if there is one, otherwise the standard agent's update scan (`pendingUpdates`, `rebootRequired`) — the same precedence as the Patches tab | 36 hours — the Patches tab's threshold |
+
+Nothing on the list is fetched from the machine when the list loads: every value is what the last heartbeat or
+scan stored, shown with its age, and greyed once it is stale. *Not sampled* and *No scan* mean nothing has been
+reported, not zero.
+
+Filtering, sorting and paging happen on the server (`GET /endpoints/list`), so a list of thousands is never sent
+to the browser. The first step selects the caller's visible devices with the same access rules as every other
+device query; the second derives alert counts, patch counts and percentages for exactly those ids, then filters,
+sorts and pages them. **Export CSV** (`GET /endpoints/list/export.csv`) returns the whole filtered view — up to
+10,000 rows — and is written to the audit log (`ENDPOINT_LIST_EXPORTED`) before the file is sent. Device-reported
+text that a spreadsheet would read as a formula is prefixed with an apostrophe.
+
 ## See also
 
 - [monitoring.md](monitoring.md) — monitors and alerts built on this data
