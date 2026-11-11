@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
@@ -13,11 +14,11 @@ import { AccessPolicyService } from '../security-controls/access-policy.service'
 import { latestRustdeskVersion } from '../common/rustdesk-release';
 import { BLOCKER, blocker, ROLLOUT_OPEN } from '../client-updates/policy';
 import { DeviceGroupsService } from './device-groups.service';
-import { FleetBudget, manageRefusal, parseBulk, parseSelection, refusalOf, type BulkAction, type BulkResult } from './rules';
+import { FleetBudget, manageRefusal, membershipStep, parseBulk, parseSelection, refusalOf, type BulkAction, type BulkResult } from './rules';
 
 type Target = {
   id: string; name: string; customerId: string | null; tenantId: string | null; status: string; isOnline: boolean;
-  platform: string | null; endpointGroupId: string | null;
+  platform: string | null;
 };
 
 /**
@@ -37,7 +38,9 @@ type Target = {
  *     one, a made-up id) is NOT_FOUND, exactly what the single route says,
  *     and nothing about it is returned;
  *   - group membership needs manageRefusal() over the GROUP's business, and
- *     the computer must be in that business (OTHER_BUSINESS otherwise);
+ *     the computer must be in that business (OTHER_BUSINESS otherwise). A
+ *     computer may be in any number of groups (0.34), so adding one never
+ *     takes it out of another;
  *   - refresh goes through EndpointsService.requestInventoryRefresh, so the
  *     technician grant, capability and fleet-abuse admission are the single
  *     route's; the bulk path stops short of the fleet limit (FleetBudget)
@@ -73,7 +76,7 @@ export class DeviceBulkService {
     this.acl.assertCapability(a, CAP.COMPUTERS_VIEW);
     const rows = await this.prisma.endpoint.findMany({
       where: { AND: [this.acl.endpointVisibilityWhere(a), { id: { in: ids } }] },
-      select: { id: true, name: true, customerId: true, tenantId: true, status: true, isOnline: true, platform: true, endpointGroupId: true },
+      select: { id: true, name: true, customerId: true, tenantId: true, status: true, isOnline: true, platform: true },
     });
     return new Map(rows.map((r) => [r.id, r]));
   }
@@ -116,28 +119,29 @@ export class DeviceBulkService {
     }
     const group = { id: g.id, name: g.name, customerId: g.customerId };
     const why = manageRefusal(a, g.customerId);
+    // Current membership of THIS group only: other groups never matter.
+    const members = new Set(targets.length ? (await this.prisma.endpointGroupMember.findMany({
+      where: { endpointGroupId: g.id, endpointId: { in: targets.map((t) => t.id) } }, select: { endpointId: true },
+    })).map((m) => m.endpointId) : []);
     const changed: string[] = [];
     for (const t of targets) {
       const base = { endpointId: t.id, name: t.name };
-      if (why) { results.set(t.id, { ...base, ok: false, code: 'NOT_ALLOWED', reason: why }); continue; }
-      if (t.customerId !== g.customerId) {
-        results.set(t.id, { ...base, ok: false, code: 'OTHER_BUSINESS', reason: 'This computer is not in the group’s business; a group holds only its own business’s computers.' });
-        continue;
-      }
+      const step = membershipStep(action, t, group, members.has(t.id), why);
+      if (step.kind === 'refuse') { results.set(t.id, { ...base, ok: false, code: step.code, reason: step.reason }); continue; }
+      if (step.kind === 'unchanged') { results.set(t.id, { ...base, ok: true, unchanged: true }); continue; }
       if (action === 'group.add') {
-        if (t.endpointGroupId === g.id) { results.set(t.id, { ...base, ok: true, unchanged: true }); continue; }
-        if (t.endpointGroupId) {
-          const other = await this.prisma.endpointGroup.findUnique({ where: { id: t.endpointGroupId }, select: { name: true } });
-          results.set(t.id, { ...base, ok: false, code: 'IN_OTHER_GROUP', reason: `Already in the group “${other?.name ?? 'another group'}”. A computer is in one group at a time: remove it from that group first.` });
-          continue;
+        // The insert trigger (migration 0049) refuses a computer that is no
+        // longer in the group's business; a concurrent add is a duplicate key.
+        try {
+          await this.prisma.endpointGroupMember.create({ data: { endpointGroupId: g.id, endpointId: t.id, addedById: a.userId } });
+          changed.push(t.id); results.set(t.id, { ...base, ok: true });
+        } catch (e) {
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') { results.set(t.id, { ...base, ok: true, unchanged: true }); continue; }
+          this.logger.warn(`bulk group.add ${t.id}: ${String(e)}`);
+          results.set(t.id, { ...base, ok: false, code: 'CONFLICT', reason: 'This computer changed while the request ran; nothing was changed for it.' });
         }
-        // Conditional: still in this business and still in no group.
-        const w = await this.prisma.endpoint.updateMany({ where: { id: t.id, customerId: g.customerId, endpointGroupId: null }, data: { endpointGroupId: g.id } });
-        if (w.count === 1) { changed.push(t.id); results.set(t.id, { ...base, ok: true }); }
-        else results.set(t.id, { ...base, ok: false, code: 'CONFLICT', reason: 'This computer changed while the request ran; nothing was changed for it.' });
       } else {
-        if (t.endpointGroupId !== g.id) { results.set(t.id, { ...base, ok: true, unchanged: true }); continue; }
-        const w = await this.prisma.endpoint.updateMany({ where: { id: t.id, endpointGroupId: g.id }, data: { endpointGroupId: null } });
+        const w = await this.prisma.endpointGroupMember.deleteMany({ where: { endpointGroupId: g.id, endpointId: t.id } });
         if (w.count === 1) changed.push(t.id);
         results.set(t.id, { ...base, ok: true, ...(w.count === 1 ? {} : { unchanged: true }) });
       }

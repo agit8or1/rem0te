@@ -165,6 +165,40 @@ export interface BulkResult {
   unchanged?: boolean;
 }
 
+// ── Group membership (0.34: a computer may be in many groups) ──────────────
+
+/**
+ * What a group.add / group.remove does for one visible computer, decided
+ * before anything is written:
+ *   - `refuse` when the caller may not manage the group's business
+ *     (manageRefusal) or the computer is in another business — a group holds
+ *     only its own business's computers, whoever asks;
+ *   - `unchanged` when there is nothing to do (already a member / not one);
+ *   - `write` otherwise.
+ * Membership of OTHER groups never matters: 0.33's IN_OTHER_GROUP is gone.
+ */
+export type MembershipStep =
+  | { kind: 'refuse'; code: 'NOT_ALLOWED' | 'OTHER_BUSINESS'; reason: string }
+  | { kind: 'unchanged' }
+  | { kind: 'write' };
+export function membershipStep(
+  action: 'group.add' | 'group.remove',
+  t: { customerId: string | null },
+  group: { customerId: string },
+  isMember: boolean,
+  refusal: string | null,
+): MembershipStep {
+  if (refusal) return { kind: 'refuse', code: 'NOT_ALLOWED', reason: refusal };
+  if (t.customerId !== group.customerId) return { kind: 'refuse', code: 'OTHER_BUSINESS', reason: 'This computer is not in the group’s business; a group holds only its own business’s computers.' };
+  if (action === 'group.add' ? isMember : !isMember) return { kind: 'unchanged' };
+  return { kind: 'write' };
+}
+
+/** The device list's Groups CSV cell: every group, by name, "; "-separated (names are unique per business). */
+export function groupsCell(groups: { name: string | null }[] | null | undefined): string {
+  return (groups ?? []).map((g) => g.name ?? '').filter(Boolean).join('; ');
+}
+
 /**
  * The fleet-abuse guard's device and business limits, applied BEFORE a bulk
  * refresh asks it about each computer (0.33). The guard trips — pausing the

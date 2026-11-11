@@ -287,8 +287,10 @@ const SECTIONS: Section[] = [
         </p>
         <p>
           <strong className="text-foreground">Device groups</strong> (Views → Device groups…) are named groups of one
-          business&apos;s computers, for filtering and bulk actions; a computer is in one group at a time, and groups
-          grant nothing. They are managed by the same people who may share views, and every change is audited.
+          business&apos;s computers, for filtering and bulk actions. A computer can be in several groups of its
+          business — adding it to one never takes it out of another — and the Groups column lists them all. A computer
+          moved to another business leaves the old business&apos;s groups. Groups grant nothing. They are managed by the
+          same people who may share views, and every change is audited.
         </p>
         <p>
           <strong className="text-foreground">Tick rows</strong> to act on up to 200 devices at once: add to or remove
@@ -647,7 +649,13 @@ const SECTIONS: Section[] = [
           A key belongs to one business and can do only what its scopes allow — tick only what the
           integration needs. It is shown once, when it is created; only a hash is kept, so a lost key is
           revoked and replaced. Revoking takes effect at once. Keys are managed by a Business Owner, or by a
-          Platform Admin for any business. See the{' '}
+          Platform Admin for any business.
+        </p>
+        <p>
+          Creating a key asks you to <strong className="text-foreground">confirm it&apos;s you</strong>, whatever its
+          scopes: a key keeps working after you sign out, so a stolen or unattended session must not be enough to make
+          one. Your entries stay in the form while you confirm. A key cannot be edited afterwards — to change its
+          scopes, create a new one and revoke the old. Revoking never asks. See the{' '}
           <Link href="/docs/public-api" className="underline text-foreground">API guide</Link>.
         </p>
       </div>
@@ -926,10 +934,10 @@ const SECTIONS: Section[] = [
           enough. It lasts 10 minutes for that sign-in.
         </p>
         <p>
-          Making an install link, and creating an API key that can make them, always ask — for every role, and whatever
-          the step-up settings say. A link puts a computer into a business, so an unattended or stolen session must not
-          be enough. API keys that already have the enrolment scope keep working: a key cannot confirm anything, and is
-          itself the second proof.
+          Making an install link, and creating any API key, always ask — for every role, and whatever the step-up
+          settings say. A link puts a computer into a business, and a key keeps working after you sign out, so an
+          unattended or stolen session must not be enough for either. API keys that already have the enrolment scope
+          keep working: a key cannot confirm anything, and is itself the second proof.
         </p>
         <p>
           You can add passkeys and link a single sign-on provider from{' '}

@@ -120,7 +120,9 @@ at the bottom.
   archived devices.
   They combine, and *Clear* resets them. The address bar carries the current view,
   so you can bookmark it; whoever opens the link still sees only their own devices.
-- **Columns** — choose which columns show (a *Group* column is available).
+- **Columns** — choose which columns show (a *Groups* column is available; it
+  lists every group the device is in, and the CSV's *Groups* column does the same,
+  separated by `; `).
   **Compact / Comfortable** sets the row height. Both are remembered in this
   browser.
 - **Views** (0.33) — save the current filters, sort, columns and density under a
@@ -137,9 +139,15 @@ at the bottom.
   0.31 or 0.32 are offered for import once (*Import N views saved in this
   browser*).
 - **Device groups** (0.33, *Views → Device groups…*) — named, static groups of
-  one business's computers, for filtering and for acting on together. A computer
-  is in at most one group at a time (the same group an enrolment link can put it
-  in). Creating, renaming and deleting groups, and adding or removing members, is
+  one business's computers, for filtering and for acting on together. From 0.34 a
+  computer can be in **several** groups of its business: adding it to one never
+  takes it out of another, removing it from one leaves the rest, and deleting a
+  group only removes that membership. The group filter shows every device in that
+  group, and each group's count in the menu counts a device once per group it is
+  in. An enrolment link can name a group: the new device joins it when it
+  installs (re-enrolling an existing device adds that group and keeps its others).
+  A device moved to another business leaves all of the old business's groups.
+  Creating, renaming and deleting groups, and adding or removing members, is
   for a Business Owner, a technician with *computers:edit* over the whole
   business, or the MSP — never a Business User, whatever they hold, because a
   Business User may see only some of the business's computers. A group cannot
@@ -154,7 +162,7 @@ at the bottom.
   device on its own, with the same checks as doing it to that one device, and
   the result lists every device it refused and why — not visible to you, no
   permission, archived, Linux, no device secret, under an *updates* containment
-  pause, already in another group, already current. A bulk refresh counts toward
+  pause, in another business than the group, already current. A bulk refresh counts toward
   your limit on distinct computers per window (the fleet-abuse guard); the list
   stops at that limit and says so, rather than tripping it and pausing you.
   There is deliberately no bulk connect, archive, delete or approved action.

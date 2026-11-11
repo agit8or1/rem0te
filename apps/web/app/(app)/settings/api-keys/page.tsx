@@ -20,6 +20,13 @@ import { apiError } from '@/components/security-controls/shared';
  * Keys for the public API (/api/v1/pub/v1, docs/PUBLIC-API.md). A key belongs
  * to exactly one business and carries only the scopes ticked here. The key
  * itself is shown once, at creation; only its prefix is stored readably.
+ *
+ * Creating a key asks the person to confirm it is them (0.34, every key; 0.33
+ * asked only for enrollment:write). The API answers STEP_UP_REQUIRED, the
+ * StepUpDialog asks, and the interceptor retries the same request — the form
+ * is untouched throughout and cleared only once the key exists. Revoking
+ * never asks. Keys cannot be edited: to change scopes, create a new key and
+ * revoke the old one.
  */
 
 type Key = {
@@ -35,7 +42,7 @@ const SCOPE_HINT: Record<string, string> = {
   'computers:read': 'List and read computers',
   'computers:write': 'Change computers',
   'sessions:read': 'Read session history',
-  'enrollment:write': 'Create enrollment tokens (installs a computer into the business). Creating a key with this scope asks you to confirm it is you.',
+  'enrollment:write': 'Create enrollment tokens (installs a computer into the business)',
   'audit:read': 'Read the audit log',
 };
 const fmt = (d: string | null) => (d ? new Date(d).toLocaleString() : '—');
@@ -73,7 +80,13 @@ export default function ApiKeysPage() {
       setCreated({ name: k.name, key: k.key }); setName(''); setNotice(null);
       qc.invalidateQueries({ queryKey: ['apikeys'] });
     },
-    onError: (e) => setNotice({ ok: false, text: apiError(e).message }),
+    onError: (e) => {
+      // Cancelled (or failed) confirmation: nothing was created and the form is kept as it was.
+      const code = (e as { response?: { data?: { code?: string } } })?.response?.data?.code;
+      setNotice({ ok: false, text: code === 'STEP_UP_REQUIRED'
+        ? 'No key was created: creating a key needs you to confirm it is you. Your entries are kept — press Create key to try again.'
+        : apiError(e).message });
+    },
   });
   const revoke = useMutation({
     mutationFn: (id: string) => apiKeysApi.revoke(id),
@@ -164,6 +177,10 @@ export default function ApiKeysPage() {
           <Button disabled={!canCreate || create.isPending} onClick={() => create.mutate()}>
             <KeyRound className="mr-1 h-4 w-4" />Create key
           </Button>
+          <p className="text-xs text-muted-foreground">
+            You will be asked to confirm it is you: a key keeps working after you sign out, so creating one needs a fresh
+            sign-in. Scopes cannot be changed later — create a new key and revoke the old one. Revoking never asks.
+          </p>
           {needsBusiness && !target && <p className="text-xs text-muted-foreground">Choose a business above first.</p>}
         </CardContent>
       </Card>

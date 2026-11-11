@@ -31,7 +31,8 @@ export class ApiKeysController {
   @Post()
   @RequirePermissions('api_keys:write')
   async create(@Actor() actor: ActorContext, @Body() dto: CreateApiKeyDto, @Req() req: Request) {
-    // A key with enrollment:write needs a fresh re-authentication (0.33).
+    // Creating any key needs a fresh re-authentication (0.34; 0.33 asked
+    // only for enrollment:write). Revoking, below, never does.
     const u = req.user as { sub?: string; iat?: number } | undefined;
     const freshMethod = u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null;
     return { success: true, data: await this.svc.create(actor, dto, freshMethod) };

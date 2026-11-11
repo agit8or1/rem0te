@@ -179,8 +179,8 @@ export function GroupsDialog({
         <DialogHeader>
           <DialogTitle>Device groups</DialogTitle>
           <DialogDescription>
-            Static groups of one business’s computers, for filtering the list and acting on them together. A computer is in
-            one group at a time. Groups grant no access to anything. Changes are recorded in the audit log.
+            Static groups of one business’s computers, for filtering the list and acting on them together. A computer can be
+            in several groups of its business; adding it to one never takes it out of another. Groups grant no access to anything. Changes are recorded in the audit log.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2 max-h-[45vh] overflow-y-auto">

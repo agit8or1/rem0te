@@ -221,7 +221,7 @@ export class EndpointsService {
       include: {
         customer: true,
         site: true,
-        endpointGroup: true,
+        groupMemberships: { select: { group: { select: { id: true, name: true } } } },
         // The ciphertext is selected only to be collapsed into a boolean below.
         // Plaintext is reachable only through the audited password route.
         rustdeskNode: {
@@ -246,7 +246,10 @@ export class EndpointsService {
       },
     });
     if (!endpoint) throw new NotFoundException('Computer not found');
-    return this.stripSecrets(endpoint);
+    // Every group it is in (0.34), by name.
+    const { groupMemberships, ...rest } = endpoint;
+    const groups = groupMemberships.map((m) => m.group).sort((x, y) => x.name.localeCompare(y.name));
+    return this.stripSecrets({ ...rest, groups });
   }
 
   // ── Writes ────────────────────────────────────────────────────────────────
@@ -284,7 +287,8 @@ export class EndpointsService {
     }
 
     // So does a device group (0.33): a group holds only its own business's
-    // computers. Before 0.33 this id was stored unchecked.
+    // computers. Before 0.33 this id was stored unchecked. Since 0.34 it is
+    // the computer's first membership, not a column.
     if (dto.endpointGroupId) await this.assertGroupFor(dto.endpointGroupId, businessId, business.tenantId);
 
     // Typing in a RustDesk ID is a Platform Admin action. A node created this
@@ -312,7 +316,7 @@ export class EndpointsService {
         name: dto.name,
         description: dto.description,
         siteId: dto.siteId,
-        endpointGroupId: dto.endpointGroupId,
+        ...(dto.endpointGroupId ? { groupMemberships: { create: { endpointGroupId: dto.endpointGroupId, addedById: actor.userId } } } : {}),
         hostname: dto.hostname,
         platform: dto.platform,
         osVersion: dto.osVersion,
@@ -361,14 +365,18 @@ export class EndpointsService {
       if (!site) throw new BadRequestException('That site does not belong to this business');
     }
 
-    // Moving a computer to another business takes it out of its device group
-    // (0.33): a group holds only its own business's computers.
-    const leavesGroup = dto.customerId !== undefined && dto.customerId !== existing.customerId;
+    // Moving a computer to another business takes it out of every device
+    // group of the old one: the endpoint_leaves_foreign_groups trigger
+    // (migration 0049) does it in the same statement, for this path and any
+    // other that changes customerId. Which ones it left goes in the audit.
+    const movesBusiness = dto.customerId !== undefined && dto.customerId !== existing.customerId;
+    const leftGroups = movesBusiness
+      ? (await this.prisma.endpointGroupMember.findMany({ where: { endpointId: id }, select: { group: { select: { id: true, name: true } } } })).map((m) => m.group)
+      : [];
 
     const endpoint = await this.prisma.endpoint.update({
       where: { id },
       data: {
-        ...(leavesGroup ? { endpointGroupId: null } : {}),
         ...(dto.name !== undefined ? { name: dto.name } : {}),
         ...(dto.description !== undefined ? { description: dto.description } : {}),
         ...(dto.customerId !== undefined ? { customerId: dto.customerId } : {}),
@@ -386,6 +394,7 @@ export class EndpointsService {
       action: 'ENDPOINT_UPDATED', actorId: actor.userId, actorIp: actor.ip,
       tenantId: existing.tenantId ?? undefined, customerId: existing.customerId ?? undefined,
       resource: 'endpoint', resourceId: id,
+      ...(movesBusiness ? { meta: { movedToBusiness: dto.customerId ?? null, leftGroups } } : {}),
     });
     return endpoint;
   }

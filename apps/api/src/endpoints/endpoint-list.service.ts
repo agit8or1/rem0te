@@ -35,6 +35,7 @@ import { STALE_AFTER_MS as PATCH_STALE_AFTER_MS } from '../patching/summary';
 
 import type { ListQuery, SortKey } from './list-query';
 import { likeEscape } from '../common/like';
+import { groupsCell } from '../device-views/rules';
 export { SORT_KEYS, LIST_FILTER_KEYS, parseListQuery } from './list-query';
 export type { SortKey, ListQuery } from './list-query';
 
@@ -53,7 +54,7 @@ interface SqlRow {
   status: string; isOnline: boolean; lastSeenAt: Date | null; accessMode: string; deviceClass: string;
   agentVersion: string | null; updateChannel: string | null;
   customerId: string | null; customerName: string | null; siteId: string | null; siteName: string | null;
-  groupId: string | null; groupName: string | null;
+  groups: { id: string; name: string }[] | null;
   osCaption: string | null; loggedOnUser: string | null; liveSampledAt: Date | null;
   cpuLoadPercent: number | null; memoryTotalMb: number | null; memoryFreeMb: number | null;
   systemDiskTotalMb: number | null; systemDiskFreeMb: number | null;
@@ -100,7 +101,7 @@ export class EndpointListService {
   private filteredWhere(actor: ActorContext, q: ListQuery): Prisma.EndpointWhereInput {
     const and: Prisma.EndpointWhereInput[] = [this.scopedWhere(actor, q)];
     if (q.siteId) and.push({ siteId: q.siteId });
-    if (q.groupId) and.push({ endpointGroupId: q.groupId });
+    if (q.groupId) and.push({ groupMemberships: { some: { endpointGroupId: q.groupId } } });
     if (q.ids) and.push({ id: { in: q.ids } });
     if (q.online) and.push({ isOnline: q.online === 'online' });
     if (q.agent === 'signed') and.push({ updateChannel: 'signed' });
@@ -156,7 +157,7 @@ export class EndpointListService {
       SELECT e.id, e.name, e.hostname, e.platform, e."osVersion", e.status::text AS status, e."isOnline", e."lastSeenAt",
              e."accessMode"::text AS "accessMode", e."deviceClass"::text AS "deviceClass", e."agentVersion", e."updateChannel",
              e."customerId", c.name AS "customerName", e."siteId", s.name AS "siteName",
-             e."endpointGroupId" AS "groupId", g.name AS "groupName",
+             gm.groups,
              i."osCaption", i."loggedOnUser", i."liveSampledAt", i."cpuLoadPercent", i."memoryTotalMb", i."memoryFreeMb",
              i."systemDiskTotalMb", i."systemDiskFreeMb",
              d.patch_source AS "patchSource", d.patch_at AS "patchAt", d.patch_pending AS "patchPending", d.reboot_pending AS "rebootPending",
@@ -165,7 +166,12 @@ export class EndpointListService {
         FROM "Endpoint" e
         LEFT JOIN "Customer" c ON c.id = e."customerId"
         LEFT JOIN "Site" s ON s.id = e."siteId"
-        LEFT JOIN "EndpointGroup" g ON g.id = e."endpointGroupId"
+        LEFT JOIN LATERAL (
+          -- Every group the computer is in (0.34: any number, all of its own business).
+          SELECT json_agg(json_build_object('id', g.id, 'name', g.name) ORDER BY lower(g.name), g.id) AS groups
+            FROM "EndpointGroupMember" m JOIN "EndpointGroup" g ON g.id = m."endpointGroupId"
+           WHERE m."endpointId" = e.id
+        ) gm ON TRUE
         LEFT JOIN "EndpointInventory" i ON i."endpointId" = e.id
         LEFT JOIN LATERAL (
           SELECT
@@ -220,7 +226,7 @@ export class EndpointListService {
       deviceClass: r.deviceClass, accessMode: r.accessMode,
       business: r.customerId ? { id: r.customerId, name: r.customerName } : null,
       site: r.siteId ? { id: r.siteId, name: r.siteName } : null,
-      group: r.groupId ? { id: r.groupId, name: r.groupName } : null,
+      groups: r.groups ?? [],
       agent: {
         type: r.updateChannel === 'signed' ? 'signed' : r.agentVersion ? 'standard' : 'none',
         version: r.agentVersion,
@@ -287,14 +293,16 @@ export class EndpointListService {
     // Without the caller's own businessId filter, so the menu still lists the
     // others they may pick; still the caller's visibility, still 403 for a
     // foreign business via scopedWhere in the main query.
-    const groups = await this.prisma.endpoint.groupBy({
-      by: ['customerId', 'siteId', 'endpointGroupId'],
-      where: this.scopedWhere(actor, { status: q.status }),
-      _count: { _all: true },
-    });
+    const scoped = this.scopedWhere(actor, { status: q.status });
+    const [groups, members] = await Promise.all([
+      this.prisma.endpoint.groupBy({ by: ['customerId', 'siteId'], where: scoped, _count: { _all: true } }),
+      // A computer in several groups counts once in each.
+      this.prisma.endpointGroupMember.groupBy({ by: ['endpointGroupId'], where: { endpoint: scoped }, _count: { _all: true } }),
+    ]);
     const bIds = [...new Set(groups.map((g) => g.customerId).filter((x): x is string => !!x))];
     const sIds = [...new Set(groups.map((g) => g.siteId).filter((x): x is string => !!x))];
-    const gIds = [...new Set(groups.map((g) => g.endpointGroupId).filter((x): x is string => !!x))];
+    const gIds = members.map((m) => m.endpointGroupId);
+    const inGroup = new Map(members.map((m) => [m.endpointGroupId, m._count._all]));
     const [bs, ss, gs] = await Promise.all([
       bIds.length ? this.prisma.customer.findMany({ where: { id: { in: bIds } }, select: { id: true, name: true } }) : [],
       sIds.length ? this.prisma.site.findMany({ where: { id: { in: sIds } }, select: { id: true, name: true, customerId: true } }) : [],
@@ -305,7 +313,7 @@ export class EndpointListService {
       businesses: bs.map((b) => ({ id: b.id, name: b.name, count: count((g) => g.customerId === b.id) })).sort((a, b) => a.name.localeCompare(b.name)),
       sites: ss.map((s) => ({ id: s.id, name: s.name, businessId: s.customerId, count: count((g) => g.siteId === s.id) })).sort((a, b) => a.name.localeCompare(b.name)),
       // Groups among the caller's visible computers, counted over what they can see.
-      groups: gs.map((x) => ({ id: x.id, name: x.name, businessId: x.customerId, count: count((g) => g.endpointGroupId === x.id) })).sort((a, b) => a.name.localeCompare(b.name)),
+      groups: gs.map((x) => ({ id: x.id, name: x.name, businessId: x.customerId, count: inGroup.get(x.id) ?? 0 })).sort((a, b) => a.name.localeCompare(b.name)),
     };
   }
 
@@ -325,7 +333,7 @@ export class EndpointListService {
     const now = Date.now();
     const views = rows.map((r) => this.rowView(r, alerts, now));
     const header = [
-      'Name', 'Hostname', 'Business', 'Site', 'Group', 'OS', 'Status', 'Online', 'Last seen (UTC)',
+      'Name', 'Hostname', 'Business', 'Site', 'Groups', 'OS', 'Status', 'Online', 'Last seen (UTC)',
       'Agent', 'Agent version', 'Logged-in user',
       'CPU %', 'Memory used %', 'Disk used %', 'Resources sampled (UTC)', 'Resources stale',
       'Pending updates', 'Restart pending', 'Update scan source', 'Update scan (UTC)', 'Update scan stale',
@@ -334,7 +342,7 @@ export class EndpointListService {
     const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : '');
     const yn = (b: boolean | null | undefined) => (b === null || b === undefined ? '' : b ? 'yes' : 'no');
     const lines = [header, ...views.map((v) => [
-      v.name, v.hostname ?? '', v.business?.name ?? '', v.site?.name ?? '', v.group?.name ?? '', v.os ?? v.platform ?? '', v.status, yn(v.isOnline), iso(v.lastSeenAt),
+      v.name, v.hostname ?? '', v.business?.name ?? '', v.site?.name ?? '', groupsCell(v.groups), v.os ?? v.platform ?? '', v.status, yn(v.isOnline), iso(v.lastSeenAt),
       v.agent.type, v.agent.version ?? '', v.loggedOnUser ?? '',
       v.resources?.cpuPercent ?? '', v.resources?.memoryUsedPercent ?? '', v.resources?.diskUsedPercent ?? '', iso(v.resources?.sampledAt), yn(v.resources?.stale),
       v.patches.pendingCount ?? '', yn(v.patches.rebootPending), v.patches.source, iso(v.patches.checkedAt), yn(v.patches.stale),

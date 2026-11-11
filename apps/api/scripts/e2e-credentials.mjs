@@ -222,9 +222,10 @@ async function main() {
     check(t.status < 300 && !!token, 'a claim token for Acme: assigned users (Pat), the front-office group', msg(t));
     const cl = await req('POST', '/enrollment/claim', { body: { token, rustdeskId: poolRid, agentSecret: poolSecret, hostname: 'RECEPTION-2', platform: 'Windows', password: 'reception-2-permanent-pw' } });
     check(cl.status < 300, 'the installer claims the pooled computer with that token', msg(cl));
-    const ep = await prisma.endpoint.findUnique({ where: { id: pooled.endpointId }, include: { rustdeskNode: true } });
+    const ep = await prisma.endpoint.findUnique({ where: { id: pooled.endpointId }, include: { rustdeskNode: true, groupMemberships: true } });
     check(ep.customerId === acme.id && ep.tenantId === tenant.id, 'it is now in Acme (not just the tenant)', JSON.stringify({ customerId: ep.customerId, tenantId: ep.tenantId }));
-    check(ep.endpointGroupId === group.id && ep.accessMode === 'ASSIGNED_USERS' && ep.status === 'ACTIVE', 'with the token\'s group and access mode, and ACTIVE', JSON.stringify({ g: ep.endpointGroupId, m: ep.accessMode, s: ep.status }));
+    const gs = ep.groupMemberships.map((m) => m.endpointGroupId);
+    check(gs.length === 1 && gs[0] === group.id && ep.accessMode === 'ASSIGNED_USERS' && ep.status === 'ACTIVE', 'with the token\'s group (a membership, 0.34) and access mode, and ACTIVE', JSON.stringify({ g: gs, m: ep.accessMode, s: ep.status }));
     check(ep.hostname === 'RECEPTION-2' && ep.name === 'RECEPTION-2' && ep.rustdeskNode?.tenantId === tenant.id, 'named and hostnamed from the claim; the node joined the tenant', JSON.stringify({ n: ep.name, h: ep.hostname }));
     const access = await prisma.computerAccess.findMany({ where: { endpointId: ep.id } });
     check(access.length === 1 && access[0].userId === pat.id, 'Pat is assigned to it, as the token said');

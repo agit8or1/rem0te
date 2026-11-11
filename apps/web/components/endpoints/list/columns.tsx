@@ -73,7 +73,15 @@ export const COLUMNS: ColumnDef[] = [
   },
   { id: 'business', label: 'Business', defaultOn: true, sort: 'business', cell: (r) => r.business?.name ?? dash },
   { id: 'site', label: 'Site', defaultOn: true, sort: 'site', cell: (r) => r.site?.name ?? dash },
-  { id: 'group', label: 'Group', defaultOn: false, cell: (r) => r.group?.name ?? dash },
+  // Id kept as 'group' so saved views from 0.33 keep the column.
+  {
+    id: 'group', label: 'Groups', defaultOn: false,
+    cell: (r) => (r.groups.length === 0 ? dash : (
+      <div className="flex flex-wrap gap-1 max-w-[220px]" title={r.groups.map((g) => g.name).join(', ')}>
+        {r.groups.map((g) => <Badge key={g.id} variant="secondary" className="text-[10px] font-normal">{g.name}</Badge>)}
+      </div>
+    )),
+  },
   {
     id: 'os', label: 'OS', defaultOn: true, sort: 'os',
     cell: (r) => (

@@ -24,9 +24,10 @@ export type GroupRow = { id: string; tenantId: string; customerId: string | null
 
 /**
  * Static device groups (0.33). A group belongs to one business and every
- * member is a computer of that business (Endpoint.endpointGroupId: a
- * computer is in at most one group). Groups are a device-list filter; they
- * grant nothing.
+ * member is a computer of that business. Since 0.34 membership is
+ * EndpointGroupMember, so a computer may be in any number of its business's
+ * groups; the same-business rule is also a database trigger (migration
+ * 0049). Groups are a device-list filter; they grant nothing.
  *
  * Reading the business's groups needs computers:view; member counts are
  * counted over the computers the reader can see. Creating, renaming and
@@ -73,9 +74,9 @@ export class DeviceGroupsService {
       select: { id: true, name: true, description: true, customerId: true, customer: { select: { name: true } }, createdAt: true, updatedAt: true },
     });
     // Members counted over what THIS reader can see, never the raw total.
-    const counts = groups.length ? await this.prisma.endpoint.groupBy({
+    const counts = groups.length ? await this.prisma.endpointGroupMember.groupBy({
       by: ['endpointGroupId'],
-      where: { AND: [this.acl.endpointVisibilityWhere(a, scope), { status: { not: 'ARCHIVED' } }, { endpointGroupId: { in: groups.map((g) => g.id) } }] },
+      where: { endpointGroupId: { in: groups.map((g) => g.id) }, endpoint: { AND: [this.acl.endpointVisibilityWhere(a, scope), { status: { not: 'ARCHIVED' } }] } },
       _count: { _all: true },
     }) : [];
     const n = new Map(counts.map((c) => [c.endpointGroupId, c._count._all]));
@@ -139,11 +140,11 @@ export class DeviceGroupsService {
     return { id: after.id, name: after.name, description: after.description };
   }
 
-  /** Deleting a group removes its members from it (they stay where they are otherwise) and is audited with how many. */
+  /** Deleting a group removes its members from it (they keep their other groups) and is audited with how many. */
   async remove(a: ActorContext, id: string) {
     const g = await this.findManageable(a, id);
     const released = await this.prisma.$transaction(async (tx) => {
-      const r = await tx.endpoint.updateMany({ where: { endpointGroupId: g.id }, data: { endpointGroupId: null } });
+      const r = await tx.endpointGroupMember.deleteMany({ where: { endpointGroupId: g.id } });
       await tx.endpointGroup.delete({ where: { id: g.id } });
       return r.count;
     });

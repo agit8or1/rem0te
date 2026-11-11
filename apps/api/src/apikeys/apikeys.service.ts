@@ -51,11 +51,21 @@ export class ApiKeysService {
   }
 
   /**
-   * `freshMethod` is the caller's step-up method, or null. A key carrying
-   * `enrollment:write` can mint enrolment tokens with no person present, so
-   * creating one needs the same fresh re-authentication a person needs to
-   * mint a token themselves (0.33) — otherwise a stolen session would mint
-   * the key, then the tokens. Other scopes are unchanged.
+   * `freshMethod` is the caller's step-up method, or null.
+   *
+   * Creating ANY key needs a fresh re-authentication (0.34). A key is
+   * long-lived Business Owner access to its business with nobody present: it
+   * survives the session that made it, a password change and a sign-out, so
+   * a stolen or unattended session that could mint one would keep its access
+   * long after the session was revoked. 0.33 asked only for keys carrying
+   * `enrollment:write`; every scope is worth stealing.
+   *
+   * Scope is decided first (another business is a 403, a missing one a 404)
+   * and the request is validated, so nobody is asked to re-authenticate for
+   * something that would be refused anyway; nothing is written before the
+   * check. Keys are immutable after this: there is no route that widens a
+   * key's scopes or restores a revoked key (§ 33 checks both), so creation
+   * is the only way to get a key's access. Revoking never needs a step-up.
    */
   async create(actor: ActorContext, dto: { name: string; scopes: string[]; expiresInDays?: number; businessId?: string }, freshMethod: string | null) {
     // A key always belongs to exactly one business — no key is ever minted
@@ -69,12 +79,10 @@ export class ApiKeysService {
     if (!dto.name || dto.name.length < 1) throw new BadRequestException('name required');
     const validScopes = dto.scopes.filter((s) => (API_SCOPES as readonly string[]).includes(s));
     if (validScopes.length === 0) throw new BadRequestException('at least one valid scope required');
-    if (validScopes.includes('enrollment:write')) {
-      assertFresh(freshMethod, {
-        action: 'apikey.enrollment',
-        message: 'Confirm it is you to create a key that can mint enrolment tokens.',
-      });
-    }
+    assertFresh(freshMethod, {
+      action: 'apikey.create',
+      message: 'Confirm it is you to create an API key: a key keeps working after you sign out.',
+    });
 
     const { raw, prefix, hash } = generateKey();
     const expiresAt = dto.expiresInDays && dto.expiresInDays > 0
@@ -99,7 +107,7 @@ export class ApiKeysService {
       actorId: actor.userId, actorIp: actor.ip,
       action: 'API_KEY_CREATED',
       resource: 'api_key', resourceId: record.id,
-      meta: { name: record.name, scopes: validScopes },
+      meta: { name: record.name, scopes: validScopes, expiresAt: record.expiresAt, stepUpMethod: freshMethod },
     });
 
     // raw key returned ONCE — operator must save it

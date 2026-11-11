@@ -37,7 +37,8 @@ export interface DeviceRow {
   accessMode: string;
   business: { id: string; name: string | null } | null;
   site: { id: string; name: string | null } | null;
-  group: { id: string; name: string | null } | null;
+  /** Every group the computer is in (0.34: any number of its business's groups), by name. */
+  groups: { id: string; name: string }[];
   agent: { type: 'signed' | 'standard' | 'none'; version: string | null; lastHeartbeatAt: string | null };
   loggedOnUser: string | null;
   resources: {

@@ -1045,10 +1045,11 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //     one: a person needs a fresh re-authentication, whatever their role and
 //     whatever step-up actions are configured (assertFresh, never the
 //     configurable StepUpService.assert). An API key cannot step up and keeps
-//     the ability, so minting a key that carries enrollment:write needs the
-//     same fresh re-authentication. Every caller must say which proof it
-//     has; nothing else writes a DeviceClaimToken. Registering by RustDesk ID
-//     mints no credential and so is not gated.
+//     the ability, so minting a key needs the same fresh re-authentication
+//     (0.33: keys carrying enrollment:write; 0.34: every key, § 33). Every
+//     caller must say which proof it has; nothing else writes a
+//     DeviceClaimToken. Registering by RustDesk ID mints no credential and so
+//     is not gated.
 {
   const enr = read('apps/api/src/enrollment/enrollment.service.ts');
   const ctl = read('apps/api/src/enrollment/enrollment.controller.ts');
@@ -1081,11 +1082,11 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const keys = read('apps/api/src/apikeys/apikeys.service.ts');
   const keysCtl = read('apps/api/src/apikeys/apikeys.controller.ts');
   const keyFn = keys.slice(keys.indexOf('async create('), keys.indexOf('async revoke('));
-  check('a key that can mint enrolment tokens needs a fresh re-authentication to create',
-    /if \(validScopes\.includes\('enrollment:write'\)\) \{\s*assertFresh\(freshMethod, \{/.test(keyFn)
-      && keyFn.indexOf("validScopes.includes('enrollment:write')") < keyFn.indexOf('apiKey.create(')
+  check('a key that can mint enrolment tokens needs a fresh re-authentication to create (every key does since 0.34, § 33)',
+    /\n    assertFresh\(freshMethod, \{\s*action: 'apikey\.create',/.test(keyFn)
+      && keyFn.indexOf('assertFresh(freshMethod') < keyFn.indexOf('apiKey.create(')
       && /this\.stepUp\.read\(req, u\.sub, u\.iat\)\?\.method \?\? null : null;\s*return \{ success: true, data: await this\.svc\.create\(actor, dto, freshMethod\) \};/.test(keysCtl),
-    'ApiKeysService.create must assertFresh on enrollment:write (the filtered scopes) before writing; the controller passes the step-up');
+    'ApiKeysService.create must assertFresh before writing; the controller passes the step-up');
   const eps = read('apps/api/src/endpoints/endpoints.service.ts');
   check('registering by RustDesk ID mints no credential (which is why it is not gated)',
     /rustdeskNode: \{ create: \{ tenantId: business\.tenantId, rustdeskId: dto\.rustdeskId, platform: dto\.platform \} \},/.test(eps)
@@ -1126,7 +1127,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /where: this\.listWhere\(actor, search \? likeEscape\(search\) : undefined\),/.test(read('apps/api/src/businesses/businesses.service.ts'))
       && /where: this\.listWhere\(actor, businessId\),/.test(read('apps/api/src/sites/sites.service.ts'))
       && /where: this\.memberWhere\(actor, businessId\),/.test(read('apps/api/src/users/users.service.ts'))
-      && /where: this\.scopedWhere\(actor, \{ status: q\.status \}\)/.test(read('apps/api/src/endpoints/endpoint-list.service.ts')),
+      && /const scoped = this\.scopedWhere\(actor, \{ status: q\.status \}\);[\s\S]{0,200}where: scoped,/.test(read('apps/api/src/endpoints/endpoint-list.service.ts')),
     'GET /businesses, /sites, /users and the device list must build their where with the builders search uses');
   {
     // 0.33: the list routes' own searches escape too, with the same helper —
@@ -1192,7 +1193,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 
   check('bulk: exactly four repeatable actions, and nothing that connects, archives, deletes or runs an action',
     /export const BULK_ACTIONS = \['group\.add', 'group\.remove', 'inventory\.refresh', 'client\.update'\] as const;/.test(rules)
-      && !/\b(authorizeConnect|connect\(|archive|restore\(|\.delete\(|deleteMany|ActionsService|actionJob|createPlan|SignerClient|scriptVersion)\b/i.test(code(bulkSvc).replace(/endpointGroup\.findUnique/g, '')),
+      && !/\b(authorizeConnect|connect\(|archive|restore\(|\.delete\(|deleteMany|ActionsService|actionJob|createPlan|SignerClient|scriptVersion)\b/i.test(code(bulkSvc).replace(/this\.prisma\.endpointGroupMember\.deleteMany\(\{ where: \{ endpointGroupId: g\.id, endpointId: t\.id \} \}\)/g, '')),
     'BULK_ACTIONS must stay the four, and the bulk service must not reach connect/archive/delete/approved actions');
   check('bulk: at most 200 per request, counted before de-duplication, for the export too',
     /export const BULK_MAX = 200;/.test(rules)
@@ -1226,20 +1227,21 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('groups: every write checks manageRefusal first, and a member must be in the group’s business',
     /async create\(a: ActorContext, raw: unknown\) \{[\s\S]{0,400}const why = manageRefusal\(a, customerId\);\s*if \(why\) throw new ForbiddenException/.test(groupSvc)
       && /const g = await this\.findManageable\(a, id\);/.test(groupSvc.slice(groupSvc.indexOf('async update('))) && /const g = await this\.findManageable\(a, id\);/.test(groupSvc.slice(groupSvc.indexOf('async remove(')))
-      && /const why = manageRefusal\(a, g\.customerId\);/.test(bulkSvc) && /if \(t\.customerId !== g\.customerId\) \{/.test(bulkSvc)
-      && /updateMany\(\{ where: \{ id: t\.id, customerId: g\.customerId, endpointGroupId: null \}, data: \{ endpointGroupId: g\.id \} \}\)/.test(bulkSvc),
-    'create/update/remove and bulk membership must check manageRefusal; additions are conditional on the business');
+      && /const why = manageRefusal\(a, g\.customerId\);/.test(bulkSvc)
+      && /const step = membershipStep\(action, t, group, members\.has\(t\.id\), why\);\s*if \(step\.kind === 'refuse'\)/.test(bulkSvc)
+      && /if \(refusal\) return \{ kind: 'refuse', code: 'NOT_ALLOWED'/.test(rules) && /if \(t\.customerId !== group\.customerId\) return \{ kind: 'refuse', code: 'OTHER_BUSINESS'/.test(rules),
+    'create/update/remove and bulk membership must check manageRefusal and the business (membershipStep); the 0049 trigger backs the insert (§ 33)');
   check('groups: another business’s group is a 404',
     /if \(!g\.customerId \|\| g\.customerId !== a\.businessId\) throw new NotFoundException\('Group not found'\);/.test(groupSvc), 'findVisible must compare the business');
   const eps = read('apps/api/src/endpoints/endpoints.service.ts');
   const enr = read('apps/api/src/enrollment/enrollment.service.ts');
-  check('a computer gets only its own business’s group: creation, enrolment tokens, claims, and moving business',
+  check('a computer gets only its own business’s group: creation, enrolment tokens, claims (moving business: § 33’s trigger)',
     /if \(dto\.endpointGroupId\) await this\.assertGroupFor\(dto\.endpointGroupId, businessId, business\.tenantId\);/.test(eps)
       && /where: \{ id: groupId, OR: \[\{ customerId: businessId \}, \{ customerId: null, tenantId \}\] \}/.test(eps)
-      && /\.\.\.\(leavesGroup \? \{ endpointGroupId: null \} : \{\}\)/.test(eps)
       && /where: \{ id: dto\.endpointGroupId, OR: \[\{ customerId: businessId \}, \{ customerId: null, tenantId: business\.tenantId \}\] \}/.test(enr)
-      && /endpointGroupId: groupId,/.test(enr) && !/endpointGroupId: record\.endpointGroupId/.test(enr),
-    'create, update, token minting and claim must all tie the group to the business');
+      && /groupMemberships: \{ create: \{ endpointGroupId: groupId \} \}/.test(enr) && /data: \[\{ endpointGroupId: groupId, endpointId: endpoint\.id \}\]/.test(enr)
+      && !/endpointGroupId: record\.endpointGroupId/.test(enr.replace(/where: \{ id: record\.endpointGroupId,/, '')),
+    'create, token minting and claim must all tie the group to the business; the claim uses the re-checked groupId, never the token\'s raw id');
   const views = [...ctl.matchAll(/@(Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)')?\s*\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''}`);
   const handlers = ctl.split(/\n  @(?:Get|Post|Put|Patch|Delete)\(/).slice(1);
   check('views and groups: every route names its capability, no route runs a view, bulk has two routes',
@@ -1441,6 +1443,85 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('macOS is a read-only agent platform for every console refusal',
     /if \(isMacPlatform\(platform\)\) return 'macOS';/.test(plat) && /'MACOS_AGENT_READ_ONLY'/.test(plat),
     'readOnlyAgentOs must return macOS for a Mac, with its own refusal code');
+}
+
+// 33. API keys and device-group membership (0.34).
+//     A key is long-lived Business Owner access that outlives the session
+//     that made it, so creating ANY key needs a fresh re-authentication
+//     (assertFresh, unconditional — 0.33 asked only for enrollment:write),
+//     after scope and before the row is written. Keys are immutable: the only
+//     routes are list, create and revoke; nothing widens a key's scopes or
+//     clears revokedAt, so creation is the one way to get a key's access, and
+//     revoking (never gated) only ever takes it away.
+//     A computer may be in many groups (EndpointGroupMember). The rule that a
+//     group holds only its own business's computers is two database
+//     triggers (migration 0049): the insert is refused across businesses, and
+//     a computer that changes business or tenant leaves every group not its
+//     new business's own. Endpoint.endpointGroupId is gone, and only the
+//     known paths write membership rows.
+{
+  const keys = read('apps/api/src/apikeys/apikeys.service.ts');
+  const keysCtl = read('apps/api/src/apikeys/apikeys.controller.ts');
+  const keyFn = keys.slice(keys.indexOf('async create('), keys.indexOf('async revoke('));
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  check('creating any API key needs a fresh re-authentication, after scope and validation, before the write',
+    /\n    assertFresh\(freshMethod, \{\s*action: 'apikey\.create',/.test(keyFn)
+      && !/if \([^)]*\) \{\s*assertFresh\(freshMethod/.test(keyFn)
+      && keyFn.indexOf('this.acl.requireScope(actor') < keyFn.indexOf('assertFresh(freshMethod')
+      && keyFn.indexOf("if (validScopes.length === 0)") < keyFn.indexOf('assertFresh(freshMethod')
+      && keyFn.indexOf('assertFresh(freshMethod') < keyFn.indexOf('this.prisma.apiKey.create(')
+      && /stepUpMethod: freshMethod/.test(keyFn),
+    'ApiKeysService.create: requireScope → validate → assertFresh (no condition around it) → apiKey.create; the audit records the method');
+  const routes = [...keysCtl.matchAll(/@(Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)')?\s*\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''}`.trim());
+  check('API keys are immutable: list, create and revoke are the only routes, and revoke needs no step-up',
+    JSON.stringify(routes) === JSON.stringify(['GET', 'POST', 'DELETE :id'])
+      && !/stepUp|freshMethod/.test(keysCtl.slice(keysCtl.indexOf("@Delete(':id')")))
+      && /@Controller\('apikeys'\)/.test(keysCtl),
+    `routes: ${routes.join(', ')} — a route that edits a key needs its own step-up decision here`);
+  const keyWriters = walk('apps/api/src').filter((f) => !f.endsWith('.spec.ts') && /\.apiKey\.(create|createMany|update|updateMany|upsert)\(/.test(read(f)));
+  const updates = [...strip(keys).matchAll(/this\.prisma\.apiKey\.update\(\{[^;]*?data: \{([^}]*)\}/g)].map((m) => m[1].trim());
+  check('nothing widens a key or restores a revoked one',
+    keyWriters.length === 1 && keyWriters[0].endsWith('apikeys/apikeys.service.ts')
+      && !/\.apiKey\.(updateMany|upsert|createMany)\(/.test(keys)
+      && updates.length === 2 && updates.every((d) => /^(revokedAt: new Date\(\)|lastUsedAt: new Date\(\))$/.test(d))
+      && !/revokedAt:\s*null/.test(strip(keys)),
+    `apiKey writers: ${keyWriters.join(', ')}; update data: ${JSON.stringify(updates)}`);
+  const dlg = read('apps/web/components/auth/step-up-dialog.tsx');
+  check('the console asks for the step-up and retries, keeping the form',
+    /'apikey\.create':/.test(dlg) && /cfg\._stepUpRetried = true;\s*return api\.request\(cfg\);/.test(read('apps/web/lib/api-client.ts')),
+    'StepUpDialog must label apikey.create; the interceptor must retry the original request');
+
+  const mig = read('apps/api/prisma/migrations/0049_device_group_members/migration.sql');
+  const schema = read('apps/api/prisma/schema.prisma');
+  const model = schema.slice(schema.indexOf('model Endpoint {'), schema.indexOf('}', schema.indexOf('model Endpoint {')));
+  check('membership is a join table and Endpoint.endpointGroupId is gone',
+    /model EndpointGroupMember \{[\s\S]*?@@id\(\[endpointGroupId, endpointId\]\)/.test(schema)
+      && !/^\s*endpointGroupId\b/m.test(model) && /groupMemberships EndpointGroupMember\[\]/.test(model)
+      && /ALTER TABLE "Endpoint" DROP COLUMN "endpointGroupId";/.test(mig),
+    'EndpointGroupMember with a composite key; no endpointGroupId on Endpoint');
+  check('the database refuses a cross-business membership and drops foreign groups on a move',
+    /CREATE TRIGGER endpoint_group_member_same_business\s+BEFORE INSERT OR UPDATE ON "EndpointGroupMember"/.test(mig)
+      && /IF g_customer IS NOT NULL THEN\s+IF e_customer IS DISTINCT FROM g_customer THEN\s+RAISE EXCEPTION/.test(mig)
+      && /ELSIF e_tenant IS DISTINCT FROM g_tenant THEN\s+RAISE EXCEPTION/.test(mig)
+      && /CREATE TRIGGER endpoint_leaves_foreign_groups\s+AFTER UPDATE OF "customerId", "tenantId" ON "Endpoint"/.test(mig)
+      && /AND \(g\."customerId" IS NULL OR g\."customerId" IS DISTINCT FROM NEW\."customerId"\);/.test(mig)
+      && mig.indexOf('CREATE TRIGGER endpoint_group_member_same_business') < mig.indexOf('INSERT INTO "EndpointGroupMember"'),
+    'migration 0049 must create both triggers, the insert check before the copy of 0.33 memberships');
+  const memberWriters = walk('apps/api/src').filter((f) => !f.endsWith('.spec.ts') && /endpointGroupMember\.(create|createMany|upsert|update|updateMany)\(|groupMemberships: \{ create:/.test(read(f))).sort();
+  check('only the known paths add a computer to a group',
+    JSON.stringify(memberWriters) === JSON.stringify(['apps/api/src/device-views/device-bulk.service.ts', 'apps/api/src/endpoints/endpoints.service.ts', 'apps/api/src/enrollment/enrollment.service.ts'])
+      && !/endpointGroupMember\.(update|updateMany|upsert)\(/.test(memberWriters.map(read).join('\n')),
+    `writers: ${memberWriters.join(', ')} — a new path must check the business (and rely on the trigger)`);
+  const listSvc = read('apps/api/src/endpoints/endpoint-list.service.ts');
+  check('the group filter and facet stay inside the caller’s visibility',
+    /if \(q\.groupId\) and\.push\(\{ groupMemberships: \{ some: \{ endpointGroupId: q\.groupId \} \} \}\);/.test(listSvc)
+      && /this\.prisma\.endpointGroupMember\.groupBy\(\{ by: \['endpointGroupId'\], where: \{ endpoint: scoped \}/.test(listSvc)
+      && /const scoped = this\.scopedWhere\(actor, \{ status: q\.status \}\);/.test(listSvc)
+      && /where: \{ endpointGroupId: \{ in: groups\.map\(\(g\) => g\.id\) \}, endpoint: \{ AND: \[this\.acl\.endpointVisibilityWhere\(a, scope\),/.test(read('apps/api/src/device-views/device-groups.service.ts')),
+    'filteredWhere AND-s the membership filter; facet and group-list counts go through scopedWhere / endpointVisibilityWhere');
+  check('the API key and device-group suites run in CI',
+    /\benrol-stepup\b/.test(read('scripts/run-e2e.sh')) && /\bdevice-views\b/.test(read('scripts/run-e2e.sh')) && /unit-device-views\.mjs/.test(read('.github/workflows/ci.yml')),
+    'run-e2e.sh must run enrol-stepup and device-views; ci.yml unit-device-views');
 }
 
 if (failures.length > 0) {
