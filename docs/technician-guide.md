@@ -29,17 +29,66 @@ next. Recovery codes work here too, and each one is single-use.
 
 ## 2. Find a computer
 
-**Devices** lists every machine enrolled in the businesses you can see.
+**Devices** lists every machine you can see: in the businesses you can reach,
+and — for a Business User — only the machines assigned to you or shared
+company-wide; for a technician, only the machines your assignment names.
 
 ![Computers list](screenshots/guide/tech-02-computers.png)
 
-1. **Search** — filters by name or hostname as you type.
-2. **The table** — Business tells you who the machine belongs to, RustDesk ID is
-   its remote-control identity, Last Seen is the most recent agent check-in, and
-   Status is Online or Offline.
+1. **Search** — matches name, hostname, IP address, OS, alias, RustDesk ID, business,
+   site and the signed-in user. The server does the matching, so it searches every page,
+   not just the one on screen.
+2. **The table** — one row per device. Online devices come first, then by name;
+   click any column heading to sort by it instead (click again to reverse).
 3. **Enroll Client** — install the agent on a new machine (§5).
 4. **Generate Enrollment Link** — a one-time link you can send to someone else to
    run themselves.
+
+*(The screenshot predates 0.31's columns; the numbered parts are where they were.)*
+
+### What the columns mean
+
+| Column | What it shows |
+|---|---|
+| **Device** | Name, hostname, and a dot: green online, grey offline. |
+| **Business / Site** | Who the machine belongs to and where. |
+| **OS** | An icon and the reported Windows edition or platform. |
+| **Health** | The worst *open* monitoring alert — Critical, Warning, Info — or *No open alerts*. That is not a promise nothing is wrong, only that no monitor says so. |
+| **Agent** | *Signed* (the 0.27+ signed agent), *Standard*, or *No agent report*, with when it last checked in. |
+| **Last seen** | *Online now*, or how long ago it was last heard from. |
+| **Logged-in user** | Who the last heartbeat said was signed in. |
+| **CPU / RAM / disk** | The last resource sample and its age. |
+| **Pending patches** | From the last update scan: how many are waiting, and a *restart* tag if Windows wants one. |
+| **Alerts** | How many monitoring alerts are open (or acknowledged). Click it for the device's Monitoring tab. |
+
+**Every number says how old it is, and an old one is greyed.** A resource sample
+is stale after 15 minutes (five missed heartbeats); an update scan after 36 hours.
+A greyed value is what the machine last said, not what it is doing now.
+
+Health and Alerts need the **monitoring:alerts** permission. Without it those
+columns are not offered and you cannot filter or sort by them — the list says so
+at the bottom.
+
+### Filters, columns and saved views
+
+- **Filters** — business (when you can see more than one), site, online/offline,
+  open or critical alerts, *Restart pending*, agent type, and archived devices.
+  They combine, and *Clear* resets them. The address bar carries the current view,
+  so you can bookmark it; whoever opens the link still sees only their own devices.
+- **Columns** — choose which columns show. **Compact / Comfortable** sets the row
+  height. Both are remembered in this browser only.
+- **Views** — save the current filters, sort and columns under a name. Views are
+  stored in this browser only: they are not shared, and do not follow you to
+  another computer.
+- **Export CSV** — downloads every device in the current filtered view (not just
+  this page), up to 10,000; narrow the filters if there are more. It needs
+  *computers:view*, contains exactly what you can see, and **each export is
+  recorded in the audit log** with its filters and row count.
+- **Connect** on a row works exactly as it does on the device page. **⋯** opens the
+  device, or its Patches, Monitoring or Test connection tab, or copies its hostname.
+
+There is no RustDesk ID column any more. The ID is still on the device's page,
+and search still finds a device by it.
 
 **Online means the agent checked in within the last 30 minutes.** The agent
 heartbeats every 3 minutes, so a machine that has genuinely dropped shows Offline

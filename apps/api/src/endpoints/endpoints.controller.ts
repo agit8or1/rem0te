@@ -22,6 +22,7 @@ import { RateLimit } from '../common/throttling';
 import { StepUpService } from '../auth/step-up.service';
 import { SessionEventsService } from '../sessions/session-events.service';
 import { PublicUrlService } from '../platform/public-url.service';
+import { EndpointListService, parseListQuery } from './endpoint-list.service';
 
 /**
  * Computers.
@@ -46,6 +47,7 @@ export class EndpointsController {
     private readonly stepUp: StepUpService,
     private readonly sessionEvents: SessionEventsService,
     private readonly urls: PublicUrlService,
+    private readonly list_: EndpointListService,
   ) {}
 
   @Get('connected')
@@ -62,6 +64,29 @@ export class EndpointsController {
   @Get('mine')
   async mine(@Actor() actor: ActorContext) {
     return { success: true, data: await this.svc.myComputers(actor) };
+  }
+
+  /**
+   * The device list (0.31): server-side search, filters, sort and pages over
+   * the computers this caller can see. Scoping lives in EndpointListService.
+   */
+  @Get('list')
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  async deviceList(@Actor() actor: ActorContext, @Query() q: Record<string, unknown>) {
+    return { success: true, data: await this.list_.list(actor, parseListQuery(q)) };
+  }
+
+  /** The same view as CSV, every page at once. Audited (ENDPOINT_LIST_EXPORTED) before it is sent. */
+  @Get('list/export.csv')
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  @RateLimit(10)
+  async deviceListExport(@Actor() actor: ActorContext, @Query() q: Record<string, unknown>, @Res() res: Response) {
+    const out = await this.list_.exportCsv(actor, parseListQuery(q));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${out.filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Rows', String(out.rows));
+    res.send(out.csv);
   }
 
   /**
