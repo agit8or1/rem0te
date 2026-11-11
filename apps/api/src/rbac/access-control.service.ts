@@ -297,11 +297,24 @@ export class AccessControlService {
   // ── Object-level checks ───────────────────────────────────────────────────
 
   /**
-   * Confirm a computer is inside the caller's business before anything is
-   * read from or written to it.
+   * Confirm the caller may see this computer before anything is read from or
+   * written to it: the per-id form of `endpointVisibilityWhere`.
    *
-   * Deliberately raises NotFound rather than Forbidden: a caller poking at
-   * another business's ids learns nothing about whether they exist.
+   *   • Platform Admin: any computer.
+   *   • Business Owner: any computer in their business.
+   *   • Technician: the computers their assignment names (per capability).
+   *   • Business User: a computer in their business that is COMPANY_WIDE or
+   *     granted to them (ComputerAccess, inside its dates). Business scope
+   *     alone is not enough — until 0.31.2 it was, and every `:id` route let
+   *     a Business User read and change computers granted only to others.
+   *
+   * Seeing is not connecting: a grant's weekly schedule is not checked here,
+   * exactly as the list does not check it. `canReachEndpoint` enforces the
+   * schedule wherever a session, credential or command is released.
+   *
+   * Deliberately raises NotFound rather than Forbidden, for every refusal: a
+   * caller poking at ids they may not see learns nothing about whether they
+   * exist.
    */
   async assertEndpointInScope(actor: ActorContext, endpointId: string, capability: Capability | null = null) {
     const endpoint = await this.prisma.endpoint.findUnique({
@@ -316,8 +329,17 @@ export class AccessControlService {
       }
       // A technician assigned to named computers cannot address any other,
       // even inside the same business — same NotFound as a foreign id.
-      if (actor.technician && !technicianGrantAllows(actor.technician, capability, endpoint.id)) {
-        throw new NotFoundException('Computer not found');
+      if (actor.technician) {
+        if (!technicianGrantAllows(actor.technician, capability, endpoint.id)) {
+          throw new NotFoundException('Computer not found');
+        }
+      } else if (!this.isBusinessOwner(actor) && endpoint.accessMode !== 'COMPANY_WIDE') {
+        // The Business User rule, taken from endpointVisibilityWhere itself so
+        // the list and the per-id check cannot drift apart.
+        const visible = await this.prisma.endpoint.count({
+          where: { AND: [{ id: endpoint.id }, this.endpointVisibilityWhere(actor)] },
+        });
+        if (visible === 0) throw new NotFoundException('Computer not found');
       }
     }
     return endpoint;

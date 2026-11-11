@@ -5,7 +5,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { HostMetricsService } from './host-metrics.service';
-import { CAP } from '../rbac/capabilities';
 
 @Injectable()
 export class AdminService {
@@ -109,84 +108,6 @@ export class AdminService {
     });
 
     return updated;
-  }
-
-  /**
-   * Search across businesses, users and computers.
-   *
-   * The scope filter is the same one every other read uses: a Platform Admin
-   * searches globally, everyone else searches inside their own business only.
-   * There is no code path that returns a row from another business.
-   */
-  async search(actor: ActorContext, query: string) {
-    const q = query.trim();
-    if (q.length < 2) {
-      return { businesses: [], users: [], computers: [], query: q };
-    }
-
-    const scope = this.acl.resolveScope(actor);
-    const like = { contains: q, mode: 'insensitive' as const };
-    const canSeeUsers = actor.isPlatformAdmin || this.acl.can(actor, CAP.USERS_VIEW);
-    const canSeeComputers = actor.isPlatformAdmin || this.acl.can(actor, CAP.COMPUTERS_VIEW);
-
-    const [businesses, users, computers] = await Promise.all([
-      this.prisma.customer.findMany({
-        where: {
-          isArchived: false,
-          ...(scope ? { id: scope } : {}),
-          OR: [{ name: like }, { code: like }, { email: like }, { city: like }],
-        },
-        select: { id: true, name: true, code: true, city: true, isActive: true },
-        take: 10,
-      }),
-
-      canSeeUsers
-        ? this.prisma.membership.findMany({
-            where: {
-              ...(scope ? { customerId: scope } : {}),
-              user: { OR: [{ email: like }, { firstName: like }, { lastName: like }] },
-            },
-            select: {
-              user: { select: { id: true, email: true, firstName: true, lastName: true, status: true } },
-              customer: { select: { id: true, name: true } },
-              role: { select: { type: true } },
-            },
-            take: 10,
-          })
-        : Promise.resolve([]),
-
-      canSeeComputers
-        ? this.prisma.endpoint.findMany({
-            where: {
-              ...(scope ? { customerId: scope } : {}),
-              OR: [
-                { name: like },
-                { hostname: like },
-                { ipAddress: like },
-                { platform: like },
-                { osVersion: like },
-                { aliases: { some: { alias: like } } },
-                { rustdeskNode: { rustdeskId: like } },
-              ],
-            },
-            select: {
-              id: true, name: true, hostname: true, platform: true, osVersion: true,
-              ipAddress: true, status: true, isOnline: true,
-              customer: { select: { id: true, name: true } },
-              rustdeskNode: { select: { rustdeskId: true } },
-            },
-            take: 20,
-          })
-        : Promise.resolve([]),
-    ]);
-
-    return {
-      query: q,
-      scope: scope ? 'business' : 'platform',
-      businesses,
-      users: users.map((m) => ({ ...m.user, business: m.customer, level: m.role.type })),
-      computers,
-    };
   }
 
   private runAsync(cmd: string, args: string[], timeoutMs: number): Promise<string> {

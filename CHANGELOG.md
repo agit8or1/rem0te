@@ -5,6 +5,92 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.31.2] — 2026-11-11 · *Workbench*
+
+### Security
+- **A Business User could read and change, by id, computers in their business that were granted only to
+  someone else.** A Business User sees a computer when it is granted to them (a `ComputerAccess` row inside its
+  dates) or marked company-wide. The device list, dashboard, map and support-request picker applied that rule
+  (`endpointVisibilityWhere`), but `AccessControlService.assertEndpointInScope`, the per-id check behind every
+  `:id` route, checked only business scope and technician grants. A Business User who knew or guessed a computer's
+  id therefore got it back from routes the list would never have shown it on. The symptom: the computer was
+  absent from *Devices*, but `GET /endpoints/:id` returned it in full. With the capabilities a route asks for, the
+  same user could also, on that computer:
+  - read its details, inventory, last event-log result, patch status, approved-action history, connection
+    diagnostics and report, diagnostics-catalog entries, run history and results, notes, who has access
+    (`/access`), and the access review;
+  - rename or describe it, tag it, add aliases, archive and restore it, queue an inventory refresh and update scan,
+    queue an agent reinstall, request a read-only diagnostic (201), add a note, link a Tactical RMM agent, set a
+    maintenance window on it, and issue an enrolment token for it;
+  - with `users:manage`, grant themselves (or anyone) access, revoke the person it was granted to, and, with
+    `computers:edit`, make it company-wide. After that, connecting was genuinely allowed.
+
+  Connecting, the Connect script, launcher tokens, sessions and the password routes were not exposed, because they
+  also call `canReachEndpoint`. The password and rotate routes did answer 403 "You have not been given access"
+  rather than 404, which confirmed the computer existed. The monitoring view of one computer already called
+  `canReachEndpoint` and was not exposed.
+
+  `assertEndpointInScope` now applies the Business User rule. It takes the rule from `endpointVisibilityWhere`
+  itself (`count({ where: { AND: [{ id }, endpointVisibilityWhere(actor)] } })`) so the list and the per-id check
+  cannot drift apart again, and it answers with the same `404 Computer not found` as an id in another business or
+  one that does not exist. Owners, Platform Admins and technicians are unchanged. A company-wide computer needs no
+  query. A grant's weekly schedule is still not part of *seeing*, exactly as in the list: a weekday-only grant
+  still shows the computer at the weekend, and connecting is still refused by `canReachEndpoint`. No route needed
+  a weaker variant. Support requests already choose computers through `endpointVisibilityWhere`, offboarding does not
+  use this check, and the access review now needs the same visibility as the computer page it is shown on.
+  Because the fix is in the shared check, all 53 call sites are covered. That includes the 0.31 diagnostics-catalog
+  routes, which another review found independently.
+- **`GET /admin/search` is removed.** It filtered computers by business alone, so a Business User's search returned
+  computers granted only to others, with name, hostname, IP address and RustDesk ID. A technician assigned one
+  computer got every computer in the business. Nothing in the web app called it. The unused `adminApi.search`
+  client is removed too. 0.33's global search replaces it, and that search is built from each list's own rule.
+- **Invariant §21** (`scripts/check-security-invariants.mjs`): `assertEndpointInScope` must apply
+  `endpointVisibilityWhere` to a Business User with the same NotFound, it must be the only per-computer scope check
+  (a weaker variant is a review, not a default), and `/admin/search` must be absent or use
+  `endpointVisibilityWhere`. Removing each guard fails the check.
+
+### Tests
+- New `apps/api/scripts/e2e-endpoint-visibility.mjs`, added to `scripts/run-e2e.sh`. It runs its own API on 3341.
+  The restricted Business User holds every business capability, so only visibility can refuse her. She calls 44
+  per-computer routes (reads and writes) on a computer granted only to a colleague. Each route must answer
+  `404 Computer not found` and leave the computer unchanged, and the same route on her granted computer is the
+  control. It also checks admin search as a Business User and as a one-computer technician. Allowed: company-wide,
+  out-of-hours scheduled (seen but not connected to), owner, Platform Admin and technician. Refused: expired grant,
+  not-yet-started grant, another business, and a byte-identical answer to a nonexistent id.
+- `e2e-business-access.mjs`: its two `/admin/search` checks asserted the old route's results. They now assert that
+  it is gone (404).
+
+### Upgrade notes
+- API only, plus `docs/` and the regenerated in-app docs bundle. The web change only removes an unused client
+  function. No schema or dependency change: rebuild the API, rsync `dist`, copy `version.json` and `CHANGELOG.md`,
+  and restart `reboot-remote-api`. Rebuild the web too if you want the docs bundle and the version banner current.
+- An integration or script that called `GET /api/v1/admin/search` now gets 404.
+
+### Verification
+- `e2e-endpoint-visibility`: **64 passed, 48 failed** against the unfixed build. The failures were all 3 search
+  checks, 39 of the 44 routes, the unchanged-computer check, the expired and not-started grants (4), and the
+  nonexistent-id comparison. Of those 39 routes, 28 returned or changed data (2xx). The other 11 refused with an
+  error other than not-found (400, 403, 500, or "Request not found"), which still confirmed that the computer
+  exists. The 5 that already refused were the monitoring view, the Connect script, a catalog action request,
+  launcher tokens and Connect.
+  **112 passed, 0 failed** after the fix.
+- Every suite on a Business User path passes against the fixed build, each API-backed one on a freshly started
+  API: device-list 113, business-access 83, full (proof passed), smoke (passed), security-audit 52,
+  support-requests 47, offboarding 63, session-mutations 43, credentials 44, presets 113, dashboard 53,
+  diagnostics-catalog 70, monitoring 108. The rest of `run-e2e.sh` also passes: security-features 42,
+  integration 77, public-api (passed), public-address 43, rollouts 46, sso-passkeys 70, candidate-password
+  (passed), security-regression (passed), containment 70, approved-action 76, staged-patching 67,
+  signed-updates 46, ticket-workflow 53.
+- Two suites asserted the old behaviour and were changed. `e2e-offboarding`: a member with no grant on the computer
+  got 403 from the access review, and now gets 404. A new check covers a member who can see the computer but lacks
+  `users:view`, which is still 403. `e2e-security-audit` M4: password reveal and set on an ungranted computer now
+  return 404, not 403. The `users:manage` check for changing access mode now runs on a computer the editor is
+  granted, so that the refusal it tests is the capability and not visibility.
+- `pnpm -r lint`, `tsc --noEmit` in both apps, `nest build`, `check-versions.mjs` and the security invariants pass.
+  `docs/API-REFERENCE.md` was regenerated (382 routes) and matches the runtime route table.
+
+---
+
 ## [0.31.1] — 2026-11-11 · *Workbench*
 
 ### Fixed

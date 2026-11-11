@@ -255,15 +255,19 @@ try {
   // ── M4 + access mode ───────────────────────────────────────────────────
   section('M4 — computers:edit does not bypass per-computer grants');
   {
+    // Since 0.31.2 an ungranted computer is not visible to a Business User at
+    // all, so these are the same 404 as a computer that does not exist (they
+    // were 403 when the per-id check stopped at business scope).
     const pw = await req('GET', `/endpoints/${epA.id}/password`, { cookie: cEditorA });
-    check(pw.status === 403, 'password reveal refused without a grant', `HTTP ${pw.status}`);
+    check(pw.status === 404, 'password reveal refused without a grant (404: not visible)', `HTTP ${pw.status}`);
     const set = await req('PATCH', `/endpoints/${epA.id}/password`, { cookie: cEditorA, body: { password: 'x' } });
-    check(set.status === 403 || set.status === 400, 'password set refused without a grant', `HTTP ${set.status}`);
-    const mode = await req('PATCH', `/endpoints/${epA.id}/access-mode`, { cookie: cEditorA, body: { mode: 'COMPANY_WIDE' } });
-    check(mode.status === 403, 'access-mode change needs users:manage', `HTTP ${mode.status}`);
+    check(set.status === 404, 'password set refused without a grant (404: not visible)', `HTTP ${set.status}`);
     const lt = await req('POST', '/launcher/token', { cookie: cEditorA, body: { endpointId: epA.id } });
     check(lt.status === 404 || lt.status === 403, 'launcher token refused without a grant', `HTTP ${lt.status}`);
     await prisma.computerAccess.create({ data: { tenantId: tenant.id, endpointId: epA.id, userId: editorA.id } });
+    // Granted, so visible: now the refusal must be the capability's.
+    const mode = await req('PATCH', `/endpoints/${epA.id}/access-mode`, { cookie: cEditorA, body: { accessMode: 'COMPANY_WIDE' } });
+    check(mode.status === 403, 'access-mode change needs users:manage, even on a computer they are granted', `HTTP ${mode.status}`);
     const pwNoStep = await req('GET', `/endpoints/${epA.id}/password`, { cookie: cEditorA });
     check(pwNoStep.status === 403 && pwNoStep.body?.code === 'STEP_UP_REQUIRED',
       'granted reveal still asks for step-up', `HTTP ${pwNoStep.status} ${pwNoStep.body?.code}`);
