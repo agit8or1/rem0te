@@ -3,7 +3,7 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **383** of them across
+integration, under `/api/integration/v1`). There are **384** of them across
 **48** controllers.
 
 For request and response shapes, worked examples and error codes, see
@@ -238,6 +238,7 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/enrollment/tokens` | signed in | `COMPUTERS_VIEW` |
 | `POST` | `/api/v1/enrollment/tokens` | signed in | `COMPUTERS_ADD` |
 | `DELETE` | `/api/v1/enrollment/tokens/:id` | signed in | `COMPUTERS_REMOVE` |
+| `GET` | `/api/v1/enrollment/tokens/:id/status` | signed in | `COMPUTERS_VIEW` |
 
 ## Health
 

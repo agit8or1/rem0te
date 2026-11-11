@@ -13,7 +13,7 @@ import Link from 'next/link';
 const STEPS = [
   { label: 'Verify Server', icon: Server },
   { label: 'Install RustDesk', icon: Monitor },
-  { label: 'Enroll a Device', icon: Sparkles },
+  { label: 'Add a device', icon: Sparkles },
   { label: "You're Ready!", icon: CheckCircle2 },
 ];
 
@@ -325,46 +325,36 @@ function StepEnrollDevice({ downloadPageUrl }: { downloadPageUrl: string }) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Sparkles className="h-4 w-4" />
-          Step 3 — Enroll a Remote Device
+          Step 3 — Add a device
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-5">
         <p className="text-sm text-muted-foreground">
-          Enrolling a device registers it permanently in the system so you can connect without asking
-          the user for their ID every time.
+          Adding a device installs RustDesk (and, on Windows, the Rem0te agent) on it and enrols it into a
+          business, so you can connect without asking for its ID every time.
         </p>
 
         <div className="space-y-3">
-          <p className="text-sm font-medium">Option A — Download page (easiest for end users)</p>
+          <p className="text-sm font-medium">Add device (recommended)</p>
           <p className="text-sm text-muted-foreground">
-            Send the user this link. It lets them download RustDesk pre-configured for your server
-            and includes enrollment instructions:
+            Choose the business and site, pick the operating system, copy the install command, and the page
+            shows the device arriving and its first health.
+          </p>
+          <Link href="/endpoints/enroll">
+            <Button>Open Add device</Button>
+          </Link>
+        </div>
+
+        <div className="border-t pt-4 space-y-3">
+          <p className="text-sm font-medium">Download page (for a person to fetch RustDesk themselves)</p>
+          <p className="text-sm text-muted-foreground">
+            This page offers RustDesk pre-configured for your server. It does not enrol the computer: use Add
+            device for that.
           </p>
           <CodeBlock>{downloadPageUrl}</CodeBlock>
           <p className="text-xs text-muted-foreground">
             The download page is enabled in Settings → General → Download Page.
           </p>
-        </div>
-
-        <div className="border-t pt-4 space-y-3">
-          <p className="text-sm font-medium">Option B — Manual enrollment token</p>
-          <ol className="space-y-2 text-sm text-muted-foreground list-decimal pl-5">
-            <li>
-              Go to <Link href="/endpoints" className="underline">Endpoints</Link> and click{' '}
-              <strong>New Enrollment Token</strong> (or use Settings → Enrollment).
-            </li>
-            <li>Copy the token and give it to whoever is setting up the device.</li>
-            <li>
-              On the remote device, after installing RustDesk, run:
-              <div className="mt-1.5">
-                <CodeBlock>{`rustdesk --enroll <TOKEN>`}</CodeBlock>
-              </div>
-            </li>
-            <li>
-              The device will appear in your <Link href="/endpoints" className="underline">Endpoints</Link> list
-              automatically.
-            </li>
-          </ol>
         </div>
       </CardContent>
     </Card>
@@ -382,8 +372,8 @@ function StepReady() {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          Your Rem0te environment is set up. Here&apos;s a summary of what you&apos;ve
-          configured:
+          These are the steps this guide walked through. It does not check them for you; the
+          pages it links to do:
         </p>
 
         <ul className="space-y-2 text-sm">
@@ -397,7 +387,7 @@ function StepReady() {
           </li>
           <li className="flex items-start gap-2">
             <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-            <span>At least one remote device enrolled (or a download link ready for users)</span>
+            <span>A device added from Add device — its page shows whether it really arrived</span>
           </li>
         </ul>
 
@@ -411,7 +401,7 @@ function StepReady() {
           <Link href="/endpoints">
             <Button variant="outline">
               <Monitor className="h-4 w-4 mr-2" />
-              View Endpoints
+              View devices
             </Button>
           </Link>
           <Link href="/help">

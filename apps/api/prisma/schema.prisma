@@ -557,6 +557,7 @@ model Site {
   isActive     Boolean @default(true)
 
   endpoints           Endpoint[]
+  claimTokens         DeviceClaimToken[]
   monitorRules        MonitorRule[]
   monitorAlerts       MonitorAlert[]
   monitorSuppressions MonitorSuppression[]
@@ -891,6 +892,12 @@ model DeviceClaimToken {
   customerName String?
   siteName     String?
   description  String?
+
+  // The site the device lands in (Add device, 0032). Bound at mint time like
+  // the business, validated to belong to it, and copied onto the endpoint at
+  // claim. `siteName` above is the display copy; this is the binding.
+  siteId String?
+  site   Site?   @relation(fields: [siteId], references: [id], onDelete: SetNull)
 
   // Managed-computer enrollment binding — set by the admin at token-mint time.
   // The endpoint that redeems this token cannot influence any of these values;

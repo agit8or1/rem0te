@@ -59,6 +59,17 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
     return { success: true, data: token };
   }
 
+  // Add device, steps 4–5: has the device this token was made for enrolled,
+  // and what has it reported so far? Polled by the page. Scoped by business
+  // (token) and by endpoint visibility (device); see the service.
+  @Get('tokens/:id/status')
+  @UseGuards(JwtAuthGuard, CapabilitiesGuard)
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  async tokenStatus(@Actor() actor: ActorContext, @Param('id') id: string) {
+    const data = await this.enrollment.claimTokenStatus(actor, id);
+    return { success: true, data };
+  }
+
   @Delete('tokens/:id')
   @UseGuards(JwtAuthGuard, CapabilitiesGuard)
   @RequireCapability(CAP.COMPUTERS_REMOVE)

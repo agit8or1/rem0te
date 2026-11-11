@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, BellOff, Plus, Sparkles, Trash2 } from 'lucide-react';
@@ -72,6 +72,13 @@ export default function MonitoringSettingsPage() {
   const { user, isPlatformAdmin, canManageTechnicians, technician, businessId: ownBusiness } = usePermissions();
   const msp = (isPlatformAdmin || canManageTechnicians) && !technician;
   const [picked, setPicked] = useState('');
+  // ?businessId= opens one business's policies (Add device links here). Read
+  // after mount so the page still prerenders; only meaningful to someone who
+  // may pick a business at all, and the server re-checks the choice.
+  useEffect(() => {
+    const b = new URLSearchParams(window.location.search).get('businessId');
+    if (b && /^[a-z0-9]{10,40}$/.test(b)) setPicked(b);
+  }, []);
   const businessId = ownBusiness ?? (picked || null);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const fail = (e: unknown) => setNotice({ ok: false, text: apiError(e).message });

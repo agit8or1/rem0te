@@ -101,13 +101,16 @@ Then send anyone who needs help to `https://<your-host>/quick`.
 
 ## Enrolling a Device
 
-1. Go to **Devices → Add device** (or **Businesses → [Business] → Downloads**).
-2. Pick the business the computer belongs to and who should be able to reach it, then generate the
-   installer link. The binding is fixed at this point — the machine that runs it cannot choose a
-   different business.
-3. Copy the one-line install command (or the **Windows installer (.exe)** URL).
-4. Send it to the device — the user runs it.
-5. One UAC prompt → installer runs → the computer appears in that business.
+1. Go to **Devices → Add device** (the Devices page's *Add device* button, or the tab).
+2. Pick the business, then a site (or none), and who should be able to reach the computer. The
+   binding is fixed at this point — the machine that runs the link cannot choose a different
+   business or site.
+3. Pick the operating system and make the install command. Copy the one-line command (or, on
+   Windows, the one-click installer link). It is single-use, expires in 24 hours, and is shown once.
+4. Run it on the device, or send it to the person there.
+5. Leave the page open: it shows the device arriving, then its first health — online, the agent
+   and its version, whether its first inventory has arrived — and links to the device and to the
+   business's monitoring policies. See [technician-guide.md](technician-guide.md) §5.
 
 The install script on the device:
 - Downloads and silently installs RustDesk

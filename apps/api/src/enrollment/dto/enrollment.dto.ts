@@ -23,6 +23,9 @@ export class CreateClaimTokenDto {
   @IsOptional() @IsEnum(EndpointAccessMode) accessMode?: EndpointAccessMode;
   @IsOptional() @IsArray() @IsString({ each: true }) assignedUserIds?: string[];
   @IsOptional() @IsString() endpointGroupId?: string;
+  // The site the device lands in. Must be an active site of the token's
+  // business; checked at mint time and again at claim.
+  @IsOptional() @IsString() @Length(1, 64) siteId?: string;
 }
 
 export class HeartbeatDto {

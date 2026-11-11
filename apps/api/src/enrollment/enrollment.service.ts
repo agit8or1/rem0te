@@ -116,6 +116,18 @@ export class EnrollmentService {
       if (!group) throw new BadRequestException('Unknown computer group');
     }
 
+    // The site, like the business, is fixed now. It must be an active site of
+    // THIS business: a site id from another business is refused with the same
+    // message as one that does not exist, so it cannot be used to probe.
+    let site: { id: string; name: string } | null = null;
+    if (dto.siteId) {
+      site = await this.prisma.site.findFirst({
+        where: { id: dto.siteId, customerId: businessId, isActive: true },
+        select: { id: true, name: true },
+      });
+      if (!site) throw new BadRequestException('Unknown site for this business');
+    }
+
     const token = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(token).digest('hex');
     const expiresAt = new Date(Date.now() + this.tokenTtlHours * 60 * 60 * 1000);
@@ -127,7 +139,8 @@ export class EnrollmentService {
         expiresAt,
         endpointId: dto.endpointId ?? null,
         customerName: business.name,
-        siteName: dto.siteName ?? null,
+        siteName: site?.name ?? dto.siteName ?? null,
+        siteId: site?.id ?? null,
         description: dto.description ?? null,
         customerId: businessId,
         accessMode: dto.accessMode ?? 'ASSIGNED_USERS',
@@ -149,6 +162,7 @@ export class EnrollmentService {
         endpointId: dto.endpointId,
         description: dto.description,
         businessId,
+        ...(site ? { siteId: site.id } : {}),
         accessMode: dto.accessMode ?? 'ASSIGNED_USERS',
         assignedUserIds,
       },
@@ -172,6 +186,84 @@ export class EnrollmentService {
       },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  /**
+   * Has the device this token was made for appeared yet, and how is it? (Add
+   * device, step 4 and 5.)
+   *
+   * The token is looked up inside the caller's business, exactly as the token
+   * list is; a token of another business is a 404, never a 403. The device is
+   * then read through `endpointVisibilityWhere`, AND-ed with its id: a person
+   * who may mint tokens is not thereby entitled to see every computer one
+   * enrols (a Business User minting an ASSIGNED_USERS token for somebody
+   * else), so such a device is reported as enrolled but not shown.
+   *
+   * Nothing secret leaves here: no token, no token hash, no device secret —
+   * only whether a secret is bound, and when.
+   */
+  async claimTokenStatus(actor: ActorContext, tokenId: string) {
+    this.acl.assertCapability(actor, CAP.COMPUTERS_VIEW);
+    const scope = this.acl.resolveScope(actor);
+    const record = await this.prisma.deviceClaimToken.findFirst({
+      where: { id: tokenId, ...(scope ? { customerId: scope } : {}) },
+      select: {
+        id: true, customerId: true, customerName: true, siteId: true, siteName: true, endpointId: true,
+        accessMode: true, description: true, createdAt: true, expiresAt: true, claimedAt: true,
+      },
+    });
+    if (!record) throw new NotFoundException('Token not found');
+
+    const now = new Date();
+    let state: 'waiting' | 'expired' | 'claiming' | 'enrolled';
+    if (!record.claimedAt) state = record.expiresAt < now ? 'expired' : 'waiting';
+    // Consumed, but the claim has not yet recorded what it enrolled (a fresh
+    // token's endpointId is written last). Either it finishes in a moment or
+    // it fails and hands the token back.
+    else state = record.endpointId ? 'enrolled' : 'claiming';
+
+    let device: Record<string, unknown> | null = null;
+    let deviceVisible = false;
+    if (state === 'enrolled' && record.endpointId) {
+      const ep = await this.prisma.endpoint.findFirst({
+        where: { AND: [this.acl.endpointVisibilityWhere(actor, record.customerId), { id: record.endpointId }] },
+        select: {
+          id: true, name: true, hostname: true, platform: true, osVersion: true, status: true,
+          isOnline: true, lastSeenAt: true, createdAt: true, agentVersion: true, updateChannel: true,
+          customerId: true, customer: { select: { id: true, name: true } },
+          site: { select: { id: true, name: true } },
+          rustdeskNode: { select: { agentSecretHash: true, agentSecretSetAt: true, lastSeenAt: true } },
+          inventory: { select: { collectedAt: true, liveSampledAt: true, osCaption: true, updatesCheckedAt: true } },
+        },
+      });
+      if (ep) {
+        deviceVisible = true;
+        const { rustdeskNode: node, inventory: inv, ...rest } = ep;
+        device = {
+          ...rest,
+          // Same three-way classification as the device list.
+          agentType: ep.updateChannel === 'signed' ? 'signed' : ep.agentVersion ? 'standard' : 'none',
+          agentBound: !!node?.agentSecretHash,
+          agentBoundAt: node?.agentSecretSetAt ?? null,
+          inventoryCollectedAt: inv?.collectedAt ?? null,
+          liveSampledAt: inv?.liveSampledAt ?? null,
+          updatesCheckedAt: inv?.updatesCheckedAt ?? null,
+          osCaption: inv?.osCaption ?? null,
+        };
+      }
+    }
+
+    return {
+      token: {
+        id: record.id, businessId: record.customerId, businessName: record.customerName,
+        siteId: record.siteId, siteName: record.siteName, accessMode: record.accessMode,
+        description: record.description, createdAt: record.createdAt, expiresAt: record.expiresAt,
+        claimedAt: record.claimedAt,
+      },
+      state,
+      deviceVisible,
+      device,
+    };
   }
 
   async claimEndpoint(dto: ClaimEndpointDto, claimedByIp?: string) {
@@ -256,6 +348,17 @@ export class EnrollmentService {
       }
     }
 
+    // The token's site, re-checked now: it was validated at mint time, but a
+    // site can be deactivated in the 24 hours a token lives. A site that no
+    // longer qualifies is dropped rather than failing the install — the device
+    // still lands in the right business, just without a site.
+    const siteId = record.siteId && record.customerId
+      ? (await this.prisma.site.findFirst({
+          where: { id: record.siteId, customerId: record.customerId, isActive: true },
+          select: { id: true },
+        }))?.id ?? null
+      : null;
+
     const boundEndpointId = record.endpointId ?? adoptedEndpointId;
     let endpoint = boundEndpointId
       ? await this.prisma.endpoint.findUnique({ where: { id: boundEndpointId } })
@@ -277,6 +380,7 @@ export class EnrollmentService {
           // A pooled computer was named by its own heartbeat; name it as a fresh enrolment would.
           ...(adoptedEndpointId && dto.hostname ? { name: dto.hostname } : {}),
           ...(record.customerId ? { customerId: record.customerId } : {}),
+          ...(siteId ? { siteId } : {}),
           ...(record.endpointGroupId ? { endpointGroupId: record.endpointGroupId } : {}),
           accessMode: record.accessMode,
         },
@@ -289,6 +393,7 @@ export class EnrollmentService {
         data: {
           tenantId: record.tenantId,
           customerId: record.customerId ?? null,
+          siteId,
           endpointGroupId: record.endpointGroupId ?? null,
           accessMode: record.accessMode,
           name: dto.hostname ?? dto.rustdeskId,
@@ -391,6 +496,7 @@ export class EnrollmentService {
         customerId: record.customerId,
         accessMode: record.accessMode,
         assignedUsers: record.assignedUserIds.length,
+        ...(siteId ? { siteId } : {}),
         ...(adoptedEndpointId ? { adoptedFromPool: true } : {}),
       },
     });

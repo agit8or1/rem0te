@@ -105,7 +105,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: 'enrolling-endpoints',
-    title: 'Enrolling Endpoints (Permanent Management)',
+    title: 'Adding a Device (Permanent Management)',
     content: (
       <div className="space-y-3 text-sm text-muted-foreground">
         <p>There are two ways to use RustDesk with this platform:</p>
@@ -119,36 +119,34 @@ const SECTIONS: Section[] = [
             </p>
           </div>
           <div className="rounded-md border px-4 py-3 space-y-1">
-            <p className="font-medium text-foreground">Managed / Enrolled</p>
+            <p className="font-medium text-foreground">Managed (added as a device)</p>
             <p>
-              RustDesk is installed as a persistent service on the remote machine and registered in
-              this system with a permanent record. The tech can connect without asking for the ID
-              each time. The endpoint shows up in the Endpoints list with its current online status.
+              RustDesk is installed as a persistent service on the remote machine and the machine
+              is enrolled into a business. You can connect without asking for the ID each time, and
+              on Windows the Rem0te agent reports its health, inventory and updates.
             </p>
           </div>
         </div>
-        <p className="pt-1 font-medium text-foreground">How enrollment works</p>
+        <p className="pt-1 font-medium text-foreground">How to add a device</p>
+        <p>
+          Open{' '}
+          <Link href="/endpoints/enroll" className="underline text-foreground">
+            Devices → Add device
+          </Link>{' '}
+          (the <strong className="text-foreground">Add device</strong> button on the Devices page). One page takes you through it:
+        </p>
         <ol className="list-decimal pl-5 space-y-1.5">
-          <li>
-            Go to{' '}
-            <Link href="/endpoints" className="underline text-foreground">
-              Endpoints
-            </Link>{' '}
-            and create an <strong className="text-foreground">enrollment token</strong>.
-          </li>
-          <li>Provide that token to whoever is setting up the device.</li>
-          <li>
-            On the remote machine (after installing RustDesk), run:
-            <CodeBlock>rustdesk --enroll YOUR_TOKEN_HERE</CodeBlock>
-          </li>
-          <li>
-            The device calls the API and registers itself. It immediately appears in your Endpoints
-            list.
-          </li>
+          <li>Choose the business, then a site or none, and who may connect. These are fixed into the link: the machine cannot pick another business or site.</li>
+          <li>Choose the operating system. Windows gets the Rem0te agent; Linux and macOS get remote access only.</li>
+          <li>Copy the install command (or, on Windows, the one-click installer link) and run it on the machine. It works once, expires in 24 hours, and is shown only once.</li>
+          <li>Keep the page open. It checks every few seconds and says the device enrolled only when it has.</li>
+          <li>It then shows the first health the server has received: online, the agent and its version, and whether the first inventory has arrived. Anything not yet received says so.</li>
+          <li>Open the device, or the business&apos;s monitoring policies, from the last step.</li>
         </ol>
         <p>
-          Tokens can be single-use or multi-use and can have an expiry date. Revoke them in the
-          Endpoints page.
+          An unused link can be revoked from the waiting step. For a machine that already runs
+          RustDesk and only needs listing, without the agent, use{' '}
+          <Link href="/endpoints/new" className="underline text-foreground">Register by RustDesk ID</Link>.
         </p>
       </div>
     ),
@@ -198,8 +196,9 @@ const SECTIONS: Section[] = [
             <CodeBlock>rustdesk --install-service</CodeBlock>
           </li>
           <li>
-            <strong className="text-foreground">Enroll</strong> — Use an enrollment token (see
-            previous section) to register the device.
+            <strong className="text-foreground">Enrol</strong> — Add it from Devices → Add device
+            (previous section). On a machine you can run commands on, Add device&apos;s installer does
+            every step above for you.
           </li>
         </ol>
         <p>

@@ -23,7 +23,7 @@ bundled into `/docs`. Integration work is tracked separately in
 | Remote access | RustDesk launch from the computer page; the Windows launcher; launch policy (presets L1/L2/L3, protected classes, step-up for password use); session history; Quick Connect; customer support requests | I, **P** |
 | Tenancy | Businesses, sites, per-business access, technician assignment across businesses, offboarding, technician approvals | I (business-access 83, offboarding 62, presets 113), P |
 | Sign-in security | MFA (TOTP, passkeys), SSO (OIDC), step-up, short-lived sessions, rate limits, security invariants in CI | U, I, P |
-| Enrolment | Expiring enrolment tokens, Windows install script, pool adoption bound to the token's business, signed update channel | I, P (standard channel) |
+| Enrolment | Expiring enrolment tokens, Windows install script, pool adoption bound to the token's business, signed update channel. **Guided Add device** (0.32): business → site → OS → command → waits for the device → first health → monitoring links, with the site bound to the token | I (add-device 58), P (standard channel; the guided flow is not yet P) |
 | Standard agent (Windows) | Heartbeat, online/offline, hardware/OS inventory, logged-on user, CPU load (point value), disks, installed software with change history, event-log reading, Windows Update scan (read-only), restart pending | I, **P** (standard channel; observed, not a controlled test) |
 | Monitoring | Global → business → site → computer rules; offline, disk, CPU, memory, services, event patterns, restart pending; dedup (one open alert per problem), hysteresis, cooldowns, site-outage correlation, maintenance windows, 4-level escalation, webhooks, alerts → ClientSt0r tickets | U (91), I (108) — **not R**: the monitor block has never run on real Windows |
 | Audit | Sealed hash chain, insert-only entries, signed checkpoints, off-host export, verification CLI | U (35), I |
@@ -58,8 +58,6 @@ bundled into `/docs`. Integration work is tracked separately in
 - **Remote-session controls:** file-transfer authorization, chat, recording, clipboard policy, multi-monitor
   selection. RustDesk doesn't report enforcement, so none of these can be offered as restrictions (see Security).
 - **Browser-based remote desktop.**
-- **Guided Add Device flow** (customer → site → OS → command → confirm → health → policies). Three separate
-  entry points exist instead: Enroll Computer, Generate Enrollment Link and Quick Start.
 - **Global search** across computers, businesses and users.
 - **Saved device views, device groups in the UI, bulk actions.**
 - **Server sizing guidance** by endpoint count.
@@ -105,7 +103,7 @@ owner's approval.
 | 4 | **Device list:** alert, patch, user and resource columns (marked stale when stale), business/site filters, sort, density, saved views | P0 | Finding the computer |
 | 5 | **Read-only diagnostics catalog** (disk, services, network/DNS, recent errors, heavy processes, pending updates, restart state) on the standard agent; results bounded, redacted and audited | P0 | Basic one-click diagnostics; also the first half of revision 3 (P2/P3) |
 | 6 | Revision 3 items ClientSt0r acknowledges | P0 | Blocked on ClientSt0r (coordination §9) |
-| 7 | Guided Add Device | P1 | |
+| 7 | Guided Add Device — **built (0.32)** | P1 | |
 | 8 | Maintenance actions for the signed catalog (restart an approved service, schedule a reboot, collect logs) | P1 | Needs real-Windows testing of the signed agent first |
 | 9 | Script library with review and immutable approval binding | P1 | Largest new surface. Design note first |
 | 10 | Reports: patch compliance, agent coverage, alert frequency | P1/P2 | |

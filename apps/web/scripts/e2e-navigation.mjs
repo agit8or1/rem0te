@@ -138,6 +138,25 @@ try {
       if (got.includes('devices')) {
         await visit(page, who === 'user' ? '/endpoints' : '/endpoints');
         const tabs = await page.$$eval('[data-section-tabs="devices"] a', (els) => els.map((e) => e.textContent.trim()));
+        // 0.32: one way to add a device. The Devices page has a single "Add
+        // device" button (for whoever may add computers) leading to the guided
+        // flow; "Enroll Client" and "Generate Enrollment Link" are gone.
+        // The section tab of the same name is not a button on the page: leave it out.
+        const header = await page.$$eval('main a, main button', (els) => els.filter((e) => !e.closest('[data-section-tabs]')).map((e) => [e.textContent.trim(), e.getAttribute('href')]));
+        const adds = header.filter(([t]) => t === 'Add device' || /Enroll Client|Generate Enrollment Link/i.test(t));
+        const mayAdd = who !== 'user';
+        check(mayAdd ? adds.length === 1 && adds[0][1] === '/endpoints/enroll' : adds.length === 0,
+          mayAdd ? 'Devices has one "Add device" button, to /endpoints/enroll, and no old enrol buttons' : 'without computers:add, Devices offers no Add device button', JSON.stringify(adds));
+        if (mayAdd) {
+          await follow(page, 'main a[data-testid="add-device"]');
+          const flow = await page.$('[data-testid="add-device-flow"]');
+          const steps = await page.$$eval('[data-testid^="step-"]', (els) => els.map((e) => e.getAttribute('data-testid')));
+          check(new URL(page.url()).pathname === '/endpoints/enroll' && !!flow && JSON.stringify(steps) === JSON.stringify(['step-place', 'step-os', 'step-command', 'step-wait', 'step-health', 'step-next']),
+            'Add device opens the guided flow with its six steps', JSON.stringify({ url: page.url(), steps }));
+          const h = await pageHealth(page);
+          check(h.overflow <= 1, 'the guided flow does not overflow sideways', JSON.stringify(h));
+          await visit(page, '/endpoints');
+        }
         const want = who === 'admin' ? ['All devices', 'My devices', 'Add device', 'Unassigned'] : who === 'owner' ? ['All devices', 'My devices', 'Add device'] : ['All devices', 'My devices'];
         check(JSON.stringify(tabs) === JSON.stringify(want), `Devices tabs: ${want.join(' · ')}`, `got ${tabs.join(' · ')}`);
         for (const t of tabs) {

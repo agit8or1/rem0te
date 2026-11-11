@@ -315,6 +315,8 @@ export const auditApi = {
 export const enrollmentApi = {
   listTokens: () => api.get('/enrollment/tokens'),
   createToken: (data: Record<string, unknown>) => api.post('/enrollment/tokens', data),
+  /** Add device: has the device this token was made for enrolled, and how is it? Never returns the token. */
+  tokenStatus: (id: string) => api.get(`/enrollment/tokens/${encodeURIComponent(id)}/status`),
   revokeToken: (id: string) => api.delete(`/enrollment/tokens/${id}`),
 };
 
