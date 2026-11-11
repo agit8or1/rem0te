@@ -77,7 +77,16 @@ const where = (b: Biz, d: Dev) => [b?.name, d?.name].filter(Boolean).join(' · '
 export default function DashboardPage() {
   const { isPlatformAdmin } = usePermissions();
   const now = useNow();
-  const [showMap, setShowMap] = useState(false);
+  // The device map is shown unless this viewer hid it (0.32: 0.31 hid it by
+  // default and it read as removed). A per-browser convenience only.
+  const [showMap, setShowMap] = useState(true);
+  useEffect(() => {
+    try { if (localStorage.getItem('dashboard.map') === 'hidden') setShowMap(false); } catch { /* storage unavailable */ }
+  }, []);
+  const toggleMap = () => setShowMap((v) => {
+    try { localStorage.setItem('dashboard.map', v ? 'hidden' : 'shown'); } catch { /* storage unavailable */ }
+    return !v;
+  });
 
   const { data, isLoading, error, dataUpdatedAt } = useQuery<Overview>({
     queryKey: ['dashboard-overview'],
@@ -344,7 +353,7 @@ export default function DashboardPage() {
 
       <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
         {d.devices && (
-          <button type="button" onClick={() => setShowMap((v) => !v)} className="inline-flex items-center gap-1 hover:text-foreground">
+          <button type="button" onClick={toggleMap} className="inline-flex items-center gap-1 hover:text-foreground">
             <MapPin className="h-3.5 w-3.5" /> {showMap ? 'Hide device locations' : 'Show device locations'}
           </button>
         )}

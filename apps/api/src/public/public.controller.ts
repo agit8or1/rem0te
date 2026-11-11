@@ -466,7 +466,7 @@ CLAIM_TOKEN="${claimToken}"
 RED='\\033[0;31m'; GREEN='\\033[0;32m'; YELLOW='\\033[1;33m'; CYAN='\\033[0;36m'; NC='\\033[0m'
 
 # Generate a permanent password for this device
-PERM_PW=$(LC_ALL=C tr -dc 'A-Za-z2-9' < /dev/urandom | head -c 12)
+PERM_PW=$(LC_ALL=C tr -dc 'A-Za-z2-9' < /dev/urandom | head -c 12 || true)
 
 # Device secret: what proves to the server that a later call really is this
 # machine. The RustDesk ID alone used to be enough, and it is a number anyone
@@ -479,7 +479,7 @@ else
   AGENT_SECRET=""
 fi
 if [ -z "\${AGENT_SECRET}" ]; then
-  AGENT_SECRET=$(LC_ALL=C tr -dc 'A-Za-z0-9_-' < /dev/urandom | head -c 43)
+  AGENT_SECRET=$(LC_ALL=C tr -dc 'A-Za-z0-9_-' < /dev/urandom | head -c 43 || true)
   ( umask 077; printf '%s' "\${AGENT_SECRET}" > "\${AGENT_STATE}" ) 2>/dev/null || true
 fi
 
@@ -627,7 +627,7 @@ PUB_KEY="${keyVal}"
 CLAIM_TOKEN="${claimToken}"
 
 # Generate a permanent password for this device
-PERM_PW=$(LC_ALL=C tr -dc 'A-Za-z2-9' < /dev/urandom | head -c 12)
+PERM_PW=$(LC_ALL=C tr -dc 'A-Za-z2-9' < /dev/urandom | head -c 12 || true)
 
 # Device secret — see the Linux installer for why the RustDesk ID is not
 # identity. Stored 0600 under the user's home because this installer does not
@@ -639,7 +639,7 @@ else
   AGENT_SECRET=""
 fi
 if [ -z "\${AGENT_SECRET}" ]; then
-  AGENT_SECRET=$(LC_ALL=C tr -dc 'A-Za-z0-9_-' < /dev/urandom | head -c 43)
+  AGENT_SECRET=$(LC_ALL=C tr -dc 'A-Za-z0-9_-' < /dev/urandom | head -c 43 || true)
   ( umask 077; printf '%s' "\${AGENT_SECRET}" > "\${AGENT_STATE}" ) 2>/dev/null || true
 fi
 
