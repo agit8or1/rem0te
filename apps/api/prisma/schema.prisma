@@ -47,6 +47,12 @@ enum RoleType {
   CUSTOMER
 }
 
+/// Who staged a RustDesk client update on a node (0.32).
+enum UpdateRequestSource {
+  MANUAL
+  POLICY
+}
+
 enum EndpointStatus {
   ACTIVE
   OFFLINE
@@ -142,6 +148,8 @@ enum ActivityAction {
   ENDPOINT_DEVICE_SECRET_ACCEPTED
   ENDPOINT_RESTORED
   ENDPOINT_LIST_EXPORTED
+  CLIENT_UPDATE_POLICY_CHANGED
+  CLIENT_UPDATE_AUTO_QUEUED
   CONNECTION_GRANT_CREATED
   CONNECTION_GRANT_REDEEMED
   CONNECTION_GRANT_DENIED
@@ -524,14 +532,15 @@ model Customer {
   supportSessions SupportSession[]
   apiKeys         ApiKey[]
 
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  actionJobs          ActionJob[]
-  patchDeployments    PatchDeployment[]
-  containmentPauses   ContainmentPause[]
-  monitorRules        MonitorRule[]
-  monitorAlerts       MonitorAlert[]
-  monitorSuppressions MonitorSuppression[]
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  actionJobs           ActionJob[]
+  patchDeployments     PatchDeployment[]
+  containmentPauses    ContainmentPause[]
+  monitorRules         MonitorRule[]
+  monitorAlerts        MonitorAlert[]
+  monitorSuppressions  MonitorSuppression[]
+  clientUpdatePolicies ClientUpdatePolicy[]
 
   @@index([tenantId])
   @@index([tenantId, name])
@@ -561,6 +570,7 @@ model Site {
   monitorRules        MonitorRule[]
   monitorAlerts       MonitorAlert[]
   monitorSuppressions MonitorSuppression[]
+  clientUpdatePolicy  ClientUpdatePolicy?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -811,6 +821,18 @@ model RustdeskNode {
   // update retries on the next heartbeat instead of being lost.
   updateRequestedAt   DateTime?
   updateTargetVersion String?
+  // Who asked (0.32). MANUAL: someone clicked Update — handed out on the next
+  // authenticated heartbeat, as before. POLICY: the business's client-update
+  // policy queued it — handed out only inside that policy's window and, when
+  // the policy says so, never during an open session or with someone logged
+  // on. Null on a row staged before 0.32 means MANUAL (migration 0033 sets it).
+  updateRequestSource UpdateRequestSource?
+  updateRequestedById String?
+  // Why the heartbeat last withheld a POLICY request (outside_window,
+  // session_open, user_logged_on, policy_off), and since when. Written only
+  // when it changes; cleared when the request is handed out or clears.
+  updateHoldReason    String?
+  updateHoldAt        DateTime?
 
   // Operator-requested agent reinstall, staged the same way.
   //
@@ -2670,4 +2692,39 @@ model IntegrationAlertEvent {
   @@unique([peerId, externalOrgId, sequence])
   @@index([ackedAt, nextDeliveryAt])
   @@index([alertId])
+}
+
+// ─── Scheduled client updates (0.32) ──────────────────────────────────────────
+
+/// When a business's RustDesk clients may be updated without anyone clicking
+/// Update. One row per business (siteId null) and optionally one per site,
+/// which replaces the business row for that site's computers entirely.
+///
+/// The sweep (client-updates/client-update-sweep.service.ts) queues outdated
+/// online computers through RustdeskNode.updateRequestedAt with source POLICY,
+/// only while `windows` is open in `timeZone`; the heartbeat hands a POLICY
+/// request out only inside the window too. Off by default.
+///
+/// `windows` is [{days: 0-6[], start: "HH:MM", end: "HH:MM"}] in `timeZone`
+/// (an IANA name), the same shape and rules as rbac/schedule.ts: an end before
+/// the start crosses midnight and belongs to the day it starts on.
+/// A partial unique index (migration 0033) allows one business row per business.
+model ClientUpdatePolicy {
+  id                String   @id @default(cuid())
+  tenantId          String
+  customerId        String
+  customer          Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  siteId            String?  @unique
+  site              Site?    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  enabled           Boolean  @default(false)
+  timeZone          String
+  windows           Json
+  skipActiveSession Boolean  @default(true)
+  skipLoggedOnUser  Boolean  @default(false)
+  updatedById       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([enabled])
 }

@@ -658,6 +658,59 @@ check(
   check('a run is re-authorized against its requester at delivery', /const why = !entry \? 'unknown_key' : !ep \? 'endpoint_missing' : await this\.requesterStillAllowed\(r, entry, ep\);/.test(dsvc), 'forHeartbeat must check the requester before DELIVERED');
 }
 
+// 21. Scheduled client updates (0.32). A business's update policy makes the
+//     server re-run an installer on its computers with nobody clicking
+//     Update, so: only an owner, a whole-business technician with
+//     computers:edit or the MSP may set it; turning it on needs fresh
+//     authentication; the sweep queues only inside an open window, honours
+//     containment and is bounded; the heartbeat hands a POLICY request out
+//     only when the policy allows it NOW and fails closed if it cannot tell;
+//     withdrawing never touches a request someone made by hand.
+{
+  const svc = read('apps/api/src/client-updates/client-updates.service.ts');
+  const ctl = read('apps/api/src/client-updates/client-updates.controller.ts');
+  const sweep = read('apps/api/src/client-updates/client-update-sweep.service.ts');
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const refusal = svc.slice(svc.indexOf('editRefusal(a: ActorContext'), svc.indexOf('private assertEdit('));
+  check('only a whole-business technician with computers:edit may set a client-update policy',
+    /if \(a\.technician\) \{[\s\S]*?a\.technician\.businessId !== customerId[\s\S]*?\.includes\(CAP\.COMPUTERS_EDIT\) && s\.endpointIds === null\)/.test(refusal),
+    'editRefusal must require computers:edit from one grant whose endpointIds is null, in the same business');
+  check('a Business User may not set a client-update policy; an owner only for their own business',
+    /if \(a\.businessId !== customerId\) return [^;]+;\s*if \(!a\.isPlatformAdmin && this\.acl\.isBusinessOwner\(a\)\) return null;\s*return '[^']+';\s*\}/.test(refusal),
+    'after the technician branch: other business refused, owner allowed, everyone else refused');
+  check('both policy writes check permission before anything else changes',
+    /async putPolicy\([\s\S]{0,700}this\.assertEdit\(a, customerId\);/.test(svc) && /async deleteSiteOverride\([\s\S]{0,400}this\.assertEdit\(a, customerId\);/.test(svc),
+    'putPolicy and deleteSiteOverride must call assertEdit');
+  check('turning a policy on, or removing a site override, needs fresh authentication',
+    /if \(input\.enabled && !fresh\) throw new FreshAuthNeeded\(\);/.test(svc) && /\/\/ The site falls back to the business policy, which may be on\.\s*if \(!fresh\) throw new FreshAuthNeeded\(\);/.test(svc)
+      && (ctl.match(/this\.isFresh\(req\)/g) ?? []).length === 2 && /code: 'STEP_UP_REQUIRED'/.test(ctl),
+    'the service must refuse without fresh auth and the controller must pass isFresh(req) on both writes');
+  check('a site override must belong to the business it is set in',
+    /if \(!site \|\| site\.customerId !== customerId\) throw new NotFoundException/.test(svc), 'siteOf must compare site.customerId');
+  check('withdrawing automatic requests never touches a manual one',
+    /updateMany\(\{\s*where: \{ id: \{ in: drop \}, updateRequestSource: 'POLICY' \}/.test(svc), 'clearUnwanted must be conditional on POLICY');
+  const pass_ = sweep.slice(sweep.indexOf('private async pass('));
+  check('the client-update sweep can be turned off', /onModuleInit\(\) \{\s*if \(process\.env\.CLIENT_UPDATE_SWEEP === 'off'\) return;/.test(sweep), 'CLIENT_UPDATE_SWEEP=off must stop it');
+  check('the sweep skips a business under an "updates" containment pause',
+    /if \(await this\.containment\.blocking\('updates', customerId\)\) continue;/.test(pass_), 'pass() must ask containment per business');
+  check('the sweep queues only where the window is open now',
+    /const open = policies\.filter\(\(p\) => p\.enabled && isWindowOpen\(policyWindow\(p\), now\)\);/.test(pass_) && /if \(!p \|\| !open\.some\(\(o\) => o\.id === p\.id\)\) continue;/.test(pass_),
+    'every candidate must be governed by an enabled policy whose window is open at this sweep');
+  check('the sweep is bounded and queues each computer once',
+    /let budget = this\.batch\(\);/.test(pass_) && /Math\.min\(n, 500\)/.test(sweep) && /where: \{ id: n\.id, updateRequestedAt: null \}/.test(pass_) && /if \(w\.count !== 1\) continue;\s*budget--;/.test(pass_),
+    'a per-sweep budget (max 500) and a conditional write that only counts what it changed');
+  check('every automatic queuing is audited', /if \(w\.count !== 1\) continue;[\s\S]{0,80}await this\.audit\.log\(\{[\s\S]{0,120}action: 'CLIENT_UPDATE_AUTO_QUEUED'/.test(pass_), 'audit after each queued computer');
+  check('the heartbeat holds a POLICY request unless the policy allows it now, and fails closed',
+    /if \(updateRustdesk && node\.updateRequestSource === 'POLICY'\) \{\s*const hold = await this\.clientUpdates\.holdForHeartbeat\([\s\S]{0,300}\.catch\(\(e\) => \{[\s\S]{0,200}?return 'error'; \}\);\s*if \(hold\) updateRustdesk = null;\s*\}/.test(enr),
+    'a policy check error must hold the update, not hand it out');
+  check('a POLICY request is weighed only after containment and the device secret',
+    enr.indexOf('authenticated && !updatesHeld &&\n      node.updateRequestedAt') !== -1
+      && enr.indexOf("node.updateRequestSource === 'POLICY'") > enr.indexOf('authenticated && !updatesHeld &&\n      node.updateRequestedAt'),
+    'the hold must refine the existing authenticated, uncontained instruction');
+  const run = read('scripts/run-e2e.sh');
+  check('scratch APIs in run-e2e.sh run without the client-update sweep', /MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off/.test(run), 'it acts on every enabled policy in the database');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

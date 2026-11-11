@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **384** of them across
-**48** controllers.
+integration, under `/api/integration/v1`). There are **387** of them across
+**49** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -126,6 +126,17 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/customers/:id/users/:userId/reset-access` | signed in | `USERS_MANAGE` |
 | `GET` | `/api/v1/customers/capability-catalog` | signed in | — |
 
+## Client updates
+
+`apps/api/src/client-updates/client-updates.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/client-updates/computers` | signed in | — |
+| `GET` | `/api/v1/client-updates/policy` | signed in | — |
+| `PUT` | `/api/v1/client-updates/policy` | signed in | — |
+| `DELETE` | `/api/v1/client-updates/policy/sites/:siteId` | signed in | — |
+
 ## Containment
 
 `apps/api/src/containment/containment.controller.ts`
@@ -238,7 +249,6 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/enrollment/tokens` | signed in | `COMPUTERS_VIEW` |
 | `POST` | `/api/v1/enrollment/tokens` | signed in | `COMPUTERS_ADD` |
 | `DELETE` | `/api/v1/enrollment/tokens/:id` | signed in | `COMPUTERS_REMOVE` |
-| `GET` | `/api/v1/enrollment/tokens/:id/status` | signed in | `COMPUTERS_VIEW` |
 
 ## Health
 

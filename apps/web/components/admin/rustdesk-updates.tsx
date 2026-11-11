@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { updateApi } from '@/lib/api-client';
+import { HOLD_LABEL } from '@/lib/client-updates';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -19,6 +20,11 @@ type Row = {
   version: string | null;
   updatePending: boolean;
   updateTargetVersion: string | null;
+  /** 0.32: 'manual' goes on the next heartbeat; 'policy' waits for the business's update window. */
+  updateSource?: 'manual' | 'policy' | null;
+  updateRequestedBy?: { id: string; name: string } | null;
+  updateHoldReason?: string | null;
+  business?: { id: string; name: string } | null;
   /** null = the endpoint has never reported a version, so we genuinely do not know. */
   upToDate: boolean | null;
 };
@@ -194,6 +200,15 @@ export function RustdeskUpdates({
                           <Loader2 className="h-3 w-3 animate-spin" />
                           Queued to v{r.updateTargetVersion}
                           {staleTarget(r) && <span className="text-amber-600 dark:text-amber-500">(v{latest} out)</span>}
+                          {r.updateSource === 'policy' ? (
+                            <span className="text-muted-foreground" title="Queued by the business's update policy: handed out only inside its update window. Click Update to send it now.">
+                              · auto{r.updateHoldReason ? `, waiting: ${HOLD_LABEL[r.updateHoldReason] ?? r.updateHoldReason}` : ''}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">
+                              · by {r.updateRequestedBy?.name ?? 'hand'}
+                            </span>
+                          )}
                         </span>
                       ) : r.upToDate === true ? (
                         <span className="flex items-center gap-1 text-muted-foreground">
@@ -213,15 +228,16 @@ export function RustdeskUpdates({
                       )}
                     </td>
                     <td className="py-2 text-right whitespace-nowrap">
-                      {staleTarget(r) && (
+                      {(staleTarget(r) || r.updateSource === 'policy') && (
                         <Button
                           variant="outline"
                           size="sm"
                           className="mr-1"
                           onClick={() => { setMsg(null); if (r.endpointId) stage.mutate([r.endpointId]); }}
                           disabled={stage.isPending}
+                          title={r.updateSource === 'policy' ? 'Send it on the next heartbeat instead of waiting for the update window' : undefined}
                         >
-                          Update
+                          {r.updateSource === 'policy' && !staleTarget(r) ? 'Update now' : 'Update'}
                         </Button>
                       )}
                       {r.updatePending ? (
@@ -252,10 +268,12 @@ export function RustdeskUpdates({
         )}
 
         {!compact && <p className="text-[11px] text-muted-foreground">
-          Queued updates are picked up on the endpoint&apos;s next heartbeat (about 3 minutes) and
+          Updates queued here are picked up on the endpoint&apos;s next heartbeat (about 3 minutes) and
           applied by re-running the installer. An offline endpoint applies it when it next checks
           in. A queued update clears itself once the endpoint reports the target version, so a
-          failed install retries rather than being silently dropped.
+          failed install retries rather than being silently dropped. Updates marked <em>auto</em> were
+          queued by a business&apos;s update policy and wait for its window —
+          see <Link href="/settings/client-updates" className="underline">Settings → Client updates</Link>.
         </p>}
       </CardContent>
     </Card>

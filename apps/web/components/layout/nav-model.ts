@@ -19,7 +19,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Activity, Building2, Download, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
   Monitor, MonitorCheck, MonitorX, PackageCheck, PlayCircle, RefreshCw, Settings, Shield, ShieldCheck, Siren,
-  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog,
+  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock,
 } from 'lucide-react';
 import { CAP, type Capability } from '@/lib/auth';
 
@@ -105,6 +105,9 @@ export const NAV: NavSection[] = [
       { href: '/admin/technicians', label: 'Technicians', icon: UserCog, show: (c) => c.canManageTechnicians },
       { href: '/admin/access', label: 'Access control', icon: ShieldCheck, show: (c) => c.isPlatformAdmin },
       { href: '/admin/sso', label: 'Single sign-on', icon: KeyRound, show: (c) => c.isPlatformAdmin },
+      // 0.32: who may change it is decided by the API (owner, a whole-business
+      // technician with computers:edit, the MSP); this only decides who sees the entry.
+      { href: '/settings/client-updates', label: 'Client updates', icon: CalendarClock, show: (c) => c.isBusinessOwner || c.canManageTechnicians || (c.technician && c.can(CAP.COMPUTERS_EDIT)) },
       { href: '/admin/rollouts', label: 'Client rollouts', icon: PackageCheck, show: (c) => c.isPlatformAdmin },
       { href: '/admin/security', label: 'Security', icon: Shield, show: (c) => c.isPlatformAdmin },
       { href: '/admin/status', label: 'System status', icon: Activity, show: (c) => c.isPlatformAdmin },

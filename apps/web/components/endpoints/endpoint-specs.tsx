@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { endpointsApi } from '@/lib/api-client';
+import { HOLD_LABEL } from '@/lib/client-updates';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -58,7 +59,10 @@ export interface Inventory {
 
 export interface InventoryPayload {
   inventory: Inventory | null;
-  rustdesk: { installedVersion: string | null; stagedVersion: string | null; stagedAt: string | null };
+  rustdesk: {
+    installedVersion: string | null; stagedVersion: string | null; stagedAt: string | null;
+    stagedSource?: 'manual' | 'policy' | null; stagedHoldReason?: string | null;
+  };
   // The Rem0te agent, as distinct from the RustDesk client: this is the one
   // that decides whether the machine can collect anything at all.
   agent: {
@@ -258,7 +262,9 @@ function UpdatesCard({ data, onOpenPatches }: { data: InventoryPayload; onOpenPa
               v{data.rustdesk.stagedVersion}
             </span>
             <div className="text-[11px] text-muted-foreground">
-              applies on the next heartbeat
+              {data.rustdesk.stagedSource === 'policy'
+                ? `automatic — applies inside the business's update window${data.rustdesk.stagedHoldReason ? ` (waiting: ${HOLD_LABEL[data.rustdesk.stagedHoldReason] ?? data.rustdesk.stagedHoldReason})` : ''}`
+                : 'applies on the next heartbeat'}
             </div>
           </Row>
         )}

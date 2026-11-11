@@ -13,6 +13,7 @@ import { compareVersions } from '../common/agent-contract';
 import { rustdeskAssetSha256 } from '../common/rustdesk-release';
 import { isWithinSchedule, parseSchedule } from '../rbac/schedule';
 import { queryHbbsOnline } from '../enrollment/hbbs-presence';
+import { openSessionReason } from './session-evidence';
 
 const TAG_RE = /^\d+\.\d+\.\d+$/;
 const ACTIVE: UpdateJobStatus[] = ['DISPATCHED', 'INSTALLING', 'AWAITING_VERIFICATION'];
@@ -519,19 +520,7 @@ export class UpdateRolloutService implements OnModuleInit, OnModuleDestroy {
       try { open = isWithinSchedule(parseSchedule(window), now); } catch { open = false; }
       if (!open) return 'outside_maintenance_window';
     }
-    if ((f.rdSessionsActive ?? 0) > 0) return 'active_session_reported_by_endpoint';
-    const sessions = await this.prisma.supportSession.findMany({
-      where: {
-        endpointId: f.endpointId,
-        status: { in: ['SESSION_STARTED', 'LAUNCH_REQUESTED', 'LAUNCHER_ACKNOWLEDGED', 'CLIENT_OPENED'] },
-      },
-      select: { status: true, createdAt: true },
-    });
-    if (sessions.some((s) => s.status === 'SESSION_STARTED')) return 'active_session_confirmed';
-    if (deferOnUnknown && sessions.some((s) => now.getTime() - s.createdAt.getTime() < 2 * 3600_000)) {
-      return 'session_state_unknown (a recent launch has not been confirmed or closed)';
-    }
-    return null;
+    return openSessionReason(this.prisma, f.endpointId, f.rdSessionsActive, now, deferOnUnknown);
   }
 
   private async recordEvidence(j: Prisma.UpdateJobGetPayload<{ include: { rollout: true } }>, f: HeartbeatFacts) {

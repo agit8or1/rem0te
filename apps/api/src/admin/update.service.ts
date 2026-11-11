@@ -719,11 +719,16 @@ export class UpdateService {
         select: {
           rustdeskId: true, version: true, lastSeenAt: true,
           updateRequestedAt: true, updateTargetVersion: true,
-          endpoint: { select: { id: true, name: true, hostname: true, isOnline: true, platform: true } },
+          updateRequestSource: true, updateRequestedById: true, updateHoldReason: true,
+          endpoint: { select: { id: true, name: true, hostname: true, isOnline: true, platform: true, customer: { select: { id: true, name: true } } } },
         },
         orderBy: { hostname: 'asc' },
       }),
     ]);
+    const byIds = [...new Set(nodes.map((n) => n.updateRequestedById).filter((x): x is string => !!x))];
+    const users = new Map((await this.prisma.user.findMany({
+      where: { id: { in: byIds } }, select: { id: true, firstName: true, lastName: true, email: true },
+    })).map((u) => [u.id, [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email]));
 
     const endpoints = nodes.map((n) => ({
       endpointId: n.endpoint?.id ?? null,
@@ -736,6 +741,14 @@ export class UpdateService {
       lastSeenAt: n.lastSeenAt,
       updatePending: !!n.updateRequestedAt,
       updateTargetVersion: n.updateTargetVersion,
+      business: n.endpoint?.customer ?? null,
+      // Which kind of request this is (0.32): 'manual' goes on the next
+      // heartbeat; 'policy' waits for the business's update window.
+      updateSource: n.updateRequestedAt ? (n.updateRequestSource === 'POLICY' ? 'policy' : 'manual') : null,
+      updateRequestedBy: n.updateRequestedById
+        ? { id: n.updateRequestedById, name: users.get(n.updateRequestedById) ?? 'a user no longer here' }
+        : null,
+      updateHoldReason: n.updateRequestSource === 'POLICY' ? n.updateHoldReason : null,
       // Unknown until the endpoint heartbeats with a version, which only
       // installers from v0.8.2 onward report. Explicitly not "outdated":
       // flagging every pre-upgrade endpoint as out of date would be noise.
@@ -783,9 +796,16 @@ export class UpdateService {
       (n) => !n.version || this.compareVersions(n.version, latest) < 0,
     );
 
+    // MANUAL (0.32): someone asked, so it goes on the next heartbeat whatever
+    // the business's update window says. A computer the update policy had
+    // already queued becomes a manual request here, which is the point of
+    // clicking Update on it.
     await this.prisma.rustdeskNode.updateMany({
       where: { id: { in: targets.map((t) => t.id) } },
-      data: { updateRequestedAt: new Date(), updateTargetVersion: latest },
+      data: {
+        updateRequestedAt: new Date(), updateTargetVersion: latest,
+        updateRequestSource: 'MANUAL', updateRequestedById: actor.userId ?? null, updateHoldReason: null, updateHoldAt: null,
+      },
     });
 
     for (const t of targets) {
@@ -793,7 +813,7 @@ export class UpdateService {
         tenantId: t.tenantId ?? undefined,
         actorId: actor.userId, actorIp: actor.ip,
         action: 'ENDPOINT_UPDATED', resource: 'endpoint', resourceId: t.endpointId,
-        meta: { rustdeskFrom: t.version ?? 'unknown', rustdeskTo: latest },
+        meta: { rustdeskFrom: t.version ?? 'unknown', rustdeskTo: latest, source: 'manual' },
       });
     }
 
@@ -804,7 +824,7 @@ export class UpdateService {
   async cancelRustdeskUpdate(endpointId: string) {
     const r = await this.prisma.rustdeskNode.updateMany({
       where: { endpointId },
-      data: { updateRequestedAt: null, updateTargetVersion: null },
+      data: { updateRequestedAt: null, updateTargetVersion: null, updateRequestSource: null, updateRequestedById: null, updateHoldReason: null, updateHoldAt: null },
     });
     return { cancelled: r.count };
   }

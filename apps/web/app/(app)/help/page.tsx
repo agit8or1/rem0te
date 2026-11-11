@@ -497,6 +497,57 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'client-updates',
+    title: 'Automatic RustDesk Client Updates',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          A business can let the server update outdated RustDesk clients by itself, at a time nobody is
+          using the computers. Set it in{' '}
+          <Link href="/settings/client-updates" className="underline text-foreground">Settings → Client updates</Link>.
+          It is off until someone turns it on.
+        </p>
+        <p className="font-medium text-foreground">The update window</p>
+        <p>
+          Pick the days and times, and the time zone they are in — for example every night 22:00–05:00
+          Europe/London. An end earlier than the start runs past midnight and belongs to the day it starts
+          on. Daylight-saving changes are handled: on the night the clocks go forward a window that starts in
+          the missing hour opens when the clock reaches the next real time. The page shows when the window
+          next opens. A site can have its own policy, which replaces the business one for that site.
+        </p>
+        <p className="font-medium text-foreground">What happens</p>
+        <p>
+          While the window is open, the server queues outdated Windows computers that are online, in batches
+          (25 per two-minute sweep by default), and each is told to re-run its installer on its next heartbeat. Outside the window nothing
+          is queued, and anything already queued automatically waits. By default a computer with an open
+          remote session is skipped (the install restarts RustDesk and would end the session); you can also
+          skip computers someone is logged on to. Updates paused by{' '}
+          <Link href="/settings/security/containment" className="underline text-foreground">Containment</Link>{' '}
+          stop all of this.
+        </p>
+        <p className="font-medium text-foreground">Clicking Update still goes at once</p>
+        <p>
+          An update someone queues by hand on the Updates page is sent on the next heartbeat, whatever the
+          window. The Updates page and the computer&apos;s page say which kind each queued update is, and who
+          queued a manual one. Clicking Update on one that is waiting for the window sends it now.
+        </p>
+        <p className="font-medium text-foreground">Computers that will never update automatically</p>
+        <p>
+          The Computers list says why: not Windows, never authenticated with a device secret (re-run the
+          installer on the machine once), or an agent so old it has never reported a RustDesk version. An
+          offline computer is queued when it is next online inside the window.
+        </p>
+        <p className="font-medium text-foreground">Who can change it</p>
+        <p>
+          A Business Owner for their own business, a technician whose assignment gives{' '}
+          <em>Rename/edit computers</em> over the whole business, or the MSP. Turning it on asks you to confirm
+          it is you; turning it off never does. Every change, and every computer queued automatically, is in
+          the audit log.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'api-keys',
     title: 'API Keys',
     content: (

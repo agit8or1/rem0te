@@ -21,6 +21,7 @@ import { UpdateRolloutService } from '../admin/update-rollout.service';
 import { MonitoringService } from '../monitoring/monitoring.service';
 import { DiagnosticsCatalogService } from '../diagnostics-catalog/diagnostics-catalog.service';
 import { ContainmentService } from '../containment/containment.service';
+import { ClientUpdatesService } from '../client-updates/client-updates.service';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
 import { CANDIDATE_LIVE_MS, CANDIDATE_SETTLE_MS } from './device-secret';
 import { queryHbbsOnline } from './hbbs-presence';
@@ -47,6 +48,7 @@ export class EnrollmentService {
     private readonly containment: ContainmentService,
     private readonly monitoring: MonitoringService,
     private readonly diagnostics: DiagnosticsCatalogService,
+    private readonly clientUpdates: ClientUpdatesService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -632,7 +634,7 @@ export class EnrollmentService {
         node.updateTargetVersion &&
         dto.rustdeskVersion &&
         compareVersions(dto.rustdeskVersion, node.updateTargetVersion) >= 0
-          ? { updateRequestedAt: null, updateTargetVersion: null }
+          ? { updateRequestedAt: null, updateTargetVersion: null, updateRequestSource: null, updateRequestedById: null, updateHoldReason: null, updateHoldAt: null }
           : {}),
         // A reinstall clears once the endpoint reports an agent matching this
         // server AND the request has been handed out at least once. Without
@@ -714,6 +716,19 @@ export class EnrollmentService {
       !(dto.rustdeskVersion && compareVersions(dto.rustdeskVersion, node.updateTargetVersion) >= 0)
         ? { targetVersion: node.updateTargetVersion }
         : null;
+
+    // v0.32: a request the business's update policy queued is handed out only
+    // inside that policy's window — and, when the policy says so, not while a
+    // session is open or someone is logged on. A request someone made by hand
+    // (MANUAL, or anything staged before 0.32) still goes now. Fails closed:
+    // if the policy cannot be read, the automatic request waits.
+    if (updateRustdesk && node.updateRequestSource === 'POLICY') {
+      const hold = await this.clientUpdates.holdForHeartbeat(
+        { id: node.id, endpointId: node.endpointId, updateHoldReason: node.updateHoldReason },
+        { rustdeskSessions: dto.rustdeskSessions, loggedOnUser: dto.loggedOnUser },
+      ).catch((e) => { this.logger.warn(`Update policy check failed for ${node.endpointId}: ${String(e)}`); return 'error'; });
+      if (hold) updateRustdesk = null;
+    }
 
     // An operator-requested agent reinstall. Same mechanism as the RustDesk
     // upgrade — re-run the installer, which is idempotent and keeps the

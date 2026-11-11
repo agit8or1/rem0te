@@ -96,6 +96,16 @@ function toMinutes(hhmm: string): number {
 export function isWithinSchedule(schedule: AccessSchedule | null | undefined, at: Date = new Date()): boolean {
   if (!schedule) return true;
   const { day, minutes } = localClock(at, schedule.timeZone);
+  return isOpenAtClock(schedule, day, minutes);
+}
+
+/**
+ * The window test on an already-computed wall clock (weekday, minutes since
+ * midnight in the schedule's zone). Split out so a caller scanning many
+ * minutes (the client-update window's "next opening") converts the clock
+ * itself and still applies exactly this rule.
+ */
+export function isOpenAtClock(schedule: AccessSchedule, day: number, minutes: number): boolean {
   const yesterday = (day + 6) % 7;
   return schedule.windows.some((w) => {
     const s = toMinutes(w.start);

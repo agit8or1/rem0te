@@ -677,6 +677,18 @@ export const monitoringApi = {
   endpoint: (id: string) => api.get(`/monitoring/endpoints/${id}`),
 };
 
+// Scheduled RustDesk client updates (0.32). Turning a policy on, or removing a
+// site override, needs fresh authentication (STEP_UP_REQUIRED); turning it off does not.
+export const clientUpdatesApi = {
+  policy: (businessId?: string | null) => api.get('/client-updates/policy', bq(businessId)),
+  setPolicy: (data: {
+    businessId: string; siteId?: string | null; enabled: boolean; timeZone: string;
+    windows: { days: number[]; start: string; end: string }[]; skipActiveSession: boolean; skipLoggedOnUser: boolean;
+  }) => api.put('/client-updates/policy', data),
+  removeSiteOverride: (businessId: string, siteId: string) => api.delete(`/client-updates/policy/sites/${siteId}`, bq(businessId)),
+  computers: (businessId?: string | null) => api.get('/client-updates/computers', bq(businessId)),
+};
+
 // API keys for the public API (/api/v1/pub/v1, docs/PUBLIC-API.md). The raw key is returned once, at creation.
 export const API_KEY_SCOPES = [
   'companies:read', 'companies:write', 'users:read', 'users:write',

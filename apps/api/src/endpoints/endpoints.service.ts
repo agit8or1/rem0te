@@ -1267,6 +1267,7 @@ export class EndpointsService {
         where: { endpointId: id },
         select: {
           version: true, updateTargetVersion: true, updateRequestedAt: true,
+          updateRequestSource: true, updateHoldReason: true,
           agentSecretHash: true, reinstallRequestedAt: true, reinstallDispatchedAt: true,
           candidateSecretSeenAt: true, candidateSecretFirstAt: true,
           candidateSecretIp: true, candidateSecretConflict: true,
@@ -1284,6 +1285,10 @@ export class EndpointsService {
         // disagreeing with it.
         stagedVersion: node?.updateTargetVersion ?? null,
         stagedAt: node?.updateRequestedAt ?? null,
+        // 0.32: 'policy' waits for the business's update window; 'manual' goes
+        // on the next heartbeat. The page must not promise the latter for both.
+        stagedSource: node?.updateRequestedAt ? (node.updateRequestSource === 'POLICY' ? 'policy' : 'manual') : null,
+        stagedHoldReason: node?.updateRequestSource === 'POLICY' ? node.updateHoldReason ?? null : null,
       },
       // The Rem0te agent, which is a different question from the RustDesk
       // client: it is what decides whether this machine can collect anything

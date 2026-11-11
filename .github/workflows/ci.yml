@@ -124,6 +124,13 @@ jobs:
       - name: Diagnostics catalog tests
         run: node apps/api/scripts/unit-diagnostics-catalog.mjs
 
+      # Scheduled client updates (0.32): the update window's validation, time
+      # zones (+5:30, +5:45, a 30-minute DST zone), windows across midnight,
+      # both DST transitions, next opening/closing against a minute-by-minute
+      # reference, and the policy decisions the sweep and heartbeat share.
+      - name: Client update window tests
+        run: node apps/api/scripts/unit-update-window.mjs
+
       # Patch status (0.30): the Patches tab summary and the redacted ticket
       # summary for restart required/completed, failed, offline/stale, WSUS and
       # Intune, the standard agent and no evidence, against the contract schema.

@@ -6,11 +6,13 @@ separately, from different places, and confusing them wastes time.
 | What | Where | Restart blast radius |
 |---|---|---|
 | **Rem0te itself** | Updates page → *Check for updates* | API + web restart; sessions in flight are unaffected |
-| **RustDesk clients on endpoints** | Updates → *RustDesk Clients* | Per-endpoint, applied on its next heartbeat |
+| **RustDesk clients on endpoints** | Updates → *RustDesk Clients*, or automatically in a window: Settings → *Client updates* | Per-endpoint, applied on its next heartbeat (automatic ones only inside the business's update window) |
 | **RustDesk server (hbbs/hbbr)** | Updates → *RustDesk Server* | **Every endpoint reads offline for ~30s** |
 
 All three live at **/about** in the UI, reachable from the sidebar as
-**Settings → Updates** (Platform Admin only). The running version is also in the sidebar
+**Settings → Updates** (Platform Admin only). Automatic client updates are set
+per business at **Settings → Client updates**, by that business's owner, a
+technician with `computers:edit` over the whole business, or the MSP. The running version is also in the sidebar
 footer and on the About page, for everyone signed in — "which version are you
 on?" is the first question asked about every problem.
 
@@ -73,6 +75,96 @@ Consequences worth knowing:
 - **Endpoints that have never reported a version show as *Unknown*, not
   *Outdated*.** Flagging every pre-v0.8.2 machine as out of date would be pure
   noise.
+
+### Automatic updates in a window (0.32)
+
+Staging by hand applies on the next heartbeat, whatever the time. A business
+can instead let the server do it, outside working hours:
+**Settings → Client updates** (`/settings/client-updates`).
+
+| Setting | Default | Meaning |
+|---|---|---|
+| On / off | **Off** | Nothing is queued automatically until it is turned on |
+| Update window | — | Days of the week, a start and an end, in a stated IANA time zone (e.g. `Europe/London`). Up to 7 windows, each at least 30 minutes |
+| Skip a computer with an open session | **On** | The install restarts RustDesk, which ends the session |
+| Skip a computer with someone logged on | Off | When on, an agent that does not report who is logged on is skipped too — unknown is not "nobody" |
+
+A **site** can have its own policy. It replaces the business policy for that
+site's computers entirely, including being off when the business is on.
+
+**The window.** Same rules as every other weekly window in Rem0te
+(`rbac/schedule.ts`): days are 0 = Sunday … 6 = Saturday, times are wall-clock
+in the policy's zone, and an end earlier than the start crosses midnight and
+belongs to the day it starts on (22:00–05:00 on Friday is Friday night into
+Saturday). Daylight saving is never computed with local-time arithmetic, so
+on a spring-forward night a window starting in the missing hour opens when
+the clock reaches the next real time (02:30–05:00 in New York on 8 March opens
+at 03:00 EDT), and on a fall-back night 01:00–02:00 covers both hours that
+read 01:xx. The page shows when the window next opens and closes.
+
+**The sweep** (`client-updates/client-update-sweep.service.ts`) runs every
+`CLIENT_UPDATE_SWEEP_SECONDS` (default 120). For each enabled policy whose
+window is open *now*, it queues that scope's computers through the same
+`updateRequestedAt` path a click on Update uses, marked **POLICY**. A computer
+is queued only if it is Windows, not archived, online, has a device secret,
+has reported a RustDesk version older than the target (the version pin, else
+the latest release), has nothing queued already, has no staged-rollout job
+and — per the policy — no open session and nobody logged on. At most
+`CLIENT_UPDATE_SWEEP_BATCH` (default 25) computers are queued per sweep, across
+every business, so a fleet is spread over successive sweeps. Outside the
+window it queues nothing. `CLIENT_UPDATE_SWEEP=off` turns it off in that
+process; run scratch and capture APIs with it off, because it acts on every
+enabled policy in the database.
+
+**The heartbeat** hands a POLICY request out only inside the window, and,
+when the policy says so, not during an open session (the endpoint's own
+session count, a confirmed session, or a launch in the last two hours never
+confirmed or closed — the same evidence staged rollouts use) or with someone
+logged on. Otherwise it is withheld and the reason recorded, so the console
+can say *auto, waiting for the window* or *waiting: a remote session is open*.
+
+**A request made by hand still goes immediately.** Clicking Update marks it
+**MANUAL**, with who clicked, and the next heartbeat carries it as before.
+Clicking Update on a computer the policy queued turns it into a manual
+request. The Updates page, the computer's page and Settings → Client updates
+all say which kind each queued update is, and who queued a manual one.
+Requests staged before 0.32 are recorded as manual.
+
+**Turning a policy off withdraws** the POLICY requests it queued that have not
+completed; manual requests are left alone. So does removing a site override
+when the business policy is off.
+
+**Containment.** An `updates` pause (global, or for the business) stops the
+sweep queuing anything there and the heartbeat handing anything out, as it
+already did for manual requests and rollouts.
+
+**Who can change a policy.** It makes the server re-run an installer on every
+computer in the business without anyone clicking Update, so:
+
+- a **Business Owner**, for their own business only;
+- a **technician** whose assignment grants `computers:edit` over the *whole*
+  business — an assignment limited to named computers cannot set a policy that
+  reaches all of them;
+- the **MSP** (Platform Admin, or `technicians:manage` when not acting as a
+  technician).
+
+A Business User cannot, whatever they hold: they may see only some of the
+business's computers and the policy reaches all of them. Turning a policy on,
+saving one that stays on, or removing a site override needs fresh
+authentication (`STEP_UP_REQUIRED`, action `updates.schedule`); turning one
+off never does. Anyone with `computers:view` can read the policy and the
+computer list, for the computers they can see.
+
+**Audit.** Every change is `CLIENT_UPDATE_POLICY_CHANGED` with the policy
+before and after, the window in words, and how many requests it withdrew. Every
+computer the sweep queues is `CLIENT_UPDATE_AUTO_QUEUED`, with no actor, the
+policy, and the from/to versions.
+
+**Computers that will never update automatically** are listed with the reason:
+not Windows, never authenticated with a device secret (re-run the installer on
+the machine once), or never reported a RustDesk version (an agent older than
+0.8.2 — see below). An offline computer is not "never": it is queued when it
+is next online inside the window.
 
 ### The pre-v0.8.2 trap
 
