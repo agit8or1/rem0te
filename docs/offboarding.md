@@ -15,7 +15,7 @@ This is the most important part of the page.
 
 ## Access review
 
-Every computer has an **Access review** panel (needs `users:view`). It lists everyone who can connect, and how:
+Every computer has an **Access review** panel, *Who can connect to this computer* on its **History** tab (needs `users:view`). It lists everyone who can connect, and how:
 
 | Shown as | Meaning |
 |---|---|

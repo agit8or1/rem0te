@@ -149,7 +149,7 @@ for a computer it confirms neither.
 
 ## Test connection (v0.20)
 
-Every computer has a **Test connection** panel. It runs read-only checks and
+Every computer has a **Test connection** panel, on its **Diagnostics** tab (0.31; **Diagnose** in the header opens it). It runs read-only checks and
 says, for each, what was found, where the problem is (server, endpoint or your
 computer) and what to do:
 

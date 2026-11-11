@@ -45,6 +45,45 @@ next. Recovery codes work here too, and each one is single-use.
 heartbeats every 3 minutes, so a machine that has genuinely dropped shows Offline
 a few minutes later, not instantly.
 
+### The device workspace (0.31)
+
+Opening a computer gives you one page for it.
+
+**The header** says who it is and whether it is reachable: name, status
+(*Online*, *Offline since …*, or *Online (RustDesk only)* when RustDesk can reach
+it but its agent has stopped checking in), business, site and **last seen**,
+marked *stale* when the agent has missed its check-ins. Under it, the
+**attention strip** lists what needs looking at, each one a link to the tab that
+explains it: open alerts with the worst severity (→ Monitoring), *Restart
+pending* and pending updates with the age of the scan (→ Patches), a refused
+heartbeat or an out-of-date agent (→ Overview), and which agent the computer runs
+— *Standard agent*, *Signed agent* or *RustDesk only* (see
+[What each agent can do](capabilities.md)).
+
+**The actions:** **Connect**, **Diagnose** (opens Diagnostics), **Run action**
+(opens Actions; disabled, with the reason printed underneath, when the computer
+lacks the signed agent or no approval signer is configured), **Patch** (opens
+Patches) and **More**: view-only connect (technicians), the diagnostics report,
+*Reinstall agent* and *Archive computer*, each behind a confirmation that says
+what it does.
+
+**The tabs**, each linkable with `?tab=`:
+
+| Tab | What is on it |
+|---|---|
+| Overview | Assignment, key alerts, patch status, recent activity, then the hardware, utilisation, storage, network and update cards, each with its age |
+| Monitoring | Alerts first (acknowledge and resolve here), then what is watched on this computer in words, the agent's last report, and what changed |
+| Software | Installed software with a filter, and recent software changes (Windows agents only) |
+| Patches | Patch status, updates offered, Windows Update history |
+| Event logs | A page of one Windows event log, on request (Windows agents only) |
+| Diagnostics | Test connection: server, computer and your own RustDesk |
+| Actions | Request an approved action and see past requests |
+| History | Remote sessions, technician notes, the AI-written summary (labelled as such) and who can connect |
+
+There are no Services or Processes tabs: no agent collects them. The agent reads
+only the services a monitor names, and those appear on Monitoring. Old links
+(`?tab=notes`, `?tab=timeline`, `?tab=access-review`) open History.
+
 ---
 
 ## 3. Connect to a computer
@@ -181,7 +220,8 @@ business from there. See [technicians.md](technicians.md).
 
 ## Troubleshooting
 
-**Start with Test connection.** Every computer's page has it. It checks the
+**Start with Test connection.** Every computer's page has it, on the
+**Diagnostics** tab (the **Diagnose** button opens it). It checks the
 server, the computer and, with *Check my computer*, your own RustDesk, and says
 which one is wrong. See [connecting.md](connecting.md#test-connection-v020).
 

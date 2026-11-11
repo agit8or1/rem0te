@@ -190,7 +190,7 @@ rollback. If a version misbehaves:
    it leaves it alone, so *Reinstall agent* by itself does not downgrade. The
    uninstall needs someone at the machine, or a tool other than RustDesk:
    uninstalling RustDesk over a RustDesk session ends that session.
-4. Check the computer's **Test connection** panel: registration, version and
+4. Check the computer's **Test connection** panel (Diagnostics tab): registration, version and
    heartbeat.
 
 **Agents on the signed chain (0.24)** work differently:

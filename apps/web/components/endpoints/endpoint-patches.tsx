@@ -27,7 +27,7 @@ interface PatchUpdate {
 }
 interface History { updateId: string; revision: number; kb?: string; title: string; result: string; hresult?: string; operation: string; date: string }
 /** Built by apps/api/src/patching/summary.ts (0.30). */
-interface Summary {
+export interface Summary {
   evidence: { source: 'signed_agent_scan' | 'standard_agent_scan' | 'none'; at: string | null; ageHours: number | null; freshness: 'fresh' | 'stale' | 'none'; lastSuccessfulScanAt: string | null };
   lastBootAt: string | null; restartedSinceLastInstall: boolean | null;
   online: { isOnline: boolean; lastSeenAt: string | null };
@@ -37,7 +37,7 @@ interface Summary {
   deploy: { possible: boolean; reason: string | null };
   warnings: string[];
 }
-interface Patches {
+export interface Patches {
   summary: Summary;
   supported: boolean; scannedAt: string | null; scanRequestedAt: string | null; scanPending: boolean; error: string | null;
   managers: { id: string; label: string }[]; autoUpdate: string | null;
@@ -58,7 +58,7 @@ const MANAGED: Record<Summary['managedBy']['state'], string> = { rem0te_or_windo
 const age = (h: number | null) => (h == null ? '' : h < 1 ? 'under an hour old' : h < 48 ? `${Math.round(h)} h old` : `${Math.round(h / 24)} days old`);
 
 /** The evidence first: where it came from, how old it is, and who manages updates here. */
-function PatchSummaryCard({ s }: { s: Summary }) {
+export function PatchSummaryCard({ s }: { s: Summary }) {
   const row = (k: string, v: React.ReactNode) => (<div className="flex flex-wrap gap-x-2"><dt className="text-muted-foreground w-44 shrink-0">{k}</dt><dd className="min-w-0">{v}</dd></div>);
   return (
     <Card data-testid="patch-summary">

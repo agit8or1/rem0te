@@ -4,7 +4,8 @@ What a managed computer reports about itself, how it gets here, and how to ask
 it for a slice of its Windows event log.
 
 All of it lives on a computer's page, under **Devices → *the machine* →
-Overview** and **Event Log**.
+Overview**, **Software** and **Event logs** (the tabs are described in
+[the technician guide](technician-guide.md#the-device-workspace-031)).
 
 ---
 
@@ -134,7 +135,7 @@ bump that constant in the same commit.
 
 ## Event logs
 
-**Devices → *the machine* → Event Log** requests a page of one Windows event
+**Devices → *the machine* → Event logs** requests a page of one Windows event
 log. Pick the log, a time range, the levels, and how many of the most recent
 events you want; the request is queued and the table fills in when the machine
 answers.
@@ -227,10 +228,11 @@ numbers.
 
 From 0.29 the inventory includes **installed software**: what Windows lists under Programs and Features, from
 the 64- and 32-bit uninstall registry keys, skipping system components and updates, up to 500 entries. It is
-shown on the computer's **Monitoring** tab with a filter.
+shown on the computer's **Software** tab (0.31; before that, the Monitoring tab) with a filter, the age of the
+inventory it came from, and the latest software changes.
 
 Each inventory is also **compared with the one before**. Hardware, operating system, disks, network adapters and
-software that were added, removed or changed are recorded as a change history on the same tab — *software added:
+software that were added, removed or changed are recorded as a change history on the **Monitoring** tab — *software added:
 7-Zip 24.08*, *memory changed: 16 GB → 32 GB*. The first inventory is the baseline and records nothing; a list an
 older agent does not report (software, before 0.29) is not compared, so upgrading an agent does not log every
 program as newly installed.
