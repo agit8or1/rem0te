@@ -10,6 +10,7 @@ behind it says *No data*, and an empty report says what is missing.
 | **Agent coverage** | Which agent each device runs and at what version; devices without a device secret; devices not heard from in N days; non-Windows devices with no inventory | View computers |
 | **Alert frequency** | How many alerts each business, site, computer and monitor type raised in a period, and how long they took to resolve | monitoring:alerts |
 | **Offline time** | How long computers were unreachable, from the offline episodes the Offline monitor recorded | monitoring:alerts |
+| **Software compliance** (0.34) | For each software catalog entry, how many Windows computers are compliant, outdated, missing or unknown | View computers |
 
 Each report shows only what you can already see elsewhere:
 
@@ -97,6 +98,27 @@ What this cannot tell you, and why there is **no availability percentage**:
 An availability percentage needs the time each computer was monitored, which is not recorded, so any
 percentage would be invented.
 
+## Software compliance
+
+Per [software catalog](software-deployment.md) entry, over the Windows computers it applies to (a business's entries
+over that business's computers, global entries over every computer you can see), from the newest evidence:
+
+- the inventory's installed-software list, for a **display name** detection rule only; the inventory carries no
+  uninstall key names or file versions, so the other two rules are never answered from it;
+- the detection the computer reported when a software plan ran there (before, after, or at a timeout), for any
+  rule, counted only for the same package under the same rule.
+
+| State | Means |
+|---|---|
+| **Compliant** | The detection rule holds |
+| **Outdated** | Found, at a version the rule does not accept |
+| **Missing** | Not found |
+| **Unknown** | No evidence, or none newer than 14 days (counted separately as *stale*) |
+
+Unknown is never folded into compliant or missing. A rule nothing has evidence for is honestly all unknown. The page
+shows the totals, each entry's counts, how many visible computers are not Windows (and so not counted), and the
+computers needing attention (outdated, then missing, then unknown). The export has one row per entry and computer.
+
 ## Exporting
 
 Every report has **Export CSV**. The export is the whole report as rows (one per device for patch compliance
@@ -122,6 +144,6 @@ with the same scoping and filters as the page.
 
 ## API
 
-`GET /api/v1/reports/{patch-compliance|agent-coverage|alert-frequency|offline-time}` and the same path with
+`GET /api/v1/reports/{patch-compliance|agent-coverage|alert-frequency|offline-time|software-compliance}` and the same path with
 `/export.csv`, taking `businessId`, `siteId`, `days` (1, 7, 30, 90, 365) and `silentDays` (1, 3, 7, 14, 30,
 90). Other values are a 400. See the [API reference](API-REFERENCE.md).

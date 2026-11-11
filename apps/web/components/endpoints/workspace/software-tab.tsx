@@ -7,17 +7,27 @@ import { apiError } from '@/components/security-controls/shared';
 import { formatDate } from '@/lib/utils';
 import { ago } from './device-model';
 import { useMonitoringView } from './use-device-data';
+import { ManagedSoftware } from './managed-software';
 
 /**
  * Installed software (0.29): what Windows lists under Programs and Features,
  * sent with the full inventory pass. Read from the same monitoring view the
  * Monitoring tab uses — there is no separate software route.
+ *
+ * 0.34 added Managed software above it: the software catalog as this
+ * computer sees it, with Install / Uninstall when the server allows them.
  */
 export function DeviceSoftwareTab({ endpointId }: { endpointId: string }) {
   const [filter, setFilter] = useState('');
   const { data, error } = useMonitoringView(endpointId);
-  if (error) return <p className="text-sm text-muted-foreground">{apiError(error).message}</p>;
-  if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (error || !data) {
+    return (
+      <div className="space-y-4">
+        <ManagedSoftware endpointId={endpointId} />
+        <p className="text-sm text-muted-foreground">{error ? apiError(error).message : 'Loading…'}</p>
+      </div>
+    );
+  }
 
   const q = filter.trim().toLowerCase();
   const rows = (data.software ?? []).filter((s) => !q || `${s.name} ${s.publisher ?? ''} ${s.version ?? ''}`.toLowerCase().includes(q));
@@ -25,6 +35,7 @@ export function DeviceSoftwareTab({ endpointId }: { endpointId: string }) {
 
   return (
     <div className="space-y-4">
+      <ManagedSoftware endpointId={endpointId} />
       <Card data-testid="mon-software">
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-3">
           <div>

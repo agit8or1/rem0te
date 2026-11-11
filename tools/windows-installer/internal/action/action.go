@@ -183,6 +183,12 @@ type Options struct {
 	Maint Maintenance
 	// How long a service restart waits for the stop; 60 seconds by default.
 	StopTimeout time.Duration
+	// Software deployment (v0.34): winget and the read-only detection
+	// probe; nil where not available. SoftwareTimeout, when set, replaces
+	// every winget timeout (tests); 0 means the defaults in software.go.
+	Winget          Winget
+	Software        SoftwareProbe
+	SoftwareTimeout time.Duration
 }
 
 var jobRE = regexp.MustCompile(`^[a-f0-9]{32}$`)

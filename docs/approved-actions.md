@@ -12,9 +12,14 @@ a warned restart, cancel a pending restart, and collect a fixed set of logs. See
 [Maintenance actions (0.32)](#maintenance-actions-032). The rest of this page describes the Print Spooler action, and
 the machinery every action shares.
 
-Those six are the whole catalog. You can't request a command, a script, a path, a URL, a service off the list, a
+From 0.34 it has two **software actions**: install and uninstall one allowlisted winget package, pinned by version and
+installer SHA-256, requested only from the software catalog (one computer, or a canary and rings). See
+[Software deployment](software-deployment.md).
+
+Those eight are the whole catalog. You can't request a command, a script, a path, a URL, a service off the list, a
 restart message of your own, a log file or time range of your own, or a change to any service's startup type. Credential extraction, removing backups, disabling defenses, granting admin rights and wiping
-disks aren't in the catalog and never will be. They aren't switched off; nothing exists to request them.
+disks aren't in the catalog and never will be. Nor can you request a package outside the catalog, an installer of
+your own, installer switches, or a per-user install. They aren't switched off; nothing exists to request them.
 
 > **Warning.** Documents already waiting in the print queue may print as soon as the spooler starts. They can't be
 > recalled once they reach the printer. The requester confirms this, and the approval page shows it.
@@ -362,6 +367,7 @@ a passkey. A rejection is final.
 | Code | Meaning |
 |---|---|
 | `ACTION_NOT_IN_CATALOG` | Not a catalog action. Commands, scripts and the blocked categories are always this |
+| `ACTION_NOT_DIRECT` | Requested through its own workflow, not the Actions tab: update install (a patch deployment) and, from 0.34, software install and uninstall (the software catalog) |
 | `PARAMS_NOT_ALLOWED` | The parameters aren't the catalog's (another service, an extra field) |
 | `ACTION_NOT_GRANTED` | Your role or access level doesn't include requesting this, on this computer |
 | `PROTECTED_DEVICE_CLASS` | The computer is a protected class |
@@ -382,18 +388,25 @@ the job; request it again), `bad_window` (from 0.32 also a restart plan whose wi
 nothing changed), `restart_already_scheduled`, `stop_failed`, `start_failed`, `did_not_remain_running`,
 `schedule_failed`, `cancel_failed`, `no_maintenance` (an agent built without the maintenance surface).
 
+0.34 software results: `managed_elsewhere`, `hash_mismatch` and `manifest_hash_mismatch` (refused, nothing installed),
+`winget_unavailable`, `winget_too_old` and `detection_failed` (not executed), `download_failed`,
+`installer_not_found`, `install_failed`, `uninstall_failed` and `not_effective` (failed), `timeout` (uncertain),
+`no_software` (an agent built without the software surface). See
+[Software deployment](software-deployment.md#refusals-and-results).
+
 ## What has been proven, and what hasn't
 
 | Level | State |
 |---|---|
 | **Fixture-tested** | Yes. `internal/action` Go tests cover every refusal, replay, crash and verification path. `unit-approval-signer.mjs` (79 checks from 0.32) covers synthetic passkeys through the real WebAuthn verification: forged origin and RP ID, missing user verification, reused and cross-decision challenges, counter regression, the requester approving, quorum, customer sign-off and restart. `e2e-approved-action.mjs` (76 checks) runs the portal, the signer and the agent's real decision code against a simulated Windows, including the compromised-database envelopes |
 | **Fixture-tested, 0.32** | `internal/action` Go tests for the maintenance actions (allowlist, charset, delay bounds, session check, journal steps, interruption, redaction and size caps); `unit-approval-signer.mjs` adds the maintenance admission and two-approver cases; `e2e-maintenance-actions.mjs` runs all four through the portal, the signer and the agent's real decision code against a simulated Windows (service manager, `shutdown.exe`, `wevtutil` and the session count are simulated) |
+| **Fixture-tested, 0.34** | `internal/action` Go tests for the software actions against a stub winget run through the agent's real exec path (success, already installed, hash and manifest mismatch, winget missing or too old, managed elsewhere, timeout, not effective, restart required, argument injection in every field); `unit-approval-signer.mjs` adds the software admission, two-approver and 25-computer cases; `e2e-software-deploy.mjs` runs the catalog, single installs and uninstalls, rings, compliance and isolation through the portal, the signer and the agent's real decision code. winget, App Installer under SYSTEM, the uninstall registry and file versions are simulated |
 | **Paired lab** (real Windows workstation, real authenticator, real ClientSt0r) | **Not done.** The Windows calls (service control manager, registry product type, `rustdesk --get-id`, and from 0.32 `shutdown.exe`, `wevtutil.exe` and the RustDesk process count) are compiled and vetted for Windows but haven't run on a lab machine |
 | **Production-ready** | **No.** It needs the paired lab first, and an operator who has done the key and roster ceremonies |
 
 ## Known limits
 
-- Six actions, on Windows only. Every action but update install names one computer per plan; an update ring names up to 25.
+- Eight actions, on Windows only. Every action but update install and the two software actions names one computer per plan; an update or software ring names up to 25.
 - The RustDesk session check is made once, when a restart is scheduled, and sees RustDesk sessions only.
 - A scheduled restart is reported as scheduled. Whether it happened is seen only from the next boot time.
 - A compromised portal can delay, cancel or withhold delivery. It can't sign or alter a plan.

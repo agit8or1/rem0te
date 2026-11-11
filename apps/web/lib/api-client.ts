@@ -105,6 +105,44 @@ export const patchingApi = {
   revokePolicy: (id: string, reason: string) => api.post(`/patching/policies/${id}/revoke`, { reason }),
 };
 
+// 0.34 software deployment (docs/software-deployment.md). The catalog is
+// allowlisted winget packages pinned to one version and installer SHA-256.
+// Changing it needs a fresh sign-in (the interceptor prompts). There is no
+// approve route: each ring's plan is approved on the approval signer.
+export type SoftwareDetection =
+  | { kind: 'display_name'; name: string; match: 'exact' | 'prefix'; compare: 'gte' | 'eq'; version: string }
+  | { kind: 'uninstall_key'; key: string; compare: 'gte' | 'eq'; version: string }
+  | { kind: 'file_version'; base: 'ProgramFiles' | 'ProgramFilesX86'; file: string; compare: 'gte' | 'eq'; version: string };
+export type SoftwareHash =
+  | { source: 'winget_pkgs'; architecture: 'x64' | 'x86' | 'arm64' | 'neutral'; installerSha256?: string }
+  | { source: 'admin_pasted'; installerSha256: string };
+export interface SoftwareEntryInput { name: string; publisher?: string; version: string; hash: SoftwareHash; detection: SoftwareDetection; notes?: string }
+export const softwareApi = {
+  list: (businessId?: string | null, archived?: boolean) =>
+    api.get('/software/catalog', { params: { ...(businessId ? { businessId } : {}), ...(archived ? { archived: '1' } : {}) } }),
+  get: (id: string) => api.get(`/software/catalog/${id}`),
+  create: (body: SoftwareEntryInput & { scope: 'global' | 'business'; businessId?: string; packageId: string }) => api.post('/software/catalog', body),
+  update: (id: string, body: SoftwareEntryInput & { expectedRevision: number }) => api.post(`/software/catalog/${id}`, body),
+  archive: (id: string, body: { reason: string; expectedRevision: number }) => api.post(`/software/catalog/${id}/archive`, body),
+  manifestPreview: (body: { packageId: string; version: string }) => api.post('/software/manifest-preview', body),
+  deployments: (businessId?: string | null) => api.get('/software/deployments', bq(businessId)),
+  deployment: (id: string) => api.get(`/software/deployments/${id}`),
+  createDeployment: (body: { entryId: string; operation: 'install' | 'uninstall'; name?: string; rings: string[][]; soakHours: number; failureThreshold: number; windowHours: number }) =>
+    api.post('/software/deployments', body),
+  requestRing: (id: string, ring: number, body: { reason: string; startsInMinutes?: number; exclude?: { endpointId: string; why: string }[] }) =>
+    api.post(`/software/deployments/${id}/rings/${ring}/request`, body),
+  pause: (id: string, reason: string) => api.post(`/software/deployments/${id}/pause`, { reason }),
+  resume: (id: string, reason: string) => api.post(`/software/deployments/${id}/resume`, { reason }),
+  cancel: (id: string, reason: string) => api.post(`/software/deployments/${id}/cancel`, { reason }),
+  endpoint: (endpointId: string) => api.get(`/endpoints/${endpointId}/software/catalog`),
+  // One computer: a one-ring deployment; the returned job carries the approval link.
+  single: (endpointId: string, entryId: string, operation: 'install' | 'uninstall', body: { reason: string; windowHours: number; startsInMinutes?: number }) =>
+    api.post(`/endpoints/${endpointId}/software/${entryId}/${operation}`, body),
+  // The report (report-kit's useReport/ExportButton call the same two routes).
+  compliance: (params: Record<string, string>) => api.get('/reports/software-compliance', { params }),
+  complianceCsv: (params: Record<string, string>) => api.get('/reports/software-compliance/export.csv', { params, responseType: 'blob' }),
+};
+
 export interface PatchPolicyInput {
   businessId: string; name: string; rings: string[][];
   allow: { classifications: string[]; severities?: string[]; excludeKbs?: string[] };

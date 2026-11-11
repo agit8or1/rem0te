@@ -190,6 +190,15 @@ jobs:
       - name: Metric history tests
         run: node apps/api/scripts/unit-metric-history.mjs
 
+      # Software deployment (0.34): the closed install/uninstall params and
+      # their charsets (package id, version, hash, the three detection forms),
+      # version comparison as the agent does it, compliance from evidence with
+      # the 14-day staleness rule, the winget-pkgs manifest reader and
+      # installer choice, the ring gate, and that WINGET_MANIFEST_BASE is
+      # honoured only for a loopback http URL.
+      - name: Software deployment tests
+        run: node apps/api/scripts/unit-software.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.

@@ -119,6 +119,27 @@ var catalog = []Action{
 		Execute:     collectLogs,
 		Interrupted: func(map[string]any, Options) map[string]string { return nil },
 	},
+	{
+		// Install one allowlisted winget package at an exact version, pinned
+		// by installer hash (v0.34). High impact on any computer: two
+		// approvers, always. The agent hashes the downloaded installer
+		// itself before winget installs anything (software.go).
+		ID: "windows.software.install", Version: 1, MaxTargets: MaxRingTargets,
+		ParamsOK:    softwareParamsOK,
+		Risk:        func(int, int) string { return "high" },
+		Precheck:    softwarePrecheck(false),
+		Execute:     installSoftware,
+		Interrupted: softwareInterrupted,
+	},
+	{
+		// Uninstall that package (v0.34). Same closed parameters.
+		ID: "windows.software.uninstall", Version: 1, MaxTargets: MaxRingTargets,
+		ParamsOK:    softwareParamsOK,
+		Risk:        func(int, int) string { return "high" },
+		Precheck:    softwarePrecheck(true),
+		Execute:     uninstallSoftware,
+		Interrupted: softwareInterrupted,
+	},
 }
 
 func needMaint(_ *Plan, o Options) *Result {

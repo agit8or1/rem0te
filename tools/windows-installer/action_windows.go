@@ -74,7 +74,8 @@ func cmdAction(args []string) int {
 	}
 	wa := &winActions{paths: paths}
 	r, err := action.Run(*job, raw, action.Options{StateDir: paths.StateDir, Keys: keys, Platform: wa, Now: time.Now,
-		WUA: winWUA{paths: paths}, Registry: winRegistry{}, Pause: pause, Maint: wa})
+		WUA: winWUA{paths: paths}, Registry: winRegistry{}, Pause: pause, Maint: wa,
+		Winget: winLocatedWinget{}, Software: winSoftware{}})
 	if err != nil {
 		fmt.Fprintf(out, "  action %s: %v\n", *job, err)
 		return 5

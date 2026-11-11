@@ -105,6 +105,8 @@ export interface PlanRequest {
   integration?: { peer: string; key: string };
   display?: Plan['display'];
   deployment?: { id: string; ring: number };
+  /** 0.34: a ring of a software deployment (windows.software.*). */
+  softwareDeployment?: { id: string; ring: number };
   /** 0.32: an exact window (a patch policy's maintenance window) instead of startsInMinutes/windowHours. */
   window?: { notBefore: Date; notAfter: Date };
   /**
@@ -211,7 +213,7 @@ export class ActionsService {
     }
     if (!action.direct) {
       await this.acl.assertEndpointInScope(actor, endpointId);
-      throw new BadRequestException({ code: 'ACTION_NOT_DIRECT', message: 'Windows updates are installed through a patch deployment, ring by ring, not one computer at a time.' });
+      throw new BadRequestException({ code: 'ACTION_NOT_DIRECT', message: action.indirectVia ?? 'This action is requested through its own workflow, not from the Actions tab.' });
     }
     const job = await this.createPlan(actor, {
       action, endpointIds: [endpointId], params: dto.params, reason: dto.reason, startsInMinutes: dto.startsInMinutes, windowHours: dto.windowHours, origin, integration,
@@ -313,7 +315,8 @@ export class ActionsService {
         requestedById: actor.userId, risk, approvalsRequired: plan.policy.approvalsRequired, customerSignoff: plan.policy.customerSignoff,
         notBefore, notAfter, plan: plan as unknown as Prisma.InputJsonValue, digest: submitted.body.digest!, approvalUrl: submitted.body.approvalUrl,
         integrationPeer: r.integration?.peer ?? null, integrationKey: r.integration?.key ?? null,
-        deploymentId: r.deployment?.id ?? null, ring: r.deployment?.ring ?? null,
+        deploymentId: r.deployment?.id ?? null, ring: r.deployment?.ring ?? r.softwareDeployment?.ring ?? null,
+        softwareDeploymentId: r.softwareDeployment?.id ?? null,
         targets: { create: eps.map((ep) => ({ endpointId: ep.id })) },
       },
       include: { targets: true },
@@ -321,7 +324,7 @@ export class ActionsService {
     await this.audit.log({
       tenantId: first.tenantId ?? undefined, customerId: first.customerId ?? undefined, actorId: actor.userId, actorIp: actor.ip,
       action: 'ACTION_REQUESTED', resource: 'action_job', resourceId: job.id,
-      meta: { endpointIds: eps.map((e) => e.id), action: `${action.id}@${action.version}`, params: r.params, risk, approvalsRequired: plan.policy.approvalsRequired, customerSignoff: plan.policy.customerSignoff, origin: origin.kind, via: origin.via, ticketRef: origin.ticketRef, digest: job.digest, deployment: r.deployment ?? null, underPolicy: r.underPolicy?.policyId ?? null },
+      meta: { endpointIds: eps.map((e) => e.id), action: `${action.id}@${action.version}`, params: r.params, risk, approvalsRequired: plan.policy.approvalsRequired, customerSignoff: plan.policy.customerSignoff, origin: origin.kind, via: origin.via, ticketRef: origin.ticketRef, digest: job.digest, deployment: r.deployment ?? null, softwareDeployment: r.softwareDeployment ?? null, underPolicy: r.underPolicy?.policyId ?? null },
     });
     // Signed already, by the signer's own decision: pull the envelope now.
     if (r.underPolicy) { await this.refresh(job); return (await this.prisma.actionJob.findUnique({ where: { id: job.id }, include: { targets: true } }))!; }
@@ -351,7 +354,7 @@ export class ActionsService {
       window: { notBefore: j.notBefore, notAfter: j.notAfter }, digest: j.digest, approvalUrl: j.approvalUrl,
       approvers: j.approvers, dispatchedAt: j.dispatchedAt, deliveries: j.deliveries, outcome: j.outcome, result: shown(j.result), resultAt: j.resultAt,
       reconciled: j.reconciledAt ? { at: j.reconciledAt, byId: j.reconciledById, note: j.reconcileNote } : null,
-      deploymentId: j.deploymentId, ring: j.ring,
+      deploymentId: j.deploymentId, ring: j.ring, softwareDeploymentId: j.softwareDeploymentId,
       targets: targets.map((t) => ({
         endpointId: t.endpointId, hostname: names.get(t.endpointId) ?? null, status: t.status, statusReason: t.statusReason,
         deliveries: t.deliveries, dispatchedAt: t.dispatchedAt, outcome: t.outcome, result: shown(t.result), resultAt: t.resultAt,

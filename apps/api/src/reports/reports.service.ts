@@ -9,6 +9,8 @@ import { effectiveRules, scopesFor, type RuleLike } from '../monitoring/engine';
 import { STALE_AFTER_MS } from '../patching/summary';
 import { deviceCompliance, tally, PATCH_COMPLIANCE_DEFINITION, PATCH_INVENTORY_SELECT, type DeviceCompliance } from '../patching/compliance';
 import { csvCell, EXPORT_MAX_ROWS } from '../endpoints/endpoint-list.service';
+import { SOFTWARE_INSTALL, SOFTWARE_UNINSTALL } from '../actions/catalog';
+import { EVIDENCE_STALE_DAYS, complianceOf, evidenceFor, programsOf, tallyCompliance, type ComplianceState } from '../software/definition';
 
 /**
  * Reports (0.32): patch compliance, agent coverage, alert frequency and
@@ -37,12 +39,18 @@ import { csvCell, EXPORT_MAX_ROWS } from '../endpoints/endpoint-list.service';
  * percentage is given: which computers were monitored, and when, is not
  * recorded (MonitorRule keeps no history), so the denominator is unknown.
  *
+ * Software compliance (0.34) is computed per software catalog entry from
+ * what is stored about each visible Windows computer: the inventory's
+ * software list (for a display-name rule) and the detection each software
+ * job's agent reported (for any rule, same package and same rule only). The
+ * newest evidence decides; none, or none in 14 days, is "unknown".
+ *
  * Exports are the device list's: the same row cap (refused, never truncated),
  * the same formula-cell neutralisation, and an audit row (REPORT_EXPORTED)
  * written with logOrFail before the file leaves.
  */
 
-export const REPORT_KEYS = ['patch-compliance', 'agent-coverage', 'alert-frequency', 'offline-time'] as const;
+export const REPORT_KEYS = ['patch-compliance', 'agent-coverage', 'alert-frequency', 'offline-time', 'software-compliance'] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
 export const PERIOD_DAYS = [1, 7, 30, 90, 365] as const;
@@ -478,6 +486,75 @@ export class ReportsService {
     };
   }
 
+  // ── Software compliance (0.34) ────────────────────────────────────────────
+
+  private async softwareRows(actor: ActorContext, q: ReportQuery, now: Date) {
+    const scope = this.acl.resolveScope(actor, q.businessId);
+    const eps = await this.prisma.endpoint.findMany({
+      where: this.devicesWhere(actor, q),
+      select: {
+        id: true, name: true, hostname: true, platform: true, customerId: true,
+        customer: { select: { id: true, name: true } }, site: { select: { id: true, name: true } },
+        inventory: { select: { software: true, collectedAt: true } },
+      },
+    });
+    const windows = eps.filter((e) => isWindows(e.platform));
+    const businesses = [...new Set(windows.map((e) => e.customerId).filter((x): x is string => !!x))];
+    // Global entries, and the entries of businesses this caller can see computers in.
+    const entries = await this.prisma.softwareCatalogEntry.findMany({
+      where: { archivedAt: null, OR: [{ scope: 'GLOBAL' }, { customerId: { in: scope ? businesses.filter((b) => b === scope) : businesses } }] },
+      select: { id: true, name: true, packageId: true, version: true, scope: true, customerId: true, detection: true, customer: { select: { id: true, name: true } } },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    });
+    // The agent's own detection, from software jobs on these computers only.
+    const targets = windows.length && entries.length ? await this.prisma.actionTarget.findMany({
+      where: { endpointId: { in: windows.map((e) => e.id) }, resultAt: { not: null }, job: { actionId: { in: [SOFTWARE_INSTALL.id, SOFTWARE_UNINSTALL.id] } } },
+      select: { endpointId: true, resultAt: true, result: true, job: { select: { params: true } } },
+    }) : [];
+    const byEp = new Map<string, typeof targets>();
+    for (const t of targets) { const l = byEp.get(t.endpointId) ?? []; l.push(t); byEp.set(t.endpointId, l); }
+    const rows: { entry: (typeof entries)[number]; device: Ref; business: Ref | null; site: Ref | null; state: ComplianceState; stale: boolean; source: string | null; at: Date | null; version: string | null }[] = [];
+    for (const en of entries) {
+      for (const e of windows) {
+        if (en.scope === 'BUSINESS' && en.customerId !== e.customerId) continue;
+        const c = complianceOf(evidenceFor(en, e.inventory?.collectedAt ?? null, programsOf(e.inventory?.software), byEp.get(e.id) ?? []), now);
+        rows.push({ entry: en, device: { id: e.id, name: label(e) }, business: e.customer as Ref | null, site: e.site as Ref | null, state: c.state, stale: c.stale, source: c.evidence?.source ?? null, at: c.evidence?.at ?? null, version: c.evidence?.version ?? null });
+      }
+    }
+    return { rows, entries, notWindows: eps.length - windows.length };
+  }
+
+  async softwareCompliance(actor: ActorContext, q: ReportQuery) {
+    const now = new Date();
+    const head = this.head(actor, q, now);
+    const [{ rows, entries, notWindows }, facets] = await Promise.all([this.softwareRows(actor, q, now), this.facets(actor, 'devices')]);
+    const RANKS: Record<ComplianceState, number> = { outdated: 0, missing: 1, unknown: 2, compliant: 3 };
+    const view = (r: (typeof rows)[number]) => ({
+      entry: { id: r.entry.id, name: r.entry.name }, device: r.device, business: r.business, site: r.site,
+      state: r.state, stale: r.stale, evidence: r.source, evidenceAt: iso(r.at), detectedVersion: r.version,
+    });
+    const attention = rows.filter((r) => r.state !== 'compliant')
+      .sort((a, b) => RANKS[a.state] - RANKS[b.state] || a.entry.name.localeCompare(b.entry.name) || a.device.name.localeCompare(b.device.name));
+    return {
+      ...head,
+      definition: `Per catalog entry, each Windows computer it applies to (a business's entries: that business's computers; global entries: every computer), from the newest evidence: the inventory's installed-software list (display-name rules only) or the detection the computer reported when a software plan ran there (any rule). Compliant: the detection rule holds. Outdated: found, at a version the rule does not accept. Missing: not found. Unknown: no evidence, or none newer than ${EVIDENCE_STALE_DAYS} days.`,
+      staleAfterDays: EVIDENCE_STALE_DAYS,
+      notWindows,
+      totals: tallyCompliance(rows.map((r) => r.state)),
+      entries: entries.map((en) => {
+        const l = rows.filter((r) => r.entry.id === en.id);
+        return {
+          entry: { id: en.id, name: en.name, packageId: en.packageId, version: en.version, scope: en.scope.toLowerCase(), business: en.customer as Ref | null, rule: (en.detection as { kind?: string } | null)?.kind ?? null },
+          ...tallyCompliance(l.map((r) => r.state)),
+          unknownStale: l.filter((r) => r.state === 'unknown' && r.stale).length,
+        };
+      }),
+      devices: attention.slice(0, PAGE_LIST_MAX).map(view),
+      devicesTotal: attention.length,
+      facets,
+    };
+  }
+
   // ── Export ────────────────────────────────────────────────────────────────
 
   /**
@@ -514,6 +591,11 @@ export class ReportsService {
         r.state === 'RESOLVED' ? iso(r.resolvedAt) ?? '' : '', r.state === 'RESOLVED' ? (r.resolvedById ? 'person' : 'monitor') : '',
         r.state === 'RESOLVED' && r.resolvedAt ? minutes(r.resolvedAt.getTime() - r.firstSeenAt.getTime()) : '',
       ]);
+    } else if (report === 'software-compliance') {
+      const { rows } = await this.softwareRows(actor, q, now);
+      rows.sort((a, b) => a.entry.name.localeCompare(b.entry.name) || byName(a.business, b.business) || byName(a.site, b.site) || a.device.name.localeCompare(b.device.name));
+      header = ['Software', 'Package', 'Version', 'Business', 'Site', 'Device', 'State', 'Evidence', 'Evidence (UTC)', 'Detected version', 'Stale'];
+      lines = rows.map((r) => [r.entry.name, r.entry.packageId, r.entry.version, r.business?.name ?? '', r.site?.name ?? '', r.device.name, r.state, r.source ?? '', iso(r.at) ?? '', r.version ?? '', yn(r.stale)]);
     } else {
       const { computers } = await this.offlineEpisodes(actor, q, now);
       header = ['Business', 'Site', 'Computer', 'Offline minutes', 'Episodes', 'Longest episode (minutes)', 'Still offline', 'Ended by a person', 'Closed without reconnecting', 'Last went offline (UTC)'];

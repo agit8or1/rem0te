@@ -396,9 +396,10 @@ check(
   const goCat = read('tools/windows-installer/internal/action/catalog.go');
   const goIds = [...goCat.matchAll(/ID: "([^"]+)"/g)].map((m) => m[1]);
   // 0.27 added windows.update.install (§ 15); 0.32 the four maintenance
-  // actions. The list is exact and ordered: anything further is a review.
-  const CATALOG_IDS = ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect'];
-  check('agent catalog is exactly the Spooler start, update install, service restart, restart schedule/cancel and log collection',
+  // actions; 0.34 software install and uninstall (§ 33). The list is exact
+  // and ordered: anything further is a review.
+  const CATALOG_IDS = ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect', 'windows.software.install', 'windows.software.uninstall'];
+  check('agent catalog is exactly the Spooler start, update install, service restart, restart schedule/cancel, log collection and software install/uninstall',
     goIds.join(',') === CATALOG_IDS.join(',') && /const ServiceName = "Spooler"/.test(goCat) && /s == ServiceName/.test(goCat),
     `agent catalog ids: ${goIds.join(', ')}`);
   const tsCat = read('apps/api/src/actions/catalog.ts');
@@ -413,7 +414,9 @@ check(
   const entries = goCat.slice(goCat.indexOf('var catalog = []Action{')).split(/\n\t\{\n/).slice(1);
   const CLOSED = [/ParamsOK: func\(p map\[string\]any\) bool \{\s*if len\(p\) != 1 \{\s*return false\s*\}\s*s, ok := p\["service"\]\.\(string\)\s*return ok && s == ServiceName/,
     /ParamsOK:\s+updateParamsOK,/, /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return RestartService\(p\) != "" \},/,
-    /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return RestartDelay\(p\) != 0 \},/, /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return len\(p\) == 0 \},/];
+    /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return RestartDelay\(p\) != 0 \},/, /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return len\(p\) == 0 \},/,
+    // 0.34: the five closed software keys, checked in §33.
+    /ParamsOK:\s+softwareParamsOK,/];
   const openParams = entries.filter((e) => !CLOSED.some((re) => re.test(e))).map((e) => (e.match(/ID: "([^"]+)"/) ?? [])[1] ?? '?');
   check('every agent catalog entry has closed parameters', entries.length === CATALOG_IDS.length && openParams.length === 0, `not closed: ${openParams.join(', ')}`);
   const maint = read('tools/windows-installer/internal/action/maintenance.go');
@@ -436,11 +439,12 @@ check(
       && /if err != nil \{\s*return &Result\{Outcome: "not_executed", Reason: "session_state_unknown"/.test(maint),
     'maintenance risk must be "high" and "cannot tell" must count as a session');
   check('the agent\'s action package runs no process; the Windows side runs only shutdown.exe and wevtutil.exe from System32',
-    !/"os\/exec"|exec\.Command/.test(maint + read('tools/windows-installer/internal/action/action.go') + goCat)
+    !/"os\/exec"|exec\.Command/.test(maint + read('tools/windows-installer/internal/action/action.go') + goCat + read('tools/windows-installer/internal/action/software.go'))
       && [...read('tools/windows-installer/action_windows.go').matchAll(/runSystem32\([^,]+, "([^"]+)"/g)].map((m) => m[1]).every((x) => x === 'shutdown.exe' || x === 'wevtutil.exe')
       && (read('tools/windows-installer/action_windows.go').match(/exec\.Command(?:Context)?\(/g) ?? []).length === 2,
     'maintenance must not grow a way to run something else');
-  check('the maintenance actions are not offered to ClientSt0r', (tsCat.match(/integration: false,/g) ?? []).length === 4 && /proposable\(\): string\[\] \{[^}]{0,200}CATALOG\.filter\(\(a\) => a\.integration\)\.map/.test(read('apps/api/src/integration/action-proposals.service.ts'))
+  // Four maintenance actions (0.32) and the two software actions (0.34).
+  check('the maintenance and software actions are not offered to ClientSt0r', (tsCat.match(/integration: false,/g) ?? []).length === 6 && /proposable\(\): string\[\] \{[^}]{0,200}CATALOG\.filter\(\(a\) => a\.integration\)\.map/.test(read('apps/api/src/integration/action-proposals.service.ts'))
       && /if \(!catalogEntry\(body\.action\.id, body\.action\.version\)\?\.integration\)/.test(read('apps/api/src/integration/action-proposals.service.ts')),
     'advertising them changes the ticket-rmm contract');
   check('portal catalog has no command, script, path or URL parameter', !/\b(command|script|path|url|args|cmd)\s*:/i.test(tsCat.replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, '')),
@@ -794,9 +798,9 @@ check(
   check('reports: the visibility rule is never spread into another object', !/\.\.\.\s*this\.acl\.endpointVisibilityWhere/.test(rsvc), 'spread found');
   const routes = rctl.split('@Get(').slice(1);
   check('reports: every route names its capability; every export is throttled',
-    routes.length === 8 && routes.every((r) => /^\s*'[^']+'\)\s*@RequireCapability\(CAP\.(COMPUTERS_VIEW|ALERTS_VIEW)\)/.test(r)) && routes.filter((r) => /export\.csv/.test(r.slice(0, 60))).every((r) => /@RateLimit\(10\)/.test(r.slice(0, 200)))
+    routes.length === 10 && routes.every((r) => /^\s*'[^']+'\)\s*@RequireCapability\(CAP\.(COMPUTERS_VIEW|ALERTS_VIEW)\)/.test(r)) && routes.filter((r) => /export\.csv/.test(r.slice(0, 60))).every((r) => /@RateLimit\(10\)/.test(r.slice(0, 200)))
       && routes.filter((r) => /^'(alert-frequency|offline-time)/.test(r)).every((r) => /CAP\.ALERTS_VIEW/.test(r.slice(0, 120))),
-    'eight routes, each @RequireCapability; alert reports need ALERTS_VIEW; exports @RateLimit');
+    'ten routes (0.34 added software compliance and its export), each @RequireCapability; alert reports need ALERTS_VIEW; exports @RateLimit');
   const ex = rsvc.slice(rsvc.indexOf('async exportCsv('));
   check('reports: an export is capped, neutralised and audited (logOrFail) before it is returned',
     /if \(lines\.length > EXPORT_MAX_ROWS\) \{\s*throw new BadRequestException/.test(ex) && /cells\.map\(csvCell\)/.test(ex)
@@ -1441,6 +1445,107 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('macOS is a read-only agent platform for every console refusal',
     /if \(isMacPlatform\(platform\)\) return 'macOS';/.test(plat) && /'MACOS_AGENT_READ_ONLY'/.test(plat),
     'readOnlyAgentOs must return macOS for a Mac, with its own refusal code');
+}
+
+// 33. Software deployment (0.34). A catalog entry pins one winget package id,
+//     one version and one installer SHA-256; installing or uninstalling it is
+//     a signed, two-approver plan. The parameters are closed and charset-checked
+//     the same way on both sides (a package id can never start with "-", so
+//     winget can never read it as an option); the agent passes them to winget
+//     as an argument array from one exec site, never a shell string, never an
+//     override flag, and refuses an installer whose hash is not the pin before
+//     installing; the portal installs only through ActionsService.createPlan,
+//     changes the catalog only after a fresh sign-in, and has no route that
+//     accepts a file.
+{
+  const goSw = read('tools/windows-installer/internal/action/software.go');
+  const goWg = read('tools/windows-installer/internal/winget/winget.go');
+  const goWin = read('tools/windows-installer/software_windows.go');
+  const tsCat = read('apps/api/src/actions/catalog.ts');
+  const goRe = (name) => (goSw.match(new RegExp(`${name}\\s*= regexp\\.MustCompile\\(\`([^\`]+)\`\\)`)) ?? [])[1] ?? null;
+  const tsRe = (name) => (tsCat.match(new RegExp(`(?:export )?const ${name} = /(.+)/;`)) ?? [])[1] ?? null;
+  const pairs = [['PackageIDRE', 'PACKAGE_ID_RE'], ['PkgVersionRE', 'SOFTWARE_VERSION_RE'], ['sha256RE', 'SHA256_RE'], ['displayNameRE', 'DISPLAY_NAME_RE'], ['uninstallKeyRE', 'UNINSTALL_KEY_RE'], ['fileSegmentRE', 'FILE_SEGMENT_RE']];
+  const differ = pairs.filter(([g, t]) => !goRe(g) || goRe(g) !== tsRe(t)).map(([g, t]) => `${g}=${goRe(g)} vs ${t}=${tsRe(t)}`);
+  check('software: every parameter charset is the same regular expression on the agent and the portal', differ.length === 0, differ.join('; '));
+  // Whatever the regex is, these must never be a package id or a version.
+  const HOSTILE = ['-h.x', '--override.x', '--force', '7zip.7zip;calc', '7zip.7zip calc', '7zip.7zip"', "7zip.7zip'", '7zip.7zip&calc', '7zip.7zip|calc', '$(calc).x', '7zip.`calc`', '%TEMP%.x', '7zip\\7zip', '7zip/7zip', '7zip.7zip\n--force', 'a.b>c'];
+  const idRe = goRe('PackageIDRE'), verRe = goRe('PkgVersionRE');
+  const lets = idRe && verRe ? HOSTILE.filter((h) => new RegExp(idRe).test(h) || new RegExp(verRe).test(h)) : ['(regex not found)'];
+  check('software: no package id or version can start with "-" or carry a space, quote or shell character', lets.length === 0 && /^\^\[A-Za-z0-9\]/.test(idRe) && /^\^\[0-9A-Za-z\]/.test(verRe), `accepted: ${lets.map((x) => JSON.stringify(x)).join(', ')}`);
+  check('software: the params are exactly five keys, scope machine, on both sides',
+    /if !exactKeys\(p, "packageId", "version", "installerSha256", "scope", "detection"\) \{/.test(goSw) && /func softwareParamsOK\(p map\[string\]any\) bool \{\s*_, err := SoftwareParams\(p\)\s*return err == nil\s*\}/.test(goSw) && /!ok \|\| s\.Scope != "machine"/.test(goSw) && /func ValidPackageID\(s string\) bool \{ return len\(s\) <= 128 && PackageIDRE\.MatchString\(s\) \}/.test(goSw)
+      && /export const SoftwareParams = z\.object\(\{\s*packageId: z\.string\(\)\.max\(PACKAGE_ID_MAX\)\.regex\(PACKAGE_ID_RE\),\s*version: SwVersion,\s*installerSha256: z\.string\(\)\.regex\(SHA256_RE\),\s*scope: z\.literal\('machine'\),\s*detection: Detection,\s*\}\)\.strict\(\);/.test(tsCat)
+      && (tsCat.match(/\}\)\.strict\(\),?\n/g) ?? []).length >= 3 && /z\.discriminatedUnion\('kind', \[\s*z\.object\(\{ kind: z\.literal\('display_name'\)[\s\S]{0,200}\.strict\(\),\s*z\.object\(\{ kind: z\.literal\('uninstall_key'\)[\s\S]{0,200}\.strict\(\),\s*z\.object\(\{ kind: z\.literal\('file_version'\)[\s\S]{0,300}\.strict\(\),\s*\]\)/.test(tsCat),
+    'SoftwareParams (Go and zod) must stay exactly packageId, version, installerSha256, scope "machine" and one of three strict detection forms');
+  const swEntries = read('tools/windows-installer/internal/action/catalog.go').split(/\n\t\{\n/).filter((e) => /ID: "windows\.software\./.test(e));
+  const tsSw = [...tsCat.matchAll(/export const SOFTWARE_(INSTALL|UNINSTALL): CatalogAction = \{([\s\S]*?)\n\};/g)].map((m) => m[2]);
+  check('software: install and uninstall are high impact on any computer, never direct, never offered to ClientSt0r, at most one ring',
+    swEntries.length === 2 && swEntries.every((e) => /Risk:\s+func\(int, int\) string \{ return "high" \},/.test(e) && /MaxTargets:\s+MaxRingTargets,/.test(e) && /ParamsOK:\s+softwareParamsOK,/.test(e))
+      && tsSw.length === 2 && tsSw.every((e) => /risk: \(\) => 'high',/.test(e) && /direct: false,/.test(e) && /integration: false,/.test(e) && /maxTargets: MAX_RING_TARGETS,/.test(e) && /params: SoftwareParams,/.test(e)),
+    'both entries: Risk "high", MaxRingTargets, softwareParamsOK; portal risk high, direct false, integration false');
+  // The one process: winget.exe by its located path, an argument array.
+  const execs = (src) => (src.match(/exec\.Command(?:Context)?\(/g) ?? []).length;
+  const swPath = goSw + goWin;
+  check('software: the agent starts winget from exactly one place, with an argument array, and never a shell',
+    execs(goWg) === 1 && /exec\.CommandContext\(ctx, r\.Path, args\.\.\.\)/.test(goWg) && execs(swPath) === 0 && !/"os\/exec"/.test(swPath)
+      && !/cmd\.exe|cmd \/c|powershell|pwsh|ShellExecute|CreateProcess|\/bin\/sh/i.test(swPath + goWg.replace(/^\s*\/\/.*$/gm, '')) && !/strings\.Join\(|fmt\.Sprint|"\s*\+|\+\s*"/.test(goSw.slice(goSw.indexOf('func downloadArgs('), goSw.indexOf('// wingetVersion'))),
+    'internal/winget is the only exec site (exec.CommandContext(ctx, r.Path, args...)); software.go and software_windows.go start nothing, and the argument lists are literals');
+  const runs = [...goSw.matchAll(/o\.Winget\.Run\((.+?), swTimeout\(/g)].map((m) => m[1].trim());
+  check('software: winget is only ever given --version or one of the three fixed argument lists',
+    runs.length === 4 && runs.every((r) => ['[]string{"--version"}', 'downloadArgs(s, dir)', 'installArgs(s)', 'uninstallArgs(s)'].includes(r)),
+    `o.Winget.Run arguments: ${runs.join(' | ')}`);
+  const argFns = goSw.slice(goSw.indexOf('func downloadArgs('), goSw.indexOf('// wingetVersion'));
+  check('software: no override, force, custom, location, manifest, header or hash-skipping flag; always --exact, --source winget, --scope machine',
+    !/--ignore-security-hash|--force|--override|--custom|--location|--manifest|"-h"|--header|--rainbow|--ignore-local-archive-malware-scan|--allow-reboot/.test(goSw + goWin)
+      && (argFns.match(/"--exact", "--source", "winget"/g) ?? []).length === 3 && (argFns.match(/"--scope", "machine"/g) ?? []).length === 3
+      && /func installArgs[\s\S]{0,300}"--skip-dependencies"/.test(argFns) && /func downloadArgs[\s\S]{0,300}"--skip-dependencies"/.test(argFns),
+    'the three lists must stay fixed: exact id from the winget source, machine scope, no dependencies, nothing that weakens winget\'s own checks');
+  const iHash = goSw.indexOf('if got != s.InstallerSHA256 {'), iMan = goSw.indexOf('if !manifestDeclares(yamls, s.InstallerSHA256) {'), iInst = goSw.indexOf('o.Winget.Run(installArgs(s)');
+  check('software: the agent hashes the downloaded installer itself and refuses a mismatch before installing',
+    iHash > 0 && iMan > iHash && iInst > iMan && /if got != s\.InstallerSHA256 \{\s*r\.Outcome, r\.Reason, r\.Detail = "refused", "hash_mismatch",[^\n]*\n\s*return r/.test(goSw)
+      && /if !manifestDeclares\(yamls, s\.InstallerSHA256\) \{\s*r\.Outcome, r\.Reason, r\.Detail = "refused", "manifest_hash_mismatch",[^\n]*\n\s*return r/.test(goSw)
+      && /got, err := fileSHA256\(inst\)/.test(goSw) && /s, err := SoftwareParams\(p\.Params\) \/\/ verified already; checked again before use/.test(goSw),
+    'Execute re-parses the params, computes the installer hash, refuses hash_mismatch / manifest_hash_mismatch, and only then runs install');
+  check('software: the agent refuses when something else manages the computer\'s applications, before winget is asked anything',
+    /if m := o\.Software\.AppManagers\(\); len\(m\) > 0 \{\s*obs\["managers"\][^\n]*\n\s*return &Result\{Outcome: "refused", Reason: "managed_elsewhere"/.test(goSw) && goSw.indexOf('o.Software.AppManagers()') < goSw.indexOf('wingetVersion(o)', goSw.indexOf('func softwarePrecheck(')),
+    'softwarePrecheck must refuse managed_elsewhere before it locates or runs winget');
+  // The portal side.
+  const svc = read('apps/api/src/software/software.service.ts');
+  const ctl = read('apps/api/src/software/software.controller.ts');
+  const swDir = readdirSync(join(ROOT, 'apps/api/src/software')).filter((f) => f.endsWith('.ts')).map((f) => read(`apps/api/src/software/${f}`)).join('\n');
+  check('software: a plan is made only by ActionsService.createPlan; nothing here writes jobs or talks to the signer itself',
+    (svc.match(/this\.actions\.createPlan\(/g) ?? []).length === 1 && !/actionJob\.(create|update|upsert)|actionTarget\.(create|update|upsert)|signer\.submit|\/internal\/v1\/plans/.test(swDir),
+    'requestRing must go through createPlan, which re-checks access, readiness and containment and submits to the signer');
+  const routeList = [...ctl.matchAll(/@(Get|Post|Put|Patch|Delete)\('([^']*)'\)\s*(?:@HttpCode\([^)]*\)\s*)?@RequireCapability\(CAP\.([A-Z_]+)\)/g)].map((m) => [m[1], m[2], m[3]]);
+  const allRoutes = [...ctl.matchAll(/@(?:Get|Post|Put|Patch|Delete)\('([^']*)'\)/g)].map((m) => m[1]);
+  check('software: every route names its capability; there is no approve, sign or upload route',
+    allRoutes.length === 15 && routeList.length === allRoutes.length && !allRoutes.some((r) => /approv|sign|upload|installer|file|blob|binary/i.test(r))
+      && routeList.filter(([m, r]) => m === 'Post' && /^software\/(catalog|manifest-preview)/.test(r)).every(([, , c]) => c === 'COMPUTERS_EDIT'),
+    `routes: ${allRoutes.join(', ')}`);
+  check('software: nothing in the software module accepts a file',
+    !/FileInterceptor|FilesInterceptor|UploadedFile|multer|multipart|@Req\(\) req: Request\)[^{]*\{[^}]*req\.pipe|express\.raw/.test(swDir),
+    'the portal never receives an installer: each computer downloads it with winget and checks the pinned hash');
+  const method = (name) => svc.slice(svc.indexOf(`  async ${name}(`), svc.indexOf('\n  }\n', svc.indexOf(`  async ${name}(`)));
+  const fresh = ['create', 'update', 'archive'].map((n) => { const b = method(n); const a = b.indexOf("assertFresh(freshMethod, { action: 'software.catalog' });"); const w = b.search(/this\.prisma\.softwareCatalogEntry\.(create|updateMany)\(/); const au = b.indexOf("action: 'SOFTWARE_CATALOG_"); return [n, a > 0 && w > a && au > w]; });
+  check('software: adding, changing or archiving a catalog entry needs a fresh sign-in before the write, and is audited after it',
+    fresh.every(([, ok]) => ok) && (ctl.match(/this\.fresh\(req\)/g) ?? []).length === 3 && /this\.stepUp\.read\(req, u\.sub, u\.iat\)/.test(ctl),
+    `per method: ${fresh.map(([n, ok]) => `${n}=${ok}`).join(', ')}`);
+  check('software: only a business\'s own owner (not a technician) or a Platform Admin changes its entries; only an admin the global ones',
+    /private canEdit\(actor: ActorContext, e: [^)]*\): boolean \{\s*if \(actor\.isPlatformAdmin\) return true;\s*if \(e\.scope === 'GLOBAL'\) return false;[\s\S]{0,120}return !actor\.technician && actor\.businessId === e\.customerId && this\.acl\.isBusinessOwner\(actor\);/.test(svc),
+    'canEdit must keep the owner-in-person rule');
+  check('software: another business\'s entry or deployment looks like a missing one',
+    /if \(!e \|\| !this\.canRead\(actor, e\)\) throw new NotFoundException\('Catalog entry not found'\);/.test(svc)
+      && /for \(const e of r\.endpointIds\) await this\.acl\.assertEndpointInScope\(actor, e\)\.catch\(\(\) => \{ throw new NotFoundException\('Deployment not found'\); \}\);/.test(svc),
+    'entry() and scoped() must 404');
+  check('software: a deployment\'s first ring is one computer and no ring exceeds the signed maximum',
+    /if \(dto\.rings\[0\]\.length !== 1\) throw new BadRequestException\(\{ code: 'BAD_RINGS'/.test(svc) && /rings: z\.array\(z\.array\(Id\)\.min\(1\)\.max\(MAX_RING_TARGETS\)\)\.min\(1\)\.max\(MAX_SOFTWARE_RINGS\),/.test(read('apps/api/src/software/definition.ts')),
+    'ring 0 is the canary; each ring at most MAX_RING_TARGETS (25)');
+  const man = read('apps/api/src/software/manifest.ts');
+  check('software: the manifest fetch is one bounded GET with no credentials, no redirects, and a loopback-only test override',
+    /redirect: 'error', credentials: 'omit'/.test(man) && /signal: AbortSignal\.timeout\(10_000\)/.test(man) && /if \(n > MANIFEST_MAX_BYTES\)/.test(man)
+      && /if \(o && \/\^http:\\\/\\\/127\\\.0\\\.0\\\.1:\[0-9\]\{2,5\}\(\\\/\[A-Za-z0-9\._\/-\]\*\)\?\$\/\.test\(o\)\)/.test(man)
+      && /export const WINGET_PKGS_RAW = 'https:\/\/raw\.githubusercontent\.com\/microsoft\/winget-pkgs\/master\/manifests';/.test(read('apps/api/src/software/definition.ts')),
+    'fetchInstallerManifest must stay bounded and WINGET_MANIFEST_BASE loopback-only');
 }
 
 if (failures.length > 0) {

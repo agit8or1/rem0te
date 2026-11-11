@@ -26,6 +26,15 @@ export function renderApprovalPage(v: View, nonce: string): string {
   const updates = p.display?.updates?.length
     ? `<table class="inner"><tr><th>Update</th><th>Classification</th><th>Severity</th></tr>${p.display.updates.map((u) => `<tr><td>${u.kb ? `<strong>${esc(u.kb)}</strong> ` : ''}${esc(u.title)}<br><code>${esc(u.updateId)} rev ${esc(u.revision)}</code></td><td>${esc(u.className ?? 'unknown')}</td><td>${esc(u.severity ?? '—')}</td></tr>`).join('')}</table><p class="mut">Titles and KBs are as the computers reported them. Each computer installs an update only if Windows Update itself offers it as a security, critical, rollup or ordinary update.</p>`
     : '';
+  // 0.34: what a software plan installs. The params are what the computer
+  // acts on; the name and publisher are the catalog's labels for them.
+  const software = (pl: typeof p) => {
+    const sw = pl.display!.software!;
+    const pr = pl.params as { packageId?: string; version?: string; installerSha256?: string; detection?: unknown };
+    return `<strong>${esc(sw.name)}</strong>${sw.publisher ? ` <span class="mut">(${esc(sw.publisher)})</span>` : ''}<br>winget package <code>${esc(pr.packageId ?? '')}</code> version <code>${esc(pr.version ?? '')}</code>, machine-wide`
+      + `<br>Installer SHA-256 <code>${esc(pr.installerSha256 ?? '')}</code> — ${sw.hashSource === 'winget_pkgs' ? `read from the winget-pkgs manifest (manifest SHA-256 <code>${esc((sw.manifestSha256 ?? '').slice(0, 16))}…</code>)` : '<strong>typed in by the catalog\'s editor</strong>, not read from a manifest'}`
+      + `<br><span class="mut">Each computer hashes the installer winget downloads and installs nothing unless it is exactly this hash. Detection rule: <code>${esc(JSON.stringify(pr.detection ?? null))}</code></span>`;
+  };
   const needs = [`${p.policy.approvalsRequired} approver${p.policy.approvalsRequired > 1 ? 's' : ''} (${p.policy.risk} impact)`]
     .concat(p.policy.customerSignoff ? ['customer sign-off from this business'] : []).join(' + ');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -41,6 +50,7 @@ ${row('Customer', esc(t.businessName))}
 ${dep ? row('Deployment', `${esc(dep.name)} — <strong>${dep.ring === 0 ? 'canary (ring 0)' : `ring ${esc(dep.ring)}`}</strong> of ${esc(dep.rings)}`) : ''}
 ${row(p.targets.length === 1 ? 'Computer' : 'Computers', computers)}
 ${row('Action', updates ? `<code>${esc(p.action.id)}@${esc(p.action.version)}</code>, never restarting${updates}` : `<code>${esc(p.action.id)}@${esc(p.action.version)}</code> with <code>${esc(JSON.stringify(p.params))}</code>`)}
+${p.display?.software ? row('Software', software(p)) : ''}
 ${p.display?.policy ? row('Signed under', `patch policy <strong>${esc(p.display.policy.name)}</strong> <span class="mut">(${esc(p.display.policy.digest.slice(0, 16))}…)</span>, approved once by the people listed below; this signer checked the plan is inside it`) : ''}
 ${row('Requested by', `${esc(p.requestedBy.name)} <span class="mut">via ${esc(p.requestedBy.via)}</span>`)}
 ${row('Origin', p.origin.kind === 'ai_suggestion' ? `<strong>AI suggestion</strong>${p.origin.ticketRef ? ` from ticket ${esc(p.origin.ticketRef)}` : ''} — nothing runs without your explicit approval` : 'Technician')}

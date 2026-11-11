@@ -258,7 +258,8 @@ async function all() {
     const cat = await req('GET', '/actions/catalog', { s: S.sam, business: acme.id });
     const acts = cat.body?.data?.actions ?? [];
     const by = Object.fromEntries(acts.map((a) => [a.id, a]));
-    check(acts.map((a) => `${a.id}@${a.version}`).join(',') === ALL_ACTIONS.join(','), 'GET /actions/catalog lists exactly the six, in order', acts.map((a) => a.id).join(','));
+    // The six through 0.32, first and in order; later releases append (0.34: software install/uninstall).
+    check(acts.slice(0, 6).map((a) => `${a.id}@${a.version}`).join(',') === ALL_ACTIONS.join(','), 'GET /actions/catalog lists the six through 0.32 first, in order', acts.map((a) => a.id).join(','));
     check(['windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect'].every((id) => by[id]?.workstationRisk === 'high' && by[id]?.direct === true),
       'each maintenance action is high impact even on a standard workstation, and requestable from the computer');
     check(by['windows.service.restart']?.choice?.options.map((o) => o.value).join(',') === 'Spooler,wuauserv,BITS,W32Time,WinRM,RustDesk', 'restart offers exactly the allowlist', JSON.stringify(by['windows.service.restart']?.choice));

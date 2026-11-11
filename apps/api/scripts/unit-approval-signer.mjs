@@ -101,6 +101,12 @@ function verifyEnvelope(env) {
   return ok ? JSON.parse(bytes.toString('utf8')) : null;
 }
 
+// 0.34: a software plan, as the portal builds one from a catalog entry.
+const SW = { packageId: '7zip.7zip', version: '24.08', installerSha256: 'e'.repeat(64), scope: 'machine', detection: { kind: 'display_name', name: '7-Zip', match: 'prefix', compare: 'gte', version: '24.08' } };
+const swDisplay = { updates: [], deployment: null, software: { name: '7-Zip', publisher: 'Igor Pavlov', hashSource: 'winget_pkgs', manifestSha256: 'f'.repeat(64), entryId: 'entry_7zip_0001', entryRevision: 1 } };
+const swTarget = { endpointId: 'ep_frontdesk_a', businessId: BIZ_A, businessName: 'Acme', hostname: 'FRONTDESK', deviceClass: 'WORKSTATION', rustdeskId: '123456789', deviceSecretSha256: 'b'.repeat(64) };
+const swPlan = (over = {}) => plan({ action: { id: 'windows.software.install', version: 1 }, params: SW, risk: 'high', display: swDisplay, ...over });
+
 // ── admission: the portal's claims about policy are re-derived ─────────────
 check('keys document lists one 16-hex kid', keysDoc.schema === 'rem0te-approval-keys/1' && /^[0-9a-f]{16}$/.test(keysDoc.keys[0]?.kid));
 for (const [name, p, code] of [
@@ -123,6 +129,19 @@ for (const [name, p, code] of [
   ['a restart plan with a window over 2 hours', plan({ action: { id: 'windows.reboot.schedule', version: 1 }, params: { delayMinutes: 30 }, risk: 'high', hours: 3 }), null],
   ['a log collection naming a path', plan({ action: { id: 'windows.logs.collect', version: 1 }, params: { log: 'C:\\Windows\\System32\\config\\SAM' }, risk: 'high' }), null],
   ['a restart cancel with parameters', plan({ action: { id: 'windows.reboot.cancel', version: 1 }, params: { all: true }, risk: 'high' }), null],
+  // 0.34 software: closed params, charset-checked, high impact, at most 25 computers.
+  ['a software install claimed as low risk', swPlan({ risk: 'low', approvalsRequired: 1 }), 'risk_mismatch'],
+  ['a software install with one approval', swPlan({ approvalsRequired: 1 }), 'too_few_approvals_required'],
+  ['a software install with a shell separator in the package id', swPlan({ params: { ...SW, packageId: '7zip.7zip;calc' } }), null],
+  ['a software install whose package id is a flag', swPlan({ params: { ...SW, packageId: '--override.x' } }), null],
+  ['a software install whose version is a flag', swPlan({ params: { ...SW, version: '--force' } }), null],
+  ['a software install with an upper-case hash', swPlan({ params: { ...SW, installerSha256: SW.installerSha256.toUpperCase() } }), null],
+  ['a software install for one user', swPlan({ params: { ...SW, scope: 'user' } }), null],
+  ['a software install with installer arguments', swPlan({ params: { ...SW, args: '/S /D=C:\\evil' } }), null],
+  ['a software install with no detection rule', swPlan({ params: { packageId: SW.packageId, version: SW.version, installerSha256: SW.installerSha256, scope: 'machine' } }), null],
+  ['a software install whose detection file leaves Program Files', swPlan({ params: { ...SW, detection: { kind: 'file_version', base: 'ProgramFiles', file: '..\\Windows\\cmd.exe', compare: 'gte', version: '1' } } }), null],
+  ['a software install whose detection runs something', swPlan({ params: { ...SW, detection: { kind: 'script', script: 'Get-Item' } } }), null],
+  ['a software uninstall on 26 computers', swPlan({ action: { id: 'windows.software.uninstall', version: 1 }, targets: Array.from({ length: 26 }, (_, i) => ({ ...swTarget, endpointId: `ep_ring_${String(i).padStart(4, '0')}`, rustdeskId: String(100000000 + i) })) }), null],
 ]) {
   const r = await submit(p);
   check(`admission refuses ${name}`, r.status === 409 && (!code || r.body?.error === code), JSON.stringify(r.body));
@@ -143,6 +162,31 @@ for (const [name, p, code] of [
   const signedPlan = verifyEnvelope(d.body?.envelope ?? (await j(`${INTERNAL}/internal/v1/plans/${pr.jobId}`)).body?.envelope);
   check('a second, different approver signs it; the envelope carries the delay and both approvers',
     d.body?.status === 'SIGNED' && signedPlan?.params?.delayMinutes === 30 && signedPlan.approvers.length === 2, JSON.stringify(d.body).slice(0, 200));
+}
+
+// ── 0.34: a software install needs two distinct approvers; the page shows the pin ──
+{
+  const pr = swPlan();
+  const sr = await submit(pr);
+  check('a software install (high, two approvals, closed params) is admitted', sr.status === 201, JSON.stringify(sr.body));
+  const html3 = await (await fetch(`${PUBLIC}/approve/${pr.jobId}`)).text();
+  check('its approval page shows the package, version, pinned SHA-256, where it came from and the detection rule',
+    html3.includes('7zip.7zip') && html3.includes('24.08') && html3.includes('e'.repeat(64)) && /read from the winget-pkgs manifest/.test(html3) && /Detection rule/.test(html3) && /Igor Pavlov/.test(html3));
+  const pasted = swPlan({ display: { ...swDisplay, software: { ...swDisplay.software, hashSource: 'admin_pasted', manifestSha256: null } } });
+  await submit(pasted);
+  const html4 = await (await fetch(`${PUBLIC}/approve/${pasted.jobId}`)).text();
+  check('a pasted hash is shown as typed in by the catalog\'s editor', /typed in by the catalog(&#39;|')s editor/.test(html4));
+  let d = await decide(pr.jobId, people.olivia);
+  check('one approval does not sign a software install', d.status === 200 && d.body.status === 'AWAITING_APPROVAL', JSON.stringify(d.body));
+  d = await decide(pr.jobId, people.olivia);
+  check('the same approver cannot count twice for a software install', d.status === 409, JSON.stringify(d.body));
+  d = await decide(pr.jobId, people.quinn);
+  const signedPlan = verifyEnvelope(d.body?.envelope ?? (await j(`${INTERNAL}/internal/v1/plans/${pr.jobId}`)).body?.envelope);
+  check('a second, different approver signs it; the envelope carries exactly the closed params and both approvers',
+    d.body?.status === 'SIGNED' && canonicalJson(signedPlan?.params ?? null) === canonicalJson(SW) && signedPlan.approvers.length === 2, JSON.stringify(d.body).slice(0, 200));
+  const ring = swPlan({ action: { id: 'windows.software.uninstall', version: 1 }, targets: Array.from({ length: 25 }, (_, i) => ({ ...swTarget, endpointId: `ep_ring_${String(i).padStart(4, '0')}`, rustdeskId: String(100000000 + i) })) });
+  const rr = await submit(ring);
+  check('a software uninstall ring of 25 computers is admitted', rr.status === 201, JSON.stringify(rr.body));
 }
 
 // ── low risk: one roster approver, not the requester ───────────────────────
