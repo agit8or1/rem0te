@@ -254,9 +254,18 @@ without its own two approvals, so the design keeps the decision on the signer:
   - the ring order, against the signer's own ledger;
   - classes, severities and KBs;
   - the window, the expiry and the requester;
-  - the previous ring's gate, including canary-effective.
+  - the previous ring's gate, including canary-effective, computed only from results and scans **the computers
+    signed themselves** (0.34).
 
   Only then is the plan signed, carrying the policy's approvers.
+- **Ring results are signed by the computers (0.34).** Each 0.34 agent has an Ed25519 result key it generated and
+  never exports. The policy names each computer's key, so two approvers vouch for it, and on approval the signer pins
+  it write-once to the computer's enrolled identity (`device-keys/`). Before a later ring is signed, the signer checks
+  every previous-ring result and the canary's scan under that key. A result that is missing, forged, from another
+  computer, about another plan or stale is refused with a named code. The portal relays the agents' signatures as
+  received; it holds no device key and has no code that signs a device statement. The first time a computer's key is
+  named is trusted on first use: compare the fingerprint on the approval page with `rem0te-agent.exe status`. See
+  [Staged patching → Signed results](staged-patching.md#signed-results-034).
 - **The portal can propose a policy and ask for it to be revoked.** It can't approve a policy, un-revoke one, or sign
   under one. `POST /internal/v1/policies/:id/plans` is a request for the signer to decide; a refusal comes back as
   `409` with the code, and the signer keeps the last 50 with the policy.
@@ -269,6 +278,8 @@ The signer operator's CLI:
 ```bash
 $S patch-policy list                                   # status, signature check, approvals, plans signed, last refusals
 $S patch-policy revoke --id <policyId> --reason 'why'  # one-way
+$S device-key list                                     # 0.34: pinned result keys, fingerprints, the policy that pinned each
+$S device-key forget --endpoint <endpointId> --reason 'why'  # remove a pin after reading the new fingerprint on the computer
 ```
 
 ## Setting it up
@@ -386,7 +397,7 @@ nothing changed), `restart_already_scheduled`, `stop_failed`, `start_failed`, `d
 
 | Level | State |
 |---|---|
-| **Fixture-tested** | Yes. `internal/action` Go tests cover every refusal, replay, crash and verification path. `unit-approval-signer.mjs` (79 checks from 0.32) covers synthetic passkeys through the real WebAuthn verification: forged origin and RP ID, missing user verification, reused and cross-decision challenges, counter regression, the requester approving, quorum, customer sign-off and restart. `e2e-approved-action.mjs` (76 checks) runs the portal, the signer and the agent's real decision code against a simulated Windows, including the compromised-database envelopes |
+| **Fixture-tested** | Yes. `internal/action` Go tests cover every refusal, replay, crash and verification path. `unit-approval-signer.mjs` (99 checks from 0.34; 79 in 0.32) covers synthetic passkeys through the real WebAuthn verification: forged origin and RP ID, missing user verification, reused and cross-decision challenges, counter regression, the requester approving, quorum, customer sign-off and restart. `e2e-approved-action.mjs` (76 checks) runs the portal, the signer and the agent's real decision code against a simulated Windows, including the compromised-database envelopes |
 | **Fixture-tested, 0.32** | `internal/action` Go tests for the maintenance actions (allowlist, charset, delay bounds, session check, journal steps, interruption, redaction and size caps); `unit-approval-signer.mjs` adds the maintenance admission and two-approver cases; `e2e-maintenance-actions.mjs` runs all four through the portal, the signer and the agent's real decision code against a simulated Windows (service manager, `shutdown.exe`, `wevtutil` and the session count are simulated) |
 | **Paired lab** (real Windows workstation, real authenticator, real ClientSt0r) | **Not done.** The Windows calls (service control manager, registry product type, `rustdesk --get-id`, and from 0.32 `shutdown.exe`, `wevtutil.exe` and the RustDesk process count) are compiled and vetted for Windows but haven't run on a lab machine |
 | **Production-ready** | **No.** It needs the paired lab first, and an operator who has done the key and roster ceremonies |
@@ -397,8 +408,10 @@ nothing changed), `restart_already_scheduled`, `stop_failed`, `start_failed`, `d
 - The RustDesk session check is made once, when a restart is scheduled, and sees RustDesk sessions only.
 - A scheduled restart is reported as scheduled. Whether it happened is seen only from the next boot time.
 - A compromised portal can delay, cancel or withhold delivery. It can't sign or alter a plan.
-- Under a patch policy, the portal relays ring results to the signer. Results aren't signed by the agents yet, so
-  forged results could start the next ring early. That ring still holds only what the policy allows.
+- Under a patch policy, ring results are signed by the agents (0.34), but each computer's result key is trusted on
+  first use: the first approved policy that names it is what vouches for it. Comparing the fingerprint with
+  `rem0te-agent.exe status` is the only proof. A portal can still withhold results, so the next ring starts late or
+  never.
 - The signer is a single process with file state. Back up `/var/lib/rem0te-approver`; losing the key means
   generating a new one and publishing a new `approval/keys.json`. Plans signed by the old key are then refused.
 - Roster membership is managed by the operator CLI. The portal neither shows nor changes it.

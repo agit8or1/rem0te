@@ -24,6 +24,7 @@ import (
 
 	"github.com/agit8or1/rem0te/windows-installer/internal/action"
 	"github.com/agit8or1/rem0te/windows-installer/internal/agent"
+	"github.com/agit8or1/rem0te/windows-installer/internal/devsig"
 	"github.com/agit8or1/rem0te/windows-installer/internal/flock"
 	"github.com/agit8or1/rem0te/windows-installer/internal/patch"
 )
@@ -165,6 +166,16 @@ func cmdPatchScan(args []string) int {
 	}
 	defer l.Release()
 	p := patch.Scan(winWUA{paths: paths}, winRegistry{}, time.Now())
+	// v0.34: signed by this computer's own key, for a patch policy's ring
+	// gate on the approval signer. A scan that cannot be signed is still
+	// written: it shows posture, and only counts for nothing as evidence.
+	if k, err := devsig.Load(paths.StateDir); err != nil {
+		fmt.Fprintf(logf, "  patch-scan: result key unavailable, scan unsigned: %v\n", err)
+	} else if rid, sec, err := (&winActions{paths: paths}).DeviceIdentity(); err != nil {
+		fmt.Fprintf(logf, "  patch-scan: identity unreadable, scan unsigned: %v\n", err)
+	} else if err := patch.SignScan(&p, k, rid, sec); err != nil {
+		fmt.Fprintf(logf, "  patch-scan: signing: %v\n", err)
+	}
 	b, _ := json.Marshal(p)
 	tmp := postureFile(paths) + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {

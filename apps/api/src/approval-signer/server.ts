@@ -21,6 +21,7 @@ import { catalogEntry } from '../actions/catalog';
 import {
   admitPlan, credentialSha256, webauthnChallenge, loadSigningKey, policyFor, recordDecision, Refused, rolesFor, signJob, keysDocument,
   admitPolicy, approvalsOf, effectivePolicyStatus, policyRolesFor, recordPolicyDecision, signPolicy, signUnderPolicy,
+  deviceIdentity, deviceKeyChangedMessage, newPins, pinConflicts,
   type Challenge, type JobRecord, type PolicyRecord, type Role,
 } from './core';
 import { SignerStore } from './store';
@@ -92,6 +93,12 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
     return j;
   };
 
+  const pins = (identity: string) => store.devicePin(identity);
+  /** For the approval page: whether each computer's key is pinned already, new here, or not the pinned one. */
+  const keyStatus = (r: PolicyRecord) => Object.fromEntries(r.doc.rings.flat().map((c) => {
+    const pin = c.resultKey ? store.devicePin(deviceIdentity(c)) : null;
+    return [c.endpointId, !c.resultKey ? 'none' : !pin ? 'first_sight' : pin.resultKey === c.resultKey ? `pinned ${pin.pinnedAt}` : 'changed'];
+  }));
   const assertNotPaused = (businessId: string) => {
     const p = store.activePause(businessId);
     if (p) throw new Refused('paused', `the approval signer is paused${p.scope === 'business' ? ' for this business' : ''}: ${p.reason}`);
@@ -129,7 +136,7 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
     if (!r) return send(res, 404, { error: 'not_found' });
     if (req.method === 'GET' && !sub) {
       const nonce = randomBytes(16).toString('base64');
-      return send(res, 200, renderPolicyApprovalPage(policyView(r, now()), nonce), pageHeaders(nonce));
+      return send(res, 200, renderPolicyApprovalPage({ ...policyView(r, now()), keyStatus: keyStatus(r) }, nonce), pageHeaders(nonce));
     }
     if (req.method === 'GET' && sub === '/state') return send(res, 200, policyView(r, now()));
     if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
@@ -161,6 +168,8 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       const status = recordPolicyDecision(cur, member, c.role as Role, c.decision, now(), policyFor(store.policy(), cur.doc.businessId).customerSignoff);
       if (status === 'ACTIVE') signPolicy(cur, k, now());
       store.savePatchPolicy(cur);
+      // v0.34: approving the policy is what makes its result keys trusted; pin them.
+      if (status === 'ACTIVE') for (const p of newPins(cur, pins, now())) store.pinDeviceKey(p);
       if (status === 'ACTIVE') console.log(`[approval-signer] policy ${cur.policyId} approved; plans inside it are now signed without further approval until ${cur.doc.expiresAt}`);
       return { cur, member };
     });
@@ -179,6 +188,8 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       const out = await store.exclusive(() => {
         const { doc, digest } = admitPolicy(b.policy, now());
         assertNotPaused(doc.businessId);
+        const changed = pinConflicts(doc.rings.flat(), pins);
+        if (changed.length) throw new Refused('device_key_changed', deviceKeyChangedMessage(changed));
         const existing = store.patchPolicy(doc.policyId);
         if (existing) {
           if (existing.digest !== digest) throw new Refused('policy_id_reused', 'a different policy already has this id');
@@ -224,7 +235,7 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
           if (existing.digest !== again.digest || !r.ledger.some((e) => e.jobId === jobId)) throw new Refused('job_id_reused', 'a different plan already has this job id');
           return existing;
         }
-        const { job } = signUnderPolicy(r, b, k, store.policy(), now());
+        const { job } = signUnderPolicy(r, b, k, store.policy(), now(), pins);
         store.saveJob(job);
         store.savePatchPolicy(r);
         console.log(`[approval-signer] signed ${job.jobId} under policy ${r.policyId} (ring ${job.plan.display?.deployment?.ring}, ${job.plan.targets.length} computer(s))`);

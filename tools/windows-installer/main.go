@@ -27,6 +27,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	_ "embed"
 	"encoding/json"
 	"flag"
@@ -42,6 +43,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"github.com/agit8or1/rem0te/windows-installer/internal/agent"
+	"github.com/agit8or1/rem0te/windows-installer/internal/devsig"
 	"github.com/agit8or1/rem0te/windows-installer/internal/trust"
 )
 
@@ -273,6 +275,12 @@ func cmdStatus() int {
 		if json.Unmarshal(raw, &pin) == nil {
 			out["pin"] = pin
 		}
+	}
+	// v0.34: the key this computer signs its results with. Compare the
+	// fingerprint with the one the approval signer's policy page shows for
+	// this computer before approving its first patch policy.
+	if k, err := devsig.Load(p.StateDir); err == nil {
+		out["resultKey"] = map[string]string{"publicKey": devsig.PublicB64(k), "fingerprint": devsig.Fingerprint(k.Public().(ed25519.PublicKey))}
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")

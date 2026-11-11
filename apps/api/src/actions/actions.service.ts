@@ -14,6 +14,7 @@ import {
   APPROVALS_REQUIRED, CATALOG, Envelope, LOG_SOURCES, MAX_WINDOW_HOURS, PLAN_SCHEMA, Plan, catalogEntry, planDigest, type CatalogAction,
 } from './catalog';
 import { sanitizeLogs } from './logs';
+import { DeviceSigned, RESULT_STATUS } from './device-result';
 import { SignerClient } from './signer.client';
 import { ContainmentService } from '../containment/containment.service';
 
@@ -82,13 +83,13 @@ export const AgentResult = z.object({
   logs: z.array(z.object({
     source: z.enum(LOG_SOURCES), text: z.string().max(16_384), truncated: z.boolean(), note: z.string().max(300).optional(),
   }).strict()).max(LOG_SOURCES.length).optional(),
+  // v0.34: the computer's signature over the result's gate facts. Stored as
+  // received and relayed to the approval signer; the portal never builds one.
+  signed: DeviceSigned.optional().catch(undefined),
 }).strict();
 export type AgentResult = z.infer<typeof AgentResult>;
 
-const STATUS_FOR: Record<AgentResult['outcome'], ActionTargetStatus> = {
-  succeeded: 'SUCCEEDED', already_running: 'SUCCEEDED', restart_required: 'SUCCEEDED', no_change: 'SUCCEEDED',
-  failed: 'FAILED', partial: 'FAILED', refused: 'REFUSED_BY_ENDPOINT', not_executed: 'NOT_EXECUTED', uncertain: 'UNKNOWN',
-};
+const STATUS_FOR: Record<AgentResult['outcome'], ActionTargetStatus> = RESULT_STATUS;
 
 type Ep = NonNullable<Awaited<ReturnType<ActionsService['endpointFor']>>>;
 type PlanTarget = Plan['targets'][number];

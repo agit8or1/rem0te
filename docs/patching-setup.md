@@ -38,6 +38,11 @@ Set up the offline-signed update chain and publish the agent (`windows/rem0te-ag
 - [Update signing → Shipping a release](update-signing.md#shipping-a-release)
 - [Update signing → Portal configuration](update-signing.md#portal-configuration) (`UPDATE_REPO_DIR`)
 
+A patch policy with more than one ring needs the **0.34** agent on every computer in every ring but the last: those
+computers' signed results are what open the next ring
+([Staged patching → Signed results](staged-patching.md#signed-results-034)). An older agent signs nothing, and the
+policy is refused (`RESULT_KEY_MISSING`) until it has upgraded and scanned once.
+
 Plans name the build by its digest, and a computer on any other build refuses the plan. So "published" here means the
 build the computers will actually run.
 
@@ -72,6 +77,10 @@ Follow [Approved actions → Setting it up](approved-actions.md#setting-it-up), 
 
 Patch policies need the **0.32** signer. An older signer answers 404 on `/internal/v1/capabilities`, and the
 pre-flight reports it as too old.
+
+Signed results need the **0.34** signer, rebuilt with `build-approval-signer.mjs`. Policies approved by an older
+signer carry no result keys; after the upgrade they can run their canary but no later ring
+(`result_key_not_pinned`), so approve them again once their computers run the 0.34 agent.
 
 ## 4. Point the portal at the signer
 

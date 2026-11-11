@@ -11,6 +11,8 @@
 //	    [-sessions N] [-stop-fails] [-events-dir DIR] [-rustdesk-logs DIR]
 //
 //	rem0te-action-sim -scan -wua wua.json [-registry registry.json]     posture, as patch-scan writes it
+//	    [-state DIR -rustdesk-id ID -secret S]                          ...signed with DIR's device key (v0.34)
+//	rem0te-action-sim -result-key -state DIR                            this computer's result key and fingerprint
 //	rem0te-action-sim -restart -wua wua.json                            what a restart does to pending updates
 //
 // -wua is a patch.FakeWUA (offered, installed, superseded, results, fail),
@@ -30,6 +32,7 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -39,6 +42,7 @@ import (
 	"time"
 
 	"github.com/agit8or1/rem0te/windows-installer/internal/action"
+	"github.com/agit8or1/rem0te/windows-installer/internal/devsig"
 	"github.com/agit8or1/rem0te/windows-installer/internal/patch"
 )
 
@@ -147,11 +151,21 @@ func main() {
 	rdLogs := flag.String("rustdesk-logs", "", "a RustDesk service log directory")
 	scan := flag.Bool("scan", false, "print this computer's patch posture and exit")
 	restart := flag.Bool("restart", false, "simulate a restart (clears pending restarts) and exit")
+	resultKey := flag.Bool("result-key", false, "print this computer's result-signing key (created in -state if absent) and exit")
 	flag.Parse()
 
 	fail := func(err error) {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
+	}
+	if *resultKey {
+		k, err := devsig.Load(*state)
+		if err != nil {
+			fail(err)
+		}
+		out, _ := json.Marshal(map[string]string{"publicKey": devsig.PublicB64(k), "fingerprint": devsig.Fingerprint(k.Public().(ed25519.PublicKey))})
+		fmt.Println(string(out))
+		return
 	}
 	var wua *patch.FakeWUA
 	reg := &patch.FakeRegistry{}
@@ -189,7 +203,19 @@ func main() {
 			saveWUA()
 			return
 		}
-		out, _ := json.Marshal(patch.Scan(wua, reg, time.Now()))
+		p := patch.Scan(wua, reg, time.Now())
+		// v0.34: with -state and an identity, the scan is signed by the
+		// computer's own key (kept in -state), as patch-scan signs it.
+		if *state != "" && *rid != "" && *secret != "" {
+			k, err := devsig.Load(*state)
+			if err != nil {
+				fail(err)
+			}
+			if err := patch.SignScan(&p, k, *rid, action.SecretSHA256(*secret)); err != nil {
+				fail(err)
+			}
+		}
+		out, _ := json.Marshal(p)
 		fmt.Println(string(out))
 		return
 	}
