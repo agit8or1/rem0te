@@ -174,6 +174,13 @@ try {
         }
       }
 
+      // A dashboard tile's link opens the list already filtered.
+      if (got.includes('alerts')) {
+        await visit(page, '/alerts?state=open&severity=critical');
+        const sel = await page.evaluate(() => [document.querySelector('#al-state')?.value, document.querySelector('#al-sev')?.value]);
+        check(sel[0] === 'open' && sel[1] === 'critical', '/alerts?state=open&severity=critical opens filtered', JSON.stringify(sel));
+      }
+
       // Help & docs, at the bottom.
       await follow(page, 'aside a[href="/help"]');
       check(await page.$('main a[href="/docs"]') !== null, 'Help links to the full documentation');

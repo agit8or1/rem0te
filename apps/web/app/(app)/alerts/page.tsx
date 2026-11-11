@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, Network, Settings2, Siren } from 'lucide-react';
@@ -24,11 +24,31 @@ import { AlertDetail, type AlertRow, SeverityBadge, StateBadge, type Summary } f
  * (most alerts also resolve themselves when the monitor sees it clear).
  */
 
+const STATES = ['active', 'open', 'acknowledged', 'resolved', 'all'];
+const SEVERITIES = ['critical', 'warning', 'info'];
+
 export default function AlertsPage() {
   const { user, can, isBusinessOwner } = usePermissions();
   const qc = useQueryClient();
-  const [state, setState] = useState('active');
-  const [severity, setSeverity] = useState('');
+  const [state, setStateRaw] = useState('active');
+  const [severity, setSeverityRaw] = useState('');
+  // The filters live in the URL too, so the dashboard's "Critical alerts" and
+  // any shared link open the list already filtered. Unknown values are ignored.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const st = q.get('state'), sv = q.get('severity');
+    if (st && STATES.includes(st)) setStateRaw(st);
+    if (sv && SEVERITIES.includes(sv)) setSeverityRaw(sv);
+  }, []);
+  function syncUrl(st: string, sv: string) {
+    const q = new URLSearchParams(window.location.search);
+    if (st === 'active') q.delete('state'); else q.set('state', st);
+    if (!sv) q.delete('severity'); else q.set('severity', sv);
+    const qs = q.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+  }
+  const setState = (v: string) => { setStateRaw(v); syncUrl(v, severity); };
+  const setSeverity = (v: string) => { setSeverityRaw(v); syncUrl(state, v); };
   const [open, setOpen] = useState<string | null>(null);
 
   const { data: summary } = useQuery<Summary>({
