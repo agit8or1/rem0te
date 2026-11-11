@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { canonicalJson } from '../integration/crypto';
-import { APPROVALS_REQUIRED, MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, MAX_WINDOW_HOURS, UPDATE_ID_RE, UPDATE_INSTALL, type Plan } from './catalog';
+import { APPROVALS_REQUIRED, MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, MAX_WINDOW_HOURS, UPDATE_ID_RE, UPDATE_INSTALL, UpdateReboot, rebootWithin, type Plan } from './catalog';
 import { CLASSIFICATIONS, idKey, updateState, type PostureLike, type TargetView, type UpdateState } from '../patching/posture';
 
 /**
@@ -103,8 +103,12 @@ export const PolicyDoc = z.object({
   soakHours: z.number().int().min(0).max(168),
   failureThreshold: z.number().int().min(0).max(MAX_RING_TARGETS),
   window: PolicyWindow,
-  /** 0.32 never restarts a computer. A later reboot rule is a §15 change to the agent's closed params. */
-  reboot: z.literal('never'),
+  /**
+   * The most a plan under this policy may ask (0.34): never, or a restart if
+   * required inside the window. Signed with the rest, so the signer refuses
+   * a plan asking for more (reboot_not_allowed).
+   */
+  reboot: UpdateReboot,
   createdAt: Iso,
   expiresAt: Iso,
   createdBy: z.object({ userId: Id, name: z.string().max(120) }).strict(),
@@ -412,7 +416,7 @@ export function evaluatePolicyPlan(s: PolicyState, r: PolicyPlanRequest, opts: {
   // The action and what it installs.
   if (p.action.id !== UPDATE_INSTALL.id || p.action.version !== UPDATE_INSTALL.version) return no('action_not_in_policy', 'A patch policy signs Windows update installs only.');
   const params = p.params as { updates?: { updateId: string; revision: number }[]; reboot?: unknown; allow?: unknown };
-  if (params.reboot !== doc.reboot) return no('reboot_not_allowed', 'The plan\'s reboot rule is not the policy\'s.');
+  if (!rebootWithin(params.reboot, doc.reboot)) return no('reboot_not_allowed', `The plan's restart rule asks for more than the policy allows (${doc.reboot === 'never' ? 'never restart' : 'restart if required, inside the window'}).`);
   if (canonicalJson(params.allow ?? null) !== canonicalJson(allowParams(doc.allow))) return no('filter_mismatch', 'The plan must carry exactly the policy\'s update filter, so each computer applies it.');
   const updates = params.updates ?? [];
   const shown = p.display?.updates ?? [];

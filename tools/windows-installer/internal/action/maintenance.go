@@ -262,9 +262,9 @@ func scheduleRestart(p *Plan, o Options) Result {
 		r.Outcome, r.Reason, r.Detail = "refused", "params_not_allowed", "the delay is outside 5 minutes to 24 hours"
 		return r
 	}
-	at := o.now().Add(time.Duration(minutes) * time.Minute)
 	journalStep(o, p, "scheduling")
-	if err := o.Maint.ScheduleRestart(minutes*60, RestartMessage(at.Local(), minutes, p.JobID)); err != nil {
+	at, err := scheduleWarnedRestart(p, o, minutes)
+	if err != nil {
 		if errors.Is(err, ErrRestartScheduled) {
 			r.Outcome, r.Reason, r.Detail = "failed", "restart_already_scheduled", "Windows already has a restart or shutdown pending; nothing was changed. Cancel that one first if it is ours."
 		} else {
@@ -272,11 +272,24 @@ func scheduleRestart(p *Plan, o Options) Result {
 		}
 		return r
 	}
-	_ = atomicWrite(rebootRecordPath(o), RebootRecord{JobID: p.JobID, At: at.UTC().Format(time.RFC3339)})
 	r.Observed["scheduledFor"] = at.UTC().Format(time.RFC3339)
 	r.Observed["delayMinutes"] = strconv.Itoa(minutes)
 	r.Outcome, r.Detail = "succeeded", "Windows is showing the restart warning; the computer restarts at the time shown unless the restart is canceled"
 	return r
+}
+
+// scheduleWarnedRestart is the one way this agent restarts a computer:
+// Maintenance.ScheduleRestart (shutdown.exe /r /t <seconds> on Windows) with
+// the fixed RestartMessage, then a record of it for windows.reboot.cancel.
+// windows.reboot.schedule and windows.update.install's in-window restart
+// (0.34) both come through here, after their own session and window checks.
+func scheduleWarnedRestart(p *Plan, o Options, minutes int) (time.Time, error) {
+	at := o.now().Add(time.Duration(minutes) * time.Minute)
+	if err := o.Maint.ScheduleRestart(minutes*60, RestartMessage(at.Local(), minutes, p.JobID)); err != nil {
+		return at, err
+	}
+	_ = atomicWrite(rebootRecordPath(o), RebootRecord{JobID: p.JobID, At: at.UTC().Format(time.RFC3339)})
+	return at, nil
 }
 
 func scheduleInterrupted(_ map[string]any, o Options) map[string]string {

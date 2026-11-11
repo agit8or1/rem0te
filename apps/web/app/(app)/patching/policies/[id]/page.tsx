@@ -12,6 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { CLASS_NAMES, DEPLOYMENT_STATUS, POLICY_STATUS, describeWindow } from '@/lib/patching';
 import { AlertTriangle, ArrowLeft, ExternalLink } from 'lucide-react';
+import { rebootSummary } from '@/components/patching/patch-reboot-choice';
 
 /**
  * One patch policy (0.32): the exact document two approvers signed on the
@@ -24,7 +25,7 @@ interface PolicyDoc {
   name: string; businessName: string; reason: string; createdAt: string; expiresAt: string; createdBy: { name: string };
   rings: { endpointId: string; hostname: string }[][];
   allow: { classifications: string[]; severities?: string[]; excludeKbs?: string[] };
-  soakHours: number; failureThreshold: number; window: { days: string[]; start: string; end: string; timezone: string }; reboot: 'never';
+  soakHours: number; failureThreshold: number; window: { days: string[]; start: string; end: string; timezone: string }; reboot: 'never' | 'if_required_in_window';
 }
 interface Policy {
   id: string; name: string; status: string; digest: string; approvalUrl: string; expiresAt: string; createdAt: string;
@@ -101,7 +102,7 @@ export default function PolicyPage() {
             {row('Window', describeWindow(d.window))}
             {row('Soak between rings', `${d.soakHours} h`)}
             {row('Failures allowed per ring', String(d.failureThreshold))}
-            {row('Restart', 'never')}
+            {row('Restart', rebootSummary(d.reboot))}
             {row('Reason', d.reason)}
             {row('Approved by', p.approvals.length ? p.approvals.map((a) => `${a.name} (${a.role}, ${formatDate(a.at)})`).join('; ') : 'nobody yet — two approvers other than its author approve it on the approval signer')}
             {row('Document digest', <code className="break-all">{p.digest}</code>)}

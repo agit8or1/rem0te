@@ -12,7 +12,7 @@ import { ActionsService } from '../actions/actions.service';
 import { SignerClient } from '../actions/signer.client';
 import { ContainmentService } from '../containment/containment.service';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
-import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, UPDATE_INSTALL } from '../actions/catalog';
+import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, UPDATE_INSTALL, UpdateReboot } from '../actions/catalog';
 import {
   MAX_POLICY_DAYS, MAX_POLICY_RINGS, POLICY_SCHEMA, PolicyAllow, PolicyDoc, PolicyWindow,
   allowParams, localTime, nextOccurrence, occurrenceAt, policyAllowsUpdate, policyDigest, validatePolicyDoc,
@@ -26,7 +26,8 @@ import { PatchingService } from './patching.service';
  * A policy is a bounded document — one business, named computers in fixed
  * rings with a one-computer canary, the update classes and severities it may
  * install, KBs it never installs, a maintenance window, soak and failure
- * threshold, never restart, and an expiry at most 90 days out. Two people on
+ * threshold, a restart rule (0.34: never, or if required inside the
+ * window), and an expiry at most 90 days out. Two people on
  * the approval signer's roster approve it there, with passkeys. After that
  * the signer signs each ring plan the portal proposes *only if the plan is
  * inside the document*: the portal cannot widen the computers, the classes,
@@ -55,8 +56,8 @@ export const CreatePolicyDto = z.object({
   soakHours: z.number().int().min(0).max(168).default(24),
   failureThreshold: z.number().int().min(0).max(MAX_RING_TARGETS).default(0),
   window: PolicyWindow,
-  /** The only rule this release has. */
-  reboot: z.literal('never').default('never'),
+  /** 0.34: never (the default), or restart if required inside the window. Signed into the policy. */
+  reboot: UpdateReboot.default('never'),
   expiresInDays: z.number().int().min(1).max(MAX_POLICY_DAYS).default(30),
   reason: z.string().trim().min(3).max(500),
 }).strict();
@@ -219,7 +220,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
         businessId: r.customerId, name: `${doc.name} — ${date}`.slice(0, 120),
         updates: updates.map((u) => ({ updateId: u.updateId, revision: u.revision })),
         rings: doc.rings.map((ring) => ring.map((c) => c.endpointId)),
-        soakHours: doc.soakHours, failureThreshold: doc.failureThreshold, windowHours: 24,
+        soakHours: doc.soakHours, failureThreshold: doc.failureThreshold, windowHours: 24, reboot: doc.reboot,
       }, 'POLICY', { policyId: r.id, windowKey, createdById: doc.createdBy.userId });
     } catch (e) {
       // Another sweep (another process) made this window's deployment first.
@@ -327,7 +328,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     const expiresAt = new Date(now.getTime() + dto.expiresInDays * 86_400_000);
     const doc: PolicyDoc = {
       schema: POLICY_SCHEMA, policyId: randomBytes(16).toString('hex'), name: dto.name, businessId: dto.businessId, businessName,
-      rings, allow: dto.allow, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, window: dto.window, reboot: 'never',
+      rings, allow: dto.allow, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, window: dto.window, reboot: dto.reboot,
       createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
       createdBy: { userId: actor.userId, name: ([user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.email || actor.userId).slice(0, 120) },
       reason: dto.reason,
@@ -349,7 +350,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     });
     await this.audit.log({
       tenantId: tenantId ?? undefined, customerId: dto.businessId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_POLICY_CREATED', resource: 'patch_policy', resourceId: row.id,
-      meta: { name: dto.name, digest, rings: rings.map((x) => x.length), allow: allowParams(dto.allow), window: dto.window, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, expiresAt: doc.expiresAt, reason: dto.reason },
+      meta: { name: dto.name, digest, rings: rings.map((x) => x.length), allow: allowParams(dto.allow), window: dto.window, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, reboot: dto.reboot, expiresAt: doc.expiresAt, reason: dto.reason },
     });
     return this.detail(actor, row.id, now);
   }

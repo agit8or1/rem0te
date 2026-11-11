@@ -300,7 +300,7 @@ async function all() {
     const direct = await req('POST', `/endpoints/${manual.id}/actions`, { s: S.owen, business: acme.id, body: { actionId: 'windows.update.install', version: 1, params: { updates: [id(NET)], reboot: 'never' }, reason: 'direct' } });
     check(direct.status === 400 && code(direct) === 'ACTION_NOT_DIRECT', 'ACTION_NOT_DIRECT still holds on the Actions tab', msg(direct));
     const rb = await req('POST', `/endpoints/${manual.id}/patches/install`, { s: S.owen, business: acme.id, body: { updates: [id(NET)], reboot: 'if_required', reason: 'with a restart' } });
-    check(rb.status === 400, 'a reboot option other than "never" is refused', msg(rb));
+    check(rb.status === 400, 'a restart rule outside the closed pair ("never" | "if_required_in_window") is refused', msg(rb));
     const r = await req('POST', `/endpoints/${manual.id}/patches/install`, { s: S.owen, business: acme.id, body: { updates: [id(NET)], reboot: 'never', reason: 'user reports .NET app crash' } });
     const job = r.body?.data?.job, dep = r.body?.data?.deployment;
     check(r.status === 201 && job?.status === 'AWAITING_APPROVAL' && job.approvalsRequired === 2 && job.targets.length === 1, 'Install becomes one plan for one computer, awaiting TWO approvals', msg(r));
@@ -334,7 +334,7 @@ async function all() {
     r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, expiresInDays: 91 } });
     check(r.status === 400, 'an expiry beyond 90 days is refused', msg(r));
     r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, reboot: 'always' } });
-    check(r.status === 400, 'a reboot rule other than "never" is refused', msg(r));
+    check(r.status === 400, 'a policy restart rule outside the closed pair is refused', msg(r));
     r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, allow: { classifications: ['ebfc1fc5-71a4-4f7b-9aca-3b9a503104a0'] } } });
     check(r.status === 400, 'drivers are not a class a policy can allow', msg(r));
     r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body });
@@ -401,6 +401,11 @@ async function all() {
     check(r.status === 409 && r.body?.error === 'ring_already_signed', 'the canary again while its window is open → ring_already_signed', JSON.stringify(r.body));
     r = await underPolicy(pol.id, { plan: craft(base, { requestedBy: { ...base.requestedBy, userId: olivia.id } }), policyDigest: cDigest, evidence: null });
     check(r.status === 409 && r.body?.error === 'requester_mismatch', 'a plan requested as someone other than the policy\'s author → requester_mismatch', JSON.stringify(r.body));
+    // 0.34: the policy says never; a plan may not ask for a restart under it.
+    r = await underPolicy(pol.id, { plan: craft(base, { params: { ...base.params, reboot: 'if_required_in_window' } }), policyDigest: cDigest, evidence: null });
+    check(r.status === 409 && r.body?.error === 'reboot_not_allowed', 'the policy forbids restarts; a plan asking to restart in its window → reboot_not_allowed', JSON.stringify(r.body));
+    r = await underPolicy(pol.id, { plan: craft(base, { params: { ...base.params, reboot: 'always' } }), policyDigest: cDigest, evidence: null });
+    check(r.status >= 400 && r.status < 500 && r.body?.error !== undefined && !r.body?.jobId, 'a restart rule outside the closed pair is refused outright', JSON.stringify(r.body));
     const st = await sj(`${INTERNAL}/internal/v1/policies/${pol.id}`);
     check(st.body?.refusals?.length >= 5, 'the signer keeps each refusal with the policy (for its operator and the portal)', JSON.stringify(st.body?.refusals?.length));
   }
@@ -454,6 +459,32 @@ async function all() {
       await sleep(4500);
       check((await prisma.patchDeployment.count({ where: { policyId: pol.id } })) === 1, 'and no second deployment is proposed in the same window');
     }
+  }
+
+  section('A policy that allows a restart inside its window (0.34)');
+  {
+    // Through the portal: accepted, signed into the document, shown to the approvers. Left unapproved, so the sweep never acts on it.
+    const r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, name: 'Acme security, with restarts', reboot: 'if_required_in_window' } });
+    check(r.status === 201 && r.body?.data?.document?.reboot === 'if_required_in_window', 'the portal proposes a policy whose rule is "restart if required, inside the window"', msg(r));
+    const page = r.status === 201 ? await (await fetch(r.body.data.approvalUrl)).text() : '';
+    check(page.includes('if Windows requires one') && page.includes('15-minute warning') && page.includes('not yet run on a real Windows computer'), 'its approval page says it restarts, with the fixed warning, and that this has not run on real Windows', page.slice(0, 200));
+    const dflt = await prisma.patchPolicy.findUnique({ where: { id: pol.id } });
+    check(dflt.document.reboot === 'never', 'a policy proposed without a rule says never (the default)', JSON.stringify(dflt.document.reboot));
+    // Straight to the signer (the portal never sees it), approved, then plans under it.
+    const t0 = new Date();
+    const doc = { ...pol.document, policyId: hex(16), name: 'Restarts allowed', reboot: 'if_required_in_window', createdAt: t0.toISOString(), expiresAt: new Date(t0.getTime() + 86_400_000).toISOString() };
+    const sub = await sj(`${INTERNAL}/internal/v1/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy: doc }) });
+    check(sub.status === 201, 'the signer accepts it', JSON.stringify(sub.body));
+    await approvePolicy(doc.policyId, pk.olivia); const a = await approvePolicy(doc.policyId, pk.quinn);
+    check(a.body?.status === 'ACTIVE', 'approved by two', JSON.stringify(a.body).slice(0, 200));
+    const under = (rule) => craft(canaryJob.plan, {
+      params: { ...canaryJob.plan.params, reboot: rule },
+      display: { ...canaryJob.plan.display, policy: { id: doc.policyId, name: doc.name, digest: sub.body.digest }, deployment: { ...canaryJob.plan.display.deployment, id: `rb${hex(8)}` } },
+    });
+    const ok = await underPolicy(doc.policyId, { plan: under('if_required_in_window'), policyDigest: sub.body.digest, evidence: null });
+    check(ok.status === 201 && /^[0-9a-f]{32}$/.test(ok.body?.jobId ?? ''), 'a canary plan asking to restart in the window is signed under it', JSON.stringify(ok.body));
+    const less = await underPolicy(doc.policyId, { plan: under('never'), policyDigest: sub.body.digest, evidence: null });
+    check(less.status === 201, 'and so is one asking for less (never)', JSON.stringify(less.body));
   }
 
   section('Revoke: one-way, and it reaches the signer');

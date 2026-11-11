@@ -14,6 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { POLICY_STATUS, WEEKDAYS, CLASS_NAMES, SEVERITIES, describeWindow } from '@/lib/patching';
 import { AlertTriangle, CheckCircle2, Loader2, Plus, ScrollText, XCircle } from 'lucide-react';
+import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
 
 /**
  * Patch policies (0.32) and the production pre-flight.
@@ -124,6 +125,7 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
   const [failureThreshold, setFailureThreshold] = useState(0);
   const [expiresInDays, setExpiresInDays] = useState(30);
   const [reason, setReason] = useState('');
+  const [reboot, setReboot] = useState<RebootRule>('never');
 
   const rings = useMemo(() => {
     const max = Math.max(-1, ...Object.values(ringOf).filter((r): r is number => r !== ''));
@@ -137,7 +139,7 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
 
   const create = useMutation({
     mutationFn: () => patchingApi.createPolicy({
-      businessId, name: name.trim(), rings, soakHours, failureThreshold, expiresInDays, reason: reason.trim(), reboot: 'never',
+      businessId, name: name.trim(), rings, soakHours, failureThreshold, expiresInDays, reason: reason.trim(), reboot,
       allow: { classifications: [...classes], ...(severities.size ? { severities: [...severities] } : {}), ...(kbs.length ? { excludeKbs: [...new Set(kbs)] } : {}) },
       window: { days: WEEKDAYS.filter((d) => days.has(d.id)).map((d) => d.id), start, end, timezone },
     }),
@@ -212,13 +214,17 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
           <div className="space-y-1"><Label className="text-xs">Expires after (days, at most 90)</Label><Input type="number" min={1} max={90} value={expiresInDays} onChange={(e) => setExpiresInDays(Number(e.target.value))} /></div>
         </div>
 
+        <div className="max-w-xl">
+          <RebootChoice id="pol-reboot" value={reboot} onChange={setReboot} scope="policy" />
+        </div>
+
         <div className="space-y-1 max-w-xl">
           <Label htmlFor="pol-reason" className="text-xs">Reason (shown to the approvers)</Label>
           <Input id="pol-reason" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
         </div>
 
         <p className="text-xs text-muted-foreground flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />
-          Computers are never restarted: a restart rule needs a change to what the agent accepts, and is not in this release. Proposing needs a fresh sign-in; approving happens only on the approval signer.
+          The restart rule is part of what the approvers sign: a ring plan may never ask for more than it. Proposing needs a fresh sign-in; approving happens only on the approval signer.
         </p>
         <div className="flex gap-2">
           <Button size="sm" disabled={!ok || create.isPending} onClick={() => create.mutate()}>{create.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Propose for approval</Button>

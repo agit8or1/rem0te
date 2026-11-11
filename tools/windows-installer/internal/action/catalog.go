@@ -70,8 +70,10 @@ var catalog = []Action{
 		// Install named Windows updates (v0.27). Software installation is high
 		// impact on any computer: two approvers, always. The parameters name
 		// update identities and nothing else — no URL, package, path or
-		// script — and "reboot" admits one value, so a plan can never restart
-		// a computer in this release.
+		// script. "reboot" admits two fixed values (0.34): never, or a restart
+		// after the install only if Windows needs one, through the same
+		// warned, session-checked shutdown.exe path as windows.reboot.schedule
+		// and only inside the plan's signed window (restartInWindow).
 		ID: "windows.update.install", Version: 1, MaxTargets: MaxRingTargets,
 		ParamsOK:    updateParamsOK,
 		Risk:        func(int, int) string { return "high" },

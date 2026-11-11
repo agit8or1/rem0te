@@ -12,6 +12,8 @@
 //
 //	rem0te-action-sim -scan -wua wua.json [-registry registry.json]     posture, as patch-scan writes it
 //	rem0te-action-sim -restart -wua wua.json                            what a restart does to pending updates
+//	rem0te-action-sim -fire-restart -state DIR -wua wua.json [-registry registry.json]
+//	                                                                    the restart DIR has scheduled, if any, happens
 //
 // -wua is a patch.FakeWUA (offered, installed, superseded, results, fail),
 // read before and written back after, so an install changes what the next
@@ -24,6 +26,13 @@
 // Application.txt (wevtutil /f:text output) and -rustdesk-logs a RustDesk log
 // directory. A scheduled restart is kept in DIR/sim-restart (seconds, then the
 // message), so a second schedule finds it and a cancel removes it.
+//
+// Restarts after updates (0.34): -fire-restart is the scheduled restart's
+// delay running out. Only if DIR/sim-restart exists does the simulated
+// computer restart (pending restarts clear, in Windows Update and in the
+// registry, which is written back) and the file go; otherwise nothing
+// changes. It prints {"restarted": true|false}. -clock-offset moves the
+// agent's clock (e.g. 7h50m), to run a plan near the end of its window.
 //
 // It prints the Result as JSON. The state directory carries the journal, so
 // running it twice with the same job is a replay, as on a real machine.
@@ -147,6 +156,8 @@ func main() {
 	rdLogs := flag.String("rustdesk-logs", "", "a RustDesk service log directory")
 	scan := flag.Bool("scan", false, "print this computer's patch posture and exit")
 	restart := flag.Bool("restart", false, "simulate a restart (clears pending restarts) and exit")
+	fire := flag.Bool("fire-restart", false, "if a restart is scheduled in -state, it happens; then exit")
+	offset := flag.Duration("clock-offset", 0, "added to the agent's clock")
 	flag.Parse()
 
 	fail := func(err error) {
@@ -178,6 +189,26 @@ func main() {
 			b, _ := json.Marshal(wua)
 			_ = os.WriteFile(*wuaPath, b, 0o600)
 		}
+	}
+	if *fire {
+		if wua == nil || *state == "" {
+			fail(errors.New("-fire-restart needs -state and -wua"))
+		}
+		f := filepath.Join(*state, "sim-restart")
+		if _, err := os.Stat(f); err != nil {
+			fmt.Println(`{"restarted":false}`)
+			return
+		}
+		wua.Restart()
+		reg.Keys = nil
+		saveWUA()
+		if *regPath != "" {
+			b, _ := json.Marshal(reg)
+			_ = os.WriteFile(*regPath, b, 0o600)
+		}
+		_ = os.Remove(f)
+		fmt.Println(`{"restarted":true}`)
+		return
 	}
 	if *scan || *restart {
 		if wua == nil {
@@ -215,7 +246,8 @@ func main() {
 		cur = string(b)
 	}
 	p := &sim{state: cur, stopAfter: *stops, product: *pt, rid: *rid, sec: *secret, self: *self}
-	o := action.Options{StateDir: *state, Keys: keys, Platform: p, Now: time.Now,
+	clock := func() time.Time { return time.Now().Add(*offset) }
+	o := action.Options{StateDir: *state, Keys: keys, Platform: p, Now: clock,
 		Checks: []time.Duration{time.Millisecond, time.Millisecond}, WUAWait: time.Second,
 		Maint: &simMaint{s: p, stateDir: *state, sessions: *sessions, stopFails: *stopFails, eventsDir: *eventsDir, rustdeskLD: *rdLogs}}
 	if *pausePath != "" {

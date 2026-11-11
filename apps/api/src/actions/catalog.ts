@@ -100,15 +100,40 @@ export const UpdateFilter = z.object({
   excludeKbs: z.array(z.string().regex(/^KB[0-9]{4,10}$/)).min(1).max(50).refine(uniq, 'duplicate').optional(),
 }).strict();
 
+/**
+ * An update plan's restart rule (0.34). Two fixed values, nothing to choose
+ * beyond them: no delay, time, message or command. The agent has the same
+ * two (updates.go RebootNever / RebootInWindow) and refuses anything else.
+ *
+ *   never                  the computer is never restarted (0.27–0.33).
+ *   if_required_in_window  after the install, and only if Windows then says
+ *                          a restart is required, the agent schedules one
+ *                          through windows.reboot.schedule's own path: the
+ *                          fixed warning, UPDATE_RESTART_WARNING_MINUTES
+ *                          later, never while a RustDesk session is open (or
+ *                          when it cannot tell), never after the plan's
+ *                          signed window closes. Otherwise restart_deferred.
+ */
+export const UPDATE_REBOOT_RULES = ['never', 'if_required_in_window'] as const;
+export type UpdateRebootRule = (typeof UPDATE_REBOOT_RULES)[number];
+export const UpdateReboot = z.enum(UPDATE_REBOOT_RULES);
+/** The fixed warning before an update plan's restart; the agent uses the same (UpdateRestartWarningMinutes). */
+export const UPDATE_RESTART_WARNING_MINUTES = 15;
+/** Does a plan's rule ask for no more than `allowed`? (never ≤ if_required_in_window) */
+export const rebootWithin = (plan: unknown, allowed: UpdateRebootRule) =>
+  UpdateReboot.safeParse(plan).success && UPDATE_REBOOT_RULES.indexOf(plan as UpdateRebootRule) <= UPDATE_REBOOT_RULES.indexOf(allowed);
+/** Said wherever the restart rule is offered or described. */
+export const REBOOT_UNPROVEN = 'The in-window restart has been tested against a simulated Windows only; it has not yet run on a real Windows computer.';
+
 export const UPDATE_INSTALL: CatalogAction = {
   id: 'windows.update.install',
   version: 1,
   title: 'Install Windows updates',
-  description: 'Downloads and installs the named Windows updates from Windows Update on each named computer, then reports each update\'s result. It never restarts a computer.',
+  description: 'Downloads and installs the named Windows updates from Windows Update on each named computer, then reports each update\'s result. It restarts a computer only if the plan\'s restart rule allows it and Windows says a restart is required; by default it never does.',
   params: z.object({
     updates: z.array(UpdateIdentity).min(1).max(MAX_UPDATES_PER_PLAN)
       .refine((u) => new Set(u.map((x) => `${x.updateId}@${x.revision}`)).size === u.length, 'duplicate update'),
-    reboot: z.literal('never'),
+    reboot: UpdateReboot,
     // 0.32: a plan signed under a patch policy carries the policy's filter,
     // and the agent applies it to Windows Update's own answer
     // (patch.InstallFiltered). It can only narrow what Eligible allows.
@@ -116,19 +141,20 @@ export const UPDATE_INSTALL: CatalogAction = {
   }).strict(),
   warnings: [
     'Installing updates changes the computer. An update can break a driver or an application, and some cannot be uninstalled.',
-    'Many updates need a restart before they take effect. This plan never restarts a computer: until someone restarts it, it keeps running the old code and reports "restart required".',
+    'Many updates need a restart before they take effect. With the restart rule "never", the computer is not restarted: until someone restarts it, it keeps running the old code and reports "restart required".',
+    `With the restart rule "restart if required, inside the window", a computer that Windows says needs a restart after the install shows the fixed restart warning and restarts ${UPDATE_RESTART_WARNING_MINUTES} minutes later: programs still open are closed without saving. It does not restart while a RustDesk session is open (or when it cannot tell), or if the restart would fall after the plan's window closes; it reports the restart deferred and leaves the computer as it is. ${REBOOT_UNPROVEN}`,
     'Updates download from Microsoft. People using the computer may notice it slow down while they install.',
     'Each computer installs only the named updates that Windows Update offers it and that are security, critical, rollup or ordinary updates. Drivers, feature upgrades and optional updates are never installed, and no licence is accepted on anyone\'s behalf.',
   ],
-  verification: 'Each computer reports what Windows Update said for every named update, and whether a restart is pending. A later scan, after any restart, shows whether the update took effect.',
-  doesNotProve: ['that the update fixed any problem', 'that applications still work afterwards', 'that the computer has been restarted'],
+  verification: 'Each computer reports what Windows Update said for every named update, whether a restart is pending, and — under the in-window rule — whether it scheduled a restart and for when, or why it deferred it. A later scan, after any restart, shows whether the update took effect.',
+  doesNotProve: ['that the update fixed any problem', 'that applications still work afterwards', 'that a scheduled restart happened (a later scan with no restart pending shows that)'],
   // Software installation is high impact on any computer, at any count.
   risk: () => 'high',
   maxTargets: MAX_RING_TARGETS,
   resultDeadlineMinutes: 6 * 60,
   direct: false,
   integration: true,
-  acknowledge: 'I understand that these updates change the computers and may need a restart.',
+  acknowledge: 'I understand that these updates change the computers, may need a restart, and that under the in-window rule the computers restart after a fixed warning.',
 };
 
 // ── Maintenance actions (0.32) ──────────────────────────────────────────────

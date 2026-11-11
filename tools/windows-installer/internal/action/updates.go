@@ -1,6 +1,7 @@
 package action
 
 import (
+	"errors"
 	"math"
 	"path/filepath"
 	"strconv"
@@ -10,8 +11,9 @@ import (
 	"github.com/agit8or1/rem0te/windows-installer/internal/patch"
 )
 
-// updateParamsOK: exactly {"updates": [{updateId, revision}, ...], "reboot": "never"},
+// updateParamsOK: exactly {"updates": [{updateId, revision}, ...], "reboot": <rule>},
 // and optionally "allow" (0.32): a signed patch policy's narrowing, see updateFilter.
+// The rule (0.34) is one of two fixed strings, RebootNever or RebootInWindow.
 func updateParamsOK(p map[string]any) bool {
 	_, _, err := updateParams(p)
 	return err == nil
@@ -27,8 +29,8 @@ func updateParams(p map[string]any) ([]patch.Identity, *patch.Filter, error) {
 	if hasAllow {
 		want = 3
 	}
-	if len(p) != want || p["reboot"] != "never" {
-		return nil, nil, paramErr("params must be exactly updates, reboot=never and optionally allow")
+	if len(p) != want || UpdateReboot(p) == "" {
+		return nil, nil, paramErr("params must be exactly updates, reboot (never or if_required_in_window) and optionally allow")
 	}
 	list, ok := p["updates"].([]any)
 	if !ok || len(list) < 1 || len(list) > patch.MaxPerPlan {
@@ -61,6 +63,31 @@ func updateParams(p map[string]any) ([]patch.Identity, *patch.Filter, error) {
 		return nil, nil, err
 	}
 	return out, f, nil
+}
+
+// The update plan's reboot rule (0.34). Two values and nothing else: there
+// is no delay, message, time or command to choose.
+const (
+	// RebootNever: the agent never restarts the computer (0.27–0.33).
+	RebootNever = "never"
+	// RebootInWindow: after the install, and only if Windows then reports a
+	// restart is required, the agent schedules one through the same path as
+	// windows.reboot.schedule — after UpdateRestartWarningMinutes of fixed
+	// warning, only while no RustDesk session is open (or when that cannot be
+	// told), and only if the restart falls inside the plan's signed window.
+	// Otherwise it records restart_deferred and leaves the computer alone.
+	RebootInWindow = "if_required_in_window"
+	// UpdateRestartWarningMinutes: the fixed warning before such a restart.
+	UpdateRestartWarningMinutes = 15
+)
+
+// UpdateReboot returns the plan's reboot rule, or "" for anything else.
+func UpdateReboot(p map[string]any) string {
+	switch s, _ := p["reboot"].(string); s {
+	case RebootNever, RebootInWindow:
+		return s
+	}
+	return ""
 }
 
 // updateFilter parses "allow": {"classifications": [...], "severities"?: [...],
@@ -142,8 +169,8 @@ func installUpdates(p *Plan, o Options) Result {
 		r.Outcome, r.Reason, r.Detail = "failed", "update_agent_busy", "Windows Update was busy with another scan or install; nothing was attempted"
 		return r
 	}
-	defer l.Release()
 	rep := patch.InstallFiltered(o.WUA, o.Registry, ids, filter)
+	l.Release()
 	r.Reboot = &rep.Reboot
 	r.Observed["rebootPending"] = strconv.FormatBool(rep.Reboot.Pending)
 	if rep.Refusal != "" {
@@ -162,12 +189,80 @@ func installUpdates(p *Plan, o Options) Result {
 	case "uncertain":
 		r.Detail = "the installer did not report every result; check the computer before trying again"
 	}
+	if UpdateReboot(p.Params) == RebootInWindow {
+		restartInWindow(p, o, &r)
+	}
 	return r
+}
+
+// Restart is what an update plan with RebootInWindow did about a restart.
+type Restart struct {
+	// State: scheduled | restart_deferred | not_required
+	State  string `json:"state"`
+	Reason string `json:"reason,omitempty"`
+	// ScheduledFor (UTC, RFC 3339) and DelayMinutes: when State is scheduled.
+	ScheduledFor string `json:"scheduledFor,omitempty"`
+	DelayMinutes int    `json:"delayMinutes,omitempty"`
+}
+
+// restartInWindow schedules the restart an update plan allows, or records
+// why not. Every refusal leaves the computer as it is: nothing is retried
+// later and nothing is restarted outside the signed window.
+func restartInWindow(p *Plan, o Options, r *Result) {
+	deferred := func(reason, detail string) {
+		r.Restart = &Restart{State: "restart_deferred", Reason: reason}
+		r.Detail += " The restart was not scheduled: " + detail
+	}
+	pending := r.Reboot != nil && r.Reboot.Pending
+	switch {
+	case r.Outcome == "uncertain":
+		// The installer may still be at work: never restart under it.
+		deferred("install_uncertain", "the install's outcome is not known.")
+		return
+	case !pending:
+		r.Restart = &Restart{State: "not_required", Reason: "no_restart_pending"}
+		return
+	case r.Outcome != "restart_required" && r.Outcome != "partial":
+		// A restart already pending for something else is not this plan's.
+		r.Restart = &Restart{State: "not_required", Reason: "nothing_installed"}
+		return
+	}
+	if o.Maint == nil {
+		deferred("no_maintenance", "this agent cannot schedule a restart.")
+		return
+	}
+	na, err := time.Parse(time.RFC3339Nano, p.Window.NotAfter)
+	at := o.now().Add(UpdateRestartWarningMinutes * time.Minute)
+	if err != nil || at.After(na) {
+		deferred("window_closed", "the plan's window closes before a restart with a "+strconv.Itoa(UpdateRestartWarningMinutes)+"-minute warning could happen.")
+		return
+	}
+	// The same check windows.reboot.schedule makes: "cannot tell" counts as open.
+	if pr := sessionCheck("the restart")(p, o); pr != nil {
+		deferred(pr.Reason, "a RustDesk session was open, or the agent could not tell.")
+		for k, v := range pr.Observed {
+			r.Observed[k] = v
+		}
+		return
+	}
+	journalStep(o, p, "scheduling_restart")
+	when, err := scheduleWarnedRestart(p, o, UpdateRestartWarningMinutes)
+	if err != nil {
+		if errors.Is(err, ErrRestartScheduled) {
+			deferred("restart_already_scheduled", "Windows already has a restart or shutdown pending.")
+		} else {
+			deferred("schedule_failed", trim(err.Error()))
+		}
+		return
+	}
+	r.Restart = &Restart{State: "scheduled", ScheduledFor: when.UTC().Format(time.RFC3339), DelayMinutes: UpdateRestartWarningMinutes}
+	r.Observed["scheduledFor"] = r.Restart.ScheduledFor
+	r.Detail += " A restart is scheduled for " + r.Restart.ScheduledFor + ", after a " + strconv.Itoa(UpdateRestartWarningMinutes) + "-minute warning on screen."
 }
 
 // updatesNow reports what a restart check can see without touching Windows
 // Update, for a job interrupted mid-install.
-func updatesNow(_ map[string]any, o Options) map[string]string {
+func updatesNow(params map[string]any, o Options) map[string]string {
 	if o.Registry == nil {
 		return nil
 	}
@@ -175,6 +270,9 @@ func updatesNow(_ map[string]any, o Options) map[string]string {
 	out := map[string]string{"rebootPending": strconv.FormatBool(len(s) > 0)}
 	if len(s) > 0 {
 		out["rebootSources"] = joinComma(s)
+	}
+	if UpdateReboot(params) == RebootInWindow {
+		out["note"] = "a restart may have been scheduled; look for the Windows warning"
 	}
 	return out
 }

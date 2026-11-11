@@ -86,7 +86,7 @@ export const patchingApi = {
   candidates: (businessId: string) => api.get('/patching/candidates', { params: { businessId } }),
   list: (businessId: string) => api.get('/patching/deployments', { params: { businessId } }),
   get: (id: string) => api.get(`/patching/deployments/${id}`),
-  create: (body: { businessId: string; name: string; updates: UpdateIdentity[]; rings: string[][]; soakHours: number; failureThreshold: number; windowHours: number }) =>
+  create: (body: { businessId: string; name: string; updates: UpdateIdentity[]; rings: string[][]; soakHours: number; failureThreshold: number; windowHours: number; reboot?: 'never' | 'if_required_in_window' }) =>
     api.post('/patching/deployments', body),
   requestRing: (id: string, ring: number, body: { reason: string; startsInMinutes?: number; exclude?: { endpointId: string; why: string }[] }) =>
     api.post(`/patching/deployments/${id}/rings/${ring}/request`, body),
@@ -95,7 +95,7 @@ export const patchingApi = {
   cancel: (id: string, reason: string) => api.post(`/patching/deployments/${id}/cancel`, { reason }),
   // 0.32. "Install updates" builds a one-computer deployment; its canary
   // still needs two approvals on the approval signer.
-  install: (endpointId: string, body: { updates: UpdateIdentity[]; reboot: 'never'; reason: string; windowHours: number }) =>
+  install: (endpointId: string, body: { updates: UpdateIdentity[]; reboot: 'never' | 'if_required_in_window'; reason: string; windowHours: number }) =>
     api.post(`/endpoints/${endpointId}/patches/install`, body),
   preflight: () => api.get('/patching/preflight'),
   policies: (businessId: string) => api.get('/patching/policies', { params: { businessId } }),
@@ -110,7 +110,7 @@ export interface PatchPolicyInput {
   allow: { classifications: string[]; severities?: string[]; excludeKbs?: string[] };
   soakHours: number; failureThreshold: number;
   window: { days: string[]; start: string; end: string; timezone: string };
-  reboot: 'never'; expiresInDays: number; reason: string;
+  reboot: 'never' | 'if_required_in_window'; expiresInDays: number; reason: string;
 }
 
 // ─── Endpoints ───────────────────────────────────────────────────────────────

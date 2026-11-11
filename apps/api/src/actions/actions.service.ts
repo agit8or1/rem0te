@@ -11,7 +11,7 @@ import { AccessPolicyService } from '../security-controls/access-policy.service'
 import { AbuseGuardService } from '../security-controls/abuse-guard.service';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import {
-  APPROVALS_REQUIRED, CATALOG, Envelope, LOG_SOURCES, MAX_WINDOW_HOURS, PLAN_SCHEMA, Plan, catalogEntry, planDigest, type CatalogAction,
+  APPROVALS_REQUIRED, CATALOG, Envelope, LOG_SOURCES, MAX_WINDOW_HOURS, PLAN_SCHEMA, Plan, catalogEntry, planDigest, UPDATE_INSTALL, type CatalogAction,
 } from './catalog';
 import { sanitizeLogs } from './logs';
 import { SignerClient } from './signer.client';
@@ -77,6 +77,14 @@ export const AgentResult = z.object({
   agentSha256: z.string().max(64).optional(),
   updates: z.array(PatchOutcome).max(20).optional(),
   reboot: z.object({ pending: z.boolean(), sources: z.array(z.string().max(32)).max(8) }).strict().optional(),
+  // windows.update.install with reboot if_required_in_window (0.34): what the
+  // agent did about a restart. Kept only for a plan that allowed one.
+  restart: z.object({
+    state: z.enum(['scheduled', 'restart_deferred', 'not_required']),
+    reason: z.enum(['remote_session_open', 'session_state_unknown', 'window_closed', 'restart_already_scheduled', 'schedule_failed', 'install_uncertain', 'no_maintenance', 'no_restart_pending', 'nothing_installed']).optional(),
+    scheduledFor: z.string().datetime().optional(),
+    delayMinutes: z.number().int().min(1).max(1440).optional(),
+  }).strict().optional(),
   // windows.logs.collect (0.32). Bounded here, then redacted again and capped
   // by sanitizeLogs before anything is stored.
   logs: z.array(z.object({
@@ -598,20 +606,32 @@ export class ActionsService {
       if (!p.success) continue;
       const r = p.data;
       // Never another computer's result — and no ack, so it is not hidden either.
-      const t = await this.prisma.actionTarget.findUnique({ where: { jobId_endpointId: { jobId: r.jobId, endpointId } }, include: { job: { select: { actionId: true } } } });
+      const t = await this.prisma.actionTarget.findUnique({ where: { jobId_endpointId: { jobId: r.jobId, endpointId } }, include: { job: { select: { actionId: true, plan: true, notAfter: true } } } });
       if (!t) continue;
       acks.push(r.jobId);
       if (t.result !== null || !['DISPATCHED', 'UNKNOWN'].includes(t.status)) continue;
       // Collected text only for the action that collects it, redacted again
       // here (the agent's redaction is not trusted) and capped.
       if (r.logs) r.logs = t.job.actionId === 'windows.logs.collect' ? sanitizeLogs(r.logs) : undefined;
+      // A restart report only from an update plan whose signed rule allowed one.
+      const planReboot = (t.job.plan as unknown as Plan | null)?.params?.reboot;
+      if (r.restart && !(t.job.actionId === UPDATE_INSTALL.id && planReboot === 'if_required_in_window')) r.restart = undefined;
       const u = await this.prisma.actionTarget.updateMany({
         where: { id: t.id, status: { in: ['DISPATCHED', 'UNKNOWN'] }, result: { equals: Prisma.DbNull } },
         data: { status: STATUS_FOR[r.outcome], outcome: r.outcome, statusReason: r.reason ?? null, result: r as unknown as Prisma.InputJsonValue, resultAt: new Date() },
       });
+      if (u.count && r.restart?.state === 'scheduled' && r.restart.scheduledFor) {
+        // The canary's proof is a scan after the restart: ask for one once the
+        // restart is due (patchScanDue waits until then), never later than
+        // the plan's window allows the restart to have been.
+        const at = new Date(Date.parse(r.restart.scheduledFor) + 2 * 60_000);
+        if (at.getTime() > Date.now() - 3_600_000 && at.getTime() <= t.job.notAfter.getTime() + 2 * 60_000) {
+          await this.prisma.endpoint.update({ where: { id: endpointId }, data: { patchScanRequestedAt: at } });
+        }
+      }
       if (u.count) {
         const j = await this.rollup(r.jobId);
-        await this.audit.log({ tenantId: j.tenantId ?? undefined, customerId: j.customerId, action: 'ACTION_RESULT', resource: 'action_job', resourceId: j.id, meta: { endpointId, outcome: r.outcome, reason: r.reason ?? null, observed: r.observed ?? null, updates: r.updates?.map((x) => `${x.kb ?? x.updateId}:${x.state}`) ?? null, logs: r.logs?.map((x) => `${x.source}:${x.text.length}${x.truncated ? '+' : ''}`) ?? null } });
+        await this.audit.log({ tenantId: j.tenantId ?? undefined, customerId: j.customerId, action: 'ACTION_RESULT', resource: 'action_job', resourceId: j.id, meta: { endpointId, outcome: r.outcome, reason: r.reason ?? null, observed: r.observed ?? null, restart: r.restart ?? null, updates: r.updates?.map((x) => `${x.kb ?? x.updateId}:${x.state}`) ?? null, logs: r.logs?.map((x) => `${x.source}:${x.text.length}${x.truncated ? '+' : ''}`) ?? null } });
       }
     }
     return acks;

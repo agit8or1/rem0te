@@ -3,7 +3,7 @@
  * sign — not by the portal. Self-contained: no external scripts, styles,
  * fonts or images, a nonce CSP, and every value HTML-escaped.
  */
-import type { Plan } from '../actions/catalog';
+import { REBOOT_UNPROVEN, UPDATE_RESTART_WARNING_MINUTES, type Plan } from '../actions/catalog';
 import { CLASSIFICATIONS as CLASS_NAME, type PolicyDoc } from '../actions/patch-policy';
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -26,6 +26,9 @@ export function renderApprovalPage(v: View, nonce: string): string {
   const updates = p.display?.updates?.length
     ? `<table class="inner"><tr><th>Update</th><th>Classification</th><th>Severity</th></tr>${p.display.updates.map((u) => `<tr><td>${u.kb ? `<strong>${esc(u.kb)}</strong> ` : ''}${esc(u.title)}<br><code>${esc(u.updateId)} rev ${esc(u.revision)}</code></td><td>${esc(u.className ?? 'unknown')}</td><td>${esc(u.severity ?? '—')}</td></tr>`).join('')}</table><p class="mut">Titles and KBs are as the computers reported them. Each computer installs an update only if Windows Update itself offers it as a security, critical, rollup or ordinary update.</p>`
     : '';
+  const restarts = (p.params as { reboot?: unknown }).reboot === 'if_required_in_window'
+    ? `<strong>restarting if Windows requires it</strong>, after a fixed ${UPDATE_RESTART_WARNING_MINUTES}-minute warning, only inside the window below and never while a RustDesk session is open. <span class="mut">${esc(REBOOT_UNPROVEN)}</span>`
+    : 'never restarting';
   const needs = [`${p.policy.approvalsRequired} approver${p.policy.approvalsRequired > 1 ? 's' : ''} (${p.policy.risk} impact)`]
     .concat(p.policy.customerSignoff ? ['customer sign-off from this business'] : []).join(' + ');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -40,7 +43,7 @@ export function renderApprovalPage(v: View, nonce: string): string {
 ${row('Customer', esc(t.businessName))}
 ${dep ? row('Deployment', `${esc(dep.name)} — <strong>${dep.ring === 0 ? 'canary (ring 0)' : `ring ${esc(dep.ring)}`}</strong> of ${esc(dep.rings)}`) : ''}
 ${row(p.targets.length === 1 ? 'Computer' : 'Computers', computers)}
-${row('Action', updates ? `<code>${esc(p.action.id)}@${esc(p.action.version)}</code>, never restarting${updates}` : `<code>${esc(p.action.id)}@${esc(p.action.version)}</code> with <code>${esc(JSON.stringify(p.params))}</code>`)}
+${row('Action', updates || p.action.id === 'windows.update.install' ? `<code>${esc(p.action.id)}@${esc(p.action.version)}</code>, ${restarts}${updates || `<br><code>${esc(JSON.stringify(p.params))}</code>`}` : `<code>${esc(p.action.id)}@${esc(p.action.version)}</code> with <code>${esc(JSON.stringify(p.params))}</code>`)}
 ${p.display?.policy ? row('Signed under', `patch policy <strong>${esc(p.display.policy.name)}</strong> <span class="mut">(${esc(p.display.policy.digest.slice(0, 16))}…)</span>, approved once by the people listed below; this signer checked the plan is inside it`) : ''}
 ${row('Requested by', `${esc(p.requestedBy.name)} <span class="mut">via ${esc(p.requestedBy.via)}</span>`)}
 ${row('Origin', p.origin.kind === 'ai_suggestion' ? `<strong>AI suggestion</strong>${p.origin.ticketRef ? ` from ticket ${esc(p.origin.ticketRef)}` : ''} — nothing runs without your explicit approval` : 'Technician')}
@@ -121,7 +124,9 @@ export function renderPolicyApprovalPage(v: PolicyView, nonce: string): string {
 <div class="warn"><strong>Before you approve</strong><ul>
 <li>Your approval stands in for yours on every ring plan signed under this policy. The signer refuses any plan outside it: another computer, another class of update, a KB excluded here, outside the window, after expiry, a ring out of order, or a later ring before the canary has confirmed every update took effect.</li>
 <li>Installing updates changes computers. An update can break a driver or an application, and some cannot be uninstalled.</li>
-<li>Computers are never restarted. An update that needs a restart is reported as "restart required" until someone restarts it, and the next ring waits for that.</li>
+${d.reboot === 'if_required_in_window'
+    ? `<li>Computers restart. After installing, a computer Windows says needs a restart shows a fixed warning and restarts ${UPDATE_RESTART_WARNING_MINUTES} minutes later, closing programs still open without saving. It does not restart while a RustDesk session is open (or when it cannot tell), or after the window ends; then it stays "restart required" until someone restarts it, and the next ring waits for that. ${esc(REBOOT_UNPROVEN)}</li>`
+    : '<li>Computers are never restarted. An update that needs a restart is reported as "restart required" until someone restarts it, and the next ring waits for that.</li>'}
 <li>The previous ring's results reach this signer through the portal; agents do not sign them. The signer re-checks them, but a portal that forged a whole canary result could start ring 1 early. It still could not add a computer, an update or an hour.</li>
 </ul></div>
 <table>
@@ -131,7 +136,7 @@ ${row('Installs', esc(d.allow.classifications.map((c) => CLASS_NAME[c] ?? c).joi
 ${row('Never installs', d.allow.excludeKbs ? esc(d.allow.excludeKbs.join(', ')) : '<span class="mut">no KBs excluded</span>')}
 ${row('Window', `${esc(days)}, ${esc(d.window.start)}–${esc(d.window.end)} <strong>${esc(d.window.timezone)}</strong> local time`)}
 ${row('Between rings', `soak ${esc(d.soakHours)} h; at most ${esc(d.failureThreshold)} failed computer(s) per ring before the deployment pauses itself`)}
-${row('Restarts', 'never')}
+${row('Restarts', d.reboot === 'if_required_in_window' ? `<strong>if Windows requires one</strong>, after a ${UPDATE_RESTART_WARNING_MINUTES}-minute warning, inside the window only, never with a RustDesk session open` : 'never')}
 ${row('Proposed by', `${esc(d.createdBy.name)} <span class="mut">(cannot approve it)</span>`)}
 ${row('Reason', esc(d.reason))}
 ${row('Expires', `${fmt(d.expiresAt)} <span class="mut">(then approved again)</span>`)}

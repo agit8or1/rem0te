@@ -62,6 +62,7 @@ const INTERNAL = `http://127.0.0.1:${s.internal.address().port}`;
 const PUBLIC = `http://127.0.0.1:${s.pub.address().port}`;
 
 const jobId = () => randomBytes(16).toString('hex');
+const UPD_ID = { updateId: '5a1b2c3d-0000-4000-8000-000000000001', revision: 201 };
 const AGENT_SHA = 'a'.repeat(64);
 function plan({ biz = BIZ_A, deviceClass = 'WORKSTATION', customerSignoff = false, risk, approvalsRequired, hours = 4, origin = { kind: 'technician', ticketRef: null }, ...over } = {}) {
   const now = Date.now();
@@ -123,9 +124,28 @@ for (const [name, p, code] of [
   ['a restart plan with a window over 2 hours', plan({ action: { id: 'windows.reboot.schedule', version: 1 }, params: { delayMinutes: 30 }, risk: 'high', hours: 3 }), null],
   ['a log collection naming a path', plan({ action: { id: 'windows.logs.collect', version: 1 }, params: { log: 'C:\\Windows\\System32\\config\\SAM' }, risk: 'high' }), null],
   ['a restart cancel with parameters', plan({ action: { id: 'windows.reboot.cancel', version: 1 }, params: { all: true }, risk: 'high' }), null],
+  // 0.34: an update plan's restart rule is one of two fixed strings, with nothing beside it.
+  ...[['always'], ['if_required'], [''], [true], [{ delayMinutes: 5 }]].map(([rb]) => [`an update plan with restart rule ${JSON.stringify(rb)}`, plan({ action: { id: 'windows.update.install', version: 1 }, params: { updates: [UPD_ID], reboot: rb }, risk: 'high' }), null]),
+  ['an update plan with a restart delay beside the rule', plan({ action: { id: 'windows.update.install', version: 1 }, params: { updates: [UPD_ID], reboot: 'if_required_in_window', delayMinutes: 1 }, risk: 'high' }), null],
+  ['an update plan with a restart message beside the rule', plan({ action: { id: 'windows.update.install', version: 1 }, params: { updates: [UPD_ID], reboot: 'if_required_in_window', message: 'click here' }, risk: 'high' }), null],
+  ['an update plan with no restart rule', plan({ action: { id: 'windows.update.install', version: 1 }, params: { updates: [UPD_ID] }, risk: 'high' }), null],
 ]) {
   const r = await submit(p);
   check(`admission refuses ${name}`, r.status === 409 && (!code || r.body?.error === code), JSON.stringify(r.body));
+}
+
+// ── 0.34: an update plan that restarts in its window is admitted and says so ──
+{
+  const pu = plan({ action: { id: 'windows.update.install', version: 1 }, params: { updates: [UPD_ID], reboot: 'if_required_in_window' }, risk: 'high' });
+  const su = await submit(pu);
+  check('an update plan with the in-window restart rule (high, two approvals) is admitted', su.status === 201, JSON.stringify(su.body));
+  const html = await (await fetch(`${PUBLIC}/approve/${pu.jobId}`)).text();
+  check('its approval page says it restarts if required, with the fixed warning, and that this has not run on real Windows',
+    /restarting if Windows requires it/.test(html) && /15-minute warning/.test(html) && /not yet run on a real Windows computer/.test(html) && !/never restarting/.test(html));
+  const pn = plan({ action: { id: 'windows.update.install', version: 1 }, params: { updates: [UPD_ID], reboot: 'never' }, risk: 'high' });
+  check('a never-restart update plan is admitted', (await submit(pn)).status === 201);
+  check('and its page says never restarting', /never restarting/.test(await (await fetch(`${PUBLIC}/approve/${pn.jobId}`)).text()));
+  check('an update plan under-stated as low risk is refused (installs are high on any computer)', (await submit(plan({ action: { id: 'windows.update.install', version: 1 }, params: { updates: [UPD_ID], reboot: 'if_required_in_window' } }))).body?.error === 'risk_mismatch');
 }
 
 // ── 0.32: a scheduled restart needs two distinct approvers, even on a workstation ──

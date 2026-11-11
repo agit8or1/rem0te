@@ -16,6 +16,7 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { DEPLOYMENT_STATUS } from '@/lib/patching';
 import { PoliciesCard, PreflightCard } from '@/components/patching/patch-policies';
+import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
 import { AlertTriangle, Loader2, Plus, ShieldCheck } from 'lucide-react';
 
 /**
@@ -119,6 +120,7 @@ function CreateDeployment({ businessId, onDone }: { businessId: string; onDone: 
   const [soakHours, setSoakHours] = useState(24);
   const [failureThreshold, setFailureThreshold] = useState(0);
   const [windowHours, setWindowHours] = useState(8);
+  const [reboot, setReboot] = useState<RebootRule>('never');
 
   const rings = useMemo(() => {
     const max = Math.max(-1, ...Object.values(ringOf).filter((r): r is number => r !== ''));
@@ -130,7 +132,7 @@ function CreateDeployment({ businessId, onDone }: { businessId: string; onDone: 
 
   const create = useMutation({
     mutationFn: () => patchingApi.create({
-      businessId, name: name.trim(), soakHours, failureThreshold, windowHours, rings,
+      businessId, name: name.trim(), soakHours, failureThreshold, windowHours, rings, reboot,
       updates: (c?.updates ?? []).filter((u) => updates.has(key(u))).map((u) => ({ updateId: u.updateId, revision: u.revision })),
     }),
     onSuccess: (r) => { toast({ title: 'Deployment created', description: 'Request the canary when you are ready.' }); onDone(); router.push(`/patching/${r.data.data.id}`); },
@@ -194,8 +196,12 @@ function CreateDeployment({ businessId, onDone }: { businessId: string; onDone: 
           <div className="space-y-1"><Label className="text-xs">Window each ring may run in (hours)</Label><Input type="number" min={1} max={24} value={windowHours} onChange={(e) => setWindowHours(Number(e.target.value))} /></div>
         </div>
 
+        <div className="max-w-xl">
+          <RebootChoice id="dep-reboot" value={reboot} onChange={setReboot} scope="plan" />
+        </div>
+
         <p className="text-xs text-muted-foreground flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />
-          Computers are never restarted. Drivers, feature upgrades, optional updates and anything needing a licence or someone at the keyboard are refused, by the portal and again by each computer.
+          Every ring plan carries the restart rule above, and the approvers see it. Drivers, feature upgrades, optional updates and anything needing a licence or someone at the keyboard are refused, by the portal and again by each computer.
         </p>
         <div className="flex gap-2">
           <Button size="sm" disabled={name.trim().length < 3 || updates.size === 0 || !ringsOk || create.isPending} onClick={() => create.mutate()}>

@@ -247,8 +247,9 @@ portal's `dist`. Its behavioural proof is `apps/api/scripts/e2e-approved-action.
 (needs `RELEASE_BIN` and `ACTION_SIM` built from `tools/windows-installer`).
 
 0.27.0 added §15 for staged patching: the agent's update params are closed
-(`updates` + `reboot: "never"`), its update risk is always high, `wua.ps1` has
-no restart, `AcceptEula`, `Invoke-Expression` or download-and-run, the agent
+(`updates` + `reboot`, which from 0.34 is exactly `"never"` or
+`"if_required_in_window"`, + an optional narrowing `allow`), its update risk is
+always high, `wua.ps1` has no restart, `AcceptEula`, `Invoke-Expression` or download-and-run, the agent
 checks other update managers before installing, the patching API has no
 approve route, the canary gate requires *effective*, and updates cannot be
 requested one computer at a time (`ACTION_NOT_DIRECT`). §14's agent-catalog
@@ -257,6 +258,24 @@ check now expects exactly the two actions. Its behavioural proof is
 the sim takes `-wua` / `-registry` fixture files). An `ActionJob` is now one
 signed plan with an `ActionTarget` row per computer; `endpointId` on the job is
 only the first target, so per-computer state lives on the target.
+
+0.34 added §33 for the update restart rule. Under `if_required_in_window` the
+agent restarts only after something was installed and Windows reports a restart
+required, only through `scheduleWarnedRestart` — the one `Maint.ScheduleRestart`
+call `windows.reboot.schedule` also uses, with the same fixed message — after a
+fixed 15-minute warning (the same constant on both sides), and only after the
+window check and then `sessionCheck` ("cannot tell" counts as open); anything
+else is `restart_deferred`, never a restart outside the signed window. Every
+way to ask for an install defaults to `never`, the signer refuses a plan asking
+for more than its policy (`rebootWithin` → `reboot_not_allowed`), the database
+CHECKs `PatchDeployment.reboot`, the portal keeps a `restart` report only from
+a plan whose rule allowed one, and the UI and `docs/staged-patching.md` say it
+has not run on real Windows. The portal asks for a patch scan due just after
+the restart (`patchScanRequestedAt` may be in the future; `patchScanDue` waits
+for it), so the canary gate opens only on a post-restart scan. Behavioural
+proof: `e2e-staged-patching.mjs` (`rem0te-action-sim -fire-restart` is the
+restart happening, `-clock-offset` moves the agent's clock, `-sessions` opens a
+session) and `e2e-patch-policies.mjs`.
 
 0.32 widened §14's catalog checks to an exact, ordered list of six actions —
 the Spooler start, update install, and four maintenance actions

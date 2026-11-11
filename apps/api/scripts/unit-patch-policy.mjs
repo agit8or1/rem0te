@@ -19,7 +19,8 @@ const require = createRequire(import.meta.url);
 const dist = join(here, '..', 'dist');
 const P = require(join(dist, 'actions', 'patch-policy.js'));
 const core = require(join(dist, 'approval-signer', 'core.js'));
-const { PLAN_SIGNING_PREFIX } = require(join(dist, 'actions', 'catalog.js'));
+const C = require(join(dist, 'actions', 'catalog.js'));
+const { PLAN_SIGNING_PREFIX } = C;
 
 let passed = 0;
 const failures = [];
@@ -144,7 +145,21 @@ const code = (r) => (r.ok ? 'ok' : r.code);
   r = evaluate(s, plan(d, { allow: null }));
   check('a plan with no filter at all (the agent would install any eligible class) → filter_mismatch', code(r) === 'filter_mismatch', code(r));
   r = evaluate(s, plan(d, { reboot: 'in_window' }));
-  check('a reboot rule other than the policy\'s → reboot_not_allowed', code(r) === 'reboot_not_allowed', code(r));
+  check('a reboot rule outside the closed pair → reboot_not_allowed', code(r) === 'reboot_not_allowed', code(r));
+  // 0.34: the policy says never; a plan may not ask for the in-window restart under it.
+  r = evaluate(s, plan(d, { reboot: 'if_required_in_window' }));
+  check('a never-restart policy, a plan asking to restart in its window → reboot_not_allowed', code(r) === 'reboot_not_allowed', code(r));
+  const dRb = doc({ reboot: 'if_required_in_window' });
+  r = evaluate(state(dRb), plan(dRb, { reboot: 'if_required_in_window' }));
+  check('a policy that allows the in-window restart: a plan asking for it is accepted', r.ok, JSON.stringify(r));
+  r = evaluate(state(dRb), plan(dRb, { reboot: 'never' }));
+  check('…and one asking for less (never) is accepted too', r.ok, JSON.stringify(r));
+  for (const bad of [undefined, null, 'always', 'IF_REQUIRED_IN_WINDOW', 1, { rule: 'if_required_in_window' }]) {
+    const pb = plan(dRb); pb.params.reboot = bad; if (bad === undefined) delete pb.params.reboot;
+    check(`even under that policy, a reboot of ${JSON.stringify(bad)} → reboot_not_allowed`, code(evaluate(state(dRb), pb)) === 'reboot_not_allowed', code(evaluate(state(dRb), pb)));
+  }
+  check('rebootWithin orders the rules: never ≤ if_required_in_window', C.rebootWithin('never', 'never') && C.rebootWithin('never', 'if_required_in_window') && C.rebootWithin('if_required_in_window', 'if_required_in_window') && !C.rebootWithin('if_required_in_window', 'never') && !C.rebootWithin('sometimes', 'if_required_in_window'));
+  check('the policy\'s rule is in its digest: changing it changes the document approved', P.policyDigest(dRb) !== P.policyDigest({ ...dRb, reboot: 'never' }));
   r = evaluate(s, plan(d, { nb: new Date(NOW.getTime() + 6 * 3600_000), hours: 1 }));
   check('a plan that starts after the window closes → outside_window', code(r) === 'outside_window', code(r));
   r = evaluate(s, plan(d, { hours: 8 }));
@@ -291,7 +306,8 @@ const code = (r) => (r.ok ? 'ok' : r.code);
   check('admitPolicy refuses a computer in two rings', refused(() => core.admitPolicy(doc({ rings: [[CANARY], [CANARY, R1A]] }), NOW)) === 'bad_rings');
   check('admitPolicy refuses a driver classification', refused(() => core.admitPolicy(doc({ allow: { classifications: ['ebfc1fc5-71a4-4f7b-9aca-3b9a503104a0'] } }), NOW)) === 'invalid_policy');
   check('admitPolicy refuses an unknown timezone', refused(() => core.admitPolicy(doc({ window: { days: ['sat'], start: '22:00', end: '04:00', timezone: 'Mars/Olympus_Mons' } }), NOW)) === 'invalid_policy');
-  check('admitPolicy refuses a reboot rule (0.32 never restarts)', refused(() => core.admitPolicy(doc({ reboot: 'in_window' }), NOW)) === 'invalid_policy');
+  check('admitPolicy refuses a reboot rule outside the closed pair', refused(() => core.admitPolicy(doc({ reboot: 'in_window' }), NOW)) === 'invalid_policy' && refused(() => core.admitPolicy(doc({ reboot: 'always' }), NOW)) === 'invalid_policy');
+  check('admitPolicy accepts the in-window restart rule (0.34)', refused(() => core.admitPolicy(doc({ reboot: 'if_required_in_window' }), NOW)) === null);
   check('admitPolicy refuses a window that never opens before expiry', refused(() => core.admitPolicy(doc({ window: { days: ['sat'], start: '22:00', end: '23:00', timezone: 'UTC' }, expiresAt: iso(NOW.getTime() + 3600_000) }), NOW)) === 'window_never_opens');
   check('admitPolicy refuses a field it does not know', refused(() => core.admitPolicy({ ...doc(), extraComputers: [OTHER] }, NOW)) === 'invalid_policy');
 
