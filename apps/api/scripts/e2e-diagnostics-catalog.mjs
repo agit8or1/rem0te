@@ -266,13 +266,14 @@ async function all() {
   r = await req('GET', `/endpoints/${pc2.id}/diagnostics/runs/${offRun}`, { s: S.owen });
   check(r.data?.status === 'EXPIRED' && /did not check in/.test(r.data.error) && /offline/.test(r.data.error), 'a run nobody picked up expires, saying the computer did not check in (offline)', msg(r));
   r = await ask(S.owen, pc2, 'disk_space');
-  check(r.data?.deduplicated === false && r.data.run.id !== offRun, 'and asking again makes a new run');
-  const oldAgentRun = r.data.run.id;
+  check(r.data?.deduplicated === false && r.data?.run?.id && r.data.run.id !== offRun, 'and asking again makes a new run', msg(r));
+  const oldAgentRun = r.data?.run?.id;
   await heartbeat(pc2);
   await prisma.diagnosticRun.update({ where: { id: oldAgentRun }, data: { deliveredAt: new Date(Date.now() - 11 * 60_000) } });
   r = await req('GET', `/endpoints/${pc2.id}/diagnostics/runs/${oldAgentRun}`, { s: S.owen });
   check(r.data?.status === 'EXPIRED' && /never started/.test(r.data.error) && /predates/.test(r.data.error), 'a run delivered but never started expires, naming the likely cause (old agent)', msg(r));
   r = await ask(S.owen, pc2, 'top_processes');
+  if (!r.data?.run?.id) throw new Error(`asking pc2 for top_processes returned no run: ${msg(r)}`);
   const stuck = r.data.run.id;
   await heartbeat(pc2);
   await post(pc2, { runId: stuck, key: 'top_processes', state: 'running' });

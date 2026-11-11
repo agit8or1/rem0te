@@ -253,7 +253,16 @@ async function all() {
     check(a.status === 200 && d.status === 200 && a.data.total === aVisibleOwner && d.data.total === aVisibleOwner, `sort=${sort} asc/desc both return all ${aVisibleOwner}`, `${msg(a)} / ${msg(d)}`);
   }
   r = await list(S.ownerA, { sort: 'name', dir: 'asc', pageSize: 200 });
-  { const n = r.data.rows.map((x) => x.name.toLowerCase()); check(n.every((v, i) => i === 0 || n[i - 1] <= v), 'sort=name asc is in name order'); }
+  {
+    // The expected order comes from the database's own collation, not from
+    // JavaScript's: CI's Postgres sorts with a locale collation that ignores
+    // hyphens, so a byte comparison disagreed with a correct server there.
+    const got = r.data.rows.map((x) => x.id);
+    const want = (await prisma.$queryRawUnsafe(`SELECT id FROM "Endpoint" WHERE id = ANY($1::text[]) ORDER BY lower(name) ASC, id`, got)).map((x) => x.id);
+    const gotNames = r.data.rows.map((x) => x.name.toLowerCase());
+    const sameOrderByName = gotNames.every((v, i) => i === 0 || v === gotNames[i - 1] || want.indexOf(got[i - 1]) < want.indexOf(got[i]));
+    check(sameOrderByName, 'sort=name asc is in name order (the database collation)', gotNames.slice(0, 8).join(', '));
+  }
   r = await list(S.ownerA, { sort: 'cpu', dir: 'desc' });
   check(r.data.rows[0].id === a1.id && r.data.rows[1].id === aOff.id, 'sort=cpu desc → 91 % then 50 %, unsampled last');
   r = await list(S.ownerA, { sort: 'patches', dir: 'desc' });
