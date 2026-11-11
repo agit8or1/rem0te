@@ -129,7 +129,7 @@ const which = (t) => { try { return execFileSync('sh', ['-c', `command -v ${t}`]
 // writing to markers.log.
 const MARK_CMDS = ['softwareupdate', 'launchctl', 'shutdown', 'reboot', 'halt', 'rustdesk', 'open', 'osascript', 'pmset',
   'systemsetup', 'installer', 'networksetup', 'scutil', 'killall', 'pkill', 'sudo', 'bash', 'zsh', 'python3', 'wget', 'nvram',
-  'diskutil', 'spctl', 'tmutil', 'profiles', 'mdmclient', 'csrutil', 'kextload', 'brew'];
+  'diskutil', 'spctl', 'tmutil', 'profiles', 'mdmclient', 'csrutil', 'kextload', 'brew', 'rpm'];
 
 const SW_VERS = 'ProductName:\t\tmacOS\nProductVersion:\t\t14.5\nBuildVersion:\t\t23F79\n';
 const TOP = 'Processes: 512 total, 3 running, 509 sleeping, 2390 threads\n2026/11/11 09:00:00\nLoad Avg: 2.10, 1.90, 1.80\nCPU usage: 30.0% user, 20.0% sys, 50.0% idle\n\n'

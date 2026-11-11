@@ -5,6 +5,667 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.33.0] — 2026-11-11 · *Lookout*
+
+The third increment of the RMM overhaul: finding things and seeing what a computer is doing. Six parts, each built
+and tested on its own from the 0.32 integration and then integrated on top of the 0.32.0 release: enrolment
+step-up and server sizing, global search, device groups / saved views / bulk actions, metric history, Processes /
+Services / Network snapshots, and a read-only macOS agent. Nothing here acts on a computer that could not be acted
+on before; the snapshots and the macOS agent have been run against stubs and recorded output, not on real Windows
+or a real Mac.
+
+### Fixed
+- **A `%`, `_` or `\` in a list search was a LIKE wildcard, not a character.** Prisma's `contains` becomes
+  `ILIKE '%' || value || '%'` with the value spliced in as is, so `GET /endpoints?search=%`, the device list's
+  `GET /endpoints/list?search=_` and `GET /businesses?search=%` matched every row in the caller's scope, `ACME_PC`
+  also found `ACME-PC`, and a `DOMAIN\user` backslash escaped the next character instead of matching it. Not a
+  scope leak — the scope is AND-ed on — but wrong results. Global search (below) found and fixed this for itself;
+  the three list routes now escape with the same helper, `apps/api/src/common/like.ts` (`likeEscape`, re-exported by
+  `search/query.ts`). `BusinessesService.listWhere` takes an escaped term, so global search and `GET /businesses`
+  cannot escape twice or not at all. `e2e-search.mjs` gains a section proving `%`, `_`, `TAG_EXACT` and `TAG%EXACT`
+  match nothing on all three routes while the literal text does, and that a backslash still finds a `DOMAIN\user`;
+  §28 gains a check that each route goes through the helper.
+
+### Enrolment step-up and server sizing
+
+#### Security
+
+- **Making an enrolment token needs a fresh re-authentication** (closes the limitation listed since 0.23: "a stolen
+  admin session can still create enrolment tokens"). Before this, `POST /enrollment/tokens` accepted any valid
+  session with *Add computers*. A token lets whatever machine runs it join a business, where it gets that business's
+  monitoring, update policies and relay configuration, so a stolen or unattended session was enough to plant a
+  machine. Now the route answers `403 STEP_UP_REQUIRED` (`action: "enrollment.create"`) until the person confirms it
+  is them (password, authenticator code or passkey; 10 minutes, this sign-in only). This includes re-enrol tokens
+  for an existing computer.
+  - **Every role, not only Platform Admins.** A token always covers exactly one business and does the same thing
+    whoever made it, so a stolen Business Owner session is as useful as a Platform Admin one for that business.
+  - **Not configurable.** It uses `assertFresh`, like lifting a containment pause, not the switchable
+    `PlatformSettings.stepUpActions`. The e2e suite empties that list and the mint is still refused.
+  - **Scope comes first.** Naming another business, or one that does not exist, is refused as before (403/404),
+    never answered with a prompt to re-authenticate.
+  - `EnrollmentService.createClaimToken` now takes a required third argument saying how the mint proved more than a
+    session (`{ via: 'session', freshMethod }` or `{ via: 'api-key', apiKeyId }`), so a new route cannot mint on a
+    bare session by forgetting. The `CLAIM_TOKEN_CREATED` audit entry records `mintedVia` and the step-up method or
+    the API key's id.
+- **API keys keep minting tokens; creating such a key needs the re-authentication.** A key cannot step up (there is
+  no person at the other end), and provisioning scripts are what `POST /pub/v1/enrollment/tokens` is for. The key is
+  itself the second proof: a separate secret bound to one business with an explicit scope. To stop a stolen session
+  from minting a key and then minting tokens with it, `POST /apikeys` with `enrollment:write` among its scopes now
+  answers `403 STEP_UP_REQUIRED` (`apikey.enrollment`) without a fresh confirmation. Keys without that scope are
+  unchanged.
+- **Registering a computer by RustDesk ID stays ungated.** It mints nothing (no token, device secret or password;
+  Platform Admin only, unchanged), and the e2e suite checks that the node it creates carries no secret.
+- **Console.** *Add device* handles the refusal without losing anything: the api-client interceptor opens the
+  step-up dialog and retries the same request, so the business, site, access choice and OS are all still in the
+  retried body. If the person cancels, nothing is made and the page says so; the button works again. The dialog
+  names both new actions, and the API keys page says that the `enrollment:write` scope asks for confirmation.
+
+#### Added
+
+- **Server sizing guide** (`docs/server-sizing.md`, in the in-app docs; linked from Setup and `/help`): CPU, memory,
+  disk and PostgreSQL for 50, 250, 1,000 and 5,000 computers, heartbeat rates (every 3 minutes), hbbs/hbbr bandwidth,
+  and database growth per table. Every figure is marked **measured** or **estimated**. The measured ones come from a
+  new load script, `apps/api/scripts/bench-heartbeat.mjs` (bounded, scratch database only, starts its own API), and
+  from synthetic rows inserted and rolled back in a scratch database. On a shared 16-core host a steady-state
+  heartbeat cost ≈ 70 ms of API CPU and ≈ 9 ms of PostgreSQL CPU, made ≈ 24 transactions and 4 row updates and
+  inserted nothing, and one API process handled 18–41 heartbeats a second.
+  - **Finding:** 5,000 computers need 27.8 heartbeats a second, which is at the edge of what one API process
+    measured. Most of the cost is that every heartbeat runs a `sqlite3` child process for the hbbs presence lookup
+    (`peerRegisteredWithHbbs`). A patched build that skipped it (an experiment only, not shipped) dropped API CPU to
+    ≈ 42 ms and roughly doubled throughput. Batching or caching that lookup is the obvious next step before
+    promising 5,000. Running two API processes is not supported, because the sweeps and the audit sealer run inside
+    the process.
+  - **Finding:** nothing that grows is pruned: commands, inventory changes, sessions, alerts and diagnostics
+    accumulate, and the sealed audit log cannot be pruned. The guide estimates ≈ 1.3 MB per computer per year.
+
+#### Upgrade notes
+
+- No migration and no configuration change.
+- Anyone who makes install links is now asked to confirm it is them once per 10 minutes. Scripts that call
+  `POST /enrollment/tokens` with a session cookie must `POST /auth/step-up` first and send the `step_up` cookie (or
+  the `x-rem0te-step-up` header). Scripts using an API key are unaffected.
+- Existing API keys with `enrollment:write` keep working. If a session may have been stolen, review them under
+  *Settings → API keys*: keys created before this release did not need the confirmation.
+
+#### Verification
+
+- New `apps/api/scripts/e2e-enrol-stepup.mjs` (self-starting, port 3332, in `scripts/run-e2e.sh`): **44 passed** —
+  stale refused and fresh minted for Platform Admin, Business Owner A, Business Owner B and a Business User with
+  *Add computers*, with no row written on refusal; re-enrol tokens; scope before freshness; another user's step-up,
+  an earlier sign-in's step-up, a wrongly signed, an expired and a malformed step-up all refused; still refused with
+  every configurable step-up action switched off; `enrollment:write` keys refused stale (including among other
+  scopes) and created fresh, other keys unchanged; a key mints in its own business only, audited with its id; a
+  session cannot use the public route; register by RustDesk ID mints no credential; business A/B isolation of the
+  minted tokens.
+- `e2e-add-device.mjs`: **62 passed** (was 58; now opens with a stale-session refusal, a scope refusal ahead of the
+  prompt and "no row written", then steps every session up).
+- Adjusted for the step-up and re-run: `e2e-credentials` 44, `e2e-presets` 114 (its stolen-session drill now asserts
+  that enrolment is refused — it used to record a 201), `e2e-linux-agent` 84, `e2e-business-access` 83,
+  `e2e-security-audit` 56 (new section: owner and Platform Admin sessions without step-up cannot mint a token or an
+  `enrollment:write` key, and nothing is written), `e2e-smoke`, `e2e-full` (now asserts the stale refusal first),
+  `e2e-public-api` (asserts the stale key refusal), `e2e-candidate-password`: all pass.
+- `scripts/check-security-invariants.mjs` §27 (7 checks): `assertFresh` cannot be skipped; `createClaimToken`
+  demands a mint proof and checks it after scope and before the write; only it writes a `DeviceClaimToken` and only
+  the two known routes call it; the console route passes the step-up it read and the public route sits behind
+  `ApiKeyAuthGuard` and passes the key id; `enrollment:write` keys need fresh auth; register-by-ID mints no
+  credential; the suite is in `run-e2e.sh`. Each check was shown to fail with its guard removed (10 mutations,
+  10 caught), then restored.
+- `check-versions`, `pnpm -r lint`, `tsc --noEmit` (api, web), `nest build`, `next build` pass.
+  `docs/API-REFERENCE.md` regenerated (it had not been since 0.32: 392 → 405 routes; no route was added here).
+
+### Global search
+
+#### Added
+
+- **Global search** (`GET /search?q=`, and a command palette in a new top bar: the *Search* button or **Ctrl+K** /
+  **⌘K** anywhere). One query, five groups, at most **8** results each with a `more` flag:
+  - **devices** by name, hostname, RustDesk ID, serial number, signed-in user, IP address, a network adapter's IPv4
+    and alias. Each result says which field matched and its value (*Serial: …*, *Adapter IP: …*), and only that
+    field is returned. Every one of those values is already on the device page for anyone who can open it, which
+    is the only kind of device search can return. Archived devices are excluded, as in the device list;
+  - **businesses** by name, code, email or city; **sites** by name, city or address (a site opens the device list
+    filtered to it); **people** by first name, last name or email, word by word ("jane doe"); **open and
+    acknowledged alerts** by title.
+
+  Exact matches rank first, then prefix, then anywhere; ties go online-first, then by name. The palette debounces
+  typing (200 ms), is keyboard-driven (↑/↓, Enter, Esc; Ctrl/⌘-click opens a new tab), marks the matched text, and
+  works in the light and dark themes and full-screen at phone width. Docs: `docs/technician-guide.md` §2 *Search
+  everything*, `docs/access-control.md`, and *Searching Everything (Ctrl+K)* on `/help`.
+- **No group is scoped by new code.** Each one starts from the where builder its own list route uses, now shared
+  rather than copied: the device list's `EndpointListService.scopedWhere` (visibility AND-ed, not archived),
+  `BusinessesService.listWhere` (GET /businesses), `SitesService.listWhere` (GET /sites), `UsersService.memberWhere`
+  (GET /users) and `MonitoringAdminService.alertWhere` (GET /monitoring/alerts). The match is always AND-ed onto
+  that fragment. Each group is gated by its list page's capability (`GROUP_CAPABILITY`: computers and sites
+  `computers:view`, people `users:view`, alerts `monitoring:alerts`, businesses none, like GET /businesses), and a
+  group the caller may not use is `null` — left out of the palette, never drawn as "no results".
+
+#### Removed
+
+- **`GET /admin/search`.** It scoped computers by business alone (`customerId`), so a Business User found
+  ASSIGNED_USERS computers granted only to other people — name, hostname, IP address and RustDesk ID — and a
+  technician restricted to named computers found every computer in the business. Measured before removal against
+  the new suite's fixtures: the Business User saw the ungranted computer, and a technician assigned to one computer
+  got 19. The web app no longer called it (`adminApi.search` was defined and unused); `e2e-business-access.mjs`
+  now checks the same two properties through `GET /search`. §28 of the invariants keeps it the only search route.
+
+#### Security
+
+- Searches are **not audited** (a keystroke is not an event) and the API never logs the query text: the 5xx log
+  line for `/search` records the path without its query string (`GlobalExceptionFilter`). Results are
+  `Cache-Control: no-store`. A reverse proxy's access log still records request addresses, search included — said
+  in the guide.
+- **Throttled**: 120 requests a minute per client address (`@RateLimit(SEARCH_RATE_LIMIT)`), on top of the 20/s
+  burst throttler. The palette says *Too many searches* on a 429.
+- `q` is 2–100 characters after control and invisible formatting characters (zero-width, bidi overrides) are
+  removed and whitespace collapsed; given twice it is a 400.
+- **LIKE metacharacters are literal.** Prisma's `contains` splices the value into `ILIKE '%…%'` unescaped, so `%`
+  matched everything and a `DOMAIN\user` backslash broke matching — the suite caught both before release. Search
+  escapes every value (`likeEscape`). The device list's search, `GET /endpoints?search=` and
+  `GET /businesses?search=` had the same fault; they are fixed in this release (see *Fixed* at the top).
+- No result carries a secret, hash, token, password flag or capability list: selects are explicit, and §28 fails
+  the build if `SearchService` names any of them.
+
+#### Performance (measured; no index, no migration)
+
+End to end through the API, Platform Admin (every device in scope), median of 5, on the shared scratch Postgres 16:
+
+| Devices | `/search` (typical query) | device list's own search | `/search?q=pc` (matches all) |
+|---|---|---|---|
+| 2,000 | 52–72 ms | 56 ms | 280 ms |
+| 20,000 | 316–450 ms | 319 ms | 990 ms |
+
+Computers run in two phases, like the device list: Prisma finds the scoped ids that match (one query, the scope
+AND the match); one SQL statement over exactly those ids (`unnest(ids)`) ranks them with cheap per-field
+expressions, keeps nine, and only for those works out which field matched. Adapter IPv4s live in a JSON array
+Prisma cannot search, so for an address-shaped query only, the matching inventory rows are found first and their
+ids join the match condition (inside the AND, so they can only narrow). The first version ranked every scoped
+device with a lateral subquery and took ~1 s at 20,000 for any query; the second phase was the cost.
+
+A `pg_trgm` index was measured and **not** added: seven GIN indexes (Endpoint name, hostname, serial, IP;
+RustdeskNode ID; inventory serial and signed-in user) took the phase-one query from 233 ms to 94 ms at 20,000, but
+Endpoint itself still seq-scans because Prisma's OR over relations defeats a BitmapOr, the inventory indexes are
+rewritten by every three-minute heartbeat, and the migration would need `CREATE EXTENSION` on every install. At
+the fleet sizes rem0te runs, the scan is the device list's own cost.
+
+#### Upgrade notes
+
+- No migration, no new setting. The top bar appears on every signed-in page.
+- Anything calling `GET /admin/search` gets a 404; use `GET /search?q=` (response shape:
+  `{ query, cap, groups: { computers, businesses, sites, users, alerts } }`, each `{ items, more }` or `null`).
+
+#### Known
+
+- The palette's browser test (`apps/web/scripts/e2e-search-palette.mjs`) needs a web build pointed at a scratch API
+  and is not in CI; it was run on a scratch stack (24/24). `e2e-navigation.mjs` (docs stack only) was not run.
+- Search covers what the five list routes cover; notes, software lists, event logs and session history are not
+  searched.
+
+#### Verification
+
+- `apps/api/scripts/e2e-search.mjs` — **98/98** against a scratch database on port 3281: every device field with
+  the field reported, exact > prefix > contains, the cap and `more` on every group, LIKE metacharacters literal,
+  archived devices and inactive sites excluded; isolation for six personas (owner, Business User, one-computer
+  technician, whole-business technician, user with alerts, users-only) across 19 probes each — B's shared words,
+  exact hostname, exact RustDesk ID, serial, IP, adapter IP, alias, site, people, alert and business — all empty,
+  with the Platform Admin finding every one (negative control); a Business User sees only assigned and
+  company-wide devices, also by an ungranted computer's exact hostname; capability gating per group, each matched
+  by a 403 from that group's list route; no audit row and no query text in the API output; no secret in any of
+  the responses; 120 answered then 429, another address still answered; `/admin/search` 404. Removing the scope
+  from the search service (`scopedWhere`, `memberWhere`, `sites.listWhere` replaced with `{}`) fails 15 checks.
+- `apps/api/scripts/unit-search.mjs` — **37/37** (parsing, escaping, ranking, address heuristic, gates); in CI.
+- `apps/web/scripts/e2e-search-palette.mjs` — **24/24**: Ctrl+K and the button, focus, the hint, grouped results,
+  arrow keys and Enter, serial match label, site and person, another business not found, Esc, light and dark
+  surfaces, phone width (fits 390 × 844, no sideways scroll, tap opens), a Business User without People/Alerts
+  groups.
+- `node scripts/check-security-invariants.mjs` — §28 (8 checks), each proven to fail with its guard removed
+  (12 mutations); §18 now also covers the palette script. `check-versions.mjs` passes.
+- Existing suites re-run: `e2e-device-list.mjs` 113/113, `e2e-business-access.mjs` 83/83, `e2e-smoke.mjs` and
+  `e2e-full.mjs` pass. `pnpm -r lint`, `tsc --noEmit` (api, web), `nest build`, `next build` clean.
+  `docs/API-REFERENCE.md` regenerated (405 routes) and matched against the runtime route table.
+
+### Device groups, saved views and bulk actions
+
+#### Added
+
+- **Saved device views on the account** (`/device-views`). A view is a name plus the device list's own parameters —
+  filters (validated by the list's parser, `parseListQuery`, now in `endpoints/list-query.ts`; unknown keys and bad
+  values are a 400, never dropped), sort, columns and density. It never stores devices, and there is no route that
+  runs one: the browser opens a view by calling `GET /endpoints/list` with its parameters, as the viewer. A view is
+  **personal** (only its author lists, opens, changes or deletes it; another user's is a 404) or **shared** within
+  one business. Sharing, changing or deleting a shared view needs a Business Owner, a technician whose assignment
+  grants `computers:edit` over the whole business, or the MSP — never a Business User, whatever they hold — and is
+  audited (`DEVICE_VIEW_SHARED_CHANGED`, with before and after). A shared view's filters cannot name another
+  business, or another business's site or group; another business's shared view is a 404. Opening a shared view
+  applies the viewer's own visibility: a Business User opening the owner's unfiltered view gets exactly their own
+  devices, and a shared alerts filter is still refused to someone without `monitoring:alerts`. Views saved in a
+  browser by 0.31/0.32 (`localStorage`) are offered for a one-time import as personal views.
+- **Device groups** (`/device-groups`, Views → Device groups…). The existing `EndpointGroup` — until now
+  tenant-wide, settable only through an enrolment token, and with no API or UI — now belongs to one business
+  (`customerId`), with names unique per business. It is a list filter (`groupId`), a facet with counts over what
+  the viewer can see, an optional *Group* column and a CSV column. A computer is in at most one group (the existing
+  `Endpoint.endpointGroupId`, which enrolment tokens already set). Creating, renaming and deleting groups, and
+  changing members, need the same rule as sharing a view. Every change is audited (`DEVICE_GROUP_CREATED`,
+  `_UPDATED`, `_DELETED` with members released, `_MEMBERS_CHANGED` with the computers). Groups grant nothing.
+- **Bulk actions on selected devices** (`POST /endpoints/bulk`, `POST /endpoints/bulk/export.csv`). Tick rows (the
+  selection survives paging and filtering) and act on up to **200** at once: add to / remove from a group, refresh
+  inventory (which also asks for an update scan), queue a RustDesk client update, and export the selection. Only
+  actions that already exist for one computer and are safe to repeat; there is deliberately no bulk connect,
+  archive, delete or approved action. Every computer is decided on its own, server side, and the response lists each
+  one's result: a computer the caller cannot see (another business's, an ungranted one, a made-up id) is
+  `NOT_FOUND` with no name, exactly as the single route says. Refresh is `EndpointsService.requestInventoryRefresh`
+  itself (technician grant, capability, fleet-abuse admission, its own audit entry). Client update keeps the
+  one-click rules — Platform Admin only, pin over latest, staged through `UpdateService.requestRustdeskUpdate` so its
+  rules and per-computer audit apply — and additionally refuses what could never apply (no device secret, no
+  reported version, a staged rollout owns it) and anything under an `updates` containment pause (`CONTAINED`, with
+  the pause's reason), which the heartbeat would only have withheld. Group membership needs the manage rule over the
+  group's business, and a computer of another business is refused `OTHER_BUSINESS` — even for a Platform Admin. A
+  computer already in another group is refused `IN_OTHER_GROUP`, naming it; nothing is moved silently. The export is
+  the device list's own audited export (`ENDPOINT_LIST_EXPORTED`, `logOrFail`) with the selection AND-ed on and
+  recorded. Each request is audited as `DEVICE_BULK_ACTION`, once per business it touched, with what succeeded and
+  the refusal codes.
+
+#### Changed
+
+- **A bulk refresh stops short of the fleet-abuse limit instead of tripping it.** The abuse guard pauses a person and
+  alerts an administrator the moment a request would exceed their limit on distinct computers (40 per window for a
+  member, 60 for a Platform Admin, per preset tier for technicians). That is right for someone fanning out single
+  requests and wrong for someone who ticked 200 boxes, so the bulk path reads the guard's own window first and
+  refuses the overflow with `FLEET_LIMIT` (naming the limit). It never admits anything itself: every computer it lets
+  through is still admitted by the guard, and an approved maintenance exception still lets its computers past.
+- **A computer can only be put in its own business's group, everywhere.** `POST /endpoints` stored
+  `endpointGroupId` unchecked; it now must be that business's group (or a pre-0.33 group with no business in the same
+  tenant). Enrolment tokens apply the same rule (they previously checked only the tenant), the claim re-checks it
+  and drops a group deleted since the token was made instead of failing the install, and a computer that moves
+  business — re-enrolled into another business, or moved by a Platform Admin — leaves its old business's group.
+- The client-update rollout states (`ROLLOUT_OPEN`) are defined once, in `client-updates/policy.ts`; the sweep and
+  the policy service had a copy each.
+
+#### Upgrade notes
+
+- **Migration `0040_device_views`.** `EndpointGroup` gains `customerId` and `createdById`; the tenant-wide unique name
+  becomes unique per business. A pre-0.33 group whose members are all in one business of its tenant is given that
+  business; any other (empty, or spanning businesses) keeps `customerId` NULL — it still filters and still works on
+  enrolment tokens, and the console offers no way to edit it. `SavedView` (in the schema since before 0.31, never
+  written) gains `customerId`, `shared`, `density` and a foreign key to its author (`SET NULL`: a shared view outlives
+  its author), and its `tenantId` becomes nullable. Six `ActivityAction` values are added. **Schema change: run
+  `prisma migrate deploy` and regenerate the client at the target** (CLAUDE.md, *A schema change needs two more
+  steps*).
+- `AdminModule` now exports `UpdateService` and `EndpointsModule` exports `EndpointListService`, for the bulk
+  service. No production dependency changes.
+- Browser-saved views are not migrated automatically: each user is offered *Import N views saved in this browser*
+  in the Views menu, once.
+
+#### Verification
+
+- `apps/api/scripts/e2e-device-views.mjs` (new, self-starting on port 3291): **117 passed, 0 failed** — views round
+  trip and store only list parameters; personal views are private; who may share; a shared view cannot name another
+  business's business/site/group and cannot widen visibility (Business User, restricted technician, alerts filter);
+  Business B gets 404 on A's views and groups; groups' edit rule, per-business names, group filter and counts never
+  widening; a group cannot hold another business's computer through bulk, `POST /endpoints` or an enrolment token;
+  per-computer bulk refusals (not found, no permission, archived, Linux, no device secret, containment, in another
+  group, already current); the fleet limit stopped short of with nobody paused; the 200 cap and no other actions; the
+  selection export and its audit; `DEVICE_BULK_ACTION` once per business.
+- `apps/api/scripts/unit-device-views.mjs` (new, in CI): **60 passed** — filter normalisation through the list's
+  parser, updates applying no defaults, the manage rule, selection cap and de-duplication, the four actions, the
+  fleet budget, and per-computer refusal mapping.
+- Existing suites rerun against the change: `e2e-device-list` 113 passed, `e2e-credentials` 44, `e2e-auto-updates`
+  73, `e2e-add-device` 58, `unit-update-window` 85.
+- `scripts/check-security-invariants.mjs` §29 (14 checks): the four actions and nothing that connects,
+  archives, deletes or runs an action; the cap; visibility AND-ed; refresh and client update through the single
+  paths with the admin and containment checks; the fleet budget only refusing; the manage rule; group writes and
+  same-business membership; another business's group is a 404; group integrity at creation, tokens, claims and
+  business moves; every route names its capability and no route runs a view; views store list parameters only;
+  view privacy; the selection export; the audit entries. Each check was shown to fail with its guard removed (25
+  mutations, all caught) and restored.
+- `docs/API-REFERENCE.md` regenerated and checked against the runtime route table (416/416).
+- Not verified in a browser: the device-list UI (selection, bulk bar, result dialog, views menu, groups dialog)
+  type-checks, lints and builds, but was not driven against a running stack.
+
+### Metric history
+
+#### Added
+
+- **Metric history: CPU, memory and disk over time** (`GET /endpoints/:id/metrics?range=24h|7d|30d|90d`, the device
+  workspace's new **Performance** tab). Until now the console had the latest reading only — the Overview gauges
+  and the device-list columns — so "did this disk fill overnight or over three months?" had no answer. Each
+  authenticated heartbeat now also writes one `EndpointMetricSample` (processor %, memory used %, system-disk
+  used %), at most one per computer per minute (`METRIC_MIN_INTERVAL_SECONDS`), from the same values
+  `recordLiveState` already sanitised; each inventory pass writes one `EndpointDiskSample` per volume. No agent
+  changed: the Windows and Linux agents already send these. 24 h is served from raw samples; 7, 30 and 90 days
+  from an hourly roll-up (`EndpointMetricHourly`: count, min, mean, max), with hours not rolled yet computed from
+  raw at read time so a chart never has a hole because the sweep has not run. **Gaps are returned as gaps** —
+  `{from, to}` intervals; 10 minutes with no sample for per-heartbeat series (the offline sweep's threshold), a
+  missing hour for hourly ones, 13 h for volumes — and the chart breaks the line and hatches the stretch; nothing
+  is interpolated or carried across. The route needs `computers:view` and scopes with `assertEndpointInScope`
+  (technician grant) AND `endpointVisibilityWhere` (a Business User sees only granted and company-wide computers);
+  anything else is the same 404 as a nonexistent id. The tab shows for any computer whose agent reports (not
+  RustDesk-only), in light and dark themes, with crosshair and keyboard readout, and a table view. See
+  `docs/metric-history.md`.
+- **Downsampling and retention sweep** (every 5 min, `METRIC_SWEEP=off` stops it in a process, mirroring
+  `MONITOR_SWEEP`). It rolls up complete hours (two minutes after the hour ends), oldest first, at most
+  `METRIC_ROLLUP_HOURS_PER_PASS` (6) per pass, each as an upsert recomputed from raw — idempotent, and safe with two
+  API instances. Then it prunes in batches (`METRIC_PRUNE_BATCH` 5,000 × `METRIC_PRUNE_BATCHES` 10 per table per
+  pass): raw past `METRIC_RAW_HOURS` (48, allowed 24–168) **only once its hour has been rolled up**, so a sweep
+  switched off for a week loses nothing when it comes back; hourly and volume rows past `METRIC_HOURLY_DAYS` (90,
+  allowed 7–400). Out-of-range settings are clamped and unparsable ones take the default. The normal pass looks only
+  after the newest rolled hour (40 ms at 1,000 computers); the first pass of a process and every
+  `METRIC_FULL_SCAN_PASSES` (12) anti-join all of raw against the roll-up, to find a skipped hour after a clock step
+  or restore (1.7 s at 1,000 computers).
+- **Storage, measured:** ≈ 770 MB per 1,000 computers at default retention with two volumes each (raw 180 MB,
+  hourly 450 MB, volumes 137 MB; ~200 B per row including indexes), on PostgreSQL 16 with synthetic data.
+- `check-security-invariants.mjs` **§30 Metric history** (5 checks): a sample is written only inside the
+  heartbeat's authenticated branch, from `recordLiveState`'s sanitised values; volume samples only from
+  `recordInventory`'s `sanitizeDisks` output; nothing else in the API writes the three tables; the route names
+  `computers:view` and uses both scope checks; the sweep honours `METRIC_SWEEP=off`, every query is `LIMIT`ed, the
+  retention ceilings are finite and applied, and the one-sample-per-interval guard is in place. Each was proved to
+  fail with its guard removed.
+
+#### Changed
+
+- Monitoring is unchanged and does not read history: the disk, processor and memory monitors still judge each
+  reading as it arrives. `docs/monitoring.md` and the in-app `/help` say how the two relate. `recordLiveState` now
+  returns the sanitised resource values it stored (it returned nothing).
+
+#### Upgrade notes
+
+- Migration `0041_metric_history` adds three tables and no columns elsewhere; run `prisma migrate deploy`, then
+  regenerate the Prisma client at the target (CLAUDE.md, *A schema change needs two more steps*). History starts
+  with each computer's first heartbeat after the upgrade; there is nothing to backfill.
+- Budget ≈ 0.8 MB of database per computer at the defaults. A scratch or capture API pointed at a database it
+  should not prune can set `METRIC_SWEEP=off` (it only ever touches the three metric tables).
+- Non-system volumes are sampled only on the ≈ 6-hourly inventory pass, because the heartbeat carries the system
+  volume only; the system volume therefore appears both per heartbeat and per inventory pass.
+
+#### Verification
+
+- `unit-metric-history.mjs`: 42/42 (samples from heartbeat values, volume samples, roll-up, which hours a pass
+  rolls, retention defaults/floors/ceilings, ranges, gaps, hourly merge). Added to CI.
+- `e2e-metric-history.mjs` (own API on 3301, started twice): 59/59 on a database of its own (proves the normal
+  pass after a first full scan), 58/58 in a shared database (proves catch-up by full scan). Unauthenticated,
+  wrong-secret and unbound-node heartbeats write nothing; an authenticated one writes exactly one sample with the
+  right percentages; a second inside the interval writes nothing; inventory writes one sample per volume and a
+  wrong secret none; with `METRIC_SWEEP=off` nothing is rolled or pruned over several intervals; with it on every
+  complete hour equals the JS reference roll-up exactly, no pass rolls more than 3 hours, further passes change
+  nothing, raw past 48 h is pruned once rolled and raw inside 48 h kept, hourly and volume rows past 90 d pruned;
+  24 h/7 d/30 d/90 d read the right store and exclude what is outside them, gaps contain no points, an invalid range
+  is a 400; Business B's owner, an ungranted Business User and a technician restricted to another computer all get
+  the nonexistent-id 404, `computers:view` is required, the admin is the control. Added to `scripts/run-e2e.sh`.
+- `e2e-linux-agent.mjs`: 86/86 (two new checks: the real Linux script's heartbeat and inventory land as one sample
+  and one volume sample per mount). `e2e-monitoring.mjs` 108/108 and `e2e-device-list.mjs` 113/113 unchanged.
+- `check-security-invariants.mjs` all hold (§30 adds 5); `check-versions.mjs` passes; `pnpm -r lint`, `tsc` in both
+  apps, `nest build` and `next build` clean. API reference regenerated and matches the runtime route table
+  (406 routes).
+- The Performance tab was rendered against a scratch API and screenshotted at desktop and narrow widths in both
+  themes, with no sideways overflow. `e2e-navigation.mjs` gained a Performance check (tab after Overview, renders,
+  range picker) but was **not run**: it needs the docs stack on port 4000, outside this increment's ports.
+
+### Processes, Services and Network snapshots
+
+#### Added
+
+- **Processes, Services and Network tabs on the device workspace** (standard Windows agent). Three read-only
+  snapshots: every running process (name, PID, processor time, working set, the user it runs as where the agent can
+  read it, start time), every installed service (name, display name, state, start mode including delayed start, and
+  the account it runs as) and every connection Windows lists under Network Connections (status, speed, MAC,
+  IPv4/IPv6, gateways, DNS servers and suffix, DHCP server and lease). Each tab says when the snapshot was taken and
+  how old it is (flagged past a day), and **Refresh** asks for a new one; while it is on its way the old snapshot
+  stays with the refresh beside it, and a failed or expired refresh is shown with its reason beside the last good
+  one. Processes and Services sort and filter; Services can show only automatic services that are not running.
+  There is nothing on these tabs that acts on the computer — no end task, stop, start or restart. Restarting a
+  service stays a signed maintenance action; ending a process is not offered.
+- They ride the 0.31 diagnostics catalog rather than a new channel: three more closed keys, `process_list`,
+  `service_list` and `network_adapters`, requested with `POST /endpoints/:id/diagnostics/runs` (a key and nothing
+  else), handed out on the authenticated heartbeat as id and key, and reported to `/enrollment/diagnostic-result`
+  with the device secret. Every request and completion is audited as for any diagnostic
+  (`ENDPOINT_DIAGNOSTIC_REQUESTED` / `_COMPLETED`, never result content). A new read,
+  `GET /endpoints/:id/diagnostics/snapshots/:key`, returns the newest completed result with `takenAt`, an open
+  refresh (`pending`) and a newer failure (`lastFailure`); any other key is a 400 `UNKNOWN_SNAPSHOT`. The Diagnostics
+  list leaves the three keys out (their tabs show them), and the run history lists snapshot runs without their
+  result (`resultOnTab`), so it stays small.
+- **Bounded and redacted.** The agent sends at most the 1,000 largest processes by memory, 1,000 services and 32
+  adapters; the server keeps the same, re-shapes every field (unknown fields dropped, control characters stripped,
+  profile paths and long tokens redacted, process names cut to the file name, accounts, service names, MACs,
+  addresses and DNS suffixes each checked against a charset, numbers range-checked — the "unknown" Int64 speed of a
+  disconnected adapter is dropped) and caps the stored result at 128 KB (`MAX_SNAPSHOT_BYTES`), cutting the longest
+  list and marking it truncated; the tab says so. Every other key keeps its 32 KB cap. Command lines, executable
+  and service binary paths, modules and environment variables are never collected.
+- **The agent's snapshot functions** (`Get-Rem0teSnapProcesses`, `…Services`, `…Network` in `heartbeat.ps1`) use
+  `Get-Process -IncludeUserName` (falling back to `Get-Process` without elevation, and saying users were not read),
+  `Get-CimInstance Win32_Service` and `Get-CimInstance Win32_NetworkAdapter` / `Win32_NetworkAdapterConfiguration`,
+  and are reachable only from the catalog switch. Every string put into a result goes through
+  `Get-Rem0teSnapText` (control characters out, clamped) or `Get-Rem0teSnapMatch` (also an explicit charset).
+- **A build-time guard on the generated heartbeat**, `assertSnapshotBlockSafe()` in `public/windows-script.ts`,
+  applied to both installer variants. The heartbeat is one template literal, not `joinPs()` statements, so this is
+  its counterpart: it refuses to produce an installer whose snapshot block calls anything but `Get-*` cmdlets (plus
+  `Sort-Object` / `Select-Object`), uses `Invoke-*`, `iex`, script blocks, the call or dot-source operator,
+  `New-Object`, `Add-Type` or `Start-*`, reads `PathName`, `CommandLine`, `.Path`, modules or `$env:`, or puts a
+  result field together without one of the two helpers (tracing each variable back to its assignments).
+
+#### Changed
+
+- **Diagnostics routes apply the device-list visibility rule, not only business scope.** `catalogFor`, `request`,
+  `history`, `getRun` and the new `snapshot` now check business scope *and* `acl.endpointVisibilityWhere`, so a
+  Business User sees only computers granted to them or company-wide, and any other reads as missing (404). Before
+  this, such a user could stage a diagnostic on a computer in their business that they could not see — it then
+  failed at delivery as `requester_lost_access` — and could read that computer's run history and results. Found
+  while writing the A/B suite for this change: a viewer's refresh of an ungranted computer returned 201.
+- `unit-diagnostics-catalog.mjs` and `e2e-diagnostics-catalog.mjs` expect twelve catalog keys; the database key
+  list is read from migration 0042. §20's capped-result check follows `capResult(shaped, resultCapFor(run.key))`.
+
+#### Not included
+
+- **Linux.** The standard Linux agent reads only command ids and three fixed command types from the heartbeat
+  response, never a diagnostics run, and `systemctl` is deliberately absent from it (§24). Offering these there
+  would widen what that agent reads and runs, so the tabs are not shown for Linux and a request is refused
+  (`DIAGNOSTIC_OS_UNSUPPORTED`).
+- **MAC masking.** No masking policy applies to MAC addresses today (the Specs tab shows them in full), so the
+  Network tab shows them in full too.
+
+#### Upgrade notes
+
+- **Migration `0042_system_inventory`.** Redefines `DiagnosticRun_key_catalog` to add the three keys, and
+  `DiagnosticRun_result_bounded` to allow 256 KB of jsonb text for them (the service caps them at 128 KB; jsonb's
+  text form adds spacing) while every other key keeps 64 KB. Adds the index
+  `DiagnosticRun(endpointId, key, completedAt)` for the tabs. No data changes. **Schema change:** run
+  `prisma migrate deploy`, rsync `prisma/` and regenerate the client at the target (CLAUDE.md).
+- The agent picks the new functions up with its next heartbeat-script refresh (reinstall, or the update path that
+  rewrites `heartbeat.ps1`). Until then a refresh is delivered and then expires after ten minutes with "Delivered
+  to the computer but never started … the agent probably predates the diagnostics catalog" — the existing message;
+  for these keys it means "predates 0.33".
+- **Nothing here has run on real Windows.** The PowerShell is parsed with
+  `[System.Management.Automation.Language.Parser]::ParseFile()` (PowerShell 7.4) and run under pwsh on Linux against
+  stub `Get-Process` / `Get-CimInstance`. Unverified until it does: `Get-Process -IncludeUserName` as SYSTEM in
+  Windows PowerShell 5.1, `Win32_Service.DelayedAutoStart` (absent on older builds — the start mode then reads
+  *Automatic*), and the `Speed` a real disconnected adapter reports.
+
+#### Verification
+
+- `unit-system-inventory.mjs` — **92 passed**: the three entries, sanitizers against hostile input, row and byte
+  bounds, the build-time guard (13 mutations, each refused), and with `PWSH` set: both installers and the heartbeat
+  parse (`ParseFile`), and the three keys run against stubs — elevated, not elevated, hostile values, 1,505
+  processes (the agent sends 1,000; the post stays under the 600,000-character cap) — and survive the server's
+  sanitizer and cap. Added to CI.
+- `e2e-system-inventory.mjs` — **68 passed**: empty snapshot; refusals (unknown snapshot key, parameters, Linux,
+  unbound agent) write nothing; no `computers:view` → 403; an ungranted computer → 404 for snapshot, refresh, history
+  and catalog; business B → 404 and its device cannot touch A's runs; request → heartbeat (id and key only) →
+  running → completed; hostile results trimmed and redacted, 1,503 processes stored within 128 KB and marked
+  truncated; a 700,000-character post refused; refresh pending, failed and replaced; the history leaves results
+  out; database backstops (unknown key, 256 KB snapshot, 64 KB elsewhere); audit with no result content. Added to
+  `scripts/run-e2e.sh`.
+- `e2e-diagnostics-catalog.mjs` — **70 passed**; `e2e-linux-agent.mjs` — **84 passed**; `unit-diagnostics-catalog.mjs`
+  — **110 passed**; `unit-monitoring.mjs` — **100 passed** (with `PWSH`); `unit-signed-installer.mjs` — **51 passed**.
+- `scripts/check-security-invariants.mjs` **§31** (10 checks) — each proven to fail with its guard removed (14
+  mutations) and restored; §20 updated for migration 0042 and the per-key cap.
+- `e2e-navigation.mjs` extended (a Windows device has the three tabs, each with its age, a Refresh and no action
+  button) — **not run here**: it needs the docs stack on port 4000, outside this increment's ports. The tabs were
+  rendered and screenshotted against a scratch API and `next dev` on ports 3315/3316 (light, dark).
+- `pnpm -r lint`, `tsc --noEmit` (both apps), `nest build`, `next build`, `check-versions.mjs`;
+  `docs/API-REFERENCE.md` regenerated and checked against the runtime route table (406 routes).
+
+### Standard macOS agent
+
+#### Added
+
+- **A read-only macOS agent: heartbeat, inventory and pending updates.** Before this, a Mac sent one registration
+  when its installer ran and nothing after it. There was no heartbeat, no inventory, and no patch or monitoring
+  data. Run with `sudo` (as **Devices → Add device** shows it), the macOS installer now installs a POSIX `sh`
+  agent at `/Library/Rem0te/rem0te-agent`. A LaunchDaemon (`com.rem0te.agent`) runs it as root every 180
+  seconds and at load, at background priority, with `PATH=/usr/bin:/bin:/usr/sbin:/sbin`. It is the 0.32 Linux
+  agent's twin. The code that touches the device secret, the server and the server's response is now one shared
+  module, `apps/api/src/public/posix-agent.ts`, used by both agents: the sanitisers, the config and secret checks,
+  `post()`, the heartbeat body and the command loop. Only the measuring is per platform.
+  - It reports `sw_vers`, kernel, boot time (`sysctl kern.boottime`), CPU load (`top -l 2`, second sample),
+    memory (`hw.memsize`, `vm_stat`), volumes (`df` + `mount`, APFS system volumes left out) and the console user.
+    It also reports the RustDesk version (from `Info.plist`), and model, serial and firmware (`ioreg`, plus
+    `system_profiler SPHardwareDataType` bounded to 15 s).
+  - It authenticates with the secret bound at claim, with no first-sight binding. It is shown as **Standard
+    (macOS)**; a Mac without the agent stays *RustDesk only*.
+  - Everything is under `/Library/Rem0te`, not `/usr/local`. On an Intel Mac with Homebrew, `/usr/local` belongs
+    to an admin account, so a root daemon running a script from there could be replaced from that account.
+  - The secret is `root:wheel 0600`, and the agent refuses it if it is looser or owned by another account.
+  - `--uninstall` removes the daemon, script, config, log and secret, and leaves RustDesk.
+- **Pending updates on a Mac come from macOS's own last check.** The agent never runs `softwareupdate`. It reads
+  `RecommendedUpdates`, `LastSuccessfulDate` and `AutomaticCheckEnabled` from
+  `/Library/Preferences/com.apple.SoftwareUpdate` with `defaults read`.
+  - Why not `softwareupdate -l`: it contacts Apple's (or the MDM's) catalog, takes from seconds to minutes, can
+    stall behind a busy `softwareupdated`, and macOS has no `timeout` to bound it. Every other option of it
+    downloads, installs or changes the schedule.
+  - If there was no check, or the last one is older than 36 hours (the Patches tab's stale threshold), the scan
+    is reported **failed: "Pending updates unknown"**, with the age and whether automatic checking is off. An old
+    list is never shown as current.
+  - Restart pending is always unknown on a Mac, because macOS does not record it with the list.
+- The console refuses password rotation, reinstall and event-log queries for a Mac (`MACOS_AGENT_READ_ONLY`), as it
+  does for Linux. The one-click RustDesk client update now skips Macs. Before 0.33 it staged an update there that
+  could never apply, because Macs never heartbeated. Server side, `refuseOnLinux` / `isLinuxPlatform` became
+  `refuseOnReadOnlyAgent` / `readOnlyAgentOs` in `common/platform.ts`, which covers both platforms.
+  `LINUX_AGENT_READ_ONLY` is unchanged.
+- The device workspace hides Software and Event logs for a Mac with the agent, as for Linux. **Add device** now
+  shows the agent, identity and inventory health rows for Linux and macOS, not only Windows. Its Linux and macOS
+  text had still said "remote access only" after 0.32.
+
+#### Fixed
+
+- **Both shell installers exited at their first line of work under `set -euo pipefail`.**
+  `PERM_PW=$(tr -dc … < /dev/urandom | head -c 12)` ends with `tr` killed by SIGPIPE. That is status 141, and
+  `pipefail` turned it into the script's exit status before anything was installed or printed. Every random-string
+  pipeline in the Linux and macOS installers now ends `|| true`. Found while writing the macOS e2e, which now runs
+  those lines from both served installers under `bash -c 'set -euo pipefail'`. The Linux installer had only ever
+  been checked with `bash -n`, and no Linux endpoint has been installed yet (`docs/capabilities.md`).
+- The Linux agent now also refuses a secret file not owned by the account it runs as, through the shared check.
+  Before, it checked only the mode.
+
+#### Changed
+
+- `e2e-linux-agent.mjs` links `id` into its minimal PATH (the owner check needs it).
+- The agent-coverage report's "non-Windows with no inventory" definition, its hint and `docs/reports.md` no longer
+  say Linux and macOS agents send no inventory.
+
+#### Upgrade notes
+
+- **Macs enrolled before 0.33** have no agent. Re-run the installer with `sudo` from a new enrolment link.
+  - Older installers kept the device secret in the home directory of whoever ran them. The new one reuses that
+    secret, so the computer stays bound, **only if root wrote it** (owner 0, mode 600, not a link), because a copy
+    a user wrote is one that user knows. It then deletes every copy.
+  - Run without `sudo`, the installer behaves as before (RustDesk and one registration) and says how to add the
+    agent.
+- No migration and no new route. `AGENT_CONTRACT_VERSION` is unchanged: it tracks the Windows heartbeat script.
+
+#### Verification
+
+- **Evidence: integration-tested only.** No Mac, launchd or root has been involved. `docs/capabilities.md` says so
+  and lists a Mac as lab item 5.
+- `apps/api/scripts/e2e-macos-agent.mjs`: **106 passed, 0 failed**.
+  - It runs the real generated agent against a real API and scratch database, on Linux, unprivileged.
+  - Every macOS command is a stub printing recorded macOS output: `sw_vers`, `sysctl`, `vm_stat`, `top`, `who`,
+    `df`, `mount`, `ioreg`, `system_profiler`, `defaults`, `plutil`, `dscl`, `hostname` and `uname`.
+  - It runs to completion under dash, `bash --posix` and zsh 5.9's sh emulation.
+  - It proves that the inventory lands with exact values, and that wrong, missing, 644/640/660/604 and
+    foreign-owned secrets are refused.
+  - It proves A/B business isolation (claim, inventory, list, command results, rotation as 404) and that hostile
+    strings are stripped and never evaluated.
+  - The console refusals and the ignored staged rotation, reinstall, client update and event-log query are
+    checked.
+  - The four update-cache states, and a hung `system_profiler` cut off at 15 s, are covered.
+  - Marker stubs for `softwareupdate`, `launchctl`, `shutdown`, `defaults write` and 25 other state-changing
+    commands never ran.
+- `apps/api/scripts/unit-macos-agent.mjs` (new CI step): **31 passed** with zsh, 27 without.
+  - The awk date conversions match JavaScript over 2,008 instants in every shell. This found busybox awk's `%d`
+    wrapping at 2³¹ (2038), now `%.0f`.
+  - Also covered: the `RecommendedUpdates` parser, platform mapping and template guards.
+  - Both agents parse under sh, dash, `bash --posix`, busybox sh and zsh's sh emulation.
+- `e2e-linux-agent.mjs` against the refactored Linux agent: **84 passed** (unchanged). The generated Linux script
+  was diffed against 0.32's: the only differences are the owner check, the `wc` padding fix, and variable names.
+- `e2e-auto-updates` 73, `e2e-reports` 102, `e2e-diagnostics-catalog` 70: all pass.
+- `check-security-invariants.mjs`: all checks hold (182 on the branch).
+  - §24 is reworked for the shared module and gains the owner check and the macOS console refusals.
+  - New §32 covers macOS: the shared guards are assembled in; no `softwareupdate`, `launchctl`, `defaults write`,
+    in-place `plutil` or `/usr/local`; the system PATH; `system_profiler` only through `bounded()`; the root-only
+    secret and its legacy adoption rule; the daemon only as root; and `--uninstall`.
+  - It also checks that every urandom pipeline ends `|| true`.
+  - All 18 new or changed checks were shown to fail with their guard removed.
+- `pnpm -r lint`, `tsc --noEmit` (both apps), `nest build` and `next build` are clean.
+
+### Integration notes
+- Security invariants are numbered, after 0.32's §25 patch policies: **§27** enrolment step-up, **§28** global
+  search, **§29** device groups, saved views and bulk actions, **§30** metric history, **§31** system inventory
+  snapshots, **§32** the macOS agent. Each branch had numbered its own section §25. **§26 is left free** for the
+  0.31.2 security fix (`AccessControlService.assertEndpointInScope`), which is merged in after 0.32's §25. §24 (the Linux agent) is the
+  macOS branch's version, reworked for the shared `apps/api/src/public/posix-agent.ts`; §20 is the inventory
+  branch's, reading the diagnostics key list from migration 0042 and the per-key result cap.
+- `scripts/run-e2e.sh` runs the new suites `enrol-stepup`, `search`, `device-views`, `metric-history`,
+  `system-inventory` and `macos-agent` beside 0.32's, exports `METRIC_SWEEP=off` next to `PATCH_POLICY_SWEEP=off`,
+  and runs every scratch API with `MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off
+  METRIC_SWEEP=off`. `e2e-metric-history.mjs` sets `METRIC_SWEEP: 'on'` for its own API, because it tests the
+  sweep and would otherwise inherit the export. The scratch-API port can be moved with `E2E_API_PORT` (default
+  3101).
+- Branches built before the enrolment step-up minted tokens with a bare session: `e2e-device-views.mjs` now steps
+  up before its token checks, and `e2e-macos-agent.mjs` steps every session up at login, as `e2e-linux-agent.mjs`
+  already did. `e2e-macos-agent.mjs` also marks `rpm` (a Mac agent never calls it); the Linux sandbox keeps 0.32's
+  `rpm` stub, and both suites pass with a host `rpm` that runs `bash -c` first on `PATH` (without the Linux stub,
+  that run fails the four marker checks CI failed).
+- The device workspace tabs are Overview · Performance · Monitoring · Software · Processes · Services · Network ·
+  Patches · Event logs · Diagnostics · Actions · History.
+### Verification (integrated)
+- `scripts/run-e2e.sh` against a fresh scratch database, with `RELEASE_BIN` and `ACTION_SIM` built from
+  `tools/windows-installer`: **all 39 suites pass, none skipped** (2,490 counted checks over the 34 suites that
+  print a count; `smoke`, `full`, `public-api`, `candidate-password` and `security-regression` report pass/fail).
+  The new suites: `enrol-stepup` 44, `search` 113, `device-views` 117, `metric-history` 59, `system-inventory` 68,
+  `macos-agent` 106; beside them `linux-agent` 86, `patch-policies` 75, `maintenance-actions` 64, `device-list`
+  113, `add-device` 62, `script-library` 138, `reports` 102.
+- Every unit script CI runs: 18 scripts, 1,091 checks, with `PWSH` set so the PowerShell blocks are parsed and run.
+  `go test ./...` in `tools/windows-installer` passes.
+- `check-security-invariants.mjs`: 243 checks hold. `check-versions.mjs`, `pnpm -r lint`, `tsc --noEmit` (api,
+  web), `nest build`, `next build` and the launcher build pass. `docs/API-REFERENCE.md` regenerated (424 routes,
+  56 controllers) and the docs bundle rebuilt.
+- Not run: `apps/web/scripts/e2e-navigation.mjs` and `e2e-search-palette.mjs` (browser suites for the docs stack,
+  not in CI); nothing on real Windows or a real Mac.
+
+### Upgrade notes (all of 0.33)
+- **Schema change:** migrations `0040_device_views`, `0041_metric_history` and `0042_system_inventory` (0039, 0043
+  and 0044 were reserved and are unused). Take a `pg_dump` first, then `prisma migrate deploy`, rsync
+  `apps/api/prisma/` to the target and run `prisma generate` there, as `CLAUDE.md` describes — without the last two
+  the API throws `Unknown field ... on model ...` at runtime.
+- No production dependency changed; the target's `node_modules` stays.
+- **`GET /admin/search` is removed** (it scoped computers by business alone). Anything calling it gets a 404; use
+  `GET /search?q=`.
+- **Making an install link needs a fresh re-authentication** for every role, once per 10 minutes. Scripts that
+  call `POST /enrollment/tokens` with a session must `POST /auth/step-up` first; API keys are unaffected, but
+  creating a key with `enrollment:write` now needs the same confirmation.
+- **Existing Linux and macOS installs must re-run the installer to get the agent**: Linux computers enrolled before
+  0.32 and Macs enrolled before 0.33 have RustDesk only. Macs need the installer run with `sudo`.
+- Windows computers pick up the Processes, Services and Network snapshot functions with their next heartbeat-script
+  refresh (reinstall, or the update path that rewrites `heartbeat.ps1`); until then a refresh expires with the
+  existing "predates the diagnostics catalog" message.
+- **New settings**, all optional: `METRIC_SWEEP` (default on; `off` stops roll-up and pruning in that process — set
+  it on scratch and capture APIs), `METRIC_RAW_HOURS` (48, 24–168), `METRIC_HOURLY_DAYS` (90, 7–400),
+  `METRIC_ROLLUP_HOURS_PER_PASS` (6), `METRIC_PRUNE_BATCH` (5,000), `METRIC_PRUNE_BATCHES` (10),
+  `METRIC_FULL_SCAN_PASSES` (12), `METRIC_SWEEP_SECONDS` and `METRIC_MIN_INTERVAL_SECONDS`. Out-of-range values
+  are clamped. Budget ≈ 0.8 MB of database per computer at the defaults; see `docs/server-sizing.md`.
+- Browser-saved device views are not migrated automatically: each user is offered *Import N views saved in this
+  browser* once.
+
+---
+
 ## [0.32.0] — 2026-11-11 · *Fieldkit*
 
 The second increment of the RMM overhaul (`docs/rmm-gap-analysis.md` items 7–12, plus patch policies requested on
