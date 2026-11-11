@@ -8,7 +8,7 @@ import {
   Loader2, MoreHorizontal, Rows3, Search, Trash2, Users, X,
 } from 'lucide-react';
 import { endpointsApi } from '@/lib/api-client';
-import { usePermissions } from '@/lib/auth';
+import { usePermissions, CAP } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -419,7 +419,7 @@ export function DeviceList() {
       </div>
 
       {selected.size > 0 && (
-        <BulkBar selected={selected} groups={groups} isPlatformAdmin={isPlatformAdmin} sort={sort} dir={dir}
+        <BulkBar selected={selected} groups={groups} isPlatformAdmin={isPlatformAdmin} canEdit={can(CAP.COMPUTERS_EDIT)} sort={sort} dir={dir}
           onClear={() => setSelected(new Map())} onDone={bulkDone} />
       )}
 

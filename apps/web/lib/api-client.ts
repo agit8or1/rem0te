@@ -181,6 +181,13 @@ export const endpointsApi = {
   // keeping its config, password and enrolment. The only way to refresh the
   // agent on a computer whose RustDesk client is already current.
   reinstallAgent: (id: string) => api.post(`/endpoints/${id}/reinstall-agent`, {}),
+  // 0.34 Agent card: what the computer runs, and updating or upgrading it.
+  // Upgrading needs a fresh sign-in (the interceptor asks) and a reason.
+  agent: (id: string) => api.get(`/endpoints/${id}/agent`),
+  updateAgent: (id: string) => api.post(`/endpoints/${id}/agent/update`, {}),
+  migrateAgent: (id: string, reason: string) => api.post(`/endpoints/${id}/agent/migrate`, { reason }),
+  cancelAgentMigration: (id: string) => api.post(`/endpoints/${id}/agent/migrate/cancel`, {}),
+  agentMigrations: (params?: { state?: string; businessId?: string }) => api.get('/agent-migrations', { params }),
   // Trust the new device secret a computer is heartbeating with after its
   // bound one stopped matching (e.g. an installer re-run that lost it).
   acceptDeviceSecret: (id: string) => api.post(`/endpoints/${id}/accept-device-secret`, {}),

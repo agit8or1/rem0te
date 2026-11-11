@@ -180,6 +180,10 @@ Settings → Security → Update Signing has two settings:
 | **Signed only** | Get no reinstall or update trigger from the heartbeat | A refusal that runs nothing | Takes effect at once |
 | **Signed only + portal migration** | Get the reinstall trigger only | A short script that downloads the signed agent, checks it against the digest the portal pins, and runs `migrate` | Turning portal migration on needs review |
 
+From 0.34 one computer can also be moved from the console (*Moving existing agents → One computer from the console*).
+That is allowed in **Legacy allowed** and **Signed only + portal migration**, and refused in **Signed only**; it never
+changes the mode.
+
 Notes on these settings:
 - Review means the same independent review as Technician Access: someone other than the requester approves, and both
   need a fresh sign-in.
@@ -207,12 +211,63 @@ after checking its SHA-256 against the release notes, and run it elevated:
 
 **Locally:** run the same command from an elevated prompt.
 
-**Through the portal:** use *Signed only + portal migration*.
+**Through the portal, every legacy agent:** use *Signed only + portal migration*.
 - That one run trusts the portal, exactly as every legacy run already does.
 - Use it when GPO or Intune isn't available, and only while you trust the portal.
 
+**Through the portal, one computer from the console (0.34).** On the computer's **Overview → Agent** card, press
+**Upgrade to signed agent**, give a reason, and confirm it is you. For several at once, select them on **Devices → All
+devices** and use **Upgrade to signed…** (at most 200 per request; each computer is decided on its own and refused
+with its reason). Follow them on **Devices → Agent migrations** (`/endpoints/agent-migrations`).
+
+What happens:
+- The request names that computer. Its next authenticated heartbeat — and no other computer's — is handed the
+  reinstall flag with a one-off nonce (`mig_…`).
+- The standard agent fetches `windows.ps1?updateNonce=<nonce>`. For an open request that serves the same migration
+  script as *Signed only + portal migration*, pinned to the digest of `windows/rem0te-agent.exe` in the signed targets
+  the portal serves **at that moment**. The script downloads that file, refuses it if the digest differs, and runs
+  `migrate`, which keeps the enrolment, device secret and RustDesk configuration. It stages the binary in a new,
+  randomly named directory locked to SYSTEM and Administrators.
+- The request completes when the computer's heartbeat reports the signed channel. It is **held**, not handed out,
+  while an `updates` containment pause applies, while a staged rollout owns the computer, if the portal is moved to
+  **Signed only** in the meantime (the nonce then serves a script that runs nothing), or if no signed agent is
+  published. A request handed out over two hours ago whose computer still reports the standard agent shows as **Not
+  confirmed**: the standard agent doesn't report the script's exit code. From 0.34 its heartbeat does report what
+  `rem0te-agent.exe` last wrote to `agent-status.json`, so a failed `migrate` shows its result on the card.
+- An agent older than 0.20 ignores the nonce and simply reinstalls the current standard agent; the request stays open
+  and the next attempt, 30 minutes later, migrates it.
+
+The preconditions, each refused with its own reason: a signed repository is configured and lists the signed agent
+(*No signed release is published …*); the computer is a Windows standard agent with a device secret, not archived;
+the portal has an https public address or a relay host; the portal is not in **Signed only**; no `updates` pause
+applies; no staged rollout is running on it. It needs **computers:edit** on that computer (the same as **Reinstall
+agent**), a fresh sign-in, and a reason, which is audited (`AGENT_MIGRATION_REQUESTED`; also
+`AGENT_MIGRATION_COMPLETED`, `AGENT_MIGRATION_CANCELLED`, and `DEVICE_BULK_ACTION` for a selection).
+
+**Why this needs no second person, when turning on portal migration does.** A standard agent already trusts the
+portal completely: anyone who can press *Reinstall agent* on it can make the portal run its installer there as
+SYSTEM. Migrating that one computer is one more such run, of a fixed script whose only inputs are the portal's address
+and the digest the offline-signed repository lists. It gives a compromised portal nothing it didn't already have
+over that machine, and leaves the machine where the portal has *less* power: afterwards it runs only code signed by
+keys the portal never holds. Turning on portal migration is different: it decides what **every** legacy agent is
+handed, including ones nobody asked about, which is why it goes to review.
+
+**Why it is refused in Signed only.** In that mode you have contained the legacy agents: the portal hands them nothing
+to run. A per-computer migration is a portal-served script run on a legacy agent — exactly what the mode withholds,
+and what turning on portal migration puts to review. Allowing it would let one person reopen, machine by machine, the
+path the mode closed. In Signed only, migrate locally or through GPO/Intune, or ask for portal migration. That the
+script itself is harmless today doesn't change this: what the mode contains is the legacy agent running whatever the
+portal serves.
+
 To check a machine afterwards, run `rem0te-agent.exe status`. It prints the pin, the trust-root version and the
-result of the last update.
+result of the last update. From 0.34 the heartbeat also reports that last result and its time, and the computer's
+**Agent** card shows them; signed builds published before 0.34 don't report it.
+
+**Updating an agent that already runs.** The Agent card's **Update agent** re-runs the current standard installer on a
+standard agent (the existing reinstall: same permission, same audit, refused under an `updates` pause and in Signed
+only). On a signed agent the same button is **Check for update now**: the agent runs `rem0te-agent.exe update`, which
+installs only what the signed repository lists. Linux and macOS agents act on nothing the portal sends, so the card
+gives the command to re-run on the computer instead.
 
 ## Rotating keys
 

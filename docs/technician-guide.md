@@ -259,7 +259,7 @@ what it does.
 
 | Tab | What is on it |
 |---|---|
-| Overview | Assignment, key alerts, patch status, recent activity, then the hardware, utilisation, storage, network and update cards, each with its age |
+| Overview | Assignment, key alerts, patch status, the **Agent** card, recent activity, then the hardware, utilisation, storage, network and update cards, each with its age |
 | Monitoring | Alerts first (acknowledge and resolve here), then what is watched on this computer in words, the agent's last report, and what changed |
 | Software | Installed software with a filter, and recent software changes (Windows agents only) |
 | Processes | Every running process, as a read-only snapshot with its age and a Refresh (standard Windows agent, 0.33) |
@@ -270,6 +270,29 @@ what it does.
 | Diagnostics | Test connection: server, computer and your own RustDesk |
 | Actions | Request an approved action and see past requests |
 | History | Remote sessions, technician notes, the AI-written summary (labelled as such) and who can connect |
+
+**The Agent card** (Overview, 0.34) says which agent the computer runs (*Standard*,
+*Signed*, or the read-only Linux/macOS agent), its version and whether that is the
+current one, the update channel and the portal's update mode, and — for a signed
+agent — the result of its last update check. Its buttons:
+
+- **Update agent** (standard Windows agent): re-runs the current installer at the
+  next check-in. It is the same as *Reinstall agent*: the same permission, refused
+  while updates are paused for the business, and audited.
+- **Check for update now** (signed agent): the agent runs its own signed update
+  at the next check-in. It installs only what the signed repository lists.
+- On Linux and macOS the card prints the exact command to re-run on the computer;
+  those agents act on nothing the portal sends.
+- **Upgrade to signed agent** (standard Windows agent): asks for a reason and a
+  fresh sign-in, then moves this computer to the signed agent at its next
+  check-in, keeping its enrolment and RustDesk ID. When it can't be offered, the
+  card says exactly why — no signed release published, no device secret, the
+  portal in *Signed only* mode, updates paused, a rollout running. A request can
+  be cancelled until it completes. **Devices → Agent migrations** lists pending,
+  held, not confirmed and completed requests. To move several computers, select
+  them on **All devices** and use **Upgrade to signed…** (at most 200; each one is
+  refused with its own reason). See
+  [Update signing → Moving existing agents](update-signing.md#moving-existing-agents).
 
 Processes, Services and Network are snapshots, not live views: each says when it
 was taken, and **Refresh** asks the computer for a new one on its next check-in.

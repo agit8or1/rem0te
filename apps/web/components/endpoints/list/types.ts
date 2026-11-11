@@ -99,7 +99,7 @@ export interface DeviceGroup {
   may: { manage: boolean };
 }
 
-export type BulkAction = 'group.add' | 'group.remove' | 'inventory.refresh' | 'client.update';
+export type BulkAction = 'group.add' | 'group.remove' | 'inventory.refresh' | 'client.update' | 'agent.update' | 'agent.migrate';
 export interface BulkResponse {
   action: BulkAction;
   requested: number;

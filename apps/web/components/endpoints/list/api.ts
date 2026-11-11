@@ -65,8 +65,8 @@ export const deviceGroupsApi = {
 };
 
 export const bulkApi = {
-  run: (action: BulkAction, endpointIds: string[], groupId?: string) =>
-    api.post('/endpoints/bulk', { action, endpointIds, ...(groupId ? { groupId } : {}) }).then((r) => r.data?.data as BulkResponse),
+  run: (action: BulkAction, endpointIds: string[], groupId?: string, reason?: string) =>
+    api.post('/endpoints/bulk', { action, endpointIds, ...(groupId ? { groupId } : {}), ...(reason ? { reason } : {}) }).then((r) => r.data?.data as BulkResponse),
   /** The selection as CSV, through the audited device-list export. */
   exportCsv: async (endpointIds: string[], sort: SortKey, dir: 'asc' | 'desc') =>
     blobDownload(await api.post('/endpoints/bulk/export.csv', { endpointIds, sort, dir }, { responseType: 'blob' })),

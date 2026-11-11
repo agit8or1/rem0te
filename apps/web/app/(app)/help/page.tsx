@@ -531,6 +531,22 @@ const SECTIONS: Section[] = [
           cannot reach it, then accept it as above. A computer archived by mistake
           comes back with <strong>Restore</strong> on the same page.
         </p>
+        <p className="font-medium text-foreground">Updating or upgrading a computer&apos;s agent</p>
+        <p>
+          From 0.34 the <strong>Agent</strong> card on a computer&apos;s Overview tab says which agent it runs, its
+          version and whether that is current, its update channel and the portal&apos;s update mode.{' '}
+          <strong>Update agent</strong> re-runs the current installer on a standard agent (the same as Reinstall
+          agent); on a signed agent it is <strong>Check for update now</strong>, which installs only what the signed
+          repository lists. Linux and macOS agents act on nothing the console sends, so the card gives the command to
+          re-run on the computer. <strong>Upgrade to signed agent</strong> moves one Windows computer to the signed
+          agent at its next check-in, after a reason and a fresh sign-in; when it can&apos;t, the card says exactly
+          what is missing, such as a signed release that has not been published yet. It is refused while the portal is
+          in <em>Signed only</em> mode and held while updates are paused for the business. Several computers can be
+          moved at once from the device list, and{' '}
+          <Link href="/endpoints/agent-migrations" className="underline">Agent migrations</Link> lists what is pending,
+          held, not confirmed or done. More in{' '}
+          <Link href="/docs/update-signing#moving-existing-agents" className="underline">Update signing</Link>.
+        </p>
       </div>
     ),
   },

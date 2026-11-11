@@ -1190,10 +1190,11 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const listSvc = read('apps/api/src/endpoints/endpoint-list.service.ts');
   const listQuery = read('apps/api/src/endpoints/list-query.ts');
 
-  check('bulk: exactly four repeatable actions, and nothing that connects, archives, deletes or runs an action',
-    /export const BULK_ACTIONS = \['group\.add', 'group\.remove', 'inventory\.refresh', 'client\.update'\] as const;/.test(rules)
+  // 0.34 adds agent.update and agent.migrate, through AgentUpgradeService (§33).
+  check('bulk: exactly six repeatable actions, and nothing that connects, archives, deletes or runs an action',
+    /export const BULK_ACTIONS = \['group\.add', 'group\.remove', 'inventory\.refresh', 'client\.update', 'agent\.update', 'agent\.migrate'\] as const;/.test(rules)
       && !/\b(authorizeConnect|connect\(|archive|restore\(|\.delete\(|deleteMany|ActionsService|actionJob|createPlan|SignerClient|scriptVersion)\b/i.test(code(bulkSvc).replace(/endpointGroup\.findUnique/g, '')),
-    'BULK_ACTIONS must stay the four, and the bulk service must not reach connect/archive/delete/approved actions');
+    'BULK_ACTIONS must stay the six, and the bulk service must not reach connect/archive/delete/approved actions');
   check('bulk: at most 200 per request, counted before de-duplication, for the export too',
     /export const BULK_MAX = 200;/.test(rules)
       && /if \(ids\.length > BULK_MAX\) throw bad\('BULK_TOO_LARGE'/.test(rules) && rules.indexOf('ids.length > BULK_MAX') < rules.indexOf('[...new Set(ids as string[])]')
@@ -1441,6 +1442,70 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('macOS is a read-only agent platform for every console refusal',
     /if \(isMacPlatform\(platform\)\) return 'macOS';/.test(plat) && /'MACOS_AGENT_READ_ONLY'/.test(plat),
     'readOnlyAgentOs must return macOS for a Mac, with its own refusal code');
+}
+
+// 33. Agent upgrade from the console (0.34). One computer can be moved from
+//     the standard agent to the signed agent, or have its agent updated. A
+//     per-computer migration is allowed without independent review because a
+//     standard agent already runs whatever reinstall the portal hands it — so
+//     it must stay exactly that: it never writes the platform's update-trust
+//     mode, it is refused (and held, and served nothing) in Signed only
+//     without portal migration, the script it serves always pins the digest
+//     of the signed agent the offline-signed repository lists, only the
+//     requesting computer's authenticated heartbeat is handed its nonce, the
+//     request needs a fresh sign-in (single and bulk) and computers:edit, and
+//     an updates pause holds it like every other update flag.
+{
+  const mig = read('apps/api/src/update-trust/agent-migration.ts');
+  const msvc = read('apps/api/src/update-trust/agent-migration.service.ts');
+  const usvc = read('apps/api/src/agent-upgrade/agent-upgrade.service.ts');
+  const uctl = read('apps/api/src/agent-upgrade/agent-upgrade.controller.ts');
+  check('a per-computer migration never writes the update-trust mode',
+    ![msvc, usvc].some((t) => /platformSettings\s*\.\s*(update|upsert|create|updateMany)\b|\.setMode\(|trust\.request\(|updateTrustMode\s*:|\$execute/.test(t)),
+    'agent-migration.service.ts / agent-upgrade.service.ts must not write PlatformSettings or request a trust change');
+  const build = mig.slice(mig.indexOf('export function buildMigrationScript('), mig.indexOf('export const MIGRATION_UNAVAILABLE'));
+  check('the migration script pins and checks the signed agent digest',
+    /!\/\^\[0-9a-f\]\{64\}\$\/\.test\(agentSha256\)/.test(build) && /targets\/windows\/\$\{agentSha256\}\.rem0te-agent\.exe/.test(build)
+      && /\(Get-FileHash -Algorithm SHA256 -LiteralPath \$exe\)\.Hash\.ToLower\(\) -ne '\$\{agentSha256\}'\) \{ Remove-Item -LiteralPath \$exe -Force; exit 12 \}/.test(build)
+      && build.indexOf('Get-FileHash') < build.indexOf('& $exe migrate'),
+    'buildMigrationScript must validate the digest, download by it, and refuse a mismatch before running migrate');
+  const sfn = msvc.slice(msvc.indexOf('async scriptForNonce('));
+  check('the served script takes its digest from the signed repository, at the moment it is fetched',
+    /const agent = this\.updateTrust\.agentTarget\(\);/.test(sfn) && /return buildMigrationScript\(host, agent\.sha256\);/.test(sfn) && !/sha256\s*:/.test(read('apps/api/prisma/migrations/0055_agent_migration/migration.sql')),
+    'scriptForNonce must pin updateTrust.agentTarget().sha256 (no stored digest)');
+  const pub = read('apps/api/src/public/public.controller.ts');
+  check('windows.ps1 serves a migration only for an open migration nonce',
+    /if \(updateNonce && !jobNonce\) \{\s*const mig = await this\.agentMigration\.scriptForNonce\(updateNonce\);/.test(pub)
+      && /MIGRATION_NONCE_RE\.test\(nonce\)/.test(sfn) && /where: \{ nonce, \.\.\.OPEN \}/.test(sfn),
+    'the nonce branch must go through scriptForNonce, which matches only open requests');
+  check('Signed only without portal migration: refused, held and served nothing',
+    /\n\s*if \(f\.mode === 'signed_only' && !f\.legacyPortalMigration\) \{\s*return \{\s*code: 'SIGNED_ONLY'/.test(mig)
+      && /const allowed = mode\.mode === 'legacy_allowed' \|\| mode\.legacyPortalMigration;\s*if \(!allowed \|\| !agent \|\| !host\) return MIGRATION_UNAVAILABLE;/.test(sfn)
+      && /i\.updatesHeld \? 'contained'\s*: i\.gate === 'withhold' \? 'signed_only'/.test(msvc)
+      && !/Invoke-|iex|Start-|&\s*\$/.test(mig.slice(mig.indexOf('export const MIGRATION_UNAVAILABLE'), mig.indexOf('export const MIGRATION_NONCE_RE'))),
+    'migrationBlock, scriptForNonce and forHeartbeat must each keep the Signed only boundary; MIGRATION_UNAVAILABLE runs nothing');
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const step = enr.slice(enr.indexOf('// Per-computer migration to the signed agent (0.34).'), enr.indexOf('// v0.28: updates paused everywhere or for this business.'));
+  const fh = msvc.slice(msvc.indexOf('async forHeartbeat('), msvc.indexOf('async scriptForNonce('));
+  check('only the requesting computer\'s authenticated heartbeat is handed its nonce, before the updates-pause null',
+    step.length > 200 && /if \(authenticated\) \{\s*try \{\s*const mig = await this\.agentMigration\.forHeartbeat\(\{\s*endpointId: node\.endpointId,/.test(step)
+      && /updatesHeld, rolloutManaged,/.test(step) && /const open = await this\.openFor\(i\.endpointId\);/.test(fh)
+      && /openFor\(endpointId: string\) \{\s*return this\.prisma\.agentMigration\.findFirst\(\{ where: \{ endpointId, \.\.\.OPEN \} \}\);/.test(msvc)
+      && /if \(updatesHeld\) \{\s*updateRustdesk = null;\s*reinstallAgent = null;/.test(enr.slice(enr.indexOf('// v0.28: updates paused everywhere'))),
+    'forHeartbeat must run under authenticated, read only this endpoint\'s open request, and precede the updatesHeld block');
+  const mfn = usvc.slice(usvc.indexOf('async migrate('), usvc.indexOf('async cancelMigration('));
+  check('a migration request needs computers:edit and a fresh sign-in, single and bulk',
+    /assertEndpointInScope\(actor, id, CAP\.COMPUTERS_EDIT\);\s*this\.acl\.assertCapability\(actor, CAP\.COMPUTERS_EDIT\);\s*assertFresh\(freshMethod,/.test(mfn)
+      && mfn.indexOf('assertFresh(') < mfn.indexOf('this.migration.request(')
+      && /if \(action === 'agent\.migrate'\) \{\s*assertFresh\(opts\.freshMethod,/.test(usvc)
+      && /@Post\(':id\/agent\/migrate'\)\s*@RequireCapability\(CAP\.COMPUTERS_EDIT\)/.test(uctl) && /this\.svc\.migrate\(actor, id, body\?\.reason, this\.freshMethod\(req\)\)/.test(uctl)
+      && /@Post\(':id\/agent\/update'\)\s*@RequireCapability\(CAP\.COMPUTERS_EDIT\)/.test(uctl),
+    'migrate() must assert computers:edit then assertFresh before recording; bulk agent.migrate must assertFresh once');
+  const rq = msvc.slice(msvc.indexOf('async request('), msvc.indexOf('async cancel('));
+  check('a migration request is recorded only with its audit entry, and re-checks every precondition',
+    /const b = await this\.block\(endpointId\);\s*if \(b\) throw/.test(rq) && /await this\.audit\.logOrFail\(\{[\s\S]{0,200}action: 'AGENT_MIGRATION_REQUESTED'/.test(rq)
+      && /catch \(e\) \{\s*await this\.prisma\.agentMigration\.delete\(/.test(rq),
+    'request() must refuse on migrationBlock and roll back a request whose audit entry failed');
 }
 
 if (failures.length > 0) {

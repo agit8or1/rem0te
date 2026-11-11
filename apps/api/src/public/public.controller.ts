@@ -33,6 +33,8 @@ import {
   MACOS_AGENT_LOG, MACOS_AGENT_NEWSYSLOG, MACOS_AGENT_NEWSYSLOG_CONF, MACOS_AGENT_PATH, MACOS_AGENT_PLIST, MACOS_AGENT_SECRET,
 } from './macos-agent';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
+import { AgentMigrationService } from '../update-trust/agent-migration.service';
+import { buildMigrationScript, validPortalHost } from '../update-trust/agent-migration';
 
 const INSTALLER_MAGIC = Buffer.from('REM0TE_INST_URL:');
 const INSTALLER_SLOT_SIZE = 256;
@@ -45,13 +47,6 @@ const BASE64_RE = /^[A-Za-z0-9+/]{16,512}={0,2}$/;
 const HEX_TOKEN_RE = /^[A-Fa-f0-9]{16,128}$/;
 const VERSION_RE = /^[a-zA-Z0-9._+-]{1,32}$/;
 
-// host or host:port, matching what the signed agent accepts (agent.ValidPortal).
-function validPortalHost(h: string): boolean {
-  const [host, port, extra] = h.split(':');
-  if (extra !== undefined || !HOSTNAME_RE.test(host) || host.includes('..')) return false;
-  return port === undefined || /^[1-9][0-9]{0,4}$/.test(port);
-}
-
 // What a legacy agent's heartbeat gets from windows.ps1 in signed_only mode
 // when portal-mediated migration is off. It runs as SYSTEM and does nothing.
 const SIGNED_ONLY_REFUSAL = `# Rem0te: this portal installs and updates only through the signed agent.
@@ -61,29 +56,8 @@ Write-Output 'Refused: signed-only update policy. Nothing was changed.'
 exit 1
 `;
 
-// One-time migration of a legacy agent to the signed chain. This run trusts
-// the portal, exactly as every legacy run does: the digest is pinned here,
-// by the portal. Everything after it — the agent binary re-verifying itself
-// in stage 2, the installer, RustDesk, every later update — is verified
-// against the offline-signed root compiled into that binary.
-function buildMigrationScript(portalHost: string, agentSha256: string): string {
-  if (!validPortalHost(portalHost) || !/^[0-9a-f]{64}$/.test(agentSha256)) {
-    throw new BadRequestException('Cannot build a migration script from these values');
-  }
-  return `# Rem0te: migrate this machine to the signed update chain (one time).
-$ErrorActionPreference = 'Stop'
-$ProgressPreference = 'SilentlyContinue'
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$dir = Join-Path $env:ProgramData 'Rem0te\setup\migrate'
-New-Item -ItemType Directory -Force -Path $dir | Out-Null
-icacls $dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' *>$null
-$exe = Join-Path $dir 'rem0te-agent.exe'
-Invoke-WebRequest -UseBasicParsing -Uri 'https://${portalHost}/api/v1/public/updates/targets/windows/${agentSha256}.rem0te-agent.exe' -OutFile $exe
-if ((Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash.ToLower() -ne '${agentSha256}') { Remove-Item -LiteralPath $exe -Force; exit 12 }
-& $exe migrate --portal '${portalHost}'
-exit $LASTEXITCODE
-`;
-}
+// The one-time migration script (buildMigrationScript) lives in
+// update-trust/agent-migration.ts, shared with the per-computer migration (0.34).
 
 function safeHost(host: string | null): string {
   if (!host) return '';
@@ -136,6 +110,7 @@ export class PublicController {
     private readonly rollouts: UpdateRolloutService,
     private readonly urls: PublicUrlService,
     private readonly updateTrust: UpdateTrustService,
+    private readonly agentMigration: AgentMigrationService,
   ) {}
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -315,6 +290,20 @@ export class PublicController {
     let filename: string;
 
     if (platform === 'windows.ps1') {
+      // One computer's migration to the signed agent (0.34): the heartbeat
+      // handed exactly that computer this nonce. Its script is the same one
+      // the mode below serves, pinned to the served signed agent's digest; a
+      // nonce that is not an open migration changes nothing.
+      if (updateNonce && !jobNonce) {
+        const mig = await this.agentMigration.scriptForNonce(updateNonce);
+        if (mig !== null) {
+          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+          res.setHeader('Content-Disposition', 'inline; filename="install-rustdesk.ps1"');
+          res.setHeader('Cache-Control', 'no-store');
+          res.send(mig);
+          return;
+        }
+      }
       // Containment (0.24). This route is what every legacy agent's heartbeat
       // pipes into a SYSTEM PowerShell. In signed_only it serves no installer:
       // either the one-time migration to the signed agent (when an operator

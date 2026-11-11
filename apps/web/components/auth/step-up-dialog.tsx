@@ -26,6 +26,8 @@ const ACTION_LABEL: Record<string, string> = {
   // 0.33: an enrolment token adds a computer to a business.
   'enrollment.create': 'make an install link',
   'apikey.enrollment': 'create an API key that can enrol computers',
+  // 0.34: a per-computer move to the signed agent runs a portal-served script once.
+  'agent.migrate': 'upgrade computers to the signed agent',
 };
 
 /**

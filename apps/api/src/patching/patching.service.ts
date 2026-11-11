@@ -1,3 +1,5 @@
+import { AgentMigrationService } from '../update-trust/agent-migration.service';
+import { migrationState } from '../update-trust/agent-migration';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, type ActionJob, type ActionTarget, type PatchDeployment } from '@prisma/client';
 import { z } from 'zod';
@@ -86,6 +88,7 @@ export class PatchingService {
     private readonly policy: AccessPolicyService,
     private readonly actions: ActionsService,
     private readonly signer: SignerClient,
+    private readonly migration: AgentMigrationService,
   ) {}
 
   private bad(code: string, message: string, extra: Record<string, unknown> = {}): never {
@@ -261,14 +264,26 @@ export class PatchingService {
    * `possible`; the same checks run again when the request arrives, and once
    * more inside build().
    */
-  async installState(actor: ActorContext, endpointId: string): Promise<{ possible: boolean; reason: string | null; fix: string | null; installable: number }> {
+  async installState(actor: ActorContext, endpointId: string): Promise<{
+    possible: boolean; reason: string | null; fix: string | null; installable: number;
+    fixAction?: 'agent-card'; fixLink?: { href: string; label: string } | null;
+  }> {
     const no = (reason: string, fix: string | null) => ({ possible: false, reason, fix, installable: 0 });
     const ep = await this.actions.endpointFor(endpointId);
     if (!ep || !ep.customerId) return no('This computer is not in a business.', null);
     const full = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { isOnline: true, updateChannel: true } });
     if (full?.updateChannel !== 'signed') {
-      return no('This computer runs the standard agent, which only reports updates. Installing needs the signed agent, which runs only plans approved on the roster.',
-        'Switch this computer to the signed channel: publish a signed release, then migrate it (Patching setup, step 2).');
+      // 0.34: point at the Agent card's button when it would work, and name
+      // exactly what is missing when it would not (agent-migration.ts).
+      const standard = 'This computer runs the standard agent, which only reports updates. Installing needs the signed agent, which runs only plans approved on the roster.';
+      const open = await this.migration.openFor(endpointId);
+      if (open) {
+        const st = migrationState(open);
+        return { ...no(standard, `An upgrade to the signed agent is already requested. ${st.text} Follow it on the Agent card (Overview tab).`), fixAction: 'agent-card' };
+      }
+      const b = await this.migration.block(endpointId);
+      if (!b) return { ...no(standard, 'Upgrade it: press "Upgrade to signed agent" on the Agent card (Overview tab). It keeps the enrolment, device secret and RustDesk configuration.'), fixAction: 'agent-card' };
+      return { ...no(standard, `${b.reason}${b.fix ? ` ${b.fix}` : ''}`), fixLink: b.link ?? null };
     }
     const notReady = this.actions.readiness(ep, `${UPDATE_INSTALL.id}@${UPDATE_INSTALL.version}`);
     if (notReady) {

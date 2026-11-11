@@ -36,7 +36,7 @@ bundled into `/docs`. Integration work is tracked separately in
 
 | Area | What exists | What is missing |
 |---|---|---|
-| **Signed agent** | Signed binary and update chain; patch scan; approved actions with journaling; signed pause; device binding | Never run on real Windows (**S** only). Not deployed: production is on the standard channel and the approval signer is not installed, so approved actions and patch deployment are **inert in production** |
+| **Signed agent** | Signed binary and update chain; patch scan; approved actions with journaling; signed pause; device binding. **Agent card, Update agent / Check for update now, and per-computer and bulk Upgrade to signed agent** from the console (0.34), with the preconditions refused by name and a Migration status page | Never run on real Windows (**S** only); the console upgrade is integration-tested against a real signed repository and a stand-in agent binary (`e2e-agent-upgrade.mjs`, I), and the migration script has never run on Windows. Not deployed: production is on the standard channel and the approval signer is not installed, so approved actions and patch deployment are **inert in production** |
 | **Approved actions** | Catalog of exactly two: start the Print Spooler once, and install Windows updates. Independent passkey approvals on a separate signer, risk levels, journal, audit | No diagnostics catalog; no service restart, policy refresh, reboot scheduling, log collection or repair actions. Only **S** evidence |
 | **Patching** | Scan, KB, severity, classification, restart detection, WSUS/Intune/WUfB/ConfigMgr detection and refusal, canary, rings, two approvals, auto-pause, retry, reconcile, evidence-first status (0.30); **Install updates** from one computer's Patches tab, as a one-computer deployment with two approvals (0.32); **patch policies** approved once on the signer, then rolled out inside a maintenance window, with each ring signed by the signer only if it falls inside the policy (0.32); a live production pre-flight (0.32) | No compliance report; no restart rule (computers are never restarted); rings are chosen by hand; ring results relayed to the signer aren't signed by the agents; failure reasons only as Windows HRESULTs. Only **S**, and not deployed: production has no signer and no signed agents ([Patching setup](patching-setup.md)) |
 | **Diagnostics** | "Test connection" (RustDesk reachability) and event-log fetch | No one-click diagnostics (DNS, network, service health, disk, heavy processes); event collection takes up to ~3 minutes with no visible progress |
@@ -54,6 +54,11 @@ bundled into `/docs`. Integration work is tracked separately in
   warnings, independent approval bound to the content hash; [script-library.md](script-library.md), I). Not
   implemented: running a script at all, and so signing, scheduling, job queue, bulk runs, output capture and
   redaction, retries. Running waits for the signed agent's real-Windows testing. This is still the largest gap.
+- **Agent upgrade beyond the request (0.34):** the console can now ask one computer, or up to 200, to move to the
+  signed agent, but it can't see the result directly: the standard agent doesn't report the migration script's exit
+  code, so a request that ran and failed shows as *not confirmed* after two hours rather than *failed*. Not
+  implemented: per-business update modes (the mode is platform-wide), migrating while the portal is in *Signed only*
+  (refused by design), and any upgrade for Linux or macOS (no signed agent exists for either).
 - **Software deployment:** catalog, verified packages, install/uninstall jobs, detection rules, version compliance.
   Inventory only.
 - **Linux and macOS beyond read-only reporting:** no installed-software list, service or event monitoring,
