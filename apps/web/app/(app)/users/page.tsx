@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -64,6 +64,10 @@ export default function UsersPage() {
   const { isPlatformAdmin, isBusinessOwner, businessId, businessName, user: me } = usePermissions();
 
   const [search, setSearch] = useState('');
+  // Global search (0.33) opens a person as /users?search=<email>.
+  useEffect(() => {
+    try { const v = new URLSearchParams(window.location.search).get('search'); if (v) setSearch(v.slice(0, 200)); } catch { /* no URL */ }
+  }, []);
   const [businessFilter, setBusinessFilter] = useState<string>('all');
   const [editing, setEditing] = useState<Membership | null>(null);
   const [adding, setAdding] = useState(false);

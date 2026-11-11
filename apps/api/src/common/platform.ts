@@ -8,15 +8,37 @@ export function isLinuxPlatform(platform: string | null | undefined): boolean {
   return !!platform && /^linux/i.test(platform.trim());
 }
 
+/** macOS, under any of the names installers have reported it by (0.33). */
+export function isMacPlatform(platform: string | null | undefined): boolean {
+  return !!platform && /^(macos|mac|darwin|osx|os x)\b/i.test(platform.trim());
+}
+
+/**
+ * The platforms whose agent is the read-only POSIX agent (posix-agent.ts):
+ * Linux from 0.32, macOS from 0.33. Both report heartbeat, inventory and
+ * pending updates and act on nothing the server sends, so the console must
+ * not stage a rotation, a reinstall, a client update or an event-log query
+ * for them — it would look accepted and never happen.
+ *
+ * Returns the label used in messages, or null for every other platform.
+ */
+export function readOnlyAgentOs(platform: string | null | undefined): 'Linux' | 'macOS' | null {
+  if (isLinuxPlatform(platform)) return 'Linux';
+  if (isMacPlatform(platform)) return 'macOS';
+  return null;
+}
+
 /**
  * Why a request that only a Windows agent can act on is refused for a Linux
- * computer (0.32). The Linux agent is read-only: it ignores rotations,
- * reinstalls, client updates and event-log queries, so staging one would look
- * accepted and never happen.
+ * (0.32) or macOS (0.33) computer. One code per platform, so the Linux code a
+ * client may already key on is unchanged.
  */
-export const LINUX_READ_ONLY = {
-  code: 'LINUX_AGENT_READ_ONLY',
-  message: (what: string) =>
-    `${what} is not available on Linux: the Linux agent only reports, and acts on nothing the server sends. ` +
-    'Do it on the computer itself (re-run the installer to reinstall or change the password).',
-};
+export function readOnlyAgentRefusal(platform: string | null | undefined, what: string): { code: string; message: string } | null {
+  const os = readOnlyAgentOs(platform);
+  if (!os) return null;
+  return {
+    code: os === 'Linux' ? 'LINUX_AGENT_READ_ONLY' : 'MACOS_AGENT_READ_ONLY',
+    message: `${what} is not available on ${os}: the ${os} agent only reports, and acts on nothing the server sends. ` +
+      'Do it on the computer itself (re-run the installer to reinstall or change the password).',
+  };
+}

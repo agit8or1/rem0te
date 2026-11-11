@@ -12,6 +12,6 @@ import { EndpointInventoryModule } from '../endpoint-inventory/endpoint-inventor
   imports: [AuditModule, RbacModule, ConfigModule, EndpointInventoryModule],
   controllers: [EndpointsController],
   providers: [EndpointsService, TrmmResolverService, EndpointListService],
-  exports: [EndpointsService, TrmmResolverService],
+  exports: [EndpointsService, TrmmResolverService, EndpointListService],
 })
 export class EndpointsModule {}

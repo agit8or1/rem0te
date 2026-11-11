@@ -23,6 +23,9 @@ const ACTION_LABEL: Record<string, string> = {
   'fresh.auth.passkey': 'activate a protected-device exception',
   // 0.32: an enabled client-update policy installs software unattended.
   'updates.schedule': 'turn on automatic client updates',
+  // 0.33: an enrolment token adds a computer to a business.
+  'enrollment.create': 'make an install link',
+  'apikey.enrollment': 'create an API key that can enrol computers',
 };
 
 /**

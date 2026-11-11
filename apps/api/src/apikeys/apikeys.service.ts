@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { isOwnerRole } from '../rbac/capabilities';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
+import { assertFresh } from '../security-controls/review';
 
 // Known scopes exposed via the public API. Keys can be minted with any
 // subset; the guard enforces the required scope per route.
@@ -49,7 +50,14 @@ export class ApiKeysService {
     });
   }
 
-  async create(actor: ActorContext, dto: { name: string; scopes: string[]; expiresInDays?: number; businessId?: string }) {
+  /**
+   * `freshMethod` is the caller's step-up method, or null. A key carrying
+   * `enrollment:write` can mint enrolment tokens with no person present, so
+   * creating one needs the same fresh re-authentication a person needs to
+   * mint a token themselves (0.33) — otherwise a stolen session would mint
+   * the key, then the tokens. Other scopes are unchanged.
+   */
+  async create(actor: ActorContext, dto: { name: string; scopes: string[]; expiresInDays?: number; businessId?: string }, freshMethod: string | null) {
     // A key always belongs to exactly one business — no key is ever minted
     // with platform-wide reach.
     const businessId = this.acl.requireScope(actor, dto.businessId);
@@ -61,6 +69,12 @@ export class ApiKeysService {
     if (!dto.name || dto.name.length < 1) throw new BadRequestException('name required');
     const validScopes = dto.scopes.filter((s) => (API_SCOPES as readonly string[]).includes(s));
     if (validScopes.length === 0) throw new BadRequestException('at least one valid scope required');
+    if (validScopes.includes('enrollment:write')) {
+      assertFresh(freshMethod, {
+        action: 'apikey.enrollment',
+        message: 'Confirm it is you to create a key that can mint enrolment tokens.',
+      });
+    }
 
     const { raw, prefix, hash } = generateKey();
     const expiresAt = dto.expiresInDays && dto.expiresInDays > 0

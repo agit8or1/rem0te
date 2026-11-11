@@ -115,19 +115,56 @@ at the bottom.
 
 ### Filters, columns and saved views
 
-- **Filters** — business (when you can see more than one), site, online/offline,
-  open or critical alerts, *Restart pending*, agent type, and archived devices.
+- **Filters** — business (when you can see more than one), site, device group,
+  online/offline, open or critical alerts, *Restart pending*, agent type, and
+  archived devices.
   They combine, and *Clear* resets them. The address bar carries the current view,
   so you can bookmark it; whoever opens the link still sees only their own devices.
-- **Columns** — choose which columns show. **Compact / Comfortable** sets the row
-  height. Both are remembered in this browser only.
-- **Views** — save the current filters, sort and columns under a name. Views are
-  stored in this browser only: they are not shared, and do not follow you to
-  another computer.
+- **Columns** — choose which columns show (a *Group* column is available).
+  **Compact / Comfortable** sets the row height. Both are remembered in this
+  browser.
+- **Views** (0.33) — save the current filters, sort, columns and density under a
+  name. A view is stored on your account, so it follows you to another computer.
+  It holds only the list's own parameters, never the devices. It is either
+  **personal** (only you see it) or **shared** with everyone in one business who
+  can see devices. Sharing — and changing or deleting a shared view — is for a
+  Business Owner, a technician with *computers:edit* over the whole business, or
+  the MSP, and is recorded in the audit log. A shared view's filters cannot name
+  another business, or another business's site or group. **Opening a view shows
+  only the devices you can see**: a Business User opening the owner's
+  "everything" view gets their own devices, and a view filtering on alerts is
+  refused to someone without *monitoring:alerts*. Views saved in a browser by
+  0.31 or 0.32 are offered for import once (*Import N views saved in this
+  browser*).
+- **Device groups** (0.33, *Views → Device groups…*) — named, static groups of
+  one business's computers, for filtering and for acting on together. A computer
+  is in at most one group at a time (the same group an enrolment link can put it
+  in). Creating, renaming and deleting groups, and adding or removing members, is
+  for a Business Owner, a technician with *computers:edit* over the whole
+  business, or the MSP — never a Business User, whatever they hold, because a
+  Business User may see only some of the business's computers. A group cannot
+  hold another business's computer. Groups grant no access to anything. Every
+  change is audited. Groups made before 0.33 that span businesses (or have no
+  members) belong to no business: they still filter, and cannot be edited here.
+- **Select and act on many** (0.33) — tick rows (the header box ticks the page;
+  the selection survives paging and filtering) and a bar offers: **Add / Remove**
+  from a group, **Refresh inventory** (also re-checks Windows Update),
+  **Queue client update** (Platform Admin only, as on the Updates page) and
+  **Export selection**. At most 200 devices per request. The server checks every
+  device on its own, with the same checks as doing it to that one device, and
+  the result lists every device it refused and why — not visible to you, no
+  permission, archived, Linux, no device secret, under an *updates* containment
+  pause, already in another group, already current. A bulk refresh counts toward
+  your limit on distinct computers per window (the fleet-abuse guard); the list
+  stops at that limit and says so, rather than tripping it and pausing you.
+  There is deliberately no bulk connect, archive, delete or approved action.
+  Each bulk request is recorded in the audit log, once per business it touched,
+  alongside each device's own entry.
 - **Export CSV** — downloads every device in the current filtered view (not just
   this page), up to 10,000; narrow the filters if there are more. It needs
   *computers:view*, contains exactly what you can see, and **each export is
-  recorded in the audit log** with its filters and row count.
+  recorded in the audit log** with its filters and row count. *Export selection*
+  is the same export limited to the ticked devices.
 - **Connect** on a row works exactly as it does on the device page. **⋯** opens the
   device, or its Patches, Monitoring or Test connection tab, or copies its hostname.
 
@@ -137,6 +174,64 @@ and search still finds a device by it.
 **Online means the agent checked in within the last 30 minutes.** The agent
 heartbeats every 3 minutes, so a machine that has genuinely dropped shows Offline
 a few minutes later, not instantly.
+
+### Search everything — Ctrl+K (0.33)
+
+The **Search** box at the top of every page, or **Ctrl+K** (**⌘K** on a Mac)
+from anywhere, searches devices, businesses, sites, people and open alerts in
+one go. Type at least two characters (at most 100); results appear when you
+pause. **↑ / ↓** move through them, **Enter** opens the highlighted one, **Esc**
+closes the box. Ctrl/⌘-click opens a result in a new tab.
+
+| Group | Matches on | Opens | Needs |
+|---|---|---|---|
+| **Devices** | Name, hostname, RustDesk ID, serial number, signed-in user, IP address, a network adapter's IPv4, alias | The device's page | *View computers* |
+| **Businesses** | Name, code, email, city | The business's page | Nothing beyond being in it (as the Businesses list) |
+| **Sites** | Name, city, address | The device list filtered to that site | *View computers* |
+| **People** | First name, last name, email — "jane doe" finds Jane Doe | The Users list, filtered to that person | *View business users* |
+| **Open alerts** | Title (open and acknowledged only) | The device's Monitoring tab, or the alerts list | *See and work alerts* |
+
+**What a device result shows.** Its name, online or offline, business and site,
+and — unless the name itself matched — *which* field matched and its value
+(*Serial: 5CG1234XYZ*, *RustDesk ID: 123456789*, *Adapter IP: 10.0.4.17*). Only
+the field that matched is returned; the others are not sent. Every one of them
+is already on the device's own page for anyone who can open it, which is the
+only kind of device search can find.
+
+**Order and limits.** An exact match comes first, then one that starts with
+what you typed, then one that contains it; among equals, online devices first,
+then by name. Each group shows at most **8**. When there are more, the group
+says *first 8*; for devices there is a link to the device list's own search,
+which pages through everything (it matches a slightly different set of fields:
+OS, business and site names, but not serial numbers or adapter addresses).
+Archived devices and inactive sites are not found, as on their lists.
+
+**You only find what you could already open.** Each group is built from the
+same rule as its own list page — not a copy of it: devices from the device
+list's scope (a Business User sees only devices assigned to them or shared
+company-wide, a technician only their assignment's), businesses, sites and
+people from their list routes, alerts from the alerts list. A group you have
+no permission for is **left out**, never shown as empty. Another business's
+device, site or person is not found by anything you type — not even its exact
+hostname or RustDesk ID. Search grants nothing: opening a result applies that
+page's own check again.
+
+**Privacy and limits.** Searches are not written to the audit log (a keystroke
+is not an event), and the API does not log the query text — an error is
+logged with the path only. A reverse proxy in front of Rem0te keeps its own
+access log, which records the address of each request, search included.
+Results are sent with `Cache-Control: no-store`. Searching is limited to **120
+requests a minute per client address**; past that the box says *Too many
+searches* until the minute is up. Typing pauses of 200 ms trigger a request,
+so ordinary typing stays well inside it.
+
+**How fast.** Measured end to end through the API on a shared scratch
+Postgres 16 (Platform Admin, every device in scope): 50–70 ms over 2,000
+devices and 300–450 ms over 20,000 — in line with the device list's own
+search (56 ms and 320 ms on the same data), which scans the same way. A
+two-letter query that matches nearly every device (*pc*) is the slow case:
+about 0.3 s at 2,000 and 1 s at 20,000, because every match has to be ranked.
+There is no search index; the measured trade-off is in the 0.33 changelog.
 
 ### The device workspace (0.31)
 
@@ -167,14 +262,20 @@ what it does.
 | Overview | Assignment, key alerts, patch status, recent activity, then the hardware, utilisation, storage, network and update cards, each with its age |
 | Monitoring | Alerts first (acknowledge and resolve here), then what is watched on this computer in words, the agent's last report, and what changed |
 | Software | Installed software with a filter, and recent software changes (Windows agents only) |
+| Processes | Every running process, as a read-only snapshot with its age and a Refresh (standard Windows agent, 0.33) |
+| Services | Every service with state, start mode and run-as account; snapshot with age and Refresh (0.33) |
+| Network | Every network connection: addresses, gateway, DNS, DHCP, MAC; snapshot with age and Refresh (0.33) |
 | Patches | Patch status, updates offered, Windows Update history |
 | Event logs | A page of one Windows event log, on request (Windows agents only) |
 | Diagnostics | Test connection: server, computer and your own RustDesk |
 | Actions | Request an approved action and see past requests |
 | History | Remote sessions, technician notes, the AI-written summary (labelled as such) and who can connect |
 
-There are no Services or Processes tabs: no agent collects them. The agent reads
-only the services a monitor names, and those appear on Monitoring. Old links
+Processes, Services and Network are snapshots, not live views: each says when it
+was taken, and **Refresh** asks the computer for a new one on its next check-in.
+They have no buttons that change the computer — restarting a service is a signed
+maintenance action on Actions, and ending a process is not offered
+([diagnostics.md](diagnostics.md#the-processes-services-and-network-tabs)). Old links
 (`?tab=notes`, `?tab=timeline`, `?tab=access-review`) open History.
 
 ---
@@ -237,13 +338,20 @@ walks through it in six steps on one page:
    different business or site. You can only pick a business you manage; the
    server refuses any other, and a site that is not that business's.
 2. **Operating system.** Windows gets RustDesk and the Rem0te agent (heartbeat,
-   inventory, monitoring, update scans). Linux and macOS get RustDesk and a
-   one-time registration — remote access only.
+   inventory, monitoring, update scans). Linux (0.32) and macOS (0.33, run with
+   `sudo`) get RustDesk and the read-only agent: heartbeat, inventory and
+   pending updates, and nothing the console sends is acted on
+   ([inventory.md](inventory.md)).
 3. **Run the installer.** A one-line command (PowerShell as Administrator, or a
    root shell), and on Windows also a one-click installer link to send to the
    person at the machine. It contains a single-use enrolment token that expires
    in 24 hours, and it is shown **once**: reload the page and only the waiting
    continues. If the command is lost, revoke the link and make a new one.
+   Making it asks you to confirm it is you (password, authenticator code or
+   passkey) unless you did in the last 10 minutes (0.33): a link adds a computer
+   to the business, so a session left open must not be enough. Your choices are
+   kept while you confirm, and if you cancel nothing is made — press the button
+   again.
 4. **Wait for the device.** The page checks every few seconds and says *enrolled*
    only when a device has used this link. You can revoke an unused link here.
 5. **First health** — what the server has actually received: the business and

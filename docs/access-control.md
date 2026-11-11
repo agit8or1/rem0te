@@ -100,6 +100,11 @@ Three rules that are easy to assume the other way round:
   and minting a launcher token for it, take the same per-computer access as connecting: a grant on
   that computer, or the computer being company-wide. Before 0.18.22 the capability alone was
   enough, which let a Business User read the password of a machine they had been given no access to.
+- **`computers:edit` does not let a Business User manage device groups or shared views** (0.33).
+  Both are about the whole business, and a Business User may see only some of its computers, so they
+  are for a Business Owner, a technician whose assignment grants `computers:edit` over the whole
+  business, or the MSP — the same rule as the client-update policy. A saved view never widens
+  anything: it is a set of list parameters, run as whoever opens it.
 - **Making a computer company-wide needs `users:manage`**, the capability that grants access to one
   person, because it grants access to everyone in the business at once.
 - **`support:history_view` reads sessions; it never changes them.** Completing, cancelling or
@@ -183,7 +188,21 @@ computers they can see or their own sessions), and activity follows the audit
 page. A section the caller lacks the capability for is `null`, not zero.
 Proven by `apps/api/scripts/e2e-dashboard.mjs`.
 
-Proven by `apps/api/scripts/e2e-business-access.mjs` — 82 server-side checks including direct-URL
+Global search (`GET /search`, 0.33) works the same way. Each group is built
+from its own list route's where builder — the device list's `scopedWhere`,
+`listWhere` for businesses and sites, `memberWhere` for people, `alertWhere`
+for alerts — with the search AND-ed onto it, and is gated by that list's
+capability (`computers:view`, none, `computers:view`, `users:view`,
+`monitoring:alerts`). A group the caller may not use is `null`. Another
+business's computers, sites and people are not found by any query, including
+an exact hostname or RustDesk ID. The older `GET /admin/search` was removed in
+0.31.2: it scoped computers by business alone, so a Business User found
+computers assigned only to others and a technician restricted to named
+computers found the whole business. Proven by
+`apps/api/scripts/e2e-search.mjs`; the rules are §28 of the security
+invariants.
+
+Proven by `apps/api/scripts/e2e-business-access.mjs` — 83 server-side checks including direct-URL
 and direct-API cross-business probing in both directions.
 
 ---
@@ -220,6 +239,11 @@ Revealing a computer password, changing permissions, managing technicians, SSO
 configuration and passkey changes need a recent re-authentication on top of a
 valid session. Access is checked first, then step-up. See
 [sign-in.md](sign-in.md#step-up).
+
+From 0.33, `computers:add` alone no longer makes an enrolment link: making one
+also needs a fresh re-authentication, for every role, and so does creating an
+API key with `enrollment:write`. See
+[sign-in.md](sign-in.md#always-on-whatever-is-configured).
 
 ## Access review and offboarding (v0.20)
 

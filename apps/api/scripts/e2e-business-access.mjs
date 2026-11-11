@@ -184,10 +184,11 @@ try {
     check(ids.includes(epA.id) && ids.includes(epB.id), 'sees every computer');
   }
   {
-    // GET /admin/search was removed in 0.31.2: it scoped computers by business
-    // alone. e2e-endpoint-visibility.mjs holds the proof.
-    const r = await req('GET', `/admin/search?q=E2E-`, { cookie: cAdmin });
-    check(r.status === 404, 'the removed /admin/search route is gone', `HTTP ${r.status}`);
+    // GET /search (0.33) replaced /admin/search, which scoped by business alone.
+    const r = await req('GET', `/search?q=${encodeURIComponent(`-PC-${sfx}`)}`, { cookie: cAdmin });
+    const found = (r.body?.data?.groups?.computers?.items ?? []).map((c) => c.id);
+    check(r.status === 200 && found.includes(epA.id) && found.includes(epB.id),
+      'global search spans businesses', `HTTP ${r.status}, ${found.length} computers`);
   }
   {
     const r = await req('POST', '/businesses', {
@@ -418,10 +419,10 @@ try {
     check(r.status === 403, 'CANNOT make themselves a Platform Admin', `HTTP ${r.status}`);
   }
   {
-    const r = await req('GET', `/admin/search?q=E2E-`, { cookie: cUserA });
-    const found = (r.body?.data?.computers ?? []).map((c) => c.id);
-    check(r.status === 404 && !found.includes(epB.id),
-      'search cannot reach another business (the route is gone)', `HTTP ${r.status}, saw ${found.length} computers`);
+    const r = await req('GET', `/search?q=${encodeURIComponent(`-PC-${sfx}`)}`, { cookie: cUserA });
+    const found = (r.body?.data?.groups?.computers?.items ?? []).map((c) => c.id);
+    check(r.status === 200 && !found.includes(epB.id),
+      'search stays inside their own business', `HTTP ${r.status}, saw ${found.length} computers`);
   }
 
   // ── Quick Connect ─────────────────────────────────────────────────────────

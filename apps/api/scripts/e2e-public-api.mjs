@@ -56,14 +56,20 @@ try {
   const businessId = bizRes.body?.data?.id;
   created.push({ type: 'customer', id: businessId });
 
-  // 3. mint an API key bound to that business
-  const mint = await req('POST', '/apikeys',
-    {
-      name: `e2e ${suffix}`,
-      businessId,
-      scopes: ['companies:read', 'companies:write', 'computers:read', 'enrollment:write'],
-    },
-    { cookie });
+  // 3. mint an API key bound to that business. A key with enrollment:write
+  //    needs a fresh re-authentication (0.33): refused without, made with one.
+  const keyBody = {
+    name: `e2e ${suffix}`,
+    businessId,
+    scopes: ['companies:read', 'companies:write', 'computers:read', 'enrollment:write'],
+  };
+  const staleKey = await req('POST', '/apikeys', keyBody, { cookie });
+  log('enrollment:write key without step-up refused', staleKey, staleKey.status === 403 && staleKey.body?.code === 'STEP_UP_REQUIRED');
+  assert(staleKey.status === 403 && staleKey.body?.code === 'STEP_UP_REQUIRED', 'an enrollment:write key without a step-up must be refused');
+  const up = await req('POST', '/auth/step-up', { password: adminPw }, { cookie });
+  const stepCookie = (up.setCookie.match(/step_up=[^;]+/) ?? [])[0];
+  assert(up.status === 200 && stepCookie, 'step-up failed');
+  const mint = await req('POST', '/apikeys', keyBody, { cookie: `${cookie}; ${stepCookie}` });
   log('mint api key', mint, mint.status === 201);
   assert(mint.status === 201, 'mint failed');
   const rawKey = mint.body?.data?.key;

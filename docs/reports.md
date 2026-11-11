@@ -57,8 +57,9 @@ links to its Patches tab.
   hash.
 - **Not heard from in N days.** No heartbeat in that long, or never. Oldest first.
 - **Non-Windows with no inventory.** Devices whose platform is not Windows (or was never reported) that have
-  never sent an inventory pass. Linux and macOS agents register once and send no inventory yet, so today this
-  is every Linux and macOS device; the list keeps that visible.
+  never sent an inventory pass. The read-only Linux (0.32) and macOS (0.33) agents send one, so this is now the
+  Linux and macOS computers installed before their agent existed (or a Mac installed without `sudo`), and
+  anything else that registered once; re-running the installer on them adds the agent.
 
 ## Alert frequency
 

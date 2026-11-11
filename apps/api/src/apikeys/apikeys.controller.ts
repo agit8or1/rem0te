@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import type { Request } from 'express';
 import { IsArray, IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator';
 import { ApiKeysService } from './apikeys.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -6,6 +7,7 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
 import { Actor } from '../common/decorators/actor.decorator';
 import type { ActorContext } from '../rbac/access-control.service';
+import { StepUpService } from '../auth/step-up.service';
 
 class CreateApiKeyDto {
   @IsString() @Length(1, 128) name!: string;
@@ -18,7 +20,7 @@ class CreateApiKeyDto {
 @Controller('apikeys')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class ApiKeysController {
-  constructor(private readonly svc: ApiKeysService) {}
+  constructor(private readonly svc: ApiKeysService, private readonly stepUp: StepUpService) {}
 
   @Get()
   @RequirePermissions('api_keys:read')
@@ -28,8 +30,11 @@ export class ApiKeysController {
 
   @Post()
   @RequirePermissions('api_keys:write')
-  async create(@Actor() actor: ActorContext, @Body() dto: CreateApiKeyDto) {
-    return { success: true, data: await this.svc.create(actor, dto) };
+  async create(@Actor() actor: ActorContext, @Body() dto: CreateApiKeyDto, @Req() req: Request) {
+    // A key with enrollment:write needs a fresh re-authentication (0.33).
+    const u = req.user as { sub?: string; iat?: number } | undefined;
+    const freshMethod = u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null;
+    return { success: true, data: await this.svc.create(actor, dto, freshMethod) };
   }
 
   @Delete(':id')

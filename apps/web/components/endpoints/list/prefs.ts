@@ -2,7 +2,9 @@ import { EMPTY_FILTERS, type Density, type DeviceFilters, type SortKey } from '.
 
 /**
  * Per-viewer preferences for the device list, kept in this browser's
- * localStorage: visible columns, density and named saved views.
+ * localStorage: visible columns and density. Saved views live on the server
+ * since 0.33 (/device-views); views saved in a browser by 0.31/0.32 are read
+ * here only so the list can offer to import them.
  *
  * Every read and write is wrapped: storage can be missing, blocked, full or
  * throw (private windows, cleared site data). The list works without it —
@@ -14,7 +16,8 @@ const PREFS_KEY = 'rem0te.devices.prefs.v1';
 const VIEWS_KEY = 'rem0te.devices.views.v1';
 
 export interface Prefs { columns: string[] | null; density: Density }
-export interface SavedView {
+/** A 0.31/0.32 browser-only view, kept for the one-time import. */
+export interface LegacyView {
   name: string;
   filters: DeviceFilters;
   columns: string[];
@@ -48,12 +51,14 @@ export function loadPrefs(): Prefs {
 }
 export const savePrefs = (p: Prefs) => write(PREFS_KEY, p);
 
-export function loadViews(): SavedView[] {
-  const v = read<SavedView[]>(VIEWS_KEY);
+export function loadLegacyViews(): LegacyView[] {
+  const v = read<LegacyView[]>(VIEWS_KEY);
   if (!Array.isArray(v)) return [];
   return v
     .filter((x) => x && typeof x.name === 'string' && x.filters && Array.isArray(x.columns))
     .map((x) => ({ ...x, filters: { ...EMPTY_FILTERS, ...x.filters } }))
     .slice(0, 50);
 }
-export const saveViews = (v: SavedView[]) => write(VIEWS_KEY, v);
+export function clearLegacyViews() {
+  try { window.localStorage.removeItem(VIEWS_KEY); } catch { /* storage unavailable: nothing to clear */ }
+}

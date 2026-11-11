@@ -46,6 +46,13 @@ export class DiagnosticsCatalogController {
     return { success: true, data: await this.svc.history(actor, id, Number(limit) || 20) };
   }
 
+  /** 0.33: the Processes, Services and Network tabs. Refresh is a POST to runs. */
+  @Get('snapshots/:key')
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  async snapshot(@Actor() actor: ActorContext, @Param('id') id: string, @Param('key') key: string) {
+    return { success: true, data: await this.svc.snapshot(actor, id, key) };
+  }
+
   @Get('runs/:runId')
   @RequireCapability(CAP.COMPUTERS_VIEW)
   async one(@Actor() actor: ActorContext, @Param('id') id: string, @Param('runId') runId: string) {

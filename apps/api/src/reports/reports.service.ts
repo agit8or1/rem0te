@@ -286,7 +286,7 @@ export class ReportsService {
         agent: 'Signed: the agent reports the signed update channel. Standard: it reports an agent version on the standard channel. None: no agent has ever reported a version (RustDesk only, or never checked in).',
         deviceSecret: 'A device secret is bound when the agent\'s installer registered one and the server stored it. Without one, a heartbeat is accepted as "online" but nothing it reports is written.',
         silent: `Not heard from: no heartbeat in the last ${q.silentDays} day${q.silentDays === 1 ? '' : 's'}, or never.`,
-        nonWindowsNoInventory: 'Not Windows (or no platform reported) and no inventory pass ever received. Linux and macOS agents register once and send no inventory yet.',
+        nonWindowsNoInventory: 'Not Windows (or no platform reported) and no inventory pass ever received. The read-only Linux (0.32) and macOS (0.33) agents send one; these are computers installed before their agent existed, or a Mac installed without sudo.',
       },
       totals: summarise(rows),
       versions: [...versions.values()].sort((a, b) => TYPE_ORDER[a.type] - TYPE_ORDER[b.type] || (b.version ?? '').localeCompare(a.version ?? '', undefined, { numeric: true }) || b.count - a.count),

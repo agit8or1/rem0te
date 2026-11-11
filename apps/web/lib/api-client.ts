@@ -171,6 +171,9 @@ export const endpointsApi = {
   // computer. Populated by the agent's heartbeat, so a machine whose installer
   // predates this reports `agentBound: false` and nothing else.
   inventory: (id: string) => api.get(`/endpoints/${id}/inventory`),
+  // Metric history (0.33): CPU, memory and disk over 24h | 7d | 30d | 90d.
+  // Gaps come back as intervals; nothing is interpolated.
+  metrics: (id: string, range: string) => api.get(`/endpoints/${id}/metrics`, { params: { range } }),
   // Queues a re-collection for the endpoint's next heartbeat — up to ~3
   // minutes away. Nothing is synchronous here.
   refreshInventory: (id: string) => api.post(`/endpoints/${id}/inventory/refresh`, {}),
@@ -691,6 +694,32 @@ export const monitoringApi = {
   setPolicy: (data: { scope: 'global' | 'business'; businessId?: string; levels: { afterMinutes: number; minSeverity: Severity; destinations: { label: string; url: string }[] }[]; ticketing: { enabled: boolean; minSeverity: Severity } }) =>
     api.put('/monitoring/notify-policy', data),
   endpoint: (id: string) => api.get(`/monitoring/endpoints/${id}`),
+};
+
+// Global search (0.33): one route, grouped results. A group the caller may
+// not use is null (never an empty list). See docs/technician-guide.md.
+export type SearchComputerField = 'hostname' | 'rustdeskId' | 'serialNumber' | 'loggedOnUser' | 'ipAddress' | 'privateIp' | 'alias';
+export interface SearchGroup<T> { items: T[]; more: boolean }
+export interface SearchResults {
+  query: string;
+  cap: number;
+  groups: {
+    computers: SearchGroup<{
+      id: string; name: string; hostname: string | null; isOnline: boolean; lastSeenAt: string | null; platform: string | null;
+      business: { id: string; name: string | null } | null; site: { id: string; name: string | null } | null;
+      match: { field: SearchComputerField; value: string | null } | null;
+    }> | null;
+    businesses: SearchGroup<{ id: string; name: string; code: string | null; city: string | null; isActive: boolean }> | null;
+    sites: SearchGroup<{ id: string; name: string; city: string | null; business: { id: string; name: string } }> | null;
+    users: SearchGroup<{ id: string; membershipId: string; name: string | null; email: string; status: string; accessLevel: string; business: { id: string; name: string } | null }> | null;
+    alerts: SearchGroup<{
+      id: string; title: string; severity: 'INFO' | 'WARNING' | 'CRITICAL'; state: string; kind: string; lastSeenAt: string;
+      business: { id: string; name: string } | null; computer: { id: string; name: string } | null; site: { id: string; name: string } | null;
+    }> | null;
+  };
+}
+export const searchApi = {
+  search: (q: string, signal?: AbortSignal) => api.get<{ success: boolean; data: SearchResults }>('/search', { params: { q }, signal }),
 };
 
 // Scheduled RustDesk client updates (0.32). Turning a policy on, or removing a

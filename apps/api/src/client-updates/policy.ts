@@ -108,6 +108,9 @@ export const BLOCKER: Record<Blocker, { permanent: boolean; text: string }> = {
   queued: { permanent: false, text: 'Already queued.' },
 };
 
+/** UpdateJob states in which a staged rollout owns a computer's updates. */
+export const ROLLOUT_OPEN = ['REQUESTED', 'DISPATCHED', 'INSTALLING', 'AWAITING_VERIFICATION'] as const;
+
 export interface EligibilityFacts {
   status: string;
   isOnline: boolean;

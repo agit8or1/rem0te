@@ -14,13 +14,14 @@ import type { ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
 import { RateLimit } from '../common/throttling';
 import { DiagnosticResultDto } from '../diagnostics-catalog/diagnostic-result.dto';
+import { StepUpService } from '../auth/step-up.service';
 
 @Controller('enrollment')
 export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(EnrollmentController.name);
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private readonly enrollment: EnrollmentService) {}
+  constructor(private readonly enrollment: EnrollmentService, private readonly stepUp: StepUpService) {}
 
   onModuleInit() {
     // Every minute: hbbs presence is near real-time (30 s registration
@@ -51,11 +52,16 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
     return { success: true, data: tokens };
   }
 
+  // Minting needs a fresh re-authentication (0.33), for every role: see
+  // EnrollmentService.createClaimToken. The service checks it after scope,
+  // so this only reads what the request carries.
   @Post('tokens')
   @UseGuards(JwtAuthGuard, CapabilitiesGuard)
   @RequireCapability(CAP.COMPUTERS_ADD)
-  async createToken(@Actor() actor: ActorContext, @Body() dto: CreateClaimTokenDto) {
-    const token = await this.enrollment.createClaimToken(actor, dto);
+  async createToken(@Actor() actor: ActorContext, @Body() dto: CreateClaimTokenDto, @Req() req: Request) {
+    const u = req.user as { sub?: string; iat?: number } | undefined;
+    const freshMethod = u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null;
+    const token = await this.enrollment.createClaimToken(actor, dto, { via: 'session', freshMethod });
     return { success: true, data: token };
   }
 

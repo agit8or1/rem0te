@@ -1,5 +1,8 @@
 import { api } from '@/lib/api-client';
-import type { DeviceFilters, DeviceListResponse, SortKey } from './types';
+import type { BulkAction, BulkResponse, DeviceFilters, DeviceGroup, DeviceListResponse, SavedView, SortKey } from './types';
+
+/** The largest selection one bulk request may name (the server refuses more). */
+export const BULK_MAX = 200;
 
 /** Query-string form of the current view. Empty values are left out, never sent as "all". */
 export function toParams(f: DeviceFilters, sort: SortKey, dir: 'asc' | 'desc', page?: number, pageSize?: number) {
@@ -12,10 +15,62 @@ export function toParams(f: DeviceFilters, sort: SortKey, dir: 'asc' | 'desc', p
   if (f.restartPending) p.restartPending = 'true';
   if (f.agent) p.agent = f.agent;
   if (f.status !== 'current') p.status = f.status;
+  if (f.groupId) p.groupId = f.groupId;
   if (page) p.page = String(page);
   if (pageSize) p.pageSize = String(pageSize);
   return p;
 }
+
+/** A view's filters in the list's own shape (the server stored only list parameters). */
+export function viewFilters(f: SavedView['filters']): DeviceFilters {
+  const s = (k: keyof DeviceFilters) => (typeof f[k] === 'string' ? (f[k] as string) : '');
+  return {
+    search: s('search'), businessId: s('businessId'), siteId: s('siteId'), groupId: s('groupId'),
+    online: (s('online') as DeviceFilters['online']) || '', alerts: (s('alerts') as DeviceFilters['alerts']) || '',
+    restartPending: f.restartPending === true, agent: (s('agent') as DeviceFilters['agent']) || '',
+    status: (s('status') as DeviceFilters['status']) || 'current',
+  };
+}
+
+/** The current filters as a view stores them: set values only. */
+export function storedFilters(f: DeviceFilters): Record<string, string | boolean> {
+  const out: Record<string, string | boolean> = {};
+  for (const [k, v] of Object.entries(f)) {
+    if (k === 'status' ? v !== 'current' : !!v) out[k] = typeof v === 'string' ? v.trim() : v;
+  }
+  return out;
+}
+
+async function blobDownload(r: { data: unknown; headers: Record<string, unknown> }) {
+  const cd = String(r.headers['content-disposition'] ?? '');
+  const name = /filename="([^"]+)"/.exec(cd)?.[1] ?? 'devices.csv';
+  return { blob: r.data as Blob, filename: name, rows: Number(r.headers['x-rows'] ?? 0), notExported: Number(r.headers['x-not-exported'] ?? 0) };
+}
+
+export const deviceViewsApi = {
+  list: () => api.get('/device-views').then((r) => r.data?.data as { views: SavedView[]; may: { share: boolean } }),
+  create: (body: { name: string; filters: Record<string, string | boolean>; columns: string[]; sort: SortKey; dir: 'asc' | 'desc'; density: string; shared: boolean; businessId?: string }) =>
+    api.post('/device-views', body).then((r) => r.data?.data as SavedView),
+  update: (id: string, body: Partial<{ name: string; filters: Record<string, string | boolean>; columns: string[]; sort: SortKey; dir: 'asc' | 'desc'; density: string }>) =>
+    api.patch(`/device-views/${id}`, body).then((r) => r.data?.data as SavedView),
+  remove: (id: string) => api.delete(`/device-views/${id}`),
+};
+
+export const deviceGroupsApi = {
+  list: (businessId?: string) =>
+    api.get('/device-groups', { params: businessId ? { businessId } : {} }).then((r) => r.data?.data as { groups: DeviceGroup[]; may: { manage: boolean; reason: string | null } }),
+  create: (body: { name: string; description?: string; businessId?: string }) => api.post('/device-groups', body).then((r) => r.data?.data),
+  update: (id: string, body: { name?: string; description?: string | null }) => api.patch(`/device-groups/${id}`, body).then((r) => r.data?.data),
+  remove: (id: string) => api.delete(`/device-groups/${id}`).then((r) => r.data?.data as { membersReleased: number }),
+};
+
+export const bulkApi = {
+  run: (action: BulkAction, endpointIds: string[], groupId?: string) =>
+    api.post('/endpoints/bulk', { action, endpointIds, ...(groupId ? { groupId } : {}) }).then((r) => r.data?.data as BulkResponse),
+  /** The selection as CSV, through the audited device-list export. */
+  exportCsv: async (endpointIds: string[], sort: SortKey, dir: 'asc' | 'desc') =>
+    blobDownload(await api.post('/endpoints/bulk/export.csv', { endpointIds, sort, dir }, { responseType: 'blob' })),
+};
 
 export const deviceListApi = {
   list: (params: Record<string, string>) =>

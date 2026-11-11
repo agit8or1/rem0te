@@ -32,6 +32,11 @@ export const DIAGNOSTIC_KEYS = [
   'dns_resolution',
   'pending_updates',
   'reboot_status',
+  // 0.33: full snapshots, shown on the device workspace's Processes, Services
+  // and Network tabs rather than in the Diagnostics list (see SNAPSHOT_KEYS).
+  'process_list',
+  'service_list',
+  'network_adapters',
 ] as const;
 export type DiagnosticKey = (typeof DIAGNOSTIC_KEYS)[number];
 
@@ -50,6 +55,12 @@ export interface CatalogEntry {
   risk: 'read_only';
   expectedImpact: 'none';
   approvals: 'none (read-only)';
+  /**
+   * 0.33: the device workspace tab that shows this key's latest result as a
+   * snapshot (with its age and a Refresh). Snapshot keys are left out of the
+   * Diagnostics list, which would only repeat the tab.
+   */
+  tab?: 'processes' | 'services' | 'network';
 }
 
 const W = ['windows'] as const;
@@ -102,7 +113,29 @@ export const CATALOG: readonly CatalogEntry[] = [
     description: 'Whether Windows is waiting for a restart, and which of the standard signals say so (component servicing, Windows Update, pending file renames, the update agent), with the last boot time.',
     capabilityReason: 'Flags and the boot time only; the rename list itself (which holds paths) is never read.',
   },
+  {
+    key: 'process_list', label: 'Processes', ...RO, capability: VIEW, duration: 'seconds', tab: 'processes',
+    description: 'Every running process: name, process id, processor time, working set, the user it runs as where Windows lets the agent read it, and when it started. No command lines, paths, modules or environment.',
+    capabilityReason: 'Process names and owners are no more than the console already shows (installed software, the signed-in user). Command lines, which can carry secrets, are never collected.',
+  },
+  {
+    key: 'service_list', label: 'Services', ...RO, capability: VIEW, duration: 'seconds', tab: 'services',
+    description: 'Every installed Windows service: name, display name, state, start mode and the account it runs as. No binary paths or arguments.',
+    capabilityReason: 'The same service names and states the monitors read, plus the run-as account name. Binary paths and arguments are never collected.',
+  },
+  {
+    key: 'network_adapters', label: 'Network adapters', ...RO, capability: VIEW, duration: 'seconds', tab: 'network',
+    description: 'Every network connection Windows lists: status, speed, MAC address, IPv4 and IPv6 addresses, gateways, DNS servers and suffix, and DHCP (server and lease).',
+    capabilityReason: 'Adapters, MAC and addresses are already in the inventory on the Specs tab; this adds gateways, DNS and DHCP detail.',
+  },
 ];
+
+/** The keys shown as workspace snapshots (0.33), and the tab each belongs to. */
+export const SNAPSHOT_KEYS = ['process_list', 'service_list', 'network_adapters'] as const;
+export type SnapshotKey = (typeof SNAPSHOT_KEYS)[number];
+export function isSnapshotKey(k: unknown): k is SnapshotKey {
+  return typeof k === 'string' && (SNAPSHOT_KEYS as readonly string[]).includes(k);
+}
 
 const BY_KEY = new Map<string, CatalogEntry>(CATALOG.map((e) => [e.key, e]));
 
@@ -134,6 +167,18 @@ export const MAX_RUNS_PER_USER = 40;
 
 /** Stored result size cap, bytes of JSON. The database CHECK is the backstop at 64 KB. */
 export const MAX_RESULT_BYTES = 32_768;
+/**
+ * Snapshot keys (0.33) list everything rather than a top ten, so they get a
+ * larger cap: 1,000 processes at ~140 bytes each would not fit in 32 KB. The
+ * database backstop for them is 256 KB (migration 0042).
+ */
+export const MAX_SNAPSHOT_BYTES = 131_072;
+/** Rows a snapshot may hold, on the agent and again here. */
+export const SNAPSHOT_ROWS = { process_list: 1000, service_list: 1000, network_adapters: 32 } as const;
+/** The stored cap for one key. */
+export function resultCapFor(key: string): number {
+  return isSnapshotKey(key) ? MAX_SNAPSHOT_BYTES : MAX_RESULT_BYTES;
+}
 /** What the agent may post for one result (refresh_inventory carries the whole inventory). */
 export const MAX_AGENT_RESULT_CHARS = 600_000;
 export const MAX_MESSAGE_CHARS = 300;
@@ -186,6 +231,11 @@ function ips(v: unknown, max: number): string[] {
 }
 const HOST_RE = /^[A-Za-z0-9.-]{1,253}$/;
 const SVC_RE = /^[A-Za-z0-9_.$ -]{1,128}$/;
+// A Windows account as a service or process reports it: LocalSystem,
+// NT AUTHORITY\LocalService, .\backup, CORP\svc-sql, svc@corp.example.
+const ACCOUNT_RE = /^[A-Za-z0-9 _.$@\\-]{1,128}$/;
+// Six to eight hex pairs split by ':' or '-' (EUI-48, or EUI-64 on some virtual adapters).
+const isMac = (m: string) => /^[0-9A-Fa-f:-]{17,23}$/.test(m) && /^(6|7|8)$/.test(String(m.split(/[:-]/).length)) && m.split(/[:-]/).every((p) => /^[0-9A-Fa-f]{2}$/.test(p));
 const LOGS = ['System', 'Application'] as const;
 export const REBOOT_SOURCES = ['component_servicing', 'windows_update', 'pending_file_rename', 'update_agent'] as const;
 const STATES = ['Running', 'Stopped', 'Paused', 'StartPending', 'StopPending', 'ContinuePending', 'PausePending', 'Missing', 'Unknown'] as const;
@@ -307,6 +357,58 @@ export function sanitizeResult(key: string, raw: unknown): Record<string, unknow
         rebootRequired: bool(r.rebootRequired),
         count: int(r.count, 0, 1000),
         pending: list(r.pending, 100).map((u) => ({ title: str(u.title, 300), kb: str(u.kb, 32), severity: str(u.severity, 32), sizeBytes: int(u.sizeBytes, 0, Number.MAX_SAFE_INTEGER) })).filter((u) => u.title),
+      };
+    case 'process_list': {
+      const rows = list(r.processes, SNAPSHOT_ROWS.process_list).map((p) => {
+        const base = procRow(p);
+        if (!base) return null;
+        // A user name only if it looks like one (DOMAIN\\user, NT AUTHORITY\\SYSTEM, user@domain).
+        const u = str(p.user, 128);
+        return { ...base, user: u && ACCOUNT_RE.test(u) ? u : null, startedAt: iso(p.startedAt) };
+      }).filter(Boolean);
+      return {
+        processCount: int(r.processCount, 0, 1_000_000),
+        userNamesRead: bool(r.userNamesRead) ?? false,
+        processes: rows,
+      };
+    }
+    case 'service_list': {
+      const rows = list(r.services, SNAPSHOT_ROWS.service_list).map((v) => {
+        const name = str(v.name, 128);
+        if (!name || !SVC_RE.test(name)) return null;
+        const acct = str(v.account, 128);
+        return {
+          name, displayName: str(v.displayName, 256),
+          state: oneOf(v.state, STATES, 'Unknown'), startMode: oneOf(v.startMode, START, 'Unknown'),
+          account: acct && ACCOUNT_RE.test(acct) ? acct : null,
+        };
+      }).filter(Boolean);
+      return { serviceCount: int(r.serviceCount, 0, 100_000), services: rows };
+    }
+    case 'network_adapters':
+      return {
+        adapters: list(r.adapters, SNAPSHOT_ROWS.network_adapters).map((a) => {
+          const mac = str(a.mac, 32);
+          const dhcpServer = str(a.dhcpServer, 64);
+          const suffix = str(a.dnsSuffix, 253);
+          return {
+            name: str(a.name, 128),
+            connectionId: str(a.connectionId, 128),
+            status: str(a.status, 32),
+            up: bool(a.up) ?? false,
+            mac: mac && isMac(mac) ? mac.toUpperCase().replace(/-/g, ':') : null,
+            speedBps: int(a.speedBps, 0, 1e13),
+            ipv4: ips(a.ipv4, 16),
+            ipv6: ips(a.ipv6, 16),
+            gateway: ips(a.gateway, 8),
+            dnsServers: ips(a.dnsServers, 8),
+            dnsSuffix: suffix && HOST_RE.test(suffix) ? suffix : null,
+            dhcpEnabled: bool(a.dhcpEnabled),
+            dhcpServer: dhcpServer && IP_RE.test(dhcpServer) ? dhcpServer : null,
+            dhcpLeaseObtainedAt: iso(a.dhcpLeaseObtainedAt),
+            dhcpLeaseExpiresAt: iso(a.dhcpLeaseExpiresAt),
+          };
+        }).filter((a) => a.name),
       };
     default:
       return null;

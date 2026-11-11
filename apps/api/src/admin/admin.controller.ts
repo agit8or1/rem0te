@@ -81,4 +81,5 @@ export class AdminController {
   // alone, so a Business User found computers granted only to others (name,
   // hostname, IP, RustDesk ID) and a technician restricted to named computers
   // found every one in the business. Nothing in the web app called it.
+  // GET /search (SearchService, 0.33) replaces it, built from each list's own rule.
 }

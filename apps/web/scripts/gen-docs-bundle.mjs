@@ -48,6 +48,7 @@ const ORDER = [
   ['inventory.md', 'Inventory and event logs', 'Computers and monitoring', 'Specs, installed software, change history, pending updates and event-log slices.'],
   ['diagnostics.md', 'One-click diagnostics', 'Computers and monitoring', 'Read-only checks a technician runs with one click: disk, services, errors, network, DNS, updates, restart.'],
   ['monitoring.md', 'Monitoring and alerts', 'Computers and monitoring', 'Monitors, inheritance, alerts, site outages, maintenance windows and escalation.'],
+  ['metric-history.md', 'Metric history', 'Computers and monitoring', 'CPU, memory and disk over time: the Performance tab, gaps, roll-up, retention and storage.'],
   ['reports.md', 'Reports', 'Computers and monitoring', 'Patch compliance, agent coverage, alert frequency and offline time, from stored data, with audited CSV export.'],
   ['updates.md', 'Updates', 'Computers and monitoring', 'Updating the portal, RustDesk and the agent, and client rollouts.'],
   ['staged-patching.md', 'Staged patching', 'Computers and monitoring', 'Windows updates in rings — canary, approvals, halt on failure.'],
@@ -69,6 +70,7 @@ const ORDER = [
   ['PUBLIC-API.md', 'API guide', 'Integrations and API', 'API keys, scopes and the public API with examples.'],
   ['API-REFERENCE.md', 'API reference', 'Integrations and API', 'Every route the server exposes, generated from the route table.'],
   ['setup.md', 'Setup and operations', 'Running the server', 'Installing, configuring and operating the server.'],
+  ['server-sizing.md', 'Server sizing', 'Running the server', 'CPU, memory, disk and PostgreSQL for 50 to 5,000 computers, with measured heartbeat cost and database growth.'],
   ['architecture.md', 'Architecture', 'Running the server', 'How the pieces fit together.'],
 ];
 const badGroup = ORDER.find(([, , g]) => !GROUPS.includes(g));

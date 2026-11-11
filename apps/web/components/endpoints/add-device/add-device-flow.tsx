@@ -29,6 +29,12 @@ import { formatDate } from '@/lib/utils';
  * "waiting" stays "waiting" until a row says otherwise. The raw token exists
  * only in this component's memory, once, as the creation response returns it.
  * The URL carries the token's id (not the token) so a reload keeps waiting.
+ *
+ * Making the link needs a fresh re-authentication (0.33). The server answers
+ * STEP_UP_REQUIRED; the api-client interceptor opens the step-up dialog and
+ * retries the same request, so every choice made here is still in state and
+ * still in the retried body. Cancelling the dialog creates nothing and keeps
+ * the choices: the button simply works again.
  */
 
 type Os = 'windows' | 'linux' | 'macos';
@@ -61,12 +67,12 @@ const OS: Record<Os, { label: string; shell: string; path: (t: string) => string
   linux: {
     label: 'Linux', shell: 'a root shell',
     path: (t) => `/api/v1/public/install/linux/${t}`, cmd: (u) => `curl -fsSL ${u} | sudo bash`,
-    agent: 'Installs RustDesk and registers the computer once. Remote access only: no heartbeat, inventory or monitoring on Linux yet.',
+    agent: 'Installs RustDesk and the read-only Linux agent: heartbeat, inventory and pending package updates every 3 minutes. It runs nothing the console sends.',
   },
   macos: {
     label: 'macOS', shell: 'Terminal, with sudo',
     path: (t) => `/api/v1/public/install/mac/${t}`, cmd: (u) => `curl -fsSL ${u} | sudo bash`,
-    agent: 'Installs RustDesk and registers the computer once. Remote access only: no heartbeat, inventory or monitoring on macOS yet.',
+    agent: 'Installs RustDesk and, with sudo, the read-only macOS agent: heartbeat, inventory and the updates macOS last found, every 3 minutes. It runs nothing the console sends.',
   },
 };
 
@@ -226,6 +232,10 @@ export function AddDeviceFlow() {
   const device = status?.device ?? null;
   const enrolled = status?.state === 'enrolled';
   const isWindows = device ? String(device.platform ?? '').toLowerCase() === 'windows' : os === 'windows';
+  // Platforms whose installer adds an agent that heartbeats: Windows, Linux
+  // (0.32) and macOS (0.33, when run with sudo). The others register once.
+  const devicePlatform = device ? String(device.platform ?? '').toLowerCase() : (os ?? '');
+  const heartbeats = isWindows || /^(linux|macos|mac|darwin)/.test(devicePlatform);
   const agent = device ? agentType(device as unknown as Record<string, unknown>) : null;
   const monitoring = useMonitoringView(device?.id ?? '', !!device && can(CAP.COMPUTERS_VIEW));
 
@@ -339,7 +349,17 @@ export function AddDeviceFlow() {
                 </label>
               ))}
             </div>
-            {create.error && <p className="text-sm text-destructive" data-testid="create-error">{apiError(create.error, 'Could not make the link').message}</p>}
+            {create.error && (apiError(create.error).code === 'STEP_UP_REQUIRED' ? (
+              <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="create-stepup-cancelled">
+                No link was made: making one needs you to confirm it&apos;s you. Your choices are kept — press the button again when ready.
+              </p>
+            ) : (
+              <p className="text-sm text-destructive" data-testid="create-error">{apiError(create.error, 'Could not make the link').message}</p>
+            ))}
+            <p className="text-xs text-muted-foreground" data-testid="create-stepup-note">
+              You will be asked to confirm it&apos;s you (password, authenticator code or passkey) unless you did in the last 10 minutes:
+              an install link adds a computer to {businessLabel}.
+            </p>
             <div className="flex flex-wrap gap-2">
               <Button disabled={!os || create.isPending} onClick={() => create.mutate()} data-testid="make-link">
                 {create.isPending ? 'Making the link…' : 'Make the install command'}
@@ -418,7 +438,7 @@ export function AddDeviceFlow() {
               detail={`${device.customer?.name ?? 'none'} · ${device.site?.name ?? 'no site'}`} />
             <HealthRow testId="health-online" ok={device.isOnline} waiting={!device.isOnline}
               label={device.isOnline ? 'Online' : 'Offline'} detail={`last check-in ${ago(device.lastSeenAt)}`} />
-            {isWindows ? (
+            {heartbeats ? (
               <>
                 <HealthRow testId="health-agent" ok={device.agentType !== 'none'} waiting={device.agentType === 'none'}
                   label={device.agentType === 'none' ? 'Agent' : (agent?.label ?? 'Agent')}
@@ -444,7 +464,9 @@ export function AddDeviceFlow() {
               {monitoring.data.rules.length === 0
                 ? 'No monitors apply to this device yet.'
                 : `${monitoring.data.rules.length} monitor${monitoring.data.rules.length === 1 ? '' : 's'} apply: ${monitoring.data.rules.slice(0, 4).map((r) => `${r.name} (${describeMonitor(r.kind, r.params)})`).join('; ')}${monitoring.data.rules.length > 4 ? '…' : ''}.`}
-              {!isWindows && ' Monitoring needs the Windows agent, so none of them report from this device.'}
+              {!isWindows && (heartbeats
+                ? ' Service and event-log monitors need the Windows agent; offline, disk, CPU and memory monitors use what this device\u2019s agent reports.'
+                : ' Monitoring needs the Windows agent, so none of them report from this device.')}
             </p>
           )}
           <div className="flex flex-wrap gap-2">

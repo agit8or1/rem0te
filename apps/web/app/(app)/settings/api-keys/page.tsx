@@ -35,7 +35,7 @@ const SCOPE_HINT: Record<string, string> = {
   'computers:read': 'List and read computers',
   'computers:write': 'Change computers',
   'sessions:read': 'Read session history',
-  'enrollment:write': 'Create enrollment tokens (installs a computer into the business)',
+  'enrollment:write': 'Create enrollment tokens (installs a computer into the business). Creating a key with this scope asks you to confirm it is you.',
   'audit:read': 'Read the audit log',
 };
 const fmt = (d: string | null) => (d ? new Date(d).toLocaleString() : '—');

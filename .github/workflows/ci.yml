@@ -131,6 +131,13 @@ jobs:
       - name: Diagnostics catalog tests
         run: node apps/api/scripts/unit-diagnostics-catalog.mjs
 
+      # System inventory snapshots (0.33): the process / service / adapter
+      # sanitisers, row and byte bounds, and the build-time guard on the
+      # heartbeat's snapshot block (each refusal proven by mutation) — and,
+      # with the runner's pwsh, the three keys run against stub cmdlets.
+      - name: System inventory tests
+        run: node apps/api/scripts/unit-system-inventory.mjs
+
       # Scheduled client updates (0.32): the update window's validation, time
       # zones (+5:30, +5:45, a 30-minute DST zone), windows across midnight,
       # both DST transitions, next opening/closing against a minute-by-minute
@@ -151,11 +158,37 @@ jobs:
       - name: Patch summary tests
         run: node apps/api/scripts/unit-patch-summary.mjs
 
+      # Global search (0.33): q is 2–100 visible characters, LIKE metacharacters
+      # are literal, the ranking, and which capability gates each group.
+      - name: Global search tests
+        run: node apps/api/scripts/unit-search.mjs
+
+      # The macOS agent (0.33): its awk date conversions (it avoids date(1),
+      # whose BSD and GNU forms differ) against JavaScript over 2,000 instants
+      # in every shell on the runner, the RecommendedUpdates parser, the
+      # read-only platform mapping, and both POSIX agents parsed by sh, dash,
+      # bash --posix and busybox sh.
+      - name: macOS agent tests
+        run: node apps/api/scripts/unit-macos-agent.mjs
+
       # The panel updater's release-tag check (0.30.1): real gpg keys and a
       # real signed tag, one keyring holding the release key AND another, so
       # the pinned check is tested against exactly the case it exists for.
       - name: Updater signature tests
         run: node apps/api/scripts/unit-update-signing.mjs
+
+      # Device groups, saved views and bulk actions (0.33): a view's filters
+      # are the list's own parameters (unknown keys and bad values refused),
+      # an update applies no defaults, who may manage a business's groups and
+      # shared views, the 200 cap and the four actions, the fleet budget that
+      # stops short of the abuse guard, and per-computer refusal reasons.
+      - name: Device views tests
+        run: node apps/api/scripts/unit-device-views.mjs
+
+      # Metric history (0.33): samples from heartbeat values, the hourly
+      # roll-up, which hours a pass rolls, retention caps and gap detection.
+      - name: Metric history tests
+        run: node apps/api/scripts/unit-metric-history.mjs
 
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it

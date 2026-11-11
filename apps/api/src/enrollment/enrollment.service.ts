@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Logger, UnauthorizedException } from '@nestjs/common';
 import { randomBytes, createCipheriv, createDecipheriv, createHash, timingSafeEqual } from 'crypto';
 import { execFile } from 'child_process';
@@ -27,8 +28,19 @@ import { CANDIDATE_LIVE_MS, CANDIDATE_SETTLE_MS } from './device-secret';
 import { withDeviceText } from './device-text';
 import { queryHbbsOnline } from './hbbs-presence';
 import { compareVersions } from '../common/agent-contract';
+import { assertFresh } from '../security-controls/review';
+import { MetricsService } from '../metrics/metrics.service';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * How a token mint proved more than a session (0.33): a fresh step-up for a
+ * person, or the API key itself. Every caller of createClaimToken has to say
+ * which, so a new route cannot mint on a bare session by forgetting.
+ */
+export type TokenMintAuth =
+  | { via: 'session'; freshMethod: string | null }
+  | { via: 'api-key'; apiKeyId: string | undefined };
 
 @Injectable()
 export class EnrollmentService {
@@ -50,6 +62,7 @@ export class EnrollmentService {
     private readonly monitoring: MonitoringService,
     private readonly diagnostics: DiagnosticsCatalogService,
     private readonly clientUpdates: ClientUpdatesService,
+    private readonly metrics: MetricsService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -76,8 +89,21 @@ export class EnrollmentService {
    * token carries (business, access mode, assigned users) is validated now,
    * so a device can only ever enroll itself where an authorised person said
    * it could.
+   *
+   * Minting needs proof beyond the session (0.33). An enrolment token puts a
+   * machine of the holder's choosing into a business, where it is handed that
+   * business's monitoring, update policies and relay configuration — so a
+   * stolen or unattended session must not be enough. A signed-in person needs
+   * a fresh re-authentication (step-up, ten minutes, this sign-in only),
+   * whatever their role and whatever step-up actions are configured. An API
+   * key cannot step up; it keeps the ability because the key is itself the
+   * second proof — a separate secret, bound to one business, carrying the
+   * explicit `enrollment:write` scope, and minting such a key needs the same
+   * fresh re-authentication (ApiKeysService.create). The check runs after
+   * every scope and input check, so someone with no business here is refused
+   * outright rather than asked to re-authenticate first.
    */
-  async createClaimToken(actor: ActorContext, dto: CreateClaimTokenDto & { businessId?: string }) {
+  async createClaimToken(actor: ActorContext, dto: CreateClaimTokenDto & { businessId?: string }, auth: TokenMintAuth) {
     this.acl.assertCapability(actor, CAP.COMPUTERS_ADD);
 
     const businessId = this.acl.requireScope(actor, dto.businessId ?? dto.customerId);
@@ -112,8 +138,10 @@ export class EnrollmentService {
     }
 
     if (dto.endpointGroupId) {
+      // The business's own group, or a pre-0.33 one with no business in the
+      // same tenant (0.33: a group holds only its own business's computers).
       const group = await this.prisma.endpointGroup.findFirst({
-        where: { id: dto.endpointGroupId, tenantId: business.tenantId },
+        where: { id: dto.endpointGroupId, OR: [{ customerId: businessId }, { customerId: null, tenantId: business.tenantId }] },
         select: { id: true },
       });
       if (!group) throw new BadRequestException('Unknown computer group');
@@ -129,6 +157,15 @@ export class EnrollmentService {
         select: { id: true, name: true },
       });
       if (!site) throw new BadRequestException('Unknown site for this business');
+    }
+
+    if (auth.via === 'session') {
+      assertFresh(auth.freshMethod, {
+        action: 'enrollment.create',
+        message: 'Confirm it is you to make an install link: an enrolment token adds a computer to this business.',
+      });
+    } else if (!auth.apiKeyId) {
+      throw new ForbiddenException('Only an API key with the enrollment:write scope can mint a token without a fresh sign-in');
     }
 
     const token = randomBytes(32).toString('hex');
@@ -168,6 +205,8 @@ export class EnrollmentService {
         ...(site ? { siteId: site.id } : {}),
         accessMode: dto.accessMode ?? 'ASSIGNED_USERS',
         assignedUserIds,
+        // What proved this was not just a session (0.33).
+        ...(auth.via === 'session' ? { mintedVia: 'session', stepUpMethod: auth.freshMethod } : { mintedVia: 'api-key', apiKeyId: auth.apiKeyId }),
       },
     });
 
@@ -361,6 +400,15 @@ export class EnrollmentService {
           select: { id: true },
         }))?.id ?? null
       : null;
+    // The token's device group, the same way (0.33): it must still exist and
+    // still be this business's (or a pre-0.33 group of the tenant). A group
+    // deleted since the token was made is dropped, not an install failure.
+    const groupId = record.endpointGroupId
+      ? (await this.prisma.endpointGroup.findFirst({
+          where: { id: record.endpointGroupId, OR: [{ customerId: record.customerId ?? '__none__' }, { customerId: null, tenantId: record.tenantId }] },
+          select: { id: true },
+        }))?.id ?? null
+      : null;
 
     const boundEndpointId = record.endpointId ?? adoptedEndpointId;
     let endpoint = boundEndpointId
@@ -384,7 +432,8 @@ export class EnrollmentService {
           ...(adoptedEndpointId && dto.hostname ? { name: dto.hostname } : {}),
           ...(record.customerId ? { customerId: record.customerId } : {}),
           ...(siteId ? { siteId } : {}),
-          ...(record.endpointGroupId ? { endpointGroupId: record.endpointGroupId } : {}),
+          // A computer that changes business leaves its old business's group.
+          ...(groupId ? { endpointGroupId: groupId } : record.customerId && record.customerId !== endpoint.customerId ? { endpointGroupId: null } : {}),
           accessMode: record.accessMode,
         },
       });
@@ -397,7 +446,7 @@ export class EnrollmentService {
           tenantId: record.tenantId,
           customerId: record.customerId ?? null,
           siteId,
-          endpointGroupId: record.endpointGroupId ?? null,
+          endpointGroupId: groupId,
           accessMode: record.accessMode,
           name: dto.hostname ?? dto.rustdeskId,
           hostname: dto.hostname ?? null,
@@ -804,7 +853,7 @@ export class EnrollmentService {
       // hiccup writing one, must not cost the endpoint its liveness ping. That
       // is what marks it offline on the dashboard.
       try {
-        await this.inventory.recordLiveState(node.endpointId, {
+        const live = await this.inventory.recordLiveState(node.endpointId, {
           loggedOnUser: dto.loggedOnUser,
           uptimeSeconds: dto.uptimeSeconds,
           lastBootAt: dto.lastBootAt,
@@ -814,6 +863,13 @@ export class EnrollmentService {
           systemDiskTotalMb: dto.systemDiskTotalMb,
           systemDiskFreeMb: dto.systemDiskFreeMb,
         });
+        // Metric history (0.33): the same sanitised values, as one sample.
+        // Inside the authenticated branch on purpose — a heartbeat without
+        // the device secret writes no history (check-security-invariants §30).
+        if (live) {
+          await this.metrics.recordHeartbeat(node.endpointId, live)
+            .catch((e) => this.logger.warn(`Metric sample failed for ${node.endpointId}: ${String(e)}`));
+        }
         commands = await this.inventory.collectForHeartbeat(node.endpointId);
       } catch (e) {
         this.logger.warn(`Inventory step failed for endpoint ${node.endpointId}: ${String(e)}`);

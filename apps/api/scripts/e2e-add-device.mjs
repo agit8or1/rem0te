@@ -23,7 +23,9 @@
  *     shown; the Platform Admin sees all of it (the negative control);
  *   - nothing secret leaves the status route: no raw token, no token hash,
  *     no device secret;
- *   - expired and revoked tokens report as such.
+ *   - expired and revoked tokens report as such;
+ *   - minting needs a fresh re-authentication (0.33): a stale session gets
+ *     STEP_UP_REQUIRED and writes nothing, and a scope refusal comes first.
  *
  * Self-starting: it runs its own API from dist/ on ADDDEVICE_API_PORT (3201)
  * against DATABASE_URL, which must name a scratch/test database. Fixtures are
@@ -96,6 +98,19 @@ async function login(email) {
   s.cookie = `access_token=${mm[1]}`;
   return s;
 }
+/**
+ * Minting a token needs a fresh re-authentication (0.33). The session keeps
+ * its plain cookie in `bare` (a stale session, for the refusal checks) and
+ * carries the step-up from here on, as the console's retried request does.
+ */
+async function stepUp(s) {
+  const r = await fetch(`${API}/auth/step-up`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': ip(), cookie: s.cookie }, body: JSON.stringify({ password: PW }) });
+  const mm = (r.headers.get('set-cookie') ?? '').match(/step_up=([^;]+)/);
+  if (r.status !== 200 || !mm) throw new Error(`step-up: ${r.status} ${await r.text()}`);
+  s.bare = s.bare ?? s.cookie;
+  s.cookie = `${s.bare}; step_up=${mm[1]}`;
+  return s;
+}
 const mint = (s, body) => req('POST', '/enrollment/tokens', s, body);
 const status = (s, id) => req('GET', `/enrollment/tokens/${id}/status`, s);
 const msg = (r) => `HTTP ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`;
@@ -147,9 +162,20 @@ async function all() {
     userA: await login(userA.email), viewOnlyA: await login(viewOnlyA.email), addOnlyA: await login(addOnlyA.email),
   };
 
+  // ── Step-up (0.33): a stale session mints nothing ─────────────────────────
+  section('Minting needs a fresh re-authentication (0.33)');
+  let r = await mint(S.ownerA, { businessId: A.id, siteId: siteA.id, accessMode: 'COMPANY_WIDE', description: 'Add device: stale' });
+  check(r.status === 403 && r.body?.code === 'STEP_UP_REQUIRED' && r.body?.action === 'enrollment.create', 'owner A without a step-up: 403 STEP_UP_REQUIRED (enrollment.create)', msg(r));
+  r = await mint(S.ownerA, { businessId: B.id, accessMode: 'COMPANY_WIDE' });
+  check(r.status === 403 && r.body?.code !== 'STEP_UP_REQUIRED', 'owner A naming business B without a step-up: refused on scope, not asked to re-authenticate', msg(r));
+  const staleRows = await prisma.deviceClaimToken.count({ where: { customerId: { in: [A.id, B.id] } } });
+  check(staleRows === 0, 'no token row was written by the refused attempts', `rows: ${staleRows}`);
+  for (const k of ['admin', 'ownerA', 'ownerB', 'userA', 'viewOnlyA', 'addOnlyA']) await stepUp(S[k]);
+  check(true, 'every session steps up (password); the rest of this suite mints as the console does after the dialog');
+
   // ── Minting: the existing permission checks, plus the site ────────────────
   section('Minting a token: business and site are fixed, and only where the caller may manage');
-  let r = await mint(S.ownerA, { businessId: A.id, siteId: siteA.id, accessMode: 'COMPANY_WIDE', description: 'Add device: Windows' });
+  r = await mint(S.ownerA, { businessId: A.id, siteId: siteA.id, accessMode: 'COMPANY_WIDE', description: 'Add device: Windows' });
   const t1 = r.data;
   check(r.status === 201 || r.status === 200, 'owner A mints a token for A with site HQ', msg(r));
   check(/^[0-9a-f]{64}$/.test(t1?.token ?? '') && t1.siteId === siteA.id && t1.siteName === siteA.name && t1.customerId === A.id, 'the creation response carries the raw token once, and the site binding', JSON.stringify({ siteId: t1?.siteId, siteName: t1?.siteName }));

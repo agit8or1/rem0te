@@ -138,6 +138,8 @@ try {
     user: { email: await mk('user', {}, { roleId: userRole.id, capabilities: ['computers:view', 'computers:connect'] }), expect: ['dashboard', 'devices', 'patching', 'remote', 'reports'] },
   };
   const anyEndpoint = await prisma.endpoint.findFirst({ where: { customerId: biz.id, status: 'ACTIVE' }, select: { id: true } });
+  // 0.33: the Processes, Services and Network tabs belong to a Windows computer.
+  const windowsEndpoint = await prisma.endpoint.findFirst({ where: { customerId: biz.id, status: 'ACTIVE', platform: { contains: 'indows', mode: 'insensitive' } }, select: { id: true } });
 
   const browser = await chromium.launch({ headless: true });
   for (const [who, p] of Object.entries(personas)) {
@@ -201,6 +203,41 @@ try {
         if (anyEndpoint) {
           await visit(page, `/endpoints/${anyEndpoint.id}`);
           check(!(await page.$('[data-section-tabs]')), 'a device\'s own page has no section tabs (it has its own)');
+          // 0.33: Performance sits right after Overview for any computer whose agent reports.
+          const wtabs = await page.$$eval('[data-testid="workspace-tabs"] [role="tab"]', (els) => els.map((e) => e.textContent.trim()));
+          if (wtabs.includes('Performance')) {
+            check(wtabs[1] === 'Performance', 'the device workspace has Performance right after Overview', wtabs.join(' · '));
+            await page.click('[data-testid="tab-performance"]');
+            await page.waitForSelector('[data-testid="performance-tab"] [data-testid="metric-range"]', { timeout: 15000 });
+            await page.waitForSelector('[data-testid="metric-cpu-chart"] svg, [data-testid="metric-empty"]', { timeout: 15000 });
+            const h = await pageHealth(page);
+            check(h.overflow <= 1, `Performance renders (charts or the empty state) without sideways overflow`, JSON.stringify(h));
+            await page.click('[data-testid="metric-range-7d"]');
+            await page.waitForSelector('[data-testid="metric-range-7d"][aria-pressed="true"]', { timeout: 5000 });
+            check(true, 'the range picker switches to 7 d');
+            await page.screenshot({ path: path.join(OUT_DIR, `performance-${who}-${vpName}.png`), fullPage: true }).catch(() => {});
+          } else {
+            check(true, `this device shows no Performance tab (${wtabs.join(' · ')}) — its agent reports nothing`);
+          }
+        }
+        // 0.33: read-only snapshot tabs, each with its age and a Refresh, and no
+        // control that acts on the computer (no end task, stop or start).
+        if (windowsEndpoint && who !== 'user') {
+          await visit(page, `/endpoints/${windowsEndpoint.id}`);
+          const wsTabs = await page.$$eval('[data-testid="workspace-tabs"] [role="tab"]', (els) => els.map((e) => e.textContent.trim()));
+          check(['Processes', 'Services', 'Network'].every((t) => wsTabs.includes(t)), 'a Windows device has Processes, Services and Network tabs', wsTabs.join(' · '));
+          for (const [t, key] of [['processes', 'process_list'], ['services', 'service_list'], ['network', 'network_adapters']]) {
+            await page.click(`[data-testid="tab-${t}"]`);
+            await page.waitForSelector(`[data-testid="snapshot-${key}"]`, { timeout: 15_000 }).catch(() => {});
+            const card = await page.$(`[data-testid="snapshot-${key}"]`);
+            const info = card ? await card.evaluate((el) => ({
+              age: el.querySelector('[data-testid="snapshot-age"]')?.textContent ?? '',
+              refresh: !!el.querySelector('[data-testid="snapshot-refresh"]'),
+              actions: [...el.querySelectorAll('button')].map((b) => (b.textContent ?? '').trim()).filter((x) => /\b(end|kill|stop|start|restart|disable|enable)\b/i.test(x)),
+            })) : null;
+            const h = await pageHealth(page);
+            check(!!info && /Taken|Never taken/.test(info.age) && info.refresh && info.actions.length === 0 && h.overflow <= 1, `${t} tab: shows when it was taken, a Refresh, no action buttons, no overflow`, JSON.stringify({ info, overflow: h.overflow }));
+          }
         }
       }
       if (got.includes('remote')) {

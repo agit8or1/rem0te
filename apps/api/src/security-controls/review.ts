@@ -19,10 +19,18 @@ export function assertIndependentReviewer(actor: ActorContext, requesterId: stri
   if (!reviewer) throw new ForbiddenException({ code: 'NOT_A_REVIEWER', message: `Approving a ${what} needs a Platform Admin or a designated independent reviewer.` });
 }
 
-/** Fresh authentication, required whatever step-up actions are enabled. */
-export function assertFresh(method: string | null, opts: { phishingResistant?: boolean } = {}) {
+/**
+ * Fresh authentication, required whatever step-up actions are enabled.
+ *
+ * `action` names what is being confirmed, so the console's dialog can say it
+ * (default `fresh.auth`). It changes the wording only, never the rule.
+ */
+export function assertFresh(method: string | null, opts: { phishingResistant?: boolean; action?: string; message?: string } = {}) {
   if (!method) {
-    throw new ForbiddenException({ code: 'STEP_UP_REQUIRED', action: 'fresh.auth', message: 'Confirm it is you to continue: this action always needs a fresh re-authentication.' });
+    throw new ForbiddenException({
+      code: 'STEP_UP_REQUIRED', action: opts.action ?? 'fresh.auth',
+      message: opts.message ?? 'Confirm it is you to continue: this action always needs a fresh re-authentication.',
+    });
   }
   if (opts.phishingResistant && method !== 'passkey') {
     throw new ForbiddenException({ code: 'STEP_UP_REQUIRED', action: 'fresh.auth.passkey', message: 'This action needs a fresh passkey confirmation (password and authenticator codes are not accepted).' });

@@ -100,6 +100,13 @@ const SECTIONS: Section[] = [
           </Link>{' '}
           for the full list.
         </p>
+        <p>
+          How big a server to use for 50, 250, 1,000 or 5,000 computers — CPU, memory, disk and PostgreSQL, with the
+          measured cost of a heartbeat and how fast the database grows — is in{' '}
+          <Link href="/docs/server-sizing" className="underline text-foreground">Server sizing</Link>. In short: 2 vCPU
+          and 2–4 GB up to a few hundred computers, 4 vCPU and 8 GB for 1,000. At 5,000 a single API process is near its
+          measured limit; read the page before planning that size.
+        </p>
       </div>
     ),
   },
@@ -137,8 +144,8 @@ const SECTIONS: Section[] = [
         </p>
         <ol className="list-decimal pl-5 space-y-1.5">
           <li>Choose the business, then a site or none, and who may connect. These are fixed into the link: the machine cannot pick another business or site.</li>
-          <li>Choose the operating system. Windows gets the Rem0te agent; Linux and macOS get remote access only.</li>
-          <li>Copy the install command (or, on Windows, the one-click installer link) and run it on the machine. It works once, expires in 24 hours, and is shown only once.</li>
+          <li>Choose the operating system. Windows gets the Rem0te agent; Linux and macOS (run with sudo) get a read-only agent that reports inventory and pending updates.</li>
+          <li>Make the install command. You are asked to confirm it&apos;s you first, unless you did in the last 10 minutes: a link adds a computer to the business. Your choices are kept while you confirm. Copy the command (or, on Windows, the one-click installer link) and run it on the machine. It works once, expires in 24 hours, and is shown only once.</li>
           <li>Keep the page open. It checks every few seconds and says the device enrolled only when it has.</li>
           <li>It then shows the first health the server has received: online, the agent and its version, and whether the first inventory has arrived. Anything not yet received says so.</li>
           <li>Open the device, or the business&apos;s monitoring policies, from the last step.</li>
@@ -209,6 +216,50 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'global-search',
+    title: 'Searching Everything (Ctrl+K)',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          The <strong className="text-foreground">Search</strong> box at the top of every page — or{' '}
+          <strong className="text-foreground">Ctrl+K</strong> (<strong className="text-foreground">⌘K</strong> on a
+          Mac) from anywhere — searches devices, businesses, sites, people and open alerts at once. Type at least two
+          characters; the arrow keys move through the results, Enter opens one, Esc closes the box.
+        </p>
+        <ul className="list-disc pl-5 space-y-1.5">
+          <li>
+            <strong className="text-foreground">Devices</strong> match by name, hostname, RustDesk ID, serial number,
+            signed-in user, IP address, a network adapter&apos;s IPv4 address or alias. A result says which of those
+            matched. Archived devices are not included, as in the device list.
+          </li>
+          <li>
+            <strong className="text-foreground">Businesses</strong> by name, code, email or city;{' '}
+            <strong className="text-foreground">sites</strong> by name, city or address (a site opens the device list
+            filtered to it); <strong className="text-foreground">people</strong> by name or email;{' '}
+            <strong className="text-foreground">alerts</strong> by title, open and acknowledged ones only.
+          </li>
+          <li>
+            Exact matches come first, then ones that start with what you typed. Each group shows at most eight; when
+            there are more it says so, and for devices links to the device list&apos;s own search.
+          </li>
+        </ul>
+        <p>
+          <strong className="text-foreground">You only ever find what you could already open.</strong> Each group uses
+          the same rules as its own page: devices need <em>View computers</em> and show only the devices you can see
+          (for a Business User, the ones assigned to you or shared company-wide; for a technician, the ones your
+          assignment names); sites need <em>View computers</em>; people need <em>View business users</em>; alerts need{' '}
+          <em>See and work alerts</em>. A group you have no permission for is left out, not shown as empty. Another
+          business&apos;s device is not found even by its exact hostname or RustDesk ID.
+        </p>
+        <p>
+          Searches are not written to the audit log and the server does not log what you typed. A reverse proxy in
+          front of Rem0te may still record request addresses, which include the search. Searching is limited to 120
+          requests a minute from one address; the box says so if you hit it.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'device-list',
     title: 'The Device List',
     content: (
@@ -227,10 +278,23 @@ const SECTIONS: Section[] = [
         </p>
         <p>
           <strong className="text-foreground">Columns</strong> and row density are remembered in this browser.{' '}
-          <strong className="text-foreground">Views</strong> save the current filters, sort and columns under a
-          name — in this browser only; they are not shared. <strong className="text-foreground">Export CSV</strong>{' '}
-          downloads the whole filtered view (up to 10,000 devices), contains only what you can see, and is recorded
-          in the audit log.
+          <strong className="text-foreground">Views</strong> save the current filters, sort, columns and density
+          under a name, on your account. A view is personal, or shared with everyone in one business — sharing is
+          for a Business Owner, a technician with computers:edit over the whole business, or the MSP, and is
+          audited. A view stores only the list&apos;s parameters, so opening one shows each person only the devices
+          they can see. <strong className="text-foreground">Export CSV</strong> downloads the whole filtered view
+          (up to 10,000 devices), contains only what you can see, and is recorded in the audit log.
+        </p>
+        <p>
+          <strong className="text-foreground">Device groups</strong> (Views → Device groups…) are named groups of one
+          business&apos;s computers, for filtering and bulk actions; a computer is in one group at a time, and groups
+          grant nothing. They are managed by the same people who may share views, and every change is audited.
+        </p>
+        <p>
+          <strong className="text-foreground">Tick rows</strong> to act on up to 200 devices at once: add to or remove
+          from a group, refresh inventory, queue a RustDesk client update (Platform Admin), or export the selection.
+          Each device is checked on its own exactly as if you had done it to that one device, and the result lists
+          every device that was refused and why. There is no bulk connect, archive, delete or approved action.
         </p>
       </div>
     ),
@@ -377,8 +441,8 @@ const SECTIONS: Section[] = [
           the scan, and which agent it runs. Each opens the tab that explains it.
           Connect, Diagnose, Run action and Patch sit beside it; Archive and the other
           rare actions are under More, each with a confirmation. The tabs are
-          Overview, Monitoring, Software, Patches, Event logs, Diagnostics, Actions and
-          History (sessions, notes, the AI-written summary and who can connect), and
+          Overview, Performance, Monitoring, Software, Processes, Services, Network, Patches, Event logs,
+          Diagnostics, Actions and History (sessions, notes, the AI-written summary and who can connect), and
           each can be linked with <code>?tab=</code>.
         </p>
         <p className="font-medium text-foreground">Nothing here is live</p>
@@ -388,6 +452,16 @@ const SECTIONS: Section[] = [
           when its contents were collected. Pressing{' '}
           <strong className="text-foreground">Refresh</strong> queues a fresh collection
           for the next heartbeat — it does not fetch anything on the spot.
+        </p>
+        <p className="font-medium text-foreground">Performance: CPU, memory and disk over time</p>
+        <p>
+          The <strong className="text-foreground">Performance</strong> tab (0.33) charts processor, memory and
+          system-disk use from every heartbeat, and each volume from the inventory pass, over 24 hours, 7, 30 or 90
+          days. Longer ranges show each hour&apos;s mean with its lowest-to-highest band. Hatched stretches are gaps —
+          no samples arrived, because the computer was offline or its agent was not reporting — and nothing is drawn
+          across them. Samples are kept 48 hours and hourly figures 90 days. History raises no alerts; the
+          monitors judge each reading as it arrives. See{' '}
+          <Link href="/docs/metric-history" className="underline text-foreground">Metric history</Link>.
         </p>
         <p>
           Signed-in user and uptime come in on every heartbeat. Full specs are
@@ -424,6 +498,18 @@ const SECTIONS: Section[] = [
           expires and says so. <em>Recent system errors</em> needs the event-log permission; every
           other check needs only to see the computer. Every run is in the audit log. More in{' '}
           <Link href="/docs/diagnostics" className="underline text-foreground">One-click diagnostics</Link>.
+        </p>
+        <p className="font-medium text-foreground">Processes, Services and Network</p>
+        <p>
+          These three tabs list every running process (with its user and start time), every
+          service (with its start mode and the account it runs as) and every network connection
+          (addresses, gateway, DNS, DHCP and MAC). Each is a snapshot: it says when it was taken
+          and how old it is, and <strong className="text-foreground">Refresh</strong> asks the
+          computer for a new one on its next heartbeat, exactly like a diagnostic. Command lines
+          and file paths are never collected. There are no end-task, stop or start buttons —
+          restarting a service is a signed maintenance action on the Actions tab. Windows computers
+          with the standard agent only; the Linux agent does not collect them. More in{' '}
+          <Link href="/docs/diagnostics#the-processes-services-and-network-tabs" className="underline text-foreground">One-click diagnostics</Link>.
         </p>
         <p className="font-medium text-foreground">If a computer reports nothing</p>
         <p>
@@ -726,6 +812,16 @@ const SECTIONS: Section[] = [
           <Link href="/docs/inventory#linux-computers-032" className="underline text-foreground">Inventory</Link>.
         </p>
         <p>
+          From 0.33 the macOS installer does the same when it is run with <code>sudo</code>: a read-only agent in{' '}
+          <code>/Library/Rem0te</code>, run by a LaunchDaemon every 3 minutes, shown as <em>Standard (macOS)</em>. It reports
+          the macOS version, kernel, uptime, CPU, memory, volumes, the console user, the model and serial, the RustDesk
+          version, and the updates macOS itself last found. It never runs <code>softwareupdate</code>: if macOS has not
+          checked in the last 36 hours the scan says <em>unknown</em> rather than showing an old list, and restart pending
+          is always unknown on a Mac. Like the Linux agent it acts on nothing the console sends. It has been tested
+          against recorded macOS output, not yet on a Mac. More in{' '}
+          <Link href="/docs/inventory#macos-computers-033" className="underline text-foreground">Inventory</Link>.
+        </p>
+        <p>
           From 0.32, a computer&apos;s <em>Patches</em> tab has <strong className="text-foreground">Install updates</strong>{' '}
           when it can be patched: pick updates and give a reason, and it becomes a one-computer deployment that two
           approvers still approve on the approval signer. When it cannot be patched there is no button; the tab says why
@@ -828,6 +924,12 @@ const SECTIONS: Section[] = [
           <strong className="text-foreground">confirm it&apos;s you</strong> with your password, an authenticator code
           or a passkey. If you have an authenticator, its code or a passkey is required — your password alone is not
           enough. It lasts 10 minutes for that sign-in.
+        </p>
+        <p>
+          Making an install link, and creating an API key that can make them, always ask — for every role, and whatever
+          the step-up settings say. A link puts a computer into a business, so an unattended or stolen session must not
+          be enough. API keys that already have the enrolment scope keep working: a key cannot confirm anything, and is
+          itself the second proof.
         </p>
         <p>
           You can add passkeys and link a single sign-on provider from{' '}

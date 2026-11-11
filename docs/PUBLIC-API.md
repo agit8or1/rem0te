@@ -32,7 +32,9 @@ server-side we store only a SHA-256 hash. Keys support:
   `0009` — re-issue them per business.
 - **scopes** — one or more of `companies:read`, `companies:write`, `users:read`,
   `users:write`, `computers:read`, `computers:write`, `sessions:read`,
-  `enrollment:write`, `audit:read`
+  `enrollment:write`, `audit:read`. A key with `enrollment:write` can only be
+  created after a fresh re-authentication (0.33); the API answers
+  `403 STEP_UP_REQUIRED` (`apikey.enrollment`) and the console prompts.
 - **expiresInDays** — optional TTL (1–3650), null = never expires
 
 Revocation is immediate. Rate-limited to 300 req/min per key.
@@ -88,7 +90,10 @@ built against v0.6/v0.7.
 
 ### Managed enrollment (one-command installers)
 
-- `POST /pub/v1/enrollment/tokens` — scope `enrollment:write`
+- `POST /pub/v1/enrollment/tokens` — scope `enrollment:write`. No step-up: an API key
+  cannot do one. Instead, *creating* a key with `enrollment:write` needs a fresh
+  re-authentication in the console (0.33), and every token a key mints is audited with
+  `mintedVia: "api-key"` and the key's id. See [sign-in.md](sign-in.md#always-on-whatever-is-configured).
   ```json
   {
     "accessMode":       "ASSIGNED_USERS" | "COMPANY_WIDE",

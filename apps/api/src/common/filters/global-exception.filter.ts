@@ -9,6 +9,9 @@ import {
 import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 
+/** Global search (0.33) — its query text is never logged. */
+const SEARCH_PATH = /\/search\/?$/;
+
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(GlobalExceptionFilter.name);
@@ -52,8 +55,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     if (status >= 500) {
+      // A search's query string is what someone was looking for (a person's
+      // name, a serial, an address): the path alone is logged for it.
+      const logged = SEARCH_PATH.test(request.path ?? '') ? request.path : request.url;
       this.logger.error(
-        `${request.method} ${request.url} → ${status}`,
+        `${request.method} ${logged} → ${status}`,
         exception instanceof Error ? exception.stack : String(exception),
       );
     }

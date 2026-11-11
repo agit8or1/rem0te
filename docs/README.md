@@ -26,10 +26,13 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   to read a slice of its event log.
 - **[diagnostics.md](diagnostics.md)** — one-click read-only diagnostics: disk space,
   services, recent errors, top processes, network and DNS, pending updates and
-  restart status, and what the agent will and will not read (0.31).
+  restart status, and what the agent will and will not read (0.31); the Processes,
+  Services and Network snapshot tabs (0.33).
 - **[monitoring.md](monitoring.md)** — monitors (offline, disk, CPU, memory,
   services, event log, pending restart), inheritance, alerts, site outages,
   maintenance windows, escalation and ClientSt0r tickets (0.29).
+- **[metric-history.md](metric-history.md)** — CPU, memory and disk over 24 hours to 90 days on a computer's
+  Performance tab: what is recorded, gaps, roll-up and retention settings, storage per 1,000 computers (0.33).
 - **[reports.md](reports.md)** — patch compliance, agent coverage, alert frequency and offline time per
   business and site, what each is computed from and what it cannot tell you, and the audited CSV export (0.32).
 - **[tactical-rmm.md](tactical-rmm.md)** — connecting and querying from inside
@@ -71,6 +74,7 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   launch policy, protected device classes, fleet-abuse limits, independent
   review of trust changes, and what this build can and cannot enforce.
 - **[setup.md](setup.md)** — installation, configuration, ports, operations.
+- **[server-sizing.md](server-sizing.md)** — how big a server for 50 to 5,000 computers, from measured heartbeat cost and row sizes.
 - **[updates.md](updates.md)** — the three things that can be out of date
   (Rem0te, the RustDesk clients, hbbs/hbbr) and how each is updated.
 - **[architecture.md](architecture.md)** — what runs where, the data model, and

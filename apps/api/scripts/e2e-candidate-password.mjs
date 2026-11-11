@@ -16,7 +16,12 @@ const login = await call('POST', '/auth/login', { email: process.env.SEED_ADMIN_
 ok(login.status < 300 && cookie, 'login ' + login.status + ' ' + JSON.stringify(login.j?.data ?? login.j).slice(0, 120));
 const biz = await call('POST', '/businesses', { name: 'CandPw Co' });
 const bizId = biz.j?.data?.id; ok(!!bizId, 'business ' + biz.status);
-const tok = await call('POST', '/enrollment/tokens', { businessId: bizId });
+// Minting needs a fresh re-authentication (0.33).
+const up0 = await fetch(B + '/auth/step-up', { method: 'POST', headers: { 'content-type': 'application/json', cookie }, body: JSON.stringify({ password: process.env.SEED_ADMIN_PASSWORD }) });
+const mintStep = (up0.headers.getSetCookie?.() ?? []).find((c) => c.startsWith('step_up='))?.split(';')[0] ?? '';
+ok(up0.status === 200 && !!mintStep, 'step-up before minting ' + up0.status);
+const tokR = await fetch(B + '/enrollment/tokens', { method: 'POST', headers: { 'content-type': 'application/json', cookie: `${cookie}; ${mintStep}` }, body: JSON.stringify({ businessId: bizId }) });
+const tok = { status: tokR.status, j: await tokR.json().catch(() => null) };
 const token = tok.j?.data?.token ?? tok.j?.data?.rawToken ?? tok.j?.token; ok(!!token, 'claim token ' + tok.status + ' ' + Object.keys(tok.j?.data ?? {}).join(','));
 const rid = '9' + String(Date.now()).slice(-8);
 const cl = await call('POST', '/enrollment/claim', { token, rustdeskId: rid, hostname: 'CANDPW', platform: 'Windows', password: 'OldPassword000000001', agentSecret: 'secretA'.padEnd(43, 'a') }, false);

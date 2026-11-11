@@ -229,20 +229,37 @@ try {
     check(rot.status === 400, 'rotation refused for a node with no device secret', `HTTP ${rot.status}`);
 
     // The recovery path: a token minted for this very computer may rebind it.
-    const t = await req('POST', '/enrollment/tokens', { cookie: cOwnerA, body: { businessId: bizA.id, endpointId: epLegacy.id } });
+    // Minting needs a fresh re-authentication (0.33), tested below.
+    const cOwnerAUp = await stepUp(cOwnerA);
+    const t = await req('POST', '/enrollment/tokens', { cookie: cOwnerAUp, body: { businessId: bizA.id, endpointId: epLegacy.id } });
     const own = secret();
     const c = await req('POST', '/enrollment/claim', { body: { token: t.body?.data?.token, rustdeskId: epLegacy.rustdeskId, agentSecret: own } });
     const bound = await prisma.rustdeskNode.findUnique({ where: { rustdeskId: epLegacy.rustdeskId } });
     check(c.status === 200 && !!bound.agentSecretHash, 'a token minted for the computer re-binds it', `HTTP ${c.status} ${JSON.stringify(c.body).slice(0, 160)}`);
-    const other = await req('POST', '/enrollment/tokens', { cookie: cOwnerA, body: { businessId: bizA.id } });
+    const other = await req('POST', '/enrollment/tokens', { cookie: cOwnerAUp, body: { businessId: bizA.id } });
     const steal = await req('POST', '/enrollment/claim', { body: { token: other.body?.data?.token, rustdeskId: epLegacy.rustdeskId, agentSecret: secret() } });
     check(steal.status === 400, 'a token for any other computer cannot', `HTTP ${steal.status}`);
+  }
+
+  // ── 0.33 ────────────────────────────────────────────────────────────────
+  section('0.33 — a stolen session cannot mint an enrolment token, or a key that can');
+  {
+    const before = await prisma.deviceClaimToken.count({ where: { customerId: bizA.id } });
+    const t = await req('POST', '/enrollment/tokens', { cookie: cOwnerA, body: { businessId: bizA.id, accessMode: 'COMPANY_WIDE' } });
+    check(t.status === 403 && t.body?.code === 'STEP_UP_REQUIRED', 'owner session without a step-up: token refused with STEP_UP_REQUIRED', `HTTP ${t.status} ${t.body?.code}`);
+    const a = await req('POST', '/enrollment/tokens', { cookie: cAdmin, body: { businessId: bizA.id, accessMode: 'COMPANY_WIDE' } });
+    check(a.status === 403 && a.body?.code === 'STEP_UP_REQUIRED', 'Platform Admin session without a step-up: refused too', `HTTP ${a.status} ${a.body?.code}`);
+    const k = await req('POST', '/apikeys', { cookie: cOwnerA, body: { name: `audit-enrol-${sfx}`, scopes: ['enrollment:write'] } });
+    check(k.status === 403 && k.body?.code === 'STEP_UP_REQUIRED', 'without a step-up, no API key with enrollment:write either', `HTTP ${k.status} ${k.body?.code}`);
+    const after = await prisma.deviceClaimToken.count({ where: { customerId: bizA.id } });
+    const keys = await prisma.apiKey.count({ where: { customerId: bizA.id, name: `audit-enrol-${sfx}` } });
+    check(after === before && keys === 0, 'nothing was written', `tokens ${before}→${after}, keys ${keys}`);
   }
 
   // ── M8 ──────────────────────────────────────────────────────────────────
   section('M8 — a claim token is single-use under a race');
   {
-    const t = await req('POST', '/enrollment/tokens', { cookie: cOwnerA, body: { businessId: bizA.id, accessMode: 'COMPANY_WIDE' } });
+    const t = await req('POST', '/enrollment/tokens', { cookie: await stepUp(cOwnerA), body: { businessId: bizA.id, accessMode: 'COMPANY_WIDE' } });
     const token = t.body?.data?.token;
     check(!!token, 'token minted', `HTTP ${t.status}`);
     const ids = [rid(), rid(), rid(), rid()]; created.rustdeskIds.push(...ids);

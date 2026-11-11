@@ -217,7 +217,7 @@ async function main() {
     const hb = await req('POST', '/enrollment/heartbeat', { body: { rustdeskId: poolRid, agentSecret: poolSecret, hostname: 'desktop-8f3k2', platform: 'Windows' } });
     const pooled = await prisma.rustdeskNode.findUnique({ where: { rustdeskId: poolRid }, include: { endpoint: true } });
     check(hb.status < 300 && pooled && pooled.tenantId === null && pooled.endpoint.customerId === null, 'an unknown computer heartbeats into the pending pool (no tenant, no business)', msg(hb));
-    const t = await req('POST', '/enrollment/tokens', { s: S.admin, body: { businessId: acme.id, accessMode: 'ASSIGNED_USERS', assignedUserIds: [pat.id], endpointGroupId: group.id } });
+    const t = await req('POST', '/enrollment/tokens', { s: (await stepUp(S.admin)).s, body: { businessId: acme.id, accessMode: 'ASSIGNED_USERS', assignedUserIds: [pat.id], endpointGroupId: group.id } });
     const token = t.body.data?.token;
     check(t.status < 300 && !!token, 'a claim token for Acme: assigned users (Pat), the front-office group', msg(t));
     const cl = await req('POST', '/enrollment/claim', { body: { token, rustdeskId: poolRid, agentSecret: poolSecret, hostname: 'RECEPTION-2', platform: 'Windows', password: 'reception-2-permanent-pw' } });
@@ -239,7 +239,7 @@ async function main() {
 
   section('Claim tokens: 24 hours, single use');
   {
-    const t = await req('POST', '/enrollment/tokens', { s: S.admin, body: { businessId: acme.id } });
+    const t = await req('POST', '/enrollment/tokens', { s: (await stepUp(S.admin)).s, body: { businessId: acme.id } });
     const rec = await prisma.deviceClaimToken.findFirst({ where: { customerId: acme.id }, orderBy: { createdAt: 'desc' } });
     const hours = (rec.expiresAt.getTime() - rec.createdAt.getTime()) / 3_600_000;
     check(Math.abs(hours - 24) < 0.1, `a token lives 24 hours (${hours.toFixed(2)} h)`);
@@ -251,7 +251,7 @@ async function main() {
     check(c2.status === 400 && /already been used/.test(JSON.stringify(c2.body)), 'the same token again → 400 already used', msg(c2));
     check(!(await prisma.rustdeskNode.findUnique({ where: { rustdeskId: r2 } })), '…and enrolled nothing');
 
-    const t2 = await req('POST', '/enrollment/tokens', { s: S.admin, body: { businessId: acme.id } });
+    const t2 = await req('POST', '/enrollment/tokens', { s: (await stepUp(S.admin)).s, body: { businessId: acme.id } });
     await prisma.deviceClaimToken.updateMany({ where: { customerId: acme.id, claimedAt: null }, data: { expiresAt: new Date(Date.now() - 1000) } });
     const r3 = rid(); created.rustdeskIds.push(r3);
     const c3 = await req('POST', '/enrollment/claim', { body: { token: t2.body.data.token, rustdeskId: r3, agentSecret: secret(), hostname: 'LATE' } });

@@ -2,10 +2,10 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowDown, ArrowUp, ArrowUpDown, Bookmark, Check, ChevronLeft, ChevronRight, Columns3, Download,
-  Loader2, MoreHorizontal, Rows3, Search, Trash2, X,
+  ArrowDown, ArrowUp, ArrowUpDown, Bookmark, Check, ChevronLeft, ChevronRight, Columns3, Download, FolderTree,
+  Loader2, MoreHorizontal, Rows3, Search, Trash2, Users, X,
 } from 'lucide-react';
 import { endpointsApi } from '@/lib/api-client';
 import { usePermissions } from '@/lib/auth';
@@ -19,9 +19,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { COLUMNS, DEFAULT_COLUMNS, ago, type CellContext } from './columns';
-import { deviceListApi, refusalMessage, toParams } from './api';
-import { loadPrefs, loadViews, savePrefs, saveViews, type SavedView } from './prefs';
-import { EMPTY_FILTERS, type Density, type DeviceFilters, type DeviceRow, type SortKey } from './types';
+import { BULK_MAX, deviceGroupsApi, deviceListApi, deviceViewsApi, refusalMessage, storedFilters, toParams, viewFilters } from './api';
+import { clearLegacyViews, loadLegacyViews, loadPrefs, savePrefs, type LegacyView } from './prefs';
+import { BulkBar, BulkResultDialog, GroupsDialog } from './bulk';
+import { EMPTY_FILTERS, type BulkResponse, type Density, type DeviceFilters, type DeviceRow, type SavedView, type SortKey } from './types';
 
 const PAGE_SIZES = [25, 50, 100, 200];
 const ALL = '__all__'; // Radix Select cannot carry an empty value.
@@ -42,6 +43,7 @@ function readUrl(): { filters: DeviceFilters; sort: SortKey; dir: 'asc' | 'desc'
         restartPending: q.get('restartPending') === 'true',
         agent: pick('agent', ['', 'signed', 'standard', 'none'] as const, ''),
         status: pick('status', ['current', 'archived', 'all'] as const, 'current'),
+        groupId: q.get('groupId') ?? '',
       },
       sort, dir: pick('dir', ['asc', 'desc'] as const, DEFAULT_DIR[sort] ?? 'desc'),
       page: Math.max(1, parseInt(q.get('page') ?? '1', 10) || 1),
@@ -57,7 +59,8 @@ function apiMessage(e: unknown, fallback: string) {
 
 export function DeviceList() {
   const { toast } = useToast();
-  const { can, isPlatformAdmin, technician } = usePermissions();
+  const { can, isPlatformAdmin, technician, businessName } = usePermissions();
+  const qc = useQueryClient();
   const [filters, setFilters] = React.useState<DeviceFilters>(EMPTY_FILTERS);
   const [searchInput, setSearchInput] = React.useState('');
   const [sort, setSort] = React.useState<SortKey>('online');
@@ -66,9 +69,15 @@ export function DeviceList() {
   const [pageSize, setPageSize] = React.useState(50);
   const [columns, setColumns] = React.useState<string[]>(DEFAULT_COLUMNS);
   const [density, setDensity] = React.useState<Density>('comfortable');
-  const [views, setViews] = React.useState<SavedView[]>([]);
+  const [legacy, setLegacy] = React.useState<LegacyView[]>([]);
   const [saveOpen, setSaveOpen] = React.useState(false);
   const [viewName, setViewName] = React.useState('');
+  const [shareView, setShareView] = React.useState(false);
+  const [activeView, setActiveView] = React.useState<SavedView | null>(null);
+  const [groupsOpen, setGroupsOpen] = React.useState(false);
+  // Selected rows, kept across pages and filters (id → name). Capped: the server refuses more than BULK_MAX per request.
+  const [selected, setSelected] = React.useState<Map<string, string>>(new Map());
+  const [bulkResult, setBulkResult] = React.useState<BulkResponse | null>(null);
   const [exporting, setExporting] = React.useState(false);
   const [now, setNow] = React.useState(() => Date.now());
   const [ready, setReady] = React.useState(false);
@@ -78,7 +87,7 @@ export function DeviceList() {
     const p = loadPrefs();
     if (p.columns?.length) setColumns(p.columns.filter((c) => COLUMNS.some((d) => d.id === c)));
     setDensity(p.density);
-    setViews(loadViews());
+    setLegacy(loadLegacyViews());
     const u = readUrl();
     if (u) { setFilters(u.filters); setSearchInput(u.filters.search); setSort(u.sort); setDir(u.dir); setPage(u.page); }
     setReady(true);
@@ -120,6 +129,25 @@ export function DeviceList() {
     retry: (n, e) => (e as { response?: { status?: number } })?.response?.status !== 403 && n < 2,
   });
 
+  // Saved views (0.33): personal, plus the business's shared ones. Opening a
+  // view only sets the list's parameters; the server scopes the list for
+  // whoever opens it.
+  const viewsQ = useQuery({ queryKey: ['device-views'], queryFn: deviceViewsApi.list, enabled: ready, staleTime: 60_000 });
+  const views = viewsQ.data?.views ?? [];
+  const groupsQ = useQuery({
+    queryKey: ['device-groups', filters.businessId],
+    queryFn: () => deviceGroupsApi.list(filters.businessId || undefined),
+    enabled: ready, staleTime: 60_000,
+    retry: false,
+  });
+  const groups = groupsQ.data?.groups ?? [];
+  // A shared view and a new group belong to one business: the viewer's own, or (Platform Admin) the business filter.
+  const targetBusinessId = isPlatformAdmin ? (filters.businessId || undefined) : undefined;
+  const targetBusinessName = isPlatformAdmin
+    ? (filters.businessId ? (data?.facets.businesses.find((b) => b.id === filters.businessId)?.name ?? null) : null)
+    : businessName;
+  const canShare = !!viewsQ.data?.may.share && (!isPlatformAdmin || !!filters.businessId);
+
   const alertsVisible = data?.alertsVisible ?? false;
   const offered = COLUMNS.filter((c) => !c.needsAlerts || alertsVisible);
   const shown = offered.filter((c) => c.fixed || columns.includes(c.id));
@@ -151,20 +179,84 @@ export function DeviceList() {
   }
   function setDens(d: Density) { setDensity(d); persist(columns, d); }
 
-  function saveView() {
+  async function saveView() {
     const name = viewName.trim().slice(0, 60);
     if (!name) return;
-    const next = [...views.filter((v) => v.name !== name), { name, filters, columns, sort, dir }];
-    setViews(next);
-    if (!saveViews(next)) toast({ title: 'View not saved', description: 'This browser is not letting the page store data.', variant: 'destructive' });
-    setSaveOpen(false); setViewName('');
+    try {
+      const v = await deviceViewsApi.create({
+        name, filters: storedFilters(filters), columns, sort, dir, density,
+        shared: shareView, ...(shareView && targetBusinessId ? { businessId: targetBusinessId } : {}),
+      });
+      setActiveView(v);
+      qc.invalidateQueries({ queryKey: ['device-views'] });
+      toast({ title: shareView ? 'View shared' : 'View saved', description: shareView ? `Everyone in ${v.business?.name ?? 'this business'} who can see devices now lists it. It shows each of them only the devices they can see.` : 'Only you can see it.' });
+      setSaveOpen(false); setViewName(''); setShareView(false);
+    } catch (e) {
+      toast({ title: 'View not saved', description: await refusalMessage(e, 'The view could not be saved.'), variant: 'destructive' });
+    }
+  }
+  async function updateView(v: SavedView) {
+    try {
+      const u = await deviceViewsApi.update(v.id, { filters: storedFilters(filters), columns, sort, dir, density });
+      setActiveView(u);
+      qc.invalidateQueries({ queryKey: ['device-views'] });
+      toast({ title: `Updated “${u.name}”`, description: u.shared ? 'The change is recorded in the audit log.' : undefined });
+    } catch (e) {
+      toast({ title: 'View not updated', description: await refusalMessage(e, 'The view could not be updated.'), variant: 'destructive' });
+    }
   }
   function applyView(v: SavedView) {
-    setFilters(v.filters); setSearchInput(v.filters.search); setColumns(v.columns); setSort(v.sort); setDir(v.dir); setPage(1);
+    const f = viewFilters(v.filters);
+    setFilters(f); setSearchInput(f.search); setSort(v.sort); setDir(v.dir); setPage(1);
+    if (v.columns.length) setColumns(v.columns.filter((c) => COLUMNS.some((d) => d.id === c)));
+    setDensity(v.density);
+    setActiveView(v);
   }
-  function deleteView(name: string) {
-    const next = views.filter((v) => v.name !== name);
-    setViews(next); saveViews(next);
+  async function deleteView(v: SavedView) {
+    if (v.shared && !window.confirm(`Delete the shared view “${v.name}” for everyone in ${v.business?.name ?? 'this business'}?`)) return;
+    try {
+      await deviceViewsApi.remove(v.id);
+      if (activeView?.id === v.id) setActiveView(null);
+      qc.invalidateQueries({ queryKey: ['device-views'] });
+    } catch (e) {
+      toast({ title: 'View not deleted', description: await refusalMessage(e, 'The view could not be deleted.'), variant: 'destructive' });
+    }
+  }
+  /** Views saved in this browser by 0.31/0.32, moved to the server as personal views. */
+  async function importLegacy() {
+    let ok = 0;
+    for (const v of legacy) {
+      try {
+        await deviceViewsApi.create({ name: v.name.slice(0, 60), filters: storedFilters(v.filters), columns: v.columns, sort: v.sort, dir: v.dir, density, shared: false });
+        ok++;
+      } catch { /* a view the server refuses (for example a filter it no longer accepts) is left behind */ }
+    }
+    if (ok === legacy.length) { clearLegacyViews(); setLegacy([]); }
+    qc.invalidateQueries({ queryKey: ['device-views'] });
+    toast({ title: `Imported ${ok} of ${legacy.length} view${legacy.length === 1 ? '' : 's'}`, description: ok === legacy.length ? 'They are now personal views on your account.' : 'The rest stay in this browser.' });
+  }
+
+  function toggleRow(r: DeviceRow) {
+    setSelected((prev) => {
+      const next = new Map(prev);
+      if (next.has(r.id)) next.delete(r.id);
+      else if (next.size < BULK_MAX) next.set(r.id, r.name);
+      else toast({ title: `At most ${BULK_MAX} devices`, description: 'One bulk request acts on at most 200 devices.' });
+      return next;
+    });
+  }
+  function togglePage(rows: DeviceRow[]) {
+    setSelected((prev) => {
+      const next = new Map(prev);
+      if (rows.every((r) => next.has(r.id))) rows.forEach((r) => next.delete(r.id));
+      else for (const r of rows) { if (next.size >= BULK_MAX) break; next.set(r.id, r.name); }
+      return next;
+    });
+  }
+  function bulkDone(r: BulkResponse) {
+    setBulkResult(r);
+    qc.invalidateQueries({ queryKey: ['device-list'] });
+    if (r.action.startsWith('group.')) qc.invalidateQueries({ queryKey: ['device-groups'] });
   }
 
   async function exportCsv() {
@@ -210,6 +302,16 @@ export function DeviceList() {
 
   const sites = (data?.facets.sites ?? []).filter((s) => !filters.businessId || s.businessId === filters.businessId);
   const businesses = data?.facets.businesses ?? [];
+  // Groups to filter on: those with devices this viewer can see, plus any the viewer manages (an empty group can still be picked).
+  const groupOptions: [string, string][] = (() => {
+    const m = new Map<string, string>();
+    for (const g of data?.facets.groups ?? []) if (!filters.businessId || g.businessId === filters.businessId) m.set(g.id, `${g.name} (${g.count})`);
+    for (const g of groups) if (!m.has(g.id) && g.may.manage) m.set(g.id, `${g.name} (0)`);
+    if (filters.groupId && !m.has(filters.groupId)) m.set(filters.groupId, 'Selected group');
+    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  })();
+  const pageRows = data?.rows ?? [];
+  const pageAllSelected = pageRows.length > 0 && pageRows.every((r) => selected.has(r.id));
   const active = Object.entries(filters).filter(([k, v]) => k !== 'status' ? !!v : v !== 'current').length;
   const refused = (error as { response?: { status?: number } } | null)?.response?.status;
   const from = data && data.total ? (data.page - 1) * data.pageSize + 1 : 0;
@@ -236,6 +338,7 @@ export function DeviceList() {
         </div>
         {(isPlatformAdmin || businesses.length > 1) && sel(filters.businessId, (v) => setFilter('businessId', v), 'Business', businesses.map((b) => [b.id, `${b.name} (${b.count})`]), 'w-[180px]')}
         {sites.length > 0 && sel(filters.siteId, (v) => setFilter('siteId', v), 'Site', sites.map((s) => [s.id, `${s.name} (${s.count})`]))}
+        {groupOptions.length > 0 && sel(filters.groupId, (v) => setFilter('groupId', v), 'Group', groupOptions, 'w-[160px]')}
         {sel(filters.online, (v) => setFilter('online', v as DeviceFilters['online']), 'Online', [['online', 'Online'], ['offline', 'Offline']], 'w-[130px]')}
         {alertsVisible && sel(filters.alerts, (v) => setFilter('alerts', v as DeviceFilters['alerts']), 'Alerts', [['any', 'Has open alerts'], ['critical', 'Has critical alerts']])}
         {sel(filters.agent, (v) => setFilter('agent', v as DeviceFilters['agent']), 'Agent', [['signed', 'Signed agent'], ['standard', 'Standard agent'], ['none', 'No agent report']])}
@@ -252,22 +355,41 @@ export function DeviceList() {
         <div className="flex items-center gap-2 sm:ml-auto">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-9"><Bookmark className="h-4 w-4 mr-1.5" />Views</Button>
+              <Button variant="outline" size="sm" className="h-9" title={activeView ? `View: ${activeView.name}` : 'Saved views'}>
+                <Bookmark className="h-4 w-4 mr-1.5" /><span className="max-w-[10rem] truncate">{activeView ? activeView.name : 'Views'}</span>
+              </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-64">
-              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Saved in this browser only</DropdownMenuLabel>
-              {views.length === 0 && <p className="px-2 py-1.5 text-xs text-muted-foreground">No saved views yet.</p>}
-              {views.map((v) => (
-                <DropdownMenuItem key={v.name} onSelect={() => applyView(v)} className="justify-between">
-                  <span className="truncate">{v.name}</span>
-                  <button type="button" aria-label={`Delete view ${v.name}`} className="ml-2 text-muted-foreground hover:text-destructive"
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); deleteView(v.name); }}>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </DropdownMenuItem>
-              ))}
+            <DropdownMenuContent align="end" className="w-72">
+              {viewsQ.isError && <p className="px-2 py-1.5 text-xs text-destructive">Saved views could not be loaded.</p>}
+              {(['personal', 'shared'] as const).map((kind) => {
+                const vs = views.filter((v) => (kind === 'shared') === v.shared);
+                if (!vs.length && kind === 'shared') return null;
+                return (
+                  <React.Fragment key={kind}>
+                    <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                      {kind === 'personal' ? 'My views (only you see them)' : 'Shared in the business'}
+                    </DropdownMenuLabel>
+                    {kind === 'personal' && !vs.length && <p className="px-2 py-1.5 text-xs text-muted-foreground">No saved views yet.</p>}
+                    {vs.map((v) => (
+                      <DropdownMenuItem key={v.id} onSelect={() => applyView(v)} className="justify-between gap-2">
+                        <span className="truncate">{v.shared ? <Users className="inline h-3.5 w-3.5 mr-1 text-muted-foreground" aria-label="Shared" /> : null}{v.name}{isPlatformAdmin && v.business?.name ? <span className="text-muted-foreground"> · {v.business.name}</span> : null}</span>
+                        {v.may.edit && (
+                          <button type="button" aria-label={`Delete view ${v.name}`} className="text-muted-foreground hover:text-destructive"
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); deleteView(v); }}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </DropdownMenuItem>
+                    ))}
+                  </React.Fragment>
+                );
+              })}
               <DropdownMenuSeparator />
+              {activeView?.may.edit && <DropdownMenuItem onSelect={() => updateView(activeView)}>Update “{activeView.name}” to this view</DropdownMenuItem>}
               <DropdownMenuItem onSelect={() => setSaveOpen(true)}>Save current view…</DropdownMenuItem>
+              {legacy.length > 0 && <DropdownMenuItem onSelect={importLegacy}>Import {legacy.length} view{legacy.length === 1 ? '' : 's'} saved in this browser</DropdownMenuItem>}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setGroupsOpen(true)}><FolderTree className="h-4 w-4 mr-2" />Device groups…</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           <DropdownMenu>
@@ -296,6 +418,11 @@ export function DeviceList() {
         </div>
       </div>
 
+      {selected.size > 0 && (
+        <BulkBar selected={selected} groups={groups} isPlatformAdmin={isPlatformAdmin} sort={sort} dir={dir}
+          onClear={() => setSelected(new Map())} onDone={bulkDone} />
+      )}
+
       {refused ? (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm">
           {refused === 403 ? 'This view is not available to you: ' : 'The device list could not be loaded: '}
@@ -308,6 +435,10 @@ export function DeviceList() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-muted/50">
+              <th className={cn('w-8', pad)}>
+                <input type="checkbox" className="h-4 w-4 align-middle" aria-label="Select every device on this page"
+                  checked={pageAllSelected} disabled={!pageRows.length} onChange={() => togglePage(pageRows)} />
+              </th>
               {shown.map((c) => (
                 <th key={c.id} className={cn('text-left font-medium whitespace-nowrap', pad, c.className)} aria-sort={c.sort && sort === c.sort ? (dir === 'asc' ? 'ascending' : 'descending') : undefined}>
                   {c.sort ? (
@@ -329,13 +460,16 @@ export function DeviceList() {
           </thead>
           <tbody className="divide-y">
             {isLoading || !ready ? (
-              <tr><td colSpan={shown.length + 1} className="text-center py-8 text-muted-foreground">Loading…</td></tr>
+              <tr><td colSpan={shown.length + 2} className="text-center py-8 text-muted-foreground">Loading…</td></tr>
             ) : !data?.rows.length ? (
-              <tr><td colSpan={shown.length + 1} className="text-center py-8 text-muted-foreground">
+              <tr><td colSpan={shown.length + 2} className="text-center py-8 text-muted-foreground">
                 {active ? 'No devices match these filters.' : 'No devices yet. Enroll one to see it here.'}
               </td></tr>
             ) : data.rows.map((r) => (
-              <tr key={r.id} className={cn('group hover:bg-muted/30', !r.isOnline && 'bg-muted/10')}>
+              <tr key={r.id} className={cn('group hover:bg-muted/30', !r.isOnline && 'bg-muted/10', selected.has(r.id) && 'bg-primary/5')}>
+                <td className={cn(pad, 'align-top w-8')}>
+                  <input type="checkbox" className="h-4 w-4 mt-0.5" aria-label={`Select ${r.name}`} checked={selected.has(r.id)} onChange={() => toggleRow(r)} />
+                </td>
                 {shown.map((c) => <td key={c.id} className={cn(pad, 'align-top', c.className)}>{c.cell?.(r, ctx)}</td>)}
                 <td className={cn(pad, 'align-top text-right whitespace-nowrap sticky right-0 bg-background shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.15)]')}>
                   <div className="flex justify-end items-center gap-1">
@@ -400,18 +534,38 @@ export function DeviceList() {
           <DialogHeader>
             <DialogTitle>Save this view</DialogTitle>
             <DialogDescription>
-              Saves the current filters, sort and columns under a name, in this browser only. It is not shared with
-              anyone and does not follow you to another device. Opening it always shows only devices you can see.
+              Saves the current filters, sort, columns and density under a name — never the devices themselves. Opening
+              a view always shows only the devices whoever opens it can see.
             </DialogDescription>
           </DialogHeader>
           <Input autoFocus placeholder="e.g. Offline servers at HQ" value={viewName} maxLength={60}
             onChange={(e) => setViewName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveView(); }} />
+          <label className={cn('flex items-start gap-2 text-sm', !canShare && 'opacity-60')}>
+            <input type="checkbox" className="h-4 w-4 mt-0.5" checked={shareView} disabled={!canShare} onChange={(e) => setShareView(e.target.checked)} />
+            <span>
+              Share with everyone in {targetBusinessName ?? 'the business'}
+              <span className="block text-xs text-muted-foreground">
+                {canShare
+                  ? 'They see it in their Views menu; it shows each of them only what they can already see. Sharing is recorded in the audit log.'
+                  : isPlatformAdmin && !filters.businessId
+                    ? 'Pick a business filter first: a shared view belongs to one business.'
+                    : 'Sharing is for a Business Owner, a technician with computers:edit over the whole business, or the MSP.'}
+              </span>
+            </span>
+          </label>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSaveOpen(false)}>Cancel</Button>
-            <Button onClick={saveView} disabled={!viewName.trim()}>Save</Button>
+            <Button onClick={saveView} disabled={!viewName.trim()}>{shareView ? 'Share' : 'Save'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <BulkResultDialog result={bulkResult} onClose={() => setBulkResult(null)} />
+      <GroupsDialog open={groupsOpen} onOpenChange={setGroupsOpen}
+        groups={groups.filter((g) => !filters.businessId || g.business?.id === filters.businessId)}
+        businessId={targetBusinessId} businessLabel={targetBusinessName}
+        canCreate={!!groupsQ.data?.may.manage && (!isPlatformAdmin || !!filters.businessId)}
+        onChanged={() => { qc.invalidateQueries({ queryKey: ['device-groups'] }); qc.invalidateQueries({ queryKey: ['device-list'] }); }} />
     </div>
   );
 }

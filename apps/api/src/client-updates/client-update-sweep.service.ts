@@ -4,14 +4,13 @@ import { AuditService } from '../audit/audit.service';
 import { ContainmentService } from '../containment/containment.service';
 import { openSessionReason } from '../admin/session-evidence';
 import { ClientUpdatesService } from './client-updates.service';
-import { blocker, effectivePolicy, policyWindow } from './policy';
+import { blocker, effectivePolicy, policyWindow, ROLLOUT_OPEN } from './policy';
 import { describeWindow, isWindowOpen } from './update-window';
 
 /** A live sample older than this does not say who is logged on now. */
 const LIVE_SAMPLE_FRESH_MS = 15 * 60_000;
 /** A session count the endpoint reported longer ago than this is not evidence about now. */
 const SESSION_COUNT_FRESH_MS = 10 * 60_000;
-const ROLLOUT_OPEN = ['REQUESTED', 'DISPATCHED', 'INSTALLING', 'AWAITING_VERIFICATION'] as const;
 
 /**
  * The client-update sweep (0.32). Every CLIENT_UPDATE_SWEEP_SECONDS (default

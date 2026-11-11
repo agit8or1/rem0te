@@ -611,7 +611,7 @@ check(
 //     touches anything. screenshots.mjs had no such guard and defaulted to
 //     port 3000 — the production web port — until 0.29.
 {
-  for (const f of ['apps/web/scripts/screenshots.mjs', 'apps/web/scripts/capture-media.mjs', 'apps/web/scripts/capture-video.mjs', 'apps/web/scripts/e2e-navigation.mjs']) {
+  for (const f of ['apps/web/scripts/screenshots.mjs', 'apps/web/scripts/capture-media.mjs', 'apps/web/scripts/capture-video.mjs', 'apps/web/scripts/e2e-navigation.mjs', 'apps/web/scripts/e2e-search-palette.mjs']) {
     const src = read(f);
     check(`${f.split('/').pop()} refuses https and ports 3000/443`, /:\(3000\|443\)\\b/.test(src) && /https:\\\/\\\//.test(src) && /throw new Error\(`Refusing/.test(src), `${f} must throw before capturing against a production-looking WEB_URL`);
   }
@@ -696,14 +696,16 @@ check(
       && /export function isCatalogKey\(k: unknown\): k is DiagnosticKey \{\s*return typeof k === 'string' && BY_KEY\.has\(k\);/.test(cat),
     'request() and report() must refuse a non-catalog key first; report() must match the run\'s key');
   const mig = read('apps/api/prisma/migrations/0031_diagnostic_runs/migration.sql');
-  const dbKeys = [...(/"DiagnosticRun_key_catalog" CHECK \("key" IN \(([\s\S]*?)\)\)/.exec(mig)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  // 0042 (0.33) redefines the key list; the newest definition is the one in force.
+  const migKeys = read('apps/api/prisma/migrations/0042_system_inventory/migration.sql');
+  const dbKeys = [...(/"DiagnosticRun_key_catalog" CHECK \("key" IN \(([\s\S]*?)\)\)/.exec(migKeys)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
   check('the database refuses a key outside the catalog', JSON.stringify(dbKeys) === JSON.stringify(keys), `CHECK lists: ${dbKeys.join(',')}`);
   check('a request carries a key and nothing else',
     /export class RequestDiagnosticDto \{\s*@IsString\(\)\s*@Length\(1, 64\)\s*@Matches\([^\n]*\)\s*key!: string;\s*\}/.test(read('apps/api/src/diagnostics-catalog/diagnostics-catalog.controller.ts'))
       && /out\.push\(\{ id: r\.id, key: r\.key \}\)/.test(dsvc) && !/params/.test(dsvc.slice(dsvc.indexOf('async forHeartbeat('), dsvc.indexOf('private async requesterStillAllowed('))),
     'no parameters from the console, none to the agent');
   check('stored diagnostic results are size-capped',
-    /const capped = capResult\(shaped\);[\s\S]{0,300}result: capped\.result/.test(repFn) && /export const MAX_RESULT_BYTES = 32_768;/.test(cat)
+    /const capped = capResult\(shaped, resultCapFor\(run\.key\)\);[\s\S]{0,300}result: capped\.result/.test(repFn) && /export const MAX_RESULT_BYTES = 32_768;/.test(cat)
       && /CHECK \("result" IS NULL OR octet_length\("result"::text\) <= 65536\)/.test(mig),
     'report() must store capResult\'s output; the migration keeps the 64 KB backstop');
   const enr = read('apps/api/src/enrollment/enrollment.service.ts');
@@ -867,15 +869,24 @@ check(
 //     fixed type names, it runs no expression, shell, download or
 //     package-changing command, it reads os-release and its config with sed
 //     (never sources them), keeps the secret out of argv, and refuses a
-//     world-readable secret. The installer writes the secret 0600 and its
-//     --uninstall removes it. Server side: device strings are made inert on
-//     heartbeat and claim, and the console refuses to stage what the Linux
-//     agent would ignore.
+//     world-readable secret or one another account owns. The installer
+//     writes the secret 0600 and its --uninstall removes it. Server side:
+//     device strings are made inert on heartbeat and claim, and the console
+//     refuses to stage what the Linux agent would ignore. Since 0.33 the
+//     parts that touch the secret, the server and its response live in
+//     posix-agent.ts, shared with macOS (§ 32), so both are checked here.
+// The shell text of an agent module: every String.raw template in it, with
+// comment lines dropped (they name what the agent does NOT do).
+const shellCode = (...files) => files.map((f) => [...read(f).matchAll(/String\.raw`([\s\S]*?)`;/g)].map((m) => m[1]).join('\n')).join('\n')
+  .split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX_COMMANDS'];
 {
   const la = read('apps/api/src/public/linux-agent.ts');
-  const tpl = la.slice(la.indexOf('const LINUX_AGENT_TEMPLATE = String.raw`'), la.lastIndexOf('`;'));
-  // Comment lines name what the agent does NOT do; only code is checked.
-  const code = tpl.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  const code = shellCode('apps/api/src/public/linux-agent.ts', 'apps/api/src/public/posix-agent.ts');
+  const build = la.slice(la.indexOf('export function buildLinuxAgentScript('), la.indexOf('}', la.indexOf('export function buildLinuxAgentScript(')));
+  check('the Linux agent is assembled with every shared POSIX guard',
+    POSIX_PARTS.every((p) => build.includes(p)) && /assemblePosixAgent\('linux'/.test(build),
+    `buildLinuxAgentScript must include ${POSIX_PARTS.join(', ')}`);
   check('the Linux agent runs no expression, shell, download or state-changing command',
     code.length > 8000
       && !/\beval\b|^\s*\.\s|\bsource\b|\b(sh|bash|dash) -c\b|\|\s*(sh|bash|dash)\b|\bwget\b|\bpython3?\b|\bperl\b/m.test(code)
@@ -897,6 +908,9 @@ check(
     /case "\$mode" in\s*600\|400\) ;;\s*\*\) log "refusing/.test(code) && /\^https:\/\/\[A-Za-z0-9\.-\]\+/.test(code)
       && /\^http:\/\/\(127\\\.0\\\.0\\\.1\|localhost\)/.test(code),
     'secret must be 600/400; plain http only to loopback');
+  check('the POSIX agents refuse a secret owned by any account but their own',
+    /owner=\$\(file_owner "\$SECRET_FILE"\)\nif \[ -z "\$owner" \] \|\| \[ "\$owner" != "\$\(id -u\)" \]; then\n\s*log "refusing[^\n]*\n\s*exit 1/.test(code),
+    'posix-agent.ts must compare the secret file\'s owner with id -u and exit before sending');
   check('every string the Linux agent sends goes through txt or nm',
     /txt\(\) \{ printf '%s' "\$1" \| tr -cd ' -~' \| tr -d '"\\\\' \| cut -c1-"\$2"; \}/.test(code)
       && /nm\(\) \{ printf '%s' "\$1" \| tr -cd 'A-Za-z0-9\._-' \| cut -c1-"\$2"; \}/.test(code),
@@ -916,11 +930,12 @@ check(
     'heartbeat() must pass its dto through withDeviceText before the node lookup; claim likewise');
   const eps = read('apps/api/src/endpoints/endpoints.service.ts');
   const fn = (name) => eps.slice(eps.indexOf(`async ${name}(`), eps.indexOf(`async ${name}(`) + 900);
-  check('the console refuses to stage for Linux what its agent would ignore',
-    /await this\.refuseOnLinux\(endpointId, /.test(fn('rotateCredential')) && /await this\.refuseOnLinux\(id, /.test(fn('requestAgentReinstall'))
-      && /await this\.refuseOnLinux\(id, /.test(fn('requestEventLog'))
-      && /!isLinuxPlatform\(n\.endpoint\?\.platform\)/.test(read('apps/api/src/admin/update.service.ts')),
-    'rotation, reinstall, event-log query and one-click client update must refuse or skip Linux');
+  check('the console refuses to stage for Linux and macOS what their agents would ignore',
+    /await this\.refuseOnReadOnlyAgent\(endpointId, /.test(fn('rotateCredential')) && /await this\.refuseOnReadOnlyAgent\(id, /.test(fn('requestAgentReinstall'))
+      && /await this\.refuseOnReadOnlyAgent\(id, /.test(fn('requestEventLog'))
+      && /const refusal = readOnlyAgentRefusal\(ep\?\.platform, what\);\s*if \(refusal\) throw new BadRequestException\(refusal\);/.test(eps)
+      && /!readOnlyAgentOs\(n\.endpoint\?\.platform\)/.test(read('apps/api/src/admin/update.service.ts')),
+    'rotation, reinstall, event-log query and one-click client update must refuse or skip Linux and macOS');
 }
 
 // 25. Patch policies and installing from the Patches tab (0.32). A policy is
@@ -1023,6 +1038,409 @@ check(
   check('GET /admin/search is gone, or scopes computers with endpointVisibilityWhere',
     !hasSearch || (/async search\(/.test(adminSvc) && /this\.acl\.endpointVisibilityWhere\(actor/.test(searchFn)),
     'admin search must not filter computers by business scope alone');
+}
+
+// 27. Enrolment step-up (0.33). An enrolment token puts a machine of the
+//     holder's choosing into a business, so a session alone must not mint
+//     one: a person needs a fresh re-authentication, whatever their role and
+//     whatever step-up actions are configured (assertFresh, never the
+//     configurable StepUpService.assert). An API key cannot step up and keeps
+//     the ability, so minting a key that carries enrollment:write needs the
+//     same fresh re-authentication. Every caller must say which proof it
+//     has; nothing else writes a DeviceClaimToken. Registering by RustDesk ID
+//     mints no credential and so is not gated.
+{
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const ctl = read('apps/api/src/enrollment/enrollment.controller.ts');
+  const pub = read('apps/api/src/public-api/public-api.controller.ts');
+  const rev = read('apps/api/src/security-controls/review.ts');
+  const mintFn = enr.slice(enr.indexOf('async createClaimToken('), enr.indexOf('async listClaimTokens('));
+  check('assertFresh refuses a missing method unconditionally',
+    /export function assertFresh\(method: string \| null,[^)]*\) \{\s*if \(!method\) \{\s*throw new ForbiddenException\(\{\s*code: 'STEP_UP_REQUIRED'/.test(rev),
+    'review.ts: assertFresh must throw STEP_UP_REQUIRED whenever method is null, with no option that skips it');
+  check('createClaimToken demands a mint proof and checks it before the token is written',
+    /async createClaimToken\(actor: ActorContext, dto: [^)]*\}, auth: TokenMintAuth\)/.test(mintFn)
+      && /export type TokenMintAuth =\s*\| \{ via: 'session'; freshMethod: string \| null \}\s*\| \{ via: 'api-key'; apiKeyId: string \| undefined \};/.test(enr)
+      && /if \(auth\.via === 'session'\) \{\s*assertFresh\(auth\.freshMethod, \{\s*action: 'enrollment\.create'/.test(mintFn)
+      && /\} else if \(!auth\.apiKeyId\) \{\s*throw new ForbiddenException/.test(mintFn)
+      && mintFn.indexOf('assertFresh(auth.freshMethod') !== -1
+      && mintFn.indexOf('assertFresh(auth.freshMethod') < mintFn.indexOf('deviceClaimToken.create(')
+      && mintFn.indexOf('assertFresh(auth.freshMethod') > mintFn.indexOf('this.acl.requireScope(actor'),
+    'session → assertFresh (after scope, before the create); api-key → refused without a key id');
+  const writers = walk('apps/api/src').filter((f) => !f.endsWith('.spec.ts') && /deviceClaimToken\.(create|createMany|upsert)\(/.test(read(f)));
+  const callers = walk('apps/api/src').filter((f) => !f.endsWith('.spec.ts') && /\.createClaimToken\(/.test(read(f)));
+  check('only createClaimToken writes a new DeviceClaimToken, and only the two known routes call it',
+    writers.length === 1 && writers[0].endsWith('enrollment/enrollment.service.ts') && (enr.match(/deviceClaimToken\.create\(/g) ?? []).length === 1
+      && callers.length === 2 && callers.some((f) => f.endsWith('enrollment/enrollment.controller.ts')) && callers.some((f) => f.endsWith('public-api/public-api.controller.ts')),
+    `writers: ${writers.join(', ')}; callers: ${callers.join(', ')} — a new mint path needs its own step-up decision here`);
+  check('the console route passes the step-up it read; the public route passes the API key',
+    /const freshMethod = u\?\.sub \? this\.stepUp\.read\(req, u\.sub, u\.iat\)\?\.method \?\? null : null;\s*const token = await this\.enrollment\.createClaimToken\(actor, dto, \{ via: 'session', freshMethod \}\);/.test(ctl)
+      && /\{ via: 'api-key', apiKeyId: this\.apiKeyMeta\(req\)\.apiKeyId \},\s*\);/.test(pub)
+      && /@Controller\('pub\/v1'\)\s*@Public\(\)\s*@UseGuards\(ApiKeyAuthGuard\)/.test(pub),
+    'enrollment.controller must read StepUpService; public-api must sit behind ApiKeyAuthGuard and pass apiKeyId');
+  const keys = read('apps/api/src/apikeys/apikeys.service.ts');
+  const keysCtl = read('apps/api/src/apikeys/apikeys.controller.ts');
+  const keyFn = keys.slice(keys.indexOf('async create('), keys.indexOf('async revoke('));
+  check('a key that can mint enrolment tokens needs a fresh re-authentication to create',
+    /if \(validScopes\.includes\('enrollment:write'\)\) \{\s*assertFresh\(freshMethod, \{/.test(keyFn)
+      && keyFn.indexOf("validScopes.includes('enrollment:write')") < keyFn.indexOf('apiKey.create(')
+      && /this\.stepUp\.read\(req, u\.sub, u\.iat\)\?\.method \?\? null : null;\s*return \{ success: true, data: await this\.svc\.create\(actor, dto, freshMethod\) \};/.test(keysCtl),
+    'ApiKeysService.create must assertFresh on enrollment:write (the filtered scopes) before writing; the controller passes the step-up');
+  const eps = read('apps/api/src/endpoints/endpoints.service.ts');
+  check('registering by RustDesk ID mints no credential (which is why it is not gated)',
+    /rustdeskNode: \{ create: \{ tenantId: business\.tenantId, rustdeskId: dto\.rustdeskId, platform: dto\.platform \} \},/.test(eps)
+      && /if \(dto\.rustdeskId\) \{\s*this\.acl\.assertPlatformAdmin\(actor\);/.test(eps),
+    'the node created by ID must carry no secret or password, and stay Platform Admin only — if it ever mints one, gate it');
+  check('the enrolment step-up suite runs in CI', /\benrol-stepup\b/.test(read('scripts/run-e2e.sh')), 'add e2e-enrol-stepup to run-e2e.sh');
+}
+
+// 28. Global search (0.33). A search result is a disclosure like a list row,
+//     so every group starts from its own list route's where builder — the
+//     device list's scopedWhere (visibility AND-ed), GET /businesses' and
+//     GET /sites' listWhere, GET /users' memberWhere, the alerts list's
+//     alertWhere — with the match AND-ed onto it, and is gated by that list's
+//     capability. The list routes use the same builders, so the two cannot
+//     drift. Results name no secret; searches are throttled, not audited and
+//     not logged; query text reaches LIKE only escaped.
+{
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const svc = code(read('apps/api/src/search/search.service.ts'));
+  const ctl = code(read('apps/api/src/search/search.controller.ts'));
+  const qry = read('apps/api/src/search/query.ts');
+  const fn = (name) => { const i = svc.indexOf(`private async ${name}(`); return i < 0 ? '' : svc.slice(i, svc.indexOf('\n  }\n', i)); };
+  const comp = fn('computers'), biz = fn('businessGroup'), site = fn('siteGroup'), usr = fn('userGroup'), alr = fn('alertGroup');
+  check('search: each group starts from its list route\'s where builder, with the match AND-ed onto it',
+    /where: \{ AND: \[this\.devices\.scopedWhere\(actor, \{ status: 'current' \}\), match\] \}/.test(comp)
+      && /where: this\.businesses\.listWhere\(actor, likeEscape\(q\)\)/.test(biz)
+      && /where: \{ AND: \[this\.sites\.listWhere\(actor\), \{ OR: /.test(site)
+      && /AND: \[\s*this\.users\.memberWhere\(actor\),/.test(usr)
+      && /where: \{ AND: \[this\.monitoring\.alertWhere\(actor\), /.test(alr)
+      && !/\.\.\.\s*this\.(acl|devices|businesses|sites|users|monitoring)\./.test(svc) && !/endpointVisibilityWhere|businessWhere|resolveScope/.test(svc),
+    'computers: AND [scopedWhere, match]; businesses: listWhere; sites/users/alerts: AND [builder, …]; no builder spread, no hand-written scope');
+  check('search: phase two reads only the ids phase one returned',
+    /const ids = found\.map\(\(r\) => r\.id\);/.test(comp) && /FROM unnest\(\$\{ids\}::text\[\]\) AS u\(id\)/.test(comp)
+      && (comp.match(/FROM "Endpoint"/g) ?? []).length === 0 && (comp.match(/JOIN "Endpoint" e ON e\.id = (u|k)\.id/g) ?? []).length === 2
+      && /SELECT \* FROM ranked ORDER BY/.test(comp) && /FROM kept k/.test(comp),
+    'the ranked SQL must start from unnest(ids) and the output from kept rows only');
+  check('search: the list routes use the same builders',
+    /where: this\.listWhere\(actor, search \? likeEscape\(search\) : undefined\),/.test(read('apps/api/src/businesses/businesses.service.ts'))
+      && /where: this\.listWhere\(actor, businessId\),/.test(read('apps/api/src/sites/sites.service.ts'))
+      && /where: this\.memberWhere\(actor, businessId\),/.test(read('apps/api/src/users/users.service.ts'))
+      && /where: this\.scopedWhere\(actor, \{ status: q\.status \}\)/.test(read('apps/api/src/endpoints/endpoint-list.service.ts')),
+    'GET /businesses, /sites, /users and the device list must build their where with the builders search uses');
+  {
+    // 0.33: the list routes' own searches escape too, with the same helper —
+    // before, GET /endpoints?search=% (or _) matched every computer in scope.
+    const eps = read('apps/api/src/endpoints/endpoints.service.ts');
+    const lst = read('apps/api/src/endpoints/endpoint-list.service.ts');
+    const term = eps.slice(eps.indexOf('const term = params.search'), eps.indexOf('const where = { AND: [visibility, filters] };'));
+    check('search: GET /businesses, GET /endpoints and the device list escape LIKE metacharacters in a search',
+      /const term = params\.search \? likeEscape\(params\.search\) : undefined;/.test(eps) && !/contains: params\.search/.test(eps)
+        && (term.match(/contains: term,/g) ?? []).length === 6
+        && /const c = \{ contains: likeEscape\(q\.search\), mode: 'insensitive' as const \};/.test(lst) && !/contains: q\.search/.test(lst)
+        && [eps, lst, read('apps/api/src/businesses/businesses.service.ts')].every((src) => /import \{ likeEscape \} from '\.\.\/common\/like';/.test(src)),
+      'every user-typed contains: on those routes must go through common/like.ts likeEscape');
+  }
+  check('search: each group is gated by its list page\'s capability',
+    /computers: 'computers:view',\s*businesses: null,\s*sites: 'computers:view',\s*users: 'users:view',\s*alerts: 'monitoring:alerts',/.test(qry)
+      && /return this\.acl\.can\(actor, GROUP_CAPABILITY\[group\]\);/.test(svc)
+      && /^\s*if \(!this\.allowed\(actor, 'computers'\)\) return null;/m.test(comp) && /^\s*if \(!this\.allowed\(actor, 'sites'\)\) return null;/m.test(site)
+      && /^\s*if \(!this\.allowed\(actor, 'users'\)\) return null;/m.test(usr)
+      && /catch \(e\) \{ if \(e instanceof ForbiddenException\) return null; throw e; \}/.test(svc)
+      && ['computers', 'businessGroup', 'siteGroup', 'userGroup', 'alertGroup'].every((g) => new RegExp(`gated\\(\\(\\) => this\\.${g}\\(actor, q\\)\\)`).test(svc)),
+    'GROUP_CAPABILITY must name computers:view / none / computers:view / users:view / monitoring:alerts, and each group must check it (alerts through alertWhere)');
+  const containsArgs = [...svc.matchAll(/contains: ([^,}]+)/g)].map((m) => m[1].trim());
+  check('search: query text reaches LIKE only escaped',
+    containsArgs.length >= 6 && containsArgs.every((a) => /^likeEscape\((q|t)\)$/.test(a)) && /listWhere\(actor, likeEscape\(q\)\)/.test(biz)
+      && /ILIKE \$\{p\.contains\}/.test(comp) && !/ILIKE \$\{q\}|LIKE '%' \|\|/.test(svc)
+      && /export \{ likeEscape \};/.test(qry) && /import \{ likeEscape \} from '\.\.\/common\/like';/.test(qry)
+      && /return s\.replace\(\/\[\\\\%_\]\/g, \(c\) => `\\\\\$\{c\}`\);/.test(read('apps/api/src/common/like.ts')),
+    `every contains: must be likeEscape(q|t) (got ${containsArgs.join(', ')}); raw SQL only through likePatterns`);
+  check('search: results name no secret, hash, token or credential',
+    !/passwordHash|permanentPassword|agentSecretHash|hasPassword|mfa|totp|secret|token|apiKey|capabilities:/i.test(svc),
+    'nothing secret may be selected or returned by SearchService');
+  const filt = read('apps/api/src/common/filters/global-exception.filter.ts');
+  check('search: one GET route, throttled, not audited, never logs the query',
+    (ctl.match(/@(Get|Post|Put|Patch|Delete)\(/g) ?? []).length === 1 && /@Get\(\)\s*@RateLimit\(SEARCH_RATE_LIMIT\)/.test(ctl)
+      && /export const SEARCH_RATE_LIMIT = (\d+);/.test(ctl) && Number(/SEARCH_RATE_LIMIT = (\d+)/.exec(ctl)?.[1]) <= 120
+      && /@Controller\('search'\)\s*@UseGuards\(JwtAuthGuard\)/.test(ctl) && /parseSearchQuery\(q\)/.test(ctl)
+      && ![svc, ctl].some((s) => /AuditService|audit\.|Logger|console\./.test(s))
+      && /const logged = SEARCH_PATH\.test\(request\.path \?\? ''\) \? request\.path : request\.url;/.test(filt) && /\$\{request\.method\} \$\{logged\} →/.test(filt),
+    'GET /search only, @RateLimit ≤ 120/min, JWT, parsed q; no audit or logger in search; the 5xx log line drops its query string');
+  const others = walk('apps/api/src').filter((f) => /controller\.ts$/.test(f) && f !== 'apps/api/src/search/search.controller.ts')
+    .filter((f) => /@Get\(\s*'[^']*\bsearch\b[^']*'\s*\)/.test(read(f)));
+  check('search: there is one search route — /admin/search (business-only scoping) stays removed', others.length === 0, `search routes in: ${others.join(', ')}`);
+}
+
+// 29. Device groups, saved views and bulk actions (0.33). A bulk request is
+//     only the four repeatable actions, capped at 200, every computer found
+//     through the visibility rule AND-ed and decided by the single action's
+//     own path; group and shared-view writes need manageRefusal (a Business
+//     User never, a technician only with computers:edit over the whole
+//     business); a group holds only its own business's computers wherever a
+//     computer gets one; a view stores list parameters and nothing runs it.
+{
+  const dir = 'apps/api/src/device-views';
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const rules = read(`${dir}/rules.ts`);
+  const bulkSvc = read(`${dir}/device-bulk.service.ts`);
+  const groupSvc = read(`${dir}/device-groups.service.ts`);
+  const viewSvc = read(`${dir}/saved-views.service.ts`);
+  const ctl = read(`${dir}/device-views.controller.ts`);
+  const listSvc = read('apps/api/src/endpoints/endpoint-list.service.ts');
+  const listQuery = read('apps/api/src/endpoints/list-query.ts');
+
+  check('bulk: exactly four repeatable actions, and nothing that connects, archives, deletes or runs an action',
+    /export const BULK_ACTIONS = \['group\.add', 'group\.remove', 'inventory\.refresh', 'client\.update'\] as const;/.test(rules)
+      && !/\b(authorizeConnect|connect\(|archive|restore\(|\.delete\(|deleteMany|ActionsService|actionJob|createPlan|SignerClient|scriptVersion)\b/i.test(code(bulkSvc).replace(/endpointGroup\.findUnique/g, '')),
+    'BULK_ACTIONS must stay the four, and the bulk service must not reach connect/archive/delete/approved actions');
+  check('bulk: at most 200 per request, counted before de-duplication, for the export too',
+    /export const BULK_MAX = 200;/.test(rules)
+      && /if \(ids\.length > BULK_MAX\) throw bad\('BULK_TOO_LARGE'/.test(rules) && rules.indexOf('ids.length > BULK_MAX') < rules.indexOf('[...new Set(ids as string[])]')
+      && /const endpointIds = parseSelection\(body\.endpointIds\);/.test(rules) && /const ids = parseSelection\(body\.endpointIds\);/.test(bulkSvc),
+    'parseSelection must cap the raw list; parseBulk and exportSelection must both use it');
+  check('bulk: every computer is found through the visibility rule, AND-ed, and anything else is NOT_FOUND',
+    /where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(a\), \{ id: \{ in: ids \} \}\] \}/.test(bulkSvc)
+      && /if \(!seen\.has\(id\)\) results\.set\(id, \{ endpointId: id, ok: false, code: 'NOT_FOUND', reason: 'Computer not found' \}\);/.test(bulkSvc)
+      && !/\.\.\.\s*this\.acl\.endpointVisibilityWhere/.test(bulkSvc + groupSvc + viewSvc)
+      && (code(bulkSvc).match(/this\.prisma\.endpoint\.findMany\(/g) ?? []).length === 1,
+    'visible() must AND endpointVisibilityWhere with the ids, and be the only endpoint read');
+  check('bulk: refresh is the single route’s own call; client update is Platform Admin, containment-checked, staged by the one-click path',
+    /await this\.endpoints\.requestInventoryRefresh\(a, t\.id\);/.test(bulkSvc)
+      && /if \(!a\.isPlatformAdmin\) \{/.test(bulkSvc) && bulkSvc.indexOf('if (!a.isPlatformAdmin) {') < bulkSvc.indexOf("this.containment.blocking('updates', t.customerId)")
+      && /if \(pause\) \{ results\.set\(t\.id, \{ \.\.\.base, ok: false, code: 'CONTAINED'/.test(bulkSvc)
+      && /await this\.updates\.requestRustdeskUpdate\(stage\.map\(\(t\) => t\.id\), /.test(bulkSvc)
+      && !/rustdeskNode\.(update|updateMany)\(/.test(bulkSvc),
+    'no bulk path may write a RustDesk request itself or skip the admin/containment checks');
+  check('bulk: the fleet budget only refuses — every computer it lets through is still admitted by the guard',
+    /const limit = budget\.wouldExceed\(t\.id, t\.customerId, controls\.thresholds\[this\.policy\.tierFor\(a, t\.id\)\]\);\s*if \(limit\) \{/.test(bulkSvc)
+      && bulkSvc.indexOf('budget.admitted(t.id, t.customerId)') > bulkSvc.indexOf('await this.endpoints.requestInventoryRefresh(a, t.id);')
+      && !/abuse\.admit|privilegedActivity\.create/.test(bulkSvc),
+    'FleetBudget may refuse before the guard, never admit in its place');
+
+  const refusal = rules.slice(rules.indexOf('export function manageRefusal('), rules.indexOf('// ── Saved views'));
+  check('groups and shared views: a technician needs computers:edit on the whole business; a Business User never',
+    /if \(a\.technician\) \{[\s\S]*?a\.technician\.businessId !== customerId[\s\S]*?\.includes\(CAP\.COMPUTERS_EDIT\) && s\.endpointIds === null\)/.test(refusal)
+      && /if \(a\.businessId !== customerId\) return [^;]+;\s*if \(isOwnerRole\(a\.roleType\)\) return null;\s*return '[^']+';\s*\}/.test(refusal),
+    'manageRefusal must mirror the client-update rule');
+  check('groups: every write checks manageRefusal first, and a member must be in the group’s business',
+    /async create\(a: ActorContext, raw: unknown\) \{[\s\S]{0,400}const why = manageRefusal\(a, customerId\);\s*if \(why\) throw new ForbiddenException/.test(groupSvc)
+      && /const g = await this\.findManageable\(a, id\);/.test(groupSvc.slice(groupSvc.indexOf('async update('))) && /const g = await this\.findManageable\(a, id\);/.test(groupSvc.slice(groupSvc.indexOf('async remove(')))
+      && /const why = manageRefusal\(a, g\.customerId\);/.test(bulkSvc) && /if \(t\.customerId !== g\.customerId\) \{/.test(bulkSvc)
+      && /updateMany\(\{ where: \{ id: t\.id, customerId: g\.customerId, endpointGroupId: null \}, data: \{ endpointGroupId: g\.id \} \}\)/.test(bulkSvc),
+    'create/update/remove and bulk membership must check manageRefusal; additions are conditional on the business');
+  check('groups: another business’s group is a 404',
+    /if \(!g\.customerId \|\| g\.customerId !== a\.businessId\) throw new NotFoundException\('Group not found'\);/.test(groupSvc), 'findVisible must compare the business');
+  const eps = read('apps/api/src/endpoints/endpoints.service.ts');
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  check('a computer gets only its own business’s group: creation, enrolment tokens, claims, and moving business',
+    /if \(dto\.endpointGroupId\) await this\.assertGroupFor\(dto\.endpointGroupId, businessId, business\.tenantId\);/.test(eps)
+      && /where: \{ id: groupId, OR: \[\{ customerId: businessId \}, \{ customerId: null, tenantId \}\] \}/.test(eps)
+      && /\.\.\.\(leavesGroup \? \{ endpointGroupId: null \} : \{\}\)/.test(eps)
+      && /where: \{ id: dto\.endpointGroupId, OR: \[\{ customerId: businessId \}, \{ customerId: null, tenantId: business\.tenantId \}\] \}/.test(enr)
+      && /endpointGroupId: groupId,/.test(enr) && !/endpointGroupId: record\.endpointGroupId/.test(enr),
+    'create, update, token minting and claim must all tie the group to the business');
+  const views = [...ctl.matchAll(/@(Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)')?\s*\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''}`);
+  const handlers = ctl.split(/\n  @(?:Get|Post|Put|Patch|Delete)\(/).slice(1);
+  check('views and groups: every route names its capability, no route runs a view, bulk has two routes',
+    JSON.stringify(views) === JSON.stringify(['GET ', 'GET :id', 'POST ', 'PATCH :id', 'DELETE :id', 'GET ', 'POST ', 'PATCH :id', 'DELETE :id', 'POST ', 'POST export.csv'])
+      && handlers.length === 11 && handlers.every((h) => /^[^\n]*\)\s*\n\s*@RequireCapability\(CAP\.(COMPUTERS_VIEW|COMPUTERS_EDIT)\)/.test(h))
+      && /@Controller\('device-views'\)/.test(ctl) && /@Controller\('device-groups'\)/.test(ctl) && /@Controller\('endpoints\/bulk'\)/.test(ctl),
+    `routes: ${views.join(', ')}`);
+  check('views store list parameters only, parsed by the list’s own parser; nothing in the view service reads computers',
+    /const unknown = Object\.keys\(raw\)\.filter\(\(k\) => !\(LIST_FILTER_KEYS as readonly string\[\]\)\.includes\(k\)\);\s*if \(unknown\.length\) throw bad/.test(rules)
+      && /const q = parseListQuery\(asQuery\);/.test(rules)
+      && /export const ViewUpdate = z\.object\(viewFields\)\.partial\(\)\.strict\(\);/.test(rules) && !/shared|businessId/.test(rules.slice(rules.indexOf('const viewFields = {'), rules.indexOf('export const ViewInput')))
+      && !/this\.prisma\.endpoint\./.test(viewSvc) && /if \(f\.businessId && f\.businessId !== customerId\) \{/.test(viewSvc),
+    'normalizeViewFilters must refuse unknown keys and use parseListQuery; updates cannot change who a view is for; shared filters stay in the business');
+  check('a personal view is its author’s alone; a shared view is its business’s',
+    /if \(!v\.shared\) \{\s*if \(v\.userId !== a\.userId\) throw new NotFoundException/.test(viewSvc)
+      && /if \(!v\.customerId \|\| !\(a\.isPlatformAdmin \|\| v\.customerId === a\.businessId\)\) throw new NotFoundException/.test(viewSvc)
+      && /const why = manageRefusal\(a, v\.customerId!\);/.test(viewSvc) && /const why = manageRefusal\(a, customerId\);\s*if \(why\) throw new ForbiddenException\(\{ code: 'NOT_ALLOWED', message: why \}\);\s*await this\.assertFiltersInBusiness/.test(viewSvc),
+    'findVisible must 404 other people’s and other businesses’ views; shared writes need manageRefusal');
+  check('the selection export is the list’s audited export with the selection AND-ed; no query string can set it',
+    /const out = await this\.list\.exportCsv\(a, q\);/.test(bulkSvc) && /if \(q\.ids\) and\.push\(\{ id: \{ in: q\.ids \} \}\);/.test(listSvc)
+      && !/\bids:/.test(listQuery.slice(listQuery.indexOf('export function parseListQuery('))),
+    'exportSelection must call exportCsv; filteredWhere must AND ids; parseListQuery must never set ids');
+  check('group, shared-view and bulk changes are audited',
+    ['DEVICE_GROUP_CREATED', 'DEVICE_GROUP_UPDATED', 'DEVICE_GROUP_DELETED'].every((x) => groupSvc.includes(`action: '${x}'`))
+      && bulkSvc.includes("action: 'DEVICE_GROUP_MEMBERS_CHANGED'") && bulkSvc.includes("action: 'DEVICE_BULK_ACTION'") && viewSvc.includes("action: 'DEVICE_VIEW_SHARED_CHANGED'")
+      && /if \(v\.shared\) await this\.auditShared\(a, v, 'created', null\);/.test(viewSvc) && /if \(v\.shared\) await this\.auditShared\(a, v, 'updated', before\);/.test(viewSvc) && /if \(v\.shared\) await this\.auditShared\(a, v, 'deleted', v\);/.test(viewSvc)
+      && /await this\.auditBulk\(a, input\.action, targets, ordered, group\);/.test(bulkSvc),
+    'every write path must write its audit entry');
+}
+
+// 30. Metric history (0.33). History is evidence a technician reads, so only
+//     the device may write it: a sample comes only from the heartbeat's
+//     authenticated branch, from the values recordLiveState sanitised, and a
+//     per-volume sample only from the sanitised disk list of an inventory pass
+//     (a command result, which requires the device secret). Nothing else in
+//     the API writes either. The read route names computers:view and scopes
+//     with assertEndpointInScope AND endpointVisibilityWhere. The sweep honours
+//     METRIC_SWEEP=off, and every pass and retention setting is bounded.
+{
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const hb = enr.slice(enr.indexOf('async heartbeat('), enr.indexOf('async monitorReport('));
+  const authBlock = hb.match(/if \(authenticated\) \{\n(?:\s*\/\/[^\n]*\n)*\s*try \{\n\s*const live = await this\.inventory\.recordLiveState\(node\.endpointId, \{[\s\S]*?\}\);\n([\s\S]*?)commands = await this\.inventory\.collectForHeartbeat/);
+  check('a heartbeat writes metric history only inside its authenticated branch, from recordLiveState\'s sanitised values',
+    !!authBlock && /await this\.metrics\.recordHeartbeat\(node\.endpointId, live\)/.test(authBlock[1])
+      && (hb.match(/this\.metrics\.recordHeartbeat\(/g) ?? []).length === 1,
+    'enrollment.service heartbeat(): metrics.recordHeartbeat(node.endpointId, live) must sit between recordLiveState and collectForHeartbeat inside `if (authenticated) {`');
+  const inv = read('apps/api/src/endpoint-inventory/endpoint-inventory.service.ts');
+  const ri = inv.slice(inv.indexOf('async recordInventory('), inv.indexOf('async recordUpdateScan('));
+  check('per-volume history comes only from an inventory pass\'s sanitised disk list',
+    /disks: this\.sanitizeDisks\(r\.disks\)/.test(ri) && /await this\.metrics\.recordDisks\(endpointId, data\.disks\)/.test(ri),
+    'recordInventory must pass data.disks (sanitizeDisks output) to metrics.recordDisks');
+  const writers = walk('apps/api/src').filter((f) => !f.startsWith('apps/api/src/metrics/'))
+    .filter((f) => /\.(recordHeartbeat|recordDisks)\(|endpointMetricSample\.(create|update|upsert)|endpointDiskSample\.(create|update|upsert)|endpointMetricHourly\.(create|update|upsert)|"EndpointMetric(Sample|Hourly)"|"EndpointDiskSample"/.test(read(f)));
+  check('nothing outside the heartbeat and the inventory pass writes metric history',
+    JSON.stringify(writers.sort()) === JSON.stringify(['apps/api/src/endpoint-inventory/endpoint-inventory.service.ts', 'apps/api/src/enrollment/enrollment.service.ts']),
+    `writers: ${writers.join(', ')}`);
+  const ms = read('apps/api/src/metrics/metrics.service.ts');
+  const mc = read('apps/api/src/metrics/metrics.controller.ts');
+  const hist = ms.slice(ms.indexOf('async history('), ms.indexOf('private async diskHistory('));
+  check('the history route names computers:view and is scoped and visibility-filtered',
+    /@Get\(':id\/metrics'\)\s*@RequireCapability\(CAP\.COMPUTERS_VIEW\)/.test(mc) && /@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)/.test(mc)
+      && /await this\.acl\.assertEndpointInScope\(actor, endpointId, CAP\.COMPUTERS_VIEW\)/.test(hist)
+      && /where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(actor\), \{ id: endpointId \}\] \}/.test(hist)
+      && /if \(!ep\) throw new NotFoundException/.test(hist),
+    'MetricsController GET :id/metrics needs computers:view; history() must assertEndpointInScope and AND endpointVisibilityWhere, 404 otherwise');
+  const mm = read('apps/api/src/metrics/metrics-math.ts');
+  const lim = (k) => Number((mm.match(new RegExp(`${k}: \\{ def: \\d+, min: \\d+, max: ([\\d_]+) \\}`)) ?? [])[1]?.replace(/_/g, ''));
+  check('the metric sweep honours METRIC_SWEEP=off and every pass and retention is bounded',
+    /if \(process\.env\.METRIC_SWEEP === 'off'\) return;/.test(ms) && (ms.match(/LIMIT \$\{this\.cfg\.rollupHoursPerPass\}/g) ?? []).length === 2
+      && (ms.match(/LIMIT \$\{n\}\)\)/g) ?? []).length === 3
+      && lim('rawHours') <= 168 && lim('hourlyDays') <= 400 && lim('rollupHoursPerPass') <= 48 && lim('pruneBatch') <= 50000 && lim('pruneBatches') <= 100
+      && /Math\.min\(lim\.max, Math\.max\(lim\.min,/.test(mm)
+      && /at: \{ gt: new Date\(now\.getTime\(\) - this\.cfg\.minIntervalSeconds \* 1000\) \}/.test(ms),
+    'onModuleInit must return on METRIC_SWEEP=off; roll-up and the three prunes LIMITed; METRIC_LIMITS ceilings finite and applied; one sample per minIntervalSeconds');
+}
+
+// 31. System inventory snapshots (0.33): process list, full service list and
+//     network adapter details. They ride the diagnostics catalog (§20) — a
+//     key, the authenticated heartbeat, the device-secret result — and add
+//     no channel. The agent's snapshot functions only call Get-* cmdlets
+//     (plus Sort-Object / Select-Object), never read command lines, binary
+//     paths, modules or the environment, and put every string through a
+//     charset helper; a build-time guard refuses the script otherwise. The
+//     server bounds rows and bytes, drops what the charsets refuse, keeps
+//     results out of the history, scopes every diagnostics read by the
+//     device-list visibility rule, and the workspace tabs offer no action.
+{
+  const ws = read('apps/api/src/public/windows-script.ts');
+  // The template's own copy (column 0), not the guard's SNAPSHOT_BLOCK_START constant.
+  const start = ws.indexOf('\n# ---- Snapshots (0.33): processes, services, network adapters');
+  const blk = ws.slice(start, ws.indexOf('if (\\$state.agentSecret -and \\$resp -and \\$resp.data -and \\$resp.data.diagnostics) {', start));
+  const code = blk.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  const cmds = [...new Set([...code.matchAll(/\b[A-Z][a-z]+-[A-Z][A-Za-z0-9]+\b/g)].map((m) => m[0]))];
+  check('the snapshot functions call only Get-* cmdlets (and Sort-Object / Select-Object)',
+    start > 0 && code.length > 4000 && cmds.length > 0 && cmds.every((c) => /^(Get-[A-Za-z0-9]+|Sort-Object|Select-Object)$/.test(c)),
+    `commands: ${cmds.join(', ')}`);
+  check('the snapshot functions run no expression, script block or process, and read no command line, path, module or environment',
+    !/Invoke-|\biex\b|\[scriptblock\]|\.Invoke\(|\.Create\(|&\s*[\\$'"({]|Add-Type|New-Object|Start-|PathName|CommandLine|ExecutablePath|MainModule|\.Modules\b|\.Path\b|\\\$env:/i.test(code),
+    'Get-Process / Win32_Service / Win32_NetworkAdapter[Configuration] fields only');
+  check('every snapshot string goes through a charset helper',
+    /\\\$t = \(\(\[string\]\\\$v\) -replace '\[\\\\x00-\\\\x1f\\\\x7f\]', ' '\)\.Trim\(\)/.test(code)
+      && /if \(\\\$null -eq \\\$t -or \\\$t -notmatch \\\$re\) \{ return \\\$null \}/.test(code)
+      && !/= \[string\]\\\$(pr|s|a|c)\./.test(code.replace(/\[string\]\\\$s\.StartMode/g, '').replace(/\(\[string\]\\\$s\.State\)/g, '')),
+    'Get-Rem0teSnapText strips control characters and clamps; Get-Rem0teSnapMatch drops a value failing its charset; no raw [string] field');
+  check('a build-time guard refuses an unsafe snapshot block, on both installer variants',
+    (ws.match(/return assertSnapshotBlockSafe\(template\(v, /g) ?? []).length === 2
+      && /const SNAP_ALLOWED_COMMANDS = \/\^\(Get-\[A-Za-z0-9\]\+\|Sort-Object\|Select-Object\)\$\/;/.test(ws)
+      && /const SNAP_FORBIDDEN = \/Invoke-\|\\biex\\b/.test(ws) && /PathName\|CommandLine\|ExecutablePath\|MainModule/.test(ws),
+    'buildLegacyWindowsScript and buildSignedWindowsScript must return assertSnapshotBlockSafe(template(...))');
+  check('the snapshot functions run only from the catalog switch',
+    /'process_list' \{ \\\$out = Get-Rem0teSnapProcesses \}/.test(ws) && /'service_list' \{ \\\$out = Get-Rem0teSnapServices \}/.test(ws) && /'network_adapters' \{ \\\$out = Get-Rem0teSnapNetwork \}/.test(ws)
+      && (ws.match(/Get-Rem0teSnap(Processes|Services|Network)\b/g) ?? []).length === 6,
+    'each defined once and called once, from switch -Exact ($dk)');
+  const cat = read('apps/api/src/diagnostics-catalog/catalog.ts');
+  const caseOf = (k) => cat.slice(cat.indexOf(`case '${k}':`), cat.indexOf('case ', cat.indexOf(`case '${k}':`) + 10));
+  check('snapshot results are bounded in rows and bytes, with a database backstop',
+    /export const SNAPSHOT_ROWS = \{ process_list: 1000, service_list: 1000, network_adapters: 32 \} as const;/.test(cat)
+      && /export const MAX_SNAPSHOT_BYTES = 131_072;/.test(cat)
+      && /return isSnapshotKey\(key\) \? MAX_SNAPSHOT_BYTES : MAX_RESULT_BYTES;/.test(cat)
+      && /THEN 262144 ELSE 65536 END/.test(read('apps/api/prisma/migrations/0042_system_inventory/migration.sql')),
+    '1000/1000/32 rows, 128 KB stored, 256 KB CHECK');
+  check('the snapshot sanitizers keep no command line, path or binary, and check accounts, MACs and addresses',
+    ['process_list', 'service_list', 'network_adapters'].every((k) => !/commandLine|pathName|binaryPath|\.path\b|modules|environment/i.test(caseOf(k)))
+      && /user: u && ACCOUNT_RE\.test\(u\)/.test(caseOf('process_list')) && /account: acct && ACCOUNT_RE\.test\(acct\)/.test(caseOf('service_list'))
+      && /mac && isMac\(mac\)/.test(caseOf('network_adapters')) && /ipv4: ips\(a\.ipv4, 16\)/.test(caseOf('network_adapters'))
+      && /const base = procRow\(p\);/.test(caseOf('process_list')),
+    'process names via procRow (path cut), ACCOUNT_RE, isMac, IP_RE');
+  const dsvc = read('apps/api/src/diagnostics-catalog/diagnostics-catalog.service.ts');
+  const fnOf = (n) => dsvc.slice(dsvc.indexOf(`async ${n}(`), dsvc.indexOf('\n  }\n', dsvc.indexOf(`async ${n}(`)));
+  check('every diagnostics read and request is scoped by the device-list visibility rule',
+    /const visible = await this\.prisma\.endpoint\.count\(\{ where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(actor\), \{ id: endpointId \}\] \} \}\);\s*if \(!visible\) throw new NotFoundException/.test(dsvc)
+      && ['catalogFor', 'request', 'history', 'getRun', 'snapshot'].every((n) => /await this\.assertVisible\(actor, endpointId, /.test(fnOf(n)))
+      && (dsvc.match(/this\.acl\.assertEndpointInScope\(/g) ?? []).length === 1,
+    'catalogFor, request, history, getRun and snapshot must call assertVisible (business scope AND endpointVisibilityWhere)');
+  check('a snapshot read names a snapshot key and its capability; the history leaves snapshot results out',
+    /if \(!isSnapshotKey\(key\)\) \{\s*throw new BadRequestException/.test(fnOf('snapshot')) && /const cap = entry\.capability as Capability;/.test(fnOf('snapshot'))
+      && /isSnapshotKey\(r\.key\) \? \{ \.\.\.r, result: null, resultOnTab: true \}/.test(fnOf('history'))
+      && /@Get\('snapshots\/:key'\)\s*@RequireCapability\(CAP\.COMPUTERS_VIEW\)/.test(read('apps/api/src/diagnostics-catalog/diagnostics-catalog.controller.ts')),
+    'UNKNOWN_SNAPSHOT before anything else; resultOnTab in history');
+  const tabs = read('apps/web/components/endpoints/workspace/snapshot-tabs.tsx');
+  const posts = [...tabs.matchAll(/api\.(post|put|patch|delete)\(([^)]*)\)/g)].map((m) => m[0]);
+  check('the Processes, Services and Network tabs offer no action: their only write is a Refresh (a catalog key)',
+    posts.length === 1 && /api\.post\(`\/endpoints\/\$\{endpointId\}\/diagnostics\/runs`, \{ key: snapKey \}\)/.test(posts[0])
+      && !/>\s*(End task|End process|Kill|Stop|Start|Restart|Disable|Enable)\b/i.test(tabs) && !/dangerouslySetInnerHTML/.test(tabs),
+    `writes: ${posts.join(' | ')}`);
+}
+
+// 32. The standard macOS agent (0.33). The Linux agent's rules (§ 24, whose
+//     shared POSIX parts it must include), plus macOS's own ways to change a
+//     machine: it never runs softwareupdate in any form (pending updates come
+//     from macOS's own last check, read with defaults read), and never
+//     launchctl, shutdown, pmset, systemsetup, defaults write, or plutil
+//     other than converting to stdout. It runs as root from /Library/Rem0te
+//     with the system PATH, never from /usr/local (admin-writable with
+//     Homebrew). The installer writes the secret root-only 0600, adopts a
+//     pre-0.33 secret only from a copy root wrote, installs the daemon only
+//     as root, and --uninstall removes the daemon, script, config and secret.
+//     The console refuses for macOS what it refuses for Linux.
+{
+  const ma = read('apps/api/src/public/macos-agent.ts');
+  const code = shellCode('apps/api/src/public/macos-agent.ts', 'apps/api/src/public/posix-agent.ts');
+  const build = ma.slice(ma.indexOf('export function buildMacosAgentScript('), ma.indexOf('}', ma.indexOf('export function buildMacosAgentScript(')));
+  check('the macOS agent is assembled with every shared POSIX guard',
+    POSIX_PARTS.every((p) => build.includes(p)) && /assemblePosixAgent\('macos'/.test(build),
+    `buildMacosAgentScript must include ${POSIX_PARTS.join(', ')}`);
+  check('the macOS agent runs no expression, shell, download or state-changing command',
+    code.length > 8000
+      && !/\beval\b|^\s*\.\s|\bsource\b|\b(sh|bash|dash|zsh) -c\b|\|\s*(sh|bash|dash|zsh)\b|\bwget\b|\bpython3?\b|\bperl\b|\bosascript\b/m.test(code)
+      && !/\bsoftwareupdate\b|\blaunchctl\b|(^|[\s;&|(])(reboot|shutdown|halt|pmset|systemsetup|nvram|diskutil|scutil|open|killall|pkill|networksetup|profiles)(\s|;|$)|\binstaller -|\brustdesk\s+--|\bdefaults (write|delete|import|rename)\b/m.test(code)
+      && (code.match(/\bplutil\b[^\n]*/g) ?? []).every((l) => /plutil -convert xml1 -o - "\$plist"/.test(l))
+      && (code.match(/\bdefaults [a-z]+/g) ?? []).every((l) => l === 'defaults read')
+      && (code.match(/\bcurl -/g) ?? []).length === 1,
+    'the agent must stay read-only: one curl (in post()), defaults read only, plutil to stdout only, and no softwareupdate at all');
+  check('the macOS agent runs with the system PATH only, from /Library/Rem0te',
+    /\nPATH=\/usr\/bin:\/bin:\/usr\/sbin:\/sbin\n/.test(code) && !/\/usr\/local/.test(code)
+      && /export const MACOS_AGENT_DIR = '\/Library\/Rem0te';/.test(ma) && /const SYSTEM_PATH = '\/usr\/bin:\/bin:\/usr\/sbin:\/sbin';/.test(ma)
+      && /<key>PATH<\/key>\s*<string>\$\{SYSTEM_PATH\}<\/string>/.test(ma),
+    'PATH fixed in the script and the LaunchDaemon; no /usr/local anywhere (Homebrew makes it admin-writable)');
+  check('the macOS agent bounds system_profiler and reads nothing else from the response',
+    /bounded "\$TMPD\/sp" system_profiler SPHardwareDataType/.test(code) && (code.match(/system_profiler/g) ?? []).length === 1
+      && !/rotate|updateRustdesk|reinstallAgent|confirm-rotation|diagnostic-result|monitor-report/.test(code),
+    'system_profiler only through bounded(); no other heartbeat field read');
+  const pc = read('apps/api/src/public/public.controller.ts');
+  const mac = pc.slice(pc.indexOf('private buildMacosScript('));
+  check('the macOS installer writes the secret root-only and adopts an old one only from a root-written copy',
+    /AGENT_STATE="\$\{MACOS_AGENT_SECRET\}"/.test(mac) && /\( umask 077; printf '%s' "\\\$\{AGENT_SECRET\}" > "\\\$\{AGENT_STATE\}" \)\n\s*chown root:wheel "\\\$\{AGENT_STATE\}"\n\s*chmod 600 "\\\$\{AGENT_STATE\}"/.test(mac)
+      && /\[ ! -L "\\\$\{f\}" \] && \[ "\$\(stat -f '%u %Lp' "\\\$\{f\}" 2>\/dev\/null\)" = "0 600" \]/.test(mac),
+    'umask 077, chown root:wheel, chmod 600; a legacy secret only if owner 0, mode 600, not a symlink');
+  check('the macOS installer installs the daemon only as root, from a quoted heredoc, and --uninstall removes it all',
+    /if \[ "\\\$\{IS_ROOT\}" = 1 \] && \[ -n "\\\$\{HOST_ADDR\}" \]; then/.test(mac) && /<<'\$\{MACOS_AGENT_HEREDOC\}'/.test(mac)
+      && /rm -f \$\{MACOS_AGENT_PLIST\} \$\{MACOS_AGENT_NEWSYSLOG\}\n\s*rm -f \$\{MACOS_AGENT_PATH\} \$\{MACOS_AGENT_CONF\} \$\{MACOS_AGENT_SECRET\}/.test(mac)
+      && /launchctl bootout system\/\$\{MACOS_AGENT_LABEL\}/.test(mac.slice(0, mac.indexOf('VERSION="'))),
+    'agent block under IS_ROOT; --uninstall boots out the daemon and removes the plist, script, config and secret');
+  check('the installers survive their own random-string pipelines under pipefail',
+    [...pc.matchAll(/< \/dev\/urandom \| head -c \d+[^)\n]*\)/g)].length >= 4
+      && [...pc.matchAll(/< \/dev\/urandom \| head -c \d+[^)\n]*\)/g)].every((m) => / \|\| true\)$/.test(m[0])),
+    'tr < /dev/urandom | head -c N exits 141 (SIGPIPE) under set -o pipefail: end each with || true');
+  const plat = read('apps/api/src/common/platform.ts');
+  check('macOS is a read-only agent platform for every console refusal',
+    /if \(isMacPlatform\(platform\)\) return 'macOS';/.test(plat) && /'MACOS_AGENT_READ_ONLY'/.test(plat),
+    'readOnlyAgentOs must return macOS for a Mac, with its own refusal code');
 }
 
 if (failures.length > 0) {

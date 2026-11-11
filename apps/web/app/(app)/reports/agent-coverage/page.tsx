@@ -64,7 +64,7 @@ export default function AgentCoveragePage() {
                 <Figure label="Devices" value={t.total} hint={`${t.signed} signed · ${t.standard} standard · ${t.none} no agent report`} />
                 <Figure label="No device secret" value={t.noDeviceSecret} tone={t.noDeviceSecret ? 'warn' : 'good'} hint="Heartbeats accepted as online; nothing they report is written" />
                 <Figure label={`Not heard from in ${data.silentDays} d`} value={t.silent} tone={t.silent ? 'warn' : 'good'} hint="Includes devices that never checked in" />
-                <Figure label="Non-Windows, no inventory" value={t.nonWindowsNoInventory} hint="Linux and macOS agents send no inventory yet" />
+                <Figure label="Non-Windows, no inventory" value={t.nonWindowsNoInventory} hint="Installed before the Linux or macOS agent existed" />
               </div>
               <Definition>
                 <p>{data.definitions.agent}</p>

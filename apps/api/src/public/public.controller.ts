@@ -28,6 +28,10 @@ import {
   buildLinuxAgentScript, LINUX_AGENT_CONF, LINUX_AGENT_HEREDOC, LINUX_AGENT_PATH, LINUX_AGENT_SECRET,
   LINUX_AGENT_SERVICE, LINUX_AGENT_TIMER,
 } from './linux-agent';
+import {
+  buildMacosAgentScript, MACOS_AGENT_CONF, MACOS_AGENT_DIR, MACOS_AGENT_HEREDOC, MACOS_AGENT_LABEL, MACOS_AGENT_LAUNCHD_PLIST,
+  MACOS_AGENT_LOG, MACOS_AGENT_NEWSYSLOG, MACOS_AGENT_NEWSYSLOG_CONF, MACOS_AGENT_PATH, MACOS_AGENT_PLIST, MACOS_AGENT_SECRET,
+} from './macos-agent';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 
 const INSTALLER_MAGIC = Buffer.from('REM0TE_INST_URL:');
@@ -498,7 +502,9 @@ RED='\\033[0;31m'; GREEN='\\033[0;32m'; YELLOW='\\033[1;33m'; CYAN='\\033[0;36m'
 # authenticate as.
 [ "$EUID" -eq 0 ] || { echo -e "\${RED}ERROR: Run as root: sudo bash\${NC}"; exit 1; }
 
-# Generate a permanent password for this device
+# Generate a permanent password for this device. "|| true": head exits after
+# 12 bytes, tr dies of SIGPIPE (141), and under pipefail that status would end
+# the installer here, silently (0.33).
 PERM_PW=$(LC_ALL=C tr -dc 'A-Za-z2-9' < /dev/urandom | head -c 12 || true)
 
 # Device secret: what proves to the server that a later call really is this
@@ -676,32 +682,94 @@ echo ""
     const keyVal = safeKey(key);
     const claimToken = safeToken(enrollToken);
     version = safeVersion(version);
+    const agentScript = buildMacosAgentScript(this.agentVersion());
+    if (agentScript.split('\n').includes(MACOS_AGENT_HEREDOC)) throw new Error('agent script contains its heredoc delimiter');
     return `#!/usr/bin/env bash
 # Reboot Remote — RustDesk Auto-Installer for macOS
 # Server: ${host ?? 'NOT CONFIGURED'}
 # Re-run this script at any time to update the server config.
+#
+# Run with sudo (as Devices -> Add device shows it), this also installs the
+# Rem0te agent (standard, read-only): ${MACOS_AGENT_PATH}, run every 3 minutes
+# by the ${MACOS_AGENT_LABEL} LaunchDaemon. It reports inventory and pending
+# updates and never acts on anything the server sends. Without sudo it
+# installs RustDesk and registers the computer only, as before 0.33.
+#
+# Remove the agent (daemon, script, config, log and device secret; RustDesk stays):
+#   curl -fsSL <this installer's URL> | sudo bash -s -- --uninstall
 set -euo pipefail
+
+if [ "\${1:-}" = "--uninstall" ]; then
+  [ "$(id -u)" -eq 0 ] || { echo "ERROR: Run as root: sudo bash -s -- --uninstall"; exit 1; }
+  launchctl bootout system/${MACOS_AGENT_LABEL} 2>/dev/null || launchctl unload ${MACOS_AGENT_PLIST} 2>/dev/null || true
+  rm -f ${MACOS_AGENT_PLIST} ${MACOS_AGENT_NEWSYSLOG}
+  rm -f ${MACOS_AGENT_PATH} ${MACOS_AGENT_CONF} ${MACOS_AGENT_SECRET}
+  rm -f ${MACOS_AGENT_LOG} ${MACOS_AGENT_LOG}.*
+  rmdir ${MACOS_AGENT_DIR} 2>/dev/null || true
+  echo "Removed the Rem0te agent: the LaunchDaemon, ${MACOS_AGENT_PATH}, ${MACOS_AGENT_CONF}, its log and the device secret."
+  echo "RustDesk is still installed (remove it by deleting /Applications/RustDesk.app)."
+  echo "Archive the computer in Rem0te too; re-installing later needs a new enrolment link."
+  exit 0
+fi
 
 VERSION="${version}"
 HOST_ADDR="${hostVal}"
 PUB_KEY="${keyVal}"
 CLAIM_TOKEN="${claimToken}"
 
-# Generate a permanent password for this device
+IS_ROOT=0
+if [ "$(id -u)" -eq 0 ]; then IS_ROOT=1; fi
+
+# Generate a permanent password for this device. "|| true": head exits after
+# 12 bytes, tr dies of SIGPIPE (141), and under pipefail that status would end
+# the installer here, silently (0.33).
 PERM_PW=$(LC_ALL=C tr -dc 'A-Za-z2-9' < /dev/urandom | head -c 12 || true)
 
 # Device secret — see the Linux installer for why the RustDesk ID is not
-# identity. Stored 0600 under the user's home because this installer does not
-# run as root, and reused across re-installs.
-AGENT_STATE="\${HOME}/.rem0te-agent.secret"
-if [ -r "\${AGENT_STATE}" ]; then
-  AGENT_SECRET=$(cat "\${AGENT_STATE}" 2>/dev/null | tr -dc 'A-Za-z0-9_-')
-else
+# identity. Reused across re-installs so the binding the server holds stays
+# valid.
+if [ "\${IS_ROOT}" = 1 ]; then
+  # As root (0.33): root-only, ${MACOS_AGENT_SECRET}, which the agent refuses
+  # unless it is 0600 and owned by root.
+  AGENT_STATE="${MACOS_AGENT_SECRET}"
+  install -d -m 0755 -o root -g wheel ${MACOS_AGENT_DIR}
   AGENT_SECRET=""
-fi
-if [ -z "\${AGENT_SECRET}" ]; then
-  AGENT_SECRET=$(LC_ALL=C tr -dc 'A-Za-z0-9_-' < /dev/urandom | head -c 43 || true)
-  ( umask 077; printf '%s' "\${AGENT_SECRET}" > "\${AGENT_STATE}" ) 2>/dev/null || true
+  if [ -f "\${AGENT_STATE}" ] && [ ! -L "\${AGENT_STATE}" ]; then
+    AGENT_SECRET=$(tr -dc 'A-Za-z0-9_-' < "\${AGENT_STATE}" 2>/dev/null || true)
+  fi
+  # Before 0.33 the secret was kept in the home directory of whoever ran this.
+  # Keep it — the server holds its hash — but only from a copy root wrote
+  # (owner root, mode 600, not a link): a copy a user wrote is one that user
+  # knows, and could report as this computer with. Then delete every copy.
+  LEGACY_SECRETS=("\${HOME}/.rem0te-agent.secret" "/var/root/.rem0te-agent.secret")
+  if [ -n "\${SUDO_USER:-}" ]; then LEGACY_SECRETS+=("/Users/\${SUDO_USER}/.rem0te-agent.secret"); fi
+  for f in "\${LEGACY_SECRETS[@]}"; do
+    [ -f "\${f}" ] || continue
+    if [ -z "\${AGENT_SECRET}" ] && [ ! -L "\${f}" ] && [ "$(stat -f '%u %Lp' "\${f}" 2>/dev/null)" = "0 600" ]; then
+      AGENT_SECRET=$(tr -dc 'A-Za-z0-9_-' < "\${f}" 2>/dev/null || true)
+    fi
+    rm -f "\${f}"
+  done
+  if [ -z "\${AGENT_SECRET}" ]; then
+    AGENT_SECRET=$(LC_ALL=C tr -dc 'A-Za-z0-9_-' < /dev/urandom | head -c 43 || true)
+  fi
+  rm -f "\${AGENT_STATE}"
+  ( umask 077; printf '%s' "\${AGENT_SECRET}" > "\${AGENT_STATE}" )
+  chown root:wheel "\${AGENT_STATE}"
+  chmod 600 "\${AGENT_STATE}" || { echo "ERROR: could not write the device secret \${AGENT_STATE}"; exit 1; }
+else
+  # Without sudo: under the user's home, 0600, as before 0.33. No agent is
+  # installed in this case, so nothing reads it after the claim.
+  AGENT_STATE="\${HOME}/.rem0te-agent.secret"
+  if [ -r "\${AGENT_STATE}" ]; then
+    AGENT_SECRET=$(cat "\${AGENT_STATE}" 2>/dev/null | tr -dc 'A-Za-z0-9_-')
+  else
+    AGENT_SECRET=""
+  fi
+  if [ -z "\${AGENT_SECRET}" ]; then
+    AGENT_SECRET=$(LC_ALL=C tr -dc 'A-Za-z0-9_-' < /dev/urandom | head -c 43 || true)
+    ( umask 077; printf '%s' "\${AGENT_SECRET}" > "\${AGENT_STATE}" ) 2>/dev/null || true
+  fi
 fi
 
 ARCH=$(uname -m)
@@ -807,6 +875,44 @@ if [ -n "\${RD_ID}" ]; then
   fi
 else
   echo "  Could not detect RustDesk Device ID after 45 s — skipping registration."
+fi
+
+# ── The Rem0te agent (standard, read-only, 0.33) ────────────────────────────
+# Heartbeat, inventory and pending updates every 3 minutes, authenticated with
+# the device secret above. Installed even when registration was skipped: it
+# finds the RustDesk ID once RustDesk has one. It reads; it runs nothing the
+# server sends. Only as root: a LaunchDaemon and a root-only secret need it.
+if [ "\${IS_ROOT}" = 1 ] && [ -n "\${HOST_ADDR}" ]; then
+  echo "  Installing the Rem0te agent (heartbeat and inventory, every 3 minutes)..."
+  install -d -m 0755 -o root -g wheel ${MACOS_AGENT_DIR}
+  AGENT_TMP=$(mktemp ${MACOS_AGENT_DIR}/.agent.XXXXXX)
+  cat > "\${AGENT_TMP}" <<'${MACOS_AGENT_HEREDOC}'
+${agentScript}${MACOS_AGENT_HEREDOC}
+  install -m 0755 -o root -g wheel "\${AGENT_TMP}" ${MACOS_AGENT_PATH}
+  rm -f "\${AGENT_TMP}"
+  ( umask 022; printf 'API_BASE=https://%s/api/v1\\n' "\${HOST_ADDR}" > ${MACOS_AGENT_CONF} )
+  chown root:wheel ${MACOS_AGENT_CONF}
+  cat > ${MACOS_AGENT_PLIST} <<'REM0TE_PLIST_EOF'
+${MACOS_AGENT_LAUNCHD_PLIST}REM0TE_PLIST_EOF
+  chown root:wheel ${MACOS_AGENT_PLIST}
+  chmod 644 ${MACOS_AGENT_PLIST}
+  mkdir -p /etc/newsyslog.d
+  cat > ${MACOS_AGENT_NEWSYSLOG} <<'REM0TE_PLIST_EOF'
+${MACOS_AGENT_NEWSYSLOG_CONF}REM0TE_PLIST_EOF
+  chmod 644 ${MACOS_AGENT_NEWSYSLOG}
+  # Reload: a re-run replaces the script and the job. RunAtLoad makes the
+  # first report now rather than in three minutes.
+  launchctl bootout system/${MACOS_AGENT_LABEL} 2>/dev/null || true
+  launchctl enable system/${MACOS_AGENT_LABEL} 2>/dev/null || true
+  if launchctl bootstrap system ${MACOS_AGENT_PLIST} 2>/dev/null || launchctl load -w ${MACOS_AGENT_PLIST} 2>/dev/null; then
+    echo "  Agent installed: ${MACOS_AGENT_PATH} (log: ${MACOS_AGENT_LOG})"
+  else
+    echo "  Could not load the LaunchDaemon — see: sudo launchctl print system/${MACOS_AGENT_LABEL}"
+  fi
+elif [ "\${IS_ROOT}" != 1 ]; then
+  echo "  Rem0te agent not installed: re-run this installer with sudo to add heartbeat, inventory and pending updates."
+else
+  echo "  Rem0te agent not installed: the server address is not configured."
 fi
 
 echo ""

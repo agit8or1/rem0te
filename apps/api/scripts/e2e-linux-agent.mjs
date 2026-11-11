@@ -92,6 +92,12 @@ async function login(email) {
   const mm = (r.headers.get('set-cookie') ?? '').match(/access_token=([^;]+)/);
   if (r.status !== 200 || !mm) throw new Error(`login ${email}: ${r.status} ${await r.text()}`);
   s.cookie = `access_token=${mm[1]}`;
+  // Minting an enrolment token needs a fresh re-authentication (0.33); the
+  // step-up rides along on every request of this session, as in the console.
+  const u = await fetch(`${API}/auth/step-up`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': s.ip, cookie: s.cookie }, body: JSON.stringify({ password: PW }) });
+  const su = (u.headers.get('set-cookie') ?? '').match(/step_up=([^;]+)/);
+  if (u.status !== 200 || !su) throw new Error(`step-up ${email}: ${u.status} ${await u.text()}`);
+  s.cookie += `; step_up=${su[1]}`;
   return s;
 }
 const code = (r) => r.body?.code ?? r.body?.message?.code ?? r.body?.error?.code;
@@ -105,7 +111,7 @@ const encryptPassword = (text) => {
 // ── The sandbox ─────────────────────────────────────────────────────────────
 // Tools the agent uses. A "minimal" PATH holds links to these only, so the
 // absence of a package manager is real rather than simulated by a flag.
-const TOOLS = ['sh', 'curl', 'sed', 'grep', 'awk', 'tr', 'cut', 'head', 'cat', 'wc', 'stat', 'mktemp', 'rm', 'sleep', 'date', 'uname', 'df', 'readlink', 'nproc', 'hostname'];
+const TOOLS = ['sh', 'curl', 'sed', 'grep', 'awk', 'tr', 'cut', 'head', 'cat', 'wc', 'stat', 'id', 'mktemp', 'rm', 'sleep', 'date', 'uname', 'df', 'readlink', 'nproc', 'hostname'];
 const which = (t) => { try { return execFileSync('sh', ['-c', `command -v ${t}`], { encoding: 'utf8' }).trim(); } catch { return ''; } };
 const MARK_CMDS = ['rustdesk', 'systemctl', 'apt-get', 'reboot', 'shutdown', 'dpkg', 'yum', 'rpm-ostree', 'bash', 'python3', 'wget'];
 
@@ -253,6 +259,14 @@ async function all() {
   const disks = Array.isArray(i?.disks) ? i.disks : [];
   check(disks.some((d) => d.drive === '/' && d.totalBytes > 0 && d.freeBytes >= 0) && i.systemDiskTotalMb > 0 && i.systemDiskFreeMb >= 0, `disks from df (${disks.map((d) => d.drive).join(', ')}), system disk ${i?.systemDiskFreeMb} MB free`);
   check(disks.every((d) => !/^(tmpfs|devtmpfs|squashfs|overlay)$/.test(d.fsType ?? '')), 'pseudo filesystems are left out');
+  // Metric history (0.33): the real script's heartbeat and inventory pass land as history.
+  const ms = await prisma.endpointMetricSample.findMany({ where: { endpointId: A.id } });
+  const expMem = Math.round(((i.memoryTotalMb - i.memoryFreeMb) / i.memoryTotalMb) * 1000) / 10;
+  check(ms.length === 1 && ms[0].cpu === i.cpuLoadPercent && Math.abs(ms[0].memory - expMem) < 0.06 && ms[0].disk > 0 && ms[0].disk <= 100,
+    `metric history: one sample, cpu ${ms[0]?.cpu}%, memory ${ms[0]?.memory}% used, system disk ${ms[0]?.disk}% used`, JSON.stringify(ms));
+  const vs = await prisma.endpointDiskSample.findMany({ where: { endpointId: A.id } });
+  check(vs.length === disks.filter((d) => d.totalBytes > 0 && d.freeBytes !== null && d.freeBytes <= d.totalBytes).length && vs.some((v) => v.drive === '/'),
+    `metric history: one volume sample per reported mount (${vs.map((v) => v.drive).join(', ')})`);
   const whoUsers = [...new Set(execFileSync('who', { encoding: 'utf8' }).split('\n').map((l) => l.split(/\s+/)[0]).filter(Boolean))].join(', ');
   check((i?.loggedOnUser ?? '') === whoUsers.slice(0, 128), `logged-on users from who: "${whoUsers}"`, `stored "${i?.loggedOnUser}"`);
   const aptN = (() => { try { return execFileSync('apt', ['list', '--upgradable'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\n').filter((l) => l.includes('[upgradable from:')).length; } catch { return null; } })();

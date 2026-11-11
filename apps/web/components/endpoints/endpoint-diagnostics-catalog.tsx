@@ -40,6 +40,8 @@ interface CatalogItem {
   expectedImpact: 'none';
   approvals: string;
   allowed: boolean;
+  /** 0.33: shown as a snapshot on that workspace tab instead of in this list. */
+  tab?: 'processes' | 'services' | 'network';
 }
 interface CatalogResponse { supported: boolean; agentBound: boolean; isOnline: boolean; lastSeenAt: string | null; items: CatalogItem[] }
 interface Run {
@@ -48,7 +50,11 @@ interface Run {
   requestedBy: { id: string; name: string | null };
   error: string | null; truncated: boolean; resultBytes: number | null;
   result: Record<string, unknown> | null; resultWithheld: boolean;
+  /** A snapshot run (0.33): its result is on the workspace tab, not in the history. */
+  resultOnTab?: boolean;
 }
+
+const TAB_NAME: Record<string, string> = { process_list: 'Processes', service_list: 'Services', network_adapters: 'Network' };
 
 const DURATION: Record<CatalogItem['duration'], string> = { seconds: 'seconds', minute: 'about a minute', minutes: 'several minutes' };
 
@@ -228,7 +234,8 @@ function RunDetail({ run, now }: { run: Run; now: number }) {
       <Steps run={run} />
       {run.status === 'REQUESTED' && <p className="text-xs text-muted-foreground">The computer collects this on its next check-in, normally within three minutes. If it does not check in within fifteen, the request expires.</p>}
       {run.error && <p className="text-xs text-red-600 dark:text-red-400">{run.error}</p>}
-      {run.status === 'COMPLETED' && (run.resultWithheld
+      {run.status === 'COMPLETED' && run.resultOnTab && <p className="text-xs text-muted-foreground">The result is on the {TAB_NAME[run.key] ?? 'device'} tab.</p>}
+      {run.status === 'COMPLETED' && !run.resultOnTab && (run.resultWithheld
         ? <p className="text-xs text-muted-foreground flex items-center gap-1"><Lock className="h-3 w-3" />The result contains event-log text, which needs the &ldquo;Read event logs&rdquo; permission.</p>
         : <Result run={run} />)}
       {run.truncated && <p className="text-[11px] text-amber-700 dark:text-amber-400">Some lists were shortened to fit the result size limit.</p>}
@@ -297,7 +304,8 @@ export function EndpointDiagnosticsCatalog({ endpointId }: { endpointId: string 
         <CardContent className="space-y-2">
           {blocked && <p className="text-sm text-amber-700 dark:text-amber-400 flex items-center gap-2"><AlertTriangle className="h-4 w-4" />{blocked}</p>}
           <ul className="divide-y">
-            {c.items.map((item) => {
+            {/* Snapshot keys have their own tabs (Processes, Services, Network). */}
+            {c.items.filter((item) => !item.tab).map((item) => {
               const last = latestByKey.get(item.key);
               const busy = !!last && OPEN.includes(last.status);
               return (

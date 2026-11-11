@@ -5,6 +5,7 @@ import { PatchingModule } from './patching/patching.module';
 import { ContainmentModule } from './containment/containment.module';
 import { AuditChainModule } from './audit/audit-chain.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
+import { MetricsModule } from './metrics/metrics.module';
 import { ClientUpdatesModule } from './client-updates/client-updates.module';
 import { HealthModule } from './health/health.module';
 import { Module } from '@nestjs/common';
@@ -39,11 +40,13 @@ import { EnrollmentModule } from './enrollment/enrollment.module';
 import { NotesModule } from './notes/notes.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ReportsModule } from './reports/reports.module';
+import { SearchModule } from './search/search.module';
 import { GeoipModule } from './geoip/geoip.module';
 import { AdminModule } from './admin/admin.module';
 import { DiagnosticsModule } from './diagnostics/diagnostics.module';
 import { DiagnosticsCatalogModule } from './diagnostics-catalog/diagnostics-catalog.module';
 import { ScriptLibraryModule } from './script-library/script-library.module';
+import { DeviceViewsModule } from './device-views/device-views.module';
 import { SupportRequestsModule } from './support-requests/support-requests.module';
 import { OffboardingModule } from './offboarding/offboarding.module';
 import { SsoModule } from './sso/sso.module';
@@ -92,6 +95,7 @@ import { IntegrationModule } from './integration/integration.module';
     ContainmentModule,
     AuditChainModule,
     MonitoringModule,
+    MetricsModule,
     ClientUpdatesModule,
     HealthModule,
     AuthModule,
@@ -109,12 +113,14 @@ import { IntegrationModule } from './integration/integration.module';
     NotesModule,
     DashboardModule,
     ReportsModule,
+    SearchModule,
     GeoipModule,
     AdminModule,
     UpdateRolloutModule,
     DiagnosticsModule,
     DiagnosticsCatalogModule,
     ScriptLibraryModule,
+    DeviceViewsModule,
     SupportRequestsModule,
     OffboardingModule,
     SsoModule,
