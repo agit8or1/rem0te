@@ -324,8 +324,6 @@ export const adminApi = {
   listUnassigned: () => api.get('/admin/unassigned-devices'),
   assignDevice: (id: string, businessId: string) =>
     api.post(`/admin/unassigned-devices/${id}/assign`, { businessId }),
-  /** Global search — scoped to the caller's business unless Platform Admin. */
-  search: (q: string) => api.get('/admin/search', { params: { q } }),
 };
 
 // ─── Public address (Settings → General) ─────────────────────────────────────
