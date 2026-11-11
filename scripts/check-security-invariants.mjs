@@ -807,6 +807,67 @@ check(
     `trigger does not fix: ${missing.join(', ') || '-'}; service writes: ${writes.join(' | ')}`);
 }
 
+// 24. The standard Linux agent (0.32). It reports and never acts: the only
+//     things it reads from a heartbeat response are command ids and three
+//     fixed type names, it runs no expression, shell, download or
+//     package-changing command, it reads os-release and its config with sed
+//     (never sources them), keeps the secret out of argv, and refuses a
+//     world-readable secret. The installer writes the secret 0600 and its
+//     --uninstall removes it. Server side: device strings are made inert on
+//     heartbeat and claim, and the console refuses to stage what the Linux
+//     agent would ignore.
+{
+  const la = read('apps/api/src/public/linux-agent.ts');
+  const tpl = la.slice(la.indexOf('const LINUX_AGENT_TEMPLATE = String.raw`'), la.lastIndexOf('`;'));
+  // Comment lines name what the agent does NOT do; only code is checked.
+  const code = tpl.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  check('the Linux agent runs no expression, shell, download or state-changing command',
+    code.length > 8000
+      && !/\beval\b|^\s*\.\s|\bsource\b|\b(sh|bash|dash) -c\b|\|\s*(sh|bash|dash)\b|\bwget\b|\bpython3?\b|\bperl\b/m.test(code)
+      && !/\brustdesk\s+--|\bsystemctl\b|(^|[\s;&|(])(reboot|shutdown|poweroff)(\s|;|$)|\bapt-get\b|\bapt (update|upgrade|install|remove|full-upgrade)\b|\bdpkg -i\b|\bdnf (-[a-zA-Z]+ )*(install|upgrade|update|makecache|remove)\b|\bzypper\b[^\n]*(?<![-\w])(refresh|ref|update|up|install|in|patch|remove|dup)(?![-\w])|\brpm -[iUe]/m.test(code)
+      && (code.match(/\bcurl -/g) ?? []).length === 1,
+    'the agent must stay read-only: one curl (in post()), and nothing that changes the machine');
+  check('the Linux agent reads only command ids and three fixed types from the response',
+    /grep -oE '\\\{"id":"\[A-Za-z0-9_-\]\{1,64\}","type":"\(INVENTORY_REFRESH\|UPDATE_SCAN\|EVENT_LOG_QUERY\)"'/.test(code)
+      && !/rotate|updateRustdesk|reinstallAgent|confirm-rotation|diagnostic-result|monitor-report/.test(code),
+    'no other field of the heartbeat response may be read');
+  check('the Linux agent never refreshes a repository to list updates',
+    /apt list --upgradable/.test(code) && /dnf -q -C check-update/.test(code) && /zypper --non-interactive --no-refresh list-updates/.test(code),
+    'apt list (no apt update), dnf -C, zypper --no-refresh');
+  check('the Linux agent parses its config and os-release with sed, and keeps the secret out of argv',
+    /conf_get\(\) \{ sed -n "s\/\^\$1=\/\/p" "\$CONF"/.test(code) && /osr_get\(\) \{ sed -n "s\/\^\$1=\/\/p" "\$OS_RELEASE"/.test(code)
+      && /--data-binary @"\$TMPD\/req"/.test(code) && !/curl[^\n]*\$SECRET/.test(code),
+    'never source a file; the body (with the secret) goes through a 0700 temp file');
+  check('the Linux agent refuses a readable secret and non-https servers',
+    /case "\$mode" in\s*600\|400\) ;;\s*\*\) log "refusing/.test(code) && /\^https:\/\/\[A-Za-z0-9\.-\]\+/.test(code)
+      && /\^http:\/\/\(127\\\.0\\\.0\\\.1\|localhost\)/.test(code),
+    'secret must be 600/400; plain http only to loopback');
+  check('every string the Linux agent sends goes through txt or nm',
+    /txt\(\) \{ printf '%s' "\$1" \| tr -cd ' -~' \| tr -d '"\\\\' \| cut -c1-"\$2"; \}/.test(code)
+      && /nm\(\) \{ printf '%s' "\$1" \| tr -cd 'A-Za-z0-9\._-' \| cut -c1-"\$2"; \}/.test(code),
+    'printable ASCII without " or \\, clamped; host names to the inert charset');
+  const pc = read('apps/api/src/public/public.controller.ts');
+  const lin = pc.slice(pc.indexOf('private buildLinuxScript('), pc.indexOf('private buildMacosScript('));
+  check('the Linux installer writes the device secret 0600 and --uninstall removes it',
+    /\( umask 077; printf '%s' "\\\$\{AGENT_SECRET\}" > "\\\$\{AGENT_STATE\}" \)/.test(lin) && /chmod 600 "\\\$\{AGENT_STATE\}"/.test(lin)
+      && /rm -f \$\{LINUX_AGENT_PATH\} \$\{LINUX_AGENT_CONF\} \$\{LINUX_AGENT_SECRET\}/.test(lin)
+      && /<<'\$\{LINUX_AGENT_HEREDOC\}'/.test(lin),
+    'secret under umask 077 + chmod 600; agent embedded in a quoted heredoc; uninstall removes the secret');
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const hb = enr.slice(enr.indexOf('async heartbeat('), enr.indexOf('const node = await this.prisma.rustdeskNode.findUnique({', enr.indexOf('async heartbeat(')));
+  check('device-reported names are made inert on heartbeat and claim',
+    /dto = withDeviceText\(dto\);/.test(hb) && /this\.claimWithConsumedToken\(withDeviceText\(dto\), record, claimedByIp\)/.test(enr)
+      && /const CONTROL = \/\[\\x00-\\x1f\\x7f-\\x9f/.test(read('apps/api/src/enrollment/device-text.ts')),
+    'heartbeat() must pass its dto through withDeviceText before the node lookup; claim likewise');
+  const eps = read('apps/api/src/endpoints/endpoints.service.ts');
+  const fn = (name) => eps.slice(eps.indexOf(`async ${name}(`), eps.indexOf(`async ${name}(`) + 900);
+  check('the console refuses to stage for Linux what its agent would ignore',
+    /await this\.refuseOnLinux\(endpointId, /.test(fn('rotateCredential')) && /await this\.refuseOnLinux\(id, /.test(fn('requestAgentReinstall'))
+      && /await this\.refuseOnLinux\(id, /.test(fn('requestEventLog'))
+      && /!isLinuxPlatform\(n\.endpoint\?\.platform\)/.test(read('apps/api/src/admin/update.service.ts')),
+    'rotation, reinstall, event-log query and one-click client update must refuse or skip Linux');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

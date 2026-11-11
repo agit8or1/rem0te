@@ -42,7 +42,7 @@ bundled into `/docs`. Integration work is tracked separately in
 | **Device list** | Search, status, last seen, Connect | 6 columns; no alerts/patch/user/resource columns, no business or site filter, saved views, bulk actions, column choice or density; the RustDesk ID column is always masked |
 | **Dashboard** | Tiles: computers, offline, sessions 7d/30d, businesses; a map; server CPU/memory/disk | Answers none of the five questions (what's broken, who's affected, what needs attention, what's being repaired, what's next). Mixes server health with fleet health |
 | **Ticket ↔ RMM (path B)** | Contract revision 2, signed examples, workflow proven against a reference peer (53 checks) | **Does not interoperate with real ClientSt0r**: four measured gaps. Revision 3 is proposed and awaiting ClientSt0r |
-| **Linux / macOS** | RustDesk plus a one-time registration at install | No heartbeat, inventory, monitoring or patch reporting |
+| **Linux / macOS** | Linux (0.32): RustDesk plus a read-only agent on a systemd timer — heartbeat, inventory, pending updates (apt/dnf/zypper); evidence **I** (real script, scratch API, unprivileged). macOS: RustDesk plus a one-time registration | Linux: no software list, services/events monitoring, diagnostics or anything acted on; not yet run on an installed endpoint. macOS: no heartbeat, inventory, monitoring or patch reporting |
 | **AI** | Ticket analysis through ClientSt0r's inference endpoint (rem0te holds no provider key). Separately, the device page's "AI Timeline" calls Anthropic **directly from rem0te** with `ANTHROPIC_API_KEY`, sending notes and session history | The direct call conflicts with "provider keys stay in ClientSt0r". It is unset in production, so inert. Decide: remove it, route it through ClientSt0r, or keep it as an explicitly optional standalone feature with redaction |
 | **Reports** | Audit log, session history, alerts list, audit export | No report pages, no scheduling, no exports for patch compliance, uptime, alert frequency or agent coverage |
 
@@ -109,7 +109,7 @@ owner's approval.
 | 8 | Maintenance actions for the signed catalog (restart an approved service, schedule a reboot, collect logs) | P1 | Needs real-Windows testing of the signed agent first |
 | 9 | Script library with review and immutable approval binding | P1 | Largest new surface. Design note first |
 | 10 | Reports: patch compliance, agent coverage, alert frequency | P1/P2 | |
-| 11 | Linux heartbeat and inventory | P2 | |
+| 11 | Linux heartbeat and inventory | P2 | Done in 0.32 (integration-tested, `e2e-linux-agent.mjs`); real-endpoint test outstanding |
 | 12 | **Scheduled RustDesk client updates** (requested 2026-11-11): opt-in per business or site, applied only inside an update window outside working hours, never while a session is open, honouring the `updates` containment pause; reuses the staged-rollout path (signed agent) or the queued-reinstall path (standard agent) | P1 | Today every client update is queued by hand and applied on the next heartbeat, whatever the time |
 
 **Real-device dependency.** Items 5 and 8 need a disposable Windows 11 machine and a Windows Server 2022 machine

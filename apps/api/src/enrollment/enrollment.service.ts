@@ -24,6 +24,7 @@ import { ContainmentService } from '../containment/containment.service';
 import { ClientUpdatesService } from '../client-updates/client-updates.service';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
 import { CANDIDATE_LIVE_MS, CANDIDATE_SETTLE_MS } from './device-secret';
+import { withDeviceText } from './device-text';
 import { queryHbbsOnline } from './hbbs-presence';
 import { compareVersions } from '../common/agent-contract';
 
@@ -289,7 +290,7 @@ export class EnrollmentService {
     if (consumed.count !== 1) throw new BadRequestException('Token has already been used');
 
     try {
-      return await this.claimWithConsumedToken(dto, record, claimedByIp);
+      return await this.claimWithConsumedToken(withDeviceText(dto), record, claimedByIp);
     } catch (e) {
       // A claim that failed half-way has enrolled nothing. Hand the token back
       // so the operator is not forced to mint another for a typo-class error.
@@ -518,6 +519,8 @@ export class EnrollmentService {
     agentActions?: string[]; agentSha256?: string; actionResults?: unknown[];
     patchPosture?: Record<string, unknown>;
   }, remoteIp?: string) {
+    // Names and versions as text, never control codes (0.32) — see device-text.ts.
+    dto = withDeviceText(dto);
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { rustdeskId: dto.rustdeskId },
     });

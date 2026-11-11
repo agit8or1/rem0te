@@ -19,7 +19,7 @@ import { DeviceSoftwareTab } from '@/components/endpoints/workspace/software-tab
 import { DeviceHistoryTab, type SessionRow } from '@/components/endpoints/workspace/history-tab';
 import { DiagnosticsPanel } from '@/components/endpoints/workspace/diagnostics-panel';
 import type { AccessReview } from '@/components/endpoints/workspace/access-review-panel';
-import { agentType, parseTab, reportsInventory, TAB_LABEL, type WorkspaceTab } from '@/components/endpoints/workspace/device-model';
+import { acceptsQueuedWork, agentType, parseTab, reportsWindowsDetail, TAB_LABEL, type WorkspaceTab } from '@/components/endpoints/workspace/device-model';
 import {
   actionUnavailableReason, useActionCatalog, useInventory, useMonitoringView, usePatchStatus,
 } from '@/components/endpoints/workspace/use-device-data';
@@ -154,20 +154,21 @@ export default function EndpointDetailPage() {
 
   const ep = endpoint as Record<string, unknown>;
   const agent = agentType(ep);
-  const inventoryCapable = reportsInventory(agent);
+  const windowsDetail = reportsWindowsDetail(agent);
   const isOnline = !!(ep.isOnline as boolean);
   const actionReason = canView ? actionUnavailableReason(ep, catalog.data, catalog.isError) : null;
   const sessions = (ep.supportSessions as SessionRow[] | undefined) ?? [];
   const showReview = canReview && !reviewError && !!review;
 
   // Only tabs with something real behind them. Software and Event logs come
-  // from the Windows agents; a Linux or macOS computer has RustDesk only.
+  // from the Windows agents; the Linux agent reports inventory and pending
+  // updates (Overview, Patches), and macOS has RustDesk only.
   const tabs: WorkspaceTab[] = [
     'overview',
     ...(canView ? (['monitoring'] as const) : []),
-    ...(canView && inventoryCapable ? (['software'] as const) : []),
+    ...(canView && windowsDetail ? (['software'] as const) : []),
     ...(canView ? (['patches'] as const) : []),
-    ...(canEventLogs && inventoryCapable ? (['events'] as const) : []),
+    ...(canEventLogs && windowsDetail ? (['events'] as const) : []),
     ...(canView ? (['diagnostics', 'actions'] as const) : []),
     'history',
   ];
@@ -191,7 +192,7 @@ export default function EndpointDetailPage() {
             onOpenTab={setTab}
             perms={{ view: canView, edit: can(CAP.COMPUTERS_EDIT), remove: can(CAP.COMPUTERS_REMOVE), technician: !!technician }}
             actionReason={actionReason}
-            reportsInventory={inventoryCapable}
+            reportsInventory={acceptsQueuedWork(agent)}
           />
         }
       />

@@ -703,6 +703,16 @@ const SECTIONS: Section[] = [
           <Link href="/docs/capabilities" className="underline text-foreground">What each agent can do</Link>.
         </p>
         <p>
+          From 0.32, the Linux installer also installs a small <strong className="text-foreground">read-only agent</strong>{' '}
+          (a shell script on a systemd timer, every 3 minutes), shown as <em>Standard (Linux)</em>. It heartbeats with the
+          device secret from the enrolment, and reports the OS, kernel, uptime, CPU, memory, disks, logged-on users, the
+          RustDesk version and pending package updates from apt, dnf or zypper (without refreshing them; <em>unknown</em>{' '}
+          when there is none). It acts on nothing the console sends, so rotating the password, reinstalling or updating
+          RustDesk on a Linux computer means re-running the installer there; it has no software list or event logs. Remove
+          it with the installer&apos;s <code>--uninstall</code>. More in{' '}
+          <Link href="/docs/inventory#linux-computers-032" className="underline text-foreground">Inventory</Link>.
+        </p>
+        <p>
           From 0.31 the menu is organised by job: <strong className="text-foreground">Dashboard</strong>,{' '}
           <strong className="text-foreground">Devices</strong> (all devices, your own, adding one),{' '}
           <strong className="text-foreground">Alerts</strong>, <strong className="text-foreground">Automation</strong>,{' '}
