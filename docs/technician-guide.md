@@ -25,6 +25,48 @@ computer in them is fictional.
 If your account has two-factor authentication enabled you are asked for a code
 next. Recovery codes work here too, and each one is single-use.
 
+### The dashboard: what to work on (0.31)
+
+Signing in lands you on the **Dashboard**. It answers, from stored data, what is
+broken, which businesses it affects, which devices need attention, what is
+already being worked on, and what to do next. It covers only what you can see:
+a Business User sees the devices granted to them, a technician sees their
+assignment's business and computers, a Platform Admin sees every business. A
+section you have no permission for is not shown at all — it is never shown as a
+zero.
+
+| Part | What it is built from |
+|---|---|
+| **Site outage** strip | An open site-outage alert: several devices at one site stopped reporting together |
+| **Devices** | Active devices (archived and not-yet-enrolled ones excluded): online, offline, and *agent silent* — reachable through RustDesk but the agent has not checked in for 30 minutes, so nothing it reports is current |
+| **Critical alerts** | Open critical alerts. Alerts in a maintenance window are counted apart, not as critical |
+| **Failed actions** | Approved-action and patch targets that failed, were refused or did not run in the last 7 days, plus any whose outcome is unknown (those block new requests until someone records what they found) |
+| **Awaiting approval** | Plans waiting for the approval roster. Approval happens on the signer, never here; expired requests are not counted |
+| **Restart pending** | Devices whose latest update scan says Windows is waiting for a restart, or that have a *restart pending* alert. A scan older than 36 hours is flagged stale |
+| **Patch compliance** | Of the devices with an update scan under 36 hours old, the share that list no pending updates. Coverage (how many devices have such a scan) and the scan ages are shown beside it; with no fresh scan at all it says *No data* |
+| **Active sessions** | Sessions connected now, and ones still launching. A session row that has not moved for 12 hours is not shown as live |
+| **Work on next** | A ranked list, each item with the reason it is there (below) |
+| **Customers affected** | Businesses with an outage, an open alert, an offline device or a failed action |
+| **Devices needing attention** | Devices with critical or warning alerts, failed actions, offline, agent silent or restart pending, most serious first |
+| **Being worked on** | Live sessions, acknowledged alerts (and who acknowledged them), actions in flight, patch deployments in progress |
+| **Your recent devices** | The devices of your own most recent sessions |
+| **Recent activity** | Alert, action, patch, session, device and support-request events from the audit log, last 7 days. Needs *View business audit log* |
+
+**How "Work on next" is ordered.** A fixed ladder, then oldest first: site
+outages, critical alerts, actions with an unknown outcome, failed actions,
+warning alerts, failed client rollouts (Platform Admins), approval requests,
+restarts pending from a fresh scan, then info alerts. Acknowledged alerts are
+not in it (someone has them), nor are alerts in a maintenance window or offline
+alerts grouped under a site outage. Nothing is ranked by anything the dashboard
+cannot see, such as a customer's contract.
+
+Every item and figure links to where you act on it — the device's Monitoring,
+Patches or Actions tab, the patch deployment, the alerts list. The page polls
+every 30 seconds and says how old its data is. Server health (CPU, memory, disk,
+relay) is not on the dashboard: Platform Admins find it under **Settings →
+System status**. Device locations (the map) are under *Show device locations*
+at the bottom.
+
 ---
 
 ## 2. Find a computer

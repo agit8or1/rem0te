@@ -607,6 +607,17 @@ const SECTIONS: Section[] = [
           and platform administration. Help and the documentation are at the bottom of the menu.
         </p>
         <p>
+          The <Link href="/dashboard" className="underline text-foreground">Dashboard</Link> (0.31) says what is broken,
+          which businesses it affects, which devices need attention, what is already being worked on, and what to
+          do next — only for what you can see. <strong className="text-foreground">Work on next</strong> is a ranked
+          list and each item says why it is there: site outages, then critical alerts, actions whose outcome is
+          unknown, failed actions, warnings, approval requests, restarts pending and info alerts, oldest first.
+          Acknowledged alerts and alerts in a maintenance window are left out. <em>Patch compliance</em> counts only
+          devices with an update scan under 36 hours old and shows the coverage beside it; with no such scan it says{' '}
+          <em>No data</em>. Server health moved to Settings → System status. More in{' '}
+          <Link href="/docs/technician-guide" className="underline text-foreground">Technician guide</Link>.
+        </p>
+        <p>
           From 0.28, writes can be <strong className="text-foreground">paused</strong> while an incident is looked at:
           approved actions, remote connections, agent updates and ClientSt0r jobs, for every business or for one. A red
           strip at the top of the page says what is stopped and why; a refused click says <em>CONTAINED</em>. A Business
