@@ -1,7 +1,8 @@
 # Rem0te — screenshot gallery
 
-Every image below is a capture of the running application at **1440×1000**
-(retina, `deviceScaleFactor: 2`), taken against an isolated demo database.
+Every image below is a capture of **Rem0te v0.33** running against an isolated demo
+database, at **1440×1000** or, where marked, **390×844** (phone width), both at
+`deviceScaleFactor: 2`.
 Nothing is mocked, drawn, or AI-generated.
 
 **All businesses, people, devices and activity shown are fictitious.** The
@@ -21,34 +22,47 @@ capture — see [Regenerating these](#regenerating-these).
 
 | Section | What it covers |
 |---|---|
-| [Overview and dashboards](#overview-and-dashboards) | The operator's landing view and the customer list |
-| [Visual insights and monitoring](#visual-insights-and-monitoring) | Client map, live sessions, history, audit, host health |
-| [Device inventory](#device-inventory) | Every computer, its collected specs and its event log |
-| [Everyday workflows](#everyday-workflows) | Enrolling a device, downloads, Quick Connect, launching from Tactical RMM |
+| [Overview and dashboards](#overview-and-dashboards) | The dashboard, search, the customer list |
+| [Visual insights and monitoring](#visual-insights-and-monitoring) | Client map, alerts, live sessions, history, audit, host health |
+| [Devices](#devices) | The device list, bulk actions, saved views, one device, Linux and macOS |
+| [Device tabs](#device-tabs) | Performance, processes, services, network, patches, event log |
+| [Everyday workflows](#everyday-workflows) | Adding a device, downloads, Quick Connect, launching from Tactical RMM |
+| [Reports, automation and patching](#reports-automation-and-patching) | Reports, the script library, client-update windows, patch policies |
 | [Access and administration](#access-and-administration) | The three-level model, capabilities, accounts |
 | [Configuration](#configuration) | Platform settings, branding, releases, documentation |
 | [Regenerating these](#regenerating-these) | How to rebuild the gallery without touching production |
 
-Theme coverage is deliberately mixed: most features appear once, in whichever
-theme suits them, with the dashboard captured in **both** so the theme support
-is visible rather than claimed.
+Most features appear once, in whichever theme suits them; the dashboard, device
+list and a device page are also shown at phone width.
 
 ---
 
 ## Overview and dashboards
 
 ### Dashboard — light
-<a href="images/github/dashboard-light.png"><img src="images/github/dashboard-light.png" alt="Rem0te dashboard in light theme: tiles for total computers, offline computers, active sessions and sessions over 7 and 30 days, above a map of client locations across the western United States and a recent-sessions list."></a>
+<a href="images/github/dashboard-light.png"><img src="images/github/dashboard-light.png" alt="The Rem0te dashboard in light theme: a red site-outage strip for Harbor Logistics' Tacoma warehouse, tiles for devices, critical alerts, failed actions, awaiting approval, restart pending, patch compliance and active sessions, a ranked Work on next list with the reason for each item, and the customers affected."></a>
 
-Open Rem0te and see the whole estate at once — how many computers exist, how
-many are offline right now, what is connected, and how much support work the
-last week actually took.
+What needs a person, first. A site outage is one item rather than three offline
+alerts; every tile is a count with what it is counted from; *Work on next* says why
+each item is there.
 
 ### Dashboard — dark
-<a href="images/github/dashboard-dark.png"><img src="images/github/dashboard-dark.png" alt="The same Rem0te dashboard in dark theme, showing 34 total computers with 26 online, 8 offline, three active sessions, the client location map and a seven-day session bar chart."></a>
+<a href="images/github/dashboard-dark.png"><img src="images/github/dashboard-dark.png" alt="The same dashboard in dark theme."></a>
 
 The same view in dark. Both themes ship with the product and are switched from
-the sidebar — this pair is the one deliberate duplicate in the gallery.
+the sidebar.
+
+### Dashboard at phone width — light
+<a href="images/github/dashboard-narrow-light.png"><img src="images/github/dashboard-narrow-light.png" alt="The dashboard at 390 pixels wide in light theme, the outage strip and tiles squeezed into a narrow column beside the full sidebar."></a>
+
+At 390 px. The sidebar does not collapse on a phone yet, so the content gets what
+is left. This image shows that as it is; it does not claim a mobile layout.
+
+### Search everything — dark
+<a href="images/github/search-dark.png"><img src="images/github/search-dark.png" alt="The Ctrl+K search box in dark theme with harb typed: eight Harbor Logistics devices with online or offline badges and the matched letters highlighted, then the business."></a>
+
+**Ctrl+K** from any page: devices, businesses, sites, people and open alerts, each
+group only if you may open its list page.
 
 ### Businesses — light
 <a href="images/github/businesses-light.png"><img src="images/github/businesses-light.png" alt="The Businesses page listing six customer businesses with short code, contact address, computer count, number of people, status and creation date."></a>
@@ -71,6 +85,12 @@ gates temporary support access for their users.
 
 Managed computers plotted from the address each last checked in from, clustered
 by city with a count. Useful for spotting a site that has gone dark.
+
+### Alerts — dark
+<a href="images/github/alerts-dark.png"><img src="images/github/alerts-dark.png" alt="The Alerts page in dark theme: totals for open, acknowledged, critical, warning and in-maintenance alerts, a filter, and the open alerts including a site outage and a stopped Print Spooler."></a>
+
+Every open alert, deduplicated: a problem that repeats is one alert with a count,
+and a site outage gathers the computers it took down.
 
 ### Live sessions — dark
 <a href="images/github/sessions-live-dark.png"><img src="images/github/sessions-live-dark.png" alt="The Sessions page in dark theme, showing a grid of currently-online enrolled clients, each card with hostname, business, last-seen time and a Connect button."></a>
@@ -110,26 +130,45 @@ The platform's own security surface, in one place.
 
 ---
 
-## Device inventory
+## Devices
 
-### All computers — light
-<a href="images/github/computers-inventory-light.png"><img src="images/github/computers-inventory-light.png" alt="The Enrolled Clients list in light theme, showing computers across all businesses with name, owning business, platform badge, masked RustDesk ID, last seen and online status."></a>
+### Device list — light
+<a href="images/github/computers-inventory-light.png"><img src="images/github/computers-inventory-light.png" alt="The Devices list in light theme: search, filters for business, site, group, online, alerts, agent, restart pending and archived, Views, Columns and Export CSV, above a table with device, business, site, OS, health, agent and last seen, and a Connect button per row."></a>
 
-Every managed computer across every business, searchable, with platform and live
-status. RustDesk IDs are masked in this gallery.
+Every device you may see, across every business. The server does the searching and
+filtering, so it covers every page, not just the one on screen.
 
-### All computers — dark
-<a href="images/github/computers-inventory-dark.png"><img src="images/github/computers-inventory-dark.png" alt="The same enrolled clients inventory in dark theme."></a>
+### Device list — dark
+<a href="images/github/computers-inventory-dark.png"><img src="images/github/computers-inventory-dark.png" alt="The same device list in dark theme."></a>
+
+### Bulk actions — dark
+<a href="images/github/device-bulk-dark.png"><img src="images/github/device-bulk-dark.png" alt="The device list in dark theme with three devices ticked and the bulk bar showing group membership, Refresh inventory, Queue client update and Export selection."></a>
+
+Tick devices for group membership, an inventory refresh, a client update or an
+export of just those rows.
+
+### Saved views — light
+<a href="images/github/device-views-light.png"><img src="images/github/device-views-light.png" alt="The Views menu open on the device list in light theme, listing views shared in each business such as Harbor — offline, with Save current view and Device groups below."></a>
+
+Filters, sort, columns and density saved under a name, for yourself or shared in a
+business. A shared view still shows each person only what they may see.
+
+### Device list at phone width — dark
+<a href="images/github/device-list-narrow-dark.png"><img src="images/github/device-list-narrow-dark.png" alt="The device list at 390 pixels wide in dark theme, its filters stacked one per row."></a>
 
 ### One business's computers — dark
 <a href="images/github/business-computers-dark.png"><img src="images/github/business-computers-dark.png" alt="The Computers tab of a single business in dark theme, listing that customer's machines with Windows, macOS and Linux platform badges and online or offline status."></a>
 
 Scoped to a single customer — the view you use when they phone up.
 
-### Computer detail — light
-<a href="images/github/device-detail-light.png"><img src="images/github/device-detail-light.png" alt="A single computer's detail page in light theme showing its platform, operating system version, status and connection controls."></a>
+### A device — light
+<a href="images/github/device-detail-light.png"><img src="images/github/device-detail-light.png" alt="HARB-DISPATCH-01's page in light theme: status, Connect, Diagnose, Run action, Patch and More, an attention strip with one critical alert, two pending updates and the signed agent, the tabs, and the Overview's assignment, key alerts, patch status and recent activity."></a>
 
-One machine: what it is, what it runs, and the controls to connect to it.
+One device: its state, what is wrong with it, and the tabs for everything else. An
+action that is not available says why underneath.
+
+### A device at phone width — light
+<a href="images/github/device-overview-narrow-light.png"><img src="images/github/device-overview-narrow-light.png" alt="The same device page at 390 pixels wide in light theme."></a>
 
 ### Resource gauges — light
 <a href="images/github/device-resources-light.png"><img src="images/github/device-resources-light.png" alt="The Resources card on a computer's page in light theme: CPU, memory and system disk shown as labelled meters with percentages, the memory meter reading 44 percent of 16 GB and the disk meter showing free space, above a note saying when the sample was taken."></a>
@@ -140,7 +179,7 @@ card says so instead of letting a needle imply "now". Amber past 80% and red
 past 92%, the point at which a Windows volume starts failing updates.
 
 ### Device specs — dark
-<a href="images/github/device-specs-dark.png"><img src="images/github/device-specs-dark.png" alt="The collected-inventory cards on a computer's page in dark theme: System with OS build and architecture, Session showing nobody at the console and six hours of uptime, Hardware with an HP EliteBook 840 G9 and its Core i7 and BIOS version, Memory and Storage with usage bars, Network with adapter and address, and an Updates card showing two pending Windows updates beside the Rem0te agent and RustDesk client versions."></a>
+<a href="images/github/device-specs-dark.png"><img src="images/github/device-specs-dark.png" alt="The collected-inventory cards on a computer's page in dark theme: System, Session, Hardware, Memory, Storage with usage bars, Network, and an Updates card showing two pending Windows updates beside the agent and RustDesk versions."></a>
 
 What a managed computer reports about itself, collected by its agent on a
 heartbeat rather than fetched live — so every card says how old its contents
@@ -151,18 +190,11 @@ Three separate things can be out of date here — the Rem0te agent, the RustDesk
 client, and the machine's own Windows updates — so each is named rather than
 merged into one "up to date" claim.
 
-### Event log — dark
-<a href="images/github/device-event-log-dark.png"><img src="images/github/device-event-log-dark.png" alt="The Event Log tab on a computer's page in dark theme, with selectors for log, time range and event count, level chips for Critical, Error, Warning and Information, an optional source filter, and a table of returned System log entries with timestamps, level badges, event IDs, providers and messages."></a>
+### A Linux device — dark
+<a href="images/github/device-linux-dark.png"><img src="images/github/device-linux-dark.png" alt="CASC-FILESRV's page in dark theme: an Ubuntu file server on the read-only Linux agent, with four apt updates pending and a restart required."></a>
 
-Read a page of a managed computer's Windows event log without connecting to it.
-Five logs are available — Application, System, Security, Setup and Windows
-PowerShell — and nothing else: the allowlist is enforced by the API and again
-by the agent that opens the log.
-
-There is no channel to reach into an endpoint, so this is a request rather than
-a query: it is collected on the machine's next heartbeat, up to about three
-minutes away. Reading logs is its own permission, separate from viewing the
-computer, and every request is audited with the log, the window and who asked.
+Linux and macOS computers run read-only agents: heartbeat, inventory and pending
+updates, and nothing the console sends.
 
 ### My Computers — dark
 <a href="images/github/my-computers-dark.png"><img src="images/github/my-computers-dark.png" alt="The My Computers page in dark theme, showing only the machines the signed-in user has been granted access to, each with a Connect button."></a>
@@ -177,19 +209,66 @@ Machines that enrolled but have not landed in a business yet.
 
 ---
 
+## Device tabs
+
+### Performance — light
+<a href="images/github/device-performance-light.png"><img src="images/github/device-performance-light.png" alt="The Performance tab in light theme over 7 days: processor, memory, system disk and a volume, each the hourly mean with a pale band for the lowest to highest sample."></a>
+
+Metric history: 24 hours of every sample, then hourly means with their range for
+7, 30 and 90 days. Hatched stretches are gaps, where no samples arrived.
+
+### Performance — dark
+<a href="images/github/device-performance-dark.png"><img src="images/github/device-performance-dark.png" alt="The same Performance tab in dark theme over 24 hours."></a>
+
+### Processes — dark
+<a href="images/github/device-processes-dark.png"><img src="images/github/device-processes-dark.png" alt="The Processes tab in dark theme: a read-only snapshot taken ten minutes ago, a filter, and processes sorted by memory with PID, CPU time, user and start time."></a>
+
+A snapshot, not a live view: it says when it was taken and who asked, and nothing on
+it acts on the computer.
+
+### Services — light
+<a href="images/github/device-services-light.png"><img src="images/github/device-services-light.png" alt="The Services tab in light theme listing services with state, start mode and the account each runs as."></a>
+
+Display name, name, state, start mode and account. Starting or stopping a service is
+not offered here.
+
+### Network — dark
+<a href="images/github/device-network-dark.png"><img src="images/github/device-network-dark.png" alt="The Network tab in dark theme: one card per adapter with status, speed, addresses, gateway, DNS, MAC and DHCP lease."></a>
+
+### Patches — light
+<a href="images/github/device-patches-light.png"><img src="images/github/device-patches-light.png" alt="The Patches tab in light theme: patch status from the standard agent scan, Install updates explaining it needs the signed agent, Windows Update with Scan now, and the two updates offered with KB, severity and size."></a>
+
+What the evidence is and how old, what is offered, and, when deploying is not
+possible on this computer, why.
+
+### Event log — dark
+<a href="images/github/device-event-log-dark.png"><img src="images/github/device-event-log-dark.png" alt="The Event Log tab on a computer's page in dark theme, with selectors for log, time range and event count, level chips for Critical, Error, Warning and Information, an optional source filter, and a table of returned System log entries with timestamps, level badges, event IDs, providers and messages."></a>
+
+Read a page of a managed computer's Windows event log without connecting to it.
+Five logs are available — Application, System, Security, Setup and Windows
+PowerShell — and nothing else: the allowlist is enforced by the API and again
+by the agent that opens the log.
+
+There is no channel to reach into an endpoint, so this is a request rather than
+a query: it is collected on the machine's next heartbeat, up to about three
+minutes away. Reading logs is its own permission, separate from viewing the
+computer, and every request is audited with the log, the window and who asked.
+
+---
+
 ## Everyday workflows
 
-### Enrol a managed device — light
-<a href="images/github/enroll-device-light.png"><img src="images/github/enroll-device-light.png" alt="The three-step enrollment form in light theme: choose the business, choose which users may connect with one user ticked, and choose Windows, Linux or macOS before generating an installer."></a>
+### Add a device — light
+<a href="images/github/add-device-light.png"><img src="images/github/add-device-light.png" alt="The Add device page in light theme: Harbor Logistics and the Tacoma warehouse chosen in step 1, and step 2 offering Windows, Linux or macOS, each saying which agent it installs."></a>
 
-Pick the business, pick who may connect, pick the platform. The business is
-bound into the installer when it is generated — the machine that runs it cannot
-place itself somewhere else.
+Business, site, who may connect, then the operating system. All of it is fixed into
+the single-use install link: the machine that runs it cannot place itself
+somewhere else.
 
-### Enrol a managed device — dark
-<a href="images/github/enroll-device-dark.png"><img src="images/github/enroll-device-dark.png" alt="The same enrollment workflow in dark theme with a different business selected, showing that business's users as the access options."></a>
+### Add a device — dark
+<a href="images/github/add-device-dark.png"><img src="images/github/add-device-dark.png" alt="The same page in dark theme with Cascade Accounting chosen, offering that business's people as the ones who may connect."></a>
 
-Choosing a different business narrows the access list to that business's people.
+Choosing a business narrows the access list to that business's people.
 
 ### Downloads — dark
 <a href="images/github/downloads-dark.png"><img src="images/github/downloads-dark.png" alt="The Downloads page in dark theme offering the preconfigured RustDesk client, an unconfigured client and a setup command for the technician's own computer."></a>
@@ -220,6 +299,47 @@ No computer record is created.
 
 Answers in the product, not just the repository — how connections are brokered,
 why a Connect can fail, and what to do about it.
+
+---
+
+## Reports, automation and patching
+
+### Patch compliance — light
+<a href="images/github/reports-patch-light.png"><img src="images/github/reports-patch-light.png" alt="The Patch compliance report in light theme: 28 percent compliant, 74 percent coverage, nine coverage gaps and six restart pending, then a table by business."></a>
+
+From stored scans only: a device with no fresh scan is a coverage gap, never counted
+as compliant or not.
+
+### Alert frequency — light
+<a href="images/github/reports-alerts-light.png"><img src="images/github/reports-alerts-light.png" alt="The Alert frequency report in light theme: alerts raised and resolved by business, site, computer and monitor type, with times to resolve."></a>
+
+### Offline time — dark
+<a href="images/github/reports-offline-dark.png"><img src="images/github/reports-offline-dark.png" alt="The Offline time report in dark theme: recorded offline time, episodes, offline now, and a table by site and by computer."></a>
+
+Measured from the Offline monitor's episodes. There is no availability percentage,
+because the time each computer was monitored is not recorded.
+
+### Script library — dark
+<a href="images/github/script-library-dark.png"><img src="images/github/script-library-dark.png" alt="The Script library in dark theme with a notice that running scripts is not available yet, and three scripts with their scope, review state and risk."></a>
+
+Scripts written, versioned and reviewed in the portal. It cannot run them, and says so.
+
+### Reviewing a script — light
+<a href="images/github/script-review-light.png"><img src="images/github/script-review-light.png" alt="Version 2 of Clear stuck print queue in review in light theme: its versions, hashes, static checks, the content, and Approve and Reject."></a>
+
+The reviewer approves an exact hash, and cannot be the person who wrote the content.
+
+### Client updates in a window — light
+<a href="images/github/client-updates-light.png"><img src="images/github/client-updates-light.png" alt="Settings, Client updates for Harbor Logistics in light theme: a notice that the sweep is off on this server, the business policy's windows, the Tacoma warehouse override, and each computer's automatic-update state."></a>
+
+Outdated RustDesk clients updated by the server, only inside a window outside
+working hours, skipping computers with a session open.
+
+### Patching — dark
+<a href="images/github/patch-policies-dark.png"><img src="images/github/patch-policies-dark.png" alt="The Patching page in dark theme for Harbor Logistics: the signed patching pre-flight with nine failing checks and the fix for each, and two automatic patch policies, one awaiting approval and one active."></a>
+
+The pre-flight reads each requirement from the real server. On this demo server they
+all fail, because there is no signer, and the page says exactly that.
 
 ---
 
@@ -300,10 +420,14 @@ DATABASE_URL=… ENCRYPTION_KEY=… npx tsx prisma/_docs-demo-data.ts
 # 3. Re-anchor the demo clocks, then capture. Online/offline is derived from
 #    how recently a device checked in, and the API sweeps the flag as data
 #    ages — without this the dashboard counts stop matching the inventory.
-DATABASE_URL=… npx tsx prisma/_docs-demo-refresh.ts   # run from apps/api
 DATABASE_URL=… npx tsx prisma/_docs-demo-monitoring.ts # monitors, alerts, a site outage, API keys
-# Run the demo API with MONITOR_SWEEP=off, or it re-evaluates those alerts,
-# and PATCH_POLICY_SWEEP=off, or it proposes plans for any demo patch policy.
+DATABASE_URL=… npx tsx prisma/_docs-demo-workbench.ts  # 0.31–0.33 pages, see below
+DATABASE_URL=… npx tsx prisma/_docs-demo-refresh.ts    # last, right before capturing
+# Run the demo API with every sweep off, or it acts on the demo data:
+#   MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off \
+#   METRIC_SWEEP=off RETENTION_SWEEP=off
+# The client-update and patching pages then say their sweep is off; that is
+# what the screenshots show, and it is true of the demo server.
 WEB_URL=http://127.0.0.1:4000 EMAIL=… PASSWORD=… \
   node apps/web/scripts/capture-media.mjs          # gallery -> docs/images/github/
 WEB_URL=http://127.0.0.1:4000 EMAIL=… PASSWORD=… \
@@ -329,6 +453,35 @@ ONLY=guide/alerts,guide/api-keys …                 # just some of them
 Each guide image is followed in the markdown by a numbered list explaining
 its callouts; keep the two in step when a callout is added or moved.
 
+`_docs-demo-workbench.ts` (0.34) seeds what the 0.31–0.33 pages need, and can be
+re-run: it deletes what it owns first. It refuses any database not named
+`reboot_remote_docs`, like the other demo modules. It writes:
+
+- a Linux and a macOS computer on the read-only agents;
+- 30 days of metric history (raw samples for the last 24 hours, hourly rows and
+  six-hourly disk samples before that, with one deliberate gap);
+- process, service and network snapshots, run through the API's own sanitiser
+  and size cap;
+- device groups and shared saved views;
+- resolved alert history, which the alert and offline-time reports count;
+- scripts with an approved version and a version in review;
+- client-update policies with a site override, and two held updates;
+- two patch policies, one awaiting approval and one active;
+- a fictional relay host (`remote.example.net`) and Quick Connect turned on.
+
+Capturing takes a few minutes, and a computer that has not checked in for ten
+minutes reads *agent silent*. Re-run `_docs-demo-refresh.ts` every couple of
+minutes while capturing; it only moves timestamps.
+
+`screenshots.mjs` deletes the audit rows its throwaway admin wrote when it
+finishes. The audit chain on the docs database then reports those rows as
+deleted; that is expected on a scratch database. Capture the gallery (whose
+audit and security pages show the chain) before the guide, or reset the
+database between them.
+
+The PNGs are written as Playwright produces them; nothing in the pipeline
+recompresses them.
+
 Masking happens in the browser DOM immediately before each shutter and never
 writes to the database:
 
@@ -338,6 +491,8 @@ writes to the database:
 | Long hex secrets | `SAMPLE-TOKEN-VALUE` |
 | RustDesk IDs | `•••••••••` |
 | Public IP addresses | `198.51.100.24` (RFC 5737 documentation range) |
+| API key prefixes | `rk_SAMPLE` |
+| Host names outside `mspreboot`, `github`, `rustdesk` and `example` | `remote.example.com` |
 
 Private ranges and loopback are left as they are — they carry nothing.
 

@@ -4,7 +4,7 @@
     "height": 1000
   },
   "deviceScaleFactor": 2,
-  "demoData": "apps/api/prisma/_docs-demo-data.ts against reboot_remote_docs",
+  "demoData": "apps/api/prisma/_docs-demo-data.ts, _docs-demo-monitoring.ts and _docs-demo-workbench.ts against reboot_remote_docs",
   "shots": [
     {
       "name": "dashboard-light",
@@ -43,14 +43,38 @@
       "viewport": "1440x1000@2x"
     },
     {
+      "name": "device-views-light",
+      "route": "/endpoints",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
       "name": "device-detail-light",
-      "route": "/endpoints/cmu6a1ehi004y11tbhux4koc5",
+      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d",
       "theme": "light",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "device-resources-light",
-      "route": "/endpoints/cmu6a1ehi004y11tbhux4koc5",
+      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "device-performance-light",
+      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d?tab=performance",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "device-services-light",
+      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d?tab=services",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "device-patches-light",
+      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d?tab=patches",
       "theme": "light",
       "viewport": "1440x1000@2x"
     },
@@ -61,7 +85,7 @@
       "viewport": "1440x1000@2x"
     },
     {
-      "name": "enroll-device-light",
+      "name": "add-device-light",
       "route": "/endpoints/enroll",
       "theme": "light",
       "viewport": "1440x1000@2x"
@@ -69,6 +93,30 @@
     {
       "name": "quick-connect-light",
       "route": "/quick-connect",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "reports-patch-light",
+      "route": "/reports",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "reports-alerts-light",
+      "route": "/reports/alert-frequency",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "script-review-light",
+      "route": "/automation/scripts/cmwcqxzzl003r30f9dvrlxrv0",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "client-updates-light",
+      "route": "/settings/client-updates",
       "theme": "light",
       "viewport": "1440x1000@2x"
     },
@@ -109,14 +157,26 @@
       "viewport": "1440x1000@2x"
     },
     {
+      "name": "search-dark",
+      "route": "/dashboard",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
       "name": "business-overview-dark",
-      "route": "/businesses/cmu6a1eh6004n11tbqqkaood6",
+      "route": "/businesses/cmwcqwwkf004nkynnqnuoq449",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "client-map-dark",
       "route": "/dashboard",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "alerts-dark",
+      "route": "/alerts",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
@@ -145,20 +205,50 @@
       "viewport": "1440x1000@2x"
     },
     {
+      "name": "device-bulk-dark",
+      "route": "/endpoints",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
       "name": "business-computers-dark",
-      "route": "/businesses/cmu6a1eh6004n11tbqqkaood6",
+      "route": "/businesses/cmwcqwwkf004nkynnqnuoq449",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "device-specs-dark",
-      "route": "/endpoints/cmu6a1ehi004y11tbhux4koc5",
+      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "device-performance-dark",
+      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d?tab=performance",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "device-processes-dark",
+      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d?tab=processes",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "device-network-dark",
+      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d?tab=network",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "device-event-log-dark",
-      "route": "/endpoints/cmu6a1ehi004y11tbhux4koc5",
+      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d?tab=events",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "device-linux-dark",
+      "route": "/endpoints/cmwcqwwid003fkynn6ukol55i",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
@@ -169,7 +259,7 @@
       "viewport": "1440x1000@2x"
     },
     {
-      "name": "enroll-device-dark",
+      "name": "add-device-dark",
       "route": "/endpoints/enroll",
       "theme": "dark",
       "viewport": "1440x1000@2x"
@@ -189,6 +279,24 @@
     {
       "name": "help-dark",
       "route": "/help",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "reports-offline-dark",
+      "route": "/reports/offline-time",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "script-library-dark",
+      "route": "/automation/scripts",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "patch-policies-dark",
+      "route": "/patching",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
@@ -215,6 +323,24 @@
       "route": "/about",
       "theme": "dark",
       "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "dashboard-narrow-light",
+      "route": "/dashboard",
+      "theme": "light",
+      "viewport": "390x844@2x"
+    },
+    {
+      "name": "device-overview-narrow-light",
+      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d",
+      "theme": "light",
+      "viewport": "390x844@2x"
+    },
+    {
+      "name": "device-list-narrow-dark",
+      "route": "/endpoints",
+      "theme": "dark",
+      "viewport": "390x844@2x"
     }
   ]
 }

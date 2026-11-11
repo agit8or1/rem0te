@@ -131,6 +131,26 @@ flagged. These are pictures of a moment, not live views.
 | **Services** | Display name, name, state, start mode (including delayed start) and the account it runs as; a filter, and *Automatic, not running* | 1,000 services; 128 KB |
 | **Network** | One card per connection: status, speed, IPv4/IPv6, gateway, DNS servers and suffix, MAC, DHCP server and lease | 32 adapters, 16 addresses each |
 
+![The Processes tab: the read-only notice, the snapshot's age, Refresh, the filter and the sortable columns](screenshots/guide/device-processes.png)
+
+1. **Read-only snapshot** — what the tab is, and that nothing on it acts on the computer.
+2. **When it was taken** — and how old it is; flagged after a day.
+3. **Refresh** — asks for a new one on the computer's next check-in.
+4. **Filter** — by name, PID or user.
+5. **The columns** — click one to sort.
+
+![The Services tab filtered to "sp": the Print Spooler stopped](screenshots/guide/device-services.png)
+
+1. **Filter** — by display name or name; *Automatic, not running* beside it.
+2. **A service** — state, start mode and account. This Print Spooler is the one the open Windows-service alert is about.
+3. **Refresh** — as on Processes.
+
+![The Network tab: one card per adapter](screenshots/guide/device-network.png)
+
+1. **An adapter** — status, speed, addresses, gateway, DNS, MAC and the DHCP lease.
+2. **A disconnected adapter** — listed with its status rather than hidden.
+3. **Refresh** — as on Processes.
+
 **There is nothing to click that acts on the computer** — no end task, stop, start or restart. Restarting a service
 is a signed maintenance action on the Actions tab (signed agent, allowlisted services, approvals); ending a process
 is not offered at all. When a result had to be cut to fit, the tab says so.

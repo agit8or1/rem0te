@@ -119,6 +119,16 @@ Then:
    - the expiry, at most 90 days.
 5. Propose it. Two approvers open the signer's approval page and approve it with their passkeys.
 
+![Patching for one business: the pre-flight checks and the policies](screenshots/guide/patch-policies.png)
+
+1. **Business** — policies belong to one business.
+2. **Pre-flight** — each requirement in this guide, checked against the server as it is. On this demo server every
+   check fails (no signer, sweep off), which is what it should say.
+3. **Check again** — re-runs them.
+4. **Awaiting approval** — proposed, not yet approved by two people on the signer.
+5. **Active** — approved; it acts only inside its windows.
+6. **New policy** — needs a fresh sign-in.
+
 From then on, inside each open window:
 
 - The sweep proposes a deployment of the canary's offered, policy-allowed updates. The signer signs the canary plan

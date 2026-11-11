@@ -26,6 +26,14 @@ Filters: **Business** (a Platform Admin, or anyone who works in several), **Site
 days). The filters stay in the address bar, so a report can be bookmarked; whoever opens the link sees it with
 their own permissions.
 
+![Reports, on Patch compliance](screenshots/guide/reports.png)
+
+1. **The reports** — one tab each.
+2. **Offline time** — the one the next screenshot opens.
+3. **Business** — then Site; the filters stay in the address bar.
+4. **Export CSV** — the report as on screen, with the same visibility.
+5. **The totals** — each a count of devices, with *No data* where there is no scan to count from.
+
 ## Patch compliance
 
 The definition is the dashboard's, from the same code (`apps/api/src/patching/compliance.ts`), so the two
@@ -96,6 +104,13 @@ What this cannot tell you, and why there is **no availability percentage**:
 
 An availability percentage needs the time each computer was monitored, which is not recorded, so any
 percentage would be invented.
+
+![Offline time over 30 days](screenshots/guide/reports-offline.png)
+
+1. **The filters** — business, site and period.
+2. **By site** — computers, episodes and time offline; *By computer* below it lists each computer, its longest
+   episode and when it last went offline.
+3. **Export CSV** — the report as on screen.
 
 ## Exporting
 

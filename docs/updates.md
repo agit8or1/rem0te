@@ -92,6 +92,15 @@ can instead let the server do it, outside working hours:
 A **site** can have its own policy. It replaces the business policy for that
 site's computers entirely, including being off when the business is on.
 
+![Settings → Client updates for one business: its policy, a site's override and each computer's state](screenshots/guide/client-updates.png)
+
+1. **Business** — the policy is per business.
+2. **The sweep notice** — shown when this server has `CLIENT_UPDATE_SWEEP=off`: policies are saved, nothing is queued.
+3. **The business policy** — on or off, the windows and their zone, the two skip rules.
+4. **A site override** — replaces the business policy for that site's computers.
+5. **Auto, waiting** — a computer the policy will update in its next window, with the reason it is held if one applies.
+6. **Not automatic** — a computer no policy covers, or one whose policy is off.
+
 **The window.** Same rules as every other weekly window in Rem0te
 (`rbac/schedule.ts`): days are 0 = Sunday … 6 = Saturday, times are wall-clock
 in the policy's zone, and an end earlier than the start crosses midnight and

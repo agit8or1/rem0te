@@ -125,7 +125,11 @@ export class ReportsService {
     const and: Prisma.MonitorAlertWhereInput[] = [
       this.monitoring.alertWhere(actor, q.businessId),
       // A site-wide alert (site outage) has no computer; every other one must be on a computer this caller can see.
-      { OR: [{ endpointId: null }, { endpoint: this.acl.endpointVisibilityWhere(actor, q.businessId) }] },
+      // `is`, not a bare relation filter: for a caller who sees every computer
+      // the visibility filter is {}, and Prisma 5 reads `{ endpoint: {} }`
+      // inside an OR as matching nothing — so a Platform Admin's alert and
+      // offline reports silently held only site-wide alerts (found 0.34).
+      { OR: [{ endpointId: null }, { endpoint: { is: this.acl.endpointVisibilityWhere(actor, q.businessId) } }] },
     ];
     if (q.siteId) and.push({ siteId: q.siteId });
     return { AND: and };

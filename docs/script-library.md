@@ -24,6 +24,23 @@ ships.
 It doesn't do any of this yet: run a script, schedule one, send one to a computer, collect output, or include one in a
 plan. Linux and macOS scripts aren't supported either.
 
+![The script library: the not-yet notice, the scope filter, a script and New script](screenshots/guide/script-library.png)
+
+1. **The notice** — running scripts is not available yet, on the page itself.
+2. **Scope** — global scripts, or one business's.
+3. **A script** — its latest version and review state.
+4. **New script** — writes version 1 as a draft.
+
+![A version in review: its card, its hash, the static checks, the content and Approve](screenshots/guide/script-review.png)
+
+1. **Version 2** — in review, written by someone other than the reviewer, edited from v1. *Compare* below it shows
+   any two versions line by line.
+2. **Content SHA-256** — the hash an approval records. (Shown as a placeholder here: the capture masks every long
+   hex string. The Review box repeats it in short form.)
+3. **Static checks** — warnings for the reviewer; they flag, never block.
+4. **The content** — exactly the bytes the hash is of.
+5. **Approve** — offered only to someone who did not write the content, and it asks for a fresh sign-in.
+
 ## How a script would run
 
 Only one way: as an **approved action** on the signed agent, through the chain that already starts the Print Spooler

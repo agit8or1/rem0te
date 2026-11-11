@@ -338,6 +338,15 @@ async function all() {
     const body = JSON.stringify({ ...adm.data, facets: undefined });
     check(adm.status === 200 && t(adm) === t(own) && !leaks(body, bMarkers).length, `${rep}: narrowed to A, exactly the owner's totals and nothing of Beech`, `${t(adm)} vs ${t(own)}; leaks ${leaks(body, bMarkers)}`);
   }
+  // Unfiltered, a Platform Admin's computer alerts must be there too. Until
+  // 0.34 they were not: the visibility filter is {} for someone who sees
+  // everything, and `{ endpoint: {} }` inside an OR matched no alert with a
+  // computer — only site outages were counted.
+  for (const rep of ['alert-frequency', 'offline-time']) {
+    const a = await get(S.ownerA, rep), b = await get(S.ownerB, rep), all = await get(S.admin, rep);
+    const n = (x) => rep === 'offline-time' ? x.data.totals.episodes : x.data.totals.raised;
+    check(all.status === 200 && n(all) === n(a) + n(b), `${rep}: unfiltered, the Platform Admin counts A's and B's computer alerts (${n(a)} + ${n(b)})`, `got ${n(all)}`);
+  }
 
   // ── Capabilities ──────────────────────────────────────────────────────────
   section('Each report needs the capability of what it summarises');

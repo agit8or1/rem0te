@@ -43,45 +43,89 @@ const STILL = `*,*::before,*::after{animation:none!important;transition:none!imp
   animation-duration:0s!important;transition-duration:0s!important;caret-color:transparent!important}
   *{scrollbar-width:none!important}::-webkit-scrollbar{display:none!important}`;
 
+/** Narrow captures: a phone-width viewport, for the responsive layout. */
+const NARROW = { width: 390, height: 844 };
+
+/** Pick a business in the page's first <select> (pages that start with "Choose a business…"). */
+const pickBusiness = (sel, label) => async (p) => {
+  await p.waitForSelector(sel, { timeout: 15000 });
+  await p.selectOption(sel, { label });
+};
+
 export const SHOTS = [
   // ── Overview and dashboards ────────────────────────────────────────────
-  { name: 'dashboard-light', path: '/dashboard', theme: 'light', wait: 'text=Total Computers', settle: 4000 },
-  { name: 'dashboard-dark', path: '/dashboard', theme: 'dark', wait: 'text=Total Computers', settle: 4000 },
+  { name: 'dashboard-light', path: '/dashboard', theme: 'light', wait: 'text=Work on next', settle: 3000 },
+  { name: 'dashboard-dark', path: '/dashboard', theme: 'dark', wait: 'text=Work on next', settle: 3000 },
+  { name: 'dashboard-narrow-light', path: '/dashboard', theme: 'light', viewport: 'narrow', wait: 'text=Work on next', settle: 3000 },
+  { name: 'search-dark', path: '/dashboard', theme: 'dark', wait: 'text=Work on next', settle: 800,
+    before: async (p) => {
+      await p.keyboard.press('Control+k');
+      await p.fill('[data-testid="global-search-input"]', 'harb');
+      await p.waitForSelector('#gs-results [role="group"]', { timeout: 10000 });
+    } },
   { name: 'businesses-light', path: '/businesses', theme: 'light', wait: 'text=Northwind Dental' },
   { name: 'business-overview-dark', maxHeight: 700, path: '@business', theme: 'dark', wait: 'text=Quick Connect' },
 
   // ── Visual insights and monitoring ─────────────────────────────────────
-  { name: 'client-map-dark', path: '/dashboard', theme: 'dark', wait: 'text=Total Computers', settle: 5000,
-    clip: '@map' },
+  { name: 'client-map-dark', path: '/dashboard', theme: 'dark', wait: 'div[class~="h-[420px]"]', settle: 4000,
+    clip: '@element', element: 'div[class~="h-[420px]"]' },
+  { name: 'alerts-dark', path: '/alerts', theme: 'dark', wait: 'text=Tacoma warehouse', settle: 2000 },
   { name: 'sessions-live-dark', path: '/sessions', theme: 'dark', wait: 'text=Connected' },
-  { name: 'session-history-light', path: '/sessions', theme: 'light', click: ['button:has-text("Session History")'], settle: 3000 },
+  { name: 'session-history-light', path: '/sessions', theme: 'light', click: ['[role="tab"]:has-text("History")'], settle: 3000 },
   { name: 'audit-timeline-dark', path: '/audit', theme: 'dark', settle: 3500 },
   { name: 'audit-timeline-light', path: '/audit', theme: 'light', settle: 3500 },
   { name: 'system-status-dark', path: '/admin/status', theme: 'dark', settle: 4000 },
   { name: 'security-overview-light', maxHeight: 620, path: '/admin/security', theme: 'light', settle: 4000 },
 
   // ── Device inventory ───────────────────────────────────────────────────
-  { name: 'computers-inventory-light', path: '/endpoints', theme: 'light', wait: 'text=RustDesk ID' },
-  { name: 'computers-inventory-dark', path: '/endpoints', theme: 'dark', wait: 'text=RustDesk ID' },
+  { name: 'computers-inventory-light', path: '/endpoints', theme: 'light', wait: 'table' },
+  { name: 'computers-inventory-dark', path: '/endpoints', theme: 'dark', wait: 'table' },
+  { name: 'device-list-narrow-dark', path: '/endpoints', theme: 'dark', viewport: 'narrow', wait: 'main', settle: 3000 },
+  { name: 'device-bulk-dark', path: '/endpoints', theme: 'dark', wait: 'table', settle: 800,
+    before: async (p) => {
+      for (const n of ['ACF-CAD-WS', 'ACF-SHOPFLOOR-1', 'CASC-AUDIT-02']) await p.check(`input[aria-label="Select ${n}"]`).catch(() => {});
+      await p.evaluate(() => { for (const el of document.querySelectorAll('*')) if (el.scrollTop) el.scrollTop = 0; });
+    } },
+  { name: 'device-views-light', path: '/endpoints', theme: 'light', wait: 'table', settle: 800,
+    before: async (p) => { await p.click('button:has-text("Views")'); await p.waitForSelector('[role="menu"]', { timeout: 10000 }); } },
   { name: 'business-computers-dark', path: '@business', theme: 'dark', click: ['button:has-text("Computers")'], settle: 2500 },
-  // The device page is mostly collected inventory now, so it needs more than
-  // the old 660px: that height cropped it at the Assignment card, above
-  // everything the page is actually for.
   { name: 'device-detail-light', maxHeight: 1100, path: '@endpoint', theme: 'light', settle: 3500 },
+  { name: 'device-overview-narrow-light', path: '@endpoint', theme: 'light', viewport: 'narrow', settle: 3500 },
   { name: 'device-resources-light', path: '@endpoint', theme: 'light', settle: 3500,
     clip: '@resources' },
   { name: 'device-specs-dark', path: '@endpoint', theme: 'dark', settle: 3500,
     clip: '@specs' },
-  { name: 'device-event-log-dark', maxHeight: 1000, path: '@endpoint', theme: 'dark',
-    click: ['button[role=tab]:has-text("Event Log")'], settle: 2500 },
+  { name: 'device-performance-light', path: '@endpoint?tab=performance', theme: 'light', wait: '[data-testid="performance-tab"]', settle: 2500,
+    before: async (p) => { await p.click('[data-testid="metric-range-7d"]').catch(() => {}); } },
+  { name: 'device-performance-dark', path: '@endpoint?tab=performance', theme: 'dark', wait: '[data-testid="performance-tab"]', settle: 2500 },
+  { name: 'device-processes-dark', path: '@endpoint?tab=processes', theme: 'dark', wait: '[data-testid="snapshot-age"]', settle: 1500 },
+  { name: 'device-services-light', path: '@endpoint?tab=services', theme: 'light', wait: '[data-testid="snapshot-age"]', settle: 1500 },
+  { name: 'device-network-dark', path: '@endpoint?tab=network', theme: 'dark', wait: '[data-testid="adapter"]', settle: 1500 },
+  { name: 'device-patches-light', path: '@endpoint?tab=patches', theme: 'light', settle: 3000 },
+  { name: 'device-event-log-dark', maxHeight: 1000, path: '@endpoint?tab=events', theme: 'dark', settle: 3000 },
+  { name: 'device-linux-dark', path: '@endpoint:CASC-FILESRV', theme: 'dark', settle: 3500 },
   { name: 'my-computers-dark', path: '/my-computers', theme: 'dark', settle: 3000 },
   { name: 'unassigned-light', maxHeight: 620, path: '/admin/unassigned', theme: 'light', settle: 2500 },
 
   // ── Everyday workflows ─────────────────────────────────────────────────
-  { name: 'enroll-device-light', path: '/endpoints/enroll', theme: 'light',
-    click: ['[role=combobox]', '[role=option]:has-text("Harbor Logistics")', 'text=Ellen Vasquez'], settle: 2500 },
-  { name: 'enroll-device-dark', path: '/endpoints/enroll', theme: 'dark',
-    click: ['[role=combobox]', '[role=option]:has-text("Cascade Accounting")'], settle: 2500 },
+  // Add Device, up to the operating-system step. The next step makes a real
+  // single-use install link; the in-app guide (screenshots.mjs) captures it.
+  { name: 'add-device-light', path: '/endpoints/enroll', theme: 'light', settle: 1000,
+    before: async (p) => {
+      await p.waitForSelector('#ad-business', { timeout: 15000 });
+      await p.selectOption('#ad-business', { label: 'Harbor Logistics' });
+      await p.waitForTimeout(800);
+      await p.selectOption('#ad-site', { label: 'Tacoma warehouse' });
+      await p.check('input[name="ad-access"] >> nth=1');
+      await p.click('[data-testid="place-next"]');
+      await p.check('input[name="ad-os"] >> nth=0');
+    } },
+  { name: 'add-device-dark', path: '/endpoints/enroll', theme: 'dark', settle: 1000,
+    before: async (p) => {
+      await p.waitForSelector('#ad-business', { timeout: 15000 });
+      await p.selectOption('#ad-business', { label: 'Cascade Accounting' });
+      await p.waitForTimeout(800);
+    } },
   { name: 'downloads-dark', path: '/downloads', theme: 'dark', settle: 3000 },
   { name: 'quick-connect-light', path: '/quick-connect', theme: 'light', settle: 2500 },
   // What a Tactical RMM URL Action lands on when a hostname is ambiguous. The
@@ -94,6 +138,17 @@ export const SHOTS = [
   { name: 'trmm-match-dark', maxHeight: 900, theme: 'dark', settle: 2500,
     path: '/trmm?host=reception-pc&agent=demo-agent-0001' },
   { name: 'help-dark', path: '/help', theme: 'dark', settle: 3000 },
+
+  // ── Automation, patching and reports ───────────────────────────────────
+  { name: 'reports-patch-light', path: '/reports', theme: 'light', wait: 'text=By business', settle: 1500 },
+  { name: 'reports-offline-dark', path: '/reports/offline-time', theme: 'dark', wait: 'text=Export CSV', settle: 2500 },
+  { name: 'reports-alerts-light', path: '/reports/alert-frequency', theme: 'light', wait: 'text=Export CSV', settle: 2500 },
+  { name: 'script-library-dark', path: '/automation/scripts', theme: 'dark', wait: 'text=Clear stuck print queue', settle: 1500 },
+  { name: 'script-review-light', path: '@script:Clear stuck print queue', theme: 'light', wait: 'text=Static checks', settle: 1500 },
+  { name: 'client-updates-light', path: '/settings/client-updates', theme: 'light', settle: 2000,
+    before: pickBusiness('#cu-business', 'Harbor Logistics') },
+  { name: 'patch-policies-dark', path: '/patching', theme: 'dark', settle: 2000,
+    before: pickBusiness('main select', 'Harbor Logistics') },
 
   // ── Access and administration ──────────────────────────────────────────
   { name: 'access-model-light', path: '/admin/access', theme: 'light', settle: 3000 },
@@ -122,10 +177,13 @@ async function signIn(ctx) {
   return page;
 }
 
-async function makeContext(browser, theme) {
+async function makeContext(browser, theme, viewport = VIEWPORT) {
   const ctx = await browser.newContext({
-    viewport: VIEWPORT, deviceScaleFactor: SCALE,
+    viewport, deviceScaleFactor: SCALE,
     colorScheme: theme, reducedMotion: 'reduce',
+    // The demo businesses are in the Pacific Northwest; times on screen read
+    // in their zone rather than the capture host's.
+    timezoneId: 'America/Los_Angeles',
   });
   // The app reads localStorage.theme on mount — set it before any script runs
   // so the first paint is already the right theme.
@@ -142,11 +200,12 @@ async function run() {
   const manifest = [];
   let businessId = null, endpointId = null;
 
-  for (const theme of ['light', 'dark']) {
-    const themeShots = shots.filter((s) => s.theme === theme);
+  for (const [theme, vpName] of [['light', 'desktop'], ['dark', 'desktop'], ['light', 'narrow'], ['dark', 'narrow']]) {
+    const themeShots = shots.filter((s) => s.theme === theme && (s.viewport ?? 'desktop') === vpName);
     if (!themeShots.length) continue;
+    const vp = vpName === 'narrow' ? NARROW : VIEWPORT;
 
-    const ctx = await makeContext(browser, theme);
+    const ctx = await makeContext(browser, theme, vp);
     const page = await signIn(ctx);
 
     // Resolve one business and one endpoint id for the @-placeholders.
@@ -161,14 +220,33 @@ async function run() {
         const harbor = list.find((c) => /Harbor/.test(c.name)) ?? list[0];
         const e = await fetch('/api/v1/endpoints?limit=50').then((x) => x.json()).catch(() => null);
         const eps = arr(e);
-        const online = eps.find((x) => x.isOnline && /HARB/.test(x.name ?? '')) ?? eps.find((x) => x.isOnline) ?? eps[0];
+        // HARB-DISPATCH-01 by name: it carries every 0.31–0.33 demo record
+        // (history, snapshots, the open alert), so the device shots agree.
+        const online = eps.find((x) => x.name === 'HARB-DISPATCH-01') ?? eps.find((x) => x.isOnline && /HARB/.test(x.name ?? '')) ?? eps.find((x) => x.isOnline) ?? eps[0];
         return { businessId: harbor?.id ?? null, endpointId: online?.id ?? null };
       });
       businessId = r.businessId; endpointId = r.endpointId;
     }
 
     for (const s of themeShots) {
-      const target = s.path
+      let target = s.path;
+      // "@endpoint:<name>" and "@script:<name>" resolve by name through the API.
+      const named = /^@(endpoint|script):([^?]+)(\?.*)?$/.exec(target);
+      if (named) {
+        const [, kind, name, q] = named;
+        const id = await page.evaluate(async ([k, n]) => {
+          if (k === 'endpoint') {
+            const r = await fetch(`/api/v1/endpoints?search=${encodeURIComponent(n)}&pageSize=25`).then((x) => x.json()).catch(() => null);
+            const l = r?.data?.endpoints ?? r?.data?.items ?? [];
+            return l.find((x) => x.name === n)?.id ?? null;
+          }
+          const r = await fetch('/api/v1/scripts').then((x) => x.json()).catch(() => null);
+          const l = r?.data?.scripts ?? r?.data?.items ?? (Array.isArray(r?.data) ? r.data : []);
+          return l.find((x) => x.name === n)?.id ?? null;
+        }, [kind, name]);
+        target = `${kind === 'endpoint' ? '/endpoints' : '/automation/scripts'}/${id}${q ?? ''}`;
+      }
+      target = target
         .replace('@business', `/businesses/${businessId}`)
         .replace('@endpoint', `/endpoints/${endpointId}`);
       const p = s.anon ? await (await makeContext(browser, theme)).newPage() : page;
@@ -176,6 +254,7 @@ async function run() {
         await p.goto(`${WEB}${target}`, { waitUntil: 'networkidle', timeout: 40000 });
         await p.addStyleTag({ content: STILL });
         if (s.wait) await p.waitForSelector(s.wait, { timeout: 15000 }).catch(() => {});
+        if (s.before) await s.before(p);
         for (const c of s.click ?? []) {
           await p.click(c, { timeout: 8000 }).catch(() => console.log(`    (click missed: ${c})`));
           await p.waitForTimeout(900);
@@ -186,7 +265,9 @@ async function run() {
         await p.waitForTimeout(250);
 
         const file = path.join(OUT, `${s.name}.png`);
-        if (s.clip === '@map') {
+        if (s.clip === '@element') {
+          await p.locator(s.element).first().screenshot({ path: file });
+        } else if (s.clip === '@map') {
           // The first <svg> on the page is the sidebar logo. Take the largest
           // one instead — that is the map — and frame its surrounding card.
           const box = await p.evaluate(() => {
@@ -206,7 +287,9 @@ async function run() {
           // heading: it sits above the specs grid rather than inside it, so
           // the @specs anchor below deliberately does not include it.
           const found = await p.evaluate(() => {
-            const head = [...document.querySelectorAll('div,section')]
+            // The heading is the card's <h3> (CardTitle); its row also holds
+            // the sample's age, so only the h3 itself reads exactly this.
+            const head = [...document.querySelectorAll('h3,div,section')]
               .find((el) => /^Resources$/.test((el.textContent ?? '').trim()));
             const card = head?.closest('div.rounded-lg,div.rounded-xl,section');
             if (!card) return false;
@@ -232,7 +315,7 @@ async function run() {
           // a class: the grid re-flows between one and two columns with the
           // window, so anything geometric breaks at the next viewport change.
           const found = await p.evaluate(() => {
-            const heads = [...document.querySelectorAll('div,section')]
+            const heads = [...document.querySelectorAll('h3,div,section')]
               .filter((el) => /^Hardware$/.test((el.textContent ?? '').trim()));
             const card = heads[0]?.closest('div.rounded-lg,div.rounded-xl,section');
             const grid = card?.parentElement?.closest('div.grid') ?? card?.parentElement;
@@ -241,7 +324,18 @@ async function run() {
             return true;
           });
           if (found) {
+            // The grid is taller than the viewport and the top bar is sticky:
+            // an element shot then has the search bar printed over its first
+            // row (0.34). Give the page room and hide what sticks.
+            await p.setViewportSize({ width: vp.width, height: 2000 });
+            await p.evaluate(() => {
+              for (const el of document.querySelectorAll('body *')) {
+                const pos = getComputedStyle(el).position;
+                if (pos === 'sticky' || pos === 'fixed') el.style.visibility = 'hidden';
+              }
+            });
             await p.locator('[data-capture-specs]').screenshot({ path: file });
+            await p.setViewportSize(vp);
           } else {
             // No cards at all is what an endpoint that has never reported
             // looks like; fall back rather than failing the whole run.
@@ -252,11 +346,11 @@ async function run() {
           // Pages whose content ends well above the fold would otherwise be
           // half empty, which reads badly at GitHub's display width.
           await p.screenshot({ path: file,
-            clip: { x: 0, y: 0, width: VIEWPORT.width, height: s.maxHeight } });
+            clip: { x: 0, y: 0, width: vp.width, height: s.maxHeight } });
         } else {
           await p.screenshot({ path: file });
         }
-        manifest.push({ name: s.name, route: target, theme, viewport: `${VIEWPORT.width}x${VIEWPORT.height}@${SCALE}x` });
+        manifest.push({ name: s.name, route: target, theme, viewport: `${vp.width}x${vp.height}@${SCALE}x` });
         console.log(`  ✓ ${s.name}  [${theme}]  ${target}`);
       } catch (e) {
         console.log(`  ✗ ${s.name} — ${e.message.split('\n')[0]}`);
@@ -287,7 +381,7 @@ async function run() {
 
   await writeFile(manifestPath,
     JSON.stringify({ viewport: VIEWPORT, deviceScaleFactor: SCALE,
-      demoData: 'apps/api/prisma/_docs-demo-data.ts against reboot_remote_docs',
+      demoData: 'apps/api/prisma/_docs-demo-data.ts, _docs-demo-monitoring.ts and _docs-demo-workbench.ts against reboot_remote_docs',
       shots: merged }, null, 2) + '\n');
   console.log(`\n${manifest.length} captured -> ${OUT}`);
   await browser.close();

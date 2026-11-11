@@ -108,7 +108,9 @@ The full review lists issues per screen. The ones that shape the plan:
 5. **Destructive actions next to primary ones:** Archive beside Connect, a bare "×" on rows.
 6. **Layout defects:** missing page padding (Quick Connect, Downloads, Access), sidebar footer clipping entries,
    a stray callout.
-7. **The GitHub gallery shows v0.18.10**, not what ships.
+7. **The GitHub gallery shows v0.18.10**, not what ships. *(Regenerated in 0.34 from the 0.33 product, light and
+   dark, desktop and phone width; the in-app guide gained callout images for the 0.31–0.33 pages. The 0.34
+   captures show two more pages without left padding: Patching and Script library.)*
 
 ## Priority fixes (the order this will be built in)
 
