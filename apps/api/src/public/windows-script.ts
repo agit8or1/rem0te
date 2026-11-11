@@ -46,6 +46,83 @@ interface Variant {
   actionHook: string;
 }
 
+// ── Build-time guard for the 0.33 snapshot block ─────────────────────────────
+//
+// The heartbeat is one template literal, not joinPs() statements, so it gets
+// its own refusal at build time — the same idea as RustdeskService.joinPs():
+// a mistake that would only show on someone else's machine throws here, with
+// a stack trace, instead. For the Processes / Services / Network snapshot
+// functions it refuses:
+//   - any command that is not a Get-* cmdlet (Sort-Object and Select-Object
+//     only reorder and cut what was read);
+//   - Invoke-*, iex, script blocks, the call and dot-source operators,
+//     Add-Type, New-Object, Start-*, and the properties that carry command
+//     lines, binary paths, modules or the environment;
+//   - a result field whose value did not come through Get-Rem0teSnapText
+//     (control characters out, clamped) or Get-Rem0teSnapMatch (an explicit
+//     charset), a numeric cast, or a fixed lookup table.
+export const SNAPSHOT_BLOCK_START = '# ---- Snapshots (0.33): processes, services, network adapters';
+const SNAPSHOT_BLOCK_END = 'if ($state.agentSecret -and $resp -and $resp.data -and $resp.data.diagnostics) {';
+const SNAP_ALLOWED_COMMANDS = /^(Get-[A-Za-z0-9]+|Sort-Object|Select-Object)$/;
+const SNAP_FORBIDDEN = /Invoke-|\biex\b|\[scriptblock\]|\.Invoke\(|\.Create\(|&\s*[$'"({]|^\s*\.\s|Add-Type|New-Object|Start-|Stop-|Set-|Out-File|PathName|CommandLine|ExecutablePath|MainModule|\.Modules\b|\.Path\b|\.Environment|EnvironmentVariables|\$env:/im;
+const SNAP_ROW_VALUE = [
+  /^\$[A-Za-z][A-Za-z0-9]*$/,                                  // a variable, itself checked below
+  /^\(Get-Rem0teSnap(?:Text|Match) [^()]*\)$/,                // through a charset helper
+  /^\[(int|double)\]\$[A-Za-z][A-Za-z0-9.]*$/,                 // a number
+  /^\[string\]\$names\[\$st\]$/,                               // the fixed status table
+  /^\(\$st -eq 2\)$/,
+];
+const SNAP_VAR_SOURCE = [
+  /^Get-Rem0teSnap(Text|Match|Iso) /, /^\$null$/, /^@\(\)$/, /^\$true$/, /^\$false$/, /^-1$/,
+  /^\[math\]::Round\(\[double\]\$[A-Za-z.]+, 1\)$/, /^\[(bool|double|int)\]\$[A-Za-z][A-Za-z0-9.]*$/,
+  /^\[string\]\$modes\[\[string\]\$s\.StartMode\]$/, /^'[A-Za-z]+'$/, /^\$v$/,
+];
+
+export function assertSnapshotBlockSafe(script: string): string {
+  const a = script.indexOf(SNAPSHOT_BLOCK_START);
+  const b = script.indexOf(SNAPSHOT_BLOCK_END, a);
+  if (a < 0 || b < 0) throw new Error('heartbeat: the snapshot block is missing');
+  const code = script.slice(a, b).split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  const fail = (why: string) => { throw new Error(`heartbeat snapshot block refused: ${why}`); };
+  const bad = SNAP_FORBIDDEN.exec(code);
+  if (bad) fail(`forbidden construct "${bad[0]}"`);
+  for (const m of code.matchAll(/\b[A-Z][a-z]+-[A-Z][A-Za-z0-9]+\b/g)) {
+    if (!SNAP_ALLOWED_COMMANDS.test(m[0])) fail(`"${m[0]}" is not a Get-* cmdlet`);
+  }
+  if (!/\$t = \(\(\[string\]\$v\) -replace '\[\\x00-\\x1f\\x7f\]', ' '\)\.Trim\(\)/.test(code) || !/if \(\$t\.Length -gt \$max\) \{ \$t = \$t\.Substring\(0, \$max\) \}/.test(code)) {
+    fail('Get-Rem0teSnapText must strip control characters and clamp');
+  }
+  if (!/if \(\$null -eq \$t -or \$t -notmatch \$re\) \{ return \$null \}/.test(code)) fail('Get-Rem0teSnapMatch must drop a value failing its charset');
+  // Every field of every result row, and every variable that feeds one.
+  const rows = [...code.matchAll(/\$(?:out|ads) \+= @\{([^{}]*)\}/g)].map((m) => m[1]);
+  if (rows.length < 3) fail('expected a result row in each snapshot function');
+  const seen = new Set<string>();
+  const checkVar = (name: string, depth = 0) => {
+    if (seen.has(name)) return;
+    seen.add(name);
+    if (depth > 4) fail(`$${name} is assigned through too many steps`);
+    // The name comes from this file's own row literals, matched by [A-Za-z0-9]+ above.
+    // eslint-disable-next-line security/detect-non-literal-regexp
+    const sources = [...code.matchAll(new RegExp(`\\$${name}\\s*\\+?=\\s*([^;\\n]+?)\\s*(?=;|\\s\\}|\\n|$)`, 'g'))].map((m) => m[1].trim());
+    if (!sources.length) fail(`$${name} is used in a result but never assigned`);
+    for (const src of sources) {
+      if (!SNAP_VAR_SOURCE.some((re) => re.test(src))) fail(`$${name} is assigned from "${src}", which is not a checked source`);
+      if (src === '$v') checkVar('v', depth + 1);
+    }
+  };
+  for (const body of rows) {
+    for (const pair of body.split(/;|\n/).map((p) => p.trim()).filter(Boolean)) {
+      const m = /^([A-Za-z0-9]+) = (.+)$/.exec(pair);
+      if (!m) fail(`unreadable result field "${pair}"`);
+      const value = m![2].trim();
+      if (!SNAP_ROW_VALUE.some((re) => re.test(value))) fail(`result field ${m![1]} = ${value} is not checked against a charset`);
+      const v = /^\$([A-Za-z][A-Za-z0-9]*)$/.exec(value);
+      if (v) checkVar(v[1]);
+    }
+  }
+  return script;
+}
+
 function assertSafe(value: string, re: RegExp, what: string): string {
   if (!value) return '';
   if (!re.test(value)) throw new Error(`${what} is not valid for an installer script`);
@@ -99,7 +176,7 @@ try {
     // Approved actions need the signed agent; a legacy machine is never sent one.
     actionHook: '# Approved actions: not on the legacy channel.',
   };
-  return template(v, host);
+  return assertSnapshotBlockSafe(template(v, host));
 }
 
 // The signed variant. agentVersion is the release it is built for; it is a
@@ -227,7 +304,7 @@ try {
     }
 } catch {}`,
   };
-  return template(v, 'set by the signed agent');
+  return assertSnapshotBlockSafe(template(v, 'set by the signed agent'));
 }
 
 function template(v: Variant, host: string | null): string {
@@ -1315,8 +1392,113 @@ function Get-Rem0teDiagReboot {
     try { \$os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop; if (\$os.LastBootUpTime) { \$boot = \$os.LastBootUpTime.ToUniversalTime().ToString('o'); \$up = [int]((Get-Date) - \$os.LastBootUpTime).TotalSeconds } } catch {}
     return @{ pending = (\$src.Count -gt 0); sources = \$src; lastBootAt = \$boot; uptimeSeconds = \$up }
 }
+# ---- Snapshots (0.33): processes, services, network adapters --------------
+# Three more catalog keys, each a full list for the device workspace's
+# Processes, Services and Network tabs. Same rules as above: Get-* cmdlets
+# and CIM reads only, nothing the server sends but the key, and every string
+# that goes into a result is checked against a charset here (and again on
+# the server). Never collected: command lines, executable or service binary
+# paths, modules, environment variables.
+function Get-Rem0teSnapText(\$v, [int]\$max) {
+    if (\$null -eq \$v) { return \$null }
+    \$t = (([string]\$v) -replace '[\\x00-\\x1f\\x7f]', ' ').Trim()
+    if (\$t.Length -gt \$max) { \$t = \$t.Substring(0, \$max) }
+    if (\$t.Length -eq 0) { return \$null }
+    return \$t
+}
+function Get-Rem0teSnapMatch(\$v, [string]\$re, [int]\$max) {
+    \$t = Get-Rem0teSnapText \$v \$max
+    if (\$null -eq \$t -or \$t -notmatch \$re) { return \$null }
+    return \$t
+}
+function Get-Rem0teSnapIso(\$d) {
+    if (\$null -eq \$d) { return \$null }
+    try { return ([datetime]\$d).ToUniversalTime().ToString('o') } catch { return \$null }
+}
+function Get-Rem0teSnapProcesses {
+    # -IncludeUserName needs the elevation the SYSTEM task has. Without it
+    # the list is still taken, and says the users were not read.
+    \$withUser = \$true
+    \$all = @()
+    try { \$all = @(Get-Process -IncludeUserName -ErrorAction Stop) }
+    catch { \$withUser = \$false; \$all = @(Get-Process -ErrorAction SilentlyContinue) }
+    \$out = @()
+    foreach (\$pr in @(\$all | Sort-Object -Property WorkingSet64 -Descending | Select-Object -First 1000)) {
+        # A name, never a path: no separator, colon or wildcard.
+        \$n = Get-Rem0teSnapMatch \$pr.ProcessName '^[^\\\\/:*?"<>|]{1,128}\$' 128
+        if (\$null -eq \$n) { continue }
+        \$u = \$null
+        if (\$withUser) { \$u = Get-Rem0teSnapMatch \$pr.UserName '^[A-Za-z0-9 _.\$@\\\\-]{1,128}\$' 128 }
+        \$cpu = \$null
+        if (\$null -ne \$pr.CPU) { \$cpu = [math]::Round([double]\$pr.CPU, 1) }
+        # StartTime throws for a protected process (System, Idle, csrss).
+        \$st = \$null
+        try { \$st = Get-Rem0teSnapIso \$pr.StartTime } catch {}
+        \$out += @{ name = \$n; pid = [int]\$pr.Id; cpuSeconds = \$cpu; workingSetBytes = [double]\$pr.WorkingSet64; user = \$u; startedAt = \$st }
+    }
+    return @{ processCount = [int]\$all.Count; userNamesRead = \$withUser; processes = \$out }
+}
+function Get-Rem0teSnapServices {
+    # Win32_Service through CIM: Get-Service does not carry the run-as
+    # account. Name, display name, state, start mode and account only.
+    \$modes = @{ 'Auto' = 'Automatic'; 'Manual' = 'Manual'; 'Disabled' = 'Disabled'; 'Boot' = 'Boot'; 'System' = 'System' }
+    \$all = @(Get-CimInstance Win32_Service -ErrorAction Stop)
+    \$out = @()
+    foreach (\$s in @(\$all | Sort-Object -Property Name | Select-Object -First 1000)) {
+        \$n = Get-Rem0teSnapMatch \$s.Name '^[A-Za-z0-9_.\$ -]{1,128}\$' 128
+        if (\$null -eq \$n) { continue }
+        \$mode = [string]\$modes[[string]\$s.StartMode]
+        if (-not \$mode) { \$mode = 'Unknown' }
+        if (\$mode -eq 'Automatic' -and \$s.DelayedAutoStart -eq \$true) { \$mode = 'AutomaticDelayedStart' }
+        \$state = Get-Rem0teSnapMatch (([string]\$s.State) -replace ' ', '') '^[A-Za-z]{1,32}\$' 32
+        \$acct = Get-Rem0teSnapMatch \$s.StartName '^[A-Za-z0-9 _.\$@\\\\-]{1,128}\$' 128
+        \$out += @{ name = \$n; displayName = (Get-Rem0teSnapText \$s.DisplayName 256); state = \$state; startMode = \$mode; account = \$acct }
+    }
+    return @{ serviceCount = [int]\$all.Count; services = \$out }
+}
+function Get-Rem0teSnapNetwork {
+    # Every connection Windows lists under Network Connections (an adapter
+    # with a connection name), joined to its IP configuration by index.
+    \$ipRe = '^[0-9a-fA-F:.%]{2,64}\$'
+    \$cfg = @{}
+    foreach (\$c in @(Get-CimInstance Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue)) { \$cfg[[string]\$c.Index] = \$c }
+    \$names = @{ 0 = 'Disconnected'; 1 = 'Connecting'; 2 = 'Connected'; 3 = 'Disconnecting'; 4 = 'Hardware not present'; 5 = 'Hardware disabled'; 6 = 'Hardware malfunction'; 7 = 'Media disconnected'; 8 = 'Authenticating'; 9 = 'Authentication succeeded'; 10 = 'Authentication failed'; 11 = 'Invalid address'; 12 = 'Credentials required' }
+    \$ads = @()
+    foreach (\$a in @(Get-CimInstance Win32_NetworkAdapter -ErrorAction Stop)) {
+        if (-not \$a.NetConnectionID) { continue }
+        if (\$ads.Count -ge 32) { break }
+        \$st = -1
+        if (\$null -ne \$a.NetConnectionStatus) { \$st = [int]\$a.NetConnectionStatus }
+        \$c = \$cfg[[string]\$a.Index]
+        \$v4 = @(); \$v6 = @(); \$gw = @(); \$dns = @()
+        \$dhcp = \$null; \$dhcpSrv = \$null; \$leaseFrom = \$null; \$leaseTo = \$null; \$suffix = \$null
+        if (\$c) {
+            foreach (\$ip in @(\$c.IPAddress | Select-Object -First 32)) { \$v = Get-Rem0teSnapMatch \$ip \$ipRe 64; if (\$v) { if (\$v.Contains(':')) { \$v6 += \$v } else { \$v4 += \$v } } }
+            foreach (\$g in @(\$c.DefaultIPGateway | Select-Object -First 8)) { \$v = Get-Rem0teSnapMatch \$g \$ipRe 64; if (\$v) { \$gw += \$v } }
+            foreach (\$d in @(\$c.DNSServerSearchOrder | Select-Object -First 8)) { \$v = Get-Rem0teSnapMatch \$d \$ipRe 64; if (\$v) { \$dns += \$v } }
+            \$dhcp = [bool]\$c.DHCPEnabled
+            if (\$dhcp) {
+                \$dhcpSrv = Get-Rem0teSnapMatch \$c.DHCPServer \$ipRe 64
+                \$leaseFrom = Get-Rem0teSnapIso \$c.DHCPLeaseObtained
+                \$leaseTo = Get-Rem0teSnapIso \$c.DHCPLeaseExpires
+            }
+            \$suffix = Get-Rem0teSnapMatch \$c.DNSDomain '^[A-Za-z0-9.-]{1,253}\$' 253
+        }
+        \$speed = \$null
+        if (\$null -ne \$a.Speed) { \$speed = [double]\$a.Speed }
+        \$mac = Get-Rem0teSnapMatch \$a.MACAddress '^[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5,7}\$' 32
+        \$ads += @{
+            name = (Get-Rem0teSnapText \$a.Name 128); connectionId = (Get-Rem0teSnapText \$a.NetConnectionID 128)
+            status = [string]\$names[\$st]; up = (\$st -eq 2); speedBps = \$speed
+            mac = \$mac
+            ipv4 = \$v4; ipv6 = \$v6; gateway = \$gw; dnsServers = \$dns; dnsSuffix = \$suffix
+            dhcpEnabled = \$dhcp; dhcpServer = \$dhcpSrv; dhcpLeaseObtainedAt = \$leaseFrom; dhcpLeaseExpiresAt = \$leaseTo
+        }
+    }
+    return @{ adapters = \$ads }
+}
 if (\$state.agentSecret -and \$resp -and \$resp.data -and \$resp.data.diagnostics) {
-    \$diagKeys = @('refresh_inventory', 'disk_space', 'service_health', 'recent_system_errors', 'top_processes', 'network_connectivity', 'dns_resolution', 'pending_updates', 'reboot_status')
+    \$diagKeys = @('refresh_inventory', 'disk_space', 'service_health', 'recent_system_errors', 'top_processes', 'network_connectivity', 'dns_resolution', 'pending_updates', 'reboot_status', 'process_list', 'service_list', 'network_adapters')
     foreach (\$dr in @(\$resp.data.diagnostics | Select-Object -First 3)) {
         if (-not \$dr) { continue }
         \$rid = [string]\$dr.id
@@ -1336,6 +1518,9 @@ if (\$state.agentSecret -and \$resp -and \$resp.data -and \$resp.data.diagnostic
                 'dns_resolution' { \$out = Get-Rem0teDiagDns }
                 'pending_updates' { \$out = @{ updates = (Get-Rem0tePendingUpdates) } }
                 'reboot_status' { \$out = Get-Rem0teDiagReboot }
+                'process_list' { \$out = Get-Rem0teSnapProcesses }
+                'service_list' { \$out = Get-Rem0teSnapServices }
+                'network_adapters' { \$out = Get-Rem0teSnapNetwork }
                 default { throw 'Not a catalog diagnostic' }
             }
             Send-Rem0teDiag \$rid \$dk 'completed' \$out \$null

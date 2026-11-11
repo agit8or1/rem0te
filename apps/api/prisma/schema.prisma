@@ -1195,7 +1195,8 @@ model DiagnosticRun {
   expiresAt     DateTime
   dispatchCount Int       @default(0)
 
-  // Sanitised and size-capped server side (MAX_RESULT_BYTES). `resultBytes`
+  // Sanitised and size-capped server side (MAX_RESULT_BYTES; MAX_SNAPSHOT_BYTES for
+  // the 0.33 snapshot keys). `resultBytes`
   // is the stored size; `truncated` is set when lists were cut to fit.
   result      Json?
   resultBytes Int?
@@ -1206,6 +1207,7 @@ model DiagnosticRun {
   @@index([endpointId, requestedAt])
   @@index([requestedById, requestedAt])
   @@index([status, expiresAt])
+  @@index([endpointId, key, completedAt])
 }
 
 // ─── Technician Devices & Launcher ───────────────────────────────────────────

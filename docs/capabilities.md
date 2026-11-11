@@ -23,6 +23,7 @@ far each part has been tested. "Tested" here means one of three things, and they
 | Windows event log reading | Yes | Yes | No (a staged query is refused) | No | No |
 | One-click read-only diagnostics (0.31): disk, services, errors, processes, network, DNS, updates, restart | Yes | Yes (the same heartbeat script) | No | No | No |
 | Metric history (0.33): CPU, memory, system disk per heartbeat; each volume per inventory pass | Yes | Yes | Yes | No | No |
+| Processes, Services and Network tabs (0.33): full read-only snapshots | Yes | Yes (the same heartbeat script) | No (its agent reads no diagnostics) | No | No |
 | Monitoring (offline, disk, CPU, memory, services, events, restart pending) | Yes | Yes | Offline, system disk, CPU, memory and restart pending, from the values it reports; **no services or events** | Offline only (it stops heartbeating) | No |
 | **Patches: pending updates, restart pending** | **Yes — read-only**, every 12 h or on *Scan now* | Yes | **Yes — read-only**: `apt list --upgradable`, `dnf -C check-update` or `zypper --no-refresh list-updates`, from the package manager's existing cache; **unknown** with none of them | No | No |
 | Patches: update identities, history, restart sources | No | Yes | No | No | No |

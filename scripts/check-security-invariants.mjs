@@ -696,14 +696,16 @@ check(
       && /export function isCatalogKey\(k: unknown\): k is DiagnosticKey \{\s*return typeof k === 'string' && BY_KEY\.has\(k\);/.test(cat),
     'request() and report() must refuse a non-catalog key first; report() must match the run\'s key');
   const mig = read('apps/api/prisma/migrations/0031_diagnostic_runs/migration.sql');
-  const dbKeys = [...(/"DiagnosticRun_key_catalog" CHECK \("key" IN \(([\s\S]*?)\)\)/.exec(mig)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  // 0042 (0.33) redefines the key list; the newest definition is the one in force.
+  const migKeys = read('apps/api/prisma/migrations/0042_system_inventory/migration.sql');
+  const dbKeys = [...(/"DiagnosticRun_key_catalog" CHECK \("key" IN \(([\s\S]*?)\)\)/.exec(migKeys)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
   check('the database refuses a key outside the catalog', JSON.stringify(dbKeys) === JSON.stringify(keys), `CHECK lists: ${dbKeys.join(',')}`);
   check('a request carries a key and nothing else',
     /export class RequestDiagnosticDto \{\s*@IsString\(\)\s*@Length\(1, 64\)\s*@Matches\([^\n]*\)\s*key!: string;\s*\}/.test(read('apps/api/src/diagnostics-catalog/diagnostics-catalog.controller.ts'))
       && /out\.push\(\{ id: r\.id, key: r\.key \}\)/.test(dsvc) && !/params/.test(dsvc.slice(dsvc.indexOf('async forHeartbeat('), dsvc.indexOf('private async requesterStillAllowed('))),
     'no parameters from the console, none to the agent');
   check('stored diagnostic results are size-capped',
-    /const capped = capResult\(shaped\);[\s\S]{0,300}result: capped\.result/.test(repFn) && /export const MAX_RESULT_BYTES = 32_768;/.test(cat)
+    /const capped = capResult\(shaped, resultCapFor\(run\.key\)\);[\s\S]{0,300}result: capped\.result/.test(repFn) && /export const MAX_RESULT_BYTES = 32_768;/.test(cat)
       && /CHECK \("result" IS NULL OR octet_length\("result"::text\) <= 65536\)/.test(mig),
     'report() must store capResult\'s output; the migration keeps the 64 KB backstop');
   const enr = read('apps/api/src/enrollment/enrollment.service.ts');
@@ -1253,6 +1255,77 @@ check(
       && /Math\.min\(lim\.max, Math\.max\(lim\.min,/.test(mm)
       && /at: \{ gt: new Date\(now\.getTime\(\) - this\.cfg\.minIntervalSeconds \* 1000\) \}/.test(ms),
     'onModuleInit must return on METRIC_SWEEP=off; roll-up and the three prunes LIMITed; METRIC_LIMITS ceilings finite and applied; one sample per minIntervalSeconds');
+}
+
+// 30. System inventory snapshots (0.33): process list, full service list and
+//     network adapter details. They ride the diagnostics catalog (§20) — a
+//     key, the authenticated heartbeat, the device-secret result — and add
+//     no channel. The agent's snapshot functions only call Get-* cmdlets
+//     (plus Sort-Object / Select-Object), never read command lines, binary
+//     paths, modules or the environment, and put every string through a
+//     charset helper; a build-time guard refuses the script otherwise. The
+//     server bounds rows and bytes, drops what the charsets refuse, keeps
+//     results out of the history, scopes every diagnostics read by the
+//     device-list visibility rule, and the workspace tabs offer no action.
+{
+  const ws = read('apps/api/src/public/windows-script.ts');
+  // The template's own copy (column 0), not the guard's SNAPSHOT_BLOCK_START constant.
+  const start = ws.indexOf('\n# ---- Snapshots (0.33): processes, services, network adapters');
+  const blk = ws.slice(start, ws.indexOf('if (\\$state.agentSecret -and \\$resp -and \\$resp.data -and \\$resp.data.diagnostics) {', start));
+  const code = blk.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  const cmds = [...new Set([...code.matchAll(/\b[A-Z][a-z]+-[A-Z][A-Za-z0-9]+\b/g)].map((m) => m[0]))];
+  check('the snapshot functions call only Get-* cmdlets (and Sort-Object / Select-Object)',
+    start > 0 && code.length > 4000 && cmds.length > 0 && cmds.every((c) => /^(Get-[A-Za-z0-9]+|Sort-Object|Select-Object)$/.test(c)),
+    `commands: ${cmds.join(', ')}`);
+  check('the snapshot functions run no expression, script block or process, and read no command line, path, module or environment',
+    !/Invoke-|\biex\b|\[scriptblock\]|\.Invoke\(|\.Create\(|&\s*[\\$'"({]|Add-Type|New-Object|Start-|PathName|CommandLine|ExecutablePath|MainModule|\.Modules\b|\.Path\b|\\\$env:/i.test(code),
+    'Get-Process / Win32_Service / Win32_NetworkAdapter[Configuration] fields only');
+  check('every snapshot string goes through a charset helper',
+    /\\\$t = \(\(\[string\]\\\$v\) -replace '\[\\\\x00-\\\\x1f\\\\x7f\]', ' '\)\.Trim\(\)/.test(code)
+      && /if \(\\\$null -eq \\\$t -or \\\$t -notmatch \\\$re\) \{ return \\\$null \}/.test(code)
+      && !/= \[string\]\\\$(pr|s|a|c)\./.test(code.replace(/\[string\]\\\$s\.StartMode/g, '').replace(/\(\[string\]\\\$s\.State\)/g, '')),
+    'Get-Rem0teSnapText strips control characters and clamps; Get-Rem0teSnapMatch drops a value failing its charset; no raw [string] field');
+  check('a build-time guard refuses an unsafe snapshot block, on both installer variants',
+    (ws.match(/return assertSnapshotBlockSafe\(template\(v, /g) ?? []).length === 2
+      && /const SNAP_ALLOWED_COMMANDS = \/\^\(Get-\[A-Za-z0-9\]\+\|Sort-Object\|Select-Object\)\$\/;/.test(ws)
+      && /const SNAP_FORBIDDEN = \/Invoke-\|\\biex\\b/.test(ws) && /PathName\|CommandLine\|ExecutablePath\|MainModule/.test(ws),
+    'buildLegacyWindowsScript and buildSignedWindowsScript must return assertSnapshotBlockSafe(template(...))');
+  check('the snapshot functions run only from the catalog switch',
+    /'process_list' \{ \\\$out = Get-Rem0teSnapProcesses \}/.test(ws) && /'service_list' \{ \\\$out = Get-Rem0teSnapServices \}/.test(ws) && /'network_adapters' \{ \\\$out = Get-Rem0teSnapNetwork \}/.test(ws)
+      && (ws.match(/Get-Rem0teSnap(Processes|Services|Network)\b/g) ?? []).length === 6,
+    'each defined once and called once, from switch -Exact ($dk)');
+  const cat = read('apps/api/src/diagnostics-catalog/catalog.ts');
+  const caseOf = (k) => cat.slice(cat.indexOf(`case '${k}':`), cat.indexOf('case ', cat.indexOf(`case '${k}':`) + 10));
+  check('snapshot results are bounded in rows and bytes, with a database backstop',
+    /export const SNAPSHOT_ROWS = \{ process_list: 1000, service_list: 1000, network_adapters: 32 \} as const;/.test(cat)
+      && /export const MAX_SNAPSHOT_BYTES = 131_072;/.test(cat)
+      && /return isSnapshotKey\(key\) \? MAX_SNAPSHOT_BYTES : MAX_RESULT_BYTES;/.test(cat)
+      && /THEN 262144 ELSE 65536 END/.test(read('apps/api/prisma/migrations/0042_system_inventory/migration.sql')),
+    '1000/1000/32 rows, 128 KB stored, 256 KB CHECK');
+  check('the snapshot sanitizers keep no command line, path or binary, and check accounts, MACs and addresses',
+    ['process_list', 'service_list', 'network_adapters'].every((k) => !/commandLine|pathName|binaryPath|\.path\b|modules|environment/i.test(caseOf(k)))
+      && /user: u && ACCOUNT_RE\.test\(u\)/.test(caseOf('process_list')) && /account: acct && ACCOUNT_RE\.test\(acct\)/.test(caseOf('service_list'))
+      && /mac && isMac\(mac\)/.test(caseOf('network_adapters')) && /ipv4: ips\(a\.ipv4, 16\)/.test(caseOf('network_adapters'))
+      && /const base = procRow\(p\);/.test(caseOf('process_list')),
+    'process names via procRow (path cut), ACCOUNT_RE, isMac, IP_RE');
+  const dsvc = read('apps/api/src/diagnostics-catalog/diagnostics-catalog.service.ts');
+  const fnOf = (n) => dsvc.slice(dsvc.indexOf(`async ${n}(`), dsvc.indexOf('\n  }\n', dsvc.indexOf(`async ${n}(`)));
+  check('every diagnostics read and request is scoped by the device-list visibility rule',
+    /const visible = await this\.prisma\.endpoint\.count\(\{ where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(actor\), \{ id: endpointId \}\] \} \}\);\s*if \(!visible\) throw new NotFoundException/.test(dsvc)
+      && ['catalogFor', 'request', 'history', 'getRun', 'snapshot'].every((n) => /await this\.assertVisible\(actor, endpointId, /.test(fnOf(n)))
+      && (dsvc.match(/this\.acl\.assertEndpointInScope\(/g) ?? []).length === 1,
+    'catalogFor, request, history, getRun and snapshot must call assertVisible (business scope AND endpointVisibilityWhere)');
+  check('a snapshot read names a snapshot key and its capability; the history leaves snapshot results out',
+    /if \(!isSnapshotKey\(key\)\) \{\s*throw new BadRequestException/.test(fnOf('snapshot')) && /const cap = entry\.capability as Capability;/.test(fnOf('snapshot'))
+      && /isSnapshotKey\(r\.key\) \? \{ \.\.\.r, result: null, resultOnTab: true \}/.test(fnOf('history'))
+      && /@Get\('snapshots\/:key'\)\s*@RequireCapability\(CAP\.COMPUTERS_VIEW\)/.test(read('apps/api/src/diagnostics-catalog/diagnostics-catalog.controller.ts')),
+    'UNKNOWN_SNAPSHOT before anything else; resultOnTab in history');
+  const tabs = read('apps/web/components/endpoints/workspace/snapshot-tabs.tsx');
+  const posts = [...tabs.matchAll(/api\.(post|put|patch|delete)\(([^)]*)\)/g)].map((m) => m[0]);
+  check('the Processes, Services and Network tabs offer no action: their only write is a Refresh (a catalog key)',
+    posts.length === 1 && /api\.post\(`\/endpoints\/\$\{endpointId\}\/diagnostics\/runs`, \{ key: snapKey \}\)/.test(posts[0])
+      && !/>\s*(End task|End process|Kill|Stop|Start|Restart|Disable|Enable)\b/i.test(tabs) && !/dangerouslySetInnerHTML/.test(tabs),
+    `writes: ${posts.join(' | ')}`);
 }
 
 if (failures.length > 0) {

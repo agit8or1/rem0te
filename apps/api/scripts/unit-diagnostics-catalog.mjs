@@ -28,11 +28,14 @@ let passed = 0;
 const failures = [];
 const check = (name, ok, detail = '') => { if (ok) passed++; else failures.push(`${name}${detail ? ` — ${detail}` : ''}`); };
 
+// The 0.31 nine; this suite runs them under pwsh. The 0.33 snapshot keys are
+// run under pwsh by unit-system-inventory.mjs.
 const KEYS = ['refresh_inventory', 'disk_space', 'service_health', 'recent_system_errors', 'top_processes', 'network_connectivity', 'dns_resolution', 'pending_updates', 'reboot_status'];
+const ALL_KEYS = [...KEYS, 'process_list', 'service_list', 'network_adapters'];
 
 // ── The catalog ─────────────────────────────────────────────────────────────
 {
-  check('the catalog has exactly the nine stable keys, in order', JSON.stringify(c.DIAGNOSTIC_KEYS) === JSON.stringify(KEYS) && JSON.stringify(c.CATALOG.map((e) => e.key)) === JSON.stringify(KEYS));
+  check('the catalog has exactly the twelve stable keys, in order', JSON.stringify(c.DIAGNOSTIC_KEYS) === JSON.stringify(ALL_KEYS) && JSON.stringify(c.CATALOG.map((e) => e.key)) === JSON.stringify(ALL_KEYS));
   for (const e of c.CATALOG) {
     check(`${e.key}: read-only, no impact, no approvals, Windows`, e.risk === 'read_only' && e.expectedImpact === 'none' && e.approvals === 'none (read-only)' && JSON.stringify(e.supportedOs) === '["windows"]');
     check(`${e.key}: label, description, duration and a justified capability`, !!e.label && e.description.length > 20 && ['seconds', 'minute', 'minutes'].includes(e.duration) && ['computers:view', 'computers:event_logs'].includes(e.capability) && e.capabilityReason.length > 10);
@@ -41,7 +44,7 @@ const KEYS = ['refresh_inventory', 'disk_space', 'service_health', 'recent_syste
   check('every other diagnostic needs only computers:view', c.CATALOG.filter((e) => e.key !== 'recent_system_errors').every((e) => e.capability === 'computers:view'));
   check('pending_updates is the slow one', c.catalogEntry('pending_updates').duration === 'minutes');
   for (const k of ['run_script', '__proto__', 'constructor', 'toString', 'Disk_Space', 'disk_space ', '', null, 1, ['disk_space']]) check(`isCatalogKey refuses ${JSON.stringify(k)}`, !c.isCatalogKey(k));
-  check('isCatalogKey accepts each catalog key', KEYS.every((k) => c.isCatalogKey(k)));
+  check('isCatalogKey accepts each catalog key', ALL_KEYS.every((k) => c.isCatalogKey(k)));
   check('publicCatalog is a copy (mutating it does not change the catalog)', (() => { const p = c.publicCatalog(); p[0].key = 'x'; return c.CATALOG[0].key === 'refresh_inventory'; })());
 }
 
@@ -94,9 +97,10 @@ const KEYS = ['refresh_inventory', 'disk_space', 'service_health', 'recent_syste
   check('capResult: a small result is untouched', !small.truncated && small.result.a.length === 3);
   check('capResult: an unshrinkable result becomes a marker', c.capResult({ s: 'y'.repeat(10_000) }, 1_000).result.tooLarge === true);
   check('the stored cap is 32 KB and under the database backstop of 64 KB', c.MAX_RESULT_BYTES === 32_768 && /octet_length\("result"::text\) <= 65536/.test(readFileSync(join(here, '..', 'prisma', 'migrations', '0031_diagnostic_runs', 'migration.sql'), 'utf8')));
-  const mig = readFileSync(join(here, '..', 'prisma', 'migrations', '0031_diagnostic_runs', 'migration.sql'), 'utf8');
+  // The newest migration that redefines the constraint (0042 added the snapshot keys).
+  const mig = readFileSync(join(here, '..', 'prisma', 'migrations', '0042_system_inventory', 'migration.sql'), 'utf8');
   const dbKeys = [...(/"DiagnosticRun_key_catalog" CHECK \("key" IN \(([\s\S]*?)\)\)/.exec(mig)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
-  check('the database CHECK lists exactly the catalog keys', JSON.stringify(dbKeys) === JSON.stringify(KEYS), JSON.stringify(dbKeys));
+  check('the database CHECK lists exactly the catalog keys', JSON.stringify(dbKeys) === JSON.stringify(ALL_KEYS), JSON.stringify(dbKeys));
 }
 
 // ── The generated agent ─────────────────────────────────────────────────────
@@ -109,9 +113,9 @@ const blk = blockOf(hbOf(signed));
   check('both installer variants carry the same diagnostics block', blk.length > 5000 && blk === blockOf(hbOf(legacy)));
   const sw = /switch -Exact \(\$dk\) \{([\s\S]*?)\n {12}\}/.exec(blk)?.[1] ?? '';
   const arms = [...sw.matchAll(/^\s+'([a-z_]+)' \{/gm)].map((m) => m[1]);
-  check('the agent switch has exactly the catalog keys, and a default that throws', JSON.stringify(arms) === JSON.stringify(KEYS) && /default \{ throw /.test(sw), JSON.stringify(arms));
+  check('the agent switch has exactly the catalog keys, and a default that throws', JSON.stringify(arms) === JSON.stringify(ALL_KEYS) && /default \{ throw /.test(sw), JSON.stringify(arms));
   const list = [...(/\$diagKeys = @\(([^)]*)\)/.exec(blk)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
-  check('the agent refuses any key not in its own list of the catalog keys', JSON.stringify(list) === JSON.stringify(KEYS) && /if \(-not \(\$diagKeys -contains \$dk\)\)/.test(blk));
+  check('the agent refuses any key not in its own list of the catalog keys', JSON.stringify(list) === JSON.stringify(ALL_KEYS) && /if \(-not \(\$diagKeys -contains \$dk\)\)/.test(blk));
   check('the block runs no process, expression or download, and changes nothing',
     !/Invoke-Expression|\biex\b|Start-Process|Invoke-WebRequest|DownloadString|DownloadFile|Net\.WebClient|Invoke-Command|\bStart-Job\b|(Set|Stop|Start|Restart|Suspend|Remove|Clear|New)-(Service|Item|ItemProperty|EventLog)|Set-Content|Out-File|Add-Content|\bsc(\.exe)? |\bcmd(\.exe)? \/c|& \$/i.test(blk));
   check('one network post, to diagnostic-result', (blk.match(/Invoke-RestMethod/g) ?? []).length === 1 && /enrollment\/diagnostic-result/.test(blk));

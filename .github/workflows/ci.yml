@@ -131,6 +131,13 @@ jobs:
       - name: Diagnostics catalog tests
         run: node apps/api/scripts/unit-diagnostics-catalog.mjs
 
+      # System inventory snapshots (0.33): the process / service / adapter
+      # sanitisers, row and byte bounds, and the build-time guard on the
+      # heartbeat's snapshot block (each refusal proven by mutation) — and,
+      # with the runner's pwsh, the three keys run against stub cmdlets.
+      - name: System inventory tests
+        run: node apps/api/scripts/unit-system-inventory.mjs
+
       # Scheduled client updates (0.32): the update window's validation, time
       # zones (+5:30, +5:45, a 30-minute DST zone), windows across midnight,
       # both DST transitions, next opening/closing against a minute-by-minute

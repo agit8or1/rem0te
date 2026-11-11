@@ -17,6 +17,7 @@ import { DeviceOverviewTab } from '@/components/endpoints/workspace/overview-tab
 import { DeviceMonitoringTab } from '@/components/endpoints/workspace/monitoring-tab';
 import { DevicePerformanceTab } from '@/components/endpoints/workspace/performance-tab';
 import { DeviceSoftwareTab } from '@/components/endpoints/workspace/software-tab';
+import { DeviceNetworkTab, DeviceProcessesTab, DeviceServicesTab } from '@/components/endpoints/workspace/snapshot-tabs';
 import { DeviceHistoryTab, type SessionRow } from '@/components/endpoints/workspace/history-tab';
 import { DiagnosticsPanel } from '@/components/endpoints/workspace/diagnostics-panel';
 import type { AccessReview } from '@/components/endpoints/workspace/access-review-panel';
@@ -34,12 +35,12 @@ import { useToast } from '@/hooks/use-toast';
  * (open alerts, restart pending, pending updates, agent type) built from reads
  * the tabs already make. Primary actions: Connect, Diagnose, Run action,
  * Patch, and More for archive and the other rare things. Tabs, each
- * deep-linkable with `?tab=`: Overview · Performance · Monitoring · Software · Patches ·
- * Event logs · Diagnostics · Actions · History.
+ * deep-linkable with `?tab=`: Overview · Performance · Monitoring · Software ·
+ * Processes · Services · Network · Patches · Event logs · Diagnostics · Actions · History.
  *
- * There are no Services or Processes tabs because nothing collects them: the
- * agent reads only the services a monitor names (shown on Monitoring), and no
- * agent reports processes.
+ * Processes, Services and Network (0.33) are read-only snapshots from the
+ * standard Windows agent, requested through the diagnostics catalog and shown
+ * with their age; they have no buttons that act on the computer.
  */
 export default function EndpointDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -169,7 +170,7 @@ export default function EndpointDetailPage() {
     // Metric history (0.33): from the heartbeat, so any agent that reports — not RustDesk only.
     ...(canView && reportsInventory(agent) ? (['performance'] as const) : []),
     ...(canView ? (['monitoring'] as const) : []),
-    ...(canView && windowsDetail ? (['software'] as const) : []),
+    ...(canView && windowsDetail ? (['software', 'processes', 'services', 'network'] as const) : []),
     ...(canView ? (['patches'] as const) : []),
     ...(canEventLogs && windowsDetail ? (['events'] as const) : []),
     ...(canView ? (['diagnostics', 'actions'] as const) : []),
@@ -248,6 +249,24 @@ export default function EndpointDetailPage() {
         {tabs.includes('software') && (
           <TabsContent value="software" className="mt-4">
             {active === 'software' && <DeviceSoftwareTab endpointId={id} />}
+          </TabsContent>
+        )}
+
+        {tabs.includes('processes') && (
+          <TabsContent value="processes" className="mt-4">
+            {active === 'processes' && <DeviceProcessesTab endpointId={id} />}
+          </TabsContent>
+        )}
+
+        {tabs.includes('services') && (
+          <TabsContent value="services" className="mt-4">
+            {active === 'services' && <DeviceServicesTab endpointId={id} />}
+          </TabsContent>
+        )}
+
+        {tabs.includes('network') && (
+          <TabsContent value="network" className="mt-4">
+            {active === 'network' && <DeviceNetworkTab endpointId={id} />}
           </TabsContent>
         )}
 

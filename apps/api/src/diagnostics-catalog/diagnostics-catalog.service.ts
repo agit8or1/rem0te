@@ -15,7 +15,7 @@ import { MonitoringService } from '../monitoring/monitoring.service';
 import {
   CATALOG, MAX_AGENT_RESULT_CHARS, MAX_RUNS_PER_DEVICE, MAX_RUNS_PER_USER, PICKUP_TTL_MINUTES,
   RATE_WINDOW_MINUTES, RUNS_PER_HEARTBEAT, RUN_TTL_MINUTES, START_TTL_MINUTES,
-  capResult, catalogEntry, isCatalogKey, publicCatalog, sanitizeResult, type CatalogEntry,
+  capResult, catalogEntry, isCatalogKey, isSnapshotKey, publicCatalog, resultCapFor, sanitizeResult, type CatalogEntry,
 } from './catalog';
 
 const OPEN = ['REQUESTED', 'DELIVERED', 'RUNNING'] as const;
@@ -48,11 +48,25 @@ export class DiagnosticsCatalogService {
     return actor.isPlatformAdmin || actor.capabilities.includes(cap);
   }
 
+  /**
+   * Business scope, then the device-list visibility rule (0.33): a Business
+   * User sees only the computers granted to them or COMPANY_WIDE ones, so a
+   * computer they cannot see in the list is a missing one here too — for
+   * requesting, for the history and for snapshots. Before 0.33 only business
+   * scope was checked, and a run requested that way failed at delivery.
+   */
+  private async assertVisible(actor: ActorContext, endpointId: string, cap: Capability) {
+    const endpoint = await this.acl.assertEndpointInScope(actor, endpointId, cap);
+    const visible = await this.prisma.endpoint.count({ where: { AND: [this.acl.endpointVisibilityWhere(actor), { id: endpointId }] } });
+    if (!visible) throw new NotFoundException('Computer not found');
+    return endpoint;
+  }
+
   // ── Console side ──────────────────────────────────────────────────────────
 
   /** The catalog for one computer, with what this person may run on it. */
   async catalogFor(actor: ActorContext, endpointId: string) {
-    await this.acl.assertEndpointInScope(actor, endpointId, 'computers:view');
+    await this.assertVisible(actor, endpointId, 'computers:view');
     this.acl.assertCapability(actor, 'computers:view');
     const [ep, node] = await Promise.all([
       this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { platform: true, isOnline: true, lastSeenAt: true } }),
@@ -78,7 +92,7 @@ export class DiagnosticsCatalogService {
     }
     const entry = catalogEntry(key)!;
     const cap = entry.capability as Capability;
-    const endpoint = await this.acl.assertEndpointInScope(actor, endpointId, cap);
+    const endpoint = await this.assertVisible(actor, endpointId, cap);
     this.acl.assertCapability(actor, cap);
     if (endpoint.status === 'ARCHIVED') throw new BadRequestException({ code: 'ENDPOINT_ARCHIVED', message: 'This computer is archived.' });
 
@@ -136,17 +150,59 @@ export class DiagnosticsCatalogService {
     return { run: await this.present(actor, run), deduplicated: false };
   }
 
-  /** Recent runs, newest first. Results only where the reader holds the key's capability. */
+  /**
+   * Recent runs, newest first. Results only where the reader holds the key's
+   * capability. A snapshot key's result (up to 128 KB) is left out here —
+   * `resultOnTab` says where it is — so the history stays small.
+   */
   async history(actor: ActorContext, endpointId: string, limit = 20) {
-    await this.acl.assertEndpointInScope(actor, endpointId, 'computers:view');
+    await this.assertVisible(actor, endpointId, 'computers:view');
     this.acl.assertCapability(actor, 'computers:view');
     await this.expire({ endpointId });
     const rows = await this.prisma.diagnosticRun.findMany({ where: { endpointId }, orderBy: { requestedAt: 'desc' }, take: Math.min(Math.max(limit, 1), 50) });
-    return this.presentMany(actor, rows);
+    return (await this.presentMany(actor, rows)).map((r) => (isSnapshotKey(r.key) ? { ...r, result: null, resultOnTab: true } : r));
+  }
+
+  /**
+   * The workspace snapshot for one snapshot key (0.33): the newest completed
+   * result, and whatever happened since — a run still open (the Refresh in
+   * flight) or the newest one that failed or expired after it. Reading a
+   * snapshot reads what is stored; only a POST to runs asks the computer.
+   */
+  async snapshot(actor: ActorContext, endpointId: string, key: unknown) {
+    if (!isSnapshotKey(key)) {
+      throw new BadRequestException({ code: 'UNKNOWN_SNAPSHOT', message: 'Not a snapshot. Known: process_list, service_list, network_adapters' });
+    }
+    const entry = catalogEntry(key)!;
+    const cap = entry.capability as Capability;
+    await this.assertVisible(actor, endpointId, cap);
+    this.acl.assertCapability(actor, cap);
+    await this.expire({ endpointId });
+    const [ep, node, latest, newest] = await Promise.all([
+      this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { platform: true, isOnline: true, lastSeenAt: true } }),
+      this.prisma.rustdeskNode.findUnique({ where: { endpointId }, select: { agentSecretHash: true } }),
+      this.prisma.diagnosticRun.findFirst({ where: { endpointId, key, status: 'COMPLETED' }, orderBy: { completedAt: 'desc' } }),
+      this.prisma.diagnosticRun.findFirst({ where: { endpointId, key }, orderBy: { requestedAt: 'desc' } }),
+    ]);
+    const since = newest && (!latest || newest.id !== latest.id) && newest.requestedAt > (latest?.requestedAt ?? new Date(0)) ? newest : null;
+    const [shownLatest, shownSince] = await Promise.all([
+      latest ? this.present(actor, latest) : null,
+      since ? this.present(actor, since) : null,
+    ]);
+    return {
+      key, label: entry.label, tab: entry.tab,
+      supported: isWindows(ep?.platform), agentBound: !!node?.agentSecretHash,
+      isOnline: !!ep?.isOnline, lastSeenAt: ep?.lastSeenAt ?? null,
+      // takenAt is when the computer reported it, which is when it was read.
+      takenAt: latest?.completedAt ?? null,
+      latest: shownLatest,
+      pending: shownSince && OPEN.includes(shownSince.status as (typeof OPEN)[number]) ? shownSince : null,
+      lastFailure: shownSince && !OPEN.includes(shownSince.status as (typeof OPEN)[number]) ? shownSince : null,
+    };
   }
 
   async getRun(actor: ActorContext, endpointId: string, runId: string) {
-    await this.acl.assertEndpointInScope(actor, endpointId, 'computers:view');
+    await this.assertVisible(actor, endpointId, 'computers:view');
     this.acl.assertCapability(actor, 'computers:view');
     await this.expire({ endpointId });
     const run = await this.prisma.diagnosticRun.findFirst({ where: { id: runId, endpointId } });
@@ -287,7 +343,7 @@ export class DiagnosticsCatalogService {
       if (n.count) await this.auditDone(run, 'failed', { reason: 'bad_result' });
       return { accepted: !!n.count };
     }
-    const capped = capResult(shaped);
+    const capped = capResult(shaped, resultCapFor(run.key));
     const n = await this.prisma.diagnosticRun.updateMany({
       where: { id: run.id, status: run.status },
       data: {

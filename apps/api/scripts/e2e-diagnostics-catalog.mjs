@@ -131,7 +131,8 @@ async function all() {
   section('The catalog');
   let r = await req('GET', `/endpoints/${pc1.id}/diagnostics/catalog`, { s: S.owen });
   const keys = r.data?.items?.map((i) => i.key) ?? [];
-  check(r.status === 200 && keys.length === 9 && keys.includes('recent_system_errors') && r.data.supported === true && r.data.agentBound === true, 'the owner is served nine catalog entries for a bound Windows computer', msg(r));
+  // Twelve since 0.33: the three snapshot keys (process_list, service_list, network_adapters; e2e-system-inventory.mjs).
+  check(r.status === 200 && keys.length === 12 && keys.includes('recent_system_errors') && keys.includes('process_list') && r.data.supported === true && r.data.agentBound === true, 'the owner is served twelve catalog entries for a bound Windows computer', msg(r));
   check(r.data?.items?.every((i) => i.risk === 'read_only' && i.expectedImpact === 'none' && i.approvals === 'none (read-only)' && i.allowed), 'every entry is read-only, no impact, no approvals, and all are allowed to the owner');
   r = await req('GET', `/endpoints/${pc1.id}/diagnostics/catalog`, { s: S.uma });
   const umaAllowed = Object.fromEntries((r.data?.items ?? []).map((i) => [i.key, i.allowed]));

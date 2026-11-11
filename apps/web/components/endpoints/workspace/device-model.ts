@@ -9,13 +9,16 @@
 import type { AlertRow } from '@/components/monitoring/alerts';
 
 export type WorkspaceTab =
-  | 'overview' | 'performance' | 'monitoring' | 'software' | 'patches' | 'events' | 'diagnostics' | 'actions' | 'history';
+  | 'overview' | 'performance' | 'monitoring' | 'software' | 'processes' | 'services' | 'network' | 'patches' | 'events' | 'diagnostics' | 'actions' | 'history';
 
 export const TAB_LABEL: Record<WorkspaceTab, string> = {
   overview: 'Overview',
   performance: 'Performance',
   monitoring: 'Monitoring',
   software: 'Software',
+  processes: 'Processes',
+  services: 'Services',
+  network: 'Network',
   patches: 'Patches',
   events: 'Event logs',
   diagnostics: 'Diagnostics',

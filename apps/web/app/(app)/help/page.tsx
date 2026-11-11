@@ -441,8 +441,8 @@ const SECTIONS: Section[] = [
           the scan, and which agent it runs. Each opens the tab that explains it.
           Connect, Diagnose, Run action and Patch sit beside it; Archive and the other
           rare actions are under More, each with a confirmation. The tabs are
-          Overview, Performance, Monitoring, Software, Patches, Event logs, Diagnostics, Actions and
-          History (sessions, notes, the AI-written summary and who can connect), and
+          Overview, Performance, Monitoring, Software, Processes, Services, Network, Patches, Event logs,
+          Diagnostics, Actions and History (sessions, notes, the AI-written summary and who can connect), and
           each can be linked with <code>?tab=</code>.
         </p>
         <p className="font-medium text-foreground">Nothing here is live</p>
@@ -498,6 +498,18 @@ const SECTIONS: Section[] = [
           expires and says so. <em>Recent system errors</em> needs the event-log permission; every
           other check needs only to see the computer. Every run is in the audit log. More in{' '}
           <Link href="/docs/diagnostics" className="underline text-foreground">One-click diagnostics</Link>.
+        </p>
+        <p className="font-medium text-foreground">Processes, Services and Network</p>
+        <p>
+          These three tabs list every running process (with its user and start time), every
+          service (with its start mode and the account it runs as) and every network connection
+          (addresses, gateway, DNS, DHCP and MAC). Each is a snapshot: it says when it was taken
+          and how old it is, and <strong className="text-foreground">Refresh</strong> asks the
+          computer for a new one on its next heartbeat, exactly like a diagnostic. Command lines
+          and file paths are never collected. There are no end-task, stop or start buttons —
+          restarting a service is a signed maintenance action on the Actions tab. Windows computers
+          with the standard agent only; the Linux agent does not collect them. More in{' '}
+          <Link href="/docs/diagnostics#the-processes-services-and-network-tabs" className="underline text-foreground">One-click diagnostics</Link>.
         </p>
         <p className="font-medium text-foreground">If a computer reports nothing</p>
         <p>

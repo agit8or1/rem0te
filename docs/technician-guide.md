@@ -262,14 +262,20 @@ what it does.
 | Overview | Assignment, key alerts, patch status, recent activity, then the hardware, utilisation, storage, network and update cards, each with its age |
 | Monitoring | Alerts first (acknowledge and resolve here), then what is watched on this computer in words, the agent's last report, and what changed |
 | Software | Installed software with a filter, and recent software changes (Windows agents only) |
+| Processes | Every running process, as a read-only snapshot with its age and a Refresh (standard Windows agent, 0.33) |
+| Services | Every service with state, start mode and run-as account; snapshot with age and Refresh (0.33) |
+| Network | Every network connection: addresses, gateway, DNS, DHCP, MAC; snapshot with age and Refresh (0.33) |
 | Patches | Patch status, updates offered, Windows Update history |
 | Event logs | A page of one Windows event log, on request (Windows agents only) |
 | Diagnostics | Test connection: server, computer and your own RustDesk |
 | Actions | Request an approved action and see past requests |
 | History | Remote sessions, technician notes, the AI-written summary (labelled as such) and who can connect |
 
-There are no Services or Processes tabs: no agent collects them. The agent reads
-only the services a monitor names, and those appear on Monitoring. Old links
+Processes, Services and Network are snapshots, not live views: each says when it
+was taken, and **Refresh** asks the computer for a new one on its next check-in.
+They have no buttons that change the computer — restarting a service is a signed
+maintenance action on Actions, and ending a process is not offered
+([diagnostics.md](diagnostics.md#the-processes-services-and-network-tabs)). Old links
 (`?tab=notes`, `?tab=timeline`, `?tab=access-review`) open History.
 
 ---
