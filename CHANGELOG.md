@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.31.1] — 2026-11-11 · *Workbench*
+
+### Fixed
+- **The dashboard's device map looked removed.** 0.31.0 moved the map below the tiles behind a small
+  *Show device locations* link, and the link started closed, so the map never appeared unless someone found the
+  link. Owners reported it as missing. The map now shows by default. *Hide device locations* folds it away, and
+  that choice is remembered in the browser (`localStorage` key `dashboard.map`). It is a per-viewer convenience,
+  never a permission: when storage is blocked the map simply shows. `docs/setup.md` and
+  `docs/technician-guide.md` describe it.
+
+### Upgrade notes
+- Web only. No API, schema or dependency change; rebuild and deploy the web app, plus `version.json` and
+  `CHANGELOG.md`.
+
+### Verification
+- `pnpm -r lint`, `tsc --noEmit` and `next build` pass, and the security invariants and `check-versions.mjs` pass.
+
+---
+
 ## [0.31.0] — 2026-11-11 · *Workbench*
 
 The first increment of the RMM overhaul: the technician's screens, reorganised around the work. The plan and the
