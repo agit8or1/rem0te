@@ -208,7 +208,7 @@ export default function UsersPage() {
       </div>
 
       <Card>
-        <CardContent className="p-0">
+        <CardContent className="p-0 overflow-x-auto">
           {isLoading ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>
           ) : filtered.length === 0 ? (
