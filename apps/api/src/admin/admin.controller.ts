@@ -77,8 +77,9 @@ export class AdminController {
     return { success: true, data: await this.adminService.assignDevice(actor, id, businessId) };
   }
 
-  // GET /admin/search was removed in 0.33. It scoped computers by business
-  // alone, so a Business User found computers assigned only to others and a
-  // technician restricted to named computers found every one in the business.
-  // GET /search (SearchService) replaces it, built from each list's own rule.
+  // GET /admin/search was removed in 0.31.2. It scoped computers by business
+  // alone, so a Business User found computers granted only to others (name,
+  // hostname, IP, RustDesk ID) and a technician restricted to named computers
+  // found every one in the business. Nothing in the web app called it.
+  // GET /search (SearchService, 0.33) replaces it, built from each list's own rule.
 }

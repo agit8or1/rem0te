@@ -1008,8 +1008,37 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'a reboot rule is a §15 change to the agent\'s closed params');
 }
 
-// §26 is reserved for the 0.31.2 security fix (AccessControlService.
-// assertEndpointInScope), which is merged in after 0.32's §25.
+// 26. Within-business computer visibility (0.31.2). A Business User sees only
+//     computers granted to them or COMPANY_WIDE. The per-id check every `:id`
+//     route uses must apply that rule, not business scope alone, and must
+//     take it from endpointVisibilityWhere so the two cannot drift. Until
+//     0.31.2 it checked business and technician grants only, and
+//     GET /admin/search filtered computers by `customerId`: both let a
+//     Business User read (and the per-id routes change) computers granted
+//     only to someone else. Proof: apps/api/scripts/e2e-endpoint-visibility.mjs.
+{
+  const acl = read('apps/api/src/rbac/access-control.service.ts');
+  const start = acl.indexOf('  async assertEndpointInScope(');
+  const fn = acl.slice(start, acl.indexOf('\n  }\n', start));
+  check('assertEndpointInScope applies the Business User visibility rule from endpointVisibilityWhere',
+    start > 0
+      && /\} else if \(!this\.isBusinessOwner\(actor\) && endpoint\.accessMode !== 'COMPANY_WIDE'\) \{/.test(fn)
+      && /where: \{ AND: \[\{ id: endpoint\.id \}, this\.endpointVisibilityWhere\(actor\)\] \}/.test(fn)
+      && /if \(visible === 0\) throw new NotFoundException\('Computer not found'\);/.test(fn),
+    'a Business User (not owner, not technician) must be checked against endpointVisibilityWhere, with the same NotFound');
+  // Any variant that skips the rule must be named for it and justified, never
+  // a silent default. None exists today; a new one is a review.
+  const variants = [...acl.matchAll(/async (assertEndpoint\w*)\(/g)].map((m) => m[1]);
+  check('assertEndpointInScope is the only per-computer scope check', JSON.stringify(variants) === JSON.stringify(['assertEndpointInScope']),
+    `found: ${variants.join(', ')} — a weaker variant needs its own review and its own invariant`);
+  const adminCtl = read('apps/api/src/admin/admin.controller.ts');
+  const adminSvc = read('apps/api/src/admin/admin.service.ts');
+  const hasSearch = /@Get\('search'\)/.test(adminCtl);
+  const searchFn = adminSvc.slice(adminSvc.indexOf('async search('), adminSvc.indexOf('async search(') + 4000);
+  check('GET /admin/search is gone, or scopes computers with endpointVisibilityWhere',
+    !hasSearch || (/async search\(/.test(adminSvc) && /this\.acl\.endpointVisibilityWhere\(actor/.test(searchFn)),
+    'admin search must not filter computers by business scope alone');
+}
 
 // 27. Enrolment step-up (0.33). An enrolment token puts a machine of the
 //     holder's choosing into a business, so a session alone must not mint

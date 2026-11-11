@@ -187,8 +187,14 @@ try {
   check(/does not change a RustDesk password/.test(r.body?.data?.note ?? ''), 'states that removal does not change a seen password');
   r = await req('GET', `/endpoints/${ep1.id}/access-review`, { cookie: cOwnerB });
   check(r.status === 404 || r.status === 403, 'owner of B cannot review a computer in A', `${r.status}`);
+  // 0.31.2: pia has no grant on ep1 (assigned-users), so she cannot see it at
+  // all — the same 404 as a computer that does not exist. Before 0.31.2 the
+  // per-id check stopped at business scope and this was a 403.
   r = await req('GET', `/endpoints/${ep1.id}/access-review`, { cookie: cPlain });
-  check(r.status === 403, 'a member without users:view cannot review', `${r.status}`);
+  check(r.status === 404, 'a member who cannot see the computer cannot review it (404)', `${r.status}`);
+  // uma CAN see ep1 (direct grant) but lacks users:view: refused by capability.
+  r = await req('GET', `/endpoints/${ep1.id}/access-review`, { cookie: await login(uma.email) });
+  check(r.status === 403, 'a member who can see the computer but lacks users:view cannot review (403)', `${r.status}`);
 
   // ─────────────────────────────────────────────────────────────────────────
   section('Offboarding preview');

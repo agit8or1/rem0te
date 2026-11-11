@@ -25,7 +25,7 @@ billing, read-only or portal access.
 The Rem0te operator. Identified by `User.isPlatformAdmin`, not by a role row — there is no
 "Platform Admin" membership to forge.
 
-Can create, edit, disable and delete businesses; view and search every business, user and computer;
+Can create, edit, disable and delete businesses; view every business, user and computer;
 move an unassigned computer into a business; manage Business Owners and Business Users; manage
 platform settings, RustDesk infrastructure, installers and updates; view global audit logs and
 active sessions; and use Quick Connect whenever the master switch is on.
@@ -149,6 +149,25 @@ await this.acl.assertUserInScope(actor, targetUserId);
 These deliberately raise **404, not 403**, for objects in another business — a caller probing ids
 learns nothing about whether they exist.
 
+**Business scope is not the whole rule for a computer.** `assertEndpointInScope` is the per-id form
+of `endpointVisibilityWhere`, the rule the device list uses, and every `:id` route goes through it:
+
+| Caller | Sees by id |
+|---|---|
+| Platform Admin | any computer |
+| Business Owner | any computer in their business |
+| Technician | the computers their assignment names |
+| Business User | a computer in their business that is company-wide, or granted to them (inside the grant's start and end dates) |
+
+A computer a Business User cannot see answers **404 Computer not found**, the same as a computer in
+another business or one that does not exist. A grant's weekly schedule is not part of seeing: a
+person with a weekday-only grant still sees the computer at the weekend, and is refused when they try
+to connect, reveal its password or open a session — that is `canReachEndpoint`. Before 0.31.2 the
+per-id check stopped at business scope, so a Business User could read and change, by id, computers
+in their business granted only to someone else; `apps/api/scripts/e2e-endpoint-visibility.mjs` is
+the proof that they no longer can, and §26 of `scripts/check-security-invariants.mjs` keeps the
+check in place.
+
 The JWT is not trusted as a cache: `JwtStrategy.validate()` re-reads role, business and capabilities
 from the database on every request. Revoking a capability, moving someone between businesses, or
 disabling a business takes effect on the very next request.
@@ -156,7 +175,7 @@ disabling a business takes effect on the very next request.
 ### What this covers
 
 Businesses · users · computers · sessions · remote connections · audit logs · installers ·
-enrollment tokens · launcher tokens · credentials · Quick Connect · search · notes · sites ·
+enrollment tokens · launcher tokens · credentials · Quick Connect · notes · sites ·
 API keys · dashboard counts.
 
 The dashboard (`GET /dashboard/overview`, 0.31) adds nothing new to this: each
@@ -177,7 +196,7 @@ capability (`computers:view`, none, `computers:view`, `users:view`,
 `monitoring:alerts`). A group the caller may not use is `null`. Another
 business's computers, sites and people are not found by any query, including
 an exact hostname or RustDesk ID. The older `GET /admin/search` was removed in
-0.33: it scoped computers by business alone, so a Business User found
+0.31.2: it scoped computers by business alone, so a Business User found
 computers assigned only to others and a technician restricted to named
 computers found the whole business. Proven by
 `apps/api/scripts/e2e-search.mjs`; the rules are §28 of the security
