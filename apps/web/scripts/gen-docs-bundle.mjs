@@ -51,6 +51,7 @@ const ORDER = [
   ['reports.md', 'Reports', 'Computers and monitoring', 'Patch compliance, agent coverage, alert frequency and offline time, from stored data, with audited CSV export.'],
   ['updates.md', 'Updates', 'Computers and monitoring', 'Updating the portal, RustDesk and the agent, and client rollouts.'],
   ['staged-patching.md', 'Staged patching', 'Computers and monitoring', 'Windows updates in rings — canary, approvals, halt on failure.'],
+  ['patching-setup.md', 'Patching setup', 'Computers and monitoring', 'Turning on signed patching in production, in order, with a live pre-flight.'],
   ['approved-actions.md', 'Approved actions', 'Computers and monitoring', 'Actions on a computer approved by passkey on a separate signer.'],
   ['script-library.md', 'Script library', 'Computers and monitoring', 'Write, version and review PowerShell scripts, and why they cannot run yet.'],
   ['technicians.md', 'MSP technicians', 'People and access', 'Per-business, time-limited and scheduled technician access.'],

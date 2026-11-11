@@ -21,7 +21,7 @@
  * `sh -c`, no download and no package-manager command that changes anything;
  * pending updates are read with `apt list --upgradable` (never `apt update`),
  * `dnf -C check-update` and `zypper --no-refresh list-updates`.
- * scripts/check-security-invariants.mjs § 21 asserts all of that against the
+ * scripts/check-security-invariants.mjs §24 asserts all of that against the
  * text below.
  *
  * Everything it sends is reduced on the device before it leaves — printable

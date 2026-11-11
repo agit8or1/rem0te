@@ -17,7 +17,8 @@
  *
  * It copies exactly the files the signer loads, found by loading it (not by a
  * list someone has to keep in step), and refuses if that set ever reaches
- * outside approval-signer/, actions/catalog and integration/crypto — which is
+ * outside approval-signer/, actions/catalog, actions/patch-policy,
+ * patching/posture and integration/crypto — which is
  * how a Nest or Prisma import would announce itself. The manifest pins the
  * exact versions the API was built and tested against.
  */
@@ -34,7 +35,8 @@ const out = i > 0 ? path.resolve(process.argv[i + 1]) : null;
 const listOnly = process.argv.includes('--list');
 if (!out && !listOnly) { console.error('usage: build-approval-signer.mjs --out DIR | --list'); process.exit(2); }
 
-const ALLOWED = [/^approval-signer\//, /^actions\/catalog\.js$/, /^integration\/crypto\.js$/];
+// 0.32: the patch-policy evaluator and the posture rule it shares with the portal (both pure: zod and node: only).
+const ALLOWED = [/^approval-signer\//, /^actions\/catalog\.js$/, /^actions\/patch-policy\.js$/, /^patching\/posture\.js$/, /^integration\/crypto\.js$/];
 const DIRECT_DEPS = ['@simplewebauthn/server', 'zod'];
 
 const require = createRequire(import.meta.url);

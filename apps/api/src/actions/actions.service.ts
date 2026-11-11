@@ -105,6 +105,13 @@ export interface PlanRequest {
   integration?: { peer: string; key: string };
   display?: Plan['display'];
   deployment?: { id: string; ring: number };
+  /** 0.32: an exact window (a patch policy's maintenance window) instead of startsInMinutes/windowHours. */
+  window?: { notBefore: Date; notAfter: Date };
+  /**
+   * 0.32: submit under a patch policy. The signer signs it at once if it is
+   * inside that policy, and refuses it otherwise; nobody is asked to approve.
+   */
+  underPolicy?: { policyId: string; digest: string; evidence: unknown };
 }
 
 @Injectable()
@@ -270,8 +277,8 @@ export class ActionsService {
     const signerPolicy = await this.signer.policy(first.customerId!);
     if (signerPolicy.status !== 200) throw new ConflictException({ code: 'APPROVAL_SIGNER_ERROR', message: 'The approval signer did not return this business\'s policy.' });
     const now = new Date();
-    const notBefore = new Date(now.getTime() + r.startsInMinutes * 60_000);
-    const notAfter = new Date(notBefore.getTime() + r.windowHours * 3600_000);
+    const notBefore = r.window?.notBefore ?? new Date(now.getTime() + r.startsInMinutes * 60_000);
+    const notAfter = r.window?.notAfter ?? new Date(notBefore.getTime() + r.windowHours * 3600_000);
     const user = await this.prisma.user.findUnique({ where: { id: actor.userId }, select: { firstName: true, lastName: true, email: true } });
     const plan: Plan = {
       schema: PLAN_SCHEMA,
@@ -292,9 +299,12 @@ export class ActionsService {
     };
     const check = Plan.safeParse(plan);
     if (!check.success) throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: 'A computer\'s identity is incomplete; it cannot be named in a plan.' });
-    const submitted = await this.signer.submit(plan);
+    const submitted = r.underPolicy
+      ? await this.signer.submitUnderPolicy(r.underPolicy.policyId, { plan, policyDigest: r.underPolicy.digest, evidence: r.underPolicy.evidence })
+      : await this.signer.submit(plan);
     if (submitted.status !== 201 || !submitted.body.approvalUrl || submitted.body.digest !== planDigest(plan)) {
-      throw new ConflictException({ code: 'APPROVAL_SIGNER_REFUSED', message: submitted.body.message ?? submitted.body.error ?? 'The approval signer refused the plan.' });
+      // Under a policy, the signer's own code says which bound the plan crossed.
+      throw new ConflictException({ code: r.underPolicy ? 'POLICY_REFUSED' : 'APPROVAL_SIGNER_REFUSED', signerCode: submitted.body.error ?? null, message: submitted.body.message ?? submitted.body.error ?? 'The approval signer refused the plan.' });
     }
     const job = await this.prisma.actionJob.create({
       data: {
@@ -311,8 +321,10 @@ export class ActionsService {
     await this.audit.log({
       tenantId: first.tenantId ?? undefined, customerId: first.customerId ?? undefined, actorId: actor.userId, actorIp: actor.ip,
       action: 'ACTION_REQUESTED', resource: 'action_job', resourceId: job.id,
-      meta: { endpointIds: eps.map((e) => e.id), action: `${action.id}@${action.version}`, params: r.params, risk, approvalsRequired: plan.policy.approvalsRequired, customerSignoff: plan.policy.customerSignoff, origin: origin.kind, via: origin.via, ticketRef: origin.ticketRef, digest: job.digest, deployment: r.deployment ?? null },
+      meta: { endpointIds: eps.map((e) => e.id), action: `${action.id}@${action.version}`, params: r.params, risk, approvalsRequired: plan.policy.approvalsRequired, customerSignoff: plan.policy.customerSignoff, origin: origin.kind, via: origin.via, ticketRef: origin.ticketRef, digest: job.digest, deployment: r.deployment ?? null, underPolicy: r.underPolicy?.policyId ?? null },
     });
+    // Signed already, by the signer's own decision: pull the envelope now.
+    if (r.underPolicy) { await this.refresh(job); return (await this.prisma.actionJob.findUnique({ where: { id: job.id }, include: { targets: true } }))!; }
     return job;
   }
 

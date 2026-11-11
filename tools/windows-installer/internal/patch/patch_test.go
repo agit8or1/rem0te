@@ -220,3 +220,30 @@ func TestScriptParsesAndStaysInBounds(t *testing.T) {
 		t.Fatalf("wua.ps1 does not parse: %s", out)
 	}
 }
+
+// 0.32: a signed policy's filter only ever removes updates Eligible allows.
+func TestInstallFilteredOnlyNarrows(t *testing.T) {
+	ord := cu()
+	ord.UpdateID, ord.Revision, ord.Classification, ord.KB, ord.Severity = idOld, 3, ClassUpdates, "KB5044100", ""
+	f := &FakeWUA{Offered: []Update{cu(), drv(), ord}}
+	ids := []Identity{{idCU, 200}, {idDrv, 1}, {idOld, 3}}
+	// A filter naming drivers cannot get a driver past Eligible.
+	r := InstallFiltered(f, &FakeRegistry{}, ids, &Filter{Classifications: []string{ClassSecurity, ClassUpdates, ClassDrivers}})
+	if s := states(r); s[idDrv] != "excluded:excluded_classification" || s[idCU] != "installed:" || s[idOld] != "installed:" {
+		t.Fatalf("%v", s)
+	}
+	f = &FakeWUA{Offered: []Update{cu(), ord}}
+	r = InstallFiltered(f, &FakeRegistry{}, []Identity{{idCU, 200}, {idOld, 3}}, &Filter{Classifications: []string{ClassSecurity, ClassUpdates}, Severities: []string{"Critical"}})
+	if s := states(r); s[idCU] != "installed:" || s[idOld] != "excluded:severity_not_in_policy" {
+		t.Fatalf("severity: %v", s)
+	}
+	f = &FakeWUA{Offered: []Update{cu(), ord}}
+	r = InstallFiltered(f, &FakeRegistry{}, []Identity{{idCU, 200}, {idOld, 3}}, &Filter{Classifications: []string{ClassSecurity, ClassUpdates}, Severities: []string{"Critical", "Unrated"}, ExcludeKBs: []string{"KB5044284"}})
+	if s := states(r); s[idCU] != "excluded:kb_excluded_by_policy" || s[idOld] != "installed:" {
+		t.Fatalf("kb / unrated: %v", s)
+	}
+	var none *Filter
+	if ok, _ := none.Allows(drv()); !ok {
+		t.Fatal("a nil filter must narrow nothing (Eligible still decides)")
+	}
+}

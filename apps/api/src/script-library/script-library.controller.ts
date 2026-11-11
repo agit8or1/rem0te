@@ -11,7 +11,7 @@ import { ScriptLibraryService } from './script-library.service';
  * The script library: write, version, diff and review PowerShell scripts.
  *
  * There is deliberately no route here that runs, sends or schedules a
- * script, and none can be added without failing §21 of the security
+ * script, and none can be added without failing §23 of the security
  * invariants: a script would run only as a signed action, approved on the
  * approval signer and verified by the signed agent (docs/script-library.md).
  * A review decision is a record in this database, not an authorization any

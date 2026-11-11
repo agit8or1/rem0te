@@ -104,6 +104,13 @@ jobs:
           node apps/api/scripts/unit-approval-signer.mjs
           node apps/api/scripts/build-approval-signer.mjs --list
 
+      # Patch policies (0.32): the pure policy evaluator the signer runs before
+      # signing a ring plan under an approved policy — every refusal, the
+      # maintenance-window arithmetic across DST, the shared ring gate — and
+      # the signer's policy records (quorum, tamper, revocation).
+      - name: Patch policy tests
+        run: node apps/api/scripts/unit-patch-policy.mjs
+
       # The tamper-evident audit chain (0.28): every tamper kind, gaps,
       # checkpoint signatures and the export checker, against the compiled
       # chain module with no database.

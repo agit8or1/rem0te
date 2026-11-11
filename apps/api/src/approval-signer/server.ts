@@ -20,10 +20,11 @@ import { verifyAuthenticationResponse, type AuthenticationResponseJSON } from '@
 import { catalogEntry } from '../actions/catalog';
 import {
   admitPlan, credentialSha256, webauthnChallenge, loadSigningKey, policyFor, recordDecision, Refused, rolesFor, signJob, keysDocument,
-  type Challenge, type JobRecord, type Role,
+  admitPolicy, approvalsOf, effectivePolicyStatus, policyRolesFor, recordPolicyDecision, signPolicy, signUnderPolicy,
+  type Challenge, type JobRecord, type PolicyRecord, type Role,
 } from './core';
 import { SignerStore } from './store';
-import { renderApprovalPage } from './page';
+import { renderApprovalPage, renderPolicyApprovalPage } from './page';
 
 export interface SignerConfig {
   dir: string;
@@ -38,6 +39,8 @@ export interface SignerConfig {
 
 const CHALLENGE_TTL_MS = 5 * 60_000;
 const MAX_BODY = 64 * 1024;
+/** A ring plan under a policy carries the previous ring's evidence: up to 25 computers. */
+const MAX_POLICY_PLAN_BODY = 512 * 1024;
 
 function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
   const text = typeof body === 'string' ? body : JSON.stringify(body);
@@ -48,9 +51,9 @@ function send(res: ServerResponse, status: number, body: unknown, headers: Recor
   });
   res.end(text);
 }
-async function body(req: IncomingMessage): Promise<unknown> {
+async function body(req: IncomingMessage, max = MAX_BODY): Promise<unknown> {
   const chunks: Buffer[] = []; let n = 0;
-  for await (const c of req) { n += (c as Buffer).length; if (n > MAX_BODY) throw new Refused('too_large'); chunks.push(c as Buffer); }
+  for await (const c of req) { n += (c as Buffer).length; if (n > max) throw new Refused('too_large'); chunks.push(c as Buffer); }
   try { return chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}; } catch { throw new Refused('bad_json'); }
 }
 const fail = (res: ServerResponse, e: unknown) => {
@@ -58,6 +61,15 @@ const fail = (res: ServerResponse, e: unknown) => {
   console.error('[approval-signer]', e);
   return send(res, 500, { error: 'internal' });
 };
+
+/** Public view of a policy: what an approver needs, nothing about the roster. */
+function policyView(r: PolicyRecord, now: Date) {
+  return {
+    policyId: r.policyId, status: effectivePolicyStatus(r, now), digest: r.digest, doc: r.doc,
+    decisions: r.decisions.map((d) => ({ name: d.name, role: d.role, decision: d.decision, at: d.at })),
+    revokedAt: r.revokedAt, revokeReason: r.revokeReason, signedPlans: r.ledger.length,
+  };
+}
 
 /** Public view of a job: what an approver needs, nothing about the roster. */
 function view(j: JobRecord) {
@@ -80,6 +92,151 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
     return j;
   };
 
+  const assertNotPaused = (businessId: string) => {
+    const p = store.activePause(businessId);
+    if (p) throw new Refused('paused', `the approval signer is paused${p.scope === 'business' ? ' for this business' : ''}: ${p.reason}`);
+  };
+  const remember = (r: PolicyRecord, jobId: string, e: Refused) => {
+    r.refusals = [...r.refusals, { at: now().toISOString(), jobId, code: e.code, message: e.message.slice(0, 300) }].slice(-50);
+    store.savePatchPolicy(r);
+    console.log(`[approval-signer] refused a plan under policy ${r.policyId}: ${e.code} — ${e.message}`);
+  };
+
+  /** The roster member whose passkey made this assertion over this challenge, or a refusal. Records the counter. */
+  async function verifiedMember(c: Challenge, assertion: AuthenticationResponseJSON | undefined) {
+    const member = store.roster().members.find((x) => x.credentialId === assertion?.id);
+    if (!member || !assertion) throw new Refused('not_authorized', 'this passkey is not on the approval roster');
+    let v: Awaited<ReturnType<typeof verifyAuthenticationResponse>>;
+    try {
+      v = await verifyAuthenticationResponse({
+        response: assertion, expectedChallenge: webauthnChallenge(c), expectedOrigin: cfg.origin, expectedRPID: cfg.rpId, requireUserVerification: true,
+        credential: { id: member.credentialId, publicKey: new Uint8Array(Buffer.from(member.publicKey, 'base64url')), counter: Math.max(member.counter, store.counter(credentialSha256(member))) },
+      });
+    } catch (e) { throw new Refused('not_authorized', `passkey verification failed: ${(e as Error).message.slice(0, 120)}`); }
+    if (!v.verified) throw new Refused('not_authorized', 'passkey verification failed');
+    store.saveCounter(credentialSha256(member), v.authenticationInfo.newCounter);
+    return member;
+  }
+
+  const pageHeaders = (nonce: string) => ({
+    'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'`,
+    'x-frame-options': 'DENY',
+  });
+
+  /** The public approval pages for a policy: the same passkeys, roster and origin rules as a plan's. */
+  async function publicPolicy(req: IncomingMessage, res: ServerResponse, id: string, sub: string | undefined) {
+    const r = store.patchPolicy(id);
+    if (!r) return send(res, 404, { error: 'not_found' });
+    if (req.method === 'GET' && !sub) {
+      const nonce = randomBytes(16).toString('base64');
+      return send(res, 200, renderPolicyApprovalPage(policyView(r, now()), nonce), pageHeaders(nonce));
+    }
+    if (req.method === 'GET' && sub === '/state') return send(res, 200, policyView(r, now()));
+    if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
+    if (req.headers.origin !== cfg.origin) throw new Refused('not_authorized', 'cross-origin request refused');
+    const b = await body(req) as { decision?: string; role?: string; challengeId?: string; assertion?: AuthenticationResponseJSON };
+    const p = store.activePause(r.doc.businessId);
+    if (p) throw new Refused('paused', `approvals are paused${p.scope === 'business' ? ' for this business' : ''}: ${p.reason}`);
+    if (sub === '/challenge') {
+      const decision = b.decision === 'reject' ? 'reject' : b.decision === 'approve' ? 'approve' : null;
+      const role = b.role === 'customer' ? 'customer' : b.role === 'approver' ? 'approver' : null;
+      if (!decision || !role) throw new Refused('bad_request', 'decision and role are required');
+      const st = effectivePolicyStatus(r, now());
+      if (st !== 'AWAITING_APPROVAL') throw new Refused('not_awaiting', `this policy is ${st.toLowerCase().replace(/_/g, ' ')}`);
+      const c: Challenge = { id: randomBytes(32).toString('base64url'), kind: 'policy', jobId: r.policyId, digest: r.digest, decision, role, expiresAt: new Date(now().getTime() + CHALLENGE_TTL_MS).toISOString(), used: false };
+      store.saveChallenge(c);
+      return send(res, 200, { challengeId: c.id, options: { challenge: webauthnChallenge(c), rpId: cfg.rpId, timeout: CHALLENGE_TTL_MS, userVerification: 'required', allowCredentials: [] } });
+    }
+    // /decide
+    const out = await store.exclusive(async () => {
+      const c = b.challengeId ? store.challenge(b.challengeId) : null;
+      if (!c || c.kind !== 'policy' || c.jobId !== r.policyId) throw new Refused('bad_challenge');
+      if (c.used) throw new Refused('challenge_used', 'this approval prompt was already used');
+      if (Date.parse(c.expiresAt) <= now().getTime()) throw new Refused('challenge_expired');
+      c.used = true; store.saveChallenge(c);
+      const cur = store.patchPolicy(r.policyId)!;
+      if (cur.digest !== c.digest) throw new Refused('plan_changed');
+      const member = await verifiedMember(c, b.assertion);
+      if (store.activePause(cur.doc.businessId)) throw new Refused('paused', 'approvals were paused while you decided');
+      const status = recordPolicyDecision(cur, member, c.role as Role, c.decision, now(), policyFor(store.policy(), cur.doc.businessId).customerSignoff);
+      if (status === 'ACTIVE') signPolicy(cur, k, now());
+      store.savePatchPolicy(cur);
+      if (status === 'ACTIVE') console.log(`[approval-signer] policy ${cur.policyId} approved; plans inside it are now signed without further approval until ${cur.doc.expiresAt}`);
+      return { cur, member };
+    });
+    return send(res, 200, { ...policyView(out.cur, now()), you: { name: out.member.name, credential: credentialSha256(out.member).slice(0, 16), roles: policyRolesFor(out.member, out.cur.doc) } });
+  }
+
+  // ── internal: patch policies (v0.32) ──────────────────────────────────────
+  //   POST /internal/v1/policies               propose (awaits two approvals here)
+  //   GET  /internal/v1/policies/:id           status, for the portal to mirror
+  //   POST /internal/v1/policies/:id/revoke    one-way: nothing un-revokes
+  //   POST /internal/v1/policies/:id/plans     sign a ring plan, if it is inside the policy
+  async function internalPolicy(req: IncomingMessage, res: ServerResponse, [id, sub]: [string | undefined, string | undefined]) {
+    if (!id) {
+      if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
+      const b = await body(req) as { policy?: unknown };
+      const out = await store.exclusive(() => {
+        const { doc, digest } = admitPolicy(b.policy, now());
+        assertNotPaused(doc.businessId);
+        const existing = store.patchPolicy(doc.policyId);
+        if (existing) {
+          if (existing.digest !== digest) throw new Refused('policy_id_reused', 'a different policy already has this id');
+          return existing;
+        }
+        const r: PolicyRecord = {
+          policyId: doc.policyId, status: 'AWAITING_APPROVAL', doc, digest, decisions: [], signature: null, kid: null,
+          revokedAt: null, revokedBy: null, revokeReason: null, ledger: [], refusals: [], createdAt: now().toISOString(), updatedAt: now().toISOString(),
+        };
+        store.savePatchPolicy(r);
+        return r;
+      });
+      return send(res, 201, { policyId: out.policyId, digest: out.digest, status: effectivePolicyStatus(out, now()), approvalUrl: `${cfg.origin}/approve/policy/${out.policyId}` });
+    }
+    const r0 = store.patchPolicy(id);
+    if (!r0) return send(res, 404, { error: 'not_found' });
+    if (req.method === 'GET' && !sub) {
+      const v = policyView(r0, now());
+      return send(res, 200, { ...v, approvals: approvalsOf(r0).map((a) => ({ name: a.name, role: a.role, at: a.at })), refusals: r0.refusals.slice(-10) });
+    }
+    if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
+    if (sub === 'revoke') {
+      const b = await body(req) as { reason?: unknown };
+      if (typeof b.reason !== 'string' || b.reason.trim().length < 3) throw new Refused('bad_request', 'a reason is required');
+      const out = await store.exclusive(() => {
+        const reason = [...b.reason as string].slice(0, 300).map((c) => (c < ' ' ? ' ' : c)).join('');
+        if (store.revokePatchPolicy(id, { at: now().toISOString(), by: 'portal', reason })) console.log(`[approval-signer] policy ${id} revoked at the portal's request: ${reason}`);
+        return store.patchPolicy(id)!;
+      });
+      return send(res, 200, { policyId: out.policyId, status: 'REVOKED', revokedAt: out.revokedAt });
+    }
+    // sub === 'plans'
+    const b = await body(req, MAX_POLICY_PLAN_BODY) as { plan?: { jobId?: unknown }; policyDigest?: unknown; evidence?: unknown };
+    const out = await store.exclusive(() => {
+      const r = store.patchPolicy(id)!;
+      const jobId = typeof b.plan?.jobId === 'string' && /^[a-f0-9]{32}$/.test(b.plan.jobId) ? b.plan.jobId : '-';
+      try {
+        assertNotPaused(r.doc.businessId);
+        const existing = jobId !== '-' ? store.job(jobId) : null;
+        if (existing) {
+          // The same plan again (a retried request): the same answer. Anything else under this id is refused.
+          const again = admitPlan(b.plan, store.policy(), now());
+          if (existing.digest !== again.digest || !r.ledger.some((e) => e.jobId === jobId)) throw new Refused('job_id_reused', 'a different plan already has this job id');
+          return existing;
+        }
+        const { job } = signUnderPolicy(r, b, k, store.policy(), now());
+        store.saveJob(job);
+        store.savePatchPolicy(r);
+        console.log(`[approval-signer] signed ${job.jobId} under policy ${r.policyId} (ring ${job.plan.display?.deployment?.ring}, ${job.plan.targets.length} computer(s))`);
+        return job;
+      } catch (e) {
+        if (e instanceof Refused) remember(r, jobId, e);
+        throw e;
+      }
+    });
+    return send(res, 201, { jobId: out.jobId, digest: out.digest, status: out.status, approvalUrl: `${cfg.origin}/approve/${out.jobId}` });
+  }
+
   // ── internal ──────────────────────────────────────────────────────────────
   const internal = createServer(async (req, res) => {
     try {
@@ -101,6 +258,14 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
         console.log(`[approval-signer] paused (${p.scope}${p.businessId ? ` ${p.businessId}` : ''}) at the portal's request: ${p.reason}`);
         return send(res, 201, { id: p.id });
       }
+      // v0.32: what this signer supports, and how many people could approve —
+      // a count only, for the portal's pre-flight check. Who they are stays here.
+      if (req.method === 'GET' && url.pathname === '/internal/v1/capabilities') {
+        const people = new Set(store.roster().members.filter((x) => !x.disabled && x.approve.length).map((x) => x.userId));
+        return send(res, 200, { patchPolicies: 1, kid: k.kid, roster: { approvers: people.size } });
+      }
+      const pol = policyRoute(url.pathname);
+      if (pol) return await internalPolicy(req, res, pol);
       if (!m) return send(res, 404, { error: 'not_found' });
       if (req.method === 'POST' && !m[1]) {
         const b = await body(req) as { plan?: unknown };
@@ -141,6 +306,8 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
   const pub = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', cfg.origin);
+      const pm = url.pathname.match(/^\/approve\/policy\/([a-f0-9]{32})(\/state|\/challenge|\/decide)?$/);
+      if (pm) return await publicPolicy(req, res, pm[1], pm[2]);
       const m = url.pathname.match(/^\/approve\/([a-f0-9]{32})(\/state|\/challenge|\/decide)?$/);
       if (!m) return send(res, 404, { error: 'not_found' });
       const j = store.job(m[1]);
@@ -176,23 +343,14 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       // /decide
       const out = await store.exclusive(async () => {
         const c = b.challengeId ? store.challenge(b.challengeId) : null;
-        if (!c || c.jobId !== j.jobId) throw new Refused('bad_challenge');
+        // A policy's challenge is never a plan's (and the reverse): `kind` and the id both have to match.
+        if (!c || c.jobId !== j.jobId || c.kind) throw new Refused('bad_challenge');
         if (c.used) throw new Refused('challenge_used', 'this approval prompt was already used');
         if (Date.parse(c.expiresAt) <= now().getTime()) throw new Refused('challenge_expired');
         c.used = true; store.saveChallenge(c); // consumed before verification: a failed attempt cannot be retried with it
         const cur = expireIfDue(store.job(j.jobId)!);
         if (cur.digest !== c.digest) throw new Refused('plan_changed');
-        const member = store.roster().members.find((x) => x.credentialId === b.assertion?.id);
-        if (!member || !b.assertion) throw new Refused('not_authorized', 'this passkey is not on the approval roster');
-        let v: Awaited<ReturnType<typeof verifyAuthenticationResponse>>;
-        try {
-          v = await verifyAuthenticationResponse({
-            response: b.assertion, expectedChallenge: webauthnChallenge(c), expectedOrigin: cfg.origin, expectedRPID: cfg.rpId, requireUserVerification: true,
-            credential: { id: member.credentialId, publicKey: new Uint8Array(Buffer.from(member.publicKey, 'base64url')), counter: Math.max(member.counter, store.counter(credentialSha256(member))) },
-          });
-        } catch (e) { throw new Refused('not_authorized', `passkey verification failed: ${(e as Error).message.slice(0, 120)}`); }
-        if (!v.verified) throw new Refused('not_authorized', 'passkey verification failed');
-        store.saveCounter(credentialSha256(member), v.authenticationInfo.newCounter);
+        const member = await verifiedMember(c, b.assertion);
         if (store.activePause(cur.plan.targets[0]?.businessId ?? null)) throw new Refused('paused', 'approvals were paused while you decided');
         const status = recordDecision(cur, member, c.role as Role, c.decision, now());
         if (status === 'SIGNED') signJob(cur, k, now());
@@ -209,6 +367,18 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
     internal, pub,
     close: () => Promise.all([new Promise<void>((r) => internal.close(() => r())), new Promise<void>((r) => pub.close(() => r()))]).then(() => undefined),
   };
+}
+
+/** /internal/v1/policies, /policies/<id>, /policies/<id>/(revoke|plans) → [id?, sub?]; else null. */
+function policyRoute(p: string): [string | undefined, string | undefined] | null {
+  const base = '/internal/v1/policies';
+  if (p === base) return [undefined, undefined];
+  if (!p.startsWith(`${base}/`)) return null;
+  const rest = p.slice(base.length + 1).split('/');
+  if (!/^[a-f0-9]{32}$/.test(rest[0])) return null;
+  if (rest.length === 1) return [rest[0], undefined];
+  if (rest.length === 2 && (rest[1] === 'revoke' || rest[1] === 'plans')) return [rest[0], rest[1]];
+  return null;
 }
 
 /** /internal/v1/plans, /plans/<job>, /plans/<job>/cancel → [path, job?, '/cancel'?]; else null. */

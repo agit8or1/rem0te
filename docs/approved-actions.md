@@ -238,7 +238,42 @@ state now; reconcile it as for the spooler (`running`, `stopped`, `restart_sched
 signed agent build. Production has no signer installed, so the Actions tab says "no approval signer is configured"
 and requests nothing; a computer whose agent does not report an action shows that action as not available on it.
 
+## Patch policies: approved once, signed by the signer
+
+From 0.32, a person can approve a bounded **patch policy** instead of each update ring
+([Staged patching → Patch policies](staged-patching.md#patch-policies)). It is the one case where a plan is signed
+without its own two approvals, so the design keeps the decision on the signer:
+
+- **The policy is approved like a plan**, on the signer's own origin at `/approve/policy/<id>`, by two people on the
+  roster other than its author, with their passkeys. Customer sign-off applies if the business requires it. On
+  quorum the signer signs `rem0te-patch-policy-approved-v1` over the policy's digest and the approvals.
+- **Each ring plan is evaluated by the signer** against the stored, signature-checked policy. The check is
+  `evaluatePolicyPlan`, a pure function in `apps/api/src/actions/patch-policy.ts` that loads no Nest, Prisma or
+  portal module. It checks:
+  - every target's enrolled identity;
+  - the ring order, against the signer's own ledger;
+  - classes, severities and KBs;
+  - the window, the expiry and the requester;
+  - the previous ring's gate, including canary-effective.
+
+  Only then is the plan signed, carrying the policy's approvers.
+- **The portal can propose a policy and ask for it to be revoked.** It can't approve a policy, un-revoke one, or sign
+  under one. `POST /internal/v1/policies/:id/plans` is a request for the signer to decide; a refusal comes back as
+  `409` with the code, and the signer keeps the last 50 with the policy.
+- **Revocation** is a write-once file on the signer (`revocations/<id>.json`), merged into the policy on every read.
+  Neither the portal nor the signer's own server rewrites it.
+- A containment pause on the signer refuses new policies, policy decisions and every plan under a policy.
+
+The signer operator's CLI:
+
+```bash
+$S patch-policy list                                   # status, signature check, approvals, plans signed, last refusals
+$S patch-policy revoke --id <policyId> --reason 'why'  # one-way
+```
+
 ## Setting it up
+
+For the full production order, including patching, see [Patching setup](patching-setup.md).
 
 You need a working signed update chain first ([update-signing.md](update-signing.md)). That's how computers learn
 the approval key.
@@ -362,6 +397,8 @@ nothing changed), `restart_already_scheduled`, `stop_failed`, `start_failed`, `d
 - The RustDesk session check is made once, when a restart is scheduled, and sees RustDesk sessions only.
 - A scheduled restart is reported as scheduled. Whether it happened is seen only from the next boot time.
 - A compromised portal can delay, cancel or withhold delivery. It can't sign or alter a plan.
+- Under a patch policy, the portal relays ring results to the signer. Results aren't signed by the agents yet, so
+  forged results could start the next ring early. That ring still holds only what the policy allows.
 - The signer is a single process with file state. Back up `/var/lib/rem0te-approver`; losing the key means
   generating a new one and publishing a new `approval/keys.json`. Plans signed by the old key are then refused.
 - Roster membership is managed by the operator CLI. The portal neither shows nor changes it.

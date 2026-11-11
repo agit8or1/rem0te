@@ -726,6 +726,20 @@ const SECTIONS: Section[] = [
           <Link href="/docs/inventory#linux-computers-032" className="underline text-foreground">Inventory</Link>.
         </p>
         <p>
+          From 0.32, a computer&apos;s <em>Patches</em> tab has <strong className="text-foreground">Install updates</strong>{' '}
+          when it can be patched: pick updates and give a reason, and it becomes a one-computer deployment that two
+          approvers still approve on the approval signer. When it cannot be patched there is no button; the tab says why
+          (for example, the standard agent) and what to do instead.{' '}
+          <strong className="text-foreground">Patch policies</strong> on the Patching page are approved once, by two
+          people on the approval signer, and then run inside their maintenance window: the canary first, the next ring
+          only once the canary is confirmed effective. The approval signer, not this portal, signs each ring, and only if
+          it stays inside the policy&apos;s computers, update classes, excluded KBs, window and expiry. Revoking one is
+          one-way. Computers are still never restarted. Platform Admins see a pre-flight listing what a production
+          install still lacks. Fixture-tested only so far. More in{' '}
+          <Link href="/docs/patching-setup" className="underline text-foreground">Patching setup</Link> and{' '}
+          <Link href="/docs/staged-patching" className="underline text-foreground">Staged patching</Link>.
+        </p>
+        <p>
           From 0.31 the menu is organised by job: <strong className="text-foreground">Dashboard</strong>,{' '}
           <strong className="text-foreground">Devices</strong> (all devices, your own, adding one),{' '}
           <strong className="text-foreground">Alerts</strong>, <strong className="text-foreground">Automation</strong>,{' '}

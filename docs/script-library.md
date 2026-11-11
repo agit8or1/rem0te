@@ -73,7 +73,7 @@ bytes before anything is signed.
   remote shell on every computer, which is the thing this design exists to prevent.
 - **There's no route for it.** The script-library module creates no `ActionJob`, imports nothing from the action
   dispatcher, the signer client or the heartbeat, and has no run, execute, dispatch or send route. The security
-  invariants (§21) check that in CI.
+  invariants (§23) check that in CI.
 
 ## Threat model
 

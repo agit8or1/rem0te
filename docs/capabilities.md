@@ -37,7 +37,7 @@ The standard agent never deploys anything. The Linux agent goes further: it acts
 From a heartbeat response it reads only command ids and three fixed command names (inventory refresh, update scan,
 and an event-log query it answers with "Windows-only"); rotations, reinstalls, client updates, monitor queries,
 diagnostics and actions are ignored, and the console refuses to stage the ones it would otherwise accept.
-`scripts/check-security-invariants.mjs` §21 checks this against the script's text.
+`scripts/check-security-invariants.mjs` §24 checks this against the script's text.
 
 The standard agent never deploys anything. The Patches tab shows what it reports, labelled
 *Standard agent scan (read-only)*, and says that deploying needs the signed agent.

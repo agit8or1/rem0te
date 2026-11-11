@@ -1,6 +1,9 @@
 # Staged patching
 
-rem0te 0.27 can install **Windows updates** on customer computers in stages. A **canary** computer goes first, then
+rem0te 0.27 can install **Windows updates** on customer computers in stages. 0.32 adds
+[installing from one computer's Patches tab](#installing-from-one-computers-patches-tab) and
+[patch policies](#patch-policies), which are approved once and then run inside a maintenance window. For production
+setup, see [Patching setup](patching-setup.md). A **canary** computer goes first, then
 one or more **rings**. Each ring is a single signed plan that two people on the approval roster authorize with a
 passkey. The next ring can't be requested until the canary reports that the updates took effect.
 
@@ -145,10 +148,94 @@ Portal, when creating a deployment or requesting a ring:
 The agent adds `managed_elsewhere`, `update_agent_busy` (a scan held Windows Update for 20 minutes) and
 `lookup_failed` to the refusal reasons listed in [Approved actions](approved-actions.md#refusal-codes).
 
+## Installing from one computer's Patches tab
+
+Since 0.32, a computer's **Patches** tab has an **Install updates** button when the computer can be patched. You
+pick from its installable updates, the restart rule (only *never* exists) and a window, and give a reason.
+
+- The request becomes a **one-computer deployment**: a single canary ring, marked *one computer* in the list. Its plan
+  awaits **two approvals** on the approval signer, like any ring.
+- It isn't a direct request. `POST /endpoints/:id/actions` still refuses updates with `ACTION_NOT_DIRECT`.
+- When the computer can't be patched, the tab shows no button. It says why and what to do instead:
+
+| Why | What to do |
+|---|---|
+| It runs the standard agent | Switch it to the signed channel ([Patching setup](patching-setup.md), step 2) |
+| No signed build published, or it isn't on it | Publish a release, or let it update itself |
+| No device identity | Re-enrol it |
+| No signed scan yet | **Scan now** and wait |
+| Managed by WSUS, WUfB, MDM or ConfigMgr | Patch it there |
+| Offline | Wait until it checks in |
+| No approval signer configured | [Patching setup](patching-setup.md), steps 3 to 5 |
+| Your access doesn't include high-impact requests | Ask someone whose access does |
+| An earlier install is pending or uncertain | Wait, cancel it, or reconcile it |
+| Nothing installable is offered | Nothing to do |
+
+The same checks run again when the request arrives, and once more when the deployment is built.
+
+## Patch policies
+
+A **patch policy** (0.32) approves a bounded kind of patching once, so the nightly canary doesn't need two people
+every time. Two approvers other than its author approve the policy on the approval signer. After that, **the signer
+itself**, not the portal, signs each ring plan, but only if the plan falls inside the policy.
+
+**What the policy binds** (the signer checks each one):
+
+| Bound | Checked against |
+|---|---|
+| The business and its computers, by enrolled identity (endpoint, RustDesk ID, device-secret hash) | Every target in every plan. A re-enrolled computer is a different computer and is refused |
+| The rings, in order. Ring 0 is one canary; later rings hold at most 25 | The signer's own ledger of what it signed. Ring *n* needs ring *n − 1* of the same deployment signed first |
+| Classes, severities, excluded KBs | Each update shown in the plan. The plan also carries the filter as `params.allow`, and **each computer applies it** to Windows Update's own answer, so a mislabelled update can't slip past |
+| The maintenance window: days, local start and end, IANA time zone | The plan's window must lie inside one occurrence. DST is honoured |
+| Soak and failure threshold | The ring gate, re-run by the signer (below) |
+| Reboot: never | The plan's params |
+| Expiry, at most 90 days | Every plan, and the plan's window end |
+
+**The canary must be effective.** For every ring after the canary, the portal hands the signer the previous ring's
+results and scans. The signer re-runs the same gate the portal uses (`evaluateRingGate`): every computer answered,
+nothing uncertain left unreconciled, failures within the threshold, the soak passed, and **for the canary, every
+update effective in a later scan**.
+
+**What a compromised portal still can't do:** widen the computers, classes or window, change the ring order, skip
+the canary, or keep using a revoked or expired policy. It also can't approve a policy: there's no approve route, and
+the passkeys are checked on the signer's own origin.
+
+**What it can do** is lie about results. Agents don't sign their results yet, so a portal that forges a whole canary
+result could have the next ring start early. That ring still holds only the computers and updates the policy names,
+inside its window, with the agent applying the filter.
+
+**The sweep.** Every 60 seconds (`PATCH_POLICY_SWEEP_SECONDS`), the API looks at each active policy whose window is
+open:
+
+- If a deployment from the policy is still active, the sweep moves it on by one ring when the gate allows.
+- Otherwise it proposes one new deployment for this window: the canary's offered, installable, policy-allowed updates,
+  at most 20.
+
+It runs once per window. `(policy, window)` is unique in the database, so a restart or a second process can't propose
+twice. Each attempt is recorded on the policy and audited (`PATCH_POLICY_PROPOSED`, `PATCH_POLICY_REFUSED`).
+
+- A paused deployment is left alone, and nothing new is proposed while it exists.
+- A containment pause stops it on both sides.
+- Computers in a later ring that aren't ready are left out of that ring's plan, each with the reason.
+- `PATCH_POLICY_SWEEP=off` disables the sweep.
+
+**Revoking** is one-way and lives on the signer. **Revoke** on the policy's page (fresh sign-in) marks it revoked in
+the portal at once, cancels what hasn't been delivered, and asks the signer to revoke. The sweep keeps asking until
+the signer confirms. The signer's operator can also revoke with `patch-policy revoke`. Either way the signer writes
+`revocations/<id>.json` once and never rewrites it, and refuses every later plan.
+
+Policy refusal codes, from the signer: `policy_revoked`, `policy_expired`, `policy_not_active`, `policy_not_approved`,
+`policy_digest_mismatch`, `policy_signature_invalid`, `computer_not_in_policy`, `class_not_allowed`,
+`severity_not_allowed`, `kb_excluded`, `filter_mismatch`, `outside_window`, `ring_out_of_order`,
+`ring_already_signed`, `ring_retry_limit` (three signings of one ring), `canary_not_effective`,
+`canary_proved_nothing`, `gate_not_passed`, `evidence_mismatch`, `updates_not_proven`, `requester_mismatch`,
+`reboot_not_allowed`, `paused`.
+
 ## Setting it up
 
 Staged patching needs [approved actions](approved-actions.md#setting-it-up) to be set up already: the approval signer,
-its roster, and `approval/keys.json` in the signed repository. On top of that:
+its roster, and `approval/keys.json` in the signed repository. [Patching setup](patching-setup.md) is the
+production order, with a live pre-flight. On top of that:
 
 1. Build and publish the **0.27 signed agent** (`windows/rem0te-agent.exe`) through the offline-signed update chain.
    Agents report `windows.update.install@1` in their heartbeat once they run it.
@@ -162,6 +249,7 @@ There are no new server settings.
 | Level | State |
 |---|---|
 | **Fixture-tested** | Yes. The Go packages `internal/patch` and `internal/action` test eligibility, manager detection, the parsers' refusal of answers for unrequested updates, every per-update state, crash → unknown, the Windows Update lock, replay, and a second process seeing `in_progress`. `wua.ps1` is parsed by PowerShell in the tests and checked for banned cmdlets. `e2e-staged-patching.mjs` (59 checks) runs the portal, the signer and the agent's real decision code against a simulated Windows Update and registry: posture, deployment refusals, the canary, restart → effective, a three-computer ring with a crash and a failure, auto-pause, resume and retry, identity change, a tampered ring plan, and cancel |
+| **Fixture-tested (0.32)** | Yes. `unit-patch-policy.mjs` (114 checks) covers every policy refusal, the window arithmetic across DST in several zones, and the signer's policy records. `e2e-patch-policies.mjs` (75 checks) covers: a one-computer install through two approvals to effective; no button on a standard-agent computer; a policy approved by passkey; the sweep proposing the canary inside the window; the agent installing only the policy's class; ring 1 signed automatically only after the canary was effective; the signer refusing widened rings, a disallowed class, a wider filter, out-of-window plans, a skipped canary, an altered digest, a non-author requester, expired and revoked policies, and a containment pause; and no duplicate after an API restart. Go tests cover the agent's `allow` filter |
 | **Paired lab** (real Windows, real Windows Update, real authenticator) | **Not done.** The script hasn't run against a real Windows Update service. Classification IDs, result codes and pending-restart keys are as Microsoft documents them, not yet as observed |
 | **Production-ready** | **No.** It needs the paired lab first: a canary, a WSUS-managed computer, an update that needs a restart, and one that fails |
 
@@ -170,7 +258,10 @@ There are no new server settings.
 - Windows only, and Microsoft updates only. No third-party patching, drivers or feature upgrades.
 - No restarts, no maintenance-window restarts, no user notification. "Restart required" waits for a person.
 - No uninstall or rollback.
-- Rings are chosen by hand. There is no automatic grouping by model, site or role.
+- Rings are chosen by hand, for a deployment and for a policy. There is no automatic grouping by model, site or role.
+- A policy can't restart computers. A restart rule needs a change to the agent's closed parameters.
+- Under a policy, the portal relays ring results to the signer. Agents don't sign results, so a compromised portal can
+  start the next ring early by forging them. It can't widen the ring.
 - A computer managed by WSUS or Intune is refused rather than coordinated with.
 - Posture is device-reported, so a compromised computer can misreport its own posture. It can't widen another
   computer's plan, and it can't get anything installed that Windows Update doesn't offer it.

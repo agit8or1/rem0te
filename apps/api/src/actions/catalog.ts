@@ -90,6 +90,16 @@ export const MAX_RING_TARGETS = 25;
 
 export const UpdateIdentity = z.object({ updateId: z.string().regex(UPDATE_ID_RE), revision: z.number().int().min(1).max(1_000_000) }).strict();
 
+/** Installable classifications (the agent's patch.Installable). */
+export const INSTALLABLE_CLASSES = ['0fa1201d-4330-4fa8-8ae9-b877473b6441', 'e6cf1350-c01b-414d-a61f-263d14d133b4', '28bc880e-0592-4cbf-8f95-c79b17911d5f', 'cd5ffd1e-e932-4e3a-bf74-18bf0b1bbd83'] as const;
+const uniq = <T>(a: T[]) => new Set(a).size === a.length;
+/** A patch policy's narrowing, as the agent parses it (internal/action/updates.go updateFilter). */
+export const UpdateFilter = z.object({
+  classifications: z.array(z.enum(INSTALLABLE_CLASSES)).min(1).max(4).refine(uniq, 'duplicate'),
+  severities: z.array(z.enum(['Critical', 'Important', 'Moderate', 'Low', 'Unrated'])).min(1).max(5).refine(uniq, 'duplicate').optional(),
+  excludeKbs: z.array(z.string().regex(/^KB[0-9]{4,10}$/)).min(1).max(50).refine(uniq, 'duplicate').optional(),
+}).strict();
+
 export const UPDATE_INSTALL: CatalogAction = {
   id: 'windows.update.install',
   version: 1,
@@ -99,6 +109,10 @@ export const UPDATE_INSTALL: CatalogAction = {
     updates: z.array(UpdateIdentity).min(1).max(MAX_UPDATES_PER_PLAN)
       .refine((u) => new Set(u.map((x) => `${x.updateId}@${x.revision}`)).size === u.length, 'duplicate update'),
     reboot: z.literal('never'),
+    // 0.32: a plan signed under a patch policy carries the policy's filter,
+    // and the agent applies it to Windows Update's own answer
+    // (patch.InstallFiltered). It can only narrow what Eligible allows.
+    allow: UpdateFilter.optional(),
   }).strict(),
   warnings: [
     'Installing updates changes the computer. An update can break a driver or an application, and some cannot be uninstalled.',
@@ -303,6 +317,8 @@ export const Plan = z.object({
       title: z.string().max(300), className: z.string().max(64).nullable(), severity: z.string().max(32).nullable(),
     }).strict()).max(MAX_UPDATES_PER_PLAN),
     deployment: z.object({ id: Id, name: z.string().max(120), ring: z.number().int().min(0).max(9), rings: z.number().int().min(1).max(10) }).strict().nullable(),
+    /** 0.32: the patch policy this plan was signed under, if any (the signer checks it is the one it holds). */
+    policy: z.object({ id: z.string().regex(/^[a-f0-9]{32}$/), name: z.string().max(120), digest: Hex64 }).strict().optional(),
   }).strict().optional(),
   createdAt: Iso,
   /** Filled in by the signer when the quorum is met. */

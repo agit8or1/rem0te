@@ -93,7 +93,25 @@ export const patchingApi = {
   pause: (id: string, reason: string) => api.post(`/patching/deployments/${id}/pause`, { reason }),
   resume: (id: string, reason: string) => api.post(`/patching/deployments/${id}/resume`, { reason }),
   cancel: (id: string, reason: string) => api.post(`/patching/deployments/${id}/cancel`, { reason }),
+  // 0.32. "Install updates" builds a one-computer deployment; its canary
+  // still needs two approvals on the approval signer.
+  install: (endpointId: string, body: { updates: UpdateIdentity[]; reboot: 'never'; reason: string; windowHours: number }) =>
+    api.post(`/endpoints/${endpointId}/patches/install`, body),
+  preflight: () => api.get('/patching/preflight'),
+  policies: (businessId: string) => api.get('/patching/policies', { params: { businessId } }),
+  policy: (id: string) => api.get(`/patching/policies/${id}`),
+  // Creating and revoking need a fresh sign-in (the interceptor prompts).
+  createPolicy: (body: PatchPolicyInput) => api.post('/patching/policies', body),
+  revokePolicy: (id: string, reason: string) => api.post(`/patching/policies/${id}/revoke`, { reason }),
 };
+
+export interface PatchPolicyInput {
+  businessId: string; name: string; rings: string[][];
+  allow: { classifications: string[]; severities?: string[]; excludeKbs?: string[] };
+  soakHours: number; failureThreshold: number;
+  window: { days: string[]; start: string; end: string; timezone: string };
+  reboot: 'never'; expiresInDays: number; reason: string;
+}
 
 // ─── Endpoints ───────────────────────────────────────────────────────────────
 export const endpointsApi = {

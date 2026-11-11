@@ -14,7 +14,7 @@ import { staticCheck } from './static-checks';
  * The script library (docs/script-library.md): scripts, immutable versions
  * and review. It stores, hashes, checks and records. It never runs a script,
  * and it has no way to: it creates no action job, talks to no agent and no
- * signer, and the invariants (§21) keep it that way.
+ * signer, and the invariants (§23) keep it that way.
  *
  *   DRAFT ─author submits─▶ IN_REVIEW ─reviewer─▶ APPROVED | REJECTED (final)
  *     ▲                        │

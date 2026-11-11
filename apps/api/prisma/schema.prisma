@@ -98,6 +98,12 @@ enum ActivityAction {
   PATCH_DEPLOYMENT_UPDATED
   PATCH_RING_REQUESTED
   PATCH_SCAN_REQUESTED
+  PATCH_POLICY_CREATED
+  PATCH_POLICY_UPDATED
+  PATCH_POLICY_REVOKED
+  PATCH_POLICY_PROPOSED
+  PATCH_POLICY_REFUSED
+  PATCH_INSTALL_REQUESTED
   CONTAINMENT_PAUSED
   CONTAINMENT_CLEARED
   AUDIT_CHAIN_ALERT
@@ -550,6 +556,7 @@ model Customer {
   monitorSuppressions  MonitorSuppression[]
   clientUpdatePolicies ClientUpdatePolicy[]
   scripts              Script[]
+  patchPolicies        PatchPolicy[]
 
   @@index([tenantId])
   @@index([tenantId, name])
@@ -2420,8 +2427,67 @@ model PatchDeployment {
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
   jobs             ActionJob[]
+  /// 0.32: how it came about — built by hand, an "Install updates" request
+  /// from one computer's Patches tab, or proposed by a patch policy.
+  origin           PatchDeploymentOrigin @default(DEPLOYMENT)
+  policyId         String?
+  policy           PatchPolicy?          @relation(fields: [policyId], references: [id], onDelete: SetNull)
+  /// The maintenance-window occurrence (its UTC start) a policy proposed it
+  /// for. Unique per policy: once per window, whatever restarts in between.
+  windowKey        String?
+
+  @@unique([policyId, windowKey])
+  @@index([customerId, createdAt])
+}
+
+enum PatchDeploymentOrigin {
+  DEPLOYMENT
+  MANUAL
+  POLICY
+}
+
+enum PatchPolicyStatus {
+  AWAITING_APPROVAL
+  ACTIVE
+  REJECTED
+  REVOKED
+  EXPIRED
+}
+
+/// A patch policy (0.32): approved once by two people on the approval
+/// signer's roster, after which the signer — not the portal — signs each ring
+/// plan that falls inside it. This row is the portal's mirror: the signer's
+/// copy, its ledger and its revocation are what decide.
+model PatchPolicy {
+  /// The policy id in the signed document (32 hex).
+  id              String            @id
+  tenantId        String?
+  customerId      String
+  customer        Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  name            String
+  /// The exact document the approvers sign (rem0te-patch-policy/1).
+  document        Json
+  digest          String
+  status          PatchPolicyStatus @default(AWAITING_APPROVAL)
+  approvalUrl     String
+  /// [{ name, role, at }] as the signer reports them.
+  approvals       Json?
+  expiresAt       DateTime
+  createdById     String
+  revokedAt       DateTime?
+  revokedById     String?
+  revokeReason    String?
+  /// When the signer confirmed the revocation. Null with revokedAt set means
+  /// the portal has stopped proposing and the sweep keeps asking the signer.
+  signerRevokedAt DateTime?
+  /// The sweep's last attempt: { at, windowKey, ok, code, message, deploymentId?, ring?, jobId? }.
+  lastProposal    Json?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  deployments     PatchDeployment[]
 
   @@index([customerId, createdAt])
+  @@index([status])
 }
 
 // ─── Containment (v0.28) ─────────────────────────────────────────────────────

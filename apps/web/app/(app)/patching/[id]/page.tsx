@@ -39,7 +39,7 @@ interface Ring {
   computers: Computer[];
 }
 interface Deployment {
-  id: string; name: string; businessId: string; status: string; pausedReason: string | null;
+  id: string; name: string; businessId: string; origin: 'DEPLOYMENT' | 'MANUAL' | 'POLICY'; policyId: string | null; status: string; pausedReason: string | null;
   soakHours: number; failureThreshold: number; windowHours: number; createdAt: string;
   updates: { updateId: string; revision: number; kb: string | null; title: string; className: string | null; severity: string | null }[];
   next: { ring: number | null; canRequest: boolean; why: string };
@@ -117,7 +117,13 @@ export default function DeploymentPage() {
         <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Next</CardTitle></CardHeader>
         <CardContent className="space-y-3 text-sm">
           <p>{d.next.why}</p>
-          {d.next.canRequest && nextRing && (
+          {d.origin === 'POLICY' && d.policyId && (
+            <p className="text-xs text-muted-foreground">
+              This deployment belongs to <Link className="underline" href={`/patching/policies/${d.policyId}`}>a patch policy</Link>: its rings are requested by the policy inside its maintenance window and signed by the approval signer only if they fall inside it. Pause or cancel it here, or revoke the policy.
+            </p>
+          )}
+          {d.origin === 'MANUAL' && <p className="text-xs text-muted-foreground">Requested from one computer&apos;s Patches tab: a single canary ring, approved like any other.</p>}
+          {d.next.canRequest && nextRing && d.origin !== 'POLICY' && (
             <>
               <p className="text-xs text-muted-foreground">
                 Requests {nextRing.canary ? 'the canary' : `ring ${nextRing.ring}`} ({nextRing.computers.length} computer{nextRing.computers.length === 1 ? '' : 's'}) as one signed plan. Two people on the approval roster must approve it with a passkey; you cannot approve your own request. Computers are never restarted.

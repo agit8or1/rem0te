@@ -373,11 +373,13 @@ check(
 {
   const signerDir = 'apps/api/src/approval-signer';
   const signerFiles = readdirSync(join(ROOT, signerDir)).filter((f) => f.endsWith('.ts')).map((f) => `${signerDir}/${f}`);
-  const ALLOWED_IMPORT = /^(node:|crypto$|\.\/|@simplewebauthn\/server$|zod$|\.\.\/actions\/catalog$|\.\.\/integration\/crypto$)/;
+  const ALLOWED_IMPORT = /^(node:|crypto$|\.\/|@simplewebauthn\/server$|zod$|\.\.\/actions\/catalog$|\.\.\/actions\/patch-policy$|\.\.\/integration\/crypto$)/;
   const importsOf = (src) => [...src.matchAll(/(?:from|require\()\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
   const bad = [];
-  for (const f of [...signerFiles, 'apps/api/src/actions/catalog.ts', 'apps/api/src/integration/crypto.ts']) {
-    const own = f.startsWith(signerDir) ? ALLOWED_IMPORT : /^(node:|crypto$|zod$|\.\/crypto$|\.\.\/integration\/crypto$)/;
+  // 0.32: the patch-policy evaluator (and the posture module it judges with)
+  // run inside the signer, so they are held to the same rule.
+  for (const f of [...signerFiles, 'apps/api/src/actions/catalog.ts', 'apps/api/src/integration/crypto.ts', 'apps/api/src/actions/patch-policy.ts', 'apps/api/src/patching/posture.ts']) {
+    const own = f.startsWith(signerDir) ? ALLOWED_IMPORT : /^(node:|crypto$|zod$|\.\/crypto$|\.\/catalog$|\.\.\/actions\/catalog$|\.\.\/patching\/posture$|\.\.\/integration\/crypto$)/;
     for (const i of importsOf(read(f))) if (!own.test(i)) bad.push(`${f} imports ${i}`);
   }
   check('approval signer loads no Nest, Prisma or portal module', signerFiles.length >= 4 && bad.length === 0,
@@ -471,9 +473,13 @@ check(
 //     approved or promoted past its canary by the portal alone.
 {
   const upd = read('tools/windows-installer/internal/action/updates.go');
-  check('agent update params are closed: exactly updates + reboot "never", each {updateId, revision}',
-    /len\(p\) != 2 \|\| p\["reboot"\] != "never"/.test(upd) && /!ok \|\| len\(m\) != 2/.test(upd),
-    'the update action must not accept any other parameter');
+  // 0.32 adds an optional "allow" filter (a patch policy's classes, severities
+  // and excluded KBs). It can only narrow: closed keys, fixed values.
+  check('agent update params are closed: exactly updates + reboot "never" (+ optional allow), each {updateId, revision}',
+    /want := 2\s*if hasAllow \{\s*want = 3\s*\}\s*if len\(p\) != want \|\| p\["reboot"\] != "never"/.test(upd) && /!ok \|\| len\(m\) != 2/.test(upd)
+      && /if k != "classifications" && k != "severities" && k != "excludeKbs" \{\s*return nil, paramErr/.test(upd)
+      && /_, ok := patch\.Installable\[s\]; return ok/.test(upd),
+    'the update action must not accept any other parameter, and allow may only narrow');
   const goCat = read('tools/windows-installer/internal/action/catalog.go');
   const updEntry = goCat.slice(goCat.indexOf('ID: "windows.update.install"'));
   check('agent update risk is always high, whatever the device', /Risk:\s*func\([^)]*\) string \{\s*return "high"\s*\}/.test(updEntry),
@@ -492,8 +498,10 @@ check(
   const pctl = read('apps/api/src/patching/patching.controller.ts');
   check('the patching API has no approve or sign route', !/@(?:Get|Post|Put|Patch|Delete)\('[^']*(approv|sign)/i.test(pctl), 'approval happens on the approval signer only');
   const psvc = read('apps/api/src/patching/patching.service.ts');
+  // 0.32: the gate moved to actions/patch-policy.ts so the signer runs the same rule.
+  const gateSrc = read('apps/api/src/actions/patch-policy.ts');
   check('the canary gate requires every update effective, and a ring over threshold is retried, never promoted past',
-    /reason: 'canary_not_effective'/.test(psvc) && /g\.reason === 'too_many_failures'\) return \{ ring: i, canRequest: true/.test(psvc),
+    /reason: 'canary_not_effective'/.test(gateSrc) && /return evaluateRingGate\(/.test(psvc) && /g\.reason === 'too_many_failures'\) return \{ ring: i, canRequest: true/.test(psvc),
     'promotion must be gated on the canary and on the failure threshold');
   const asvc = read('apps/api/src/actions/actions.service.ts');
   check('updates cannot be requested one computer at a time, around the deployment', /ACTION_NOT_DIRECT/.test(asvc) && /direct: false/.test(read('apps/api/src/actions/catalog.ts')),
@@ -913,6 +921,76 @@ check(
       && /await this\.refuseOnLinux\(id, /.test(fn('requestEventLog'))
       && /!isLinuxPlatform\(n\.endpoint\?\.platform\)/.test(read('apps/api/src/admin/update.service.ts')),
     'rotation, reinstall, event-log query and one-click client update must refuse or skip Linux');
+}
+
+// 25. Patch policies and installing from the Patches tab (0.32). A policy is
+//     approved once, on the signer, by two people; after that the signer —
+//     never the portal — signs each ring plan, and only inside the policy.
+//     Manual installs are one-computer deployments that still need two
+//     approvals. (§19 and §20 were taken by 0.30.1 and 0.31.)
+{
+  const pctl = read('apps/api/src/patching/patching.controller.ts');
+  const psvc = read('apps/api/src/patching/patching.service.ts');
+  const proutes = [...pctl.matchAll(/@(?:Get|Post|Put|Patch|Delete)\('([^']*)'\)/g)].map((m) => m[1]);
+  check('the patching API has no route that approves or signs a policy or a plan',
+    proutes.includes('patching/policies') && !proutes.some((r) => /approv|sign|activate|unrevoke|reinstate/i.test(r)),
+    `patching routes: ${proutes.join(', ')}`);
+  const sigClient = read('apps/api/src/actions/signer.client.ts').replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, '');
+  check('the portal\'s signer client cannot approve, sign or un-revoke a policy',
+    /submitUnderPolicy\(/.test(sigClient) && !/\/(approve|decide|challenge|unrevoke|restore)\b/.test(sigClient),
+    'only propose, read, revoke and submit-under-policy');
+  const at = (src, marker, n) => src.slice(src.indexOf(marker), src.indexOf(marker) + n);
+  const createFn = at(pctl, "@Post('patching/policies')", 400);
+  const revokeFn = at(pctl, "@Post('patching/policies/:id/revoke')", 400);
+  check('creating or revoking a policy needs fresh authentication',
+    /this\.fresh\(req\)/.test(createFn) && /this\.fresh\(req\)/.test(revokeFn) && /assertFresh\(/.test(pctl),
+    'POST patching/policies and patching/policies/:id/revoke must call assertFresh');
+  const core = read('apps/api/src/approval-signer/core.ts');
+  const sun = at(core, 'export function signUnderPolicy(', 1800);
+  check('the signer signs under a policy only after the pure evaluator accepts the plan',
+    /const decision: PolicyDecision = evaluatePolicyPlan\(/.test(sun) && /if \(!decision\.ok\) throw new Refused\(decision\.code/.test(sun) && sun.indexOf('evaluatePolicyPlan(') < sun.indexOf('signJob(job'),
+    'signUnderPolicy must evaluate, and refuse, before signJob');
+  const ev = read('apps/api/src/actions/patch-policy.ts');
+  const evFn = ev.slice(ev.indexOf('export function evaluatePolicyPlan('));
+  const need = ['policy_revoked', 'policy_signature_invalid', 'policy_digest_mismatch', 'policy_expired', 'policy_not_approved', 'computer_not_in_policy', 'class_not_allowed', 'kb_excluded', 'filter_mismatch', 'outside_window', 'ring_out_of_order', 'reboot_not_allowed', 'evidence_mismatch'];
+  const missing = need.filter((c) => !evFn.includes(`'${c}'`) && !ev.includes(`'${c}'`));
+  check('the policy evaluator refuses out-of-policy plans (computers, classes, KBs, window, ring order, expiry, revocation, digest)',
+    missing.length === 0 && /evaluateRingGate\(\{/.test(evFn) && /canary_not_effective/.test(evFn) && !/from '@nestjs|from '@prisma\/client'/.test(ev),
+    `missing refusals: ${missing.join(', ')}`);
+  check('the canary needs no evidence and a later ring needs the previous ring signed by this signer',
+    /if \(ring === 0\) \{\s*if \(r\.evidence\) return no\('bad_evidence'/.test(evFn) && /if \(!prev\) return no\('ring_out_of_order'/.test(evFn),
+    'ring order comes from the signer\'s own ledger');
+  const store = read('apps/api/src/approval-signer/store.ts');
+  check('a revocation is a write-once file on the signer, merged on every read',
+    /revokePatchPolicy\([\s\S]{0,600}'wx'/.test(store) && /patchPolicy\(id: string\)[\s\S]{0,600}revocations/.test(store),
+    'revocations/<id>.json, created with wx, never rewritten');
+  const srv = read('apps/api/src/approval-signer/server.ts');
+  check('the signer refuses policy plans and new policies while paused',
+    /async function internalPolicy[\s\S]{0,900}assertNotPaused\(doc\.businessId\)/.test(srv) && /assertNotPaused\(r\.doc\.businessId\);\s*const existing = jobId/.test(srv),
+    'propose and plans must consult the pause');
+  const pol = read('apps/api/src/patching/policies.service.ts');
+  check('the policy sweep can be switched off (PATCH_POLICY_SWEEP=off), and never runs twice at once',
+    /static sweepEnabled\(\) \{ return process\.env\.PATCH_POLICY_SWEEP !== 'off'; \}/.test(pol) && /onModuleInit\(\) \{\s*if \(!PatchPolicyService\.sweepEnabled\(\)\) return;/.test(pol) && /if \(this\.busy\) return;/.test(pol),
+    'onModuleInit must return before scheduling when the sweep is off');
+  check('the sweep proposes once per window (unique policy + window) and consults containment',
+    /@@unique\(\[policyId, windowKey\]\)/.test(read('apps/api/prisma/schema.prisma')) && /containment\.blocking\('actions', r\.customerId\)/.test(pol) && /e\.code === 'P2002'/.test(pol),
+    'PatchDeployment(policyId, windowKey) must be unique and the sweep must check the pause');
+  check('e2e and docs stacks run with the sweep off unless testing it',
+    /export PATCH_POLICY_SWEEP=off/.test(read('scripts/run-e2e.sh')) && /PATCH_POLICY_SWEEP=off/.test(read('docs/screenshots.md')),
+    'scripts/run-e2e.sh and the docs stack (docs/screenshots.md) must set PATCH_POLICY_SWEEP=off');
+  const ins = at(psvc, 'async installOnEndpoint(', 1800);
+  check('a manual install is a one-computer deployment whose canary still awaits two approvals',
+    /rings: \[\[endpointId\]\]/.test(ins) && /'MANUAL', null\)/.test(ins) && /this\.requestRing\(actor, d\.id, 0, \{ reason: dto\.reason, startsInMinutes: dto\.startsInMinutes \}\);/.test(ins) && !/underPolicy|UnderPolicy/.test(ins),
+    'installOnEndpoint must not pass a policy (which would sign without approvals)');
+  check('only the sweep requests a ring under a policy, and a person cannot request one beside it',
+    /if \(!under && d\.origin === 'POLICY'\) throw new ConflictException/.test(psvc) && (pctl.match(/requestRing\(/g) ?? []).length === 2
+      && /this\.patching\.requestRing\(actor, id, Number\(ring\), body\) \}/.test(pctl),
+    'the controller must never pass an UnderPolicy');
+  check('ACTION_NOT_DIRECT still holds for updates',
+    /ACTION_NOT_DIRECT/.test(read('apps/api/src/actions/actions.service.ts')) && /direct: false/.test(read('apps/api/src/actions/catalog.ts')),
+    'POST /endpoints/:id/actions must refuse windows.update.install');
+  check('a policy can never restart a computer in this release', /reboot: z\.literal\('never'\)/.test(ev) && /reboot: z\.literal\('never'\)/.test(pol),
+    'a reboot rule is a §15 change to the agent\'s closed params');
 }
 
 if (failures.length > 0) {
