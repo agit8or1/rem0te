@@ -261,9 +261,11 @@ export class EndpointsService {
    */
   private async assertGroupFor(groupId: string, businessId: string, tenantId: string) {
     const g = await this.prisma.endpointGroup.findFirst({
-      where: { id: groupId, OR: [{ customerId: businessId }, { customerId: null, tenantId }] }, select: { id: true },
+      where: { id: groupId, OR: [{ customerId: businessId }, { customerId: null, tenantId }] }, select: { id: true, kind: true },
     });
     if (!g) throw new BadRequestException('Unknown device group for this business');
+    // 0.34: a rule group's members follow its rule; nothing joins one by hand.
+    if (g.kind === 'RULE') throw new BadRequestException({ code: 'RULE_GROUP', message: 'That is a rule group: a computer is in it when it matches the rule, so it cannot be put in one.' });
   }
 
   async create(actor: ActorContext, dto: CreateEndpointDto & { businessId?: string }) {

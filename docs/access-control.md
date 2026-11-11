@@ -112,6 +112,16 @@ Three rules that are easy to assume the other way round:
   a Platform Admin, or re-enrolled with a token of another business — leaves every group of the
   old business in the same statement (a second trigger); the move's audit entry lists them.
   Membership grants nothing.
+- **A rule group's members are computed as the reader, never stored** (0.34). Its rule is the
+  device list's own filters, AND-ed with the group's business AND-ed with the reader's own
+  visibility, every time it is read — so a Business User sees only their computers in it, a
+  technician only the ones their grant names, and another business's rule group lists nothing and
+  is a 404 to edit or act on. A rule that selects by alerts is not evaluated for a reader without
+  `monitoring:alerts` (filtering by it is a 403: membership would disclose alert state). A rule's
+  values reach the database only as bound parameters. Nothing adds a computer to a rule group by
+  hand — the service refuses it and a trigger refuses the row — and a group's kind cannot change.
+  Bulk on a rule group resolves its members at request time as the caller, then runs each
+  computer's own checks.
 - **Making a computer company-wide needs `users:manage`**, the capability that grants access to one
   person, because it grants access to everyone in the business at once.
 - **`support:history_view` reads sessions; it never changes them.** Completing, cancelling or

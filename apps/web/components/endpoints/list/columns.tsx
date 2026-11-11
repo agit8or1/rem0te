@@ -78,7 +78,10 @@ export const COLUMNS: ColumnDef[] = [
     id: 'group', label: 'Groups', defaultOn: false,
     cell: (r) => (r.groups.length === 0 ? dash : (
       <div className="flex flex-wrap gap-1 max-w-[220px]" title={r.groups.map((g) => g.name).join(', ')}>
-        {r.groups.map((g) => <Badge key={g.id} variant="secondary" className="text-[10px] font-normal">{g.name}</Badge>)}
+        {r.groups.map((g) => (
+          <Badge key={g.id} variant={g.kind === 'rule' ? 'outline' : 'secondary'} className="text-[10px] font-normal"
+            title={g.kind === 'rule' ? 'Rule group: in it because it matches the rule now' : undefined}>{g.name}</Badge>
+        ))}
       </div>
     )),
   },

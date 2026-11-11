@@ -293,6 +293,14 @@ const SECTIONS: Section[] = [
           same people who may share views, and every change is audited.
         </p>
         <p>
+          A <strong className="text-foreground">rule group</strong> (Views → Save filters as a rule group…) holds
+          whichever computers of its business match the current filters — online, platform, site, tag, updates,
+          alerts, RustDesk version range, last seen (More filters) — worked out each time it is read, so a computer
+          that goes offline leaves an &ldquo;online&rdquo; group at once. Nobody adds to it by hand. Everyone sees only
+          the members they can already see, and a rule on alerts needs the monitoring:alerts permission. Filtered by
+          a rule group, the bulk bar acts on its current members (at most 200).
+        </p>
+        <p>
           <strong className="text-foreground">Tick rows</strong> to act on up to 200 devices at once: add to or remove
           from a group, refresh inventory, queue a RustDesk client update (Platform Admin), or export the selection.
           Each device is checked on its own exactly as if you had done it to that one device, and the result lists

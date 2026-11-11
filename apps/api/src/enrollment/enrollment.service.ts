@@ -142,9 +142,11 @@ export class EnrollmentService {
       // same tenant (0.33: a group holds only its own business's computers).
       const group = await this.prisma.endpointGroup.findFirst({
         where: { id: dto.endpointGroupId, OR: [{ customerId: businessId }, { customerId: null, tenantId: business.tenantId }] },
-        select: { id: true },
+        select: { id: true, kind: true },
       });
       if (!group) throw new BadRequestException('Unknown computer group');
+      // 0.34: a claim adds a membership row, which a rule group never has.
+      if (group.kind === 'RULE') throw new BadRequestException({ code: 'RULE_GROUP', message: 'That is a rule group: a new computer is in it when it matches the rule. Pick a static group, or none.' });
     }
 
     // The site, like the business, is fixed now. It must be an active site of
@@ -407,7 +409,10 @@ export class EnrollmentService {
     // keeps its other groups in the same business.
     const groupId = record.endpointGroupId
       ? (await this.prisma.endpointGroup.findFirst({
-          where: { id: record.endpointGroupId, OR: [{ customerId: record.customerId ?? '__none__' }, { customerId: null, tenantId: record.tenantId }] },
+          // kind STATIC: a token can never name a rule group (refused when it
+          // was made, and a group's kind never changes), but the claim must
+          // not depend on that — the 0053 trigger would fail the install.
+          where: { id: record.endpointGroupId, kind: 'STATIC', OR: [{ customerId: record.customerId ?? '__none__' }, { customerId: null, tenantId: record.tenantId }] },
           select: { id: true },
         }))?.id ?? null
       : null;

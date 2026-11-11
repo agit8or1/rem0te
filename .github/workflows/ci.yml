@@ -185,6 +185,13 @@ jobs:
       - name: Device views tests
         run: node apps/api/scripts/unit-device-views.mjs
 
+      # Rule-based device groups (0.34): a rule is the list's own closed
+      # filters — round-trip, refusal of unknown and refused keys and of any
+      # value the list refuses, an unreadable rule matching nothing, numeric
+      # version comparison, and bulk's endpointIds XOR targetGroupId.
+      - name: Dynamic group tests
+        run: node apps/api/scripts/unit-dynamic-groups.mjs
+
       # Metric history (0.33): samples from heartbeat values, the hourly
       # roll-up, which hours a pass rolls, retention caps and gap detection.
       - name: Metric history tests

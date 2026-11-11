@@ -2,7 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { z } from 'zod';
 import { isOwnerRole, CAP } from '../rbac/capabilities';
 import type { ActorContext } from '../rbac/access-control.service';
-import { LIST_FILTER_KEYS, parseListQuery, SORT_KEYS } from '../endpoints/list-query';
+import { LIST_FILTER_KEYS, parseListFilters, SORT_KEYS, storedForm } from '../endpoints/list-query';
 import { PLATFORM_PERM } from '../rbac/platform-permissions';
 
 /**
@@ -99,17 +99,7 @@ export function normalizeViewFilters(raw: Record<string, unknown>): StoredFilter
     else if (typeof v === 'string') asQuery[k] = v;
     else throw bad('INVALID_VIEW', `${k} must be a string`);
   }
-  const q = parseListQuery(asQuery);
-  const out: StoredFilters = {};
-  if (q.search) out.search = q.search;
-  if (q.businessId) out.businessId = q.businessId;
-  if (q.siteId) out.siteId = q.siteId;
-  if (q.online) out.online = q.online;
-  if (q.alerts) out.alerts = q.alerts;
-  if (q.restartPending) out.restartPending = true;
-  if (q.agent) out.agent = q.agent;
-  if (q.status && q.status !== 'current') out.status = q.status;
-  if (q.groupId) out.groupId = q.groupId;
+  const out: StoredFilters = storedForm(parseListFilters(asQuery));
   for (const k of ['businessId', 'siteId', 'groupId'] as const) {
     if (out[k] !== undefined && !ID.test(String(out[k]))) throw bad('INVALID_VIEW', `${k} is not an id`);
   }
@@ -128,10 +118,17 @@ export type BulkAction = (typeof BULK_ACTIONS)[number];
 
 const BulkBody = z.object({
   action: z.enum(BULK_ACTIONS),
-  endpointIds: z.array(z.string().regex(ID)).min(1),
+  endpointIds: z.array(z.string().regex(ID)).min(1).optional(),
+  /** The destination of group.add / group.remove. */
   groupId: z.string().regex(ID).optional(),
+  /**
+   * 0.34: act on a group's members instead of a selection — resolved by the
+   * server at request time as the caller sees them (a rule group's rule is
+   * evaluated then), capped at BULK_MAX like a selection.
+   */
+  targetGroupId: z.string().regex(ID).optional(),
 }).strict();
-export type BulkInput = { action: BulkAction; endpointIds: string[]; groupId?: string };
+export type BulkInput = { action: BulkAction; endpointIds?: string[]; groupId?: string; targetGroupId?: string };
 
 /** The selection, de-duplicated (order kept) and capped. Over the cap is a 400 naming it, never a silent truncation. */
 export function parseSelection(ids: unknown): string[] {
@@ -143,13 +140,16 @@ export function parseSelection(ids: unknown): string[] {
 
 export function parseBulk(raw: unknown): BulkInput {
   const body = (raw ?? {}) as Record<string, unknown>;
+  const byGroup = body.targetGroupId !== undefined;
+  if (byGroup && body.endpointIds !== undefined) throw bad('INVALID_REQUEST', 'Name either endpointIds or targetGroupId, not both');
   // The cap is checked before the schema so its refusal says what it is.
-  const endpointIds = parseSelection(body.endpointIds);
+  const endpointIds = byGroup ? undefined : parseSelection(body.endpointIds);
   const p = BulkBody.safeParse({ ...body, endpointIds });
   if (!p.success) throw bad('INVALID_REQUEST', p.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '));
   const groupAction = p.data.action === 'group.add' || p.data.action === 'group.remove';
   if (groupAction && !p.data.groupId) throw bad('INVALID_REQUEST', 'groupId is required for a group action');
   if (!groupAction && p.data.groupId) throw bad('INVALID_REQUEST', 'groupId applies only to group actions');
+  if (groupAction && p.data.targetGroupId && p.data.targetGroupId === p.data.groupId) throw bad('INVALID_REQUEST', 'A group cannot be its own target');
   return p.data;
 }
 

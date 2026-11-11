@@ -53,6 +53,12 @@ enum UpdateRequestSource {
   POLICY
 }
 
+/// A device group's kind (0.34): a hand-kept list, or a rule over the device list's filters.
+enum EndpointGroupKind {
+  STATIC
+  RULE
+}
+
 enum EndpointStatus {
   ACTIVE
   OFFLINE
@@ -764,6 +770,14 @@ model EndpointGroup {
   name        String
   description String?
   createdById String?
+  // 0.34: STATIC groups hold EndpointGroupMember rows; a RULE group never
+  // does (trigger, migration 0053) — its members are computed on every read
+  // from `rule` AND-ed with the business and the reader's visibility. `rule`
+  // is the device list's own filter parameters, validated by parseRule()
+  // (device-views/group-rule.ts); never SQL or free text. `kind` is fixed at
+  // creation (trigger); `rule` is set exactly when kind = RULE (CHECK).
+  kind        EndpointGroupKind @default(STATIC)
+  rule        Json?
 
   members EndpointGroupMember[]
 
@@ -774,6 +788,7 @@ model EndpointGroup {
   // pre-0.33 groups (no business) are not constrained by it.
   @@unique([customerId, name])
   @@index([tenantId])
+  @@index([customerId, kind])
 }
 
 // One computer in one device group (0.34). Two triggers in migration 0049

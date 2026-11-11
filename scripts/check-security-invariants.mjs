@@ -1138,7 +1138,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     check('search: GET /businesses, GET /endpoints and the device list escape LIKE metacharacters in a search',
       /const term = params\.search \? likeEscape\(params\.search\) : undefined;/.test(eps) && !/contains: params\.search/.test(eps)
         && (term.match(/contains: term,/g) ?? []).length === 6
-        && /const c = \{ contains: likeEscape\(q\.search\), mode: 'insensitive' as const \};/.test(lst) && !/contains: q\.search/.test(lst)
+        && /const c = \{ contains: likeEscape\(f\.search\), mode: 'insensitive' as const \};/.test(lst) && /const c = \{ contains: likeEscape\(f\.os\), mode: 'insensitive' as const \};/.test(lst)
+        && !/contains: [qf]\.(search|os)/.test(lst)
         && [eps, lst, read('apps/api/src/businesses/businesses.service.ts')].every((src) => /import \{ likeEscape \} from '\.\.\/common\/like';/.test(src)),
       'every user-typed contains: on those routes must go through common/like.ts likeEscape');
   }
@@ -1198,7 +1199,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('bulk: at most 200 per request, counted before de-duplication, for the export too',
     /export const BULK_MAX = 200;/.test(rules)
       && /if \(ids\.length > BULK_MAX\) throw bad\('BULK_TOO_LARGE'/.test(rules) && rules.indexOf('ids.length > BULK_MAX') < rules.indexOf('[...new Set(ids as string[])]')
-      && /const endpointIds = parseSelection\(body\.endpointIds\);/.test(rules) && /const ids = parseSelection\(body\.endpointIds\);/.test(bulkSvc),
+      && /const endpointIds = byGroup \? undefined : parseSelection\(body\.endpointIds\);/.test(rules) && /const ids = parseSelection\(body\.endpointIds\);/.test(bulkSvc),
     'parseSelection must cap the raw list; parseBulk and exportSelection must both use it');
   check('bulk: every computer is found through the visibility rule, AND-ed, and anything else is NOT_FOUND',
     /where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(a\), \{ id: \{ in: ids \} \}\] \}/.test(bulkSvc)
@@ -1225,7 +1226,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /if \(a\.businessId !== customerId\) return [^;]+;\s*if \(isOwnerRole\(a\.roleType\)\) return null;\s*return '[^']+';\s*\}/.test(refusal),
     'manageRefusal must mirror the client-update rule');
   check('groups: every write checks manageRefusal first, and a member must be in the group’s business',
-    /async create\(a: ActorContext, raw: unknown\) \{[\s\S]{0,400}const why = manageRefusal\(a, customerId\);\s*if \(why\) throw new ForbiddenException/.test(groupSvc)
+    /async create\(a: ActorContext, raw: unknown\) \{[\s\S]{0,900}const why = manageRefusal\(a, customerId\);\s*if \(why\) throw new ForbiddenException/.test(groupSvc)
       && /const g = await this\.findManageable\(a, id\);/.test(groupSvc.slice(groupSvc.indexOf('async update('))) && /const g = await this\.findManageable\(a, id\);/.test(groupSvc.slice(groupSvc.indexOf('async remove(')))
       && /const why = manageRefusal\(a, g\.customerId\);/.test(bulkSvc)
       && /const step = membershipStep\(action, t, group, members\.has\(t\.id\), why\);\s*if \(step\.kind === 'refuse'\)/.test(bulkSvc)
@@ -1251,10 +1252,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     `routes: ${views.join(', ')}`);
   check('views store list parameters only, parsed by the list’s own parser; nothing in the view service reads computers',
     /const unknown = Object\.keys\(raw\)\.filter\(\(k\) => !\(LIST_FILTER_KEYS as readonly string\[\]\)\.includes\(k\)\);\s*if \(unknown\.length\) throw bad/.test(rules)
-      && /const q = parseListQuery\(asQuery\);/.test(rules)
+      && /const out: StoredFilters = storedForm\(parseListFilters\(asQuery\)\);/.test(rules)
       && /export const ViewUpdate = z\.object\(viewFields\)\.partial\(\)\.strict\(\);/.test(rules) && !/shared|businessId/.test(rules.slice(rules.indexOf('const viewFields = {'), rules.indexOf('export const ViewInput')))
       && !/this\.prisma\.endpoint\./.test(viewSvc) && /if \(f\.businessId && f\.businessId !== customerId\) \{/.test(viewSvc),
-    'normalizeViewFilters must refuse unknown keys and use parseListQuery; updates cannot change who a view is for; shared filters stay in the business');
+    'normalizeViewFilters must refuse unknown keys and use the list’s parseListFilters; updates cannot change who a view is for; shared filters stay in the business');
   check('a personal view is its author’s alone; a shared view is its business’s',
     /if \(!v\.shared\) \{\s*if \(v\.userId !== a\.userId\) throw new NotFoundException/.test(viewSvc)
       && /if \(!v\.customerId \|\| !\(a\.isPlatformAdmin \|\| v\.customerId === a\.businessId\)\) throw new NotFoundException/.test(viewSvc)
@@ -1268,7 +1269,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     ['DEVICE_GROUP_CREATED', 'DEVICE_GROUP_UPDATED', 'DEVICE_GROUP_DELETED'].every((x) => groupSvc.includes(`action: '${x}'`))
       && bulkSvc.includes("action: 'DEVICE_GROUP_MEMBERS_CHANGED'") && bulkSvc.includes("action: 'DEVICE_BULK_ACTION'") && viewSvc.includes("action: 'DEVICE_VIEW_SHARED_CHANGED'")
       && /if \(v\.shared\) await this\.auditShared\(a, v, 'created', null\);/.test(viewSvc) && /if \(v\.shared\) await this\.auditShared\(a, v, 'updated', before\);/.test(viewSvc) && /if \(v\.shared\) await this\.auditShared\(a, v, 'deleted', v\);/.test(viewSvc)
-      && /await this\.auditBulk\(a, input\.action, targets, ordered, group\);/.test(bulkSvc),
+      && /await this\.auditBulk\(a, input\.action, targets, ordered, group, target\);/.test(bulkSvc),
     'every write path must write its audit entry');
 }
 
@@ -1514,7 +1515,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     `writers: ${memberWriters.join(', ')} — a new path must check the business (and rely on the trigger)`);
   const listSvc = read('apps/api/src/endpoints/endpoint-list.service.ts');
   check('the group filter and facet stay inside the caller’s visibility',
-    /if \(q\.groupId\) and\.push\(\{ groupMemberships: \{ some: \{ endpointGroupId: q\.groupId \} \} \}\);/.test(listSvc)
+    /\} else if \(q\.groupId\) \{\s*and\.push\(\{ groupMemberships: \{ some: \{ endpointGroupId: q\.groupId \} \} \}\);/.test(listSvc)
       && /this\.prisma\.endpointGroupMember\.groupBy\(\{ by: \['endpointGroupId'\], where: \{ endpoint: scoped \}/.test(listSvc)
       && /const scoped = this\.scopedWhere\(actor, \{ status: q\.status \}\);/.test(listSvc)
       && /where: \{ endpointGroupId: \{ in: groups\.map\(\(g\) => g\.id\) \}, endpoint: \{ AND: \[this\.acl\.endpointVisibilityWhere\(a, scope\),/.test(read('apps/api/src/device-views/device-groups.service.ts')),
@@ -1522,6 +1523,105 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('the API key and device-group suites run in CI',
     /\benrol-stepup\b/.test(read('scripts/run-e2e.sh')) && /\bdevice-views\b/.test(read('scripts/run-e2e.sh')) && /unit-device-views\.mjs/.test(read('.github/workflows/ci.yml')),
     'run-e2e.sh must run enrol-stepup and device-views; ci.yml unit-device-views');
+}
+
+// 34. Rule-based device groups (0.34). A rule group's members are computed on
+//     every read, never stored: the rule (the device list's own closed
+//     filters, parsed by the list's own parser) AND the group's business AND
+//     the reader's visibility, through scopedWhere. A rule's values reach SQL
+//     only as bound parameters. Nothing — bulk, an enrolment token, a claim,
+//     endpoint creation, or a direct insert (0053 trigger) — adds a computer
+//     to a rule group, and a group's kind never changes. A rule that reads
+//     alerts is not evaluated for a reader who may not see alerts. Bulk on a
+//     group resolves membership at request time, as the caller, capped, and
+//     then takes the ordinary per-computer path. Edits carry the rule before
+//     and after in the audit.
+{
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const gr = read('apps/api/src/device-views/group-rule.ts');
+  const lq = read('apps/api/src/endpoints/list-query.ts');
+  const listSvc = read('apps/api/src/endpoints/endpoint-list.service.ts');
+  const groupSvc = read('apps/api/src/device-views/device-groups.service.ts');
+  const bulkSvc = read('apps/api/src/device-views/device-bulk.service.ts');
+  const mig = read('apps/api/prisma/migrations/0053_dynamic_device_groups/migration.sql').replace(/--.*$/gm, '');
+  const ruleKeys = (gr.match(/export const RULE_KEYS = \[([\s\S]*?)\] as const/) ?? [])[1] ?? '';
+  const listKeys = (lq.match(/export const LIST_FILTER_KEYS = \[([\s\S]*?)\] as const/) ?? [])[1] ?? '';
+  const keysOf = (x) => [...x.matchAll(/'([a-zA-Z]+)'/g)].map((m) => m[1]);
+  const parseFn = gr.slice(gr.indexOf('export function parseRule('), gr.indexOf('export function ruleFilters('));
+  check('a rule is closed: only list filters, never search/businessId/groupId/status, unknown keys refused, parsed by the list’s parser, never empty',
+    keysOf(ruleKeys).length >= 10 && keysOf(ruleKeys).every((k) => keysOf(listKeys).includes(k))
+      && !['search', 'businessId', 'groupId', 'status'].some((k) => keysOf(ruleKeys).includes(k))
+      && /const refused = keys\.filter\(\(k\) => k in RULE_REFUSED\);\s*if \(refused\.length\) throw bad/.test(parseFn)
+      && /const unknown = keys\.filter\(\(k\) => !\(RULE_KEYS as readonly string\[\]\)\.includes\(k\)\);\s*if \(unknown\.length\) throw bad/.test(parseFn)
+      && /f = parseListFilters\(asQuery\);/.test(parseFn) && /if \(!Object\.keys\(out\)\.length\) throw bad\('A rule needs at least one condition\.'\);/.test(parseFn)
+      && /if \(groupRule|groupRule:/.test(strip(lq.slice(lq.indexOf('export function parseListFilters(')))) === false,
+    'RULE_KEYS ⊆ LIST_FILTER_KEYS minus search/businessId/groupId/status; parseRule refuses refused and unknown keys, parses with parseListFilters, refuses an empty rule; no parser reads groupRule from a request');
+  const derived = listSvc.slice(listSvc.indexOf('private derivedConds('), listSvc.indexOf('private filteredWhere('));
+  const rawUses = walk('apps/api/src').filter((f) => /\$queryRawUnsafe|\$executeRawUnsafe/.test(strip(read(f))) && /device-views|endpoint-list|list-query/.test(f));
+  check('a rule never becomes SQL text: bound parameters only, one whitelisted Prisma.raw, no unsafe raw query',
+    rawUses.length === 0 && (strip(listSvc).match(/Prisma\.raw\(/g) ?? []).length === 1
+      && /return Prisma\.raw\(`\$\{expr\[sort\]\}/.test(listSvc)
+      && derived.split('\n').filter((l) => /out\.push\(/.test(l)).every((l) => /out\.push\(Prisma\.sql`[^`]*`\);/.test(l))
+      && !/Prisma\.raw|Unsafe/.test(strip(gr) + strip(groupSvc) + strip(bulkSvc))
+      && /export const OS_TERM = /.test(lq) && /export function isVersion\(/.test(lq),
+    `derivedConds must push only Prisma.sql templates; the only Prisma.raw is orderSql; unsafe raw in: ${rawUses.join(', ')}`);
+  const evalFn = listSvc.slice(listSvc.indexOf('async evaluateRuleGroups('), listSvc.indexOf('private async withRuleGroups('));
+  const fw = listSvc.slice(listSvc.indexOf('private filteredWhere('), listSvc.indexOf('private orderSql('));
+  const wgr = listSvc.slice(listSvc.indexOf('private async withGroupRule('), listSvc.indexOf('async ruleGroupsOf('));
+  check('membership is computed as the reader: scopedWhere AND the group’s business AND the rule; an unreadable rule matches nothing',
+    /const scoped = this\.scopedWhere\(actor, \{ status: opts\.status \}\);/.test(evalFn)
+      && /AND: \[scoped, \{ customerId: g\.customerId \}, \.\.\.this\.filterConds\(g\.rule\)/.test(evalFn)
+      && /if \(!g\.rule\) return \[\];/.test(evalFn)
+      && /const and: Prisma\.EndpointWhereInput\[\] = \[this\.scopedWhere\(actor, q\), \.\.\.this\.filterConds\(q\)\];/.test(fw)
+      && /if \(q\.groupRule\) \{\s*and\.push\(\{ customerId: q\.groupRule\.customerId \}\);\s*\/\/[^\n]*\n\s*and\.push\(\.\.\.\(q\.groupRule\.rule \? this\.filterConds\(q\.groupRule\.rule\) : \[\{ id: \{ in: \[\] \} \}\]\)\);/.test(fw)
+      && /customerId: actor\.isPlatformAdmin \? \{ not: null \} : \(actor\.businessId \?\? '__none__'\)/.test(wgr)
+      && /if \(q\.groupRule\?\.rule\) conds\.push\(\.\.\.this\.derivedConds\(q\.groupRule\.rule\)\);/.test(listSvc)
+      && !/endpointGroupMember\.(create|createMany)/.test(listSvc + groupSvc.slice(groupSvc.indexOf('async create('))),
+    'evaluateRuleGroups and filteredWhere must AND scopedWhere, the business and the rule; withGroupRule only attaches a rule the caller may address');
+  check('a rule on alerts is not evaluated for a reader without monitoring:alerts',
+    /if \(ruleNeedsAlerts\(g\.rule\) && !alerts\.visible\) return null;/.test(evalFn)
+      && /if \(q\.groupRule && ruleNeedsAlerts\(q\.groupRule\.rule\)\) \{\s*throw new ForbiddenException/.test(listSvc)
+      && listSvc.indexOf('const q = await this.withGroupRule(actor, query);\n    this.assertAlertUse(q, alerts);') > 0
+      && /if \(got === null \|\| got === undefined\) throw new ForbiddenException/.test(bulkSvc),
+    'evaluateRuleGroups returns null, the list filter and bulk refuse');
+  const eps = read('apps/api/src/endpoints/endpoints.service.ts');
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const ga = bulkSvc.slice(bulkSvc.indexOf('private async groupAction('), bulkSvc.indexOf('// ── Refresh inventory'));
+  check('nothing adds a computer to a rule group, and a group’s kind never changes',
+    /if \(g\.kind === 'RULE'\) \{\s*throw new BadRequestException\(\{ code: 'RULE_GROUP'/.test(ga) && ga.indexOf("g.kind === 'RULE'") < ga.indexOf('endpointGroupMember.create(')
+      && /if \(g\.kind === 'RULE'\) throw new BadRequestException\(\{ code: 'RULE_GROUP'/.test(eps)
+      && /if \(group\.kind === 'RULE'\) throw new BadRequestException\(\{ code: 'RULE_GROUP'/.test(enr)
+      && /where: \{ id: record\.endpointGroupId, kind: 'STATIC',/.test(enr)
+      && /CREATE TRIGGER endpoint_group_member_static_only\s+BEFORE INSERT OR UPDATE ON "EndpointGroupMember"/.test(mig)
+      && /IF EXISTS \(SELECT 1 FROM "EndpointGroup" WHERE id = NEW\."endpointGroupId" AND "kind" = 'RULE'\) THEN\s+RAISE EXCEPTION/.test(mig)
+      && /CREATE TRIGGER endpoint_group_kind_fixed\s+BEFORE UPDATE OF "kind" ON "EndpointGroup"/.test(mig)
+      && /IF NEW\."kind" IS DISTINCT FROM OLD\."kind" THEN\s+RAISE EXCEPTION/.test(mig)
+      && /CHECK \(\("kind" = 'RULE' AND "rule" IS NOT NULL/.test(mig)
+      && /const GroupUpdate = z\.object\(\{\s*name: GroupInput\.shape\.name,\s*description: GroupInput\.shape\.description,\s*rule: z\.unknown\(\),\s*\}\)\.partial\(\)\.strict\(\);/.test(groupSvc),
+    'bulk group.add/remove, endpoint creation and enrolment tokens refuse RULE groups; the claim takes STATIC only; 0053 has the static-only and kind-fixed triggers and the CHECK; PATCH has no kind');
+  const rt = bulkSvc.slice(bulkSvc.indexOf('private async resolveTarget('), bulkSvc.indexOf('async run('));
+  const run = bulkSvc.slice(bulkSvc.indexOf('async run('), bulkSvc.indexOf('// ── Groups'));
+  check('bulk on a group: resolved now, as the caller, capped, then the ordinary per-computer path',
+    /const g = await this\.groups\.findVisible\(a, groupId\);/.test(rt)
+      && /await this\.list\.evaluateRuleGroups\(a, \[/.test(rt)
+      && /endpoint: \{ AND: \[this\.acl\.endpointVisibilityWhere\(a\), \{ status: \{ not: 'ARCHIVED' \} \}\] \}/.test(rt)
+      && /if \(ids\.length > BULK_MAX\) \{\s*throw new BadRequestException\(\{ code: 'BULK_TOO_LARGE'/.test(rt)
+      && /const input = \{ \.\.\.parsed, endpointIds: target \? target\.ids : parsed\.endpointIds! \};\s*const seen = await this\.visible\(a, input\.endpointIds\);/.test(run)
+      && /if \(byGroup && body\.endpointIds !== undefined\) throw bad/.test(read('apps/api/src/device-views/rules.ts')),
+    'resolveTarget must use findVisible and the list’s evaluation (or visible static members), refuse over BULK_MAX, and feed visible()');
+  const upd = groupSvc.slice(groupSvc.indexOf('async update('), groupSvc.indexOf('async remove('));
+  check('rule groups: same manage rule as static ones, a site from the business, audited with the rule before and after',
+    /const g = await this\.findManageable\(a, id\);/.test(upd) && /await this\.validRule\(d\.rule, g\.customerId\)/.test(upd)
+      && /before: \{ name: g\.name, description: g\.description, \.\.\.\(g\.kind === 'RULE' \? \{ rule: g\.rule \} : \{\}\) \}/.test(upd)
+      && /after: \{ name: after\.name, description: after\.description, \.\.\.\(g\.kind === 'RULE' \? \{ rule: after\.rule \} : \{\}\) \}/.test(upd)
+      && /kind: rule \? 'rule' : 'static', \.\.\.\(rule \? \{ rule \} : \{\}\)/.test(groupSvc)
+      && /where: \{ id: rule\.siteId, customerId \}/.test(groupSvc)
+      && /const rule = d\.kind === 'rule' \? await this\.validRule\(d\.rule, customerId\) : null;/.test(groupSvc)
+      && groupSvc.indexOf('const why = manageRefusal(a, customerId);') < groupSvc.indexOf('const rule = d.kind === \'rule\''),
+    'update must go through findManageable and validRule and audit before/after rule; create audits kind and rule');
+  check('the dynamic-group suites run in CI',
+    /\bdynamic-groups\b/.test(read('scripts/run-e2e.sh')) && /unit-dynamic-groups\.mjs/.test(read('.github/workflows/ci.yml')),
+    'run-e2e.sh must run dynamic-groups; ci.yml unit-dynamic-groups');
 }
 
 if (failures.length > 0) {

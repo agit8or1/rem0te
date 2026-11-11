@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -14,7 +14,8 @@ import { AccessPolicyService } from '../security-controls/access-policy.service'
 import { latestRustdeskVersion } from '../common/rustdesk-release';
 import { BLOCKER, blocker, ROLLOUT_OPEN } from '../client-updates/policy';
 import { DeviceGroupsService } from './device-groups.service';
-import { FleetBudget, manageRefusal, membershipStep, parseBulk, parseSelection, refusalOf, type BulkAction, type BulkResult } from './rules';
+import { ruleFilters } from './group-rule';
+import { BULK_MAX, FleetBudget, manageRefusal, membershipStep, parseBulk, parseSelection, refusalOf, type BulkAction, type BulkResult } from './rules';
 
 type Target = {
   id: string; name: string; customerId: string | null; tenantId: string | null; status: string; isOnline: boolean;
@@ -81,8 +82,38 @@ export class DeviceBulkService {
     return new Map(rows.map((r) => [r.id, r]));
   }
 
+  /**
+   * A group's members as the caller sees them, resolved now (0.34): a static
+   * group's member rows, or a rule group's rule evaluated through the device
+   * list (scopedWhere AND the business AND the rule). Archived computers are
+   * left out, as on the list. More than BULK_MAX is refused, never cut.
+   */
+  private async resolveTarget(a: ActorContext, groupId: string): Promise<{ ids: string[]; group: { id: string; name: string; kind: 'static' | 'rule' } }> {
+    const g = await this.groups.findVisible(a, groupId);
+    let ids: string[];
+    if (g.kind === 'RULE') {
+      if (!g.customerId) throw new BadRequestException({ code: 'LEGACY_GROUP', message: 'This group belongs to no business.' });
+      const m = await this.list.evaluateRuleGroups(a, [{ id: g.id, name: g.name, customerId: g.customerId, rule: ruleFilters(g.rule) }], { status: 'current' });
+      const got = m.get(g.id);
+      if (got === null || got === undefined) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'This rule group selects computers by their alerts, which needs the monitoring:alerts permission.' });
+      ids = got;
+    } else {
+      ids = (await this.prisma.endpointGroupMember.findMany({
+        where: { endpointGroupId: g.id, endpoint: { AND: [this.acl.endpointVisibilityWhere(a), { status: { not: 'ARCHIVED' } }] } },
+        select: { endpointId: true }, orderBy: { endpointId: 'asc' },
+      })).map((r) => r.endpointId);
+    }
+    if (ids.length > BULK_MAX) {
+      throw new BadRequestException({ code: 'BULK_TOO_LARGE', message: `At most ${BULK_MAX} devices per request; this group has ${ids.length} you can see right now. Narrow it, or act on a selection.` });
+    }
+    if (!ids.length) throw new BadRequestException({ code: 'GROUP_EMPTY', message: 'No computer you can see is in this group right now; nothing was done.' });
+    return { ids, group: { id: g.id, name: g.name, kind: g.kind === 'RULE' ? 'rule' : 'static' } };
+  }
+
   async run(a: ActorContext, raw: unknown) {
-    const input = parseBulk(raw);
+    const parsed = parseBulk(raw);
+    const target = parsed.targetGroupId ? await this.resolveTarget(a, parsed.targetGroupId) : null;
+    const input = { ...parsed, endpointIds: target ? target.ids : parsed.endpointIds! };
     const seen = await this.visible(a, input.endpointIds);
     const results = new Map<string, BulkResult>();
     for (const id of input.endpointIds) {
@@ -104,8 +135,13 @@ export class DeviceBulkService {
       action: input.action, requested: ordered.length,
       succeeded: ordered.filter((r) => r.ok).length, refused: ordered.filter((r) => !r.ok).length,
     };
-    await this.auditBulk(a, input.action, targets, ordered, group);
-    return { ...summary, ...(group ? { group: { id: group.id, name: group.name } } : {}), results: ordered };
+    await this.auditBulk(a, input.action, targets, ordered, group, target);
+    return {
+      ...summary,
+      ...(group ? { group: { id: group.id, name: group.name } } : {}),
+      ...(target ? { target: { ...target.group, resolved: target.ids.length } } : {}),
+      results: ordered,
+    };
   }
 
   // ── Groups ────────────────────────────────────────────────────────────────
@@ -113,6 +149,11 @@ export class DeviceBulkService {
   private async groupAction(a: ActorContext, action: 'group.add' | 'group.remove', groupId: string, targets: Target[], results: Map<string, BulkResult>) {
     // 404 for a group the caller cannot address: the whole request names it.
     const g = await this.groups.findVisible(a, groupId);
+    // A rule group's members follow its rule; nobody adds or removes them by
+    // hand (the 0053 trigger refuses the row too). Refused for the whole request.
+    if (g.kind === 'RULE') {
+      throw new BadRequestException({ code: 'RULE_GROUP', message: 'This is a rule group: its members are the computers its rule matches, so they cannot be added or removed by hand. Edit the rule instead.' });
+    }
     if (!g.customerId) {
       for (const t of targets) results.set(t.id, { endpointId: t.id, name: t.name, ok: false, code: 'LEGACY_GROUP', reason: 'This group predates 0.33 and belongs to no business, so its members are not changed here.' });
       return null;
@@ -275,7 +316,10 @@ export class DeviceBulkService {
 
   // ── Audit ─────────────────────────────────────────────────────────────────
 
-  private async auditBulk(a: ActorContext, action: BulkAction, targets: Target[], results: BulkResult[], group: { id: string; customerId: string } | null) {
+  private async auditBulk(
+    a: ActorContext, action: BulkAction, targets: Target[], results: BulkResult[], group: { id: string; customerId: string } | null,
+    target: { ids: string[]; group: { id: string; kind: 'static' | 'rule' } } | null,
+  ) {
     const byBusiness = new Map<string | null, Target[]>();
     for (const t of targets) byBusiness.set(t.customerId, [...(byBusiness.get(t.customerId) ?? []), t]);
     if (!byBusiness.size) byBusiness.set(group?.customerId ?? a.businessId ?? null, []);
@@ -290,6 +334,8 @@ export class DeviceBulkService {
         tenantId: ts[0]?.tenantId ?? a.tenantId ?? undefined, customerId: customerId ?? undefined,
         resource: 'endpoint', meta: {
           action, ...(group ? { groupId: group.id } : {}),
+          // 0.34: the group acted on, and how many it resolved to at request time.
+          ...(target ? { targetGroup: { id: target.group.id, kind: target.group.kind, resolved: target.ids.length } } : {}),
           requested: results.length, inThisBusiness: ts.length, notFound,
           succeeded: mine.filter((r) => r.ok).map((r) => r.endpointId),
           refused: codes,

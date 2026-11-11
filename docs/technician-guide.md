@@ -117,7 +117,12 @@ at the bottom.
 
 - **Filters** — business (when you can see more than one), site, device group,
   online/offline, open or critical alerts, *Restart pending*, agent type, and
-  archived devices.
+  archived devices. **More filters** (0.34) adds platform (Windows, Linux,
+  macOS, other), OS name contains, tag (exact), update state (pending, none
+  pending, scan stale, never scanned), a RustDesk version range (dotted numbers,
+  compared numerically — 1.10 is above 1.9; a computer with no reported version
+  or a non-numeric one such as a nightly never matches a range) and last seen
+  (not seen for N days, which includes never; seen within N days).
   They combine, and *Clear* resets them. The address bar carries the current view,
   so you can bookmark it; whoever opens the link still sees only their own devices.
 - **Columns** — choose which columns show (a *Groups* column is available; it
@@ -154,6 +159,27 @@ at the bottom.
   hold another business's computer. Groups grant no access to anything. Every
   change is audited. Groups made before 0.33 that span businesses (or have no
   members) belong to no business: they still filter, and cannot be edited here.
+- **Rule groups** (0.34, *Views → Save filters as a rule group…*) — a group
+  whose members are whichever of its business's computers match a rule **right
+  now**. The rule is the list's own filters: set them, then save. It can use
+  site, online/offline, alerts, *Restart pending*, agent type and everything
+  under *More filters*; search, business, group and the archived filter are
+  never part of a rule (the group already belongs to one business, and the
+  list's own Archived filter still applies). Nothing is copied or stored as
+  members: the server works the membership out every time the group is read, so
+  a computer that goes offline has left an "Online" group the next time anyone
+  looks, with no sweep to wait for. Everyone sees only the members they can
+  already see — a Business User sees their own computers in it — and a rule on
+  alerts is not offered to, and refused for, someone without
+  *monitoring:alerts*. A rule group is in the group filter (marked *rule*), the
+  *Groups* column and the CSV like any other group. It cannot be added to or
+  removed from by hand, named by an enrolment link, or turned into a static
+  group (or back). To change it, set the filters and use *Device groups… → Use
+  current filters*. Who may create, edit and delete one is the same as for a
+  static group, and each change is audited with the rule before and after. A
+  business can have at most 50 rule groups. If a stored rule can no longer be
+  read, it matches nothing (never the whole business) and the groups dialog says
+  so.
 - **Select and act on many** (0.33) — tick rows (the header box ticks the page;
   the selection survives paging and filtering) and a bar offers: **Add / Remove**
   from a group, **Refresh inventory** (also re-checks Windows Update),
@@ -168,6 +194,12 @@ at the bottom.
   There is deliberately no bulk connect, archive, delete or approved action.
   Each bulk request is recorded in the audit log, once per business it touched,
   alongside each device's own entry.
+  **Filtered by a rule group** (0.34), the same bar acts on the group itself:
+  the server works out its members when you click — as you see them, at most
+  200 (more is refused, never cut short) — and then checks each one exactly as
+  above. *Copy into* puts the computers that match now into a static group;
+  later matches are not added. The audit entry records the group and how many
+  it resolved to.
 - **Export CSV** — downloads every device in the current filtered view (not just
   this page), up to 10,000; narrow the filters if there are more. It needs
   *computers:view*, contains exactly what you can see, and **each export is
