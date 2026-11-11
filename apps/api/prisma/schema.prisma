@@ -136,6 +136,8 @@ enum ActivityAction {
   ENDPOINT_HEARTBEAT_REJECTED
   ENDPOINT_INVENTORY_REFRESH_REQUESTED
   ENDPOINT_EVENT_LOG_REQUESTED
+  ENDPOINT_DIAGNOSTIC_REQUESTED
+  ENDPOINT_DIAGNOSTIC_COMPLETED
   ENDPOINT_AGENT_REINSTALL_REQUESTED
   ENDPOINT_DEVICE_SECRET_ACCEPTED
   ENDPOINT_RESTORED
@@ -631,6 +633,7 @@ model Endpoint {
   monitorStates     EndpointMonitorState[]
   changes           EndpointChange[]
   commands          EndpointCommand[]
+  diagnosticRuns    DiagnosticRun[]
   aliases           EndpointAlias[]
   tags              EndpointTag[]
   noteRels          Note[]
@@ -1083,6 +1086,55 @@ enum EndpointCommandStatus {
   SUCCEEDED
   FAILED
   EXPIRED
+}
+
+// ─── Diagnostics catalog (0.31) ──────────────────────────────────────────────
+//
+// One-click read-only diagnostics. `key` is a catalog key
+// (diagnostics-catalog/catalog.ts); the agent maps it to a fixed script block
+// compiled into heartbeat.ps1 and runs nothing else. There are no parameters:
+// the request carries the key and nothing a person typed.
+
+enum DiagnosticRunStatus {
+  REQUESTED
+  DELIVERED
+  RUNNING
+  COMPLETED
+  FAILED
+  EXPIRED
+}
+
+model DiagnosticRun {
+  id         String   @id @default(cuid())
+  endpointId String
+  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  tenantId   String?
+  customerId String?
+
+  key    String
+  status DiagnosticRunStatus @default(REQUESTED)
+
+  // Not a relation, like EndpointCommand.requestedById: a run outlives its requester.
+  requestedById String
+  requestedAt   DateTime  @default(now())
+  deliveredAt   DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  // Not picked up by then: EXPIRED, and `error` says the computer did not check in.
+  expiresAt     DateTime
+  dispatchCount Int       @default(0)
+
+  // Sanitised and size-capped server side (MAX_RESULT_BYTES). `resultBytes`
+  // is the stored size; `truncated` is set when lists were cut to fit.
+  result      Json?
+  resultBytes Int?
+  truncated   Boolean @default(false)
+  error       String?
+
+  @@index([endpointId, status])
+  @@index([endpointId, requestedAt])
+  @@index([requestedById, requestedAt])
+  @@index([status, expiresAt])
 }
 
 // ─── Technician Devices & Launcher ───────────────────────────────────────────

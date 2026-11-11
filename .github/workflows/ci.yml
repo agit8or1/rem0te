@@ -117,6 +117,13 @@ jobs:
       - name: Monitoring tests
         run: node apps/api/scripts/unit-monitoring.mjs
 
+      # Diagnostics catalog (0.31): the closed catalog, result sanitising,
+      # redaction and the size cap against the compiled module, the agent's
+      # dispatch switch against the catalog — and, with the runner's pwsh, both
+      # installers parsed and the diagnostics block run against stub cmdlets.
+      - name: Diagnostics catalog tests
+        run: node apps/api/scripts/unit-diagnostics-catalog.mjs
+
       # Patch status (0.30): the Patches tab summary and the redacted ticket
       # summary for restart required/completed, failed, offline/stale, WSUS and
       # Intune, the standard agent and no evidence, against the contract schema.

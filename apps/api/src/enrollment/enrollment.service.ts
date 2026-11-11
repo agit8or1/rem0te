@@ -19,6 +19,7 @@ import { CreateClaimTokenDto, ClaimEndpointDto } from './dto/enrollment.dto';
 import { SessionEventsService } from '../sessions/session-events.service';
 import { UpdateRolloutService } from '../admin/update-rollout.service';
 import { MonitoringService } from '../monitoring/monitoring.service';
+import { DiagnosticsCatalogService } from '../diagnostics-catalog/diagnostics-catalog.service';
 import { ContainmentService } from '../containment/containment.service';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
 import { CANDIDATE_LIVE_MS, CANDIDATE_SETTLE_MS } from './device-secret';
@@ -45,6 +46,7 @@ export class EnrollmentService {
     private readonly actions: ActionsService,
     private readonly containment: ContainmentService,
     private readonly monitoring: MonitoringService,
+    private readonly diagnostics: DiagnosticsCatalogService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -707,6 +709,17 @@ export class EnrollmentService {
       }
     }
 
+    // Diagnostics catalog (0.31): runs staged for this machine, as catalog
+    // keys only. Authenticated heartbeats only, and best-effort like the rest.
+    let diagnostics: { id: string; key: string }[] = [];
+    if (authenticated) {
+      try {
+        diagnostics = await this.diagnostics.forHeartbeat(node.endpointId);
+      } catch (e) {
+        this.logger.warn(`Diagnostics step failed for endpoint ${node.endpointId}: ${String(e)}`);
+      }
+    }
+
     // Session evidence from the remote side. Only an authenticated heartbeat,
     // and only for this machine's own sessions — see reconcileEndpointSignal.
     if (authenticated && dto.rustdeskSessions !== undefined) {
@@ -763,6 +776,7 @@ export class EnrollmentService {
       patchPostureAck,
       patchScan,
       monitor,
+      diagnostics,
       rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
     };
   }
@@ -787,6 +801,28 @@ export class EnrollmentService {
       throw new UnauthorizedException('This device is not recognised');
     }
     return this.monitoring.ingestReport(node.endpointId, { services: dto.services, events: dto.events });
+  }
+
+  /**
+   * The agent reporting on a diagnostic run (0.31). Device secret required,
+   * exactly as for command-result: a result is evidence the console shows,
+   * and without the secret anyone who knows a RustDesk ID could write it.
+   */
+  async diagnosticResult(dto: { rustdeskId: string; agentSecret: string; runId: string; key: string; state: string; result?: unknown; error?: string }) {
+    const node = await this.prisma.rustdeskNode.findUnique({
+      where: { rustdeskId: dto.rustdeskId },
+      select: { id: true, tenantId: true, endpointId: true, agentSecretHash: true },
+    });
+    if (!node?.agentSecretHash || !this.secretMatches(node.agentSecretHash, dto.agentSecret)) {
+      await this.audit.log({
+        tenantId: node?.tenantId ?? undefined,
+        action: 'ENDPOINT_HEARTBEAT_REJECTED',
+        resource: 'endpoint', resourceId: node?.endpointId,
+        meta: { rustdeskId: dto.rustdeskId, reason: 'diagnostic_result_unauthenticated' },
+      });
+      throw new UnauthorizedException('This device is not recognised');
+    }
+    return this.diagnostics.report(node.endpointId, dto);
   }
 
   /**

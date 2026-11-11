@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **378** of them across
-**47** controllers.
+integration, under `/api/integration/v1`). There are **383** of them across
+**48** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -160,6 +160,17 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/endpoints/:id/diagnostics` | signed in | `COMPUTERS_VIEW` |
 | `GET` | `/api/v1/endpoints/:id/diagnostics/report` | signed in | `COMPUTERS_VIEW` |
 
+## Diagnostics catalog
+
+`apps/api/src/diagnostics-catalog/diagnostics-catalog.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/endpoints/:id/diagnostics/catalog` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/endpoints/:id/diagnostics/runs` | signed in, throttled | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/endpoints/:id/diagnostics/runs` | signed in | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/endpoints/:id/diagnostics/runs/:runId` | signed in | `COMPUTERS_VIEW` |
+
 ## Client downloads
 
 `apps/api/src/downloads/downloads.controller.ts`
@@ -221,6 +232,7 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/enrollment/claim` | public, throttled | — |
 | `POST` | `/api/v1/enrollment/command-result` | public, throttled | — |
 | `POST` | `/api/v1/enrollment/confirm-rotation` | public, throttled | — |
+| `POST` | `/api/v1/enrollment/diagnostic-result` | public, throttled | — |
 | `POST` | `/api/v1/enrollment/heartbeat` | public, throttled | — |
 | `POST` | `/api/v1/enrollment/monitor-report` | public, throttled | — |
 | `GET` | `/api/v1/enrollment/tokens` | signed in | `COMPUTERS_VIEW` |

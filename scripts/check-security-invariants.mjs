@@ -598,6 +598,60 @@ check(
     'plain `git tag --verify` trusts any key in the service account\'s keyring');
 }
 
+// 20. The read-only diagnostics catalog (0.31). A console user picks a KEY;
+//     the agent maps it to a fixed read-only block and runs nothing else.
+//     Closed on every side: the agent's switch and list, the server's
+//     request and result paths, and the database. Results are capped on the
+//     agent, in the service and by a CHECK constraint, and only an
+//     authenticated heartbeat is handed a run or may report one.
+{
+  const cat = read('apps/api/src/diagnostics-catalog/catalog.ts');
+  const keys = [...(/export const DIAGNOSTIC_KEYS = \[([\s\S]*?)\] as const;/.exec(cat)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  const ws = read('apps/api/src/public/windows-script.ts');
+  const blk = ws.slice(ws.indexOf('# ---- Diagnostics catalog (0.31)'), ws.indexOf('# ---- Monitoring (0.29)'));
+  const sw = /switch -Exact \(\\\$dk\) \{([\s\S]*?)\n {12}\}/.exec(blk)?.[1] ?? '';
+  const arms = [...sw.matchAll(/^\s+'([a-z_]+)' \{/gm)].map((m) => m[1]);
+  const listed = [...(/\\\$diagKeys = @\(([^)]*)\)/.exec(blk)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  check('the agent\'s diagnostics switch has exactly the catalog keys and a default that runs nothing',
+    keys.length >= 9 && JSON.stringify(arms) === JSON.stringify(keys) && /default \{ throw /.test(sw),
+    `catalog: ${keys.join(',')}; switch: ${arms.join(',')}`);
+  check('the agent refuses a key not in its own copy of the catalog before running anything',
+    JSON.stringify(listed) === JSON.stringify(keys) && /if \(-not \(\\\$diagKeys -contains \\\$dk\)\) \{ Send-Rem0teDiag [^}]*'failed'[^}]*; continue \}/.test(blk)
+      && blk.indexOf('\\$diagKeys -contains') < blk.indexOf('switch -Exact'),
+    '$diagKeys must equal DIAGNOSTIC_KEYS and be checked before the switch');
+  check('the diagnostics block runs no process, expression or download, and writes nothing',
+    blk.length > 5000 && !/Invoke-Expression|\biex\b|Start-Process|Invoke-WebRequest|DownloadString|DownloadFile|Net\.WebClient|Invoke-Command|Start-Job|(Set|Stop|Start|Restart|Suspend|Remove|Clear|New)-(Service|Item|ItemProperty|EventLog)\b|Set-Content|Out-File|Add-Content|& \\\$/i.test(blk)
+      && (blk.match(/Invoke-RestMethod/g) ?? []).length === 1 && /enrollment\/diagnostic-result/.test(blk),
+    'read-only blocks only, and one post to /enrollment/diagnostic-result');
+  check('the agent caps a diagnostic result before posting it',
+    /if \(\\\$j\.Length -gt 600000\) \{\s*\\\$p\.Remove\('result'\)/.test(blk) && /MAX_AGENT_RESULT_CHARS = 600_000/.test(cat), 'Send-Rem0teDiag must drop an oversized result');
+  const dsvc = read('apps/api/src/diagnostics-catalog/diagnostics-catalog.service.ts');
+  const reqFn = dsvc.slice(dsvc.indexOf('async request('), dsvc.indexOf('async history('));
+  const repFn = dsvc.slice(dsvc.indexOf('async report('), dsvc.indexOf('private async shapeAgentResult('));
+  check('the server accepts only catalog keys, on request and on result',
+    /^\s*if \(!isCatalogKey\(key\)\) \{\s*throw new BadRequestException/m.test(reqFn.split('\n').slice(0, 3).join('\n'))
+      && /^\s*if \(!isCatalogKey\(dto\.key\)\) return \{ accepted: false/m.test(repFn.split('\n').slice(0, 3).join('\n'))
+      && /if \(run\.key !== dto\.key\) return \{ accepted: false/.test(repFn)
+      && /export function isCatalogKey\(k: unknown\): k is DiagnosticKey \{\s*return typeof k === 'string' && BY_KEY\.has\(k\);/.test(cat),
+    'request() and report() must refuse a non-catalog key first; report() must match the run\'s key');
+  const mig = read('apps/api/prisma/migrations/0031_diagnostic_runs/migration.sql');
+  const dbKeys = [...(/"DiagnosticRun_key_catalog" CHECK \("key" IN \(([\s\S]*?)\)\)/.exec(mig)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  check('the database refuses a key outside the catalog', JSON.stringify(dbKeys) === JSON.stringify(keys), `CHECK lists: ${dbKeys.join(',')}`);
+  check('a request carries a key and nothing else',
+    /export class RequestDiagnosticDto \{\s*@IsString\(\)\s*@Length\(1, 64\)\s*@Matches\([^\n]*\)\s*key!: string;\s*\}/.test(read('apps/api/src/diagnostics-catalog/diagnostics-catalog.controller.ts'))
+      && /out\.push\(\{ id: r\.id, key: r\.key \}\)/.test(dsvc) && !/params/.test(dsvc.slice(dsvc.indexOf('async forHeartbeat('), dsvc.indexOf('private async requesterStillAllowed('))),
+    'no parameters from the console, none to the agent');
+  check('stored diagnostic results are size-capped',
+    /const capped = capResult\(shaped\);[\s\S]{0,300}result: capped\.result/.test(repFn) && /export const MAX_RESULT_BYTES = 32_768;/.test(cat)
+      && /CHECK \("result" IS NULL OR octet_length\("result"::text\) <= 65536\)/.test(mig),
+    'report() must store capResult\'s output; the migration keeps the 64 KB backstop');
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const dr = enr.slice(enr.indexOf('async diagnosticResult('), enr.indexOf('async diagnosticResult(') + 1000);
+  check('a diagnostic result needs the device secret', /secretMatches\(node\.agentSecretHash, dto\.agentSecret\)/.test(dr) && /UnauthorizedException/.test(dr), 'diagnostic-result must authenticate like command-result');
+  check('only an authenticated heartbeat is handed diagnostic runs', /if \(authenticated\) \{\s*try \{\s*diagnostics = await this\.diagnostics\.forHeartbeat\(node\.endpointId\);/.test(enr), 'forHeartbeat must be gated on authenticated');
+  check('a run is re-authorized against its requester at delivery', /const why = !entry \? 'unknown_key' : !ep \? 'endpoint_missing' : await this\.requesterStillAllowed\(r, entry, ep\);/.test(dsvc), 'forHeartbeat must check the requester before DELIVERED');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

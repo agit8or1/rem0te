@@ -40,6 +40,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { GeoipModule } from './geoip/geoip.module';
 import { AdminModule } from './admin/admin.module';
 import { DiagnosticsModule } from './diagnostics/diagnostics.module';
+import { DiagnosticsCatalogModule } from './diagnostics-catalog/diagnostics-catalog.module';
 import { SupportRequestsModule } from './support-requests/support-requests.module';
 import { OffboardingModule } from './offboarding/offboarding.module';
 import { SsoModule } from './sso/sso.module';
@@ -107,6 +108,7 @@ import { IntegrationModule } from './integration/integration.module';
     AdminModule,
     UpdateRolloutModule,
     DiagnosticsModule,
+    DiagnosticsCatalogModule,
     SupportRequestsModule,
     OffboardingModule,
     SsoModule,

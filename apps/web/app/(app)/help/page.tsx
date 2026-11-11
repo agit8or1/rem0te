@@ -413,6 +413,19 @@ const SECTIONS: Section[] = [
           request is recorded in the audit log with the log name, the window and who
           asked.
         </p>
+        <p className="font-medium text-foreground">One-click diagnostics</p>
+        <p>
+          A Windows computer&apos;s <strong className="text-foreground">Diagnostics</strong> list
+          has nine read-only checks — disk space, service health, recent system errors, top
+          processes, network connectivity, DNS, pending updates, reboot status and a fresh
+          inventory. Press <strong className="text-foreground">Run</strong>: the computer picks the
+          request up on its next heartbeat, runs the fixed check its agent carries, and the result
+          appears with its age. Nothing on the computer is changed and nothing you type reaches it —
+          there is nothing to type. If the computer does not check in within fifteen minutes the run
+          expires and says so. <em>Recent system errors</em> needs the event-log permission; every
+          other check needs only to see the computer. Every run is in the audit log. More in{' '}
+          <Link href="/docs/diagnostics" className="underline text-foreground">One-click diagnostics</Link>.
+        </p>
         <p className="font-medium text-foreground">If a computer reports nothing</p>
         <p>
           Re-run the managed installer on it. The agent that collects all of this is
