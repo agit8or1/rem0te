@@ -8,6 +8,7 @@
 //	    -rustdesk-id 123456789 -secret S -product-type 1 -self-sha HEX \
 //	    [-service stopped|running|disabled] [-stops-after N] \
 //	    [-wua wua.json] [-registry registry.json]
+//	    [-sessions N] [-stop-fails] [-events-dir DIR] [-rustdesk-logs DIR]
 //
 //	rem0te-action-sim -scan -wua wua.json [-registry registry.json]     posture, as patch-scan writes it
 //	rem0te-action-sim -restart -wua wua.json                            what a restart does to pending updates
@@ -16,6 +17,13 @@
 // read before and written back after, so an install changes what the next
 // scan sees. -registry is a patch.FakeRegistry (WSUS, Configuration Manager,
 // pending-restart keys).
+//
+// Maintenance (v0.32): -sessions is how many RustDesk sessions are open (-1:
+// the agent cannot tell); -stop-fails makes a service stop fail as Windows
+// does when dependents are running; -events-dir holds System.txt and
+// Application.txt (wevtutil /f:text output) and -rustdesk-logs a RustDesk log
+// directory. A scheduled restart is kept in DIR/sim-restart (seconds, then the
+// message), so a second schedule finds it and a cancel removes it.
 //
 // It prints the Result as JSON. The state directory carries the journal, so
 // running it twice with the same job is a replay, as on a real machine.
@@ -63,6 +71,57 @@ func (s *sim) StartService(string) error {
 	s.state = "running"
 	return nil
 }
+
+type simMaint struct {
+	s          *sim
+	stateDir   string
+	sessions   int
+	stopFails  bool
+	eventsDir  string
+	rustdeskLD string
+}
+
+func (m *simMaint) StopService(string, time.Duration) error {
+	if m.stopFails {
+		return errors.New("A stop control has been sent to a service that other running services are dependent on.")
+	}
+	if m.s.state != "disabled" { // a disabled service is already stopped, and stays disabled
+		m.s.state = "stopped"
+	}
+	return nil
+}
+func (m *simMaint) restartFile() string { return filepath.Join(m.stateDir, "sim-restart") }
+func (m *simMaint) ScheduleRestart(seconds int, message string) error {
+	if _, err := os.Stat(m.restartFile()); err == nil {
+		return action.ErrRestartScheduled
+	}
+	return os.WriteFile(m.restartFile(), []byte(fmt.Sprintf("%d\n%s", seconds, message)), 0o600)
+}
+func (m *simMaint) CancelRestart() error {
+	if err := os.Remove(m.restartFile()); err != nil {
+		return action.ErrNoRestartScheduled
+	}
+	return nil
+}
+func (m *simMaint) RemoteSessions() (int, error) {
+	if m.sessions < 0 {
+		return 0, errors.New("Access is denied.")
+	}
+	return m.sessions, nil
+}
+func (m *simMaint) Events(log string, _ time.Duration, _ int) ([]byte, error) {
+	if m.eventsDir == "" {
+		return nil, errors.New("wevtutil exit 15007")
+	}
+	return os.ReadFile(filepath.Join(m.eventsDir, log+".txt"))
+}
+func (m *simMaint) RustdeskLogDirs() []string {
+	if m.rustdeskLD == "" {
+		return nil
+	}
+	return []string{m.rustdeskLD}
+}
+
 func (s *sim) ProductType() (int, error)               { return s.product, nil }
 func (s *sim) DeviceIdentity() (string, string, error) { return s.rid, action.SecretSHA256(s.sec), nil }
 func (s *sim) SelfSHA256() (string, error)             { return s.self, nil }
@@ -82,6 +141,10 @@ func main() {
 	stops := flag.Int("stops-after", 0, "the service stops again after N state reads (0 = stays up)")
 	wuaPath := flag.String("wua", "", "simulated Windows Update state (patch.FakeWUA JSON)")
 	regPath := flag.String("registry", "", "simulated registry (patch.FakeRegistry JSON)")
+	sessions := flag.Int("sessions", 0, "open RustDesk sessions (-1: cannot tell)")
+	stopFails := flag.Bool("stop-fails", false, "stopping a service fails (running dependents)")
+	eventsDir := flag.String("events-dir", "", "directory with System.txt and Application.txt (wevtutil text)")
+	rdLogs := flag.String("rustdesk-logs", "", "a RustDesk service log directory")
 	scan := flag.Bool("scan", false, "print this computer's patch posture and exit")
 	restart := flag.Bool("restart", false, "simulate a restart (clears pending restarts) and exit")
 	flag.Parse()
@@ -153,7 +216,8 @@ func main() {
 	}
 	p := &sim{state: cur, stopAfter: *stops, product: *pt, rid: *rid, sec: *secret, self: *self}
 	o := action.Options{StateDir: *state, Keys: keys, Platform: p, Now: time.Now,
-		Checks: []time.Duration{time.Millisecond, time.Millisecond}, WUAWait: time.Second}
+		Checks: []time.Duration{time.Millisecond, time.Millisecond}, WUAWait: time.Second,
+		Maint: &simMaint{s: p, stateDir: *state, sessions: *sessions, stopFails: *stopFails, eventsDir: *eventsDir, rustdeskLD: *rdLogs}}
 	if *pausePath != "" {
 		raw, err := os.ReadFile(*pausePath)
 		if err != nil {

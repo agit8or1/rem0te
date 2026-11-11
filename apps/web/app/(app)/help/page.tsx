@@ -680,6 +680,19 @@ const SECTIONS: Section[] = [
           More in <Link href="/docs/approved-actions" className="underline text-foreground">Approved actions</Link>.
         </p>
         <p>
+          From 0.32, the same <em>Actions</em> tab (or <strong className="text-foreground">Run action</strong> at the top of
+          a computer&apos;s page) offers four <strong className="text-foreground">maintenance actions</strong>: restart one
+          service from a fixed list (Print Spooler, Windows Update, BITS, Windows Time, WinRM, RustDesk), schedule a
+          restart after a warning of 5 minutes to 24 hours, cancel a pending restart, and collect a fixed set of logs.
+          Each one always needs two different approvers, whatever the computer. A scheduled restart shows the person at
+          the computer a fixed warning and closes unsaved programs when it ends; it is never immediate, and the computer
+          skips it, like a RustDesk restart, while a RustDesk session is open. Collected logs are bounded, redacted twice
+          and shown only to people who may read the computer&apos;s event logs. Like every approved action, these do
+          nothing until an approval signer is installed and the computer runs a 0.32+ signed agent; until then the tab
+          says why. They have been tested against a simulated Windows only.{' '}
+          More in <Link href="/docs/approved-actions#maintenance-actions-032" className="underline text-foreground">Approved actions</Link>.
+        </p>
+        <p>
           From 0.27, Windows updates can be installed in stages from{' '}
           <Link href="/patching" className="underline text-foreground">Patching</Link>: one{' '}
           <strong className="text-foreground">canary</strong> computer first, then rings. Each ring is one plan that two

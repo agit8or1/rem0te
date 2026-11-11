@@ -393,11 +393,54 @@ check(
     'only the signer may load the job-approval key');
   const goCat = read('tools/windows-installer/internal/action/catalog.go');
   const goIds = [...goCat.matchAll(/ID: "([^"]+)"/g)].map((m) => m[1]);
-  // 0.27 added windows.update.install (§ 15). Anything further is a review.
-  check('agent catalog is the Spooler start and Windows update install, nothing else',
-    goIds.length === 2 && goIds[0] === 'windows.service.start' && goIds[1] === 'windows.update.install' && /const ServiceName = "Spooler"/.test(goCat) && /s == ServiceName/.test(goCat),
+  // 0.27 added windows.update.install (§ 15); 0.32 the four maintenance
+  // actions. The list is exact and ordered: anything further is a review.
+  const CATALOG_IDS = ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect'];
+  check('agent catalog is exactly the Spooler start, update install, service restart, restart schedule/cancel and log collection',
+    goIds.join(',') === CATALOG_IDS.join(',') && /const ServiceName = "Spooler"/.test(goCat) && /s == ServiceName/.test(goCat),
     `agent catalog ids: ${goIds.join(', ')}`);
   const tsCat = read('apps/api/src/actions/catalog.ts');
+  const tsIds = [...tsCat.matchAll(/^export const [A-Z_]+: CatalogAction = \{\s*id: '([^']+)'/gm)].map((m) => m[1]);
+  const tsList = (tsCat.match(/^export const CATALOG: CatalogAction\[\] = \[([^\]]*)\];/m) ?? [])[1] ?? '';
+  check('portal catalog is the same exact list, in the same order',
+    tsIds.join(',') === CATALOG_IDS.join(',') && tsList.split(',').map((x) => x.trim()).length === CATALOG_IDS.length,
+    `portal catalog ids: ${tsIds.join(', ')}; CATALOG = [${tsList}]`);
+  // Every agent entry's parameters are one of the closed forms below, and
+  // nothing else: a fixed service, update identities, an allowlisted service,
+  // a bounded integer, or no parameters at all.
+  const entries = goCat.slice(goCat.indexOf('var catalog = []Action{')).split(/\n\t\{\n/).slice(1);
+  const CLOSED = [/ParamsOK: func\(p map\[string\]any\) bool \{\s*if len\(p\) != 1 \{\s*return false\s*\}\s*s, ok := p\["service"\]\.\(string\)\s*return ok && s == ServiceName/,
+    /ParamsOK:\s+updateParamsOK,/, /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return RestartService\(p\) != "" \},/,
+    /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return RestartDelay\(p\) != 0 \},/, /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return len\(p\) == 0 \},/];
+  const openParams = entries.filter((e) => !CLOSED.some((re) => re.test(e))).map((e) => (e.match(/ID: "([^"]+)"/) ?? [])[1] ?? '?');
+  check('every agent catalog entry has closed parameters', entries.length === CATALOG_IDS.length && openParams.length === 0, `not closed: ${openParams.join(', ')}`);
+  const maint = read('tools/windows-installer/internal/action/maintenance.go');
+  const goSvc = ((maint.match(/var RestartableServices = \[\]string\{([^}]*)\}/) ?? [])[1] ?? '').split(',').map((x) => x.trim().replace(/"/g, '')).filter(Boolean);
+  const tsSvc = [...(tsCat.match(/export const RESTARTABLE_SERVICES = \[([\s\S]*?)\] as const;/) ?? [])[1]?.matchAll(/name: '([^']+)'/g) ?? []].map((m) => m[1]);
+  const NEVER = /^(WinDefend|WdNisSvc|Sense|SecurityHealthService|wscsvc|mpssvc|BFE|lsass|SamSs|KeyIso|VaultSvc|Netlogon|EventLog|RpcSs|RpcEptMapper|DcomLaunch|SgrmBroker|WinHttpAutoProxySvc|CryptSvc|gpsvc|ProfSvc|Schedule|TermService)$/i;
+  check('service restart names a fixed allowlist, the same on both sides, with no security or core service on it',
+    goSvc.length > 0 && goSvc.join(',') === tsSvc.join(',') && !goSvc.some((n) => NEVER.test(n))
+      && /if !ok \|\| !ServiceNameRE\.MatchString\(s\) \{\s*return ""\s*\}\s*for _, a := range RestartableServices \{\s*if s == a \{/.test(maint)
+      && /var ServiceNameRE = regexp\.MustCompile\(`\^\[A-Za-z0-9_\]\{1,64\}\$`\)/.test(maint),
+    `agent ${goSvc.join(', ')}; portal ${tsSvc.join(', ')}`);
+  check('a restart is never immediate: the delay is a whole number of minutes, 5 to 1440, on both sides',
+    /const \(\s*MinRestartDelayMinutes = 5\s*MaxRestartDelayMinutes = 24 \* 60\s*\)/.test(maint) && /if len\(p\) != 1 \{\s*return 0\s*\}\s*d, ok := p\["delayMinutes"\]\.\(float64\)\s*if !ok \|\| d != math\.Trunc\(d\) \|\| d < MinRestartDelayMinutes \|\| d > MaxRestartDelayMinutes \{/.test(maint)
+      && /delayMinutes: z\.number\(\)\.int\(\)\.min\(MIN_RESTART_DELAY_MINUTES\)\.max\(MAX_RESTART_DELAY_MINUTES\) \}\)\.strict\(\)/.test(tsCat) && /MIN_RESTART_DELAY_MINUTES = 5;/.test(tsCat),
+    'RestartDelay and REBOOT_SCHEDULE.params must keep the 5-minute floor');
+  const maintEntries = entries.filter((e) => /ID: "windows\.(service\.restart|reboot\.|logs\.)/.test(e));
+  check('every maintenance action is high impact on any computer, and the RustDesk restart and the restart wait for no open session',
+    maintEntries.length === 4 && maintEntries.every((e) => /Risk:\s+func\(int, int\) string \{ return "high" \},/.test(e))
+      && /Precheck:\s+sessionCheck\("the restart"\),/.test(goCat) && /if RestartService\(p\.Params\) == "RustDesk" \{\s*return sessionCheck\(/.test(maint)
+      && /if err != nil \{\s*return &Result\{Outcome: "not_executed", Reason: "session_state_unknown"/.test(maint),
+    'maintenance risk must be "high" and "cannot tell" must count as a session');
+  check('the agent\'s action package runs no process; the Windows side runs only shutdown.exe and wevtutil.exe from System32',
+    !/"os\/exec"|exec\.Command/.test(maint + read('tools/windows-installer/internal/action/action.go') + goCat)
+      && [...read('tools/windows-installer/action_windows.go').matchAll(/runSystem32\([^,]+, "([^"]+)"/g)].map((m) => m[1]).every((x) => x === 'shutdown.exe' || x === 'wevtutil.exe')
+      && (read('tools/windows-installer/action_windows.go').match(/exec\.Command(?:Context)?\(/g) ?? []).length === 2,
+    'maintenance must not grow a way to run something else');
+  check('the maintenance actions are not offered to ClientSt0r', (tsCat.match(/integration: false,/g) ?? []).length === 4 && /proposable\(\): string\[\] \{[^}]{0,200}CATALOG\.filter\(\(a\) => a\.integration\)\.map/.test(read('apps/api/src/integration/action-proposals.service.ts'))
+      && /if \(!catalogEntry\(body\.action\.id, body\.action\.version\)\?\.integration\)/.test(read('apps/api/src/integration/action-proposals.service.ts')),
+    'advertising them changes the ticket-rmm contract');
   check('portal catalog has no command, script, path or URL parameter', !/\b(command|script|path|url|args|cmd)\s*:/i.test(tsCat.replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, '')),
     'the catalog must not grow a free-form parameter');
   const act = read('tools/windows-installer/internal/action/action.go');
@@ -405,6 +448,10 @@ check(
   check('agent journals a job before executing it, and consults the journal first',
     iJournal > 0 && iExec > iJournal && iRun > iExec && /if err := writeJournal\(o, journal\{JobID: jobID, State: "executing"[\s\S]{0,240}return Result\{\}, fmt\.Errorf/.test(act),
     'the journal write must precede execute() and a failed write must stop it');
+  const iPre = act.indexOf('a.Precheck(plan, o)'), iPz = act.indexOf('o.Pause.ActionsPaused(');
+  check('an action\'s own checks run after verification and the signed pause, before the executing journal entry, and end the job',
+    iPre > iPz && iPz > 0 && iExec > iPre && /if pr := a\.Precheck\(plan, o\); pr != nil \{[\s\S]{0,200}writeJournal\(o, journal\{JobID: jobID, State: "done"[\s\S]{0,120}return report\(o, r\)/.test(act),
+    'Precheck must sit between the pause and the executing journal, and its result must be final');
   // class-transformer's implicit conversion turns an untyped array of objects
   // into [[]] — silently. It broke command-result events in production.
   const untyped = [];

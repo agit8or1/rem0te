@@ -102,7 +102,7 @@ func installUpdates(p *Plan, o Options) Result {
 
 // updatesNow reports what a restart check can see without touching Windows
 // Update, for a job interrupted mid-install.
-func updatesNow(o Options) map[string]string {
+func updatesNow(_ map[string]any, o Options) map[string]string {
 	if o.Registry == nil {
 		return nil
 	}

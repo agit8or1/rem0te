@@ -73,7 +73,7 @@ export const actionsApi = {
     api.post(`/endpoints/${endpointId}/actions`, body),
   get: (id: string) => api.get(`/actions/${id}`),
   cancel: (id: string) => api.post(`/actions/${id}/cancel`),
-  reconcile: (id: string, body: { found: 'running' | 'stopped' | 'installed' | 'not_installed' | 'other'; note: string; endpointId?: string }) =>
+  reconcile: (id: string, body: { found: 'running' | 'stopped' | 'installed' | 'not_installed' | 'restart_scheduled' | 'no_restart_scheduled' | 'other'; note: string; endpointId?: string }) =>
     api.post(`/actions/${id}/reconcile`, body),
 };
 

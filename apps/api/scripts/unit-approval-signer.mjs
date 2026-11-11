@@ -113,9 +113,36 @@ for (const [name, p, code] of [
   ['an unknown action', plan({ action: { id: 'windows.shell.run', version: 1 } }), null],
   ['window already closed', plan({ hours: -1, window: { notBefore: new Date(Date.now() - 7_200_000).toISOString(), notAfter: new Date(Date.now() - 1000).toISOString() } }), 'window_closed'],
   ['an extra top-level field', { ...plan(), command: 'whoami' }, 'invalid_plan'],
+  // 0.32 maintenance actions: high impact on any computer, closed params.
+  ['a service restart on a workstation claimed as low risk', plan({ action: { id: 'windows.service.restart', version: 1 }, params: { service: 'wuauserv' } }), 'risk_mismatch'],
+  ['a restart of a service off the allowlist (WinDefend)', plan({ action: { id: 'windows.service.restart', version: 1 }, params: { service: 'WinDefend' }, risk: 'high' }), null],
+  ['a restart of a service off the allowlist (lsass)', plan({ action: { id: 'windows.service.restart', version: 1 }, params: { service: 'lsass' }, risk: 'high' }), null],
+  ['an immediate restart (delay 0)', plan({ action: { id: 'windows.reboot.schedule', version: 1 }, params: { delayMinutes: 0 }, risk: 'high' }), null],
+  ['a restart under five minutes', plan({ action: { id: 'windows.reboot.schedule', version: 1 }, params: { delayMinutes: 4 }, risk: 'high' }), null],
+  ['a restart with a custom message', plan({ action: { id: 'windows.reboot.schedule', version: 1 }, params: { delayMinutes: 30, message: 'click this link' }, risk: 'high' }), null],
+  ['a restart plan with a window over 2 hours', plan({ action: { id: 'windows.reboot.schedule', version: 1 }, params: { delayMinutes: 30 }, risk: 'high', hours: 3 }), null],
+  ['a log collection naming a path', plan({ action: { id: 'windows.logs.collect', version: 1 }, params: { log: 'C:\\Windows\\System32\\config\\SAM' }, risk: 'high' }), null],
+  ['a restart cancel with parameters', plan({ action: { id: 'windows.reboot.cancel', version: 1 }, params: { all: true }, risk: 'high' }), null],
 ]) {
   const r = await submit(p);
   check(`admission refuses ${name}`, r.status === 409 && (!code || r.body?.error === code), JSON.stringify(r.body));
+}
+
+// ── 0.32: a scheduled restart needs two distinct approvers, even on a workstation ──
+{
+  const pr = plan({ action: { id: 'windows.reboot.schedule', version: 1 }, params: { delayMinutes: 30 }, risk: 'high', hours: 1.5 });
+  const sr = await submit(pr);
+  check('a restart schedule (high, two approvals, 90-minute window) is admitted', sr.status === 201, JSON.stringify(sr.body));
+  const html2 = await (await fetch(`${PUBLIC}/approve/${pr.jobId}`)).text();
+  check('its approval page shows the fixed restart warning and the delay', /closed without saving/.test(html2) && /Your IT support provider has scheduled a restart/.test(html2) && /delayMinutes/.test(html2));
+  let d = await decide(pr.jobId, people.olivia);
+  check('one approval does not sign a restart on a workstation', d.status === 200 && d.body.status === 'AWAITING_APPROVAL', JSON.stringify(d.body));
+  d = await decide(pr.jobId, people.olivia);
+  check('the same approver cannot count twice for a restart', d.status === 409, JSON.stringify(d.body));
+  d = await decide(pr.jobId, people.quinn);
+  const signedPlan = verifyEnvelope(d.body?.envelope ?? (await j(`${INTERNAL}/internal/v1/plans/${pr.jobId}`)).body?.envelope);
+  check('a second, different approver signs it; the envelope carries the delay and both approvers',
+    d.body?.status === 'SIGNED' && signedPlan?.params?.delayMinutes === 30 && signedPlan.approvers.length === 2, JSON.stringify(d.body).slice(0, 200));
 }
 
 // ── low risk: one roster approver, not the requester ───────────────────────

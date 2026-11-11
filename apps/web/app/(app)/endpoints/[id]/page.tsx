@@ -21,7 +21,7 @@ import { DiagnosticsPanel } from '@/components/endpoints/workspace/diagnostics-p
 import type { AccessReview } from '@/components/endpoints/workspace/access-review-panel';
 import { acceptsQueuedWork, agentType, parseTab, reportsWindowsDetail, TAB_LABEL, type WorkspaceTab } from '@/components/endpoints/workspace/device-model';
 import {
-  actionUnavailableReason, useActionCatalog, useInventory, useMonitoringView, usePatchStatus,
+  actionUnavailableReason, agentActionKeys, useActionCatalog, useInventory, useMonitoringView, usePatchStatus,
 } from '@/components/endpoints/workspace/use-device-data';
 import { usePermissions, CAP } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -270,7 +270,7 @@ export default function EndpointDetailPage() {
 
         {tabs.includes('actions') && (
           <TabsContent value="actions" className="mt-4">
-            {active === 'actions' && <EndpointActions endpointId={id} isOnline={isOnline} unavailableReason={actionReason === 'Checking…' ? null : actionReason} />}
+            {active === 'actions' && <EndpointActions endpointId={id} isOnline={isOnline} unavailableReason={actionReason === 'Checking…' ? null : actionReason} agentActions={agentActionKeys(ep)} />}
           </TabsContent>
         )}
 

@@ -106,7 +106,7 @@ owner's approval.
 | 5 | **Read-only diagnostics catalog** (disk, services, network/DNS, recent errors, heavy processes, pending updates, restart state) on the standard agent; results bounded, redacted and audited | P0 | Basic one-click diagnostics; also the first half of revision 3 (P2/P3) |
 | 6 | Revision 3 items ClientSt0r acknowledges | P0 | Blocked on ClientSt0r (coordination §9) |
 | 7 | Guided Add Device — **built (0.32)** | P1 | |
-| 8 | Maintenance actions for the signed catalog (restart an approved service, schedule a reboot, collect logs) | P1 | Needs real-Windows testing of the signed agent first |
+| 8 | Maintenance actions for the signed catalog (restart an approved service, schedule a reboot, collect logs) | P1 | Built in 0.32 (`windows.service.restart`, `windows.reboot.schedule` / `.cancel`, `windows.logs.collect`); **S only** — needs real-Windows testing of the signed agent |
 | 9 | Script library with review and immutable approval binding | P1 | Largest new surface. Design note first |
 | 10 | Reports: patch compliance, agent coverage, alert frequency | P1/P2 | |
 | 11 | Linux heartbeat and inventory | P2 | Done in 0.32 (integration-tested, `e2e-linux-agent.mjs`); real-endpoint test outstanding |

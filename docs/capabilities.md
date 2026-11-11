@@ -29,6 +29,7 @@ far each part has been tested. "Tested" here means one of three things, and they
 | Patches: confirmed by a later scan | No | Yes | No | No | No |
 | **Deploying updates** (canary, rings, two approvals) | **No** | Yes, when approvals are configured | **No** | No | No |
 | Approved actions (start the Print Spooler) | No | Yes, when approvals are configured | No | No | No |
+| Maintenance actions (restart an allowlisted service, schedule or cancel a restart, collect logs) | No | Yes (0.32+ agent), when approvals are configured | No | No | No |
 | Password rotation, reinstall, RustDesk client update from the console | Yes | Yes | **No** — the console refuses them; re-run the installer on the computer | No | No |
 | Containment honoured on the device | Server side only | Server side, and the agent checks the signed pause | Server side only (it acts on nothing anyway) | Server side only | Server side only |
 
@@ -93,6 +94,7 @@ values.
 | Patch status: offline, stale evidence | **No** | Yes (scan time moved back 80 hours in the database) | Yes |
 | Patch status: externally managed (WSUS, Intune) | **No** | Yes (the agent's registry detection against a simulated registry) | Yes |
 | Approved actions (Print Spooler) | **No** | Yes (`e2e-approved-action.mjs`) | Yes |
+| Maintenance actions (service restart, restart schedule/cancel, log collection) | **No** | Yes (`e2e-maintenance-actions.mjs`; service manager, `shutdown.exe`, `wevtutil` and the session count simulated) | Yes |
 | ClientSt0r workflow | — | — | Against a contract-conformant reference peer (`e2e-ticket-workflow.mjs`). **Against the real ClientSt0r: does not interoperate yet** (`interop-clientst0r.mjs`, four measured gaps) |
 
 ### Still needs a lab

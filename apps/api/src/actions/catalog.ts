@@ -8,11 +8,14 @@ import { canonicalJson } from '../integration/crypto';
  * the Windows agent (tools/windows-installer/internal/action/catalog.go),
  * which is the copy that decides what actually runs.
  *
- * Two actions. Starting one Windows service on one workstation (0.26), and
- * installing named Windows updates on a ring of computers (0.27). Nothing here
- * can carry a command line, a script, a path or a URL — parameters are closed
- * enums or update identities — so an AI suggestion, a ticket or a compromised
- * portal cannot turn a catalog entry into arbitrary execution.
+ * Six actions. Starting the Print Spooler on one computer (0.26); installing
+ * named Windows updates on a ring of computers (0.27); and four maintenance
+ * actions (0.32): restarting one service from a fixed allowlist, scheduling a
+ * warned restart, canceling it, and collecting a fixed set of logs. Nothing
+ * here can carry a command line, a script, a path or a URL — parameters are
+ * closed enums, bounded integers or update identities — so an AI suggestion, a
+ * ticket or a compromised portal cannot turn a catalog entry into arbitrary
+ * execution.
  */
 
 export const PLAN_SCHEMA = 'rem0te-action-plan/1';
@@ -42,6 +45,20 @@ export interface CatalogAction {
   resultDeadlineMinutes: number;
   /** Requestable one computer at a time from its Actions tab (false: only through its own workflow). */
   direct: boolean;
+  /**
+   * Offered to ClientSt0r as proposable (capabilities and action-proposals).
+   * The 0.32 maintenance actions are not: advertising them is a change to the
+   * ticket-rmm contract that ClientSt0r has not agreed to.
+   */
+  integration: boolean;
+  /** Longest signed window, hours, when shorter than MAX_WINDOW_HOURS. The agent enforces the same. */
+  maxWindowHours?: number;
+  /** A capability the requester needs on top of actions:request — and that a reader needs to see the result's content. */
+  requiresCapability?: 'computers:event_logs';
+  /** What the requester ticks to confirm they read the warnings. */
+  acknowledge: string;
+  /** The one parameter a requester chooses, if any, and every value it may take. */
+  choice?: { field: string; label: string; options: { value: string | number; label: string }[] };
 }
 
 export const SERVICE_START: CatalogAction = {
@@ -61,6 +78,8 @@ export const SERVICE_START: CatalogAction = {
   maxTargets: 1,
   resultDeadlineMinutes: 30,
   direct: true,
+  integration: true,
+  acknowledge: 'I understand that documents already waiting may print as soon as the spooler starts, and cannot be recalled.',
 };
 
 export const UPDATE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -94,9 +113,132 @@ export const UPDATE_INSTALL: CatalogAction = {
   maxTargets: MAX_RING_TARGETS,
   resultDeadlineMinutes: 6 * 60,
   direct: false,
+  integration: true,
+  acknowledge: 'I understand that these updates change the computers and may need a restart.',
 };
 
-export const CATALOG: CatalogAction[] = [SERVICE_START, UPDATE_INSTALL];
+// ── Maintenance actions (0.32) ──────────────────────────────────────────────
+// Every one is high impact on any computer: two distinct approvers, always,
+// and the agent recomputes that itself. Keep in step with
+// tools/windows-installer/internal/action/{catalog,maintenance}.go.
+
+/**
+ * The only services windows.service.restart may name (the agent has the same
+ * list and refuses anything else). Left out on purpose: security products and
+ * the security subsystem, RPC, the event log, DNS Client (Windows 10+ will
+ * not stop it) and Workstation (stopping it drops open files and mapped
+ * drives). See docs/approved-actions.md.
+ */
+export const RESTARTABLE_SERVICES = [
+  { name: 'Spooler', label: 'Print Spooler' },
+  { name: 'wuauserv', label: 'Windows Update' },
+  { name: 'BITS', label: 'Background Intelligent Transfer Service' },
+  { name: 'W32Time', label: 'Windows Time' },
+  { name: 'WinRM', label: 'Windows Remote Management' },
+  { name: 'RustDesk', label: 'RustDesk (remote support)' },
+] as const;
+const SERVICE_NAMES = RESTARTABLE_SERVICES.map((s) => s.name) as unknown as [string, ...string[]];
+
+export const SERVICE_RESTART: CatalogAction = {
+  id: 'windows.service.restart',
+  version: 1,
+  title: 'Restart a Windows service',
+  description: 'Stops one service from a fixed list and starts it again, then checks it is running. If it was stopped, it is only started.',
+  params: z.object({ service: z.enum(SERVICE_NAMES) }).strict(),
+  warnings: [
+    'Whatever the service was doing stops: print jobs being sent, a download in progress, a Windows Update scan, a WinRM session.',
+    'Restarting RustDesk disconnects anyone connected through it. The computer skips it if a RustDesk session is open, or if it cannot tell. If RustDesk does not come back, nobody can connect remotely until someone at the computer fixes it.',
+    'Windows refuses to stop a service that other running services depend on; the restart then fails and nothing else is stopped.',
+    'The startup type is not changed: a disabled service stays disabled and the start fails.',
+  ],
+  verification: 'The agent records the state before, after the stop, and 10 and 30 seconds after the start.',
+  doesNotProve: ['that whatever was failing now works', 'why the service had stopped or misbehaved'],
+  risk: () => 'high',
+  maxTargets: 1,
+  resultDeadlineMinutes: 30,
+  direct: true,
+  integration: false,
+  acknowledge: 'I understand that the service stops for a moment, and that restarting RustDesk disconnects anyone connected.',
+  choice: { field: 'service', label: 'Service', options: RESTARTABLE_SERVICES.map((s) => ({ value: s.name, label: `${s.label} (${s.name})` })) },
+};
+
+/** Restart warning bounds, minutes; the agent enforces the same. */
+export const MIN_RESTART_DELAY_MINUTES = 5;
+export const MAX_RESTART_DELAY_MINUTES = 24 * 60;
+const DELAYS = [5, 15, 30, 60, 120, 240, 480, 1440];
+
+export const REBOOT_SCHEDULE: CatalogAction = {
+  id: 'windows.reboot.schedule',
+  version: 1,
+  title: 'Schedule a restart',
+  description: 'Shows a fixed restart warning on the computer and restarts it when the chosen delay has passed (5 minutes to 24 hours after the computer receives the plan). Never immediately.',
+  params: z.object({ delayMinutes: z.number().int().min(MIN_RESTART_DELAY_MINUTES).max(MAX_RESTART_DELAY_MINUTES) }).strict(),
+  warnings: [
+    'When the delay ends, Windows closes every program still open without saving. Anything not saved by then is lost.',
+    'The person at the computer sees this warning, in this wording: "Your IT support provider has scheduled a restart of this computer for <time> (in <N> minutes). Please save your work and close your programs before then: programs still open will be closed without saving. Approved maintenance, reference <job>."',
+    'The delay counts from when the computer receives the approved plan, at its next check-in after approval. The plan expires unrun if that is not within 2 hours of its start.',
+    'The computer skips the restart if a RustDesk session is open, or if it cannot tell. It checks once, when it schedules: someone who connects afterwards sees the Windows warning on screen.',
+    'It can be canceled with "Cancel a scheduled restart", which needs its own approvals: approve that early if you may need it.',
+  ],
+  verification: 'The agent reports the time it scheduled the restart for. It cannot report the restart itself: that is seen as a new boot time in the inventory afterwards.',
+  doesNotProve: ['that the computer restarted', 'that a restart fixed anything', 'that nobody lost unsaved work'],
+  risk: () => 'high',
+  maxTargets: 1,
+  resultDeadlineMinutes: 30,
+  direct: true,
+  integration: false,
+  maxWindowHours: 2,
+  acknowledge: 'I understand that programs still open when the delay ends are closed without saving.',
+  choice: { field: 'delayMinutes', label: 'Warning before the restart', options: DELAYS.map((m) => ({ value: m, label: m < 60 ? `${m} minutes` : m === 60 ? '1 hour' : `${m / 60} hours` })) },
+};
+
+export const REBOOT_CANCEL: CatalogAction = {
+  id: 'windows.reboot.cancel',
+  version: 1,
+  title: 'Cancel a scheduled restart',
+  description: 'Cancels the restart or shutdown Windows has pending on this computer, if there is one.',
+  params: z.object({}).strict(),
+  warnings: [
+    'This cancels whatever restart or shutdown is pending on the computer, including one a person or another tool scheduled there, not only one scheduled from here.',
+    'It needs its own two approvals and runs at the computer\'s next check-in after them. A restart whose delay ends first is not stopped.',
+  ],
+  verification: 'The agent reports whether a pending restart was canceled, or that none was pending.',
+  doesNotProve: ['that no restart happens later for another reason'],
+  risk: () => 'high',
+  maxTargets: 1,
+  resultDeadlineMinutes: 30,
+  direct: true,
+  integration: false,
+  acknowledge: 'I understand that this cancels any pending restart on the computer.',
+};
+
+export const LOGS_COLLECT: CatalogAction = {
+  id: 'windows.logs.collect',
+  version: 1,
+  title: 'Collect logs',
+  description: 'Collects a fixed set of logs: Critical and Error events from the System and Application logs in the last 24 hours (at most 50 each), the agent\'s record of approved actions, the end of the agent\'s own log, and the end of the newest RustDesk service log. At most 12 KB from each and 40 KB in all.',
+  params: z.object({}).strict(),
+  warnings: [
+    'Event and log text can name people, computers, files and network addresses. User-profile paths, long tokens and anything written as a password, secret, token or key are redacted, on the computer and again on receipt; other personal details may remain.',
+    'Only people who may read this computer\'s event logs see what is collected.',
+  ],
+  verification: 'The collected text is shown on this computer\'s Actions tab, source by source, with what was shortened or missing.',
+  doesNotProve: ['that the logs are complete', 'that nothing else went wrong outside the collected sources'],
+  risk: () => 'high',
+  maxTargets: 1,
+  resultDeadlineMinutes: 30,
+  direct: true,
+  integration: false,
+  requiresCapability: 'computers:event_logs',
+  acknowledge: 'I understand that the collected text may include personal details that redaction does not catch.',
+};
+
+export const CATALOG: CatalogAction[] = [SERVICE_START, UPDATE_INSTALL, SERVICE_RESTART, REBOOT_SCHEDULE, REBOOT_CANCEL, LOGS_COLLECT];
+
+/** The log sources windows.logs.collect returns, in order; the agent sends the same. */
+export const LOG_SOURCES = ['system_errors', 'application_errors', 'agent_journal', 'agent_log', 'rustdesk_log'] as const;
+export const MAX_LOG_SECTION_CHARS = 12 * 1024;
+export const MAX_LOGS_CHARS = 40 * 1024;
 export const catalogEntry = (id: string, version: number) => CATALOG.find((a) => a.id === id && a.version === version) ?? null;
 
 /** Approvals required by risk. The agent enforces the same minimums. */
@@ -191,7 +333,7 @@ export function validatePlanAction(p: Plan): { ok: true; action: CatalogAction }
   if (p.policy.risk !== risk) return { ok: false, reason: 'risk_mismatch' };
   if (p.policy.approvalsRequired < APPROVALS_REQUIRED[risk]) return { ok: false, reason: 'too_few_approvals_required' };
   const nb = Date.parse(p.window.notBefore), na = Date.parse(p.window.notAfter);
-  if (!(na > nb) || na - nb > MAX_WINDOW_HOURS * 3600_000) return { ok: false, reason: 'bad_window' };
+  if (!(na > nb) || na - nb > (a.maxWindowHours ?? MAX_WINDOW_HOURS) * 3600_000) return { ok: false, reason: 'bad_window' };
   return { ok: true, action: a };
 }
 

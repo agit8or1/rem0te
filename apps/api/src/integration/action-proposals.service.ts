@@ -34,7 +34,8 @@ export class ActionProposalsService {
 
   /** What capabilities advertises: catalog actions, only when a signer is configured. */
   proposable(): string[] {
-    return this.actions.catalog().configured ? CATALOG.map((a) => `${a.id}@${a.version}`) : [];
+    // 0.32: the maintenance actions are not offered to ClientSt0r (CatalogAction.integration).
+    return this.actions.catalog().configured ? CATALOG.filter((a) => a.integration).map((a) => `${a.id}@${a.version}`) : [];
   }
 
   async propose(peer: Peer, rawBody: unknown, token: string | undefined): Promise<{ replayed: boolean; proposal: ActionProposal }> {
@@ -63,9 +64,9 @@ export class ActionProposalsService {
 
     // Refused by name before anything else is looked up: the catalog is the
     // whole vocabulary, and the categories below are never in it.
-    if (!catalogEntry(body.action.id, body.action.version)) {
+    if (!catalogEntry(body.action.id, body.action.version)?.integration) {
       await this.reject(peer, claims, 'ACTION_NOT_IN_CATALOG', body);
-      throw new IntegrationError(400, 'ACTION_NOT_IN_CATALOG', `Only catalog actions can be proposed (${CATALOG.map((a) => `${a.id}@${a.version}`).join(', ')}). Never: ${BLOCKED_CATEGORIES.join(', ').replace(/_/g, ' ')}.`);
+      throw new IntegrationError(400, 'ACTION_NOT_IN_CATALOG', `Only these catalog actions can be proposed: ${CATALOG.filter((a) => a.integration).map((a) => `${a.id}@${a.version}`).join(', ')}. Never: ${BLOCKED_CATEGORIES.join(', ').replace(/_/g, ' ')}.`);
     }
 
     const who = await this.delegation.requireActor(peer.id, claims).catch(async (e) => {
