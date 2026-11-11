@@ -77,13 +77,14 @@ company-wide; for a technician, only the machines your assignment names.
 
 ![Computers list](screenshots/guide/tech-02-computers.png)
 
-1. **Search** — matches name, hostname, IP address, OS, alias, RustDesk ID, business,
+1. **Devices** — the menu entry; its tabs hold *My devices*, *Add device* and the others.
+2. **Search** — matches name, hostname, IP address, OS, alias, RustDesk ID, business,
    site and the signed-in user. The server does the matching, so it searches every page,
    not just the one on screen.
-2. **The table** — one row per device. Online devices come first, then by name;
+3. **The table** — one row per device. Online devices come first, then by name;
    click any column heading to sort by it instead (click again to reverse).
-3. **Enroll Client** — install the agent on a new machine (§5).
-4. **Generate Enrollment Link** — a one-time link you can send to someone else to
+4. **Enroll Client** — install the agent on a new machine (§5).
+5. **Generate Enrollment Link** — a one-time link you can send to someone else to
    run themselves.
 
 *(The screenshot predates 0.31's columns; the numbered parts are where they were.)*
@@ -179,11 +180,13 @@ only the services a monitor names, and those appear on Monitoring. Old links
 
 ## 3. Connect to a computer
 
-Open a computer from the list, then use **Connect**.
+Use **Connect** on a computer's card in **Devices → My devices**, on its row in **All devices**, or at the top of
+its page.
 
-![Computer detail with Connect](screenshots/guide/tech-03-connect.png)
+![My devices, with Connect](screenshots/guide/tech-03-connect.png)
 
-1. **Connect** — hands the machine's ID and password to your local RustDesk
+1. **My devices** — the computers this account may connect to.
+2. **Connect** — hands the machine's ID and password to your local RustDesk
    client and starts the session.
 
 You do not need to type a password. Rem0te holds the credential for each machine
@@ -242,11 +245,11 @@ facts that distinguish a firewall problem from a service that is not running.
 
 ![Sessions](screenshots/guide/tech-05-sessions.png)
 
-1. **Connected** — enrolled clients currently online, each with a direct Connect
-   button.
-2. **Session History** — past sessions with duration and disposition.
-3. **Connect** — start a session with that machine.
-4. **Ad-hoc Session** — record a session against a machine that is not enrolled.
+1. **Remote Support** — Sessions is its first tab.
+2. **Connected** — open sessions, then the enrolled clients currently online.
+3. **Session History** — past sessions with duration and disposition.
+4. **Connect** — start a session with that machine.
+5. **Quick Connect** — for a machine that is not enrolled; a session can no longer be recorded by hand.
 
 Each session's status says what is actually known about it. *Client opened*
 means RustDesk started on your computer, not that you connected. *Connection
@@ -264,8 +267,9 @@ installed on each managed computer.
 
 ![Updates](screenshots/guide/tech-06-updates.png)
 
-1. **Update all outdated** — queues every machine that is behind.
-2. **Check** — re-reads the latest RustDesk release.
+1. **Settings → Updates** — Rem0te's own version, then the RustDesk server and clients.
+2. **Update all outdated** — queues every machine that is behind.
+3. **Check** — re-reads the latest RustDesk release.
 
 Per-machine status reads:
 

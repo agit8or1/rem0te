@@ -355,9 +355,15 @@ check(
     check(`catalog lists ${id} as unavailable`, new RegExp(`id: '${id}',[^\\n]*status: 'unavailable'`).test(cat), `${id} must not be presented as available`);
   }
   check('session length is advisory, not enforced', /id: 'session-length',[^\n]*status: 'advisory'/.test(cat), 'nothing ends a session');
+  // Since 0.31 the button lives in the device workspace's More menu: the page
+  // passes the technician context in, the menu offers view-only only with it.
   const page = read('apps/web/app/(app)/endpoints/[id]/page.tsx');
-  check('View only is offered only in a technician context', /\{technician && \(\s*<Button[\s\S]{0,400}mutate\('view_only'\)/.test(page),
-    'for members view-only is not applied; the button must not imply it is');
+  const devActions = read('apps/web/components/endpoints/workspace/device-actions.tsx');
+  check('View only is offered only in a technician context',
+    /technician: !!technician\b/.test(page) && /onViewOnly=\{\(\) => launchMutation\.mutate\('view_only'\)\}/.test(page)
+      && /\{perms\.technician && \(\s*<DropdownMenuItem[^>]*onSelect=\{onViewOnly\}/.test(devActions)
+      && (devActions.match(/onViewOnly/g) ?? []).length === 3,
+    'for members view-only is not applied; the menu must not imply it is');
 }
 
 // 14. Approved actions (0.26). A compromised portal or database alone must

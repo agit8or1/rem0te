@@ -5,6 +5,105 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.31.0] — 2026-11-11 · *Workbench*
+
+The first increment of the RMM overhaul: the technician's screens, reorganised around the work. The plan and the
+honest inventory behind it are in `docs/rmm-gap-analysis.md`; the integration with ClientSt0r is tracked in
+`INTEGRATION_COORDINATION.md`.
+
+### Added
+
+- **The menu is organised by job:** Dashboard, Devices, Alerts, Patching, Remote Support, and a collapsible
+  Settings group that holds the administration (users, audit, businesses, technicians, access, SSO, rollouts,
+  security, system status, updates). Pages that belong to one job are tabs of it, so Devices has *All devices*,
+  *My devices*, *All assigned*, *Add device* and *Unassigned*, and Remote Support has *Sessions*, *Quick Connect*,
+  *Support requests* and *Technician client*. The sidebar and the tabs are drawn from one model
+  (`components/layout/nav-model.ts`), so they cannot disagree. Hiding an entry is a convenience; every route still
+  checks permissions itself. Page titles now match the menu ("Devices", "Add device", "Technician client"…).
+  Automation and Reports are deliberately absent until they exist.
+- **Technician dashboard** (`GET /dashboard/overview`): what is broken, who is affected, what needs attention, what
+  is being worked on and what to do next, from real data. Online / offline / agent-silent devices, critical alerts
+  (maintenance shown apart), site outages, restart pending, patch compliance from stored scans (with its definition,
+  coverage and age), failed or uncertain approved-action targets, approvals waiting, live sessions, recent devices,
+  and a ranked "work on next" queue where every item says why it is there. Each section reuses the scoping of the
+  page it summarises and is absent without that page's capability. Server host health moved to System status; the
+  map is behind "Show device locations". Dashboard tiles open the Alerts list already filtered: the Alerts filters
+  now follow the URL.
+- **Device workspace.** The computer page's header states status (online, offline since…, or reachable through
+  RustDesk with a silent agent), business, site and last seen (marked stale past the 10-minute sweep), with an
+  attention strip of open alerts, restart pending, pending updates with scan age and agent problems, each linking
+  to its tab. Primary actions: Connect, Diagnose, Run action (disabled with the reason when it cannot), Patch, and
+  a More menu for view-only, diagnostics report, reinstall and archive — Archive no longer sits beside Connect, and
+  each is confirmed. Tabs regrouped: Overview, Monitoring (alerts first), Software, Patches, Event logs,
+  Diagnostics, Actions, History (sessions, notes, AI summary, access review). `?tab=` deep-links; old values map
+  across.
+- **Device list** rebuilt on `GET /endpoints/list`: server-side search and filters (business, site, online, alerts,
+  restart pending, agent type, archived), every column sortable, 25–200 per page, online first. Columns: device,
+  business, site, OS, health (worst open alert), agent type and version, last seen, logged-in user, CPU/RAM/disk with
+  age, pending patches, open alerts, Connect, More. Samples older than 15 minutes and scans older than 36 hours are
+  greyed rather than shown as current. Column choice, density and named views are saved in the viewer's browser and
+  say so. The always-masked RustDesk ID column is gone (search still matches it). **CSV export** of the filtered
+  view (`/endpoints/list/export.csv`): needs View computers, capped at 10,000 rows, formula cells neutralised, and
+  audited as `ENDPOINT_LIST_EXPORTED` — written before the file is returned, or the export is refused.
+- **Read-only diagnostics catalog** for the standard Windows agent: nine one-click checks — refresh inventory, disk
+  space, service health, recent system errors, top processes, network connectivity, DNS resolution, pending updates,
+  reboot status. The request carries a catalog key and nothing else; the heartbeat hands `{id, key}` only to an
+  authenticated device; `heartbeat.ps1` maps the key to a fixed read-only function and refuses any other; results
+  return with the device secret on `POST /enrollment/diagnostic-result`, are re-shaped, redacted and capped at
+  32 KB. Lifecycle requested → delivered → running → completed / failed / expired, the requester is re-authorised
+  at delivery, there are per-device and per-user limits, and the request and outcome are audited. On the device
+  page's Diagnostics tab. See `docs/diagnostics.md`. **Simulated only:** the PowerShell has been parsed by
+  PowerShell 7.4 and run under pwsh against stub cmdlets, never on real Windows.
+- **Path A of the ClientSt0r integration is proven against ClientSt0r's own code.** `interop-clientst0r.mjs` now
+  drives ClientSt0r 3.17.660's `Rem0teProvider` (whoami, connection test, device list and normalisation, the
+  business pin, and a second business's key on the same connection, which is refused) against a real rem0te:
+  17/17. This is code-level interop with a scratch ClientSt0r, not a test of two deployed applications. Path B
+  (ticket-rmm-v1) still has the four gaps recorded in `INTEGRATION_COORDINATION.md`; revision 3 is proposed there
+  and awaits ClientSt0r.
+
+### Fixed
+
+- **A Business User saw every computer in their business on `GET /endpoints` and `GET /endpoints/connected`**,
+  including `ASSIGNED_USERS` computers granted only to other people. Both scoped by business alone; the newer
+  listings already used `acl.endpointVisibilityWhere`. Both now do, AND-ed with the filters. The first attempt at
+  this fix still leaked: spreading the search's `OR` into the same object as the visibility rule's `OR` silently
+  replaced it. Owners, admins and technicians see what they saw before. The page that lists every device was
+  already correct, so the symptom was in pickers and the online-computers list.
+- **Tab bars with many tabs and the Users table widened the whole page at tablet width** (found by the new
+  navigation test). They now scroll inside their own box.
+- **Missing page padding** on Quick Connect, Downloads and Access control.
+- **`unit-monitoring.mjs` failed when run under pwsh at certain times of day:** its event fixture used a fixed
+  timestamp that drifted out of the two-hour window the check asks for. The fixture is now relative to the clock.
+- The product is called Rem0te on `/help` (it still said Reboot Remote).
+- **Guide screenshots re-captured for the new menu**, and three whose numbered keys never matched their callouts
+  (Devices list, Sessions, Updates) now do. Callout numbers are kept inside the frame instead of losing half to the
+  top edge.
+- The invariant that view-only is offered only in a technician context followed the button into the workspace's
+  More menu; it failed on the old page location and is confirmed to fail again when the gate is removed.
+
+### Removed
+
+- The old device table (`endpoint-table.tsx`) and the unused `endpoint-monitoring.tsx` component.
+
+### Upgrade notes
+
+- **Schema change:** migrations `0030_device_list_export_audit` (an audit action) and `0031_diagnostic_runs` (the
+  `DiagnosticRun` table, with CHECK constraints on key and result size). `prisma migrate deploy`, rsync `prisma/`,
+  `npx prisma generate` at the target. No dependency changes.
+- **Computers get the diagnostics block when their agent is reinstalled.** Until then a requested diagnostic stays
+  *Delivered* and expires after 10 minutes, and the page says the agent probably predates 0.31.
+- Bookmarks still work: no route moved, only where it sits in the menu.
+
+### Verification
+
+- New: `apps/web/scripts/e2e-navigation.mjs` (Platform Admin, Business Owner, Business User; 1440 and 820 px; light
+  and dark — 132 checks; guarded like the capture scripts, §18), `e2e-dashboard.mjs` (53, fails with each scoping
+  rule removed), `e2e-device-list.mjs` (113, including Business A / B isolation and the two regressions above, which
+  fail on 0.30.1's service), `e2e-diagnostics-catalog.mjs` (70) and `unit-diagnostics-catalog.mjs` (104, in CI).
+- Invariants §20 for the diagnostics catalog (19 guard removals confirmed caught).
+- `scripts/run-e2e.sh` runs the dashboard, diagnostics-catalog and device-list suites.
+- Not tested: anything on a real Windows computer, and the two applications deployed side by side.
+
 ## [0.30.1] — 2026-11-10 · *Plumbline*
 
 ### Security

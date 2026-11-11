@@ -1,4 +1,4 @@
-# RMM gap analysis (2026-11-11, rem0te 0.30.1)
+# RMM gap analysis (2026-11-11, rem0te 0.30.1; status updated for 0.31.0)
 
 An honest inventory against the RMM overhaul brief. It is written from the code, the test suites and a review of
 every published screenshot. It is a planning record for maintainers, not product documentation, so it is not
@@ -110,6 +110,7 @@ owner's approval.
 | 9 | Script library with review and immutable approval binding | P1 | Largest new surface. Design note first |
 | 10 | Reports: patch compliance, agent coverage, alert frequency | P1/P2 | |
 | 11 | Linux heartbeat and inventory | P2 | |
+| 12 | **Scheduled RustDesk client updates** (requested 2026-11-11): opt-in per business or site, applied only inside an update window outside working hours, never while a session is open, honouring the `updates` containment pause; reuses the staged-rollout path (signed agent) or the queued-reinstall path (standard agent) | P1 | Today every client update is queued by hand and applied on the next heartbeat, whatever the time |
 
 **Real-device dependency.** Items 5 and 8 need a disposable Windows 11 machine and a Windows Server 2022 machine
 to move past **S**. Until then their changelog entries say *simulated only*.
