@@ -14,7 +14,7 @@
  */
 import { chromium } from 'playwright';
 import { createRequire } from 'module';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { mkdir, mkdtemp } from 'fs/promises';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
@@ -92,6 +92,30 @@ async function visit(page, href) {
   return pageHealth(page);
 }
 
+/** No control anywhere on a library page that could read as running a script. */
+async function noRunControl(page) {
+  return page.evaluate(() => [...document.querySelectorAll('main button, main a, main [role=button]')]
+    .map((e) => (e.textContent ?? '').trim()).filter((t) => /\b(run|execute|deploy|dispatch|send to)\b/i.test(t)));
+}
+
+async function automationChecks(page) {
+  await follow(page, 'nav[aria-label="Main"] [data-nav="automation"]');
+  const h = await pageHealth(page);
+  check(new URL(page.url()).pathname === '/automation/scripts' && h.h1 === 'Script library', 'Automation opens the Script library', JSON.stringify(h));
+  const notice = await page.$eval('[data-not-runnable]', (e) => e.textContent).catch(() => '');
+  check(/isn.t available yet/i.test(notice) && /signed agent/i.test(notice) && /real Windows/i.test(notice), 'it says plainly that running scripts is not available yet, and why', notice.slice(0, 200));
+  const runs = await noRunControl(page);
+  check(runs.length === 0, 'the library page has no Run button', runs.join(' | '));
+  const row = await page.$('[data-script-row]');
+  if (row) {
+    await row.click();
+    await page.waitForSelector('[data-script-content]', { timeout: 15_000 }).catch(() => {});
+    const d = await pageHealth(page);
+    const runs2 = await noRunControl(page);
+    check(!!(await page.$('[data-not-runnable]')) && !!(await page.$('[data-static-checks]')) && runs2.length === 0 && d.overflow <= 1, 'a script\'s page shows the notice and the static checks, has no Run button, no overflow', `${runs2.join(' | ')} ${JSON.stringify(d)}`);
+  }
+}
+
 const created = [];
 try {
   const tenant = await prisma.tenant.findFirst({ where: { isActive: true }, orderBy: { createdAt: 'asc' } });
@@ -108,8 +132,8 @@ try {
     return u.email;
   };
   const personas = {
-    admin: { email: await mk('admin', { isPlatformAdmin: true }), expect: ['dashboard', 'devices', 'alerts', 'patching', 'remote', 'reports', 'settings'] },
-    owner: { email: await mk('owner', {}, { roleId: ownerRole.id, capabilities: [] }), expect: ['dashboard', 'devices', 'alerts', 'patching', 'remote', 'reports', 'settings'] },
+    admin: { email: await mk('admin', { isPlatformAdmin: true }), expect: ['dashboard', 'devices', 'alerts', 'automation', 'patching', 'remote', 'reports', 'settings'] },
+    owner: { email: await mk('owner', {}, { roleId: ownerRole.id, capabilities: [] }), expect: ['dashboard', 'devices', 'alerts', 'automation', 'patching', 'remote', 'reports', 'settings'] },
     // computers:view without monitoring:alerts: the device reports, not the alert ones (0.32).
     user: { email: await mk('user', {}, { roleId: userRole.id, capabilities: ['computers:view', 'computers:connect'] }), expect: ['dashboard', 'devices', 'patching', 'remote', 'reports'] },
   };
@@ -133,6 +157,14 @@ try {
         const h = await pageHealth(page);
         const active = await page.$eval(`nav[aria-label="Main"] [data-nav="${id}"]`, (e) => e.className.includes('bg-primary'));
         check(!h.notFound && h.h1 && h.overflow <= 1 && active, `${id} → ${new URL(page.url()).pathname} renders "${h.h1}", highlighted, no overflow`, JSON.stringify(h));
+      }
+
+      // Automation: the script library, which says it cannot run scripts and offers nothing that would.
+      if (got.includes('automation')) await automationChecks(page);
+      else {
+        const h = await visit(page, '/automation/scripts');
+        const txt = await page.evaluate(() => document.querySelector('main')?.innerText ?? '');
+        check(!!h.h1 && /permission/i.test(txt) && !(await page.$('[data-script-row]')), 'without library rights, /automation/scripts loads but lists nothing and says a permission is needed', txt.slice(0, 200));
       }
 
       // Section tabs: on Devices and Remote Support, never on a device's own page.

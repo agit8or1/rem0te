@@ -58,6 +58,13 @@ export const CAP = {
   // Business Owner (or the MSP) with fresh authentication, because pointing
   // alerts somewhere is a way to read a business's machine names out.
   MONITORING_CONFIGURE: 'monitoring:configure',
+
+  // Script library. Writing scripts and new versions, and submitting them for
+  // review; and, separately, approving or rejecting someone else's version.
+  // Neither runs anything: nothing in the library can (docs/script-library.md).
+  // A technician needs these on a grant covering the whole business.
+  SCRIPTS_AUTHOR: 'scripts:author',
+  SCRIPTS_REVIEW: 'scripts:review',
 } as const;
 
 export type Capability = (typeof CAP)[keyof typeof CAP];
@@ -130,6 +137,13 @@ export const CAPABILITY_GROUPS: {
     group: 'Actions',
     items: [
       { key: CAP.ACTIONS_REQUEST, label: 'Request approved actions', description: 'Ask for a catalog action (such as starting the Print Spooler) on a computer they can reach. Nothing runs until people on the approval roster approve it with their passkeys; this permission never approves.' },
+    ],
+  },
+  {
+    group: 'Automation',
+    items: [
+      { key: CAP.SCRIPTS_AUTHOR, label: 'Write scripts', description: "Add scripts to this business's library, edit them (each edit is a new version) and submit versions for review. Scripts cannot be run yet." },
+      { key: CAP.SCRIPTS_REVIEW, label: 'Review scripts', description: "Approve or reject someone else's script version. Never one they wrote or edited. Approving needs a fresh sign-in, and runs nothing." },
     ],
   },
 ];

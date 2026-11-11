@@ -750,6 +750,63 @@ check(
     'agentSecretHash may appear only in the select and the bound/none mapping');
 }
 
+// 23. The script library. It stores, hashes and reviews scripts and has no
+//     way to run one: a script would run only as a signed action, approved on
+//     the approval signer and verified by the signed agent
+//     (docs/script-library.md). So the library reaches nothing that touches
+//     a computer, has no run route, never lets a contributor approve, and its
+//     versions cannot change once written.
+{
+  const dir = 'apps/api/src/script-library';
+  const files = readdirSync(join(ROOT, dir)).filter((f) => f.endsWith('.ts')).map((f) => `${dir}/${f}`);
+  const src = Object.fromEntries(files.map((f) => [f, read(f)]));
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const ALLOWED = /^(node:crypto|zod|express|@nestjs\/common|@prisma\/client|\.\/(definition|static-checks|script-library\.(service|controller))|\.\.\/(prisma\/prisma\.service|audit\/audit\.(service|module)|rbac\/(access-control\.service|capabilities|platform-permissions)|security-controls\/review|common\/guards\/jwt-auth\.guard|common\/decorators\/actor\.decorator|common\/throttling|auth\/step-up\.service))$/;
+  const importsOf = (s) => [...s.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s*['"]([^'"]+)['"]|\b(?:require|import)\(\s*['"]([^'"]+)['"]/gm)].map((m) => m[1] ?? m[2]);
+  const badImports = files.flatMap((f) => importsOf(src[f]).filter((i) => !ALLOWED.test(i)).map((i) => `${f} imports ${i}`));
+  const touches = files.flatMap((f) => [...code(src[f]).matchAll(/\b(actionJob|actionTarget|ActionsService|SignerClient|createPlan|endpointCommand|diagnosticRun|rustdeskNode|EnrollmentService|DiagnosticsCatalogService|PatchingService|heartbeat|forHeartbeat|envelope)\b|\.endpoint\./gi)].map((m) => `${f}: ${m[0]}`));
+  const reachIn = walk('apps/api/src').filter((f) => !f.startsWith(dir) && f !== 'apps/api/src/app.module.ts' && /from ['"][./]*script-library\//.test(read(f)));
+  const mod = src[`${dir}/script-library.module.ts`] ?? '';
+  check('the script library creates no action job and reaches no agent, signer or heartbeat',
+    files.length >= 5 && badImports.length === 0 && touches.length === 0 && reachIn.length === 0 && !/@Global\(\)/.test(code(mod)) && !/exports\s*:/.test(code(mod)),
+    [...badImports, ...touches, ...reachIn.map((f) => `${f} imports the library`)].join('; ') || 'script-library module missing, global, or exporting');
+
+  const ctl = src[`${dir}/script-library.controller.ts`] ?? '';
+  const routes = [...ctl.matchAll(/@(Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)')?\s*\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''}`);
+  const EXPECT = ['GET ', 'POST ', 'GET :id', 'GET :id/diff', 'POST :id/versions', 'GET :id/versions/:version', 'POST :id/versions/:version/submit', 'POST :id/versions/:version/withdraw', 'POST :id/versions/:version/review'];
+  const elsewhere = walk('apps/api/src').filter((f) => /controller\.ts$/.test(f) && !f.startsWith(dir))
+    .filter((f) => /@(?:Get|Post|Put|Patch|Delete)\('[^']*scripts?\b|@Controller\(\s*\[?\s*'[^']*scripts?\b/i.test(read(f)));
+  check('the script library has no run route, here or anywhere else',
+    /@Controller\('scripts'\)/.test(ctl) && JSON.stringify(routes) === JSON.stringify(EXPECT) && !routes.some((r) => /run|exec|dispatch|deploy|send|schedule|push|approve/i.test(r)) && elsewhere.length === 0,
+    `routes: ${routes.join(', ')}${elsewhere.length ? `; other controllers with script routes: ${elsewhere.join(', ')}` : ''}`);
+
+  const svc = code(src[`${dir}/script-library.service.ts`] ?? '');
+  const rev = svc.slice(svc.indexOf('async review('));
+  const iSame = rev.search(/if \(v\.authorId === actor\.userId \|\| v\.contributorIds\.includes\(actor\.userId\)\) \{\s*await refuse\('same_person'\);\s*throw new ForbiddenException\(\{ code: 'SAME_PERSON'/);
+  const iHash = rev.search(/if \(d\.expectedSha256 !== v\.contentSha256\) \{/);
+  const iFresh = rev.search(/if \(d\.decision === 'approve'\) assertFresh\(freshMethod\);/);
+  const iWrite = rev.search(/tx\.scriptVersion\.updateMany\(\{\s*where: \{ id: v\.id, status: 'IN_REVIEW', contentSha256: d\.expectedSha256 \}/);
+  const mig = read('apps/api/prisma/migrations/0035_script_library/migration.sql');
+  check('approval refuses SAME_PERSON (author and contributors), binds the hash seen, and needs fresh authentication — before it writes',
+    iSame >= 0 && iHash > iSame && iFresh > iHash && iWrite > iFresh
+      && /const contributorIds = contributorsOf\(actor\.userId, base\);/.test(svc)
+      && /if \(base && base\.status !== 'APPROVED'\) for \(const c of base\.contributorIds\) out\.add\(c\);/.test(read(`${dir}/definition.ts`))
+      && /"decidedById" <> "authorId"\s*AND NOT \("decidedById" = ANY \("contributorIds"\)\)\s*AND "approvedSha256" IS NOT NULL\s*AND "approvedSha256" = "contentSha256"/.test(mig),
+    'review() must check SAME_PERSON, then the hash, then assertFresh, then write; new versions inherit unapproved contributors; 0035 keeps the CHECK');
+
+  const guard = mig.slice(mig.indexOf('CREATE OR REPLACE FUNCTION rem0te_script_version_guard()'));
+  const IMMUTABLE = ['content', 'contentSha256', 'definitionSha256', 'contentBytes', 'parameters', 'risk', 'language', 'targetOs', 'description', 'authorId', 'contributorIds', 'scriptId', 'version', 'basedOnId'];
+  const missing = IMMUTABLE.filter((c) => !new RegExp(`NEW\\."${c}" (<>|IS DISTINCT FROM) OLD\\."${c}"`).test(guard));
+  const writes = [...svc.matchAll(/scriptVersion\.(update|updateMany|upsert)\(\{[\s\S]*?data: \{([^}]*)\}/g)].map((m) => m[2]);
+  check('script versions are immutable: the trigger fixes content and definition, the service never rewrites them',
+    missing.length === 0 && /CREATE TRIGGER "ScriptVersion_immutable" BEFORE INSERT OR UPDATE ON "ScriptVersion"/.test(mig)
+      && /CREATE TRIGGER "Script_immutable" BEFORE UPDATE ON "Script"/.test(mig)
+      && /IF NEW\."contentSha256" <> encode\(sha256\(convert_to\(NEW\."content", 'UTF8'\)\), 'hex'\) THEN/.test(guard)
+      && /IF NEW\."status" <> 'DRAFT'/.test(guard)
+      && writes.length >= 2 && writes.every((w) => !/\b(content|contentSha256|definitionSha256|contentBytes|parameters|risk|language|targetOs|description|authorId|contributorIds)\b/.test(w)),
+    `trigger does not fix: ${missing.join(', ') || '-'}; service writes: ${writes.join(' | ')}`);
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

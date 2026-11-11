@@ -3,7 +3,8 @@
  *
  * The sidebar used to list about thirty routes flat, mixing a person's own
  * computers, daily technician work and platform administration. Now it lists
- * the jobs: Dashboard, Devices, Alerts, Patching, Remote Support, Reports, and a
+ * the jobs: Dashboard, Devices, Alerts, Automation, Patching, Remote Support,
+ * Reports, and a
  * Settings group that holds the administration. Pages that belong to one job
  * (all devices, add a device, unassigned…) are tabs of that job, drawn by
  * <SectionTabs> from the same model, so the sidebar and the tabs can never
@@ -12,14 +13,14 @@
  * Every entry still declares who may see it. Hiding an entry is a convenience,
  * never the control: each route and API call checks permissions itself.
  *
- * Automation is not here yet on purpose: an entry that leads to an empty page
- * is a dead end. It joins when it ships. Reports joined in 0.32; each report
+ * Automation joined with the script library (0.32): write, version and review
+ * scripts. It cannot run them yet, and its page says so. Reports joined in 0.32; each report
  * shows only for the capability of the data it summarises (computers:view or
  * monitoring:alerts), the same rule the API applies.
  */
 import type { LucideIcon } from 'lucide-react';
 import {
-  Activity, BarChart3, BellRing, Building2, Cpu, WifiOff, Download, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
+  Activity, BarChart3, BellRing, Building2, Cpu, WifiOff, Download, FileCode2, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
   Monitor, MonitorCheck, MonitorX, PackageCheck, PlayCircle, RefreshCw, Settings, Shield, ShieldCheck, Siren,
   UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock,
 } from 'lucide-react';
@@ -33,6 +34,8 @@ export type NavCtx = {
   technician: boolean;
   hasAssignments: boolean;
   canManageTechnicians: boolean;
+  /** Platform Admin or `approvals:review`: reviews global scripts. */
+  isIndependentReviewer: boolean;
 };
 
 export type NavLeaf = {
@@ -78,6 +81,13 @@ export const NAV: NavSection[] = [
   {
     id: 'alerts', label: 'Alerts', icon: Siren, kind: 'link',
     items: [{ href: '/alerts', label: 'Alerts', icon: Siren, show: (c) => c.can(CAP.ALERTS_VIEW) }],
+  },
+  {
+    id: 'automation', label: 'Automation', icon: FileCode2, kind: 'link',
+    items: [{
+      href: '/automation/scripts', label: 'Script library', icon: FileCode2,
+      show: (c) => c.can(CAP.SCRIPTS_AUTHOR) || c.can(CAP.SCRIPTS_REVIEW) || c.isIndependentReviewer,
+    }],
   },
   {
     id: 'patching', label: 'Patching', icon: ShieldCheck, kind: 'link',

@@ -144,6 +144,13 @@ enum ActivityAction {
   ENDPOINT_EVENT_LOG_REQUESTED
   ENDPOINT_DIAGNOSTIC_REQUESTED
   ENDPOINT_DIAGNOSTIC_COMPLETED
+  SCRIPT_CREATED
+  SCRIPT_VERSION_CREATED
+  SCRIPT_VERSION_SUBMITTED
+  SCRIPT_VERSION_WITHDRAWN
+  SCRIPT_VERSION_APPROVED
+  SCRIPT_VERSION_REJECTED
+  SCRIPT_REVIEW_REFUSED
   ENDPOINT_AGENT_REINSTALL_REQUESTED
   ENDPOINT_DEVICE_SECRET_ACCEPTED
   ENDPOINT_RESTORED
@@ -542,6 +549,7 @@ model Customer {
   monitorAlerts        MonitorAlert[]
   monitorSuppressions  MonitorSuppression[]
   clientUpdatePolicies ClientUpdatePolicy[]
+  scripts             Script[]
 
   @@index([tenantId])
   @@index([tenantId, name])
@@ -2728,4 +2736,80 @@ model ClientUpdatePolicy {
 
   @@index([customerId])
   @@index([enabled])
+}
+
+// ─── Script library (review only; nothing here runs a script) ────────────────
+//
+// docs/script-library.md. A version is immutable from the moment it is
+// written: migration 0035's trigger refuses any change to its content,
+// hashes, definition or authorship, and any status change but
+// DRAFT→IN_REVIEW, IN_REVIEW→DRAFT, IN_REVIEW→APPROVED, IN_REVIEW→REJECTED.
+// CHECKs refuse an approver who contributed to the content.
+
+enum ScriptScope {
+  GLOBAL
+  BUSINESS
+}
+
+enum ScriptVersionStatus {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  REJECTED
+}
+
+model Script {
+  id          String      @id @default(cuid())
+  scope       ScriptScope
+  tenantId    String?
+  // Null exactly when scope is GLOBAL (CHECK). Fixed once written (trigger).
+  customerId  String?
+  customer    Customer?   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  name        String
+  // Not a relation: the record outlives the people in it, like DiagnosticRun.
+  createdById String
+  createdAt   DateTime    @default(now())
+
+  versions ScriptVersion[]
+
+  // One name per business; global names are unique by a partial index (0035).
+  @@unique([customerId, name])
+  @@index([scope])
+}
+
+model ScriptVersion {
+  id        String  @id @default(cuid())
+  scriptId  String
+  script    Script  @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+  version   Int
+  // The version this one was edited from; null for the first.
+  basedOnId String?
+
+  description String
+  language    String
+  targetOs    String
+  risk        String
+  parameters  Json   @default("[]")
+
+  content          String
+  contentBytes     Int
+  contentSha256    String
+  definitionSha256 String
+
+  authorId       String
+  // The author plus the contributors of an unapproved base version
+  // (definition.ts contributorsOf). None of them may approve this version.
+  contributorIds String[]
+  createdAt      DateTime @default(now())
+
+  status         ScriptVersionStatus @default(DRAFT)
+  submittedAt    DateTime?
+  decidedById    String?
+  decidedAt      DateTime?
+  decisionNote   String?
+  // The content hash the approver's page showed. Equal to contentSha256 (CHECK).
+  approvedSha256 String?
+
+  @@unique([scriptId, version])
+  @@index([scriptId, status])
 }

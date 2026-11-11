@@ -699,3 +699,25 @@ export const apiKeysApi = {
   create: (data: { name: string; scopes: string[]; expiresInDays?: number; businessId?: string }) => api.post('/apikeys', data),
   revoke: (id: string) => api.delete(`/apikeys/${id}`),
 };
+
+// Script library: write, version, diff and review. There is no run call —
+// scripts cannot be run from the portal (docs/script-library.md).
+export type ScriptParameter =
+  | { name: string; type: 'string'; description?: string; required: boolean; charset: 'alphanumeric' | 'identifier' | 'hostname' | 'safe_text'; maxLength: number }
+  | { name: string; type: 'integer'; description?: string; required: boolean; min: number; max: number }
+  | { name: string; type: 'boolean'; description?: string; required: boolean }
+  | { name: string; type: 'choice'; description?: string; required: boolean; choices: string[] };
+export type ScriptRisk = 'low' | 'medium' | 'high';
+export interface ScriptVersionInput { description: string; risk: ScriptRisk; parameters: ScriptParameter[]; content: string }
+export const scriptsApi = {
+  list: (businessId?: string | null) => api.get('/scripts', bq(businessId)),
+  get: (id: string) => api.get(`/scripts/${id}`),
+  version: (id: string, version: number) => api.get(`/scripts/${id}/versions/${version}`),
+  diff: (id: string, from: number, to: number) => api.get(`/scripts/${id}/diff`, { params: { from, to } }),
+  create: (data: ScriptVersionInput & { scope: 'global' | 'business'; businessId?: string; name: string }) => api.post('/scripts', data),
+  newVersion: (id: string, data: ScriptVersionInput & { basedOnVersion: number }) => api.post(`/scripts/${id}/versions`, data),
+  submit: (id: string, version: number) => api.post(`/scripts/${id}/versions/${version}/submit`),
+  withdraw: (id: string, version: number) => api.post(`/scripts/${id}/versions/${version}/withdraw`),
+  review: (id: string, version: number, data: { decision: 'approve' | 'reject'; expectedSha256: string; note: string }) =>
+    api.post(`/scripts/${id}/versions/${version}/review`, data),
+};

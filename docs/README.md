@@ -55,6 +55,9 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[staged-patching.md](staged-patching.md)** — Windows updates in stages (0.27): a canary, then rings, each a
   signed plan two approvers authorize; what is installed and refused, the promotion gate, what *effective* means,
   and what is and is not proven.
+- **[script-library.md](script-library.md)**: the script library. PowerShell scripts with immutable, hashed
+  versions, static-check warnings, and review by someone other than the author. Scripts can't run yet; the page
+  explains the signed path they'll take and the threat model.
 - **[containment.md](containment.md)** — stopping writes during an incident (0.28): a global write pause and
   per-business suspension, enforced by the portal, the approval signer and a signed pause the agents obey; the
   tamper-evident audit log, its off-host export and verification; watching from outside.

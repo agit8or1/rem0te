@@ -48,8 +48,10 @@ bundled into `/docs`. Integration work is tracked separately in
 
 ## Not implemented
 
-- **Script library and automation engine:** scripts, versions, review, signing, scheduling, job queue, bulk runs,
-  output capture and redaction, retries. Nothing exists. This is the largest gap.
+- **Script library and automation engine:** the library and its review now exist (immutable hashed versions, static
+  warnings, independent approval bound to the content hash; [script-library.md](script-library.md), I). Not
+  implemented: running a script at all, and so signing, scheduling, job queue, bulk runs, output capture and
+  redaction, retries. Running waits for the signed agent's real-Windows testing. This is still the largest gap.
 - **Software deployment:** catalog, verified packages, install/uninstall jobs, detection rules, version compliance.
   Inventory only.
 - **Process list, full service list, network adapter details** in the agent. Services are checked only when a

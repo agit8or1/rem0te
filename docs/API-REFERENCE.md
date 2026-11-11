@@ -3,7 +3,7 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **391** of them across
+integration, under `/api/integration/v1`). There are **392** of them across
 **49** controllers.
 
 For request and response shapes, worked examples and error codes, see
@@ -462,21 +462,6 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/public/quick-connect` | public | — |
 | `GET` | `/api/v1/public/quick-connect/download/:os` | public | — |
 
-## Reports
-
-`apps/api/src/reports/reports.controller.ts`
-
-| Method | Path | Access | Capability |
-|---|---|---|---|
-| `GET` | `/api/v1/reports/agent-coverage` | signed in | `COMPUTERS_VIEW` |
-| `GET` | `/api/v1/reports/agent-coverage/export.csv` | signed in, throttled | `COMPUTERS_VIEW` |
-| `GET` | `/api/v1/reports/alert-frequency` | signed in | `ALERTS_VIEW` |
-| `GET` | `/api/v1/reports/alert-frequency/export.csv` | signed in, throttled | `ALERTS_VIEW` |
-| `GET` | `/api/v1/reports/offline-time` | signed in | `ALERTS_VIEW` |
-| `GET` | `/api/v1/reports/offline-time/export.csv` | signed in, throttled | `ALERTS_VIEW` |
-| `GET` | `/api/v1/reports/patch-compliance` | signed in | `COMPUTERS_VIEW` |
-| `GET` | `/api/v1/reports/patch-compliance/export.csv` | signed in, throttled | `COMPUTERS_VIEW` |
-
 ## Rollouts
 
 `apps/api/src/admin/rollouts.controller.ts`
@@ -495,6 +480,22 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/admin/rollouts/pilot-groups` | signed in | — |
 | `GET` | `/api/v1/admin/rollouts/pin` | signed in | — |
 | `PATCH` | `/api/v1/admin/rollouts/pin` | signed in | — |
+
+## Script library
+
+`apps/api/src/script-library/script-library.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/scripts` | signed in | — |
+| `POST` | `/api/v1/scripts` | signed in, throttled | — |
+| `GET` | `/api/v1/scripts/:id` | signed in | — |
+| `GET` | `/api/v1/scripts/:id/diff` | signed in | — |
+| `POST` | `/api/v1/scripts/:id/versions` | signed in, throttled | — |
+| `GET` | `/api/v1/scripts/:id/versions/:version` | signed in | — |
+| `POST` | `/api/v1/scripts/:id/versions/:version/review` | signed in, throttled | — |
+| `POST` | `/api/v1/scripts/:id/versions/:version/submit` | signed in | — |
+| `POST` | `/api/v1/scripts/:id/versions/:version/withdraw` | signed in | — |
 
 ## Security
 

@@ -705,11 +705,23 @@ const SECTIONS: Section[] = [
         <p>
           From 0.31 the menu is organised by job: <strong className="text-foreground">Dashboard</strong>,{' '}
           <strong className="text-foreground">Devices</strong> (all devices, your own, adding one),{' '}
-          <strong className="text-foreground">Alerts</strong>, <strong className="text-foreground">Patching</strong>,{' '}
+          <strong className="text-foreground">Alerts</strong>, <strong className="text-foreground">Automation</strong>,{' '}
+          <strong className="text-foreground">Patching</strong>,{' '}
           <strong className="text-foreground">Remote Support</strong> (sessions, Quick Connect, support requests and the
           technician client), <strong className="text-foreground">Reports</strong> (0.32) and{' '}
           <strong className="text-foreground">Settings</strong>, which holds users, the audit log
           and platform administration. Help and the documentation are at the bottom of the menu.
+        </p>
+        <p>
+          <Link href="/automation/scripts" className="underline text-foreground">Automation → Script library</Link> holds
+          PowerShell scripts for one business, or global ones a Platform Admin writes. Every edit is a new version with its
+          own SHA-256. A version goes from draft to review to approved or rejected, and someone other than everyone who
+          wrote it must approve it, with a fresh sign-in. Before you approve, the page shows warnings for things like{' '}
+          <code>Invoke-Expression</code>, downloads, encoded commands, credentials and disabling Defender. They&apos;re
+          warnings, not a verdict. <strong className="text-foreground">Scripts can&apos;t run yet</strong>: they&apos;ll
+          only run through the signed agent and the approval roster, and that path hasn&apos;t been tested on real Windows.
+          Writing needs <em>Write scripts</em>; reviewing needs <em>Review scripts</em>. More in{' '}
+          <Link href="/docs/script-library" className="underline text-foreground">Script library</Link>.
         </p>
         <p>
           The <Link href="/dashboard" className="underline text-foreground">Dashboard</Link> (0.31) says what is broken,
