@@ -45,7 +45,7 @@ bundled into `/docs`. Integration work is tracked separately in
 | **Dashboard** | Tiles: computers, offline, sessions 7d/30d, businesses; a map; server CPU/memory/disk | Answers none of the five questions (what's broken, who's affected, what needs attention, what's being repaired, what's next). Mixes server health with fleet health |
 | **Ticket ↔ RMM (path B)** | Contract revision 2, signed examples, workflow proven against a reference peer (53 checks) | **Does not interoperate with real ClientSt0r**: four measured gaps. Revision 3 is proposed and awaiting ClientSt0r |
 | **Linux / macOS** | Linux (0.32): RustDesk plus a read-only agent on a systemd timer — heartbeat, inventory, pending updates (apt/dnf/zypper); evidence **I** (real script, scratch API, unprivileged). macOS (0.33): the same read-only agent (shared `posix-agent.ts`) on a launchd LaunchDaemon, installed with `sudo` — heartbeat, inventory (`sw_vers`, `sysctl`, `vm_stat`, `top`, `df`, `ioreg`, `system_profiler`), and the updates macOS itself last found (never `softwareupdate`); evidence **I** only (real script and API, but on Linux against stubs of every macOS command) | Both: no software list, services/events monitoring, diagnostics or anything acted on; neither has run on an installed endpoint (no **R**). macOS also: restart pending is unknown, and pending updates are unknown when macOS has not checked within 36 hours; the installer's macOS steps are only parsed |
-| **AI** | Ticket analysis through ClientSt0r's inference endpoint (rem0te holds no provider key). Separately, the device page's "AI Timeline" calls Anthropic **directly from rem0te** with `ANTHROPIC_API_KEY`, sending notes and session history | The direct call conflicts with "provider keys stay in ClientSt0r". It is unset in production, so inert. Decide: remove it, route it through ClientSt0r, or keep it as an explicitly optional standalone feature with redaction |
+| **AI** | Ticket analysis, and since 0.34 the device page's AI summary, both go through ClientSt0r's inference gateway. rem0te holds no model-provider key and has no provider SDK (invariant §33). The summary sends a redacted minimum (platform, OS, agent version, dates, the newest notes and sessions; never the name, hostname, business, addresses or authors), audits every request without its text, stops under an `integration` pause, and shows the technician exactly what leaves | The summary's operation, `device_timeline_v1` with ClientSt0r's capabilities document (P11/P12, [coordination §5A](../INTEGRATION_COORDINATION.md)), is a **proposal ClientSt0r has not agreed**. Until ClientSt0r's capabilities list it, the button is disabled with *Needs ClientSt0r support for device_timeline_v1*, so in practice there is no AI summary yet. Evidence **U** (22), **I** (61, reference peer, not ClientSt0r) — **not R** |
 | **Reports** | Audit log, session history, alerts list, audit export | No report pages, no scheduling, no exports for patch compliance, uptime, alert frequency or agent coverage |
 
 ## Not implemented
@@ -70,6 +70,10 @@ bundled into `/docs`. Integration work is tracked separately in
 - **Remote-session controls:** file-transfer authorization, chat, recording, clipboard policy, multi-monitor
   selection. RustDesk doesn't report enforcement, so none of these can be offered as restrictions (see Security).
 - **Browser-based remote desktop.**
+- **AI device summary in practice** (0.34): rem0te's side is built and proved against a reference peer, but
+  ClientSt0r has neither agreed to nor implemented `device_timeline_v1` and its capabilities document (P11/P12), so
+  the summary is unavailable against the real ClientSt0r. Not implemented either side: a summary per ticket rather
+  than per computer, citing which note a sentence came from, and choosing the model profile in the console.
 - *(Global search — built in 0.33, see Working today. Not included: saved searches, searching inside notes, software lists or event logs, and a search index; the fleet is scanned per query.)*
 - ~~Saved device views, device groups in the UI, bulk actions~~ — built in 0.33 (see *Device list* above).
   Not implemented: dynamic (rule-based) groups and membership in more than one group.
@@ -85,12 +89,12 @@ bundled into `/docs`. Integration work is tracked separately in
 | Standard agent's heartbeat authority | It reports, it never executes. Execution is signed-agent only | Keep the split. Move production endpoints to the signed channel only after real-Windows testing |
 | Approval signer not installed in production | Nothing can be executed in production at all. Safe, but the action catalog is unusable there | Install per `docs/approved-actions.md` once real-device tests pass |
 | In-app updater requires a pinned key (0.30.1) | Updates are unavailable until `UPDATE_SIGNING_KEY_FINGERPRINT` and `UPDATE_GNUPGHOME` are set | Operator configuration |
-| Direct AI call from rem0te (above) | Notes and session history would leave rem0te if a key were set | Decide and document |
 
 ### Resolved
 
 | Limitation | Resolved in | How |
 |---|---|---|
+| The device page's AI summary called a model provider directly from rem0te with `ANTHROPIC_API_KEY`, sending the computer's name, hostname, business, site, tags and every note verbatim (inert in production: the key was unset) | 0.34 | Removed, with `@anthropic-ai/sdk`. The summary is requested through ClientSt0r's gateway by the integration client, redacted to a listed minimum, audited before it leaves, gated by `integration:ticket_analysis` and containment, and only once ClientSt0r advertises the (proposed) operation. [integration-clientst0r.md](integration-clientst0r.md#the-device-pages-ai-summary-034); `e2e-ai-timeline.mjs`, `unit-ai-timeline.mjs`; invariant §33 (**U**, **I**) |
 | A stolen admin session could create enrolment tokens (known since 0.23) | 0.33 | Making a token needs a fresh re-authentication for every role (`enrollment.create`, not configurable), and so does creating an API key with `enrollment:write` (`apikey.enrollment`). API keys keep minting without one: the key is the second proof. Registering by RustDesk ID mints no credential and is not gated. [sign-in.md](sign-in.md#always-on-whatever-is-configured); `e2e-enrol-stepup.mjs`; invariant §27 (**I**) |
 
 ## Usability findings from the screenshots

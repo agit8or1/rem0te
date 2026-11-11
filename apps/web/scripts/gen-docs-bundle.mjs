@@ -65,7 +65,7 @@ const ORDER = [
   ['incident-recovery.md', 'Incident recovery', 'Security and incidents', 'What to do, in order, when you suspect a compromise.'],
   ['update-signing.md', 'Update signing', 'Security and incidents', 'The offline-signed update chain and what a compromised portal cannot do.'],
   ['SECURITY-AUDIT.md', 'Security', 'Security and incidents', 'Security review findings and how each was addressed.'],
-  ['integration-clientst0r.md', 'ClientSt0r integration', 'Integrations and API', 'Ticket analysis, alert events and ticket links (contract ticket-rmm-v1).'],
+  ['integration-clientst0r.md', 'ClientSt0r integration', 'Integrations and API', 'Ticket analysis, the device AI summary, alert events and ticket links (contract ticket-rmm-v1).'],
   ['tactical-rmm.md', 'Tactical RMM', 'Integrations and API', 'Connecting from inside Tactical RMM: URL actions and agent matching.'],
   ['PUBLIC-API.md', 'API guide', 'Integrations and API', 'API keys, scopes and the public API with examples.'],
   ['API-REFERENCE.md', 'API reference', 'Integrations and API', 'Every route the server exposes, generated from the route table.'],

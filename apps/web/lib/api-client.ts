@@ -155,6 +155,8 @@ export const endpointsApi = {
   update: (id: string, data: Record<string, unknown>) => api.patch(`/endpoints/${id}`, data),
   archive: (id: string) => api.patch(`/endpoints/${id}/archive`),
   restore: (id: string) => api.patch(`/endpoints/${id}/restore`),
+  /** 0.34: whether the AI summary can be requested through ClientSt0r, and exactly what would be sent. */
+  timelineStatus: (id: string) => api.get(`/endpoints/${id}/timeline`),
   generateTimeline: (id: string) => api.post(`/endpoints/${id}/timeline/generate`),
   saveTimeline: (id: string, aiTimeline: string) => api.patch(`/endpoints/${id}`, { aiTimeline }),
   getPassword: (id: string) => api.get(`/endpoints/${id}/password`),

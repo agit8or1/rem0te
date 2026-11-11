@@ -22,34 +22,49 @@ export function signAlertEvent(event: unknown): { alg: 'Ed25519'; kid: string; s
 export interface SignedFetchResult { status: number; body: Buffer; headers: Headers; nonce: string }
 
 /**
- * POST to one of a peer's two configured URLs, signed. This is the ONLY
- * outbound HTTP the integration has, and its target is a `Peer` field from
- * the peers file — callers cannot pass a URL. Redirects are refused (a 3xx
- * could otherwise send a signed body somewhere else) and the response is
- * read to a hard size cap.
+ * POST to one of a peer's configured URLs, signed. With signedGetCapabilities
+ * below, this is the ONLY outbound HTTP the integration has, and its target
+ * is a `Peer` field from the peers file — callers cannot pass a URL.
+ * Redirects are refused (a 3xx could otherwise send a signed body somewhere
+ * else) and the response is read to a hard size cap.
  */
 export async function signedPost(peer: Peer, which: 'inference' | 'events', body: string, timeoutMs: number, maxResponseBytes: number): Promise<SignedFetchResult> {
   const url = which === 'inference' ? peer.inferenceUrl : peer.eventsUrl;
+  return send(peer, url, 'POST', body, timeoutMs, maxResponseBytes);
+}
+
+/**
+ * v0.34: GET the peer's own capabilities document (PROPOSED P12), signed the
+ * same way over an empty body. The URL is the peers file's optional
+ * `capabilitiesUrl`; with none configured there is nothing to ask.
+ */
+export async function signedGetCapabilities(peer: Peer, timeoutMs: number, maxResponseBytes: number): Promise<SignedFetchResult> {
+  const url = peer.capabilitiesUrl;
+  if (!url) throw new Error('peer has no capabilitiesUrl');
+  return send(peer, url, 'GET', '', timeoutMs, maxResponseBytes);
+}
+
+async function send(peer: Peer, url: URL, method: 'GET' | 'POST', body: string, timeoutMs: number, maxResponseBytes: number): Promise<SignedFetchResult> {
   const s = selfKey();
   const ts = String(Math.floor(Date.now() / 1000));
   const nonce = randomBytes(18).toString('base64url');
   const pathWithQuery = url.pathname + url.search;
   const sig = signEd25519(s.privateKey, requestSigningString({
-    audience: peer.peerAudience, method: 'POST', pathWithQuery, timestamp: ts, nonce, bodySha256: sha256Hex(body),
+    audience: peer.peerAudience, method, pathWithQuery, timestamp: ts, nonce, bodySha256: sha256Hex(body),
   }));
   const res = await fetch(url, {
-    method: 'POST',
+    method,
     redirect: 'error',
     signal: AbortSignal.timeout(timeoutMs),
     headers: {
-      'content-type': 'application/json',
+      ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
       [HDR.keyId]: `rem0te/${s.keyId}`,
       [HDR.timestamp]: ts,
       [HDR.nonce]: nonce,
       [HDR.signature]: sig,
       'x-request-id': randomUUID(),
     },
-    body,
+    body: method === 'POST' ? body : undefined,
   });
   const declared = Number(res.headers.get('content-length') ?? '0');
   if (declared > maxResponseBytes) { await res.body?.cancel(); throw new Error('response too large'); }

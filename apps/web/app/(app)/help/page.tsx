@@ -511,6 +511,23 @@ const SECTIONS: Section[] = [
           with the standard agent only; the Linux agent does not collect them. More in{' '}
           <Link href="/docs/diagnostics#the-processes-services-and-network-tabs" className="underline text-foreground">One-click diagnostics</Link>.
         </p>
+        <p className="font-medium text-foreground">The AI-written summary</p>
+        <p>
+          <em>History</em> ends with an <strong className="text-foreground">AI-written summary</strong> of the
+          computer&apos;s notes and remote sessions. Rem0te holds no AI provider key: from 0.34 the summary is written by
+          ClientSt0r&apos;s AI, through the same signed connection as ticket analysis, for the ClientSt0r organization
+          the business is mapped to. <strong className="text-foreground">What is sent to ClientSt0r</strong> lists every
+          field, what is never sent (the computer&apos;s name and hostname, the business, addresses, who wrote a note,
+          the RustDesk ID) and how many passwords, tokens, e-mail and IP addresses were removed first; <em>Show the
+          exact text</em> shows it word for word. Generating one needs Rename/edit computers and Ticket analysis
+          (ClientSt0r); every request is in the audit log, without the text, and an integration pause stops it.
+        </p>
+        <p>
+          ClientSt0r does not offer this yet: the panel says <em>Needs ClientSt0r support for
+          device_timeline_v1</em> and the button stays off until ClientSt0r advertises it. A summary already written
+          can still be edited by hand. More in{' '}
+          <Link href="/docs/integration-clientst0r#the-device-pages-ai-summary-034" className="underline text-foreground">ClientSt0r integration</Link>.
+        </p>
         <p className="font-medium text-foreground">If a computer reports nothing</p>
         <p>
           Re-run the managed installer on it. The agent that collects all of this is

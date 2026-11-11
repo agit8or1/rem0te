@@ -13,7 +13,6 @@
     "lint:fix": "eslint . --fix"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^1.6.0",
     "@nestjs/common": "^11.2.8",
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.2.8",

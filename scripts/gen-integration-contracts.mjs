@@ -12,14 +12,14 @@
  * Schemas are what ClientSt0r validates against, so the two must not drift.
  */
 import { createRequire } from 'node:module';
-import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(path.join(root, 'apps/api/package.json'));
 const { z } = require('zod');
-const { CONTRACT_SCHEMAS } = require(path.join(root, 'apps/api/dist/integration/contract.js'));
+const { CONTRACT_SCHEMAS, PROPOSED_SCHEMAS } = require(path.join(root, 'apps/api/dist/integration/contract.js'));
 const dir = path.join(root, 'docs/contracts/ticket-rmm-v1');
 const check = process.argv.includes('--check');
 
@@ -33,6 +33,20 @@ for (const [name, schema] of Object.entries(CONTRACT_SCHEMAS)) {
   if (check) {
     if (!existsSync(file) || readFileSync(file, 'utf8') !== text) { console.error(`drift: ${path.relative(root, file)}`); drift++; }
   } else writeFileSync(file, text);
+}
+
+// PROPOSED additions (0.34: revision 4, P11/P12 in INTEGRATION_COORDINATION.md
+// §5A) are generated beside the agreed ones, never among them: a peer that
+// validates against schemas/ must not mistake a proposal for the contract.
+for (const [name, schema] of Object.entries(PROPOSED_SCHEMAS ?? {})) {
+  const json = z.toJSONSchema(schema, { io: 'input', unrepresentable: 'any' });
+  json.$id = `urn:rem0te:contract:ticket-rmm-v1:proposed:${name}`;
+  json.title = `ticket-rmm-v1 PROPOSED ${name} (revision 4 proposal, not agreed)`;
+  const text = JSON.stringify(json, null, 2) + '\n';
+  const file = path.join(dir, 'proposed', `${name}.schema.json`);
+  if (check) {
+    if (!existsSync(file) || readFileSync(file, 'utf8') !== text) { console.error(`drift: ${path.relative(root, file)}`); drift++; }
+  } else { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, text); }
 }
 
 for (const f of readdirSync(path.join(dir, 'fixtures')).filter((x) => x.endsWith('.json')).sort()) {
@@ -98,4 +112,4 @@ if (existsSync(path.join(exDir, 'index.json'))) {
 }
 
 if (drift || bad) { console.error(`${drift} schema(s) drifted, ${bad} fixture(s) failed${drift ? ' — run node scripts/gen-integration-contracts.mjs' : ''}`); process.exit(1); }
-console.log(`ticket-rmm-v1: ${Object.keys(CONTRACT_SCHEMAS).length} schemas ${check ? 'match' : 'written'}, fixtures valid, ${examplesChecked} signed examples verified`);
+console.log(`ticket-rmm-v1: ${Object.keys(CONTRACT_SCHEMAS).length} schemas (+ ${Object.keys(PROPOSED_SCHEMAS ?? {}).length} proposed) ${check ? 'match' : 'written'}, fixtures valid, ${examplesChecked} signed examples verified`);
