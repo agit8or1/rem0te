@@ -184,10 +184,10 @@ try {
     check(ids.includes(epA.id) && ids.includes(epB.id), 'sees every computer');
   }
   {
+    // GET /admin/search was removed in 0.31.2: it scoped computers by business
+    // alone. e2e-endpoint-visibility.mjs holds the proof.
     const r = await req('GET', `/admin/search?q=E2E-`, { cookie: cAdmin });
-    const found = (r.body?.data?.computers ?? []).map((c) => c.id);
-    check(r.body?.data?.scope === 'platform' && found.includes(epA.id) && found.includes(epB.id),
-      'global search spans businesses', JSON.stringify(r.body?.data?.scope));
+    check(r.status === 404, 'the removed /admin/search route is gone', `HTTP ${r.status}`);
   }
   {
     const r = await req('POST', '/businesses', {
@@ -420,8 +420,8 @@ try {
   {
     const r = await req('GET', `/admin/search?q=E2E-`, { cookie: cUserA });
     const found = (r.body?.data?.computers ?? []).map((c) => c.id);
-    check(r.status === 200 && !found.includes(epB.id),
-      'search stays inside their own business', `saw ${found.length} computers`);
+    check(r.status === 404 && !found.includes(epB.id),
+      'search cannot reach another business (the route is gone)', `HTTP ${r.status}, saw ${found.length} computers`);
   }
 
   // ── Quick Connect ─────────────────────────────────────────────────────────
