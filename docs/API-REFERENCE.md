@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **411** of them across
-**51** controllers.
+integration, under `/api/integration/v1`). There are **424** of them across
+**56** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -45,7 +45,6 @@ Admins and Business Owners are not confined by it; see
 |---|---|---|---|
 | `GET` | `/api/v1/admin/platform-settings` | signed in | — |
 | `PATCH` | `/api/v1/admin/platform-settings` | signed in | — |
-| `GET` | `/api/v1/admin/search` | signed in | — |
 | `GET` | `/api/v1/admin/status` | signed in | — |
 | `GET` | `/api/v1/admin/unassigned-devices` | signed in | — |
 | `POST` | `/api/v1/admin/unassigned-devices/:id/assign` | signed in | — |
@@ -159,6 +158,38 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/dashboard/overview` | signed in | — |
 | `GET` | `/api/v1/dashboard/platform` | signed in | — |
 
+## Device views devicegroups
+
+`apps/api/src/device-views/device-views.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/device-groups` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/device-groups` | signed in, throttled | `COMPUTERS_EDIT` |
+| `PATCH` | `/api/v1/device-groups/:id` | signed in, throttled | `COMPUTERS_EDIT` |
+| `DELETE` | `/api/v1/device-groups/:id` | signed in, throttled | `COMPUTERS_EDIT` |
+
+## Device views deviceviews
+
+`apps/api/src/device-views/device-views.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/device-views` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/device-views` | signed in, throttled | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/device-views/:id` | signed in | `COMPUTERS_VIEW` |
+| `PATCH` | `/api/v1/device-views/:id` | signed in, throttled | `COMPUTERS_VIEW` |
+| `DELETE` | `/api/v1/device-views/:id` | signed in, throttled | `COMPUTERS_VIEW` |
+
+## Device views endpointsbulk
+
+`apps/api/src/device-views/device-views.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `POST` | `/api/v1/endpoints/bulk` | signed in, throttled | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/endpoints/bulk/export.csv` | signed in, throttled | `COMPUTERS_VIEW` |
+
 ## Diagnostics
 
 `apps/api/src/diagnostics/diagnostics.controller.ts`
@@ -181,6 +212,7 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/endpoints/:id/diagnostics/runs` | signed in, throttled | `COMPUTERS_VIEW` |
 | `GET` | `/api/v1/endpoints/:id/diagnostics/runs` | signed in | `COMPUTERS_VIEW` |
 | `GET` | `/api/v1/endpoints/:id/diagnostics/runs/:runId` | signed in | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/endpoints/:id/diagnostics/snapshots/:key` | signed in | `COMPUTERS_VIEW` |
 
 ## Client downloads
 
@@ -311,6 +343,14 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/launcher/token` | signed in | — |
 | `PATCH` | `/api/v1/launcher/token/:id/revoke` | signed in | `COMPUTERS_CONNECT` |
 | `GET` | `/api/v1/launcher/validate` | public, throttled | — |
+
+## Metrics
+
+`apps/api/src/metrics/metrics.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/endpoints/:id/metrics` | signed in | `COMPUTERS_VIEW` |
 
 ## Multi-factor authentication
 
@@ -529,6 +569,14 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/scripts/:id/versions/:version/review` | signed in, throttled | — |
 | `POST` | `/api/v1/scripts/:id/versions/:version/submit` | signed in | — |
 | `POST` | `/api/v1/scripts/:id/versions/:version/withdraw` | signed in | — |
+
+## Search
+
+`apps/api/src/search/search.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/search` | signed in, throttled | — |
 
 ## Security
 

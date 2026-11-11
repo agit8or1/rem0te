@@ -232,6 +232,38 @@ async function all() {
   r = await search(S.ownerA, `${TAG}_EXACT`);
   check(r.status === 200 && r.g.computers.items.length === 0, '"_" does not match "-"', msg(r));
 
+  section('The list routes treat LIKE wildcards as literal too (0.33)');
+  {
+    // Before 0.33 only global search escaped: GET /endpoints?search=%,
+    // the device list and GET /businesses spliced the text into ILIKE as is,
+    // so "%" or "_" matched every row in scope. All four share likeEscape now.
+    const get = async (p) => {
+      const res = await fetch(`${API}${p}`, { headers: { cookie: S.ownerA.cookie, 'x-forwarded-for': ip() } });
+      // Not added to `seen`: that sweep is for search responses, and these list
+      // routes return their own fields (hasPassword and the like) by design.
+      const t = await res.text(); let j; try { j = JSON.parse(t); } catch { j = t; } return { status: res.status, data: j?.data };
+    };
+    const enc = encodeURIComponent;
+    const oldIds = async (q) => { const x = await get(`/endpoints?search=${enc(q)}&limit=200`); return x.status === 200 ? (x.data?.endpoints ?? []).map((e) => e.id) : null; };
+    const listIds = async (q) => { const x = await get(`/endpoints/list?search=${enc(q)}&pageSize=200`); return x.status === 200 ? (x.data?.rows ?? []).map((e) => e.id) : null; };
+    const bizIds = async (q) => { const x = await get(`/businesses?search=${enc(q)}`); return x.status === 200 ? (x.data ?? []).map((b) => b.id) : null; };
+    // Controls: the literal text does find the fixtures, so an empty answer below is the escaping.
+    check((await oldIds(`${TAG}-EXACT`))?.includes(aExact.id), 'control: GET /endpoints finds a computer by a literal name');
+    check((await listIds(`${TAG}-EXACT`))?.includes(aExact.id), 'control: the device list finds it too');
+    check((await bizIds(`${TAG} Acme`))?.includes(A.id), 'control: GET /businesses finds a business by a literal name');
+    for (const q of ['%', '_', `${TAG}_EXACT`, `${TAG}%EXACT`]) {
+      const o = await oldIds(q), l = await listIds(q);
+      check(Array.isArray(o) && o.length === 0, `GET /endpoints?search=${q} matches nothing (wildcards are literal)`, JSON.stringify(o));
+      check(Array.isArray(l) && l.length === 0, `device list search=${q} matches nothing`, JSON.stringify(l));
+    }
+    for (const q of ['%', '_', `${TAG}_Acme`]) {
+      const b = await bizIds(q);
+      check(Array.isArray(b) && b.length === 0, `GET /businesses?search=${q} matches nothing`, JSON.stringify(b));
+    }
+    // A backslash is a literal character, not an escape for the next one.
+    check((await listIds(`ACME\\${TAG}-jdoe`))?.includes(a1.id), 'device list: a DOMAIN\\user search with a backslash still finds the signed-in user');
+  }
+
   section('Computers: ranking and the cap');
   r = await search(S.ownerA, `${TAG}-EXACT`);
   {

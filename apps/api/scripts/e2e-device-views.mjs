@@ -96,6 +96,14 @@ async function login(email, business) {
   if (r.status !== 200 || !mm) throw new Error(`login ${email}: ${r.status} ${await r.text()}`);
   return { cookie: `access_token=${mm[1]}`, business };
 }
+// Minting an enrolment token needs a fresh re-authentication (0.33): the
+// step-up then rides on every request of the session, as in the console.
+async function stepUp(s) {
+  const r = await fetch(`${API}/auth/step-up`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': ip(), cookie: s.cookie }, body: JSON.stringify({ password: PW }) });
+  const mm = (r.headers.get('set-cookie') ?? '').match(/step_up=([^;]+)/);
+  if (r.status !== 200 || !mm) throw new Error(`step-up: ${r.status} ${await r.text()}`);
+  s.cookie += `; step_up=${mm[1]}`;
+}
 const qs = (o) => new URLSearchParams(Object.entries(o).filter(([, v]) => v !== undefined && v !== false && v !== '').map(([k, v]) => [k, String(v)])).toString();
 const list = (s, params = {}) => req('GET', `/endpoints/list?${qs({ pageSize: 200, ...params })}`, s);
 const bulk = (s, body) => req('POST', '/endpoints/bulk', s, { body });
@@ -343,6 +351,7 @@ async function all() {
 
   r = await req('POST', '/endpoints', S.ownerA, { body: { name: `${TAG}-sneaky`, endpointGroupId: gB.id } });
   check(r.status === 400, 'creating a computer in another business’s group is refused (it was stored unchecked before 0.33)', msg(r));
+  await stepUp(S.ownerA); // so a refusal below is the group check, not the missing step-up
   r = await req('POST', '/enrollment/tokens', S.ownerA, { body: { businessId: A.id, endpointGroupId: gB.id } });
   check(r.status === 400, 'so is an enrolment token naming another business’s group', msg(r));
   r = await req('POST', '/enrollment/tokens', S.ownerA, { body: { businessId: A.id, endpointGroupId: gA.id } });

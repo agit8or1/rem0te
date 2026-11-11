@@ -8,6 +8,7 @@ import { randomBytes } from 'crypto';
 import * as argon2 from 'argon2';
 import { Prisma, RoleType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { likeEscape } from '../common/like';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { revocationInstant } from '../auth/session-revocation';
@@ -69,7 +70,8 @@ export class BusinessesService {
   /**
    * The businesses this caller may list, optionally narrowed by a search.
    * Shared by GET /businesses and global search (SearchService), so the two
-   * can never disagree about which businesses a person can find.
+   * can never disagree about which businesses a person can find. `search` is
+   * a LIKE pattern fragment: callers pass it through likeEscape first.
    */
   listWhere(actor: ActorContext, search?: string): Prisma.CustomerWhereInput {
     const scope = this.acl.resolveScope(actor);
@@ -91,7 +93,7 @@ export class BusinessesService {
 
   async findAll(actor: ActorContext, search?: string) {
     return this.prisma.customer.findMany({
-      where: this.listWhere(actor, search),
+      where: this.listWhere(actor, search ? likeEscape(search) : undefined),
       select: {
         id: true, name: true, code: true, email: true, phone: true,
         address: true, city: true, state: true, country: true, postalCode: true,

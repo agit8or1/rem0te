@@ -40,7 +40,7 @@ server sends. From a heartbeat response they read only command ids and three fix
 update scan, and an event-log query they answer with "Windows-only"); rotations, reinstalls, client updates, monitor
 queries, diagnostics and actions are ignored, and the console refuses to stage the ones it would otherwise accept
 (`LINUX_AGENT_READ_ONLY`, `MACOS_AGENT_READ_ONLY`). The two share that code (`posix-agent.ts`), and
-`scripts/check-security-invariants.mjs` §24 (both) and §31 (macOS: no `softwareupdate`, `launchctl`, `defaults
+`scripts/check-security-invariants.mjs` §24 (both) and §32 (macOS: no `softwareupdate`, `launchctl`, `defaults
 write`, nothing under `/usr/local`) check it against the scripts' text.
 
 The standard agent never deploys anything. The Patches tab shows what it reports, labelled

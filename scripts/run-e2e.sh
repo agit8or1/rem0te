@@ -65,7 +65,7 @@ for t in containment approved-action staged-patching maintenance-actions patch-p
 done
 
 echo "── suites against a scratch API (one API per suite: the login throttle is per process)"
-PORT=3101
+PORT="${E2E_API_PORT:-3101}"
 export API_BASE="http://127.0.0.1:$PORT/api/v1" FRONTEND_URL="http://scratch.example.com:3100"
 for t in smoke full business-access offboarding public-api public-address rollouts security-audit session-mutations support-requests sso-passkeys candidate-password secreg; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then echo "port $PORT is busy" >&2; exit 1; fi

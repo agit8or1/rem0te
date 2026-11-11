@@ -21,6 +21,7 @@ import { AGENT_CONTRACT_VERSION, agentMeetsContract } from '../common/agent-cont
 import { readOnlyAgentRefusal } from '../common/platform';
 import type { CreateEndpointDto, UpdateEndpointDto } from './dto/create-endpoint.dto';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
+import { likeEscape } from '../common/like';
 
 /**
  * Computers.
@@ -169,20 +170,22 @@ export class EndpointsService {
     // AND-ed, never spread: the rule is an OR, and so is the search below —
     // spread into one object, the search would replace it.
     const visibility = this.acl.endpointVisibilityWhere(actor, params.businessId === 'null' ? undefined : params.businessId);
+    // '%', '_' and '\\' in a search are literal (likeEscape).
+    const term = params.search ? likeEscape(params.search) : undefined;
     const filters: Record<string, unknown> = {
       // "unassigned" is a platform-admin-only view — a business can never own
       // a computer that belongs to no business.
       ...(!scope && params.businessId === 'null' ? { customerId: null } : {}),
       ...(params.status ? { status: params.status } : {}),
       ...(params.platform ? { platform: params.platform } : {}),
-      ...(params.search ? {
+      ...(term ? {
         OR: [
-          { name: { contains: params.search, mode: 'insensitive' } },
-          { hostname: { contains: params.search, mode: 'insensitive' } },
-          { ipAddress: { contains: params.search, mode: 'insensitive' } },
-          { osVersion: { contains: params.search, mode: 'insensitive' } },
-          { aliases: { some: { alias: { contains: params.search, mode: 'insensitive' } } } },
-          { rustdeskNode: { rustdeskId: { contains: params.search, mode: 'insensitive' } } },
+          { name: { contains: term, mode: 'insensitive' } },
+          { hostname: { contains: term, mode: 'insensitive' } },
+          { ipAddress: { contains: term, mode: 'insensitive' } },
+          { osVersion: { contains: term, mode: 'insensitive' } },
+          { aliases: { some: { alias: { contains: term, mode: 'insensitive' } } } },
+          { rustdeskNode: { rustdeskId: { contains: term, mode: 'insensitive' } } },
         ],
       } : {}),
       ...(params.tag ? { tags: { some: { tag: params.tag } } } : {}),

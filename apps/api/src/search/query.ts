@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { likeEscape } from '../common/like';
 
 /**
  * Global search (0.33): parsing and the pure parts of matching. No database,
@@ -55,10 +56,9 @@ export function parseSearchQuery(raw: unknown): string {
   return q;
 }
 
-/** Escape LIKE / ILIKE metacharacters (Postgres' default escape is backslash). */
-export function likeEscape(s: string): string {
-  return s.replace(/[\\%_]/g, (c) => `\\${c}`);
-}
+// Shared with the list routes' searches (GET /businesses, GET /endpoints, the
+// device list), so a wildcard means the same thing everywhere.
+export { likeEscape };
 
 /** The three patterns the computer query ranks by: exact, prefix, anywhere. */
 export function likePatterns(q: string) {

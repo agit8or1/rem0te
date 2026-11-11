@@ -180,7 +180,7 @@ an exact hostname or RustDesk ID. The older `GET /admin/search` was removed in
 0.33: it scoped computers by business alone, so a Business User found
 computers assigned only to others and a technician restricted to named
 computers found the whole business. Proven by
-`apps/api/scripts/e2e-search.mjs`; the rules are §25 of the security
+`apps/api/scripts/e2e-search.mjs`; the rules are §28 of the security
 invariants.
 
 Proven by `apps/api/scripts/e2e-business-access.mjs` — 83 server-side checks including direct-URL

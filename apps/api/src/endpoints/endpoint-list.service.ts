@@ -34,6 +34,7 @@ import { STALE_AFTER_MS as PATCH_STALE_AFTER_MS } from '../patching/summary';
  */
 
 import type { ListQuery, SortKey } from './list-query';
+import { likeEscape } from '../common/like';
 export { SORT_KEYS, LIST_FILTER_KEYS, parseListQuery } from './list-query';
 export type { SortKey, ListQuery } from './list-query';
 
@@ -106,7 +107,7 @@ export class EndpointListService {
     if (q.agent === 'standard') and.push({ OR: [{ updateChannel: null }, { updateChannel: { not: 'signed' } }], agentVersion: { not: null } });
     if (q.agent === 'none') and.push({ OR: [{ updateChannel: null }, { updateChannel: { not: 'signed' } }], agentVersion: null });
     if (q.search) {
-      const c = { contains: q.search, mode: 'insensitive' as const };
+      const c = { contains: likeEscape(q.search), mode: 'insensitive' as const };
       and.push({
         OR: [
           { name: c }, { hostname: c }, { ipAddress: c }, { osVersion: c },

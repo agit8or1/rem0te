@@ -20,7 +20,7 @@ import {
  * Nothing here is written from an unauthenticated request. The two record
  * methods are called only from the heartbeat's authenticated branch and from
  * a command result (which requires the device secret), and take only values
- * those paths have already sanitised (check-security-invariants §25).
+ * those paths have already sanitised (check-security-invariants §30).
  *
  * Monitoring does not read this. The threshold monitors (DISK_FREE, CPU_HIGH,
  * MEMORY_HIGH) evaluate the live sample on EndpointInventory as it arrives;

@@ -94,7 +94,7 @@ inventory service exactly as the automatic collections do, and the run keeps a s
 The catalog is closed in four places: the request (unknown key: 400 `UNKNOWN_DIAGNOSTIC`), the heartbeat, the
 result, and the database — `DiagnosticRun.key` has a `CHECK` constraint listing the twelve keys (migration 0042
 added the snapshots), and results over 64 KB (256 KB for a snapshot) are refused by another. Adding a diagnostic is
-a migration on purpose. `scripts/check-security-invariants.mjs` §20 checks all of it, and §25 the snapshots.
+a migration on purpose. `scripts/check-security-invariants.mjs` §20 checks all of it, and §31 the snapshots.
 
 **Who may see what.** Every route here applies business scope *and* the device-list visibility rule: a Business User
 sees only the computers granted to them (or marked company-wide), and any other computer — in their business or

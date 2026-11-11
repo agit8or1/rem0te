@@ -865,7 +865,7 @@ export class EnrollmentService {
         });
         // Metric history (0.33): the same sanitised values, as one sample.
         // Inside the authenticated branch on purpose — a heartbeat without
-        // the device secret writes no history (check-security-invariants §25).
+        // the device secret writes no history (check-security-invariants §30).
         if (live) {
           await this.metrics.recordHeartbeat(node.endpointId, live)
             .catch((e) => this.logger.warn(`Metric sample failed for ${node.endpointId}: ${String(e)}`));

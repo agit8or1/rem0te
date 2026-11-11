@@ -24,7 +24,7 @@
  * **Read-only.** Nothing here runs anything the server sends: the response is
  * searched for `{"id":"<charset>","type":"<one of three names>"` and nothing
  * else in it is read. scripts/check-security-invariants.mjs §24 (both agents)
- * and §25 (macOS) check the text.
+ * and §32 (macOS) check the text.
  *
  * Every fragment is String.raw so shell backslashes survive, and none may
  * contain `${` (assemblePosixAgent refuses it): in a template literal that

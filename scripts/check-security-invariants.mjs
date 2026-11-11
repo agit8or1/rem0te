@@ -874,7 +874,7 @@ check(
 //     device strings are made inert on heartbeat and claim, and the console
 //     refuses to stage what the Linux agent would ignore. Since 0.33 the
 //     parts that touch the secret, the server and its response live in
-//     posix-agent.ts, shared with macOS (§ 31), so both are checked here.
+//     posix-agent.ts, shared with macOS (§ 32), so both are checked here.
 // The shell text of an agent module: every String.raw template in it, with
 // comment lines dropped (they name what the agent does NOT do).
 const shellCode = (...files) => files.map((f) => [...read(f).matchAll(/String\.raw`([\s\S]*?)`;/g)].map((m) => m[1]).join('\n')).join('\n')
@@ -1008,7 +1008,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'a reboot rule is a §15 change to the agent\'s closed params');
 }
 
-// 26. Enrolment step-up (0.33). An enrolment token puts a machine of the
+// §26 is reserved for the 0.31.2 security fix (AccessControlService.
+// assertEndpointInScope), which is merged in after 0.32's §25.
+
+// 27. Enrolment step-up (0.33). An enrolment token puts a machine of the
 //     holder's choosing into a business, so a session alone must not mint
 //     one: a person needs a fresh re-authentication, whatever their role and
 //     whatever step-up actions are configured (assertFresh, never the
@@ -1062,7 +1065,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('the enrolment step-up suite runs in CI', /\benrol-stepup\b/.test(read('scripts/run-e2e.sh')), 'add e2e-enrol-stepup to run-e2e.sh');
 }
 
-// 27. Global search (0.33). A search result is a disclosure like a list row,
+// 28. Global search (0.33). A search result is a disclosure like a list row,
 //     so every group starts from its own list route's where builder — the
 //     device list's scopedWhere (visibility AND-ed), GET /businesses' and
 //     GET /sites' listWhere, GET /users' memberWhere, the alerts list's
@@ -1091,11 +1094,24 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /SELECT \* FROM ranked ORDER BY/.test(comp) && /FROM kept k/.test(comp),
     'the ranked SQL must start from unnest(ids) and the output from kept rows only');
   check('search: the list routes use the same builders',
-    /where: this\.listWhere\(actor, search\),/.test(read('apps/api/src/businesses/businesses.service.ts'))
+    /where: this\.listWhere\(actor, search \? likeEscape\(search\) : undefined\),/.test(read('apps/api/src/businesses/businesses.service.ts'))
       && /where: this\.listWhere\(actor, businessId\),/.test(read('apps/api/src/sites/sites.service.ts'))
       && /where: this\.memberWhere\(actor, businessId\),/.test(read('apps/api/src/users/users.service.ts'))
       && /where: this\.scopedWhere\(actor, \{ status: q\.status \}\)/.test(read('apps/api/src/endpoints/endpoint-list.service.ts')),
     'GET /businesses, /sites, /users and the device list must build their where with the builders search uses');
+  {
+    // 0.33: the list routes' own searches escape too, with the same helper —
+    // before, GET /endpoints?search=% (or _) matched every computer in scope.
+    const eps = read('apps/api/src/endpoints/endpoints.service.ts');
+    const lst = read('apps/api/src/endpoints/endpoint-list.service.ts');
+    const term = eps.slice(eps.indexOf('const term = params.search'), eps.indexOf('const where = { AND: [visibility, filters] };'));
+    check('search: GET /businesses, GET /endpoints and the device list escape LIKE metacharacters in a search',
+      /const term = params\.search \? likeEscape\(params\.search\) : undefined;/.test(eps) && !/contains: params\.search/.test(eps)
+        && (term.match(/contains: term,/g) ?? []).length === 6
+        && /const c = \{ contains: likeEscape\(q\.search\), mode: 'insensitive' as const \};/.test(lst) && !/contains: q\.search/.test(lst)
+        && [eps, lst, read('apps/api/src/businesses/businesses.service.ts')].every((src) => /import \{ likeEscape \} from '\.\.\/common\/like';/.test(src)),
+      'every user-typed contains: on those routes must go through common/like.ts likeEscape');
+  }
   check('search: each group is gated by its list page\'s capability',
     /computers: 'computers:view',\s*businesses: null,\s*sites: 'computers:view',\s*users: 'users:view',\s*alerts: 'monitoring:alerts',/.test(qry)
       && /return this\.acl\.can\(actor, GROUP_CAPABILITY\[group\]\);/.test(svc)
@@ -1108,7 +1124,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('search: query text reaches LIKE only escaped',
     containsArgs.length >= 6 && containsArgs.every((a) => /^likeEscape\((q|t)\)$/.test(a)) && /listWhere\(actor, likeEscape\(q\)\)/.test(biz)
       && /ILIKE \$\{p\.contains\}/.test(comp) && !/ILIKE \$\{q\}|LIKE '%' \|\|/.test(svc)
-      && /return s\.replace\(\/\[\\\\%_\]\/g, \(c\) => `\\\\\$\{c\}`\);/.test(qry),
+      && /export \{ likeEscape \};/.test(qry) && /import \{ likeEscape \} from '\.\.\/common\/like';/.test(qry)
+      && /return s\.replace\(\/\[\\\\%_\]\/g, \(c\) => `\\\\\$\{c\}`\);/.test(read('apps/api/src/common/like.ts')),
     `every contains: must be likeEscape(q|t) (got ${containsArgs.join(', ')}); raw SQL only through likePatterns`);
   check('search: results name no secret, hash, token or credential',
     !/passwordHash|permanentPassword|agentSecretHash|hasPassword|mfa|totp|secret|token|apiKey|capabilities:/i.test(svc),
@@ -1126,7 +1143,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('search: there is one search route — /admin/search (business-only scoping) stays removed', others.length === 0, `search routes in: ${others.join(', ')}`);
 }
 
-// 28. Device groups, saved views and bulk actions (0.33). A bulk request is
+// 29. Device groups, saved views and bulk actions (0.33). A bulk request is
 //     only the four repeatable actions, capped at 200, every computer found
 //     through the visibility rule AND-ed and decided by the single action's
 //     own path; group and shared-view writes need manageRefusal (a Business
@@ -1224,7 +1241,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'every write path must write its audit entry');
 }
 
-// 29. Metric history (0.33). History is evidence a technician reads, so only
+// 30. Metric history (0.33). History is evidence a technician reads, so only
 //     the device may write it: a sample comes only from the heartbeat's
 //     authenticated branch, from the values recordLiveState sanitised, and a
 //     per-volume sample only from the sanitised disk list of an inventory pass
@@ -1270,7 +1287,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'onModuleInit must return on METRIC_SWEEP=off; roll-up and the three prunes LIMITed; METRIC_LIMITS ceilings finite and applied; one sample per minIntervalSeconds');
 }
 
-// 30. System inventory snapshots (0.33): process list, full service list and
+// 31. System inventory snapshots (0.33): process list, full service list and
 //     network adapter details. They ride the diagnostics catalog (§20) — a
 //     key, the authenticated heartbeat, the device-secret result — and add
 //     no channel. The agent's snapshot functions only call Get-* cmdlets
@@ -1341,7 +1358,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     `writes: ${posts.join(' | ')}`);
 }
 
-// 31. The standard macOS agent (0.33). The Linux agent's rules (§ 24, whose
+// 32. The standard macOS agent (0.33). The Linux agent's rules (§ 24, whose
 //     shared POSIX parts it must include), plus macOS's own ways to change a
 //     machine: it never runs softwareupdate in any form (pending updates come
 //     from macOS's own last check, read with defaults read), and never

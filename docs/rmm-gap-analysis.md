@@ -91,7 +91,7 @@ bundled into `/docs`. Integration work is tracked separately in
 
 | Limitation | Resolved in | How |
 |---|---|---|
-| A stolen admin session could create enrolment tokens (known since 0.23) | 0.33 | Making a token needs a fresh re-authentication for every role (`enrollment.create`, not configurable), and so does creating an API key with `enrollment:write` (`apikey.enrollment`). API keys keep minting without one: the key is the second proof. Registering by RustDesk ID mints no credential and is not gated. [sign-in.md](sign-in.md#always-on-whatever-is-configured); `e2e-enrol-stepup.mjs`; invariant §25 (**I**) |
+| A stolen admin session could create enrolment tokens (known since 0.23) | 0.33 | Making a token needs a fresh re-authentication for every role (`enrollment.create`, not configurable), and so does creating an API key with `enrollment:write` (`apikey.enrollment`). API keys keep minting without one: the key is the second proof. Registering by RustDesk ID mints no credential and is not gated. [sign-in.md](sign-in.md#always-on-whatever-is-configured); `e2e-enrol-stepup.mjs`; invariant §27 (**I**) |
 
 ## Usability findings from the screenshots
 
