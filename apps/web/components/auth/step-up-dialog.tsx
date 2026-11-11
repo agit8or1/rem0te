@@ -21,6 +21,8 @@ const ACTION_LABEL: Record<string, string> = {
   // v0.23 security controls: always re-authenticate, whatever is enabled.
   'fresh.auth': 'change technician access or security controls',
   'fresh.auth.passkey': 'activate a protected-device exception',
+  // 0.32: an enabled client-update policy installs software unattended.
+  'updates.schedule': 'turn on automatic client updates',
 };
 
 /**

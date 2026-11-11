@@ -24,6 +24,10 @@ import { RustdeskService } from '../common/rustdesk.service';
 import { UpdateRolloutService } from '../admin/update-rollout.service';
 import { PublicUrlService } from '../platform/public-url.service';
 import { buildLegacyWindowsScript } from './windows-script';
+import {
+  buildLinuxAgentScript, LINUX_AGENT_CONF, LINUX_AGENT_HEREDOC, LINUX_AGENT_PATH, LINUX_AGENT_SECRET,
+  LINUX_AGENT_SERVICE, LINUX_AGENT_TIMER,
+} from './linux-agent';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 
 const INSTALLER_MAGIC = Buffer.from('REM0TE_INST_URL:');
@@ -452,11 +456,35 @@ export class PublicController {
     const keyVal = safeKey(key);
     const claimToken = safeToken(enrollToken);
     version = safeVersion(version);
+    const agentScript = buildLinuxAgentScript(this.agentVersion());
+    if (agentScript.split('\n').includes(LINUX_AGENT_HEREDOC)) throw new Error('agent script contains its heredoc delimiter');
     return `#!/usr/bin/env bash
 # Reboot Remote — RustDesk Auto-Installer for Linux (Debian/Ubuntu)
 # Server: ${host ?? 'NOT CONFIGURED'}
 # Re-run this script at any time to update the server config.
+#
+# Installs RustDesk, registers this computer, and installs the Rem0te agent
+# (standard, read-only): ${LINUX_AGENT_PATH}, run every 3 minutes by
+# rem0te-agent.timer. It reports inventory and pending updates and never acts
+# on anything the server sends.
+#
+# Remove the agent (timer, script, config and device secret; RustDesk stays):
+#   curl -fsSL <this installer's URL> | sudo bash -s -- --uninstall
 set -euo pipefail
+
+if [ "\${1:-}" = "--uninstall" ]; then
+  [ "$EUID" -eq 0 ] || { echo "ERROR: Run as root: sudo bash -s -- --uninstall"; exit 1; }
+  systemctl disable --now rem0te-agent.timer 2>/dev/null || true
+  systemctl stop rem0te-agent.service 2>/dev/null || true
+  rm -f /etc/systemd/system/rem0te-agent.timer /etc/systemd/system/rem0te-agent.service
+  systemctl daemon-reload 2>/dev/null || true
+  rm -f ${LINUX_AGENT_PATH} ${LINUX_AGENT_CONF} ${LINUX_AGENT_SECRET}
+  rmdir /usr/local/lib/rem0te 2>/dev/null || true
+  echo "Removed the Rem0te agent: the timer, ${LINUX_AGENT_PATH}, ${LINUX_AGENT_CONF} and the device secret."
+  echo "RustDesk is still installed (remove it with: apt remove rustdesk)."
+  echo "Archive the computer in Rem0te too; re-installing later needs a new enrolment link."
+  exit 0
+fi
 
 VERSION="${version}"
 HOST_ADDR="${hostVal}"
@@ -465,6 +493,11 @@ CLAIM_TOKEN="${claimToken}"
 
 RED='\\033[0;31m'; GREEN='\\033[0;32m'; YELLOW='\\033[1;33m'; CYAN='\\033[0;36m'; NC='\\033[0m'
 
+# Root first: the device secret below is written to /etc, and a non-root run
+# used to carry on without it and register a machine its agent could never
+# authenticate as.
+[ "$EUID" -eq 0 ] || { echo -e "\${RED}ERROR: Run as root: sudo bash\${NC}"; exit 1; }
+
 # Generate a permanent password for this device
 PERM_PW=$(LC_ALL=C tr -dc 'A-Za-z2-9' < /dev/urandom | head -c 12 || true)
 
@@ -472,7 +505,7 @@ PERM_PW=$(LC_ALL=C tr -dc 'A-Za-z2-9' < /dev/urandom | head -c 12 || true)
 # machine. The RustDesk ID alone used to be enough, and it is a number anyone
 # who has connected here knows. Kept 0600 and reused across re-installs so the
 # binding the server holds stays valid.
-AGENT_STATE="/etc/rem0te-agent.secret"
+AGENT_STATE="${LINUX_AGENT_SECRET}"
 if [ -r "\${AGENT_STATE}" ]; then
   AGENT_SECRET=$(cat "\${AGENT_STATE}" 2>/dev/null | tr -dc 'A-Za-z0-9_-')
 else
@@ -482,8 +515,8 @@ if [ -z "\${AGENT_SECRET}" ]; then
   AGENT_SECRET=$(LC_ALL=C tr -dc 'A-Za-z0-9_-' < /dev/urandom | head -c 43 || true)
   ( umask 077; printf '%s' "\${AGENT_SECRET}" > "\${AGENT_STATE}" ) 2>/dev/null || true
 fi
-
-[ "$EUID" -eq 0 ] || { echo -e "\${RED}ERROR: Run as root: sudo bash\${NC}"; exit 1; }
+chown root:root "\${AGENT_STATE}" 2>/dev/null || true
+chmod 600 "\${AGENT_STATE}" 2>/dev/null || { echo -e "\${RED}ERROR: could not write the device secret \${AGENT_STATE}\${NC}"; exit 1; }
 
 echo -e "\${CYAN}"
 echo "  Reboot Remote — Installing RustDesk remote support client"
@@ -589,6 +622,34 @@ if [ -n "\${RD_ID}" ]; then
   fi
 else
   echo "  Could not detect RustDesk Device ID after 45 s — skipping registration."
+fi
+
+# ── The Rem0te agent (standard, read-only) ──────────────────────────────────
+# Heartbeat, inventory and pending updates every 3 minutes, authenticated with
+# the device secret above. Installed even when registration was skipped: it
+# finds the RustDesk ID once RustDesk has one. It reads; it runs nothing the
+# server sends.
+if [ -n "\${HOST_ADDR}" ] && command -v systemctl >/dev/null 2>&1; then
+  echo "  Installing the Rem0te agent (heartbeat and inventory, every 3 minutes)..."
+  install -d -m 0755 -o root -g root /usr/local/lib/rem0te
+  AGENT_TMP=$(mktemp)
+  cat > "\${AGENT_TMP}" <<'${LINUX_AGENT_HEREDOC}'
+${agentScript}${LINUX_AGENT_HEREDOC}
+  install -m 0755 -o root -g root "\${AGENT_TMP}" ${LINUX_AGENT_PATH}
+  rm -f "\${AGENT_TMP}"
+  ( umask 022; printf 'API_BASE=https://%s/api/v1\\n' "\${HOST_ADDR}" > ${LINUX_AGENT_CONF} )
+  cat > /etc/systemd/system/rem0te-agent.service <<'REM0TE_UNIT_EOF'
+${LINUX_AGENT_SERVICE}REM0TE_UNIT_EOF
+  cat > /etc/systemd/system/rem0te-agent.timer <<'REM0TE_UNIT_EOF'
+${LINUX_AGENT_TIMER}REM0TE_UNIT_EOF
+  chmod 644 /etc/systemd/system/rem0te-agent.service /etc/systemd/system/rem0te-agent.timer
+  systemctl daemon-reload
+  systemctl enable --now rem0te-agent.timer >/dev/null 2>&1 || echo -e "\${YELLOW}  Could not start rem0te-agent.timer — see: systemctl status rem0te-agent.timer\${NC}"
+  # First report now rather than in two minutes; its result is in the journal.
+  systemctl start --no-block rem0te-agent.service 2>/dev/null || true
+  echo "  Agent installed: ${LINUX_AGENT_PATH} (logs: journalctl -u rem0te-agent)"
+else
+  echo -e "\${YELLOW}  Rem0te agent not installed: \${HOST_ADDR:+systemd not found}\${HOST_ADDR:-the server address is not configured}.\${NC}"
 fi
 
 echo ""

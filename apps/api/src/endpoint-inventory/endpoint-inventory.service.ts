@@ -90,6 +90,8 @@ const COMMANDS_PER_HEARTBEAT = 2;
  */
 const INVENTORY_STALE_HOURS = 6;
 const UPDATE_SCAN_STALE_HOURS = 12;
+/** How long an automatic collection that came back failed waits before it is staged again. */
+const FAILED_RETRY_HOURS = 1;
 
 // Control characters have no legitimate use in any of these fields, and a
 // stray carriage return in a hostname is the kind of thing that corrupts a log
@@ -589,8 +591,27 @@ export class EndpointInventoryService {
     const stale = (at: Date | null | undefined, hours: number) =>
       !at || Date.now() - at.getTime() > hours * 3_600_000;
 
-    const invStale = stale(inv?.collectedAt, INVENTORY_STALE_HOURS);
-    const updStale = stale(inv?.updatesCheckedAt, UPDATE_SCAN_STALE_HOURS);
+    let invStale = stale(inv?.collectedAt, INVENTORY_STALE_HOURS);
+    let updStale = stale(inv?.updatesCheckedAt, UPDATE_SCAN_STALE_HOURS);
+    if (!invStale && !updStale) return;
+
+    // An automatic collection the agent answered with a failure is not asked
+    // again on the very next heartbeat. Without this, a computer that cannot
+    // answer — a Linux distribution with none of apt, dnf or zypper reports
+    // its pending updates as unknown, and a Windows Update agent can be
+    // disabled — was handed a fresh UPDATE_SCAN every three minutes, leaving
+    // ~480 failed rows a day and a scan hammering a broken service. An
+    // operator's Refresh is not held back by this (it has a requester).
+    const recentFailures = await this.prisma.endpointCommand.findMany({
+      where: {
+        endpointId, requestedById: null, status: 'FAILED',
+        type: { in: ['INVENTORY_REFRESH', 'UPDATE_SCAN'] },
+        completedAt: { gt: new Date(Date.now() - FAILED_RETRY_HOURS * 3_600_000) },
+      },
+      select: { type: true },
+    });
+    if (recentFailures.some((c) => c.type === 'INVENTORY_REFRESH')) invStale = false;
+    if (recentFailures.some((c) => c.type === 'UPDATE_SCAN')) updStale = false;
     if (!invStale && !updStale) return;
 
     const ep = await this.prisma.endpoint.findUnique({

@@ -13,12 +13,12 @@ import { locate, visibleItems, type NavCtx } from './nav-model';
 
 export function SectionTabs() {
   const pathname = usePathname();
-  const { can, isPlatformAdmin, isBusinessOwner, technician, assignedBusinesses, canManageTechnicians } = usePermissions();
+  const { can, isPlatformAdmin, isBusinessOwner, technician, assignedBusinesses, canManageTechnicians, isIndependentReviewer } = usePermissions();
   const here = locate(pathname);
   if (!here || here.section.kind !== 'hub' || !here.leaf || here.leaf.href !== pathname) return null;
   const ctx: NavCtx = {
     can, isPlatformAdmin, isBusinessOwner, technician: !!technician,
-    hasAssignments: assignedBusinesses.length > 0, canManageTechnicians,
+    hasAssignments: assignedBusinesses.length > 0, canManageTechnicians, isIndependentReviewer,
   };
   const items = visibleItems(here.section, ctx);
   if (items.length < 2) return null;

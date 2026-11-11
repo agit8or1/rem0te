@@ -238,8 +238,8 @@ It writes fixtures, so run it against a scratch API and database
 
 0.26.0 added §14 for approved actions: the approval signer loads no Nest,
 Prisma or portal module and the portal never imports it or loads its key; there
-is no approve route; the agent catalog is Spooler-only and journals before it
-executes; and no DTO array of objects lacks `@Type(() => Object)` —
+is no approve route; the agent catalog is closed (originally Spooler-only;
+see 0.32 below) and journals before it executes; and no DTO array of objects lacks `@Type(() => Object)` —
 class-transformer's implicit conversion silently turns those into `[[]]`, which
 is how command-result events went missing in production. The signer is its own
 install (`apps/api/scripts/build-approval-signer.mjs`), never run from the
@@ -257,6 +257,25 @@ check now expects exactly the two actions. Its behavioural proof is
 the sim takes `-wua` / `-registry` fixture files). An `ActionJob` is now one
 signed plan with an `ActionTarget` row per computer; `endpointId` on the job is
 only the first target, so per-computer state lives on the target.
+
+0.32 widened §14's catalog checks to an exact, ordered list of six actions —
+the Spooler start, update install, and four maintenance actions
+(`windows.service.restart`, `windows.reboot.schedule`, `windows.reboot.cancel`,
+`windows.logs.collect`) — the same on the agent and in the portal. Every agent
+entry's `ParamsOK` must be one of the known closed forms; the service restart's
+allowlist (`RestartableServices` / `RESTARTABLE_SERVICES`) must agree on both
+sides, pass the charset check first and hold no security or core service; the
+restart delay floor is 5 minutes on both sides; every maintenance action is
+`high` risk and the restart (and a RustDesk restart) waits for no open session,
+"cannot tell" counting as open; an action's `Precheck` runs after the signed
+pause and before the *executing* journal entry; the agent's action package runs
+no process and the Windows side only `shutdown.exe` / `wevtutil.exe` from
+System32; and the maintenance actions are not offered to ClientSt0r
+(`integration: false`). Its behavioural proof is
+`apps/api/scripts/e2e-maintenance-actions.mjs` (port 3251, same `RELEASE_BIN` /
+`ACTION_SIM`; the sim takes `-sessions`, `-stop-fails`, `-events-dir`,
+`-rustdesk-logs`). Adding an action, or a service to the allowlist, is a new
+agent release and a review: change the invariant's list in the same commit.
 
 0.28.0 added §16 for containment and evidence: the signer has no HTTP route
 that lifts a pause, lifting a portal pause needs `assertFresh`, the

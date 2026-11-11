@@ -13,23 +13,31 @@ far each part has been tested. "Tested" here means one of three things, and they
 
 ## The agent types
 
-| | **Standard agent** | **Signed agent** (0.27+) | **Linux / macOS** | **Quick Connect** |
-|---|---|---|---|---|
-| What it is | The Windows install script's scheduled tasks (update channel `legacy`) | The signed `rem0te-agent.exe`, installed from the signed update channel (`signed`) | RustDesk plus a one-time registration at install | A one-off RustDesk session, nothing installed |
-| Remote access (RustDesk, launch policy, audit) | Yes | Yes | Yes | Yes, for that session |
-| Heartbeat, online/offline | Yes | Yes | At install only | No |
-| Inventory (hardware, OS, disks, last boot) | Yes | Yes | No | No |
-| Installed software and change history (0.29) | Yes | Yes | No | No |
-| Windows event log reading | Yes | Yes | No | No |
-| One-click read-only diagnostics (0.31): disk, services, errors, processes, network, DNS, updates, restart | Yes | Yes (the same heartbeat script) | No | No |
-| Monitoring (offline, disk, CPU, memory, services, events, restart pending) | Yes | Yes | Offline only (it stops heartbeating) | No |
-| **Patches: pending updates, restart pending** | **Yes — read-only**, every 12 h or on *Scan now* | Yes | No | No |
-| Patches: update identities, history, restart sources | No | Yes | No | No |
-| Patches: who manages patching (WSUS, Intune, WUfB, ConfigMgr) | **No — shown as Unknown** | Yes | No | No |
-| Patches: confirmed by a later scan | No | Yes | No | No |
-| **Deploying updates** (canary, rings, two approvals) | **No** | Yes, when approvals are configured | No | No |
-| Approved actions (start the Print Spooler) | No | Yes, when approvals are configured | No | No |
-| Containment honoured on the device | Server side only | Server side, and the agent checks the signed pause | Server side only | Server side only |
+| | **Standard agent** | **Signed agent** (0.27+) | **Standard (Linux)** (0.32+) | **macOS**, and Linux installed before 0.32 | **Quick Connect** |
+|---|---|---|---|---|---|
+| What it is | The Windows install script's scheduled tasks (update channel `legacy`) | The signed `rem0te-agent.exe`, installed from the signed update channel (`signed`) | A POSIX `sh` script and a systemd timer, installed by the Linux installer; read-only | RustDesk plus a one-time registration at install | A one-off RustDesk session, nothing installed |
+| Remote access (RustDesk, launch policy, audit) | Yes | Yes | Yes | Yes | Yes, for that session |
+| Heartbeat, online/offline | Yes | Yes | Yes, every 3 minutes, with the device secret | At install only | No |
+| Inventory (hardware, OS, disks, last boot) | Yes | Yes | Yes: os-release, kernel, uptime, CPU model and load, memory, disks (`df`), logged-on users (`who`), DMI where readable | No | No |
+| Installed software and change history (0.29) | Yes | Yes | No | No | No |
+| Windows event log reading | Yes | Yes | No (a staged query is refused) | No | No |
+| One-click read-only diagnostics (0.31): disk, services, errors, processes, network, DNS, updates, restart | Yes | Yes (the same heartbeat script) | No | No | No |
+| Monitoring (offline, disk, CPU, memory, services, events, restart pending) | Yes | Yes | Offline, system disk, CPU, memory and restart pending, from the values it reports; **no services or events** | Offline only (it stops heartbeating) | No |
+| **Patches: pending updates, restart pending** | **Yes — read-only**, every 12 h or on *Scan now* | Yes | **Yes — read-only**: `apt list --upgradable`, `dnf -C check-update` or `zypper --no-refresh list-updates`, from the package manager's existing cache; **unknown** with none of them | No | No |
+| Patches: update identities, history, restart sources | No | Yes | No | No | No |
+| Patches: who manages patching (WSUS, Intune, WUfB, ConfigMgr) | **No — shown as Unknown** | Yes | No — shown as Unknown | No | No |
+| Patches: confirmed by a later scan | No | Yes | No | No | No |
+| **Deploying updates** (canary, rings, two approvals) | **No** | Yes, when approvals are configured | **No** | No | No |
+| Approved actions (start the Print Spooler) | No | Yes, when approvals are configured | No | No | No |
+| Maintenance actions (restart an allowlisted service, schedule or cancel a restart, collect logs) | No | Yes (0.32+ agent), when approvals are configured | No | No | No |
+| Password rotation, reinstall, RustDesk client update from the console | Yes | Yes | **No** — the console refuses them; re-run the installer on the computer | No | No |
+| Containment honoured on the device | Server side only | Server side, and the agent checks the signed pause | Server side only (it acts on nothing anyway) | Server side only | Server side only |
+
+The standard agent never deploys anything. The Linux agent goes further: it acts on **nothing** the server sends.
+From a heartbeat response it reads only command ids and three fixed command names (inventory refresh, update scan,
+and an event-log query it answers with "Windows-only"); rotations, reinstalls, client updates, monitor queries,
+diagnostics and actions are ignored, and the console refuses to stage the ones it would otherwise accept.
+`scripts/check-security-invariants.mjs` §24 checks this against the script's text.
 
 The standard agent never deploys anything. The Patches tab shows what it reports, labelled
 *Standard agent scan (read-only)*, and says that deploying needs the signed agent.
@@ -76,6 +84,7 @@ values.
 |---|---|---|---|
 | Remote access, launch policy | **Yes** (production fleet) | — | Yes |
 | Standard agent: heartbeat, inventory, update scan | **In production use**, standard channel: observed, not a controlled test | — | Yes |
+| Standard (Linux) agent: heartbeat, inventory, pending updates (0.32) | **No installed Linux endpoint yet** | The real generated script, run unprivileged on a Linux host against a scratch API, reading that host's real `/proc`, `df`, `who` and `apt list`; dnf and zypper from stubs (`e2e-linux-agent.mjs`). Not installed under systemd, not run as root | Yes |
 | Monitoring collection (services, events, software) | **No** | Under pwsh against stubs (`unit-monitoring.mjs`) | Yes (`e2e-monitoring.mjs`) |
 | One-click diagnostics (the nine catalog checks) | **No** | Parsed by PowerShell's parser and run under pwsh against stubs (`unit-diagnostics-catalog.mjs`) | Yes: real API and database, simulated heartbeat (`e2e-diagnostics-catalog.mjs`) |
 | Signed agent: patch scan, install, restart detection | **No** | Yes: `e2e-staged-patching.mjs` runs the agent's real `internal/patch` code through `rem0te-action-sim` | — |
@@ -85,6 +94,7 @@ values.
 | Patch status: offline, stale evidence | **No** | Yes (scan time moved back 80 hours in the database) | Yes |
 | Patch status: externally managed (WSUS, Intune) | **No** | Yes (the agent's registry detection against a simulated registry) | Yes |
 | Approved actions (Print Spooler) | **No** | Yes (`e2e-approved-action.mjs`) | Yes |
+| Maintenance actions (service restart, restart schedule/cancel, log collection) | **No** | Yes (`e2e-maintenance-actions.mjs`; service manager, `shutdown.exe`, `wevtutil` and the session count simulated) | Yes |
 | ClientSt0r workflow | — | — | Against a contract-conformant reference peer (`e2e-ticket-workflow.mjs`). **Against the real ClientSt0r: does not interoperate yet** (`interop-clientst0r.mjs`, four measured gaps) |
 
 ### Still needs a lab
@@ -103,4 +113,8 @@ These are the remaining steps that need hardware or accounts this repository's C
    with a scratch rem0te: `e2e-ticket-workflow.mjs`'s scenarios repeated with ClientSt0r in place of the
    reference peer.
 
-Until those have been run, the "Real Windows" column above stays **No**.
+4. **A disposable Debian or Ubuntu VM and a Fedora or openSUSE VM**, installed from a scratch rem0te's Linux
+   installer as root, so the systemd timer, the 0600 secret and `--uninstall` run for real.
+
+Until those have been run, the "Real Windows" column above stays **No**, and the Linux agent is integration-tested
+only.

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, FormEvent } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { endpointsApi, businessesApi, sitesApi } from '@/lib/api-client';
@@ -44,13 +45,13 @@ export default function NewEndpointPage() {
   const createMutation = useMutation({
     mutationFn: (data: Record<string, unknown>) => endpointsApi.create(data),
     onSuccess: (res) => {
-      toast({ title: 'Endpoint created' });
+      toast({ title: 'Device registered' });
       router.push(`/endpoints/${res.data?.data?.id}`);
     },
     onError: (err: unknown) => {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        'Failed to create endpoint';
+        'Failed to register the device';
       toast({ title: 'Error', description: msg, variant: 'destructive' });
     },
   });
@@ -75,11 +76,17 @@ export default function NewEndpointPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-2xl">
-      <PageHeader title="Enroll Client" description="Register a permanently installed remote device" />
+      <PageHeader
+        title="Register by RustDesk ID"
+        description="List a computer that already runs RustDesk, without installing anything on it. It gets no agent: no heartbeat, inventory or monitoring."
+      />
+      <p className="text-sm">
+        <Link href="/endpoints/enroll" className="underline">Add device</Link> is the usual way in: it installs RustDesk and the agent, and shows the device arriving.
+      </p>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Endpoint Details</CardTitle>
+          <CardTitle className="text-base">Device details</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -180,7 +187,7 @@ export default function NewEndpointPage() {
 
             <div className="flex gap-3 pt-2">
               <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? 'Creating…' : 'Create Endpoint'}
+                {createMutation.isPending ? 'Registering…' : 'Register device'}
               </Button>
               <Button type="button" variant="outline" onClick={() => router.back()}>
                 Cancel

@@ -148,15 +148,21 @@ type Result struct {
 	// Updates and Reboot: windows.update.install only.
 	Updates []patch.Outcome `json:"updates,omitempty"`
 	Reboot  *patch.Reboot   `json:"reboot,omitempty"`
+	// Logs: windows.logs.collect only. Bounded and redacted (maintenance.go).
+	Logs []LogSection `json:"logs,omitempty"`
 }
 
 type journal struct {
-	JobID         string  `json:"jobId"`
-	State         string  `json:"state"` // executing | done
-	At            string  `json:"at"`
-	ActionID      string  `json:"actionId,omitempty"`
-	ActionVersion int     `json:"actionVersion,omitempty"`
-	Result        *Result `json:"result,omitempty"`
+	JobID         string `json:"jobId"`
+	State         string `json:"state"` // executing | done
+	At            string `json:"at"`
+	ActionID      string `json:"actionId,omitempty"`
+	ActionVersion int    `json:"actionVersion,omitempty"`
+	// Params: the verified plan's (v0.32), so an interrupted job can say
+	// what it was working on. Step: how far an executing job got.
+	Params map[string]any `json:"params,omitempty"`
+	Step   string         `json:"step,omitempty"`
+	Result *Result        `json:"result,omitempty"`
 }
 
 type Options struct {
@@ -173,6 +179,10 @@ type Options struct {
 	WUAWait time.Duration
 	// The signed pause (control/pause.json), or nil when none is published.
 	Pause *Pause
+	// Maintenance actions (v0.32); nil where not available.
+	Maint Maintenance
+	// How long a service restart waits for the stop; 60 seconds by default.
+	StopTimeout time.Duration
 }
 
 var jobRE = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -220,8 +230,11 @@ func Run(jobID string, envelope []byte, o Options) (Result, error) {
 		}
 		r := Result{JobID: jobID, Outcome: "uncertain", Reason: "interrupted",
 			Detail: "the agent stopped while this action was running; it will not run it again"}
+		if j.Step != "" {
+			r.Detail += " (it had reached: " + j.Step + ")"
+		}
 		if a := Lookup(j.ActionID, j.ActionVersion); a != nil && a.Interrupted != nil {
-			r.Observed = a.Interrupted(o)
+			r.Observed = a.Interrupted(j.Params, o)
 		} else if st, err := o.Platform.ServiceState(ServiceName); err == nil && j.ActionID == "" {
 			r.Observed = map[string]string{"now": st} // journals written by 0.26
 		}
@@ -255,8 +268,19 @@ func Run(jobID string, envelope []byte, o Options) (Result, error) {
 		}
 	}
 
+	// 1c. Read-only checks an action needs on this computer now (v0.32: no
+	// RustDesk session open before a restart). Final, like a refusal.
+	if a := Lookup(plan.Action.ID, plan.Action.Version); a.Precheck != nil {
+		if pr := a.Precheck(plan, o); pr != nil {
+			r := *pr
+			r.JobID = jobID
+			writeJournal(o, journal{JobID: jobID, State: "done", At: o.now().UTC().Format(time.RFC3339), Result: &r})
+			return report(o, r)
+		}
+	}
+
 	// 2. Consume the job before acting on it.
-	if err := writeJournal(o, journal{JobID: jobID, State: "executing", At: o.now().UTC().Format(time.RFC3339), ActionID: plan.Action.ID, ActionVersion: plan.Action.Version}); err != nil {
+	if err := writeJournal(o, journal{JobID: jobID, State: "executing", At: o.now().UTC().Format(time.RFC3339), ActionID: plan.Action.ID, ActionVersion: plan.Action.Version, Params: plan.Params}); err != nil {
 		return Result{}, fmt.Errorf("journal: %w", err)
 	}
 	r := Lookup(plan.Action.ID, plan.Action.Version).Execute(plan, o)
@@ -336,6 +360,9 @@ func verify(jobID string, raw []byte, o Options) (*Plan, *Result) {
 	now := o.now()
 	if e1 != nil || e2 != nil || !na.After(nb) {
 		return nil, refuse("bad_window", "the plan's window does not parse")
+	}
+	if a.MaxWindow > 0 && na.Sub(nb) > a.MaxWindow {
+		return nil, refuse("bad_window", "the plan's window is longer than this action allows")
 	}
 	if now.Before(nb) {
 		return nil, refuse("not_yet_valid", "the plan's window has not opened by this computer's clock")

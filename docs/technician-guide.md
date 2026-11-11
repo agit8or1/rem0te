@@ -83,11 +83,12 @@ company-wide; for a technician, only the machines your assignment names.
    not just the one on screen.
 3. **The table** — one row per device. Online devices come first, then by name;
    click any column heading to sort by it instead (click again to reverse).
-4. **Enroll Client** — install the agent on a new machine (§5).
-5. **Generate Enrollment Link** — a one-time link you can send to someone else to
-   run themselves.
+4. **Add device** — enrol a new machine (§5). Until 0.32 there were two buttons
+   here, *Enroll Client* and *Generate Enrollment Link*; both became this one.
+5. *(Removed in 0.32 — see 4.)*
 
-*(The screenshot predates 0.31's columns; the numbered parts are where they were.)*
+*(The screenshot predates 0.31's columns and 0.32's single Add device button; the
+numbered parts are where they were.)*
 
 ### What the columns mean
 
@@ -227,17 +228,49 @@ Rem0te does not store the Quick Connect password and never displays it again.
 
 ## 5. Enrol a new computer
 
-From **Devices → Enroll Client** you get a one-line PowerShell command to run
-on the target machine as Administrator. It installs RustDesk, points it at this
-server, sets a managed password, and registers the machine.
+**Devices → Add device** (the button on the Devices page, or the *Add device* tab)
+walks through it in six steps on one page:
+
+1. **Business and site.** Pick the business, then a site or *No site*, and who
+   may connect — specific people, or everyone in the business. All three are
+   fixed into the link when it is made: the machine that runs it cannot pick a
+   different business or site. You can only pick a business you manage; the
+   server refuses any other, and a site that is not that business's.
+2. **Operating system.** Windows gets RustDesk and the Rem0te agent (heartbeat,
+   inventory, monitoring, update scans). Linux and macOS get RustDesk and a
+   one-time registration — remote access only.
+3. **Run the installer.** A one-line command (PowerShell as Administrator, or a
+   root shell), and on Windows also a one-click installer link to send to the
+   person at the machine. It contains a single-use enrolment token that expires
+   in 24 hours, and it is shown **once**: reload the page and only the waiting
+   continues. If the command is lost, revoke the link and make a new one.
+4. **Wait for the device.** The page checks every few seconds and says *enrolled*
+   only when a device has used this link. You can revoke an unused link here.
+5. **First health** — what the server has actually received: the business and
+   site it landed in, online, the agent and its version (after its first
+   heartbeat, up to 3 minutes), whether its device identity is bound, and
+   whether its first inventory has arrived. Each line says *waiting* until it is
+   true; nothing is assumed.
+6. **Next** — open the device, its Monitoring tab, or the business's monitoring
+   policies, with the monitors that already apply to it listed.
+
+A Business User who adds a machine for *specific people* that does not include
+themselves is told it enrolled, but not shown it: they could not see it in the
+list either.
 
 The installer is safe to re-run; it reconfigures an existing install rather than
-duplicating it.
+duplicating it. To re-enrol a machine whose identity is not bound, use *Make an
+enrollment link for this computer* on its page: it opens Add device bound to
+that computer.
 
 **It will refuse to report success if the machine never reaches the server.** If
 you see an error instead of a summary, read it — it prints the service state,
 whether ports 443 and 21116 are reachable, and RustDesk's own log. Those are the
 facts that distinguish a firewall problem from a service that is not running.
+
+**Already running RustDesk, and only want it listed?** *Register it by RustDesk
+ID* (linked at the bottom of Add device) adds it without installing anything. It
+then has no agent: no heartbeat, inventory or monitoring.
 
 ---
 

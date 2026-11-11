@@ -27,6 +27,10 @@ fi
 OUT="${E2E_OUT:-$ROOT/.e2e-logs}"
 mkdir -p "$OUT"
 export DATABASE_URL="$DB" I_KNOW_THIS_IS_NOT_PRODUCTION=1 NODE_ENV=test
+# The patch-policy sweep proposes plans for every active policy in the
+# database. Off for every suite but the one that tests it (which turns it on
+# for its own API).
+export PATCH_POLICY_SWEEP=off
 export ENCRYPTION_KEY="${ENCRYPTION_KEY:-$(openssl rand -hex 32)}"
 export SEED_ADMIN_EMAIL="${SEED_ADMIN_EMAIL:-e2e-admin@example.com}"
 export SEED_ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD:-$(openssl rand -base64 18)}"
@@ -51,8 +55,8 @@ run() { # name, command...
 }
 
 echo "── self-starting suites"
-for t in credentials security-features presets monitoring integration dashboard diagnostics-catalog device-list endpoint-visibility; do run "$t" node "scripts/e2e-$t.mjs"; done
-for t in containment approved-action staged-patching signed-updates ticket-workflow; do
+for t in credentials security-features presets monitoring integration dashboard diagnostics-catalog device-list endpoint-visibility add-device auto-updates reports script-library linux-agent; do run "$t" node "scripts/e2e-$t.mjs"; done
+for t in containment approved-action staged-patching maintenance-actions patch-policies signed-updates ticket-workflow; do
   if [[ -n "${RELEASE_BIN:-}" && -n "${ACTION_SIM:-}" ]]; then run "$t" node "scripts/e2e-$t.mjs"
   else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM not set)\n' "$t"; skipped+=("$t"); fi
 done
@@ -63,7 +67,7 @@ export API_BASE="http://127.0.0.1:$PORT/api/v1" FRONTEND_URL="http://scratch.exa
 for t in smoke full business-access offboarding public-api public-address rollouts security-audit session-mutations support-requests sso-passkeys candidate-password secreg; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then echo "port $PORT is busy" >&2; exit 1; fi
   env PORT=$PORT HBBS_PRESENCE_HOST=127.0.0.2 OIDC_ALLOW_INSECURE_LOOPBACK=true PUBLIC_API_URL="http://scratch.example.com:$PORT" \
-    JWT_SECRET="$(openssl rand -hex 32)" LAUNCHER_TOKEN_SECRET="$(openssl rand -hex 32)" MONITOR_SWEEP=off \
+    JWT_SECRET="$(openssl rand -hex 32)" LAUNCHER_TOKEN_SECRET="$(openssl rand -hex 32)" MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off \
     VERSION_FILE="$ROOT/version.json" node dist/main.js > "$OUT/api-$t.log" 2>&1 &
   pid=$!
   for _ in $(seq 1 180); do grep -q "listening on" "$OUT/api-$t.log" 2>/dev/null && break; sleep 1; done

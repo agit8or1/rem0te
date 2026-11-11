@@ -9,6 +9,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -18,8 +19,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -69,8 +72,9 @@ func cmdAction(args []string) int {
 		fmt.Fprintf(out, "  action %s: approval keys unavailable: %v\n", *job, err)
 		return 4
 	}
-	r, err := action.Run(*job, raw, action.Options{StateDir: paths.StateDir, Keys: keys, Platform: &winActions{paths: paths}, Now: time.Now,
-		WUA: winWUA{paths: paths}, Registry: winRegistry{}, Pause: pause})
+	wa := &winActions{paths: paths}
+	r, err := action.Run(*job, raw, action.Options{StateDir: paths.StateDir, Keys: keys, Platform: wa, Now: time.Now,
+		WUA: winWUA{paths: paths}, Registry: winRegistry{}, Pause: pause, Maint: wa})
 	if err != nil {
 		fmt.Fprintf(out, "  action %s: %v\n", *job, err)
 		return 5
@@ -209,3 +213,164 @@ func (w *winActions) SelfSHA256() (string, error) {
 }
 
 func (w *winActions) Sleep(d time.Duration) { time.Sleep(d) }
+
+// ── Maintenance actions (v0.32) ────────────────────────────────────────────
+// One fixed operation per method. Nothing here takes a command line from a
+// plan: shutdown.exe and wevtutil.exe are run by absolute path, without a
+// shell, with argument lists built from values internal/action has checked.
+
+// StopService asks the service manager to stop the service, then waits for
+// it to report stopped. A service with running dependents is refused by
+// Windows (ERROR_DEPENDENT_SERVICES_RUNNING) and that error is returned as
+// is: nothing else is ever stopped to make room.
+func (w *winActions) StopService(name string, timeout time.Duration) error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(name)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	st, err := s.Control(svc.Stop)
+	if err != nil {
+		if !errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
+			return err
+		}
+		return nil
+	}
+	deadline := time.Now().Add(timeout)
+	for st.State != svc.Stopped {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the service did not stop within %s", timeout)
+		}
+		time.Sleep(500 * time.Millisecond)
+		if st, err = s.Query(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runSystem32(timeout time.Duration, exe string, args ...string) ([]byte, int, error) {
+	d, err := windows.GetSystemDirectory()
+	if err != nil {
+		return nil, -1, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, filepath.Join(d, exe), args...).CombinedOutput()
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return out, ee.ExitCode(), err
+	}
+	if err != nil {
+		return out, -1, err
+	}
+	return out, 0, nil
+}
+
+// ScheduleRestart: shutdown.exe /r /t N /d p:4:1 /c MESSAGE. With /t above 0
+// Windows implies /f, so programs still open at the deadline are closed —
+// which is what the fixed message tells the person at the computer.
+func (w *winActions) ScheduleRestart(seconds int, message string) error {
+	if seconds < action.MinRestartDelayMinutes*60 || seconds > action.MaxRestartDelayMinutes*60 || len(message) > 500 || strings.ContainsAny(message, "\"\r\n") {
+		return errors.New("refusing an out-of-range restart")
+	}
+	out, code, err := runSystem32(30*time.Second, "shutdown.exe", "/r", "/t", strconv.Itoa(seconds), "/d", "p:4:1", "/c", message)
+	switch {
+	case code == int(windows.ERROR_SHUTDOWN_IS_SCHEDULED):
+		return action.ErrRestartScheduled
+	case err != nil:
+		return fmt.Errorf("shutdown.exe exit %d: %s", code, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// CancelRestart: shutdown.exe /a.
+func (w *winActions) CancelRestart() error {
+	out, code, err := runSystem32(30*time.Second, "shutdown.exe", "/a")
+	switch {
+	case code == int(windows.ERROR_NO_SHUTDOWN_IN_PROGRESS):
+		return action.ErrNoRestartScheduled
+	case err != nil:
+		return fmt.Errorf("shutdown.exe exit %d: %s", code, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// RemoteSessions counts 'rustdesk.exe --cm' processes: RustDesk starts one
+// connection manager per incoming session and none otherwise. It is the
+// signal heartbeat.ps1 reports as rustdeskSessions. A rustdesk.exe whose
+// command line cannot be read is an error, never "no session".
+func (w *winActions) RemoteSessions() (int, error) {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseHandle(snap)
+	var e windows.ProcessEntry32
+	e.Size = uint32(unsafe.Sizeof(e))
+	n := 0
+	for err = windows.Process32First(snap, &e); err == nil; err = windows.Process32Next(snap, &e) {
+		if !strings.EqualFold(windows.UTF16ToString(e.ExeFile[:]), "rustdesk.exe") {
+			continue
+		}
+		cmd, cerr := commandLine(e.ProcessID)
+		if cerr != nil {
+			return 0, fmt.Errorf("rustdesk.exe pid %d: %w", e.ProcessID, cerr)
+		}
+		if strings.Contains(cmd, "--cm") {
+			n++
+		}
+	}
+	if !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
+		return 0, err
+	}
+	return n, nil
+}
+
+func commandLine(pid uint32) (string, error) {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return "", err
+	}
+	defer windows.CloseHandle(h)
+	buf := make([]byte, 64<<10)
+	var ret uint32
+	if err := windows.NtQueryInformationProcess(h, windows.ProcessCommandLineInformation, unsafe.Pointer(&buf[0]), uint32(len(buf)), &ret); err != nil {
+		return "", err
+	}
+	return (*windows.NTUnicodeString)(unsafe.Pointer(&buf[0])).String(), nil
+}
+
+// Events: wevtutil.exe qe <System|Application> for Critical (1) and Error
+// (2) events newer than since, newest first, at most max, as text.
+func (w *winActions) Events(log string, since time.Duration, max int) ([]byte, error) {
+	if log != "System" && log != "Application" {
+		return nil, errors.New("not a collected log")
+	}
+	q := fmt.Sprintf("/q:*[System[(Level=1 or Level=2) and TimeCreated[timediff(@SystemTime) <= %d]]]", since.Milliseconds())
+	out, code, err := runSystem32(60*time.Second, "wevtutil.exe", "qe", log, q, "/c:"+strconv.Itoa(max), "/rd:true", "/f:text")
+	if err != nil {
+		return nil, fmt.Errorf("wevtutil exit %d", code)
+	}
+	return out, nil
+}
+
+// RustdeskLogDirs: where the RustDesk service writes its logs (the same
+// three the installer's diagnostics read). Service profiles only — a
+// person's own profile is never read.
+func (w *winActions) RustdeskLogDirs() []string {
+	win := os.Getenv("SystemRoot")
+	if win == "" {
+		win = `C:\Windows`
+	}
+	return []string{
+		filepath.Join(win, `System32\config\systemprofile\AppData\Roaming\RustDesk\log`),
+		filepath.Join(win, `ServiceProfiles\LocalService\AppData\Roaming\RustDesk\log`),
+		filepath.Join(win, `ServiceProfiles\NetworkService\AppData\Roaming\RustDesk\log`),
+	}
+}

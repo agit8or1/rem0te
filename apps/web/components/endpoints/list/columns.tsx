@@ -98,7 +98,7 @@ export const COLUMNS: ColumnDef[] = [
     // The last heartbeat is the Last seen column; this one says which agent sent it.
     cell: (r, c) => (
       <div className="text-xs whitespace-nowrap" title={r.agent.lastHeartbeatAt ? `Last heartbeat ${new Date(r.agent.lastHeartbeatAt).toLocaleString()}` : 'No heartbeat yet'}>
-        <span>{r.agent.type === 'signed' ? 'Signed' : r.agent.type === 'standard' ? 'Standard' : 'No agent report'}</span>
+        <span>{r.agent.type === 'signed' ? 'Signed' : r.agent.type === 'standard' ? (/^linux/i.test(r.platform ?? '') ? 'Standard (Linux)' : 'Standard') : 'No agent report'}</span>
         <p className={cn('text-muted-foreground', !r.isOnline && 'opacity-60')}>
           {r.agent.version ?? 'version unknown'}{r.isOnline ? '' : ` · ${ago(r.agent.lastHeartbeatAt, c.now)}`}
         </p>

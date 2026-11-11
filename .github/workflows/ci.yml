@@ -104,6 +104,13 @@ jobs:
           node apps/api/scripts/unit-approval-signer.mjs
           node apps/api/scripts/build-approval-signer.mjs --list
 
+      # Patch policies (0.32): the pure policy evaluator the signer runs before
+      # signing a ring plan under an approved policy — every refusal, the
+      # maintenance-window arithmetic across DST, the shared ring gate — and
+      # the signer's policy records (quorum, tamper, revocation).
+      - name: Patch policy tests
+        run: node apps/api/scripts/unit-patch-policy.mjs
+
       # The tamper-evident audit chain (0.28): every tamper kind, gaps,
       # checkpoint signatures and the export checker, against the compiled
       # chain module with no database.
@@ -123,6 +130,20 @@ jobs:
       # installers parsed and the diagnostics block run against stub cmdlets.
       - name: Diagnostics catalog tests
         run: node apps/api/scripts/unit-diagnostics-catalog.mjs
+
+      # Scheduled client updates (0.32): the update window's validation, time
+      # zones (+5:30, +5:45, a 30-minute DST zone), windows across midnight,
+      # both DST transitions, next opening/closing against a minute-by-minute
+      # reference, and the policy decisions the sweep and heartbeat share.
+      - name: Client update window tests
+        run: node apps/api/scripts/unit-update-window.mjs
+
+      # Script library: content and definition hashing, content and parameter
+      # validation, the contributor rule behind SAME_PERSON, the line diff,
+      # and every static-check rule (they warn, never block) against the
+      # compiled module with no database.
+      - name: Script library tests
+        run: node apps/api/scripts/unit-script-library.mjs
 
       # Patch status (0.30): the Patches tab summary and the redacted ticket
       # summary for restart required/completed, failed, offline/stale, WSUS and

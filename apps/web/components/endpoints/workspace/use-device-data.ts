@@ -75,13 +75,21 @@ export function useActionCatalog(enabled = true) {
   });
 }
 
-/** The one catalog action a computer page can request (updates go through a deployment). */
-export const DIRECT_ACTION_ID = 'windows.service.start';
+/**
+ * The catalog actions a computer page can request: those marked direct
+ * (updates go through a deployment). 0.32 adds the maintenance actions.
+ */
+export const directActions = (catalog: ActionCatalog | undefined) => (catalog?.actions ?? []).filter((a) => a.direct);
+
+/** The actions this computer's agent says it can run, as id@version. */
+export const agentActionKeys = (ep: Record<string, unknown>) => (Array.isArray(ep.agentActions) ? (ep.agentActions as string[]) : []);
 
 /**
  * Why RUN ACTION cannot work for this computer, or null. Mirrors the first
  * checks of ActionsService.readiness() with what this page can see; the
- * server still decides, and says why, when a request is made.
+ * server still decides, and says why, when a request is made. RUN ACTION is
+ * available when the agent reports at least one direct action; the Actions
+ * tab says, per action, which ones it does not.
  */
 export function actionUnavailableReason(ep: Record<string, unknown>, catalog: ActionCatalog | undefined, catalogError: boolean): string | null {
   if (catalogError) return 'Could not read the action catalog.';
@@ -89,9 +97,9 @@ export function actionUnavailableReason(ep: Record<string, unknown>, catalog: Ac
   if (!catalog.configured) return 'No approval signer is configured on this server, so no action can be approved.';
   if (ep.status === 'ARCHIVED') return 'This computer is archived.';
   if (ep.updateChannel !== 'signed') return 'This computer runs the standard agent. Approved actions need the signed agent.';
-  const action = catalog.actions.find((a) => a.id === DIRECT_ACTION_ID);
-  if (!action) return 'This server offers no action that can be requested for one computer.';
-  const agentActions = Array.isArray(ep.agentActions) ? (ep.agentActions as string[]) : [];
-  if (!agentActions.includes(`${action.id}@${action.version}`)) return 'This computer’s agent does not report support for the catalog action yet. Let it update first.';
+  const direct = directActions(catalog);
+  if (!direct.length) return 'This server offers no action that can be requested for one computer.';
+  const agent = agentActionKeys(ep);
+  if (!direct.some((a) => agent.includes(`${a.id}@${a.version}`))) return 'This computer’s agent does not report support for any catalog action yet. Let it update first.';
   return null;
 }

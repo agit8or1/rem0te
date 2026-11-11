@@ -65,6 +65,26 @@ export class AuditService {
     }
   }
 
+  /**
+   * The entry as row data, for a caller that writes it inside its own
+   * transaction: where the state change and its record must land together
+   * or not at all (a script approval).
+   */
+  entry(params: LogParams): Prisma.ActivityLogUncheckedCreateInput {
+    const metadata = params.metadata ?? params.meta ?? undefined;
+    return {
+      action: params.action,
+      actorId: params.actorId ?? null,
+      tenantId: params.tenantId ?? null,
+      customerId: params.customerId ?? null,
+      actorIp: params.actorIp ?? null,
+      actorAgent: params.actorAgent ?? null,
+      resource: params.resource ?? null,
+      resourceId: params.resourceId ?? null,
+      metadata: metadata ? (metadata as Prisma.InputJsonValue) : undefined,
+    };
+  }
+
   private async write(params: LogParams): Promise<void> {
     const metadata = params.metadata ?? params.meta ?? undefined;
     await this.prisma.activityLog.create({

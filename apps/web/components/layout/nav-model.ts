@@ -3,7 +3,8 @@
  *
  * The sidebar used to list about thirty routes flat, mixing a person's own
  * computers, daily technician work and platform administration. Now it lists
- * the jobs: Dashboard, Devices, Alerts, Patching, Remote Support, and a
+ * the jobs: Dashboard, Devices, Alerts, Automation, Patching, Remote Support,
+ * Reports, and a
  * Settings group that holds the administration. Pages that belong to one job
  * (all devices, add a device, unassigned…) are tabs of that job, drawn by
  * <SectionTabs> from the same model, so the sidebar and the tabs can never
@@ -12,14 +13,16 @@
  * Every entry still declares who may see it. Hiding an entry is a convenience,
  * never the control: each route and API call checks permissions itself.
  *
- * Automation and Reports are not here yet on purpose: an entry that leads to
- * an empty page is a dead end. They join when they ship.
+ * Automation joined with the script library (0.32): write, version and review
+ * scripts. It cannot run them yet, and its page says so. Reports joined in 0.32; each report
+ * shows only for the capability of the data it summarises (computers:view or
+ * monitoring:alerts), the same rule the API applies.
  */
 import type { LucideIcon } from 'lucide-react';
 import {
-  Activity, Building2, Download, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
+  Activity, BarChart3, BellRing, Building2, Cpu, WifiOff, Download, FileCode2, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
   Monitor, MonitorCheck, MonitorX, PackageCheck, PlayCircle, RefreshCw, Settings, Shield, ShieldCheck, Siren,
-  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog,
+  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock,
 } from 'lucide-react';
 import { CAP, type Capability } from '@/lib/auth';
 
@@ -31,6 +34,8 @@ export type NavCtx = {
   technician: boolean;
   hasAssignments: boolean;
   canManageTechnicians: boolean;
+  /** Platform Admin or `approvals:review`: reviews global scripts. */
+  isIndependentReviewer: boolean;
 };
 
 export type NavLeaf = {
@@ -78,6 +83,13 @@ export const NAV: NavSection[] = [
     items: [{ href: '/alerts', label: 'Alerts', icon: Siren, show: (c) => c.can(CAP.ALERTS_VIEW) }],
   },
   {
+    id: 'automation', label: 'Automation', icon: FileCode2, kind: 'link',
+    items: [{
+      href: '/automation/scripts', label: 'Script library', icon: FileCode2,
+      show: (c) => c.can(CAP.SCRIPTS_AUTHOR) || c.can(CAP.SCRIPTS_REVIEW) || c.isIndependentReviewer,
+    }],
+  },
+  {
     id: 'patching', label: 'Patching', icon: ShieldCheck, kind: 'link',
     items: [{ href: '/patching', label: 'Patching', icon: ShieldCheck, show: (c) => c.can(CAP.COMPUTERS_VIEW) }],
   },
@@ -90,6 +102,16 @@ export const NAV: NavSection[] = [
       // The RustDesk client for the technician's own machine: Connect uses it.
       { href: '/downloads', label: 'Technician client', icon: HardDriveDownload, show: all },
     ],
+  },
+  {
+    id: 'reports', label: 'Reports', icon: BarChart3, kind: 'hub',
+    items: [
+      { href: '/reports/patch-compliance', label: 'Patch compliance', icon: ShieldCheck, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
+      { href: '/reports/agent-coverage', label: 'Agent coverage', icon: Cpu, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
+      { href: '/reports/alert-frequency', label: 'Alert frequency', icon: BellRing, show: (c) => c.can(CAP.ALERTS_VIEW) },
+      { href: '/reports/offline-time', label: 'Offline time', icon: WifiOff, show: (c) => c.can(CAP.ALERTS_VIEW) },
+    ],
+    also: ['/reports'],
   },
   {
     id: 'settings', label: 'Settings', icon: Settings, kind: 'group',
@@ -105,6 +127,9 @@ export const NAV: NavSection[] = [
       { href: '/admin/technicians', label: 'Technicians', icon: UserCog, show: (c) => c.canManageTechnicians },
       { href: '/admin/access', label: 'Access control', icon: ShieldCheck, show: (c) => c.isPlatformAdmin },
       { href: '/admin/sso', label: 'Single sign-on', icon: KeyRound, show: (c) => c.isPlatformAdmin },
+      // 0.32: who may change it is decided by the API (owner, a whole-business
+      // technician with computers:edit, the MSP); this only decides who sees the entry.
+      { href: '/settings/client-updates', label: 'Client updates', icon: CalendarClock, show: (c) => c.isBusinessOwner || c.canManageTechnicians || (c.technician && c.can(CAP.COMPUTERS_EDIT)) },
       { href: '/admin/rollouts', label: 'Client rollouts', icon: PackageCheck, show: (c) => c.isPlatformAdmin },
       { href: '/admin/security', label: 'Security', icon: Shield, show: (c) => c.isPlatformAdmin },
       { href: '/admin/status', label: 'System status', icon: Activity, show: (c) => c.isPlatformAdmin },

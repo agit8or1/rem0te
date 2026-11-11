@@ -91,7 +91,20 @@ export interface TargetView {
   reconciledNote?: string | null;
 }
 
-export function updateState(u: { updateId: string; revision: number }, t: TargetView | null, posture: Posture | null): { state: UpdateState; detail: string | null } {
+/**
+ * The part of a posture that `updateState` reads. A full Posture is one; so
+ * is the reduced scan a portal relays to the approval signer as evidence
+ * (0.32, actions/patch-policy.ts), which is why both use this one rule.
+ */
+export interface PostureLike {
+  scannedAt: string;
+  error?: string;
+  updates: { updateId: string; revision: number }[];
+  history: { updateId: string; revision: number; operation: string; result: string }[];
+  reboot: { pending: boolean };
+}
+
+export function updateState(u: { updateId: string; revision: number }, t: TargetView | null, posture: PostureLike | null): { state: UpdateState; detail: string | null } {
   if (!t) return { state: 'not_planned', detail: null };
   if (t.status === 'CANCELED') return { state: 'canceled', detail: t.statusReason };
   if (t.jobStatus === 'AWAITING_APPROVAL') return { state: 'awaiting_approval', detail: null };

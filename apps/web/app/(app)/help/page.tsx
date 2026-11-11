@@ -105,7 +105,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: 'enrolling-endpoints',
-    title: 'Enrolling Endpoints (Permanent Management)',
+    title: 'Adding a Device (Permanent Management)',
     content: (
       <div className="space-y-3 text-sm text-muted-foreground">
         <p>There are two ways to use RustDesk with this platform:</p>
@@ -119,36 +119,34 @@ const SECTIONS: Section[] = [
             </p>
           </div>
           <div className="rounded-md border px-4 py-3 space-y-1">
-            <p className="font-medium text-foreground">Managed / Enrolled</p>
+            <p className="font-medium text-foreground">Managed (added as a device)</p>
             <p>
-              RustDesk is installed as a persistent service on the remote machine and registered in
-              this system with a permanent record. The tech can connect without asking for the ID
-              each time. The endpoint shows up in the Endpoints list with its current online status.
+              RustDesk is installed as a persistent service on the remote machine and the machine
+              is enrolled into a business. You can connect without asking for the ID each time, and
+              on Windows the Rem0te agent reports its health, inventory and updates.
             </p>
           </div>
         </div>
-        <p className="pt-1 font-medium text-foreground">How enrollment works</p>
+        <p className="pt-1 font-medium text-foreground">How to add a device</p>
+        <p>
+          Open{' '}
+          <Link href="/endpoints/enroll" className="underline text-foreground">
+            Devices → Add device
+          </Link>{' '}
+          (the <strong className="text-foreground">Add device</strong> button on the Devices page). One page takes you through it:
+        </p>
         <ol className="list-decimal pl-5 space-y-1.5">
-          <li>
-            Go to{' '}
-            <Link href="/endpoints" className="underline text-foreground">
-              Endpoints
-            </Link>{' '}
-            and create an <strong className="text-foreground">enrollment token</strong>.
-          </li>
-          <li>Provide that token to whoever is setting up the device.</li>
-          <li>
-            On the remote machine (after installing RustDesk), run:
-            <CodeBlock>rustdesk --enroll YOUR_TOKEN_HERE</CodeBlock>
-          </li>
-          <li>
-            The device calls the API and registers itself. It immediately appears in your Endpoints
-            list.
-          </li>
+          <li>Choose the business, then a site or none, and who may connect. These are fixed into the link: the machine cannot pick another business or site.</li>
+          <li>Choose the operating system. Windows gets the Rem0te agent; Linux and macOS get remote access only.</li>
+          <li>Copy the install command (or, on Windows, the one-click installer link) and run it on the machine. It works once, expires in 24 hours, and is shown only once.</li>
+          <li>Keep the page open. It checks every few seconds and says the device enrolled only when it has.</li>
+          <li>It then shows the first health the server has received: online, the agent and its version, and whether the first inventory has arrived. Anything not yet received says so.</li>
+          <li>Open the device, or the business&apos;s monitoring policies, from the last step.</li>
         </ol>
         <p>
-          Tokens can be single-use or multi-use and can have an expiry date. Revoke them in the
-          Endpoints page.
+          An unused link can be revoked from the waiting step. For a machine that already runs
+          RustDesk and only needs listing, without the agent, use{' '}
+          <Link href="/endpoints/new" className="underline text-foreground">Register by RustDesk ID</Link>.
         </p>
       </div>
     ),
@@ -198,8 +196,9 @@ const SECTIONS: Section[] = [
             <CodeBlock>rustdesk --install-service</CodeBlock>
           </li>
           <li>
-            <strong className="text-foreground">Enroll</strong> — Use an enrollment token (see
-            previous section) to register the device.
+            <strong className="text-foreground">Enrol</strong> — Add it from Devices → Add device
+            (previous section). On a machine you can run commands on, Add device&apos;s installer does
+            every step above for you.
           </li>
         </ol>
         <p>
@@ -498,6 +497,57 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'client-updates',
+    title: 'Automatic RustDesk Client Updates',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          A business can let the server update outdated RustDesk clients by itself, at a time nobody is
+          using the computers. Set it in{' '}
+          <Link href="/settings/client-updates" className="underline text-foreground">Settings → Client updates</Link>.
+          It is off until someone turns it on.
+        </p>
+        <p className="font-medium text-foreground">The update window</p>
+        <p>
+          Pick the days and times, and the time zone they are in — for example every night 22:00–05:00
+          Europe/London. An end earlier than the start runs past midnight and belongs to the day it starts
+          on. Daylight-saving changes are handled: on the night the clocks go forward a window that starts in
+          the missing hour opens when the clock reaches the next real time. The page shows when the window
+          next opens. A site can have its own policy, which replaces the business one for that site.
+        </p>
+        <p className="font-medium text-foreground">What happens</p>
+        <p>
+          While the window is open, the server queues outdated Windows computers that are online, in batches
+          (25 per two-minute sweep by default), and each is told to re-run its installer on its next heartbeat. Outside the window nothing
+          is queued, and anything already queued automatically waits. By default a computer with an open
+          remote session is skipped (the install restarts RustDesk and would end the session); you can also
+          skip computers someone is logged on to. Updates paused by{' '}
+          <Link href="/settings/security/containment" className="underline text-foreground">Containment</Link>{' '}
+          stop all of this.
+        </p>
+        <p className="font-medium text-foreground">Clicking Update still goes at once</p>
+        <p>
+          An update someone queues by hand on the Updates page is sent on the next heartbeat, whatever the
+          window. The Updates page and the computer&apos;s page say which kind each queued update is, and who
+          queued a manual one. Clicking Update on one that is waiting for the window sends it now.
+        </p>
+        <p className="font-medium text-foreground">Computers that will never update automatically</p>
+        <p>
+          The Computers list says why: not Windows, never authenticated with a device secret (re-run the
+          installer on the machine once), or an agent so old it has never reported a RustDesk version. An
+          offline computer is queued when it is next online inside the window.
+        </p>
+        <p className="font-medium text-foreground">Who can change it</p>
+        <p>
+          A Business Owner for their own business, a technician whose assignment gives{' '}
+          <em>Rename/edit computers</em> over the whole business, or the MSP. Turning it on asks you to confirm
+          it is you; turning it off never does. Every change, and every computer queued automatically, is in
+          the audit log.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'api-keys',
     title: 'API Keys',
     content: (
@@ -630,6 +680,19 @@ const SECTIONS: Section[] = [
           More in <Link href="/docs/approved-actions" className="underline text-foreground">Approved actions</Link>.
         </p>
         <p>
+          From 0.32, the same <em>Actions</em> tab (or <strong className="text-foreground">Run action</strong> at the top of
+          a computer&apos;s page) offers four <strong className="text-foreground">maintenance actions</strong>: restart one
+          service from a fixed list (Print Spooler, Windows Update, BITS, Windows Time, WinRM, RustDesk), schedule a
+          restart after a warning of 5 minutes to 24 hours, cancel a pending restart, and collect a fixed set of logs.
+          Each one always needs two different approvers, whatever the computer. A scheduled restart shows the person at
+          the computer a fixed warning and closes unsaved programs when it ends; it is never immediate, and the computer
+          skips it, like a RustDesk restart, while a RustDesk session is open. Collected logs are bounded, redacted twice
+          and shown only to people who may read the computer&apos;s event logs. Like every approved action, these do
+          nothing until an approval signer is installed and the computer runs a 0.32+ signed agent; until then the tab
+          says why. They have been tested against a simulated Windows only.{' '}
+          More in <Link href="/docs/approved-actions#maintenance-actions-032" className="underline text-foreground">Approved actions</Link>.
+        </p>
+        <p>
           From 0.27, Windows updates can be installed in stages from{' '}
           <Link href="/patching" className="underline text-foreground">Patching</Link>: one{' '}
           <strong className="text-foreground">canary</strong> computer first, then rings. Each ring is one plan that two
@@ -653,12 +716,49 @@ const SECTIONS: Section[] = [
           <Link href="/docs/capabilities" className="underline text-foreground">What each agent can do</Link>.
         </p>
         <p>
+          From 0.32, the Linux installer also installs a small <strong className="text-foreground">read-only agent</strong>{' '}
+          (a shell script on a systemd timer, every 3 minutes), shown as <em>Standard (Linux)</em>. It heartbeats with the
+          device secret from the enrolment, and reports the OS, kernel, uptime, CPU, memory, disks, logged-on users, the
+          RustDesk version and pending package updates from apt, dnf or zypper (without refreshing them; <em>unknown</em>{' '}
+          when there is none). It acts on nothing the console sends, so rotating the password, reinstalling or updating
+          RustDesk on a Linux computer means re-running the installer there; it has no software list or event logs. Remove
+          it with the installer&apos;s <code>--uninstall</code>. More in{' '}
+          <Link href="/docs/inventory#linux-computers-032" className="underline text-foreground">Inventory</Link>.
+        </p>
+        <p>
+          From 0.32, a computer&apos;s <em>Patches</em> tab has <strong className="text-foreground">Install updates</strong>{' '}
+          when it can be patched: pick updates and give a reason, and it becomes a one-computer deployment that two
+          approvers still approve on the approval signer. When it cannot be patched there is no button; the tab says why
+          (for example, the standard agent) and what to do instead.{' '}
+          <strong className="text-foreground">Patch policies</strong> on the Patching page are approved once, by two
+          people on the approval signer, and then run inside their maintenance window: the canary first, the next ring
+          only once the canary is confirmed effective. The approval signer, not this portal, signs each ring, and only if
+          it stays inside the policy&apos;s computers, update classes, excluded KBs, window and expiry. Revoking one is
+          one-way. Computers are still never restarted. Platform Admins see a pre-flight listing what a production
+          install still lacks. Fixture-tested only so far. More in{' '}
+          <Link href="/docs/patching-setup" className="underline text-foreground">Patching setup</Link> and{' '}
+          <Link href="/docs/staged-patching" className="underline text-foreground">Staged patching</Link>.
+        </p>
+        <p>
           From 0.31 the menu is organised by job: <strong className="text-foreground">Dashboard</strong>,{' '}
           <strong className="text-foreground">Devices</strong> (all devices, your own, adding one),{' '}
-          <strong className="text-foreground">Alerts</strong>, <strong className="text-foreground">Patching</strong>,{' '}
+          <strong className="text-foreground">Alerts</strong>, <strong className="text-foreground">Automation</strong>,{' '}
+          <strong className="text-foreground">Patching</strong>,{' '}
           <strong className="text-foreground">Remote Support</strong> (sessions, Quick Connect, support requests and the
-          technician client) and <strong className="text-foreground">Settings</strong>, which holds users, the audit log
+          technician client), <strong className="text-foreground">Reports</strong> (0.32) and{' '}
+          <strong className="text-foreground">Settings</strong>, which holds users, the audit log
           and platform administration. Help and the documentation are at the bottom of the menu.
+        </p>
+        <p>
+          <Link href="/automation/scripts" className="underline text-foreground">Automation → Script library</Link> holds
+          PowerShell scripts for one business, or global ones a Platform Admin writes. Every edit is a new version with its
+          own SHA-256. A version goes from draft to review to approved or rejected, and someone other than everyone who
+          wrote it must approve it, with a fresh sign-in. Before you approve, the page shows warnings for things like{' '}
+          <code>Invoke-Expression</code>, downloads, encoded commands, credentials and disabling Defender. They&apos;re
+          warnings, not a verdict. <strong className="text-foreground">Scripts can&apos;t run yet</strong>: they&apos;ll
+          only run through the signed agent and the approval roster, and that path hasn&apos;t been tested on real Windows.
+          Writing needs <em>Write scripts</em>; reviewing needs <em>Review scripts</em>. More in{' '}
+          <Link href="/docs/script-library" className="underline text-foreground">Script library</Link>.
         </p>
         <p>
           The <Link href="/dashboard" className="underline text-foreground">Dashboard</Link> (0.31) says what is broken,
@@ -670,6 +770,20 @@ const SECTIONS: Section[] = [
           devices with an update scan under 36 hours old and shows the coverage beside it; with no such scan it says{' '}
           <em>No data</em>. Server health moved to Settings → System status. More in{' '}
           <Link href="/docs/technician-guide" className="underline text-foreground">Technician guide</Link>.
+        </p>
+        <p>
+          <Link href="/reports" className="underline text-foreground">Reports</Link> (0.32) answer four questions from
+          stored data, per business and site: <strong className="text-foreground">Patch compliance</strong> (the
+          dashboard&apos;s definition; devices with a stale scan or none are coverage gaps, never counted as
+          compliant), <strong className="text-foreground">Agent coverage</strong> (agent type and version, devices
+          without a device secret, devices not heard from in a chosen number of days, non-Windows devices with no
+          inventory), <strong className="text-foreground">Alert frequency</strong> over a period, with time to resolve,
+          and <strong className="text-foreground">Offline time</strong>, measured from the Offline monitor&apos;s alerts
+          because the online flag keeps no history. There is no availability percentage: which computers were
+          monitored, and when, is not recorded. Each report shows only what you can already see and needs the
+          permission of its data (View computers, or monitoring:alerts). <em>Export CSV</em> is capped at 10,000
+          rows and recorded in the audit log before the file is sent. Reports are not scheduled or emailed. More in{' '}
+          <Link href="/docs/reports" className="underline text-foreground">Reports</Link>.
         </p>
         <p>
           From 0.28, writes can be <strong className="text-foreground">paused</strong> while an incident is looked at:

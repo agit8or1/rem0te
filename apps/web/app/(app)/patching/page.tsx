@@ -15,6 +15,7 @@ import { usePermissions } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { DEPLOYMENT_STATUS } from '@/lib/patching';
+import { PoliciesCard, PreflightCard } from '@/components/patching/patch-policies';
 import { AlertTriangle, Loader2, Plus, ShieldCheck } from 'lucide-react';
 
 /**
@@ -33,7 +34,7 @@ interface Candidates {
   computers: { id: string; hostname: string; deviceClass: string; isOnline: boolean; notReady: string | null; scannedAt: string | null; managers: string[]; rebootPending: boolean | null; offered: number | null }[];
   updates: (UpdateIdentity & { kb: string | null; title: string; className: string | null; severity: string | null; offeredOn: number; installable: boolean; notInstallableBecause: string | null })[];
 }
-interface DeploymentRow { id: string; name: string; status: string; pausedReason: string | null; rings: number[]; updates: number; lastRing: number | null; lastRingStatus: string | null; createdAt: string }
+interface DeploymentRow { id: string; name: string; origin: 'DEPLOYMENT' | 'MANUAL' | 'POLICY'; policyId: string | null; status: string; pausedReason: string | null; rings: number[]; updates: number; lastRing: number | null; lastRingStatus: string | null; createdAt: string }
 
 const selectClass = 'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm';
 const key = (u: UpdateIdentity) => `${u.updateId}@${u.revision}`;
@@ -75,7 +76,11 @@ export default function PatchingPage() {
         </div>
       )}
 
+      {isPlatformAdmin && <PreflightCard />}
+
       {creating && businessId && <CreateDeployment businessId={businessId} onDone={() => { setCreating(false); refetch(); }} />}
+
+      {businessId && <PoliciesCard businessId={businessId} />}
 
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-sm">Deployments</CardTitle></CardHeader>
@@ -88,6 +93,7 @@ export default function PatchingPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <strong>{d.name}</strong>
                   <Badge variant={DEPLOYMENT_STATUS[d.status] ?? 'outline'}>{d.status.toLowerCase()}</Badge>
+                  {d.origin !== 'DEPLOYMENT' && <Badge variant="outline">{d.origin === 'POLICY' ? 'from a policy' : 'one computer'}</Badge>}
                   <span className="text-xs text-muted-foreground">{d.updates} update{d.updates === 1 ? '' : 's'} · rings of {d.rings.join(', ')} · {formatDate(d.createdAt)}</span>
                 </div>
                 {d.lastRing !== null && <p className="text-xs text-muted-foreground mt-1">{d.lastRing === 0 ? 'Canary' : `Ring ${d.lastRing}`}: {d.lastRingStatus?.toLowerCase().replace(/_/g, ' ')}</p>}

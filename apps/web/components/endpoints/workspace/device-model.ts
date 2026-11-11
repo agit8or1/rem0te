@@ -76,7 +76,15 @@ export interface AgentType {
   label: string;
   /** One line on what this means for the technician. */
   explanation: string;
+  /**
+   * The standard Linux agent (0.32): it reports heartbeat, inventory and
+   * pending updates and acts on nothing the server sends, so there is no
+   * software list, no event log and nothing to queue on the computer.
+   */
+  linux?: boolean;
 }
+
+const isLinux = (platform: string) => platform.startsWith('linux');
 
 /**
  * Which agent the computer runs, from what its heartbeats report.
@@ -87,11 +95,23 @@ export interface AgentType {
  */
 export function agentType(ep: Record<string, unknown>): AgentType {
   const platform = String(ep.platform ?? '').toLowerCase();
-  if (platform === 'linux' || platform === 'macos' || platform === 'mac' || platform === 'darwin') {
+  // A Linux computer installed from 0.32 on runs the standard Linux agent; one
+  // installed before has RustDesk only and never sends an agent version.
+  if (isLinux(platform) && ep.agentVersion) {
+    return {
+      kind: 'standard',
+      label: 'Standard (Linux)',
+      explanation: 'Reports inventory and pending package updates (read-only). No software list or event logs, and it runs nothing the console sends.',
+      linux: true,
+    };
+  }
+  if (isLinux(platform) || platform === 'macos' || platform === 'mac' || platform === 'darwin') {
     return {
       kind: 'rustdesk-only',
       label: 'RustDesk only',
-      explanation: 'Remote access only. No inventory, monitoring, event logs or patching on this platform.',
+      explanation: isLinux(platform)
+        ? 'Remote access only: installed before the Linux agent existed. Re-run the Linux installer from an enrolment link to add inventory and pending updates.'
+        : 'Remote access only. No inventory, monitoring, event logs or patching on this platform.',
     };
   }
   if (ep.updateChannel === 'signed') {
@@ -112,6 +132,10 @@ export function agentType(ep: Record<string, unknown>): AgentType {
 }
 
 export const reportsInventory = (a: AgentType) => a.kind === 'signed' || a.kind === 'standard' || a.kind === 'unknown';
+/** Installed software and event logs: the Windows agents only. */
+export const reportsWindowsDetail = (a: AgentType) => reportsInventory(a) && !a.linux;
+/** Something the console can queue on the computer (reinstall): not the read-only Linux agent. */
+export const acceptsQueuedWork = (a: AgentType) => reportsInventory(a) && !a.linux;
 
 // ── Connection status ──────────────────────────────────────────────────────
 

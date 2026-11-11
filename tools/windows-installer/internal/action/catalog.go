@@ -1,5 +1,7 @@
 package action
 
+import "time"
+
 // The agent's copy of the catalog (v0.26). It is compiled in, so a plan can
 // only ever name something this file implements: there is no command, script,
 // path or URL parameter anywhere, and no way to add one without shipping a new
@@ -8,7 +10,8 @@ package action
 // Keep in step with apps/api/src/actions/catalog.ts; the portal and signer
 // copy decides what can be proposed, this copy decides what can run.
 
-// ServiceName is the only service any action in this release touches.
+// ServiceName is the only service windows.service.start touches.
+// windows.service.restart has its own allowlist (RestartableServices).
 const ServiceName = "Spooler"
 
 // MinApprovals by risk; the same numbers as APPROVALS_REQUIRED in the portal.
@@ -23,11 +26,20 @@ type Action struct {
 	Risk func(productType, targets int) string
 	// MaxTargets: how many computers one signed plan may name.
 	MaxTargets int
+	// MaxWindow: the longest signed window this action accepts (0: no
+	// limit beyond the portal's 24 hours). A restart must not land hours
+	// after the time its approvers had in mind.
+	MaxWindow time.Duration
+	// Precheck, if set, runs after every verification and the signed pause,
+	// before the job is journaled as executing. It only reads; a non-nil
+	// Result ends the job there (final, like a refusal).
+	Precheck func(p *Plan, o Options) *Result
 	// Execute runs the verified plan. Observations only.
 	Execute func(p *Plan, o Options) Result
 	// Interrupted describes the computer now, for a job whose journal says it
 	// was executing when the agent stopped. It must not change anything.
-	Interrupted func(o Options) map[string]string
+	// params are the plan's, as journaled; check them before use.
+	Interrupted func(params map[string]any, o Options) map[string]string
 }
 
 var catalog = []Action{
@@ -47,7 +59,7 @@ var catalog = []Action{
 			return "high"
 		},
 		Execute: startSpooler,
-		Interrupted: func(o Options) map[string]string {
+		Interrupted: func(_ map[string]any, o Options) map[string]string {
 			if st, err := o.Platform.ServiceState(ServiceName); err == nil {
 				return map[string]string{"now": st}
 			}
@@ -66,6 +78,54 @@ var catalog = []Action{
 		Execute:     installUpdates,
 		Interrupted: updatesNow,
 	},
+	{
+		// Restart one service from RestartableServices (v0.32). High impact
+		// on any computer: two approvers, always. Restarting RustDesk drops
+		// whoever is connected, so that one waits for no open session.
+		ID: "windows.service.restart", Version: 1, MaxTargets: 1,
+		ParamsOK:    func(p map[string]any) bool { return RestartService(p) != "" },
+		Risk:        func(int, int) string { return "high" },
+		Precheck:    restartPrecheck,
+		Execute:     restartService,
+		Interrupted: restartInterrupted,
+	},
+	{
+		// Schedule a restart after a warning of 5 minutes to 24 hours
+		// (v0.32). Never immediate; the message is fixed text; skipped while a
+		// RustDesk session is open or when that cannot be told.
+		ID: "windows.reboot.schedule", Version: 1, MaxTargets: 1, MaxWindow: 2 * time.Hour,
+		ParamsOK:    func(p map[string]any) bool { return RestartDelay(p) != 0 },
+		Risk:        func(int, int) string { return "high" },
+		Precheck:    sessionCheck("the restart"),
+		Execute:     scheduleRestart,
+		Interrupted: scheduleInterrupted,
+	},
+	{
+		// Cancel a pending restart (v0.32). No parameters at all.
+		ID: "windows.reboot.cancel", Version: 1, MaxTargets: 1,
+		ParamsOK:    func(p map[string]any) bool { return len(p) == 0 },
+		Risk:        func(int, int) string { return "high" },
+		Precheck:    needMaint,
+		Execute:     cancelRestart,
+		Interrupted: func(map[string]any, Options) map[string]string { return nil },
+	},
+	{
+		// Collect the fixed LogSources, bounded and redacted (v0.32). No
+		// parameters: nothing can name a file, a log or a time range.
+		ID: "windows.logs.collect", Version: 1, MaxTargets: 1,
+		ParamsOK:    func(p map[string]any) bool { return len(p) == 0 },
+		Risk:        func(int, int) string { return "high" },
+		Precheck:    needMaint,
+		Execute:     collectLogs,
+		Interrupted: func(map[string]any, Options) map[string]string { return nil },
+	},
+}
+
+func needMaint(_ *Plan, o Options) *Result {
+	if o.Maint == nil {
+		return &Result{Outcome: "failed", Reason: "no_maintenance", Detail: "this agent cannot perform maintenance actions"}
+	}
+	return nil
 }
 
 // MaxRingTargets is the most computers one signed patch plan (one ring) may name.

@@ -9,6 +9,9 @@
  *   <dir>/jobs/<id>.json    one per plan; decisions and the envelope
  *   <dir>/challenges/<id>.json  single-use WebAuthn challenges
  *   <dir>/counters/<sha>.json   each passkey's signature counter
+ *   <dir>/policies/<id>.json    patch policies (v0.32): the document, its decisions,
+ *                               the signer's signature and the ledger
+ *   <dir>/revocations/<id>.json patch policy revocations: write-once, never removed
  *   <dir>/pauses/<id>.json      pauses (v0.28): created by the operator CLI or at the
  *                               portal's request; cleared only by the operator CLI
  *
@@ -23,14 +26,14 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
-import type { Challenge, JobRecord, Policy, Roster } from './core';
+import type { Challenge, JobRecord, Policy, PolicyRecord, Roster } from './core';
 
 const ID = /^[a-f0-9]{32}$/;
 
 export class SignerStore {
   private chain: Promise<unknown> = Promise.resolve();
   constructor(readonly dir: string) {
-    for (const d of ['jobs', 'challenges', 'counters', 'pauses']) mkdirSync(path.join(dir, d), { recursive: true, mode: 0o700 });
+    for (const d of ['jobs', 'challenges', 'counters', 'pauses', 'policies', 'revocations']) mkdirSync(path.join(dir, d), { recursive: true, mode: 0o700 });
   }
 
   /** Run fn with every other mutation waiting. */
@@ -71,6 +74,34 @@ export class SignerStore {
   }
   saveChallenge(c: Challenge) { this.write(path.join(this.dir, 'challenges', `${c.id}.json`), c); }
 
+  // ── Patch policies (v0.32) ────────────────────────────────────────────────
+  // One file each. The serving process creates, records decisions on, signs,
+  // revokes and appends to a policy's ledger; nothing it does reactivates a
+  // revoked one, and nothing over HTTP can.
+  /**
+   * A policy, with any revocation applied. Revocation is its own write-once
+   * file (revocations/<id>.json), so neither the serving process nor the CLI
+   * can lose one by rewriting the policy file, and nothing removes it.
+   */
+  patchPolicy(id: string): PolicyRecord | null {
+    if (!ID.test(id)) return null;
+    const r = this.read<PolicyRecord>(path.join(this.dir, 'policies', `${id}.json`));
+    if (!r) return null;
+    const rev = this.read<Revocation>(path.join(this.dir, 'revocations', `${id}.json`));
+    if (rev) Object.assign(r, { status: 'REVOKED', revokedAt: rev.at, revokedBy: rev.by, revokeReason: rev.reason });
+    return r;
+  }
+  /** Revoke a policy. Returns false if it already was; the first revocation stands. */
+  revokePatchPolicy(id: string, rev: Revocation): boolean {
+    if (!ID.test(id)) throw new Error('bad policy id');
+    try { writeFileSync(path.join(this.dir, 'revocations', `${id}.json`), JSON.stringify(rev, null, 2), { mode: 0o600, flag: 'wx' }); return true; } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
+      throw e;
+    }
+  }
+  savePatchPolicy(r: PolicyRecord) { if (!ID.test(r.policyId)) throw new Error('bad policy id'); this.write(path.join(this.dir, 'policies', `${r.policyId}.json`), r); }
+  patchPolicies(): string[] { return readdirSync(path.join(this.dir, 'policies')).filter((f) => /^[a-f0-9]{32}\.json$/.test(f)).map((f) => f.slice(0, -5)); }
+
   // ── Pauses (v0.28) ────────────────────────────────────────────────────────
   // One file each, so the serving process (which only ever creates one) and
   // the operator CLI (which clears) never overwrite each other's write.
@@ -93,3 +124,5 @@ export interface Pause {
   id: string; scope: 'global' | 'business'; businessId?: string; reason: string;
   setBy: 'operator' | 'portal'; ref?: string; at: string; clearedAt?: string; clearReason?: string;
 }
+
+export interface Revocation { at: string; by: 'portal' | 'operator'; reason: string }

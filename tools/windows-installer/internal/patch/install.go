@@ -42,7 +42,14 @@ type Report struct {
 
 // Install installs exactly the approved identities that this computer is
 // offered and that Eligible allows, and nothing else. It never restarts.
-func Install(w WUA, reg Registry, ids []Identity) Report {
+func Install(w WUA, reg Registry, ids []Identity) Report { return InstallFiltered(w, reg, ids, nil) }
+
+// InstallFiltered is Install with a signed plan's own narrowing (0.32): a
+// plan signed under a patch policy names the classifications, severities and
+// excluded KBs that policy allows, and the computer applies them to Windows
+// Update's own answer — not to the titles and classes the portal displayed.
+// A nil filter narrows nothing beyond Eligible.
+func InstallFiltered(w WUA, reg Registry, ids []Identity, f *Filter) Report {
 	r := Report{Outcomes: []Outcome{}}
 	if m := Managers(reg); len(m) > 0 {
 		r.Refusal, r.Detail = "managed_elsewhere", "updates on this computer are managed by: "+join(m)
@@ -75,6 +82,8 @@ func Install(w WUA, reg Registry, ids []Identity) Report {
 		default: // offered
 			o.KB = st.Update.KB
 			if ok, why := Eligible(*st.Update); !ok {
+				o.State, o.Reason = "excluded", why
+			} else if ok, why := f.Allows(*st.Update); !ok {
 				o.State, o.Reason = "excluded", why
 			} else {
 				o.State = "not_attempted"
@@ -138,6 +147,56 @@ func Install(w WUA, reg Registry, ids []Identity) Report {
 	}
 	r.Reboot = reboot(reg, out.RebootRequired)
 	return r
+}
+
+// Filter is a signed plan's narrowing of what may be installed (0.32). It can
+// only remove updates from what Eligible allows; it can never add one.
+type Filter struct {
+	// Classifications: a non-empty subset of Installable.
+	Classifications []string
+	// Severities: if set, the MSRC severity must be one of these. An update
+	// Windows reports no severity for counts as "Unrated".
+	Severities []string
+	// ExcludeKBs: updates Windows reports under one of these KBs are refused.
+	ExcludeKBs []string
+}
+
+// Severities a filter may name.
+var Severities = map[string]bool{"Critical": true, "Important": true, "Moderate": true, "Low": true, "Unrated": true}
+
+// Allows reports whether f lets u through, and the stable reason if not.
+func (f *Filter) Allows(u Update) (bool, string) {
+	if f == nil {
+		return true, ""
+	}
+	if !has(f.Classifications, u.Classification) {
+		return false, "classification_not_in_policy"
+	}
+	if len(f.Severities) > 0 {
+		s := u.Severity
+		if s == "" {
+			s = "Unrated"
+		}
+		if !has(f.Severities, s) {
+			return false, "severity_not_in_policy"
+		}
+	}
+	if u.KB != "" && has(f.ExcludeKBs, u.KB) {
+		return false, "kb_excluded_by_policy"
+	}
+	return true, ""
+}
+
+// ValidKB reports whether s is a KB number as Windows Update reports one.
+func ValidKB(s string) bool { return kbRE.MatchString(s) }
+
+func has(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 func reboot(reg Registry, wuaSays bool) Reboot {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The 0.31 navigation, in a real browser: every sidebar entry and section tab
+ * The 0.31 navigation (and 0.32's Reports), in a real browser: every sidebar entry and section tab
  * leads to a page that renders, each persona sees exactly its entries, the
  * Settings group works, nothing overflows sideways, at desktop and tablet
  * widths, in the light and dark themes. It also writes screenshots to OUT_DIR
@@ -14,7 +14,7 @@
  */
 import { chromium } from 'playwright';
 import { createRequire } from 'module';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { mkdir, mkdtemp } from 'fs/promises';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
@@ -92,6 +92,30 @@ async function visit(page, href) {
   return pageHealth(page);
 }
 
+/** No control anywhere on a library page that could read as running a script. */
+async function noRunControl(page) {
+  return page.evaluate(() => [...document.querySelectorAll('main button, main a, main [role=button]')]
+    .map((e) => (e.textContent ?? '').trim()).filter((t) => /\b(run|execute|deploy|dispatch|send to)\b/i.test(t)));
+}
+
+async function automationChecks(page) {
+  await follow(page, 'nav[aria-label="Main"] [data-nav="automation"]');
+  const h = await pageHealth(page);
+  check(new URL(page.url()).pathname === '/automation/scripts' && h.h1 === 'Script library', 'Automation opens the Script library', JSON.stringify(h));
+  const notice = await page.$eval('[data-not-runnable]', (e) => e.textContent).catch(() => '');
+  check(/isn.t available yet/i.test(notice) && /signed agent/i.test(notice) && /real Windows/i.test(notice), 'it says plainly that running scripts is not available yet, and why', notice.slice(0, 200));
+  const runs = await noRunControl(page);
+  check(runs.length === 0, 'the library page has no Run button', runs.join(' | '));
+  const row = await page.$('[data-script-row]');
+  if (row) {
+    await row.click();
+    await page.waitForSelector('[data-script-content]', { timeout: 15_000 }).catch(() => {});
+    const d = await pageHealth(page);
+    const runs2 = await noRunControl(page);
+    check(!!(await page.$('[data-not-runnable]')) && !!(await page.$('[data-static-checks]')) && runs2.length === 0 && d.overflow <= 1, 'a script\'s page shows the notice and the static checks, has no Run button, no overflow', `${runs2.join(' | ')} ${JSON.stringify(d)}`);
+  }
+}
+
 const created = [];
 try {
   const tenant = await prisma.tenant.findFirst({ where: { isActive: true }, orderBy: { createdAt: 'asc' } });
@@ -108,9 +132,10 @@ try {
     return u.email;
   };
   const personas = {
-    admin: { email: await mk('admin', { isPlatformAdmin: true }), expect: ['dashboard', 'devices', 'alerts', 'patching', 'remote', 'settings'] },
-    owner: { email: await mk('owner', {}, { roleId: ownerRole.id, capabilities: [] }), expect: ['dashboard', 'devices', 'alerts', 'patching', 'remote', 'settings'] },
-    user: { email: await mk('user', {}, { roleId: userRole.id, capabilities: ['computers:view', 'computers:connect'] }), expect: ['dashboard', 'devices', 'patching', 'remote'] },
+    admin: { email: await mk('admin', { isPlatformAdmin: true }), expect: ['dashboard', 'devices', 'alerts', 'automation', 'patching', 'remote', 'reports', 'settings'] },
+    owner: { email: await mk('owner', {}, { roleId: ownerRole.id, capabilities: [] }), expect: ['dashboard', 'devices', 'alerts', 'automation', 'patching', 'remote', 'reports', 'settings'] },
+    // computers:view without monitoring:alerts: the device reports, not the alert ones (0.32).
+    user: { email: await mk('user', {}, { roleId: userRole.id, capabilities: ['computers:view', 'computers:connect'] }), expect: ['dashboard', 'devices', 'patching', 'remote', 'reports'] },
   };
   const anyEndpoint = await prisma.endpoint.findFirst({ where: { customerId: biz.id, status: 'ACTIVE' }, select: { id: true } });
 
@@ -134,10 +159,37 @@ try {
         check(!h.notFound && h.h1 && h.overflow <= 1 && active, `${id} → ${new URL(page.url()).pathname} renders "${h.h1}", highlighted, no overflow`, JSON.stringify(h));
       }
 
+      // Automation: the script library, which says it cannot run scripts and offers nothing that would.
+      if (got.includes('automation')) await automationChecks(page);
+      else {
+        const h = await visit(page, '/automation/scripts');
+        const txt = await page.evaluate(() => document.querySelector('main')?.innerText ?? '');
+        check(!!h.h1 && /permission/i.test(txt) && !(await page.$('[data-script-row]')), 'without library rights, /automation/scripts loads but lists nothing and says a permission is needed', txt.slice(0, 200));
+      }
+
       // Section tabs: on Devices and Remote Support, never on a device's own page.
       if (got.includes('devices')) {
         await visit(page, who === 'user' ? '/endpoints' : '/endpoints');
         const tabs = await page.$$eval('[data-section-tabs="devices"] a', (els) => els.map((e) => e.textContent.trim()));
+        // 0.32: one way to add a device. The Devices page has a single "Add
+        // device" button (for whoever may add computers) leading to the guided
+        // flow; "Enroll Client" and "Generate Enrollment Link" are gone.
+        // The section tab of the same name is not a button on the page: leave it out.
+        const header = await page.$$eval('main a, main button', (els) => els.filter((e) => !e.closest('[data-section-tabs]')).map((e) => [e.textContent.trim(), e.getAttribute('href')]));
+        const adds = header.filter(([t]) => t === 'Add device' || /Enroll Client|Generate Enrollment Link/i.test(t));
+        const mayAdd = who !== 'user';
+        check(mayAdd ? adds.length === 1 && adds[0][1] === '/endpoints/enroll' : adds.length === 0,
+          mayAdd ? 'Devices has one "Add device" button, to /endpoints/enroll, and no old enrol buttons' : 'without computers:add, Devices offers no Add device button', JSON.stringify(adds));
+        if (mayAdd) {
+          await follow(page, 'main a[data-testid="add-device"]');
+          const flow = await page.$('[data-testid="add-device-flow"]');
+          const steps = await page.$$eval('[data-testid^="step-"]', (els) => els.map((e) => e.getAttribute('data-testid')));
+          check(new URL(page.url()).pathname === '/endpoints/enroll' && !!flow && JSON.stringify(steps) === JSON.stringify(['step-place', 'step-os', 'step-command', 'step-wait', 'step-health', 'step-next']),
+            'Add device opens the guided flow with its six steps', JSON.stringify({ url: page.url(), steps }));
+          const h = await pageHealth(page);
+          check(h.overflow <= 1, 'the guided flow does not overflow sideways', JSON.stringify(h));
+          await visit(page, '/endpoints');
+        }
         const want = who === 'admin' ? ['All devices', 'My devices', 'Add device', 'Unassigned'] : who === 'owner' ? ['All devices', 'My devices', 'Add device'] : ['All devices', 'My devices'];
         check(JSON.stringify(tabs) === JSON.stringify(want), `Devices tabs: ${want.join(' · ')}`, `got ${tabs.join(' · ')}`);
         for (const t of tabs) {
@@ -155,6 +207,29 @@ try {
         await follow(page, 'nav[aria-label="Main"] [data-nav="remote"]');
         const tabs = await page.$$eval('[data-section-tabs="remote"] a', (els) => els.map((e) => e.textContent.trim()));
         check(who === 'user' ? tabs.length === 0 : tabs.includes('Sessions') && tabs.includes('Technician client'), who === 'user' ? 'a user with one Remote Support page sees no tab bar' : `Remote Support tabs: ${tabs.join(' · ')}`, tabs.join(' · '));
+      }
+
+      // Reports (0.32): one tab per report the person's permissions allow, each a real page.
+      if (got.includes('reports')) {
+        await follow(page, 'nav[aria-label="Main"] [data-nav="reports"]');
+        const tabs = await page.$$eval('[data-section-tabs="reports"] a', (els) => els.map((e) => e.textContent.trim()));
+        const want = who === 'user' ? ['Patch compliance', 'Agent coverage'] : ['Patch compliance', 'Agent coverage', 'Alert frequency', 'Offline time'];
+        check(JSON.stringify(tabs) === JSON.stringify(want), `Reports tabs: ${want.join(' · ')}`, `got ${tabs.join(' · ')}`);
+        for (const t of tabs) {
+          await follow(page, `[data-section-tabs="reports"] a:text-is("${t}")`);
+          await page.waitForSelector('main h1', { timeout: 15_000 }).catch(() => {});
+          const h = await pageHealth(page);
+          const current = await page.$eval('[data-section-tabs="reports"] a[aria-current="page"]', (e) => e.textContent.trim()).catch(() => null);
+          const refused = await page.evaluate(() => /not available to you|could not be loaded/i.test(document.querySelector('main')?.innerText ?? ''));
+          check(!h.notFound && h.h1 === t && h.overflow <= 1 && current === t && !refused, `Reports → ${t} renders "${h.h1}", is the current tab, and loads`, JSON.stringify({ ...h, refused }));
+        }
+        if (who === 'user') {
+          const h = await visit(page, '/reports/alert-frequency');
+          const refused = await page.evaluate(() => /not available to you/i.test(document.querySelector('main')?.innerText ?? ''));
+          check(h.h1 === 'Alert frequency' && refused, 'a report without its permission says so instead of drawing an empty report', JSON.stringify(h));
+        }
+        const h = await visit(page, '/reports');
+        check(new URL(page.url()).pathname === '/reports/patch-compliance' || h.h1 === 'Patch compliance', '/reports opens the first report', page.url());
       }
 
       // Settings: collapsible, every entry renders, the group stays open on its pages.

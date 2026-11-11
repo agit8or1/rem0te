@@ -73,7 +73,7 @@ export const actionsApi = {
     api.post(`/endpoints/${endpointId}/actions`, body),
   get: (id: string) => api.get(`/actions/${id}`),
   cancel: (id: string) => api.post(`/actions/${id}/cancel`),
-  reconcile: (id: string, body: { found: 'running' | 'stopped' | 'installed' | 'not_installed' | 'other'; note: string; endpointId?: string }) =>
+  reconcile: (id: string, body: { found: 'running' | 'stopped' | 'installed' | 'not_installed' | 'restart_scheduled' | 'no_restart_scheduled' | 'other'; note: string; endpointId?: string }) =>
     api.post(`/actions/${id}/reconcile`, body),
 };
 
@@ -93,7 +93,25 @@ export const patchingApi = {
   pause: (id: string, reason: string) => api.post(`/patching/deployments/${id}/pause`, { reason }),
   resume: (id: string, reason: string) => api.post(`/patching/deployments/${id}/resume`, { reason }),
   cancel: (id: string, reason: string) => api.post(`/patching/deployments/${id}/cancel`, { reason }),
+  // 0.32. "Install updates" builds a one-computer deployment; its canary
+  // still needs two approvals on the approval signer.
+  install: (endpointId: string, body: { updates: UpdateIdentity[]; reboot: 'never'; reason: string; windowHours: number }) =>
+    api.post(`/endpoints/${endpointId}/patches/install`, body),
+  preflight: () => api.get('/patching/preflight'),
+  policies: (businessId: string) => api.get('/patching/policies', { params: { businessId } }),
+  policy: (id: string) => api.get(`/patching/policies/${id}`),
+  // Creating and revoking need a fresh sign-in (the interceptor prompts).
+  createPolicy: (body: PatchPolicyInput) => api.post('/patching/policies', body),
+  revokePolicy: (id: string, reason: string) => api.post(`/patching/policies/${id}/revoke`, { reason }),
 };
+
+export interface PatchPolicyInput {
+  businessId: string; name: string; rings: string[][];
+  allow: { classifications: string[]; severities?: string[]; excludeKbs?: string[] };
+  soakHours: number; failureThreshold: number;
+  window: { days: string[]; start: string; end: string; timezone: string };
+  reboot: 'never'; expiresInDays: number; reason: string;
+}
 
 // ─── Endpoints ───────────────────────────────────────────────────────────────
 export const endpointsApi = {
@@ -315,6 +333,8 @@ export const auditApi = {
 export const enrollmentApi = {
   listTokens: () => api.get('/enrollment/tokens'),
   createToken: (data: Record<string, unknown>) => api.post('/enrollment/tokens', data),
+  /** Add device: has the device this token was made for enrolled, and how is it? Never returns the token. */
+  tokenStatus: (id: string) => api.get(`/enrollment/tokens/${encodeURIComponent(id)}/status`),
   revokeToken: (id: string) => api.delete(`/enrollment/tokens/${id}`),
 };
 
@@ -673,6 +693,18 @@ export const monitoringApi = {
   endpoint: (id: string) => api.get(`/monitoring/endpoints/${id}`),
 };
 
+// Scheduled RustDesk client updates (0.32). Turning a policy on, or removing a
+// site override, needs fresh authentication (STEP_UP_REQUIRED); turning it off does not.
+export const clientUpdatesApi = {
+  policy: (businessId?: string | null) => api.get('/client-updates/policy', bq(businessId)),
+  setPolicy: (data: {
+    businessId: string; siteId?: string | null; enabled: boolean; timeZone: string;
+    windows: { days: number[]; start: string; end: string }[]; skipActiveSession: boolean; skipLoggedOnUser: boolean;
+  }) => api.put('/client-updates/policy', data),
+  removeSiteOverride: (businessId: string, siteId: string) => api.delete(`/client-updates/policy/sites/${siteId}`, bq(businessId)),
+  computers: (businessId?: string | null) => api.get('/client-updates/computers', bq(businessId)),
+};
+
 // API keys for the public API (/api/v1/pub/v1, docs/PUBLIC-API.md). The raw key is returned once, at creation.
 export const API_KEY_SCOPES = [
   'companies:read', 'companies:write', 'users:read', 'users:write',
@@ -682,4 +714,26 @@ export const apiKeysApi = {
   list: (businessId?: string | null) => api.get('/apikeys', bq(businessId)),
   create: (data: { name: string; scopes: string[]; expiresInDays?: number; businessId?: string }) => api.post('/apikeys', data),
   revoke: (id: string) => api.delete(`/apikeys/${id}`),
+};
+
+// Script library: write, version, diff and review. There is no run call —
+// scripts cannot be run from the portal (docs/script-library.md).
+export type ScriptParameter =
+  | { name: string; type: 'string'; description?: string; required: boolean; charset: 'alphanumeric' | 'identifier' | 'hostname' | 'safe_text'; maxLength: number }
+  | { name: string; type: 'integer'; description?: string; required: boolean; min: number; max: number }
+  | { name: string; type: 'boolean'; description?: string; required: boolean }
+  | { name: string; type: 'choice'; description?: string; required: boolean; choices: string[] };
+export type ScriptRisk = 'low' | 'medium' | 'high';
+export interface ScriptVersionInput { description: string; risk: ScriptRisk; parameters: ScriptParameter[]; content: string }
+export const scriptsApi = {
+  list: (businessId?: string | null) => api.get('/scripts', bq(businessId)),
+  get: (id: string) => api.get(`/scripts/${id}`),
+  version: (id: string, version: number) => api.get(`/scripts/${id}/versions/${version}`),
+  diff: (id: string, from: number, to: number) => api.get(`/scripts/${id}/diff`, { params: { from, to } }),
+  create: (data: ScriptVersionInput & { scope: 'global' | 'business'; businessId?: string; name: string }) => api.post('/scripts', data),
+  newVersion: (id: string, data: ScriptVersionInput & { basedOnVersion: number }) => api.post(`/scripts/${id}/versions`, data),
+  submit: (id: string, version: number) => api.post(`/scripts/${id}/versions/${version}/submit`),
+  withdraw: (id: string, version: number) => api.post(`/scripts/${id}/versions/${version}/withdraw`),
+  review: (id: string, version: number, data: { decision: 'approve' | 'reject'; expectedSha256: string; note: string }) =>
+    api.post(`/scripts/${id}/versions/${version}/review`, data),
 };

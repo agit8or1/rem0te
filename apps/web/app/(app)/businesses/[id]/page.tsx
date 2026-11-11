@@ -5,12 +5,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
-  businessesApi, endpointsApi, sitesApi, enrollmentApi,
+  businessesApi, endpointsApi, sitesApi,
 } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -58,7 +57,6 @@ export default function BusinessDetailPage() {
   });
 
   const [selectedUnassigned, setSelectedUnassigned] = useState('');
-  const [installerToken, setInstallerToken] = useState<string | null>(null);
 
   const assignMutation = useMutation({
     mutationFn: (epId: string) => endpointsApi.update(epId, { customerId: id }),
@@ -91,15 +89,6 @@ export default function BusinessDetailPage() {
       toast({ title: 'Could not update', description: e.response?.data?.message, variant: 'destructive' }),
   });
 
-  // Managed-device installer, bound to THIS business at mint time. The machine
-  // that redeems it cannot choose a different one.
-  const mintInstaller = useMutation({
-    mutationFn: () => enrollmentApi.createToken({ businessId: id, accessMode: 'COMPANY_WIDE' }),
-    onSuccess: (r) => setInstallerToken(r.data?.data?.token ?? null),
-    onError: (e: { response?: { data?: { message?: string } } }) =>
-      toast({ title: 'Could not create installer link', description: e.response?.data?.message, variant: 'destructive' }),
-  });
-
   if (isLoading) return <div className="p-6 text-muted-foreground text-sm">Loading…</div>;
   if (!business) return <div className="p-6 text-muted-foreground text-sm">Not found</div>;
 
@@ -109,7 +98,6 @@ export default function BusinessDetailPage() {
   const unassignedList: Record<string, unknown>[] = Array.isArray(unassignedData?.endpoints) ? unassignedData.endpoints : [];
   const peopleList: Record<string, unknown>[] = Array.isArray(people) ? people : [];
   const quickConnectEnabled = (b.quickConnectEnabled as boolean) ?? false;
-  const origin = typeof window !== 'undefined' ? window.location.origin : '';
 
   return (
     <div className="p-6 space-y-6">
@@ -223,7 +211,7 @@ export default function BusinessDetailPage() {
               <tbody className="divide-y">
                 {endpointList.length === 0 ? (
                   <tr><td colSpan={5} className="text-center py-6 text-muted-foreground">
-                    No computers in this business yet. Use the Downloads tab to enroll one.
+                    No computers in this business yet. Use the Downloads tab to add one.
                   </td></tr>
                 ) : endpointList.map((ep) => (
                   <tr key={ep.id as string} className="hover:bg-muted/30">
@@ -321,26 +309,14 @@ export default function BusinessDetailPage() {
                 a <strong>managed computer belonging to {b.name as string}</strong> — the binding is
                 fixed when the link is created and the machine cannot change it.
               </p>
-              {installerToken ? (
-                <div className="space-y-2">
-                  <Label>One-time install command (Windows, run as Administrator)</Label>
-                  <Input
-                    readOnly
-                    className="font-mono text-xs"
-                    value={`irm ${origin}/api/v1/public/install/win/${installerToken} | iex`}
-                    onFocus={(e) => e.currentTarget.select()}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Valid for 24 hours and usable once.
-                  </p>
-                </div>
-              ) : (
-                <Button
-                  disabled={!can(CAP.COMPUTERS_ADD) || mintInstaller.isPending}
-                  onClick={() => mintInstaller.mutate()}
-                >
-                  Create installer link
+              {/* One way in (0.32): Add device, with this business chosen. It
+                  binds a site too, and shows the computer arriving. */}
+              {can(CAP.COMPUTERS_ADD) ? (
+                <Button asChild>
+                  <Link href={`/endpoints/enroll?businessId=${encodeURIComponent(id)}`}>Add a device to {b.name as string}</Link>
                 </Button>
+              ) : (
+                <p className="text-sm text-muted-foreground">Adding a device needs the Add computers permission.</p>
               )}
             </CardContent>
           </Card>

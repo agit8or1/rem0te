@@ -23,13 +23,25 @@ import { AlertTriangle, ExternalLink, Loader2, ShieldCheck, Wrench } from 'lucid
  * goes there; nothing on this page can stand in for it.
  *
  * Results say what the agent observed and nothing more — a running Print
- * Spooler is not a printed document.
+ * Spooler is not a printed document, a scheduled restart is not a restart.
+ *
+ * 0.32: every direct catalog action is offered here (start the spooler, and
+ * the maintenance actions: restart an allowlisted service, schedule or cancel
+ * a restart, collect logs). Parameters are only ever one of the values the
+ * catalog lists; the server and the agent check them again.
  */
 
-interface CatalogAction { id: string; version: number; title: string; description: string; warnings: string[]; verification: string; doesNotProve: string[] }
+interface CatalogAction {
+  id: string; version: number; title: string; description: string; warnings: string[]; verification: string; doesNotProve: string[];
+  direct: boolean; acknowledge: string; maxWindowHours: number; workstationRisk: 'low' | 'high';
+  choice: { field: string; label: string; options: { value: string | number; label: string }[] } | null;
+  requiresCapability: string | null;
+}
+type LogSection = { source: string; text: string; truncated: boolean; note?: string };
 interface Job {
   id: string; status: string; statusReason: string | null;
   action: { id: string; version: number; title: string; warnings: string[] };
+  params?: { service?: unknown; delayMinutes?: unknown } | null;
   reason: string; origin: string; via: string; ticketRef: string | null; requestedById: string;
   risk: 'low' | 'high'; approvalsRequired: number; customerSignoff: boolean;
   window: { notBefore: string; notAfter: string }; digest: string; approvalUrl: string;
@@ -44,8 +56,60 @@ interface Job {
   targets: { endpointId: string; hostname: string | null; status: string; statusReason: string | null; outcome: string | null;
     result: JobResult | null; reconciled: { at: string; note: string } | null }[];
 }
-type JobResult = { observed?: Record<string, string>; detail?: string; reason?: string; updates?: { updateId: string; kb?: string; state: string; reason?: string; hresult?: string }[] };
+type JobResult = {
+  observed?: Record<string, string>; detail?: string; reason?: string;
+  updates?: { updateId: string; kb?: string; state: string; reason?: string; hresult?: string }[];
+  logs?: LogSection[]; logsWithheld?: string;
+};
 const UPDATE_ACTION = 'windows.update.install';
+/** The Print Spooler start has one fixed parameter value; no choice is offered. */
+const FIXED_PARAMS: Record<string, Record<string, unknown>> = { 'windows.service.start': { service: 'Spooler' } };
+const PLACEHOLDER: Record<string, string> = {
+  'windows.service.start': 'e.g. Ticket 42: nothing prints, the spooler is stopped',
+  'windows.service.restart': 'e.g. Ticket 51: Windows Update is stuck at 0%',
+  'windows.reboot.schedule': 'e.g. Ticket 8: updates installed, a restart is pending',
+  'windows.reboot.cancel': 'e.g. Ticket 8: the user asked to restart tonight instead',
+  'windows.logs.collect': 'e.g. Ticket 60: random freezes since Monday',
+};
+const LOG_LABEL: Record<string, string> = {
+  system_errors: 'System log: Critical and Error events, last 24 hours',
+  application_errors: 'Application log: Critical and Error events, last 24 hours',
+  agent_journal: 'Agent: approved-action journal',
+  agent_log: 'Agent: its own log',
+  rustdesk_log: 'RustDesk service log',
+};
+
+/** What the person reconciling an uncertain outcome checks for, per action. */
+function reconcileFor(actionId: string, observed?: Record<string, string>) {
+  switch (actionId) {
+    case UPDATE_ACTION:
+      return { label: 'Found the updates', choices: ['installed', 'not_installed', 'other'] as const,
+        text: 'The outcome is uncertain — the computer may or may not have installed these updates. It will not run this again. Check Settings › Windows Update › Update history on the computer, then record what you found; the deployment does not move on until you do.' };
+    case 'windows.service.restart':
+      return { label: `Found ${observed?.service ?? 'the service'}`, choices: ['running', 'stopped', 'other'] as const,
+        text: 'The outcome is uncertain — the computer may have stopped the service and not started it again. It will not run this again. Check the service on the computer, then record what you found; no new restart request is accepted until you do.' };
+    case 'windows.reboot.schedule':
+    case 'windows.reboot.cancel':
+      return { label: 'Found', choices: ['restart_scheduled', 'no_restart_scheduled', 'other'] as const,
+        text: 'The outcome is uncertain — Windows may or may not have a restart pending. It will not run this again. Check the computer (a restart warning on screen, or ask the person there), then record what you found; no new request for this action is accepted until you do.' };
+    case 'windows.logs.collect':
+      return { label: 'Found', choices: ['other'] as const,
+        text: 'The outcome is uncertain — the agent stopped while collecting. Nothing was changed on the computer. Record that you have seen this; no new collection is accepted until you do.' };
+    default:
+      return { label: 'Found the spooler', choices: ['running', 'stopped', 'other'] as const,
+        text: 'The outcome is uncertain — the computer may or may not have started the spooler. It will not run this again. Check the computer, then record what you found; no new request is accepted until you do.' };
+  }
+}
+
+/** What a reported result does not show, per action. */
+const RESULT_CAVEAT: Record<string, string> = {
+  [UPDATE_ACTION]: '. An install is confirmed only by a later scan; see the deployment.',
+  'windows.service.start': '. This shows the service state only, not that anything printed.',
+  'windows.service.restart': '. This shows the service state only, not that whatever was failing now works.',
+  'windows.reboot.schedule': '. This shows that Windows accepted the restart, not that the computer restarted; a new boot time in the inventory shows that.',
+  'windows.reboot.cancel': '. This shows what Windows answered when asked to cancel.',
+  'windows.logs.collect': '. Redacted on the computer and again on receipt.',
+};
 
 const STATUS: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning' }> = {
   AWAITING_APPROVAL: { label: 'Awaiting approval', variant: 'warning' },
@@ -65,15 +129,19 @@ function apiMessage(e: unknown, fallback: string) {
   return (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message?.toString() ?? fallback;
 }
 
-export function EndpointActions({ endpointId, isOnline, unavailableReason }: {
+export function EndpointActions({ endpointId, isOnline, unavailableReason, agentActions = [] }: {
   endpointId: string; isOnline: boolean;
-  /** Why this computer cannot run the action (0.31, from the device workspace); the server still decides. */
+  /** Why this computer cannot run any action (0.31, from the device workspace); the server still decides. */
   unavailableReason?: string | null;
+  /** What this computer's agent reports it can run, as id@version (0.32: per-action availability). */
+  agentActions?: string[];
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [reason, setReason] = useState('');
   const [confirmed, setConfirmed] = useState(false);
+  const [picked, setPicked] = useState<string | null>(null);
+  const [choice, setChoice] = useState<string>('');
 
   const { data: catalog } = useQuery({
     queryKey: ['actions-catalog'],
@@ -87,9 +155,18 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason }: {
   const refresh = () => qc.invalidateQueries({ queryKey: ['endpoint-actions', endpointId] });
 
   // Updates are requested through a staged deployment, never one computer at a time from here.
-  const action = catalog?.actions.find((a) => a.id === 'windows.service.start');
+  const direct = (catalog?.actions ?? []).filter((a) => a.direct);
+  const supported = (a: CatalogAction) => agentActions.includes(`${a.id}@${a.version}`);
+  const action = direct.find((a) => a.id === picked) ?? direct.find(supported) ?? direct[0];
+  const choiceValue = action?.choice ? (action.choice.options.find((o) => String(o.value) === choice) ?? action.choice.options[0]) : null;
+  const params = (a: CatalogAction): Record<string, unknown> =>
+    FIXED_PARAMS[a.id] ?? (a.choice && choiceValue ? { [a.choice.field]: choiceValue.value } : {});
+  const pick = (id: string) => { setPicked(id); setChoice(''); setConfirmed(false); };
   const request = useMutation({
-    mutationFn: () => actionsApi.request(endpointId, { actionId: action!.id, version: action!.version, params: { service: 'Spooler' }, reason: reason.trim() }),
+    mutationFn: () => actionsApi.request(endpointId, {
+      actionId: action!.id, version: action!.version, params: params(action!), reason: reason.trim(),
+      windowHours: Math.min(4, action!.maxWindowHours ?? 4),
+    }),
     onSuccess: () => { setReason(''); setConfirmed(false); refresh(); toast({ title: 'Requested', description: 'Nothing runs until the approvers authorize it on the approval page.' }); },
     onError: (e) => toast({ title: 'Not requested', description: apiMessage(e, 'The request was refused.'), variant: 'destructive' }),
   });
@@ -110,16 +187,30 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason }: {
     );
   }
 
-  const pending = jobs.find((j) => j.action.id !== UPDATE_ACTION && (['AWAITING_APPROVAL', 'APPROVED', 'DISPATCHED'].includes(j.status) || (j.status === 'UNKNOWN' && !j.reconciled)));
+  // The server allows one open request per action per computer.
+  const pending = action && jobs.find((j) => j.action.id === action.id && (['AWAITING_APPROVAL', 'APPROVED', 'DISPATCHED'].includes(j.status) || (j.status === 'UNKNOWN' && !j.reconciled)));
+  const notSupported = action && !unavailableReason && !supported(action)
+    ? 'This computer’s agent does not report support for this action. The maintenance actions need a signed agent from 0.32 on; let it update first.'
+    : null;
+  const blocked = unavailableReason ?? notSupported;
 
   return (
     <div className="space-y-4">
       {action && (
         <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2"><Wrench className="h-4 w-4" />{action.title}</CardTitle>
+          <CardHeader className="pb-3 space-y-2">
+            <CardTitle className="text-sm flex items-center gap-2"><Wrench className="h-4 w-4" />Run an approved action</CardTitle>
+            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Action" data-testid="action-picker">
+              {direct.map((a) => (
+                <Button key={a.id} size="sm" variant={a.id === action.id ? 'default' : 'outline'} role="radio" aria-checked={a.id === action.id}
+                  onClick={() => pick(a.id)} data-testid={`pick-${a.id}`}>
+                  {a.title}{!supported(a) && <span className="ml-1 text-[10px] opacity-70">(not on this agent)</span>}
+                </Button>
+              ))}
+            </div>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
+            <p className="font-medium">{action.title}</p>
             <p className="text-muted-foreground">{action.description}</p>
             <div className="rounded-md border border-yellow-300 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-950/40 p-3 space-y-1">
               {action.warnings.map((w) => (
@@ -131,27 +222,42 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason }: {
             </p>
             <p className="text-xs text-muted-foreground flex gap-2">
               <ShieldCheck className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-              Requesting runs nothing. People on the approval roster authorize the exact plan with a passkey on the approval page — one for a standard workstation, two for anything else, plus the customer where their policy requires it. You cannot approve your own request.
+              Requesting runs nothing. People on the approval roster authorize the exact plan with a passkey on the approval page — {action.workstationRisk === 'high'
+                ? 'this action always needs two different approvers, whatever the computer'
+                : 'one for a standard workstation, two for anything else'}, plus the customer where their policy requires it. You cannot approve your own request.
             </p>
+            {action.requiresCapability && (
+              <p className="text-xs text-muted-foreground">Requesting this, and reading what it collects, also needs permission to read this computer’s event logs ({action.requiresCapability}).</p>
+            )}
             {pending ? (
-              <p className="text-xs">An earlier request is {STATUS[pending.status]?.label.toLowerCase() ?? pending.status}; resolve it before asking again.</p>
-            ) : unavailableReason ? (
+              <p className="text-xs">An earlier request for this action is {STATUS[pending.status]?.label.toLowerCase() ?? pending.status}; resolve it before asking again.</p>
+            ) : blocked ? (
               <p className="rounded-md border bg-muted/40 p-2 text-xs" data-testid="action-unavailable">
-                <strong>Cannot be requested for this computer:</strong> {unavailableReason}
+                <strong>Cannot be requested for this computer:</strong> {blocked}
               </p>
             ) : (
               <>
+                {action.choice && choiceValue && (
+                  <div className="space-y-1">
+                    <Label htmlFor="action-choice" className="text-xs">{action.choice.label}</Label>
+                    <select id="action-choice" data-testid="action-choice" className="block h-8 rounded-md border bg-background px-2 text-xs"
+                      value={String(choiceValue.value)} onChange={(e) => { setChoice(e.target.value); setConfirmed(false); }}>
+                      {action.choice.options.map((o) => <option key={String(o.value)} value={String(o.value)}>{o.label}</option>)}
+                    </select>
+                  </div>
+                )}
                 <div className="space-y-1">
                   <Label htmlFor="action-reason" className="text-xs">Why (shown to the approvers)</Label>
-                  <Textarea id="action-reason" rows={2} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Ticket 42: nothing prints, the spooler is stopped" />
+                  <Textarea id="action-reason" rows={2} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={PLACEHOLDER[action.id] ?? 'e.g. Ticket 42: what is wrong'} />
                 </div>
                 <label className="flex items-start gap-2 text-xs">
                   <input type="checkbox" className="mt-0.5" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
-                  I understand that documents already waiting may print as soon as the spooler starts, and cannot be recalled.
+                  {action.acknowledge}
                 </label>
                 <Button size="sm" disabled={!confirmed || reason.trim().length < 3 || request.isPending} onClick={() => request.mutate()}>
                   {request.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Request approval
                 </Button>
+                {action.maxWindowHours < 4 && <p className="text-xs text-muted-foreground">An approved plan for this action is valid for {action.maxWindowHours} hour{action.maxWindowHours === 1 ? '' : 's'} only: approve it promptly, or it expires unrun.</p>}
                 {!isOnline && <p className="text-xs text-muted-foreground">This computer is offline. An approved plan waits for it until its window closes, then expires unrun.</p>}
               </>
             )}
@@ -174,7 +280,8 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason }: {
 function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => void; onChanged: () => void }) {
   const { toast } = useToast();
   const isUpdate = j.action.id === UPDATE_ACTION;
-  const choices = isUpdate ? (['installed', 'not_installed', 'other'] as const) : (['running', 'stopped', 'other'] as const);
+  const rec = reconcileFor(j.action.id, ((j.targets?.[0]?.result ?? j.result) as JobResult | null)?.observed);
+  const choices: readonly ('running' | 'stopped' | 'installed' | 'not_installed' | 'restart_scheduled' | 'no_restart_scheduled' | 'other')[] = rec.choices;
   const [found, setFound] = useState<(typeof choices)[number]>(choices[0]);
   const [note, setNote] = useState('');
   // This computer's row of the plan; for a single-computer plan it is the plan.
@@ -194,6 +301,7 @@ function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => voi
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Badge variant={s.variant}>{s.label}</Badge>
+          <span className="text-xs font-medium">{j.action.title}{typeof j.params?.service === 'string' && j.action.id !== 'windows.service.start' ? ` · ${j.params.service}` : ''}{typeof j.params?.delayMinutes === 'number' ? ` · ${j.params.delayMinutes}-minute warning` : ''}</span>
           <span className="text-xs text-muted-foreground">{formatDate(j.createdAt)}</span>
           {j.origin === 'ai_suggestion' && <Badge variant="outline" className="text-xs">AI suggestion{j.ticketRef ? ` · ${j.ticketRef}` : ''}</Badge>}
           {j.via === 'clientst0r' && <Badge variant="outline" className="text-xs">via ClientSt0r</Badge>}
@@ -224,9 +332,24 @@ function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => voi
           Computer reported <strong>{outcome?.replace(/_/g, ' ')}</strong>
           {result.reason ? ` (${result.reason.replace(/_/g, ' ')})` : ''}
           {result.observed && !isUpdate ? ` — observed: ${Object.entries(result.observed).map(([k, v]) => `${k} ${v}`).join(', ')}` : ''}
-          {isUpdate ? '. An install is confirmed only by a later scan; see the deployment.' : '. This shows the service state only, not that anything printed.'}
+          {RESULT_CAVEAT[j.action.id] ?? '.'}
         </p>
       )}
+      {result?.detail && !isUpdate && <p className="text-xs text-muted-foreground">{result.detail}</p>}
+      {result?.logsWithheld && <p className="text-xs text-muted-foreground" data-testid="logs-withheld">{result.logsWithheld}</p>}
+      {result?.logs?.length ? (
+        <div className="space-y-1" data-testid="collected-logs">
+          {result.logs.map((l) => (
+            <details key={l.source} className="rounded border">
+              <summary className="cursor-pointer px-2 py-1 text-xs">
+                {LOG_LABEL[l.source] ?? l.source}
+                <span className="text-muted-foreground"> · {l.text.length.toLocaleString()} characters{l.truncated ? ', shortened' : ''}{l.note ? ` · ${l.note}` : ''}</span>
+              </summary>
+              {l.text ? <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all border-t bg-muted/30 p-2 text-[11px] leading-snug">{l.text}</pre> : null}
+            </details>
+          ))}
+        </div>
+      ) : null}
       {result?.updates?.length ? (
         <ul className="text-xs list-disc pl-5">
           {result.updates.map((u) => <li key={u.updateId}>{u.kb ?? u.updateId}: {u.state.replace(/_/g, ' ')}{u.reason ? ` — ${u.reason}` : ''}{u.hresult && u.state === 'failed' ? ` (${u.hresult})` : ''}</li>)}
@@ -235,11 +358,9 @@ function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => voi
       <p className="text-[11px] text-muted-foreground font-mono break-all">plan {j.digest}</p>
       {uncertain && (
         <div className="rounded-md border border-destructive/40 p-2 space-y-2">
-          <p className="text-xs">{isUpdate
-            ? 'The outcome is uncertain — the computer may or may not have installed these updates. It will not run this again. Check Settings › Windows Update › Update history on the computer, then record what you found; the deployment does not move on until you do.'
-            : 'The outcome is uncertain — the computer may or may not have started the spooler. It will not run this again. Check the computer, then record what you found; no new request is accepted until you do.'}</p>
+          <p className="text-xs">{rec.text}</p>
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            {isUpdate ? 'Found the updates' : 'Found the spooler'}
+            {rec.label}
             {choices.map((f) => (
               <label key={f} className="flex items-center gap-1"><input type="radio" name={`found-${j.id}`} checked={found === f} onChange={() => setFound(f)} />{f.replace(/_/g, ' ')}</label>
             ))}

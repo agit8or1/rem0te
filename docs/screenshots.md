@@ -302,7 +302,8 @@ DATABASE_URL=… ENCRYPTION_KEY=… npx tsx prisma/_docs-demo-data.ts
 #    ages — without this the dashboard counts stop matching the inventory.
 DATABASE_URL=… npx tsx prisma/_docs-demo-refresh.ts   # run from apps/api
 DATABASE_URL=… npx tsx prisma/_docs-demo-monitoring.ts # monitors, alerts, a site outage, API keys
-# Run the demo API with MONITOR_SWEEP=off, or it re-evaluates those alerts.
+# Run the demo API with MONITOR_SWEEP=off, or it re-evaluates those alerts,
+# and PATCH_POLICY_SWEEP=off, or it proposes plans for any demo patch policy.
 WEB_URL=http://127.0.0.1:4000 EMAIL=… PASSWORD=… \
   node apps/web/scripts/capture-media.mjs          # gallery -> docs/images/github/
 WEB_URL=http://127.0.0.1:4000 EMAIL=… PASSWORD=… \

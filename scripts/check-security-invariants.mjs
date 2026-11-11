@@ -373,11 +373,13 @@ check(
 {
   const signerDir = 'apps/api/src/approval-signer';
   const signerFiles = readdirSync(join(ROOT, signerDir)).filter((f) => f.endsWith('.ts')).map((f) => `${signerDir}/${f}`);
-  const ALLOWED_IMPORT = /^(node:|crypto$|\.\/|@simplewebauthn\/server$|zod$|\.\.\/actions\/catalog$|\.\.\/integration\/crypto$)/;
+  const ALLOWED_IMPORT = /^(node:|crypto$|\.\/|@simplewebauthn\/server$|zod$|\.\.\/actions\/catalog$|\.\.\/actions\/patch-policy$|\.\.\/integration\/crypto$)/;
   const importsOf = (src) => [...src.matchAll(/(?:from|require\()\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
   const bad = [];
-  for (const f of [...signerFiles, 'apps/api/src/actions/catalog.ts', 'apps/api/src/integration/crypto.ts']) {
-    const own = f.startsWith(signerDir) ? ALLOWED_IMPORT : /^(node:|crypto$|zod$|\.\/crypto$|\.\.\/integration\/crypto$)/;
+  // 0.32: the patch-policy evaluator (and the posture module it judges with)
+  // run inside the signer, so they are held to the same rule.
+  for (const f of [...signerFiles, 'apps/api/src/actions/catalog.ts', 'apps/api/src/integration/crypto.ts', 'apps/api/src/actions/patch-policy.ts', 'apps/api/src/patching/posture.ts']) {
+    const own = f.startsWith(signerDir) ? ALLOWED_IMPORT : /^(node:|crypto$|zod$|\.\/crypto$|\.\/catalog$|\.\.\/actions\/catalog$|\.\.\/patching\/posture$|\.\.\/integration\/crypto$)/;
     for (const i of importsOf(read(f))) if (!own.test(i)) bad.push(`${f} imports ${i}`);
   }
   check('approval signer loads no Nest, Prisma or portal module', signerFiles.length >= 4 && bad.length === 0,
@@ -393,11 +395,54 @@ check(
     'only the signer may load the job-approval key');
   const goCat = read('tools/windows-installer/internal/action/catalog.go');
   const goIds = [...goCat.matchAll(/ID: "([^"]+)"/g)].map((m) => m[1]);
-  // 0.27 added windows.update.install (§ 15). Anything further is a review.
-  check('agent catalog is the Spooler start and Windows update install, nothing else',
-    goIds.length === 2 && goIds[0] === 'windows.service.start' && goIds[1] === 'windows.update.install' && /const ServiceName = "Spooler"/.test(goCat) && /s == ServiceName/.test(goCat),
+  // 0.27 added windows.update.install (§ 15); 0.32 the four maintenance
+  // actions. The list is exact and ordered: anything further is a review.
+  const CATALOG_IDS = ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect'];
+  check('agent catalog is exactly the Spooler start, update install, service restart, restart schedule/cancel and log collection',
+    goIds.join(',') === CATALOG_IDS.join(',') && /const ServiceName = "Spooler"/.test(goCat) && /s == ServiceName/.test(goCat),
     `agent catalog ids: ${goIds.join(', ')}`);
   const tsCat = read('apps/api/src/actions/catalog.ts');
+  const tsIds = [...tsCat.matchAll(/^export const [A-Z_]+: CatalogAction = \{\s*id: '([^']+)'/gm)].map((m) => m[1]);
+  const tsList = (tsCat.match(/^export const CATALOG: CatalogAction\[\] = \[([^\]]*)\];/m) ?? [])[1] ?? '';
+  check('portal catalog is the same exact list, in the same order',
+    tsIds.join(',') === CATALOG_IDS.join(',') && tsList.split(',').map((x) => x.trim()).length === CATALOG_IDS.length,
+    `portal catalog ids: ${tsIds.join(', ')}; CATALOG = [${tsList}]`);
+  // Every agent entry's parameters are one of the closed forms below, and
+  // nothing else: a fixed service, update identities, an allowlisted service,
+  // a bounded integer, or no parameters at all.
+  const entries = goCat.slice(goCat.indexOf('var catalog = []Action{')).split(/\n\t\{\n/).slice(1);
+  const CLOSED = [/ParamsOK: func\(p map\[string\]any\) bool \{\s*if len\(p\) != 1 \{\s*return false\s*\}\s*s, ok := p\["service"\]\.\(string\)\s*return ok && s == ServiceName/,
+    /ParamsOK:\s+updateParamsOK,/, /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return RestartService\(p\) != "" \},/,
+    /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return RestartDelay\(p\) != 0 \},/, /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return len\(p\) == 0 \},/];
+  const openParams = entries.filter((e) => !CLOSED.some((re) => re.test(e))).map((e) => (e.match(/ID: "([^"]+)"/) ?? [])[1] ?? '?');
+  check('every agent catalog entry has closed parameters', entries.length === CATALOG_IDS.length && openParams.length === 0, `not closed: ${openParams.join(', ')}`);
+  const maint = read('tools/windows-installer/internal/action/maintenance.go');
+  const goSvc = ((maint.match(/var RestartableServices = \[\]string\{([^}]*)\}/) ?? [])[1] ?? '').split(',').map((x) => x.trim().replace(/"/g, '')).filter(Boolean);
+  const tsSvc = [...(tsCat.match(/export const RESTARTABLE_SERVICES = \[([\s\S]*?)\] as const;/) ?? [])[1]?.matchAll(/name: '([^']+)'/g) ?? []].map((m) => m[1]);
+  const NEVER = /^(WinDefend|WdNisSvc|Sense|SecurityHealthService|wscsvc|mpssvc|BFE|lsass|SamSs|KeyIso|VaultSvc|Netlogon|EventLog|RpcSs|RpcEptMapper|DcomLaunch|SgrmBroker|WinHttpAutoProxySvc|CryptSvc|gpsvc|ProfSvc|Schedule|TermService)$/i;
+  check('service restart names a fixed allowlist, the same on both sides, with no security or core service on it',
+    goSvc.length > 0 && goSvc.join(',') === tsSvc.join(',') && !goSvc.some((n) => NEVER.test(n))
+      && /if !ok \|\| !ServiceNameRE\.MatchString\(s\) \{\s*return ""\s*\}\s*for _, a := range RestartableServices \{\s*if s == a \{/.test(maint)
+      && /var ServiceNameRE = regexp\.MustCompile\(`\^\[A-Za-z0-9_\]\{1,64\}\$`\)/.test(maint),
+    `agent ${goSvc.join(', ')}; portal ${tsSvc.join(', ')}`);
+  check('a restart is never immediate: the delay is a whole number of minutes, 5 to 1440, on both sides',
+    /const \(\s*MinRestartDelayMinutes = 5\s*MaxRestartDelayMinutes = 24 \* 60\s*\)/.test(maint) && /if len\(p\) != 1 \{\s*return 0\s*\}\s*d, ok := p\["delayMinutes"\]\.\(float64\)\s*if !ok \|\| d != math\.Trunc\(d\) \|\| d < MinRestartDelayMinutes \|\| d > MaxRestartDelayMinutes \{/.test(maint)
+      && /delayMinutes: z\.number\(\)\.int\(\)\.min\(MIN_RESTART_DELAY_MINUTES\)\.max\(MAX_RESTART_DELAY_MINUTES\) \}\)\.strict\(\)/.test(tsCat) && /MIN_RESTART_DELAY_MINUTES = 5;/.test(tsCat),
+    'RestartDelay and REBOOT_SCHEDULE.params must keep the 5-minute floor');
+  const maintEntries = entries.filter((e) => /ID: "windows\.(service\.restart|reboot\.|logs\.)/.test(e));
+  check('every maintenance action is high impact on any computer, and the RustDesk restart and the restart wait for no open session',
+    maintEntries.length === 4 && maintEntries.every((e) => /Risk:\s+func\(int, int\) string \{ return "high" \},/.test(e))
+      && /Precheck:\s+sessionCheck\("the restart"\),/.test(goCat) && /if RestartService\(p\.Params\) == "RustDesk" \{\s*return sessionCheck\(/.test(maint)
+      && /if err != nil \{\s*return &Result\{Outcome: "not_executed", Reason: "session_state_unknown"/.test(maint),
+    'maintenance risk must be "high" and "cannot tell" must count as a session');
+  check('the agent\'s action package runs no process; the Windows side runs only shutdown.exe and wevtutil.exe from System32',
+    !/"os\/exec"|exec\.Command/.test(maint + read('tools/windows-installer/internal/action/action.go') + goCat)
+      && [...read('tools/windows-installer/action_windows.go').matchAll(/runSystem32\([^,]+, "([^"]+)"/g)].map((m) => m[1]).every((x) => x === 'shutdown.exe' || x === 'wevtutil.exe')
+      && (read('tools/windows-installer/action_windows.go').match(/exec\.Command(?:Context)?\(/g) ?? []).length === 2,
+    'maintenance must not grow a way to run something else');
+  check('the maintenance actions are not offered to ClientSt0r', (tsCat.match(/integration: false,/g) ?? []).length === 4 && /proposable\(\): string\[\] \{[^}]{0,200}CATALOG\.filter\(\(a\) => a\.integration\)\.map/.test(read('apps/api/src/integration/action-proposals.service.ts'))
+      && /if \(!catalogEntry\(body\.action\.id, body\.action\.version\)\?\.integration\)/.test(read('apps/api/src/integration/action-proposals.service.ts')),
+    'advertising them changes the ticket-rmm contract');
   check('portal catalog has no command, script, path or URL parameter', !/\b(command|script|path|url|args|cmd)\s*:/i.test(tsCat.replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, '')),
     'the catalog must not grow a free-form parameter');
   const act = read('tools/windows-installer/internal/action/action.go');
@@ -405,6 +450,10 @@ check(
   check('agent journals a job before executing it, and consults the journal first',
     iJournal > 0 && iExec > iJournal && iRun > iExec && /if err := writeJournal\(o, journal\{JobID: jobID, State: "executing"[\s\S]{0,240}return Result\{\}, fmt\.Errorf/.test(act),
     'the journal write must precede execute() and a failed write must stop it');
+  const iPre = act.indexOf('a.Precheck(plan, o)'), iPz = act.indexOf('o.Pause.ActionsPaused(');
+  check('an action\'s own checks run after verification and the signed pause, before the executing journal entry, and end the job',
+    iPre > iPz && iPz > 0 && iExec > iPre && /if pr := a\.Precheck\(plan, o\); pr != nil \{[\s\S]{0,200}writeJournal\(o, journal\{JobID: jobID, State: "done"[\s\S]{0,120}return report\(o, r\)/.test(act),
+    'Precheck must sit between the pause and the executing journal, and its result must be final');
   // class-transformer's implicit conversion turns an untyped array of objects
   // into [[]] — silently. It broke command-result events in production.
   const untyped = [];
@@ -424,9 +473,13 @@ check(
 //     approved or promoted past its canary by the portal alone.
 {
   const upd = read('tools/windows-installer/internal/action/updates.go');
-  check('agent update params are closed: exactly updates + reboot "never", each {updateId, revision}',
-    /len\(p\) != 2 \|\| p\["reboot"\] != "never"/.test(upd) && /!ok \|\| len\(m\) != 2/.test(upd),
-    'the update action must not accept any other parameter');
+  // 0.32 adds an optional "allow" filter (a patch policy's classes, severities
+  // and excluded KBs). It can only narrow: closed keys, fixed values.
+  check('agent update params are closed: exactly updates + reboot "never" (+ optional allow), each {updateId, revision}',
+    /want := 2\s*if hasAllow \{\s*want = 3\s*\}\s*if len\(p\) != want \|\| p\["reboot"\] != "never"/.test(upd) && /!ok \|\| len\(m\) != 2/.test(upd)
+      && /if k != "classifications" && k != "severities" && k != "excludeKbs" \{\s*return nil, paramErr/.test(upd)
+      && /_, ok := patch\.Installable\[s\]; return ok/.test(upd),
+    'the update action must not accept any other parameter, and allow may only narrow');
   const goCat = read('tools/windows-installer/internal/action/catalog.go');
   const updEntry = goCat.slice(goCat.indexOf('ID: "windows.update.install"'));
   check('agent update risk is always high, whatever the device', /Risk:\s*func\([^)]*\) string \{\s*return "high"\s*\}/.test(updEntry),
@@ -445,8 +498,10 @@ check(
   const pctl = read('apps/api/src/patching/patching.controller.ts');
   check('the patching API has no approve or sign route', !/@(?:Get|Post|Put|Patch|Delete)\('[^']*(approv|sign)/i.test(pctl), 'approval happens on the approval signer only');
   const psvc = read('apps/api/src/patching/patching.service.ts');
+  // 0.32: the gate moved to actions/patch-policy.ts so the signer runs the same rule.
+  const gateSrc = read('apps/api/src/actions/patch-policy.ts');
   check('the canary gate requires every update effective, and a ring over threshold is retried, never promoted past',
-    /reason: 'canary_not_effective'/.test(psvc) && /g\.reason === 'too_many_failures'\) return \{ ring: i, canRequest: true/.test(psvc),
+    /reason: 'canary_not_effective'/.test(gateSrc) && /return evaluateRingGate\(/.test(psvc) && /g\.reason === 'too_many_failures'\) return \{ ring: i, canRequest: true/.test(psvc),
     'promotion must be gated on the canary and on the failure threshold');
   const asvc = read('apps/api/src/actions/actions.service.ts');
   check('updates cannot be requested one computer at a time, around the deployment', /ACTION_NOT_DIRECT/.test(asvc) && /direct: false/.test(read('apps/api/src/actions/catalog.ts')),
@@ -658,7 +713,287 @@ check(
   check('a run is re-authorized against its requester at delivery', /const why = !entry \? 'unknown_key' : !ep \? 'endpoint_missing' : await this\.requesterStillAllowed\(r, entry, ep\);/.test(dsvc), 'forHeartbeat must check the requester before DELIVERED');
 }
 
-// 21. Within-business computer visibility (0.31.2). A Business User sees only
+// 21. Scheduled client updates (0.32). A business's update policy makes the
+//     server re-run an installer on its computers with nobody clicking
+//     Update, so: only an owner, a whole-business technician with
+//     computers:edit or the MSP may set it; turning it on needs fresh
+//     authentication; the sweep queues only inside an open window, honours
+//     containment and is bounded; the heartbeat hands a POLICY request out
+//     only when the policy allows it NOW and fails closed if it cannot tell;
+//     withdrawing never touches a request someone made by hand.
+{
+  const svc = read('apps/api/src/client-updates/client-updates.service.ts');
+  const ctl = read('apps/api/src/client-updates/client-updates.controller.ts');
+  const sweep = read('apps/api/src/client-updates/client-update-sweep.service.ts');
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const refusal = svc.slice(svc.indexOf('editRefusal(a: ActorContext'), svc.indexOf('private assertEdit('));
+  check('only a whole-business technician with computers:edit may set a client-update policy',
+    /if \(a\.technician\) \{[\s\S]*?a\.technician\.businessId !== customerId[\s\S]*?\.includes\(CAP\.COMPUTERS_EDIT\) && s\.endpointIds === null\)/.test(refusal),
+    'editRefusal must require computers:edit from one grant whose endpointIds is null, in the same business');
+  check('a Business User may not set a client-update policy; an owner only for their own business',
+    /if \(a\.businessId !== customerId\) return [^;]+;\s*if \(!a\.isPlatformAdmin && this\.acl\.isBusinessOwner\(a\)\) return null;\s*return '[^']+';\s*\}/.test(refusal),
+    'after the technician branch: other business refused, owner allowed, everyone else refused');
+  check('both policy writes check permission before anything else changes',
+    /async putPolicy\([\s\S]{0,700}this\.assertEdit\(a, customerId\);/.test(svc) && /async deleteSiteOverride\([\s\S]{0,400}this\.assertEdit\(a, customerId\);/.test(svc),
+    'putPolicy and deleteSiteOverride must call assertEdit');
+  check('turning a policy on, or removing a site override, needs fresh authentication',
+    /if \(input\.enabled && !fresh\) throw new FreshAuthNeeded\(\);/.test(svc) && /\/\/ The site falls back to the business policy, which may be on\.\s*if \(!fresh\) throw new FreshAuthNeeded\(\);/.test(svc)
+      && (ctl.match(/this\.isFresh\(req\)/g) ?? []).length === 2 && /code: 'STEP_UP_REQUIRED'/.test(ctl),
+    'the service must refuse without fresh auth and the controller must pass isFresh(req) on both writes');
+  check('a site override must belong to the business it is set in',
+    /if \(!site \|\| site\.customerId !== customerId\) throw new NotFoundException/.test(svc), 'siteOf must compare site.customerId');
+  check('withdrawing automatic requests never touches a manual one',
+    /updateMany\(\{\s*where: \{ id: \{ in: drop \}, updateRequestSource: 'POLICY' \}/.test(svc), 'clearUnwanted must be conditional on POLICY');
+  const pass_ = sweep.slice(sweep.indexOf('private async pass('));
+  check('the client-update sweep can be turned off', /onModuleInit\(\) \{\s*if \(process\.env\.CLIENT_UPDATE_SWEEP === 'off'\) return;/.test(sweep), 'CLIENT_UPDATE_SWEEP=off must stop it');
+  check('the sweep skips a business under an "updates" containment pause',
+    /if \(await this\.containment\.blocking\('updates', customerId\)\) continue;/.test(pass_), 'pass() must ask containment per business');
+  check('the sweep queues only where the window is open now',
+    /const open = policies\.filter\(\(p\) => p\.enabled && isWindowOpen\(policyWindow\(p\), now\)\);/.test(pass_) && /if \(!p \|\| !open\.some\(\(o\) => o\.id === p\.id\)\) continue;/.test(pass_),
+    'every candidate must be governed by an enabled policy whose window is open at this sweep');
+  check('the sweep is bounded and queues each computer once',
+    /let budget = this\.batch\(\);/.test(pass_) && /Math\.min\(n, 500\)/.test(sweep) && /where: \{ id: n\.id, updateRequestedAt: null \}/.test(pass_) && /if \(w\.count !== 1\) continue;\s*budget--;/.test(pass_),
+    'a per-sweep budget (max 500) and a conditional write that only counts what it changed');
+  check('every automatic queuing is audited', /if \(w\.count !== 1\) continue;[\s\S]{0,80}await this\.audit\.log\(\{[\s\S]{0,120}action: 'CLIENT_UPDATE_AUTO_QUEUED'/.test(pass_), 'audit after each queued computer');
+  check('the heartbeat holds a POLICY request unless the policy allows it now, and fails closed',
+    /if \(updateRustdesk && node\.updateRequestSource === 'POLICY'\) \{\s*const hold = await this\.clientUpdates\.holdForHeartbeat\([\s\S]{0,300}\.catch\(\(e\) => \{[\s\S]{0,200}?return 'error'; \}\);\s*if \(hold\) updateRustdesk = null;\s*\}/.test(enr),
+    'a policy check error must hold the update, not hand it out');
+  check('a POLICY request is weighed only after containment and the device secret',
+    enr.indexOf('authenticated && !updatesHeld &&\n      node.updateRequestedAt') !== -1
+      && enr.indexOf("node.updateRequestSource === 'POLICY'") > enr.indexOf('authenticated && !updatesHeld &&\n      node.updateRequestedAt'),
+    'the hold must refine the existing authenticated, uncontained instruction');
+  const run = read('scripts/run-e2e.sh');
+  check('scratch APIs in run-e2e.sh run without the client-update sweep', /MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off/.test(run), 'it acts on every enabled policy in the database');
+}
+
+// 22. Reports (0.32). A report is a disclosure like a list: every device
+//     query starts from the visibility rule AND-ed (never spread beside
+//     another OR, which is how 0.31's first fix leaked), every alert query
+//     from the alerts list's own rule, each route names its capability, and
+//     an export is capped and audited before it leaves.
+{
+  const rsvc = read('apps/api/src/reports/reports.service.ts');
+  const rctl = read('apps/api/src/reports/reports.controller.ts');
+  const fn = (name, next) => rsvc.slice(rsvc.indexOf(`private ${name}(`), rsvc.indexOf(next, rsvc.indexOf(`private ${name}(`) + 10));
+  const dw = fn('devicesWhere', 'private ');
+  const aw = fn('alertsWhere', 'private ');
+  check('reports: devices start from the visibility rule, AND-ed, with computers:view asserted',
+    /this\.acl\.assertCapability\(actor, CAP\.COMPUTERS_VIEW\);/.test(dw) && /\[this\.acl\.endpointVisibilityWhere\(actor, q\.businessId\), \{ status: 'ACTIVE' \}\]/.test(dw) && /return \{ AND: and \};/.test(dw),
+    'devicesWhere must assert computers:view and AND the visibility fragment');
+  check('reports: alerts start from MonitoringAdminService.alertWhere, AND-ed with device visibility',
+    /this\.monitoring\.alertWhere\(actor, q\.businessId\)/.test(aw) && /\{ OR: \[\{ endpointId: null \}, \{ endpoint: this\.acl\.endpointVisibilityWhere\(actor, q\.businessId\) \}\] \}/.test(aw) && /return \{ AND: and \};/.test(aw),
+    'alertsWhere must call alertWhere and AND the visibility rule');
+  const epQueries = [...rsvc.matchAll(/this\.prisma\.endpoint\.(findMany|groupBy|count|aggregate)\(\{[\s\S]{0,160}/g)].map((m) => m[0]);
+  const alQueries = [...rsvc.matchAll(/this\.prisma\.monitorAlert\.(findMany|groupBy|count|aggregate)\(\{[\s\S]{0,160}/g)].map((m) => m[0]);
+  check('reports: every endpoint query is scoped by devicesWhere and every alert query by alertsWhere',
+    epQueries.length >= 4 && epQueries.every((q) => /this\.devicesWhere\(actor, /.test(q)) && alQueries.length >= 4 && alQueries.every((q) => /this\.alertsWhere\(actor, |\[base, /.test(q))
+      && /const base = this\.alertsWhere\(actor, q\);/.test(rsvc),
+    `endpoint queries ${epQueries.length}, alert queries ${alQueries.length}`);
+  check('reports: the visibility rule is never spread into another object', !/\.\.\.\s*this\.acl\.endpointVisibilityWhere/.test(rsvc), 'spread found');
+  const routes = rctl.split('@Get(').slice(1);
+  check('reports: every route names its capability; every export is throttled',
+    routes.length === 8 && routes.every((r) => /^\s*'[^']+'\)\s*@RequireCapability\(CAP\.(COMPUTERS_VIEW|ALERTS_VIEW)\)/.test(r)) && routes.filter((r) => /export\.csv/.test(r.slice(0, 60))).every((r) => /@RateLimit\(10\)/.test(r.slice(0, 200)))
+      && routes.filter((r) => /^'(alert-frequency|offline-time)/.test(r)).every((r) => /CAP\.ALERTS_VIEW/.test(r.slice(0, 120))),
+    'eight routes, each @RequireCapability; alert reports need ALERTS_VIEW; exports @RateLimit');
+  const ex = rsvc.slice(rsvc.indexOf('async exportCsv('));
+  check('reports: an export is capped, neutralised and audited (logOrFail) before it is returned',
+    /if \(lines\.length > EXPORT_MAX_ROWS\) \{\s*throw new BadRequestException/.test(ex) && /cells\.map\(csvCell\)/.test(ex)
+      && ex.indexOf("await this.audit.logOrFail({\n      action: 'REPORT_EXPORTED'") > 0 && ex.indexOf('logOrFail') < ex.indexOf('return { filename'),
+    'exportCsv must refuse above the cap, quote through csvCell and logOrFail REPORT_EXPORTED before returning');
+  check('reports: a device secret is reported as bound or not, never returned',
+    (rsvc.match(/agentSecretHash/g) ?? []).length === 2 && /rustdeskNode: \{ select: \{ agentSecretHash: true \} \}/.test(rsvc) && /e\.rustdeskNode\.agentSecretHash \? 'bound'/.test(rsvc),
+    'agentSecretHash may appear only in the select and the bound/none mapping');
+}
+
+// 23. The script library. It stores, hashes and reviews scripts and has no
+//     way to run one: a script would run only as a signed action, approved on
+//     the approval signer and verified by the signed agent
+//     (docs/script-library.md). So the library reaches nothing that touches
+//     a computer, has no run route, never lets a contributor approve, and its
+//     versions cannot change once written.
+{
+  const dir = 'apps/api/src/script-library';
+  const files = readdirSync(join(ROOT, dir)).filter((f) => f.endsWith('.ts')).map((f) => `${dir}/${f}`);
+  const src = Object.fromEntries(files.map((f) => [f, read(f)]));
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const ALLOWED = /^(node:crypto|zod|express|@nestjs\/common|@prisma\/client|\.\/(definition|static-checks|script-library\.(service|controller))|\.\.\/(prisma\/prisma\.service|audit\/audit\.(service|module)|rbac\/(access-control\.service|capabilities|platform-permissions)|security-controls\/review|common\/guards\/jwt-auth\.guard|common\/decorators\/actor\.decorator|common\/throttling|auth\/step-up\.service))$/;
+  const importsOf = (s) => [...s.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s*['"]([^'"]+)['"]|\b(?:require|import)\(\s*['"]([^'"]+)['"]/gm)].map((m) => m[1] ?? m[2]);
+  const badImports = files.flatMap((f) => importsOf(src[f]).filter((i) => !ALLOWED.test(i)).map((i) => `${f} imports ${i}`));
+  const touches = files.flatMap((f) => [...code(src[f]).matchAll(/\b(actionJob|actionTarget|ActionsService|SignerClient|createPlan|endpointCommand|diagnosticRun|rustdeskNode|EnrollmentService|DiagnosticsCatalogService|PatchingService|heartbeat|forHeartbeat|envelope)\b|\.endpoint\./gi)].map((m) => `${f}: ${m[0]}`));
+  const reachIn = walk('apps/api/src').filter((f) => !f.startsWith(dir) && f !== 'apps/api/src/app.module.ts' && /from ['"][./]*script-library\//.test(read(f)));
+  const mod = src[`${dir}/script-library.module.ts`] ?? '';
+  check('the script library creates no action job and reaches no agent, signer or heartbeat',
+    files.length >= 5 && badImports.length === 0 && touches.length === 0 && reachIn.length === 0 && !/@Global\(\)/.test(code(mod)) && !/exports\s*:/.test(code(mod)),
+    [...badImports, ...touches, ...reachIn.map((f) => `${f} imports the library`)].join('; ') || 'script-library module missing, global, or exporting');
+
+  const ctl = src[`${dir}/script-library.controller.ts`] ?? '';
+  const routes = [...ctl.matchAll(/@(Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)')?\s*\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''}`);
+  const EXPECT = ['GET ', 'POST ', 'GET :id', 'GET :id/diff', 'POST :id/versions', 'GET :id/versions/:version', 'POST :id/versions/:version/submit', 'POST :id/versions/:version/withdraw', 'POST :id/versions/:version/review'];
+  const elsewhere = walk('apps/api/src').filter((f) => /controller\.ts$/.test(f) && !f.startsWith(dir))
+    .filter((f) => /@(?:Get|Post|Put|Patch|Delete)\('[^']*scripts?\b|@Controller\(\s*\[?\s*'[^']*scripts?\b/i.test(read(f)));
+  check('the script library has no run route, here or anywhere else',
+    /@Controller\('scripts'\)/.test(ctl) && JSON.stringify(routes) === JSON.stringify(EXPECT) && !routes.some((r) => /run|exec|dispatch|deploy|send|schedule|push|approve/i.test(r)) && elsewhere.length === 0,
+    `routes: ${routes.join(', ')}${elsewhere.length ? `; other controllers with script routes: ${elsewhere.join(', ')}` : ''}`);
+
+  const svc = code(src[`${dir}/script-library.service.ts`] ?? '');
+  const rev = svc.slice(svc.indexOf('async review('));
+  const iSame = rev.search(/if \(v\.authorId === actor\.userId \|\| v\.contributorIds\.includes\(actor\.userId\)\) \{\s*await refuse\('same_person'\);\s*throw new ForbiddenException\(\{ code: 'SAME_PERSON'/);
+  const iHash = rev.search(/if \(d\.expectedSha256 !== v\.contentSha256\) \{/);
+  const iFresh = rev.search(/if \(d\.decision === 'approve'\) assertFresh\(freshMethod\);/);
+  const iWrite = rev.search(/tx\.scriptVersion\.updateMany\(\{\s*where: \{ id: v\.id, status: 'IN_REVIEW', contentSha256: d\.expectedSha256 \}/);
+  const mig = read('apps/api/prisma/migrations/0035_script_library/migration.sql');
+  check('approval refuses SAME_PERSON (author and contributors), binds the hash seen, and needs fresh authentication — before it writes',
+    iSame >= 0 && iHash > iSame && iFresh > iHash && iWrite > iFresh
+      && /const contributorIds = contributorsOf\(actor\.userId, base\);/.test(svc)
+      && /if \(base && base\.status !== 'APPROVED'\) for \(const c of base\.contributorIds\) out\.add\(c\);/.test(read(`${dir}/definition.ts`))
+      && /"decidedById" <> "authorId"\s*AND NOT \("decidedById" = ANY \("contributorIds"\)\)\s*AND "approvedSha256" IS NOT NULL\s*AND "approvedSha256" = "contentSha256"/.test(mig),
+    'review() must check SAME_PERSON, then the hash, then assertFresh, then write; new versions inherit unapproved contributors; 0035 keeps the CHECK');
+
+  const guard = mig.slice(mig.indexOf('CREATE OR REPLACE FUNCTION rem0te_script_version_guard()'));
+  const IMMUTABLE = ['content', 'contentSha256', 'definitionSha256', 'contentBytes', 'parameters', 'risk', 'language', 'targetOs', 'description', 'authorId', 'contributorIds', 'scriptId', 'version', 'basedOnId'];
+  const missing = IMMUTABLE.filter((c) => !new RegExp(`NEW\\."${c}" (<>|IS DISTINCT FROM) OLD\\."${c}"`).test(guard));
+  const writes = [...svc.matchAll(/scriptVersion\.(update|updateMany|upsert)\(\{[\s\S]*?data: \{([^}]*)\}/g)].map((m) => m[2]);
+  check('script versions are immutable: the trigger fixes content and definition, the service never rewrites them',
+    missing.length === 0 && /CREATE TRIGGER "ScriptVersion_immutable" BEFORE INSERT OR UPDATE ON "ScriptVersion"/.test(mig)
+      && /CREATE TRIGGER "Script_immutable" BEFORE UPDATE ON "Script"/.test(mig)
+      && /IF NEW\."contentSha256" <> encode\(sha256\(convert_to\(NEW\."content", 'UTF8'\)\), 'hex'\) THEN/.test(guard)
+      && /IF NEW\."status" <> 'DRAFT'/.test(guard)
+      && writes.length >= 2 && writes.every((w) => !/\b(content|contentSha256|definitionSha256|contentBytes|parameters|risk|language|targetOs|description|authorId|contributorIds)\b/.test(w)),
+    `trigger does not fix: ${missing.join(', ') || '-'}; service writes: ${writes.join(' | ')}`);
+}
+
+// 24. The standard Linux agent (0.32). It reports and never acts: the only
+//     things it reads from a heartbeat response are command ids and three
+//     fixed type names, it runs no expression, shell, download or
+//     package-changing command, it reads os-release and its config with sed
+//     (never sources them), keeps the secret out of argv, and refuses a
+//     world-readable secret. The installer writes the secret 0600 and its
+//     --uninstall removes it. Server side: device strings are made inert on
+//     heartbeat and claim, and the console refuses to stage what the Linux
+//     agent would ignore.
+{
+  const la = read('apps/api/src/public/linux-agent.ts');
+  const tpl = la.slice(la.indexOf('const LINUX_AGENT_TEMPLATE = String.raw`'), la.lastIndexOf('`;'));
+  // Comment lines name what the agent does NOT do; only code is checked.
+  const code = tpl.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  check('the Linux agent runs no expression, shell, download or state-changing command',
+    code.length > 8000
+      && !/\beval\b|^\s*\.\s|\bsource\b|\b(sh|bash|dash) -c\b|\|\s*(sh|bash|dash)\b|\bwget\b|\bpython3?\b|\bperl\b/m.test(code)
+      && !/\brustdesk\s+--|\bsystemctl\b|(^|[\s;&|(])(reboot|shutdown|poweroff)(\s|;|$)|\bapt-get\b|\bapt (update|upgrade|install|remove|full-upgrade)\b|\bdpkg -i\b|\bdnf (-[a-zA-Z]+ )*(install|upgrade|update|makecache|remove)\b|\bzypper\b[^\n]*(?<![-\w])(refresh|ref|update|up|install|in|patch|remove|dup)(?![-\w])|\brpm -[iUe]/m.test(code)
+      && (code.match(/\bcurl -/g) ?? []).length === 1,
+    'the agent must stay read-only: one curl (in post()), and nothing that changes the machine');
+  check('the Linux agent reads only command ids and three fixed types from the response',
+    /grep -oE '\\\{"id":"\[A-Za-z0-9_-\]\{1,64\}","type":"\(INVENTORY_REFRESH\|UPDATE_SCAN\|EVENT_LOG_QUERY\)"'/.test(code)
+      && !/rotate|updateRustdesk|reinstallAgent|confirm-rotation|diagnostic-result|monitor-report/.test(code),
+    'no other field of the heartbeat response may be read');
+  check('the Linux agent never refreshes a repository to list updates',
+    /apt list --upgradable/.test(code) && /dnf -q -C check-update/.test(code) && /zypper --non-interactive --no-refresh list-updates/.test(code),
+    'apt list (no apt update), dnf -C, zypper --no-refresh');
+  check('the Linux agent parses its config and os-release with sed, and keeps the secret out of argv',
+    /conf_get\(\) \{ sed -n "s\/\^\$1=\/\/p" "\$CONF"/.test(code) && /osr_get\(\) \{ sed -n "s\/\^\$1=\/\/p" "\$OS_RELEASE"/.test(code)
+      && /--data-binary @"\$TMPD\/req"/.test(code) && !/curl[^\n]*\$SECRET/.test(code),
+    'never source a file; the body (with the secret) goes through a 0700 temp file');
+  check('the Linux agent refuses a readable secret and non-https servers',
+    /case "\$mode" in\s*600\|400\) ;;\s*\*\) log "refusing/.test(code) && /\^https:\/\/\[A-Za-z0-9\.-\]\+/.test(code)
+      && /\^http:\/\/\(127\\\.0\\\.0\\\.1\|localhost\)/.test(code),
+    'secret must be 600/400; plain http only to loopback');
+  check('every string the Linux agent sends goes through txt or nm',
+    /txt\(\) \{ printf '%s' "\$1" \| tr -cd ' -~' \| tr -d '"\\\\' \| cut -c1-"\$2"; \}/.test(code)
+      && /nm\(\) \{ printf '%s' "\$1" \| tr -cd 'A-Za-z0-9\._-' \| cut -c1-"\$2"; \}/.test(code),
+    'printable ASCII without " or \\, clamped; host names to the inert charset');
+  const pc = read('apps/api/src/public/public.controller.ts');
+  const lin = pc.slice(pc.indexOf('private buildLinuxScript('), pc.indexOf('private buildMacosScript('));
+  check('the Linux installer writes the device secret 0600 and --uninstall removes it',
+    /\( umask 077; printf '%s' "\\\$\{AGENT_SECRET\}" > "\\\$\{AGENT_STATE\}" \)/.test(lin) && /chmod 600 "\\\$\{AGENT_STATE\}"/.test(lin)
+      && /rm -f \$\{LINUX_AGENT_PATH\} \$\{LINUX_AGENT_CONF\} \$\{LINUX_AGENT_SECRET\}/.test(lin)
+      && /<<'\$\{LINUX_AGENT_HEREDOC\}'/.test(lin),
+    'secret under umask 077 + chmod 600; agent embedded in a quoted heredoc; uninstall removes the secret');
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const hb = enr.slice(enr.indexOf('async heartbeat('), enr.indexOf('const node = await this.prisma.rustdeskNode.findUnique({', enr.indexOf('async heartbeat(')));
+  check('device-reported names are made inert on heartbeat and claim',
+    /dto = withDeviceText\(dto\);/.test(hb) && /this\.claimWithConsumedToken\(withDeviceText\(dto\), record, claimedByIp\)/.test(enr)
+      && /const CONTROL = \/\[\\x00-\\x1f\\x7f-\\x9f/.test(read('apps/api/src/enrollment/device-text.ts')),
+    'heartbeat() must pass its dto through withDeviceText before the node lookup; claim likewise');
+  const eps = read('apps/api/src/endpoints/endpoints.service.ts');
+  const fn = (name) => eps.slice(eps.indexOf(`async ${name}(`), eps.indexOf(`async ${name}(`) + 900);
+  check('the console refuses to stage for Linux what its agent would ignore',
+    /await this\.refuseOnLinux\(endpointId, /.test(fn('rotateCredential')) && /await this\.refuseOnLinux\(id, /.test(fn('requestAgentReinstall'))
+      && /await this\.refuseOnLinux\(id, /.test(fn('requestEventLog'))
+      && /!isLinuxPlatform\(n\.endpoint\?\.platform\)/.test(read('apps/api/src/admin/update.service.ts')),
+    'rotation, reinstall, event-log query and one-click client update must refuse or skip Linux');
+}
+
+// 25. Patch policies and installing from the Patches tab (0.32). A policy is
+//     approved once, on the signer, by two people; after that the signer —
+//     never the portal — signs each ring plan, and only inside the policy.
+//     Manual installs are one-computer deployments that still need two
+//     approvals. (§19 and §20 were taken by 0.30.1 and 0.31.)
+{
+  const pctl = read('apps/api/src/patching/patching.controller.ts');
+  const psvc = read('apps/api/src/patching/patching.service.ts');
+  const proutes = [...pctl.matchAll(/@(?:Get|Post|Put|Patch|Delete)\('([^']*)'\)/g)].map((m) => m[1]);
+  check('the patching API has no route that approves or signs a policy or a plan',
+    proutes.includes('patching/policies') && !proutes.some((r) => /approv|sign|activate|unrevoke|reinstate/i.test(r)),
+    `patching routes: ${proutes.join(', ')}`);
+  const sigClient = read('apps/api/src/actions/signer.client.ts').replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, '');
+  check('the portal\'s signer client cannot approve, sign or un-revoke a policy',
+    /submitUnderPolicy\(/.test(sigClient) && !/\/(approve|decide|challenge|unrevoke|restore)\b/.test(sigClient),
+    'only propose, read, revoke and submit-under-policy');
+  const at = (src, marker, n) => src.slice(src.indexOf(marker), src.indexOf(marker) + n);
+  const createFn = at(pctl, "@Post('patching/policies')", 400);
+  const revokeFn = at(pctl, "@Post('patching/policies/:id/revoke')", 400);
+  check('creating or revoking a policy needs fresh authentication',
+    /this\.fresh\(req\)/.test(createFn) && /this\.fresh\(req\)/.test(revokeFn) && /assertFresh\(/.test(pctl),
+    'POST patching/policies and patching/policies/:id/revoke must call assertFresh');
+  const core = read('apps/api/src/approval-signer/core.ts');
+  const sun = at(core, 'export function signUnderPolicy(', 1800);
+  check('the signer signs under a policy only after the pure evaluator accepts the plan',
+    /const decision: PolicyDecision = evaluatePolicyPlan\(/.test(sun) && /if \(!decision\.ok\) throw new Refused\(decision\.code/.test(sun) && sun.indexOf('evaluatePolicyPlan(') < sun.indexOf('signJob(job'),
+    'signUnderPolicy must evaluate, and refuse, before signJob');
+  const ev = read('apps/api/src/actions/patch-policy.ts');
+  const evFn = ev.slice(ev.indexOf('export function evaluatePolicyPlan('));
+  const need = ['policy_revoked', 'policy_signature_invalid', 'policy_digest_mismatch', 'policy_expired', 'policy_not_approved', 'computer_not_in_policy', 'class_not_allowed', 'kb_excluded', 'filter_mismatch', 'outside_window', 'ring_out_of_order', 'reboot_not_allowed', 'evidence_mismatch'];
+  const missing = need.filter((c) => !evFn.includes(`'${c}'`) && !ev.includes(`'${c}'`));
+  check('the policy evaluator refuses out-of-policy plans (computers, classes, KBs, window, ring order, expiry, revocation, digest)',
+    missing.length === 0 && /evaluateRingGate\(\{/.test(evFn) && /canary_not_effective/.test(evFn) && !/from '@nestjs|from '@prisma\/client'/.test(ev),
+    `missing refusals: ${missing.join(', ')}`);
+  check('the canary needs no evidence and a later ring needs the previous ring signed by this signer',
+    /if \(ring === 0\) \{\s*if \(r\.evidence\) return no\('bad_evidence'/.test(evFn) && /if \(!prev\) return no\('ring_out_of_order'/.test(evFn),
+    'ring order comes from the signer\'s own ledger');
+  const store = read('apps/api/src/approval-signer/store.ts');
+  check('a revocation is a write-once file on the signer, merged on every read',
+    /revokePatchPolicy\([\s\S]{0,600}'wx'/.test(store) && /patchPolicy\(id: string\)[\s\S]{0,600}revocations/.test(store),
+    'revocations/<id>.json, created with wx, never rewritten');
+  const srv = read('apps/api/src/approval-signer/server.ts');
+  check('the signer refuses policy plans and new policies while paused',
+    /async function internalPolicy[\s\S]{0,900}assertNotPaused\(doc\.businessId\)/.test(srv) && /assertNotPaused\(r\.doc\.businessId\);\s*const existing = jobId/.test(srv),
+    'propose and plans must consult the pause');
+  const pol = read('apps/api/src/patching/policies.service.ts');
+  check('the policy sweep can be switched off (PATCH_POLICY_SWEEP=off), and never runs twice at once',
+    /static sweepEnabled\(\) \{ return process\.env\.PATCH_POLICY_SWEEP !== 'off'; \}/.test(pol) && /onModuleInit\(\) \{\s*if \(!PatchPolicyService\.sweepEnabled\(\)\) return;/.test(pol) && /if \(this\.busy\) return;/.test(pol),
+    'onModuleInit must return before scheduling when the sweep is off');
+  check('the sweep proposes once per window (unique policy + window) and consults containment',
+    /@@unique\(\[policyId, windowKey\]\)/.test(read('apps/api/prisma/schema.prisma')) && /containment\.blocking\('actions', r\.customerId\)/.test(pol) && /e\.code === 'P2002'/.test(pol),
+    'PatchDeployment(policyId, windowKey) must be unique and the sweep must check the pause');
+  check('e2e and docs stacks run with the sweep off unless testing it',
+    /export PATCH_POLICY_SWEEP=off/.test(read('scripts/run-e2e.sh')) && /PATCH_POLICY_SWEEP=off/.test(read('docs/screenshots.md')),
+    'scripts/run-e2e.sh and the docs stack (docs/screenshots.md) must set PATCH_POLICY_SWEEP=off');
+  const ins = at(psvc, 'async installOnEndpoint(', 1800);
+  check('a manual install is a one-computer deployment whose canary still awaits two approvals',
+    /rings: \[\[endpointId\]\]/.test(ins) && /'MANUAL', null\)/.test(ins) && /this\.requestRing\(actor, d\.id, 0, \{ reason: dto\.reason, startsInMinutes: dto\.startsInMinutes \}\);/.test(ins) && !/underPolicy|UnderPolicy/.test(ins),
+    'installOnEndpoint must not pass a policy (which would sign without approvals)');
+  check('only the sweep requests a ring under a policy, and a person cannot request one beside it',
+    /if \(!under && d\.origin === 'POLICY'\) throw new ConflictException/.test(psvc) && (pctl.match(/requestRing\(/g) ?? []).length === 2
+      && /this\.patching\.requestRing\(actor, id, Number\(ring\), body\) \}/.test(pctl),
+    'the controller must never pass an UnderPolicy');
+  check('ACTION_NOT_DIRECT still holds for updates',
+    /ACTION_NOT_DIRECT/.test(read('apps/api/src/actions/actions.service.ts')) && /direct: false/.test(read('apps/api/src/actions/catalog.ts')),
+    'POST /endpoints/:id/actions must refuse windows.update.install');
+  check('a policy can never restart a computer in this release', /reboot: z\.literal\('never'\)/.test(ev) && /reboot: z\.literal\('never'\)/.test(pol),
+    'a reboot rule is a §15 change to the agent\'s closed params');
+}
+
+// 26. Within-business computer visibility (0.31.2). A Business User sees only
 //     computers granted to them or COMPANY_WIDE. The per-id check every `:id`
 //     route uses must apply that rule, not business scope alone, and must
 //     take it from endpointVisibilityWhere so the two cannot drift. Until

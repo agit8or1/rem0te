@@ -7,15 +7,19 @@ import { endpointsApi, patchingApi } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
-import { AlertTriangle, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Download, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 
 /**
  * Windows Update posture of one computer (v0.27), as its signed agent's
- * `patch-scan` last reported it. Read-only: updates are installed through a
- * staged deployment (canary, then rings), each ring a signed plan approved by
- * people on the approval roster — never from this tab.
+ * `patch-scan` last reported it. Since 0.32 "Install updates" here builds a
+ * one-computer deployment whose single (canary) ring is a signed plan that
+ * two people on the approval roster approve — nothing installs from this tab
+ * without them. When the computer cannot be patched there is no button, only
+ * why and what to do instead.
  *
  * Everything here is device-reported. It describes what Windows Update told
  * the agent; it does not prove a vulnerability is fixed.
@@ -44,6 +48,8 @@ export interface Patches {
   reboot: { pending: boolean; sources: string[] } | null;
   updates: PatchUpdate[]; history: History[];
   basic: { checkedAt: string | null; rebootRequired: boolean | null; updates: { title: string; kb: string | null; severity: string | null; sizeBytes: number | null }[] } | null;
+  /** 0.32: whether Install updates is offered here, and if not, why and what to do. */
+  install: { possible: boolean; reason: string | null; fix: string | null; installable: number };
 }
 
 const REBOOT_SOURCE: Record<string, string> = {
@@ -99,6 +105,113 @@ export function PatchSummaryCard({ s }: { s: Summary }) {
   );
 }
 
+function apiMessage(e: unknown, fallback: string) {
+  return (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message?.toString() ?? fallback;
+}
+
+/**
+ * Install updates on this one computer (0.32). Becomes a one-computer
+ * deployment; its plan awaits two approvals on the approval signer. When it
+ * is not possible: the reason and the next step, never a disabled button.
+ */
+function InstallUpdates({ endpointId, p }: { endpointId: string; p: Patches }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [reason, setReason] = useState('');
+  const [windowHours, setWindowHours] = useState(8);
+  const [done, setDone] = useState<{ approvalUrl: string; deploymentId: string } | null>(null);
+  const installable = p.updates.filter((u) => u.installable);
+  const go = useMutation({
+    mutationFn: () => patchingApi.install(endpointId, {
+      updates: installable.filter((u) => picked.has(`${u.updateId}@${u.revision}`)).map((u) => ({ updateId: u.updateId, revision: u.revision })),
+      reboot: 'never', reason: reason.trim(), windowHours,
+    }),
+    onSuccess: (r) => {
+      const d = r.data.data as { job: { approvalUrl: string }; deployment: { id: string } };
+      setDone({ approvalUrl: d.job.approvalUrl, deploymentId: d.deployment.id });
+      setOpen(false); setPicked(new Set()); setReason('');
+      qc.invalidateQueries({ queryKey: ['endpoint-patches', endpointId] });
+      toast({ title: 'Install requested', description: 'It awaits two approvals on the approval signer.' });
+    },
+    onError: (e) => toast({ title: 'Not requested', description: apiMessage(e, 'The request was refused.'), variant: 'destructive' }),
+  });
+  const requested = done && (
+    <p>Requested: <a className="underline" href={done.approvalUrl} target="_blank" rel="noreferrer">its approval page</a> · <Link className="underline" href={`/patching/${done.deploymentId}`}>its deployment</Link></p>
+  );
+
+  if (!p.install.possible) {
+    return (
+      <Card data-testid="patch-install-unavailable">
+        <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><Download className="h-4 w-4" />Install updates</CardTitle></CardHeader>
+        <CardContent className="space-y-1 text-xs">
+          <p><strong>Not available on this computer.</strong> {p.install.reason}</p>
+          {p.install.fix && (
+            <p className="text-muted-foreground">What to do: {p.install.fix}{/Patching setup/.test(p.install.fix) && <> See <Link className="underline" href="/docs/patching-setup">Patching setup</Link>.</>}</p>
+          )}
+          {requested}
+        </CardContent>
+      </Card>
+    );
+  }
+  return (
+    <Card data-testid="patch-install">
+      <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
+        <CardTitle className="text-sm flex items-center gap-2"><Download className="h-4 w-4" />Install updates</CardTitle>
+        {!open && <Button size="sm" onClick={() => setOpen(true)}>Install updates…</Button>}
+      </CardHeader>
+      <CardContent className="space-y-3 text-xs">
+        <p className="text-muted-foreground">
+          Installs on this computer only, as a one-computer deployment. Two people on the approval roster approve it on the approval signer — not you, and not from here.
+          It runs inside the window you give and is never promoted to other computers.
+        </p>
+        {requested}
+        {open && (
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <p className="font-medium">Updates ({installable.length} installable)</p>
+              {installable.map((u) => {
+                const k = `${u.updateId}@${u.revision}`;
+                return (
+                  <label key={k} className="flex items-start gap-2 rounded-md border p-2">
+                    <input type="checkbox" className="mt-0.5" checked={picked.has(k)} onChange={(e) => setPicked((s) => { const n = new Set(s); if (e.target.checked) n.add(k); else n.delete(k); return n; })} />
+                    <span>{u.kb && <strong>{u.kb} </strong>}{u.title}<span className="block text-muted-foreground">{u.className ?? 'Unclassified'}{u.severity ? ` · ${u.severity}` : ''}{u.rebootBehavior > 0 ? ' · may need a restart' : ''}</span></span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
+              <div className="space-y-1">
+                <Label htmlFor="inst-reboot" className="text-xs">Restart</Label>
+                {/* The only rule this release has: a restart option is a change to the agent's closed parameters, not a UI switch. */}
+                <select id="inst-reboot" className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value="never" onChange={() => undefined}>
+                  <option value="never">Never restart (someone restarts it later)</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="inst-window" className="text-xs">Window to run in (hours)</Label>
+                <Input id="inst-window" type="number" min={1} max={24} value={windowHours} onChange={(e) => setWindowHours(Math.min(24, Math.max(1, Number(e.target.value) || 1)))} />
+              </div>
+            </div>
+            <div className="space-y-1 max-w-xl">
+              <Label htmlFor="inst-reason" className="text-xs">Reason (shown to the approvers)</Label>
+              <Input id="inst-reason" maxLength={400} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. the user reports the November CU is missing" />
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" disabled={picked.size === 0 || reason.trim().length < 3 || go.isPending} onClick={() => go.mutate()}>
+                {go.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Request approval
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            </div>
+            <p className="text-muted-foreground">Fixture-tested only: proven against a simulated Windows Update and synthetic passkeys, not yet on a real Windows computer.</p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function EndpointPatches({ endpointId }: { endpointId: string }) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -124,6 +237,7 @@ export function EndpointPatches({ endpointId }: { endpointId: string }) {
     return (
       <div className="space-y-4">
         <PatchSummaryCard s={p.summary} />
+        <InstallUpdates endpointId={endpointId} p={p} />
         <Card>
           <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Windows Update</CardTitle>
@@ -167,6 +281,7 @@ export function EndpointPatches({ endpointId }: { endpointId: string }) {
   return (
     <div className="space-y-4">
       <PatchSummaryCard s={p.summary} />
+      <InstallUpdates endpointId={endpointId} p={p} />
       <Card>
         <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Windows Update</CardTitle>

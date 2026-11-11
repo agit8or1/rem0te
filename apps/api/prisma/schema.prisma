@@ -47,6 +47,12 @@ enum RoleType {
   CUSTOMER
 }
 
+/// Who staged a RustDesk client update on a node (0.32).
+enum UpdateRequestSource {
+  MANUAL
+  POLICY
+}
+
 enum EndpointStatus {
   ACTIVE
   OFFLINE
@@ -92,6 +98,12 @@ enum ActivityAction {
   PATCH_DEPLOYMENT_UPDATED
   PATCH_RING_REQUESTED
   PATCH_SCAN_REQUESTED
+  PATCH_POLICY_CREATED
+  PATCH_POLICY_UPDATED
+  PATCH_POLICY_REVOKED
+  PATCH_POLICY_PROPOSED
+  PATCH_POLICY_REFUSED
+  PATCH_INSTALL_REQUESTED
   CONTAINMENT_PAUSED
   CONTAINMENT_CLEARED
   AUDIT_CHAIN_ALERT
@@ -138,10 +150,20 @@ enum ActivityAction {
   ENDPOINT_EVENT_LOG_REQUESTED
   ENDPOINT_DIAGNOSTIC_REQUESTED
   ENDPOINT_DIAGNOSTIC_COMPLETED
+  SCRIPT_CREATED
+  SCRIPT_VERSION_CREATED
+  SCRIPT_VERSION_SUBMITTED
+  SCRIPT_VERSION_WITHDRAWN
+  SCRIPT_VERSION_APPROVED
+  SCRIPT_VERSION_REJECTED
+  SCRIPT_REVIEW_REFUSED
   ENDPOINT_AGENT_REINSTALL_REQUESTED
   ENDPOINT_DEVICE_SECRET_ACCEPTED
   ENDPOINT_RESTORED
   ENDPOINT_LIST_EXPORTED
+  CLIENT_UPDATE_POLICY_CHANGED
+  CLIENT_UPDATE_AUTO_QUEUED
+  REPORT_EXPORTED
   CONNECTION_GRANT_CREATED
   CONNECTION_GRANT_REDEEMED
   CONNECTION_GRANT_DENIED
@@ -524,14 +546,17 @@ model Customer {
   supportSessions SupportSession[]
   apiKeys         ApiKey[]
 
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  actionJobs          ActionJob[]
-  patchDeployments    PatchDeployment[]
-  containmentPauses   ContainmentPause[]
-  monitorRules        MonitorRule[]
-  monitorAlerts       MonitorAlert[]
-  monitorSuppressions MonitorSuppression[]
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  actionJobs           ActionJob[]
+  patchDeployments     PatchDeployment[]
+  containmentPauses    ContainmentPause[]
+  monitorRules         MonitorRule[]
+  monitorAlerts        MonitorAlert[]
+  monitorSuppressions  MonitorSuppression[]
+  clientUpdatePolicies ClientUpdatePolicy[]
+  scripts              Script[]
+  patchPolicies        PatchPolicy[]
 
   @@index([tenantId])
   @@index([tenantId, name])
@@ -557,9 +582,11 @@ model Site {
   isActive     Boolean @default(true)
 
   endpoints           Endpoint[]
+  claimTokens         DeviceClaimToken[]
   monitorRules        MonitorRule[]
   monitorAlerts       MonitorAlert[]
   monitorSuppressions MonitorSuppression[]
+  clientUpdatePolicy  ClientUpdatePolicy?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -810,6 +837,18 @@ model RustdeskNode {
   // update retries on the next heartbeat instead of being lost.
   updateRequestedAt   DateTime?
   updateTargetVersion String?
+  // Who asked (0.32). MANUAL: someone clicked Update — handed out on the next
+  // authenticated heartbeat, as before. POLICY: the business's client-update
+  // policy queued it — handed out only inside that policy's window and, when
+  // the policy says so, never during an open session or with someone logged
+  // on. Null on a row staged before 0.32 means MANUAL (migration 0033 sets it).
+  updateRequestSource UpdateRequestSource?
+  updateRequestedById String?
+  // Why the heartbeat last withheld a POLICY request (outside_window,
+  // session_open, user_logged_on, policy_off), and since when. Written only
+  // when it changes; cleared when the request is handed out or clears.
+  updateHoldReason    String?
+  updateHoldAt        DateTime?
 
   // Operator-requested agent reinstall, staged the same way.
   //
@@ -891,6 +930,12 @@ model DeviceClaimToken {
   customerName String?
   siteName     String?
   description  String?
+
+  // The site the device lands in (Add device, 0032). Bound at mint time like
+  // the business, validated to belong to it, and copied onto the endpoint at
+  // claim. `siteName` above is the display copy; this is the binding.
+  siteId String?
+  site   Site?   @relation(fields: [siteId], references: [id], onDelete: SetNull)
 
   // Managed-computer enrollment binding — set by the admin at token-mint time.
   // The endpoint that redeems this token cannot influence any of these values;
@@ -2382,8 +2427,67 @@ model PatchDeployment {
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
   jobs             ActionJob[]
+  /// 0.32: how it came about — built by hand, an "Install updates" request
+  /// from one computer's Patches tab, or proposed by a patch policy.
+  origin           PatchDeploymentOrigin @default(DEPLOYMENT)
+  policyId         String?
+  policy           PatchPolicy?          @relation(fields: [policyId], references: [id], onDelete: SetNull)
+  /// The maintenance-window occurrence (its UTC start) a policy proposed it
+  /// for. Unique per policy: once per window, whatever restarts in between.
+  windowKey        String?
+
+  @@unique([policyId, windowKey])
+  @@index([customerId, createdAt])
+}
+
+enum PatchDeploymentOrigin {
+  DEPLOYMENT
+  MANUAL
+  POLICY
+}
+
+enum PatchPolicyStatus {
+  AWAITING_APPROVAL
+  ACTIVE
+  REJECTED
+  REVOKED
+  EXPIRED
+}
+
+/// A patch policy (0.32): approved once by two people on the approval
+/// signer's roster, after which the signer — not the portal — signs each ring
+/// plan that falls inside it. This row is the portal's mirror: the signer's
+/// copy, its ledger and its revocation are what decide.
+model PatchPolicy {
+  /// The policy id in the signed document (32 hex).
+  id              String            @id
+  tenantId        String?
+  customerId      String
+  customer        Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  name            String
+  /// The exact document the approvers sign (rem0te-patch-policy/1).
+  document        Json
+  digest          String
+  status          PatchPolicyStatus @default(AWAITING_APPROVAL)
+  approvalUrl     String
+  /// [{ name, role, at }] as the signer reports them.
+  approvals       Json?
+  expiresAt       DateTime
+  createdById     String
+  revokedAt       DateTime?
+  revokedById     String?
+  revokeReason    String?
+  /// When the signer confirmed the revocation. Null with revokedAt set means
+  /// the portal has stopped proposing and the sweep keeps asking the signer.
+  signerRevokedAt DateTime?
+  /// The sweep's last attempt: { at, windowKey, ok, code, message, deploymentId?, ring?, jobId? }.
+  lastProposal    Json?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  deployments     PatchDeployment[]
 
   @@index([customerId, createdAt])
+  @@index([status])
 }
 
 // ─── Containment (v0.28) ─────────────────────────────────────────────────────
@@ -2663,4 +2767,115 @@ model IntegrationAlertEvent {
   @@unique([peerId, externalOrgId, sequence])
   @@index([ackedAt, nextDeliveryAt])
   @@index([alertId])
+}
+
+// ─── Scheduled client updates (0.32) ──────────────────────────────────────────
+
+/// When a business's RustDesk clients may be updated without anyone clicking
+/// Update. One row per business (siteId null) and optionally one per site,
+/// which replaces the business row for that site's computers entirely.
+///
+/// The sweep (client-updates/client-update-sweep.service.ts) queues outdated
+/// online computers through RustdeskNode.updateRequestedAt with source POLICY,
+/// only while `windows` is open in `timeZone`; the heartbeat hands a POLICY
+/// request out only inside the window too. Off by default.
+///
+/// `windows` is [{days: 0-6[], start: "HH:MM", end: "HH:MM"}] in `timeZone`
+/// (an IANA name), the same shape and rules as rbac/schedule.ts: an end before
+/// the start crosses midnight and belongs to the day it starts on.
+/// A partial unique index (migration 0033) allows one business row per business.
+model ClientUpdatePolicy {
+  id                String   @id @default(cuid())
+  tenantId          String
+  customerId        String
+  customer          Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  siteId            String?  @unique
+  site              Site?    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  enabled           Boolean  @default(false)
+  timeZone          String
+  windows           Json
+  skipActiveSession Boolean  @default(true)
+  skipLoggedOnUser  Boolean  @default(false)
+  updatedById       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([enabled])
+}
+
+// ─── Script library (review only; nothing here runs a script) ────────────────
+//
+// docs/script-library.md. A version is immutable from the moment it is
+// written: migration 0035's trigger refuses any change to its content,
+// hashes, definition or authorship, and any status change but
+// DRAFT→IN_REVIEW, IN_REVIEW→DRAFT, IN_REVIEW→APPROVED, IN_REVIEW→REJECTED.
+// CHECKs refuse an approver who contributed to the content.
+
+enum ScriptScope {
+  GLOBAL
+  BUSINESS
+}
+
+enum ScriptVersionStatus {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  REJECTED
+}
+
+model Script {
+  id          String      @id @default(cuid())
+  scope       ScriptScope
+  tenantId    String?
+  // Null exactly when scope is GLOBAL (CHECK). Fixed once written (trigger).
+  customerId  String?
+  customer    Customer?   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  name        String
+  // Not a relation: the record outlives the people in it, like DiagnosticRun.
+  createdById String
+  createdAt   DateTime    @default(now())
+
+  versions ScriptVersion[]
+
+  // One name per business; global names are unique by a partial index (0035).
+  @@unique([customerId, name])
+  @@index([scope])
+}
+
+model ScriptVersion {
+  id        String  @id @default(cuid())
+  scriptId  String
+  script    Script  @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+  version   Int
+  // The version this one was edited from; null for the first.
+  basedOnId String?
+
+  description String
+  language    String
+  targetOs    String
+  risk        String
+  parameters  Json   @default("[]")
+
+  content          String
+  contentBytes     Int
+  contentSha256    String
+  definitionSha256 String
+
+  authorId       String
+  // The author plus the contributors of an unapproved base version
+  // (definition.ts contributorsOf). None of them may approve this version.
+  contributorIds String[]
+  createdAt      DateTime @default(now())
+
+  status         ScriptVersionStatus @default(DRAFT)
+  submittedAt    DateTime?
+  decidedById    String?
+  decidedAt      DateTime?
+  decisionNote   String?
+  // The content hash the approver's page showed. Equal to contentSha256 (CHECK).
+  approvedSha256 String?
+
+  @@unique([scriptId, version])
+  @@index([scriptId, status])
 }

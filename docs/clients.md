@@ -124,13 +124,26 @@ client that does more than configure RustDesk:
 - Installs a scheduled task that heartbeats every ~3 minutes, which is what
   drives the online dot, the credential-rotation channel, the RustDesk client
   update channel, and the inventory the computer's Overview tab shows
-- Claims the machine into a business if given an enrolment token
+- Claims the machine into a business if given an enrolment token — and, from
+  0.32, into the site the token names. Business and site are fixed when the
+  token is made on Add device, never chosen by the machine
+
+Add device then shows the computer arriving and its first health (online, agent,
+inventory) as the server receives it; see [technician-guide.md](technician-guide.md) §5.
 
 It is **idempotent** — safe to re-run, and re-running is the supported way to
 repair a broken install, apply a staged upgrade, or replace the heartbeat
 script with a newer agent. Only installers from **v0.14.0** onward collect
 system specs, pending Windows updates and event logs; older ones report
 liveness and a version and nothing else. See [inventory.md](inventory.md).
+
+On **Linux** (0.32+) the installer installs a read-only agent instead of the
+scheduled task: a `sh` script under a systemd timer, every 3 minutes, with the
+device secret in `/etc/rem0te-agent.secret` (0600). It reports heartbeat,
+inventory and pending package updates and acts on nothing the server sends, so
+password rotation, reinstall and client updates are done by re-running the
+installer on the computer. Run the installer as root; `--uninstall` removes the
+agent. See [inventory.md](inventory.md#linux-computers-032).
 
 > **Installs from before v0.8.2 need to be re-run.** They wrote the RustDesk
 > service config to a path the service never reads, so the service ran on

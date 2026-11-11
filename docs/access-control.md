@@ -76,6 +76,8 @@ Stored on `Membership.capabilities` as an allowlisted string array. The vocabula
 | Users | `users:view` | See the other people in this business |
 | | `users:manage` | Invite, disable and remove business users; set their permissions |
 | Audit | `audit:view` | See this business's audit history |
+| Automation | `scripts:author` | Add scripts to this business's library, edit them (each edit is a new version) and submit versions for review |
+| | `scripts:review` | Approve or reject someone else's script version, never one they wrote or edited. Approving needs a fresh sign-in. Neither capability runs anything ([script-library.md](script-library.md)) |
 
 **Defaults for a new Business User:** `computers:view` and `computers:connect`. Everything more
 administrative is off until granted.
@@ -158,7 +160,7 @@ person with a weekday-only grant still sees the computer at the weekend, and is 
 to connect, reveal its password or open a session — that is `canReachEndpoint`. Before 0.31.2 the
 per-id check stopped at business scope, so a Business User could read and change, by id, computers
 in their business granted only to someone else; `apps/api/scripts/e2e-endpoint-visibility.mjs` is
-the proof that they no longer can, and §21 of `scripts/check-security-invariants.mjs` keeps the
+the proof that they no longer can, and §26 of `scripts/check-security-invariants.mjs` keeps the
 check in place.
 
 The JWT is not trusted as a cache: `JwtStrategy.validate()` re-reads role, business and capabilities

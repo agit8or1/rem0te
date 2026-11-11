@@ -30,6 +30,8 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[monitoring.md](monitoring.md)** — monitors (offline, disk, CPU, memory,
   services, event log, pending restart), inheritance, alerts, site outages,
   maintenance windows, escalation and ClientSt0r tickets (0.29).
+- **[reports.md](reports.md)** — patch compliance, agent coverage, alert frequency and offline time per
+  business and site, what each is computed from and what it cannot tell you, and the audited CSV export (0.32).
 - **[tactical-rmm.md](tactical-rmm.md)** — connecting and querying from inside
   Tactical RMM: URL Actions, agent matching, and the Collector Task.
 - **[integration-clientst0r.md](integration-clientst0r.md)** — ClientSt0r ticket
@@ -53,6 +55,13 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[staged-patching.md](staged-patching.md)** — Windows updates in stages (0.27): a canary, then rings, each a
   signed plan two approvers authorize; what is installed and refused, the promotion gate, what *effective* means,
   and what is and is not proven.
+- **[script-library.md](script-library.md)**: the script library. PowerShell scripts with immutable, hashed
+  versions, static-check warnings, and review by someone other than the author. Scripts can't run yet; the page
+  explains the signed path they'll take and the threat model.
+  and what is and is not proven. Since 0.32 it also covers installing from one computer's Patches tab and patch
+  policies, which are approved once and then signed ring by ring by the signer inside a maintenance window.
+- **[patching-setup.md](patching-setup.md)** — turning on signed patching in production, in order (0.32): signed
+  release, signed channel, signer, approvers, the first policy; where each key lives; the live pre-flight.
 - **[containment.md](containment.md)** — stopping writes during an incident (0.28): a global write pause and
   per-business suspension, enforced by the portal, the approval signer and a signed pause the agents obey; the
   tamper-evident audit log, its off-host export and verification; watching from outside.

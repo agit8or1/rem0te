@@ -4,14 +4,16 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
-import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
+import { AccessControlService, technicianGrantAllows, type ActorContext } from '../rbac/access-control.service';
+import type { Capability } from '../rbac/capabilities';
 import { ActorResolverService } from '../rbac/actor-resolver.service';
 import { AccessPolicyService } from '../security-controls/access-policy.service';
 import { AbuseGuardService } from '../security-controls/abuse-guard.service';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import {
-  APPROVALS_REQUIRED, CATALOG, Envelope, MAX_WINDOW_HOURS, PLAN_SCHEMA, Plan, catalogEntry, planDigest, type CatalogAction,
+  APPROVALS_REQUIRED, CATALOG, Envelope, LOG_SOURCES, MAX_WINDOW_HOURS, PLAN_SCHEMA, Plan, catalogEntry, planDigest, type CatalogAction,
 } from './catalog';
+import { sanitizeLogs } from './logs';
 import { SignerClient } from './signer.client';
 import { ContainmentService } from '../containment/containment.service';
 
@@ -54,7 +56,7 @@ export const RequestDto = z.object({
 export type RequestDto = z.infer<typeof RequestDto>;
 
 export const ReconcileDto = z.object({
-  found: z.enum(['running', 'stopped', 'installed', 'not_installed', 'other']),
+  found: z.enum(['running', 'stopped', 'installed', 'not_installed', 'restart_scheduled', 'no_restart_scheduled', 'other']),
   note: z.string().trim().min(3).max(500),
   endpointId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/).optional(),
 }).strict();
@@ -75,6 +77,11 @@ export const AgentResult = z.object({
   agentSha256: z.string().max(64).optional(),
   updates: z.array(PatchOutcome).max(20).optional(),
   reboot: z.object({ pending: z.boolean(), sources: z.array(z.string().max(32)).max(8) }).strict().optional(),
+  // windows.logs.collect (0.32). Bounded here, then redacted again and capped
+  // by sanitizeLogs before anything is stored.
+  logs: z.array(z.object({
+    source: z.enum(LOG_SOURCES), text: z.string().max(16_384), truncated: z.boolean(), note: z.string().max(300).optional(),
+  }).strict()).max(LOG_SOURCES.length).optional(),
 }).strict();
 export type AgentResult = z.infer<typeof AgentResult>;
 
@@ -98,6 +105,13 @@ export interface PlanRequest {
   integration?: { peer: string; key: string };
   display?: Plan['display'];
   deployment?: { id: string; ring: number };
+  /** 0.32: an exact window (a patch policy's maintenance window) instead of startsInMinutes/windowHours. */
+  window?: { notBefore: Date; notAfter: Date };
+  /**
+   * 0.32: submit under a patch policy. The signer signs it at once if it is
+   * inside that policy, and refuses it otherwise; nobody is asked to approve.
+   */
+  underPolicy?: { policyId: string; digest: string; evidence: unknown };
 }
 
 @Injectable()
@@ -118,8 +132,29 @@ export class ActionsService {
   catalog() {
     return {
       configured: this.signer.configured(),
-      actions: CATALOG.map((a) => ({ id: a.id, version: a.version, title: a.title, description: a.description, warnings: a.warnings, verification: a.verification, doesNotProve: a.doesNotProve, direct: a.direct, maxTargets: a.maxTargets })),
+      actions: CATALOG.map((a) => ({
+        id: a.id, version: a.version, title: a.title, description: a.description, warnings: a.warnings, verification: a.verification, doesNotProve: a.doesNotProve,
+        direct: a.direct, maxTargets: a.maxTargets, acknowledge: a.acknowledge, choice: a.choice ?? null, requiresCapability: a.requiresCapability ?? null,
+        maxWindowHours: a.maxWindowHours ?? MAX_WINDOW_HOURS,
+        // What one standard workstation needs; anything else is always high.
+        workstationRisk: a.risk([{ deviceClass: 'WORKSTATION' }]),
+      })),
     };
+  }
+
+  /**
+   * Does this person hold the action's extra capability (0.32:
+   * windows.logs.collect needs computers:event_logs) for every one of these
+   * computers? For a technician it must come from the same grant as the
+   * computer, as for the Event Log tab.
+   */
+  private mayRead(actor: ActorContext | undefined, a: CatalogAction | null, endpointIds: string[]): boolean {
+    if (!a?.requiresCapability) return true;
+    if (!actor) return false;
+    if (actor.isPlatformAdmin) return true;
+    const cap = a.requiresCapability as Capability;
+    if (actor.technician) return endpointIds.length > 0 && endpointIds.every((id) => technicianGrantAllows(actor.technician!, cap, id));
+    return this.acl.can(actor, cap);
   }
 
   async endpointFor(endpointId: string) {
@@ -181,7 +216,7 @@ export class ActionsService {
     const job = await this.createPlan(actor, {
       action, endpointIds: [endpointId], params: dto.params, reason: dto.reason, startsInMinutes: dto.startsInMinutes, windowHours: dto.windowHours, origin, integration,
     });
-    return this.view(job);
+    return this.view(job, actor);
   }
 
   /**
@@ -205,6 +240,14 @@ export class ActionsService {
     }
     if (new Set(eps.map((e) => e.customerId)).size !== 1) throw new BadRequestException({ code: 'BAD_TARGETS', message: 'A plan names computers of one business only.' });
     if (!action.params.safeParse(r.params).success) throw new BadRequestException({ code: 'PARAMS_NOT_ALLOWED', message: 'Those parameters are not allowed for this action.' });
+    const maxWindow = action.maxWindowHours ?? MAX_WINDOW_HOURS;
+    if (r.windowHours > maxWindow) throw new BadRequestException({ code: 'WINDOW_TOO_LONG', message: `This action's approval window is at most ${maxWindow} hour${maxWindow === 1 ? '' : 's'}.` });
+    // 0.32: collecting logs reads event-log text, so it needs what reading
+    // the Event Log tab needs, as well as permission to request actions.
+    if (!this.mayRead(actor, action, eps.map((e) => e.id))) {
+      await this.audit.log({ tenantId: eps[0].tenantId ?? undefined, customerId: eps[0].customerId ?? undefined, actorId: actor.userId, actorIp: actor.ip, action: 'ACTION_DISPATCH_BLOCKED', resource: 'endpoint', resourceId: eps[0].id, meta: { stage: 'request', action: action.id, reason: 'capability_missing', capability: action.requiresCapability } });
+      throw new ForbiddenException({ code: 'ACTION_NOT_GRANTED', message: `Requesting this action also needs ${action.requiresCapability}.` });
+    }
 
     const targets = eps.map((ep) => this.targetOf(ep));
     const risk = action.risk(targets);
@@ -234,8 +277,8 @@ export class ActionsService {
     const signerPolicy = await this.signer.policy(first.customerId!);
     if (signerPolicy.status !== 200) throw new ConflictException({ code: 'APPROVAL_SIGNER_ERROR', message: 'The approval signer did not return this business\'s policy.' });
     const now = new Date();
-    const notBefore = new Date(now.getTime() + r.startsInMinutes * 60_000);
-    const notAfter = new Date(notBefore.getTime() + r.windowHours * 3600_000);
+    const notBefore = r.window?.notBefore ?? new Date(now.getTime() + r.startsInMinutes * 60_000);
+    const notAfter = r.window?.notAfter ?? new Date(notBefore.getTime() + r.windowHours * 3600_000);
     const user = await this.prisma.user.findUnique({ where: { id: actor.userId }, select: { firstName: true, lastName: true, email: true } });
     const plan: Plan = {
       schema: PLAN_SCHEMA,
@@ -256,9 +299,12 @@ export class ActionsService {
     };
     const check = Plan.safeParse(plan);
     if (!check.success) throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: 'A computer\'s identity is incomplete; it cannot be named in a plan.' });
-    const submitted = await this.signer.submit(plan);
+    const submitted = r.underPolicy
+      ? await this.signer.submitUnderPolicy(r.underPolicy.policyId, { plan, policyDigest: r.underPolicy.digest, evidence: r.underPolicy.evidence })
+      : await this.signer.submit(plan);
     if (submitted.status !== 201 || !submitted.body.approvalUrl || submitted.body.digest !== planDigest(plan)) {
-      throw new ConflictException({ code: 'APPROVAL_SIGNER_REFUSED', message: submitted.body.message ?? submitted.body.error ?? 'The approval signer refused the plan.' });
+      // Under a policy, the signer's own code says which bound the plan crossed.
+      throw new ConflictException({ code: r.underPolicy ? 'POLICY_REFUSED' : 'APPROVAL_SIGNER_REFUSED', signerCode: submitted.body.error ?? null, message: submitted.body.message ?? submitted.body.error ?? 'The approval signer refused the plan.' });
     }
     const job = await this.prisma.actionJob.create({
       data: {
@@ -275,14 +321,27 @@ export class ActionsService {
     await this.audit.log({
       tenantId: first.tenantId ?? undefined, customerId: first.customerId ?? undefined, actorId: actor.userId, actorIp: actor.ip,
       action: 'ACTION_REQUESTED', resource: 'action_job', resourceId: job.id,
-      meta: { endpointIds: eps.map((e) => e.id), action: `${action.id}@${action.version}`, params: r.params, risk, approvalsRequired: plan.policy.approvalsRequired, customerSignoff: plan.policy.customerSignoff, origin: origin.kind, via: origin.via, ticketRef: origin.ticketRef, digest: job.digest, deployment: r.deployment ?? null },
+      meta: { endpointIds: eps.map((e) => e.id), action: `${action.id}@${action.version}`, params: r.params, risk, approvalsRequired: plan.policy.approvalsRequired, customerSignoff: plan.policy.customerSignoff, origin: origin.kind, via: origin.via, ticketRef: origin.ticketRef, digest: job.digest, deployment: r.deployment ?? null, underPolicy: r.underPolicy?.policyId ?? null },
     });
+    // Signed already, by the signer's own decision: pull the envelope now.
+    if (r.underPolicy) { await this.refresh(job); return (await this.prisma.actionJob.findUnique({ where: { id: job.id }, include: { targets: true } }))!; }
     return job;
   }
 
-  async view(j: ActionJob & { targets?: ActionTarget[] }) {
+  /**
+   * The job as the portal shows it. viewer decides whether collected content
+   * (windows.logs.collect's text) is included: without a viewer who holds the
+   * action's capability it is replaced by a note, never sent.
+   */
+  async view(j: ActionJob & { targets?: ActionTarget[] }, viewer?: ActorContext) {
     const a = catalogEntry(j.actionId, j.actionVersion);
     const targets = j.targets ?? await this.prisma.actionTarget.findMany({ where: { jobId: j.id } });
+    const readable = this.mayRead(viewer, a, targets.map((t) => t.endpointId));
+    const shown = (r: Prisma.JsonValue | null) => {
+      if (readable || !r || typeof r !== 'object' || Array.isArray(r) || !('logs' in r)) return r;
+      const { logs: _logs, ...rest } = r as Record<string, unknown>;
+      return { ...rest, logsWithheld: `Collected text needs ${a?.requiresCapability ?? 'a capability you do not hold'}.` } as Prisma.JsonValue;
+    };
     const names = new Map((await this.prisma.endpoint.findMany({ where: { id: { in: targets.map((t) => t.endpointId) } }, select: { id: true, name: true, hostname: true } })).map((e) => [e.id, e.hostname ?? e.name]));
     return {
       id: j.id, status: j.status, statusReason: j.statusReason, endpointId: j.endpointId, businessId: j.customerId,
@@ -290,12 +349,12 @@ export class ActionsService {
       params: j.params, reason: j.reason, origin: j.origin, via: j.via, ticketRef: j.ticketRef, requestedById: j.requestedById,
       risk: j.risk, approvalsRequired: j.approvalsRequired, customerSignoff: j.customerSignoff,
       window: { notBefore: j.notBefore, notAfter: j.notAfter }, digest: j.digest, approvalUrl: j.approvalUrl,
-      approvers: j.approvers, dispatchedAt: j.dispatchedAt, deliveries: j.deliveries, outcome: j.outcome, result: j.result, resultAt: j.resultAt,
+      approvers: j.approvers, dispatchedAt: j.dispatchedAt, deliveries: j.deliveries, outcome: j.outcome, result: shown(j.result), resultAt: j.resultAt,
       reconciled: j.reconciledAt ? { at: j.reconciledAt, byId: j.reconciledById, note: j.reconcileNote } : null,
       deploymentId: j.deploymentId, ring: j.ring,
       targets: targets.map((t) => ({
         endpointId: t.endpointId, hostname: names.get(t.endpointId) ?? null, status: t.status, statusReason: t.statusReason,
-        deliveries: t.deliveries, dispatchedAt: t.dispatchedAt, outcome: t.outcome, result: t.result, resultAt: t.resultAt,
+        deliveries: t.deliveries, dispatchedAt: t.dispatchedAt, outcome: t.outcome, result: shown(t.result), resultAt: t.resultAt,
         reconciled: t.reconciledAt ? { at: t.reconciledAt, byId: t.reconciledById, note: t.reconcileNote } : null,
       })),
       createdAt: j.createdAt, updatedAt: j.updatedAt,
@@ -393,7 +452,7 @@ export class ActionsService {
     return this.rollup(id);
   }
 
-  async get(actor: ActorContext, id: string) { await this.scoped(actor, id); return this.view(await this.load(id)); }
+  async get(actor: ActorContext, id: string) { await this.scoped(actor, id); return this.view(await this.load(id), actor); }
 
   async list(actor: ActorContext, endpointId: string) {
     await this.acl.assertEndpointInScope(actor, endpointId);
@@ -401,7 +460,7 @@ export class ActionsService {
     const out = [];
     for (const r of rows) {
       const j = await this.load(r.id);
-      const v = await this.view(j);
+      const v = await this.view(j, actor);
       // A ring plan, seen from one computer: that computer's row only.
       out.push(v.targets.length > 1 ? { ...v, targets: v.targets.filter((t) => t.endpointId === endpointId), ringSize: v.targets.length } : v);
     }
@@ -421,7 +480,7 @@ export class ActionsService {
     if (!r.count) throw new ConflictException({ code: 'NOT_CANCELABLE', message: `This action is ${j.status.toLowerCase().replace(/_/g, ' ')}; it can no longer be canceled.` });
     await this.prisma.actionTarget.updateMany({ where: { jobId: id, status: 'PENDING' }, data: { status: 'CANCELED', statusReason: 'plan canceled' } });
     await this.audit.log({ tenantId: j.tenantId ?? undefined, customerId: j.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'ACTION_CANCELED', resource: 'action_job', resourceId: id });
-    return this.view(await this.load(id));
+    return this.view(await this.load(id), actor);
   }
 
   /**
@@ -432,7 +491,7 @@ export class ActionsService {
    */
   async reconcile(actor: ActorContext, id: string, raw: unknown, now = new Date()) {
     const dto = ReconcileDto.safeParse(raw);
-    if (!dto.success) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'found (running | stopped | installed | not_installed | other) and a note of at least 3 characters are required.' });
+    if (!dto.success) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'found (running | stopped | installed | not_installed | restart_scheduled | no_restart_scheduled | other) and a note of at least 3 characters are required.' });
     const j = await this.scoped(actor, id);
     if (!this.mayManage(actor, j)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only the requester, a Business Owner of this business or a Platform Admin can reconcile.' });
     const t = dto.data.endpointId ? j.targets.find((x) => x.endpointId === dto.data.endpointId) : j.targets.length === 1 ? j.targets[0] : undefined;
@@ -447,7 +506,7 @@ export class ActionsService {
     });
     if (!r.count) throw new ConflictException({ code: 'NOT_RECONCILABLE', message: 'Already reconciled.' });
     await this.audit.log({ tenantId: j.tenantId ?? undefined, customerId: j.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'ACTION_RECONCILED', resource: 'action_job', resourceId: id, meta: { endpointId: t.endpointId, found: dto.data.found, note: dto.data.note, agentAnswered: t.result !== null } });
-    return this.view(await this.rollup(id, now));
+    return this.view(await this.rollup(id, now), actor);
   }
 
   // ── Heartbeat ─────────────────────────────────────────────────────────────
@@ -522,6 +581,7 @@ export class ActionsService {
     if (!(await this.acl.canReachEndpoint(live, ep))) return 'requester_no_longer_authorized';
     const d = await this.policy.evaluateAction(live, ep, plan.policy.risk);
     if (!d.ok) return d.reason === 'identity_paused' ? 'requester_paused' : d.reason === 'protected_device_class' ? 'protected_device_class' : d.reason === 'contained' ? 'contained' : 'requester_no_longer_authorized';
+    if (!this.mayRead(live, catalogEntry(j.actionId, j.actionVersion), [ep.id])) return 'requester_lost_capability';
     if (plan.targets.length === 1) {
       const admitted = await this.abuse.admit({ identity: `user:${j.requestedById}`, tier: d.tier, kind: 'WRITE', endpointId: ep.id, customerId: ep.customerId, entryPoint: j.via === 'clientst0r' ? 'integration' : 'ui' });
       if (!admitted.ok) return admitted.reason;
@@ -538,17 +598,20 @@ export class ActionsService {
       if (!p.success) continue;
       const r = p.data;
       // Never another computer's result — and no ack, so it is not hidden either.
-      const t = await this.prisma.actionTarget.findUnique({ where: { jobId_endpointId: { jobId: r.jobId, endpointId } } });
+      const t = await this.prisma.actionTarget.findUnique({ where: { jobId_endpointId: { jobId: r.jobId, endpointId } }, include: { job: { select: { actionId: true } } } });
       if (!t) continue;
       acks.push(r.jobId);
       if (t.result !== null || !['DISPATCHED', 'UNKNOWN'].includes(t.status)) continue;
+      // Collected text only for the action that collects it, redacted again
+      // here (the agent's redaction is not trusted) and capped.
+      if (r.logs) r.logs = t.job.actionId === 'windows.logs.collect' ? sanitizeLogs(r.logs) : undefined;
       const u = await this.prisma.actionTarget.updateMany({
         where: { id: t.id, status: { in: ['DISPATCHED', 'UNKNOWN'] }, result: { equals: Prisma.DbNull } },
         data: { status: STATUS_FOR[r.outcome], outcome: r.outcome, statusReason: r.reason ?? null, result: r as unknown as Prisma.InputJsonValue, resultAt: new Date() },
       });
       if (u.count) {
         const j = await this.rollup(r.jobId);
-        await this.audit.log({ tenantId: j.tenantId ?? undefined, customerId: j.customerId, action: 'ACTION_RESULT', resource: 'action_job', resourceId: j.id, meta: { endpointId, outcome: r.outcome, reason: r.reason ?? null, observed: r.observed ?? null, updates: r.updates?.map((x) => `${x.kb ?? x.updateId}:${x.state}`) ?? null } });
+        await this.audit.log({ tenantId: j.tenantId ?? undefined, customerId: j.customerId, action: 'ACTION_RESULT', resource: 'action_job', resourceId: j.id, meta: { endpointId, outcome: r.outcome, reason: r.reason ?? null, observed: r.observed ?? null, updates: r.updates?.map((x) => `${x.kb ?? x.updateId}:${x.state}`) ?? null, logs: r.logs?.map((x) => `${x.source}:${x.text.length}${x.truncated ? '+' : ''}`) ?? null } });
       }
     }
     return acks;

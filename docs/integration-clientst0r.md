@@ -149,7 +149,9 @@ Audit actions: `INTEGRATION_JOB_ACCEPTED`, `INTEGRATION_JOB_REJECTED`, `INTEGRAT
 ## Proposing an approved action (0.26)
 
 ClientSt0r can **propose** a catalog action on one computer, today only `windows.service.start@1` with
-`{"service":"Spooler"}`. It can't approve, dispatch or run one. The proposal goes through the same path as the
+`{"service":"Spooler"}`. The 0.32 maintenance actions (service restart, restart schedule and cancel, log
+collection) are not offered to ClientSt0r and a proposal naming one is `ACTION_NOT_IN_CATALOG`: advertising them is a
+change to the ticket-rmm contract that has not been agreed. It can't approve, dispatch or run one. The proposal goes through the same path as the
 portal's own **Request approval** button, as the delegated technician, and it gets the same live access check
 and the same approval signer.
 

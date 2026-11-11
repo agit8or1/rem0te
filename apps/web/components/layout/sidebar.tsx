@@ -36,7 +36,7 @@ export function Sidebar() {
   const router = useRouter();
   const { resolvedTheme, setTheme } = useTheme();
   const {
-    user, can, isPlatformAdmin, isBusinessOwner, accessLevel, technician, assignedBusinesses, canManageTechnicians,
+    user, can, isPlatformAdmin, isBusinessOwner, accessLevel, technician, assignedBusinesses, canManageTechnicians, isIndependentReviewer,
   } = usePermissions();
 
   // Branding lives on the platform record and is readable only by the
@@ -75,7 +75,7 @@ export function Sidebar() {
 
   const ctx: NavCtx = {
     can, isPlatformAdmin, isBusinessOwner, technician: !!technician,
-    hasAssignments: assignedBusinesses.length > 0, canManageTechnicians,
+    hasAssignments: assignedBusinesses.length > 0, canManageTechnicians, isIndependentReviewer,
   };
   const here = locate(pathname);
 

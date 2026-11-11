@@ -126,6 +126,76 @@ func TestUpdateParamsAreClosed(t *testing.T) {
 	}
 }
 
+// 0.32: a policy plan's "allow" narrows; it is as closed as the rest.
+func TestUpdateAllowIsClosedAndOnlyNarrows(t *testing.T) {
+	one := []any{map[string]any{"updateId": cuID, "revision": float64(200)}} // as JSON decodes it
+	ok := map[string]any{"reboot": "never", "updates": one, "allow": map[string]any{"classifications": []any{patch.ClassSecurity}, "severities": []any{"Critical", "Unrated"}, "excludeKbs": []any{"KB5000001"}}}
+	if !updateParamsOK(ok) {
+		t.Fatal("a well-formed allow was refused")
+	}
+	for name, allow := range map[string]any{
+		"not an object":         "Security Updates",
+		"no classifications":    map[string]any{"severities": []any{"Critical"}},
+		"empty classifications": map[string]any{"classifications": []any{}},
+		"driver class":          map[string]any{"classifications": []any{patch.ClassDrivers}},
+		"unknown class":         map[string]any{"classifications": []any{"00000000-0000-0000-0000-000000000000"}},
+		"class by name":         map[string]any{"classifications": []any{"Security Updates"}},
+		"duplicate class":       map[string]any{"classifications": []any{patch.ClassSecurity, patch.ClassSecurity}},
+		"bad severity":          map[string]any{"classifications": []any{patch.ClassSecurity}, "severities": []any{"Urgent"}},
+		"bad kb":                map[string]any{"classifications": []any{patch.ClassSecurity}, "excludeKbs": []any{"5000001"}},
+		"extra field":           map[string]any{"classifications": []any{patch.ClassSecurity}, "include": []any{cuID}},
+		"script":                map[string]any{"classifications": []any{patch.ClassSecurity}, "script": "whoami"},
+	} {
+		if updateParamsOK(map[string]any{"reboot": "never", "updates": one, "allow": allow}) {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if updateParamsOK(map[string]any{"reboot": "never", "updates": one, "allow": ok["allow"], "extra": 1}) {
+		t.Error("a fourth parameter was accepted")
+	}
+	if updateParamsOK(map[string]any{"reboot": "in_window", "updates": one, "allow": ok["allow"]}) {
+		t.Error("a reboot other than never was accepted")
+	}
+}
+
+// The filter is applied to what Windows Update itself says, not to what the
+// plan's display claims: a CU labelled "Updates" by the portal is still a
+// security update here, and a "Security" label on an ordinary update does not
+// get it past a security-only policy.
+func TestPolicyPlanFilterAppliesWindowsUpdatesOwnAnswer(t *testing.T) {
+	f := newFixture(t)
+	w, reg := f.withWUA()
+	ordID := "22222222-3333-4444-5555-666666666666"
+	w.Offered = append(w.Offered, patch.Update{UpdateID: ordID, Revision: 4, KB: "KB5044100", Title: ".NET update", Classification: patch.ClassUpdates, EulaAccepted: true})
+	p := updatePlan()
+	p["params"] = map[string]any{"reboot": "never", "allow": map[string]any{"classifications": []any{patch.ClassSecurity}},
+		"updates": []any{map[string]any{"updateId": cuID, "revision": 200}, map[string]any{"updateId": ordID, "revision": 4}}}
+	p["display"] = map[string]any{"updates": []any{map[string]any{"updateId": ordID, "revision": 4, "kb": "KB5044100", "title": "Critical security update", "className": "Security Updates", "severity": "Critical"}}, "deployment": nil}
+	r := f.runWith(f.envelope(p, nil), w, reg)
+	got := map[string]string{}
+	for _, u := range r.Updates {
+		got[u.UpdateID] = u.State + ":" + u.Reason
+	}
+	if got[cuID] != "restart_required:" || got[ordID] != "excluded:classification_not_in_policy" {
+		t.Fatalf("%v", got)
+	}
+	for _, id := range w.Installed {
+		if id.UpdateID == ordID {
+			t.Fatalf("the ordinary update was installed: %v", w.Installed)
+		}
+	}
+
+	f = newFixture(t)
+	w, reg = f.withWUA()
+	p = updatePlan()
+	p["params"] = map[string]any{"reboot": "never", "allow": map[string]any{"classifications": []any{patch.ClassSecurity}, "excludeKbs": []any{"KB5044284"}},
+		"updates": []any{map[string]any{"updateId": cuID, "revision": 200}}}
+	r = f.runWith(f.envelope(p, nil), w, reg)
+	if r.Outcome != "no_change" || len(r.Updates) != 1 || r.Updates[0].State != "excluded" || r.Updates[0].Reason != "kb_excluded_by_policy" {
+		t.Fatalf("excluded KB: %+v", r)
+	}
+}
+
 func TestRingPlanRunsOnlyOnNamedComputers(t *testing.T) {
 	ring := updatePlan(target("ep-aaaaaaaa", "111111111", "s1"), target("ep-bbbbbbbb", "123456789", "device-secret"), target("ep-cccccccc", "333333333", "s3"))
 	f := newFixture(t)

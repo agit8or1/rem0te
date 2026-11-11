@@ -31,6 +31,8 @@ export const CAP = {
   ACTIONS_REQUEST: 'actions:request',
   ALERTS_VIEW: 'monitoring:alerts',
   MONITORING_CONFIGURE: 'monitoring:configure',
+  SCRIPTS_AUTHOR: 'scripts:author',
+  SCRIPTS_REVIEW: 'scripts:review',
 } as const;
 
 export type Capability = (typeof CAP)[keyof typeof CAP];
@@ -99,5 +101,6 @@ export function usePermissions() {
     technician: user?.technician ?? null,
     assignedBusinesses: user?.assignedBusinesses ?? [],
     canManageTechnicians: !!user?.isPlatformAdmin || (user?.platformPermissions ?? []).includes('technicians:manage'),
+    isIndependentReviewer: !!user?.isPlatformAdmin || (user?.platformPermissions ?? []).includes('approvals:review'),
   };
 }

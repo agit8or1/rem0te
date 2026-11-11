@@ -12,6 +12,8 @@
  *   node dist/approval-signer/main.js pause list
  *   node dist/approval-signer/main.js pause set --global|--business <id> --reason '<why>'
  *   node dist/approval-signer/main.js pause clear --id <id> --reason '<why>'
+ *   node dist/approval-signer/main.js patch-policy list
+ *   node dist/approval-signer/main.js patch-policy revoke --id <id> --reason '<why>'
  *
  * Environment: APPROVAL_SIGNER_DIR, APPROVAL_ORIGIN, APPROVAL_RP_ID,
  * APPROVAL_PUBLIC_PORT (3201), APPROVAL_INTERNAL_PORT (3202).
@@ -22,9 +24,9 @@
  * check that stays true.
  */
 import { existsSync, writeFileSync } from 'node:fs';
-import { generateKeyPairSync } from 'node:crypto';
+import { createPublicKey, generateKeyPairSync } from 'node:crypto';
 import * as path from 'node:path';
-import { fingerprint, keysDocument, loadSigningKey, type RosterMember } from './core';
+import { approvalsOf, effectivePolicyStatus, fingerprint, keysDocument, loadSigningKey, verifyPolicy, type RosterMember } from './core';
 import { SignerStore } from './store';
 import { startSigner } from './server';
 
@@ -135,6 +137,32 @@ switch (cmd) {
     die('pause list|set|clear');
     break;
   }
+  case 'patch-policy': {
+    // v0.32. The portal proposes and may revoke; approval is on the public
+    // page with passkeys. The operator can list and revoke. Nothing — here or
+    // over HTTP — reactivates a revoked policy: approve a new one instead.
+    if (sub === 'list') {
+      const now = new Date();
+      for (const id of store.patchPolicies()) {
+        const r = store.patchPolicy(id)!;
+        const ok = verifyPolicy(r, createPublicKey(loadSigningKey(store.keyPem()).key));
+        console.log(`${r.policyId}  ${effectivePolicyStatus(r, now)}  ${!r.signature ? 'unsigned' : ok ? 'signature ok' : 'SIGNATURE DOES NOT VERIFY'}  ${r.doc.businessId}  "${r.doc.name}"  expires ${r.doc.expiresAt}  approvals=${approvalsOf(r).map((a) => a.name).join(',') || '-'}  plans=${r.ledger.length}${r.revokedAt ? `  revoked ${r.revokedAt} by ${r.revokedBy}: ${r.revokeReason}` : ''}`);
+        for (const f of r.refusals.slice(-3)) console.log(`    refused ${f.at} ${f.jobId}: ${f.code} — ${f.message}`);
+      }
+      break;
+    }
+    if (sub === 'revoke') {
+      const id = arg('id') || die('--id is required');
+      const reason = arg('reason') || die('--reason is required');
+      const r = store.patchPolicy(id) || die(`no policy ${id}`);
+      if (r.revokedAt) die(`${id} was already revoked at ${r.revokedAt}`);
+      if (!store.revokePatchPolicy(id, { at: new Date().toISOString(), by: 'operator', reason })) die(`${id} was revoked a moment ago`);
+      console.log(`revoked ${id}`);
+      break;
+    }
+    die('patch-policy list|revoke --id <id> --reason <why>');
+    break;
+  }
   default:
-    die('usage: main.js serve|keygen|keys|roster list|roster add|roster disable|policy set|pause list|set|clear');
+    die('usage: main.js serve|keygen|keys|roster list|roster add|roster disable|policy set|pause list|set|clear|patch-policy list|revoke');
 }
