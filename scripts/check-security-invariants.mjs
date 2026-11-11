@@ -611,7 +611,7 @@ check(
 //     touches anything. screenshots.mjs had no such guard and defaulted to
 //     port 3000 — the production web port — until 0.29.
 {
-  for (const f of ['apps/web/scripts/screenshots.mjs', 'apps/web/scripts/capture-media.mjs', 'apps/web/scripts/capture-video.mjs', 'apps/web/scripts/e2e-navigation.mjs']) {
+  for (const f of ['apps/web/scripts/screenshots.mjs', 'apps/web/scripts/capture-media.mjs', 'apps/web/scripts/capture-video.mjs', 'apps/web/scripts/e2e-navigation.mjs', 'apps/web/scripts/e2e-search-palette.mjs']) {
     const src = read(f);
     check(`${f.split('/').pop()} refuses https and ports 3000/443`, /:\(3000\|443\)\\b/.test(src) && /https:\\\/\\\//.test(src) && /throw new Error\(`Refusing/.test(src), `${f} must throw before capturing against a production-looking WEB_URL`);
   }
@@ -1045,6 +1045,70 @@ check(
       && /if \(dto\.rustdeskId\) \{\s*this\.acl\.assertPlatformAdmin\(actor\);/.test(eps),
     'the node created by ID must carry no secret or password, and stay Platform Admin only — if it ever mints one, gate it');
   check('the enrolment step-up suite runs in CI', /\benrol-stepup\b/.test(read('scripts/run-e2e.sh')), 'add e2e-enrol-stepup to run-e2e.sh');
+}
+
+// 27. Global search (0.33). A search result is a disclosure like a list row,
+//     so every group starts from its own list route's where builder — the
+//     device list's scopedWhere (visibility AND-ed), GET /businesses' and
+//     GET /sites' listWhere, GET /users' memberWhere, the alerts list's
+//     alertWhere — with the match AND-ed onto it, and is gated by that list's
+//     capability. The list routes use the same builders, so the two cannot
+//     drift. Results name no secret; searches are throttled, not audited and
+//     not logged; query text reaches LIKE only escaped.
+{
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const svc = code(read('apps/api/src/search/search.service.ts'));
+  const ctl = code(read('apps/api/src/search/search.controller.ts'));
+  const qry = read('apps/api/src/search/query.ts');
+  const fn = (name) => { const i = svc.indexOf(`private async ${name}(`); return i < 0 ? '' : svc.slice(i, svc.indexOf('\n  }\n', i)); };
+  const comp = fn('computers'), biz = fn('businessGroup'), site = fn('siteGroup'), usr = fn('userGroup'), alr = fn('alertGroup');
+  check('search: each group starts from its list route\'s where builder, with the match AND-ed onto it',
+    /where: \{ AND: \[this\.devices\.scopedWhere\(actor, \{ status: 'current' \}\), match\] \}/.test(comp)
+      && /where: this\.businesses\.listWhere\(actor, likeEscape\(q\)\)/.test(biz)
+      && /where: \{ AND: \[this\.sites\.listWhere\(actor\), \{ OR: /.test(site)
+      && /AND: \[\s*this\.users\.memberWhere\(actor\),/.test(usr)
+      && /where: \{ AND: \[this\.monitoring\.alertWhere\(actor\), /.test(alr)
+      && !/\.\.\.\s*this\.(acl|devices|businesses|sites|users|monitoring)\./.test(svc) && !/endpointVisibilityWhere|businessWhere|resolveScope/.test(svc),
+    'computers: AND [scopedWhere, match]; businesses: listWhere; sites/users/alerts: AND [builder, …]; no builder spread, no hand-written scope');
+  check('search: phase two reads only the ids phase one returned',
+    /const ids = found\.map\(\(r\) => r\.id\);/.test(comp) && /FROM unnest\(\$\{ids\}::text\[\]\) AS u\(id\)/.test(comp)
+      && (comp.match(/FROM "Endpoint"/g) ?? []).length === 0 && (comp.match(/JOIN "Endpoint" e ON e\.id = (u|k)\.id/g) ?? []).length === 2
+      && /SELECT \* FROM ranked ORDER BY/.test(comp) && /FROM kept k/.test(comp),
+    'the ranked SQL must start from unnest(ids) and the output from kept rows only');
+  check('search: the list routes use the same builders',
+    /where: this\.listWhere\(actor, search\),/.test(read('apps/api/src/businesses/businesses.service.ts'))
+      && /where: this\.listWhere\(actor, businessId\),/.test(read('apps/api/src/sites/sites.service.ts'))
+      && /where: this\.memberWhere\(actor, businessId\),/.test(read('apps/api/src/users/users.service.ts'))
+      && /where: this\.scopedWhere\(actor, \{ status: q\.status \}\)/.test(read('apps/api/src/endpoints/endpoint-list.service.ts')),
+    'GET /businesses, /sites, /users and the device list must build their where with the builders search uses');
+  check('search: each group is gated by its list page\'s capability',
+    /computers: 'computers:view',\s*businesses: null,\s*sites: 'computers:view',\s*users: 'users:view',\s*alerts: 'monitoring:alerts',/.test(qry)
+      && /return this\.acl\.can\(actor, GROUP_CAPABILITY\[group\]\);/.test(svc)
+      && /^\s*if \(!this\.allowed\(actor, 'computers'\)\) return null;/m.test(comp) && /^\s*if \(!this\.allowed\(actor, 'sites'\)\) return null;/m.test(site)
+      && /^\s*if \(!this\.allowed\(actor, 'users'\)\) return null;/m.test(usr)
+      && /catch \(e\) \{ if \(e instanceof ForbiddenException\) return null; throw e; \}/.test(svc)
+      && ['computers', 'businessGroup', 'siteGroup', 'userGroup', 'alertGroup'].every((g) => new RegExp(`gated\\(\\(\\) => this\\.${g}\\(actor, q\\)\\)`).test(svc)),
+    'GROUP_CAPABILITY must name computers:view / none / computers:view / users:view / monitoring:alerts, and each group must check it (alerts through alertWhere)');
+  const containsArgs = [...svc.matchAll(/contains: ([^,}]+)/g)].map((m) => m[1].trim());
+  check('search: query text reaches LIKE only escaped',
+    containsArgs.length >= 6 && containsArgs.every((a) => /^likeEscape\((q|t)\)$/.test(a)) && /listWhere\(actor, likeEscape\(q\)\)/.test(biz)
+      && /ILIKE \$\{p\.contains\}/.test(comp) && !/ILIKE \$\{q\}|LIKE '%' \|\|/.test(svc)
+      && /return s\.replace\(\/\[\\\\%_\]\/g, \(c\) => `\\\\\$\{c\}`\);/.test(qry),
+    `every contains: must be likeEscape(q|t) (got ${containsArgs.join(', ')}); raw SQL only through likePatterns`);
+  check('search: results name no secret, hash, token or credential',
+    !/passwordHash|permanentPassword|agentSecretHash|hasPassword|mfa|totp|secret|token|apiKey|capabilities:/i.test(svc),
+    'nothing secret may be selected or returned by SearchService');
+  const filt = read('apps/api/src/common/filters/global-exception.filter.ts');
+  check('search: one GET route, throttled, not audited, never logs the query',
+    (ctl.match(/@(Get|Post|Put|Patch|Delete)\(/g) ?? []).length === 1 && /@Get\(\)\s*@RateLimit\(SEARCH_RATE_LIMIT\)/.test(ctl)
+      && /export const SEARCH_RATE_LIMIT = (\d+);/.test(ctl) && Number(/SEARCH_RATE_LIMIT = (\d+)/.exec(ctl)?.[1]) <= 120
+      && /@Controller\('search'\)\s*@UseGuards\(JwtAuthGuard\)/.test(ctl) && /parseSearchQuery\(q\)/.test(ctl)
+      && ![svc, ctl].some((s) => /AuditService|audit\.|Logger|console\./.test(s))
+      && /const logged = SEARCH_PATH\.test\(request\.path \?\? ''\) \? request\.path : request\.url;/.test(filt) && /\$\{request\.method\} \$\{logged\} →/.test(filt),
+    'GET /search only, @RateLimit ≤ 120/min, JWT, parsed q; no audit or logger in search; the 5xx log line drops its query string');
+  const others = walk('apps/api/src').filter((f) => /controller\.ts$/.test(f) && f !== 'apps/api/src/search/search.controller.ts')
+    .filter((f) => /@Get\(\s*'[^']*\bsearch\b[^']*'\s*\)/.test(read(f)));
+  check('search: there is one search route — /admin/search (business-only scoping) stays removed', others.length === 0, `search routes in: ${others.join(', ')}`);
 }
 
 if (failures.length > 0) {

@@ -138,6 +138,64 @@ and search still finds a device by it.
 heartbeats every 3 minutes, so a machine that has genuinely dropped shows Offline
 a few minutes later, not instantly.
 
+### Search everything — Ctrl+K (0.33)
+
+The **Search** box at the top of every page, or **Ctrl+K** (**⌘K** on a Mac)
+from anywhere, searches devices, businesses, sites, people and open alerts in
+one go. Type at least two characters (at most 100); results appear when you
+pause. **↑ / ↓** move through them, **Enter** opens the highlighted one, **Esc**
+closes the box. Ctrl/⌘-click opens a result in a new tab.
+
+| Group | Matches on | Opens | Needs |
+|---|---|---|---|
+| **Devices** | Name, hostname, RustDesk ID, serial number, signed-in user, IP address, a network adapter's IPv4, alias | The device's page | *View computers* |
+| **Businesses** | Name, code, email, city | The business's page | Nothing beyond being in it (as the Businesses list) |
+| **Sites** | Name, city, address | The device list filtered to that site | *View computers* |
+| **People** | First name, last name, email — "jane doe" finds Jane Doe | The Users list, filtered to that person | *View business users* |
+| **Open alerts** | Title (open and acknowledged only) | The device's Monitoring tab, or the alerts list | *See and work alerts* |
+
+**What a device result shows.** Its name, online or offline, business and site,
+and — unless the name itself matched — *which* field matched and its value
+(*Serial: 5CG1234XYZ*, *RustDesk ID: 123456789*, *Adapter IP: 10.0.4.17*). Only
+the field that matched is returned; the others are not sent. Every one of them
+is already on the device's own page for anyone who can open it, which is the
+only kind of device search can find.
+
+**Order and limits.** An exact match comes first, then one that starts with
+what you typed, then one that contains it; among equals, online devices first,
+then by name. Each group shows at most **8**. When there are more, the group
+says *first 8*; for devices there is a link to the device list's own search,
+which pages through everything (it matches a slightly different set of fields:
+OS, business and site names, but not serial numbers or adapter addresses).
+Archived devices and inactive sites are not found, as on their lists.
+
+**You only find what you could already open.** Each group is built from the
+same rule as its own list page — not a copy of it: devices from the device
+list's scope (a Business User sees only devices assigned to them or shared
+company-wide, a technician only their assignment's), businesses, sites and
+people from their list routes, alerts from the alerts list. A group you have
+no permission for is **left out**, never shown as empty. Another business's
+device, site or person is not found by anything you type — not even its exact
+hostname or RustDesk ID. Search grants nothing: opening a result applies that
+page's own check again.
+
+**Privacy and limits.** Searches are not written to the audit log (a keystroke
+is not an event), and the API does not log the query text — an error is
+logged with the path only. A reverse proxy in front of Rem0te keeps its own
+access log, which records the address of each request, search included.
+Results are sent with `Cache-Control: no-store`. Searching is limited to **120
+requests a minute per client address**; past that the box says *Too many
+searches* until the minute is up. Typing pauses of 200 ms trigger a request,
+so ordinary typing stays well inside it.
+
+**How fast.** Measured end to end through the API on a shared scratch
+Postgres 16 (Platform Admin, every device in scope): 50–70 ms over 2,000
+devices and 300–450 ms over 20,000 — in line with the device list's own
+search (56 ms and 320 ms on the same data), which scans the same way. A
+two-letter query that matches nearly every device (*pc*) is the slow case:
+about 0.3 s at 2,000 and 1 s at 20,000, because every match has to be ranked.
+There is no search index; the measured trade-off is in the 0.33 changelog.
+
 ### The device workspace (0.31)
 
 Opening a computer gives you one page for it.

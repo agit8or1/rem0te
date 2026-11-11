@@ -184,10 +184,11 @@ try {
     check(ids.includes(epA.id) && ids.includes(epB.id), 'sees every computer');
   }
   {
-    const r = await req('GET', `/admin/search?q=E2E-`, { cookie: cAdmin });
-    const found = (r.body?.data?.computers ?? []).map((c) => c.id);
-    check(r.body?.data?.scope === 'platform' && found.includes(epA.id) && found.includes(epB.id),
-      'global search spans businesses', JSON.stringify(r.body?.data?.scope));
+    // GET /search (0.33) replaced /admin/search, which scoped by business alone.
+    const r = await req('GET', `/search?q=${encodeURIComponent(`-PC-${sfx}`)}`, { cookie: cAdmin });
+    const found = (r.body?.data?.groups?.computers?.items ?? []).map((c) => c.id);
+    check(r.status === 200 && found.includes(epA.id) && found.includes(epB.id),
+      'global search spans businesses', `HTTP ${r.status}, ${found.length} computers`);
   }
   {
     const r = await req('POST', '/businesses', {
@@ -418,10 +419,10 @@ try {
     check(r.status === 403, 'CANNOT make themselves a Platform Admin', `HTTP ${r.status}`);
   }
   {
-    const r = await req('GET', `/admin/search?q=E2E-`, { cookie: cUserA });
-    const found = (r.body?.data?.computers ?? []).map((c) => c.id);
+    const r = await req('GET', `/search?q=${encodeURIComponent(`-PC-${sfx}`)}`, { cookie: cUserA });
+    const found = (r.body?.data?.groups?.computers?.items ?? []).map((c) => c.id);
     check(r.status === 200 && !found.includes(epB.id),
-      'search stays inside their own business', `saw ${found.length} computers`);
+      'search stays inside their own business', `HTTP ${r.status}, saw ${found.length} computers`);
   }
 
   // ── Quick Connect ─────────────────────────────────────────────────────────

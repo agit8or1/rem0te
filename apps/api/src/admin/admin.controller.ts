@@ -7,7 +7,6 @@ import {
   Param,
   Patch,
   Post,
-  Query,
   UseGuards,
 } from '@nestjs/common';
 import { IsBoolean, IsOptional } from 'class-validator';
@@ -78,15 +77,8 @@ export class AdminController {
     return { success: true, data: await this.adminService.assignDevice(actor, id, businessId) };
   }
 
-  // ── Global search ─────────────────────────────────────────────────────────
-
-  /**
-   * Cross-cutting search. A Platform Admin searches everything; anyone else
-   * gets results confined to their own business by the same scope rule as
-   * every other read.
-   */
-  @Get('search')
-  async search(@Actor() actor: ActorContext, @Query('q') q?: string) {
-    return { success: true, data: await this.adminService.search(actor, q ?? '') };
-  }
+  // GET /admin/search was removed in 0.33. It scoped computers by business
+  // alone, so a Business User found computers assigned only to others and a
+  // technician restricted to named computers found every one in the business.
+  // GET /search (SearchService) replaces it, built from each list's own rule.
 }

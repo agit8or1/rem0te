@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
@@ -47,13 +48,18 @@ export class SitesService {
     private readonly acl: AccessControlService,
   ) {}
 
-  async findAll(actor: ActorContext, businessId?: string) {
+  /**
+   * The sites this caller may list. Shared by GET /sites and global search
+   * (SearchService). Callers gate on computers:view, as the routes do.
+   */
+  listWhere(actor: ActorContext, businessId?: string): Prisma.SiteWhereInput {
     const scope = this.acl.resolveScope(actor, businessId);
+    return { ...(scope ? { customerId: scope } : {}), isActive: true };
+  }
+
+  async findAll(actor: ActorContext, businessId?: string) {
     return this.prisma.site.findMany({
-      where: {
-        ...(scope ? { customerId: scope } : {}),
-        isActive: true,
-      },
+      where: this.listWhere(actor, businessId),
       include: {
         customer: { select: { id: true, name: true } },
         _count: { select: { endpoints: true } },

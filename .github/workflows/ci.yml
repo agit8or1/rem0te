@@ -151,6 +151,11 @@ jobs:
       - name: Patch summary tests
         run: node apps/api/scripts/unit-patch-summary.mjs
 
+      # Global search (0.33): q is 2–100 visible characters, LIKE metacharacters
+      # are literal, the ranking, and which capability gates each group.
+      - name: Global search tests
+        run: node apps/api/scripts/unit-search.mjs
+
       # The panel updater's release-tag check (0.30.1): real gpg keys and a
       # real signed tag, one keyring holding the release key AND another, so
       # the pinned check is tested against exactly the case it exists for.

@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import * as argon2 from 'argon2';
-import { RoleType } from '@prisma/client';
+import { Prisma, RoleType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
@@ -66,25 +66,32 @@ export class BusinessesService {
 
   // ── Read ──────────────────────────────────────────────────────────────────
 
-  async findAll(actor: ActorContext, search?: string, includeInactive = false) {
+  /**
+   * The businesses this caller may list, optionally narrowed by a search.
+   * Shared by GET /businesses and global search (SearchService), so the two
+   * can never disagree about which businesses a person can find.
+   */
+  listWhere(actor: ActorContext, search?: string): Prisma.CustomerWhereInput {
     const scope = this.acl.resolveScope(actor);
+    return {
+      ...(scope ? { id: scope } : {}),
+      isArchived: false,
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search, mode: 'insensitive' } },
+              { code: { contains: search, mode: 'insensitive' } },
+              { email: { contains: search, mode: 'insensitive' } },
+              { city: { contains: search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+  }
 
+  async findAll(actor: ActorContext, search?: string) {
     return this.prisma.customer.findMany({
-      where: {
-        ...(scope ? { id: scope } : {}),
-        isArchived: false,
-        ...(includeInactive ? {} : {}),
-        ...(search
-          ? {
-              OR: [
-                { name: { contains: search, mode: 'insensitive' } },
-                { code: { contains: search, mode: 'insensitive' } },
-                { email: { contains: search, mode: 'insensitive' } },
-                { city: { contains: search, mode: 'insensitive' } },
-              ],
-            }
-          : {}),
-      },
+      where: this.listWhere(actor, search),
       select: {
         id: true, name: true, code: true, email: true, phone: true,
         address: true, city: true, state: true, country: true, postalCode: true,

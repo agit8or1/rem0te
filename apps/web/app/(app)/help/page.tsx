@@ -216,6 +216,50 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'global-search',
+    title: 'Searching Everything (Ctrl+K)',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          The <strong className="text-foreground">Search</strong> box at the top of every page — or{' '}
+          <strong className="text-foreground">Ctrl+K</strong> (<strong className="text-foreground">⌘K</strong> on a
+          Mac) from anywhere — searches devices, businesses, sites, people and open alerts at once. Type at least two
+          characters; the arrow keys move through the results, Enter opens one, Esc closes the box.
+        </p>
+        <ul className="list-disc pl-5 space-y-1.5">
+          <li>
+            <strong className="text-foreground">Devices</strong> match by name, hostname, RustDesk ID, serial number,
+            signed-in user, IP address, a network adapter&apos;s IPv4 address or alias. A result says which of those
+            matched. Archived devices are not included, as in the device list.
+          </li>
+          <li>
+            <strong className="text-foreground">Businesses</strong> by name, code, email or city;{' '}
+            <strong className="text-foreground">sites</strong> by name, city or address (a site opens the device list
+            filtered to it); <strong className="text-foreground">people</strong> by name or email;{' '}
+            <strong className="text-foreground">alerts</strong> by title, open and acknowledged ones only.
+          </li>
+          <li>
+            Exact matches come first, then ones that start with what you typed. Each group shows at most eight; when
+            there are more it says so, and for devices links to the device list&apos;s own search.
+          </li>
+        </ul>
+        <p>
+          <strong className="text-foreground">You only ever find what you could already open.</strong> Each group uses
+          the same rules as its own page: devices need <em>View computers</em> and show only the devices you can see
+          (for a Business User, the ones assigned to you or shared company-wide; for a technician, the ones your
+          assignment names); sites need <em>View computers</em>; people need <em>View business users</em>; alerts need{' '}
+          <em>See and work alerts</em>. A group you have no permission for is left out, not shown as empty. Another
+          business&apos;s device is not found even by its exact hostname or RustDesk ID.
+        </p>
+        <p>
+          Searches are not written to the audit log and the server does not log what you typed. A reverse proxy in
+          front of Rem0te may still record request addresses, which include the search. Searching is limited to 120
+          requests a minute from one address; the box says so if you hit it.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'device-list',
     title: 'The Device List',
     content: (

@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
-import { RoleType } from '@prisma/client';
+import { Prisma, RoleType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { revocationInstant } from '../auth/session-revocation';
 import { AuditService } from '../audit/audit.service';
@@ -34,11 +34,18 @@ export class UsersService {
   // ── Read ──────────────────────────────────────────────────────────────────
 
   /** Members of the caller's business; every business for a Platform Admin. */
-  async listMembers(actor: ActorContext, businessId?: string) {
+  /**
+   * The memberships this caller may list. Shared by GET /users and global
+   * search (SearchService); both gate on users:view.
+   */
+  memberWhere(actor: ActorContext, businessId?: string): Prisma.MembershipWhereInput {
     const scope = this.acl.resolveScope(actor, businessId);
+    return { ...(scope ? { customerId: scope } : {}) };
+  }
 
+  async listMembers(actor: ActorContext, businessId?: string) {
     const rows = await this.prisma.membership.findMany({
-      where: { ...(scope ? { customerId: scope } : {}) },
+      where: this.memberWhere(actor, businessId),
       include: {
         user: {
           select: {

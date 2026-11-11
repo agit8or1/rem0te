@@ -137,8 +137,12 @@ export class EndpointListService {
     return actor.capabilities.includes(CAP.ALERTS_VIEW) ? { visible: true, endpointIds: null } : { visible: false };
   }
 
-  /** The caller's visible computers. Every list, facet and export starts here. */
-  private scopedWhere(actor: ActorContext, q: Pick<ListQuery, 'businessId' | 'status'>): Prisma.EndpointWhereInput {
+  /**
+   * The caller's visible computers. Every list, facet and export starts here,
+   * and so does global search (SearchService), so a search can never find a
+   * computer the device list would not show.
+   */
+  scopedWhere(actor: ActorContext, q: Pick<ListQuery, 'businessId' | 'status'>): Prisma.EndpointWhereInput {
     this.acl.assertCapability(actor, CAP.COMPUTERS_VIEW);
     const visibility = this.acl.endpointVisibilityWhere(actor, q.businessId);
     const status: Prisma.EndpointWhereInput =

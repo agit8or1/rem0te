@@ -164,7 +164,21 @@ computers they can see or their own sessions), and activity follows the audit
 page. A section the caller lacks the capability for is `null`, not zero.
 Proven by `apps/api/scripts/e2e-dashboard.mjs`.
 
-Proven by `apps/api/scripts/e2e-business-access.mjs` — 82 server-side checks including direct-URL
+Global search (`GET /search`, 0.33) works the same way. Each group is built
+from its own list route's where builder — the device list's `scopedWhere`,
+`listWhere` for businesses and sites, `memberWhere` for people, `alertWhere`
+for alerts — with the search AND-ed onto it, and is gated by that list's
+capability (`computers:view`, none, `computers:view`, `users:view`,
+`monitoring:alerts`). A group the caller may not use is `null`. Another
+business's computers, sites and people are not found by any query, including
+an exact hostname or RustDesk ID. The older `GET /admin/search` was removed in
+0.33: it scoped computers by business alone, so a Business User found
+computers assigned only to others and a technician restricted to named
+computers found the whole business. Proven by
+`apps/api/scripts/e2e-search.mjs`; the rules are §25 of the security
+invariants.
+
+Proven by `apps/api/scripts/e2e-business-access.mjs` — 83 server-side checks including direct-URL
 and direct-API cross-business probing in both directions.
 
 ---

@@ -39,6 +39,7 @@ import { EnrollmentModule } from './enrollment/enrollment.module';
 import { NotesModule } from './notes/notes.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ReportsModule } from './reports/reports.module';
+import { SearchModule } from './search/search.module';
 import { GeoipModule } from './geoip/geoip.module';
 import { AdminModule } from './admin/admin.module';
 import { DiagnosticsModule } from './diagnostics/diagnostics.module';
@@ -109,6 +110,7 @@ import { IntegrationModule } from './integration/integration.module';
     NotesModule,
     DashboardModule,
     ReportsModule,
+    SearchModule,
     GeoipModule,
     AdminModule,
     UpdateRolloutModule,

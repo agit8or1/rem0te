@@ -28,6 +28,7 @@ bundled into `/docs`. Integration work is tracked separately in
 | Monitoring | Global → business → site → computer rules; offline, disk, CPU, memory, services, event patterns, restart pending; dedup (one open alert per problem), hysteresis, cooldowns, site-outage correlation, maintenance windows, 4-level escalation, webhooks, alerts → ClientSt0r tickets | U (91), I (108) — **not R**: the monitor block has never run on real Windows |
 | Audit | Sealed hash chain, insert-only entries, signed checkpoints, off-host export, verification CLI | U (35), I |
 | Containment | Pause actions, remote, updates or integration, per business or globally; three enforcement layers | I (70) |
+| Global search (0.33) | Ctrl+K palette and `GET /search`: devices (name, hostname, RustDesk ID, serial, signed-in user, IP, adapter IPv4, alias), businesses, sites, people and open alerts, eight per group. Each group reuses its list route's where builder and capability; another business's objects are not found even by exact hostname or RustDesk ID; throttled, not audited, query not logged | U (37), I (search 98; business-access 83 after /admin/search was removed); browser 24 (`e2e-search-palette.mjs`, scratch stack: light, dark, phone width) |
 | Device sync to ClientSt0r | ClientSt0r's provider syncs computers by API key, scoped to one business | Code-level interop with ClientSt0r 3.17.660 (`INTEGRATION_COORDINATION.md` §8) |
 
 ## Partially working
@@ -60,7 +61,7 @@ bundled into `/docs`. Integration work is tracked separately in
 - **Remote-session controls:** file-transfer authorization, chat, recording, clipboard policy, multi-monitor
   selection. RustDesk doesn't report enforcement, so none of these can be offered as restrictions (see Security).
 - **Browser-based remote desktop.**
-- **Global search** across computers, businesses and users.
+- *(Global search — built in 0.33, see Working today. Not included: saved searches, searching inside notes, software lists or event logs, and a search index; the fleet is scanned per query.)*
 - **Saved device views, device groups in the UI, bulk actions.**
 - ~~Server sizing guidance by endpoint count~~ — done in 0.33: [server-sizing.md](server-sizing.md), from measured
   heartbeat cost and row sizes (I). It found that one API process is near its measured limit at 5,000 computers,
@@ -90,7 +91,7 @@ The full review lists issues per screen. The ones that shape the plan:
    Help/Documentation, Users/Technicians/Access Control, Downloads/Enroll Computer, Security in two places,
    Updates vs Patching.
 2. **No workflow spine.** Alert → computer → diagnose → action → verify → ticket isn't linked, and there's no
-   global search.
+   global search. *(Global search: Ctrl+K, 0.33.)*
 3. **Terminology drift:** computer / endpoint / client / enrolled client / device; business / company /
    organisation; a different set of session states in every view; three spellings of the product name.
 4. **Status colour carries no meaning:** the same blue for buttons and for "Active" pills, and green for "not run".
