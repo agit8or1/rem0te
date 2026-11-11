@@ -3,11 +3,14 @@ import { Prisma, type MonitorAlert, type MonitorRule } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { validatePeerUrl } from '../integration/peers';
 import {
-  agentMonitorConfig, dedupKeyOf, dueLevels, effectiveRules, EMPTY_STATE, evaluateEvents, evaluateLive, evaluateService,
+  agentMonitorConfig, dedupKeyOf, type Destination, isEmailDestination, dueLevels, effectiveRules, EMPTY_STATE, evaluateEvents, evaluateLive, evaluateService,
   NotifyLevel, OUTAGE, outageDecision, outageKeyOf, sanitizeReport, scopesFor, SEVERITY_RANK, suppressionFor,
   type Live, type MonitorStateLike, type RuleLike, type Severity, type Verdict,
 } from './engine';
 import { AlertEventsService } from './alert-events.service';
+import { EmailService } from '../email/email.service';
+import { alertMail } from '../email/mail-content';
+import { PublicUrlService } from '../platform/public-url.service';
 
 /**
  * Monitoring (v0.29): the evaluator, the sweep and the notifier.
@@ -31,7 +34,7 @@ import { AlertEventsService } from './alert-events.service';
  */
 
 type Ep = { id: string; tenantId: string | null; customerId: string | null; siteId: string | null; name: string };
-type Policy = { levels: NotifyLevel[]; ticketing: { enabled: boolean; minSeverity: Severity } };
+type Policy = { scopeKey: string; levels: NotifyLevel[]; ticketing: { enabled: boolean; minSeverity: Severity } };
 
 const LIVE_KINDS = new Set(['DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH']);
 const SWEEP_KINDS = new Set(['OFFLINE', 'REBOOT_PENDING']);
@@ -46,7 +49,12 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   private first: ReturnType<typeof setTimeout> | null = null;
   private busy = false;
 
-  constructor(private readonly prisma: PrismaService, private readonly events: AlertEventsService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly events: AlertEventsService,
+    private readonly email: EmailService,
+    private readonly urls: PublicUrlService,
+  ) {}
 
   onModuleInit() {
     if (process.env.MONITOR_SWEEP === 'off') return;
@@ -205,7 +213,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
       const reached = (policy?.levels ?? []).slice(0, a.escalationLevel);
       const fresh = await this.prisma.monitorAlert.findUnique({ where: { id: a.id }, include: VIEW_INCLUDE });
       if (fresh) {
-        const results = await this.deliverAll(reached.flatMap((l) => l.destinations), 'alert.resolved', fresh, null);
+        const results = await this.deliverAll(reached.flatMap((l) => l.destinations), 'alert.resolved', fresh, null, policy!.scopeKey);
         await this.prisma.monitorAlertEvent.create({ data: { alertId: a.id, type: 'notified', detail: { level: null, kind: 'resolved', results } as Prisma.InputJsonValue } });
       }
     }
@@ -329,7 +337,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
       if (c && Date.now() - c.at < 10_000) p = c.p;
       else {
         const row = await this.prisma.monitorNotifyPolicy.findUnique({ where: { scopeKey: k } });
-        p = row ? { levels: row.levels as unknown as NotifyLevel[], ticketing: row.ticketing as unknown as Policy['ticketing'] } : null;
+        p = row ? { scopeKey: row.scopeKey, levels: row.levels as unknown as NotifyLevel[], ticketing: row.ticketing as unknown as Policy['ticketing'] } : null;
         this.policyCache.set(k, { at: Date.now(), p });
       }
       if (p) return p;
@@ -377,7 +385,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
       const claimed = await this.prisma.monitorAlert.updateMany({ where: { id: a.id, state: 'OPEN', escalationLevel: d.index }, data: { escalationLevel: d.index + 1, ...(d.skip ? {} : { lastNotifiedAt: now }) } });
       if (!claimed.count) return;
       if (d.skip) continue;
-      const results = await this.deliverAll(d.level.destinations, 'alert.notify', a, d.index);
+      const results = await this.deliverAll(d.level.destinations, 'alert.notify', a, d.index, policy!.scopeKey);
       await this.prisma.monitorAlertEvent.create({ data: { alertId: a.id, type: d.index === 0 ? 'notified' : 'escalated', detail: { level: d.index, results } as Prisma.InputJsonValue } });
       if (d.index > 0) await this.events.emit(a.id, 'alert.updated');
     }
@@ -386,11 +394,25 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
     await this.prisma.monitorAlert.update({ where: { id: a.id }, data: { nextCheckAt: next > now ? next : new Date(now.getTime() + 60_000) } });
   }
 
-  /** POST the alert to each destination. Never throws; returns one line per destination. */
-  async deliverAll(dests: { label: string; url: string }[], type: 'alert.notify' | 'alert.resolved', a: AlertView, level: number | null) {
+  /**
+   * POST the alert to each webhook, and mail it to each email recipient.
+   * Never throws; returns one line per destination. An email goes only to a
+   * recipient still confirmed in the policy's own scope (`scopeKey`), says
+   * only what alertMail says, and is stopped by a `notifications` pause.
+   */
+  async deliverAll(dests: Destination[], type: 'alert.notify' | 'alert.resolved', a: AlertView, level: number | null, scopeKey: string) {
     const body = JSON.stringify({ source: 'rem0te', type, level, alert: webhookView(a) });
     const out: { label: string; ok: boolean; status: string }[] = [];
     for (const d of dests) {
+      if (isEmailDestination(d)) {
+        const mail = alertMail({
+          id: a.id, title: a.title, severity: a.severity, kind: a.kind, state: a.state, firstSeenAt: a.firstSeenAt, resolvedAt: a.resolvedAt,
+          computer: a.endpoint?.name ?? null, site: a.site?.name ?? null, business: a.customer?.name ?? null,
+        }, type, `${this.urls.web()}/alerts?alert=${encodeURIComponent(a.id)}`);
+        const [r] = await this.email.sendToRecipients([d.recipientId], scopeKey, mail, { customerId: a.customerId });
+        out.push({ label: d.label, ok: r.ok, status: `email ${r.status}` });
+        continue;
+      }
       try {
         const url = validatePeerUrl(d.url, 'alert destination');
         const r = await fetch(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000), headers: { 'content-type': 'application/json', 'user-agent': 'rem0te-monitoring/1' }, body });

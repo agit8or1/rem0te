@@ -190,6 +190,14 @@ jobs:
       - name: Metric history tests
         run: node apps/api/scripts/unit-metric-history.mjs
 
+      # Outbound email (0.34): the SMTP host rule (every address class, IPv4-
+      # mapped IPv6, what SMTP_ALLOW_LOCAL_RELAY admits, every resolved address
+      # checked), the report schedule maths across zones and both DST
+      # transitions — weekly occurrences against the update window's own next
+      # opening — and what an alert or report email may say.
+      - name: Email tests
+        run: node apps/api/scripts/unit-email.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.

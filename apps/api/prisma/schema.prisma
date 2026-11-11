@@ -164,6 +164,15 @@ enum ActivityAction {
   CLIENT_UPDATE_POLICY_CHANGED
   CLIENT_UPDATE_AUTO_QUEUED
   REPORT_EXPORTED
+  // 0.34 outbound email
+  SMTP_SETTINGS_CHANGED
+  EMAIL_TEST_SENT
+  EMAIL_RECIPIENT_ADDED
+  EMAIL_RECIPIENT_VERIFIED
+  EMAIL_RECIPIENT_REMOVED
+  REPORT_SCHEDULE_CHANGED
+  REPORT_SCHEDULE_SENT
+  REPORT_SCHEDULE_FAILED
   // 0.33 device groups, shared device views and bulk actions
   DEVICE_GROUP_CREATED
   DEVICE_GROUP_UPDATED
@@ -567,6 +576,8 @@ model Customer {
   patchPolicies        PatchPolicy[]
   endpointGroups       EndpointGroup[]
   savedViews           SavedView[]
+  emailRecipients      EmailRecipient[]
+  reportSchedules      ReportSchedule[]
 
   @@index([tenantId])
   @@index([tenantId, name])
@@ -2973,4 +2984,100 @@ model ScriptVersion {
 
   @@unique([scriptId, version])
   @@index([scriptId, status])
+}
+
+// ─── Outbound email (0.34) ───────────────────────────────────────────────────
+
+/// The one SMTP relay this server sends through. One row, id "singleton".
+/// Off until a Platform Admin configures and enables it. The password is
+/// AES-256-GCM under ENCRYPTION_KEY and never leaves the API: no response,
+/// audit row or log line carries it. tlsMode: implicit | starttls | none —
+/// "none" only for a loopback relay (email/smtp-host.ts).
+model SmtpSettings {
+  id             String    @id @default("singleton")
+  enabled        Boolean   @default(false)
+  host           String
+  port           Int
+  tlsMode        String
+  username       String?
+  passwordEnc    String?
+  fromAddress    String
+  fromName       String?
+  updatedById    String
+  updatedAt      DateTime  @updatedAt
+  lastTestAt     DateTime?
+  lastTestResult String?
+}
+
+/// An address mail may be sent to. Usable only once verifiedAt is set — by
+/// whoever reads that mailbox following the link sent to it. scopeKey is
+/// "global" (the MSP's) or "b:<customerId>"; a business's policies and
+/// schedules use only that business's recipients.
+model EmailRecipient {
+  id             String    @id @default(cuid())
+  scopeKey       String
+  customerId     String?
+  customer       Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  address        String
+  label          String?
+  tokenHash      String?   @unique
+  tokenExpiresAt DateTime?
+  lastSentAt     DateTime?
+  verifiedAt     DateTime?
+  addedById      String
+  createdAt      DateTime  @default(now())
+
+  @@unique([scopeKey, address])
+  @@index([customerId])
+}
+
+/// A report emailed on a schedule. Evaluated as ownerId, whose access is
+/// re-checked at every send (fails closed). customerId null = a platform-wide
+/// report, MSP only. frequency weekly (dayOfWeek 0 = Sunday) or monthly
+/// (dayOfMonth 1–28), at `time` in `timeZone` (reports/schedule.ts).
+model ReportSchedule {
+  id             String           @id @default(cuid())
+  tenantId       String?
+  customerId     String?
+  customer       Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  siteId         String?
+  report         String
+  params         Json             @default("{}")
+  frequency      String
+  dayOfWeek      Int?
+  dayOfMonth     Int?
+  time           String
+  timeZone       String
+  attachCsv      Boolean          @default(false)
+  recipientIds   String[]
+  ownerId        String
+  enabled        Boolean          @default(true)
+  disabledReason String?
+  nextRunAt      DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  deliveries     ReportDelivery[]
+
+  @@index([enabled, nextRunAt])
+  @@index([customerId])
+}
+
+/// One period of one schedule. The unique key is what makes a delivery
+/// happen at most once per period, across restarts and across two API
+/// processes: the row is claimed before anything is sent.
+/// status: sending | sent | partial | failed | blocked | missed
+model ReportDelivery {
+  id           String         @id @default(cuid())
+  scheduleId   String
+  schedule     ReportSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  periodKey    String
+  occurrenceAt DateTime
+  status       String
+  rows         Int?
+  detail       Json?
+  createdAt    DateTime       @default(now())
+  finishedAt   DateTime?
+
+  @@unique([scheduleId, periodKey])
+  @@index([scheduleId, createdAt])
 }

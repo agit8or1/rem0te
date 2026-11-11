@@ -575,7 +575,7 @@ const SECTIONS: Section[] = [
         </p>
         <p className="font-medium text-foreground">Who is told</p>
         <p>
-          Up to four escalation levels, each with webhook destinations, under the Notifications tab, and
+          Up to four escalation levels, each with webhook or (0.34) email destinations — email only to confirmed addresses, saying only the alert, computer, business and a link — under the Notifications tab, and
           optionally a ticket in ClientSt0r. Changing who is notified asks you to confirm it is you.
           See <Link href="/docs/monitoring" className="underline text-foreground">Monitoring and alerts</Link>.
         </p>
@@ -878,12 +878,23 @@ const SECTIONS: Section[] = [
           because the online flag keeps no history. There is no availability percentage: which computers were
           monitored, and when, is not recorded. Each report shows only what you can already see and needs the
           permission of its data (View computers, or monitoring:alerts). <em>Export CSV</em> is capped at 10,000
-          rows and recorded in the audit log before the file is sent. Reports are not scheduled or emailed. More in{' '}
+          rows and recorded in the audit log before the file is sent. More in{' '}
           <Link href="/docs/reports" className="underline text-foreground">Reports</Link>.
         </p>
         <p>
+          From 0.34 a report can be <Link href="/reports/schedules" className="underline text-foreground">scheduled</Link>:
+          weekly or monthly (days 1–28), at a time in a time zone, emailed to confirmed addresses with a link and,
+          optionally, the CSV — the same audited export, with the same row limit. It is computed with its owner&apos;s
+          access when it is sent; if the owner has lost access, nothing of the report is sent, the recipients are told
+          it did not come, and the schedule switches itself off. Each period is sent at most once, even across a restart.
+          Outbound email is set up by a Platform Admin under{' '}
+          <Link href="/settings/email" className="underline text-foreground">Settings → Email</Link>. Mail only ever
+          goes to addresses whose owner clicked a confirmation link. See{' '}
+          <Link href="/docs/email" className="underline text-foreground">Email and scheduled reports</Link>.
+        </p>
+        <p>
           From 0.28, writes can be <strong className="text-foreground">paused</strong> while an incident is looked at:
-          approved actions, remote connections, agent updates and ClientSt0r jobs, for every business or for one. A red
+          approved actions, remote connections, agent updates and ClientSt0r jobs — and, from 0.34, outbound email — for every business or for one. A red
           strip at the top of the page says what is stopped and why; a refused click says <em>CONTAINED</em>. A Business
           Owner can suspend their own business, and only they can lift that. A pause set by the MSP is lifted by someone
           other than whoever set it, always with a fresh sign-in. The audit log is now tamper-evident: every entry is

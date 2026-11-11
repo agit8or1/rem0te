@@ -130,10 +130,15 @@ incident, use [containment](containment.md).
 
 **Settings → Monitoring → Notifications** holds up to four escalation
 levels. Each fires once an alert has been open (and unacknowledged) that
-many minutes, for alerts at or above its severity, and sends a JSON `POST`
-to each of its destinations (up to five: Slack- or Teams-style incoming
-webhooks, a ticketing relay, your own endpoint). A level is fired once per
-alert; when the alert resolves, every level that was notified is told.
+many minutes, for alerts at or above its severity, and sends to each of its
+destinations (up to five): a JSON `POST` to a webhook (Slack- or Teams-style
+incoming webhooks, a ticketing relay, your own endpoint), or, from 0.34, an
+email to a **confirmed recipient** — picked from the business's (or the
+global) list of addresses whose owners clicked a confirmation link, never
+typed. The email carries only the alert's title and severity, the computer
+(or site), the business and a link; see [Email and scheduled reports](email.md).
+A level is fired once per alert; when the alert resolves, every level that
+was notified is told.
 
 ```json
 { "type": "alert.notify", "level": 0, "alert": { "id": "…", "title": "PC-12 has been offline for 15 minutes", "severity": "warning", "state": "open", "business": "…", "computer": "PC-12", "firstSeenAt": "…" } }
@@ -156,6 +161,9 @@ A business uses its own policy if it has one, otherwise the global one.
   addresses, `localhost` or internal names. The audit log records hosts only,
   because a webhook URL's path is often its secret; people who cannot change
   the policy see addresses shortened.
+- An email destination must be a confirmed recipient of the policy's own
+  scope, checked when the policy is saved and again when mail is sent. A
+  `notifications` containment pause stops alert emails; webhooks keep going.
 
 ### Tickets in ClientSt0r
 

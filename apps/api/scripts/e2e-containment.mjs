@@ -286,7 +286,7 @@ async function all() {
     check(r.status === 400, 'an unknown field is refused', msg(r));
     r = await req('POST', '/containment/pauses', { s: S.owen, business: acme.id, body: { scope: 'business', businessId: acme.id, reason: 'We think an account was phished' } });
     own = r.body?.data;
-    check(r.status === 201 && own?.setBy === 'customer' && own.kinds.length === 4 && /^held as [0-9a-f]{16}$/.test(own.signer?.result ?? ''), 'Acme\'s owner suspends Acme — no step-up needed, every kind, and the signer holds a copy', msg(r));
+    check(r.status === 201 && own?.setBy === 'customer' && own.kinds.length === 5 && /^held as [0-9a-f]{16}$/.test(own.signer?.result ?? ''), 'Acme\'s owner suspends Acme — no step-up needed, every kind, and the signer holds a copy', msg(r));
     const ban = await req('GET', '/containment/banner', { s: S.owen, business: acme.id });
     check(ban.body?.data?.[0]?.id === own.id, 'Acme\'s people see the banner', msg(ban));
     const banB = await req('GET', '/containment/banner', { s: S.bea, business: birch.id });

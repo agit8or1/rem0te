@@ -613,7 +613,7 @@ export const updateTrustApi = {
 
 // Containment (0.28): global write pause and business suspension. Setting
 // needs no step-up; lifting does (the interceptor prompts and retries).
-export type ContainmentKind = 'actions' | 'remote' | 'updates' | 'integration';
+export type ContainmentKind = 'actions' | 'remote' | 'updates' | 'integration' | 'notifications';
 export const containmentApi = {
   state: () => api.get('/containment'),
   banner: () => api.get('/containment/banner'),
@@ -669,6 +669,8 @@ export const securityControlsApi = {
 export type MonitorScope = 'global' | 'business' | 'site' | 'endpoint';
 export type Severity = 'INFO' | 'WARNING' | 'CRITICAL';
 export type MonitorKindId = 'OFFLINE' | 'DISK_FREE' | 'CPU_HIGH' | 'MEMORY_HIGH' | 'SERVICE_STOPPED' | 'EVENT_MATCH' | 'REBOOT_PENDING';
+/** A notification destination: a webhook, or (0.34) a confirmed email recipient of the policy's own scope. */
+export type NotifyDestination = { label: string; url: string } | { label: string; recipientId: string };
 const bq = (businessId?: string | null) => ({ params: businessId ? { businessId } : {} });
 export const monitoringApi = {
   summary: (businessId?: string | null) => api.get('/monitoring/summary', bq(businessId)),
@@ -691,7 +693,7 @@ export const monitoringApi = {
     api.post('/monitoring/suppressions', data),
   revokeSuppression: (id: string) => api.post(`/monitoring/suppressions/${id}/revoke`),
   policy: (businessId?: string | null) => api.get('/monitoring/notify-policy', bq(businessId)),
-  setPolicy: (data: { scope: 'global' | 'business'; businessId?: string; levels: { afterMinutes: number; minSeverity: Severity; destinations: { label: string; url: string }[] }[]; ticketing: { enabled: boolean; minSeverity: Severity } }) =>
+  setPolicy: (data: { scope: 'global' | 'business'; businessId?: string; levels: { afterMinutes: number; minSeverity: Severity; destinations: NotifyDestination[] }[]; ticketing: { enabled: boolean; minSeverity: Severity } }) =>
     api.put('/monitoring/notify-policy', data),
   endpoint: (id: string) => api.get(`/monitoring/endpoints/${id}`),
 };
@@ -732,6 +734,45 @@ export const clientUpdatesApi = {
   }) => api.put('/client-updates/policy', data),
   removeSiteOverride: (businessId: string, siteId: string) => api.delete(`/client-updates/policy/sites/${siteId}`, bq(businessId)),
   computers: (businessId?: string | null) => api.get('/client-updates/computers', bq(businessId)),
+};
+
+// Outbound email (0.34). Saving the relay, and adding, re-sending or removing
+// a recipient, need fresh authentication (the interceptor prompts and retries).
+export type TlsMode = 'implicit' | 'starttls' | 'none';
+export interface SmtpSettingsView {
+  configured: boolean; enabled: boolean; host?: string; port?: number; tlsMode?: TlsMode; username?: string | null; passwordSet?: boolean;
+  fromAddress?: string; fromName?: string | null; updatedAt?: string; lastTestAt?: string | null; lastTestResult?: string | null;
+  localRelay: 'none' | 'loopback' | 'private'; passwordChange?: string;
+}
+export interface EmailRecipientView {
+  id: string; scopeKey: string; businessId: string | null; address: string; label: string | null; verified: boolean;
+  verifiedAt: string | null; lastSentAt: string | null; tokenExpiresAt: string | null; createdAt: string;
+}
+export const emailApi = {
+  status: () => api.get('/email/status'),
+  settings: () => api.get('/email/settings'),
+  saveSettings: (data: { enabled: boolean; host: string; port: number; tlsMode: TlsMode; username?: string | null; password?: string | null; fromAddress: string; fromName?: string | null }) =>
+    api.put('/email/settings', data),
+  test: (recipientId?: string) => api.post('/email/settings/test', recipientId ? { recipientId } : {}),
+  recipients: (scope: 'global' | 'business', businessId?: string | null) => api.get('/email/recipients', { params: { scope, ...(businessId ? { businessId } : {}) } }),
+  addRecipient: (data: { scope: 'global' | 'business'; businessId?: string; address: string; label?: string }) => api.post('/email/recipients', data),
+  resend: (id: string) => api.post(`/email/recipients/${id}/resend`),
+  removeRecipient: (id: string) => api.delete(`/email/recipients/${id}`),
+  verify: (token: string) => api.post('/email/verify', { token }),
+};
+
+// Scheduled reports (0.34). Creating or changing one needs fresh authentication.
+export type ScheduledReportKey = 'patch-compliance' | 'agent-coverage' | 'alert-frequency' | 'offline-time';
+export interface ReportScheduleInput {
+  report: ScheduledReportKey; businessId?: string | null; siteId?: string | null; silentDays?: number;
+  frequency: 'weekly' | 'monthly'; dayOfWeek?: number | null; dayOfMonth?: number | null; time: string; timeZone: string;
+  attachCsv: boolean; recipientIds: string[]; enabled?: boolean;
+}
+export const reportSchedulesApi = {
+  list: (businessId?: string | null) => api.get('/reports/schedules', bq(businessId)),
+  create: (data: ReportScheduleInput) => api.post('/reports/schedules', data),
+  update: (id: string, data: Partial<ReportScheduleInput>) => api.patch(`/reports/schedules/${id}`, data),
+  remove: (id: string) => api.delete(`/reports/schedules/${id}`),
 };
 
 // API keys for the public API (/api/v1/pub/v1, docs/PUBLIC-API.md). The raw key is returned once, at creation.

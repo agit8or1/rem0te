@@ -1443,6 +1443,95 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'readOnlyAgentOs must return macOS for a Mac, with its own refusal code');
 }
 
+// 33. Outbound email (0.34). Mail leaves for good, so: the relay is a Platform
+//     Admin's, changed with fresh authentication; its host is a public DNS
+//     name checked on save AND resolved and checked on send, the connection
+//     made to the checked address (SSRF and DNS rebinding); plaintext only to
+//     loopback; nothing in a message is read from disk or a URL. Mail goes
+//     only to recipients confirmed by their mailbox, of the policy's or
+//     schedule's own scope, added and removed with fresh authentication; the
+//     confirmation token is consumed conditionally. The relay password is in
+//     no audit row, response or log line, and pointing the relay elsewhere
+//     drops it. A `notifications` pause stops every send. A scheduled report
+//     is claimed (unique per period) before it is sent, and its owner's
+//     access is rebuilt from the database before anything is produced.
+{
+  const ctl = read('apps/api/src/email/email.controller.ts');
+  const svc = read('apps/api/src/email/email.service.ts');
+  const host = read('apps/api/src/email/smtp-host.ts');
+  const smtpCtl = ctl.slice(ctl.indexOf("@Controller('email/settings')"), ctl.indexOf("@Controller('email')"));
+  check('the SMTP relay settings are Platform Admin only and saving them needs fresh authentication',
+    /@UseGuards\(PlatformAdminGuard\)\s*export class SmtpSettingsController/.test(smtpCtl) && /@Put\(\)[\s\S]{0,200}fresh\(this\.stepUp, req\)/.test(smtpCtl) && /assertFresh\(/.test(ctl),
+    'SmtpSettingsController must carry PlatformAdminGuard, and PUT must call fresh()');
+  const rcpCtl = ctl.slice(ctl.indexOf("@Controller('email')"));
+  check('adding, re-sending to and removing an email recipient need fresh authentication',
+    /@Post\('recipients'\)[\s\S]{0,200}fresh\(this\.stepUp, req\)/.test(rcpCtl) && /@Post\('recipients\/:id\/resend'\)[\s\S]{0,250}fresh\(this\.stepUp, req\)/.test(rcpCtl) && /@Delete\('recipients\/:id'\)[\s\S]{0,200}fresh\(this\.stepUp, req\)/.test(rcpCtl),
+    'POST recipients, POST recipients/:id/resend and DELETE recipients/:id must call fresh()');
+  const sch = read('apps/api/src/reports/report-schedules.controller.ts');
+  check('creating or changing a scheduled report needs fresh authentication',
+    /@Post\(\)[\s\S]{0,200}this\.fresh\(req\)/.test(sch) && /@Patch\(':id'\)[\s\S]{0,250}this\.fresh\(req\)/.test(sch) && /assertFresh\(/.test(sch),
+    'POST and PATCH reports/schedules must call assertFresh');
+  check('the SMTP host must be a public DNS name unless the operator allows a local relay',
+    /if \(c === 'public'\) return \{ ok: false/.test(host) && /if \(!h\.includes\('\.'\) \|\| INTERNAL_SUFFIX\.test\(h\)\)/.test(host)
+      && /if \(a === 0 \|\| \(a === 169 && b === 254\) \|\| a >= 224\) return 'blocked'/.test(host) && /process\.env\.SMTP_ALLOW_LOCAL_RELAY/.test(host)
+      && /const h = checkSmtpHostName\(d\.data\.host\);\s*if \(!h\.ok\) throw/.test(svc),
+    'checkSmtpHostName must refuse IP literals, internal names and link-local; putSettings must call it');
+  const send = svc.slice(svc.indexOf('async send('), svc.indexOf('private errorCode('));
+  check('every send resolves the relay, checks every address, and connects to the checked one',
+    /for \(const a of addresses\) \{\s*const c = classifyAddress\(a\);\s*if \(!addressAllowed\(c, allow\)\) return \{ ok: false/.test(host)
+      && /await lookup\(h\.host, \{ all: true/.test(send) && /const r = checkResolved\(addresses, allow\);\s*if \(!r\.ok\)/.test(send) && /host: r\.address,/.test(send) && /servername: h\.host/.test(send),
+    'send() must lookup → checkResolved(all addresses) → createTransport({ host: r.address, tls.servername: name })');
+  check('plaintext SMTP only to loopback, TLS certificates always verified',
+    /return mode !== 'none' \|\| isLoopback;/.test(host) && /tlsModeAllowed\(d\.data\.tlsMode, loop\)/.test(svc) && /tlsModeAllowed\(s\.tlsMode as TlsMode, r\.loopback\)/.test(send)
+      && /rejectUnauthorized: true/.test(send) && /requireTLS: s\.tlsMode === 'starttls'/.test(send),
+    'tlsModeAllowed on save and on send (with the resolved address); rejectUnauthorized true; STARTTLS required, never opportunistic');
+  check('nothing in a message is read from disk or fetched from a URL',
+    /disableFileAccess: true, disableUrlAccess: true/.test(send), 'createTransport must set disableFileAccess and disableUrlAccess');
+  check('a `notifications` containment pause stops every send',
+    /'notifications'\] as const/.test(read('apps/api/src/containment/pause.ts')) && /activePause\(this\.prisma, 'notifications', opts\.customerId\);\s*if \(pause\) return all\('contained'\)/.test(send)
+      && /activePause\(this\.prisma, 'notifications', s\.customerId\)/.test(read('apps/api/src/reports/report-schedules.service.ts')),
+    'send() and the schedule delivery must consult the notifications pause');
+  check('mail goes only to recipients confirmed in the right scope',
+    /emailRecipient\.findMany\(\{ where: \{ id: \{ in: ids \}, scopeKey, verifiedAt: \{ not: null \} \} \}\)/.test(svc)
+      && /await this\.email\.assertConfirmed\(emailIds, scopeKey\)/.test(read('apps/api/src/monitoring/monitoring-admin.service.ts'))
+      && /await this\.email\.assertConfirmed\(d\.data\.recipientIds, s\.scopeKey\)/.test(read('apps/api/src/reports/report-schedules.service.ts'))
+      && /this\.email\.sendToRecipients\(\[d\.recipientId\], scopeKey/.test(read('apps/api/src/monitoring/monitoring.service.ts')),
+    'sendToRecipients must filter on scopeKey + verifiedAt; putPolicy and schedules must assertConfirmed; alert mail must go through sendToRecipients');
+  const ver = svc.slice(svc.indexOf('async verify('), svc.indexOf('async assertConfirmed('));
+  check('a confirmation link is consumed conditionally, and a GET never confirms',
+    /updateMany\(\{ where: \{ tokenHash: hash, verifiedAt: null, tokenExpiresAt: \{ gt: now \} \}/.test(ver) && /if \(!u\.count/.test(ver)
+      && /@Post\('verify'\)\s*@Public\(\)/.test(ctl) && !/@Get\('verify/.test(ctl),
+    'verify must updateMany on (token, unverified, unexpired) and check the count; only POST verify is public');
+  const put = svc.slice(svc.indexOf('async putSettings('), svc.indexOf('async sendTest('));
+  const auditCall = put.slice(put.indexOf("action: 'SMTP_SETTINGS_CHANGED'"), put.indexOf('return {', put.indexOf("action: 'SMTP_SETTINGS_CHANGED'")));
+  check('the relay password is in no audit row, response or log line',
+    auditCall.length > 50 && !/passwordEnc|d\.data\.password|\bpass\b/.test(auditCall) && /password: passwordChange/.test(auditCall)
+      && !/passwordEnc/.test(svc.slice(svc.indexOf('private settingsView('), svc.indexOf('async getSettings(')).replace('passwordSet: !!s.passwordEnc', ''))
+      && !/this\.log\.[a-z]+\([^)]*(pass|password)/.test(svc) && !/\.message\b|\.response\b/.test(svc.slice(svc.indexOf('private errorCode('), svc.indexOf('async sendToRecipients('))),
+    'audit only whether the password changed; the view only passwordSet; errorCode must not echo the server\'s text');
+  check('pointing the relay elsewhere drops the saved password',
+    /else if \(cur\?\.passwordEnc && relayMoved\) \{ passwordEnc = null;/.test(put) && /cur\.host !== h\.host \|\| cur\.port !== d\.data\.port/.test(put),
+    'a change of host, port, username or TLS mode must clear passwordEnc unless a new password is given');
+  const rs = read('apps/api/src/reports/report-schedules.service.ts');
+  const run = rs.slice(rs.indexOf('private async runOne('), rs.indexOf('private async finish('));
+  check('a scheduled report is claimed once per period before anything is sent',
+    /CREATE UNIQUE INDEX "ReportDelivery_scheduleId_periodKey_key" ON "ReportDelivery"\("scheduleId", "periodKey"\)/.test(read('apps/api/prisma/migrations/0054_outbound_email/migration.sql'))
+      && run.indexOf('reportDelivery.create(') > 0 && run.indexOf('reportDelivery.create(') < run.indexOf('this.deliver(') && /'P2002'\) return;/.test(run),
+    'runOne must create the (schedule, period) delivery row first and return on a unique violation');
+  const del = rs.slice(rs.indexOf('private async deliver('), rs.indexOf('private ownerRefusal('));
+  check('a scheduled report is evaluated as its owner, re-checked from the database at send',
+    /const actor = await this\.actors\.contextFor\(s\.ownerId/.test(del) && del.indexOf('this.ownerRefusal(actor, s)') < del.indexOf('this.reports.exportCsv(') && /if \(refusal\) \{[\s\S]{0,600}enabled: false/.test(del)
+      && /this\.reports\.exportCsv\(actor!, report, q, \{ scheduleId: s\.id/.test(del),
+    'deliver must rebuild the owner (contextFor), refuse before exporting and switch the schedule off; the CSV is the audited exportCsv');
+  const mon = read('apps/api/src/monitoring/monitoring.service.ts');
+  const am = mon.slice(mon.indexOf('const mail = alertMail({'), mon.indexOf("}, type, `${this.urls.web()}/alerts"));
+  const content = read('apps/api/src/email/mail-content.ts');
+  const alertFn = content.slice(content.indexOf('export function alertMail('), content.indexOf('export const REPORT_TITLE'));
+  check('an alert email carries the title, computer, business and a link — not the detail or a hostname',
+    am.length > 50 && !/detail|hostname|ticket/.test(am) && !/\.detail|hostname/.test(alertFn) && /oneLine\(/.test(alertFn),
+    'alertMail must be built from the listed fields only, each through oneLine()');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

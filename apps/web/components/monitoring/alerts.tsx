@@ -61,10 +61,11 @@ export function AlertDetail({ id, onChanged }: { id: string; onChanged: () => vo
   const qc = useQueryClient();
   const [note, setNote] = useState('');
   const [err, setErr] = useState<string | null>(null);
-  const { data } = useQuery<Detail>({ queryKey: ['alert', id], queryFn: () => monitoringApi.alert(id).then((r) => r.data.data) });
+  const { data, error } = useQuery<Detail>({ queryKey: ['alert', id], queryFn: () => monitoringApi.alert(id).then((r) => r.data.data), retry: false });
   const done = () => { setNote(''); setErr(null); qc.invalidateQueries({ queryKey: ['alert', id] }); onChanged(); };
   const ack = useMutation({ mutationFn: () => monitoringApi.acknowledge(id, note.trim() || undefined), onSuccess: done, onError: (e) => setErr(apiError(e).message) });
   const res = useMutation({ mutationFn: () => monitoringApi.resolve(id, note.trim()), onSuccess: done, onError: (e) => setErr(apiError(e).message) });
+  if (error) return <p className="px-3 py-3 text-muted-foreground">{apiError(error).message === 'Alert not found' ? 'This alert was not found, or is not one you can see.' : apiError(error).message}</p>;
   if (!data) return <p className="px-3 pb-3 text-muted-foreground">Loading…</p>;
 
   return (

@@ -484,7 +484,7 @@ export class ReportsService {
    * One report as CSV: every row, capped at EXPORT_MAX_ROWS (refused above
    * it), formula cells neutralised, audited with logOrFail before it leaves.
    */
-  async exportCsv(actor: ActorContext, report: ReportKey, q: ReportQuery): Promise<{ filename: string; csv: string; rows: number }> {
+  async exportCsv(actor: ActorContext, report: ReportKey, q: ReportQuery, via?: { scheduleId: string; recipients: number }): Promise<{ filename: string; csv: string; rows: number }> {
     const now = new Date();
     const yn = (b: boolean | null | undefined) => (b === null || b === undefined ? '' : b ? 'yes' : 'no');
     let header: string[];
@@ -537,6 +537,8 @@ export class ReportsService {
           ...(report === 'agent-coverage' ? { silentDays: q.silentDays } : {}),
         },
         viaTechnicianAssignment: !!actor.technician,
+        // 0.34: a scheduled report's CSV is this same export, evaluated as the schedule's owner.
+        ...(via ? { via: 'schedule', scheduleId: via.scheduleId, recipients: via.recipients } : {}),
       },
     });
     const stamp = now.toISOString().slice(0, 16).replace(/[:T]/g, '-');

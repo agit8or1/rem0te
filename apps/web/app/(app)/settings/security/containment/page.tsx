@@ -47,6 +47,7 @@ const KINDS: { id: ContainmentKind; label: string; hint: string }[] = [
   { id: 'remote', label: 'Remote connections', hint: 'Connect, launcher links and Quick Connect.' },
   { id: 'updates', label: 'Agent updates', hint: 'RustDesk and agent update or reinstall instructions, and rollout dispatch.' },
   { id: 'integration', label: 'ClientSt0r jobs', hint: 'New ticket-analysis jobs, and queued ones.' },
+  { id: 'notifications', label: 'Outbound email', hint: 'Alert emails, scheduled reports, address confirmations and test emails. Alert webhooks are not covered.' },
 ];
 const label = (k: string) => KINDS.find((x) => x.id === k)?.label ?? k;
 const fmt = (d: string | null | undefined) => (d ? new Date(d).toLocaleString() : '—');

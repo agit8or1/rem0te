@@ -32,6 +32,8 @@ export default function AlertsPage() {
   const qc = useQueryClient();
   const [state, setStateRaw] = useState('active');
   const [severity, setSeverityRaw] = useState('');
+  const [open, setOpen] = useState<string | null>(null);
+  const [linked, setLinked] = useState<string | null>(null);
   // The filters live in the URL too, so the dashboard's "Critical alerts" and
   // any shared link open the list already filtered. Unknown values are ignored.
   useEffect(() => {
@@ -39,6 +41,9 @@ export default function AlertsPage() {
     const st = q.get('state'), sv = q.get('severity');
     if (st && STATES.includes(st)) setStateRaw(st);
     if (sv && SEVERITIES.includes(sv)) setSeverityRaw(sv);
+    // ?alert=<id> (0.34: the link in an alert email) opens that alert.
+    const al = q.get('alert');
+    if (al && /^[A-Za-z0-9_-]{8,64}$/.test(al)) { setLinked(al); setOpen(al); }
   }, []);
   function syncUrl(st: string, sv: string) {
     const q = new URLSearchParams(window.location.search);
@@ -49,7 +54,6 @@ export default function AlertsPage() {
   }
   const setState = (v: string) => { setStateRaw(v); syncUrl(v, severity); };
   const setSeverity = (v: string) => { setSeverityRaw(v); syncUrl(state, v); };
-  const [open, setOpen] = useState<string | null>(null);
 
   const { data: summary } = useQuery<Summary>({
     queryKey: ['alerts-summary'],
@@ -106,6 +110,15 @@ export default function AlertsPage() {
           </select>
         </div>
       </div>
+
+      {linked && data && !data.alerts.some((a) => a.id === linked) && (
+        <Card data-testid="alerts-linked">
+          <CardContent className="p-0 text-sm">
+            <p className="flex items-center gap-2 border-b p-3 font-medium">The alert from your link<Button size="sm" variant="ghost" className="ml-auto" onClick={() => setLinked(null)}>Close</Button></p>
+            <AlertDetail id={linked} onChanged={() => { qc.invalidateQueries({ queryKey: ['alerts'] }); qc.invalidateQueries({ queryKey: ['alerts-summary'] }); }} />
+          </CardContent>
+        </Card>
+      )}
 
       <Card data-testid="alerts-list">
         <CardContent className="p-0 text-sm">

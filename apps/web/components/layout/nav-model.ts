@@ -22,7 +22,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Activity, BarChart3, BellRing, Building2, Cpu, WifiOff, Download, FileCode2, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
   Monitor, MonitorCheck, MonitorX, PackageCheck, PlayCircle, RefreshCw, Settings, Shield, ShieldCheck, Siren,
-  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock,
+  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail,
 } from 'lucide-react';
 import { CAP, type Capability } from '@/lib/auth';
 
@@ -110,6 +110,9 @@ export const NAV: NavSection[] = [
       { href: '/reports/agent-coverage', label: 'Agent coverage', icon: Cpu, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
       { href: '/reports/alert-frequency', label: 'Alert frequency', icon: BellRing, show: (c) => c.can(CAP.ALERTS_VIEW) },
       { href: '/reports/offline-time', label: 'Offline time', icon: WifiOff, show: (c) => c.can(CAP.ALERTS_VIEW) },
+      // 0.34. Last, so /reports still opens a report. The API decides who may
+      // set one up (a Business Owner in their own business, or a Platform Admin).
+      { href: '/reports/schedules', label: 'Scheduled reports', icon: CalendarClock, show: (c) => c.isPlatformAdmin || (c.isBusinessOwner && !c.technician) },
     ],
     also: ['/reports'],
   },
@@ -131,6 +134,7 @@ export const NAV: NavSection[] = [
       // technician with computers:edit, the MSP); this only decides who sees the entry.
       { href: '/settings/client-updates', label: 'Client updates', icon: CalendarClock, show: (c) => c.isBusinessOwner || c.canManageTechnicians || (c.technician && c.can(CAP.COMPUTERS_EDIT)) },
       { href: '/admin/rollouts', label: 'Client rollouts', icon: PackageCheck, show: (c) => c.isPlatformAdmin },
+      { href: '/settings/email', label: 'Email', icon: Mail, show: (c) => c.isPlatformAdmin },
       { href: '/admin/security', label: 'Security', icon: Shield, show: (c) => c.isPlatformAdmin },
       { href: '/admin/status', label: 'System status', icon: Activity, show: (c) => c.isPlatformAdmin },
       { href: '/about', label: 'Updates', icon: RefreshCw, show: (c) => c.isPlatformAdmin },
