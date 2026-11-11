@@ -46,11 +46,12 @@ run() { # name, command...
   local t="$1"; shift
   timeout 900 "$@" > "$OUT/$t.log" 2>&1; local rc=$?
   printf '%-22s exit %-3s %s\n' "$t" "$rc" "$(summary "$OUT/$t.log")"
-  if [[ $rc -ne 0 ]]; then failed+=("$t"); tail -40 "$OUT/$t.log" | sed 's/^/    /'; fi
+  # The failed checks first: a long suite's tail alone can miss them.
+  if [[ $rc -ne 0 ]]; then failed+=("$t"); grep -a -A2 '✗' "$OUT/$t.log" | head -40 | sed 's/^/    /'; tail -40 "$OUT/$t.log" | sed 's/^/    /'; fi
 }
 
 echo "── self-starting suites"
-for t in credentials security-features presets monitoring integration; do run "$t" node "scripts/e2e-$t.mjs"; done
+for t in credentials security-features presets monitoring integration dashboard diagnostics-catalog device-list; do run "$t" node "scripts/e2e-$t.mjs"; done
 for t in containment approved-action staged-patching signed-updates ticket-workflow; do
   if [[ -n "${RELEASE_BIN:-}" && -n "${ACTION_SIM:-}" ]]; then run "$t" node "scripts/e2e-$t.mjs"
   else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM not set)\n' "$t"; skipped+=("$t"); fi

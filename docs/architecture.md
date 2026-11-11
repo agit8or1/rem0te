@@ -199,7 +199,7 @@ See [connecting.md](connecting.md).
 
 ## Host metrics and what "in use" can mean
 
-The dashboard's host row — CPU, memory, disk, bandwidth — is `HostMetricsService`
+System status's host health — CPU, memory, disk, bandwidth (on the dashboard until 0.31) — is `HostMetricsService`
 reading `/proc/stat`, `/proc/net/dev` and `/proc/net/tcp` on a two-second timer.
 No subprocess and no privilege: the API has fixed-command sudo grants for a
 couple of operations, and this needed none of them.

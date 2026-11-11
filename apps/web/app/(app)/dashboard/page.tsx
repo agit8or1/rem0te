@@ -1,343 +1,467 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
-import { dashboardApi, adminApi } from '@/lib/api-client';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Monitor, Building2, Activity, WifiOff, Clock, ArrowDownUp, Radio,
-} from 'lucide-react';
-import { formatDate } from '@/lib/utils';
-import { usePermissions } from '@/lib/auth';
-import { MeterGauge, Sparkline, rate, size } from '@/components/common/gauge';
-import { ClientMap } from '@/components/dashboard/client-map';
-import { RustdeskUpdates } from '@/components/admin/rustdesk-updates';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useQuery } from '@tanstack/react-query';
+import {
+  Activity, AlertOctagon, ArrowRight, Building2, CheckCircle2, Clock, Hourglass, MapPin, Monitor, PlayCircle,
+  RotateCcw, ShieldCheck, Siren, Wrench, XCircle,
+} from 'lucide-react';
+import { api } from '@/lib/api-client';
+import { usePermissions } from '@/lib/auth';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ClientMap } from '@/components/dashboard/client-map';
 
 /**
- * The operator's landing view, built to fit one screen without scrolling.
+ * The technician dashboard (0.31).
  *
- * That constraint is the whole design. The previous layout ran eight tall stat
- * cards over two rows, then a map, then two full-height panels, then an
- * activity list — about two and a half screens, so the map and everything
- * under it were only ever seen by someone who scrolled. Nothing was removed to
- * fix it; the density changed. Tiles are one line of figures instead of three,
- * and the lower half is a fixed-height row whose panels scroll internally
- * rather than growing the page.
+ * Built to answer, from stored data and in this order: what is broken, which
+ * customers it affects, which devices need attention, what is already being
+ * worked on, and what to do next. Everything comes from one call,
+ * GET /dashboard/overview, which scopes every section server side; a section
+ * the person has no permission for arrives as null and is not drawn — it is
+ * never drawn as a zero.
  *
- * `lg:h-screen lg:overflow-hidden` on the page, with the lower row as the only
- * flex-grow child, is what makes it end at the fold. Both are deliberately
- * `lg:`-only: on a phone a fixed-height row of stacked panels is unreadable,
- * and vertical scrolling is the right answer there.
+ * Nothing here is live in the sense of a socket: the page polls every 30 s and
+ * says how old its data is, and every list item carries its own age, so a
+ * stale figure always reads as stale.
+ *
+ * Server host health (CPU, memory, disk, relay) is not a fleet question and
+ * moved to System status (/admin/status) for Platform Admins.
  */
+
+type Biz = { id: string; name: string } | null;
+type Dev = { id: string; name: string } | null;
+interface QueueItem { key: string; kind: string; severity: 'critical' | 'warning' | 'info'; title: string; reason: string; business: Biz; device: Dev; since: string; href: string; rank: number }
+interface Overview {
+  generatedAt: string;
+  scope: 'business' | 'platform';
+  devices: null | { total: number; online: number; offline: number; agentSilent: number; agentSilentAfterMinutes: number; offlineList: { id: string; name: string; business: Biz; lastSeenAt: string | null }[] };
+  alerts: null | { open: number; acknowledged: number; critical: number; warning: number; info: number; criticalOpen: number; suppressed: number; outages: { id: string; title: string; state: string; suppressed: boolean; site: { id: string; name: string } | null; business: Biz; devices: number; since: string }[] };
+  restart: null | { devices: number; list: { device: { id: string; name: string }; business: Biz; source: 'scan' | 'alert'; evidenceAt: string | null; stale: boolean }[] };
+  patch: null | { definition: string; staleAfterHours: number; total: number; fresh: number; upToDate: number; needsUpdates: number; stale: number; noScan: number; newestScanAt: string | null; oldestFreshScanAt: string | null; compliancePercent: number | null; coveragePercent: number | null };
+  actions: null | { awaitingApproval: number; failed: number; uncertain: number; inFlight: { id: string; title: string; status: string; targets: number; createdAt: string; dispatchedAt: string | null; business: Biz; device: Dev; href: string }[] };
+  patchDeployments: null | { id: string; name: string; status: string; pausedReason: string | null; business: Biz; createdAt: string }[];
+  sessions: null | { liveAfterHours: number; live: { id: string; status: string; connected: boolean; isAdHoc: boolean; startedAt: string; lastSignalAt: string | null; technician: string | null; device: Dev; business: Biz }[] };
+  acknowledged: null | { id: string; title: string; severity: string; business: Biz; device: Dev; acknowledgedAt: string | null; by: string | null; href: string }[];
+  customers: { business: { id: string; name: string }; critical: number; warning: number; outages: number; offline: number; failedActions: number }[];
+  attention: { device: { id: string; name: string }; business: Biz; score: number; reasons: string[]; isOnline: boolean; lastSeenAt: string | null }[];
+  recentDevices: null | { id: string; name: string; business: Biz; isOnline: boolean; lastSeenAt: string | null; lastSessionAt: string }[];
+  activity: null | { id: string; action: string; label: string; at: string; actor: string | null; business: Biz; href: string | null }[];
+  queue: { items: QueueItem[]; total: number };
+}
+
+function ago(iso: string | null | undefined, now: number): string {
+  if (!iso) return 'never';
+  const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h} h ago`;
+  return `${Math.floor(h / 24)} d ago`;
+}
+
+/** Re-render on a timer so every "x ago" keeps telling the truth between polls. */
+function useNow(everyMs = 15_000) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), everyMs); return () => clearInterval(t); }, [everyMs]);
+  return now;
+}
+
+const SEV_DOT: Record<string, string> = {
+  critical: 'bg-red-500', warning: 'bg-amber-500', info: 'bg-sky-500',
+};
+const where = (b: Biz, d: Dev) => [b?.name, d?.name].filter(Boolean).join(' · ');
+
 export default function DashboardPage() {
   const { isPlatformAdmin } = usePermissions();
+  const now = useNow();
+  const [showMap, setShowMap] = useState(false);
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['dashboard'],
-    queryFn: () => dashboardApi.stats().then((r) => r.data?.data),
+  const { data, isLoading, error, dataUpdatedAt } = useQuery<Overview>({
+    queryKey: ['dashboard-overview'],
+    queryFn: () => api.get('/dashboard/overview').then((r) => r.data?.data as Overview),
     refetchInterval: 30_000,
   });
 
-  /**
-   * Host health, Platform Admin only.
-   *
-   * This is the platform operator's own server — its CPU, memory, disk and
-   * link. A Business Owner has no business seeing how full the disk on shared
-   * infrastructure is, which is why /admin/status is admin-gated and why this
-   * query is disabled rather than merely hidden: not requesting it is the
-   * difference between hiding a tile and not fetching the data.
-   *
-   * Polled faster than the rest of the page because it is the part that
-   * actually moves second to second.
-   */
-  const { data: host } = useQuery({
-    queryKey: ['admin-status'],
-    queryFn: () => adminApi.status().then((r) => r.data?.data as HostStatus | undefined),
-    enabled: isPlatformAdmin,
-    refetchInterval: 5_000,
-  });
+  if (isLoading) return <div className="p-4 md:p-6 text-sm text-muted-foreground">Loading…</div>;
+  if (error || !data) {
+    return (
+      <div className="p-4 md:p-6">
+        <h1 className="text-xl font-semibold">Dashboard</h1>
+        <p className="mt-2 text-sm text-muted-foreground">The dashboard could not be loaded. Nothing below would be current, so nothing is shown.</p>
+      </div>
+    );
+  }
 
-  const onlinePercent = data?.endpoints?.onlinePercent ?? 0;
-  const offlineCount = data?.endpoints?.offline ?? 0;
-  const net = host?.network;
+  const d = data;
+  const liveOutages = d.alerts?.outages.filter((o) => o.state === 'OPEN' && !o.suppressed) ?? [];
+  const connected = d.sessions?.live.filter((s) => s.connected).length ?? 0;
+  const launching = (d.sessions?.live.length ?? 0) - connected;
+  const failedActions = d.actions ? d.actions.failed + d.actions.uncertain : 0;
 
   return (
-    <div className="p-4 lg:p-6 space-y-3 lg:h-screen lg:overflow-hidden flex flex-col">
-      <div className="flex items-baseline justify-between gap-4 shrink-0">
+    <div className="p-4 md:p-6 space-y-4" data-testid="dashboard">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-xl font-semibold">Dashboard</h1>
         <p className="text-xs text-muted-foreground">
-          {data?.scope === 'business' ? 'Your business' : 'Every business'} · refreshes automatically
+          {d.scope === 'business' ? 'This business' : 'Every business'} · data from {ago(new Date(dataUpdatedAt || Date.parse(d.generatedAt)).toISOString(), now)} · refreshes every 30 s
         </p>
       </div>
 
-      {isLoading ? (
-        <div className="text-muted-foreground text-sm">Loading…</div>
-      ) : (
-        <>
-          {/* Estate, on one row. "Launched" was removed deliberately: it counted
-              sessions Rem0te had opened and not closed, which reads as a live
-              figure and is not one — "In use now" is the tile that means that. */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 shrink-0">
-            <Tile href="/endpoints" label="Computers" value={data?.endpoints?.total ?? 0}
-              sub={`${data?.endpoints?.online ?? 0} online`} icon={Monitor}
-              accent={offlineCount > 0 ? 'yellow' : 'green'} />
-            <Tile href="/endpoints" label="Offline" value={offlineCount}
-              sub={`${onlinePercent}% up`} icon={WifiOff}
-              accent={offlineCount > 0 ? 'red' : 'green'} />
-            {/* Sessions actually moving traffic through this server's relay.
-                Admin-only, because it is a property of the platform host. */}
-            {isPlatformAdmin && (
-              <Tile label="In use now" value={host?.relay?.sessions ?? 0}
-                sub="relayed both ways" icon={Radio}
-                accent={host?.relay?.sessions ? 'green' : undefined}
-                title={
-                  'Sessions currently relaying traffic through this server, counted from ' +
-                  'paired connections on the relay port. RustDesk prefers a direct ' +
-                  'peer-to-peer connection, and a session that went direct does not pass ' +
-                  'through here — so this counts relayed sessions, not every session.'
-                } />
-            )}
-            <Tile href="/sessions" label="Sessions 7d" value={data?.sessions?.last7Days ?? 0}
-              sub="last week" icon={Clock} />
-            <Tile href="/sessions" label="Sessions 30d" value={data?.sessions?.last30Days ?? 0}
-              sub="last month" icon={Activity} />
-            {!isPlatformAdmin && (
-              <Tile href="/businesses" label="Businesses" value={data?.businesses?.total ?? 0}
-                sub="active" icon={Building2} />
-            )}
-          </div>
-
-          {/* Host health. One card of gauges rather than four tiles, because
-              they are read together — "is this server coping" is one question. */}
-          {isPlatformAdmin && (
-            <Card className="shrink-0">
-              <CardContent className="py-3">
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3">
-                  <MeterGauge
-                    label="CPU"
-                    percent={host?.cpu?.percent ?? null}
-                    detail={
-                      host?.cpu
-                        ? `${host.cpu.count} cores · load ${host.cpu.loadAvg.map((l) => l.toFixed(2)).join(' / ')}`
-                        : undefined
-                    }
-                    unknown="sampling…"
-                  />
-                  <MeterGauge
-                    label="Memory"
-                    percent={host?.memory?.percent ?? null}
-                    detail={host?.memory ? `${size(host.memory.used)} of ${size(host.memory.total)}` : undefined}
-                    unknown="sampling…"
-                  />
-                  <MeterGauge
-                    label="Disk"
-                    percent={host?.disk?.percent ?? null}
-                    detail={host?.disk ? `${size(host.disk.free)} free of ${size(host.disk.total)}` : undefined}
-                    unknown="sampling…"
-                  />
-                  <div className="space-y-1">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-xs text-muted-foreground flex items-center gap-1">
-                        <ArrowDownUp className="h-3 w-3" /> Bandwidth
-                      </span>
-                      <span className="text-sm font-semibold tabular-nums">
-                        {rate(net?.rxBytesPerSec)}
-                      </span>
-                    </div>
-                    <Sparkline values={(net?.history ?? []).map((h) => h.rx + h.tx)} height={22} />
-                    <div className="text-[11px] text-muted-foreground tabular-nums">
-                      ↓ {rate(net?.rxBytesPerSec)} · ↑ {rate(net?.txBytesPerSec)}
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* The lower half: map, recent sessions, seven-day shape. Bounded on
-              desktop so the page ends at the fold; each panel scrolls itself. */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 lg:flex-1 lg:min-h-0">
-            {/* Carries its own header and its located / unlocatable counts, so
-                it is placed directly rather than wrapped in a second card. */}
-            <div className="lg:col-span-2 lg:min-h-0">
-              <ClientMap embedded />
+      {/* What is broken, at the scale of a whole site: first, and loud. */}
+      {liveOutages.length > 0 && (
+        <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm dark:border-red-900 dark:bg-red-950/40" role="alert" data-testid="dashboard-outages">
+          {liveOutages.map((o) => (
+            <div key={o.id} className="flex flex-wrap items-center gap-x-2">
+              <AlertOctagon className="h-4 w-4 text-red-600 dark:text-red-400" />
+              <span className="font-medium">Site outage: {o.site?.name ?? 'a site'}{o.business ? ` (${o.business.name})` : ''}</span>
+              <span className="text-muted-foreground">{o.devices} device{o.devices === 1 ? '' : 's'} stopped reporting together, since {ago(o.since, now)}</span>
+              <Link href="/alerts" className="ml-auto text-xs underline underline-offset-2">Open alerts</Link>
             </div>
-
-            <div className="flex flex-col gap-3 lg:min-h-0">
-              {/* Installed RustDesk version per client against the latest
-                  release, with Update per row. Platform Admin only: staging an
-                  update is an admin action and the API behind it is gated. */}
-              {isPlatformAdmin && <RustdeskUpdates isPlatformAdmin compact />}
-
-              <Card className="flex flex-col lg:flex-1 lg:min-h-0 overflow-hidden">
-                <CardHeader className="py-2 shrink-0">
-                  <CardTitle className="text-sm">Recent sessions</CardTitle>
-                </CardHeader>
-                <CardContent className="pt-0 overflow-y-auto">
-                  {data?.sessions?.recent?.length ? (
-                    <div className="divide-y">
-                      {(data.sessions.recent as Record<string, unknown>[]).slice(0, 6).map((s) => (
-                        <div key={s.id as string} className="py-1.5">
-                          <p className="text-xs font-medium truncate">
-                            {(s.endpoint as { name?: string } | null)?.name ??
-                              (s.adHocRustdeskId as string) ?? 'Ad-hoc'}
-                          </p>
-                          <p className="text-[11px] text-muted-foreground truncate">
-                            {(s.technician as { email?: string } | null)?.email} ·{' '}
-                            {formatDate(s.createdAt as string)}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">No sessions yet.</p>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card className="shrink-0">
-                <CardHeader className="py-2">
-                  <CardTitle className="text-sm">Sessions — last 7 days</CardTitle>
-                </CardHeader>
-                <CardContent className="pt-0 pb-3">
-                  <SessionsByDay rows={(data?.activity?.sessionsByDay ?? []) as DayCount[]} />
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-interface DayCount { date: string; count: number }
-
-/**
- * `YYYY-MM-DD` as a date in the viewer's own timezone.
- *
- * `new Date('2026-09-11')` is parsed as **UTC midnight**, so in any
- * negative-offset browser it formats as the 10th — every label on this chart
- * was one day early, and being single letters (`weekday: 'narrow'` gives S, S,
- * M, T, W, T) there was nothing to notice it by. Building the date from its
- * parts keeps it local and keeps the label matching the bar.
- */
-function localDay(iso: string): Date {
-  const [y, m, d] = iso.split('-').map(Number);
-  return new Date(y, (m ?? 1) - 1, d ?? 1);
-}
-
-/**
- * Seven days of session counts.
- *
- * The server zero-fills the series, so this renders exactly what it is given
- * and never closes a gap: a quiet day is a labelled column with no bar, not a
- * missing column. A zero is drawn as no bar at all rather than a minimum-height
- * stub — the old `Math.max(4, …)` floor made an idle day look like a small
- * amount of work.
- */
-function SessionsByDay({ rows }: { rows: DayCount[] }) {
-  if (rows.length === 0) {
-    return <p className="text-xs text-muted-foreground">No session data yet.</p>;
-  }
-
-  const max = Math.max(1, ...rows.map((r) => r.count));
-  const total = rows.reduce((sum, r) => sum + r.count, 0);
-
-  return (
-    <div className="space-y-1">
-      {/* `items-stretch` and `h-full` on the column are load-bearing, not
-          decoration. With `items-end` on this row each column sizes to its own
-          content, so the track's `flex-1` has no free space to claim, collapses
-          to zero height, and the bar's `height: N%` resolves to a percentage of
-          nothing. The counts and the day labels still render, which is what
-          made it look like a data problem for so long: a chart with correct
-          numbers and no bars at all. */}
-      <div className="flex items-stretch gap-1 h-20">
-        {rows.map((row) => {
-          const day = localDay(row.date);
-          return (
-            <div key={row.date} className="flex-1 h-full flex flex-col items-center gap-1 min-w-0">
-              <span className="text-[10px] tabular-nums text-muted-foreground leading-none">
-                {row.count > 0 ? row.count : ''}
-              </span>
-              <div className="w-full flex-1 min-h-0 bg-muted rounded-sm flex items-end overflow-hidden">
-                <div
-                  className="w-full bg-primary rounded-sm transition-all"
-                  style={{ height: `${(row.count / max) * 100}%` }}
-                />
-              </div>
-              <span
-                className="text-[10px] text-muted-foreground"
-                title={day.toLocaleDateString(undefined, { dateStyle: 'full' })}
-              >
-                {day.toLocaleDateString(undefined, { weekday: 'short' })}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-      {total === 0 && (
-        <p className="text-[11px] text-muted-foreground">No sessions in the last 7 days.</p>
-      )}
-    </div>
-  );
-}
-
-interface HostStatus {
-  memory?: { total: number; used: number; free: number; percent: number };
-  cpu?: { count: number; loadAvg: [number, number, number]; percent?: number };
-  disk?: { total: number; used: number; free: number; percent: number };
-  network?: {
-    rxBytesPerSec: number; txBytesPerSec: number;
-    history: { rx: number; tx: number; cpu: number }[];
-    sampleSeconds: number;
-  };
-  relay?: { port: number; connections: number; sessions: number };
-}
-
-type Accent = 'green' | 'red' | 'yellow' | 'blue';
-
-/**
- * One figure, one line of context, one row tall.
- *
- * Deliberately not the old StatCard, which spent a padded header, a 2xl
- * numeral and a sub-line on each of eight tiles — over half the viewport
- * before anything else was drawn.
- */
-function Tile({
-  label, value, sub, icon: Icon, accent, href, title,
-}: {
-  label: string;
-  value: number;
-  sub: string;
-  icon: React.ComponentType<{ className?: string }>;
-  accent?: Accent;
-  href?: string;
-  title?: string;
-}) {
-  const accents: Record<Accent, string> = {
-    green: 'border-l-green-500',
-    red: 'border-l-red-500',
-    yellow: 'border-l-yellow-500',
-    blue: 'border-l-blue-500',
-  };
-  const body = (
-    <Card
-      title={title}
-      className={`h-full transition-colors ${href ? 'hover:bg-muted/40 cursor-pointer' : ''}${
-        accent ? ` border-l-4 ${accents[accent]}` : ''
-      }`}
-    >
-      <CardContent className="p-3">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] text-muted-foreground truncate">{label}</span>
-          <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          ))}
         </div>
-        <div className="text-xl font-bold leading-tight tabular-nums">{value.toLocaleString()}</div>
-        <p className="text-[11px] text-muted-foreground truncate">{sub}</p>
-      </CardContent>
-    </Card>
+      )}
+
+      {/* The figures, each one a way in. */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7" data-testid="dashboard-tiles">
+        {d.devices && (
+          <Tile href="/endpoints" icon={Monitor} label="Devices" value={d.devices.total}
+            sub={`${d.devices.online} online · ${d.devices.offline} offline`} tone={d.devices.offline ? 'warn' : undefined}
+            title={d.devices.agentSilent ? `${d.devices.agentSilent} reachable but their agent has not checked in for ${d.devices.agentSilentAfterMinutes}+ minutes` : undefined} />
+        )}
+        {d.alerts && (
+          <Tile href="/alerts?state=open&severity=critical" icon={Siren} label="Critical alerts" value={d.alerts.criticalOpen}
+            sub={`${d.alerts.open} open · ${d.alerts.acknowledged} acknowledged`} tone={d.alerts.criticalOpen ? 'bad' : undefined}
+            title={d.alerts.suppressed ? `${d.alerts.suppressed} more are in a maintenance window and not counted as critical` : undefined} />
+        )}
+        {d.actions && (
+          <Tile href="#work-next" icon={XCircle} label="Failed actions" value={failedActions}
+            sub={d.actions.uncertain ? `${d.actions.uncertain} outcome unknown · 7 days` : 'last 7 days'} tone={failedActions ? 'bad' : undefined} />
+        )}
+        {d.actions && (
+          <Tile href="#work-next" icon={Hourglass} label="Awaiting approval" value={d.actions.awaitingApproval}
+            sub="approved on the signer, not here" />
+        )}
+        {d.restart && (
+          <Tile href="/patching" icon={RotateCcw} label="Restart pending" value={d.restart.devices}
+            sub={d.restart.list.some((r) => r.stale) ? 'some from stale scans' : 'from scans and alerts'} tone={d.restart.devices ? 'warn' : undefined} />
+        )}
+        {d.patch && (
+          <Tile href="/patching" icon={ShieldCheck} label="Patch compliance"
+            value={d.patch.compliancePercent === null ? 'No data' : `${d.patch.compliancePercent}%`}
+            sub={d.patch.compliancePercent === null ? `no scan under ${d.patch.staleAfterHours} h` : `${d.patch.fresh} of ${d.patch.total} devices scanned`}
+            title={d.patch.definition} />
+        )}
+        {d.sessions && (
+          <Tile href="/sessions" icon={PlayCircle} label="Active sessions" value={connected}
+            sub={launching ? `${launching} launching` : 'connected now'} />
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3 lg:items-start">
+        {/* What to do next, ranked, each with its reason. */}
+        <Card className="lg:col-span-2" id="work-next" data-testid="dashboard-queue">
+          <CardHeader className="py-3">
+            <CardTitle className="flex items-baseline justify-between text-sm">
+              <span>Work on next</span>
+              {d.queue.total > d.queue.items.length && (
+                <span className="text-xs font-normal text-muted-foreground">top {d.queue.items.length} of {d.queue.total}; the rest are on Alerts and the device pages</span>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {d.queue.items.length === 0 ? (
+              <Empty icon={CheckCircle2}>
+                Nothing needs you right now{d.alerts ? '' : ' (alerts are not visible to you, so they are not part of this)'}.
+              </Empty>
+            ) : (
+              <ol className="divide-y">
+                {d.queue.items.map((i) => (
+                  <li key={i.key}>
+                    <Link href={i.href} className="flex gap-3 py-2 hover:bg-muted/40 rounded-sm px-1 -mx-1">
+                      <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${SEV_DOT[i.severity]}`} aria-label={i.severity} />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex flex-wrap items-baseline gap-x-2">
+                          <span className="text-sm font-medium">{i.title}</span>
+                          <span className="text-xs text-muted-foreground">{where(i.business, i.device)}</span>
+                        </span>
+                        <span className="block text-xs text-muted-foreground">{i.reason}</span>
+                      </span>
+                      <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{ago(i.since, now)}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Who is affected. */}
+        <Card data-testid="dashboard-customers">
+          <CardHeader className="py-3"><CardTitle className="text-sm">Customers affected</CardTitle></CardHeader>
+          <CardContent className="pt-0">
+            {d.customers.length === 0 ? (
+              <Empty icon={Building2}>No business has an open alert, an offline device or a failed action that you can see.</Empty>
+            ) : (
+              <ul className="divide-y">
+                {d.customers.slice(0, 10).map((c) => {
+                  const parts = [
+                    c.outages && `${c.outages} outage${c.outages === 1 ? '' : 's'}`,
+                    c.critical && `${c.critical} critical`,
+                    c.failedActions && `${c.failedActions} failed action${c.failedActions === 1 ? '' : 's'}`,
+                    c.warning && `${c.warning} warning`,
+                    c.offline && `${c.offline} offline`,
+                  ].filter(Boolean);
+                  const body = (
+                    <>
+                      <span className="text-sm font-medium truncate">{c.business.name}</span>
+                      <span className={`block text-xs ${c.outages || c.critical ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'}`}>{parts.join(' · ')}</span>
+                    </>
+                  );
+                  return (
+                    <li key={c.business.id} className="py-2">
+                      {isPlatformAdmin ? <Link href={`/businesses/${c.business.id}`} className="block hover:underline">{body}</Link> : body}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3 lg:items-start">
+        {/* Which devices. */}
+        {d.devices && (
+          <Card data-testid="dashboard-attention">
+            <CardHeader className="py-3"><CardTitle className="text-sm">Devices needing attention</CardTitle></CardHeader>
+            <CardContent className="pt-0">
+              {d.attention.length === 0 ? (
+                <Empty icon={CheckCircle2}>Every device you can see is online, reporting, and has no open alert or failed action.</Empty>
+              ) : (
+                <ul className="divide-y">
+                  {d.attention.map((a) => (
+                    <li key={a.device.id}>
+                      <Link href={`/endpoints/${a.device.id}`} className="block py-2 hover:bg-muted/40 rounded-sm px-1 -mx-1">
+                        <span className="flex items-baseline gap-2">
+                          <span className={`h-2 w-2 shrink-0 rounded-full ${a.isOnline ? 'bg-green-500' : 'bg-muted-foreground/50'}`} aria-label={a.isOnline ? 'online' : 'offline'} />
+                          <span className="text-sm font-medium truncate">{a.device.name}</span>
+                          {a.business && <span className="text-xs text-muted-foreground truncate">{a.business.name}</span>}
+                        </span>
+                        <span className="block pl-4 text-xs text-muted-foreground">{a.reasons.join(' · ')}</span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* What is already in hand. */}
+        <Card data-testid="dashboard-in-progress">
+          <CardHeader className="py-3"><CardTitle className="text-sm">Being worked on</CardTitle></CardHeader>
+          <CardContent className="pt-0 space-y-3">
+            <InProgress d={d} now={now} />
+          </CardContent>
+        </Card>
+
+        {d.recentDevices && (
+          <Card data-testid="dashboard-recent-devices">
+            <CardHeader className="py-3"><CardTitle className="text-sm">Your recent devices</CardTitle></CardHeader>
+            <CardContent className="pt-0">
+              {d.recentDevices.length === 0 ? (
+                <Empty icon={Clock}>You have not opened a session to a device you can still see.</Empty>
+              ) : (
+                <ul className="divide-y">
+                  {d.recentDevices.map((r) => (
+                    <li key={r.id}>
+                      <Link href={`/endpoints/${r.id}`} className="flex items-baseline gap-2 py-2 hover:bg-muted/40 rounded-sm px-1 -mx-1">
+                        <span className={`h-2 w-2 shrink-0 rounded-full ${r.isOnline ? 'bg-green-500' : 'bg-muted-foreground/50'}`} aria-label={r.isOnline ? 'online' : 'offline'} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm truncate">{r.name}</span>
+                          <span className="block text-xs text-muted-foreground truncate">{r.business?.name ? `${r.business.name} · ` : ''}your session {ago(r.lastSessionAt, now)}</span>
+                        </span>
+                        <span className="shrink-0 text-[11px] text-muted-foreground">{r.isOnline ? 'online' : `seen ${ago(r.lastSeenAt, now)}`}</span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3 lg:items-start">
+        {d.activity && (
+          <Card className="lg:col-span-2" data-testid="dashboard-activity">
+            <CardHeader className="py-3">
+              <CardTitle className="flex items-baseline justify-between text-sm">
+                <span>Recent activity</span>
+                <Link href="/audit" className="text-xs font-normal text-muted-foreground hover:underline">Audit log</Link>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              {d.activity.length === 0 ? (
+                <Empty icon={Activity}>No alert, action, patch, session or device activity in the last 7 days.</Empty>
+              ) : (
+                <ul className="divide-y">
+                  {d.activity.map((a) => {
+                    const line = (
+                      <span className="flex items-baseline gap-2 py-1.5">
+                        <span className="min-w-0 flex-1 text-xs">
+                          <span className="font-medium">{a.actor ?? 'System'}</span> {a.label}
+                          {a.business && <span className="text-muted-foreground"> · {a.business.name}</span>}
+                        </span>
+                        <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{ago(a.at, now)}</span>
+                      </span>
+                    );
+                    return <li key={a.id}>{a.href ? <Link href={a.href} className="block hover:bg-muted/40 rounded-sm px-1 -mx-1">{line}</Link> : <span className="block px-1 -mx-1">{line}</span>}</li>;
+                  })}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {d.patch && (
+          <Card data-testid="dashboard-patch">
+            <CardHeader className="py-3">
+              <CardTitle className="flex items-baseline justify-between text-sm">
+                <span>Patch compliance</span>
+                <Link href="/patching" className="text-xs font-normal text-muted-foreground hover:underline">Patching</Link>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0 space-y-2 text-xs">
+              <PatchBreakdown p={d.patch} now={now} />
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+        {d.devices && (
+          <button type="button" onClick={() => setShowMap((v) => !v)} className="inline-flex items-center gap-1 hover:text-foreground">
+            <MapPin className="h-3.5 w-3.5" /> {showMap ? 'Hide device locations' : 'Show device locations'}
+          </button>
+        )}
+        {isPlatformAdmin && (
+          <Link href="/admin/status" className="inline-flex items-center gap-1 hover:text-foreground">
+            Server health (CPU, memory, disk, relay) is on System status <ArrowRight className="h-3 w-3" />
+          </Link>
+        )}
+      </div>
+      {showMap && d.devices && <div className="h-[420px]"><ClientMap embedded /></div>}
+    </div>
   );
-  return href ? <Link href={href} className="block h-full">{body}</Link> : body;
+}
+
+function InProgress({ d, now }: { d: Overview; now: number }) {
+  const rows: { key: string; icon: React.ComponentType<{ className?: string }>; text: string; sub: string; href: string }[] = [];
+  for (const s of d.sessions?.live ?? []) {
+    rows.push({
+      key: `s:${s.id}`, icon: PlayCircle,
+      text: `${s.technician ?? 'Someone'} ${s.connected ? 'connected to' : 'launching'} ${s.device?.name ?? (s.isAdHoc ? 'a Quick Connect computer' : 'a computer')}`,
+      sub: `${s.business?.name ? `${s.business.name} · ` : ''}last signal ${ago(s.lastSignalAt, now)}`, href: '/sessions',
+    });
+  }
+  for (const a of d.acknowledged ?? []) {
+    rows.push({ key: `a:${a.id}`, icon: Siren, text: a.title, sub: `${a.by ? `${a.by} acknowledged` : 'Acknowledged'} ${ago(a.acknowledgedAt, now)}${a.business ? ` · ${a.business.name}` : ''}`, href: a.href });
+  }
+  for (const j of d.actions?.inFlight ?? []) {
+    rows.push({ key: `j:${j.id}`, icon: Wrench, text: `${j.title}${j.device ? ` on ${j.device.name}` : ` on ${j.targets} computers`}`, sub: `${j.status === 'DISPATCHED' ? `sent ${ago(j.dispatchedAt, now)}` : 'approved, not yet sent'}${j.business ? ` · ${j.business.name}` : ''}`, href: j.href });
+  }
+  for (const p of d.patchDeployments ?? []) {
+    rows.push({ key: `p:${p.id}`, icon: ShieldCheck, text: `Patch deployment: ${p.name}`, sub: `${p.status === 'PAUSED' ? `paused${p.pausedReason ? `: ${p.pausedReason}` : ''}` : 'in progress'}${p.business ? ` · ${p.business.name}` : ''}`, href: `/patching/${p.id}` });
+  }
+  if (rows.length === 0) {
+    return <Empty icon={Wrench}>No live session, acknowledged alert, action in flight or patch deployment in progress.</Empty>;
+  }
+  return (
+    <ul className="divide-y">
+      {rows.slice(0, 10).map((r) => (
+        <li key={r.key}>
+          <Link href={r.href} className="flex gap-2 py-2 hover:bg-muted/40 rounded-sm px-1 -mx-1">
+            <r.icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="min-w-0">
+              <span className="block text-sm truncate">{r.text}</span>
+              <span className="block text-xs text-muted-foreground truncate">{r.sub}</span>
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function PatchBreakdown({ p, now }: { p: NonNullable<Overview['patch']>; now: number }) {
+  if (p.total === 0) return <p className="text-muted-foreground">No devices.</p>;
+  const seg = [
+    { n: p.upToDate, label: 'up to date', cls: 'bg-green-500' },
+    { n: p.needsUpdates, label: 'updates pending', cls: 'bg-amber-500' },
+    { n: p.stale, label: `scan older than ${p.staleAfterHours} h`, cls: 'bg-muted-foreground/40' },
+    { n: p.noScan, label: 'never scanned', cls: 'bg-slate-300 dark:bg-slate-600' },
+  ];
+  return (
+    <>
+      <div className="text-2xl font-semibold tabular-nums">
+        {p.compliancePercent === null ? 'No data' : `${p.compliancePercent}%`}
+      </div>
+      {p.compliancePercent === null && (
+        <p className="text-muted-foreground">No device has an update scan from the last {p.staleAfterHours} hours, so compliance cannot be computed honestly.</p>
+      )}
+      <div className="flex h-2 w-full overflow-hidden rounded-full bg-muted" aria-hidden>
+        {seg.map((s) => s.n > 0 && <div key={s.label} className={s.cls} style={{ width: `${(s.n / p.total) * 100}%` }} />)}
+      </div>
+      <ul className="space-y-0.5">
+        {seg.map((s) => (
+          <li key={s.label} className="flex items-center gap-2">
+            <span className={`h-2 w-2 rounded-full ${s.cls}`} />
+            <span className="flex-1">{s.label}</span>
+            <span className="tabular-nums">{s.n}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-muted-foreground">
+        Coverage {p.coveragePercent ?? 0}% ({p.fresh} of {p.total}). Newest scan {ago(p.newestScanAt, now)}{p.oldestFreshScanAt ? `, oldest counted ${ago(p.oldestFreshScanAt, now)}` : ''}.
+      </p>
+      <p className="text-muted-foreground">{p.definition}</p>
+    </>
+  );
+}
+
+function Empty({ icon: Icon, children }: { icon: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
+  return (
+    <p className="flex items-start gap-2 py-2 text-xs text-muted-foreground">
+      <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <span>{children}</span>
+    </p>
+  );
+}
+
+/** One figure, one line of context, one link. Colour only when the figure is bad. */
+function Tile({
+  label, value, sub, icon: Icon, href, tone, title,
+}: {
+  label: string; value: number | string; sub: string; icon: React.ComponentType<{ className?: string }>;
+  href: string; tone?: 'bad' | 'warn'; title?: string;
+}) {
+  const border = tone === 'bad' ? 'border-l-4 border-l-red-500' : tone === 'warn' ? 'border-l-4 border-l-amber-500' : '';
+  return (
+    <Link href={href} className="block h-full" title={title}>
+      <Card className={`h-full transition-colors hover:bg-muted/40 ${border}`}>
+        <CardContent className="p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] leading-tight text-muted-foreground">{label}</span>
+            <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          </div>
+          <div className="text-xl font-bold leading-tight tabular-nums">{typeof value === 'number' ? value.toLocaleString() : value}</div>
+          <p className="text-[11px] leading-snug text-muted-foreground line-clamp-2">{sub}</p>
+        </CardContent>
+      </Card>
+    </Link>
+  );
 }

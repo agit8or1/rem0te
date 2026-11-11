@@ -210,6 +210,33 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'device-list',
+    title: 'The Device List',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          <Link href="/endpoints" className="underline text-foreground">Devices</Link> lists every device you can
+          see — online ones first, then by name. Search, filters, sorting and paging all run on the server, so they
+          cover every device, not just the page on screen. Click a column heading to sort by it.
+        </p>
+        <p>
+          <strong className="text-foreground">Health</strong> is the worst open monitoring alert;{' '}
+          <strong className="text-foreground">Pending patches</strong> comes from the last update scan; CPU, RAM,
+          disk and the logged-in user come from the last heartbeat. Each shows its age, and a value that is stale —
+          a resource sample older than 15 minutes, an update scan older than 36 hours — is greyed: it is what the
+          device last reported, not what it is doing now. Health and alerts need the monitoring:alerts permission.
+        </p>
+        <p>
+          <strong className="text-foreground">Columns</strong> and row density are remembered in this browser.{' '}
+          <strong className="text-foreground">Views</strong> save the current filters, sort and columns under a
+          name — in this browser only; they are not shared. <strong className="text-foreground">Export CSV</strong>{' '}
+          downloads the whole filtered view (up to 10,000 devices), contains only what you can see, and is recorded
+          in the audit log.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'connect-flow',
     title: 'Connecting to a Computer',
     content: (
@@ -218,11 +245,11 @@ const SECTIONS: Section[] = [
           <li>
             Open{' '}
             <Link href="/endpoints" className="underline text-foreground">
-              Computers
+              Devices
             </Link>{' '}
             (or{' '}
             <Link href="/my-computers" className="underline text-foreground">
-              My Computers
+              Devices → My devices
             </Link>
             ) and click <strong className="text-foreground">Connect</strong>.
           </li>
@@ -339,8 +366,21 @@ const SECTIONS: Section[] = [
           A managed computer&apos;s page shows what it has reported about itself:
           hardware, storage, network adapters, who is signed in, how long it has been
           up, and how many Windows updates it is waiting on. Open it from{' '}
-          <Link href="/endpoints" className="underline text-foreground">Computers</Link> and
+          <Link href="/endpoints" className="underline text-foreground">Devices</Link> and
           look at the <strong className="text-foreground">Overview</strong> tab.
+        </p>
+        <p className="font-medium text-foreground">The device page</p>
+        <p>
+          The top of the page says whether the computer is online (or offline since
+          when), its business and site, and when its agent last checked in, marked
+          stale when it has missed check-ins. The strip under it lists what needs
+          attention: open alerts, a pending restart, pending updates with the age of
+          the scan, and which agent it runs. Each opens the tab that explains it.
+          Connect, Diagnose, Run action and Patch sit beside it; Archive and the other
+          rare actions are under More, each with a confirmation. The tabs are
+          Overview, Monitoring, Software, Patches, Event logs, Diagnostics, Actions and
+          History (sessions, notes, the AI-written summary and who can connect), and
+          each can be linked with <code>?tab=</code>.
         </p>
         <p className="font-medium text-foreground">Nothing here is live</p>
         <p>
@@ -358,7 +398,7 @@ const SECTIONS: Section[] = [
         </p>
         <p className="font-medium text-foreground">Event logs</p>
         <p>
-          The <strong className="text-foreground">Event Log</strong> tab asks the
+          The <strong className="text-foreground">Event logs</strong> tab asks the
           computer for a page of one Windows log — Application, System, Security, Setup
           or Windows PowerShell. Pick a time range, the levels and how many of the most
           recent events you want; the table fills in when the machine answers, up to
@@ -372,6 +412,19 @@ const SECTIONS: Section[] = [
           <Link href="/users" className="underline text-foreground">Users</Link>. Every
           request is recorded in the audit log with the log name, the window and who
           asked.
+        </p>
+        <p className="font-medium text-foreground">One-click diagnostics</p>
+        <p>
+          A Windows computer&apos;s <strong className="text-foreground">Diagnostics</strong> list
+          has nine read-only checks — disk space, service health, recent system errors, top
+          processes, network connectivity, DNS, pending updates, reboot status and a fresh
+          inventory. Press <strong className="text-foreground">Run</strong>: the computer picks the
+          request up on its next heartbeat, runs the fixed check its agent carries, and the result
+          appears with its age. Nothing on the computer is changed and nothing you type reaches it —
+          there is nothing to type. If the computer does not check in within fifteen minutes the run
+          expires and says so. <em>Recent system errors</em> needs the event-log permission; every
+          other check needs only to see the computer. Every run is in the audit log. More in{' '}
+          <Link href="/docs/diagnostics" className="underline text-foreground">One-click diagnostics</Link>.
         </p>
         <p className="font-medium text-foreground">If a computer reports nothing</p>
         <p>
@@ -492,7 +545,7 @@ const SECTIONS: Section[] = [
           <li>
             To prepare a machine in advance, use{' '}
             <Link href="/downloads" className="underline text-foreground">
-              Downloads
+              Remote Support → Technician client
             </Link>{' '}
             → <em>Set up this computer for Connect</em>.
           </li>
@@ -517,7 +570,8 @@ const SECTIONS: Section[] = [
     content: (
       <div className="space-y-3 text-sm text-muted-foreground">
         <p>
-          Every computer&apos;s page has a <strong className="text-foreground">Test connection</strong> panel. It
+          Every computer&apos;s page has a <strong className="text-foreground">Test connection</strong> panel, on its
+          Diagnostics tab (the Diagnose button opens it). It
           checks the server, the computer and — with <em>Check my computer</em> — the RustDesk on your own machine,
           and says which one is wrong. Fixes that change something are labelled; the test itself changes nothing.
           <em> Download report</em> gives a redacted copy safe to attach to a ticket.
@@ -599,6 +653,25 @@ const SECTIONS: Section[] = [
           <Link href="/docs/capabilities" className="underline text-foreground">What each agent can do</Link>.
         </p>
         <p>
+          From 0.31 the menu is organised by job: <strong className="text-foreground">Dashboard</strong>,{' '}
+          <strong className="text-foreground">Devices</strong> (all devices, your own, adding one),{' '}
+          <strong className="text-foreground">Alerts</strong>, <strong className="text-foreground">Patching</strong>,{' '}
+          <strong className="text-foreground">Remote Support</strong> (sessions, Quick Connect, support requests and the
+          technician client) and <strong className="text-foreground">Settings</strong>, which holds users, the audit log
+          and platform administration. Help and the documentation are at the bottom of the menu.
+        </p>
+        <p>
+          The <Link href="/dashboard" className="underline text-foreground">Dashboard</Link> (0.31) says what is broken,
+          which businesses it affects, which devices need attention, what is already being worked on, and what to
+          do next — only for what you can see. <strong className="text-foreground">Work on next</strong> is a ranked
+          list and each item says why it is there: site outages, then critical alerts, actions whose outcome is
+          unknown, failed actions, warnings, approval requests, restarts pending and info alerts, oldest first.
+          Acknowledged alerts and alerts in a maintenance window are left out. <em>Patch compliance</em> counts only
+          devices with an update scan under 36 hours old and shows the coverage beside it; with no such scan it says{' '}
+          <em>No data</em>. Server health moved to Settings → System status. More in{' '}
+          <Link href="/docs/technician-guide" className="underline text-foreground">Technician guide</Link>.
+        </p>
+        <p>
           From 0.28, writes can be <strong className="text-foreground">paused</strong> while an incident is looked at:
           approved actions, remote connections, agent updates and ClientSt0r jobs, for every business or for one. A red
           strip at the top of the page says what is stopped and why; a refused click says <em>CONTAINED</em>. A Business
@@ -620,7 +693,7 @@ const SECTIONS: Section[] = [
         </p>
         <p>
           Customers can ask for help through their business&apos;s support link, without an account. Requests appear
-          under <Link href="/support-requests" className="underline text-foreground">Support Requests</Link>: claim
+          under <Link href="/support-requests" className="underline text-foreground">Remote Support → Support requests</Link>: claim
           one, connect, and complete or hand it off.
         </p>
         <p>
@@ -738,7 +811,7 @@ const SECTIONS: Section[] = [
           <li>It shows a Remote ID and a password; they read both to you.</li>
           <li>
             You enter them under{' '}
-            <Link href="/quick-connect" className="underline text-foreground">Quick Connect</Link>{' '}
+            <Link href="/quick-connect" className="underline text-foreground">Remote Support → Quick Connect</Link>{' '}
             and connect.
           </li>
           <li>They close the client when you are done, which ends their availability.</li>
@@ -782,8 +855,10 @@ export default function HelpPage() {
 
   return (
     <div className="p-6 space-y-4 max-w-2xl">
-      <PageHeader title="Help &amp; Docs" description="How Reboot Remote and RustDesk work together.">
-        <div className="flex gap-2">
+      <PageHeader title="Help &amp; Docs" description="Quick answers here; the full guides are in the documentation.">
+        <div className="flex items-center gap-2">
+          <Link href="/docs" className="text-xs font-medium text-primary hover:underline">Full documentation</Link>
+          <span className="text-xs text-muted-foreground">·</span>
           <button
             onClick={expandAll}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors"

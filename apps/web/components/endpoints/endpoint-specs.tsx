@@ -176,7 +176,7 @@ function SectionCard({
   );
 }
 
-function UpdatesCard({ data }: { data: InventoryPayload }) {
+function UpdatesCard({ data, onOpenPatches }: { data: InventoryPayload; onOpenPatches?: () => void }) {
   const [open, setOpen] = useState(false);
   const inv = data.inventory;
   const count = inv?.pendingUpdateCount ?? null;
@@ -264,6 +264,16 @@ function UpdatesCard({ data }: { data: InventoryPayload }) {
         )}
       </div>
 
+      {/* The count is a summary; the Patches tab has the scan's evidence, its
+          age, who manages patching here, and the update list. */}
+      {onOpenPatches && (
+        <div className="pt-1">
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onOpenPatches} data-testid="updates-open-patches">
+            {count !== null && count > 0 ? `Review the ${count} pending on Patches` : 'Open Patches'}
+          </Button>
+        </div>
+      )}
+
       {list.length > 0 && (
         <div className="pt-1">
           <button
@@ -298,9 +308,12 @@ function UpdatesCard({ data }: { data: InventoryPayload }) {
 export function EndpointSpecs({
   endpointId,
   endpoint,
+  onOpenPatches,
 }: {
   endpointId: string;
   endpoint: Record<string, unknown>;
+  /** When given, the Updates card links to the Patches tab (0.31). */
+  onOpenPatches?: () => void;
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -702,7 +715,7 @@ export function EndpointSpecs({
           )}
         </SectionCard>
 
-        {data && <UpdatesCard data={data} />}
+        {data && <UpdatesCard data={data} onOpenPatches={onOpenPatches} />}
       </div>
     </div>
   );

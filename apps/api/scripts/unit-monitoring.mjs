@@ -237,8 +237,11 @@ if (pwsh) {
   const hb = /\$hbBody = @'\r?\n([\s\S]*?)\r?\n'@/.exec(script)[1];
   const blk = hb.slice(hb.indexOf('# ---- Monitoring (0.29)'), hb.indexOf('# Apply a staged RustDesk upgrade.'));
   const dir = mkdtempSync(join(tmpdir(), 'rem0te-psmon-'));
+  // Relative to now: the agent ignores a `since` older than 24 hours, so a
+  // fixed date here made this check fail a day after it was written.
+  const PWSH_SINCE = new Date(Math.floor((Date.now() - 2 * 3600_000) / 1000) * 1000).toISOString();
   const cfg = { data: { monitor: { v: 1, services: ['Spooler', 'NoSuch', 'bad name;rm', 'W32Time'], events: [
-    { key: 'disk-errors', log: 'System', ids: [7, 11], levels: [], provider: null, since: '2026-11-10T10:00:00.000Z' },
+    { key: 'disk-errors', log: 'System', ids: [7, 11], levels: [], provider: null, since: PWSH_SINCE },
     { key: 'quiet', log: 'Application', ids: [], levels: [1, 2], provider: 'MyApp', since: null },
     { key: 'evil', log: 'C:\\x', ids: [1], levels: [], provider: null, since: null },
     { key: 'failing', log: 'Setup', ids: [5], levels: [], provider: null, since: null },
@@ -266,7 +269,7 @@ ${blk}
     check('pwsh: a service name failing the charset is never passed to Get-Service', JSON.stringify(names) === JSON.stringify(['Spooler', 'NoSuch', 'W32Time']), JSON.stringify(names));
     check('pwsh: a service that is not installed reports Missing', body.services.find((s) => s.name === 'NoSuch')?.status === 'Missing');
     check('pwsh: a log outside the allowed list is never queried', !filters.some((f) => f.LogName === 'C:\\x'));
-    check('pwsh: since is honoured; ids and levels are passed', filters[0]?.StartTime?.startsWith('2026-11-10T10:00:00') && JSON.stringify(filters[0].Id) === '[7,11]' && JSON.stringify(filters[1].Level) === '[1,2]', JSON.stringify(filters));
+    check('pwsh: since is honoured; ids and levels are passed', filters[0]?.StartTime?.startsWith(PWSH_SINCE.slice(0, 19)) && JSON.stringify(filters[0].Id) === '[7,11]' && JSON.stringify(filters[1].Level) === '[1,2]', JSON.stringify(filters));
     const ev = Object.fromEntries(body.events.map((e) => [e.key, e]));
     check('pwsh: matches are counted and one sample kept, clamped to 300', ev['disk-errors']?.count === 2 && ev['disk-errors'].sample.message.length === 300);
     check('pwsh: no matches is a count of 0, not an error', ev.quiet?.count === 0);

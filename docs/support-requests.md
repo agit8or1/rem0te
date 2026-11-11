@@ -14,7 +14,7 @@ https://<your server>/support/<16 random characters>
 
 which can be shared with the business's staff, put on an intranet page or a desktop shortcut. **The link is the only thing that picks the business**, so anyone with the link can submit a request to that business. Regenerating it invalidates the old one at once. Turning it off makes the link answer exactly as an unknown link does, so a disabled link cannot be told apart from one that never existed.
 
-Signed-in members of a business can also ask from **My Computers → Request support**, which can name one of their own computers.
+Signed-in members of a business can also ask from **Devices → My devices → Request support**, which can name one of their own computers.
 
 ## What the customer sees
 
@@ -31,7 +31,7 @@ The form is unauthenticated, so it is limited in layers:
 
 ## For technicians: the queue
 
-**Support Requests** (needs `support:requests`) lists the business's requests. A technician working through an assignment sees the queue for the business they are switched into.
+**Remote Support → Support requests** (needs `support:requests`) lists the business's requests. A technician working through an assignment sees the queue for the business they are switched into.
 
 - **Claim** a request to take it. Claiming is atomic: if two people claim at once, one wins and the other is told who has it.
 - **Hand off** to someone else who can handle requests in that business. Only people who hold `support:requests` there, as members or through an assignment, are offered.

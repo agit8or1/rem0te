@@ -16,7 +16,7 @@ delivering those two values.
 | Connecting to a computer, from anything | **Just click Connect** | Rem0te → Computers |
 | Setting a machine up ahead of time | **Set up this computer for Connect** | Rem0te → Downloads |
 | A technician on a machine with no RustDesk | **Preconfigured client** | Rem0te → Downloads |
-| Deploying to a computer to be supported | **Managed installer** | Rem0te → Enroll Computer |
+| Deploying to a computer to be supported | **Managed installer** | Rem0te → Devices → Add device |
 | Helping someone with no account and no install | **Quick Connect** | Send them `/quick` |
 | Wanting stock RustDesk, unmodified | **Unconfigured client** | Rem0te → Downloads |
 
@@ -53,7 +53,7 @@ Connect button's `rustdesk://` link would work directly too.
 
 ![The Downloads page](screenshots/guide/downloads.png)
 
-1. **Downloads** in the sidebar. Separate from *Enroll Computer*, which prepares
+1. **Remote Support → Technician client**. Separate from *Devices → Add device*, which prepares
    the machine being supported rather than the one supporting it.
 2. **Set up this computer for Connect** — the one to reach for. Points this
    machine's RustDesk at the server, fetching a portable copy first if there is
@@ -114,7 +114,7 @@ a known-clean binary — comparing behaviour, or configuring by hand afterwards.
 
 ---
 
-## Managed installer — Rem0te → Enroll Computer
+## Managed installer — Rem0te → Devices → Add device
 
 For a computer that will be supported on an ongoing basis. This is the only
 client that does more than configure RustDesk:

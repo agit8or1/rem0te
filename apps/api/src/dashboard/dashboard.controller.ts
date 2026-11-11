@@ -1,5 +1,6 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
+import { DashboardOverviewService } from './overview.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
 import { Actor } from '../common/decorators/actor.decorator';
@@ -8,7 +9,22 @@ import type { ActorContext } from '../rbac/access-control.service';
 @Controller('dashboard')
 @UseGuards(JwtAuthGuard, CapabilitiesGuard)
 export class DashboardController {
-  constructor(private readonly dashboard: DashboardService) {}
+  constructor(
+    private readonly dashboard: DashboardService,
+    private readonly overviewSvc: DashboardOverviewService,
+  ) {}
+
+  /**
+   * The technician dashboard (0.31): what is broken, who is affected, what
+   * needs attention, what is being worked on, and a ranked queue of what to do
+   * next. Ungated like the counts below: each section is null when the caller
+   * lacks its capability, and every query is scoped by the service — see
+   * DashboardOverviewService for the rule each section uses.
+   */
+  @Get('overview')
+  async overview(@Actor() actor: ActorContext, @Query('businessId') businessId?: string) {
+    return { success: true, data: await this.overviewSvc.overview(actor, businessId) };
+  }
 
   /**
    * Counts for whatever the caller can see. Ungated: the service returns

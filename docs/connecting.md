@@ -42,8 +42,8 @@ There are three, and they are not equivalent.
 
 ![Connect, on a computer you have access to](screenshots/guide/tech-03-connect.png)
 
-1. **My Computers** — the computers this account may connect to. Platform Admins
-   and Business Owners get the full list under **Computers**.
+1. **Devices → My devices** — the computers this account may connect to. Platform Admins
+   and Business Owners get the full list under **Devices**.
 2. **Connect** — downloads the script described below.
 
 ### 1. The Connect button — a downloaded script
@@ -116,7 +116,7 @@ never told where to look.
 configures the client before connecting, so it works the first time on a
 machine that has never seen this server.
 
-If you would rather prepare a machine in advance, **Downloads** →
+If you would rather prepare a machine in advance, **Remote Support → Technician client** →
 *Set up this computer for Connect* does the configuration on its own. See
 [clients.md](clients.md).
 
@@ -149,7 +149,7 @@ for a computer it confirms neither.
 
 ## Test connection (v0.20)
 
-Every computer has a **Test connection** panel. It runs read-only checks and
+Every computer has a **Test connection** panel, on its **Diagnostics** tab (0.31; **Diagnose** in the header opens it). It runs read-only checks and
 says, for each, what was found, where the problem is (server, endpoint or your
 computer) and what to do:
 
@@ -195,7 +195,7 @@ rendezvous server.
    running client will not pick up a configuration change.
 2. Click **Connect** again and run the file it gives you. It reapplies the
    configuration every time, so a client that drifted gets corrected.
-3. If that still fails, Rem0te → **Downloads** → *Set up this computer for
+3. If that still fails, Rem0te → **Remote Support → Technician client** → *Set up this computer for
    Connect*, and watch its output — it prints which RustDesk it found.
 
 If it still fails, confirm what the client thinks: RustDesk → **Settings →

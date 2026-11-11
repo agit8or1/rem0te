@@ -76,6 +76,9 @@ const CALLOUT_PAGES = [
       // Connect lives on a computer's own page, not on the list — the first
       // version of this pointed at a button that is not here.
       { find: 'input[placeholder^="Search"]' },
+      { find: 'table' },
+      { find: { text: 'Enroll Client', tag: 'button' } },
+      { find: { text: 'Generate Enrollment Link', tag: 'button' } },
     ],
   },
   {
@@ -97,12 +100,26 @@ const CALLOUT_PAGES = [
   {
     name: 'guide/tech-05-sessions',
     path: '/sessions',
-    callouts: [{ find: 'a[href="/sessions"]' }],
+    callouts: [
+      { find: 'a[href="/sessions"]' },
+      // Exact selectors: text matching is by substring, and "Connect" is
+      // inside "Connected" and "Quick Connect".
+      { find: '[role="tab"][id$="-trigger-connected"]' },
+      { find: '[role="tab"][id$="-trigger-history"]' },
+      { find: 'main .grid button' },
+      { find: 'a[href="/quick-connect"]:not(nav a):not([data-section-tabs] a)' },
+    ],
   },
   {
     name: 'guide/tech-06-updates',
     path: '/about',
-    callouts: [{ find: 'a[href="/about"]' }],
+    // The RustDesk client panel sits below the server's own version card.
+    height: 1900,
+    callouts: [
+      { find: 'a[href="/about"]' },
+      { find: { text: 'Update all outdated', tag: 'button' } },
+      { find: 'button[title="Check for a newer RustDesk release"]' },
+    ],
   },
   {
     name: 'guide/downloads',
@@ -203,9 +220,9 @@ const CALLOUT_PAGES = [
     before: async (page) => { await page.waitForSelector('[data-testid="endpoint-monitoring"]', { timeout: 15_000 }); await page.waitForTimeout(500); },
     callouts: [
       { find: '[role="tab"][data-state="active"]' },
+      { find: '[data-testid="mon-alerts"]' },
       { find: '[data-testid="mon-effect"]' },
       { find: '[data-testid="mon-changes"]' },
-      { find: '[data-testid="mon-software"]' },
     ],
   },
   {
@@ -333,7 +350,9 @@ async function captureWithCallouts(page, spec, outDir, theme) {
       badge.textContent = String(n);
       Object.assign(badge.style, {
         position: 'absolute',
-        top: `${top - 11}px`, left: `${left - 11}px`,
+        // Kept inside the frame: a target at the top or left edge (a section
+        // tab, a sidebar entry) would otherwise lose half its number.
+        top: `${Math.max(2, top - 11)}px`, left: `${Math.max(2, left - 11)}px`,
         width: '22px', height: '22px', borderRadius: '11px',
         background: '#e11d48', color: '#fff',
         font: '600 12px/22px ui-sans-serif, system-ui, sans-serif',

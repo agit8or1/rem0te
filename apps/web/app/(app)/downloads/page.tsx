@@ -43,9 +43,9 @@ export default function DownloadsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="p-6 space-y-6">
       <PageHeader
-        title="Downloads"
+        title="Technician client"
         description="RustDesk clients for the computer you connect from."
       />
 

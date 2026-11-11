@@ -1,7 +1,7 @@
 # Rem0te documentation
 
 Start with the page that matches what you are doing. All of this is also inside
-the product under **Documentation** in the sidebar, as a grouped index with a
+the product under **Help & docs → Full documentation** in the sidebar, as a grouped index with a
 contents panel on every page and search across all of it (press <kbd>/</kbd>).
 
 ## Something is broken
@@ -24,6 +24,9 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[inventory.md](inventory.md)** — the specs a managed computer reports, its
   installed software and change history, its pending Windows updates, and how
   to read a slice of its event log.
+- **[diagnostics.md](diagnostics.md)** — one-click read-only diagnostics: disk space,
+  services, recent errors, top processes, network and DNS, pending updates and
+  restart status, and what the agent will and will not read (0.31).
 - **[monitoring.md](monitoring.md)** — monitors (offline, disk, CPU, memory,
   services, event log, pending restart), inheritance, alerts, site outages,
   maintenance windows, escalation and ClientSt0r tickets (0.29).

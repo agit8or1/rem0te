@@ -1,34 +1,22 @@
 'use client';
 
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import Link from 'next/link';
-import { endpointsApi, enrollmentApi } from '@/lib/api-client';
+import { enrollmentApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { StatusIndicator } from '@/components/common/status-indicator';
-import { Plus, Search, Link2, Copy, X } from 'lucide-react';
+import { Plus, Link2, Copy, X } from 'lucide-react';
 import { useState } from 'react';
-import { formatDate } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
+import { DeviceList } from '@/components/endpoints/list/device-list';
 
 export default function EndpointsPage() {
-  const [search, setSearch] = useState('');
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [linkDescription, setLinkDescription] = useState('');
   const [linkCustomerName, setLinkCustomerName] = useState('');
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
   const { toast } = useToast();
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['endpoints', search],
-    queryFn: () =>
-      endpointsApi.list(search ? { search } : undefined).then((r) => r.data?.data),
-    refetchInterval: 30_000,
-  });
-
-  const endpoints: Record<string, unknown>[] = data?.endpoints ?? [];
 
   const createTokenMutation = useMutation({
     mutationFn: () =>
@@ -66,8 +54,8 @@ export default function EndpointsPage() {
     : null;
 
   return (
-    <div className="p-6 space-y-6">
-      <PageHeader title="Enrolled Clients" description="Permanently enrolled remote devices — installed via the enrollment script">
+    <div className="p-6 space-y-4">
+      <PageHeader title="Devices" description="Every enrolled device in the businesses you can see.">
         <Button size="sm" variant="outline" onClick={() => setShowLinkModal(true)}>
           <Link2 className="h-4 w-4 mr-2" />
           Generate Enrollment Link
@@ -80,85 +68,7 @@ export default function EndpointsPage() {
         </Link>
       </PageHeader>
 
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search endpoints…"
-            className="pl-9"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-      </div>
-
-      {isLoading ? (
-        <div className="text-sm text-muted-foreground">Loading…</div>
-      ) : (
-        <div className="rounded-md border bg-background overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/50">
-                <th className="text-left px-4 py-3 font-medium">Name</th>
-                <th className="text-left px-4 py-3 font-medium">Business</th>
-                <th className="text-left px-4 py-3 font-medium">Platform</th>
-                <th className="text-left px-4 py-3 font-medium">RustDesk ID</th>
-                <th className="text-left px-4 py-3 font-medium">Last Seen</th>
-                <th className="text-left px-4 py-3 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {endpoints.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="text-center py-8 text-muted-foreground">
-                    No endpoints found.
-                  </td>
-                </tr>
-              ) : (
-                endpoints.map((ep) => {
-                  const customer = ep.customer as { name?: string } | null;
-                  return (
-                    <tr key={ep.id as string} className="hover:bg-muted/30">
-                      <td className="px-4 py-3">
-                        <Link
-                          href={`/endpoints/${ep.id as string}`}
-                          className="font-medium hover:underline"
-                        >
-                          {ep.name as string}
-                        </Link>
-                        {ep.hostname ? (
-                          <p className="text-xs text-muted-foreground">{ep.hostname as string}</p>
-                        ) : null}
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {customer?.name ?? '—'}
-                      </td>
-                      <td className="px-4 py-3">
-                        {ep.platform ? (
-                          <Badge variant="secondary">{ep.platform as string}</Badge>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                        {/* The API nests this under rustdeskNode; reading ep.rustdeskId
-                            left the column permanently blank. */}
-                        {((ep.rustdeskNode as { rustdeskId?: string } | null)?.rustdeskId) ?? '—'}
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground text-xs">
-                        {formatDate(ep.lastSeenAt as string)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusIndicator status={(ep.isOnline as boolean) ? 'online' : 'offline'} />
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DeviceList />
 
       {/* Enrollment Link Modal */}
       {showLinkModal && (

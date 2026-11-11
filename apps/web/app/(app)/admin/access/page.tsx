@@ -897,7 +897,7 @@ export default function AccessControlPage() {
 
   if (!isPlatformAdmin) {
     return (
-      <div className="space-y-6">
+      <div className="p-6 space-y-6">
         <PageHeader title="Access Control" description="Who can do what in Rem0te." />
         <Card>
           <CardContent className="p-8 text-center text-sm text-muted-foreground">
@@ -913,7 +913,7 @@ export default function AccessControlPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="p-6 space-y-6">
       <PageHeader
         title="Access Control"
         description="Three levels: Platform Admin, Business Owner, Business User."

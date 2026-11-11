@@ -65,7 +65,11 @@ function apiMessage(e: unknown, fallback: string) {
   return (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message?.toString() ?? fallback;
 }
 
-export function EndpointActions({ endpointId, isOnline }: { endpointId: string; isOnline: boolean }) {
+export function EndpointActions({ endpointId, isOnline, unavailableReason }: {
+  endpointId: string; isOnline: boolean;
+  /** Why this computer cannot run the action (0.31, from the device workspace); the server still decides. */
+  unavailableReason?: string | null;
+}) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [reason, setReason] = useState('');
@@ -131,6 +135,10 @@ export function EndpointActions({ endpointId, isOnline }: { endpointId: string; 
             </p>
             {pending ? (
               <p className="text-xs">An earlier request is {STATUS[pending.status]?.label.toLowerCase() ?? pending.status}; resolve it before asking again.</p>
+            ) : unavailableReason ? (
+              <p className="rounded-md border bg-muted/40 p-2 text-xs" data-testid="action-unavailable">
+                <strong>Cannot be requested for this computer:</strong> {unavailableReason}
+              </p>
             ) : (
               <>
                 <div className="space-y-1">

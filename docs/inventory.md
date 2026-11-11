@@ -3,8 +3,9 @@
 What a managed computer reports about itself, how it gets here, and how to ask
 it for a slice of its Windows event log.
 
-All of it lives on a computer's page, under **Computers → *the machine* →
-Overview** and **Event Log**.
+All of it lives on a computer's page, under **Devices → *the machine* →
+Overview**, **Software** and **Event logs** (the tabs are described in
+[the technician guide](technician-guide.md#the-device-workspace-031)).
 
 ---
 
@@ -71,8 +72,9 @@ would let a gauge claim a freshness it does not have.
 
 Everything here is still a **snapshot**, not a live feed — a gauge on that card
 is minutes old, not seconds — and every card says when its contents were taken.
-The one genuinely live view in Rem0te is the host health row on the dashboard,
-which describes this server rather than an endpoint.
+The one genuinely live view in Rem0te is the host health on System status
+(Platform Admins; it was on the dashboard until 0.31), which describes this
+server rather than an endpoint.
 
 ---
 
@@ -95,7 +97,7 @@ actually upgrades the agent.
 
 ### Upgrading the agent
 
-**Computers → *the machine* → Overview → Reinstall agent** re-runs the
+**Devices → *the machine* → Overview → Reinstall agent** re-runs the
 installer on the next heartbeat. The installer is idempotent: it keeps the
 server configuration, the permanent password and the enrolment, and replaces
 the heartbeat script. That is what upgrades the agent.
@@ -134,7 +136,7 @@ bump that constant in the same commit.
 
 ## Event logs
 
-**Computers → *the machine* → Event Log** requests a page of one Windows event
+**Devices → *the machine* → Event logs** requests a page of one Windows event
 log. Pick the log, a time range, the levels, and how many of the most recent
 events you want; the request is queued and the table fills in when the machine
 answers.
@@ -206,6 +208,10 @@ render. Reported timestamps are bounded to 1990–2100, because a machine with a
 dead CMOS battery reports 1980 and every "how old is this?" calculation
 downstream then reads as absurd.
 
+The one-click diagnostics (0.31, [diagnostics.md](diagnostics.md)) follow the same rule with a different
+queue: a request is one of nine catalog keys, the agent maps each to a fixed read-only function, and the
+server, the agent and the database all refuse any other key.
+
 ---
 
 ## Where it is stored
@@ -214,6 +220,7 @@ downstream then reads as absurd.
 |---|---|
 | `EndpointInventory` | One row per endpoint, rewritten in place. A snapshot, not a history. |
 | `EndpointCommand` | The queue. Status, params, result, and who asked. Expires after 30 minutes unclaimed. |
+| `DiagnosticRun` | One-click diagnostics (0.31): catalog key, status and the time of each step, who asked, the capped result. See [diagnostics.md](diagnostics.md). |
 
 Sizes in `EndpointInventory` are **megabytes**, not bytes. Prisma maps `BigInt`
 to a JavaScript `BigInt`, which `JSON.stringify` throws on outright, so a byte
@@ -227,10 +234,11 @@ numbers.
 
 From 0.29 the inventory includes **installed software**: what Windows lists under Programs and Features, from
 the 64- and 32-bit uninstall registry keys, skipping system components and updates, up to 500 entries. It is
-shown on the computer's **Monitoring** tab with a filter.
+shown on the computer's **Software** tab (0.31; before that, the Monitoring tab) with a filter, the age of the
+inventory it came from, and the latest software changes.
 
 Each inventory is also **compared with the one before**. Hardware, operating system, disks, network adapters and
-software that were added, removed or changed are recorded as a change history on the same tab — *software added:
+software that were added, removed or changed are recorded as a change history on the **Monitoring** tab — *software added:
 7-Zip 24.08*, *memory changed: 16 GB → 32 GB*. The first inventory is the baseline and records nothing; a list an
 older agent does not report (software, before 0.29) is not compared, so upgrading an agent does not log every
 program as newly installed.
@@ -238,9 +246,31 @@ program as newly installed.
 Monitors — offline, disk, CPU, memory, services, event-log matches, pending restart — and alerts are described in
 [monitoring.md](monitoring.md).
 
+## On the device list (0.31)
+
+The **Devices** list shows a summary of the same stored data, one row per device, without opening each one:
+
+| Column | Source | Stale after |
+|---|---|---|
+| Logged-in user | `loggedOnUser` from the live sample | 15 minutes (greyed with the sample) |
+| CPU / RAM / disk | `cpuLoadPercent`, `memoryFreeMb`/`memoryTotalMb`, `systemDiskFreeMb`/`systemDiskTotalMb`, sampled at `liveSampledAt` | 15 minutes — five missed three-minute heartbeats |
+| Pending patches, *restart* | the signed agent's patch scan (`patchPosture`) if there is one, otherwise the standard agent's update scan (`pendingUpdates`, `rebootRequired`) — the same precedence as the Patches tab | 36 hours — the Patches tab's threshold |
+
+Nothing on the list is fetched from the machine when the list loads: every value is what the last heartbeat or
+scan stored, shown with its age, and greyed once it is stale. *Not sampled* and *No scan* mean nothing has been
+reported, not zero.
+
+Filtering, sorting and paging happen on the server (`GET /endpoints/list`), so a list of thousands is never sent
+to the browser. The first step selects the caller's visible devices with the same access rules as every other
+device query; the second derives alert counts, patch counts and percentages for exactly those ids, then filters,
+sorts and pages them. **Export CSV** (`GET /endpoints/list/export.csv`) returns the whole filtered view — up to
+10,000 rows — and is written to the audit log (`ENDPOINT_LIST_EXPORTED`) before the file is sent. Device-reported
+text that a spreadsheet would read as a formula is prefixed with an apostrophe.
+
 ## See also
 
 - [monitoring.md](monitoring.md) — monitors and alerts built on this data
+- [diagnostics.md](diagnostics.md) — one-click read-only diagnostics
 - [clients.md](clients.md) — the managed installer and what it puts on a machine
 - [updates.md](updates.md) — the other three things that can be out of date
 - [access-control.md](access-control.md) — the capability model
