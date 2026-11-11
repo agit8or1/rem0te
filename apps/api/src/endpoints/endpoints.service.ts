@@ -133,9 +133,11 @@ export class EndpointsService {
   }
 
   async findConnected(actor: ActorContext) {
-    const scope = this.acl.resolveScope(actor);
+    // The same rule as every listing: a Business User sees only the computers
+    // granted to them or shared company-wide, not every online one in the
+    // business. AND-ed, because the visibility rule carries its own OR.
     const rows = await this.prisma.endpoint.findMany({
-      where: { isOnline: true, status: 'ACTIVE', ...(scope ? { customerId: scope } : {}), ...this.acl.endpointRestrictionWhere(actor) },
+      where: { AND: [this.acl.endpointVisibilityWhere(actor), { isOnline: true, status: 'ACTIVE' }] },
       orderBy: { lastSeenAt: 'desc' },
       include: {
         customer: { select: { id: true, name: true } },
@@ -159,9 +161,14 @@ export class EndpointsService {
     const limit = Math.min(params.limit ?? 50, 200);
     const skip = (page - 1) * limit;
 
-    const where: Record<string, unknown> = {
-      ...(scope ? { customerId: scope } : {}),
-      ...this.acl.endpointRestrictionWhere(actor),
+    // The same visibility rule as the device list, the dashboard and My
+    // devices (0.31). Scoping by business alone showed a Business User every
+    // computer in it, including ASSIGNED_USERS machines granted only to
+    // others; connecting was still refused, but names and details leaked.
+    // AND-ed, never spread: the rule is an OR, and so is the search below —
+    // spread into one object, the search would replace it.
+    const visibility = this.acl.endpointVisibilityWhere(actor, params.businessId === 'null' ? undefined : params.businessId);
+    const filters: Record<string, unknown> = {
       // "unassigned" is a platform-admin-only view — a business can never own
       // a computer that belongs to no business.
       ...(!scope && params.businessId === 'null' ? { customerId: null } : {}),
@@ -179,6 +186,7 @@ export class EndpointsService {
       } : {}),
       ...(params.tag ? { tags: { some: { tag: params.tag } } } : {}),
     };
+    const where = { AND: [visibility, filters] };
 
     const [endpoints, total] = await Promise.all([
       this.prisma.endpoint.findMany({

@@ -319,6 +319,17 @@ async function all() {
   check(ids(r).includes(aAssigned.id) && !ids(r).includes(aHidden.id), 'Business User: an assigned computer is listed, an ASSIGNED_USERS one not granted is not', JSON.stringify(r.data?.rows?.map((x) => x.name)));
   r = await list(S.userA, { search: `${TAG}-SHARED-A6` });
   check(r.status === 200 && r.data.total === 0, 'Business User: searching the ungranted computer by name finds nothing');
+  // The older GET /endpoints (business page, pickers) applies the same rule
+  // since 0.31: before, it scoped by business alone and listed the ungranted one.
+  const old = await req(`/endpoints?search=${encodeURIComponent(`${TAG}-SHARED`)}&limit=200`, S.userA);
+  const oldIds = (old.data?.endpoints ?? []).map((e) => e.id);
+  check(old.status === 200 && oldIds.includes(aAssigned.id) && !oldIds.includes(aHidden.id), 'GET /endpoints: a Business User does not see an ASSIGNED_USERS computer granted only to others', JSON.stringify((old.data?.endpoints ?? []).map((e) => e.name)));
+  const oldOwner = await req(`/endpoints?search=${encodeURIComponent(`${TAG}-SHARED`)}&limit=200`, S.ownerA);
+  check((oldOwner.data?.endpoints ?? []).some((e) => e.id === aHidden.id), 'GET /endpoints: the owner still sees it (owners see the whole business)');
+  // GET /endpoints/connected (online computers) had the same business-only scoping.
+  const conn = await req('/endpoints/connected', S.userA);
+  const connIds = (conn.data ?? []).map((e) => e.id);
+  check(conn.status === 200 && connIds.includes(aAssigned.id) && !connIds.includes(aHidden.id), 'GET /endpoints/connected: a Business User sees the granted online computer, not the ungranted one', `status ${conn.status}`);
   r = await list(S.techOne, { pageSize: 200 });
   check(r.status === 200 && r.data.total === 1 && ids(r)[0] === a1.id, 'technician restricted to A1 sees only A1', `total ${r.data?.total}`);
   r = await list(S.techOne, { search: `${TAG}-SHARED-A2` });

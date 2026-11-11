@@ -33,6 +33,9 @@ const ACTION_COLORS: Record<string, string> = {
   PLATFORM_SETTINGS_UPDATED: 'bg-purple-100 text-purple-700',
   CONNECTION_GRANT_DENIED: 'bg-red-100 text-red-700',
   ENDPOINT_PASSWORD_REVEALED: 'bg-yellow-100 text-yellow-700',
+  ENDPOINT_LIST_EXPORTED: 'bg-yellow-100 text-yellow-700',
+  ENDPOINT_DIAGNOSTIC_REQUESTED: 'bg-sky-100 text-sky-700',
+  ENDPOINT_DIAGNOSTIC_COMPLETED: 'bg-sky-100 text-sky-700',
 };
 
 function ActionBadge({ action }: { action: string }) {

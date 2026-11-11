@@ -1,5 +1,6 @@
 'use client';
 
+import { EndpointDiagnosticsCatalog } from '@/components/endpoints/endpoint-diagnostics-catalog';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
@@ -254,12 +255,14 @@ export default function EndpointDetailPage() {
 
         {tabs.includes('diagnostics') && (
           <TabsContent value="diagnostics" className="mt-4 space-y-4">
-            {/* Mounted only while selected: every run probes the server and
-                is audited, so it should not run just because the page opened.
-                The read-only diagnostics catalog (endpoint-diagnostics-catalog)
-                is wired in here alongside Test connection. */}
+            {/* Mounted only while selected: Test connection probes the server
+                and is audited, so it should not run just because the page
+                opened. The catalog runs nothing until a check is clicked. */}
             {active === 'diagnostics' && (
-              <DiagnosticsPanel endpointId={id} canConnect={can(CAP.COMPUTERS_CONNECT)} />
+              <>
+                <EndpointDiagnosticsCatalog endpointId={id} />
+                <DiagnosticsPanel endpointId={id} canConnect={can(CAP.COMPUTERS_CONNECT)} />
+              </>
             )}
           </TabsContent>
         )}
