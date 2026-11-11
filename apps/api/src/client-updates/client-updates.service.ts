@@ -8,12 +8,11 @@ import { ContainmentService } from '../containment/containment.service';
 import { latestRustdeskVersion } from '../common/rustdesk-release';
 import { openSessionReason } from '../admin/session-evidence';
 import {
-  BLOCKER, blocker, effectivePolicy, HOLD_TEXT, policyHold, PolicyInput, policyWindow, type HoldReason,
+  BLOCKER, blocker, effectivePolicy, HOLD_TEXT, policyHold, PolicyInput, policyWindow, ROLLOUT_OPEN, type HoldReason,
 } from './policy';
 import { describeWindow, parseUpdateWindow, windowState } from './update-window';
 
 const ID = /^[A-Za-z0-9_-]{8,64}$/;
-const ROLLOUT_OPEN = ['REQUESTED', 'DISPATCHED', 'INSTALLING', 'AWAITING_VERIFICATION'] as const;
 
 /** Thrown to the controller when a write needs fresh authentication it does not have. */
 export class FreshAuthNeeded extends Error {}

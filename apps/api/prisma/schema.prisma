@@ -164,6 +164,13 @@ enum ActivityAction {
   CLIENT_UPDATE_POLICY_CHANGED
   CLIENT_UPDATE_AUTO_QUEUED
   REPORT_EXPORTED
+  // 0.33 device groups, shared device views and bulk actions
+  DEVICE_GROUP_CREATED
+  DEVICE_GROUP_UPDATED
+  DEVICE_GROUP_DELETED
+  DEVICE_GROUP_MEMBERS_CHANGED
+  DEVICE_VIEW_SHARED_CHANGED
+  DEVICE_BULK_ACTION
   CONNECTION_GRANT_CREATED
   CONNECTION_GRANT_REDEEMED
   CONNECTION_GRANT_DENIED
@@ -383,6 +390,7 @@ model User {
   technicianGroups       TechnicianGroupMember[]
   externalIdentities     ExternalIdentity[]
   claimedSupportRequests SupportRequest[]        @relation("SupportRequestClaimer")
+  savedViews             SavedView[]
 
   @@index([email])
 }
@@ -557,6 +565,8 @@ model Customer {
   clientUpdatePolicies ClientUpdatePolicy[]
   scripts              Script[]
   patchPolicies        PatchPolicy[]
+  endpointGroups       EndpointGroup[]
+  savedViews           SavedView[]
 
   @@index([tenantId])
   @@index([tenantId, name])
@@ -696,6 +706,7 @@ model Endpoint {
   @@index([customerId])
   @@index([status])
   @@index([tenantId, status])
+  @@index([endpointGroupId])
 }
 
 // Which users have been granted remote access to which computers.
@@ -733,19 +744,31 @@ enum EndpointAccessMode {
   COMPANY_WIDE
 }
 
+// A static device group (0.33: managed from the device list). A computer is
+// in at most one group (Endpoint.endpointGroupId, which enrolment tokens have
+// set since before 0.33). `customerId` is the business the group belongs to;
+// every member must be in it. Groups made before 0.33 have no business
+// (customerId null): they still filter, and the console offers no way to
+// edit them.
 model EndpointGroup {
-  id          String  @id @default(cuid())
+  id          String    @id @default(cuid())
   tenantId    String
-  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
   name        String
   description String?
+  createdById String?
 
   endpoints Endpoint[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([tenantId, name])
+  // Names are unique per business. Postgres treats NULLs as distinct, so
+  // pre-0.33 groups (no business) are not constrained by it.
+  @@unique([customerId, name])
+  @@index([tenantId])
 }
 
 model EndpointTag {
@@ -1459,22 +1482,36 @@ model Invitation {
 
 // ─── Saved Views ──────────────────────────────────────────────────────────────
 
+// A saved device-list view (0.33). It stores only the filter parameters the
+// device list accepts (validated by parseListQuery), plus sort, columns and
+// density — never results. Personal (shared = false: only userId sees it) or
+// shared within ONE business (customerId), by someone who may manage that
+// business. Opening one runs the list as the viewer, with the viewer's own
+// visibility.
 model SavedView {
-  id        String   @id @default(cuid())
-  tenantId  String
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  userId    String?
-  name      String
-  resource  String
-  filters   Json
-  columns   String[]
-  sortField String?
-  sortDir   String?
+  id         String    @id @default(cuid())
+  tenantId   String?
+  tenant     Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  // The author. A personal view is theirs alone; a shared view outlives them.
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  shared     Boolean   @default(false)
+  name       String
+  resource   String
+  filters    Json
+  columns    String[]
+  sortField  String?
+  sortDir    String?
+  density    String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([tenantId])
+  @@index([userId, resource])
+  @@index([customerId, resource])
 }
 
 // ─── Platform Settings ───────────────────────────────────────────────────────

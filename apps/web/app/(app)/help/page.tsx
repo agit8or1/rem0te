@@ -278,10 +278,23 @@ const SECTIONS: Section[] = [
         </p>
         <p>
           <strong className="text-foreground">Columns</strong> and row density are remembered in this browser.{' '}
-          <strong className="text-foreground">Views</strong> save the current filters, sort and columns under a
-          name — in this browser only; they are not shared. <strong className="text-foreground">Export CSV</strong>{' '}
-          downloads the whole filtered view (up to 10,000 devices), contains only what you can see, and is recorded
-          in the audit log.
+          <strong className="text-foreground">Views</strong> save the current filters, sort, columns and density
+          under a name, on your account. A view is personal, or shared with everyone in one business — sharing is
+          for a Business Owner, a technician with computers:edit over the whole business, or the MSP, and is
+          audited. A view stores only the list&apos;s parameters, so opening one shows each person only the devices
+          they can see. <strong className="text-foreground">Export CSV</strong> downloads the whole filtered view
+          (up to 10,000 devices), contains only what you can see, and is recorded in the audit log.
+        </p>
+        <p>
+          <strong className="text-foreground">Device groups</strong> (Views → Device groups…) are named groups of one
+          business&apos;s computers, for filtering and bulk actions; a computer is in one group at a time, and groups
+          grant nothing. They are managed by the same people who may share views, and every change is audited.
+        </p>
+        <p>
+          <strong className="text-foreground">Tick rows</strong> to act on up to 200 devices at once: add to or remove
+          from a group, refresh inventory, queue a RustDesk client update (Platform Admin), or export the selection.
+          Each device is checked on its own exactly as if you had done it to that one device, and the result lists
+          every device that was refused and why. There is no bulk connect, archive, delete or approved action.
         </p>
       </div>
     ),

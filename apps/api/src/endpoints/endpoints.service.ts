@@ -248,6 +248,18 @@ export class EndpointsService {
 
   // ── Writes ────────────────────────────────────────────────────────────────
 
+  /**
+   * A device group a computer of `businessId` may be put in: that business's
+   * own, or a pre-0.33 group with no business in the same tenant. Anything
+   * else is refused with the same message as a group that does not exist.
+   */
+  private async assertGroupFor(groupId: string, businessId: string, tenantId: string) {
+    const g = await this.prisma.endpointGroup.findFirst({
+      where: { id: groupId, OR: [{ customerId: businessId }, { customerId: null, tenantId }] }, select: { id: true },
+    });
+    if (!g) throw new BadRequestException('Unknown device group for this business');
+  }
+
   async create(actor: ActorContext, dto: CreateEndpointDto & { businessId?: string }) {
     this.acl.assertCapability(actor, CAP.COMPUTERS_ADD);
 
@@ -267,6 +279,10 @@ export class EndpointsService {
       });
       if (!site) throw new BadRequestException('That site does not belong to this business');
     }
+
+    // So does a device group (0.33): a group holds only its own business's
+    // computers. Before 0.33 this id was stored unchecked.
+    if (dto.endpointGroupId) await this.assertGroupFor(dto.endpointGroupId, businessId, business.tenantId);
 
     // Typing in a RustDesk ID is a Platform Admin action. A node created this
     // way has no device secret, and the installer's heartbeat fallback used to
@@ -342,9 +358,14 @@ export class EndpointsService {
       if (!site) throw new BadRequestException('That site does not belong to this business');
     }
 
+    // Moving a computer to another business takes it out of its device group
+    // (0.33): a group holds only its own business's computers.
+    const leavesGroup = dto.customerId !== undefined && dto.customerId !== existing.customerId;
+
     const endpoint = await this.prisma.endpoint.update({
       where: { id },
       data: {
+        ...(leavesGroup ? { endpointGroupId: null } : {}),
         ...(dto.name !== undefined ? { name: dto.name } : {}),
         ...(dto.description !== undefined ? { description: dto.description } : {}),
         ...(dto.customerId !== undefined ? { customerId: dto.customerId } : {}),

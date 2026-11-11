@@ -136,8 +136,10 @@ export class EnrollmentService {
     }
 
     if (dto.endpointGroupId) {
+      // The business's own group, or a pre-0.33 one with no business in the
+      // same tenant (0.33: a group holds only its own business's computers).
       const group = await this.prisma.endpointGroup.findFirst({
-        where: { id: dto.endpointGroupId, tenantId: business.tenantId },
+        where: { id: dto.endpointGroupId, OR: [{ customerId: businessId }, { customerId: null, tenantId: business.tenantId }] },
         select: { id: true },
       });
       if (!group) throw new BadRequestException('Unknown computer group');
@@ -396,6 +398,15 @@ export class EnrollmentService {
           select: { id: true },
         }))?.id ?? null
       : null;
+    // The token's device group, the same way (0.33): it must still exist and
+    // still be this business's (or a pre-0.33 group of the tenant). A group
+    // deleted since the token was made is dropped, not an install failure.
+    const groupId = record.endpointGroupId
+      ? (await this.prisma.endpointGroup.findFirst({
+          where: { id: record.endpointGroupId, OR: [{ customerId: record.customerId ?? '__none__' }, { customerId: null, tenantId: record.tenantId }] },
+          select: { id: true },
+        }))?.id ?? null
+      : null;
 
     const boundEndpointId = record.endpointId ?? adoptedEndpointId;
     let endpoint = boundEndpointId
@@ -419,7 +430,8 @@ export class EnrollmentService {
           ...(adoptedEndpointId && dto.hostname ? { name: dto.hostname } : {}),
           ...(record.customerId ? { customerId: record.customerId } : {}),
           ...(siteId ? { siteId } : {}),
-          ...(record.endpointGroupId ? { endpointGroupId: record.endpointGroupId } : {}),
+          // A computer that changes business leaves its old business's group.
+          ...(groupId ? { endpointGroupId: groupId } : record.customerId && record.customerId !== endpoint.customerId ? { endpointGroupId: null } : {}),
           accessMode: record.accessMode,
         },
       });
@@ -432,7 +444,7 @@ export class EnrollmentService {
           tenantId: record.tenantId,
           customerId: record.customerId ?? null,
           siteId,
-          endpointGroupId: record.endpointGroupId ?? null,
+          endpointGroupId: groupId,
           accessMode: record.accessMode,
           name: dto.hostname ?? dto.rustdeskId,
           hostname: dto.hostname ?? null,

@@ -55,7 +55,7 @@ run() { # name, command...
 }
 
 echo "── self-starting suites"
-for t in credentials security-features presets monitoring integration dashboard diagnostics-catalog device-list add-device auto-updates reports script-library linux-agent enrol-stepup search; do run "$t" node "scripts/e2e-$t.mjs"; done
+for t in credentials security-features presets monitoring integration dashboard diagnostics-catalog device-list device-views add-device auto-updates reports script-library linux-agent enrol-stepup search; do run "$t" node "scripts/e2e-$t.mjs"; done
 for t in containment approved-action staged-patching maintenance-actions patch-policies signed-updates ticket-workflow; do
   if [[ -n "${RELEASE_BIN:-}" && -n "${ACTION_SIM:-}" ]]; then run "$t" node "scripts/e2e-$t.mjs"
   else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM not set)\n' "$t"; skipped+=("$t"); fi

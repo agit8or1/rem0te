@@ -1111,6 +1111,104 @@ check(
   check('search: there is one search route — /admin/search (business-only scoping) stays removed', others.length === 0, `search routes in: ${others.join(', ')}`);
 }
 
+// 28. Device groups, saved views and bulk actions (0.33). A bulk request is
+//     only the four repeatable actions, capped at 200, every computer found
+//     through the visibility rule AND-ed and decided by the single action's
+//     own path; group and shared-view writes need manageRefusal (a Business
+//     User never, a technician only with computers:edit over the whole
+//     business); a group holds only its own business's computers wherever a
+//     computer gets one; a view stores list parameters and nothing runs it.
+{
+  const dir = 'apps/api/src/device-views';
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const rules = read(`${dir}/rules.ts`);
+  const bulkSvc = read(`${dir}/device-bulk.service.ts`);
+  const groupSvc = read(`${dir}/device-groups.service.ts`);
+  const viewSvc = read(`${dir}/saved-views.service.ts`);
+  const ctl = read(`${dir}/device-views.controller.ts`);
+  const listSvc = read('apps/api/src/endpoints/endpoint-list.service.ts');
+  const listQuery = read('apps/api/src/endpoints/list-query.ts');
+
+  check('bulk: exactly four repeatable actions, and nothing that connects, archives, deletes or runs an action',
+    /export const BULK_ACTIONS = \['group\.add', 'group\.remove', 'inventory\.refresh', 'client\.update'\] as const;/.test(rules)
+      && !/\b(authorizeConnect|connect\(|archive|restore\(|\.delete\(|deleteMany|ActionsService|actionJob|createPlan|SignerClient|scriptVersion)\b/i.test(code(bulkSvc).replace(/endpointGroup\.findUnique/g, '')),
+    'BULK_ACTIONS must stay the four, and the bulk service must not reach connect/archive/delete/approved actions');
+  check('bulk: at most 200 per request, counted before de-duplication, for the export too',
+    /export const BULK_MAX = 200;/.test(rules)
+      && /if \(ids\.length > BULK_MAX\) throw bad\('BULK_TOO_LARGE'/.test(rules) && rules.indexOf('ids.length > BULK_MAX') < rules.indexOf('[...new Set(ids as string[])]')
+      && /const endpointIds = parseSelection\(body\.endpointIds\);/.test(rules) && /const ids = parseSelection\(body\.endpointIds\);/.test(bulkSvc),
+    'parseSelection must cap the raw list; parseBulk and exportSelection must both use it');
+  check('bulk: every computer is found through the visibility rule, AND-ed, and anything else is NOT_FOUND',
+    /where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(a\), \{ id: \{ in: ids \} \}\] \}/.test(bulkSvc)
+      && /if \(!seen\.has\(id\)\) results\.set\(id, \{ endpointId: id, ok: false, code: 'NOT_FOUND', reason: 'Computer not found' \}\);/.test(bulkSvc)
+      && !/\.\.\.\s*this\.acl\.endpointVisibilityWhere/.test(bulkSvc + groupSvc + viewSvc)
+      && (code(bulkSvc).match(/this\.prisma\.endpoint\.findMany\(/g) ?? []).length === 1,
+    'visible() must AND endpointVisibilityWhere with the ids, and be the only endpoint read');
+  check('bulk: refresh is the single route’s own call; client update is Platform Admin, containment-checked, staged by the one-click path',
+    /await this\.endpoints\.requestInventoryRefresh\(a, t\.id\);/.test(bulkSvc)
+      && /if \(!a\.isPlatformAdmin\) \{/.test(bulkSvc) && bulkSvc.indexOf('if (!a.isPlatformAdmin) {') < bulkSvc.indexOf("this.containment.blocking('updates', t.customerId)")
+      && /if \(pause\) \{ results\.set\(t\.id, \{ \.\.\.base, ok: false, code: 'CONTAINED'/.test(bulkSvc)
+      && /await this\.updates\.requestRustdeskUpdate\(stage\.map\(\(t\) => t\.id\), /.test(bulkSvc)
+      && !/rustdeskNode\.(update|updateMany)\(/.test(bulkSvc),
+    'no bulk path may write a RustDesk request itself or skip the admin/containment checks');
+  check('bulk: the fleet budget only refuses — every computer it lets through is still admitted by the guard',
+    /const limit = budget\.wouldExceed\(t\.id, t\.customerId, controls\.thresholds\[this\.policy\.tierFor\(a, t\.id\)\]\);\s*if \(limit\) \{/.test(bulkSvc)
+      && bulkSvc.indexOf('budget.admitted(t.id, t.customerId)') > bulkSvc.indexOf('await this.endpoints.requestInventoryRefresh(a, t.id);')
+      && !/abuse\.admit|privilegedActivity\.create/.test(bulkSvc),
+    'FleetBudget may refuse before the guard, never admit in its place');
+
+  const refusal = rules.slice(rules.indexOf('export function manageRefusal('), rules.indexOf('// ── Saved views'));
+  check('groups and shared views: a technician needs computers:edit on the whole business; a Business User never',
+    /if \(a\.technician\) \{[\s\S]*?a\.technician\.businessId !== customerId[\s\S]*?\.includes\(CAP\.COMPUTERS_EDIT\) && s\.endpointIds === null\)/.test(refusal)
+      && /if \(a\.businessId !== customerId\) return [^;]+;\s*if \(isOwnerRole\(a\.roleType\)\) return null;\s*return '[^']+';\s*\}/.test(refusal),
+    'manageRefusal must mirror the client-update rule');
+  check('groups: every write checks manageRefusal first, and a member must be in the group’s business',
+    /async create\(a: ActorContext, raw: unknown\) \{[\s\S]{0,400}const why = manageRefusal\(a, customerId\);\s*if \(why\) throw new ForbiddenException/.test(groupSvc)
+      && /const g = await this\.findManageable\(a, id\);/.test(groupSvc.slice(groupSvc.indexOf('async update('))) && /const g = await this\.findManageable\(a, id\);/.test(groupSvc.slice(groupSvc.indexOf('async remove(')))
+      && /const why = manageRefusal\(a, g\.customerId\);/.test(bulkSvc) && /if \(t\.customerId !== g\.customerId\) \{/.test(bulkSvc)
+      && /updateMany\(\{ where: \{ id: t\.id, customerId: g\.customerId, endpointGroupId: null \}, data: \{ endpointGroupId: g\.id \} \}\)/.test(bulkSvc),
+    'create/update/remove and bulk membership must check manageRefusal; additions are conditional on the business');
+  check('groups: another business’s group is a 404',
+    /if \(!g\.customerId \|\| g\.customerId !== a\.businessId\) throw new NotFoundException\('Group not found'\);/.test(groupSvc), 'findVisible must compare the business');
+  const eps = read('apps/api/src/endpoints/endpoints.service.ts');
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  check('a computer gets only its own business’s group: creation, enrolment tokens, claims, and moving business',
+    /if \(dto\.endpointGroupId\) await this\.assertGroupFor\(dto\.endpointGroupId, businessId, business\.tenantId\);/.test(eps)
+      && /where: \{ id: groupId, OR: \[\{ customerId: businessId \}, \{ customerId: null, tenantId \}\] \}/.test(eps)
+      && /\.\.\.\(leavesGroup \? \{ endpointGroupId: null \} : \{\}\)/.test(eps)
+      && /where: \{ id: dto\.endpointGroupId, OR: \[\{ customerId: businessId \}, \{ customerId: null, tenantId: business\.tenantId \}\] \}/.test(enr)
+      && /endpointGroupId: groupId,/.test(enr) && !/endpointGroupId: record\.endpointGroupId/.test(enr),
+    'create, update, token minting and claim must all tie the group to the business');
+  const views = [...ctl.matchAll(/@(Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)')?\s*\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''}`);
+  const handlers = ctl.split(/\n  @(?:Get|Post|Put|Patch|Delete)\(/).slice(1);
+  check('views and groups: every route names its capability, no route runs a view, bulk has two routes',
+    JSON.stringify(views) === JSON.stringify(['GET ', 'GET :id', 'POST ', 'PATCH :id', 'DELETE :id', 'GET ', 'POST ', 'PATCH :id', 'DELETE :id', 'POST ', 'POST export.csv'])
+      && handlers.length === 11 && handlers.every((h) => /^[^\n]*\)\s*\n\s*@RequireCapability\(CAP\.(COMPUTERS_VIEW|COMPUTERS_EDIT)\)/.test(h))
+      && /@Controller\('device-views'\)/.test(ctl) && /@Controller\('device-groups'\)/.test(ctl) && /@Controller\('endpoints\/bulk'\)/.test(ctl),
+    `routes: ${views.join(', ')}`);
+  check('views store list parameters only, parsed by the list’s own parser; nothing in the view service reads computers',
+    /const unknown = Object\.keys\(raw\)\.filter\(\(k\) => !\(LIST_FILTER_KEYS as readonly string\[\]\)\.includes\(k\)\);\s*if \(unknown\.length\) throw bad/.test(rules)
+      && /const q = parseListQuery\(asQuery\);/.test(rules)
+      && /export const ViewUpdate = z\.object\(viewFields\)\.partial\(\)\.strict\(\);/.test(rules) && !/shared|businessId/.test(rules.slice(rules.indexOf('const viewFields = {'), rules.indexOf('export const ViewInput')))
+      && !/this\.prisma\.endpoint\./.test(viewSvc) && /if \(f\.businessId && f\.businessId !== customerId\) \{/.test(viewSvc),
+    'normalizeViewFilters must refuse unknown keys and use parseListQuery; updates cannot change who a view is for; shared filters stay in the business');
+  check('a personal view is its author’s alone; a shared view is its business’s',
+    /if \(!v\.shared\) \{\s*if \(v\.userId !== a\.userId\) throw new NotFoundException/.test(viewSvc)
+      && /if \(!v\.customerId \|\| !\(a\.isPlatformAdmin \|\| v\.customerId === a\.businessId\)\) throw new NotFoundException/.test(viewSvc)
+      && /const why = manageRefusal\(a, v\.customerId!\);/.test(viewSvc) && /const why = manageRefusal\(a, customerId\);\s*if \(why\) throw new ForbiddenException\(\{ code: 'NOT_ALLOWED', message: why \}\);\s*await this\.assertFiltersInBusiness/.test(viewSvc),
+    'findVisible must 404 other people’s and other businesses’ views; shared writes need manageRefusal');
+  check('the selection export is the list’s audited export with the selection AND-ed; no query string can set it',
+    /const out = await this\.list\.exportCsv\(a, q\);/.test(bulkSvc) && /if \(q\.ids\) and\.push\(\{ id: \{ in: q\.ids \} \}\);/.test(listSvc)
+      && !/\bids:/.test(listQuery.slice(listQuery.indexOf('export function parseListQuery('))),
+    'exportSelection must call exportCsv; filteredWhere must AND ids; parseListQuery must never set ids');
+  check('group, shared-view and bulk changes are audited',
+    ['DEVICE_GROUP_CREATED', 'DEVICE_GROUP_UPDATED', 'DEVICE_GROUP_DELETED'].every((x) => groupSvc.includes(`action: '${x}'`))
+      && bulkSvc.includes("action: 'DEVICE_GROUP_MEMBERS_CHANGED'") && bulkSvc.includes("action: 'DEVICE_BULK_ACTION'") && viewSvc.includes("action: 'DEVICE_VIEW_SHARED_CHANGED'")
+      && /if \(v\.shared\) await this\.auditShared\(a, v, 'created', null\);/.test(viewSvc) && /if \(v\.shared\) await this\.auditShared\(a, v, 'updated', before\);/.test(viewSvc) && /if \(v\.shared\) await this\.auditShared\(a, v, 'deleted', v\);/.test(viewSvc)
+      && /await this\.auditBulk\(a, input\.action, targets, ordered, group\);/.test(bulkSvc),
+    'every write path must write its audit entry');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

@@ -115,19 +115,56 @@ at the bottom.
 
 ### Filters, columns and saved views
 
-- **Filters** — business (when you can see more than one), site, online/offline,
-  open or critical alerts, *Restart pending*, agent type, and archived devices.
+- **Filters** — business (when you can see more than one), site, device group,
+  online/offline, open or critical alerts, *Restart pending*, agent type, and
+  archived devices.
   They combine, and *Clear* resets them. The address bar carries the current view,
   so you can bookmark it; whoever opens the link still sees only their own devices.
-- **Columns** — choose which columns show. **Compact / Comfortable** sets the row
-  height. Both are remembered in this browser only.
-- **Views** — save the current filters, sort and columns under a name. Views are
-  stored in this browser only: they are not shared, and do not follow you to
-  another computer.
+- **Columns** — choose which columns show (a *Group* column is available).
+  **Compact / Comfortable** sets the row height. Both are remembered in this
+  browser.
+- **Views** (0.33) — save the current filters, sort, columns and density under a
+  name. A view is stored on your account, so it follows you to another computer.
+  It holds only the list's own parameters, never the devices. It is either
+  **personal** (only you see it) or **shared** with everyone in one business who
+  can see devices. Sharing — and changing or deleting a shared view — is for a
+  Business Owner, a technician with *computers:edit* over the whole business, or
+  the MSP, and is recorded in the audit log. A shared view's filters cannot name
+  another business, or another business's site or group. **Opening a view shows
+  only the devices you can see**: a Business User opening the owner's
+  "everything" view gets their own devices, and a view filtering on alerts is
+  refused to someone without *monitoring:alerts*. Views saved in a browser by
+  0.31 or 0.32 are offered for import once (*Import N views saved in this
+  browser*).
+- **Device groups** (0.33, *Views → Device groups…*) — named, static groups of
+  one business's computers, for filtering and for acting on together. A computer
+  is in at most one group at a time (the same group an enrolment link can put it
+  in). Creating, renaming and deleting groups, and adding or removing members, is
+  for a Business Owner, a technician with *computers:edit* over the whole
+  business, or the MSP — never a Business User, whatever they hold, because a
+  Business User may see only some of the business's computers. A group cannot
+  hold another business's computer. Groups grant no access to anything. Every
+  change is audited. Groups made before 0.33 that span businesses (or have no
+  members) belong to no business: they still filter, and cannot be edited here.
+- **Select and act on many** (0.33) — tick rows (the header box ticks the page;
+  the selection survives paging and filtering) and a bar offers: **Add / Remove**
+  from a group, **Refresh inventory** (also re-checks Windows Update),
+  **Queue client update** (Platform Admin only, as on the Updates page) and
+  **Export selection**. At most 200 devices per request. The server checks every
+  device on its own, with the same checks as doing it to that one device, and
+  the result lists every device it refused and why — not visible to you, no
+  permission, archived, Linux, no device secret, under an *updates* containment
+  pause, already in another group, already current. A bulk refresh counts toward
+  your limit on distinct computers per window (the fleet-abuse guard); the list
+  stops at that limit and says so, rather than tripping it and pausing you.
+  There is deliberately no bulk connect, archive, delete or approved action.
+  Each bulk request is recorded in the audit log, once per business it touched,
+  alongside each device's own entry.
 - **Export CSV** — downloads every device in the current filtered view (not just
   this page), up to 10,000; narrow the filters if there are more. It needs
   *computers:view*, contains exactly what you can see, and **each export is
-  recorded in the audit log** with its filters and row count.
+  recorded in the audit log** with its filters and row count. *Export selection*
+  is the same export limited to the ticked devices.
 - **Connect** on a row works exactly as it does on the device page. **⋯** opens the
   device, or its Patches, Monitoring or Test connection tab, or copies its hostname.
 

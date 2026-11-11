@@ -11,5 +11,7 @@ import { HostMetricsService } from './host-metrics.service';
 @Module({
   controllers: [AdminController, SecurityController, UpdateController, RolloutsController],
   providers: [AdminService, SecurityService, UpdateService, HostMetricsService],
+  // UpdateService: the device list's bulk client update (0.33) stages through it.
+  exports: [UpdateService],
 })
 export class AdminModule {}

@@ -162,6 +162,14 @@ jobs:
       - name: Updater signature tests
         run: node apps/api/scripts/unit-update-signing.mjs
 
+      # Device groups, saved views and bulk actions (0.33): a view's filters
+      # are the list's own parameters (unknown keys and bad values refused),
+      # an update applies no defaults, who may manage a business's groups and
+      # shared views, the 200 cap and the four actions, the fleet budget that
+      # stops short of the abuse guard, and per-computer refusal reasons.
+      - name: Device views tests
+        run: node apps/api/scripts/unit-device-views.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.

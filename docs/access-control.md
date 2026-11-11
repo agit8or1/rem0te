@@ -100,6 +100,11 @@ Three rules that are easy to assume the other way round:
   and minting a launcher token for it, take the same per-computer access as connecting: a grant on
   that computer, or the computer being company-wide. Before 0.18.22 the capability alone was
   enough, which let a Business User read the password of a machine they had been given no access to.
+- **`computers:edit` does not let a Business User manage device groups or shared views** (0.33).
+  Both are about the whole business, and a Business User may see only some of its computers, so they
+  are for a Business Owner, a technician whose assignment grants `computers:edit` over the whole
+  business, or the MSP — the same rule as the client-update policy. A saved view never widens
+  anything: it is a set of list parameters, run as whoever opens it.
 - **Making a computer company-wide needs `users:manage`**, the capability that grants access to one
   person, because it grants access to everyone in the business at once.
 - **`support:history_view` reads sessions; it never changes them.** Completing, cancelling or

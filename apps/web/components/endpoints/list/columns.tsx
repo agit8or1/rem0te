@@ -73,6 +73,7 @@ export const COLUMNS: ColumnDef[] = [
   },
   { id: 'business', label: 'Business', defaultOn: true, sort: 'business', cell: (r) => r.business?.name ?? dash },
   { id: 'site', label: 'Site', defaultOn: true, sort: 'site', cell: (r) => r.site?.name ?? dash },
+  { id: 'group', label: 'Group', defaultOn: false, cell: (r) => r.group?.name ?? dash },
   {
     id: 'os', label: 'OS', defaultOn: true, sort: 'os',
     cell: (r) => (
