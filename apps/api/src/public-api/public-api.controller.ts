@@ -168,6 +168,9 @@ export class PublicApiController {
   @HttpCode(HttpStatus.CREATED)
   async mintEnrollment(@Req() req: Request, @Body() dto: ApiMintEnrollmentDto) {
     const actor = this.actor(req);
+    // An API key cannot step up, and keeps the ability (0.33): the key is the
+    // second proof, and minting a key with enrollment:write needs a fresh
+    // re-authentication. See EnrollmentService.createClaimToken.
     const record = await this.enrollment.createClaimToken(
       actor,
       {
@@ -176,6 +179,7 @@ export class PublicApiController {
         assignedUserIds: dto.assignedUserIds ?? [],
         description: dto.description,
       },
+      { via: 'api-key', apiKeyId: this.apiKeyMeta(req).apiKeyId },
     );
     const platform = dto.platform ?? 'windows';
     const base = this.urls.apiConfigured() || `${req.protocol}://${req.get('host')}`;

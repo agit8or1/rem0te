@@ -119,10 +119,15 @@ try {
     `default capabilities wrong: ${JSON.stringify(johnMembership.capabilities)}`,
   );
 
-  // 4. Create a managed-enrollment token bound to Business + John
-  const tokenRes = await req('POST', '/enrollment/tokens',
-    { businessId: customerId, accessMode: 'ASSIGNED_USERS', assignedUserIds: [johnUserId], description: `e2e ${suffix}` },
-    adminCookie);
+  // 4. Create a managed-enrollment token bound to Business + John. Minting
+  // needs a fresh re-authentication (0.33): refused without, then made with one.
+  const tokenBody = { businessId: customerId, accessMode: 'ASSIGNED_USERS', assignedUserIds: [johnUserId], description: `e2e ${suffix}` };
+  const staleMint = await req('POST', '/enrollment/tokens', tokenBody, adminCookie);
+  assert(staleMint.status === 403 && staleMint.body?.code === 'STEP_UP_REQUIRED', `token without step-up should be 403 STEP_UP_REQUIRED, got ${staleMint.status}`);
+  const adminUp = await req('POST', '/auth/step-up', { password: adminPw }, adminCookie);
+  const adminStep = (adminUp.setCookie.match(/step_up=[^;]+/) ?? [])[0];
+  assert(adminUp.status === 200 && adminStep, 'admin step-up failed');
+  const tokenRes = await req('POST', '/enrollment/tokens', tokenBody, `${adminCookie}; ${adminStep}`);
   log('create enrollment token', tokenRes, tokenRes.status === 201);
   assert(tokenRes.status === 201, 'token creation failed');
   const rawToken = tokenRes.body?.data?.token;

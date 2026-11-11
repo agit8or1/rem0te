@@ -60,6 +60,34 @@ Some actions need you to confirm it is you, even with a valid session: re-enter 
 
 All are on by default (`PlatformSettings.stepUpActions`). The API answers `403` with `code: STEP_UP_REQUIRED` and the web app prompts. Access is always checked **first**, so someone with no business doing the action is refused outright, not asked to re-authenticate.
 
+### Always on, whatever is configured
+
+A few actions need a fresh confirmation that cannot be switched off in that table: lifting a containment pause,
+changing who monitoring notifies, turning on automatic client updates, technician-access decisions — and, from 0.33,
+**making an enrolment token**:
+
+| Action (in the `403`) | When |
+|---|---|
+| `enrollment.create` | Making an install link (*Devices → Add device*, or `POST /enrollment/tokens`), including a re-enrol link for an existing computer. Every role: Platform Admin, Business Owner, technician or Business User with *Add computers* |
+| `apikey.enrollment` | Creating an API key that carries the `enrollment:write` scope. Keys without that scope are unchanged |
+
+**Why every role, not only Platform Admins.** A token always covers exactly one business and does the same thing
+whoever made it: it lets any machine that runs it join that business and receive its monitoring, update policies and
+relay configuration. A stolen Business Owner session is as good for that as a stolen Platform Admin one, for that
+business. The cost is one confirmation per ten minutes of adding devices.
+
+**API keys keep the ability.** A key cannot step up — there is no person at the other end — and provisioning scripts are
+what `POST /pub/v1/enrollment/tokens` is for. The key is itself the second proof: a separate secret, bound to one
+business, carrying an explicit scope, revocable, and recorded on every token it mints (`mintedVia: "api-key"` and its
+id in the `CLAIM_TOKEN_CREATED` audit entry; session mints record `mintedVia: "session"` and the step-up method). What
+closes the gap is that *creating* such a key needs the fresh confirmation, so a stolen session cannot make a key and
+then mint with it. Keys that already had `enrollment:write` before 0.33 keep working; review them under
+*Settings → API keys* if a session may have been stolen.
+
+**Registering a computer by RustDesk ID is not gated.** It mints nothing: no token, no device secret, no password
+(Platform Admin only, unchanged). The node has no device identity, so its heartbeats are not trusted until an installer
+runs with a token — which needs the confirmation.
+
 ## Recovery
 
 If SSO, passkeys or the [public address](setup.md#public-address) go wrong, run this on the server. It talks to the database directly and works with the API down. The environment file is readable only by root, so start a root shell with it loaded:

@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Logger, UnauthorizedException } from '@nestjs/common';
 import { randomBytes, createCipheriv, createDecipheriv, createHash, timingSafeEqual } from 'crypto';
 import { execFile } from 'child_process';
@@ -27,8 +28,18 @@ import { CANDIDATE_LIVE_MS, CANDIDATE_SETTLE_MS } from './device-secret';
 import { withDeviceText } from './device-text';
 import { queryHbbsOnline } from './hbbs-presence';
 import { compareVersions } from '../common/agent-contract';
+import { assertFresh } from '../security-controls/review';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * How a token mint proved more than a session (0.33): a fresh step-up for a
+ * person, or the API key itself. Every caller of createClaimToken has to say
+ * which, so a new route cannot mint on a bare session by forgetting.
+ */
+export type TokenMintAuth =
+  | { via: 'session'; freshMethod: string | null }
+  | { via: 'api-key'; apiKeyId: string | undefined };
 
 @Injectable()
 export class EnrollmentService {
@@ -76,8 +87,21 @@ export class EnrollmentService {
    * token carries (business, access mode, assigned users) is validated now,
    * so a device can only ever enroll itself where an authorised person said
    * it could.
+   *
+   * Minting needs proof beyond the session (0.33). An enrolment token puts a
+   * machine of the holder's choosing into a business, where it is handed that
+   * business's monitoring, update policies and relay configuration — so a
+   * stolen or unattended session must not be enough. A signed-in person needs
+   * a fresh re-authentication (step-up, ten minutes, this sign-in only),
+   * whatever their role and whatever step-up actions are configured. An API
+   * key cannot step up; it keeps the ability because the key is itself the
+   * second proof — a separate secret, bound to one business, carrying the
+   * explicit `enrollment:write` scope, and minting such a key needs the same
+   * fresh re-authentication (ApiKeysService.create). The check runs after
+   * every scope and input check, so someone with no business here is refused
+   * outright rather than asked to re-authenticate first.
    */
-  async createClaimToken(actor: ActorContext, dto: CreateClaimTokenDto & { businessId?: string }) {
+  async createClaimToken(actor: ActorContext, dto: CreateClaimTokenDto & { businessId?: string }, auth: TokenMintAuth) {
     this.acl.assertCapability(actor, CAP.COMPUTERS_ADD);
 
     const businessId = this.acl.requireScope(actor, dto.businessId ?? dto.customerId);
@@ -131,6 +155,15 @@ export class EnrollmentService {
       if (!site) throw new BadRequestException('Unknown site for this business');
     }
 
+    if (auth.via === 'session') {
+      assertFresh(auth.freshMethod, {
+        action: 'enrollment.create',
+        message: 'Confirm it is you to make an install link: an enrolment token adds a computer to this business.',
+      });
+    } else if (!auth.apiKeyId) {
+      throw new ForbiddenException('Only an API key with the enrollment:write scope can mint a token without a fresh sign-in');
+    }
+
     const token = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(token).digest('hex');
     const expiresAt = new Date(Date.now() + this.tokenTtlHours * 60 * 60 * 1000);
@@ -168,6 +201,8 @@ export class EnrollmentService {
         ...(site ? { siteId: site.id } : {}),
         accessMode: dto.accessMode ?? 'ASSIGNED_USERS',
         assignedUserIds,
+        // What proved this was not just a session (0.33).
+        ...(auth.via === 'session' ? { mintedVia: 'session', stepUpMethod: auth.freshMethod } : { mintedVia: 'api-key', apiKeyId: auth.apiKeyId }),
       },
     });
 

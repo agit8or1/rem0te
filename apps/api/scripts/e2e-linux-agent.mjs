@@ -92,6 +92,12 @@ async function login(email) {
   const mm = (r.headers.get('set-cookie') ?? '').match(/access_token=([^;]+)/);
   if (r.status !== 200 || !mm) throw new Error(`login ${email}: ${r.status} ${await r.text()}`);
   s.cookie = `access_token=${mm[1]}`;
+  // Minting an enrolment token needs a fresh re-authentication (0.33); the
+  // step-up rides along on every request of this session, as in the console.
+  const u = await fetch(`${API}/auth/step-up`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': s.ip, cookie: s.cookie }, body: JSON.stringify({ password: PW }) });
+  const su = (u.headers.get('set-cookie') ?? '').match(/step_up=([^;]+)/);
+  if (u.status !== 200 || !su) throw new Error(`step-up ${email}: ${u.status} ${await u.text()}`);
+  s.cookie += `; step_up=${su[1]}`;
   return s;
 }
 const code = (r) => r.body?.code ?? r.body?.message?.code ?? r.body?.error?.code;

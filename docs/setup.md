@@ -25,6 +25,10 @@ This guide covers everything you need to go from a blank Ubuntu server to a full
 | 21117 | TCP | RustDesk relay (hbbr) |
 | 21118–21119 | TCP | RustDesk websocket (optional) |
 
+These minimums are for a small fleet. For CPU, memory, disk and PostgreSQL by number of computers (50, 250, 1,000,
+5,000), with the measured cost of a heartbeat and how fast the database grows, see
+[server-sizing.md](server-sizing.md).
+
 > **Domain vs IP address:** Using a domain name is strongly recommended — you get automatic HTTPS via Let's Encrypt. Bare IP addresses work but use plain HTTP.
 
 ---
@@ -105,7 +109,8 @@ Then send anyone who needs help to `https://<your-host>/quick`.
 2. Pick the business, then a site (or none), and who should be able to reach the computer. The
    binding is fixed at this point — the machine that runs the link cannot choose a different
    business or site.
-3. Pick the operating system and make the install command. Copy the one-line command (or, on
+3. Pick the operating system and make the install command — you confirm it is you first (0.33,
+   [sign-in.md](sign-in.md#always-on-whatever-is-configured)). Copy the one-line command (or, on
    Windows, the one-click installer link). It is single-use, expires in 24 hours, and is shown once.
 4. Run it on the device, or send it to the person there.
 5. Leave the page open: it shows the device arriving, then its first health — online, the agent

@@ -993,6 +993,60 @@ check(
     'a reboot rule is a §15 change to the agent\'s closed params');
 }
 
+// 26. Enrolment step-up (0.33). An enrolment token puts a machine of the
+//     holder's choosing into a business, so a session alone must not mint
+//     one: a person needs a fresh re-authentication, whatever their role and
+//     whatever step-up actions are configured (assertFresh, never the
+//     configurable StepUpService.assert). An API key cannot step up and keeps
+//     the ability, so minting a key that carries enrollment:write needs the
+//     same fresh re-authentication. Every caller must say which proof it
+//     has; nothing else writes a DeviceClaimToken. Registering by RustDesk ID
+//     mints no credential and so is not gated.
+{
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const ctl = read('apps/api/src/enrollment/enrollment.controller.ts');
+  const pub = read('apps/api/src/public-api/public-api.controller.ts');
+  const rev = read('apps/api/src/security-controls/review.ts');
+  const mintFn = enr.slice(enr.indexOf('async createClaimToken('), enr.indexOf('async listClaimTokens('));
+  check('assertFresh refuses a missing method unconditionally',
+    /export function assertFresh\(method: string \| null,[^)]*\) \{\s*if \(!method\) \{\s*throw new ForbiddenException\(\{\s*code: 'STEP_UP_REQUIRED'/.test(rev),
+    'review.ts: assertFresh must throw STEP_UP_REQUIRED whenever method is null, with no option that skips it');
+  check('createClaimToken demands a mint proof and checks it before the token is written',
+    /async createClaimToken\(actor: ActorContext, dto: [^)]*\}, auth: TokenMintAuth\)/.test(mintFn)
+      && /export type TokenMintAuth =\s*\| \{ via: 'session'; freshMethod: string \| null \}\s*\| \{ via: 'api-key'; apiKeyId: string \| undefined \};/.test(enr)
+      && /if \(auth\.via === 'session'\) \{\s*assertFresh\(auth\.freshMethod, \{\s*action: 'enrollment\.create'/.test(mintFn)
+      && /\} else if \(!auth\.apiKeyId\) \{\s*throw new ForbiddenException/.test(mintFn)
+      && mintFn.indexOf('assertFresh(auth.freshMethod') !== -1
+      && mintFn.indexOf('assertFresh(auth.freshMethod') < mintFn.indexOf('deviceClaimToken.create(')
+      && mintFn.indexOf('assertFresh(auth.freshMethod') > mintFn.indexOf('this.acl.requireScope(actor'),
+    'session → assertFresh (after scope, before the create); api-key → refused without a key id');
+  const writers = walk('apps/api/src').filter((f) => !f.endsWith('.spec.ts') && /deviceClaimToken\.(create|createMany|upsert)\(/.test(read(f)));
+  const callers = walk('apps/api/src').filter((f) => !f.endsWith('.spec.ts') && /\.createClaimToken\(/.test(read(f)));
+  check('only createClaimToken writes a new DeviceClaimToken, and only the two known routes call it',
+    writers.length === 1 && writers[0].endsWith('enrollment/enrollment.service.ts') && (enr.match(/deviceClaimToken\.create\(/g) ?? []).length === 1
+      && callers.length === 2 && callers.some((f) => f.endsWith('enrollment/enrollment.controller.ts')) && callers.some((f) => f.endsWith('public-api/public-api.controller.ts')),
+    `writers: ${writers.join(', ')}; callers: ${callers.join(', ')} — a new mint path needs its own step-up decision here`);
+  check('the console route passes the step-up it read; the public route passes the API key',
+    /const freshMethod = u\?\.sub \? this\.stepUp\.read\(req, u\.sub, u\.iat\)\?\.method \?\? null : null;\s*const token = await this\.enrollment\.createClaimToken\(actor, dto, \{ via: 'session', freshMethod \}\);/.test(ctl)
+      && /\{ via: 'api-key', apiKeyId: this\.apiKeyMeta\(req\)\.apiKeyId \},\s*\);/.test(pub)
+      && /@Controller\('pub\/v1'\)\s*@Public\(\)\s*@UseGuards\(ApiKeyAuthGuard\)/.test(pub),
+    'enrollment.controller must read StepUpService; public-api must sit behind ApiKeyAuthGuard and pass apiKeyId');
+  const keys = read('apps/api/src/apikeys/apikeys.service.ts');
+  const keysCtl = read('apps/api/src/apikeys/apikeys.controller.ts');
+  const keyFn = keys.slice(keys.indexOf('async create('), keys.indexOf('async revoke('));
+  check('a key that can mint enrolment tokens needs a fresh re-authentication to create',
+    /if \(validScopes\.includes\('enrollment:write'\)\) \{\s*assertFresh\(freshMethod, \{/.test(keyFn)
+      && keyFn.indexOf("validScopes.includes('enrollment:write')") < keyFn.indexOf('apiKey.create(')
+      && /this\.stepUp\.read\(req, u\.sub, u\.iat\)\?\.method \?\? null : null;\s*return \{ success: true, data: await this\.svc\.create\(actor, dto, freshMethod\) \};/.test(keysCtl),
+    'ApiKeysService.create must assertFresh on enrollment:write (the filtered scopes) before writing; the controller passes the step-up');
+  const eps = read('apps/api/src/endpoints/endpoints.service.ts');
+  check('registering by RustDesk ID mints no credential (which is why it is not gated)',
+    /rustdeskNode: \{ create: \{ tenantId: business\.tenantId, rustdeskId: dto\.rustdeskId, platform: dto\.platform \} \},/.test(eps)
+      && /if \(dto\.rustdeskId\) \{\s*this\.acl\.assertPlatformAdmin\(actor\);/.test(eps),
+    'the node created by ID must carry no secret or password, and stay Platform Admin only — if it ever mints one, gate it');
+  check('the enrolment step-up suite runs in CI', /\benrol-stepup\b/.test(read('scripts/run-e2e.sh')), 'add e2e-enrol-stepup to run-e2e.sh');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

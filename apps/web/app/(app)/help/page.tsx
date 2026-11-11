@@ -100,6 +100,13 @@ const SECTIONS: Section[] = [
           </Link>{' '}
           for the full list.
         </p>
+        <p>
+          How big a server to use for 50, 250, 1,000 or 5,000 computers — CPU, memory, disk and PostgreSQL, with the
+          measured cost of a heartbeat and how fast the database grows — is in{' '}
+          <Link href="/docs/server-sizing" className="underline text-foreground">Server sizing</Link>. In short: 2 vCPU
+          and 2–4 GB up to a few hundred computers, 4 vCPU and 8 GB for 1,000. At 5,000 a single API process is near its
+          measured limit; read the page before planning that size.
+        </p>
       </div>
     ),
   },
@@ -138,7 +145,7 @@ const SECTIONS: Section[] = [
         <ol className="list-decimal pl-5 space-y-1.5">
           <li>Choose the business, then a site or none, and who may connect. These are fixed into the link: the machine cannot pick another business or site.</li>
           <li>Choose the operating system. Windows gets the Rem0te agent; Linux and macOS get remote access only.</li>
-          <li>Copy the install command (or, on Windows, the one-click installer link) and run it on the machine. It works once, expires in 24 hours, and is shown only once.</li>
+          <li>Make the install command. You are asked to confirm it&apos;s you first, unless you did in the last 10 minutes: a link adds a computer to the business. Your choices are kept while you confirm. Copy the command (or, on Windows, the one-click installer link) and run it on the machine. It works once, expires in 24 hours, and is shown only once.</li>
           <li>Keep the page open. It checks every few seconds and says the device enrolled only when it has.</li>
           <li>It then shows the first health the server has received: online, the agent and its version, and whether the first inventory has arrived. Anything not yet received says so.</li>
           <li>Open the device, or the business&apos;s monitoring policies, from the last step.</li>
@@ -828,6 +835,12 @@ const SECTIONS: Section[] = [
           <strong className="text-foreground">confirm it&apos;s you</strong> with your password, an authenticator code
           or a passkey. If you have an authenticator, its code or a passkey is required — your password alone is not
           enough. It lasts 10 minutes for that sign-in.
+        </p>
+        <p>
+          Making an install link, and creating an API key that can make them, always ask — for every role, and whatever
+          the step-up settings say. A link puts a computer into a business, so an unattended or stolen session must not
+          be enough. API keys that already have the enrolment scope keep working: a key cannot confirm anything, and is
+          itself the second proof.
         </p>
         <p>
           You can add passkeys and link a single sign-on provider from{' '}

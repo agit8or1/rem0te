@@ -78,10 +78,14 @@ try {
   // 4. List customers — the new one should be there
   await log('GET /customers', () => get('/customers', cookie));
 
-  // 5. Create an enrollment token bound to this customer + company-wide access
+  // 5. Create an enrollment token bound to this customer + company-wide
+  // access. Minting needs a fresh re-authentication (0.33).
+  const up = await log('POST /auth/step-up', () => post('/auth/step-up', { password }, cookie));
+  const stepCookie = (up.setCookie.match(/step_up=[^;]+/) ?? [])[0];
+  if (!stepCookie) throw new Error('step-up failed');
   const token = await log('POST /enrollment/tokens (managed)', () => post('/enrollment/tokens',
     { customerId, accessMode: 'COMPANY_WIDE', assignedUserIds: [], description: 'e2e test' },
-    cookie));
+    `${cookie}; ${stepCookie}`));
   const rawToken = token.body?.data?.token;
   if (!rawToken) throw new Error('no token issued');
 

@@ -202,6 +202,11 @@ configuration and passkey changes need a recent re-authentication on top of a
 valid session. Access is checked first, then step-up. See
 [sign-in.md](sign-in.md#step-up).
 
+From 0.33, `computers:add` alone no longer makes an enrolment link: making one
+also needs a fresh re-authentication, for every role, and so does creating an
+API key with `enrollment:write`. See
+[sign-in.md](sign-in.md#always-on-whatever-is-configured).
+
 ## Access review and offboarding (v0.20)
 
 Each computer lists who can reach it and why; offboarding removes a person's

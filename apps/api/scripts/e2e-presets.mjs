@@ -519,6 +519,8 @@ async function main() {
     const drill = [];
     const enr = await req('POST', '/enrollment/tokens', { s: thief, body: { businessId: A, customerId: A } });
     drill.push(['enroll a machine', enr.status, code(enr) ?? (enr.body?.message ?? '').toString().slice(0, 60)]);
+    // Known gap until 0.33: this used to mint a token.
+    check(enr.status === 403 && code(enr) === 'STEP_UP_REQUIRED', 'enroll a machine: refused, fresh authentication required (0.33)', msg(enr));
     const appoint = await req('PATCH', `/technicians/people/${t1.id}/platform-permissions`, { s: thief, body: { permissions: ['approvals:review'] } });
     check(appoint.status === 403 && /STEP_UP_REQUIRED/.test(msg(appoint)), 'appoint an approver: refused, fresh authentication required', msg(appoint));
     drill.push(['appoint an approver', appoint.status, code(appoint)]);

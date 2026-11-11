@@ -22,7 +22,7 @@ bundled into `/docs`. Integration work is tracked separately in
 |---|---|---|
 | Remote access | RustDesk launch from the computer page; the Windows launcher; launch policy (presets L1/L2/L3, protected classes, step-up for password use); session history; Quick Connect; customer support requests | I, **P** |
 | Tenancy | Businesses, sites, per-business access, technician assignment across businesses, offboarding, technician approvals | I (business-access 83, offboarding 62, presets 113), P |
-| Sign-in security | MFA (TOTP, passkeys), SSO (OIDC), step-up, short-lived sessions, rate limits, security invariants in CI | U, I, P |
+| Sign-in security | MFA (TOTP, passkeys), SSO (OIDC), step-up (from 0.33 also for every enrolment token and enrollment:write API key), short-lived sessions, rate limits, security invariants in CI | U, I, P |
 | Enrolment | Expiring enrolment tokens, Windows install script, pool adoption bound to the token's business, signed update channel. **Guided Add device** (0.32): business → site → OS → command → waits for the device → first health → monitoring links, with the site bound to the token | I (add-device 58), P (standard channel; the guided flow is not yet P) |
 | Standard agent (Windows) | Heartbeat, online/offline, hardware/OS inventory, logged-on user, CPU load (point value), disks, installed software with change history, event-log reading, Windows Update scan (read-only), restart pending | I, **P** (standard channel; observed, not a controlled test) |
 | Monitoring | Global → business → site → computer rules; offline, disk, CPU, memory, services, event patterns, restart pending; dedup (one open alert per problem), hysteresis, cooldowns, site-outage correlation, maintenance windows, 4-level escalation, webhooks, alerts → ClientSt0r tickets | U (91), I (108) — **not R**: the monitor block has never run on real Windows |
@@ -62,7 +62,9 @@ bundled into `/docs`. Integration work is tracked separately in
 - **Browser-based remote desktop.**
 - **Global search** across computers, businesses and users.
 - **Saved device views, device groups in the UI, bulk actions.**
-- **Server sizing guidance** by endpoint count.
+- ~~Server sizing guidance by endpoint count~~ — done in 0.33: [server-sizing.md](server-sizing.md), from measured
+  heartbeat cost and row sizes (I). It found that one API process is near its measured limit at 5,000 computers,
+  mostly because every heartbeat starts a `sqlite3` process for the hbbs presence lookup.
 
 ## Security limitations (current, honest)
 
@@ -72,8 +74,13 @@ bundled into `/docs`. Integration work is tracked separately in
 | Standard agent's heartbeat authority | It reports, it never executes. Execution is signed-agent only | Keep the split. Move production endpoints to the signed channel only after real-Windows testing |
 | Approval signer not installed in production | Nothing can be executed in production at all. Safe, but the action catalog is unusable there | Install per `docs/approved-actions.md` once real-device tests pass |
 | In-app updater requires a pinned key (0.30.1) | Updates are unavailable until `UPDATE_SIGNING_KEY_FINGERPRINT` and `UPDATE_GNUPGHOME` are set | Operator configuration |
-| A stolen admin session can still create enrolment tokens | Known since 0.23 | Consider step-up for token creation |
 | Direct AI call from rem0te (above) | Notes and session history would leave rem0te if a key were set | Decide and document |
+
+### Resolved
+
+| Limitation | Resolved in | How |
+|---|---|---|
+| A stolen admin session could create enrolment tokens (known since 0.23) | 0.33 | Making a token needs a fresh re-authentication for every role (`enrollment.create`, not configurable), and so does creating an API key with `enrollment:write` (`apikey.enrollment`). API keys keep minting without one: the key is the second proof. Registering by RustDesk ID mints no credential and is not gated. [sign-in.md](sign-in.md#always-on-whatever-is-configured); `e2e-enrol-stepup.mjs`; invariant §25 (**I**) |
 
 ## Usability findings from the screenshots
 

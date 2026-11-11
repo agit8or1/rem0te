@@ -244,6 +244,11 @@ walks through it in six steps on one page:
    person at the machine. It contains a single-use enrolment token that expires
    in 24 hours, and it is shown **once**: reload the page and only the waiting
    continues. If the command is lost, revoke the link and make a new one.
+   Making it asks you to confirm it is you (password, authenticator code or
+   passkey) unless you did in the last 10 minutes (0.33): a link adds a computer
+   to the business, so a session left open must not be enough. Your choices are
+   kept while you confirm, and if you cancel nothing is made — press the button
+   again.
 4. **Wait for the device.** The page checks every few seconds and says *enrolled*
    only when a device has used this link. You can revoke an unused link here.
 5. **First health** — what the server has actually received: the business and
