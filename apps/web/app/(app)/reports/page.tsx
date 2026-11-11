@@ -9,10 +9,10 @@ import { PageHeader } from '@/components/common/page-header';
 /** /reports opens the first report this person may see, the same one the menu opens. */
 export default function ReportsIndex() {
   const router = useRouter();
-  const { can, isPlatformAdmin, isBusinessOwner, technician, assignedBusinesses, canManageTechnicians, isLoading } = usePermissions();
+  const { can, isPlatformAdmin, isBusinessOwner, technician, assignedBusinesses, canManageTechnicians, isIndependentReviewer, isLoading } = usePermissions();
   const section = NAV.find((s) => s.id === 'reports')!;
   const first = visibleItems(section, {
-    can, isPlatformAdmin, isBusinessOwner, technician: !!technician, hasAssignments: assignedBusinesses.length > 0, canManageTechnicians,
+    can, isPlatformAdmin, isBusinessOwner, technician: !!technician, hasAssignments: assignedBusinesses.length > 0, canManageTechnicians, isIndependentReviewer,
   })[0];
   useEffect(() => { if (!isLoading && first) router.replace(first.href); }, [isLoading, first, router]);
   return (

@@ -549,7 +549,7 @@ model Customer {
   monitorAlerts        MonitorAlert[]
   monitorSuppressions  MonitorSuppression[]
   clientUpdatePolicies ClientUpdatePolicy[]
-  scripts             Script[]
+  scripts              Script[]
 
   @@index([tenantId])
   @@index([tenantId, name])
