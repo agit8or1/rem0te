@@ -342,6 +342,19 @@ const SECTIONS: Section[] = [
           <Link href="/endpoints" className="underline text-foreground">Devices</Link> and
           look at the <strong className="text-foreground">Overview</strong> tab.
         </p>
+        <p className="font-medium text-foreground">The device page</p>
+        <p>
+          The top of the page says whether the computer is online (or offline since
+          when), its business and site, and when its agent last checked in, marked
+          stale when it has missed check-ins. The strip under it lists what needs
+          attention: open alerts, a pending restart, pending updates with the age of
+          the scan, and which agent it runs. Each opens the tab that explains it.
+          Connect, Diagnose, Run action and Patch sit beside it; Archive and the other
+          rare actions are under More, each with a confirmation. The tabs are
+          Overview, Monitoring, Software, Patches, Event logs, Diagnostics, Actions and
+          History (sessions, notes, the AI-written summary and who can connect), and
+          each can be linked with <code>?tab=</code>.
+        </p>
         <p className="font-medium text-foreground">Nothing here is live</p>
         <p>
           Rem0te has no channel to reach into a computer. Everything on that tab arrived
@@ -358,7 +371,7 @@ const SECTIONS: Section[] = [
         </p>
         <p className="font-medium text-foreground">Event logs</p>
         <p>
-          The <strong className="text-foreground">Event Log</strong> tab asks the
+          The <strong className="text-foreground">Event logs</strong> tab asks the
           computer for a page of one Windows log — Application, System, Security, Setup
           or Windows PowerShell. Pick a time range, the levels and how many of the most
           recent events you want; the table fills in when the machine answers, up to
@@ -517,7 +530,8 @@ const SECTIONS: Section[] = [
     content: (
       <div className="space-y-3 text-sm text-muted-foreground">
         <p>
-          Every computer&apos;s page has a <strong className="text-foreground">Test connection</strong> panel. It
+          Every computer&apos;s page has a <strong className="text-foreground">Test connection</strong> panel, on its
+          Diagnostics tab (the Diagnose button opens it). It
           checks the server, the computer and — with <em>Check my computer</em> — the RustDesk on your own machine,
           and says which one is wrong. Fixes that change something are labelled; the test itself changes nothing.
           <em> Download report</em> gives a redacted copy safe to attach to a ticket.

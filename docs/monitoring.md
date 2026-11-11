@@ -71,15 +71,18 @@ business monitor with the key `offline`; to switch it off there, add it
 disabled ("Switch off for this business" does exactly that). Removing the
 override brings the inherited one back.
 
-A computer's **Monitoring** tab lists the monitors actually in effect and
-where each came from.
+A computer's **Monitoring** tab leads with its alerts (open ones first, worst
+severity first; resolved ones folded away), then lists the monitors actually in
+effect — by name and kind, with what each watches for in words — and where each
+came from. Its open alerts also show in the attention strip at the top of the
+computer's page. From 0.31 installed software has its own **Software** tab.
 
 ![A computer's Monitoring tab: its alerts, the monitors in effect, change history and installed software](screenshots/guide/endpoint-monitoring.png)
 
 1. The **Monitoring** tab on a computer's page (`?tab=monitoring` links straight to it).
 2. Monitors in effect, where each came from, and what the agent last reported for services and event queries.
 3. Changes between inventories.
-4. Installed software, filterable.
+4. Installed software, filterable — on the **Software** tab from 0.31.
 
 ## Alerts
 

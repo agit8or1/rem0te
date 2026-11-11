@@ -1,72 +1,87 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useParams, useRouter } from 'next/navigation';
-import { endpointsApi, notesApi, diagnosticsApi, offboardingApi } from '@/lib/api-client';
-import { PageHeader } from '@/components/common/page-header';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { useParams } from 'next/navigation';
+import { endpointsApi, offboardingApi } from '@/lib/api-client';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Textarea } from '@/components/ui/textarea';
-import { StatusIndicator } from '@/components/common/status-indicator';
-import { ConfirmDialog } from '@/components/common/confirm-dialog';
-import { EndpointSpecs } from '@/components/endpoints/endpoint-specs';
 import { EndpointEventLog } from '@/components/endpoints/endpoint-event-log';
 import { EndpointActions } from '@/components/endpoints/endpoint-actions';
 import { EndpointPatches } from '@/components/endpoints/endpoint-patches';
-import { EndpointMonitoring } from '@/components/monitoring/endpoint-monitoring';
 import { EndpointUpdateHistory } from '@/components/rollouts/endpoint-update-history';
+import { TemporaryAccessCard } from '@/components/security-controls/temporary-access-card';
+import { DeviceHeader } from '@/components/endpoints/workspace/device-header';
+import { DeviceActions } from '@/components/endpoints/workspace/device-actions';
+import { DeviceOverviewTab } from '@/components/endpoints/workspace/overview-tab';
+import { DeviceMonitoringTab } from '@/components/endpoints/workspace/monitoring-tab';
+import { DeviceSoftwareTab } from '@/components/endpoints/workspace/software-tab';
+import { DeviceHistoryTab, type SessionRow } from '@/components/endpoints/workspace/history-tab';
+import { DiagnosticsPanel } from '@/components/endpoints/workspace/diagnostics-panel';
+import type { AccessReview } from '@/components/endpoints/workspace/access-review-panel';
+import { agentType, parseTab, reportsInventory, TAB_LABEL, type WorkspaceTab } from '@/components/endpoints/workspace/device-model';
+import {
+  actionUnavailableReason, useActionCatalog, useInventory, useMonitoringView, usePatchStatus,
+} from '@/components/endpoints/workspace/use-device-data';
 import { usePermissions, CAP } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
-import { formatDate } from '@/lib/utils';
-import {
-  PlayCircle, Archive, ArchiveRestore, Pencil, Check, X, RefreshCw, Sparkles,
-  CheckCircle2, XCircle, AlertTriangle, HelpCircle, Info, Clock, Download, Laptop, ShieldAlert, Eye,
-} from 'lucide-react';
-import { TemporaryAccessCard } from '@/components/security-controls/temporary-access-card';
 
+/**
+ * The device workspace (0.31): one page for one computer.
+ *
+ * Header: name, status, business, site, last seen, and an attention strip
+ * (open alerts, restart pending, pending updates, agent type) built from reads
+ * the tabs already make. Primary actions: Connect, Diagnose, Run action,
+ * Patch, and More for archive and the other rare things. Tabs, each
+ * deep-linkable with `?tab=`: Overview · Monitoring · Software · Patches ·
+ * Event logs · Diagnostics · Actions · History.
+ *
+ * There are no Services or Processes tabs because nothing collects them: the
+ * agent reads only the services a monitor names (shown on Monitoring), and no
+ * agent reports processes.
+ */
 export default function EndpointDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
   const { toast } = useToast();
-  const qc = useQueryClient();
   const { can, isPlatformAdmin, technician } = usePermissions();
+  const canView = can(CAP.COMPUTERS_VIEW);
+  const canEventLogs = can(CAP.COMPUTERS_EVENT_LOGS);
 
-  const [newNote, setNewNote] = useState('');
-  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
-  const [editingContent, setEditingContent] = useState('');
-  const [timelineText, setTimelineText] = useState<string | null>(null);
-  const [timelineEditing, setTimelineEditing] = useState(false);
-  const [timelineDraft, setTimelineDraft] = useState('');
-  const [tab, setTab] = useState('overview');
-  // ?tab=monitoring (and the others) opens that tab — alert links and the docs screenshots use it.
+  const [tab, setTabState] = useState<WorkspaceTab>('overview');
+  const tabsRef = useRef<HTMLDivElement>(null);
+  // ?tab= opens that tab (alert links, bookmarks and the docs screenshots use
+  // it); old values from before the regrouping map to where their content went.
   useEffect(() => {
-    const t = new URLSearchParams(window.location.search).get('tab');
-    if (t) setTab(t);
+    const t = parseTab(new URLSearchParams(window.location.search).get('tab'));
+    if (t) setTabState(t);
   }, []);
-
-  // Access review lists people, so it needs users:view as well. Fetched up
-  // front so a 403 (or any error) can hide the tab without a flash of it.
-  const canReview = can(CAP.USERS_VIEW);
-  const { data: review, isError: reviewError } = useQuery<AccessReview>({
-    queryKey: ['access-review', id],
-    queryFn: () => offboardingApi.accessReview(id).then((r) => r.data?.data),
-    enabled: canReview,
-    retry: false,
-  });
-  const showReview = canReview && !reviewError && !!review;
+  const setTab = useCallback((t: WorkspaceTab) => {
+    setTabState(t);
+    const url = new URL(window.location.href);
+    if (t === 'overview') url.searchParams.delete('tab'); else url.searchParams.set('tab', t);
+    window.history.replaceState(window.history.state, '', url);
+    // From a link further down the Overview, bring the tab into view.
+    tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, []);
 
   const { data: endpoint, isLoading } = useQuery({
     queryKey: ['endpoint', id],
     queryFn: () => endpointsApi.get(id).then((r) => r.data?.data),
   });
 
-  const { data: notes } = useQuery({
-    queryKey: ['notes', 'endpoint', id],
-    queryFn: () =>
-      notesApi.list({ endpointId: id }).then((r) => r.data?.data ?? []),
+  // Header and Overview reads — the same queries (and keys) the tabs use.
+  const mon = useMonitoringView(id, canView);
+  const patches = usePatchStatus(id, canView);
+  const inventory = useInventory(id, canView);
+  const catalog = useActionCatalog(canView);
+
+  // Access review lists people, so it needs users:view as well. A 403 (or any
+  // error) leaves it out of History rather than showing an error there.
+  const canReview = can(CAP.USERS_VIEW);
+  const { data: review, isError: reviewError } = useQuery<AccessReview>({
+    queryKey: ['access-review', id],
+    queryFn: () => offboardingApi.accessReview(id).then((r) => r.data?.data),
+    enabled: canReview,
+    retry: false,
   });
 
   // One click: POST :id/connect (step-up when the launch carries the
@@ -133,150 +148,52 @@ export default function EndpointDetailPage() {
     },
   });
 
-  const archiveMutation = useMutation({
-    mutationFn: () => endpointsApi.archive(id),
-    onSuccess: () => {
-      toast({ title: 'Computer archived', description: 'Restore it from its page if that was a mistake.' });
-      router.push('/endpoints');
-    },
-    onError: () => toast({ title: 'Error', description: 'Failed to archive', variant: 'destructive' }),
-  });
-
-  const restoreMutation = useMutation({
-    mutationFn: () => endpointsApi.restore(id),
-    onSuccess: () => {
-      toast({ title: 'Computer restored' });
-      qc.invalidateQueries({ queryKey: ['endpoint', id] });
-    },
-    onError: () => toast({ title: 'Error', description: 'Failed to restore', variant: 'destructive' }),
-  });
-
-  const createNoteMutation = useMutation({
-    mutationFn: (content: string) => notesApi.create({ endpointId: id, content }),
-    onSuccess: () => {
-      setNewNote('');
-      qc.invalidateQueries({ queryKey: ['notes', 'endpoint', id] });
-      toast({ title: 'Note added' });
-    },
-    onError: () => toast({ title: 'Error', description: 'Failed to add note', variant: 'destructive' }),
-  });
-
-  const generateTimelineMutation = useMutation({
-    mutationFn: () => endpointsApi.generateTimeline(id),
-    onSuccess: (res) => {
-      const text = res.data?.data?.text ?? '';
-      setTimelineText(text);
-      setTimelineDraft(text);
-      setTimelineEditing(false);
-      toast({ title: 'Timeline generated' });
-    },
-    onError: () => toast({ title: 'Error', description: 'Failed to generate timeline. Check ANTHROPIC_API_KEY.', variant: 'destructive' }),
-  });
-
-  const saveTimelineMutation = useMutation({
-    mutationFn: (text: string) => endpointsApi.saveTimeline(id, text),
-    onSuccess: () => {
-      setTimelineText(timelineDraft);
-      setTimelineEditing(false);
-      toast({ title: 'Timeline saved' });
-    },
-    onError: () => toast({ title: 'Error', description: 'Failed to save timeline', variant: 'destructive' }),
-  });
-
-  const updateNoteMutation = useMutation({
-    mutationFn: ({ noteId, content }: { noteId: string; content: string }) =>
-      notesApi.update(noteId, { content }),
-    onSuccess: () => {
-      setEditingNoteId(null);
-      qc.invalidateQueries({ queryKey: ['notes', 'endpoint', id] });
-      toast({ title: 'Note updated' });
-    },
-    onError: () => toast({ title: 'Error', description: 'Failed to update note', variant: 'destructive' }),
-  });
-
-  // Initialise timeline from endpoint data on first load
-  useEffect(() => {
-    if (endpoint) {
-      const ep = endpoint as Record<string, unknown>;
-      const stored = ep.aiTimeline as string | null | undefined;
-      if (stored && timelineText === null) {
-        setTimelineText(stored);
-        setTimelineDraft(stored);
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endpoint]);
-
   if (isLoading) return <div className="p-6 text-muted-foreground text-sm">Loading…</div>;
   if (!endpoint) return <div className="p-6 text-muted-foreground text-sm">Not found</div>;
 
   const ep = endpoint as Record<string, unknown>;
-  const customer = ep.customer as { id: string; name: string } | null;
-  const site = ep.site as { id: string; name: string } | null;
-  const aliases = (ep.aliases as { id: string; alias: string }[]) ?? [];
-  const tags = (ep.tags as { id: string; tag: string }[]) ?? [];
+  const agent = agentType(ep);
+  const inventoryCapable = reportsInventory(agent);
+  const isOnline = !!(ep.isOnline as boolean);
+  const actionReason = canView ? actionUnavailableReason(ep, catalog.data, catalog.isError) : null;
+  const sessions = (ep.supportSessions as SessionRow[] | undefined) ?? [];
+  const showReview = canReview && !reviewError && !!review;
+
+  // Only tabs with something real behind them. Software and Event logs come
+  // from the Windows agents; a Linux or macOS computer has RustDesk only.
+  const tabs: WorkspaceTab[] = [
+    'overview',
+    ...(canView ? (['monitoring'] as const) : []),
+    ...(canView && inventoryCapable ? (['software'] as const) : []),
+    ...(canView ? (['patches'] as const) : []),
+    ...(canEventLogs && inventoryCapable ? (['events'] as const) : []),
+    ...(canView ? (['diagnostics', 'actions'] as const) : []),
+    'history',
+  ];
+  const active: WorkspaceTab = tabs.includes(tab) ? tab : 'overview';
 
   return (
-    <div className="p-6 space-y-6">
-      <PageHeader
-        title={ep.name as string}
-        description={(ep.hostname as string) ?? 'No hostname'}
-      >
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            onClick={() => launchMutation.mutate(undefined)}
-            disabled={launchMutation.isPending || !(ep.rustdeskNode as { rustdeskId?: string } | null)?.rustdeskId}
-          >
-            <PlayCircle className="h-4 w-4 mr-2" />
-            Connect
-          </Button>
-          {/* View-only is enforced only for preset-backed technician grants,
-              and only by refusing a launch the computer cannot restrict. For a
-              Business Owner, Business User or Platform Admin the server has
-              never applied it — RustDesk opened with full control — so the
-              button is not offered to them rather than implying a restriction
-              that does not exist (0.25.0). */}
-          {technician && (
-            <Button
-              size="sm"
-              variant="outline"
-              title="Asks for a view-only launch. For a preset-based assignment it is refused unless this computer reports it can enforce view-only, and no shipped agent reports that yet. A custom assignment with Connect opens a normal session."
-              onClick={() => launchMutation.mutate('view_only')}
-              disabled={launchMutation.isPending || !(ep.rustdeskNode as { rustdeskId?: string } | null)?.rustdeskId}
-            >
-              <Eye className="h-4 w-4 mr-2" />
-              View only
-            </Button>
-          )}
-          {ep.status === 'ARCHIVED' ? (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => restoreMutation.mutate()}
-              disabled={restoreMutation.isPending}
-            >
-              <ArchiveRestore className="h-4 w-4 mr-2" />
-              Restore
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                // One click used to archive outright, with no way back.
-                if (confirm(`Archive ${ep.name as string}? Nobody will be able to connect to it until it is restored.`)) {
-                  archiveMutation.mutate();
-                }
-              }}
-              disabled={archiveMutation.isPending}
-            >
-              <Archive className="h-4 w-4 mr-2" />
-              Archive
-            </Button>
-          )}
-        </div>
-      </PageHeader>
+    <div className="p-4 sm:p-6 space-y-5">
+      <DeviceHeader
+        ep={ep}
+        mon={{ data: mon.data, isError: mon.isError }}
+        patches={{ data: patches.data, isError: patches.isError }}
+        inventory={inventory.data}
+        onOpenTab={setTab}
+        actions={
+          <DeviceActions
+            endpointId={id}
+            ep={ep}
+            onConnect={() => launchMutation.mutate(undefined)}
+            onViewOnly={() => launchMutation.mutate('view_only')}
+            connecting={launchMutation.isPending}
+            onOpenTab={setTab}
+            perms={{ view: canView, edit: can(CAP.COMPUTERS_EDIT), remove: can(CAP.COMPUTERS_REMOVE), technician: !!technician }}
+            actionReason={actionReason}
+            reportsInventory={inventoryCapable}
+          />
+        }
+      />
 
       <TemporaryAccessCard
         endpointId={id}
@@ -285,697 +202,89 @@ export default function EndpointDetailPage() {
         onConnect={() => launchMutation.mutate(undefined)}
       />
 
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          {/* Hidden without the capability as a courtesy — the route re-checks
-              it, so this is tidiness rather than a control. */}
-          {can(CAP.COMPUTERS_EVENT_LOGS) && (
-            <TabsTrigger value="events">Event Log</TabsTrigger>
-          )}
-          {can(CAP.COMPUTERS_VIEW) && (
-            <TabsTrigger value="diagnostics">Test connection</TabsTrigger>
-          )}
-          {/* Shown to anyone who can see the computer: whether they may
-              REQUEST is decided by the server (role, preset, device class),
-              and approving is never possible from this page. */}
-          {can(CAP.COMPUTERS_VIEW) && (
-            <TabsTrigger value="actions">Actions</TabsTrigger>
-          )}
-          {can(CAP.COMPUTERS_VIEW) && (
-            <TabsTrigger value="patches">Patches</TabsTrigger>
-          )}
-          {can(CAP.COMPUTERS_VIEW) && (
-            <TabsTrigger value="monitoring">Monitoring</TabsTrigger>
-          )}
-          {showReview && (
-            <TabsTrigger value="access-review">Access review</TabsTrigger>
-          )}
-          <TabsTrigger value="notes">Notes</TabsTrigger>
-          <TabsTrigger value="timeline">AI Timeline</TabsTrigger>
-        </TabsList>
+      <Tabs value={active} onValueChange={(v) => setTab(v as WorkspaceTab)}>
+        {/* Scrolls sideways on a narrow window rather than wrapping into a
+            second row that reads as a different set of tabs. Tabs are left out
+            without the capability as a courtesy — every route re-checks. */}
+        <div ref={tabsRef} className="-mx-1 overflow-x-auto px-1 pb-1 scroll-mt-4">
+          <TabsList className="w-max" data-testid="workspace-tabs">
+            {tabs.map((t) => (
+              <TabsTrigger key={t} value={t} data-testid={`tab-${t}`}>{TAB_LABEL[t]}</TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
 
-        <TabsContent value="overview" className="space-y-4 mt-4">
-          {/* Assignment first: it is the only part of this page that is true
-              the moment it loads. Everything below came off the endpoint on a
-              heartbeat and carries its own collected-at line. */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm">Assignment</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2.5 text-sm">
-                <Row label="Status">
-                  <StatusIndicator status={(ep.isOnline as boolean) ? 'online' : 'offline'} />
-                </Row>
-                <Row label="Business">{customer?.name ?? '—'}</Row>
-                <Row label="Site">{site?.name ?? '—'}</Row>
-                <Row label="Platform">
-                  {ep.platform ? <Badge variant="secondary">{ep.platform as string}</Badge> : '—'}
-                </Row>
-                <Row label="Tags">
-                  <div className="flex flex-wrap gap-1 justify-end">
-                    {tags.length ? tags.map((t) => (
-                      <Badge key={t.id} variant="secondary" className="text-xs">{t.tag}</Badge>
-                    )) : '—'}
-                  </div>
-                </Row>
-                <Row label="Aliases">
-                  <div className="flex flex-wrap gap-1 justify-end">
-                    {aliases.length ? aliases.map((a) => (
-                      <Badge key={a.id} variant="outline" className="text-xs font-mono">{a.alias}</Badge>
-                    )) : '—'}
-                  </div>
-                </Row>
-                <Row label="Enrolled">{formatDate(ep.createdAt as string)}</Row>
-              </CardContent>
-            </Card>
-          </div>
-
-          <EndpointSpecs endpointId={id} endpoint={ep} />
-          {/* Staged-update history (Platform Admin only, like rollouts). */}
-          {isPlatformAdmin && <EndpointUpdateHistory endpointId={id} />}
+        <TabsContent value="overview" className="mt-4">
+          <DeviceOverviewTab
+            endpointId={id}
+            ep={ep}
+            mon={mon.data}
+            patches={patches.data}
+            sessions={sessions}
+            onOpenTab={setTab}
+            showAlertsAndPatches={canView}
+            // Staged-update history (Platform Admin only, like rollouts).
+            adminExtras={isPlatformAdmin ? <EndpointUpdateHistory endpointId={id} /> : undefined}
+          />
         </TabsContent>
 
-        {can(CAP.COMPUTERS_EVENT_LOGS) && (
-          <TabsContent value="events" className="mt-4">
-            <EndpointEventLog endpointId={id} isOnline={!!(ep.isOnline as boolean)} />
+        {tabs.includes('monitoring') && (
+          <TabsContent value="monitoring" className="mt-4">
+            {active === 'monitoring' && <DeviceMonitoringTab endpointId={id} />}
           </TabsContent>
         )}
 
-        {can(CAP.COMPUTERS_VIEW) && (
+        {tabs.includes('software') && (
+          <TabsContent value="software" className="mt-4">
+            {active === 'software' && <DeviceSoftwareTab endpointId={id} />}
+          </TabsContent>
+        )}
+
+        {tabs.includes('patches') && (
+          <TabsContent value="patches" className="mt-4">
+            {active === 'patches' && <EndpointPatches endpointId={id} />}
+          </TabsContent>
+        )}
+
+        {tabs.includes('events') && (
+          <TabsContent value="events" className="mt-4">
+            <EndpointEventLog endpointId={id} isOnline={isOnline} />
+          </TabsContent>
+        )}
+
+        {tabs.includes('diagnostics') && (
           <TabsContent value="diagnostics" className="mt-4 space-y-4">
             {/* Mounted only while selected: every run probes the server and
-                is audited, so it should not run just because the page opened. */}
-            {tab === 'diagnostics' && (
+                is audited, so it should not run just because the page opened.
+                The read-only diagnostics catalog (endpoint-diagnostics-catalog)
+                is wired in here alongside Test connection. */}
+            {active === 'diagnostics' && (
               <DiagnosticsPanel endpointId={id} canConnect={can(CAP.COMPUTERS_CONNECT)} />
             )}
           </TabsContent>
         )}
 
-        {can(CAP.COMPUTERS_VIEW) && (
+        {tabs.includes('actions') && (
           <TabsContent value="actions" className="mt-4">
-            {tab === 'actions' && <EndpointActions endpointId={id} isOnline={!!(ep.isOnline as boolean)} />}
+            {active === 'actions' && <EndpointActions endpointId={id} isOnline={isOnline} unavailableReason={actionReason === 'Checking…' ? null : actionReason} />}
           </TabsContent>
         )}
 
-        {can(CAP.COMPUTERS_VIEW) && (
-          <TabsContent value="patches" className="mt-4">
-            {tab === 'patches' && <EndpointPatches endpointId={id} />}
-          </TabsContent>
-        )}
-
-        {can(CAP.COMPUTERS_VIEW) && (
-          <TabsContent value="monitoring" className="mt-4">
-            {tab === 'monitoring' && <EndpointMonitoring endpointId={id} />}
-          </TabsContent>
-        )}
-
-        {showReview && review && (
-          <TabsContent value="access-review" className="mt-4 space-y-4">
-            <AccessReviewPanel review={review} />
-          </TabsContent>
-        )}
-
-        <TabsContent value="notes" className="mt-4 space-y-4">
-          {/* Add new note */}
-          <Card>
-            <CardContent className="pt-4 space-y-3">
-              <Textarea
-                placeholder="Document an issue, observation, or anything worth tracking about this device — hardware problems, recurring errors, customer preferences, recent changes…"
-                value={newNote}
-                onChange={(e) => setNewNote(e.target.value)}
-                rows={3}
-                className="resize-none"
-              />
-              <div className="flex justify-end">
-                <Button
-                  size="sm"
-                  onClick={() => createNoteMutation.mutate(newNote)}
-                  disabled={!newNote.trim() || createNoteMutation.isPending}
-                >
-                  Add Note
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Existing notes */}
-          {Array.isArray(notes) && notes.length > 0 ? (
-            <div className="space-y-3">
-              {notes.map((note: Record<string, unknown>) => {
-                const noteId = note.id as string;
-                const isEditing = editingNoteId === noteId;
-                return (
-                  <Card key={noteId}>
-                    <CardContent className="pt-4">
-                      {isEditing ? (
-                        <div className="space-y-3">
-                          <Textarea
-                            value={editingContent}
-                            onChange={(e) => setEditingContent(e.target.value)}
-                            rows={3}
-                            className="resize-none"
-                            autoFocus
-                          />
-                          <div className="flex gap-2 justify-end">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setEditingNoteId(null)}
-                              disabled={updateNoteMutation.isPending}
-                            >
-                              <X className="h-3 w-3 mr-1" />
-                              Cancel
-                            </Button>
-                            <Button
-                              size="sm"
-                              onClick={() => updateNoteMutation.mutate({ noteId, content: editingContent })}
-                              disabled={!editingContent.trim() || updateNoteMutation.isPending}
-                            >
-                              <Check className="h-3 w-3 mr-1" />
-                              Update
-                            </Button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          <p className="text-sm whitespace-pre-wrap">{note.content as string}</p>
-                          <div className="flex items-center justify-between">
-                            <p className="text-xs text-muted-foreground">
-                              {((note.author as { email?: string }) ?? {})?.email} · {formatDate(note.createdAt as string)}
-                            </p>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
-                              onClick={() => {
-                                setEditingNoteId(noteId);
-                                setEditingContent(note.content as string);
-                              }}
-                            >
-                              <Pencil className="h-3 w-3 mr-1" />
-                              Edit
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">No notes yet.</p>
+        <TabsContent value="history" className="mt-4">
+          {active === 'history' && (
+            <DeviceHistoryTab
+              endpointId={id}
+              sessions={sessions}
+              aiTimeline={(ep.aiTimeline as string | null | undefined) ?? null}
+              review={showReview && review ? review : null}
+            />
           )}
-        </TabsContent>
-        <TabsContent value="timeline" className="mt-4 space-y-4">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-primary" />
-                  AI-Generated Device Summary
-                </CardTitle>
-                <div className="flex gap-2">
-                  {timelineText && !timelineEditing && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setTimelineDraft(timelineText);
-                        setTimelineEditing(true);
-                      }}
-                    >
-                      <Pencil className="h-3 w-3 mr-1" />
-                      Edit
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => generateTimelineMutation.mutate()}
-                    disabled={generateTimelineMutation.isPending}
-                  >
-                    <RefreshCw className={`h-3 w-3 mr-1 ${generateTimelineMutation.isPending ? 'animate-spin' : ''}`} />
-                    {timelineText ? 'Regenerate' : 'Generate'}
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {timelineEditing ? (
-                <div className="space-y-3">
-                  <Textarea
-                    value={timelineDraft}
-                    onChange={(e) => setTimelineDraft(e.target.value)}
-                    rows={10}
-                    className="resize-y font-sans text-sm"
-                    autoFocus
-                  />
-                  <div className="flex gap-2 justify-end">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setTimelineEditing(false)}
-                      disabled={saveTimelineMutation.isPending}
-                    >
-                      <X className="h-3 w-3 mr-1" />
-                      Cancel
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={() => saveTimelineMutation.mutate(timelineDraft)}
-                      disabled={saveTimelineMutation.isPending}
-                    >
-                      <Check className="h-3 w-3 mr-1" />
-                      Save
-                    </Button>
-                  </div>
-                </div>
-              ) : timelineText ? (
-                <p className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-                  {timelineText}
-                </p>
-              ) : (
-                <div className="py-8 text-center space-y-3">
-                  <Sparkles className="h-8 w-8 text-muted-foreground mx-auto" />
-                  <p className="text-sm text-muted-foreground">
-                    No timeline generated yet. Click <strong>Generate</strong> to create an AI summary based on this device&apos;s notes, sessions, and status.
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
         </TabsContent>
       </Tabs>
     </div>
   );
 }
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-start justify-between gap-4">
-      <span className="text-muted-foreground shrink-0">{label}</span>
-      <span className="text-right">{children}</span>
-    </div>
-  );
-}
-
 function apiMessage(e: unknown, fallback: string) {
   return (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message?.toString() ?? fallback;
-}
-
-// ─── Test connection ─────────────────────────────────────────────────────────
-
-/** Shapes from apps/api/src/diagnostics/diagnostics.service.ts. */
-type CheckStatus = 'pass' | 'fail' | 'warn' | 'stale' | 'unavailable' | 'info';
-type CheckLocation = 'technician' | 'endpoint' | 'server';
-interface DiagnosticCheck {
-  key: string;
-  label: string;
-  location: CheckLocation;
-  status: CheckStatus;
-  source: string;
-  observedAt: string | null;
-  summary: string;
-  nextSteps: string[];
-  actions: { id: string; label: string; changesConfiguration: boolean }[];
-}
-interface DiagnosticsResult {
-  endpoint: { id: string; name: string; hostname: string | null; rustdeskId: string | null };
-  ranAt: string;
-  checks: DiagnosticCheck[];
-  byLocation: { location: CheckLocation; worst: CheckStatus; failing: string[] }[];
-  disclaimer: string;
-}
-
-const CHECK_STYLE: Record<CheckStatus, { label: string; icon: React.ElementType; className: string }> = {
-  pass: {
-    label: 'Pass', icon: CheckCircle2,
-    className: 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900 dark:text-green-100 dark:border-green-800',
-  },
-  fail: {
-    label: 'Fail', icon: XCircle,
-    className: 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900 dark:text-red-100 dark:border-red-800',
-  },
-  warn: {
-    label: 'Warning', icon: AlertTriangle,
-    className: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900 dark:text-amber-100 dark:border-amber-800',
-  },
-  stale: {
-    label: 'Out of date', icon: Clock,
-    className: 'bg-orange-50 text-orange-800 border-orange-200 dark:bg-orange-950 dark:text-orange-200 dark:border-orange-900',
-  },
-  unavailable: {
-    label: 'Unknown', icon: HelpCircle,
-    className: 'bg-muted text-muted-foreground border-border border-dashed',
-  },
-  info: {
-    label: 'Info', icon: Info,
-    className: 'bg-sky-50 text-sky-800 border-sky-200 dark:bg-sky-950 dark:text-sky-200 dark:border-sky-900',
-  },
-};
-
-const LOCATION_LABEL: Record<CheckLocation, string> = {
-  technician: 'Your computer',
-  endpoint: 'This computer',
-  server: 'Rem0te server',
-};
-
-function CheckBadge({ status }: { status: CheckStatus }) {
-  const s = CHECK_STYLE[status] ?? CHECK_STYLE.unavailable;
-  const Icon = s.icon;
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold whitespace-nowrap ${s.className}`}>
-      <Icon className="h-3 w-3" aria-hidden="true" />
-      {s.label}
-    </span>
-  );
-}
-
-/** Fields the read-only helper reports (see technicianChecks in the API). */
-const TECH_REPORT_FIELDS: { key: string; label: string }[] = [
-  { key: 'installed', label: 'RustDesk installed' },
-  { key: 'installedVersion', label: 'Installed version' },
-  { key: 'portableCached', label: 'Portable copy cached' },
-  { key: 'portableVersion', label: 'Portable version' },
-  { key: 'configHost', label: 'Server address in RustDesk' },
-  { key: 'hostMatches', label: 'Server address matches' },
-  { key: 'keyMatches', label: 'Server key matches' },
-  { key: 'tcp21116', label: 'TCP 21116 reachable' },
-  { key: 'tcp21117', label: 'TCP 21117 reachable' },
-];
-
-function reportValue(v: unknown): string {
-  if (v === true) return 'Yes';
-  if (v === false) return 'No';
-  if (v === null || v === undefined || v === '') return '—';
-  return String(v);
-}
-
-function DiagnosticsPanel({ endpointId, canConnect }: { endpointId: string; canConnect: boolean }) {
-  const { toast } = useToast();
-  const qc = useQueryClient();
-  const [pending, setPending] = useState<{ id: string; label: string } | null>(null);
-  const [helperAt, setHelperAt] = useState<number | null>(null);
-
-  const { data, isLoading, isFetching, isError, error, refetch } = useQuery<DiagnosticsResult>({
-    queryKey: ['diagnostics', endpointId],
-    queryFn: () => diagnosticsApi.forEndpoint(endpointId).then((r) => r.data?.data),
-    retry: false,
-    staleTime: 0,
-  });
-
-  // After the helper is downloaded, poll for its report for up to 15 minutes.
-  const { data: latest } = useQuery<{ submittedAt: string; report: Record<string, unknown> | null } | null>({
-    queryKey: ['diagnostics', 'technician-latest'],
-    queryFn: () => diagnosticsApi.latestTechnicianReport().then((r) => r.data?.data ?? null),
-    enabled: canConnect,
-    retry: false,
-    refetchInterval: helperAt && Date.now() - helperAt < 15 * 60_000 ? 10_000 : false,
-  });
-
-  const latestAt = latest?.submittedAt ? new Date(latest.submittedAt).getTime() : 0;
-  useEffect(() => {
-    if (helperAt && latestAt > helperAt) {
-      setHelperAt(null);
-      qc.invalidateQueries({ queryKey: ['diagnostics', endpointId] });
-      toast({ title: 'Report received from your computer' });
-    }
-  }, [helperAt, latestAt, endpointId, qc, toast]);
-
-  const action = useMutation({
-    mutationFn: (actionId: string) => {
-      if (actionId === 'reinstall_agent') return endpointsApi.reinstallAgent(endpointId);
-      if (actionId === 'accept_device_secret') return endpointsApi.acceptDeviceSecret(endpointId);
-      if (actionId === 'rotate_credential') return endpointsApi.rotateCredential(endpointId);
-      return Promise.reject(new Error('Unsupported action'));
-    },
-    onSuccess: () => {
-      // Each of these is queued for the computer's next check-in, not done.
-      toast({ title: 'Requested', description: 'The computer applies this on its next check-in.' });
-      setPending(null);
-      qc.invalidateQueries({ queryKey: ['diagnostics', endpointId] });
-      qc.invalidateQueries({ queryKey: ['endpoint', endpointId] });
-    },
-    onError: (e: unknown) => {
-      toast({ title: 'Not done', description: apiMessage(e, 'The request failed'), variant: 'destructive' });
-      setPending(null);
-    },
-  });
-
-  function runAction(a: { id: string; label: string }) {
-    if (a.id === 'run_technician_check') {
-      if (!canConnect) return;
-      setHelperAt(Date.now());
-      window.location.href = diagnosticsApi.helperUrl(endpointId);
-      return;
-    }
-    if (a.id === 'technician_setup') {
-      window.location.href = '/downloads';
-      return;
-    }
-    setPending(a);
-  }
-
-  const actionAvailable = (id: string) =>
-    id === 'run_technician_check' ? canConnect
-      : ['technician_setup', 'reinstall_agent', 'accept_device_secret', 'rotate_credential'].includes(id);
-
-  return (
-    <>
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle className="text-sm">Test connection</CardTitle>
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching}>
-                <RefreshCw className={`h-3.5 w-3.5 mr-1 ${isFetching ? 'animate-spin' : ''}`} />
-                Run again
-              </Button>
-              <Button size="sm" variant="outline" asChild>
-                <a href={diagnosticsApi.reportUrl(endpointId)}>
-                  <Download className="h-3.5 w-3.5 mr-1" />
-                  Download report
-                </a>
-              </Button>
-              {canConnect && (
-                <Button size="sm" variant="outline" asChild>
-                  <a href={diagnosticsApi.helperUrl(endpointId)} onClick={() => setHelperAt(Date.now())}>
-                    <Laptop className="h-3.5 w-3.5 mr-1" />
-                    Check my computer
-                  </a>
-                </Button>
-              )}
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4 text-sm">
-          {isLoading ? (
-            <p className="text-muted-foreground">Running checks…</p>
-          ) : isError || !data ? (
-            <p className="text-destructive">{apiMessage(error, 'Could not run the checks.')}</p>
-          ) : (
-            <>
-              <p className="text-xs text-muted-foreground">{data.disclaimer}</p>
-              <p className="text-xs text-muted-foreground">Run {formatDate(data.ranAt)}.</p>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                {data.byLocation.map((l) => (
-                  <div key={l.location} className="rounded-md border bg-muted/30 px-3 py-2 space-y-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-medium">{LOCATION_LABEL[l.location]}</span>
-                      <CheckBadge status={l.worst} />
-                    </div>
-                    {l.failing.length > 0 && (
-                      <p className="text-xs text-muted-foreground">Failing: {l.failing.join(', ')}</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              {(['technician', 'endpoint', 'server'] as CheckLocation[]).map((loc) => {
-                const checks = data.checks.filter((c) => c.location === loc);
-                if (!checks.length) return null;
-                return (
-                  <div key={loc} className="space-y-2">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{LOCATION_LABEL[loc]}</p>
-                    <div className="divide-y rounded-md border">
-                      {checks.map((c, i) => (
-                        <div key={`${c.key}-${i}`} className="p-3 space-y-1.5">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="font-medium">{c.label}</span>
-                            <CheckBadge status={c.status} />
-                          </div>
-                          <p>{c.summary}</p>
-                          {c.nextSteps.length > 0 && (
-                            <ul className="list-disc pl-5 text-muted-foreground space-y-0.5">
-                              {c.nextSteps.map((n, j) => <li key={j}>{n}</li>)}
-                            </ul>
-                          )}
-                          <p className="text-xs text-muted-foreground">
-                            {c.source}{c.observedAt ? ` · observed ${formatDate(c.observedAt)}` : ' · never observed'}
-                          </p>
-                          {c.actions.filter((a) => actionAvailable(a.id)).length > 0 && (
-                            <div className="flex flex-wrap gap-2 pt-1">
-                              {c.actions.filter((a) => actionAvailable(a.id)).map((a) => (
-                                <Button key={a.id} size="sm" variant="outline" className="h-7 text-xs" onClick={() => runAction(a)}>
-                                  {a.label}
-                                </Button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      {canConnect && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Latest check of your computer</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            {helperAt && (
-              <p className="text-xs text-muted-foreground">
-                Waiting for the helper to report. Run the downloaded file on your Windows computer.
-              </p>
-            )}
-            {!latest ? (
-              <p className="text-muted-foreground">
-                No report yet. &ldquo;Check my computer&rdquo; downloads a read-only helper for Windows that reports back here.
-              </p>
-            ) : (
-              <>
-                <p className="text-xs text-muted-foreground">Reported {formatDate(latest.submittedAt)}.</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
-                  {TECH_REPORT_FIELDS.filter((f) => latest.report && f.key in latest.report).map((f) => (
-                    <Row key={f.key} label={f.label}>{reportValue(latest.report?.[f.key])}</Row>
-                  ))}
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      <ConfirmDialog
-        open={!!pending}
-        onOpenChange={(o) => { if (!o) setPending(null); }}
-        title={pending?.label ?? ''}
-        description="This changes configuration on the computer. It is queued and applied on the computer's next check-in."
-        confirmLabel="Request it"
-        loading={action.isPending}
-        onConfirm={() => pending && action.mutate(pending.id)}
-      />
-    </>
-  );
-}
-
-// ─── Access review ───────────────────────────────────────────────────────────
-
-/** Shapes from apps/api/src/offboarding/access-review.service.ts. */
-interface AccessEntry {
-  userId: string;
-  name: string;
-  email: string;
-  via: 'PLATFORM_ADMIN' | 'BUSINESS_OWNER' | 'COMPUTER_GRANT' | 'COMPANY_WIDE' | 'TECHNICIAN_DIRECT' | 'TECHNICIAN_GROUP';
-  detail: string;
-  activeNow: boolean;
-  inactiveReason?: string;
-  startsAt?: string | null;
-  expiresAt?: string | null;
-  schedule?: string | null;
-  temporary: boolean;
-}
-interface AccessReview {
-  endpoint: { id: string; name: string; accessMode: string; businessId: string | null };
-  reviewedAt: string;
-  entries: AccessEntry[];
-  note: string;
-}
-
-const VIA_LABEL: Record<AccessEntry['via'], string> = {
-  PLATFORM_ADMIN: 'Platform Admin',
-  BUSINESS_OWNER: 'Business Owner',
-  COMPUTER_GRANT: 'Granted on this computer',
-  COMPANY_WIDE: 'Company-wide',
-  TECHNICIAN_DIRECT: 'Technician (direct)',
-  TECHNICIAN_GROUP: 'Technician (group)',
-};
-
-function AccessReviewPanel({ review }: { review: AccessReview }) {
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm">Who can connect to this computer</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4 text-sm">
-        <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
-          <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
-          <p>{review.note}</p>
-        </div>
-
-        <p className="text-xs text-muted-foreground">
-          Access mode: {review.endpoint.accessMode === 'COMPANY_WIDE' ? 'company-wide' : 'assigned users only'} ·
-          reviewed {formatDate(review.reviewedAt)}
-        </p>
-
-        {review.entries.length === 0 ? (
-          <p className="text-muted-foreground">Nobody has access.</p>
-        ) : (
-          <div className="rounded-md border overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  <th className="text-left px-3 py-2 font-medium text-xs">Person</th>
-                  <th className="text-left px-3 py-2 font-medium text-xs">How</th>
-                  <th className="text-left px-3 py-2 font-medium text-xs">Now</th>
-                  <th className="text-left px-3 py-2 font-medium text-xs">Window</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {review.entries.map((e, i) => (
-                  <tr key={`${e.userId}-${e.via}-${i}`} className={e.activeNow ? '' : 'text-muted-foreground'}>
-                    <td className="px-3 py-2 align-top">
-                      <p className="font-medium">{e.name}</p>
-                      {e.name !== e.email && <p className="text-xs text-muted-foreground">{e.email}</p>}
-                    </td>
-                    <td className="px-3 py-2 align-top">
-                      <p>{VIA_LABEL[e.via] ?? e.via}</p>
-                      <p className="text-xs text-muted-foreground">{e.detail}</p>
-                    </td>
-                    <td className="px-3 py-2 align-top">
-                      {e.activeNow ? (
-                        <Badge variant="success">Active</Badge>
-                      ) : (
-                        <div className="space-y-0.5">
-                          <Badge variant="secondary">Inactive</Badge>
-                          {e.inactiveReason && <p className="text-xs">{e.inactiveReason}</p>}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 align-top text-xs space-y-0.5">
-                      {e.temporary && <Badge variant="warning" className="text-[10px]">Temporary</Badge>}
-                      {e.startsAt && <p>From {formatDate(e.startsAt)}</p>}
-                      {e.expiresAt && <p>Until {formatDate(e.expiresAt)}</p>}
-                      {e.schedule && <p>{e.schedule}</p>}
-                      {!e.temporary && !e.startsAt && !e.expiresAt && !e.schedule && <span className="text-muted-foreground">No limit</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
 }
