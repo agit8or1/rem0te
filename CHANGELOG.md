@@ -607,6 +607,9 @@ authentication, the database refusing direct tampering, no action job created, a
   has none), for maintenance actions and patch policies.
 - New sweeps default **on** and do nothing without configuration: `CLIENT_UPDATE_SWEEP` (needs an enabled client
   update policy) and `PATCH_POLICY_SWEEP` (needs an approved patch policy). Set either to `off` to stop it.
+
+---
+
 ## [0.31.1] — 2026-11-11 · *Workbench*
 
 ### Fixed
