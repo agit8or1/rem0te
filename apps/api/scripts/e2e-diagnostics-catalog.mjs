@@ -66,7 +66,12 @@ async function waitUp() {
   throw new Error(`api did not come up:\n${api.log.slice(-3000)}`);
 }
 
+// The API's burst throttler allows 20 requests a second per address, and a
+// signed-in session keeps one address. CI's runner is fast enough to cross it
+// (a ThrottlerException 429 crashed this suite there), so pace every call.
+const pace = () => new Promise((res) => setTimeout(res, 60));
 async function req(method, p, { s, body, business } = {}) {
+  await pace();
   const h = { 'content-type': 'application/json', 'x-forwarded-for': s?.ip ?? ip() };
   if (s) h.cookie = s.cookie;
   if (business) h['x-rem0te-business'] = business;
