@@ -669,6 +669,9 @@ model Endpoint {
   monitorAlerts     MonitorAlert[]
   monitorStates     EndpointMonitorState[]
   changes           EndpointChange[]
+  metricSamples     EndpointMetricSample[]
+  metricHourly      EndpointMetricHourly[]
+  diskSamples       EndpointDiskSample[]
   commands          EndpointCommand[]
   diagnosticRuns    DiagnosticRun[]
   aliases           EndpointAlias[]
@@ -2780,6 +2783,59 @@ model EndpointChange {
 
   @@index([endpointId, detectedAt])
   @@index([customerId, detectedAt])
+}
+
+/// Metric history (0.33): one row per computer per authenticated heartbeat,
+/// at most one a minute. Used percentages only, from the values the heartbeat
+/// already carried (cpuLoadPercent, memory and system-disk totals and free).
+/// Kept METRIC_RAW_HOURS (48 h); rolled into EndpointMetricHourly before
+/// pruning. The primary key is the index every read and the roll-up use.
+model EndpointMetricSample {
+  endpointId String
+  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  at         DateTime @default(now())
+  cpu        Float?   @db.Real
+  memory     Float?   @db.Real
+  disk       Float?   @db.Real
+
+  @@id([endpointId, at])
+  @@index([at])
+}
+
+/// Hourly roll-up of EndpointMetricSample: min, mean and max per metric over
+/// the samples that hour actually had (`samples`). Kept METRIC_HOURLY_DAYS
+/// (90 d). An hour with no row is an hour the computer did not report.
+model EndpointMetricHourly {
+  endpointId String
+  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  hour       DateTime
+  samples    Int
+  cpuMin     Float?   @db.Real
+  cpuAvg     Float?   @db.Real
+  cpuMax     Float?   @db.Real
+  memoryMin  Float?   @db.Real
+  memoryAvg  Float?   @db.Real
+  memoryMax  Float?   @db.Real
+  diskMin    Float?   @db.Real
+  diskAvg    Float?   @db.Real
+  diskMax    Float?   @db.Real
+
+  @@id([endpointId, hour])
+  @@index([hour])
+}
+
+/// Per-volume used percentage from each authenticated inventory pass (every
+/// ~6 h): the heartbeat carries the system volume only. Kept as long as the
+/// hourly roll-up; at that cadence it needs no roll-up of its own.
+model EndpointDiskSample {
+  endpointId String
+  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  at         DateTime @default(now())
+  drive      String
+  used       Float    @db.Real
+
+  @@id([endpointId, at, drive])
+  @@index([at])
 }
 
 /// Signed alert events for ClientSt0r, sequenced per (peer, organization).

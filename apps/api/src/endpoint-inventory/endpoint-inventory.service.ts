@@ -7,6 +7,7 @@ import { Prisma, EndpointCommandType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { Posture } from '../patching/posture';
 import { diffInventory, sanitizeSoftware, type InvSnapshot } from '../monitoring/engine';
+import { MetricsService } from '../metrics/metrics.service';
 
 /**
  * What a managed computer knows about itself, and the queue that asks it.
@@ -156,6 +157,7 @@ export class EndpointInventoryService {
     private readonly actors: ActorResolverService,
     private readonly acl: AccessControlService,
     private readonly abuse: AbuseGuardService,
+    private readonly metrics: MetricsService,
   ) {}
 
   /**
@@ -194,7 +196,10 @@ export class EndpointInventoryService {
       cpuLoadPercent?: unknown; memoryTotalMb?: unknown; memoryFreeMb?: unknown;
       systemDiskTotalMb?: unknown; systemDiskFreeMb?: unknown;
     },
-  ): Promise<void> {
+  ): Promise<{
+    cpuLoadPercent?: number; memoryTotalMb?: number; memoryFreeMb?: number;
+    systemDiskTotalMb?: number; systemDiskFreeMb?: number;
+  } | null> {
     // An empty string is meaningful: it is how the agent says "nobody is
     // logged on", and it has to clear a previous user rather than leave a name
     // on screen that signed out an hour ago. `str()` maps '' to undefined, so
@@ -215,12 +220,18 @@ export class EndpointInventoryService {
       systemDiskTotalMb: int(report.systemDiskTotalMb, 0, 1024 * 1024 * 1024),
       systemDiskFreeMb: int(report.systemDiskFreeMb, 0, 1024 * 1024 * 1024),
     };
-    if (Object.values(data).every((v) => v === undefined)) return;
+    if (Object.values(data).every((v) => v === undefined)) return null;
 
     // Stamped only when something in the sample actually arrived, so the UI
     // can say how old the gauges are without ever overstating it.
     data.liveSampledAt = new Date();
     await this.upsert(endpointId, data);
+    // The sanitised resource values, for metric history (0.33).
+    return {
+      cpuLoadPercent: data.cpuLoadPercent as number | undefined,
+      memoryTotalMb: data.memoryTotalMb as number | undefined, memoryFreeMb: data.memoryFreeMb as number | undefined,
+      systemDiskTotalMb: data.systemDiskTotalMb as number | undefined, systemDiskFreeMb: data.systemDiskFreeMb as number | undefined,
+    };
   }
 
   /**
@@ -271,6 +282,11 @@ export class EndpointInventoryService {
       collectedAt: new Date(),
     };
     await this.upsert(endpointId, data);
+
+    // Metric history (0.33): each volume's used share, from the sanitised list.
+    // Best-effort: history must never cost the inventory it came with.
+    await this.metrics.recordDisks(endpointId, data.disks)
+      .catch((e) => this.logger.warn(`disk history for ${endpointId}: ${String(e)}`));
 
     // Change history. Memory is compared in whole GB, so the live free-memory
     // writes to memoryTotalMb's neighbour never read as a hardware change.

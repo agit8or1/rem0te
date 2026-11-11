@@ -12,6 +12,11 @@ uses is something the agent already reports: the heartbeat (CPU, memory,
 disk, restart pending), the inventory, and a small monitor report listing
 the services and event queries the server asked about.
 
+Monitors judge each reading as it arrives. The same readings are also kept
+over time (0.33) and charted on a computer's **Performance** tab — see
+[metric-history.md](metric-history.md). History raises no alerts, and
+monitoring does not read it.
+
 ![Alerts page: severity totals, the filter, and an expanded site-outage alert with its history](screenshots/guide/alerts.png)
 
 1. **Alerts** in the sidebar — shown to anyone with `monitoring:alerts`.

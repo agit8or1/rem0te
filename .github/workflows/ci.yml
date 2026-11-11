@@ -170,6 +170,11 @@ jobs:
       - name: Device views tests
         run: node apps/api/scripts/unit-device-views.mjs
 
+      # Metric history (0.33): samples from heartbeat values, the hourly
+      # roll-up, which hours a pass rolls, retention caps and gap detection.
+      - name: Metric history tests
+        run: node apps/api/scripts/unit-metric-history.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.

@@ -29,6 +29,7 @@ import { withDeviceText } from './device-text';
 import { queryHbbsOnline } from './hbbs-presence';
 import { compareVersions } from '../common/agent-contract';
 import { assertFresh } from '../security-controls/review';
+import { MetricsService } from '../metrics/metrics.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -61,6 +62,7 @@ export class EnrollmentService {
     private readonly monitoring: MonitoringService,
     private readonly diagnostics: DiagnosticsCatalogService,
     private readonly clientUpdates: ClientUpdatesService,
+    private readonly metrics: MetricsService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -851,7 +853,7 @@ export class EnrollmentService {
       // hiccup writing one, must not cost the endpoint its liveness ping. That
       // is what marks it offline on the dashboard.
       try {
-        await this.inventory.recordLiveState(node.endpointId, {
+        const live = await this.inventory.recordLiveState(node.endpointId, {
           loggedOnUser: dto.loggedOnUser,
           uptimeSeconds: dto.uptimeSeconds,
           lastBootAt: dto.lastBootAt,
@@ -861,6 +863,13 @@ export class EnrollmentService {
           systemDiskTotalMb: dto.systemDiskTotalMb,
           systemDiskFreeMb: dto.systemDiskFreeMb,
         });
+        // Metric history (0.33): the same sanitised values, as one sample.
+        // Inside the authenticated branch on purpose — a heartbeat without
+        // the device secret writes no history (check-security-invariants §25).
+        if (live) {
+          await this.metrics.recordHeartbeat(node.endpointId, live)
+            .catch((e) => this.logger.warn(`Metric sample failed for ${node.endpointId}: ${String(e)}`));
+        }
         commands = await this.inventory.collectForHeartbeat(node.endpointId);
       } catch (e) {
         this.logger.warn(`Inventory step failed for endpoint ${node.endpointId}: ${String(e)}`);

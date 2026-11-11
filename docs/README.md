@@ -30,6 +30,8 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[monitoring.md](monitoring.md)** — monitors (offline, disk, CPU, memory,
   services, event log, pending restart), inheritance, alerts, site outages,
   maintenance windows, escalation and ClientSt0r tickets (0.29).
+- **[metric-history.md](metric-history.md)** — CPU, memory and disk over 24 hours to 90 days on a computer's
+  Performance tab: what is recorded, gaps, roll-up and retention settings, storage per 1,000 computers (0.33).
 - **[reports.md](reports.md)** — patch compliance, agent coverage, alert frequency and offline time per
   business and site, what each is computed from and what it cannot tell you, and the audited CSV export (0.32).
 - **[tactical-rmm.md](tactical-rmm.md)** — connecting and querying from inside

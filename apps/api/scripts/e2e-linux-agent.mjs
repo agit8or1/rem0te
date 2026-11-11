@@ -252,6 +252,14 @@ async function all() {
   const disks = Array.isArray(i?.disks) ? i.disks : [];
   check(disks.some((d) => d.drive === '/' && d.totalBytes > 0 && d.freeBytes >= 0) && i.systemDiskTotalMb > 0 && i.systemDiskFreeMb >= 0, `disks from df (${disks.map((d) => d.drive).join(', ')}), system disk ${i?.systemDiskFreeMb} MB free`);
   check(disks.every((d) => !/^(tmpfs|devtmpfs|squashfs|overlay)$/.test(d.fsType ?? '')), 'pseudo filesystems are left out');
+  // Metric history (0.33): the real script's heartbeat and inventory pass land as history.
+  const ms = await prisma.endpointMetricSample.findMany({ where: { endpointId: A.id } });
+  const expMem = Math.round(((i.memoryTotalMb - i.memoryFreeMb) / i.memoryTotalMb) * 1000) / 10;
+  check(ms.length === 1 && ms[0].cpu === i.cpuLoadPercent && Math.abs(ms[0].memory - expMem) < 0.06 && ms[0].disk > 0 && ms[0].disk <= 100,
+    `metric history: one sample, cpu ${ms[0]?.cpu}%, memory ${ms[0]?.memory}% used, system disk ${ms[0]?.disk}% used`, JSON.stringify(ms));
+  const vs = await prisma.endpointDiskSample.findMany({ where: { endpointId: A.id } });
+  check(vs.length === disks.filter((d) => d.totalBytes > 0 && d.freeBytes !== null && d.freeBytes <= d.totalBytes).length && vs.some((v) => v.drive === '/'),
+    `metric history: one volume sample per reported mount (${vs.map((v) => v.drive).join(', ')})`);
   const whoUsers = [...new Set(execFileSync('who', { encoding: 'utf8' }).split('\n').map((l) => l.split(/\s+/)[0]).filter(Boolean))].join(', ');
   check((i?.loggedOnUser ?? '') === whoUsers.slice(0, 128), `logged-on users from who: "${whoUsers}"`, `stored "${i?.loggedOnUser}"`);
   const aptN = (() => { try { return execFileSync('apt', ['list', '--upgradable'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\n').filter((l) => l.includes('[upgradable from:')).length; } catch { return null; } })();

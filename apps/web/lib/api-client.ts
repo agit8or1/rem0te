@@ -171,6 +171,9 @@ export const endpointsApi = {
   // computer. Populated by the agent's heartbeat, so a machine whose installer
   // predates this reports `agentBound: false` and nothing else.
   inventory: (id: string) => api.get(`/endpoints/${id}/inventory`),
+  // Metric history (0.33): CPU, memory and disk over 24h | 7d | 30d | 90d.
+  // Gaps come back as intervals; nothing is interpolated.
+  metrics: (id: string, range: string) => api.get(`/endpoints/${id}/metrics`, { params: { range } }),
   // Queues a re-collection for the endpoint's next heartbeat — up to ~3
   // minutes away. Nothing is synchronous here.
   refreshInventory: (id: string) => api.post(`/endpoints/${id}/inventory/refresh`, {}),

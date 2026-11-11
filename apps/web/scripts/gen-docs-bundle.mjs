@@ -48,6 +48,7 @@ const ORDER = [
   ['inventory.md', 'Inventory and event logs', 'Computers and monitoring', 'Specs, installed software, change history, pending updates and event-log slices.'],
   ['diagnostics.md', 'One-click diagnostics', 'Computers and monitoring', 'Read-only checks a technician runs with one click: disk, services, errors, network, DNS, updates, restart.'],
   ['monitoring.md', 'Monitoring and alerts', 'Computers and monitoring', 'Monitors, inheritance, alerts, site outages, maintenance windows and escalation.'],
+  ['metric-history.md', 'Metric history', 'Computers and monitoring', 'CPU, memory and disk over time: the Performance tab, gaps, roll-up, retention and storage.'],
   ['reports.md', 'Reports', 'Computers and monitoring', 'Patch compliance, agent coverage, alert frequency and offline time, from stored data, with audited CSV export.'],
   ['updates.md', 'Updates', 'Computers and monitoring', 'Updating the portal, RustDesk and the agent, and client rollouts.'],
   ['staged-patching.md', 'Staged patching', 'Computers and monitoring', 'Windows updates in rings — canary, approvals, halt on failure.'],

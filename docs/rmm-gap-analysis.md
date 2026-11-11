@@ -25,6 +25,7 @@ bundled into `/docs`. Integration work is tracked separately in
 | Sign-in security | MFA (TOTP, passkeys), SSO (OIDC), step-up (from 0.33 also for every enrolment token and enrollment:write API key), short-lived sessions, rate limits, security invariants in CI | U, I, P |
 | Enrolment | Expiring enrolment tokens, Windows install script, pool adoption bound to the token's business, signed update channel. **Guided Add device** (0.32): business → site → OS → command → waits for the device → first health → monitoring links, with the site bound to the token | I (add-device 58), P (standard channel; the guided flow is not yet P) |
 | Standard agent (Windows) | Heartbeat, online/offline, hardware/OS inventory, logged-on user, CPU load (point value), disks, installed software with change history, event-log reading, Windows Update scan (read-only), restart pending | I, **P** (standard channel; observed, not a controlled test) |
+| Metric history (0.33) | CPU, memory and system-disk use per authenticated heartbeat (≤ 1/min), each volume per inventory pass; hourly min/mean/max roll-up; 48 h raw / 90 d hourly retention, configurable with caps; bounded, idempotent sweep (`METRIC_SWEEP=off`); gaps returned as gaps; Performance tab with 24 h–90 d ([metric-history.md](metric-history.md)) | U (42), I (59) — not R; storage measured on synthetic data (≈ 0.8 MB per computer) |
 | Monitoring | Global → business → site → computer rules; offline, disk, CPU, memory, services, event patterns, restart pending; dedup (one open alert per problem), hysteresis, cooldowns, site-outage correlation, maintenance windows, 4-level escalation, webhooks, alerts → ClientSt0r tickets | U (91), I (108) — **not R**: the monitor block has never run on real Windows |
 | Audit | Sealed hash chain, insert-only entries, signed checkpoints, off-host export, verification CLI | U (35), I |
 | Containment | Pause actions, remote, updates or integration, per business or globally; three enforcement layers | I (70) |
@@ -57,7 +58,10 @@ bundled into `/docs`. Integration work is tracked separately in
   Inventory only.
 - **Process list, full service list, network adapter details** in the agent. Services are checked only when a
   monitor names them.
-- **Metric history:** CPU/RAM/disk are latest values; there is no time series and no retention policy.
+- **Metric history** (0.33, [metric-history.md](metric-history.md)): CPU, memory and disk are now kept over time. Still not
+  implemented: network throughput, per-process history, fleet-wide or per-business charts, exporting history, and
+  alerting on a trend (the threshold monitors still judge each reading alone). Non-system volumes are sampled only
+  every inventory pass (≈ 6 h), because the heartbeat carries the system volume only.
 - **Remote-session controls:** file-transfer authorization, chat, recording, clipboard policy, multi-monitor
   selection. RustDesk doesn't report enforcement, so none of these can be offered as restrictions (see Security).
 - **Browser-based remote desktop.**

@@ -441,7 +441,7 @@ const SECTIONS: Section[] = [
           the scan, and which agent it runs. Each opens the tab that explains it.
           Connect, Diagnose, Run action and Patch sit beside it; Archive and the other
           rare actions are under More, each with a confirmation. The tabs are
-          Overview, Monitoring, Software, Patches, Event logs, Diagnostics, Actions and
+          Overview, Performance, Monitoring, Software, Patches, Event logs, Diagnostics, Actions and
           History (sessions, notes, the AI-written summary and who can connect), and
           each can be linked with <code>?tab=</code>.
         </p>
@@ -452,6 +452,16 @@ const SECTIONS: Section[] = [
           when its contents were collected. Pressing{' '}
           <strong className="text-foreground">Refresh</strong> queues a fresh collection
           for the next heartbeat — it does not fetch anything on the spot.
+        </p>
+        <p className="font-medium text-foreground">Performance: CPU, memory and disk over time</p>
+        <p>
+          The <strong className="text-foreground">Performance</strong> tab (0.33) charts processor, memory and
+          system-disk use from every heartbeat, and each volume from the inventory pass, over 24 hours, 7, 30 or 90
+          days. Longer ranges show each hour&apos;s mean with its lowest-to-highest band. Hatched stretches are gaps —
+          no samples arrived, because the computer was offline or its agent was not reporting — and nothing is drawn
+          across them. Samples are kept 48 hours and hourly figures 90 days. History raises no alerts; the
+          monitors judge each reading as it arrives. See{' '}
+          <Link href="/docs/metric-history" className="underline text-foreground">Metric history</Link>.
         </p>
         <p>
           Signed-in user and uptime come in on every heartbeat. Full specs are

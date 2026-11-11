@@ -1209,6 +1209,52 @@ check(
     'every write path must write its audit entry');
 }
 
+// 29. Metric history (0.33). History is evidence a technician reads, so only
+//     the device may write it: a sample comes only from the heartbeat's
+//     authenticated branch, from the values recordLiveState sanitised, and a
+//     per-volume sample only from the sanitised disk list of an inventory pass
+//     (a command result, which requires the device secret). Nothing else in
+//     the API writes either. The read route names computers:view and scopes
+//     with assertEndpointInScope AND endpointVisibilityWhere. The sweep honours
+//     METRIC_SWEEP=off, and every pass and retention setting is bounded.
+{
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const hb = enr.slice(enr.indexOf('async heartbeat('), enr.indexOf('async monitorReport('));
+  const authBlock = hb.match(/if \(authenticated\) \{\n(?:\s*\/\/[^\n]*\n)*\s*try \{\n\s*const live = await this\.inventory\.recordLiveState\(node\.endpointId, \{[\s\S]*?\}\);\n([\s\S]*?)commands = await this\.inventory\.collectForHeartbeat/);
+  check('a heartbeat writes metric history only inside its authenticated branch, from recordLiveState\'s sanitised values',
+    !!authBlock && /await this\.metrics\.recordHeartbeat\(node\.endpointId, live\)/.test(authBlock[1])
+      && (hb.match(/this\.metrics\.recordHeartbeat\(/g) ?? []).length === 1,
+    'enrollment.service heartbeat(): metrics.recordHeartbeat(node.endpointId, live) must sit between recordLiveState and collectForHeartbeat inside `if (authenticated) {`');
+  const inv = read('apps/api/src/endpoint-inventory/endpoint-inventory.service.ts');
+  const ri = inv.slice(inv.indexOf('async recordInventory('), inv.indexOf('async recordUpdateScan('));
+  check('per-volume history comes only from an inventory pass\'s sanitised disk list',
+    /disks: this\.sanitizeDisks\(r\.disks\)/.test(ri) && /await this\.metrics\.recordDisks\(endpointId, data\.disks\)/.test(ri),
+    'recordInventory must pass data.disks (sanitizeDisks output) to metrics.recordDisks');
+  const writers = walk('apps/api/src').filter((f) => !f.startsWith('apps/api/src/metrics/'))
+    .filter((f) => /\.(recordHeartbeat|recordDisks)\(|endpointMetricSample\.(create|update|upsert)|endpointDiskSample\.(create|update|upsert)|endpointMetricHourly\.(create|update|upsert)|"EndpointMetric(Sample|Hourly)"|"EndpointDiskSample"/.test(read(f)));
+  check('nothing outside the heartbeat and the inventory pass writes metric history',
+    JSON.stringify(writers.sort()) === JSON.stringify(['apps/api/src/endpoint-inventory/endpoint-inventory.service.ts', 'apps/api/src/enrollment/enrollment.service.ts']),
+    `writers: ${writers.join(', ')}`);
+  const ms = read('apps/api/src/metrics/metrics.service.ts');
+  const mc = read('apps/api/src/metrics/metrics.controller.ts');
+  const hist = ms.slice(ms.indexOf('async history('), ms.indexOf('private async diskHistory('));
+  check('the history route names computers:view and is scoped and visibility-filtered',
+    /@Get\(':id\/metrics'\)\s*@RequireCapability\(CAP\.COMPUTERS_VIEW\)/.test(mc) && /@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)/.test(mc)
+      && /await this\.acl\.assertEndpointInScope\(actor, endpointId, CAP\.COMPUTERS_VIEW\)/.test(hist)
+      && /where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(actor\), \{ id: endpointId \}\] \}/.test(hist)
+      && /if \(!ep\) throw new NotFoundException/.test(hist),
+    'MetricsController GET :id/metrics needs computers:view; history() must assertEndpointInScope and AND endpointVisibilityWhere, 404 otherwise');
+  const mm = read('apps/api/src/metrics/metrics-math.ts');
+  const lim = (k) => Number((mm.match(new RegExp(`${k}: \\{ def: \\d+, min: \\d+, max: ([\\d_]+) \\}`)) ?? [])[1]?.replace(/_/g, ''));
+  check('the metric sweep honours METRIC_SWEEP=off and every pass and retention is bounded',
+    /if \(process\.env\.METRIC_SWEEP === 'off'\) return;/.test(ms) && (ms.match(/LIMIT \$\{this\.cfg\.rollupHoursPerPass\}/g) ?? []).length === 2
+      && (ms.match(/LIMIT \$\{n\}\)\)/g) ?? []).length === 3
+      && lim('rawHours') <= 168 && lim('hourlyDays') <= 400 && lim('rollupHoursPerPass') <= 48 && lim('pruneBatch') <= 50000 && lim('pruneBatches') <= 100
+      && /Math\.min\(lim\.max, Math\.max\(lim\.min,/.test(mm)
+      && /at: \{ gt: new Date\(now\.getTime\(\) - this\.cfg\.minIntervalSeconds \* 1000\) \}/.test(ms),
+    'onModuleInit must return on METRIC_SWEEP=off; roll-up and the three prunes LIMITed; METRIC_LIMITS ceilings finite and applied; one sample per minIntervalSeconds');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

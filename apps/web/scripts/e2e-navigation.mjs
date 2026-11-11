@@ -201,6 +201,22 @@ try {
         if (anyEndpoint) {
           await visit(page, `/endpoints/${anyEndpoint.id}`);
           check(!(await page.$('[data-section-tabs]')), 'a device\'s own page has no section tabs (it has its own)');
+          // 0.33: Performance sits right after Overview for any computer whose agent reports.
+          const wtabs = await page.$$eval('[data-testid="workspace-tabs"] [role="tab"]', (els) => els.map((e) => e.textContent.trim()));
+          if (wtabs.includes('Performance')) {
+            check(wtabs[1] === 'Performance', 'the device workspace has Performance right after Overview', wtabs.join(' · '));
+            await page.click('[data-testid="tab-performance"]');
+            await page.waitForSelector('[data-testid="performance-tab"] [data-testid="metric-range"]', { timeout: 15000 });
+            await page.waitForSelector('[data-testid="metric-cpu-chart"] svg, [data-testid="metric-empty"]', { timeout: 15000 });
+            const h = await pageHealth(page);
+            check(h.overflow <= 1, `Performance renders (charts or the empty state) without sideways overflow`, JSON.stringify(h));
+            await page.click('[data-testid="metric-range-7d"]');
+            await page.waitForSelector('[data-testid="metric-range-7d"][aria-pressed="true"]', { timeout: 5000 });
+            check(true, 'the range picker switches to 7 d');
+            await page.screenshot({ path: path.join(OUT_DIR, `performance-${who}-${vpName}.png`), fullPage: true }).catch(() => {});
+          } else {
+            check(true, `this device shows no Performance tab (${wtabs.join(' · ')}) — its agent reports nothing`);
+          }
         }
       }
       if (got.includes('remote')) {

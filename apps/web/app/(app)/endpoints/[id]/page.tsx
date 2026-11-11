@@ -15,11 +15,12 @@ import { DeviceHeader } from '@/components/endpoints/workspace/device-header';
 import { DeviceActions } from '@/components/endpoints/workspace/device-actions';
 import { DeviceOverviewTab } from '@/components/endpoints/workspace/overview-tab';
 import { DeviceMonitoringTab } from '@/components/endpoints/workspace/monitoring-tab';
+import { DevicePerformanceTab } from '@/components/endpoints/workspace/performance-tab';
 import { DeviceSoftwareTab } from '@/components/endpoints/workspace/software-tab';
 import { DeviceHistoryTab, type SessionRow } from '@/components/endpoints/workspace/history-tab';
 import { DiagnosticsPanel } from '@/components/endpoints/workspace/diagnostics-panel';
 import type { AccessReview } from '@/components/endpoints/workspace/access-review-panel';
-import { acceptsQueuedWork, agentType, parseTab, reportsWindowsDetail, TAB_LABEL, type WorkspaceTab } from '@/components/endpoints/workspace/device-model';
+import { acceptsQueuedWork, agentType, parseTab, reportsInventory, reportsWindowsDetail, TAB_LABEL, type WorkspaceTab } from '@/components/endpoints/workspace/device-model';
 import {
   actionUnavailableReason, agentActionKeys, useActionCatalog, useInventory, useMonitoringView, usePatchStatus,
 } from '@/components/endpoints/workspace/use-device-data';
@@ -33,7 +34,7 @@ import { useToast } from '@/hooks/use-toast';
  * (open alerts, restart pending, pending updates, agent type) built from reads
  * the tabs already make. Primary actions: Connect, Diagnose, Run action,
  * Patch, and More for archive and the other rare things. Tabs, each
- * deep-linkable with `?tab=`: Overview · Monitoring · Software · Patches ·
+ * deep-linkable with `?tab=`: Overview · Performance · Monitoring · Software · Patches ·
  * Event logs · Diagnostics · Actions · History.
  *
  * There are no Services or Processes tabs because nothing collects them: the
@@ -165,6 +166,8 @@ export default function EndpointDetailPage() {
   // updates (Overview, Patches), and macOS has RustDesk only.
   const tabs: WorkspaceTab[] = [
     'overview',
+    // Metric history (0.33): from the heartbeat, so any agent that reports — not RustDesk only.
+    ...(canView && reportsInventory(agent) ? (['performance'] as const) : []),
     ...(canView ? (['monitoring'] as const) : []),
     ...(canView && windowsDetail ? (['software'] as const) : []),
     ...(canView ? (['patches'] as const) : []),
@@ -229,6 +232,12 @@ export default function EndpointDetailPage() {
             adminExtras={isPlatformAdmin ? <EndpointUpdateHistory endpointId={id} /> : undefined}
           />
         </TabsContent>
+
+        {tabs.includes('performance') && (
+          <TabsContent value="performance" className="mt-4">
+            {active === 'performance' && <DevicePerformanceTab endpointId={id} onOpenTab={setTab} />}
+          </TabsContent>
+        )}
 
         {tabs.includes('monitoring') && (
           <TabsContent value="monitoring" className="mt-4">
