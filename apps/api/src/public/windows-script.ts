@@ -1133,6 +1133,218 @@ if (\$state.agentSecret) {
         }
     }
 }
+# ---- Diagnostics catalog (0.31) ---------------------------------------------
+# One-click read-only diagnostics. The server sends a run id and a catalog KEY
+# - never a parameter, never script text - and the switch below maps each key
+# to one fixed function in this block. A key that is not in the list is
+# refused and reported as failed. Every function only reads: CIM queries,
+# Get-Service, Get-WinEvent, Get-Process, registry presence checks, a DNS
+# lookup and one TCP connect to this agent's own server. Results are capped
+# here and again on the server, and nothing goes out without the device
+# secret.
+function Send-Rem0teDiag(\$runId, \$key, \$st, \$res, \$err) {
+    \$p = @{ rustdeskId = \$id; agentSecret = \$state.agentSecret; runId = [string]\$runId; key = [string]\$key; state = [string]\$st }
+    if (\$null -ne \$res) { \$p['result'] = \$res }
+    if (\$err) { \$e = [string]\$err; if (\$e.Length -gt 500) { \$e = \$e.Substring(0, 500) }; \$p['error'] = \$e }
+    \$j = \$p | ConvertTo-Json -Depth 8 -Compress
+    # The size cap. refresh_inventory carries the whole inventory; nothing
+    # else comes close. Over the cap, the result is dropped and the run fails.
+    if (\$j.Length -gt 600000) {
+        \$p.Remove('result'); \$p['state'] = 'failed'; \$p['error'] = 'The result exceeded the agent size limit (600000 characters).'
+        \$j = \$p | ConvertTo-Json -Depth 8 -Compress
+    }
+    try { Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/diagnostic-result') -Method Post -Body \$j -ContentType 'application/json' -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop | Out-Null } catch {}
+}
+function Get-Rem0teDiagErrText(\$er) {
+    \$m = [string]\$er.Exception.Message
+    if (\$er.Exception.InnerException) { \$m = [string]\$er.Exception.InnerException.Message }
+    if (\$m.Length -gt 200) { \$m = \$m.Substring(0, 200) }
+    return \$m
+}
+function Get-Rem0teDiagDisks {
+    \$out = @()
+    foreach (\$d in @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction Stop | Select-Object -First 32)) {
+        \$out += @{ drive = [string]\$d.DeviceID; label = [string]\$d.VolumeName; fsType = [string]\$d.FileSystem; totalBytes = [double]\$d.Size; freeBytes = [double]\$d.FreeSpace }
+    }
+    return @{ disks = \$out }
+}
+function Get-Rem0teDiagServices(\$mon) {
+    # Names, display names and states only - never the binary path or the
+    # account a service runs as.
+    \$all = @(Get-Service -ErrorAction SilentlyContinue)
+    \$stopped = @()
+    foreach (\$s in \$all) {
+        \$stt = [string]\$s.StartType
+        if ((\$stt -eq 'Automatic' -or \$stt -eq 'AutomaticDelayedStart') -and [string]\$s.Status -ne 'Running') {
+            \$stopped += @{ name = [string]\$s.Name; displayName = [string]\$s.DisplayName; status = [string]\$s.Status; startType = \$stt }
+            if (\$stopped.Count -ge 100) { break }
+        }
+    }
+    # The services this computer's monitors watch, from the same heartbeat
+    # response, checked against the same charset the monitor block uses.
+    \$watched = @()
+    if (\$mon) {
+        foreach (\$sn in @(\$mon.services | Select-Object -First 32)) {
+            \$n = [string]\$sn
+            if (\$n -notmatch '^[A-Za-z0-9_.-]{1,64}\$') { continue }
+            \$sv = Get-Service -Name \$n -ErrorAction SilentlyContinue
+            if (\$sv) { \$watched += @{ name = \$n; displayName = [string]\$sv.DisplayName; status = [string]\$sv.Status; startType = [string]\$sv.StartType } }
+            else { \$watched += @{ name = \$n; status = 'Missing'; startType = 'Unknown' } }
+        }
+    }
+    return @{ totalServices = [int]\$all.Count; stoppedAutomatic = \$stopped; monitored = \$watched }
+}
+function Get-Rem0teDiagErrors {
+    # Critical and Error from System and Application, last 24 hours, grouped
+    # by log + source + event id. One shortened message per group, with
+    # user-profile paths replaced; the server redacts again.
+    \$since = (Get-Date).AddHours(-24)
+    \$groups = @{}
+    \$scanned = 0
+    \$capped = \$false
+    foreach (\$ln in @('System', 'Application')) {
+        \$ev = @()
+        # No match is an error to Get-WinEvent, not an empty result.
+        try { \$ev = @(Get-WinEvent -FilterHashtable @{ LogName = \$ln; Level = @(1, 2); StartTime = \$since } -MaxEvents 2000 -ErrorAction Stop) }
+        catch { if (\$_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*') { throw } }
+        if (\$ev.Count -ge 2000) { \$capped = \$true }
+        foreach (\$e in \$ev) {
+            \$scanned++
+            \$k = \$ln + '|' + [string]\$e.ProviderName + '|' + [string]\$e.Id
+            \$t = \$e.TimeCreated.ToUniversalTime()
+            \$g = \$groups[\$k]
+            if (-not \$g) {
+                \$m = ([string]\$e.Message -replace '\\s+', ' ').Trim()
+                \$m = \$m -replace '[A-Za-z]:\\\\(Users|Documents and Settings)\\\\[^\\\\\\s]+', '%USERPROFILE%'
+                if (\$m.Length -gt 300) { \$m = \$m.Substring(0, 300) }
+                \$groups[\$k] = @{ log = \$ln; provider = [string]\$e.ProviderName; eventId = [int]\$e.Id; level = [int]\$e.Level; n = 1; firstAt = \$t; lastAt = \$t; message = \$m }
+            }
+            else {
+                \$g['n'] = [int]\$g['n'] + 1
+                if (\$t -lt \$g['firstAt']) { \$g['firstAt'] = \$t }
+                if (\$t -gt \$g['lastAt']) { \$g['lastAt'] = \$t }
+            }
+        }
+    }
+    \$out = @()
+    foreach (\$g in @(\$groups.Values | Sort-Object -Property @{ Expression = { [int]\$_['n'] }; Descending = \$true } | Select-Object -First 50)) {
+        \$out += @{ log = \$g['log']; provider = \$g['provider']; eventId = \$g['eventId']; level = \$g['level']; count = \$g['n']; firstAt = \$g['firstAt'].ToString('o'); lastAt = \$g['lastAt'].ToString('o'); message = \$g['message'] }
+    }
+    return @{ scanned = \$scanned; capped = \$capped; groups = \$out }
+}
+function Get-Rem0teDiagProcRow(\$pr) {
+    # ProcessName has no path. No command line, no owner, no module list.
+    return @{ name = [string]\$pr.ProcessName; pid = [int]\$pr.Id; cpuSeconds = [math]::Round([double]\$pr.CPU, 1); workingSetBytes = [double]\$pr.WorkingSet64 }
+}
+function Get-Rem0teDiagProcesses {
+    \$all = @(Get-Process -ErrorAction SilentlyContinue)
+    \$byCpu = @()
+    foreach (\$pr in @(\$all | Sort-Object -Property CPU -Descending | Select-Object -First 10)) { \$byCpu += (Get-Rem0teDiagProcRow \$pr) }
+    \$byMem = @()
+    foreach (\$pr in @(\$all | Sort-Object -Property WorkingSet64 -Descending | Select-Object -First 10)) { \$byMem += (Get-Rem0teDiagProcRow \$pr) }
+    return @{ processCount = [int]\$all.Count; byCpu = \$byCpu; byMemory = \$byMem }
+}
+function Get-Rem0teDiagNetwork {
+    # Reach: one TCP connect to the server this agent already reports to, on
+    # the port it already uses. Not configurable from the server.
+    \$h = [string]\$state.host
+    \$port = 443
+    \$target = @{ host = \$h; port = \$port; reachable = \$false; latencyMs = \$null; error = \$null }
+    if (\$h -match '^[A-Za-z0-9.-]{1,253}\$') {
+        \$tc = New-Object System.Net.Sockets.TcpClient
+        \$sw = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            \$ar = \$tc.BeginConnect(\$h, \$port, \$null, \$null)
+            if (\$ar.AsyncWaitHandle.WaitOne(5000)) { \$tc.EndConnect(\$ar); \$target['reachable'] = \$true; \$target['latencyMs'] = [int]\$sw.ElapsedMilliseconds }
+            else { \$target['error'] = 'No answer within 5 seconds' }
+        }
+        catch { \$target['error'] = (Get-Rem0teDiagErrText \$_) }
+        finally { \$tc.Close() }
+    }
+    else { \$target['error'] = 'The server name in this agent state is not usable' }
+    \$cfg = @{}
+    foreach (\$c in @(Get-CimInstance Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue)) { \$cfg[[string]\$c.Index] = \$c }
+    \$names = @{ 0 = 'Disconnected'; 1 = 'Connecting'; 2 = 'Connected'; 3 = 'Disconnecting'; 4 = 'Hardware not present'; 5 = 'Hardware disabled'; 6 = 'Hardware malfunction'; 7 = 'Media disconnected'; 8 = 'Authenticating'; 9 = 'Authentication succeeded'; 10 = 'Authentication failed'; 11 = 'Invalid address'; 12 = 'Credentials required' }
+    \$ads = @()
+    foreach (\$a in @(Get-CimInstance Win32_NetworkAdapter -Filter 'PhysicalAdapter=True' -ErrorAction SilentlyContinue | Select-Object -First 16)) {
+        \$st = [int]\$a.NetConnectionStatus
+        \$c = \$cfg[[string]\$a.Index]
+        \$v4 = @(); \$v6 = @(); \$gw = @()
+        if (\$c) {
+            foreach (\$ip in @(\$c.IPAddress)) { if (\$ip) { if (([string]\$ip).Contains(':')) { \$v6 += [string]\$ip } else { \$v4 += [string]\$ip } } }
+            foreach (\$g in @(\$c.DefaultIPGateway)) { if (\$g) { \$gw += [string]\$g } }
+        }
+        \$ads += @{ name = [string]\$a.Name; connectionId = [string]\$a.NetConnectionID; up = (\$st -eq 2); status = [string]\$names[\$st]; mac = [string]\$a.MACAddress; ipv4 = \$v4; ipv6 = \$v6; gateway = \$gw }
+    }
+    return @{ target = \$target; adapters = \$ads }
+}
+function Get-Rem0teDiagDns {
+    # Two fixed names: this agent's server and dns.msftncsi.com (what Windows
+    # itself uses to decide it is online). The system resolver answers, so a
+    # cached answer is possible and the latency says so.
+    \$res = @()
+    foreach (\$c in @(Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'IPEnabled=True' -ErrorAction SilentlyContinue)) {
+        foreach (\$s in @(\$c.DNSServerSearchOrder)) { if (\$s -and -not (\$res -contains [string]\$s)) { \$res += [string]\$s } }
+    }
+    \$look = @()
+    foreach (\$n in @([string]\$state.host, 'dns.msftncsi.com')) {
+        \$item = @{ name = \$n; ok = \$false; addresses = @(); latencyMs = \$null; error = \$null }
+        if (\$n -match '^[A-Za-z0-9.-]{1,253}\$') {
+            \$sw = [Diagnostics.Stopwatch]::StartNew()
+            try {
+                \$addrs = @([System.Net.Dns]::GetHostAddresses(\$n) | Select-Object -First 8 | ForEach-Object { [string]\$_.IPAddressToString })
+                \$item['ok'] = (\$addrs.Count -gt 0); \$item['addresses'] = \$addrs
+            }
+            catch { \$item['error'] = (Get-Rem0teDiagErrText \$_) }
+            \$item['latencyMs'] = [int]\$sw.ElapsedMilliseconds
+        }
+        else { \$item['error'] = 'Name not usable' }
+        \$look += \$item
+    }
+    return @{ resolvers = @(\$res | Select-Object -First 8); lookups = \$look }
+}
+function Get-Rem0teDiagReboot {
+    # The same four signals the signed agent's patch scan reads. Presence
+    # only: the pending-rename value lists file paths and is never read.
+    \$src = @()
+    if (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending') { \$src += 'component_servicing' }
+    if (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired') { \$src += 'windows_update' }
+    try { \$sm = Get-Item -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager' -ErrorAction Stop; if (@(\$sm.GetValueNames()) -contains 'PendingFileRenameOperations') { \$src += 'pending_file_rename' } } catch {}
+    try { if ([bool](New-Object -ComObject Microsoft.Update.SystemInfo).RebootRequired) { \$src += 'update_agent' } } catch {}
+    \$boot = \$null; \$up = \$null
+    try { \$os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop; if (\$os.LastBootUpTime) { \$boot = \$os.LastBootUpTime.ToUniversalTime().ToString('o'); \$up = [int]((Get-Date) - \$os.LastBootUpTime).TotalSeconds } } catch {}
+    return @{ pending = (\$src.Count -gt 0); sources = \$src; lastBootAt = \$boot; uptimeSeconds = \$up }
+}
+if (\$state.agentSecret -and \$resp -and \$resp.data -and \$resp.data.diagnostics) {
+    \$diagKeys = @('refresh_inventory', 'disk_space', 'service_health', 'recent_system_errors', 'top_processes', 'network_connectivity', 'dns_resolution', 'pending_updates', 'reboot_status')
+    foreach (\$dr in @(\$resp.data.diagnostics | Select-Object -First 3)) {
+        if (-not \$dr) { continue }
+        \$rid = [string]\$dr.id
+        \$dk = [string]\$dr.key
+        if (\$rid -notmatch '^[A-Za-z0-9_-]{1,64}\$') { continue }
+        if (-not (\$diagKeys -contains \$dk)) { Send-Rem0teDiag \$rid 'unknown' 'failed' \$null 'Not a catalog diagnostic'; continue }
+        Send-Rem0teDiag \$rid \$dk 'running' \$null \$null
+        try {
+            \$out = \$null
+            switch -Exact (\$dk) {
+                'refresh_inventory' { \$out = @{ inventory = (Get-Rem0teInventory) } }
+                'disk_space' { \$out = Get-Rem0teDiagDisks }
+                'service_health' { \$out = Get-Rem0teDiagServices \$resp.data.monitor }
+                'recent_system_errors' { \$out = Get-Rem0teDiagErrors }
+                'top_processes' { \$out = Get-Rem0teDiagProcesses }
+                'network_connectivity' { \$out = Get-Rem0teDiagNetwork }
+                'dns_resolution' { \$out = Get-Rem0teDiagDns }
+                'pending_updates' { \$out = @{ updates = (Get-Rem0tePendingUpdates) } }
+                'reboot_status' { \$out = Get-Rem0teDiagReboot }
+                default { throw 'Not a catalog diagnostic' }
+            }
+            Send-Rem0teDiag \$rid \$dk 'completed' \$out \$null
+        }
+        catch {
+            Send-Rem0teDiag \$rid \$dk 'failed' \$null ([string]\$_.Exception.Message)
+        }
+    }
+}
 # ---- Monitoring (0.29) ------------------------------------------------------
 # The server names the services to read and the event queries to count. Every
 # name and log is checked against fixed rules here before it is used - this

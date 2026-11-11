@@ -13,6 +13,7 @@ import { Actor } from '../common/decorators/actor.decorator';
 import type { ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
 import { RateLimit } from '../common/throttling';
+import { DiagnosticResultDto } from '../diagnostics-catalog/diagnostic-result.dto';
 
 @Controller('enrollment')
 export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
@@ -110,6 +111,17 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   @HttpCode(HttpStatus.OK)
   async monitorReport(@Body() dto: MonitorReportDto) {
     const result = await this.enrollment.monitorReport(dto);
+    return { success: true, data: result };
+  }
+
+  // Public endpoint — the agent reporting on a diagnostic run (v0.31): once
+  // when it starts, once with the result. Device secret required.
+  @Post('diagnostic-result')
+  @Public()
+  @RateLimit(60)
+  @HttpCode(HttpStatus.OK)
+  async diagnosticResult(@Body() dto: DiagnosticResultDto) {
+    const result = await this.enrollment.diagnosticResult(dto);
     return { success: true, data: result };
   }
 

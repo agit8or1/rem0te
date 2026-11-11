@@ -206,6 +206,10 @@ render. Reported timestamps are bounded to 1990–2100, because a machine with a
 dead CMOS battery reports 1980 and every "how old is this?" calculation
 downstream then reads as absurd.
 
+The one-click diagnostics (0.31, [diagnostics.md](diagnostics.md)) follow the same rule with a different
+queue: a request is one of nine catalog keys, the agent maps each to a fixed read-only function, and the
+server, the agent and the database all refuse any other key.
+
 ---
 
 ## Where it is stored
@@ -214,6 +218,7 @@ downstream then reads as absurd.
 |---|---|
 | `EndpointInventory` | One row per endpoint, rewritten in place. A snapshot, not a history. |
 | `EndpointCommand` | The queue. Status, params, result, and who asked. Expires after 30 minutes unclaimed. |
+| `DiagnosticRun` | One-click diagnostics (0.31): catalog key, status and the time of each step, who asked, the capped result. See [diagnostics.md](diagnostics.md). |
 
 Sizes in `EndpointInventory` are **megabytes**, not bytes. Prisma maps `BigInt`
 to a JavaScript `BigInt`, which `JSON.stringify` throws on outright, so a byte
@@ -241,6 +246,7 @@ Monitors — offline, disk, CPU, memory, services, event-log matches, pending re
 ## See also
 
 - [monitoring.md](monitoring.md) — monitors and alerts built on this data
+- [diagnostics.md](diagnostics.md) — one-click read-only diagnostics
 - [clients.md](clients.md) — the managed installer and what it puts on a machine
 - [updates.md](updates.md) — the other three things that can be out of date
 - [access-control.md](access-control.md) — the capability model

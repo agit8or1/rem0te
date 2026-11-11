@@ -21,6 +21,7 @@ far each part has been tested. "Tested" here means one of three things, and they
 | Inventory (hardware, OS, disks, last boot) | Yes | Yes | No | No |
 | Installed software and change history (0.29) | Yes | Yes | No | No |
 | Windows event log reading | Yes | Yes | No | No |
+| One-click read-only diagnostics (0.31): disk, services, errors, processes, network, DNS, updates, restart | Yes | Yes (the same heartbeat script) | No | No |
 | Monitoring (offline, disk, CPU, memory, services, events, restart pending) | Yes | Yes | Offline only (it stops heartbeating) | No |
 | **Patches: pending updates, restart pending** | **Yes — read-only**, every 12 h or on *Scan now* | Yes | No | No |
 | Patches: update identities, history, restart sources | No | Yes | No | No |
@@ -76,6 +77,7 @@ values.
 | Remote access, launch policy | **Yes** (production fleet) | — | Yes |
 | Standard agent: heartbeat, inventory, update scan | **In production use**, standard channel: observed, not a controlled test | — | Yes |
 | Monitoring collection (services, events, software) | **No** | Under pwsh against stubs (`unit-monitoring.mjs`) | Yes (`e2e-monitoring.mjs`) |
+| One-click diagnostics (the nine catalog checks) | **No** | Parsed by PowerShell's parser and run under pwsh against stubs (`unit-diagnostics-catalog.mjs`) | Yes: real API and database, simulated heartbeat (`e2e-diagnostics-catalog.mjs`) |
 | Signed agent: patch scan, install, restart detection | **No** | Yes: `e2e-staged-patching.mjs` runs the agent's real `internal/patch` code through `rem0te-action-sim` | — |
 | Patch status: restart required | **No** | Yes | Yes (`unit-patch-summary.mjs`) |
 | Patch status: restart completed, confirmed by a later scan | **No** | Yes | Yes |

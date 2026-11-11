@@ -46,6 +46,7 @@ const ORDER = [
   ['support-requests.md', 'Support requests', 'Connecting and clients', 'The customer support link, the status page and the technician queue.'],
   ['capabilities.md', 'What each agent can do', 'Computers and monitoring', 'Capabilities by agent type, what needs configuring, and what has been tested on real Windows.'],
   ['inventory.md', 'Inventory and event logs', 'Computers and monitoring', 'Specs, installed software, change history, pending updates and event-log slices.'],
+  ['diagnostics.md', 'One-click diagnostics', 'Computers and monitoring', 'Read-only checks a technician runs with one click: disk, services, errors, network, DNS, updates, restart.'],
   ['monitoring.md', 'Monitoring and alerts', 'Computers and monitoring', 'Monitors, inheritance, alerts, site outages, maintenance windows and escalation.'],
   ['updates.md', 'Updates', 'Computers and monitoring', 'Updating the portal, RustDesk and the agent, and client rollouts.'],
   ['staged-patching.md', 'Staged patching', 'Computers and monitoring', 'Windows updates in rings — canary, approvals, halt on failure.'],
