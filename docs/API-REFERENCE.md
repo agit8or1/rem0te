@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **389** of them across
-**48** controllers.
+integration, under `/api/integration/v1`). There are **411** of them across
+**51** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -126,6 +126,17 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/customers/:id/users/:userId/reset-access` | signed in | `USERS_MANAGE` |
 | `GET` | `/api/v1/customers/capability-catalog` | signed in | — |
 
+## Client updates
+
+`apps/api/src/client-updates/client-updates.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/client-updates/computers` | signed in | — |
+| `GET` | `/api/v1/client-updates/policy` | signed in | — |
+| `PUT` | `/api/v1/client-updates/policy` | signed in | — |
+| `DELETE` | `/api/v1/client-updates/policy/sites/:siteId` | signed in | — |
+
 ## Containment
 
 `apps/api/src/containment/containment.controller.ts`
@@ -238,6 +249,7 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/enrollment/tokens` | signed in | `COMPUTERS_VIEW` |
 | `POST` | `/api/v1/enrollment/tokens` | signed in | `COMPUTERS_ADD` |
 | `DELETE` | `/api/v1/enrollment/tokens/:id` | signed in | `COMPUTERS_REMOVE` |
+| `GET` | `/api/v1/enrollment/tokens/:id/status` | signed in | `COMPUTERS_VIEW` |
 
 ## Health
 
@@ -468,6 +480,21 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/public/quick-connect` | public | — |
 | `GET` | `/api/v1/public/quick-connect/download/:os` | public | — |
 
+## Reports
+
+`apps/api/src/reports/reports.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/reports/agent-coverage` | signed in | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/reports/agent-coverage/export.csv` | signed in, throttled | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/reports/alert-frequency` | signed in | `ALERTS_VIEW` |
+| `GET` | `/api/v1/reports/alert-frequency/export.csv` | signed in, throttled | `ALERTS_VIEW` |
+| `GET` | `/api/v1/reports/offline-time` | signed in | `ALERTS_VIEW` |
+| `GET` | `/api/v1/reports/offline-time/export.csv` | signed in, throttled | `ALERTS_VIEW` |
+| `GET` | `/api/v1/reports/patch-compliance` | signed in | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/reports/patch-compliance/export.csv` | signed in, throttled | `COMPUTERS_VIEW` |
+
 ## Rollouts
 
 `apps/api/src/admin/rollouts.controller.ts`
@@ -486,6 +513,22 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/admin/rollouts/pilot-groups` | signed in | — |
 | `GET` | `/api/v1/admin/rollouts/pin` | signed in | — |
 | `PATCH` | `/api/v1/admin/rollouts/pin` | signed in | — |
+
+## Script library
+
+`apps/api/src/script-library/script-library.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/scripts` | signed in | — |
+| `POST` | `/api/v1/scripts` | signed in, throttled | — |
+| `GET` | `/api/v1/scripts/:id` | signed in | — |
+| `GET` | `/api/v1/scripts/:id/diff` | signed in | — |
+| `POST` | `/api/v1/scripts/:id/versions` | signed in, throttled | — |
+| `GET` | `/api/v1/scripts/:id/versions/:version` | signed in | — |
+| `POST` | `/api/v1/scripts/:id/versions/:version/review` | signed in, throttled | — |
+| `POST` | `/api/v1/scripts/:id/versions/:version/submit` | signed in | — |
+| `POST` | `/api/v1/scripts/:id/versions/:version/withdraw` | signed in | — |
 
 ## Security
 

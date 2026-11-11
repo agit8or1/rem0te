@@ -5,6 +5,611 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.32.0] — 2026-11-11 · *Fieldkit*
+
+The second increment of the RMM overhaul (`docs/rmm-gap-analysis.md` items 7–12, plus patch policies requested on
+2026-11-11). Each part below was built and tested on its own, then integrated. Anything that acts on a computer —
+maintenance actions, patch installs, policies — is **simulated only** (S evidence): it needs a signed agent, the
+approval signer and approvers, none of which production has yet. `docs/patching-setup.md` is the order to turn them
+on, and the Patching page's pre-flight shows what is missing.
+
+### Fixed (dashboard)
+- **The dashboard's device map shows by default again**, as in 0.31.1: 0.31.0 hid it behind *Show device locations*
+  and it read as removed. *Hide device locations* folds it away per browser (`localStorage` `dashboard.map`).
+
+### Guided Add Device
+
+#### Added
+
+- **Add device: one guided flow** at `/endpoints/enroll`, replacing four ways to do the same thing (the Devices
+  page's *Enroll Client* button, its *Generate Enrollment Link* modal, the business page's *Create installer link*,
+  and Quick Start's manual-token instructions). Six steps on one page: (1) business, then site or *No site*, and who
+  may connect; (2) operating system; (3) the install command, from the existing single-use 24-hour enrolment token
+  and the existing install scripts, plus the one-click `.exe` link on Windows; (4) waiting for the device, by
+  polling the new `GET /enrollment/tokens/:id/status`; (5) its first health as the server has it: business and
+  site it landed in, online, agent type and version (after its first heartbeat), device identity bound, first
+  inventory received; (6) links to the device, its Monitoring tab and the business's monitoring policies
+  (`/settings/monitoring?businessId=`), with the monitors that already apply listed. Each health line stays
+  *waiting* until a row says otherwise; nothing is inferred. The raw token is held only in the page's memory,
+  once, as the creation response has always returned it; the URL carries the token's *id*, so a reload keeps
+  waiting but cannot show the command again (revoke and make a new one). The Devices page now has one *Add device*
+  button, the business page's Downloads tab and Quick Start link to the flow with the business chosen, and a
+  computer's *Make an enrollment link for this computer* opens it bound to that computer. `/endpoints/new` stays,
+  renamed **Register by RustDesk ID**, because it does something the flow does not: list a machine already
+  running RustDesk without installing anything (it gets no agent).
+- **An enrolment token can name the site** the device lands in (`siteId` on `POST /enrollment/tokens`, migration
+  `0032_add_device_token_site`). Bound at mint time like the business, for the same reason: the machine that
+  redeems the token must not choose where it lands, and a site set by the browser after the device appears would
+  be lost whenever the person closed the page first. It must be an active site of the token's business; a site of
+  another business is refused with the same message as one that does not exist (`Unknown site for this
+  business`), so it cannot be used to probe. At claim the site is re-checked: one deactivated in the token's
+  24 hours is dropped and the device still enrols into the business. Deleting a site sets the token's site to
+  null (`ON DELETE SET NULL`); it never invalidates the token. The site is recorded in `CLAIM_TOKEN_CREATED` and
+  `ENDPOINT_CLAIMED` audit metadata.
+- **`GET /enrollment/tokens/:id/status`** (`COMPUTERS_VIEW`): `waiting`, `expired`, `claiming` (consumed, endpoint
+  not yet recorded) or `enrolled`, and the device's first health. The token is looked up inside the caller's
+  business exactly as the token list is (another business's token is a 404, never a 403); the device is read
+  through `acl.endpointVisibilityWhere` AND-ed with its id, so a Business User who mints an `ASSIGNED_USERS` token
+  for somebody else is told it enrolled but is not shown the device, as the device list would not show it either.
+  It returns no token, no token hash and no device secret, only whether a secret is bound and when.
+
+#### Changed
+
+- Token creation's permission checks are unchanged: `computers:add`, the business resolved from the caller's
+  scope, a Platform Admin must name one, and naming another business (by `businessId` or the legacy `customerId`)
+  is a 403.
+
+#### Upgrade notes
+
+- **Schema change:** run `prisma migrate deploy` (migration `0032_add_device_token_site`, one nullable column and a
+  foreign key on `DeviceClaimToken`), then rsync `apps/api/prisma/` to the target and `prisma generate` there, or
+  the API throws `Unknown field siteId`. Existing tokens and tokens minted without a site enrol exactly as before.
+- Anything that linked to `/endpoints/new` as "Enroll Client" still works; the page is now *Register by RustDesk
+  ID*. The *Generate Enrollment Link* modal is gone; bookmarks to `/endpoints` are unaffected.
+
+#### Verification
+
+- `apps/api/scripts/e2e-add-device.mjs` (new, self-starting on port 3201, refuses a database whose name lacks
+  `test` or `scratch`; added to `scripts/run-e2e.sh`): **58 passed, 0 failed.** Minting: owner A cannot mint for
+  B by `businessId`, legacy `customerId` or with B's site (403); B's site on an A token and a non-existent site
+  get the same 400; inactive site refused; `computers:add` required; Platform Admin must name a business; B has no
+  tokens after every refused attempt; only the hash is stored; minting audited with business, site and actor.
+  Status: owner B gets 404 for A's token before and after enrolment; no `computers:view` is 403; no token, hash or
+  device secret in any body. The real device path (claim → heartbeat → inventory command-result) moves status
+  waiting → enrolled and fills agent type and inventory only after the device sent them. Owner B cannot see the
+  device in the list, on its page, or in the token list. A Business User's `ASSIGNED_USERS` token for a colleague:
+  enrolled, not shown, not even the id; a `COMPANY_WIDE` one is shown at the chosen site. Site deactivated before
+  claim dropped, site deleted keeps the token. Expired and revoked tokens report as such. Platform Admin as the
+  negative control.
+- `apps/web/scripts/e2e-navigation.mjs`, extended (Devices has exactly one *Add device* button to
+  `/endpoints/enroll` for those who may add, none otherwise, and no old enrol buttons; it opens the flow with its
+  six steps; no sideways overflow): **140 passed, 0 failed** against a scratch stack (`next dev`). A first, cold
+  run had 2 failures from dev-mode compile timing (an empty tab list read before the page hydrated, and a click
+  read before navigation finished); the warm rerun passed every check.
+- The flow was driven in a real browser against a scratch stack, light and dark: link made, token claimed as the
+  installer would, steps 4–6 followed (a throwaway script, not committed; screenshots only, no check counts kept).
+- `node scripts/check-security-invariants.mjs`: 130 checks, all hold. `pnpm -r lint`, `npx tsc --noEmit` (API and
+  web), `npx nest build`, `npx next build`: clean. `docs/API-REFERENCE.md` regenerated (384 routes).
+- **Not proven:** an install on a real Windows, Linux or macOS machine. The device path was exercised through the
+  enrolment API as the install scripts call it, which were not changed.
+
+### Scheduled RustDesk client updates
+
+#### Added
+
+- **Scheduled RustDesk client updates outside working hours** (Settings → *Client updates*,
+  `/settings/client-updates`; `GET/PUT /client-updates/policy`, `DELETE /client-updates/policy/sites/:siteId`,
+  `GET /client-updates/computers`). A business, and optionally each site, gets a policy: **off by default**, one to
+  seven update windows (days, start, end, each at least 30 minutes) in a stated, validated IANA time zone, *skip a
+  computer with an open session* (default on) and *skip a computer with someone logged on* (default off; an agent
+  that does not say who is logged on is skipped too, because unknown is not "nobody"). A site policy replaces the
+  business policy for its computers entirely, including being off when the business is on. Window rules are
+  `rbac/schedule.ts`'s, shared rather than copied: an end before the start crosses midnight and belongs to the day it
+  starts on, and daylight saving is never computed with local-time arithmetic — a window starting in a
+  spring-forward hour opens when the clock next reads a real time, and a fall-back 01:00–02:00 covers both hours that
+  read 01:xx. The page shows when each window next opens and closes. Migration `0033_client_update_policy`.
+- **The client-update sweep** (`client-updates/client-update-sweep.service.ts`, every `CLIENT_UPDATE_SWEEP_SECONDS`,
+  default 120; `CLIENT_UPDATE_SWEEP=off` stops it). Inside an enabled policy's window it queues outdated computers
+  through the same `RustdeskNode.updateRequestedAt` path the Update button uses, marked **POLICY**: Windows, not
+  archived, online, with a device secret, a reported version older than the pin (else the latest release), nothing
+  already queued and no staged-rollout job. At most `CLIENT_UPDATE_SWEEP_BATCH` (default 25, max 500) per sweep
+  across every business; the write is conditional on nothing being queued, so two API instances queue — and audit —
+  a computer once. An `updates` containment pause skips the business. With no target version (GitHub unreachable,
+  no pin) it queues nothing and says so once in the log. Each queued computer is audited as
+  `CLIENT_UPDATE_AUTO_QUEUED`, with no actor.
+- **Manual and automatic requests are told apart everywhere.** `RustdeskNode` gains `updateRequestSource`
+  (MANUAL / POLICY), `updateRequestedById` and the last hold reason. The Updates page shows *by &lt;user&gt;* or
+  *auto, waiting: …* and offers *Update now* on an automatic one (which makes it manual); the computer's Updates card
+  no longer promises "next heartbeat" for an automatic request; Settings → Client updates lists every visible
+  computer with what will happen to it — including, with the reason, the ones that never will (not Windows, no
+  device secret, never reported a version).
+
+#### Changed
+
+- **The heartbeat withholds a POLICY request** outside its window, during an open session (the endpoint's own count,
+  a confirmed session, or an unconfirmed launch in the last two hours) and, when asked, with someone logged on, and
+  records why. It fails closed: if the policy cannot be read, the automatic update waits. A **MANUAL request still
+  goes on the next heartbeat**, as before, and every request staged before this version is recorded as manual.
+- **Turning a policy off withdraws** the POLICY requests it queued that have not completed; removing a site override
+  does the same when the business policy is off. Manual requests are never touched.
+- "Is a session open on this computer" is one function (`admin/session-evidence.ts`), used by staged rollouts and by
+  the update policy, rather than two copies that could disagree.
+
+#### Security
+
+- **Who may change a policy:** a Business Owner for their own business; a technician whose assignment grants
+  `computers:edit` over the *whole* business (an assignment limited to named computers cannot set a policy that
+  reaches all of them); the MSP. A Business User cannot, whatever they hold, because they may see only some of the
+  business's computers. Turning a policy on, saving one that stays on, or removing a site override needs fresh
+  authentication (`STEP_UP_REQUIRED`, action `updates.schedule`) — it lets the server install software on every
+  computer in the business unattended. Turning one off never does: stopping is never harder than starting. A site id
+  from another business is 404, not 403. Every change is audited as `CLIENT_UPDATE_POLICY_CHANGED` with before,
+  after, the window in words and what it withdrew.
+- `check-security-invariants.mjs` §21 (17 checks): the edit rules, fresh authentication on both writes, the site
+  belonging to the business, withdrawal limited to POLICY, the sweep's off switch, containment, open-window and
+  batch guards and its audit, the heartbeat's fail-closed hold and its ordering after containment and the device
+  secret, and `run-e2e.sh` running scratch APIs with the sweep off. Each was confirmed to fail with its guard removed.
+
+#### Tests
+
+- `unit-update-window.mjs` (85, in CI): validation, +5:30 / +5:45 / 30-minute-DST zones, windows across midnight,
+  both DST transitions, next opening/closing against a minute-by-minute reference, and the shared policy decisions.
+- `e2e-auto-updates.mjs` (73, in `run-e2e.sh`; own API on port 3211, sweep every 2 s, scratch/test database only):
+  queues inside the window and not outside, batch cap, never the ineligible ones, site overrides, the heartbeat hold
+  outside the window and during a session, manual requests going at once, containment, business isolation and the
+  edit rules, step-up, withdrawal and audit. Nine guards removed one at a time from `dist`; the suite failed on each.
+
+**Deploying:** this has a schema change — run the migration and regenerate the Prisma client at the target (see
+`CLAUDE.md`). No production dependency changed. The standard agent's `heartbeat.ps1` is unchanged: it already
+re-runs the installer when the heartbeat says so. Not proven on real Windows; the Windows side is the existing,
+unchanged update path.
+
+### Reports
+
+#### Added
+
+- **Reports** (menu entry *Reports*, `GET /reports/{patch-compliance|agent-coverage|alert-frequency|offline-time}`):
+  four reports over a business, a site and a period, each computed only from what the database stores. Filters
+  are business (Platform Admin, or anyone working in several), site, period (1, 7, 30, 90, 365 days) and, for
+  agent coverage, *not heard from in* (1–90 days); other values are a 400, never widened to a default. Filters
+  live in the address bar. See `docs/reports.md`.
+  - **Patch compliance** per business and site, from stored Windows Update scans, with the dashboard's
+    definition stated on the page. The rule now lives in one place, `apps/api/src/patching/compliance.ts`, and
+    the dashboard calls it too, so the tile and the report cannot count differently. Devices with a stale scan
+    or none are coverage gaps, counted apart and never as compliant; non-Windows devices among *no scan* are
+    counted separately.
+  - **Agent coverage**: devices by agent type (signed / standard / none) and version; devices with no device
+    secret (telling *not bound* apart from *no RustDesk record*; the hash is never returned); devices not heard
+    from in N days, oldest first; non-Windows devices with no inventory.
+  - **Alert frequency**: alerts raised per business, site, computer and monitor type, by severity, open and
+    resolved, with median / mean / longest time to resolve over resolved alerts only. Counted by first raised;
+    repeats of an open problem are one alert. More than 50,000 alerts in the period is a 400 asking for a
+    narrower report, never a partial count.
+  - **Offline time**, derived from OFFLINE monitor alerts because `Endpoint.isOnline` is a sweep flag with no
+    history. An episode runs from the alert's recorded `detail.lastSeenAt` (else `firstSeenAt`) to its
+    reconnection-resolve, or now; clipped to the period; overlapping episodes (a person resolved while the
+    computer was still silent and the monitor re-raised) are merged; alerts closed without a reconnect are
+    marked. The page states when records begin and lists which visible computers have an enabled Offline
+    monitor **today** (with View computers). **No availability percentage**: `MonitorRule` keeps no history, so
+    the time each computer was monitored is unknown and any percentage would be invented.
+- **CSV export for each report** (`…/export.csv`), the device list's way: capped at `EXPORT_MAX_ROWS` (10,000,
+  refused above it, never truncated), formula cells neutralised with the shared `csvCell`, throttled, and audited
+  as the new **`REPORT_EXPORTED`** action (migration `0034_reports_export_audit`) with the report, row count,
+  filters and whether it came through a technician assignment — written with `logOrFail` before the file is
+  sent, so an export the audit log cannot record is refused. The audit-log page colours it like
+  `ENDPOINT_LIST_EXPORTED`.
+- **Scoping.** Device reports start from `acl.endpointVisibilityWhere` AND-ed with `status: ACTIVE` and the site
+  filter (never spread beside another `OR`); alert reports from `MonitoringAdminService.alertWhere` AND-ed with
+  the same endpoint visibility, so a technician or Business User never sees an alert on a computer their grants
+  do not cover (a site-wide outage alert, which has no computer, is visible to owners and technicians but not to
+  a Business User). A foreign business is a 403, not an empty report. Patch compliance and agent coverage need
+  `computers:view`; alert frequency and offline time need `monitoring:alerts`. The nav shows each report only
+  for its capability. Filter menus are built from the same scoped query.
+- `check-security-invariants.mjs` gains a reports section: every route names its capability, every export is
+  throttled, an export is capped, neutralised and audited with `logOrFail` before it returns, and a device
+  secret is reported as bound or not, never returned.
+
+#### Not done
+
+- **Scheduled or emailed reports.** There is no outbound mail, and the only outbound channel (alert-notification
+  webhooks to destinations a Business Owner approved with a fresh sign-in) is not a safe vehicle for device
+  inventories on a timer. Export and send by hand until a delivery mechanism is designed.
+- **Availability percentage** (see above) and **trends over time**: scans, agent versions and monitor settings
+  are stored as latest value only.
+
+#### Tests
+
+- `apps/api/scripts/e2e-reports.mjs` (new, in `scripts/run-e2e.sh`): its own API from `dist` on port 3221,
+  refuses a database whose name lacks `test` or `scratch`. Seeds synthetic businesses A (two sites) and B and
+  proves every number against the fixtures, A/B isolation, a Business User's restriction to granted devices
+  (including alerts and offline time), a technician's scope, the capability gating per report, a foreign
+  business being a 403, and the export audit row and formula neutralisation: 102/102. Mutation-checked against
+  `dist`: business-only device scoping (6 failures), business-only alert scoping (2), no audit (2), no
+  neutralisation (1) — each caught.
+- `e2e-dashboard.mjs` still 53/53 after the shared compliance rule moved into `patching/compliance.ts`.
+- `apps/web/scripts/e2e-navigation.mjs` covers the Reports entry: the menu per persona, the tabs per
+  capability (a Business User with only `computers:view` sees the two device reports, and a direct visit to an
+  alert report says it is not available instead of drawing an empty one), each report page loading, and
+  `/reports` opening the first report.
+- `docs/API-REFERENCE.md` regenerated (391 routes, matching the runtime table).
+
+### Script library (review only)
+
+#### Added
+
+- **Script library, with review and no way to run anything** (Automation → Script library, `/automation/scripts`;
+  `GET|POST /scripts`, `GET /scripts/:id`, `GET /scripts/:id/diff`, `POST /scripts/:id/versions`,
+  `GET /scripts/:id/versions/:version`, `POST …/submit`, `POST …/withdraw`, `POST …/review`). PowerShell scripts
+  for Windows, **global** (written by a Platform Admin, reviewed by a Platform Admin or an `approvals:review`
+  independent reviewer) or **per business** (new capabilities `scripts:author` and `scripts:review`; a technician
+  needs them on a grant covering the whole business, because a script is not scoped to a computer). Each version
+  is **immutable**: content, its SHA-256, a definition hash over language, target OS, risk and the declared
+  parameters (typed, with charset limits), description and author. Editing creates a new draft version; the diff
+  compares any two. Review is Draft → In review → Approved or Rejected, both final, with withdraw back to draft.
+  An approval names the content hash the reviewer's page showed (`HASH_MISMATCH` otherwise), records it as
+  `approvedSha256`, and needs fresh authentication (`assertFresh`, as for approved actions). **SAME_PERSON** is
+  refused by user id, so no owner role, Platform Admin flag or technician context makes the author someone else,
+  and it covers *contributors*: a version edited from an unapproved one inherits that one's authors, so A writes
+  v1, B makes a one-character edit as v2, and A still cannot approve v2. Another business's script and a missing
+  one both return 404, whatever business header or body field is sent. Every create, version, submit, withdraw,
+  approval, rejection and refused review is audited with hashes and never with content. Design, threat model and
+  the eventual execution path are in `docs/script-library.md`.
+- **Static checks shown to the reviewer as warnings, never as a verdict**: `Invoke-Expression`, download-and-run,
+  `-EncodedCommand`, credential material, disabling Defender, `Set-ExecutionPolicy`, forced and plain restarts,
+  event-log tampering, backup and shadow-copy deletion, local admin changes, dynamic code, and hidden Unicode
+  (bidirectional overrides, zero-width characters — "Trojan Source"). They flag; they never block, and the page
+  says a script with no findings is not thereby safe.
+- **Migration `0035_script_library`.** The database enforces what the service does, so a direct write cannot get
+  round it: a CHECK that an approved version's approver is neither its author nor a contributor and that
+  `approvedSha256` equals `contentSha256`; a trigger that recomputes the content's SHA-256 on insert, makes a
+  version's content, hashes, definition, author and contributors unchangeable, allows only the legal status moves,
+  and refuses a version inserted as anything but a draft; and a trigger that stops a script moving between
+  businesses or scopes.
+- **Security invariants §21**: the library imports nothing that creates an action job or reaches an agent, the
+  signer or the heartbeat, and nothing outside it imports the library; its route table is exactly the nine routes
+  above, with no run, execute, dispatch or approve route here or in any other controller; review checks
+  SAME_PERSON, then the hash, then fresh authentication, before it writes; and the immutability trigger covers
+  every content and definition column. Each check was confirmed to fail with its guard removed.
+
+**Running a script is not available**, and the page says so: it would run only as a signed action through the
+existing two-approval chain, with the signer signing the script's SHA-256 into the plan and the signed agent
+verifying it before running it under limits. That agent path has not been validated on real Windows, and the agent
+catalog is unchanged.
+
+Tests: `unit-script-library.mjs` (125, in CI) for hashing, validation, contributors, the diff and every static
+rule; `e2e-script-library.mjs` (138, own API on port 3231, refuses a database without `test` or `scratch` in its
+name, added to `run-e2e.sh`) for isolation, the review lifecycle, every SAME_PERSON route, hash binding, fresh
+authentication, the database refusing direct tampering, no action job created, and the audit trail;
+`e2e-navigation.mjs` now checks the Automation entry, the notice and that no page offers a Run control.
+
+### Standard Linux agent
+
+#### Added
+
+- **Standard (Linux) agent: heartbeat, inventory and pending updates on Linux.** Until now a Linux computer got
+  RustDesk and one registration at install, and nothing after it: no online dot beyond what hbbs could see, no
+  inventory, no patch reporting. The Linux installer (`/api/v1/public/install/linux.sh`) now also installs
+  `/usr/local/lib/rem0te/rem0te-agent`, a POSIX `sh` script generated by the server
+  (`apps/api/src/public/linux-agent.ts`) and embedded in the installer in a quoted heredoc, run every 3 minutes by
+  `rem0te-agent.timer` (oneshot, `ProtectSystem=full`, `ProtectHome=read-only`, `NoNewPrivileges`). It
+  authenticates with the device secret the installer already generated and the enrolment claim already binds — the
+  Windows claim flow, unchanged, no new mechanism and no first-sight binding — kept in `/etc/rem0te-agent.secret`,
+  which the installer now forces to `0600 root:root` and the agent refuses to use if it is any looser. Every
+  heartbeat reports host name, OS (`/etc/os-release`, read with `sed`, never sourced), uptime and last boot, CPU
+  busy share, memory, root filesystem, logged-on users (`who`) and the RustDesk package version; the 6-hourly
+  inventory adds kernel, architecture, CPU model, cores and speed, every real filesystem from `df`, and DMI
+  (vendor, model, serial, chassis, BIOS) where readable. Pending updates come from `apt list --upgradable` (never
+  `apt update`), `dnf -q -C check-update` or `zypper --no-refresh list-updates`, with restart pending from
+  `/run/reboot-required`, `needs-restarting -r` or `zypper needs-rebooting`; with none of them the scan is reported
+  failed with *"Pending updates unknown"*, never as zero. Shown as **Standard (Linux)** on the device list and the
+  workspace, with no Software or Event logs tab; a Linux machine installed before this stays *RustDesk only*.
+  `--uninstall` on the installer (`curl … | sudo bash -s -- --uninstall`) removes the timer, the units, the script,
+  its config and the secret, and leaves RustDesk. See `docs/inventory.md` ("Linux computers (0.32)") and the new
+  column in `docs/capabilities.md`.
+- **The Linux agent is read-only, and the console says so.** From a heartbeat response it extracts only command ids
+  in a fixed charset and three fixed names (inventory refresh, update scan, and an event-log query it answers with
+  "Event logs are Windows-only" so the request closes instead of expiring). Rotations, reinstalls, RustDesk client
+  updates, monitor queries, diagnostics and actions are ignored. Rather than let those sit looking accepted, the
+  console refuses password rotation, reinstall and event-log queries for a Linux computer
+  (`LINUX_AGENT_READ_ONLY`), and a one-click RustDesk client update skips Linux computers. Security invariants §21
+  pin all of it to the script's text: no `eval`, `source`, `sh -c`, download or package-changing command, one
+  `curl` whose body (carrying the secret) goes through a 0700 temp file and never argv, the response parse, the
+  read-only package commands, the secret's mode, and the installer's `0600` and uninstall. Each check was confirmed
+  to fail with its guard removed.
+- `apps/api/scripts/e2e-linux-agent.mjs` (84 checks, in `scripts/run-e2e.sh`): its own API from `dist` on port
+  3241 (`LINUX_API_PORT`), refusing a database without `test` or `scratch` in its name. It fetches the real
+  installer, extracts the generated agent, parses it under `sh`, `dash`, `bash --posix` and busybox, and runs it
+  unprivileged inside a temp directory (`REM0TE_AGENT_CONF`, `REM0TE_AGENT_SECRET_FILE`, `REM0TE_RUSTDESK_CONFIG`,
+  `REM0TE_OS_RELEASE`, `REM0TE_DMI_DIR`, `TMPDIR`) against the host's real `/proc`, `df`, `who` and `apt list`,
+  then against stubbed dnf and zypper and a PATH with no package manager. It proves inventory lands, a wrong,
+  missing or world-readable secret is refused, one business's agent cannot write into or close commands for
+  another's computer, hostile os-release, hostname, `who`, `df`, DMI and package strings arrive reduced and are
+  never evaluated, and marker stubs for `rustdesk`, `systemctl`, `apt-get`, `reboot` and friends are never run.
+  **Evidence level: integration (real script, real Linux userland, scratch API).** It has not run under systemd,
+  as root, or on an installed endpoint.
+
+#### Fixed
+
+- **Device-reported names were stored with control characters.** The heartbeat and claim DTOs bounded hostname,
+  platform, OS, agent and RustDesk version by length only, so a machine — or anyone holding its device secret —
+  could store a hostname carrying newlines, escape sequences or NULs, which every console view, CSV export and
+  audit entry then printed. They now go through `enrollment/device-text.ts` (control characters and whitespace
+  runs become one space; empty is "not reported") on heartbeat and claim, for every platform. The Connect `.cmd`
+  keeps its own stricter charset on top.
+- **A computer that could not answer an automatic collection was asked again every heartbeat.** A failed
+  automatic `UPDATE_SCAN` or `INVENTORY_REFRESH` left the scan stale, so the next heartbeat staged another: a
+  Windows computer with Windows Update disabled — and now a Linux computer with no supported package manager —
+  accumulated ~480 failed rows a day. An automatic collection that came back failed now waits an hour before it is
+  staged again; an operator's *Refresh* / *Scan now* is not held back.
+- The Linux installer checked for root only after trying to write the device secret, so a non-root run carried on
+  without one and registered a computer its agent could never authenticate as. The check now comes first.
+
+### Signed maintenance actions
+
+#### Added
+
+- **Maintenance actions in the signed catalog — simulated only (S evidence).** Four new catalog actions, each on one
+  computer, each needing **two distinct passkey approvals on the separate approval signer whatever the computer**
+  (high risk everywhere; the portal, the signer and the agent each derive that themselves, so a plan claiming `low`
+  is `risk_mismatch` at the signer and `risk_understated` at the agent). None of the Windows calls behind them has
+  run on a real computer: the service manager, `shutdown.exe`, `wevtutil.exe` and the RustDesk session count are
+  exercised only through `rem0te-action-sim` against a simulated Windows. Production has no approval signer
+  installed, so, exactly like the Print Spooler start, these are inert there and the Actions tab says why.
+  - **`windows.service.restart@1`** — `{"service": …}` from a fixed allowlist compiled into the agent and repeated in
+    the portal: `Spooler`, `wuauserv`, `BITS`, `W32Time`, `WinRM`, `RustDesk`. The agent re-checks the name against
+    `^[A-Za-z0-9_]{1,64}$` and its own list, journals *executing*, *stopping* and *starting*, stops it (60 s),
+    starts it and checks it is running at 10 and 30 s. A stopped service is only started; a service with running
+    dependents fails the stop and nothing else is stopped; the startup type is never changed. Left off on purpose:
+    Defender and other security products, the firewall, `lsass`/`SamSs`/`KeyIso`/`VaultSvc`/`Netlogon`, `EventLog`,
+    RPC/DCOM, `Dnscache` (Windows 10+ refuses to stop it) and `LanmanWorkstation` (drops open files and mapped
+    drives). Restarting `RustDesk` is skipped while a RustDesk session is open.
+  - **`windows.reboot.schedule@1`** — `{"delayMinutes": 5…1440}` (whole minutes; the page offers 5 min to 24 h).
+    `shutdown.exe /r /t <s> /d p:4:1 /c <fixed warning>`, the warning built only from the time and delay the agent
+    computed and the job id it verified; nothing the requester types reaches it. Never immediate. A restart plan's
+    signed window is at most 2 hours (portal `WINDOW_TOO_LONG`, signer and agent `bad_window`), because the delay
+    counts from delivery and must not land hours after what the approvers had in mind. An already-pending
+    restart is left alone (`restart_already_scheduled`). The result says *scheduled for*, never *restarted*.
+  - **`windows.reboot.cancel@1`** — no parameters; `shutdown.exe /a`, with its own two approvals. `no_change` when
+    nothing was pending. It cancels whatever is pending, including a restart scheduled by someone else.
+  - **`windows.logs.collect@1`** — no parameters. Fixed sources: System and Application Critical/Error events from
+    the last 24 h (50 each), the agent's action journal, the end of the agent's log, the end of the newest RustDesk
+    service log (service profiles only, no links followed). At most 12 KB per source and 40 KB in all. Redacted on
+    the computer and **again on receipt** (`actions/logs.ts`: the diagnostics catalog's `redact()` plus a
+    `password=`/`token:`/`Authorization: Bearer` rule), then stored in the target's result. Requesting it also needs
+    `computers:event_logs` (for a technician, from the same grant as the computer); viewers without it see that
+    text was withheld, never the text; a requester who loses it before delivery is canceled at dispatch
+    (`requester_lost_capability`). `ACTION_RESULT` audits each source's size, not its text.
+- **The remote-session check.** Before scheduling a restart or restarting RustDesk, the agent counts
+  `rustdesk.exe --cm` processes (the signal the heartbeat reports). An open session → `not_executed`
+  (`remote_session_open`); cannot tell → `not_executed` (`session_state_unknown`). The check runs after every
+  verification and the signed pause and before the *executing* journal entry (a new `Precheck` hook), so a
+  skipped job changed nothing. Gap, documented: it is made once, when the restart is scheduled, and sees RustDesk
+  sessions only — a console or RDP user gets the Windows warning, nothing more.
+- **Run action** in the device workspace now offers every direct catalog action: a picker, the one closed choice
+  where there is one (service, delay), the action's own acknowledgement, and per-action "not on this agent" when the
+  computer's agent does not report it. History rows name the action, show collected logs source by source, and
+  reconcile with action-specific choices (`restart_scheduled`, `no_restart_scheduled` added to the reconcile DTO).
+- `e2e-maintenance-actions.mjs` (64 checks; its own API on port 3251, refuses a database without `test`/`scratch`
+  in its name), added to `scripts/run-e2e.sh`. `rem0te-action-sim` takes `-sessions`, `-stop-fails`, `-events-dir`
+  and `-rustdesk-logs`. `unit-approval-signer.mjs` 64 → 79 checks; Go `internal/action` gains `maintenance_test.go`.
+
+#### Changed
+
+- **Security invariants §14 widened, not loosened.** "The agent catalog is Spooler-only" (later "exactly the two
+  actions") is now an exact, ordered list of six, the same on the agent and in the portal. New checks: every agent
+  entry's `ParamsOK` is one of the known closed forms; the restart allowlist agrees on both sides, is charset-checked
+  first and contains no security or core service; the 5-minute delay floor on both sides; every maintenance action
+  is `high` and the restart (and RustDesk restart) waits for no open session with "cannot tell" counting as open;
+  `Precheck` sits between the signed pause and the *executing* journal and is final; the agent's action package
+  runs no process and the Windows side runs only `shutdown.exe` and `wevtutil.exe` from System32; the maintenance
+  actions are not offered to ClientSt0r. Each check was confirmed to fail when its guard is removed (24 mutations).
+- **ClientSt0r is not offered the maintenance actions.** `capabilities` and action proposals are limited to
+  catalog entries marked `integration: true` (the Spooler start and update install); advertising the new ones is a
+  ticket-rmm contract change ClientSt0r has not agreed to. A proposal naming one is `ACTION_NOT_IN_CATALOG`.
+- The agent journal records the plan's params and the step reached, so an interrupted maintenance job reports how
+  far it got (and, for a service restart, the service's state now). No migration.
+
+### Patch policies and installing from the Patches tab
+
+#### Added
+
+- **Automatic patch policies, approved once — fixture-tested only.** Until now every ring of every deployment was
+  requested by hand and approved by two people, so "security updates every Saturday night" meant two approvers awake
+  every Saturday night.
+  - **What a policy is.** A bounded document (`rem0te-patch-policy/1`) naming:
+    - one business, and its computers in fixed rings, each bound by enrolled identity (endpoint, RustDesk ID,
+      device-secret hash);
+    - ring 0, a single canary; later rings of at most 25;
+    - the update classes and, optionally, severities it installs, and KBs it never installs;
+    - a weekly maintenance window (days, local start and end, IANA time zone, DST-aware, may cross midnight);
+    - soak hours and the failure threshold;
+    - `reboot: never`;
+    - an expiry at most 90 days out.
+  - **How it is approved.** Two roster approvers other than its author approve it once, with passkeys, on the
+    approval signer's own page (`/approve/policy/<id>`). Customer sign-off applies if the business requires it.
+  - **What happens after approval.** The portal's sweep proposes a deployment inside each open window: the canary's
+    offered, eligible, policy-allowed updates, at most 20. **The approval signer — not the portal — signs each ring
+    plan, only if `evaluatePolicyPlan` accepts it.** That is a pure function shared with the portal
+    (`apps/api/src/actions/patch-policy.ts`) and loads no Nest, Prisma or portal module. It checks:
+    - every target's identity against the policy;
+    - ring order against the signer's own ledger of what it signed (the canary can't be skipped);
+    - classes, severities and excluded KBs;
+    - that the plan carries the policy's filter;
+    - that the window lies inside one occurrence;
+    - the expiry and the requester (the policy's author);
+    - for every ring after the canary, the previous ring's results, by re-running the same ring gate the portal uses
+      (`evaluateRingGate`) — **canary effective**, failure threshold, soak.
+  - **Defence on the computer.** Plans carry the filter as a new optional `params.allow`, and the agent applies it to
+    Windows Update's own answer (`patch.InstallFiltered`). A mislabelled update is reported `excluded`
+    (`classification_not_in_policy`, `severity_not_in_policy`, `kb_excluded_by_policy`), never installed.
+  - **The sweep** runs every `PATCH_POLICY_SWEEP_SECONDS` (60). Every attempt is recorded on the policy and audited
+    (`PATCH_POLICY_PROPOSED` / `PATCH_POLICY_REFUSED`, deduplicated per window and code). It:
+    - proposes once per window, enforced by a unique `(policyId, windowKey)` on `PatchDeployment`;
+    - carries an open deployment across windows;
+    - leaves a paused one alone;
+    - leaves out later-ring computers that aren't ready, each with why;
+    - stops on a containment pause;
+    - is switched off by `PATCH_POLICY_SWEEP=off`.
+  - **Policy pages.** The Patching page lists policies with their next window and last attempt and has a **New
+    policy** form. A policy's page shows the approved document, its digest, the approvers, what the signer refused
+    and its deployments.
+- **Install updates from a computer's Patches tab.**
+  - The user picks installable updates, the restart rule (only *never*) and a window, and gives a reason. The request
+    becomes a **one-computer deployment** (origin `MANUAL`, a single canary ring) whose plan awaits the usual **two
+    approvals** (`POST /endpoints/:id/patches/install`, audited `PATCH_INSTALL_REQUESTED`).
+  - It isn't a direct request: `ACTION_NOT_DIRECT` still refuses updates on the Actions tab.
+  - When the computer can't be patched there is no button, only the reason and what to do. The reasons are: standard
+    agent (switch to the signed channel), not on the published build, no identity, no signed scan, managed by
+    WSUS/Intune/WUfB/ConfigMgr, offline, no signer configured, access not including high-impact requests, an earlier
+    install pending or uncertain, nothing installable.
+- **Production setup runbook** (`docs/patching-setup.md`, in the in-app docs). It sets out the owner's order of work:
+  1. publish a signed release;
+  2. move computers to the signed channel;
+  3. install the signer on a separate host or user;
+  4. set `APPROVAL_SIGNER_INTERNAL_URL`;
+  5. enrol approvers;
+  6. create the first policy.
+
+  It links to `update-signing.md`, `approved-actions.md` and `staged-patching.md` rather than repeating them, and
+  states where every key lives: generated and held by the owner, never on the portal host and never in the
+  repository.
+- **Pre-flight** (`GET /patching/preflight`, Platform Admins; a card on the Patching page). It reports each
+  prerequisite as present or missing, from real state only: the served agent target, `approval/keys.json` listing
+  the signer's live key id, the signer configured, answering and new enough, roster approver count, computers on the
+  signed channel and on the published build, signed scans, and the sweep.
+- Signer: `POST /internal/v1/policies`, `GET /internal/v1/policies/:id`, `POST /internal/v1/policies/:id/revoke`,
+  `POST /internal/v1/policies/:id/plans`, `GET /internal/v1/capabilities`; CLI `patch-policy list` and
+  `patch-policy revoke --id --reason`.
+
+#### Changed
+
+- The ring gate moved from `patching.service.ts` into `actions/patch-policy.ts` (`evaluateRingGate`), so the portal
+  and the signer apply one rule. It now also holds a ring whose plan still has targets pending or dispatched.
+- A deployment's update class name is the one its classification id means, never the device's own label for it.
+- A deployment proposed by a policy can't have a ring requested by hand (`POLICY_DEPLOYMENT`); pause or cancel it,
+  or revoke the policy.
+
+#### Security
+
+- **Revocation design: one-way, held by the signer, fail closed.** The portal never asks the signer "is this still
+  active?" in a way it could answer for itself.
+  - Revoking (fresh sign-in) marks the portal's row `REVOKED` at once, so the sweep stops proposing even if the
+    signer is unreachable. It also cancels plans not yet delivered and closes the policy's open deployments, then
+    asks the signer to revoke.
+  - The sweep keeps asking until the signer confirms (`signerRevokedAt`).
+  - The signer's operator can revoke from the CLI too.
+  - Either way the signer writes `revocations/<id>.json` with `wx`. It is never rewritten and is merged into the
+    policy on every read, so the CLI and the running server can't race each other into un-revoking it. Every later
+    plan is refused `policy_revoked`.
+  - Already-signed plans stay valid until their window closes. The portal cancels their delivery, but a computer
+    holding one can still run it inside its window.
+- Creating or revoking a policy needs `assertFresh`. There is no approve, sign, activate or un-revoke route, in the
+  portal or in its signer client.
+- **Residual risk, stated plainly:** agents don't sign their results. For rings after the canary, the portal relays
+  the previous ring's results and scans as evidence. A compromised portal that forges a whole canary success could
+  start ring 1 early. It still can't widen the computers, classes, KBs, window or ring order, or keep using a revoked
+  or expired policy.
+- Invariants **§21** (§19 and §20 were already taken by 0.30.1 and 0.31). It checks:
+  - no approve or sign route;
+  - the signer client can't approve or un-revoke;
+  - create and revoke need fresh authentication;
+  - the signer evaluates before signing;
+  - every refusal code is present;
+  - ring order comes from the signer's ledger;
+  - revocation is write-once;
+  - the pause is consulted on policy routes;
+  - the sweep can be switched off and never runs twice at once;
+  - one proposal per window;
+  - the e2e and docs stacks run with the sweep off;
+  - a manual install never passes a policy;
+  - a person can't request a ring beside a policy;
+  - `ACTION_NOT_DIRECT` holds;
+  - `reboot` is `never`.
+
+  §14 now admits `../actions/patch-policy` in the signer and holds `patch-policy.ts` and `posture.ts` to the
+  no-Nest/no-Prisma rule. §15's closed-params check covers the optional `allow` and its closed keys.
+
+#### Not done
+
+- **Reboot: deferred.** Policies and manual installs keep `reboot: "never"`. A restart rule needs a full §15 change
+  to the agent's closed parameters, plus the window, warning and session rules a restart needs. That is a separate
+  increment, not a UI switch. "Restart required" still waits for a person.
+- Nothing here has run on a real Windows computer, a real Windows Update service or a real authenticator.
+
+#### Upgrade notes
+
+- **Schema change:** migration `0038_patch_policy_engine` adds:
+  - the `PatchPolicy` table and the `PatchPolicyStatus` and `PatchDeploymentOrigin` enums;
+  - `origin`, `policyId` and `windowKey` on `PatchDeployment`, with a unique `(policyId, windowKey)`;
+  - six `ActivityAction` values.
+
+  Run `prisma migrate deploy`, rsync `prisma/`, and run `npx prisma generate` at the target. No dependency changes.
+- **The approval signer must be reinstalled** from `build-approval-signer.mjs` to support policies. Its bundle now
+  also carries `actions/patch-policy.js` and `patching/posture.js` (still no Nest or Prisma: `--list`). Existing state
+  is kept; the signer adds `policies/` and `revocations/`.
+- **Agents need the 0.32 signed build** to accept a plan carrying `allow`. An older agent refuses it as bad params,
+  so policies only reach computers on the new build. Manual installs carry no `allow` and work on 0.27+ builds.
+- New settings: `PATCH_POLICY_SWEEP` (`off` disables) and `PATCH_POLICY_SWEEP_SECONDS` (default 60). Production has
+  no signer and no signed agents, so all of this is inert there until `docs/patching-setup.md` is followed.
+
+#### Verification
+
+- New `apps/api/scripts/unit-patch-policy.mjs` (114 checks, in CI). It covers:
+  - every evaluator refusal: computer outside the policy, disallowed class or severity, excluded KB, wider filter,
+    outside the window, expired, revoked, ring out of order, canary not effective, altered policy hash, fewer than
+    two approvals, wrong requester, retry limit;
+  - window arithmetic in UTC, Chicago, Kolkata, Chatham, New York, London and Sydney across both DST changes and
+    midnight;
+  - the shared ring gate;
+  - the signer's policy records: quorum, customer sign-off, rejection, lapse, signature tamper, signing under a
+    policy.
+
+  Removing the window check fails 3 of its checks.
+- New `apps/api/scripts/e2e-patch-policies.mjs` (75 checks; its own signer on 3262/3263 and API from dist on 3261,
+  sweep every 2 s; refuses a database whose name lacks scratch/test or that already holds live policies). It drives
+  the portal, the signer and the agent's real decision code against a simulated Windows Update:
+  - pre-flight before and after enrolment;
+  - no Install button on a standard-agent computer, with the reason;
+  - a manual one-computer install through two approvals to effective;
+  - policy create (fresh sign-in, bounds refused) and passkey approval;
+  - the sweep proposing and the signer auto-signing the canary inside the window, with only the allowed class;
+  - the agent installing only that class;
+  - signer refusals of a widened ring, a swapped canary, a disallowed class, a wider filter, an out-of-window plan,
+    an altered digest, a skipped canary, a duplicate canary, a non-author requester, ring 1 before the canary is
+    effective, an expired policy, a revoked policy and a containment pause;
+  - an API restart proposing nothing twice;
+  - ring 1 auto-signed after the canary is confirmed effective;
+  - the deployment completing;
+  - revoke reaching the signer and stopping the sweep;
+  - audit rows.
+
+  It is added to `scripts/run-e2e.sh`, which now exports `PATCH_POLICY_SWEEP=off` for every other suite and scratch
+  API.
+- Go: `TestUpdateAllowIsClosedAndOnlyNarrows`, `TestPolicyPlanFilterAppliesWindowsUpdatesOwnAnswer`,
+  `TestInstallFilteredOnlyNarrows`. `go test ./...` passes.
+- `e2e-staged-patching.mjs` and `e2e-approved-action.mjs` still pass. `docs/API-REFERENCE.md` was regenerated and
+  `--check`ed against the runtime route table (389 routes).
+- Not tested: anything on real Windows, a real authenticator, or a signer on a separate host.
+
+### Integration notes
+- Security invariants are numbered §21 scheduled client updates, §22 reports, §23 script library, §24 Linux agent,
+  §25 patch policies; the maintenance actions extend §14 and §15, and patch policies extend §14 (the signer may load
+  the pure policy module) and §15 (the optional update filter).
+- `scripts/run-e2e.sh` runs every scratch API with `MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off`.
+
+### Upgrade notes (all of 0.32)
+- **Schema change:** migrations `0032_add_device_token_site`, `0033_client_update_policy`, `0034_reports_export_audit`,
+  `0035_script_library` and `0038_patch_policy_engine` (0036 and 0037 were reserved and are unused). Take a
+  `pg_dump` first, then `prisma migrate deploy`, rsync `apps/api/prisma/` to the target and run `prisma generate`
+  there, as `CLAUDE.md` describes.
+- No production dependency changed; the target's `node_modules` stays.
+- The approval signer is a separate install. A new signer build is needed only once one is installed (production
+  has none), for maintenance actions and patch policies.
+- New sweeps default **on** and do nothing without configuration: `CLIENT_UPDATE_SWEEP` (needs an enabled client
+  update policy) and `PATCH_POLICY_SWEEP` (needs an approved patch policy). Set either to `off` to stop it.
+
+---
+
 ## [0.31.0] — 2026-11-11 · *Workbench*
 
 The first increment of the RMM overhaul: the technician's screens, reorganised around the work. The plan and the
