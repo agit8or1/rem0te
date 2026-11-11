@@ -81,14 +81,16 @@ export interface AgentType {
   /** One line on what this means for the technician. */
   explanation: string;
   /**
-   * The standard Linux agent (0.32): it reports heartbeat, inventory and
-   * pending updates and acts on nothing the server sends, so there is no
-   * software list, no event log and nothing to queue on the computer.
+   * The read-only POSIX agent — Linux (0.32) or macOS (0.33): it reports
+   * heartbeat, inventory and pending updates and acts on nothing the server
+   * sends, so there is no software list, no event log and nothing to queue on
+   * the computer.
    */
-  linux?: boolean;
+  readOnlyOs?: 'Linux' | 'macOS';
 }
 
 const isLinux = (platform: string) => platform.startsWith('linux');
+const isMac = (platform: string) => /^(macos|mac|darwin|osx|os x)\b/.test(platform);
 
 /**
  * Which agent the computer runs, from what its heartbeats report.
@@ -98,24 +100,28 @@ const isLinux = (platform: string) => platform.startsWith('linux');
  * a description, not a permission.
  */
 export function agentType(ep: Record<string, unknown>): AgentType {
-  const platform = String(ep.platform ?? '').toLowerCase();
-  // A Linux computer installed from 0.32 on runs the standard Linux agent; one
-  // installed before has RustDesk only and never sends an agent version.
-  if (isLinux(platform) && ep.agentVersion) {
+  const platform = String(ep.platform ?? '').toLowerCase().trim();
+  // A Linux computer installed from 0.32 on, or a Mac installed with sudo from
+  // 0.33 on, runs the read-only agent; one installed before has RustDesk only
+  // and never sends an agent version.
+  const os = isLinux(platform) ? 'Linux' : isMac(platform) ? 'macOS' : null;
+  if (os && ep.agentVersion) {
     return {
       kind: 'standard',
-      label: 'Standard (Linux)',
-      explanation: 'Reports inventory and pending package updates (read-only). No software list or event logs, and it runs nothing the console sends.',
-      linux: true,
+      label: `Standard (${os})`,
+      explanation: os === 'Linux'
+        ? 'Reports inventory and pending package updates (read-only). No software list or event logs, and it runs nothing the console sends.'
+        : 'Reports inventory and the updates macOS last found (read-only). No software list or event logs, and it runs nothing the console sends.',
+      readOnlyOs: os,
     };
   }
-  if (isLinux(platform) || platform === 'macos' || platform === 'mac' || platform === 'darwin') {
+  if (os) {
     return {
       kind: 'rustdesk-only',
       label: 'RustDesk only',
-      explanation: isLinux(platform)
+      explanation: os === 'Linux'
         ? 'Remote access only: installed before the Linux agent existed. Re-run the Linux installer from an enrolment link to add inventory and pending updates.'
-        : 'Remote access only. No inventory, monitoring, event logs or patching on this platform.',
+        : 'Remote access only: installed before the macOS agent existed, or without sudo. Re-run the macOS installer with sudo from an enrolment link to add inventory and pending updates.',
     };
   }
   if (ep.updateChannel === 'signed') {
@@ -137,9 +143,9 @@ export function agentType(ep: Record<string, unknown>): AgentType {
 
 export const reportsInventory = (a: AgentType) => a.kind === 'signed' || a.kind === 'standard' || a.kind === 'unknown';
 /** Installed software and event logs: the Windows agents only. */
-export const reportsWindowsDetail = (a: AgentType) => reportsInventory(a) && !a.linux;
-/** Something the console can queue on the computer (reinstall): not the read-only Linux agent. */
-export const acceptsQueuedWork = (a: AgentType) => reportsInventory(a) && !a.linux;
+export const reportsWindowsDetail = (a: AgentType) => reportsInventory(a) && !a.readOnlyOs;
+/** Something the console can queue on the computer (reinstall): not the read-only Linux or macOS agent. */
+export const acceptsQueuedWork = (a: AgentType) => reportsInventory(a) && !a.readOnlyOs;
 
 // ── Connection status ──────────────────────────────────────────────────────
 

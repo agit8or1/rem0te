@@ -9,7 +9,7 @@ import { checkTagSignature, normalizeFingerprint } from './tag-signature';
 import { Subject } from 'rxjs';
 import { latestRustdeskVersion } from '../common/rustdesk-release';
 import { compareVersions } from '../common/agent-contract';
-import { isLinuxPlatform } from '../common/platform';
+import { readOnlyAgentOs } from '../common/platform';
 
 /** Root-owned; see deploy/sbin/rem0te-rustdesk-server-upgrade. */
 const RUSTDESK_SERVER_UPGRADER = '/usr/local/sbin/rem0te-rustdesk-server-upgrade';
@@ -793,11 +793,13 @@ export class UpdateService {
     });
     if (!nodes.length) throw new NotFoundException('No matching endpoints');
 
-    // Not Linux (0.32): the Linux agent reports its RustDesk version but has
-    // no update path — it acts on nothing the server sends — so a staged
-    // upgrade there would show "applies on the next heartbeat" forever.
+    // Not Linux (0.32) or macOS (0.33): their agents report the RustDesk
+    // version but have no update path — they act on nothing the server sends —
+    // so a staged upgrade there would show "applies on the next heartbeat"
+    // forever. (macOS computers were never updated this way either: before
+    // 0.33 they had no heartbeat at all.)
     const targets = nodes.filter(
-      (n) => !isLinuxPlatform(n.endpoint?.platform) && (!n.version || this.compareVersions(n.version, latest) < 0),
+      (n) => !readOnlyAgentOs(n.endpoint?.platform) && (!n.version || this.compareVersions(n.version, latest) < 0),
     );
 
     // MANUAL (0.32): someone asked, so it goes on the next heartbeat whatever

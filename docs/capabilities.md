@@ -13,33 +13,35 @@ far each part has been tested. "Tested" here means one of three things, and they
 
 ## The agent types
 
-| | **Standard agent** | **Signed agent** (0.27+) | **Standard (Linux)** (0.32+) | **macOS**, and Linux installed before 0.32 | **Quick Connect** |
-|---|---|---|---|---|---|
-| What it is | The Windows install script's scheduled tasks (update channel `legacy`) | The signed `rem0te-agent.exe`, installed from the signed update channel (`signed`) | A POSIX `sh` script and a systemd timer, installed by the Linux installer; read-only | RustDesk plus a one-time registration at install | A one-off RustDesk session, nothing installed |
-| Remote access (RustDesk, launch policy, audit) | Yes | Yes | Yes | Yes | Yes, for that session |
-| Heartbeat, online/offline | Yes | Yes | Yes, every 3 minutes, with the device secret | At install only | No |
-| Inventory (hardware, OS, disks, last boot) | Yes | Yes | Yes: os-release, kernel, uptime, CPU model and load, memory, disks (`df`), logged-on users (`who`), DMI where readable | No | No |
-| Installed software and change history (0.29) | Yes | Yes | No | No | No |
-| Windows event log reading | Yes | Yes | No (a staged query is refused) | No | No |
-| One-click read-only diagnostics (0.31): disk, services, errors, processes, network, DNS, updates, restart | Yes | Yes (the same heartbeat script) | No | No | No |
-| Metric history (0.33): CPU, memory, system disk per heartbeat; each volume per inventory pass | Yes | Yes | Yes | No | No |
-| Processes, Services and Network tabs (0.33): full read-only snapshots | Yes | Yes (the same heartbeat script) | No (its agent reads no diagnostics) | No | No |
-| Monitoring (offline, disk, CPU, memory, services, events, restart pending) | Yes | Yes | Offline, system disk, CPU, memory and restart pending, from the values it reports; **no services or events** | Offline only (it stops heartbeating) | No |
-| **Patches: pending updates, restart pending** | **Yes — read-only**, every 12 h or on *Scan now* | Yes | **Yes — read-only**: `apt list --upgradable`, `dnf -C check-update` or `zypper --no-refresh list-updates`, from the package manager's existing cache; **unknown** with none of them | No | No |
-| Patches: update identities, history, restart sources | No | Yes | No | No | No |
-| Patches: who manages patching (WSUS, Intune, WUfB, ConfigMgr) | **No — shown as Unknown** | Yes | No — shown as Unknown | No | No |
-| Patches: confirmed by a later scan | No | Yes | No | No | No |
-| **Deploying updates** (canary, rings, two approvals) | **No** | Yes, when approvals are configured | **No** | No | No |
-| Approved actions (start the Print Spooler) | No | Yes, when approvals are configured | No | No | No |
-| Maintenance actions (restart an allowlisted service, schedule or cancel a restart, collect logs) | No | Yes (0.32+ agent), when approvals are configured | No | No | No |
-| Password rotation, reinstall, RustDesk client update from the console | Yes | Yes | **No** — the console refuses them; re-run the installer on the computer | No | No |
-| Containment honoured on the device | Server side only | Server side, and the agent checks the signed pause | Server side only (it acts on nothing anyway) | Server side only | Server side only |
+| | **Standard agent** | **Signed agent** (0.27+) | **Standard (Linux)** (0.32+) | **Standard (macOS)** (0.33+) | **RustDesk only**: Linux before 0.32, macOS before 0.33 or without `sudo` | **Quick Connect** |
+|---|---|---|---|---|---|---|
+| What it is | The Windows install script's scheduled tasks (update channel `legacy`) | The signed `rem0te-agent.exe`, installed from the signed update channel (`signed`) | A POSIX `sh` script and a systemd timer, installed by the Linux installer; read-only | A POSIX `sh` script and a LaunchDaemon in `/Library/Rem0te`, installed by the macOS installer run with `sudo`; read-only | RustDesk plus a one-time registration at install | A one-off RustDesk session, nothing installed |
+| Remote access (RustDesk, launch policy, audit) | Yes | Yes | Yes | Yes | Yes | Yes, for that session |
+| Heartbeat, online/offline | Yes | Yes | Yes, every 3 minutes, with the device secret | Yes, every 3 minutes, with the device secret | At install only | No |
+| Inventory (hardware, OS, disks, last boot) | Yes | Yes | Yes: os-release, kernel, uptime, CPU model and load, memory, disks (`df`), logged-on users (`who`), DMI where readable | Yes: `sw_vers`, kernel, boot time (`sysctl`), CPU model and load (`top`), memory (`vm_stat`), volumes (`df`, `mount`), console user, model and serial (`ioreg`, `system_profiler`) | No | No |
+| Installed software and change history (0.29) | Yes | Yes | No | No | No | No |
+| Windows event log reading | Yes | Yes | No (a staged query is refused) | No (a staged query is refused) | No | No |
+| One-click read-only diagnostics (0.31): disk, services, errors, processes, network, DNS, updates, restart | Yes | Yes (the same heartbeat script) | No | No | No | No |
+| Metric history (0.33): CPU, memory, system disk per heartbeat; each volume per inventory pass | Yes | Yes | Yes | Yes | No | No |
+| Processes, Services and Network tabs (0.33): full read-only snapshots | Yes | Yes (the same heartbeat script) | No (its agent reads no diagnostics) | No (its agent reads no diagnostics) | No | No |
+| Monitoring (offline, disk, CPU, memory, services, events, restart pending) | Yes | Yes | Offline, system disk, CPU, memory and restart pending, from the values it reports; **no services or events** | Offline, system disk, CPU and memory; **no services, events or restart pending** | Offline only (it stops heartbeating) | No |
+| **Patches: pending updates, restart pending** | **Yes — read-only**, every 12 h or on *Scan now* | Yes | **Yes — read-only**: `apt list --upgradable`, `dnf -C check-update` or `zypper --no-refresh list-updates`, from the package manager's existing cache; **unknown** with none of them | **Yes — read-only**: the list macOS itself last found (`defaults read com.apple.SoftwareUpdate`), never `softwareupdate`; **unknown** if macOS has not checked within 36 hours. Restart pending: always unknown | No | No |
+| Patches: update identities, history, restart sources | No | Yes | No | No | No | No |
+| Patches: who manages patching (WSUS, Intune, WUfB, ConfigMgr) | **No — shown as Unknown** | Yes | No — shown as Unknown | No — shown as Unknown | No | No |
+| Patches: confirmed by a later scan | No | Yes | No | No | No | No |
+| **Deploying updates** (canary, rings, two approvals) | **No** | Yes, when approvals are configured | **No** | **No** | No | No |
+| Approved actions (start the Print Spooler) | No | Yes, when approvals are configured | No | No | No | No |
+| Maintenance actions (restart an allowlisted service, schedule or cancel a restart, collect logs) | No | Yes (0.32+ agent), when approvals are configured | No | No | No | No |
+| Password rotation, reinstall, RustDesk client update from the console | Yes | Yes | **No** — the console refuses them; re-run the installer on the computer | **No** — the console refuses them; re-run the installer on the computer | No | No |
+| Containment honoured on the device | Server side only | Server side, and the agent checks the signed pause | Server side only (it acts on nothing anyway) | Server side only (it acts on nothing anyway) | Server side only | Server side only |
 
-The standard agent never deploys anything. The Linux agent goes further: it acts on **nothing** the server sends.
-From a heartbeat response it reads only command ids and three fixed command names (inventory refresh, update scan,
-and an event-log query it answers with "Windows-only"); rotations, reinstalls, client updates, monitor queries,
-diagnostics and actions are ignored, and the console refuses to stage the ones it would otherwise accept.
-`scripts/check-security-invariants.mjs` §24 checks this against the script's text.
+The standard agent never deploys anything. The Linux and macOS agents go further: they act on **nothing** the
+server sends. From a heartbeat response they read only command ids and three fixed command names (inventory refresh,
+update scan, and an event-log query they answer with "Windows-only"); rotations, reinstalls, client updates, monitor
+queries, diagnostics and actions are ignored, and the console refuses to stage the ones it would otherwise accept
+(`LINUX_AGENT_READ_ONLY`, `MACOS_AGENT_READ_ONLY`). The two share that code (`posix-agent.ts`), and
+`scripts/check-security-invariants.mjs` §24 (both) and §31 (macOS: no `softwareupdate`, `launchctl`, `defaults
+write`, nothing under `/usr/local`) check it against the scripts' text.
 
 The standard agent never deploys anything. The Patches tab shows what it reports, labelled
 *Standard agent scan (read-only)*, and says that deploying needs the signed agent.
@@ -87,6 +89,7 @@ values.
 | Remote access, launch policy | **Yes** (production fleet) | — | Yes |
 | Standard agent: heartbeat, inventory, update scan | **In production use**, standard channel: observed, not a controlled test | — | Yes |
 | Standard (Linux) agent: heartbeat, inventory, pending updates (0.32) | **No installed Linux endpoint yet** | The real generated script, run unprivileged on a Linux host against a scratch API, reading that host's real `/proc`, `df`, `who` and `apt list`; dnf and zypper from stubs (`e2e-linux-agent.mjs`). Not installed under systemd, not run as root | Yes |
+| Standard (macOS) agent: heartbeat, inventory, pending updates (0.33) | **No Mac yet** — **integration-tested only** | The real generated script against a real API and database, but on Linux: every macOS command (`sw_vers`, `sysctl`, `vm_stat`, `top`, `df`, `mount`, `ioreg`, `system_profiler`, `defaults`, `plutil`) is a stub printing recorded macOS output, and run under dash, `bash --posix` and zsh's sh emulation (`e2e-macos-agent.mjs`, `unit-macos-agent.mjs`). Not run on a Mac, under launchd or as root; the installer's macOS steps are only parsed | Yes |
 | Monitoring collection (services, events, software) | **No** | Under pwsh against stubs (`unit-monitoring.mjs`) | Yes (`e2e-monitoring.mjs`) |
 | One-click diagnostics (the nine catalog checks) | **No** | Parsed by PowerShell's parser and run under pwsh against stubs (`unit-diagnostics-catalog.mjs`) | Yes: real API and database, simulated heartbeat (`e2e-diagnostics-catalog.mjs`) |
 | Signed agent: patch scan, install, restart detection | **No** | Yes: `e2e-staged-patching.mjs` runs the agent's real `internal/patch` code through `rem0te-action-sim` | — |
@@ -117,6 +120,10 @@ These are the remaining steps that need hardware or accounts this repository's C
 
 4. **A disposable Debian or Ubuntu VM and a Fedora or openSUSE VM**, installed from a scratch rem0te's Linux
    installer as root, so the systemd timer, the 0600 secret and `--uninstall` run for real.
+5. **A Mac (Apple silicon, and ideally an Intel one with Homebrew)** installed from a scratch rem0te's macOS
+   installer with `sudo`, so the LaunchDaemon, the root-only secret, the migration of a pre-0.33 secret,
+   `--uninstall`, and the real `sw_vers`, `vm_stat`, `top`, `system_profiler` and `com.apple.SoftwareUpdate`
+   output are exercised. Until then the recorded output the tests use is the only evidence of those formats.
 
-Until those have been run, the "Real Windows" column above stays **No**, and the Linux agent is integration-tested
-only.
+Until those have been run, the "Real Windows" column above stays **No**, and the Linux and macOS agents are
+integration-tested only.

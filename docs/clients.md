@@ -145,6 +145,15 @@ password rotation, reinstall and client updates are done by re-running the
 installer on the computer. Run the installer as root; `--uninstall` removes the
 agent. See [inventory.md](inventory.md#linux-computers-032).
 
+On **macOS** (0.33+), run with `sudo`, the installer adds the same read-only
+agent: a `sh` script in `/Library/Rem0te`, run by the `com.rem0te.agent`
+LaunchDaemon every 3 minutes, with the device secret in
+`/Library/Rem0te/agent.secret` (`root:wheel`, 0600). Pending updates are the
+ones macOS itself last found; the agent never runs `softwareupdate`. Without
+`sudo` the installer registers the computer once, as before. `--uninstall`
+removes the agent and leaves RustDesk. See
+[inventory.md](inventory.md#macos-computers-033).
+
 > **Installs from before v0.8.2 need to be re-run.** They wrote the RustDesk
 > service config to a path the service never reads, so the service ran on
 > defaults pointing at the public `rustdesk.com` rendezvous while every check

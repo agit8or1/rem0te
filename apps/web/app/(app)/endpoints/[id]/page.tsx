@@ -163,8 +163,8 @@ export default function EndpointDetailPage() {
   const showReview = canReview && !reviewError && !!review;
 
   // Only tabs with something real behind them. Software and Event logs come
-  // from the Windows agents; the Linux agent reports inventory and pending
-  // updates (Overview, Patches), and macOS has RustDesk only.
+  // from the Windows agents; the read-only Linux and macOS agents report
+  // inventory and pending updates (Overview, Patches).
   const tabs: WorkspaceTab[] = [
     'overview',
     // Metric history (0.33): from the heartbeat, so any agent that reports — not RustDesk only.

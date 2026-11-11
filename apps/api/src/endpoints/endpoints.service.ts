@@ -18,7 +18,7 @@ import { ActorResolverService } from '../rbac/actor-resolver.service';
 import { describeSchedule, parseSchedule } from '../rbac/schedule';
 import { Prisma } from '@prisma/client';
 import { AGENT_CONTRACT_VERSION, agentMeetsContract } from '../common/agent-contract';
-import { isLinuxPlatform, LINUX_READ_ONLY } from '../common/platform';
+import { readOnlyAgentRefusal } from '../common/platform';
 import type { CreateEndpointDto, UpdateEndpointDto } from './dto/create-endpoint.dto';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
 
@@ -626,7 +626,7 @@ export class EndpointsService {
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
     await this.assertComputerReachable(actor, endpointId);
     await this.admitWrite(actor, endpointId);
-    await this.refuseOnLinux(endpointId, 'Rotating the password from the console');
+    await this.refuseOnReadOnlyAgent(endpointId, 'Rotating the password from the console');
 
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { endpointId }, select: { id: true, agentSecretHash: true },
@@ -1353,15 +1353,15 @@ export class EndpointsService {
   }
 
   /**
-   * Refuse, before anything is staged, a request the Linux agent would ignore
-   * (0.32). It acts on nothing the server sends, so a staged rotation,
-   * reinstall or event-log query would sit there looking accepted.
+   * Refuse, before anything is staged, a request the read-only Linux (0.32)
+   * or macOS (0.33) agent would ignore. It acts on nothing the server sends,
+   * so a staged rotation, reinstall or event-log query would sit there
+   * looking accepted.
    */
-  private async refuseOnLinux(endpointId: string, what: string) {
+  private async refuseOnReadOnlyAgent(endpointId: string, what: string) {
     const ep = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { platform: true } });
-    if (isLinuxPlatform(ep?.platform)) {
-      throw new BadRequestException({ code: LINUX_READ_ONLY.code, message: LINUX_READ_ONLY.message(what) });
-    }
+    const refusal = readOnlyAgentRefusal(ep?.platform, what);
+    if (refusal) throw new BadRequestException(refusal);
   }
 
   /** This server's version — what a freshly generated installer reports. */
@@ -1425,7 +1425,7 @@ export class EndpointsService {
     // Throws on an unknown log name or an out-of-range bound before anything
     // is written, so a rejected request leaves no row behind.
     const validated = this.inventory.validateParams('EVENT_LOG_QUERY', params);
-    await this.refuseOnLinux(id, 'Reading an event log');
+    await this.refuseOnReadOnlyAgent(id, 'Reading an event log');
 
     const cmd = await this.inventory.stage({
       endpointId: id,
@@ -1468,7 +1468,7 @@ export class EndpointsService {
     const endpoint = await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
     await this.admitWrite(actor, id);
-    await this.refuseOnLinux(id, 'Reinstalling the agent from the console');
+    await this.refuseOnReadOnlyAgent(id, 'Reinstalling the agent from the console');
 
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { endpointId: id },

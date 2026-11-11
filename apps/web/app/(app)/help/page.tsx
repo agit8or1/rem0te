@@ -144,7 +144,7 @@ const SECTIONS: Section[] = [
         </p>
         <ol className="list-decimal pl-5 space-y-1.5">
           <li>Choose the business, then a site or none, and who may connect. These are fixed into the link: the machine cannot pick another business or site.</li>
-          <li>Choose the operating system. Windows gets the Rem0te agent; Linux and macOS get remote access only.</li>
+          <li>Choose the operating system. Windows gets the Rem0te agent; Linux and macOS (run with sudo) get a read-only agent that reports inventory and pending updates.</li>
           <li>Make the install command. You are asked to confirm it&apos;s you first, unless you did in the last 10 minutes: a link adds a computer to the business. Your choices are kept while you confirm. Copy the command (or, on Windows, the one-click installer link) and run it on the machine. It works once, expires in 24 hours, and is shown only once.</li>
           <li>Keep the page open. It checks every few seconds and says the device enrolled only when it has.</li>
           <li>It then shows the first health the server has received: online, the agent and its version, and whether the first inventory has arrived. Anything not yet received says so.</li>
@@ -810,6 +810,16 @@ const SECTIONS: Section[] = [
           RustDesk on a Linux computer means re-running the installer there; it has no software list or event logs. Remove
           it with the installer&apos;s <code>--uninstall</code>. More in{' '}
           <Link href="/docs/inventory#linux-computers-032" className="underline text-foreground">Inventory</Link>.
+        </p>
+        <p>
+          From 0.33 the macOS installer does the same when it is run with <code>sudo</code>: a read-only agent in{' '}
+          <code>/Library/Rem0te</code>, run by a LaunchDaemon every 3 minutes, shown as <em>Standard (macOS)</em>. It reports
+          the macOS version, kernel, uptime, CPU, memory, volumes, the console user, the model and serial, the RustDesk
+          version, and the updates macOS itself last found. It never runs <code>softwareupdate</code>: if macOS has not
+          checked in the last 36 hours the scan says <em>unknown</em> rather than showing an old list, and restart pending
+          is always unknown on a Mac. Like the Linux agent it acts on nothing the console sends. It has been tested
+          against recorded macOS output, not yet on a Mac. More in{' '}
+          <Link href="/docs/inventory#macos-computers-033" className="underline text-foreground">Inventory</Link>.
         </p>
         <p>
           From 0.32, a computer&apos;s <em>Patches</em> tab has <strong className="text-foreground">Install updates</strong>{' '}

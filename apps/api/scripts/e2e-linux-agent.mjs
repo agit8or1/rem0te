@@ -111,7 +111,7 @@ const encryptPassword = (text) => {
 // ── The sandbox ─────────────────────────────────────────────────────────────
 // Tools the agent uses. A "minimal" PATH holds links to these only, so the
 // absence of a package manager is real rather than simulated by a flag.
-const TOOLS = ['sh', 'curl', 'sed', 'grep', 'awk', 'tr', 'cut', 'head', 'cat', 'wc', 'stat', 'mktemp', 'rm', 'sleep', 'date', 'uname', 'df', 'readlink', 'nproc', 'hostname'];
+const TOOLS = ['sh', 'curl', 'sed', 'grep', 'awk', 'tr', 'cut', 'head', 'cat', 'wc', 'stat', 'id', 'mktemp', 'rm', 'sleep', 'date', 'uname', 'df', 'readlink', 'nproc', 'hostname'];
 const which = (t) => { try { return execFileSync('sh', ['-c', `command -v ${t}`], { encoding: 'utf8' }).trim(); } catch { return ''; } };
 const MARK_CMDS = ['rustdesk', 'systemctl', 'apt-get', 'reboot', 'shutdown', 'dpkg', 'yum', 'rpm-ostree', 'bash', 'python3', 'wget'];
 

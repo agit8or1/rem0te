@@ -338,8 +338,10 @@ walks through it in six steps on one page:
    different business or site. You can only pick a business you manage; the
    server refuses any other, and a site that is not that business's.
 2. **Operating system.** Windows gets RustDesk and the Rem0te agent (heartbeat,
-   inventory, monitoring, update scans). Linux and macOS get RustDesk and a
-   one-time registration — remote access only.
+   inventory, monitoring, update scans). Linux (0.32) and macOS (0.33, run with
+   `sudo`) get RustDesk and the read-only agent: heartbeat, inventory and
+   pending updates, and nothing the console sends is acted on
+   ([inventory.md](inventory.md)).
 3. **Run the installer.** A one-line command (PowerShell as Administrator, or a
    root shell), and on Windows also a one-click installer link to send to the
    person at the machine. It contains a single-use enrolment token that expires

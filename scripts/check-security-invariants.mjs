@@ -869,15 +869,24 @@ check(
 //     fixed type names, it runs no expression, shell, download or
 //     package-changing command, it reads os-release and its config with sed
 //     (never sources them), keeps the secret out of argv, and refuses a
-//     world-readable secret. The installer writes the secret 0600 and its
-//     --uninstall removes it. Server side: device strings are made inert on
-//     heartbeat and claim, and the console refuses to stage what the Linux
-//     agent would ignore.
+//     world-readable secret or one another account owns. The installer
+//     writes the secret 0600 and its --uninstall removes it. Server side:
+//     device strings are made inert on heartbeat and claim, and the console
+//     refuses to stage what the Linux agent would ignore. Since 0.33 the
+//     parts that touch the secret, the server and its response live in
+//     posix-agent.ts, shared with macOS (§ 31), so both are checked here.
+// The shell text of an agent module: every String.raw template in it, with
+// comment lines dropped (they name what the agent does NOT do).
+const shellCode = (...files) => files.map((f) => [...read(f).matchAll(/String\.raw`([\s\S]*?)`;/g)].map((m) => m[1]).join('\n')).join('\n')
+  .split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX_COMMANDS'];
 {
   const la = read('apps/api/src/public/linux-agent.ts');
-  const tpl = la.slice(la.indexOf('const LINUX_AGENT_TEMPLATE = String.raw`'), la.lastIndexOf('`;'));
-  // Comment lines name what the agent does NOT do; only code is checked.
-  const code = tpl.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  const code = shellCode('apps/api/src/public/linux-agent.ts', 'apps/api/src/public/posix-agent.ts');
+  const build = la.slice(la.indexOf('export function buildLinuxAgentScript('), la.indexOf('}', la.indexOf('export function buildLinuxAgentScript(')));
+  check('the Linux agent is assembled with every shared POSIX guard',
+    POSIX_PARTS.every((p) => build.includes(p)) && /assemblePosixAgent\('linux'/.test(build),
+    `buildLinuxAgentScript must include ${POSIX_PARTS.join(', ')}`);
   check('the Linux agent runs no expression, shell, download or state-changing command',
     code.length > 8000
       && !/\beval\b|^\s*\.\s|\bsource\b|\b(sh|bash|dash) -c\b|\|\s*(sh|bash|dash)\b|\bwget\b|\bpython3?\b|\bperl\b/m.test(code)
@@ -899,6 +908,9 @@ check(
     /case "\$mode" in\s*600\|400\) ;;\s*\*\) log "refusing/.test(code) && /\^https:\/\/\[A-Za-z0-9\.-\]\+/.test(code)
       && /\^http:\/\/\(127\\\.0\\\.0\\\.1\|localhost\)/.test(code),
     'secret must be 600/400; plain http only to loopback');
+  check('the POSIX agents refuse a secret owned by any account but their own',
+    /owner=\$\(file_owner "\$SECRET_FILE"\)\nif \[ -z "\$owner" \] \|\| \[ "\$owner" != "\$\(id -u\)" \]; then\n\s*log "refusing[^\n]*\n\s*exit 1/.test(code),
+    'posix-agent.ts must compare the secret file\'s owner with id -u and exit before sending');
   check('every string the Linux agent sends goes through txt or nm',
     /txt\(\) \{ printf '%s' "\$1" \| tr -cd ' -~' \| tr -d '"\\\\' \| cut -c1-"\$2"; \}/.test(code)
       && /nm\(\) \{ printf '%s' "\$1" \| tr -cd 'A-Za-z0-9\._-' \| cut -c1-"\$2"; \}/.test(code),
@@ -918,11 +930,12 @@ check(
     'heartbeat() must pass its dto through withDeviceText before the node lookup; claim likewise');
   const eps = read('apps/api/src/endpoints/endpoints.service.ts');
   const fn = (name) => eps.slice(eps.indexOf(`async ${name}(`), eps.indexOf(`async ${name}(`) + 900);
-  check('the console refuses to stage for Linux what its agent would ignore',
-    /await this\.refuseOnLinux\(endpointId, /.test(fn('rotateCredential')) && /await this\.refuseOnLinux\(id, /.test(fn('requestAgentReinstall'))
-      && /await this\.refuseOnLinux\(id, /.test(fn('requestEventLog'))
-      && /!isLinuxPlatform\(n\.endpoint\?\.platform\)/.test(read('apps/api/src/admin/update.service.ts')),
-    'rotation, reinstall, event-log query and one-click client update must refuse or skip Linux');
+  check('the console refuses to stage for Linux and macOS what their agents would ignore',
+    /await this\.refuseOnReadOnlyAgent\(endpointId, /.test(fn('rotateCredential')) && /await this\.refuseOnReadOnlyAgent\(id, /.test(fn('requestAgentReinstall'))
+      && /await this\.refuseOnReadOnlyAgent\(id, /.test(fn('requestEventLog'))
+      && /const refusal = readOnlyAgentRefusal\(ep\?\.platform, what\);\s*if \(refusal\) throw new BadRequestException\(refusal\);/.test(eps)
+      && /!readOnlyAgentOs\(n\.endpoint\?\.platform\)/.test(read('apps/api/src/admin/update.service.ts')),
+    'rotation, reinstall, event-log query and one-click client update must refuse or skip Linux and macOS');
 }
 
 // 25. Patch policies and installing from the Patches tab (0.32). A policy is
@@ -1326,6 +1339,62 @@ check(
     posts.length === 1 && /api\.post\(`\/endpoints\/\$\{endpointId\}\/diagnostics\/runs`, \{ key: snapKey \}\)/.test(posts[0])
       && !/>\s*(End task|End process|Kill|Stop|Start|Restart|Disable|Enable)\b/i.test(tabs) && !/dangerouslySetInnerHTML/.test(tabs),
     `writes: ${posts.join(' | ')}`);
+}
+
+// 31. The standard macOS agent (0.33). The Linux agent's rules (§ 24, whose
+//     shared POSIX parts it must include), plus macOS's own ways to change a
+//     machine: it never runs softwareupdate in any form (pending updates come
+//     from macOS's own last check, read with defaults read), and never
+//     launchctl, shutdown, pmset, systemsetup, defaults write, or plutil
+//     other than converting to stdout. It runs as root from /Library/Rem0te
+//     with the system PATH, never from /usr/local (admin-writable with
+//     Homebrew). The installer writes the secret root-only 0600, adopts a
+//     pre-0.33 secret only from a copy root wrote, installs the daemon only
+//     as root, and --uninstall removes the daemon, script, config and secret.
+//     The console refuses for macOS what it refuses for Linux.
+{
+  const ma = read('apps/api/src/public/macos-agent.ts');
+  const code = shellCode('apps/api/src/public/macos-agent.ts', 'apps/api/src/public/posix-agent.ts');
+  const build = ma.slice(ma.indexOf('export function buildMacosAgentScript('), ma.indexOf('}', ma.indexOf('export function buildMacosAgentScript(')));
+  check('the macOS agent is assembled with every shared POSIX guard',
+    POSIX_PARTS.every((p) => build.includes(p)) && /assemblePosixAgent\('macos'/.test(build),
+    `buildMacosAgentScript must include ${POSIX_PARTS.join(', ')}`);
+  check('the macOS agent runs no expression, shell, download or state-changing command',
+    code.length > 8000
+      && !/\beval\b|^\s*\.\s|\bsource\b|\b(sh|bash|dash|zsh) -c\b|\|\s*(sh|bash|dash|zsh)\b|\bwget\b|\bpython3?\b|\bperl\b|\bosascript\b/m.test(code)
+      && !/\bsoftwareupdate\b|\blaunchctl\b|(^|[\s;&|(])(reboot|shutdown|halt|pmset|systemsetup|nvram|diskutil|scutil|open|killall|pkill|networksetup|profiles)(\s|;|$)|\binstaller -|\brustdesk\s+--|\bdefaults (write|delete|import|rename)\b/m.test(code)
+      && (code.match(/\bplutil\b[^\n]*/g) ?? []).every((l) => /plutil -convert xml1 -o - "\$plist"/.test(l))
+      && (code.match(/\bdefaults [a-z]+/g) ?? []).every((l) => l === 'defaults read')
+      && (code.match(/\bcurl -/g) ?? []).length === 1,
+    'the agent must stay read-only: one curl (in post()), defaults read only, plutil to stdout only, and no softwareupdate at all');
+  check('the macOS agent runs with the system PATH only, from /Library/Rem0te',
+    /\nPATH=\/usr\/bin:\/bin:\/usr\/sbin:\/sbin\n/.test(code) && !/\/usr\/local/.test(code)
+      && /export const MACOS_AGENT_DIR = '\/Library\/Rem0te';/.test(ma) && /const SYSTEM_PATH = '\/usr\/bin:\/bin:\/usr\/sbin:\/sbin';/.test(ma)
+      && /<key>PATH<\/key>\s*<string>\$\{SYSTEM_PATH\}<\/string>/.test(ma),
+    'PATH fixed in the script and the LaunchDaemon; no /usr/local anywhere (Homebrew makes it admin-writable)');
+  check('the macOS agent bounds system_profiler and reads nothing else from the response',
+    /bounded "\$TMPD\/sp" system_profiler SPHardwareDataType/.test(code) && (code.match(/system_profiler/g) ?? []).length === 1
+      && !/rotate|updateRustdesk|reinstallAgent|confirm-rotation|diagnostic-result|monitor-report/.test(code),
+    'system_profiler only through bounded(); no other heartbeat field read');
+  const pc = read('apps/api/src/public/public.controller.ts');
+  const mac = pc.slice(pc.indexOf('private buildMacosScript('));
+  check('the macOS installer writes the secret root-only and adopts an old one only from a root-written copy',
+    /AGENT_STATE="\$\{MACOS_AGENT_SECRET\}"/.test(mac) && /\( umask 077; printf '%s' "\\\$\{AGENT_SECRET\}" > "\\\$\{AGENT_STATE\}" \)\n\s*chown root:wheel "\\\$\{AGENT_STATE\}"\n\s*chmod 600 "\\\$\{AGENT_STATE\}"/.test(mac)
+      && /\[ ! -L "\\\$\{f\}" \] && \[ "\$\(stat -f '%u %Lp' "\\\$\{f\}" 2>\/dev\/null\)" = "0 600" \]/.test(mac),
+    'umask 077, chown root:wheel, chmod 600; a legacy secret only if owner 0, mode 600, not a symlink');
+  check('the macOS installer installs the daemon only as root, from a quoted heredoc, and --uninstall removes it all',
+    /if \[ "\\\$\{IS_ROOT\}" = 1 \] && \[ -n "\\\$\{HOST_ADDR\}" \]; then/.test(mac) && /<<'\$\{MACOS_AGENT_HEREDOC\}'/.test(mac)
+      && /rm -f \$\{MACOS_AGENT_PLIST\} \$\{MACOS_AGENT_NEWSYSLOG\}\n\s*rm -f \$\{MACOS_AGENT_PATH\} \$\{MACOS_AGENT_CONF\} \$\{MACOS_AGENT_SECRET\}/.test(mac)
+      && /launchctl bootout system\/\$\{MACOS_AGENT_LABEL\}/.test(mac.slice(0, mac.indexOf('VERSION="'))),
+    'agent block under IS_ROOT; --uninstall boots out the daemon and removes the plist, script, config and secret');
+  check('the installers survive their own random-string pipelines under pipefail',
+    [...pc.matchAll(/< \/dev\/urandom \| head -c \d+[^)\n]*\)/g)].length >= 4
+      && [...pc.matchAll(/< \/dev\/urandom \| head -c \d+[^)\n]*\)/g)].every((m) => / \|\| true\)$/.test(m[0])),
+    'tr < /dev/urandom | head -c N exits 141 (SIGPIPE) under set -o pipefail: end each with || true');
+  const plat = read('apps/api/src/common/platform.ts');
+  check('macOS is a read-only agent platform for every console refusal',
+    /if \(isMacPlatform\(platform\)\) return 'macOS';/.test(plat) && /'MACOS_AGENT_READ_ONLY'/.test(plat),
+    'readOnlyAgentOs must return macOS for a Mac, with its own refusal code');
 }
 
 if (failures.length > 0) {

@@ -163,6 +163,14 @@ jobs:
       - name: Global search tests
         run: node apps/api/scripts/unit-search.mjs
 
+      # The macOS agent (0.33): its awk date conversions (it avoids date(1),
+      # whose BSD and GNU forms differ) against JavaScript over 2,000 instants
+      # in every shell on the runner, the RecommendedUpdates parser, the
+      # read-only platform mapping, and both POSIX agents parsed by sh, dash,
+      # bash --posix and busybox sh.
+      - name: macOS agent tests
+        run: node apps/api/scripts/unit-macos-agent.mjs
+
       # The panel updater's release-tag check (0.30.1): real gpg keys and a
       # real signed tag, one keyring holding the release key AND another, so
       # the pinned check is tested against exactly the case it exists for.
