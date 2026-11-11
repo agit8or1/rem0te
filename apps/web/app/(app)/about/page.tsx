@@ -167,7 +167,7 @@ function UpdatePanel({ isPlatformAdmin }: { isPlatformAdmin: boolean }) {
               )}
             </div>
             {updateInfo.releaseNotes && (
-              <pre className="text-xs text-muted-foreground bg-muted rounded p-2 whitespace-pre-wrap max-h-32 overflow-y-auto">
+              <pre className="text-xs text-muted-foreground bg-muted rounded p-2 whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
                 {updateInfo.releaseNotes.slice(0, 600)}
               </pre>
             )}
@@ -260,7 +260,7 @@ function ChangelogPanel({ isPlatformAdmin }: { isPlatformAdmin: boolean }) {
                   )}
                 </div>
                 {release.notes && (
-                  <pre className="text-xs text-muted-foreground whitespace-pre-wrap">{release.notes.slice(0, 400)}</pre>
+                  <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-words">{release.notes.slice(0, 400)}</pre>
                 )}
               </div>
             ))}

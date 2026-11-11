@@ -51,5 +51,7 @@ Business isolation is covered by an automated suite
 (`scripts/check-security-invariants.mjs`). CI runs the invariants in its `check`
 job, and every end-to-end suite — business isolation among them — in its `e2e`
 job against a disposable Postgres (`scripts/run-e2e.sh`), on every push and pull
-request. Until 0.30.1 the end-to-end suites were run by hand only. Those are
+request. Until 0.30.1 the end-to-end suites were run by hand only. From 0.34 the same job also
+runs the console in a browser (`apps/web/scripts/e2e-ui.mjs`), which starts its own
+API and web server and refuses production ports and any database not named for testing. Those are
 regression tests, not a proof of correctness.

@@ -204,7 +204,8 @@ jobs:
   # suite) against this job's throwaway database, migrated and seeded fresh.
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 60 until 0.34; the browser suite adds a web build and about five minutes.
+    timeout-minutes: 80
     services:
       postgres:
         image: postgres:16
@@ -246,12 +247,37 @@ jobs:
           echo "ACTION_SIM=$RUNNER_TEMP/rem0te-action-sim" >> "$GITHUB_ENV"
       - name: End-to-end suites
         run: scripts/run-e2e.sh
+      # The console in a real browser (0.34). Until now nothing in CI opened a
+      # page: the navigation and search-palette suites needed the docs stack
+      # and ran by hand, and several 0.32/0.33 pages had never been rendered by
+      # any test. e2e-ui.mjs starts its own API and a patched copy of this web
+      # build on 3501/3502 against this job's database, seeds and removes its
+      # own fixtures, and fails on any console error at desktop and 375 px, in
+      # both themes. It runs even when an API suite failed, so one red suite
+      # does not hide the state of the other.
+      - name: Build the web app
+        if: ${{ !cancelled() }}
+        run: pnpm --filter @reboot-remote/web build
+      # The headless shell is what chromium.launch() runs headless; --with-deps
+      # adds the system libraries the runner image does not ship.
+      - name: Install the browser
+        if: ${{ !cancelled() }}
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium-headless-shell
+      - name: UI suite (browser)
+        id: ui
+        if: ${{ !cancelled() }}
+        env:
+          OUT_DIR: ${{ runner.temp }}/ui-screenshots
+        run: node apps/web/scripts/e2e-ui.mjs
       - name: Logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-logs
-          path: .e2e-logs/
+          path: |
+            .e2e-logs/
+            ${{ runner.temp }}/ui-screenshots/
           retention-days: 7
 
   audit:

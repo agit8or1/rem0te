@@ -29,7 +29,8 @@ bundled into `/docs`. Integration work is tracked separately in
 | Monitoring | Global → business → site → computer rules; offline, disk, CPU, memory, services, event patterns, restart pending; dedup (one open alert per problem), hysteresis, cooldowns, site-outage correlation, maintenance windows, 4-level escalation, webhooks, alerts → ClientSt0r tickets | U (91), I (108) — **not R**: the monitor block has never run on real Windows |
 | Audit | Sealed hash chain, insert-only entries, signed checkpoints, off-host export, verification CLI | U (35), I |
 | Containment | Pause actions, remote, updates or integration, per business or globally; three enforcement layers | I (70) |
-| Global search (0.33) | Ctrl+K palette and `GET /search`: devices (name, hostname, RustDesk ID, serial, signed-in user, IP, adapter IPv4, alias), businesses, sites, people and open alerts, eight per group. Each group reuses its list route's where builder and capability; another business's objects are not found even by exact hostname or RustDesk ID; throttled, not audited, query not logged | U (37), I (search 98; business-access 83 after /admin/search was removed); browser 24 (`e2e-search-palette.mjs`, scratch stack: light, dark, phone width) |
+| Global search (0.33) | Ctrl+K palette and `GET /search`: devices (name, hostname, RustDesk ID, serial, signed-in user, IP, adapter IPv4, alias), businesses, sites, people and open alerts, eight per group. Each group reuses its list route's where builder and capability; another business's objects are not found even by exact hostname or RustDesk ID; throttled, not audited, query not logged | U (37), I (search 98; business-access 83 after /admin/search was removed); browser 24 (`e2e-search-palette.mjs`: light, dark, phone width; in CI from 0.34, run by `e2e-ui.mjs`) |
+| Phone-width layout and browser tests (0.34) | Below `md` (768 px) the sidebar is an off-canvas drawer from the top bar's menu button: a Radix dialog named *Main menu*, focus trapped, Esc / tap outside / navigation close it, focus returns to the button. No main page scrolls sideways at 375 px; wide tables scroll in their own container. `e2e-ui.mjs` runs in CI's `e2e` job with no docs stack: its own API and a patched copy of the web build, its own fixtures, desktop and 375 px, light and dark — sign-in, the drawer, Devices → every workspace tab, saved views, bulk selection, Ctrl+K, Add device and API keys through step-up (cancelled, then confirmed), Reports, System status, and a sweep of every menu page — failing on any console error, uncaught exception or unexpected failed request; then the search-palette suite against the same stack | Browser (`e2e-ui.mjs`, CI) — Chromium only; no WebKit/Safari or real-device test |
 | Device sync to ClientSt0r | ClientSt0r's provider syncs computers by API key, scoped to one business | Code-level interop with ClientSt0r 3.17.660 (`INTEGRATION_COORDINATION.md` §8) |
 
 ## Partially working
@@ -73,6 +74,10 @@ bundled into `/docs`. Integration work is tracked separately in
 - *(Global search — built in 0.33, see Working today. Not included: saved searches, searching inside notes, software lists or event logs, and a search index; the fleet is scanned per query.)*
 - ~~Saved device views, device groups in the UI, bulk actions~~ — built in 0.33 (see *Device list* above).
   Not implemented: dynamic (rule-based) groups and membership in more than one group.
+- ~~A usable layout at phone width; browser tests in CI~~ — done in 0.34 (see *Working today*). Not implemented: a
+  touch-first design (pages are made to fit a phone, not redesigned for one), testing in WebKit/Safari or on a real
+  device, and visual-regression comparison of screenshots (the suite takes them but compares nothing).
+  `e2e-navigation.mjs` still needs the docs stack and stays a manual run.
 - ~~Server sizing guidance by endpoint count~~ — done in 0.33: [server-sizing.md](server-sizing.md), from measured
   heartbeat cost and row sizes (I). It found that one API process is near its measured limit at 5,000 computers,
   mostly because every heartbeat starts a `sqlite3` process for the hbbs presence lookup.

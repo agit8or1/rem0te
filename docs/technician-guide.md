@@ -25,6 +25,20 @@ computer in them is fictional.
 If your account has two-factor authentication enabled you are asked for a code
 next. Recovery codes work here too, and each one is single-use.
 
+### On a phone or a narrow window (0.34)
+
+Below 768 px wide (a phone, or a tablet held upright) the menu is not drawn
+beside the page. The **☰ menu button** at the left of the top bar opens it as a
+panel over the page; it holds everything the sidebar holds, including the
+business switcher, the theme and *Sign out*. Choosing a page closes it, and so
+do **Esc**, tapping outside it and the **✕** in its corner. While it is open,
+the keyboard stays inside it and a screen reader treats it as a dialog named
+*Main menu*.
+
+Wide tables — the device list, reports, API keys — scroll sideways inside their
+own box rather than widening the page; swipe the table, not the page. The
+device workspace's tab row scrolls the same way.
+
 ### The dashboard: what to work on (0.31)
 
 Signing in lands you on the **Dashboard**. It answers, from stored data, what is

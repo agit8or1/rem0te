@@ -13,6 +13,10 @@
 # suites are reported as SKIPPED and the run fails — set E2E_ALLOW_SKIP=1 to
 # accept that (never in CI).
 #
+# The browser suite (apps/web/scripts/e2e-ui.mjs, 0.34) is not run from here: it
+# needs a web build and Playwright's browser, and CI runs it as its own step
+# after this one, against the same database.
+#
 # The suites write fixtures. Never point this at a database you care about.
 set -uo pipefail
 

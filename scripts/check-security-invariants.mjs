@@ -611,7 +611,7 @@ check(
 //     touches anything. screenshots.mjs had no such guard and defaulted to
 //     port 3000 — the production web port — until 0.29.
 {
-  for (const f of ['apps/web/scripts/screenshots.mjs', 'apps/web/scripts/capture-media.mjs', 'apps/web/scripts/capture-video.mjs', 'apps/web/scripts/e2e-navigation.mjs', 'apps/web/scripts/e2e-search-palette.mjs']) {
+  for (const f of ['apps/web/scripts/screenshots.mjs', 'apps/web/scripts/capture-media.mjs', 'apps/web/scripts/capture-video.mjs', 'apps/web/scripts/e2e-navigation.mjs', 'apps/web/scripts/e2e-search-palette.mjs', 'apps/web/scripts/e2e-ui.mjs']) {
     const src = read(f);
     check(`${f.split('/').pop()} refuses https and ports 3000/443`, /:\(3000\|443\)\\b/.test(src) && /https:\\\/\\\//.test(src) && /throw new Error\(`Refusing/.test(src), `${f} must throw before capturing against a production-looking WEB_URL`);
   }
@@ -1441,6 +1441,38 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('macOS is a read-only agent platform for every console refusal',
     /if \(isMacPlatform\(platform\)\) return 'macOS';/.test(plat) && /'MACOS_AGENT_READ_ONLY'/.test(plat),
     'readOnlyAgentOs must return macOS for a Mac, with its own refusal code');
+}
+
+// 33. The browser UI suite (0.34). e2e-ui.mjs is the first browser test CI
+//     runs, and it starts a web server, an API and a seeding Prisma client by
+//     itself, on a runner and on the production host alike. Everything that
+//     keeps it off production is a refusal before anything starts, and the
+//     one that matters most is the rewrite: a standalone build carries the API
+//     address it was built with — on this host, the production API on 3001 —
+//     so a copy whose patch silently missed would drive the live API from a
+//     browser seeding fixtures.
+{
+  const ui = read('apps/web/scripts/e2e-ui.mjs');
+  const before = ui.slice(0, ui.indexOf('// ── The stack'));
+  check('e2e-ui.mjs refuses ports 3000, 3001, 443, 4000 and 4001 before it starts anything',
+    /const FORBIDDEN_PORTS = \[3000, 3001, 443, 4000, 4001\];/.test(before)
+      && /for \(const p of \[WEB_PORT, API_PORT\]\) \{\s*if \(!Number\.isInteger\(p\) \|\| FORBIDDEN_PORTS\.includes\(p\)\) throw new Error\(`Refusing/.test(before),
+    'production (3000/3001/443) and the docs stack (4000/4001) are refused for both the web and the API port');
+  check('e2e-ui.mjs refuses a database whose name lacks test or scratch, before Prisma is loaded',
+    /if \(!\/test\|scratch\/\.test\(dbName\)\) throw new Error\(`Refusing/.test(before) && before.indexOf('test|scratch') < before.indexOf('new PrismaClient'),
+    'it migrates, seeds and deletes fixtures');
+  const prep = ui.slice(ui.indexOf('function prepareWeb('), ui.indexOf('function startWeb('));
+  check('e2e-ui.mjs patches a copy of the web build, never the build',
+    /const COPY = mkdtempSync\(/.test(prep) && /cpSync\(standalone, COPY/.test(prep)
+      && (prep.match(/writeFileSync\(/g) ?? []).length === 1 && /for \(const f of files\) \{\s*const before = readFileSync\(f, 'utf8'\);\s*writeFileSync\(f,/.test(prep)
+      && /const files = \[[^\]]+\]\.map\(\(f\) => path\.join\(COPY, f\)\)/.test(prep),
+    'the only write is to files joined from the temporary copy');
+  check('e2e-ui.mjs stops if the build\'s API destination survives the patch',
+    /if \(after\.includes\(`\$\{origin\}\/api\/`\) \|\| !after\.includes\(`\$\{API_ORIGIN\}\/api\/`\)\) throw new Error/.test(prep),
+    'every patched file must lose the old destination and gain the suite\'s own API');
+  check('e2e-ui.mjs runs its API with every background sweep off',
+    /MONITOR_SWEEP: 'off', CLIENT_UPDATE_SWEEP: 'off', PATCH_POLICY_SWEEP: 'off', METRIC_SWEEP: 'off'/.test(ui),
+    'a sweep acts on everything in the database, fixtures included');
 }
 
 if (failures.length > 0) {

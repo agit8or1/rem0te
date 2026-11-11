@@ -31,7 +31,12 @@ type NavItem = {
 /** Whether the Settings group was left open, per browser. A convenience only. */
 const SETTINGS_OPEN_KEY = 'nav.settingsOpen';
 
-export function Sidebar() {
+/**
+ * The main menu. Beside the page from `md` up (the app layout); inside the
+ * off-canvas drawer below it (nav-drawer.tsx), where `className` makes it fill
+ * the drawer instead of the screen height.
+ */
+export function Sidebar({ className }: { className?: string } = {}) {
   const pathname = usePathname();
   const router = useRouter();
   const { resolvedTheme, setTheme } = useTheme();
@@ -213,7 +218,7 @@ export function Sidebar() {
 
 
   return (
-    <aside className="flex h-screen w-60 flex-col border-r bg-background">
+    <aside className={cn('flex h-screen w-60 flex-col border-r bg-background', className)}>
       {/* Logo / branding */}
       <div
         className="flex h-14 items-center gap-2 border-b px-4"

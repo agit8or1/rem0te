@@ -192,10 +192,10 @@ function Monitors({ businessId, ok, fail }: Props) {
 
   return (
     <Card data-testid="mon-rules">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
         <CardTitle className="text-sm">Monitors {businessId ? 'for this business (and inherited)' : '— global, inherited by every business'}</CardTitle>
         {mayHere && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" disabled={recommended.isPending} onClick={() => recommended.mutate()}><Sparkles className="mr-1 h-4 w-4" />Add recommended</Button>
             <Button size="sm" onClick={() => setAdding((x) => !x)}><Plus className="mr-1 h-4 w-4" />New monitor</Button>
           </div>
