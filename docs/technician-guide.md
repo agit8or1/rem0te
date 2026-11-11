@@ -64,8 +64,8 @@ Every item and figure links to where you act on it — the device's Monitoring,
 Patches or Actions tab, the patch deployment, the alerts list. The page polls
 every 30 seconds and says how old its data is. Server health (CPU, memory, disk,
 relay) is not on the dashboard: Platform Admins find it under **Settings →
-System status**. Device locations (the map) are under *Show device locations*
-at the bottom.
+System status**. The device map is at the bottom; *Hide device
+locations* folds it away, and this browser remembers the choice.
 
 ---
 

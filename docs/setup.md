@@ -437,8 +437,8 @@ sudo -u postgres psql reboot_remote -c \
 
 ## GeoIP database (dashboard map)
 
-The dashboard's device map (*Show device locations*, at the bottom of the
-dashboard) resolves addresses offline. The database is ~124 MB
+The dashboard's device map (at the bottom of the dashboard; *Hide device locations* folds it away per browser)
+resolves addresses offline. The database is ~124 MB
 and is **not** in the repository:
 
 ```bash
