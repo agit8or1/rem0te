@@ -77,12 +77,12 @@ effect — by name and kind, with what each watches for in words — and where e
 came from. Its open alerts also show in the attention strip at the top of the
 computer's page. From 0.31 installed software has its own **Software** tab.
 
-![A computer's Monitoring tab: its alerts, the monitors in effect, change history and installed software](screenshots/guide/endpoint-monitoring.png)
+![A computer's Monitoring tab: its open alerts first, the monitors in effect, and change history](screenshots/guide/endpoint-monitoring.png)
 
 1. The **Monitoring** tab on a computer's page (`?tab=monitoring` links straight to it).
-2. Monitors in effect, where each came from, and what the agent last reported for services and event queries.
-3. Changes between inventories.
-4. Installed software, filterable — on the **Software** tab from 0.31.
+2. Its open alerts, first.
+3. Monitors in effect, where each came from, and what the agent last reported for services and event queries.
+4. Changes between inventories. Installed software is on the **Software** tab (`?tab=software`) from 0.31.
 
 ## Alerts
 

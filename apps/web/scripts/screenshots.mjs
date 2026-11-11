@@ -203,9 +203,9 @@ const CALLOUT_PAGES = [
     before: async (page) => { await page.waitForSelector('[data-testid="endpoint-monitoring"]', { timeout: 15_000 }); await page.waitForTimeout(500); },
     callouts: [
       { find: '[role="tab"][data-state="active"]' },
+      { find: '[data-testid="mon-alerts"]' },
       { find: '[data-testid="mon-effect"]' },
       { find: '[data-testid="mon-changes"]' },
-      { find: '[data-testid="mon-software"]' },
     ],
   },
   {
