@@ -707,7 +707,8 @@ const SECTIONS: Section[] = [
           <strong className="text-foreground">Devices</strong> (all devices, your own, adding one),{' '}
           <strong className="text-foreground">Alerts</strong>, <strong className="text-foreground">Patching</strong>,{' '}
           <strong className="text-foreground">Remote Support</strong> (sessions, Quick Connect, support requests and the
-          technician client) and <strong className="text-foreground">Settings</strong>, which holds users, the audit log
+          technician client), <strong className="text-foreground">Reports</strong> (0.32) and{' '}
+          <strong className="text-foreground">Settings</strong>, which holds users, the audit log
           and platform administration. Help and the documentation are at the bottom of the menu.
         </p>
         <p>
@@ -720,6 +721,20 @@ const SECTIONS: Section[] = [
           devices with an update scan under 36 hours old and shows the coverage beside it; with no such scan it says{' '}
           <em>No data</em>. Server health moved to Settings → System status. More in{' '}
           <Link href="/docs/technician-guide" className="underline text-foreground">Technician guide</Link>.
+        </p>
+        <p>
+          <Link href="/reports" className="underline text-foreground">Reports</Link> (0.32) answer four questions from
+          stored data, per business and site: <strong className="text-foreground">Patch compliance</strong> (the
+          dashboard&apos;s definition; devices with a stale scan or none are coverage gaps, never counted as
+          compliant), <strong className="text-foreground">Agent coverage</strong> (agent type and version, devices
+          without a device secret, devices not heard from in a chosen number of days, non-Windows devices with no
+          inventory), <strong className="text-foreground">Alert frequency</strong> over a period, with time to resolve,
+          and <strong className="text-foreground">Offline time</strong>, measured from the Offline monitor&apos;s alerts
+          because the online flag keeps no history. There is no availability percentage: which computers were
+          monitored, and when, is not recorded. Each report shows only what you can already see and needs the
+          permission of its data (View computers, or monitoring:alerts). <em>Export CSV</em> is capped at 10,000
+          rows and recorded in the audit log before the file is sent. Reports are not scheduled or emailed. More in{' '}
+          <Link href="/docs/reports" className="underline text-foreground">Reports</Link>.
         </p>
         <p>
           From 0.28, writes can be <strong className="text-foreground">paused</strong> while an incident is looked at:

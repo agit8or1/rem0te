@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The 0.31 navigation, in a real browser: every sidebar entry and section tab
+ * The 0.31 navigation (and 0.32's Reports), in a real browser: every sidebar entry and section tab
  * leads to a page that renders, each persona sees exactly its entries, the
  * Settings group works, nothing overflows sideways, at desktop and tablet
  * widths, in the light and dark themes. It also writes screenshots to OUT_DIR
@@ -108,9 +108,10 @@ try {
     return u.email;
   };
   const personas = {
-    admin: { email: await mk('admin', { isPlatformAdmin: true }), expect: ['dashboard', 'devices', 'alerts', 'patching', 'remote', 'settings'] },
-    owner: { email: await mk('owner', {}, { roleId: ownerRole.id, capabilities: [] }), expect: ['dashboard', 'devices', 'alerts', 'patching', 'remote', 'settings'] },
-    user: { email: await mk('user', {}, { roleId: userRole.id, capabilities: ['computers:view', 'computers:connect'] }), expect: ['dashboard', 'devices', 'patching', 'remote'] },
+    admin: { email: await mk('admin', { isPlatformAdmin: true }), expect: ['dashboard', 'devices', 'alerts', 'patching', 'remote', 'reports', 'settings'] },
+    owner: { email: await mk('owner', {}, { roleId: ownerRole.id, capabilities: [] }), expect: ['dashboard', 'devices', 'alerts', 'patching', 'remote', 'reports', 'settings'] },
+    // computers:view without monitoring:alerts: the device reports, not the alert ones (0.32).
+    user: { email: await mk('user', {}, { roleId: userRole.id, capabilities: ['computers:view', 'computers:connect'] }), expect: ['dashboard', 'devices', 'patching', 'remote', 'reports'] },
   };
   const anyEndpoint = await prisma.endpoint.findFirst({ where: { customerId: biz.id, status: 'ACTIVE' }, select: { id: true } });
 
@@ -174,6 +175,29 @@ try {
         await follow(page, 'nav[aria-label="Main"] [data-nav="remote"]');
         const tabs = await page.$$eval('[data-section-tabs="remote"] a', (els) => els.map((e) => e.textContent.trim()));
         check(who === 'user' ? tabs.length === 0 : tabs.includes('Sessions') && tabs.includes('Technician client'), who === 'user' ? 'a user with one Remote Support page sees no tab bar' : `Remote Support tabs: ${tabs.join(' · ')}`, tabs.join(' · '));
+      }
+
+      // Reports (0.32): one tab per report the person's permissions allow, each a real page.
+      if (got.includes('reports')) {
+        await follow(page, 'nav[aria-label="Main"] [data-nav="reports"]');
+        const tabs = await page.$$eval('[data-section-tabs="reports"] a', (els) => els.map((e) => e.textContent.trim()));
+        const want = who === 'user' ? ['Patch compliance', 'Agent coverage'] : ['Patch compliance', 'Agent coverage', 'Alert frequency', 'Offline time'];
+        check(JSON.stringify(tabs) === JSON.stringify(want), `Reports tabs: ${want.join(' · ')}`, `got ${tabs.join(' · ')}`);
+        for (const t of tabs) {
+          await follow(page, `[data-section-tabs="reports"] a:text-is("${t}")`);
+          await page.waitForSelector('main h1', { timeout: 15_000 }).catch(() => {});
+          const h = await pageHealth(page);
+          const current = await page.$eval('[data-section-tabs="reports"] a[aria-current="page"]', (e) => e.textContent.trim()).catch(() => null);
+          const refused = await page.evaluate(() => /not available to you|could not be loaded/i.test(document.querySelector('main')?.innerText ?? ''));
+          check(!h.notFound && h.h1 === t && h.overflow <= 1 && current === t && !refused, `Reports → ${t} renders "${h.h1}", is the current tab, and loads`, JSON.stringify({ ...h, refused }));
+        }
+        if (who === 'user') {
+          const h = await visit(page, '/reports/alert-frequency');
+          const refused = await page.evaluate(() => /not available to you/i.test(document.querySelector('main')?.innerText ?? ''));
+          check(h.h1 === 'Alert frequency' && refused, 'a report without its permission says so instead of drawing an empty report', JSON.stringify(h));
+        }
+        const h = await visit(page, '/reports');
+        check(new URL(page.url()).pathname === '/reports/patch-compliance' || h.h1 === 'Patch compliance', '/reports opens the first report', page.url());
       }
 
       // Settings: collapsible, every entry renders, the group stays open on its pages.

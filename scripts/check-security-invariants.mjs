@@ -711,6 +711,45 @@ check(
   check('scratch APIs in run-e2e.sh run without the client-update sweep', /MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off/.test(run), 'it acts on every enabled policy in the database');
 }
 
+// 22. Reports (0.32). A report is a disclosure like a list: every device
+//     query starts from the visibility rule AND-ed (never spread beside
+//     another OR, which is how 0.31's first fix leaked), every alert query
+//     from the alerts list's own rule, each route names its capability, and
+//     an export is capped and audited before it leaves.
+{
+  const rsvc = read('apps/api/src/reports/reports.service.ts');
+  const rctl = read('apps/api/src/reports/reports.controller.ts');
+  const fn = (name, next) => rsvc.slice(rsvc.indexOf(`private ${name}(`), rsvc.indexOf(next, rsvc.indexOf(`private ${name}(`) + 10));
+  const dw = fn('devicesWhere', 'private ');
+  const aw = fn('alertsWhere', 'private ');
+  check('reports: devices start from the visibility rule, AND-ed, with computers:view asserted',
+    /this\.acl\.assertCapability\(actor, CAP\.COMPUTERS_VIEW\);/.test(dw) && /\[this\.acl\.endpointVisibilityWhere\(actor, q\.businessId\), \{ status: 'ACTIVE' \}\]/.test(dw) && /return \{ AND: and \};/.test(dw),
+    'devicesWhere must assert computers:view and AND the visibility fragment');
+  check('reports: alerts start from MonitoringAdminService.alertWhere, AND-ed with device visibility',
+    /this\.monitoring\.alertWhere\(actor, q\.businessId\)/.test(aw) && /\{ OR: \[\{ endpointId: null \}, \{ endpoint: this\.acl\.endpointVisibilityWhere\(actor, q\.businessId\) \}\] \}/.test(aw) && /return \{ AND: and \};/.test(aw),
+    'alertsWhere must call alertWhere and AND the visibility rule');
+  const epQueries = [...rsvc.matchAll(/this\.prisma\.endpoint\.(findMany|groupBy|count|aggregate)\(\{[\s\S]{0,160}/g)].map((m) => m[0]);
+  const alQueries = [...rsvc.matchAll(/this\.prisma\.monitorAlert\.(findMany|groupBy|count|aggregate)\(\{[\s\S]{0,160}/g)].map((m) => m[0]);
+  check('reports: every endpoint query is scoped by devicesWhere and every alert query by alertsWhere',
+    epQueries.length >= 4 && epQueries.every((q) => /this\.devicesWhere\(actor, /.test(q)) && alQueries.length >= 4 && alQueries.every((q) => /this\.alertsWhere\(actor, |\[base, /.test(q))
+      && /const base = this\.alertsWhere\(actor, q\);/.test(rsvc),
+    `endpoint queries ${epQueries.length}, alert queries ${alQueries.length}`);
+  check('reports: the visibility rule is never spread into another object', !/\.\.\.\s*this\.acl\.endpointVisibilityWhere/.test(rsvc), 'spread found');
+  const routes = rctl.split('@Get(').slice(1);
+  check('reports: every route names its capability; every export is throttled',
+    routes.length === 8 && routes.every((r) => /^\s*'[^']+'\)\s*@RequireCapability\(CAP\.(COMPUTERS_VIEW|ALERTS_VIEW)\)/.test(r)) && routes.filter((r) => /export\.csv/.test(r.slice(0, 60))).every((r) => /@RateLimit\(10\)/.test(r.slice(0, 200)))
+      && routes.filter((r) => /^'(alert-frequency|offline-time)/.test(r)).every((r) => /CAP\.ALERTS_VIEW/.test(r.slice(0, 120))),
+    'eight routes, each @RequireCapability; alert reports need ALERTS_VIEW; exports @RateLimit');
+  const ex = rsvc.slice(rsvc.indexOf('async exportCsv('));
+  check('reports: an export is capped, neutralised and audited (logOrFail) before it is returned',
+    /if \(lines\.length > EXPORT_MAX_ROWS\) \{\s*throw new BadRequestException/.test(ex) && /cells\.map\(csvCell\)/.test(ex)
+      && ex.indexOf("await this.audit.logOrFail({\n      action: 'REPORT_EXPORTED'") > 0 && ex.indexOf('logOrFail') < ex.indexOf('return { filename'),
+    'exportCsv must refuse above the cap, quote through csvCell and logOrFail REPORT_EXPORTED before returning');
+  check('reports: a device secret is reported as bound or not, never returned',
+    (rsvc.match(/agentSecretHash/g) ?? []).length === 2 && /rustdeskNode: \{ select: \{ agentSecretHash: true \} \}/.test(rsvc) && /e\.rustdeskNode\.agentSecretHash \? 'bound'/.test(rsvc),
+    'agentSecretHash may appear only in the select and the bound/none mapping');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

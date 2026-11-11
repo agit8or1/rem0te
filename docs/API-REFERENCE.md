@@ -3,7 +3,7 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **387** of them across
+integration, under `/api/integration/v1`). There are **391** of them across
 **49** controllers.
 
 For request and response shapes, worked examples and error codes, see
@@ -125,17 +125,6 @@ Admins and Business Owners are not confined by it; see
 | `PATCH` | `/api/v1/customers/:id/users/:userId/capabilities` | signed in | `USERS_MANAGE` |
 | `POST` | `/api/v1/customers/:id/users/:userId/reset-access` | signed in | `USERS_MANAGE` |
 | `GET` | `/api/v1/customers/capability-catalog` | signed in | — |
-
-## Client updates
-
-`apps/api/src/client-updates/client-updates.controller.ts`
-
-| Method | Path | Access | Capability |
-|---|---|---|---|
-| `GET` | `/api/v1/client-updates/computers` | signed in | — |
-| `GET` | `/api/v1/client-updates/policy` | signed in | — |
-| `PUT` | `/api/v1/client-updates/policy` | signed in | — |
-| `DELETE` | `/api/v1/client-updates/policy/sites/:siteId` | signed in | — |
 
 ## Containment
 
@@ -472,6 +461,21 @@ Admins and Business Owners are not confined by it; see
 |---|---|---|---|
 | `GET` | `/api/v1/public/quick-connect` | public | — |
 | `GET` | `/api/v1/public/quick-connect/download/:os` | public | — |
+
+## Reports
+
+`apps/api/src/reports/reports.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/reports/agent-coverage` | signed in | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/reports/agent-coverage/export.csv` | signed in, throttled | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/reports/alert-frequency` | signed in | `ALERTS_VIEW` |
+| `GET` | `/api/v1/reports/alert-frequency/export.csv` | signed in, throttled | `ALERTS_VIEW` |
+| `GET` | `/api/v1/reports/offline-time` | signed in | `ALERTS_VIEW` |
+| `GET` | `/api/v1/reports/offline-time/export.csv` | signed in, throttled | `ALERTS_VIEW` |
+| `GET` | `/api/v1/reports/patch-compliance` | signed in | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/reports/patch-compliance/export.csv` | signed in, throttled | `COMPUTERS_VIEW` |
 
 ## Rollouts
 

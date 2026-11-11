@@ -4,8 +4,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
 import { MonitoringAdminService } from '../monitoring/monitoring-admin.service';
-import { Posture } from '../patching/posture';
-import { buildPatchSummary, STALE_AFTER_MS } from '../patching/summary';
+import { STALE_AFTER_MS } from '../patching/summary';
+import { deviceCompliance, PATCH_COMPLIANCE_DEFINITION, PATCH_INVENTORY_SELECT } from '../patching/compliance';
 import { catalogEntry } from '../actions/catalog';
 import { age, rankQueue, type QueueItem } from './queue';
 
@@ -112,7 +112,7 @@ export class DashboardOverviewService {
           select: {
             id: true, name: true, hostname: true, isOnline: true, lastSeenAt: true,
             customer: { select: { id: true, name: true } },
-            inventory: { select: { patchPosture: true, patchScannedAt: true, pendingUpdates: true, rebootRequired: true, updatesCheckedAt: true, lastBootAt: true } },
+            inventory: { select: PATCH_INVENTORY_SELECT },
           },
         })
       : [];
@@ -148,25 +148,21 @@ export class DashboardOverviewService {
         if (e.customer) offlineByBiz.set(e.customer.id, (offlineByBiz.get(e.customer.id) ?? 0) + 1);
         flag(e.id, 2, e.lastSeenAt ? `Offline, last seen ${age(e.lastSeenAt, now)} ago` : 'Offline, never checked in');
       }
-      const inv = e.inventory;
-      const parsed = Posture.safeParse(inv?.patchPosture);
-      const s = buildPatchSummary({
-        now, posture: parsed.success ? parsed.data : null, postureScannedAt: inv?.patchScannedAt ?? null,
-        basic: inv ? { checkedAt: inv.updatesCheckedAt, rebootRequired: inv.rebootRequired, updates: Array.isArray(inv.pendingUpdates) ? (inv.pendingUpdates as { title: string; kb: string | null; severity: string | null }[]) : [] } : null,
-        lastBootAt: inv?.lastBootAt ?? null, isOnline: e.isOnline, lastSeenAt: e.lastSeenAt, signedCapable: false, outcomes: [],
-      });
+      // The compliance rule is shared with the Patch compliance report
+      // (patching/compliance.ts), so the two can never count differently.
+      const s = deviceCompliance(e.inventory, e, now);
       patch.total++;
-      const at = s.evidence.at;
-      if (s.evidence.freshness === 'none') patch.noScan++;
-      else if (s.evidence.freshness === 'stale') patch.stale++;
+      const at = s.scanAt;
+      if (s.freshness === 'none') patch.noScan++;
+      else if (s.freshness === 'stale') patch.stale++;
       else {
         patch.fresh++;
-        if (s.pendingCount === 0) patch.upToDate++; else patch.needsUpdates++;
+        if (s.state === 'up_to_date') patch.upToDate++; else patch.needsUpdates++;
         if (at && (!patch.oldestFreshScanAt || at < patch.oldestFreshScanAt)) patch.oldestFreshScanAt = at;
       }
       if (at && (!patch.newestScanAt || at > patch.newestScanAt)) patch.newestScanAt = at;
       if (s.rebootRequired) {
-        const stale = s.evidence.freshness !== 'fresh';
+        const stale = s.freshness !== 'fresh';
         restart.push({ device: { id: e.id, name: label(e) }, business: e.customer, source: 'scan', evidenceAt: iso(at), stale });
         flag(e.id, 1, `Restart pending (update scan ${at ? `${age(at, now)} old` : 'of unknown age'}${stale ? ', stale' : ''})`);
       }
@@ -428,7 +424,7 @@ export class DashboardOverviewService {
       restart: visible ? { devices: restart.length, list: restart.slice(0, 10) } : null,
       patch: visible
         ? {
-            definition: `A device is up to date when its latest Windows Update scan is under ${STALE_AFTER_MS / 3_600_000} hours old and lists no pending updates. Compliance counts only devices with such a scan; coverage is how many devices have one.`,
+            definition: PATCH_COMPLIANCE_DEFINITION,
             staleAfterHours: STALE_AFTER_MS / 3_600_000,
             ...patch,
             newestScanAt: iso(patch.newestScanAt), oldestFreshScanAt: iso(patch.oldestFreshScanAt),

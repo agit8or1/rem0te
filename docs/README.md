@@ -30,6 +30,8 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[monitoring.md](monitoring.md)** — monitors (offline, disk, CPU, memory,
   services, event log, pending restart), inheritance, alerts, site outages,
   maintenance windows, escalation and ClientSt0r tickets (0.29).
+- **[reports.md](reports.md)** — patch compliance, agent coverage, alert frequency and offline time per
+  business and site, what each is computed from and what it cannot tell you, and the audited CSV export (0.32).
 - **[tactical-rmm.md](tactical-rmm.md)** — connecting and querying from inside
   Tactical RMM: URL Actions, agent matching, and the Collector Task.
 - **[integration-clientst0r.md](integration-clientst0r.md)** — ClientSt0r ticket

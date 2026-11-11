@@ -3,7 +3,7 @@
  *
  * The sidebar used to list about thirty routes flat, mixing a person's own
  * computers, daily technician work and platform administration. Now it lists
- * the jobs: Dashboard, Devices, Alerts, Patching, Remote Support, and a
+ * the jobs: Dashboard, Devices, Alerts, Patching, Remote Support, Reports, and a
  * Settings group that holds the administration. Pages that belong to one job
  * (all devices, add a device, unassigned…) are tabs of that job, drawn by
  * <SectionTabs> from the same model, so the sidebar and the tabs can never
@@ -12,12 +12,14 @@
  * Every entry still declares who may see it. Hiding an entry is a convenience,
  * never the control: each route and API call checks permissions itself.
  *
- * Automation and Reports are not here yet on purpose: an entry that leads to
- * an empty page is a dead end. They join when they ship.
+ * Automation is not here yet on purpose: an entry that leads to an empty page
+ * is a dead end. It joins when it ships. Reports joined in 0.32; each report
+ * shows only for the capability of the data it summarises (computers:view or
+ * monitoring:alerts), the same rule the API applies.
  */
 import type { LucideIcon } from 'lucide-react';
 import {
-  Activity, Building2, Download, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
+  Activity, BarChart3, BellRing, Building2, Cpu, WifiOff, Download, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
   Monitor, MonitorCheck, MonitorX, PackageCheck, PlayCircle, RefreshCw, Settings, Shield, ShieldCheck, Siren,
   UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock,
 } from 'lucide-react';
@@ -90,6 +92,16 @@ export const NAV: NavSection[] = [
       // The RustDesk client for the technician's own machine: Connect uses it.
       { href: '/downloads', label: 'Technician client', icon: HardDriveDownload, show: all },
     ],
+  },
+  {
+    id: 'reports', label: 'Reports', icon: BarChart3, kind: 'hub',
+    items: [
+      { href: '/reports/patch-compliance', label: 'Patch compliance', icon: ShieldCheck, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
+      { href: '/reports/agent-coverage', label: 'Agent coverage', icon: Cpu, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
+      { href: '/reports/alert-frequency', label: 'Alert frequency', icon: BellRing, show: (c) => c.can(CAP.ALERTS_VIEW) },
+      { href: '/reports/offline-time', label: 'Offline time', icon: WifiOff, show: (c) => c.can(CAP.ALERTS_VIEW) },
+    ],
+    also: ['/reports'],
   },
   {
     id: 'settings', label: 'Settings', icon: Settings, kind: 'group',

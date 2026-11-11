@@ -38,6 +38,7 @@ import { LauncherModule } from './launcher/launcher.module';
 import { EnrollmentModule } from './enrollment/enrollment.module';
 import { NotesModule } from './notes/notes.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { ReportsModule } from './reports/reports.module';
 import { GeoipModule } from './geoip/geoip.module';
 import { AdminModule } from './admin/admin.module';
 import { DiagnosticsModule } from './diagnostics/diagnostics.module';
@@ -106,6 +107,7 @@ import { IntegrationModule } from './integration/integration.module';
     EnrollmentModule,
     NotesModule,
     DashboardModule,
+    ReportsModule,
     GeoipModule,
     AdminModule,
     UpdateRolloutModule,
