@@ -152,6 +152,16 @@ Businesses · users · computers · sessions · remote connections · audit logs
 enrollment tokens · launcher tokens · credentials · Quick Connect · search · notes · sites ·
 API keys · dashboard counts.
 
+The dashboard (`GET /dashboard/overview`, 0.31) adds nothing new to this: each
+section reuses the rule of the page it summarises — devices use the device
+list's visibility (a Business User's granted and company-wide computers, a
+technician's assignment), alerts call the alerts list's own `alertWhere`, an
+approved-action plan is shown only when every computer it names is visible,
+sessions follow the sessions list (narrowed, for anyone but an owner, to
+computers they can see or their own sessions), and activity follows the audit
+page. A section the caller lacks the capability for is `null`, not zero.
+Proven by `apps/api/scripts/e2e-dashboard.mjs`.
+
 Proven by `apps/api/scripts/e2e-business-access.mjs` — 82 server-side checks including direct-URL
 and direct-API cross-business probing in both directions.
 

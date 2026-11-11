@@ -72,8 +72,9 @@ would let a gauge claim a freshness it does not have.
 
 Everything here is still a **snapshot**, not a live feed — a gauge on that card
 is minutes old, not seconds — and every card says when its contents were taken.
-The one genuinely live view in Rem0te is the host health row on the dashboard,
-which describes this server rather than an endpoint.
+The one genuinely live view in Rem0te is the host health on System status
+(Platform Admins; it was on the dashboard until 0.31), which describes this
+server rather than an endpoint.
 
 ---
 

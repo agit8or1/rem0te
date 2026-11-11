@@ -3,7 +3,7 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **375** of them across
+integration, under `/api/integration/v1`). There are **376** of them across
 **47** controllers.
 
 For request and response shapes, worked examples and error codes, see
@@ -145,6 +145,7 @@ Admins and Business Owners are not confined by it; see
 |---|---|---|---|
 | `GET` | `/api/v1/dashboard` | signed in | — |
 | `GET` | `/api/v1/dashboard/map` | signed in | — |
+| `GET` | `/api/v1/dashboard/overview` | signed in | — |
 | `GET` | `/api/v1/dashboard/platform` | signed in | — |
 
 ## Diagnostics
