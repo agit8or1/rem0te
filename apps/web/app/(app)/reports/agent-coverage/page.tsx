@@ -69,7 +69,7 @@ export default function AgentCoveragePage() {
               <Definition>
                 <p>{data.definitions.agent}</p>
                 <p>{data.definitions.deviceSecret}</p>
-                <p><Generated at={data.generatedAt} />.</p>
+                <p>Read from each device&apos;s current record, which data retention never removes, so there is no window. <Generated at={data.generatedAt} />.</p>
               </Definition>
               <Section title="Agent type and version">
                 <Table head={['Agent', 'Version', 'Devices']} empty="No devices."

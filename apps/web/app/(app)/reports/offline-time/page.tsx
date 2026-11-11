@@ -4,8 +4,8 @@ import Link from 'next/link';
 import { PageHeader } from '@/components/common/page-header';
 import { usePermissions, CAP } from '@/lib/auth';
 import {
-  Definition, Empty, FilterBar, Figure, Generated, Refused, Section, Table, ago, duration, where,
-  useReport, useReportFilters, type Facets, type Ref, type ReportFilters,
+  Definition, RetentionNote, Empty, FilterBar, Figure, Generated, Refused, Section, Table, ago, duration, where,
+  useReport, useReportFilters, type Facets, type Ref, type ReportFilters, type RetentionCoverage,
 } from '@/components/reports/report-kit';
 
 /**
@@ -20,7 +20,7 @@ interface Comp {
 }
 interface Totals { computers: number; offlineMinutes: number; episodes: number; stillOffline: number }
 interface Data {
-  generatedAt: string; days: number; from: string; to: string; recordsBeginAt: string | null; definition: string;
+  generatedAt: string; days: number; from: string; to: string; retention?: RetentionCoverage; recordsBeginAt: string | null; definition: string;
   totals: Totals;
   bySite: (Totals & { business: Ref | null; site: Ref | null })[];
   computers: Comp[]; computersTotal: number;
@@ -44,6 +44,7 @@ export default function OfflineTimePage() {
         <>
           <FilterBar facets={data?.facets} filters={filters} set={set} period report="offline-time" params={params} disabled={!t?.computers} />
           {error ? <Refused error={error} /> : null}
+          {data && <RetentionNote r={data.retention} />}
           {data && (
             <Definition>
               <p>{data.definition}</p>

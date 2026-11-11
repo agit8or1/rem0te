@@ -97,6 +97,14 @@ What this cannot tell you, and why there is **no availability percentage**:
 An availability percentage needs the time each computer was monitored, which is not recorded, so any
 percentage would be invented.
 
+## How far back the alert reports can see
+
+Resolved alerts are deleted `RETENTION_ALERT_DAYS` (default 400) days after they were resolved
+([data-retention.md](data-retention.md)). Every alert first raised inside that many days is still stored, so with the
+default the 365-day period is complete. If the setting is lower than the period you choose, Alert frequency and
+Offline time say so above the report, and say how many days they cover. Patch compliance and agent coverage
+read each device's current record, which retention never removes, and have no window.
+
 ## Exporting
 
 Every report has **Export CSV**. The export is the whole report as rows (one per device for patch compliance

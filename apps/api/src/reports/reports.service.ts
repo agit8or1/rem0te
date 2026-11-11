@@ -9,6 +9,7 @@ import { effectiveRules, scopesFor, type RuleLike } from '../monitoring/engine';
 import { STALE_AFTER_MS } from '../patching/summary';
 import { deviceCompliance, tally, PATCH_COMPLIANCE_DEFINITION, PATCH_INVENTORY_SELECT, type DeviceCompliance } from '../patching/compliance';
 import { csvCell, EXPORT_MAX_ROWS } from '../endpoints/endpoint-list.service';
+import { reportCoverage, retentionConfig } from '../retention/retention-policy';
 
 /**
  * Reports (0.32): patch compliance, agent coverage, alert frequency and
@@ -147,6 +148,8 @@ export class ReportsService {
       sites: (ss as (Ref & { customerId: string })[]).map((s) => ({ id: s.id, name: s.name, businessId: s.customerId })).sort((a, b) => a.name.localeCompare(b.name)),
     };
   }
+
+  private readonly alertRetentionDays = retentionConfig(process.env).alertDays;
 
   private head(actor: ActorContext, q: ReportQuery, now: Date) {
     const scope = this.acl.resolveScope(actor, q.businessId);
@@ -359,6 +362,9 @@ export class ReportsService {
     return {
       ...head,
       days: q.days, from: from.toISOString(), to: to.toISOString(),
+      // Resolved alerts older than RETENTION_ALERT_DAYS are deleted (0.34), so
+      // a period longer than that is not complete; the page says so.
+      retention: reportCoverage(this.alertRetentionDays, q.days),
       definitions: {
         raised: 'An alert counts in the period it was first raised. A repeat of the same open problem is one alert (its occurrences are counted on the alert, not here). A site outage and each computer\'s offline alert grouped under it are each counted.',
         resolve: 'Time to resolve is from when the alert was first raised to when it was resolved — by the monitor reading normal again, or by a person. Alerts still open are not in it.',
@@ -467,6 +473,9 @@ export class ReportsService {
     return {
       ...head,
       days: q.days, from: from.toISOString(), to: to.toISOString(),
+      // Resolved alerts older than RETENTION_ALERT_DAYS are deleted (0.34), so
+      // a period longer than that is not complete; the page says so.
+      retention: reportCoverage(this.alertRetentionDays, q.days),
       recordsBeginAt: iso(recordsBeginAt),
       definition: 'Offline time is measured from OFFLINE monitor alerts: from the last heartbeat before the silence to the moment the computer reconnected (or now, if it has not). Only computers with an enabled Offline monitor have records, and only silences longer than that monitor\'s threshold (15 minutes by default). There is no availability percentage: which computers were monitored, and when, is not recorded, so the time under monitoring is unknown.',
       totals: sum(computers),

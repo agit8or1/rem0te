@@ -6,6 +6,7 @@ import { ContainmentModule } from './containment/containment.module';
 import { AuditChainModule } from './audit/audit-chain.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { RetentionModule } from './retention/retention.module';
 import { ClientUpdatesModule } from './client-updates/client-updates.module';
 import { HealthModule } from './health/health.module';
 import { Module } from '@nestjs/common';
@@ -96,6 +97,7 @@ import { IntegrationModule } from './integration/integration.module';
     AuditChainModule,
     MonitoringModule,
     MetricsModule,
+    RetentionModule,
     ClientUpdatesModule,
     HealthModule,
     AuthModule,

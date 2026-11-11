@@ -4,8 +4,8 @@ import Link from 'next/link';
 import { PageHeader } from '@/components/common/page-header';
 import { usePermissions, CAP } from '@/lib/auth';
 import {
-  Definition, Empty, FilterBar, Figure, Generated, Refused, Section, Table, duration, where,
-  useReport, useReportFilters, type Facets, type Ref, type ReportFilters,
+  Definition, RetentionNote, Empty, FilterBar, Figure, Generated, Refused, Section, Table, duration, where,
+  useReport, useReportFilters, type Facets, type Ref, type ReportFilters, type RetentionCoverage,
 } from '@/components/reports/report-kit';
 
 /**
@@ -18,7 +18,7 @@ interface Summary {
   medianResolveMinutes: number | null; meanResolveMinutes: number | null; longestResolveMinutes: number | null;
 }
 interface Data {
-  generatedAt: string; days: number; from: string; to: string;
+  generatedAt: string; days: number; from: string; to: string; retention?: RetentionCoverage;
   definitions: { raised: string; resolve: string };
   totals: Summary;
   byBusiness: (Summary & { business: Ref | null })[];
@@ -50,6 +50,7 @@ export default function AlertFrequencyPage() {
         <>
           <FilterBar facets={data?.facets} filters={filters} set={set} period report="alert-frequency" params={params} disabled={!t?.raised} />
           {error ? <Refused error={error} /> : null}
+          {data && <RetentionNote r={data.retention} />}
           {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
           {data && t && t.raised === 0 && (
             <Empty>No alert was raised in this period for the devices you can see. Alerts are raised by monitors (Settings → Monitoring); a business with no monitors has no alerts to count.</Empty>

@@ -71,6 +71,7 @@ const ORDER = [
   ['API-REFERENCE.md', 'API reference', 'Integrations and API', 'Every route the server exposes, generated from the route table.'],
   ['setup.md', 'Setup and operations', 'Running the server', 'Installing, configuring and operating the server.'],
   ['server-sizing.md', 'Server sizing', 'Running the server', 'CPU, memory, disk and PostgreSQL for 50 to 5,000 computers, with measured heartbeat cost and database growth.'],
+  ['data-retention.md', 'Data retention', 'Running the server', 'What ages out of the database, after how long, what is never removed (the audit log), and how to change it.'],
   ['architecture.md', 'Architecture', 'Running the server', 'How the pieces fit together.'],
 ];
 const badGroup = ORDER.find(([, , g]) => !GROUPS.includes(g));

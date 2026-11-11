@@ -1443,6 +1443,73 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'readOnlyAgentOs must return macOS for a Mac, with its own refusal code');
 }
 
+// 33. Data retention (0.34). One sweep ages out operational history; it must
+//     never become a way to erase evidence or a live record. The audit chain
+//     (ActivityLog, AuditCheckpoint, AuditChainState) is named nowhere in the
+//     sweep — its one audit entry per pass is an insert through AuditService —
+//     and every statement writes only to an allow-listed table. Every
+//     statement names the finished states, so a pending command, an open
+//     diagnostic, an OPEN or ACKNOWLEDGED alert, a live session, or a used
+//     token or grant (offboarding's evidence of access) is never touched.
+//     Every statement is bounded and run through the batch loop.
+//     RETENTION_SWEEP=off stops it, and the status route is a Platform Admin
+//     read with no way to run or change the sweep.
+{
+  const svcRaw = read('apps/api/src/retention/retention.service.ts');
+  const svc = svcRaw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\s\/\/ [^\n`]*$/gm, '');
+  const policy = read('apps/api/src/retention/retention-policy.ts');
+  const ctl = read('apps/api/src/retention/retention.controller.ts');
+  const ALLOWED = ['EndpointCommand', 'DiagnosticRun', 'EndpointChange', 'MonitorAlert', 'MonitorAlertEvent', 'SupportSessionEvent', 'LauncherToken', 'ConnectionGrant', 'PrivilegedActivity'];
+  const writes = [...svc.matchAll(/\b(DELETE FROM|(?<!FOR )UPDATE|INSERT INTO|TRUNCATE)\s+"?([A-Za-z]+)"?/g)].map((m) => [m[1], m[2]]);
+  check('retention: the sweep never names the audit chain, and writes only to allow-listed tables',
+    !/ActivityLog|AuditCheckpoint|AuditChainState|activityLog|auditCheckpoint|auditChainState|TRUNCATE|INSERT INTO/i.test(svc)
+      && writes.length >= 9 && writes.every(([op, t]) => (op === 'DELETE FROM' || op === 'UPDATE') && ALLOWED.includes(t))
+      && !/\$(execute|query)RawUnsafe|\.(delete|deleteMany|update|updateMany|upsert|create|createMany)\(/.test(svc)
+      && (svc.match(/this\.audit\.(log|logOrFail)\(/g) ?? []).length === 1 && /action: 'RETENTION_PRUNED'/.test(svc),
+    `writes: ${writes.map((w) => w.join(' ')).join(' | ')}; the only audit call is one RETENTION_PRUNED insert`);
+  check('retention: the audit log and its checkpoints are evidence the policy never sweeps',
+    /key: 'audit', table: 'ActivityLog', label: '[^']+', class: 'evidence', sweep: 'none'/.test(policy)
+      && /key: 'checkpoints', table: 'AuditCheckpoint', label: '[^']+', class: 'evidence', sweep: 'none'/.test(policy)
+      && /export const NEVER_SWEPT = \['ActivityLog', 'AuditCheckpoint', 'AuditChainState'\] as const;/.test(policy),
+    'ActivityLog and AuditCheckpoint must be class evidence, sweep none');
+  const stmt = (table) => { const i = svc.indexOf(`DELETE FROM "${table}"`) >= 0 ? svc.indexOf(`DELETE FROM "${table}"`) : svc.indexOf(`UPDATE "${table}"`); return i < 0 ? '' : svc.slice(i, svc.indexOf('`', i)); };
+  const alertSel = svc.slice(svc.indexOf('SELECT a."id" FROM "MonitorAlert" a'), svc.indexOf('SKIP LOCKED'));
+  check('retention: nothing open, live or used is ever touched',
+    /const DONE_COMMAND = Prisma\.raw\(`\('SUCCEEDED','FAILED','EXPIRED'\)`\);/.test(svc)
+      && /const DONE_DIAGNOSTIC = Prisma\.raw\(`\('COMPLETED','FAILED','EXPIRED'\)`\);/.test(svc)
+      && /const DONE_SESSION = Prisma\.raw\(`\('SESSION_COMPLETED','FAILED','CANCELED','STATUS_UNKNOWN'\)`\);/.test(svc)
+      && (stmt('EndpointCommand').match(/"status" IN \$\{DONE_COMMAND\}/g) ?? []).length === 2
+      && (stmt('DiagnosticRun').match(/"status" IN \$\{DONE_DIAGNOSTIC\}/g) ?? []).length === 2
+      && /a\."state" = 'RESOLVED'/.test(alertSel) && /k\."state" <> 'RESOLVED'/.test(alertSel)
+      && /DELETE FROM "MonitorAlert" WHERE "state" = 'RESOLVED' AND/.test(svc)
+      && /s\."status"::text IN \$\{DONE_SESSION\}/.test(stmt('SupportSessionEvent'))
+      && ['LauncherToken', 'ConnectionGrant'].every((t) => (stmt(t).match(/"usedAt" IS NULL/g) ?? []).length === 2),
+    'commands/diagnostics finished states twice (outer and inner); alerts RESOLVED, no open child; sessions finished; tokens and grants unused, outer and inner');
+  check('retention: the newest command of each type, and the newest that succeeded, survive at any age',
+    /x\."type" = c\."type"\s+AND \(x\."createdAt", x\."id"\) > \(c\."createdAt", c\."id"\)\)\s+AND \(c\."status" <> 'SUCCEEDED' OR EXISTS/.test(stmt('EndpointCommand'))
+      && /x\."key" = r\."key"\s+AND \(x\."requestedAt", x\."id"\) > \(r\."requestedAt", r\."id"\)\)\s+AND \(r\."status" <> 'COMPLETED' OR EXISTS/.test(stmt('DiagnosticRun')),
+    'the "newer exists" and "newer success exists" conditions');
+  const limits = (svc.match(/LIMIT \$\{n\}/g) ?? []).length, runs = (svc.match(/await run\(\(\) => /g) ?? []).length;
+  check('retention: every statement is bounded and runs through the batch loop',
+    // Eight tables, eight bounded statements; the alert batch's two DELETEs
+    // act on the ids its bounded, locked SELECT returned.
+    limits === 8 && runs === 8 && /= ANY\(\$\{ids\}::text\[\]\)/.test(svc) && /const run = \(one: \(\) => Promise<number>\) => drain\(one, n, k\);/.test(svc)
+      && /for \(let i = 0; i < batches; i\+\+\) \{[\s\S]{0,120}if \(k < batch\) break;/.test(policy)
+      && /batch: \{ def: 2000, min: 1, max: 50_000/.test(policy) && /batches: \{ def: 10, min: 1, max: 100/.test(policy),
+    `${limits} LIMIT \${n}, ${runs} run(); want 8 of each`);
+  const e2e = read('scripts/run-e2e.sh');
+  check('retention: RETENTION_SWEEP=off stops the sweep, and the suites run with it off',
+    /export const sweepEnabled = \(env: Record<string, string \| undefined>\) => env\.RETENTION_SWEEP !== 'off';/.test(policy)
+      && /onModuleInit\(\) \{\s*if \(!this\.enabled\) return;/.test(svc)
+      && /^export RETENTION_SWEEP=off$/m.test(e2e) && /METRIC_SWEEP=off RETENTION_SWEEP=off/.test(e2e),
+    'sweepEnabled, onModuleInit guard, and run-e2e.sh exports it and passes it to the scratch API');
+  check('retention: the status route is a Platform Admin read and nothing else',
+    /@Get\(\)\s*async status\(@Actor\(\) actor: ActorContext, @Query\('fresh'\) fresh\?: string\) \{\s*this\.acl\.assertPlatformAdmin\(actor\);/.test(ctl)
+      && !/@(Post|Put|Patch|Delete)\(/.test(ctl) && (ctl.match(/@Get\(/g) ?? []).length === 1
+      && /private async countOf\(t: TableEntry\)/.test(svcRaw) && !/countOf\([^t)]/.test(svc),
+    'one GET, assertPlatformAdmin first; countOf only takes RETENTION_TABLES entries');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);
