@@ -352,8 +352,17 @@ jobs:
       - name: UI suite (browser)
         id: ui
         if: ${{ !cancelled() }}
+        # Every port the suite listens on, stated (0.35): web and API, the
+        # loopback SMTP sink (Email settings) and the reference ClientSt0r peer
+        # (the History tab's AI summary). The suite's own API runs with every
+        # background sweep off, STALE_SWEEP and SNAPSHOT_SWEEP included (set
+        # in e2e-ui.mjs, checked by the invariants).
         env:
           OUT_DIR: ${{ runner.temp }}/ui-screenshots
+          UI_WEB_PORT: '3501'
+          UI_API_PORT: '3502'
+          UI_SMTP_PORT: '3503'
+          UI_PEER_PORT: '3504'
         run: node apps/web/scripts/e2e-ui.mjs
       - name: Logs
         if: failure()

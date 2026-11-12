@@ -851,9 +851,15 @@ async function devicePageGroups(page, f, vp, label) {
   await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
   await box.locator('a[data-group-kind="rule"]').click();
   await page.waitForURL((u) => u.pathname === '/endpoints' && u.searchParams.get('groupId') === f.onlineRule.id, { timeout: 15_000 }).catch(() => {});
-  // A's online computers: WS-01, 02, 03, 05 and LNX-01 (WS-04 is offline).
-  const n = await rowsSettle(page, 5);
-  check(new URL(page.url()).searchParams.get('groupId') === f.onlineRule.id && n === 5, `${label}: following the rule group lists its five members`, `${page.url()} rows ${n}`);
+  // A's online computers: WS-01, 02, 03, 05 and LNX-01 (WS-04 is offline),
+  // and the chat computer seed035() adds (signed agent, heartbeat now). Named,
+  // not only counted: when the two 0.35 branches met, the count moved from 5
+  // to 6 and only a name says which computer joined.
+  const members = [`${TAG}-WS-01`, `${TAG}-WS-02`, `${TAG}-WS-03`, `${TAG}-WS-05`, `${TAG}-LNX-01`, `${TAG}-CHAT`];
+  const n = await rowsSettle(page, members.length);
+  const body = await page.locator('tbody').innerText().catch(() => '');
+  check(new URL(page.url()).searchParams.get('groupId') === f.onlineRule.id && n === members.length && members.every((m) => body.includes(m)) && !body.includes(`${TAG}-WS-04`),
+    `${label}: following the rule group lists its six members, by name (and not the offline WS-04)`, `${page.url()} rows ${n}: ${members.filter((m) => !body.includes(m)).join(', ') || 'all named'}`);
   await cleanCheck(page, `${label} device groups`);
 
   // A Linux computer: its package manager, not Windows Update.

@@ -2355,6 +2355,14 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       // 0.34 integration: and the four sweeps the other 0.34 branches added.
       && /RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off',/.test(ui),
     'a sweep acts on everything in the database, fixtures included');
+  // 0.35 integration: two more switches arrived (STALE_SWEEP, SNAPSHOT_SWEEP),
+  // each from a different branch. Rather than list them again, every
+  // `X_SWEEP` / `X_SEALER` off switch the API reads must be 'off' here.
+  const switches = [...new Set(walk('apps/api/src').flatMap((f) => [...read(f).matchAll(/\b([A-Z][A-Z_]*(?:SWEEP|SEALER))\s*[!=]==\s*'off'/g)].map((m) => m[1])))].sort();
+  const missing = switches.filter((n) => !new RegExp(`\\b${n}: 'off'`).test(ui));
+  check(`e2e-ui.mjs turns off every sweep switch the API reads (${switches.length})`,
+    switches.length >= 11 && missing.length === 0,
+    `not set to 'off' in e2e-ui.mjs's API env: ${missing.join(', ')}`);
 }
 
 // 45. Chat (0.34). A technician and the person at a computer. Every portal

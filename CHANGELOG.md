@@ -5,6 +5,868 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.35.0] — 2026-11-12 · *Lantern*
+
+The fifth increment of the RMM overhaul. Its theme is a console that tells the truth about what it can see. Four
+parts were built separately from 0.34 and integrated here:
+
+- **An honest online state.** A computer RustDesk can reach whose agent has stopped checking in is now amber
+  *Reachable (RustDesk) · agent silent 12 d*, never a green *Online*. This was reported against a real computer whose
+  agent had been silent for twelve days. The device list, device page, dashboard, map, search and every other list
+  read it the same way.
+- **Device groups as a policy scope.** A static or rule-based group can carry a monitor or an automatic
+  client-update policy, with a priority to settle overlaps. The device page now lists the groups a computer is in.
+- **Snapshots that refresh themselves.** The Processes, Services and Network tabs used to say "Never taken" on almost
+  every computer. The server now asks for them on the heartbeat, every 6 hours and every 5 minutes while a tab is
+  open.
+- **The 0.34 screens, driven in a browser.** Chat, the Run panel, the software catalog, Email settings, scheduled
+  reports, the Agent card, the AI summary and the retention card are now covered by `e2e-ui.mjs` in CI. Doing that
+  found four bugs, which are fixed.
+- **Polish.** The dashboard fits the window, with the map shown. Linux and macOS computers are no longer described as
+  Windows. Pages that had no side padding have it. The drawer and sidebar ink is readable on any accent. Reports gain
+  *Schedule this report*, and the device-list filters work at phone width.
+
+Two migrations (`0057_group_policy_scope`, `0059_auto_snapshots`); no production dependency changed; nothing needs
+the owner's keys. Behaviour changes for API consumers are listed under *Upgrade notes*.
+
+A note on length: 0.34.0's entry was too long for a GitHub release body (about 149,000 characters against GitHub's
+125,000 limit). This entry keeps its core well under 100,000 characters. The detail is in the per-part subsections,
+and nothing was dropped.
+
+### Device-group policies
+
+#### Added
+- **A device group is now a policy scope for monitors and automatic client-update policies.** Until now a monitor
+  could be set globally, for a business, a site or one computer, and a client-update policy only for a business or a
+  site. So "these twelve tills get a stricter disk monitor" or "kiosks never update on their own" meant either a site
+  that did not match reality or a monitor per computer. A static or rule-based group (0.34) can now carry either.
+  - **Precedence, most specific first:** computer > device group > site > business > global. The winner replaces
+    everything below it, the same way a site override always has. For monitors this is decided per key. A group
+    policy that is *off* keeps its computers off even when the business policy is on.
+  - **A computer in several groups.** Every group policy carries a **priority** from 1 to 999, and the lowest wins.
+    Priorities are unique per business (for monitors, per business and key). A clash is refused with
+    `PRIORITY_TAKEN` (409), and the database enforces it with partial unique indexes. If a tie ever reached the
+    resolver, it would be broken by policy id, never by the order rows came back.
+    We chose a priority over refusing overlapping groups because overlap is not a property of the policies. A rule
+    group's members change by themselves: a computer goes offline, or reports a new RustDesk version. A save-time
+    overlap check would be true when it ran and false an hour later.
+  - **Membership is computed, never stored.** A static group's members are its membership rows. A rule group's
+    members are its business AND its rule AND `endpointVisibilityWhere` for the business as a whole, through the
+    device list's own `EndpointListService.evaluateRuleGroups`.
+    - A computer that stops matching loses the group's policy at the next evaluation. The next heartbeat asks it
+      about the inherited monitors instead, and the next sweep closes the group monitor's open alert.
+    - A rule that no longer parses matches nothing.
+    - A rule that picks computers by their **alerts** cannot carry a policy (`GROUP_READS_ALERTS`), because a
+      monitor would then decide its own scope. A group carrying a policy cannot have its rule changed to read alerts.
+  - **Seeing the winner.** The computer's Monitoring tab says where each monitor was set and what it beat ("set for
+    group Tills (priority 2) — ahead of group Kiosks (priority 5) on priority — replacing business Acme").
+    - The Updates card gains a *Client-update policy* row backed by `GET /client-updates/computers/:endpointId/policy`.
+    - Settings → Client updates gains a *Device groups* card (live member counts, precedence order) and a *Policy*
+      column.
+    - Settings → Monitoring takes a group and a priority, and both can be edited.
+  - New route `DELETE /client-updates/policy/groups/:groupId` (step-up required). 474 routes in all.
+  - New page `docs/group-policies.md`. `docs/monitoring.md`, `docs/updates.md`, `/help` and
+    `docs/rmm-gap-analysis.md` were updated.
+
+#### Decided against
+- **Group-scoped notification policies.** Editing a group's rule needs no step-up. If that could change who hears
+  about an alert, it would be a way round §17's fresh-authentication rule on changing who is notified. Group monitors
+  decide what is watched, never who is told.
+- **Group-scoped patch-policy rings.** The approval signer signs a ring plan that names computers, and refuses any
+  computer the approvers did not see. A ring of "group Tills" would either need re-approval every time membership
+  moved, or silently widen what two people approved. Rings stay lists of named computers. Picking a ring's computers
+  from a group as a one-time copy would fit the model, but it is not built.
+- **A per-computer client-update policy.** The one-off is still the Update button.
+
+#### Security
+- Another business's group is a **404** for monitors and for client updates, the same as a made-up id. A trigger
+  (`group_policy_same_business`, 0057) also refuses it in the database.
+- Turning a group client-update policy on needs fresh authentication, as for a business policy, and so does
+  **removing** one. Its computers fall back to a site or business policy that may be on.
+  - Deleting a group that carries a policy is refused (`GROUP_HAS_POLICIES`, 409, with NO ACTION foreign keys
+    underneath), so deleting the group is no way round the step-up.
+  - The client-update controller now passes `isFresh(req)` on three writes, and the existing invariant was updated
+    from 2 to 3.
+- Invariant **§46** has 9 checks (the branch numbered it §46; it keeps it):
+  - membership is never stored and is kept on nothing between ticks;
+  - rule groups go through the list's evaluator with visibility AND-ed;
+  - precedence is never by row order;
+  - the database refuses ties, mixed scopes, cross-business groups and group deletion;
+  - cross-business is a 404;
+  - step-up is needed on enable and remove;
+  - notification stays global or business (§17);
+  - the per-computer route is read through `assertEndpointInScope`.
+
+  Each of the 14 mutations of those guards was caught, and each was restored afterwards.
+
+#### Fixed (found while building this)
+- **The 0033 index `ClientUpdatePolicy_business_row` (`WHERE "siteId" IS NULL`) would have counted every group policy
+  as a second business policy.** The symptom was a 409 on the first group policy. 0057 recreates it with
+  `AND "groupId" IS NULL`.
+
+#### Measured
+`apps/api/scripts/bench-group-policy.mjs` used one business with 5,000 computers and 50 rule groups covering every
+policy-usable condition, with a monitor on each group and a client-update policy on 49. These are medians on the
+development server:
+
+| What | Median | Worst |
+|---|---|---|
+| Membership snapshot | 0.6–0.9 s | — |
+| Monitor sweep (baseline 0.4–0.7 s) | 1.5 s | — |
+| Client-update sweep membership | 0.7 s | — |
+| Heartbeat monitor block, no group monitor of an agent kind | 12 ms | — |
+| Heartbeat monitor block, all 50 groups carrying service monitors | 84 ms | 220 ms |
+| Client-update hold, only while a POLICY request is queued | 41 ms | — |
+| Device page | 92 ms | — |
+
+Both sweeps stay well inside their tick, so membership is computed fresh each tick and not cached.
+
+The heartbeat evaluates only the groups that can change its answer: those carrying a monitor whose key has a
+service or event monitor. Its cost grows with that number, not with the number of computers.
+
+#### Known limits
+- A computer that leaves a group keeps a POLICY update already queued under the group's policy until the next
+  client-update policy save for the business withdraws it. Meanwhile the heartbeat holds it with `policy_off`.
+- The device page shows the winning group and the groups it beat. It does not list every rule group the computer is
+  in.
+- The web pages were type-checked and built, but not driven in a browser.
+
+#### Upgrade notes
+- **Schema change**, migration `0057_group_policy_scope`. It adds `groupId` and `priority` to `MonitorRule` and
+  `ClientUpdatePolicy`, with CHECK constraints, partial unique indexes and the same-business trigger, and it
+  recreates `ClientUpdatePolicy_business_row`.
+  - Run `prisma migrate deploy`.
+  - Rsync `apps/api/prisma/` and run `npx prisma generate` at the target. Without this, the API throws
+    `Unknown field groupId`.
+- No production dependency changed, and no setting was added. Existing policies are untouched: no group policy
+  exists until someone creates one.
+
+#### Verification
+- `unit-group-policy.mjs`, the resolver, precedence, explanation and engine scope keys: **38 passed, 0 failed** (new,
+  in CI).
+- `e2e-group-policies.mjs`, port 3541, added to `run-e2e.sh`: **77 passed, 0 failed**. It covers:
+  - precedence across computer, group, site and business;
+  - multi-group priority conflicts and `PRIORITY_TAKEN`;
+  - a computer leaving a rule group and losing its monitor and client-update policy on the next evaluation;
+  - unreadable and alert-reading groups;
+  - step-up on enable and remove;
+  - group deletion refused;
+  - Business A against B isolation (404s).
+- Existing suites touched by the change, all passing:
+
+  | Suite | Result |
+  |---|---|
+  | `e2e-monitoring` | 108 passed |
+  | `e2e-auto-updates` | 73 passed |
+  | `e2e-dynamic-groups` | 98 passed |
+  | `e2e-device-views` | 142 passed |
+  | `e2e-reports` | 104 passed |
+  | `unit-monitoring` | 91 passed |
+  | `unit-update-window` | 85 passed |
+
+- `check-security-invariants.mjs`: all hold, including §46 (the branch's own count; the integrated count is under *Verification (integrated)*). `check-versions.mjs` passes. `pnpm -r lint`, `tsc
+  --noEmit` in both apps, `nest build` and `next build` all pass.
+- `docs/API-REFERENCE.md` was regenerated and matches the runtime route table (474). The docs bundle was regenerated
+  (39 pages).
+
+### The 0.34 screens, driven in a browser (and what that found)
+
+Several 0.34 screens — the Chat tab, the software catalog and compliance
+report, scheduled reports, Email settings, the Agent card, Agent migrations,
+the History tab's AI summary and the Data retention card — were typechecked
+and built but never opened by a test, and `e2e-navigation.mjs` had been
+extended by four branches without ever being run. Both suites now run, pass,
+and cover them; the browser found four real bugs and three stale tests.
+
+#### Fixed
+- **The Run panel offered Request a run and Revoke on a server with no
+  approval signer.** On an approved version whose allowlist entry the portal
+  had last mirrored as ACTIVE, the panel said "No approval signer is
+  configured on this server, so scripts cannot be run here" and, beside it,
+  showed the run form and *Revoke permanently*; both fail at the signer. The
+  readiness answer (`script-run.service.ts`) now sets `canRun` and
+  `canRevoke` only when a signer is configured, as `canPropose` already did
+  through the panel. With a signer nothing changes (`e2e-script-run` 81/81).
+- **Saving Email settings brought the form back blank.** The form is rebuilt
+  from the cached settings the moment it is cleared, and was cleared before
+  the cache held what had just been saved — so a configured, switched-on relay
+  reappeared as `smtp.example.com`-placeholder fields with *Send email*
+  unticked, one Save away from switching outbound email off. The save now
+  puts its answer into the cache first.
+- **Email's "Send a test email" widened the page at 375 px.** The *To*
+  select's option names the account address in full; with a configured relay
+  (the card only shows then) it pushed `<main>` 58 px sideways. It now shrinks
+  to the screen.
+- **Agent migrations had no menu entry.** `/endpoints/agent-migrations` could
+  be reached only from an Agent card's link, while three docs pages already
+  said "Devices → Agent migrations". It is now a Devices tab, shown to whoever
+  may request a migration (`computers:edit`); the page and its API still need
+  only `computers:view`, and the Agent card still links to it.
+
+#### Tests that were wrong, not the app
+- `e2e-navigation.mjs` expected Settings without *Client updates* (in the menu
+  since 0.32), took the Services tab's sortable *Start mode* column header for
+  an action button, and checked the Business User's Agent card on a computer
+  that user cannot see (it now grants that persona the one computer, removed
+  with the user).
+
+#### Coverage added
+- `e2e-navigation.mjs` (docs stack): the Agent migrations tab and page for
+  each persona (a Business User reaches it by the Agent card's link, with no
+  tab bar); the Agent card on Overview; Software compliance and Scheduled
+  reports content; the Email SMTP form; the Data retention card.
+- `e2e-ui.mjs` (CI, its own stack), at 1440 and 375 px in light and dark, in
+  separate functions (`chatTab`, `scriptRunPanel`, `softwareCatalog`,
+  `emailSettings`, `scheduledReports`, `agentCardAndMigrations`,
+  `aiHistoryPanel`, `retentionCard`):
+  - Chat: start, send, and the receipt moving sent → delivered → shown →
+    read only as a simulated computer acknowledges over the real device
+    routes; presence (*no user*, *window open for ACME\frontdesk*); the
+    person's reply rendered as text; End chat.
+  - The Run panel on an unproposed and an allowlisted approved version, with
+    no signer: says so, offers nothing to propose, request or revoke.
+  - Adding a software catalog entry (pasted hash) through step-up, then the
+    software compliance report listing it.
+  - Email: a loopback relay saved through step-up, the form showing it, and a
+    test email received by a loopback SMTP sink.
+  - A scheduled report created through step-up to a confirmed address.
+  - The Agent card (with an open migration request) and Agent migrations
+    reached from it, counting the request as Pending.
+  - The History tab: "Needs ClientSt0r support for device_timeline_v1", with
+    Generate off, against a reference ClientSt0r peer whose signed
+    capabilities document lists only ticket triage.
+  - The Data retention card, strictly.
+  Every step-up flow first forgets the ten-minute step-up cookie, so each is
+  proven to ask. Any console error or failed request still fails the run.
+- The device side of chat and the SMTP sink moved into
+  `apps/api/scripts/lib/chat-device.mjs` and `lib/smtp-sink.mjs`, shared by
+  `e2e-chat.mjs`, `e2e-email.mjs` and `e2e-ui.mjs`.
+- `UI_COMBOS=desktop/light,…` narrows a debugging run of `e2e-ui.mjs`; a
+  narrowed run always fails.
+
+**Security invariants**: §47 (§46 on the branch) holds the two app fixes (Run panel needs a
+signer to offer a run or revoke; the Email save rebuilds from what was saved)
+and the suite's own hygiene (its SMTP sink and reference peer listen on
+loopback, on ports the refusal list covers; the global SMTP settings it
+changes are restored). Each check was shown to fail with its guard removed.
+§44's port check now also accepts the two new ports in its loop.
+
+**Upgrade notes**: none — no migration, no new route, no new environment
+variable for the server. CI's `e2e-ui.mjs` step now also uses ports 3503
+(SMTP sink) and 3504 (reference peer); `UI_SMTP_PORT` / `UI_PEER_PORT` move
+them.
+
+**Verification**: `e2e-ui.mjs` 610 passed, 0 failed (with the search
+palette suite); `e2e-navigation.mjs` 350 passed, 0 failed (docs stack);
+`e2e-chat` 89/89, `e2e-email` 92/92, `e2e-script-run` 81/81;
+`check-security-invariants` 370 checks; lint, both `tsc --noEmit`,
+`nest build` and `next build` clean.
+
+### Polish: an honest online state, a dashboard that fits the screen, groups on the device page, and smaller fixes
+
+#### Fixed
+- **A computer whose agent had been silent for twelve days showed a green
+  "Online".** It was reported against a real Windows computer: agent 0.18.25,
+  `lastSeenAt` twelve days old, `isOnline = true`, drawn green on the device
+  list, the device page and the dashboard.
+
+  The cause is a design choice, not a bug in the sweep. Since 0.19.3
+  `isOnline` is true when the agent heartbeats **or** the RustDesk server
+  (hbbs) can reach the peer. `markStaleEndpointsOffline` deliberately keeps
+  it true for a silent agent while hbbs reports the peer, because Connect
+  still works. The console drew that flag as one green "Online". So a computer
+  whose monitoring, patching, inventory and actions had stopped twelve days
+  earlier looked as healthy as one checking in now. Its "last seen" was right,
+  but nothing told you to read it.
+
+  **The sweep is unchanged.** What changed is how the console reads the flag.
+  `connectivity` is derived from `isOnline` and `lastSeenAt` against
+  `HEARTBEAT_STALE_MS` (`apps/api/src/common/connectivity.ts`). It has three
+  states:
+
+  | State | Colour | When | Wording |
+  |---|---|---|---|
+  | `online` | green | the agent checked in within the window | Online |
+  | `agent_silent` | amber | `isOnline` with no heartbeat inside the window, never reported included | *Reachable (RustDesk) · agent silent 12 d* |
+  | `offline` | grey | not reachable | Offline |
+
+  The amber tooltip says remote control should work, that monitoring, patching
+  and actions are not reporting, and suggests **Update agent** on the Agent
+  card.
+
+  The API now sends `connectivity` on:
+  - the device list rows and the device page;
+  - `GET /endpoints` and `GET /endpoints/mine`;
+  - search results;
+  - the dashboard overview (attention and recent items) and the map's points
+    and markers;
+  - the RustDesk client-update list, from the endpoint's own heartbeat: a
+    client update is delivered on that heartbeat, so a silent agent never
+    takes one.
+
+  The web derives the same answer, with the same window, for payloads that
+  carry only `isOnline` and `lastSeenAt`.
+
+  Every place that drew "Online" from `isOnline` now uses it:
+  - the device list's dot, *Last seen* and agent cells;
+  - the device page header;
+  - the dashboard tiles, attention and recent lists, and the map (amber
+    markers, with a legend entry);
+  - the Ctrl+K palette;
+  - My computers, Business → computers, Unassigned, Tactical RMM matching,
+    rollout jobs, Client updates, RustDesk updates;
+  - the technician and script-run computer pickers;
+  - Add device's health row, the Patches tab's *Connection* row, Agent
+    migrations, and both Offboarding pages.
+
+  The technician dashboard's count of remote-controllable computers is now
+  labelled *Reachable*, because that is what it counts. The *Sessions* page's
+  green dot is left alone: it marks a computer in an open session.
+
+  **The window is 30 minutes, not 10.** The method default and the web
+  constant both said 10, but the sweep has always been called with 30
+  (`enrollment.controller.ts`, every minute). There is now one constant,
+  `HEARTBEAT_STALE_MS = 30 min`, and the sweep's default reads it, so the
+  sweep behaves exactly as before. The web copy in `apps/web/lib/connectivity.ts`
+  must equal it, which §49 checks. `device-model.ts` re-exports the web copy
+  instead of keeping its own.
+
+- **Any device-list link without `platform` in it crashed the list** (0.34).
+  This included the palette's site and "see all" links, and the new group
+  links. `readUrl`'s `pick` returned `null` for an absent key whose allowed
+  values include `''`. `toParams` then threw on `.trim()` with *Cannot read
+  properties of null*. It now defaults the same way for absent and empty
+  keys.
+
+- **Linux and macOS computers were described as Windows.** The dashboard
+  read "Windows is waiting for a restart" for a Linux server. It now reads
+  "Linux is waiting for a restart", or "the computer is …" when no platform is
+  reported. On the device page:
+  - the Overview's *Updates* row is *Package updates* (Linux), *Software
+    Update* (macOS) or *Windows Update*;
+  - the Patches tab names the package manager (Linux) or Software Update
+    (macOS) as what manages patching, hides *Relevant KBs*, and says
+    deployments are Windows only;
+  - the monitoring *Restart pending* hint and the bulk *Refresh inventory*
+    title are reworded the same way.
+
+- **Patching and Script library pages had no side padding.** Each page
+  supplies its own `p-4 md:p-6` (the shell does not), and eight pages had
+  none:
+  - `/patching`, a deployment, a patch policy;
+  - the script library and a script;
+  - the software catalog, a catalog entry, a software deployment.
+
+  A static scan of every page found no others. The browser suite now checks
+  every swept page's heading is at least 12 px from `<main>`'s edge.
+
+- **The drawer close button and the sidebar header were unreadable on a
+  pale accent.** They used fixed white or grey text. Both now take black or
+  white, whichever contrasts more with the branding accent by WCAG 2.x
+  luminance (`apps/web/lib/contrast.ts`). One of the two always reaches at
+  least 4.58:1 on any opaque colour, which meets AA for normal text. With no
+  accent set, the theme's colours are kept.
+
+#### Changed
+- **The dashboard fits the window.** Before, at 1440 × 900 the page was
+  1586 px tall; at 1366 × 768 it was 1602 px; at 1920 × 1080 it was 1559 px.
+  The map sat at the very bottom, below the fold at every desktop size.
+  - **Now:** the page is exactly 900, 768 and 1080 px at those sizes, map
+    shown. Measured as `<main>`'s scrollHeight against its clientHeight,
+    because `<main>` is the shell's scroller.
+  - **How:** from `lg` the page takes the height under the top bar (`h-12`).
+    Below a single header row and the figures, a 12-column grid with three
+    `minmax(0, …fr)` rows shares what is left. Every card's body scrolls
+    inside the card (`min-h-0`), and no fixed pixel height is left: the map's
+    old `h-[420px]` wrapper is gone.
+  - **Layout:** the figures come first (devices with online / agent silent /
+    offline, critical alerts, restart pending, patch compliance, failed
+    actions, awaiting approval, active sessions). Then *Work on next*,
+    *Devices needing attention* and *Customers affected*. Then the map
+    (two rows tall) beside *Being worked on*, *Patch status*, *Recent
+    activity* and *Your recent devices*.
+  - Hiding the map (still remembered in `dashboard.map`, still shown by
+    default) gives its column to *Work on next*.
+  - Below `lg` the cards stack in the same order and the page scrolls down,
+    never sideways (375 px checked).
+  - **Cleaned up:**
+    - Every card shares one header (title left, its link or note right) and
+      the same padding and empty state.
+    - The *Patch compliance* percentage appeared twice, as a tile and again
+      as a 2xl figure in the card. The card is now *Patch status* and shows
+      only the breakdown, coverage and definition.
+    - The map toggle and the long *Server health (CPU, memory, disk, relay)
+      is on System status* line moved from a row under the cards into the
+      header, as *Hide device locations* and *Server health →*, with the full
+      sentence as its tooltip.
+    - The map card's header and padding match the others.
+    - *Work on next*'s "top N of M" note is shortened, with the rest of the
+      sentence as its tooltip.
+    - No figure, list, link or feature was removed.
+  - `screenshots.mjs` and `capture-media.mjs` find the map by
+    `[data-testid="dashboard-map"]` instead of the removed class. The guide's
+    dashboard images were not regenerated; that needs the docs stack.
+  - A containment banner, when shown, sits above the page and adds its own
+    height, so only then does the page scroll.
+
+#### Added
+- **Groups on the device page.** The Overview's Assignment card lists every
+  group the computer is in: its static groups and the rule groups of its
+  business it matches right now. Each links to the device list filtered by
+  that group (rule groups are marked *rule*).
+  - `GET /endpoints/:id` returns them as `groups`.
+  - They are computed by the device list's own `evaluateRuleGroups`, as the
+    caller and over that one computer. So they are always the list's *Groups*
+    column for the same person: a rule group whose rule reads alerts is left
+    out for someone without *monitoring:alerts*, and a Business User sees
+    what the list shows them.
+  - The scope check still runs first, so another business's computer is a 404
+    and its groups are never computed.
+
+- **Online filter: *Reachable, agent silent*** (`online=silent`, server-side).
+  - `online=online` now means the agent is checking in.
+  - Sorting by Online orders checking in, then agent silent, then offline.
+  - The CSV export gains a **Connectivity** column after *Online*.
+  - The dashboard's Devices tile reads "X online · Y agent silent · Z offline"
+    and turns amber when any are silent, with a tooltip.
+  - `GET /dashboard/overview` `devices` and `GET /dashboard` `endpoints` gain
+    `agentSilent` and `reachable`.
+
+- **Schedule this report.** Patch compliance, agent coverage, alert frequency
+  and offline time each have it beside *Export CSV*. It opens *Reports →
+  Scheduled reports* with the form prefilled from the report's current
+  filters:
+  - the business (a site implies it) and the site;
+  - *silent days* for agent coverage;
+  - the period for alert frequency and offline time: 30 days picks monthly,
+    and any other period gets a note saying a schedule covers 7 or 30 days.
+
+  It is shown only to people who may own a schedule (a Platform Admin, or a
+  Business Owner in their own right), which is the API's rule; a Business User
+  gets 403 from the API and no link. The prefill is cleared after a save.
+
+- **Device-list filters on a phone.** At 375 px the filters sit behind a
+  **Filters (n)** button beside the search, *n* being how many are set. It
+  opens a bottom sheet with the same controls, each applying at once, and
+  *Show N devices* closes it. The table now starts right under the search.
+  Desktop is unchanged.
+
+#### Upgrade notes
+- **`online` on the device list now means "agent checking in".** This applies
+  to the `online=online` filter, saved views and rule groups that use it. A
+  computer reachable only through RustDesk has left them, and
+  `online=silent` finds it.
+- **The dashboard's `online` counts no longer include agent-silent
+  computers.** This covers `GET /dashboard/overview` `devices.online`, the
+  map's `points[].online` and `GET /dashboard` `endpoints.online`. Their
+  `offline` counts still exclude those computers, and `reachable` is the old
+  `online`.
+- **The device-list CSV gains a column** after *Online*. A consumer that reads
+  columns by position must allow for it.
+- No migration. No change to the stale sweep or to `isOnline` in production.
+- **`STALE_SWEEP=off`** (new, default on) stops the stale sweep in that
+  process, as `MONITOR_SWEEP=off` does for monitoring. `e2e-polish` and
+  `e2e-ui` set it, because their agent-silent fixtures need a lasting
+  `isOnline` and there is no hbbs to keep it. The first UI run without it
+  failed 9 checks once the sweep took the fixture offline a minute in. Never
+  set it in production: machines would never go offline.
+
+#### Not done
+- The OFFLINE monitor still keys on `isOnline`, so an agent-silent computer
+  raises no alert.
+- The login and Quick Connect pages still put white text on the accent.
+- The padding of the patch, policy and software *detail* pages is checked by
+  the static scan only, not in the browser.
+- The map's amber marker is covered by §49 and the code, not by an e2e: the
+  suites run with no GeoIP database, so every computer is unlocatable.
+
+#### Invariants
+- **§48 (§46 on the branch), Groups on the device page.** `findOne` checks scope first and takes
+  its groups from `deviceList.groupsOfComputer`, with no rule-group query of
+  its own. That function evaluates only the computer's own business, as the
+  caller, over that one computer, and drops a rule the caller may not
+  evaluate (the alert gate). All 6 mutations were caught.
+- **§49 (§47 on the branch), Reachable is not reporting.**
+  - The API and web windows are equal, the sweep's default is the constant,
+    the sweep is called with no literal, and `device-model` re-exports the web
+    constant.
+  - The list's `online` filter needs `lastSeenAt >= heartbeatCutoff()`,
+    `silent` is the rest of `isOnline`, and rows carry `connectivityOf`.
+  - The overview, `GET /dashboard` and the map count online from the heartbeat
+    cutoff, never from `isOnline`.
+
+  All 8 mutations were caught.
+
+#### Verification
+- `unit-polish.mjs`: 25/25, in CI. It covers:
+  - connectivity's boundary exactly at the window, never-reported, clock
+    skew, and the API and web copies agreeing on 20 cases;
+  - the label and tooltip;
+  - restart and update wording for 9 platforms, API and web;
+  - ink at 4.5:1 or better on all 4096 colours of a 16-step grid (worst
+    4.58:1).
+- `e2e-polish.mjs` (new, port 3551, refuses a non-test database, in
+  `run-e2e.sh`): 49/49. It covers:
+  - groups on the device page for three viewers, matching the list's *Groups*
+    column, the alert-rule group hidden from a Business User, archived and
+    offline cases, edits recomputed, and B's same-named group never shown;
+  - restart wording by OS, and schedule ownership;
+  - connectivity on the list (rows, `online=silent|online|offline`, sort,
+    CSV), the device page, `GET /endpoints`, My computers, search, the
+    overview and `GET /dashboard`, and a rule group on `online=silent`;
+  - business A/B isolation for each of these.
+- Updated: `e2e-device-list` 115/115 (online now excludes agent-silent bulk
+  fixtures; `online=silent` added) and `e2e-dashboard` 53/53 (counts now
+  `online: 4, agentSilent: 1, reachable: 5`).
+- Re-run unchanged: `e2e-dynamic-groups` 98/98, `e2e-search` 113/113,
+  `e2e-endpoint-visibility` 114/114, `e2e-auto-updates` 73/73,
+  `e2e-device-views` 142/142.
+- `e2e-ui.mjs`: 616/616, including the search-palette suite (24). Added at 1440 and 375 px, light and dark:
+  - the device page's group links followed to a five-member list;
+  - a Linux computer's Overview and Patches tab with no Windows Update
+    wording;
+  - the Filters (n) sheet: it fits, applies at once, and its count goes up
+    and back;
+  - the drawer close button and header at 4.5:1 or better on three accents,
+    measured from computed colours;
+  - Schedule this report on four reports, absent on the fifth, prefilled for
+    a business with 14 silent days;
+  - no Schedule link for a Business User;
+  - the padding check on every swept page, plus the scripts, software and
+    schedules pages;
+  - a twelve-day-silent computer drawn amber on the list and device page,
+    with its tooltip, and counted apart on the dashboard;
+  - the dashboard at 1440 × 900 and 1366 × 768, light and dark, map shown:
+    the document's and `<main>`'s scrollHeight are at most the viewport,
+    every grid panel (map included) is inside it, and nothing overflows
+    sideways. At 375 px nothing scrolls sideways and the page stacks.
+- Before and after screenshots (1440 × 900, 1366 × 768, 1920 × 1080, light
+  and dark, plus 375 px) were taken on the scratch stack and looked at.
+- Security invariants hold, version check passes, lint is clean, `tsc` is
+  clean in both apps, and `nest build` and `next build` succeed.
+
+### Automatic snapshots
+
+#### Fixed
+- **The Processes, Services and Network tabs said "Never taken on this computer. Refresh asks for one." on almost
+  every computer.**
+
+  0.33 added the three snapshots (`process_list`, `service_list`, `network_adapters`) as diagnostics-catalog keys,
+  and a snapshot existed only once someone pressed Refresh. Nothing asked for one otherwise, so a computer nobody had
+  opened had none, and an open tab never updated unless a Refresh was in flight (it polled only while one was
+  pending). The owner's report: "values should be refreshed automatically, periodically as well as a manual refresh
+  button." The inventory pass and the CPU/RAM/disk values did not have this problem (see *Checked* below).
+
+#### Added
+- **The server asks for each snapshot itself, on the heartbeat.** When a computer checks in and one of its snapshots
+  is older than its interval, that heartbeat's response asks for it, as an ordinary `DiagnosticRun` with **no
+  requester** (`requestedById` null, the convention `EndpointCommand` already uses for the automatic inventory pass).
+  It is delivered, sanitised, capped at 128 KB and stored exactly like a manual run, and the tab shows it as taken
+  *automatically*. There is no sweep over the fleet and no row per computer per tick: a computer that is not checking
+  in is never asked, so nothing piles up for it. Code: `apps/api/src/diagnostics-catalog/snapshot-schedule.ts`
+  (pure) and `DiagnosticsCatalogService.scheduleAutomatic`, called from `forHeartbeat`.
+  - **Defaults:** every key every **6 hours** (the inventory pass's cadence), and every **5 minutes** while someone
+    has the key's tab open (a snapshot read by someone who can see the computer in the last 90 s; the tab re-reads
+    every 30 s). Why, at 5,000 computers (docs/server-sizing.md): a stored snapshot is ≈ 35 KB of processes, ≈ 41 KB
+    of services and ≈ 2 KB of adapters (computed from the real sanitiser); every 6 h is 60,000 uploads a day, 0.7 a
+    second beside 27.8 heartbeats a second, ≈ 1.6 GB a day, and ≈ 400 MB kept. Processes every hour would be
+    ≈ 4 GB a day for a list stale within minutes, which is why processes get the open-tab interval instead.
+  - **Settings → Monitoring & API → Automatic snapshots** (Platform Admin): the switch, each key's interval (off, or
+    1 hour – 7 days) and the open-tab interval (off, or 3 – 60 minutes). `GET`/`PUT /admin/snapshot-schedule`,
+    `PlatformAdminGuard`. Every change is audited as `SNAPSHOT_SCHEDULE_CHANGED` with before and after.
+  - **Not audited run by run.** At 5,000 computers that would be tens of thousands of entries a day in a log that can
+    never be pruned. The run itself is the record; `auditDone` returns for a requester-less run. Refresh is still
+    audited exactly as before.
+  - **Who is asked:** active, Windows, bound to a device secret, agent **0.33 or later** (0.31–0.32 refuse the
+    snapshot keys, older agents never start them), and checking in (a heartbeat in the last 30 minutes — `HEARTBEAT_STALE_MS`, the header's window; the branch had its own 10 minutes, see *Integration notes*).
+  - **Back-off and pacing.** A failed or expired automatic run is not retried for an hour (or the interval, if
+    shorter) — the trap the inventory pass fell into in 0.32. At most `SNAPSHOT_MAX_PER_MINUTE` (default 120)
+    scheduled runs start per minute in the API process, so the first round after this upgrade (every computer due at
+    once) or after an outage spreads over ≈ 2 hours at 5,000 computers. Open-tab runs are not held back.
+  - **Kept:** only the newest completed automatic run per key per computer; an older one is deleted when a newer one
+    completes, and a failed one when the next is asked for. People's runs are left to the 0.34 retention sweep, which
+    covers automatic runs too. The per-device Refresh rate limit (20 per 10 minutes) now counts people's runs only.
+  - **Off switch:** `SNAPSHOT_SWEEP=off`. `scripts/run-e2e.sh` exports it and `e2e-ui.mjs` sets it for its API;
+    `e2e-auto-snapshots.mjs` turns it on for its own.
+  - **Containment does not apply**: no pause kind covers reading, and docs/containment.md already says viewing keeps
+    working during a pause — the same as the automatic inventory pass and Refresh.
+- **The tab updates itself and says why nothing arrives.** It re-reads every 4 s while a refresh is on its way and
+  every 30 s while open (not while the browser tab is hidden), so a new snapshot appears without a reload. Under the
+  age it says how often the snapshot is refreshed and roughly when the next automatic one is due. When nothing can
+  arrive it says exactly why instead of offering a Refresh that would expire: the agent has not checked in (with
+  "it is still reachable through RustDesk" when `isOnline` comes from RustDesk alone, 0.34), the agent is older than
+  0.33 or never reported a version, the computer is not Windows, or automatic snapshots are off (in Settings, for this
+  key, or by `SNAPSHOT_SWEEP=off`). The snapshot route gains `automatic` (`state`, `reason`, `nextAt`,
+  `intervalMinutes`, `basis`), `agentSilent` and `agentVersion`. The Diagnostics history shows automatic runs as
+  *Automatic*.
+
+#### Checked
+- **CPU, memory and disk on the header and Overview are not affected.** They are the live sample every heartbeat
+  carries (`recordLiveState`, every 3 minutes), the inventory pass behind Specs is already automatic every 6 hours
+  (`stageAutomaticCollections`), the page re-reads it every 30 s, and Specs has its Refresh. Those values go stale
+  only when the agent stops checking in, which the header already says. No change made there.
+
+**Upgrade:** migration **0059_auto_snapshots**: `DiagnosticRun.requestedById` becomes nullable; a CHECK refuses a
+requester-less run of any key but the three snapshot keys; a partial unique index allows one open automatic run per
+key per computer; five `PlatformSettings` columns with range CHECKs; the `SNAPSHOT_SCHEDULE_CHANGED` audit action.
+It is a schema change, so deploy with `prisma migrate deploy` and regenerate the Prisma client at the target
+(CLAUDE.md). After the restart, expect the first round of automatic snapshots to arrive over about two hours on a
+large fleet (`SNAPSHOT_MAX_PER_MINUTE`). No agent change: it uses the 0.33 keys the agent already has.
+
+**Verify:** open a current Windows computer's Processes tab without pressing Refresh: within a few minutes it says
+*Taken just now, automatically* and *Next automatic refresh around …*, without a reload. As a Platform Admin, change
+an interval in Settings → Monitoring & API and find `SNAPSHOT_SCHEDULE_CHANGED` in the audit log. Tests:
+`e2e-auto-snapshots.mjs` 79 passed (stale keys only, intervals, the open-tab interval, failure back-off, expiry, no
+per-run audit, Refresh still audited and sharing an open automatic run, too-old / unknown / Linux / silent computers
+never asked and each tab's reason, A/B isolation including that a refused read does not mark a tab watched, the
+schedule change Platform-Admin-only and audited, the database backstops, `SNAPSHOT_SWEEP=off` and the pacer on
+separate APIs); `unit-snapshot-schedule.mjs` 85 passed (in CI; its two window-boundary checks were moved from 9/11 to 29/31 minutes at integration); `e2e-ui.mjs` gains `snapshotAutoUpdate` — the
+Processes tab, at 1440 × 900 and 375 × 812, shows the new list without a reload after a simulated device completes a
+Refresh and, separately, a run the page did not ask for (the 30 s re-read). The whole browser suite: 451 passed, 0 failed (new list in ≈ 4 s after a Refresh, ≈ 30 s on the re-read, at both widths). Existing suites touched by the change:
+`e2e-diagnostics-catalog.mjs` 70, `e2e-system-inventory.mjs` 68, `e2e-retention.mjs` 43, `unit-diagnostics-catalog`
+75, `unit-system-inventory` 66, `unit-retention` 47 — all passed. Invariant **§50** (§46 on the branch; 8 checks, each proven by
+mutation, 17 mutations caught); §20's requester re-check updated for requester-less runs. **Nothing here ran on
+Windows**: heartbeats and results are posted the way heartbeat.ps1 posts them.
+
+### Integration notes
+
+The parts were merged into `feat/v0.35.0` in this order: group policies, UI coverage, polish, automatic snapshots.
+Each branch started its invariant sections at §46. Here they are §46–§50 in merge order:
+
+| § | Part | Checks |
+|---|---|---|
+| 46 | Device groups as a policy scope | 9 |
+| 47 | UI coverage of the 0.34 screens | 3 |
+| 48 | Groups on the device page | 2 |
+| 49 | Reachable is not reporting | 4 (one added at integration) |
+| 50 | Automatic snapshots | 8 |
+
+The sections above keep each branch's own text, with the numbers corrected. Their check and test counts are each
+branch's own; the integrated counts are under *Verification (integrated)*. These changes were made where the
+branches met:
+
+- **One "agent silent" window, not two.** The snapshot branch wrote its own `AGENT_SILENT_MS = 10 min`. It believed
+  that matched the stale sweep, but the polish branch had established that the sweep has always run with 30. Left
+  as it was, for twenty minutes a computer's header would say *Online* while its Processes tab said the agent was
+  silent.
+  - `AGENT_SILENT_MS` is now `HEARTBEAT_STALE_MS`, imported from `common/connectivity.ts`.
+  - `unit-snapshot-schedule.mjs`: the boundary checks moved from 9/11 to 29/31 minutes, and it now also asserts
+    that the two constants are equal.
+  - §49 gained a check for it, which fails when the literal is restored.
+  - `docs/diagnostics.md` says 30 minutes.
+- **The snapshot tab's wording matches the header's.** When `isOnline`, the "agent silent" reason now starts with
+  the header's own label (*Reachable (RustDesk) · agent silent 12 d. Its agent has not checked in since …, so remote
+  control should work but nothing can be collected until it does.*). Before, it ended with the snapshot branch's own
+  "(it is still reachable through RustDesk)".
+- **`UpdatesCard`** takes both `endpointId`, for group policies' *Client-update policy* row, and `platform`, for
+  polish's *Windows Update* / *Package updates* / *Software Update* label.
+- **`e2e-ui.mjs`** has every function from every branch:
+  - `coverage035` (uicover), and the polish checks (`scheduleLinks`, `memberChecks`, `dashboardFit`,
+    `agentSilentUi`, padding, groups, Linux wording, the Filters sheet, contrast).
+  - `snapshotAutoUpdate` (autosnap). It now honours `UI_COMBOS` and runs for a viewport whenever any combination of
+    that viewport is selected.
+  - Its API runs with `STALE_SWEEP` and `SNAPSHOT_SWEEP` off, beside the nine 0.34 switches.
+  - CI's *UI suite (browser)* step now states all four ports: `UI_WEB_PORT` 3501, `UI_API_PORT` 3502,
+    `UI_SMTP_PORT` 3503, `UI_PEER_PORT` 3504.
+  - The fixture line counts what the merged seed creates: nine devices, three groups, three scripts.
+- **§44 now finds the sweep switches instead of listing them.** Two arrived in 0.35 from two branches. The new check
+  collects every `X_SWEEP` / `X_SEALER` `=== 'off'` switch in `apps/api/src` (eleven) and requires each to be `'off'`
+  in `e2e-ui.mjs`. It fails with `STALE_SWEEP` removed.
+- **Fixed in `e2e-ui.mjs`: `UI_REBUILD=1` could not work.** It built with `INTERNAL_API_URL=''`. `next.config.js`
+  reads that with `??`, so the build got a bare `/api/:path*` destination, and the copy patch stopped with "no /api
+  rewrite found". The variable is now left out of the build's environment, so the build gets the same default
+  destination CI's build has, which the patch then replaces in the copy.
+- **`e2e-ui.mjs`'s rule-group check failed once the branches met, and the test was wrong, not the app.** Polish
+  expected the *Online* rule group to list five members. UI coverage's `seed035()` adds a sixth online computer in
+  the same business (the chat computer, which has a fresh heartbeat). The first integrated run was 833 passed and
+  4 failed, the same check in each of the four combinations, with 6 rows each time. The check now names all six
+  members and asserts that the offline WS-04 is absent. That is stricter than the count it replaces.
+- **Shared lists are unions:** `run-e2e.sh` (group-policies, polish, auto-snapshots), `ci.yml` (`unit-group-policy`,
+  `unit-polish`, `unit-snapshot-schedule`), `rmm-gap-analysis.md` and the docs bundle (39 pages,
+  `group-policies.md` added to ORDER). `help/page.tsx`, `nav-model.ts` and `e2e-navigation.mjs` merged without
+  conflict. Each was checked line by line: every line a branch added is in the final tree, except the ones replaced
+  above.
+- **Cross-references renumbered:** `common/connectivity.ts`, `lib/connectivity.ts` and `docs/architecture.md`
+  (§47 → §49); `snapshot-schedule.ts`, `docs/diagnostics.md` and §20's comment (§46 → §50).
+- **`CLAUDE.md`:**
+  - One paragraph per new section, and §44's note says eleven switches.
+  - *Things that will bite you* now says `STALE_SWEEP=off` (and `SNAPSHOT_SWEEP=off`) must never be set in
+    production.
+- **Branch bases.** The group-policy, UI-coverage and polish branches started at 52108a7, one commit before
+  `feat/v0.34.0`'s tip. That commit (95f7792, the drawer's outside-tap wait in `e2e-ui.mjs`) is kept.
+
+### Verification (integrated)
+
+Run on the final tree, with all four parts merged and the release bookkeeping in place. The database was
+`rem0te_integrate35_test`, created empty for this run.
+
+- **Static:**
+  - `scripts/check-security-invariants.mjs`: **393 checks hold**, including §46–§50. Before 0.35 there were 366.
+  - `check-versions.mjs` passes, and so does `gen-integration-contracts --check` (18 schemas, 11 signed examples).
+  - `pnpm -r lint` exits 0 with no warnings, and `tsc --noEmit` exits 0 in both apps.
+  - `prisma generate`, `nest build` and `next build` succeed. The launcher was not touched.
+- **Prisma:** all migrations, 0000–0059, apply to the empty database (0048 and 0058 are unused). `prisma migrate
+  diff` from the migrated database to `schema.prisma` reports *No difference detected*.
+- **Production manifest:** no branch changed a dependency. `pnpm deploy:manifest` gives 0.35.0 with 30 dependencies
+  and no devDependencies, and `npm install --omit=dev --package-lock-only` exits 0 with 0 vulnerabilities.
+- **Routes:** `docs/API-REFERENCE.md` was regenerated and has 476 routes across 67 controllers. `--check` against the
+  RouterExplorer log of `run-e2e.sh`'s scratch API matches exactly (476 / 476). The docs bundle is 39 pages.
+- **Go agent (`tools/windows-installer`):**
+  - `go test -count=1 ./...` runs 232 tests and subtests, and all pass. This host has no `pwsh` on `PATH` for
+    those tests.
+  - `GOOS=windows GOARCH=amd64 go build ./...` and `go vet ./...` pass.
+  - The `rem0te-release` and `rem0te-action-sim` builds (as CI builds them) succeed.
+- **Unit scripts, every one in `ci.yml`, all exit 0:**
+
+  | Script | Passed |
+  |---|---|
+  | `agent-migration` | 44 |
+  | `ai-timeline` | 24 |
+  | `approval-signer` | 184 |
+  | `audit-chain` | 35 |
+  | `chat` | 52 |
+  | `device-views` | 77 |
+  | `diagnostics-catalog` | 75 |
+  | `dynamic-groups` | 68 |
+  | `email` | 122 |
+  | `group-policy` | 38 |
+  | `hbbs-peer-snapshot` | 29 |
+  | `integration` | 35 |
+  | `macos-agent` | 27 |
+  | `metric-history` | 42 |
+  | `monitoring` | 91 |
+  | `patch-policy` | 163 |
+  | `patch-summary` | 27 |
+  | `polish` | 25 |
+  | `presets` | 26 |
+  | `retention` | 47 |
+  | `script-library` | 125 |
+  | `script-run` | 136 |
+  | `search` | 37 |
+  | `session-mutations` | 30 |
+  | `signed-installer` | 34 (no pwsh on this host for its parse checks; CI has pwsh) |
+  | `snapshot-schedule` | 85 |
+  | `software` | 146 |
+  | `system-inventory` | 66 |
+  | `update-signing` | 16 |
+  | `update-window` | 85 |
+
+  `build-approval-signer --list` also exits 0.
+- **`scripts/run-e2e.sh`:** run in full on the fresh database, with `RELEASE_BIN` / `ACTION_SIM` built from this tree
+  and `PWSH` (PowerShell 7.4.6) set. **All 52 suites passed and none were skipped.** Passed counts:
+
+  | Suite | Passed |
+  |---|---|
+  | `credentials` | 44 |
+  | `security-features` | 42 |
+  | `presets` | 114 |
+  | `monitoring` | 108 |
+  | `integration` | 77 |
+  | `dashboard` | 53 |
+  | `diagnostics-catalog` | 70 |
+  | `system-inventory` | 68 |
+  | `device-list` | 115 |
+  | `endpoint-visibility` | 114 |
+  | `device-views` | 142 |
+  | `dynamic-groups` | 98 |
+  | `add-device` | 62 |
+  | `auto-updates` | 73 |
+  | `group-policies` | 77 |
+  | `reports` | 104 |
+  | `script-library` | 138 |
+  | `linux-agent` | 86 |
+  | `macos-agent` | 106 |
+  | `enrol-stepup` | 67 |
+  | `search` | 113 |
+  | `metric-history` | 59 |
+  | `retention` | 43 |
+  | `presence-cache` | ALL PASSED |
+  | `ai-timeline` | 61 |
+  | `email` | 92 |
+  | `chat` | 89 |
+  | `polish` | 49 |
+  | `auto-snapshots` | 79 |
+  | `containment` | 70 |
+  | `approved-action` | 76 |
+  | `staged-patching` | 94 |
+  | `maintenance-actions` | 64 |
+  | `patch-policies` | 98 |
+  | `software-deploy` | 156 |
+  | `signed-updates` | 46 |
+  | `ticket-workflow` | 53 |
+  | `agent-upgrade` | ALL PASSED |
+  | `script-run` | 81 |
+  | `smoke` | end-to-end proof passed |
+  | `full` | FULL END-TO-END PROOF PASSED |
+  | `business-access` | 83 |
+  | `offboarding` | 63 |
+  | `public-api` | PUBLIC API END-TO-END PROOF PASSED |
+  | `public-address` | 43 |
+  | `rollouts` | 46 |
+  | `security-audit` | 57 |
+  | `session-mutations` | 43 |
+  | `support-requests` | 47 |
+  | `sso-passkeys` | 70 |
+  | `candidate-password` | ALL PASSED |
+  | `secreg` | All security regression checks passed |
+
+- **`e2e-ui.mjs`, as CI runs it** (ports 3501–3504, against the same database after `run-e2e.sh`): **837 passed,
+  0 failed**, including the search-palette suite (24). The first run was 833 / 4. See *Integration notes* for that
+  fix.
+- **Not run:**
+  - `e2e-navigation.mjs`: it needs the docs stack and is run by hand.
+  - Nothing ran on real Windows.
+  - The guide's dashboard screenshots were not regenerated.
+
+### Upgrade notes (all of 0.35)
+
+- **Schema change: two migrations.** Take a `pg_dump` first. Then:
+  1. Run `prisma migrate deploy`.
+  2. Rsync `apps/api/prisma/` to the target.
+  3. Run `npx prisma generate` there, as `CLAUDE.md` describes.
+
+  Without steps 2 and 3 the API throws `Unknown field groupId` (or `snapshotAutoEnabled`) at runtime.
+
+  | Migration | Adds |
+  |---|---|
+  | `0057_group_policy_scope` | `groupId` and `priority` on `MonitorRule` and `ClientUpdatePolicy`, with CHECKs, partial unique indexes and the `group_policy_same_business` trigger. It recreates `ClientUpdatePolicy_business_row` with `AND "groupId" IS NULL` |
+  | `0059_auto_snapshots` | `DiagnosticRun.requestedById` becomes nullable. A CHECK limits requester-less runs to the three snapshot keys, and a partial unique index allows one open automatic run per key per computer. Five `PlatformSettings` columns with range CHECKs, and `SNAPSHOT_SCHEDULE_CHANGED` |
+
+  0058 is unused.
+- **Behaviour changes for API consumers and saved filters:**
+  - **`online=online` on the device list now means "the agent is checking in"** (a heartbeat in the last
+    30 minutes). It used to mean `isOnline`. This also applies to saved views and rule groups that use it. A
+    computer reachable only through RustDesk has left them. `online=silent` finds it, and sorting by Online orders
+    online, then agent silent, then offline.
+  - **The dashboard API counts gain `agentSilent` and `reachable`.** This covers `GET /dashboard/overview`
+    `devices` and `GET /dashboard` `endpoints`. Their `online` (and the map's `points[].online`) no longer
+    includes agent-silent computers. `reachable` is the old `online`. `offline` is unchanged.
+  - **The device-list CSV gains a *Connectivity* column** after *Online*. A consumer that reads columns by position
+    must allow for it.
+  - `GET /endpoints/:id` gains `groups` (static and matching rule groups). The snapshot route gains `automatic`,
+    `agentSilent` and `agentVersion`.
+  - There are two new routes: `DELETE /client-updates/policy/groups/:groupId` (step-up) and
+    `GET`/`PUT /admin/snapshot-schedule` (Platform Admin). `GET /client-updates/computers/:endpointId/policy` is
+    new too. There are 476 routes in all.
+- **New settings:**
+  - **Automatic snapshots** are on by default: every key every 6 hours, and every 5 minutes while its tab is open.
+    - Platform Admins change them in Settings → Monitoring & API → *Automatic snapshots*. Each change is audited as
+      `SNAPSHOT_SCHEDULE_CHANGED`.
+    - `SNAPSHOT_MAX_PER_MINUTE` (default 120) paces scheduled runs. After the restart, expect the first round to
+      arrive over about two hours on a 5,000-computer fleet.
+    - **Off switch: `SNAPSHOT_SWEEP=off`** stops them in that process.
+  - **`STALE_SWEEP=off`** stops the stale sweep in that process. It is for test stacks only. **Never set it in
+    production**, or machines will never go offline.
+  - No other environment variable was added. The stale sweep and `isOnline` are unchanged in production.
+- **No production dependency changed.** The target manifest does not need regenerating. `pnpm deploy:manifest`
+  still resolves under npm (see *Verification (integrated)*).
+- **Nothing needs the owner's keys.** There is no agent change and no new signed action, and the approval signer is
+  not rebuilt. The snapshots use the 0.33 diagnostics keys the agent already has, so only agents 0.33 or later are
+  asked.
+- **No permissions to grant.** Group policies use the existing monitoring and client-update capabilities.
+
+---
+
 ## [0.34.0] — 2026-11-11 · *Switchboard*
 
 The fourth increment of the RMM overhaul. Its theme is acting on computers through the approval chain, and
