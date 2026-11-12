@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { connectivityOf, heartbeatCutoff, type Connectivity } from '../common/connectivity';
 import { SessionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
@@ -44,12 +45,14 @@ export class DashboardService {
     };
 
     const [
-      totalEndpoints, onlineEndpoints, totalBusinesses, totalUsers,
+      totalEndpoints, reachableEndpoints, onlineEndpoints, totalBusinesses, totalUsers,
       totalSessions30d, totalSessions7d, activeSessions, pendingSessions,
       recentSessions, recentActivity, sessionsByDay,
     ] = await Promise.all([
       canSeeComputers ? this.prisma.endpoint.count({ where: { ...businessFilter, ...this.acl.endpointRestrictionWhere(actor), status: 'ACTIVE' } }) : 0,
       canSeeComputers ? this.prisma.endpoint.count({ where: { ...businessFilter, ...this.acl.endpointRestrictionWhere(actor), isOnline: true, status: 'ACTIVE' } }) : 0,
+      // 0.35: "online" is the agent checking in; reachable through RustDesk with the agent silent is counted apart.
+      canSeeComputers ? this.prisma.endpoint.count({ where: { ...businessFilter, ...this.acl.endpointRestrictionWhere(actor), isOnline: true, lastSeenAt: { gte: heartbeatCutoff() }, status: 'ACTIVE' } }) : 0,
 
       actor.isPlatformAdmin
         ? this.prisma.customer.count({ where: { isArchived: false } })
@@ -100,7 +103,9 @@ export class DashboardService {
       endpoints: {
         total: totalEndpoints,
         online: onlineEndpoints,
-        offline: totalEndpoints - onlineEndpoints,
+        agentSilent: reachableEndpoints - onlineEndpoints,
+        reachable: reachableEndpoints,
+        offline: totalEndpoints - reachableEndpoints,
         onlinePercent: totalEndpoints > 0 ? Math.round((onlineEndpoints / totalEndpoints) * 100) : 0,
       },
       businesses: { total: totalBusinesses },
@@ -219,8 +224,9 @@ export class DashboardService {
       key: string; lat: number; lon: number;
       city: string | null; region: string | null; country: string; countryName: string | null;
       accuracy: 'city' | 'country';
-      total: number; online: number;
-      endpoints: { id: string; name: string; isOnline: boolean; businessName: string | null }[];
+      // online: agent checking in; agentSilent: reachable through RustDesk with the agent silent (0.35).
+      total: number; online: number; agentSilent: number;
+      endpoints: { id: string; name: string; isOnline: boolean; connectivity: Connectivity; businessName: string | null }[];
     };
 
     const points = new Map<string, Point>();
@@ -251,16 +257,19 @@ export class DashboardService {
           key, lat: geo.lat, lon: geo.lon,
           city, region: geo.region, country: geo.country,
           countryName: geo.countryName,
-          accuracy: geo.accuracy, total: 0, online: 0, endpoints: [],
+          accuracy: geo.accuracy, total: 0, online: 0, agentSilent: 0, endpoints: [],
         };
         points.set(key, p);
       }
       p.total += 1;
-      if (r.isOnline) p.online += 1;
+      const c = connectivityOf(r.isOnline, r.lastSeenAt);
+      if (c === 'online') p.online += 1;
+      if (c === 'agent_silent') p.agentSilent += 1;
       p.endpoints.push({
         id: r.id,
         name: r.name,
         isOnline: r.isOnline,
+        connectivity: c,
         businessName: r.customer?.name ?? null,
       });
     }

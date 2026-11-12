@@ -190,8 +190,14 @@ async function all() {
     check(ids.length === aVisibleOwner && new Set(ids).size === aVisibleOwner, 'walking every page yields each computer once', `${ids.length} rows, ${new Set(ids).size} distinct`);
     const firstOffline = all.findIndex((x) => !x.isOnline);
     check(firstOffline > 0 && all.slice(firstOffline).every((x) => !x.isOnline), 'every online computer comes before every offline one');
-    const onl = all.slice(0, firstOffline).map((x) => x.name.toLowerCase());
-    check(onl.every((n, i) => i === 0 || onl[i - 1] <= n), 'online computers are in name order');
+    // 0.35: reachable splits in two — agent checking in first, then agent silent — each in name order.
+    const reach = all.slice(0, firstOffline);
+    const firstSilent = reach.findIndex((x) => x.connectivity === 'agent_silent');
+    const onl = reach.slice(0, firstSilent < 0 ? reach.length : firstSilent).map((x) => x.name.toLowerCase());
+    const sil = firstSilent < 0 ? [] : reach.slice(firstSilent).map((x) => x.name.toLowerCase());
+    check(firstSilent > 0 && reach.slice(0, firstSilent).every((x) => x.connectivity === 'online') && reach.slice(firstSilent).every((x) => x.connectivity === 'agent_silent'),
+      'checking-in computers come before agent-silent ones (0.35)', JSON.stringify(reach.map((x) => x.connectivity)).slice(0, 300));
+    check(onl.every((n, i) => i === 0 || onl[i - 1] <= n) && sil.every((n, i) => i === 0 || sil[i - 1] <= n), 'each in name order');
     check(!ids.includes(aArch.id), 'archived computers are not in the default view');
   }
   r = await list(S.ownerA, { pageSize: 25, page: 99 });
@@ -227,7 +233,11 @@ async function all() {
   r = await list(S.ownerA, { online: 'offline', pageSize: 200 });
   check(r.data.rows.every((x) => !x.isOnline) && r.data.total === 1 + 1 + 21, 'online=offline → only offline computers', `total ${r.data.total}`);
   r = await list(S.ownerA, { online: 'online', pageSize: 200 });
-  check(r.data.rows.every((x) => x.isOnline) && r.data.total === aVisibleOwner - 23, 'online=online → only online computers', `total ${r.data.total}`);
+  // 0.35: online means the agent checked in within the window; the bulk computers reachable with a heartbeat older than 30 minutes are agent silent.
+  const silentBulk = [...Array(63).keys()].filter((i) => i % 3 !== 0 && (i + 1) * 60_000 >= 30 * 60_000).length; // exactly 30 min at creation is past the window by the time it is read
+  check(r.data.rows.every((x) => x.isOnline && x.connectivity === 'online') && r.data.total === aVisibleOwner - 23 - silentBulk, 'online=online → only computers whose agent is checking in', `total ${r.data.total}, want ${aVisibleOwner - 23 - silentBulk}`);
+  r = await list(S.ownerA, { online: 'silent', pageSize: 200 });
+  check(r.data.rows.every((x) => x.isOnline && x.connectivity === 'agent_silent') && r.data.total === silentBulk && !r.data.rows.some((x) => bIds.has(x.id)), 'online=silent → reachable with the agent silent, none of B\'s', `total ${r.data.total}, want ${silentBulk}`);
   r = await list(S.ownerA, { alerts: 'any' });
   check(r.data.total === 2 && ids(r).includes(a1.id) && ids(r).includes(a2.id), 'alerts=any → A1 and A2', JSON.stringify(ids(r)));
   r = await list(S.ownerA, { alerts: 'critical' });

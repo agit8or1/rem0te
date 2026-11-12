@@ -231,8 +231,13 @@ They are different signals and both are correct.
 
 A Connect depends only on the second. `hbbs-probe.py` reports the second.
 Since 0.19.3 the dot follows hbbs too, so this disagreement lasts at most a
-minute. Online with an old "last seen" means RustDesk is fine but the Rem0te
-agent is not checking in — re-run the installer from inside a session.
+minute. From 0.35 a computer RustDesk can reach whose agent has not checked in
+for 30 minutes is not drawn green: it is amber, **Reachable (RustDesk) · agent
+silent 12 d** (or *no agent report*), everywhere a computer's state is shown.
+Remote control should work; monitoring, patching and actions are not reporting.
+Use **Update agent** on the computer's Agent card, or re-run the installer from
+inside a session. The device list's *Online* filter has *Reachable, agent
+silent* to find them all, and the dashboard's Devices tile counts them apart.
 
 ---
 

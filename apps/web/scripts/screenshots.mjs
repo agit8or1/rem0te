@@ -261,12 +261,12 @@ const CALLOUT_PAGES = [
     height: 1000,
     path: '/dashboard',
     before: async (page) => {
-      await page.waitForSelector('div[class~="h-[420px]"]', { timeout: 15_000 });
-      await page.evaluate(() => document.querySelector('div[class~="h-[420px]"]').scrollIntoView({ block: 'end' }));
+      await page.waitForSelector('[data-testid="dashboard-map"]', { timeout: 15_000 });
+      await page.evaluate(() => document.querySelector('[data-testid="dashboard-map"]').scrollIntoView({ block: 'end' }));
       await page.waitForTimeout(3000);
     },
     callouts: [
-      { find: 'div[class~="h-[420px]"]' },
+      { find: '[data-testid="dashboard-map"]' },
       { find: { text: 'Hide device locations', tag: 'button' } },
     ],
   },

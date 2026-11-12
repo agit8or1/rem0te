@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { apiMessage, selectClass, shortHash } from './script-ui';
+import { ConnectivityIndicator } from '@/components/common/connectivity-indicator';
 
 /**
  * Running an approved version (0.34). Three steps, and this panel only ever
@@ -39,7 +40,7 @@ interface Readiness {
   you: { canPropose: boolean; canRevoke: boolean; canRun: boolean };
   warnings: string[]; acknowledge: string; proven: string;
 }
-interface EndpointLite { id: string; name: string; hostname?: string | null; isOnline?: boolean }
+interface EndpointLite { id: string; name: string; hostname?: string | null; isOnline?: boolean; lastSeenAt?: string | null; connectivity?: string }
 
 const ENTRY: Record<string, { label: string; variant: 'success' | 'warning' | 'outline' | 'destructive' }> = {
   AWAITING_APPROVAL: { label: 'Awaiting approval on the signer', variant: 'warning' },
@@ -192,7 +193,7 @@ function RunForm({ r }: { r: Readiness }) {
                     <input type="checkbox" checked={on} disabled={!on && ids.length >= r.maxTargets}
                       onChange={() => setIds(on ? ids.filter((x) => x !== e.id) : [...ids, e.id])} />
                     <span className="flex-1 truncate">{e.name}</span>
-                    {e.isOnline !== undefined && <span className={cn('text-xs', e.isOnline ? 'text-green-700 dark:text-green-400' : 'text-muted-foreground')}>{e.isOnline ? 'online' : 'offline'}</span>}
+                    {e.isOnline !== undefined && <ConnectivityIndicator x={e} short lowercase showDot={false} className="text-xs" />}
                   </label>
                 );
               })}

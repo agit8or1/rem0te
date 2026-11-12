@@ -7,7 +7,7 @@ import { endpointsApi } from '@/lib/api-client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { StatusIndicator } from '@/components/common/status-indicator';
+import { ConnectivityIndicator } from '@/components/common/connectivity-indicator';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions, CAP } from '@/lib/auth';
 import { formatDate } from '@/lib/utils';
@@ -187,7 +187,7 @@ function TrmmLanding() {
                 <CardContent className="p-3 flex items-center justify-between gap-4">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <StatusIndicator status={c.isOnline ? 'online' : 'offline'} />
+                      <ConnectivityIndicator x={c} short />
                       <span className="font-medium text-sm truncate">{c.name}</span>
                       {c.platform && <Badge variant="secondary" className="text-[10px]">{c.platform}</Badge>}
                     </div>

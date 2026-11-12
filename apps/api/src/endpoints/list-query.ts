@@ -37,7 +37,8 @@ export interface ListQuery {
   search?: string;
   businessId?: string;
   siteId?: string;
-  online?: 'online' | 'offline';
+  /** 0.35: online = agent checking in; silent = reachable through RustDesk, agent silent (common/connectivity.ts); offline = not reachable. */
+  online?: 'online' | 'silent' | 'offline';
   alerts?: 'any' | 'critical';
   restartPending?: boolean;
   agent?: 'signed' | 'standard' | 'none';
@@ -134,7 +135,7 @@ export function parseListFilters(q: Record<string, unknown>): ListFilters {
     search: str(q.search, 100),
     businessId: str(q.businessId, 64),
     siteId: str(q.siteId, 64),
-    online: oneOf(q.online, ['online', 'offline'] as const, 'online'),
+    online: oneOf(q.online, ['online', 'silent', 'offline'] as const, 'online'),
     alerts: oneOf(q.alerts, ['any', 'critical'] as const, 'alerts'),
     restartPending: rp === 'true' ? true : undefined,
     agent: oneOf(q.agent, ['signed', 'standard', 'none'] as const, 'agent'),

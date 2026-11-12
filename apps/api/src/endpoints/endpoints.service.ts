@@ -21,6 +21,8 @@ import { readOnlyAgentRefusal } from '../common/platform';
 import type { CreateEndpointDto, UpdateEndpointDto } from './dto/create-endpoint.dto';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
 import { likeEscape } from '../common/like';
+import { EndpointListService } from './endpoint-list.service';
+import { connectivityOf } from '../common/connectivity';
 
 /**
  * Computers.
@@ -63,6 +65,7 @@ export class EndpointsService {
     private readonly actors: ActorResolverService,
     private readonly policy: AccessPolicyService,
     private readonly abuse: AbuseGuardService,
+    private readonly deviceList: EndpointListService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -130,7 +133,8 @@ export class EndpointsService {
         rustdeskNode: { select: { rustdeskId: true, lastSeenAt: true, permanentPassword: true } },
       },
     });
-    return rows.map((r) => this.stripSecrets(r));
+    const now = Date.now();
+    return rows.map((r) => ({ ...this.stripSecrets(r), connectivity: connectivityOf(r.isOnline, r.lastSeenAt, now) }));
   }
 
   async findConnected(actor: ActorContext) {
@@ -209,7 +213,8 @@ export class EndpointsService {
       this.prisma.endpoint.count({ where }),
     ]);
 
-    return { endpoints: endpoints.map((e) => this.stripSecrets(e)), total, page, limit, pages: Math.ceil(total / limit) };
+    const now = Date.now();
+    return { endpoints: endpoints.map((e) => ({ ...this.stripSecrets(e), connectivity: connectivityOf(e.isOnline, e.lastSeenAt, now) })), total, page, limit, pages: Math.ceil(total / limit) };
   }
 
   async findOne(actor: ActorContext, id: string) {
@@ -245,10 +250,13 @@ export class EndpointsService {
       },
     });
     if (!endpoint) throw new NotFoundException('Computer not found');
-    // Every group it is in (0.34), by name.
+    // Every group it is in, by name: its static groups (0.34) and, from
+    // 0.35, the rule groups of its business it matches — computed now, as
+    // this caller sees them, by the device list's own evaluation.
     const { groupMemberships, ...rest } = endpoint;
-    const groups = groupMemberships.map((m) => m.group).sort((x, y) => x.name.localeCompare(y.name));
-    return this.stripSecrets({ ...rest, groups });
+    const groups = await this.deviceList.groupsOfComputer(actor, { id: endpoint.id, customerId: endpoint.customerId }, groupMemberships.map((m) => m.group));
+    // 0.35: reachable is not reporting — see common/connectivity.ts.
+    return this.stripSecrets({ ...rest, groups, connectivity: connectivityOf(endpoint.isOnline, endpoint.lastSeenAt) });
   }
 
   // ── Writes ────────────────────────────────────────────────────────────────

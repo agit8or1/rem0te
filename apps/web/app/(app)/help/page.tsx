@@ -299,6 +299,15 @@ const SECTIONS: Section[] = [
           cover every device, not just the page on screen. Click a column heading to sort by it.
         </p>
         <p>
+          <strong className="text-foreground">Green, amber, grey (0.35).</strong> A green dot means the agent is
+          checking in. Amber, <em>Reachable (RustDesk) · agent silent 12 d</em>, means the RustDesk server can still
+          reach the computer — remote control should work — but its agent has not checked in for 30 minutes or more,
+          so monitoring, patching and actions are not reporting; try <strong className="text-foreground">Update
+          agent</strong> on its Agent card. Grey is offline. The Online filter has all three, the dashboard counts
+          agent-silent computers apart from online ones, and the CSV has a Connectivity column. On a phone the
+          filters sit behind a <strong className="text-foreground">Filters (n)</strong> button.
+        </p>
+        <p>
           <strong className="text-foreground">Health</strong> is the worst open monitoring alert;{' '}
           <strong className="text-foreground">Pending patches</strong> comes from the last update scan; CPU, RAM,
           disk and the logged-in user come from the last heartbeat. Each shows its age, and a value that is stale —
@@ -325,7 +334,7 @@ const SECTIONS: Section[] = [
           A <strong className="text-foreground">rule group</strong> (Views → Save filters as a rule group…) holds
           whichever computers of its business match the current filters — online, platform, site, tag, updates,
           alerts, RustDesk version range, last seen (More filters) — worked out each time it is read, so a computer
-          that goes offline leaves an &ldquo;online&rdquo; group at once. Nobody adds to it by hand. Everyone sees only
+          that goes offline (or whose agent goes silent) leaves an &ldquo;online&rdquo; group at once. Nobody adds to it by hand. Everyone sees only
           the members they can already see, and a rule on alerts needs the monitoring:alerts permission. Filtered by
           a rule group, the bulk bar acts on its current members (at most 200).
         </p>
@@ -515,8 +524,10 @@ const SECTIONS: Section[] = [
         <p className="font-medium text-foreground">The device page</p>
         <p>
           The top of the page says whether the computer is online (or offline since
-          when), its business and site, and when its agent last checked in, marked
-          stale when it has missed check-ins. The strip under it lists what needs
+          when, or — in amber — reachable through RustDesk with its agent silent), its business and site, and when its agent last checked in, marked
+          stale when it has missed check-ins. From 0.35 the Overview&apos;s Assignment card lists every group it is
+          in, static and rule, each a link to the list filtered by it. Restart and update wording names the
+          computer&apos;s own system: a Linux server&apos;s restart comes from its package manager, not Windows. The strip under it lists what needs
           attention: open alerts, a pending restart, pending updates with the age of
           the scan, and which agent it runs. Each opens the tab that explains it.
           Connect, Diagnose, Run action and Patch sit beside it; Archive and the other
@@ -1027,7 +1038,8 @@ const SECTIONS: Section[] = [
         <p>
           The <Link href="/dashboard" className="underline text-foreground">Dashboard</Link> (0.31) says what is broken,
           which businesses it affects, which devices need attention, what is already being worked on, and what to
-          do next — only for what you can see. <strong className="text-foreground">Work on next</strong> is a ranked
+          do next — only for what you can see. From 0.35 it fits the window on a desktop screen: figures first, then
+          the lists and the map, each long list scrolling inside its own card. <strong className="text-foreground">Work on next</strong> is a ranked
           list and each item says why it is there: site outages, then critical alerts, actions whose outcome is
           unknown, failed actions, warnings, approval requests, restarts pending and info alerts, oldest first.
           Acknowledged alerts and alerts in a maintenance window are left out. <em>Patch compliance</em> counts only
@@ -1050,6 +1062,9 @@ const SECTIONS: Section[] = [
           <Link href="/docs/reports" className="underline text-foreground">Reports</Link>.
         </p>
         <p>
+          From 0.35 each schedulable report has <strong className="text-foreground">Schedule this report</strong>{' '}
+          beside Export CSV, which opens the schedule form prefilled with the report and its filters; it is shown to
+          a Platform Admin or a Business Owner, who may own a schedule.{' '}
           From 0.34 a report can be <Link href="/reports/schedules" className="underline text-foreground">scheduled</Link>:
           weekly or monthly (days 1–28), at a time in a time zone, emailed to confirmed addresses with a link and,
           optionally, the CSV — the same audited export, with the same row limit. It is computed with its owner&apos;s

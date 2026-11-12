@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
+import { updateSourceLabel, updateSourcePhrase } from '@/lib/platform-wording';
 import { MeterGauge } from '@/components/common/gauge';
 import {
   Cpu, HardDrive, MemoryStick, Network, PackageCheck, RefreshCw,
@@ -203,7 +204,7 @@ function ClientUpdatePolicyRow({ endpointId }: { endpointId: string }) {
   );
 }
 
-function UpdatesCard({ data, onOpenPatches, endpointId }: { data: InventoryPayload; onOpenPatches?: () => void; endpointId: string }) {
+function UpdatesCard({ data, platform, onOpenPatches, endpointId }: { data: InventoryPayload; platform: unknown; onOpenPatches?: () => void; endpointId: string }) {
   const [open, setOpen] = useState(false);
   const inv = data.inventory;
   const count = inv?.pendingUpdateCount ?? null;
@@ -221,7 +222,7 @@ function UpdatesCard({ data, onOpenPatches, endpointId }: { data: InventoryPaylo
         ) : null
       }
     >
-      <Row label="Windows Update">
+      <Row label={updateSourceLabel(platform)}>
         {count === null ? (
           <span className="text-muted-foreground">Not checked yet</span>
         ) : count === 0 ? (
@@ -404,7 +405,7 @@ export function EndpointSpecs({
       toast({
         title: 'Queued',
         description:
-          'This computer collects its specs and checks Windows Update on its next heartbeat — up to about three minutes.',
+          `This computer collects its specs and checks ${updateSourcePhrase(endpoint.platform)} on its next heartbeat — up to about three minutes.`,
       });
       qc.invalidateQueries({ queryKey: ['endpoint-inventory', endpointId] });
     },
@@ -745,7 +746,7 @@ export function EndpointSpecs({
           )}
         </SectionCard>
 
-        {data && <UpdatesCard data={data} onOpenPatches={onOpenPatches} endpointId={endpointId} />}
+        {data && <UpdatesCard data={data} platform={endpoint.platform} onOpenPatches={onOpenPatches} endpointId={endpointId} />}
       </div>
     </div>
   );

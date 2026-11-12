@@ -204,7 +204,8 @@ async function all() {
   check(r.status === 200, 'overview loads', msg(r));
   let d = r.data;
   eq(leaks(r.text, bMarkers), [], 'nothing of Birch anywhere in the response');
-  eq(d.devices && { total: d.devices.total, online: d.devices.online, offline: d.devices.offline, agentSilent: d.devices.agentSilent }, { total: 6, online: 5, offline: 1, agentSilent: 1 }, 'devices: 6 active (archived and pending excluded), 5 online, 1 offline, 1 agent silent');
+  // 0.35: online counts only agents checking in; the agent-silent one is apart from it, not inside it.
+  eq(d.devices && { total: d.devices.total, online: d.devices.online, reachable: d.devices.reachable, offline: d.devices.offline, agentSilent: d.devices.agentSilent }, { total: 6, online: 4, reachable: 5, offline: 1, agentSilent: 1 }, 'devices: 6 active (archived and pending excluded), 4 online, 1 reachable with its agent silent, 1 offline');
   eq(d.devices.offlineList.map((x) => x.id), [a2.id], 'the offline list is A-PC2, with its last-seen time');
   check(d.devices.offlineList[0]?.lastSeenAt && Date.now() - Date.parse(d.devices.offlineList[0].lastSeenAt) > 1.9 * H, 'offline device shows its real last-seen age, not now', JSON.stringify(d.devices.offlineList[0]));
   eq(d.alerts && { open: d.alerts.open, acknowledged: d.alerts.acknowledged, critical: d.alerts.critical, warning: d.alerts.warning, info: d.alerts.info, suppressed: d.alerts.suppressed, criticalOpen: d.alerts.criticalOpen },

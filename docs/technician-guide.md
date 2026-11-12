@@ -63,8 +63,8 @@ zero.
 | **Critical alerts** | Open critical alerts. Alerts in a maintenance window are counted apart, not as critical |
 | **Failed actions** | Approved-action and patch targets that failed, were refused or did not run in the last 7 days, plus any whose outcome is unknown (those block new requests until someone records what they found) |
 | **Awaiting approval** | Plans waiting for the approval roster. Approval happens on the signer, never here; expired requests are not counted |
-| **Restart pending** | Devices whose latest update scan says Windows is waiting for a restart, or that have a *restart pending* alert. A scan older than 36 hours is flagged stale |
-| **Patch compliance** | Of the devices with an update scan under 36 hours old, the share that list no pending updates. Coverage (how many devices have such a scan) and the scan ages are shown beside it; with no fresh scan at all it says *No data* |
+| **Restart pending** | Devices whose latest update scan says the system (Windows, or a Linux package manager) is waiting for a restart, or that have a *restart pending* alert. A scan older than 36 hours is flagged stale |
+| **Patch compliance** | Of the devices with an update scan under 36 hours old, the share that list no pending updates; with no fresh scan at all it says *No data*. The **Patch status** card breaks it down (up to date, updates pending, stale scan, never scanned) with coverage and scan ages |
 | **Active sessions** | Sessions connected now, and ones still launching. A session row that has not moved for 12 hours is not shown as live |
 | **Work on next** | A ranked list, each item with the reason it is there (below) |
 | **Customers affected** | Businesses with an outage, an open alert, an offline device or a failed action |
@@ -85,10 +85,16 @@ Every item and figure links to where you act on it — the device's Monitoring,
 Patches or Actions tab, the patch deployment, the alerts list. The page polls
 every 30 seconds and says how old its data is. Server health (CPU, memory, disk,
 relay) is not on the dashboard: Platform Admins find it under **Settings →
-System status**. The device map is at the bottom; *Hide device
-locations* folds it away, and this browser remembers the choice.
+System status** (*Server health* at the top right). From 0.35 the dashboard
+fits the window on a desktop screen (1366 × 768 and up): the figures across
+the top, then *Work on next*, *Devices needing attention* and *Customers
+affected*, then the map with *Being worked on*, *Patch status*, *Recent
+activity* and *Your recent devices* beside it. A long list scrolls inside its
+own card instead of lengthening the page. On a phone the cards stack in that
+order. *Hide device locations* (top right) folds the map away — *Work on next*
+then takes its column — and this browser remembers the choice.
 
-![The device map at the foot of the dashboard, with clustered markers per city](screenshots/guide/dashboard-map.png)
+![The device map on the dashboard, with clustered markers per city](screenshots/guide/dashboard-map.png)
 
 1. **Client locations** — devices placed from the address they last checked in from, clustered by city with a count.
    The map is drawn from a bundled outline; no tile server is asked where your customers are.
@@ -117,12 +123,12 @@ company-wide; for a technician, only the machines your assignment names.
 
 | Column | What it shows |
 |---|---|
-| **Device** | Name, hostname, and a dot: green online, grey offline. |
+| **Device** | Name, hostname, and a dot: green online (the agent is checking in), amber reachable through RustDesk with the agent silent, grey offline. |
 | **Business / Site** | Who the machine belongs to and where. |
 | **OS** | An icon and the reported Windows edition or platform. |
 | **Health** | The worst *open* monitoring alert — Critical, Warning, Info — or *No open alerts*. That is not a promise nothing is wrong, only that no monitor says so. |
 | **Agent** | *Signed* (the 0.27+ signed agent), *Standard*, or *No agent report*, with when it last checked in. |
-| **Last seen** | *Online now*, or how long ago it was last heard from. |
+| **Last seen** | *Online*, *Reachable (RustDesk) · agent silent …* in amber, or how long ago it was last heard from. |
 | **Logged-in user** | Who the last heartbeat said was signed in. |
 | **CPU / RAM / disk** | The last resource sample and its age. |
 | **Pending patches** | From the last update scan: how many are waiting, and a *restart* tag if Windows wants one. |
@@ -139,7 +145,7 @@ at the bottom.
 ### Filters, columns and saved views
 
 - **Filters** — business (when you can see more than one), site, device group,
-  online/offline, open or critical alerts, *Restart pending*, agent type, and
+  online (*Online (agent checking in)*, *Reachable, agent silent* or *Offline*), open or critical alerts, *Restart pending*, agent type, and
   archived devices. **More filters** (0.34) adds platform (Windows, Linux,
   macOS, other), OS name contains, tag (exact), update state (pending, none
   pending, scan stale, never scanned), a RustDesk version range (dotted numbers,
@@ -148,6 +154,9 @@ at the bottom.
   (not seen for N days, which includes never; seen within N days).
   They combine, and *Clear* resets them. The address bar carries the current view,
   so you can bookmark it; whoever opens the link still sees only their own devices.
+  On a phone (0.35) the filters sit behind a **Filters (n)** button beside the
+  search, *n* being how many are set; it opens a sheet with the same controls,
+  each applying at once, and *Show N devices* closes it.
 - **Columns** — choose which columns show (a *Groups* column is available; it
   lists every group the device is in, and the CSV's *Groups* column does the same,
   separated by `; `).
@@ -251,7 +260,11 @@ and search still finds a device by it.
 
 **Online means the agent checked in within the last 30 minutes.** The agent
 heartbeats every 3 minutes, so a machine that has genuinely dropped shows Offline
-a few minutes later, not instantly.
+a few minutes later, not instantly. A machine RustDesk can still reach whose
+agent has gone quiet is neither (0.35): it is amber, **Reachable (RustDesk) ·
+agent silent** with how long, and its tooltip says remote control should work
+but monitoring, patching and actions are not reporting — try **Update agent** on
+its Agent card. The dashboard counts these apart from online ones.
 
 ### Search everything — Ctrl+K (0.33)
 
@@ -322,8 +335,8 @@ There is no search index; the measured trade-off is in the 0.33 changelog.
 Opening a computer gives you one page for it.
 
 **The header** says who it is and whether it is reachable: name, status
-(*Online*, *Offline since …*, or *Online (RustDesk only)* when RustDesk can reach
-it but its agent has stopped checking in), business, site and **last seen**,
+(*Online*, *Offline since …*, or, in amber, *Reachable (RustDesk) · agent silent
+12 d* when RustDesk can reach it but its agent has stopped checking in), business, site and **last seen**,
 marked *stale* when the agent has missed its check-ins. Under it, the
 **attention strip** lists what needs looking at, each one a link to the tab that
 explains it: open alerts with the worst severity (→ Monitoring), *Restart
@@ -341,7 +354,7 @@ what it does.
 
 ![A device's page: status, actions, the attention strip and the tabs, on Overview](screenshots/guide/device-overview.png)
 
-1. **Status** — *Online*, *Offline since …*, or *Online (RustDesk only)* when the agent has gone quiet.
+1. **Status** — *Online*, *Offline since …*, or *Reachable (RustDesk) · agent silent …* when the agent has gone quiet.
 2. **Actions** — with the reason underneath when one is unavailable (here: no approval signer on this server).
 3. **Attention strip** — open alerts, pending updates with the scan's age, and which agent it runs; each a link to its tab.
 4. **The tabs** — below.
@@ -351,7 +364,7 @@ what it does.
 
 | Tab | What is on it |
 |---|---|
-| Overview | Assignment, key alerts, patch status, the **Agent** card, recent activity, then the hardware, utilisation, storage, network and update cards, each with its age |
+| Overview | Assignment (from 0.35 with every **group** the computer is in — static groups and the rule groups it matches right now, as you would see them in the list; each links to the list filtered by it), key alerts, patch status, the **Agent** card, recent activity, then the hardware, utilisation, storage, network and update cards, each with its age |
 | Monitoring | Alerts first (acknowledge and resolve here), then what is watched on this computer in words, the agent's last report, and what changed |
 | Software | Installed software with a filter, and recent software changes (Windows agents only) |
 | Processes | Every running process, as a read-only snapshot with its age and a Refresh (standard Windows agent, 0.33) |
@@ -614,8 +627,10 @@ server, the computer and, with *Check my computer*, your own RustDesk, and says
 which one is wrong. See [connecting.md](connecting.md#test-connection-v020).
 
 **A computer shows Offline but the person says it is on.**
-Online is driven by the agent's 3-minute heartbeat, not by RustDesk. A machine
-can be running fine while the heartbeat task is broken. Re-running the installer
+Online is driven by the agent's 3-minute heartbeat. A machine RustDesk can
+reach with a broken heartbeat shows amber *Reachable (RustDesk) · agent silent*
+instead; one neither can see is Offline. A machine can be running fine while the
+heartbeat task is broken. Re-running the installer
 reinstalls the task and will now tell you if the machine cannot reach the server.
 
 **Connect says "wrong password".**

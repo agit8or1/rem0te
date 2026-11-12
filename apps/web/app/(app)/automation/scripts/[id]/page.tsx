@@ -61,11 +61,11 @@ export default function ScriptPage() {
     onError: (e) => toast({ title: 'Not saved', description: apiMessage(e, 'The new version was refused.'), variant: 'destructive' }),
   });
 
-  if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (error || !s) return <div><BackLink /><p className="text-sm text-muted-foreground">{apiMessage(error, 'Script not found.')}</p></div>;
+  if (isLoading) return <p className="p-4 md:p-6 text-sm text-muted-foreground">Loading…</p>;
+  if (error || !s) return <div className="p-4 md:p-6"><BackLink /><p className="text-sm text-muted-foreground">{apiMessage(error, 'Script not found.')}</p></div>;
 
   return (
-    <div>
+    <div className="p-4 md:p-6">
       <BackLink />
       <PageHeader title={s.name} description={`${s.scope === 'global' ? 'Global script' : `Script for ${s.businessName ?? 'this business'}`} · added ${formatDate(s.createdAt)}${s.createdBy ? ` by ${s.createdBy.name}` : ''}`}>
         {v?.you.canEdit && !editing && <Button size="sm" variant="outline" onClick={() => setEditing(true)}><Pencil className="h-4 w-4 mr-1" />Edit as a new version</Button>}

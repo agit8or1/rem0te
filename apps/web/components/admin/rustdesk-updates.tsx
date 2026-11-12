@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { MonitorDown, RefreshCw, Loader2, CheckCircle2, AlertCircle, HelpCircle } from 'lucide-react';
+import { connectivityFrom, connectivityHint, connectivityLabel, CONNECTIVITY_DOT } from '@/lib/connectivity';
 
 type Row = {
   endpointId: string | null;
@@ -16,6 +17,9 @@ type Row = {
   hostname: string | null;
   platform: string | null;
   isOnline: boolean;
+  /** 0.35: from the endpoint's own heartbeat — a client update request goes out on the agent's next heartbeat. */
+  connectivity?: 'online' | 'agent_silent' | 'offline';
+  agentLastSeenAt?: string | null;
   rustdeskId: string;
   version: string | null;
   updatePending: boolean;
@@ -179,8 +183,9 @@ export function RustdeskUpdates({
                     <td className="py-2 pr-3">
                       <div className="font-medium flex items-center gap-1.5">
                         <span
-                          className={`h-1.5 w-1.5 rounded-full shrink-0 ${r.isOnline ? 'bg-green-500' : 'bg-muted-foreground/40'}`}
-                          title={r.isOnline ? 'Online' : 'Offline'}
+                          className={`h-1.5 w-1.5 rounded-full shrink-0 ${CONNECTIVITY_DOT[connectivityFrom({ connectivity: r.connectivity, isOnline: r.isOnline, lastSeenAt: r.agentLastSeenAt })]}`}
+                          data-connectivity={connectivityFrom({ connectivity: r.connectivity, isOnline: r.isOnline, lastSeenAt: r.agentLastSeenAt })}
+                          title={`${connectivityLabel(connectivityFrom({ connectivity: r.connectivity, isOnline: r.isOnline, lastSeenAt: r.agentLastSeenAt }), r.agentLastSeenAt)}. ${connectivityHint(connectivityFrom({ connectivity: r.connectivity, isOnline: r.isOnline, lastSeenAt: r.agentLastSeenAt }))}`}
                         />
                         {r.endpointId ? (
                           <Link href={`/endpoints/${r.endpointId}`} className="hover:underline truncate">{r.name}</Link>

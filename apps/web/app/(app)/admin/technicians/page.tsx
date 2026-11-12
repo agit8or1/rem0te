@@ -26,6 +26,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/lib/auth';
 import { cn, formatDate } from '@/lib/utils';
+import { ConnectivityIndicator } from '@/components/common/connectivity-indicator';
 
 // ─── Types (shapes from apps/api/src/technicians + rbac) ─────────────────────
 
@@ -110,7 +111,7 @@ interface Group {
 interface PresetLite { id: string; key: string; name: string; tier: string; builtIn: boolean; description: string }
 const CUSTOM_PRESET = '__custom__';
 
-interface EndpointLite { id: string; name: string; hostname?: string | null; isOnline?: boolean }
+interface EndpointLite { id: string; name: string; hostname?: string | null; isOnline?: boolean; lastSeenAt?: string | null; connectivity?: string }
 
 type ApiErr = { response?: { status?: number; data?: { message?: string | string[] } } };
 function errMsg(e: unknown): string | undefined {
@@ -410,9 +411,7 @@ function ComputerPicker({ businessId, value, onChange }: { businessId: string; v
               <CheckBox on={on} />
               <span className="flex-1 truncate">{e.name}</span>
               {e.isOnline !== undefined && (
-                <span className={cn('text-xs', e.isOnline ? 'text-green-700 dark:text-green-400' : 'text-muted-foreground')}>
-                  {e.isOnline ? 'online' : 'offline'}
-                </span>
+                <ConnectivityIndicator x={e} short lowercase showDot={false} className="text-xs" />
               )}
             </button>
           );

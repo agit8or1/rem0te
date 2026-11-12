@@ -18,6 +18,7 @@ import {
   type JobStatus, type RolloutStatus, type UpdateJob,
 } from '@/components/rollouts/endpoint-update-history';
 import { AlertTriangle, ArrowLeft, ChevronDown, ChevronRight, Pause, Play, XCircle } from 'lucide-react';
+import { ConnectivityIndicator } from '@/components/common/connectivity-indicator';
 
 interface JobRow extends UpdateJob {
   endpoint: {
@@ -79,7 +80,7 @@ function JobItem({
         <Link href={`/endpoints/${job.endpointId}`} className="text-sm font-medium hover:underline">{name}</Link>
         {job.endpoint?.customer && <span className="text-xs text-muted-foreground">{job.endpoint.customer.name}</span>}
         {job.endpoint && (
-          <span className="text-xs text-muted-foreground">{job.endpoint.isOnline ? 'online' : 'offline'}</span>
+          <ConnectivityIndicator x={job.endpoint} short lowercase showDot={false} className="text-xs" />
         )}
         <JobStatusBadge status={job.status} />
         <RegistrationNote job={job} />

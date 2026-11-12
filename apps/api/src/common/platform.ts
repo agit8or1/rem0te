@@ -42,3 +42,32 @@ export function readOnlyAgentRefusal(platform: string | null | undefined, what: 
       'Do it on the computer itself (re-run the installer to reinstall or change the password).',
   };
 }
+
+/** Windows, under the names installers and heartbeats have reported it by. */
+export function isWindowsPlatform(platform: string | null | undefined): boolean {
+  return !!platform && /^win/i.test(platform.trim());
+}
+
+/**
+ * The operating system's name for a sentence about one computer's own state
+ * (0.35) — "Linux is waiting for a restart", never "Windows is" for a Linux
+ * server. Null when the platform is unknown or not one of the three, so the
+ * caller says "the computer" rather than guess.
+ */
+export function osName(platform: string | null | undefined): 'Windows' | 'Linux' | 'macOS' | null {
+  if (isWindowsPlatform(platform)) return 'Windows';
+  return readOnlyAgentOs(platform);
+}
+
+/**
+ * "<OS> is waiting for a restart", for the dashboard's reason line (0.35).
+ * The Linux agent reads the package manager's own flag (/run/reboot-required,
+ * needs-restarting -r, zypper needs-rebooting) and Windows its servicing and
+ * update signals; the macOS agent sends no restart state at all, so a Mac
+ * never reaches this. Same rule in the web app
+ * (apps/web/lib/platform-wording.ts).
+ */
+export function restartPendingSentence(platform: string | null | undefined): string {
+  const os = osName(platform);
+  return os ? `${os} is waiting for a restart` : 'the computer is waiting for a restart';
+}

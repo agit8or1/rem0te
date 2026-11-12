@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiError } from '@/components/security-controls/shared';
+import { connectivityFrom, connectivityHint, connectivityLabel, CONNECTIVITY_DOT } from '@/lib/connectivity';
 
 /**
  * Settings → Client updates (0.32).
@@ -349,7 +350,7 @@ function Computers({ rows, error }: { rows: ComputerRow[] | null; error: string 
                   <tr key={r.id} className="border-b last:border-0 align-top">
                     <td className="py-2 pr-3">
                       <div className="flex items-center gap-1.5 font-medium">
-                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.isOnline ? 'bg-green-500' : 'bg-muted-foreground/40'}`} title={r.isOnline ? 'Online' : 'Offline'} />
+                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${CONNECTIVITY_DOT[connectivityFrom(r)]}`} data-connectivity={connectivityFrom(r)} title={`${connectivityLabel(connectivityFrom(r), r.lastSeenAt)}. ${connectivityHint(connectivityFrom(r))}`} />
                         <Link href={`/endpoints/${r.id}`} className="truncate hover:underline">{r.name}</Link>
                       </div>
                       <div className="text-muted-foreground">{r.platform ?? 'unknown platform'}</div>

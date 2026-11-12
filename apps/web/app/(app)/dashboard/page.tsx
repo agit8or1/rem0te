@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { CONNECTIVITY_DOT, CONNECTIVITY_TEXT, connectivityFrom, connectivityHint, connectivityLabel } from '@/lib/connectivity';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -36,7 +37,7 @@ interface QueueItem { key: string; kind: string; severity: 'critical' | 'warning
 interface Overview {
   generatedAt: string;
   scope: 'business' | 'platform';
-  devices: null | { total: number; online: number; offline: number; agentSilent: number; agentSilentAfterMinutes: number; offlineList: { id: string; name: string; business: Biz; lastSeenAt: string | null }[] };
+  devices: null | { total: number; online: number; offline: number; agentSilent: number; reachable?: number; agentSilentAfterMinutes: number; offlineList: { id: string; name: string; business: Biz; lastSeenAt: string | null }[] };
   alerts: null | { open: number; acknowledged: number; critical: number; warning: number; info: number; criticalOpen: number; suppressed: number; outages: { id: string; title: string; state: string; suppressed: boolean; site: { id: string; name: string } | null; business: Biz; devices: number; since: string }[] };
   restart: null | { devices: number; list: { device: { id: string; name: string }; business: Biz; source: 'scan' | 'alert'; evidenceAt: string | null; stale: boolean }[] };
   patch: null | { definition: string; staleAfterHours: number; total: number; fresh: number; upToDate: number; needsUpdates: number; stale: number; noScan: number; newestScanAt: string | null; oldestFreshScanAt: string | null; compliancePercent: number | null; coveragePercent: number | null };
@@ -110,18 +111,42 @@ export default function DashboardPage() {
   const launching = (d.sessions?.live.length ?? 0) - connected;
   const failedActions = d.actions ? d.actions.failed + d.actions.uncertain : 0;
 
+  const mapOn = showMap && !!d.devices;
+  const queueNote = d.queue.total > d.queue.items.length
+    ? <span className="text-xs text-muted-foreground" title="The rest are on Alerts and the device pages">top {d.queue.items.length} of {d.queue.total}</span>
+    : null;
+
+  // 0.35 layout. From `lg` up the page is exactly the space under the top bar
+  // (h-12): a fixed header, the figures, then a 12-column grid whose rows
+  // share what is left (minmax(0, …fr), so a long list scrolls inside its own
+  // card instead of growing the page). Below `lg` everything stacks and the
+  // page scrolls, as it should on a phone. Placement is explicit so the DOM
+  // order is also the reading order when stacked: what to do, which devices,
+  // who is affected, what is in hand, patches, then the map and history.
   return (
-    <div className="p-4 md:p-6 space-y-4" data-testid="dashboard">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
+    <div className="flex flex-col gap-3 p-4 md:p-6 lg:h-[calc(100dvh-3rem)] lg:min-h-[600px] lg:py-4" data-testid="dashboard">
+      <div className="flex shrink-0 flex-wrap items-baseline gap-x-4 gap-y-1">
         <h1 className="text-xl font-semibold">Dashboard</h1>
         <p className="text-xs text-muted-foreground">
           {d.scope === 'business' ? 'This business' : 'Every business'} · data from {ago(new Date(dataUpdatedAt || Date.parse(d.generatedAt)).toISOString(), now)} · refreshes every 30 s
         </p>
+        <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          {d.devices && (
+            <button type="button" onClick={toggleMap} className="inline-flex items-center gap-1 hover:text-foreground" data-testid="dashboard-map-toggle">
+              <MapPin className="h-3.5 w-3.5" /> {showMap ? 'Hide device locations' : 'Show device locations'}
+            </button>
+          )}
+          {isPlatformAdmin && (
+            <Link href="/admin/status" className="inline-flex items-center gap-1 hover:text-foreground" title="Server health (CPU, memory, disk, relay) is on System status">
+              Server health <ArrowRight className="h-3 w-3" />
+            </Link>
+          )}
+        </div>
       </div>
 
       {/* What is broken, at the scale of a whole site: first, and loud. */}
       {liveOutages.length > 0 && (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm dark:border-red-900 dark:bg-red-950/40" role="alert" data-testid="dashboard-outages">
+        <div className="max-h-24 shrink-0 overflow-y-auto rounded-lg border border-red-300 bg-red-50 p-3 text-sm dark:border-red-900 dark:bg-red-950/40" role="alert" data-testid="dashboard-outages">
           {liveOutages.map((o) => (
             <div key={o.id} className="flex flex-wrap items-center gap-x-2">
               <AlertOctagon className="h-4 w-4 text-red-600 dark:text-red-400" />
@@ -133,25 +158,19 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* The figures, each one a way in. */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7" data-testid="dashboard-tiles">
+      {/* The figures, each one a way in: devices, alerts, restarts and patches, then what is waiting on people. */}
+      <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7" data-testid="dashboard-tiles">
         {d.devices && (
           <Tile href="/endpoints" icon={Monitor} label="Devices" value={d.devices.total}
-            sub={`${d.devices.online} online · ${d.devices.offline} offline`} tone={d.devices.offline ? 'warn' : undefined}
-            title={d.devices.agentSilent ? `${d.devices.agentSilent} reachable but their agent has not checked in for ${d.devices.agentSilentAfterMinutes}+ minutes` : undefined} />
+            // 0.35: online counts agents checking in; reachable-but-silent is said apart, never folded into it.
+            sub={`${d.devices.online} online${d.devices.agentSilent ? ` · ${d.devices.agentSilent} agent silent` : ''} · ${d.devices.offline} offline`}
+            tone={d.devices.offline || d.devices.agentSilent ? 'warn' : undefined}
+            title={d.devices.agentSilent ? `${d.devices.agentSilent} reachable through RustDesk, but their agent has not checked in for ${d.devices.agentSilentAfterMinutes}+ minutes: remote control should work; monitoring, patching and actions are not reporting.` : undefined} />
         )}
         {d.alerts && (
           <Tile href="/alerts?state=open&severity=critical" icon={Siren} label="Critical alerts" value={d.alerts.criticalOpen}
             sub={`${d.alerts.open} open · ${d.alerts.acknowledged} acknowledged`} tone={d.alerts.criticalOpen ? 'bad' : undefined}
             title={d.alerts.suppressed ? `${d.alerts.suppressed} more are in a maintenance window and not counted as critical` : undefined} />
-        )}
-        {d.actions && (
-          <Tile href="#work-next" icon={XCircle} label="Failed actions" value={failedActions}
-            sub={d.actions.uncertain ? `${d.actions.uncertain} outcome unknown · 7 days` : 'last 7 days'} tone={failedActions ? 'bad' : undefined} />
-        )}
-        {d.actions && (
-          <Tile href="#work-next" icon={Hourglass} label="Awaiting approval" value={d.actions.awaitingApproval}
-            sub="approved on the signer, not here" />
         )}
         {d.restart && (
           <Tile href="/patching" icon={RotateCcw} label="Restart pending" value={d.restart.devices}
@@ -163,208 +182,190 @@ export default function DashboardPage() {
             sub={d.patch.compliancePercent === null ? `no scan under ${d.patch.staleAfterHours} h` : `${d.patch.fresh} of ${d.patch.total} devices scanned`}
             title={d.patch.definition} />
         )}
+        {d.actions && (
+          <Tile href="#work-next" icon={XCircle} label="Failed actions" value={failedActions}
+            sub={d.actions.uncertain ? `${d.actions.uncertain} outcome unknown · 7 days` : 'last 7 days'} tone={failedActions ? 'bad' : undefined} />
+        )}
+        {d.actions && (
+          <Tile href="#work-next" icon={Hourglass} label="Awaiting approval" value={d.actions.awaitingApproval}
+            sub="approved on the signer, not here" />
+        )}
         {d.sessions && (
           <Tile href="/sessions" icon={PlayCircle} label="Active sessions" value={connected}
             sub={launching ? `${launching} launching` : 'connected now'} />
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3 lg:items-start">
+      <div className="grid grid-cols-1 gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-12 lg:grid-rows-[minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,1fr)]" data-testid="dashboard-grid">
         {/* What to do next, ranked, each with its reason. */}
-        <Card className="lg:col-span-2" id="work-next" data-testid="dashboard-queue">
-          <CardHeader className="py-3">
-            <CardTitle className="flex items-baseline justify-between text-sm">
-              <span>Work on next</span>
-              {d.queue.total > d.queue.items.length && (
-                <span className="text-xs font-normal text-muted-foreground">top {d.queue.items.length} of {d.queue.total}; the rest are on Alerts and the device pages</span>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            {d.queue.items.length === 0 ? (
-              <Empty icon={CheckCircle2}>
-                Nothing needs you right now{d.alerts ? '' : ' (alerts are not visible to you, so they are not part of this)'}.
-              </Empty>
-            ) : (
-              <ol className="divide-y">
-                {d.queue.items.map((i) => (
-                  <li key={i.key}>
-                    <Link href={i.href} className="flex gap-3 py-2 hover:bg-muted/40 rounded-sm px-1 -mx-1">
-                      <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${SEV_DOT[i.severity]}`} aria-label={i.severity} />
-                      <span className="min-w-0 flex-1">
-                        <span className="flex flex-wrap items-baseline gap-x-2">
-                          <span className="text-sm font-medium">{i.title}</span>
-                          <span className="text-xs text-muted-foreground">{where(i.business, i.device)}</span>
-                        </span>
-                        <span className="block text-xs text-muted-foreground">{i.reason}</span>
+        <Panel id="work-next" testId="dashboard-queue" title="Work on next" action={queueNote}
+          className={`lg:col-span-5 lg:col-start-1 lg:row-start-1 ${mapOn ? 'lg:row-span-1' : 'lg:row-span-3'}`}>
+          {d.queue.items.length === 0 ? (
+            <Empty icon={CheckCircle2}>
+              Nothing needs you right now{d.alerts ? '' : ' (alerts are not visible to you, so they are not part of this)'}.
+            </Empty>
+          ) : (
+            <ol className="divide-y">
+              {d.queue.items.map((i) => (
+                <li key={i.key}>
+                  <Link href={i.href} className="flex gap-3 py-2 hover:bg-muted/40 rounded-sm px-1 -mx-1">
+                    <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${SEV_DOT[i.severity]}`} aria-label={i.severity} />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="text-sm font-medium">{i.title}</span>
+                        <span className="text-xs text-muted-foreground">{where(i.business, i.device)}</span>
                       </span>
-                      <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{ago(i.since, now)}</span>
+                      <span className="block text-xs text-muted-foreground">{i.reason}</span>
+                    </span>
+                    <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{ago(i.since, now)}</span>
+                  </Link>
+                </li>
+              ))}
+            </ol>
+          )}
+        </Panel>
+
+        {/* Which devices. */}
+        {d.devices && (
+          <Panel testId="dashboard-attention" title="Devices needing attention" className="lg:col-span-4 lg:col-start-6 lg:row-start-1">
+            {d.attention.length === 0 ? (
+              <Empty icon={CheckCircle2}>Every device you can see is online, reporting, and has no open alert or failed action.</Empty>
+            ) : (
+              <ul className="divide-y">
+                {d.attention.map((a) => (
+                  <li key={a.device.id}>
+                    <Link href={`/endpoints/${a.device.id}`} className="block py-2 hover:bg-muted/40 rounded-sm px-1 -mx-1">
+                      <span className="flex items-baseline gap-2">
+                        <span className={`h-2 w-2 shrink-0 rounded-full ${CONNECTIVITY_DOT[connectivityFrom(a, now)]}`} aria-label={connectivityLabel(connectivityFrom(a, now), a.lastSeenAt, now)} />
+                        <span className="text-sm font-medium truncate">{a.device.name}</span>
+                        {a.business && <span className="text-xs text-muted-foreground truncate">{a.business.name}</span>}
+                      </span>
+                      <span className="block pl-4 text-xs text-muted-foreground">{a.reasons.join(' · ')}</span>
                     </Link>
                   </li>
                 ))}
-              </ol>
+              </ul>
             )}
-          </CardContent>
-        </Card>
+          </Panel>
+        )}
 
         {/* Who is affected. */}
-        <Card data-testid="dashboard-customers">
-          <CardHeader className="py-3"><CardTitle className="text-sm">Customers affected</CardTitle></CardHeader>
-          <CardContent className="pt-0">
-            {d.customers.length === 0 ? (
-              <Empty icon={Building2}>No business has an open alert, an offline device or a failed action that you can see.</Empty>
+        <Panel testId="dashboard-customers" title="Customers affected" className="lg:col-span-3 lg:col-start-10 lg:row-start-1">
+          {d.customers.length === 0 ? (
+            <Empty icon={Building2}>No business has an open alert, an offline device or a failed action that you can see.</Empty>
+          ) : (
+            <ul className="divide-y">
+              {d.customers.slice(0, 10).map((c) => {
+                const parts = [
+                  c.outages && `${c.outages} outage${c.outages === 1 ? '' : 's'}`,
+                  c.critical && `${c.critical} critical`,
+                  c.failedActions && `${c.failedActions} failed action${c.failedActions === 1 ? '' : 's'}`,
+                  c.warning && `${c.warning} warning`,
+                  c.offline && `${c.offline} offline`,
+                ].filter(Boolean);
+                const body = (
+                  <>
+                    <span className="block text-sm font-medium truncate">{c.business.name}</span>
+                    <span className={`block text-xs ${c.outages || c.critical ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'}`}>{parts.join(' · ')}</span>
+                  </>
+                );
+                return (
+                  <li key={c.business.id} className="py-2">
+                    {isPlatformAdmin ? <Link href={`/businesses/${c.business.id}`} className="block hover:underline">{body}</Link> : body}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Panel>
+
+        {/* What is already in hand. */}
+        <Panel testId="dashboard-in-progress" title="Being worked on" className="lg:col-span-4 lg:col-start-6 lg:row-start-2">
+          <InProgress d={d} now={now} />
+        </Panel>
+
+        {d.patch && (
+          <Panel testId="dashboard-patch" title="Patch status" className="lg:col-span-3 lg:col-start-10 lg:row-start-2"
+            action={<Link href="/patching" className="text-xs text-muted-foreground hover:underline">Patching</Link>}>
+            <PatchBreakdown p={d.patch} now={now} />
+          </Panel>
+        )}
+
+        {mapOn && (
+          <div className="h-[360px] lg:col-span-5 lg:col-start-1 lg:row-span-2 lg:row-start-2 lg:h-auto lg:min-h-0" data-testid="dashboard-map">
+            <ClientMap embedded />
+          </div>
+        )}
+
+        {d.activity && (
+          <Panel testId="dashboard-activity" title="Recent activity" className="lg:col-span-4 lg:col-start-6 lg:row-start-3"
+            action={<Link href="/audit" className="text-xs text-muted-foreground hover:underline">Audit log</Link>}>
+            {d.activity.length === 0 ? (
+              <Empty icon={Activity}>No alert, action, patch, session or device activity in the last 7 days.</Empty>
             ) : (
               <ul className="divide-y">
-                {d.customers.slice(0, 10).map((c) => {
-                  const parts = [
-                    c.outages && `${c.outages} outage${c.outages === 1 ? '' : 's'}`,
-                    c.critical && `${c.critical} critical`,
-                    c.failedActions && `${c.failedActions} failed action${c.failedActions === 1 ? '' : 's'}`,
-                    c.warning && `${c.warning} warning`,
-                    c.offline && `${c.offline} offline`,
-                  ].filter(Boolean);
-                  const body = (
-                    <>
-                      <span className="text-sm font-medium truncate">{c.business.name}</span>
-                      <span className={`block text-xs ${c.outages || c.critical ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'}`}>{parts.join(' · ')}</span>
-                    </>
+                {d.activity.map((a) => {
+                  const line = (
+                    <span className="flex items-baseline gap-2 py-1.5">
+                      <span className="min-w-0 flex-1 text-xs">
+                        <span className="font-medium">{a.actor ?? 'System'}</span> {a.label}
+                        {a.business && <span className="text-muted-foreground"> · {a.business.name}</span>}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{ago(a.at, now)}</span>
+                    </span>
                   );
-                  return (
-                    <li key={c.business.id} className="py-2">
-                      {isPlatformAdmin ? <Link href={`/businesses/${c.business.id}`} className="block hover:underline">{body}</Link> : body}
-                    </li>
-                  );
+                  return <li key={a.id}>{a.href ? <Link href={a.href} className="block hover:bg-muted/40 rounded-sm px-1 -mx-1">{line}</Link> : <span className="block px-1 -mx-1">{line}</span>}</li>;
                 })}
               </ul>
             )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3 lg:items-start">
-        {/* Which devices. */}
-        {d.devices && (
-          <Card data-testid="dashboard-attention">
-            <CardHeader className="py-3"><CardTitle className="text-sm">Devices needing attention</CardTitle></CardHeader>
-            <CardContent className="pt-0">
-              {d.attention.length === 0 ? (
-                <Empty icon={CheckCircle2}>Every device you can see is online, reporting, and has no open alert or failed action.</Empty>
-              ) : (
-                <ul className="divide-y">
-                  {d.attention.map((a) => (
-                    <li key={a.device.id}>
-                      <Link href={`/endpoints/${a.device.id}`} className="block py-2 hover:bg-muted/40 rounded-sm px-1 -mx-1">
-                        <span className="flex items-baseline gap-2">
-                          <span className={`h-2 w-2 shrink-0 rounded-full ${a.isOnline ? 'bg-green-500' : 'bg-muted-foreground/50'}`} aria-label={a.isOnline ? 'online' : 'offline'} />
-                          <span className="text-sm font-medium truncate">{a.device.name}</span>
-                          {a.business && <span className="text-xs text-muted-foreground truncate">{a.business.name}</span>}
-                        </span>
-                        <span className="block pl-4 text-xs text-muted-foreground">{a.reasons.join(' · ')}</span>
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
+          </Panel>
         )}
-
-        {/* What is already in hand. */}
-        <Card data-testid="dashboard-in-progress">
-          <CardHeader className="py-3"><CardTitle className="text-sm">Being worked on</CardTitle></CardHeader>
-          <CardContent className="pt-0 space-y-3">
-            <InProgress d={d} now={now} />
-          </CardContent>
-        </Card>
 
         {d.recentDevices && (
-          <Card data-testid="dashboard-recent-devices">
-            <CardHeader className="py-3"><CardTitle className="text-sm">Your recent devices</CardTitle></CardHeader>
-            <CardContent className="pt-0">
-              {d.recentDevices.length === 0 ? (
-                <Empty icon={Clock}>You have not opened a session to a device you can still see.</Empty>
-              ) : (
-                <ul className="divide-y">
-                  {d.recentDevices.map((r) => (
-                    <li key={r.id}>
-                      <Link href={`/endpoints/${r.id}`} className="flex items-baseline gap-2 py-2 hover:bg-muted/40 rounded-sm px-1 -mx-1">
-                        <span className={`h-2 w-2 shrink-0 rounded-full ${r.isOnline ? 'bg-green-500' : 'bg-muted-foreground/50'}`} aria-label={r.isOnline ? 'online' : 'offline'} />
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-sm truncate">{r.name}</span>
-                          <span className="block text-xs text-muted-foreground truncate">{r.business?.name ? `${r.business.name} · ` : ''}your session {ago(r.lastSessionAt, now)}</span>
-                        </span>
-                        <span className="shrink-0 text-[11px] text-muted-foreground">{r.isOnline ? 'online' : `seen ${ago(r.lastSeenAt, now)}`}</span>
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3 lg:items-start">
-        {d.activity && (
-          <Card className="lg:col-span-2" data-testid="dashboard-activity">
-            <CardHeader className="py-3">
-              <CardTitle className="flex items-baseline justify-between text-sm">
-                <span>Recent activity</span>
-                <Link href="/audit" className="text-xs font-normal text-muted-foreground hover:underline">Audit log</Link>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              {d.activity.length === 0 ? (
-                <Empty icon={Activity}>No alert, action, patch, session or device activity in the last 7 days.</Empty>
-              ) : (
-                <ul className="divide-y">
-                  {d.activity.map((a) => {
-                    const line = (
-                      <span className="flex items-baseline gap-2 py-1.5">
-                        <span className="min-w-0 flex-1 text-xs">
-                          <span className="font-medium">{a.actor ?? 'System'}</span> {a.label}
-                          {a.business && <span className="text-muted-foreground"> · {a.business.name}</span>}
-                        </span>
-                        <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{ago(a.at, now)}</span>
+          <Panel testId="dashboard-recent-devices" title="Your recent devices" className="lg:col-span-3 lg:col-start-10 lg:row-start-3">
+            {d.recentDevices.length === 0 ? (
+              <Empty icon={Clock}>You have not opened a session to a device you can still see.</Empty>
+            ) : (
+              <ul className="divide-y">
+                {d.recentDevices.map((r) => (
+                  <li key={r.id}>
+                    <Link href={`/endpoints/${r.id}`} className="flex items-baseline gap-2 py-2 hover:bg-muted/40 rounded-sm px-1 -mx-1">
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${CONNECTIVITY_DOT[connectivityFrom(r, now)]}`} aria-label={connectivityLabel(connectivityFrom(r, now), r.lastSeenAt, now)} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm truncate">{r.name}</span>
+                        <span className="block text-xs text-muted-foreground truncate">{r.business?.name ? `${r.business.name} · ` : ''}your session {ago(r.lastSessionAt, now)}</span>
                       </span>
-                    );
-                    return <li key={a.id}>{a.href ? <Link href={a.href} className="block hover:bg-muted/40 rounded-sm px-1 -mx-1">{line}</Link> : <span className="block px-1 -mx-1">{line}</span>}</li>;
-                  })}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {d.patch && (
-          <Card data-testid="dashboard-patch">
-            <CardHeader className="py-3">
-              <CardTitle className="flex items-baseline justify-between text-sm">
-                <span>Patch compliance</span>
-                <Link href="/patching" className="text-xs font-normal text-muted-foreground hover:underline">Patching</Link>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 space-y-2 text-xs">
-              <PatchBreakdown p={d.patch} now={now} />
-            </CardContent>
-          </Card>
+                      <span className={`shrink-0 text-[11px] ${connectivityFrom(r, now) === 'agent_silent' ? CONNECTIVITY_TEXT.agent_silent : 'text-muted-foreground'}`} title={connectivityHint(connectivityFrom(r, now))}>{connectivityFrom(r, now) === 'online' ? 'online' : connectivityFrom(r, now) === 'agent_silent' ? `agent silent ${ago(r.lastSeenAt, now)}` : `seen ${ago(r.lastSeenAt, now)}`}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
         )}
       </div>
-
-      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-        {d.devices && (
-          <button type="button" onClick={toggleMap} className="inline-flex items-center gap-1 hover:text-foreground">
-            <MapPin className="h-3.5 w-3.5" /> {showMap ? 'Hide device locations' : 'Show device locations'}
-          </button>
-        )}
-        {isPlatformAdmin && (
-          <Link href="/admin/status" className="inline-flex items-center gap-1 hover:text-foreground">
-            Server health (CPU, memory, disk, relay) is on System status <ArrowRight className="h-3 w-3" />
-          </Link>
-        )}
-      </div>
-      {showMap && d.devices && <div className="h-[420px]"><ClientMap embedded /></div>}
     </div>
+  );
+}
+
+/**
+ * One dashboard card: the same header (title, and a link or note on the
+ * right) and the same padding everywhere. From `lg` its body scrolls inside
+ * the card, so the grid cell, not the list, decides the height.
+ */
+function Panel({ title, action, className, testId, id, children }: {
+  title: string; action?: React.ReactNode; className?: string; testId: string; id?: string; children: React.ReactNode;
+}) {
+  return (
+    <Card id={id} data-testid={testId} className={`flex flex-col lg:min-h-0 lg:overflow-hidden ${className ?? ''}`}>
+      <CardHeader className="shrink-0 flex-row items-baseline justify-between gap-2 space-y-0 px-4 py-2.5">
+        <CardTitle className="text-sm font-semibold">{title}</CardTitle>
+        {action}
+      </CardHeader>
+      <CardContent className="px-4 pb-3 pt-0 lg:min-h-0 lg:flex-1 lg:overflow-y-auto" data-panel-body>
+        {children}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -407,18 +408,16 @@ function InProgress({ d, now }: { d: Overview; now: number }) {
 }
 
 function PatchBreakdown({ p, now }: { p: NonNullable<Overview['patch']>; now: number }) {
-  if (p.total === 0) return <p className="text-muted-foreground">No devices.</p>;
+  if (p.total === 0) return <Empty icon={ShieldCheck}>No devices.</Empty>;
   const seg = [
     { n: p.upToDate, label: 'up to date', cls: 'bg-green-500' },
     { n: p.needsUpdates, label: 'updates pending', cls: 'bg-amber-500' },
     { n: p.stale, label: `scan older than ${p.staleAfterHours} h`, cls: 'bg-muted-foreground/40' },
     { n: p.noScan, label: 'never scanned', cls: 'bg-slate-300 dark:bg-slate-600' },
   ];
+  // The percentage itself is the Patch compliance tile's; this is what it is made of.
   return (
-    <>
-      <div className="text-2xl font-semibold tabular-nums">
-        {p.compliancePercent === null ? 'No data' : `${p.compliancePercent}%`}
-      </div>
+    <div className="space-y-2 text-xs">
       {p.compliancePercent === null && (
         <p className="text-muted-foreground">No device has an update scan from the last {p.staleAfterHours} hours, so compliance cannot be computed honestly.</p>
       )}
@@ -438,7 +437,7 @@ function PatchBreakdown({ p, now }: { p: NonNullable<Overview['patch']>; now: nu
         Coverage {p.coveragePercent ?? 0}% ({p.fresh} of {p.total}). Newest scan {ago(p.newestScanAt, now)}{p.oldestFreshScanAt ? `, oldest counted ${ago(p.oldestFreshScanAt, now)}` : ''}.
       </p>
       <p className="text-muted-foreground">{p.definition}</p>
-    </>
+    </div>
   );
 }
 

@@ -29,6 +29,17 @@
  * summary against a reference ClientSt0r peer that does not advertise
  * device_timeline_v1 (UI_PEER_PORT 3504); and the Data retention card.
  *
+ * 0.35 adds: every swept page has its side padding (the heading never sits
+ * against the menu or the screen edge); the device page lists the static and
+ * rule groups a computer is in, each opening the device list filtered by it;
+ * a Linux computer's update and restart wording is Linux's, on the device
+ * page and the dashboard; the drawer's close button and the brand header
+ * reach 4.5:1 on a pale and on a dark branding accent; "Schedule this
+ * report" on each schedulable report opens Scheduled reports prefilled with
+ * its filters, for a Platform Admin and a Business Owner, and is not offered
+ * to a Business User; and at 375 px the device-list filters sit behind a
+ * "Filters (n)" button that opens a sheet, while desktop keeps them inline.
+ *
  * Any console error, uncaught exception, or unexpected failed request on a
  * page fails that page's check. The only failures expected are the 403
  * STEP_UP_REQUIRED answers the step-up flows provoke on purpose.
@@ -145,6 +156,8 @@ function startApi() {
     // Nothing in the background acts on this database while the browser looks at it.
     MONITOR_SWEEP: 'off', CLIENT_UPDATE_SWEEP: 'off', PATCH_POLICY_SWEEP: 'off', METRIC_SWEEP: 'off', AUDIT_SEALER: 'off',
     RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off',
+    // 0.35: the agent-silent fixture is reachable (isOnline) with an old heartbeat; with no hbbs here the stale sweep would take it offline within a minute.
+    STALE_SWEEP: 'off',
     FRONTEND_URL: WEB, PUBLIC_API_URL: WEB,
     VERSION_FILE: path.join(ROOT, 'version.json'),
     // 0.35: the relay is this suite's SMTP sink on loopback, and the ClientSt0r peer its reference peer.
@@ -217,6 +230,10 @@ async function seed() {
   const admin = await mk('admin', { isPlatformAdmin: true });
   const owner = await mk('owner');
   await prisma.membership.create({ data: { userId: owner.id, tenantId: tenant.id, customerId: A.id, roleId: roleOwner.id } });
+  // 0.35: a Business User (computers:view only), to whom "Schedule this report" is not offered.
+  const roleUser = await prisma.role.findFirst({ where: { type: 'BUSINESS_USER' } });
+  const member = await mk('member');
+  await prisma.membership.create({ data: { userId: member.id, tenantId: tenant.id, customerId: A.id, roleId: roleUser.id, capabilities: ['computers:view'] } });
 
   const now = Date.now();
   const ep = (biz, name, extra = {}) => prisma.endpoint.create({ data: {
@@ -230,7 +247,21 @@ async function seed() {
   const others = [];
   for (let i = 2; i <= 5; i++) others.push(await ep(A, `${TAG}-WS-0${i}`, { siteId: i % 2 ? site.id : null, isOnline: i !== 4, lastSeenAt: new Date(now - (i === 4 ? 3 * 86400_000 : 120_000)) }));
   const linux = await ep(A, `${TAG}-LNX-01`, { platform: 'Linux', osVersion: 'Ubuntu 24.04', agentVersion: '0.33.0' });
-  await ep(B, `${TAG}-BIRCH-ONLY`);
+  const birch = await ep(B, `${TAG}-BIRCH-ONLY`);
+  // 0.35: the Linux computer reports, from its package manager, a pending restart (fresh scan).
+  await prisma.endpointInventory.create({ data: { endpointId: linux.id, osCaption: 'Ubuntu 24.04 LTS', updatesCheckedAt: new Date(now - 3600_000), pendingUpdates: [], pendingUpdateCount: 0, rebootRequired: true } });
+  // 0.35: a static group holding the main device, and a rule group (online computers) in A; B has a same-named rule group.
+  const front = await prisma.endpointGroup.create({ data: { tenantId: tenant.id, customerId: A.id, name: `${TAG} Front desk`, members: { create: [{ endpointId: main.id }] } } });
+  const onlineRule = await prisma.endpointGroup.create({ data: { tenantId: tenant.id, customerId: A.id, name: `${TAG} Online`, kind: 'RULE', rule: { online: 'online' } } });
+  await prisma.endpointGroup.create({ data: { tenantId: tenant.id, customerId: B.id, name: `${TAG} Online`, kind: 'RULE', rule: { online: 'online' } } });
+  void birch;
+  // 0.35 (item 7): reachable through RustDesk (isOnline) with an agent silent for twelve days — in B, so A's counts are untouched.
+  const silent = await ep(B, `${TAG}-BIRCH-SILENT`, { lastSeenAt: new Date(now - 12 * 86400_000 - 3600_000) });
+  // 0.35: a draft library script of A, so the script page itself is swept for its padding.
+  const body = 'Get-Date';
+  const script = await prisma.script.create({ data: { scope: 'BUSINESS', tenantId: tenant.id, customerId: A.id, name: `${TAG} Clock`, createdById: admin.id,
+    versions: { create: [{ version: 1, description: 'Prints the date', language: 'powershell', targetOs: 'windows', risk: 'low', content: body, contentBytes: Buffer.byteLength(body),
+      contentSha256: createHash('sha256').update(body).digest('hex'), definitionSha256: createHash('sha256').update(`def:${body}`).digest('hex'), authorId: admin.id, contributorIds: [admin.id] }] } } });
 
   await prisma.endpointInventory.create({ data: {
     endpointId: main.id, manufacturer: 'Contoso', model: 'Workstation 9000', serialNumber: `SN${TAG}`, osCaption: 'Microsoft Windows 11 Pro', osBuild: '26100',
@@ -270,7 +301,26 @@ async function seed() {
     { name: 'Intel(R) Ethernet Connection I219-LM', connectionId: 'Ethernet', status: 'Connected', up: true, mac: '00-11-22-AA-BB-CC', speedBps: 1e9,
       ipv4: ['10.20.0.5'], ipv6: ['fe80::1'], gateway: ['10.20.0.1'], dnsServers: ['10.20.0.1'], dnsSuffix: 'corp.example.com', dhcpEnabled: true, dhcpServer: '10.20.0.1' },
   ] });
-  return { tenant, A, B, site, admin, owner, main, others, linux };
+  return { tenant, A, B, site, admin, owner, member, main, others, linux, front, onlineRule, script, silent };
+}
+
+// The branding accent is the platform's own (one row per tenant), so the
+// drawer checks set it and put it back exactly as it was — or remove the row
+// if there was none.
+let brandingBefore; // undefined: not touched
+async function setAccent(tenantId, accentColor) {
+  if (brandingBefore === undefined) {
+    const b = await prisma.tenantBranding.findUnique({ where: { tenantId } });
+    brandingBefore = b ? { tenantId, accentColor: b.accentColor } : { tenantId, none: true };
+  }
+  await prisma.tenantBranding.upsert({ where: { tenantId }, create: { tenantId, accentColor }, update: { accentColor } });
+}
+async function restoreBranding() {
+  const b = brandingBefore;
+  if (!b) return;
+  brandingBefore = undefined;
+  if (b.none) await prisma.tenantBranding.deleteMany({ where: { tenantId: b.tenantId } });
+  else await prisma.tenantBranding.update({ where: { tenantId: b.tenantId }, data: { accentColor: b.accentColor } });
 }
 
 async function cleanup() {
@@ -282,9 +332,13 @@ async function cleanup() {
     ['endpoints', async () => {
       const eps = (await prisma.endpoint.findMany({ where: { customerId: { in: ids } }, select: { id: true } })).map((e) => e.id);
       await prisma.endpointCommand.deleteMany({ where: { endpointId: { in: eps } } }).catch(() => {});
+      await prisma.endpointGroupMember.deleteMany({ where: { endpointId: { in: eps } } }).catch(() => {});
+      await prisma.endpointInventory.deleteMany({ where: { endpointId: { in: eps } } }).catch(() => {});
       return prisma.endpoint.deleteMany({ where: { id: { in: eps } } });
     }],
     ['device groups', () => prisma.endpointGroup.deleteMany({ where: { customerId: { in: ids } } })],
+    ['scripts', () => prisma.script.deleteMany({ where: { customerId: { in: ids } } })],
+    ['branding', restoreBranding],
     ['sites', () => prisma.site.deleteMany({ where: { customerId: { in: ids } } })],
     ['memberships', () => prisma.membership.deleteMany({ where: { OR: [{ customerId: { in: ids } }, { userId: { in: created.users } }] } })],
     ['businesses', () => prisma.customer.deleteMany({ where: { id: { in: ids } } })],
@@ -394,6 +448,10 @@ async function noSideScroll(page, label) {
   const o = await overflow(page);
   check(o.doc <= 1 && o.main <= 1, `${label}: no sideways page scroll`, JSON.stringify(o));
 }
+/** WCAG 2.x contrast of two computed CSS colours ("rgb(…)"/"rgba(…)", opaque). */
+const rgbOf = (c) => (c.match(/\d+(\.\d+)?/g) ?? ['0', '0', '0']).slice(0, 3).map(Number);
+const relLum = (c) => { const [r, g, b] = rgbOf(c).map((v) => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+const contrast = (a, b) => { const [x, y] = [relLum(a), relLum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
 const lum = (rgb) => { const m = rgb.match(/\d+(\.\d+)?/g)?.map(Number) ?? [0, 0, 0]; return (0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]) / 255; };
 async function themeCheck(page, theme, label) {
   const { dark, bg } = await page.evaluate(() => ({ dark: document.documentElement.classList.contains('dark'), bg: getComputedStyle(document.body).backgroundColor }));
@@ -495,7 +553,7 @@ async function shellChecks(page, vp, label) {
   check(!(await drawer.isVisible()), `${label}: a link to the page already open closes it too`);
 }
 
-async function mainPagesSweep(page, vp, label) {
+async function mainPagesSweep(page, f, vp, label) {
   // The pages a person reaches from the menu, plus the hub tabs: taken from
   // the menu itself, so a page added to it is swept without editing this.
   let hrefs;
@@ -513,18 +571,34 @@ async function mainPagesSweep(page, vp, label) {
     if (await settings.getAttribute('aria-expanded') === 'false') await settings.click();
     hrefs = await page.locator('aside a[href^="/"]').evaluateAll((els) => els.map((e) => e.getAttribute('href')));
   }
-  const extra = ['/my-computers', '/sessions', '/quick-connect', '/patching', '/endpoints/enroll', '/endpoints/new', '/settings/api-keys', '/settings/monitoring', '/settings/client-updates', '/reports/agent-coverage', '/reports/offline-time', '/reports/patch-compliance', '/reports/alert-frequency'];
+  const extra = ['/my-computers', '/sessions', '/quick-connect', '/patching', '/endpoints/enroll', '/endpoints/new', '/settings/api-keys', '/settings/monitoring', '/settings/client-updates', '/reports/agent-coverage', '/reports/offline-time', '/reports/patch-compliance', '/reports/alert-frequency',
+    // 0.35: the pages that had no side padding, and a page under each.
+    '/automation/scripts', `/automation/scripts/${f.script.id}`, '/automation/software', '/reports/schedules'];
   const all = [...new Set([...hrefs, ...extra])].filter((h) => !/^\/(docs|help)\//.test(h));
   check(all.length >= 15, `${label}: ${all.length} main pages to sweep`);
-  const bad = [], noisy = [];
+  const bad = [], noisy = [], unpadded = [], noHeading = [];
+  // 0.35: the page's own heading must sit inside a side gutter — p-4 is 16 px,
+  // p-6 24 px; the Patching and Script library pages had none (0 px), their
+  // title against the menu on desktop and the screen edge on a phone.
+  const minPad = 12;
   for (const href of all) {
     await go(page, href);
     const o = await overflow(page);
     if (o.doc > 1 || o.main > 1) bad.push(`${href}: ${JSON.stringify(o)}`);
+    const pad = await page.evaluate(() => {
+      const main = document.querySelector('main');
+      const h = main?.querySelector('h1');
+      if (!main || !h) return null;
+      const m = main.getBoundingClientRect(), r = h.getBoundingClientRect();
+      return { left: Math.round(r.left - m.left), right: Math.round(m.right - r.right) };
+    });
+    if (pad === null) noHeading.push(href);
+    else if (pad.left < minPad) unpadded.push(`${href}: heading ${pad.left} px from the left of the page`);
     const ps = takeProblems(page);
     if (ps.length) noisy.push(`${href}: ${fmtProblems(ps)}`);
   }
   check(bad.length === 0, `${label}: none of them scrolls sideways`, bad.join('\n      '));
+  check(unpadded.length === 0, `${label}: every page's heading sits inside the side padding (${all.length - noHeading.length} measured${noHeading.length ? `; no h1 on ${noHeading.join(', ')}` : ''})`, unpadded.join('\n      '));
   check(noisy.length === 0, `${label}: none of them logs an error or fails a request`, noisy.join('\n      '));
 }
 
@@ -724,6 +798,227 @@ async function systemStatus(page, label, vp) {
   await cleanCheck(page, `${label} System status`);
 }
 
+// ── 0.35 ────────────────────────────────────────────────────────────────────
+
+/** The drawer's close button and the brand header on a pale and a dark accent, and the default one. */
+async function drawerContrast(page, f, label) {
+  const trigger = page.locator('[data-testid="nav-drawer-trigger"]');
+  const drawer = page.locator('[data-testid="nav-drawer"]');
+  for (const accent of ['#FDE68A', '#1E3A8A', '#3B82F6']) {
+    await setAccent(f.tenant.id, accent);
+    await go(page, '/dashboard');
+    await trigger.click();
+    await drawer.waitFor({ state: 'visible', timeout: 10_000 });
+    const header = drawer.locator('[data-testid="brand-header"]');
+    // The branding query lands after the drawer opens: wait for the accent itself.
+    await page.waitForFunction((el) => getComputedStyle(el).backgroundColor !== 'rgba(0, 0, 0, 0)', await header.elementHandle(), { timeout: 10_000 }).catch(() => {});
+    const c = await drawer.evaluate((el) => {
+      const h = el.querySelector('[data-testid="brand-header"]'), b = el.querySelector('[data-testid="nav-drawer-close"]');
+      const hr = h.getBoundingClientRect(), br = b.getBoundingClientRect();
+      return { bg: getComputedStyle(h).backgroundColor, button: getComputedStyle(b).color, title: getComputedStyle(h.querySelector('.font-semibold') ?? h).color, onHeader: br.top >= hr.top && br.bottom <= hr.bottom + 1 };
+    });
+    const rb = contrast(c.button, c.bg), rt = contrast(c.title, c.bg);
+    check(c.onHeader && rb >= 4.5, `${label}: on accent ${accent} the drawer's close button is ${rb.toFixed(2)}:1 (WCAG AA is 4.5:1)`, JSON.stringify(c));
+    check(rt >= 4.5, `${label}: and the portal title on it is ${rt.toFixed(2)}:1`, JSON.stringify(c));
+    if (accent === '#FDE68A') await shot(page, `${label}-drawer-pale-accent`);
+    await page.keyboard.press('Escape');
+    await drawer.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
+  }
+  await restoreBranding();
+  await cleanCheck(page, `${label} drawer on branding accents`);
+}
+
+/** Groups on the device page, and a Linux computer's own wording there. */
+async function devicePageGroups(page, f, vp, label) {
+  await go(page, `/endpoints/${f.main.id}`);
+  const box = page.locator('[data-testid="device-groups"]');
+  await box.waitFor({ timeout: 15_000 });
+  const links = await box.locator('a').evaluateAll((els) => els.map((a) => ({ text: a.textContent.trim(), kind: a.getAttribute('data-group-kind'), href: a.getAttribute('href') })));
+  const want = [{ text: `${TAG} Front desk`, kind: 'static', id: f.front.id }, { text: `${TAG} Online · rule`, kind: 'rule', id: f.onlineRule.id }];
+  check(links.length === 2 && want.every((w) => links.some((l) => l.text === w.text && l.kind === w.kind && new URL(l.href, WEB).searchParams.get('groupId') === w.id)),
+    `${label}: the device page lists its static group and the rule group it matches (not Business B's same-named one), each linking to the list filtered by it`, JSON.stringify(links));
+  if (vp === 'phone') await noSideScroll(page, `${label} device groups`);
+  await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
+  await box.locator('a[data-group-kind="rule"]').click();
+  await page.waitForURL((u) => u.pathname === '/endpoints' && u.searchParams.get('groupId') === f.onlineRule.id, { timeout: 15_000 }).catch(() => {});
+  // A's online computers: WS-01, 02, 03, 05 and LNX-01 (WS-04 is offline).
+  const n = await rowsSettle(page, 5);
+  check(new URL(page.url()).searchParams.get('groupId') === f.onlineRule.id && n === 5, `${label}: following the rule group lists its five members`, `${page.url()} rows ${n}`);
+  await cleanCheck(page, `${label} device groups`);
+
+  // A Linux computer: its package manager, not Windows Update.
+  await go(page, `/endpoints/${f.linux.id}`);
+  await page.locator('[data-testid="workspace-tabs"]').waitFor({ timeout: 20_000 });
+  await settled(page);
+  let text = await page.locator('main').innerText();
+  check(text.includes('Package updates') && !/Windows Update|Windows is/.test(text), `${label}: a Linux computer's Overview names its package updates, never Windows Update`, text.match(/.{0,60}Windows.{0,60}/)?.[0] ?? '');
+  await page.locator('[data-testid="tab-patches"]').click();
+  const panel = page.locator('[role="tabpanel"][data-state="active"]');
+  await panel.waitFor({ timeout: 10_000 });
+  await settled(page, 12_000);
+  text = await panel.innerText();
+  check(/Package updates/.test(text) && /package manager/.test(text) && !/Windows Update|Windows is|from Windows/.test(text) && /A restart is pending/.test(text) && /deployments are Windows only/.test(text),
+    `${label}: its Patches tab says the package manager reports a pending restart, never Windows Update, and that deployments are Windows only`, text.match(/.{0,80}Windows.{0,80}/)?.[0] ?? text.slice(0, 400));
+  if (vp === 'phone') await noSideScroll(page, `${label} Linux patches tab`);
+  await cleanCheck(page, `${label} Linux device page`);
+}
+
+/**
+ * 0.35: the dashboard fits the screen at the common desktop sizes — neither
+ * the document nor <main> (the shell's scroller) scrolls — with the map shown,
+ * every panel inside the viewport and long lists scrolling in their own card.
+ * At 375 px it stacks and scrolls down, never sideways.
+ */
+async function dashboardFit(browser, f, vp, theme, label) {
+  const sizes = vp === 'phone' ? [null] : [[1440, 900], [1366, 768]];
+  for (const size of sizes) {
+    const ctx = size
+      ? await browser.newContext({ viewport: { width: size[0], height: size[1] }, extraHTTPHeaders: { 'x-forwarded-for': ip() } })
+      : await newContext(browser, vp, theme);
+    if (size) await ctx.addInitScript((t) => { try { localStorage.setItem('theme', t); localStorage.removeItem('dashboard.map'); } catch { /* */ } }, theme);
+    try {
+      const tag = size ? `${label} ${size[0]}×${size[1]}` : label;
+      const page = await signIn(ctx, f.admin.email, tag, theme);
+      await go(page, '/dashboard');
+      await page.locator('[data-testid="dashboard-grid"]').waitFor({ timeout: 20_000 });
+      await settled(page);
+      if (!size) {
+        await noSideScroll(page, `${tag} dashboard`);
+        const m = await page.evaluate(() => document.querySelector('main').scrollHeight > innerHeight);
+        check(m, `${tag}: the dashboard stacks and scrolls down at phone width`);
+        continue;
+      }
+      await page.locator('[data-testid="dashboard-map"]').waitFor({ timeout: 10_000 });
+      const m = await page.evaluate(() => {
+        const main = document.querySelector('main');
+        const panels = [...document.querySelectorAll('[data-testid="dashboard-grid"] > *')].map((el) => { const r = el.getBoundingClientRect(); return { id: el.getAttribute('data-testid'), bottom: Math.round(r.bottom), right: Math.round(r.right) }; });
+        return { doc: document.documentElement.scrollHeight, vh: innerHeight, mainScroll: main.scrollHeight, mainClient: main.clientHeight, docW: document.documentElement.scrollWidth, vw: innerWidth, panels };
+      });
+      check(m.doc <= m.vh && m.mainScroll <= m.mainClient + 1, `${tag}: the dashboard fits the window, map shown — the document (${m.doc} ≤ ${m.vh}) and the page (${m.mainScroll} ≤ ${m.mainClient}) do not scroll`, JSON.stringify(m));
+      check(m.panels.length >= 7 && m.panels.every((p) => p.bottom <= m.vh + 1 && p.right <= m.vw + 1) && m.docW <= m.vw, `${tag}: all ${m.panels.length} panels, the map among them, are inside the viewport and nothing overflows sideways`, JSON.stringify(m.panels));
+      await page.screenshot({ path: path.join(OUT_DIR, `dashboard-${size[0]}x${size[1]}-${theme}.png`) });
+      await cleanCheck(page, `${tag} dashboard`);
+    } finally { await ctx.close(); }
+  }
+}
+
+/** 0.35: reachable with a silent agent is amber and says so — never a green "Online". */
+async function agentSilentUi(page, f, label) {
+  await go(page, `/endpoints?search=${encodeURIComponent(`${TAG}-BIRCH-SILENT`)}`);
+  await rowsSettle(page, 1);
+  const dot = page.locator('table [data-connectivity]').first();
+  const cell = page.locator('[data-testid="last-seen-cell"]').first();
+  const cellText = (await cell.innerText().catch(() => '')).trim();
+  check(await dot.getAttribute('data-connectivity').catch(() => null) === 'agent_silent' && /agent silent 12 d/.test(cellText) && !/^Online/.test(cellText),
+    `${label}: the device list draws a twelve-day-silent, RustDesk-reachable computer amber, "agent silent 12 d", not Online`, `${await dot.getAttribute('data-connectivity').catch(() => null)} / ${cellText}`);
+  await go(page, `/endpoints/${f.silent.id}`);
+  const st = page.locator('[data-testid="device-status"]');
+  await st.waitFor({ timeout: 20_000 });
+  const stText = (await st.innerText()).trim();
+  const hint = await st.locator('dd').getAttribute('title');
+  const dotCls = await st.locator('span[aria-hidden="true"]').getAttribute('class');
+  check(stText.includes('Reachable (RustDesk) · agent silent 12 d') && /bg-amber-500/.test(dotCls ?? '') && /remote control should work/.test(hint ?? '') && /Update agent/.test(hint ?? ''),
+    `${label}: its device page header says "Reachable (RustDesk) · agent silent 12 d" in amber, with a tooltip naming what still works and Update agent`, `${stText} | ${dotCls} | ${hint}`);
+  await go(page, '/dashboard');
+  await settled(page);
+  const dash = await page.locator('main').innerText();
+  check(/\d+ online · \d+ agent silent · \d+ offline/.test(dash), `${label}: the dashboard's Devices tile counts agent-silent computers apart from online ones`, dash.match(/.{0,40}online.{0,60}/)?.[0] ?? '');
+  await cleanCheck(page, `${label} agent silent`);
+}
+
+/** At 375 px the filters are behind "Filters (n)" in a sheet; on desktop they stay inline. */
+async function filtersSheet(page, vp, label) {
+  await go(page, '/endpoints');
+  const trigger = page.locator('[data-testid="filters-sheet-trigger"]');
+  const inlineOnline = page.getByRole('combobox', { name: 'Online' });
+  await page.locator('input[aria-label="Search devices"]').fill(`${TAG}-WS`);
+  await rowsSettle(page, 5);
+  if (vp === 'desktop') {
+    check(!(await trigger.isVisible()) && await inlineOnline.isVisible(), `${label}: the filters sit inline beside the search, with no Filters button`);
+    return;
+  }
+  check(await trigger.isVisible() && !(await inlineOnline.isVisible()) && (await trigger.innerText()).trim() === 'Filters', `${label}: the filters are behind a "Filters" button, not stacked above the table`, await trigger.innerText());
+  const table = await page.locator('table').first().boundingBox();
+  const search = await page.locator('input[aria-label="Search devices"]').boundingBox();
+  check(table && search && table.y - (search.y + search.height) < 200, `${label}: the table starts within 200 px of the search box`, `search bottom ${search && Math.round(search.y + search.height)}, table top ${table && Math.round(table.y)}`);
+  await trigger.click();
+  const sheet = page.locator('[data-testid="filters-sheet"]');
+  await sheet.waitFor({ timeout: 5_000 });
+  const b = await sheet.boundingBox();
+  check(b && b.x >= 0 && b.x + b.width <= 375.5 && b.y + b.height <= 812.5, `${label}: the sheet fits the screen`, JSON.stringify(b));
+  await shot(page, `${label}-filters-sheet`);
+  await sheet.getByRole('combobox', { name: 'Online' }).click();
+  await page.getByRole('option', { name: 'Online (agent checking in)', exact: true }).click();
+  const n = await rowsSettle(page, 4);
+  check(n === 4, `${label}: Online, chosen in the sheet, applies at once (four of the five are online)`, `rows ${n}`);
+  await sheet.locator('[data-testid="filters-sheet-done"]').click();
+  await sheet.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
+  check(!(await sheet.isVisible()) && (await trigger.innerText()).trim() === 'Filters (1)', `${label}: closing it leaves "Filters (1)" on the button`, await trigger.innerText());
+  await noSideScroll(page, `${label} filters sheet`);
+  await trigger.click();
+  await sheet.waitFor({ timeout: 5_000 });
+  await sheet.getByRole('combobox', { name: 'Online' }).click();
+  await page.getByRole('option', { name: 'Online: all' }).click();
+  await rowsSettle(page, 5);
+  await page.keyboard.press('Escape');
+  await sheet.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
+  check((await trigger.innerText()).trim() === 'Filters', `${label}: and clearing it there puts the count back`, await trigger.innerText());
+  await cleanCheck(page, `${label} filters sheet`);
+}
+
+/** "Schedule this report": offered where a schedule can be made, and it carries the filters. */
+async function scheduleLinks(page, f, label) {
+  const link = page.locator('[data-testid="schedule-report"]');
+  for (const r of ['patch-compliance', 'agent-coverage', 'alert-frequency', 'offline-time']) {
+    await go(page, `/reports/${r}`);
+    check(await link.isVisible() && new URL(await link.getAttribute('href'), WEB).searchParams.get('report') === r, `${label}: ${r} offers "Schedule this report"`);
+  }
+  await go(page, '/reports/software-compliance');
+  check(!(await link.isVisible()), `${label}: software compliance, which cannot be scheduled, does not`);
+
+  // Agent coverage, for Business A, not heard from in 14 days.
+  await go(page, `/reports/agent-coverage?businessId=${f.A.id}&silentDays=14`);
+  await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
+  await link.click();
+  await page.waitForURL((u) => u.pathname === '/reports/schedules', { timeout: 15_000 });
+  await hydrated(page); await settled(page);
+  const form = page.locator('[data-testid="report-schedule-form"]');
+  await form.waitFor({ timeout: 15_000 }).catch(() => {});
+  const u = new URL(page.url());
+  const v = async (sel) => page.locator(sel).inputValue().catch(() => null);
+  check(u.searchParams.get('businessId') === f.A.id && u.searchParams.get('silentDays') === '14', `${label}: the link carries the report's business and silent-days filter`, page.url());
+  check(await v('#sched-business') === f.A.id && await v('#sf-report') === 'agent-coverage' && await v('#sf-silent') === '14' && await page.locator('[data-testid="schedule-prefill"]').isVisible(),
+    `${label}: Scheduled reports opens on that business with the form prefilled (report, 14 days) and says so`, `${await v('#sched-business')} ${await v('#sf-report')} ${await v('#sf-silent')}`);
+  await cleanCheck(page, `${label} schedule from agent coverage`);
+
+  // Offline time on 30 days → monthly; on 90 days → weekly, and the page says why.
+  await go(page, `/reports/schedules?report=offline-time&businessId=${f.A.id}&days=30`);
+  await form.waitFor({ timeout: 15_000 }).catch(() => {});
+  check(await v('#sf-report') === 'offline-time' && await v('#sf-freq') === 'monthly', `${label}: a 30-day report is prefilled as monthly`, `${await v('#sf-report')} ${await v('#sf-freq')}`);
+  await go(page, `/reports/alert-frequency?businessId=${f.A.id}&days=90`);
+  await link.click();
+  await page.waitForURL((x) => x.pathname === '/reports/schedules', { timeout: 15_000 });
+  await hydrated(page); await settled(page);
+  await form.waitFor({ timeout: 15_000 }).catch(() => {});
+  const note = await page.locator('[data-testid="schedule-prefill"]').innerText().catch(() => '');
+  check(await v('#sf-report') === 'alert-frequency' && await v('#sf-freq') === 'weekly' && /90 days/.test(note) && /7 days \(weekly\) or 30 days \(monthly\)/.test(note),
+    `${label}: a 90-day report is prefilled weekly, and the page says a schedule covers 7 or 30 days`, note);
+  await cleanCheck(page, `${label} schedule from alert frequency`);
+}
+
+/** A Business User may not own a schedule: no link on any report, and the API refuses them too. */
+async function memberChecks(browser, f, vp, theme, label) {
+  const ctx = await newContext(browser, vp, theme);
+  try {
+    const page = await signIn(ctx, f.member.email, `${label} (Business User)`, theme);
+    await go(page, '/reports/agent-coverage');
+    check(await page.locator('main h1').first().isVisible() && !(await page.locator('[data-testid="schedule-report"]').isVisible()), `${label}: a Business User sees the report without "Schedule this report"`);
+    const r = await page.request.get(`${WEB}/api/v1/reports/schedules`, { headers: { 'x-forwarded-for': ip() } });
+    check(r.status() === 403, `${label}: and the API refuses them a schedule list (HTTP ${r.status()}), as the link's rule says`);
+    await cleanCheck(page, `${label} Business User report`);
+  } finally { await ctx.close(); }
+}
+
 async function apiKeys(browser, f, vp, theme, label) {
   const ctx = await newContext(browser, vp, theme);
   try {
@@ -760,6 +1055,14 @@ async function apiKeys(browser, f, vp, theme, label) {
     await shot(page, `${label}-api-keys`);
     await createdCard.getByRole('button', { name: 'I have saved it' }).click();
     await cleanCheck(page, `${label} API keys`, stepUp403);
+
+    // 0.35: the Business Owner's dashboard words the Linux computer's restart as Linux's.
+    await go(page, '/dashboard');
+    const dash = await page.locator('main').innerText();
+    check(/Linux is waiting for a restart/.test(dash) && !/Windows is waiting for a restart/.test(dash), `${label}: the dashboard says "Linux is waiting for a restart" for the Linux computer`, dash.match(/.{0,80}waiting for a restart.{0,40}/)?.[0] ?? '(no restart line)');
+    await go(page, '/reports/patch-compliance');
+    check(await page.locator('[data-testid="schedule-report"]').isVisible(), `${label}: a Business Owner is offered "Schedule this report"`);
+    await cleanCheck(page, `${label} owner dashboard and report`);
   } finally { await ctx.close(); }
 }
 
@@ -773,16 +1076,23 @@ async function combo(browser, f, vp, theme) {
     await shot(page, `${label}-dashboard`);
     await shellChecks(page, vp, label);
     await cleanCheck(page, `${label} menu`);
+    if (vp === 'phone') await drawerContrast(page, f, label);
     await devicesAndWorkspace(page, f, vp, label);
+    await devicePageGroups(page, f, vp, label);
+    await filtersSheet(page, vp, label);
+    await agentSilentUi(page, f, label);
     await savedViewAndBulk(page, f, vp, label);
     await palette(page, f, vp, label);
     await addDevice(page, f, vp, label);
     await reports(page, label, vp);
+    await scheduleLinks(page, f, label);
     await systemStatus(page, label, vp);
     await coverage035(page, f, vp, label);
-    if (theme === 'light') await mainPagesSweep(page, vp, label);
+    if (theme === 'light') await mainPagesSweep(page, f, vp, label);
   } finally { await ctx.close(); }
   await apiKeys(browser, f, vp, theme, label);
+  if (theme === 'light') await memberChecks(browser, f, vp, theme, label);
+  await dashboardFit(browser, f, vp, theme, label);
 }
 
 // ── 0.35: the 0.34 screens, driven ──────────────────────────────────────────
@@ -1207,7 +1517,7 @@ async function main() {
     fail++; failures.push('UI_HOLD=1: a debugging run, no browser checks were made');
     return;
   }
-  check(true, `fixtures: two businesses, a Platform Admin and a Business Owner, eight devices (one that can chat), two approved scripts, a confirmed address, a ClientSt0r mapping, a migration request (tag ${TAG})`);
+  check(true, `fixtures: two businesses, a Platform Admin, a Business Owner and a Business User, nine devices (one that can chat), three groups, three scripts (two approved), a confirmed address, a ClientSt0r mapping, a migration request (tag ${TAG})`);
   const browser = await chromium.launch();
   try {
     // UI_COMBOS=desktop/light,phone/dark narrows a debugging run; a run that skips any combination fails.

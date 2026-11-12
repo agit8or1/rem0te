@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { CONNECTIVITY_DOT, CONNECTIVITY_TEXT, connectivityFrom, connectivityHint, connectivityLabel } from '@/lib/connectivity';
 import Link from 'next/link';
 import { Apple, Monitor, Terminal, HelpCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -58,9 +59,10 @@ function Pct({ label, v }: { label: string; v: number | null }) {
 export const COLUMNS: ColumnDef[] = [
   {
     id: 'name', label: 'Device', defaultOn: true, fixed: true, sort: 'name',
-    cell: (r) => (
+    cell: (r, c) => (
       <div className="flex items-center gap-2 min-w-0">
-        <span className={cn('h-2 w-2 rounded-full shrink-0', r.isOnline ? 'bg-green-500' : 'bg-gray-400')} title={r.isOnline ? 'Online' : 'Offline'} />
+        <span className={cn('h-2 w-2 rounded-full shrink-0', CONNECTIVITY_DOT[connectivityFrom(r, c.now)])} data-connectivity={connectivityFrom(r, c.now)}
+          title={`${connectivityLabel(connectivityFrom(r, c.now), r.lastSeenAt, c.now)}. ${connectivityHint(connectivityFrom(r, c.now))}`} />
         <div className="min-w-0">
           <Link href={`/endpoints/${r.id}`} className="font-medium hover:underline whitespace-nowrap">{r.name}</Link>
           {r.hostname && r.hostname.toLowerCase() !== r.name.toLowerCase() ? (
@@ -111,8 +113,8 @@ export const COLUMNS: ColumnDef[] = [
     cell: (r, c) => (
       <div className="text-xs whitespace-nowrap" title={r.agent.lastHeartbeatAt ? `Last heartbeat ${new Date(r.agent.lastHeartbeatAt).toLocaleString()}` : 'No heartbeat yet'}>
         <span>{r.agent.type === 'signed' ? 'Signed' : r.agent.type === 'standard' ? (/^linux/i.test(r.platform ?? '') ? 'Standard (Linux)' : /^(macos|mac|darwin|osx)\b/i.test(r.platform ?? '') ? 'Standard (macOS)' : 'Standard') : 'No agent report'}</span>
-        <p className={cn('text-muted-foreground', !r.isOnline && 'opacity-60')}>
-          {r.agent.version ?? 'version unknown'}{r.isOnline ? '' : ` · ${ago(r.agent.lastHeartbeatAt, c.now)}`}
+        <p className={cn('text-muted-foreground', connectivityFrom(r, c.now) !== 'online' && 'opacity-60')}>
+          {r.agent.version ?? 'version unknown'}{connectivityFrom(r, c.now) === 'online' ? '' : ` · ${ago(r.agent.lastHeartbeatAt, c.now)}`}
         </p>
       </div>
     ),
@@ -120,8 +122,10 @@ export const COLUMNS: ColumnDef[] = [
   {
     id: 'lastSeen', label: 'Last seen', defaultOn: true, sort: 'lastSeen',
     cell: (r, c) => (
-      <span className="text-xs text-muted-foreground whitespace-nowrap" title={r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleString() : 'Never'}>
-        {r.isOnline ? `Online · ${ago(r.lastSeenAt, c.now)}` : ago(r.lastSeenAt, c.now)}
+      <span className={cn('text-xs whitespace-nowrap', connectivityFrom(r, c.now) === 'agent_silent' ? CONNECTIVITY_TEXT.agent_silent : 'text-muted-foreground')}
+        title={`${r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleString() : 'Never'}${connectivityFrom(r, c.now) === 'agent_silent' ? `. ${connectivityHint('agent_silent')}` : ''}`} data-testid="last-seen-cell">
+        {connectivityFrom(r, c.now) === 'online' ? `Online · ${ago(r.lastSeenAt, c.now)}`
+          : connectivityFrom(r, c.now) === 'agent_silent' ? connectivityLabel('agent_silent', r.lastSeenAt, c.now) : ago(r.lastSeenAt, c.now)}
       </span>
     ),
   },

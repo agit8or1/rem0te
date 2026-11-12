@@ -67,8 +67,8 @@ export const SHOTS = [
   { name: 'business-overview-dark', maxHeight: 700, path: '@business', theme: 'dark', wait: 'text=Quick Connect' },
 
   // ── Visual insights and monitoring ─────────────────────────────────────
-  { name: 'client-map-dark', path: '/dashboard', theme: 'dark', wait: 'div[class~="h-[420px]"]', settle: 4000,
-    clip: '@element', element: 'div[class~="h-[420px]"]' },
+  { name: 'client-map-dark', path: '/dashboard', theme: 'dark', wait: '[data-testid="dashboard-map"]', settle: 4000,
+    clip: '@element', element: '[data-testid="dashboard-map"]' },
   { name: 'alerts-dark', path: '/alerts', theme: 'dark', wait: 'text=Tacoma warehouse', settle: 2000 },
   { name: 'sessions-live-dark', path: '/sessions', theme: 'dark', wait: 'text=Connected' },
   { name: 'session-history-light', path: '/sessions', theme: 'light', click: ['[role="tab"]:has-text("History")'], settle: 3000 },

@@ -1,4 +1,5 @@
 import { ActionsService } from '../actions/actions.service';
+import { HEARTBEAT_STALE_MS } from '../common/connectivity';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { AgentMigrationService } from '../update-trust/agent-migration.service';
 import {
@@ -1347,7 +1348,9 @@ export class EnrollmentService {
    * lastSeenAt stays the agent's own check-in, so a dead agent is still
    * visible on the device page.
    */
-  async markStaleEndpointsOffline(thresholdMinutes = 10) {
+  // The window is common/connectivity.ts's HEARTBEAT_STALE_MS, which the console's
+  // "agent silent" state uses too (0.35). The rule itself is unchanged.
+  async markStaleEndpointsOffline(thresholdMinutes = HEARTBEAT_STALE_MS / 60_000) {
     const cutoff = new Date(Date.now() - thresholdMinutes * 60 * 1000);
     const nodes = await this.prisma.rustdeskNode.findMany({
       select: { rustdeskId: true, endpointId: true },

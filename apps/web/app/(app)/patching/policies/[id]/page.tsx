@@ -69,12 +69,12 @@ export default function PolicyPage() {
     if (why && why.trim().length >= 3) revoke.mutate(why.trim());
   };
 
-  if (isLoading || !p) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (isLoading || !p) return <p className="p-4 md:p-6 text-sm text-muted-foreground">Loading…</p>;
   const d = p.document;
   const row = (k: string, v: React.ReactNode) => (<div className="flex flex-wrap gap-x-2"><dt className="text-muted-foreground w-44 shrink-0">{k}</dt><dd className="min-w-0">{v}</dd></div>);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 p-4 md:p-6">
       <Link href="/patching" className="text-xs text-muted-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3 w-3" />Patching</Link>
       <PageHeader title={p.name} description={`Patch policy for ${d.businessName} · proposed by ${d.createdBy.name} ${formatDate(p.createdAt)} · expires ${formatDate(p.expiresAt)}`}>
         <div className="flex gap-2 items-center">

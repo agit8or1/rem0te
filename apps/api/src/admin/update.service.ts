@@ -10,6 +10,7 @@ import { Subject } from 'rxjs';
 import { latestRustdeskVersion } from '../common/rustdesk-release';
 import { compareVersions } from '../common/agent-contract';
 import { readOnlyAgentOs } from '../common/platform';
+import { connectivityOf } from '../common/connectivity';
 
 /** Root-owned; see deploy/sbin/rem0te-rustdesk-server-upgrade. */
 const RUSTDESK_SERVER_UPGRADER = '/usr/local/sbin/rem0te-rustdesk-server-upgrade';
@@ -721,7 +722,7 @@ export class UpdateService {
           rustdeskId: true, version: true, lastSeenAt: true,
           updateRequestedAt: true, updateTargetVersion: true,
           updateRequestSource: true, updateRequestedById: true, updateHoldReason: true,
-          endpoint: { select: { id: true, name: true, hostname: true, isOnline: true, platform: true, customer: { select: { id: true, name: true } } } },
+          endpoint: { select: { id: true, name: true, hostname: true, isOnline: true, lastSeenAt: true, platform: true, customer: { select: { id: true, name: true } } } },
         },
         orderBy: { hostname: 'asc' },
       }),
@@ -737,6 +738,10 @@ export class UpdateService {
       hostname: n.endpoint?.hostname ?? null,
       platform: n.endpoint?.platform ?? null,
       isOnline: n.endpoint?.isOnline ?? false,
+      // 0.35: the agent's heartbeat, not the RustDesk node's — a client update
+      // request goes out on that heartbeat, so a silent agent never takes it.
+      connectivity: connectivityOf(n.endpoint?.isOnline ?? false, n.endpoint?.lastSeenAt ?? null),
+      agentLastSeenAt: n.endpoint?.lastSeenAt ?? null,
       rustdeskId: n.rustdeskId,
       version: n.version ?? null,
       lastSeenAt: n.lastSeenAt,

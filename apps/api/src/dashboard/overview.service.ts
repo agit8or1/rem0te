@@ -7,10 +7,12 @@ import { MonitoringAdminService } from '../monitoring/monitoring-admin.service';
 import { STALE_AFTER_MS } from '../patching/summary';
 import { deviceCompliance, PATCH_COMPLIANCE_DEFINITION, PATCH_INVENTORY_SELECT } from '../patching/compliance';
 import { catalogEntry } from '../actions/catalog';
+import { restartPendingSentence } from '../common/platform';
+import { connectivityOf, HEARTBEAT_STALE_MS, type Connectivity } from '../common/connectivity';
 import { age, rankQueue, type QueueItem } from './queue';
 
-/** Online by the flag, but the agent itself has not checked in for this long. */
-export const AGENT_SILENT_MS = 30 * 60_000;
+/** Reachable but not reporting: the sweep's own window (0.35: one constant, common/connectivity.ts). */
+export const AGENT_SILENT_MS = HEARTBEAT_STALE_MS;
 /** A session row that has not moved for this long is not shown as live. */
 export const SESSION_LIVE_MS = 12 * 3_600_000;
 /** Failed action targets and rollout failures look back this far. */
@@ -110,7 +112,7 @@ export class DashboardOverviewService {
       ? await this.prisma.endpoint.findMany({
           where: visible,
           select: {
-            id: true, name: true, hostname: true, isOnline: true, lastSeenAt: true,
+            id: true, name: true, hostname: true, isOnline: true, lastSeenAt: true, platform: true,
             customer: { select: { id: true, name: true } },
             inventory: { select: PATCH_INVENTORY_SELECT },
           },
@@ -119,13 +121,13 @@ export class DashboardOverviewService {
     const epById = new Map(endpoints.map((e) => [e.id, e]));
     const label = (e: { name: string; hostname: string | null }) => e.hostname || e.name;
 
-    type Attention = { device: { id: string; name: string }; business: Biz | null; score: number; reasons: string[]; isOnline: boolean; lastSeenAt: string | null };
+    type Attention = { device: { id: string; name: string }; business: Biz | null; score: number; reasons: string[]; isOnline: boolean; connectivity: Connectivity; lastSeenAt: string | null };
     const attention = new Map<string, Attention>();
     const flag = (id: string, score: number, reason: string) => {
       const e = epById.get(id);
       if (!e) return; // not a computer this person can see
       let a = attention.get(id);
-      if (!a) { a = { device: { id, name: label(e) }, business: e.customer, score: 0, reasons: [], isOnline: e.isOnline, lastSeenAt: iso(e.lastSeenAt) }; attention.set(id, a); }
+      if (!a) { a = { device: { id, name: label(e) }, business: e.customer, score: 0, reasons: [], isOnline: e.isOnline, connectivity: connectivityOf(e.isOnline, e.lastSeenAt, now.getTime()), lastSeenAt: iso(e.lastSeenAt) }; attention.set(id, a); }
       a.score += score;
       a.reasons.push(reason);
     };
@@ -137,12 +139,14 @@ export class DashboardOverviewService {
     const offline: { id: string; name: string; business: Biz | null; lastSeenAt: string | null }[] = [];
 
     for (const e of endpoints) {
-      if (e.isOnline) {
-        online++;
-        if (!e.lastSeenAt || now.getTime() - e.lastSeenAt.getTime() > AGENT_SILENT_MS) {
-          agentSilent++;
-          flag(e.id, 1, `Agent silent for ${e.lastSeenAt ? age(e.lastSeenAt, now) : 'ever'}: reachable, but nothing it reports is current`);
-        }
+      // 0.35: "online" counts only computers whose agent is checking in. One
+      // that RustDesk can reach while its agent is silent is counted apart
+      // (agentSilent), never inside online — isOnline alone means reachable.
+      const c = connectivityOf(e.isOnline, e.lastSeenAt, now.getTime());
+      if (c === 'online') online++;
+      else if (c === 'agent_silent') {
+        agentSilent++;
+        flag(e.id, 1, `Agent silent for ${e.lastSeenAt ? age(e.lastSeenAt, now) : 'ever'}: reachable through RustDesk, but nothing it reports is current`);
       } else {
         offline.push({ id: e.id, name: label(e), business: e.customer, lastSeenAt: iso(e.lastSeenAt) });
         if (e.customer) offlineByBiz.set(e.customer.id, (offlineByBiz.get(e.customer.id) ?? 0) + 1);
@@ -286,11 +290,11 @@ export class DashboardOverviewService {
           })
         : null,
     ]);
-    const recentDevices: { id: string; name: string; business: Biz | null; isOnline: boolean; lastSeenAt: string | null; lastSessionAt: string }[] = [];
+    const recentDevices: { id: string; name: string; business: Biz | null; isOnline: boolean; connectivity: Connectivity; lastSeenAt: string | null; lastSessionAt: string }[] = [];
     for (const s of mine) {
       const e = s.endpointId ? epById.get(s.endpointId) : undefined;
       if (!e || recentDevices.some((d) => d.id === e.id)) continue;
-      recentDevices.push({ id: e.id, name: label(e), business: e.customer, isOnline: e.isOnline, lastSeenAt: iso(e.lastSeenAt), lastSessionAt: s.createdAt.toISOString() });
+      recentDevices.push({ id: e.id, name: label(e), business: e.customer, isOnline: e.isOnline, connectivity: connectivityOf(e.isOnline, e.lastSeenAt, now.getTime()), lastSeenAt: iso(e.lastSeenAt), lastSessionAt: s.createdAt.toISOString() });
       if (recentDevices.length >= 6) break;
     }
 
@@ -384,7 +388,7 @@ export class DashboardOverviewService {
       if (r.source !== 'scan' || r.stale || rebootAlertIds.has(r.device.id)) continue;
       items.push({
         key: `restart:${r.device.id}`, kind: 'restart_pending', severity: 'info', title: `${r.device.name}: restart pending`,
-        reason: `The last update scan (${r.evidenceAt ? `${age(r.evidenceAt, now)} old` : 'age unknown'}) says Windows is waiting for a restart; updates do not finish until it happens.`,
+        reason: `The last update scan (${r.evidenceAt ? `${age(r.evidenceAt, now)} old` : 'age unknown'}) says ${restartPendingSentence(epById.get(r.device.id)?.platform)}; updates do not finish until it happens.`,
         business: r.business, device: r.device, since: r.evidenceAt ?? now.toISOString(), href: `/endpoints/${r.device.id}?tab=patches`,
       });
     }
@@ -407,7 +411,8 @@ export class DashboardOverviewService {
       businessId: scope,
       devices: visible
         ? {
-            total: endpoints.length, online, offline: endpoints.length - online, agentSilent,
+            // online: checking in. agentSilent: reachable (RustDesk), agent silent. reachable = the two.
+            total: endpoints.length, online, agentSilent, reachable: online + agentSilent, offline: endpoints.length - online - agentSilent,
             agentSilentAfterMinutes: AGENT_SILENT_MS / 60_000,
             offlineList: offline.slice(0, 8),
           }

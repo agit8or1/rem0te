@@ -19,6 +19,8 @@ import { usePathname } from 'next/navigation';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { Sidebar } from './sidebar';
+import { useBrandAccent } from './brand-accent';
+import { cn } from '@/lib/utils';
 
 export const NAV_DRAWER_ID = 'main-menu-drawer';
 
@@ -37,6 +39,7 @@ export function NavDrawerProvider({ children }: { children: React.ReactNode }) {
 export function NavDrawer() {
   const { open, setOpen, triggerRef } = useNavDrawer();
   const pathname = usePathname();
+  const { ink } = useBrandAccent();
 
   // Any route change closes it, whatever caused it.
   useEffect(() => { setOpen(false); }, [pathname, setOpen]);
@@ -72,8 +75,16 @@ export function NavDrawer() {
         >
           <DialogPrimitive.Title className="sr-only">Main menu</DialogPrimitive.Title>
           <Sidebar className="h-full w-full" />
+          {/* It sits on the sidebar's brand header. On a branding accent its
+              ink is black or white by the accent's luminance (always at least
+              4.5:1, WCAG AA); without one, the theme's foreground. It was
+              text-muted-foreground — grey on the accent (0.35). */}
           <DialogPrimitive.Close
-            className="absolute right-2 top-3 rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className={cn(
+              'absolute right-2 top-3 rounded-md p-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              ink === '#ffffff' ? 'hover:bg-white/15' : ink ? 'hover:bg-black/10' : 'text-foreground hover:bg-accent hover:text-accent-foreground',
+            )}
+            style={ink ? { color: ink } : undefined}
             aria-label="Close menu" data-testid="nav-drawer-close"
           >
             <X className="h-4 w-4" />
