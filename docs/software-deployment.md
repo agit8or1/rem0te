@@ -142,6 +142,33 @@ From a catalog entry, **Deploy to computers** makes a deployment. It works like 
 There is no way to install from the computer's Actions tab or by `POST /endpoints/:id/actions`. That route answers
 `ACTION_NOT_DIRECT`.
 
+### Archiving an entry revokes it
+
+From 0.36, **Archive** first revokes the entry on the approval signer, for good (by entry id, write-once; nothing
+un-revokes it). The signer then refuses any install from it that isn't signed yet (`software_revoked`), and its signed
+revocation statement names the entry, so a 0.36 signed agent refuses an install from it that was signed **before** the
+archive and is still inside its window (`revoked`, final, before anything runs). An install not yet delivered is
+canceled by the portal with the reason *revoked*. **Uninstalls are not refused**: removing a withdrawn package is
+usually why it was archived.
+
+If a signer is configured and doesn't confirm the revocation, nothing is archived (`APPROVAL_SIGNER_REFUSED`): archiving
+in the portal alone would leave delivered plans runnable. Every software plan now names its entry
+(`display.software.entryId`); the signer refuses one that doesn't (`software_entry_missing`), and so does the agent.
+
+The statement, its freshness rule (a plan runs only with a statement at least as new as its signature; otherwise it
+waits, `revocations_stale`) and why it fails closed are in
+[Script library → Revocation](script-library.md#revocation). It takes effect only on computers running a 0.36 signed
+agent build published with the owner's keys.
+
+**Entries archived before 0.36 were never revoked on the signer.** Revoke them there once after upgrading:
+
+```bash
+$S software list                                     # revoked entries on the signer
+$S software revoke --entry <entry id> --reason "why"  # one-way
+```
+
+(`$S` as in [Script library → Revocation](script-library.md#revocation).)
+
 ## What the computer does
 
 The plan carries exactly five parameters: `packageId`, `version`, `installerSha256`, `scope` (`machine`) and
@@ -251,12 +278,16 @@ The computer's Software tab shows the same state per entry, with its evidence an
 | `BAD_RINGS`, `BAD_TARGETS` | Deployment | The canary isn't one computer, a computer is in two rings, or the computers are in different businesses |
 | `RING_GATE` | Ring request | Not this ring now: the previous one hasn't passed, is soaking, or the deployment is paused |
 | `ACTION_NOT_DIRECT` | `POST /endpoints/:id/actions` | Software is deployed from the catalog only |
+| `APPROVAL_SIGNER_REFUSED` | Archive | The approval signer didn't revoke the entry, so it wasn't archived (0.36) |
 
 Agent outcomes:
 
 | Outcome | Reason | Meaning |
 |---|---|---|
 | refused | `managed_elsewhere` | ConfigMgr or Intune manages applications here |
+| refused | `revoked` | The entry was archived after the install was signed (0.36). Nothing installed |
+| refused | `software_entry_missing` | The plan names no catalog entry (0.36) |
+| waiting | `revocations_stale` | No revocation statement as new as the plan yet (0.36); retried on the next delivery, not reported |
 | refused | `hash_mismatch`, `manifest_hash_mismatch` | The installer is not the pinned one. Nothing installed |
 | not executed | `winget_unavailable`, `winget_too_old`, `detection_failed` | Nothing ran |
 | no change | — | Already installed (install) or already absent (uninstall). Only `winget --version` ran |

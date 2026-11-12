@@ -68,8 +68,12 @@ func newFixture(t *testing.T) *fixture {
 	}}
 }
 
+// opts: a fresh, empty revocation statement is delivered with every run, as
+// the Windows agent fetches one before each (v0.36); revocation_test.go
+// covers what happens without one.
 func (f *fixture) opts() Options {
-	return Options{StateDir: f.dir, Keys: []Key{{Kid: "k1", Ed25519: base64.StdEncoding.EncodeToString(f.pub)}}, Platform: f.p, Now: func() time.Time { return now }, Checks: []time.Duration{time.Second, time.Second}}
+	return Options{StateDir: f.dir, Keys: []Key{{Kid: "k1", Ed25519: base64.StdEncoding.EncodeToString(f.pub)}}, Platform: f.p, Now: func() time.Time { return now }, Checks: []time.Duration{time.Second, time.Second},
+		Revocations: f.revocations(now, nil, nil)}
 }
 
 const job = "0123456789abcdef0123456789abcdef"

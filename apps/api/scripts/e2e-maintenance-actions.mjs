@@ -167,6 +167,8 @@ function runAgent(ep, jobId, envelope, { service, sessions, eventsDir, rustdeskL
   if (eventsDir) args.push('-events-dir', eventsDir);
   if (rustdeskLogs) args.push('-rustdesk-logs', rustdeskLogs);
   if (pause) args.push('-pause', pause);
+  // 0.36: the agent fetches the signer's revocation statement from the portal's relay before each job.
+  args.push('-portal', `127.0.0.1:${PORT}`);
   return JSON.parse(execFileSync(SIM, args, { encoding: 'utf8' }).trim());
 }
 const simService = (ep, v) => writeFileSync(path.join(ep.state, 'sim-service'), v);

@@ -94,6 +94,9 @@ done
 # script under the agent's decision code. PWSH, or pwsh on PATH (the CI image has it).
 if [[ -n "${RELEASE_BIN:-}" && -n "${ACTION_SIM:-}" ]] && { [[ -n "${PWSH:-}" ]] || command -v pwsh >/dev/null; }; then run script-run node scripts/e2e-script-run.mjs
 else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM / pwsh not available)\n' script-run; skipped+=(script-run); fi
+# Signed revocation (0.36) runs scripts under the agent too, so it needs the same three.
+if [[ -n "${RELEASE_BIN:-}" && -n "${ACTION_SIM:-}" ]] && { [[ -n "${PWSH:-}" ]] || command -v pwsh >/dev/null; }; then run revocation node scripts/e2e-revocation.mjs
+else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM / pwsh not available)\n' revocation; skipped+=(revocation); fi
 
 echo "── suites against a scratch API (one API per suite: the login throttle is per process)"
 PORT="${E2E_API_PORT:-3101}"

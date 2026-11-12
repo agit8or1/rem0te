@@ -267,6 +267,10 @@ approvals, the agent's checks, the journal, the dispatch rechecks, containment, 
   (`scripts/`, `script-revocations/`). An entry is added only by two passkey approvals on the signer's page, after
   the approvers read the content the signer holds and the hash it computed. The portal can propose an entry and
   revoke one; it can't add, activate or edit one. Revocation is by content SHA-256 and permanent.
+- **Revocation reaches signed runs (0.36).** The signer publishes a signed revocation statement (every revoked script
+  hash and archived software entry), the portal relays it at `GET /api/v1/public/approval/revocations.json`, and a
+  0.36 signed agent refuses a revoked run before journaling it, and runs nothing signed after the newest statement it
+  holds. See [Script library → Revocation](script-library.md#revocation).
 - **Closed parameters.** `{"scriptVersionId", "sha256", "parameters", "timeoutMinutes"}`: a version id, its content
   hash, arguments checked against the version's declared parameters (by the portal, the signer and the agent), and a
   timeout of 1, 5, 10, 15 or 30 minutes. The plan carries a `script` block that must be exactly the signer's entry.

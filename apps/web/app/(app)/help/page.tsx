@@ -1054,7 +1054,11 @@ const SECTIONS: Section[] = [
           write it add its exact SHA-256 to the signer&apos;s own allowlist. Then you can request a run on up to 25 Windows
           computers, with typed arguments and a timeout of 1 to 30 minutes; two more approvers approve each run on the
           signer&apos;s page. The signed agent checks the hash before it runs anything, as SYSTEM, and each computer&apos;s
-          Actions tab shows the exit code and the first 64 KB of output, redacted, for 90 days. Revoking is permanent.
+          Actions tab shows the exit code and the first 64 KB of output, redacted, for 90 days. Revoking is permanent,
+          and from 0.36 it also stops a run that was already signed: the signer publishes a signed list of revoked
+          scripts and archived software, and a computer on the 0.36 signed agent refuses a revoked run before it starts
+          (<em>Refused by the computer · revoked</em>). Such a computer runs nothing signed after the newest list it
+          has, so a run can wait a moment for a fresh one; it isn&apos;t failed.
           On a server with no approval signer the panel says so and offers nothing to propose, request or revoke.
           It has been tested with PowerShell 7 on Linux, <strong className="text-foreground">not yet on a real Windows
           computer</strong>. Writing needs <em>Write scripts</em>; reviewing, proposing and revoking need <em>Review
@@ -1181,7 +1185,10 @@ const SECTIONS: Section[] = [
           Configuration Manager or Intune refuses software plans (<em>managed elsewhere</em>), and the portal stops offering
           them there. A computer without a usable winget — App Installer missing, or older than 1.7 — reports{' '}
           <em>winget unavailable</em> or <em>winget too old</em> and runs nothing; its Software tab then warns before the
-          next request. Software plans need the signed agent and the approval signer.
+          next request. Software plans need the signed agent and the approval signer.{' '}
+          <strong className="text-foreground">Archiving an entry (0.36)</strong> revokes it on the approval signer for good,
+          so a computer on the 0.36 signed agent refuses an install from it even if that install was approved before the
+          archive. Uninstalls still run. If the signer doesn&apos;t confirm, nothing is archived.
         </p>
         <p>
           <strong className="text-foreground">None of this has run on real Windows yet.</strong> It has been tested against

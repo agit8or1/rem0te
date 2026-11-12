@@ -534,3 +534,39 @@ func actionTrust(o Options, p Platform) ([]action.Key, *action.Pause, error) {
 	}
 	return keys, signedPause(c, dir, nil), nil
 }
+
+// RevocationsPath is where the portal relays the approval signer's signed
+// revocation statement (v0.36).
+const RevocationsPath = "/public/approval/revocations.json"
+
+// FetchRevocations gets the revocation statement the portal relays, as raw
+// bytes, for internal/action to verify against the approval keys: the
+// portal is a courier here, as for the update chain, and nothing it sends is
+// trusted until the signature checks. An error means none was had; the agent
+// then decides from the newest statement it already holds (and runs nothing
+// signed after it).
+func FetchRevocations(o Options) ([]byte, error) {
+	if !ValidPortal(o.PortalHost) {
+		return nil, fmt.Errorf("%w: portal host %q is not a hostname", ErrRefuse, o.PortalHost)
+	}
+	hc := o.HTTPClient
+	if hc == nil {
+		hc = &http.Client{Timeout: 30 * time.Second}
+	}
+	resp, err := hc.Get(o.base() + RevocationsPath)
+	if err != nil {
+		return nil, fmt.Errorf("fetching the revocation statement: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("revocation statement: HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, action.MaxRevocationBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > action.MaxRevocationBytes {
+		return nil, errors.New("revocation statement: too large")
+	}
+	return body, nil
+}

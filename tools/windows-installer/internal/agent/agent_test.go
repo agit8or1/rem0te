@@ -411,3 +411,34 @@ func TestSignedPauseStopsUpdate(t *testing.T) {
 		t.Fatalf("unreadable pause must fail closed, got %v", err)
 	}
 }
+
+// FetchRevocations (v0.36) is a courier: the bytes as served, from the
+// portal's relay path, bounded; an error status or an oversized body is an
+// error, never a partial statement.
+func TestFetchRevocations(t *testing.T) {
+	var path string
+	body := `{"schema":"rem0te-revocations-envelope/1","kid":"k","statement":"e30=","sig":"AA=="}`
+	status := 200
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "http://")
+	got, err := agent.FetchRevocations(agent.Options{PortalHost: host, Scheme: "http"})
+	if err != nil || string(got) != body || path != "/api/v1/public/approval/revocations.json" {
+		t.Fatalf("got %q %v from %s", got, err, path)
+	}
+	status = 503
+	if _, err := agent.FetchRevocations(agent.Options{PortalHost: host, Scheme: "http"}); err == nil {
+		t.Fatal("a 503 is not a statement")
+	}
+	status, body = 200, strings.Repeat("x", (1<<20)+10)
+	if _, err := agent.FetchRevocations(agent.Options{PortalHost: host, Scheme: "http"}); err == nil {
+		t.Fatal("an oversized body is refused")
+	}
+	if _, err := agent.FetchRevocations(agent.Options{PortalHost: "bad host/x", Scheme: "http"}); err == nil {
+		t.Fatal("an invalid portal host is refused")
+	}
+}

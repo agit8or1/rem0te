@@ -11,13 +11,14 @@ import { AccessPolicyService } from '../security-controls/access-policy.service'
 import { AbuseGuardService } from '../security-controls/abuse-guard.service';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import {
-  APPROVALS_REQUIRED, CATALOG, Envelope, LOG_SOURCES, MAX_WINDOW_HOURS, PLAN_SCHEMA, Plan, catalogEntry, planDigest, UPDATE_INSTALL, type CatalogAction,
+  APPROVALS_REQUIRED, CATALOG, Envelope, LOG_SOURCES, MAX_WINDOW_HOURS, PLAN_SCHEMA, Plan, catalogEntry, planDigest, SOFTWARE_INSTALL, UPDATE_INSTALL, type CatalogAction,
 } from './catalog';
 import { sanitizeLogs } from './logs';
 import { DeviceSigned, RESULT_STATUS } from './device-result';
 import { SCRIPT_RUN_ACTION, scriptPlanProblem, type ScriptBlock } from './script-run';
 import { ScriptAgentResult, sanitizeScriptOutput, scriptSummary } from './script-output';
 import { SignerClient } from './signer.client';
+import { RevocationRelay } from './revocations.controller';
 import { ContainmentService } from '../containment/containment.service';
 
 /**
@@ -145,6 +146,7 @@ export class ActionsService {
     private readonly updateTrust: UpdateTrustService,
     private readonly signer: SignerClient,
     private readonly containment: ContainmentService,
+    private readonly relay: RevocationRelay,
   ) {}
 
   catalog() {
@@ -414,6 +416,10 @@ export class ActionsService {
     } else return j;
     const r = await this.prisma.actionJob.updateMany({ where: { id: j.id, status: 'AWAITING_APPROVAL' }, data: next as Prisma.ActionJobUpdateManyMutationInput });
     if (r.count) {
+      // 0.36: an agent runs this plan only with a revocation statement signed
+      // after it was. The next one the relay hands out is asked for now, so
+      // the plan's first delivery never waits on a cached, older statement.
+      if (next.status === 'APPROVED') this.relay?.invalidate();
       if (next.status !== 'APPROVED') await this.prisma.actionTarget.updateMany({ where: { jobId: j.id, status: 'PENDING' }, data: { status: 'CANCELED', statusReason: next.statusReason ?? next.status!.toLowerCase() } });
       await this.audit.log({ tenantId: j.tenantId ?? undefined, customerId: j.customerId, action: 'ACTION_APPROVAL_UPDATED', resource: 'action_job', resourceId: j.id, meta: { status: next.status, statusReason: next.statusReason ?? null, approvers: (next.approvers as unknown[] | undefined)?.length ?? 0 } });
     }
@@ -610,8 +616,29 @@ export class ActionsService {
     return v ? { script: { content: Buffer.from(v.content, 'utf8').toString('base64') } } : {};
   }
 
+  /**
+   * 0.36: a script run whose allowlist entry, or a software install whose
+   * catalog entry, was revoked after the plan was signed. Not handed over: it
+   * would only be refused. This is the portal's convenience, not the control
+   * — a plan already delivered is refused by the agent itself, from the
+   * signer's signed revocation statement, whatever the portal does.
+   */
+  private async revokedSinceSigning(j: ActionJob): Promise<boolean> {
+    const plan = j.plan as unknown as Plan | null;
+    if (j.actionId === SCRIPT_RUN_ACTION && plan?.script?.allowlistId) {
+      const e = await this.prisma.scriptAllowlistEntry.findUnique({ where: { id: plan.script.allowlistId }, select: { status: true } });
+      return e?.status === 'REVOKED';
+    }
+    if (j.actionId === SOFTWARE_INSTALL.id && plan?.display?.software?.entryId) {
+      const e = await this.prisma.softwareCatalogEntry.findUnique({ where: { id: plan.display.software.entryId }, select: { archivedAt: true } });
+      return !e || !!e.archivedAt;
+    }
+    return false;
+  }
+
   /** Everything that could have changed for this computer between approval and its first delivery. */
   private async dispatchBlock(j: ActionJob, endpointId: string): Promise<string | null> {
+    if (await this.revokedSinceSigning(j)) return 'revoked';
     const ep = await this.endpointFor(endpointId);
     if (!ep || !ep.customerId || ep.customerId !== j.customerId || ep.status === 'ARCHIVED' || !ep.customer?.isActive || ep.customer.isArchived) return 'computer_no_longer_in_business';
     const plan = j.plan as unknown as Plan;
