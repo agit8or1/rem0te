@@ -220,6 +220,10 @@ export const endpointsApi = {
   chatStart: (id: string, supportRequestId?: string) => api.post(`/endpoints/${id}/chat/conversations`, supportRequestId ? { supportRequestId } : {}),
   chatSend: (id: string, cid: string, text: string) => api.post(`/endpoints/${id}/chat/conversations/${cid}/messages`, { text }),
   chatEnd: (id: string, cid: string) => api.post(`/endpoints/${id}/chat/conversations/${cid}/end`, {}),
+  // 0.36: the panel has shown these replies (in a chat that is not recorded, the server then deletes them).
+  chatAck: (id: string, cid: string, ids: string[]) => api.post(`/endpoints/${id}/chat/conversations/${cid}/ack`, { ids }),
+  // 0.36: the tray on this computer, its self-help runs and the support requests sent from it.
+  tray: (id: string) => api.get(`/endpoints/${id}/tray`),
   // Queues a re-collection for the endpoint's next heartbeat — up to ~3
   // minutes away. Nothing is synchronous here.
   refreshInventory: (id: string) => api.post(`/endpoints/${id}/inventory/refresh`, {}),
@@ -606,6 +610,15 @@ export const supportRequestsApi = {
   release: (id: string, version: number) => api.post(`/support-requests/${id}/release`, { version }),
   complete: (id: string, version: number, outcome?: string) => api.post(`/support-requests/${id}/complete`, { version, outcome }),
   cancel: (id: string, version: number, outcome?: string) => api.post(`/support-requests/${id}/cancel`, { version, outcome }),
+};
+
+// ─── v0.36: whether chats are recorded ───────────────────────────────────────
+// Changing either needs a fresh sign-in (403 STEP_UP_REQUIRED, which the
+// interceptor answers) and is audited.
+export const chatRecordingApi = {
+  get: (businessId?: string) => api.get('/chat-recording', { params: businessId ? { businessId } : {} }),
+  setBusiness: (businessId: string, recording: boolean | null) => api.put('/chat-recording', { businessId, recording }),
+  setPlatform: (recording: boolean) => api.put('/chat-recording/platform', { recording }),
 };
 
 /** The customer side: no account, the link is the only key. */

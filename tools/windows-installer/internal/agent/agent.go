@@ -39,7 +39,11 @@ import (
 const (
 	TargetInstaller = "windows/install.ps1"
 	TargetAgent     = "windows/rem0te-agent.exe"
-	ParamsSchema    = "rem0te-install-params/1"
+	// TargetTray (0.36) is the tray program both agents run in each signed-in
+	// session. Optional in the signed targets: a release without it installs
+	// no tray, and the agent then reports no tray and no chat.
+	TargetTray   = "windows/rem0te-tray.exe"
+	ParamsSchema = "rem0te-install-params/1"
 )
 
 type Mode string
@@ -70,12 +74,26 @@ type Platform interface {
 	PriorRelay() (host, key string)
 }
 
+// TrayInstaller is implemented by a Platform that can place the tray (0.36)
+// in a directory the signed-in users may read and run but not write — the
+// agent's own directory is SYSTEM and Administrators only, which a program
+// started as the user cannot execute.
+type TrayInstaller interface {
+	InstallTray(src, dst string) error
+}
+
+// TrayProtocol is the tray protocol this build speaks (internal/tray
+// ProtocolVersion; a test holds the two equal). Reported as `tray` in
+// agent-status.json once the tray is installed.
+const TrayProtocol = 1
+
 type Paths struct {
 	InstallDir string // C:\Program Files\Rem0te
 	StateDir   string // C:\ProgramData\Rem0te
 }
 
 func (p Paths) AgentExe() string   { return filepath.Join(p.InstallDir, "rem0te-agent.exe") }
+func (p Paths) TrayExe() string    { return filepath.Join(p.InstallDir, "tray", "rem0te-tray.exe") }
 func (p Paths) TUFDir() string     { return filepath.Join(p.StateDir, "tuf") }
 func (p Paths) Staging() string    { return filepath.Join(p.StateDir, "setup", "signed") }
 func (p Paths) PinFile() string    { return filepath.Join(p.StateDir, "agent-pin.json") }
@@ -261,8 +279,13 @@ type Status struct {
 	// reports them; the portal offers nothing an agent does not list.
 	Actions []string `json:"actions,omitempty"`
 	// The chat protocol this build speaks (v0.34). The heartbeat reports it as
-	// agentChat; the portal offers a chat only to an agent that does.
+	// agentChat; the portal offers a chat only to an agent that does. Since
+	// 0.36 (protocol 2) chat is the tray's, so it is reported only with a tray.
 	Chat int `json:"chat,omitempty"`
+	// The tray (0.36): its protocol and the sha256 of the signed tray this
+	// install placed. The tray host starts only a file with that hash.
+	Tray       int    `json:"tray,omitempty"`
+	TraySHA256 string `json:"traySha256,omitempty"`
 }
 
 func stage2(o Options, p Platform, c *trust.Client) (int, error) {
@@ -320,6 +343,22 @@ func stage2(o Options, p Platform, c *trust.Client) (int, error) {
 		return 0, err
 	}
 
+	// 5b. The tray (0.36), when the release signs one. A tray that cannot be
+	//     placed costs the tray and chat, never the install.
+	traySum, trayNote := "", ""
+	if t, err := c.Info(TargetTray); err == nil {
+		if ti, ok := p.(TrayInstaller); ok {
+			src := filepath.Join(st, "rem0te-tray.exe")
+			if _, err := c.Fetch(TargetTray, src); err != nil {
+				trayNote = "; tray not installed: " + err.Error()
+			} else if err := ti.InstallTray(src, o.Paths.TrayExe()); err != nil {
+				trayNote = "; tray not installed: " + err.Error()
+			} else {
+				traySum = t.SHA256
+			}
+		}
+	}
+
 	// 6. Parameters for the script, then run it.
 	sp := ScriptParams{
 		Schema: ParamsSchema, Mode: o.Mode, Host: pin.Host, Key: pin.Key, ClaimToken: o.ClaimToken,
@@ -336,7 +375,8 @@ func stage2(o Options, p Platform, c *trust.Client) (int, error) {
 	if err != nil {
 		res = "installer failed: " + err.Error()
 	}
-	writeStatus(o, Status{Channel: "signed", TrustRoot: c.RootVersion(), TargetsVersion: c.TargetsVersion(), AgentSHA256: selfSum, LastResult: res, RelayChangeAsked: relayChange})
+	res += trayNote
+	writeStatus(o, Status{Channel: "signed", TrustRoot: c.RootVersion(), TargetsVersion: c.TargetsVersion(), AgentSHA256: selfSum, LastResult: res, RelayChangeAsked: relayChange, TraySHA256: traySum})
 	return code, err
 }
 
@@ -442,7 +482,10 @@ func writeStatus(o Options, s Status) {
 	s.LastCheck = o.now().UTC()
 	if s.AgentSHA256 != "" {
 		s.Actions = action.Supported()
-		s.Chat = chat.ProtocolVersion
+		if s.TraySHA256 != "" {
+			s.Tray = TrayProtocol
+			s.Chat = chat.ProtocolVersion
+		}
 	}
 	raw, _ := json.Marshal(s)
 	_ = os.WriteFile(o.Paths.StatusFile(), raw, 0o600)

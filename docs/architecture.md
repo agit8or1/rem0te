@@ -124,6 +124,14 @@ Tenant  ─┬─ Customer (a BUSINESS — the security boundary)
   open, the signed agent long-polls `/enrollment/chat/poll` with the device
   secret, and the API holds each poll up to 25 s in memory. The poll carries
   chat text and receipts only, never commands. See [chat.md](chat.md).
+- **The tray** (0.36) is the person's side of chat, support requests and
+  self-help on Windows. The signed agent's SYSTEM tray host speaks for it with
+  the device secret on `/tray/*`. The standard agent's tray speaks for itself
+  with a tray key that opens only `/tray/*`. The chat window is the API's
+  `/assist` page, reached through the web app's rewrite with a one-time code
+  and a cookie on `/assist`. `AssistCode`, `AssistSession`,
+  `SupportRequestAttachment` and `TraySelfHelpRun` hold its state. See
+  [tray.md](tray.md).
 
 Full model in [access-control.md](access-control.md).
 

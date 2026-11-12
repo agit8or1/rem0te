@@ -66,6 +66,10 @@ export SNAPSHOT_SWEEP=off
 # which would hand those suites flags they did not ask for.
 # e2e-agent-auto-update turns it on for its own API.
 export AGENT_AUTO_UPDATE=off
+# The tray sweep (0.36) deletes expired one-time chat codes and /assist
+# sessions, prunes old self-help runs and fails runs never reported on.
+# e2e-tray runs its own API with it off and drives every expiry itself.
+export TRAY_SWEEP=off
 export ENCRYPTION_KEY="${ENCRYPTION_KEY:-$(openssl rand -hex 32)}"
 export SEED_ADMIN_EMAIL="${SEED_ADMIN_EMAIL:-e2e-admin@example.com}"
 export SEED_ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD:-$(openssl rand -base64 18)}"
@@ -90,7 +94,7 @@ run() { # name, command...
 }
 
 echo "── self-starting suites"
-for t in credentials security-features presets monitoring integration dashboard diagnostics-catalog system-inventory device-list endpoint-visibility device-views dynamic-groups add-device auto-updates group-policies reports script-library linux-agent macos-agent enrol-stepup search metric-history retention presence-cache ai-timeline email chat polish auto-snapshots agent-health agent-auto-update; do run "$t" node "scripts/e2e-$t.mjs"; done
+for t in credentials security-features presets monitoring integration dashboard diagnostics-catalog system-inventory device-list endpoint-visibility device-views dynamic-groups add-device auto-updates group-policies reports script-library linux-agent macos-agent enrol-stepup search metric-history retention presence-cache ai-timeline email chat tray polish auto-snapshots agent-health agent-auto-update; do run "$t" node "scripts/e2e-$t.mjs"; done
 for t in containment approved-action staged-patching maintenance-actions patch-policies software-deploy signed-updates ticket-workflow agent-upgrade; do
   if [[ -n "${RELEASE_BIN:-}" && -n "${ACTION_SIM:-}" ]]; then run "$t" node "scripts/e2e-$t.mjs"
   else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM not set)\n' "$t"; skipped+=("$t"); fi
@@ -109,7 +113,7 @@ export API_BASE="http://127.0.0.1:$PORT/api/v1" FRONTEND_URL="http://scratch.exa
 for t in smoke full business-access offboarding public-api public-address rollouts security-audit session-mutations support-requests sso-passkeys candidate-password secreg; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then echo "port $PORT is busy" >&2; exit 1; fi
   env PORT=$PORT HBBS_PRESENCE_HOST=127.0.0.2 OIDC_ALLOW_INSECURE_LOOPBACK=true PUBLIC_API_URL="http://scratch.example.com:$PORT" \
-    JWT_SECRET="$(openssl rand -hex 32)" LAUNCHER_TOKEN_SECRET="$(openssl rand -hex 32)" MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off METRIC_SWEEP=off RETENTION_SWEEP=off REPORT_SCHEDULE_SWEEP=off CHAT_RETENTION_SWEEP=off SCRIPT_OUTPUT_SWEEP=off \
+    JWT_SECRET="$(openssl rand -hex 32)" LAUNCHER_TOKEN_SECRET="$(openssl rand -hex 32)" MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off METRIC_SWEEP=off RETENTION_SWEEP=off REPORT_SCHEDULE_SWEEP=off CHAT_RETENTION_SWEEP=off TRAY_SWEEP=off SCRIPT_OUTPUT_SWEEP=off \
     VERSION_FILE="$ROOT/version.json" node dist/main.js > "$OUT/api-$t.log" 2>&1 &
   pid=$!
   for _ in $(seq 1 180); do grep -q "listening on" "$OUT/api-$t.log" 2>/dev/null && break; sleep 1; done

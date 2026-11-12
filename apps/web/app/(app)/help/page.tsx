@@ -413,36 +413,79 @@ const SECTIONS: Section[] = [
       <div className="space-y-3 text-sm text-muted-foreground">
         <p>
           Open a computer and choose the <strong className="text-foreground">Chat</strong> tab. <strong className="text-foreground">Start chat</strong>{' '}
-          opens a small window on that computer&apos;s desktop, titled with the business name and headed with your name,
-          saying the business will never ask for a password and that links are never opened. The computer picks the
-          chat up at its next check-in, normally within three minutes; after that, messages arrive within seconds.
+          puts a badge on the Rem0te icon in the computer&apos;s notification area. The chat opens in a small window,
+          titled with the business name and headed with your name, saying the business will never ask for a password and
+          that links are never opened. A computer on the signed agent picks the chat up at its next check-in, normally
+          within three minutes. A standard agent&apos;s tray asks within ten. After that, messages arrive within seconds.
         </p>
         <ul className="list-disc pl-5 space-y-1">
           <li>
-            <strong className="text-foreground">Windows with the signed agent only.</strong> Linux, macOS and the
-            standard Windows agent cannot chat yet, and the tab says so for those computers. The desktop window has not
-            yet been run on real Windows.
+            <strong className="text-foreground">Windows only, with either agent.</strong> Linux and macOS cannot chat,
+            and the tab says so for those computers. A standard agent needs its installer re-run from this version so that
+            its tray is installed. The tray has not yet been run on real Windows.
+          </li>
+          <li>
+            The person can also <strong className="text-foreground">start a chat from the tray</strong>. It appears as open
+            on the Chat tab and as a request in the support queue.
           </li>
           <li>
             Each message shows <em>Sent</em>, <em>Delivered</em>, <em>Shown</em> or <em>Read</em>, and only what the computer
-            has confirmed. The panel also says what the computer last reported: window open, nobody signed in, the window
-            could not be opened, or the computer has gone quiet.
+            has confirmed. The panel also says what the computer last reported.
           </li>
           <li>
-            The person can reply or close the window. Closing it ends the chat, and so do <em>End chat</em> and two hours
-            with no message.
+            <strong className="text-foreground">Recording</strong> is set per business, under{' '}
+            <em>Settings → General → Chat recording</em>. Changing it asks you to confirm it is you, and the change is
+            audited. Each chat says whether it is recorded. In a chat that is not recorded, each message is deleted from
+            the server once both sides have it, and anything left is deleted when the chat ends.
           </li>
           <li>
             Up to 2,000 characters a message and 20 messages a minute. Text is shown as plain text on both sides.
           </li>
           <li>
             Starting and writing need the <em>Chat with the person at a computer</em> permission. Anyone who can see the
-            computer can read its transcripts, which are deleted 400 days after the chat ends. A <em>remote connections</em>{' '}
-            containment pause stops new chats and messages. The audit log records each start and end, never the text.
+            computer can read a recorded transcript, which is deleted 400 days after the chat ends. A{' '}
+            <em>remote connections</em> containment pause stops new chats and messages. The audit log records each start
+            and end, never the text.
           </li>
         </ul>
         <p>
-          See <Link href="/docs/chat" className="underline text-foreground">Chat</Link> for the details.
+          See <Link href="/docs/chat" className="underline text-foreground">Chat</Link> and{' '}
+          <Link href="/docs/tray" className="underline text-foreground">The tray icon</Link> for the details.
+        </p>
+      </div>
+    ),
+  },
+  {
+    id: 'tray',
+    title: 'The Tray Icon on Windows Computers',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          Every managed Windows computer has a Rem0te icon in the notification area for each person signed in. Its menu
+          has four items: <em>Chat with support</em>, <em>Open a support request</em>, <em>Self-help tools</em> and{' '}
+          <em>About</em>.
+        </p>
+        <ul className="list-disc pl-5 space-y-1">
+          <li>
+            <strong className="text-foreground">Support requests</strong> from the tray arrive in the support queue,
+            already linked to the computer. The person may attach their resource usage and a screenshot; both are off
+            until they tick them. Attachments are shown only to someone who can see the computer, and are deleted after 45
+            days.
+          </li>
+          <li>
+            <strong className="text-foreground">Self-help tools:</strong> check DNS, test the connection and show
+            network details, with either agent. Flush DNS, renew the IP address and restart the remote support service
+            run as the system, so they are available on the signed agent only, and an <em>actions</em> containment pause
+            stops them. Each run is listed on the computer&apos;s <em>History</em> tab under <em>Tray</em>.
+          </li>
+          <li>
+            On a standard agent, the Windows account the tray reports is not proven. Treat the name on a chat or a
+            request from a standard computer as what the computer said.
+          </li>
+          <li>Not yet run on real Windows. Linux and macOS have no tray.</li>
+        </ul>
+        <p>
+          See <Link href="/docs/tray" className="underline text-foreground">The tray icon</Link> for the details.
         </p>
       </div>
     ),

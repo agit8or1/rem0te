@@ -1,6 +1,8 @@
 /**
- * The device side of chat, as the signed agent's chat host speaks it
- * (tools/windows-installer internal/chat/client.go): the device-authenticated
+ * The device side of chat, as a 0.34 signed agent's chat host speaks it
+ * (chat protocol 1; tools/windows-installer internal/chat/client.go until 0.36
+ * replaced it with the tray host, but 0.34 agents in the field still speak
+ * it): the device-authenticated
  * routes POST /enrollment/chat/poll and /enrollment/chat/reply, and the
  * heartbeat, each carrying the computer's RustDesk ID and device secret.
  *

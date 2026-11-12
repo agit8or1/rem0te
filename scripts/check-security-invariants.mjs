@@ -2381,28 +2381,30 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //     ActivityLog row (pruning deletes transcripts, not audit). The 2,000
 //     character cap is the same in the API, the database and the agent; the
 //     400-day retention sweep has its off switch set in run-e2e.sh. On the
-//     agent, the window process holds no secret and speaks no HTTP: it talks
-//     only over two first-instance, local-only pipes whose DACL names SYSTEM
-//     and the session user, checked against the launched PID; and it draws
-//     text with plain read-only EDIT controls (no RichEdit or SysLink, which
-//     turn text into links). The portal renders transcripts as React text.
+//     agent (0.36: the tray replaced the 0.34 Win32 chat window), the tray
+//     process holds no secret and speaks no HTTP in the signed agent: it
+//     talks only over two first-instance, local-only pipes whose DACL names
+//     SYSTEM and the session user, checked against the launched PID. Its
+//     chat window is a WebView2 control that loads only /assist on the pinned
+//     portal, and the page draws text with textContent. The portal renders
+//     transcripts as React text.
 {
   const ctl = read('apps/api/src/chat/chat.controller.ts');
   const svc = read('apps/api/src/chat/chat.service.ts');
   const pol = read('apps/api/src/chat/chat-policy.ts');
   const routes = [...ctl.matchAll(/@(Get|Post)\(([^)]*)\)\s*\n((?:\s*@[A-Za-z]+\([^)]*\)\s*\n)*)\s*async (\w+)/g)];
   const capOf = Object.fromEntries(routes.map((m) => [m[4], (m[3].match(/@RequireCapability\(CAP\.(\w+)\)/) ?? [])[1]]));
-  check('every chat route names its capability: viewing needs COMPUTERS_VIEW, starting, writing and ending need CHAT_SEND',
-    routes.length === 5 && /@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)/.test(ctl) && !/@Public\(\)/.test(ctl)
+  check('every chat route names its capability: viewing needs COMPUTERS_VIEW, starting, writing, acknowledging and ending need CHAT_SEND',
+    routes.length === 6 && /@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)/.test(ctl) && !/@Public\(\)/.test(ctl)
       && capOf.overview === 'COMPUTERS_VIEW' && capOf.transcript === 'COMPUTERS_VIEW'
-      && capOf.start === 'CHAT_SEND' && capOf.send === 'CHAT_SEND' && capOf.end === 'CHAT_SEND',
+      && capOf.start === 'CHAT_SEND' && capOf.send === 'CHAT_SEND' && capOf.ack === 'CHAT_SEND' && capOf.end === 'CHAT_SEND',
     `routes: ${JSON.stringify(capOf)}`);
-  const methods = ['overview', 'transcript', 'start', 'send', 'end'];
+  const methods = ['overview', 'transcript', 'start', 'send', 'ack', 'end'];
   const body = (name) => { const i = svc.indexOf(`  async ${name}(`); const j = svc.indexOf('\n  }\n', i); return i < 0 ? '' : svc.slice(i, j); };
   check('chat reaches a computer only through visibleEndpoint: assertEndpointInScope, then the visibility rule AND-ed with the id',
     /await this\.acl\.assertEndpointInScope\(actor, endpointId, capability\);\s*\n\s*const ep = await this\.prisma\.endpoint\.findFirst\(\{\s*\n\s*where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(actor\), \{ id: endpointId \}\] \},/.test(svc)
       && methods.every((m) => /await this\.visibleEndpoint\(actor, endpointId/.test(body(m)))
-      && ['start', 'send', 'end'].every((m) => /this\.visibleEndpoint\(actor, endpointId, CAP\.CHAT_SEND\)/.test(body(m))),
+      && ['start', 'send', 'ack', 'end'].every((m) => /this\.visibleEndpoint\(actor, endpointId, CAP\.CHAT_SEND\)/.test(body(m))),
     'each technician method must begin with this.visibleEndpoint(actor, endpointId[, CAP.CHAT_SEND]); a spread visibility clause beside an OR widens it');
   check('starting a chat and sending in one both consult the remote containment pause',
     ['start', 'send'].every((m) => /await this\.containment\.assertOpen\('remote', ep\.customerId\)/.test(body(m))),
@@ -2414,12 +2416,13 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     (ec.match(/await this\.enrollment\.authenticateDevice\(dto\.rustdeskId, dto\.agentSecret, 'chat_(poll|reply)_unauthenticated'\);/g) ?? []).length === 2
       && /if \(!node\?\.agentSecretHash \|\| !agentSecret \|\| !this\.secretMatches\(node\.agentSecretHash, agentSecret\)\)/.test(auth)
       && /throw new UnauthorizedException/.test(auth)
-      && /if \(authenticated && dto\.updateChannel === 'signed' && \(dto\.agentChat \?\? 0\) >= 1\)/.test(es)
+      && /if \(authenticated && \(\(dto\.updateChannel === 'signed' && \(dto\.agentChat \?\? 0\) >= 1\) \|\| \(trayProtocol \?\? 0\) >= 1\)\) \{/.test(es)
+      && /if \(authenticated && node\.endpointId && \(dto\.agentTray \?\? 0\) >= 1\) \{/.test(es)
       && /chatProtocol: dto\.updateChannel === 'signed' \? dto\.agentChat \?\? null : null/.test(es),
-    'chat/poll and chat/reply call authenticateDevice (secretMatches); the heartbeat gate is authenticated && signed');
+    'chat/poll and chat/reply call authenticateDevice (secretMatches); the heartbeat gate is authenticated && (signed chat || a tray recorded only from an authenticated heartbeat)');
   const metas = [...svc.matchAll(/meta: \{([^}]*)\}/g)].map((m) => m[1]);
   check('chat audit rows carry ids and counts only, and chat never changes or deletes an ActivityLog row',
-    metas.length === 3 && metas.every((m) => !/\b(body|text|authorName|deviceUser|deviceDetail)\b/.test(m))
+    metas.length === 4 && metas.every((m) => !/\b(body|text|authorName|deviceUser|deviceDetail)\b/.test(m))
       && !/activityLog\.(update|updateMany|delete|deleteMany|upsert)/.test(svc) && !/\$executeRaw/.test(svc),
     `audit meta must hold no message text or names; no activityLog update/delete in chat.service.ts. meta: ${JSON.stringify(metas)}`);
   const sql = read('apps/api/prisma/migrations/0056_chat/migration.sql');
@@ -2433,19 +2436,31 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /export const RETENTION_DEFAULT_DAYS = 400;/.test(pol) && /enabled: env\.CHAT_RETENTION_SWEEP !== 'off',/.test(pol)
       && /export CHAT_RETENTION_SWEEP=off/.test(e2e),
     "RETENTION_DEFAULT_DAYS = 400; CHAT_RETENTION_SWEEP=off exported in scripts/run-e2e.sh");
-  const ui = read('tools/windows-installer/chatui_windows.go');
-  const host = read('tools/windows-installer/chat_windows.go');
-  const pipe = read('tools/windows-installer/internal/chat/pipe.go');
-  check('the chat window holds no secret and speaks no HTTP, and draws text in plain read-only EDIT controls',
-    !/net\/http|heartbeat\.dat|AgentSecret|agentSecret|chat\.Client|os\/exec/.test(ui)
-      && /w\.child\("EDIT", esMultiline\|esReadOnly\|/.test(ui)
-      && !/RichEdit|RICHEDIT|MSFTEDIT|SysLink|ShellExecute|shell32/i.test(ui),
-    'chatui_windows.go: no net/http, heartbeat.dat, secret, chat.Client or os/exec; transcript EDIT is ES_READONLY; no RichEdit/SysLink/ShellExecute');
-  check('the chat pipes are first-instance, local-only, ACL\'d to SYSTEM and the session user, and checked against the launched PID',
+  const win = read('tools/windows-installer/cmd/rem0te-tray/chatwin_windows.go');
+  const trayMain = read('tools/windows-installer/cmd/rem0te-tray/main_windows.go');
+  const host = read('tools/windows-installer/trayhost_windows.go');
+  const pipe = read('tools/windows-installer/internal/tray/pipe.go');
+  const ajs = read('apps/api/src/tray/assist-page.ts');
+  check('the chat window loads only /assist on the pinned portal, with dev tools, host objects and web messages off, and the page draws text as text',
+    /if err == nil && tray\.AllowedNavigation\(portal, uri\) \{\s*\n\s*return\s*\n\s*\}/.test(win)
+      && /CreateWebResourceResponse\(nil, 403, "Forbidden", ""\)/.test(win)
+      && /v\.AddWebResourceRequestedFilter\("\*", edge\.COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL\)/.test(win)
+      && ['PutAreDevToolsEnabled', 'PutAreHostObjectsAllowed', 'PutIsWebMessageEnabled', 'PutAreDefaultContextMenusEnabled'].every((k) => new RegExp(`s\\.${k}\\(false\\)`).test(win))
+      && !/AddHostObjectToScript|Bind\(|net\/http|heartbeat\.dat|AgentSecret|agentSecret/.test(win)
+      && !/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/.test(ajs.slice(ajs.indexOf('export const ASSIST_JS'), ajs.indexOf('export const ASSIST_EXPIRED_HTML')))
+      && /body\.textContent = m\.text;/.test(ajs),
+    'chatwin_windows.go: AllowedNavigation gate answering 403 on filter "*"; dev tools, host objects, web messages, context menus off; assist.js sets textContent, never innerHTML');
+  check('the signed tray holds no secret and speaks no HTTP: everything goes through the SYSTEM host over the pipes',
+    !/heartbeat\.dat|AgentSecret|agentSecret|net\/http/.test(trayMain.slice(trayMain.indexOf('func runSigned('), trayMain.indexOf('func runStandard(')))
+      && !/heartbeat\.dat|AgentSecret|agentSecret/.test(trayMain)
+      && (trayMain.match(/exec\.Command/g) ?? []).length === 1 && /exec\.Command\(exe, "--chat-window", "--portal", a\.portal\)/.test(trayMain)
+      && /cmd\.Stdin = strings\.NewReader\(u \+ "\\n"\)/.test(trayMain),
+    'main_windows.go runSigned: no heartbeat.dat, agent secret or net/http; the one exec is itself as --chat-window, the URL (with its one-time code) on stdin, never on a command line');
+  check('the tray pipes are first-instance, local-only, ACL\'d to SYSTEM and the session user, and checked against the launched PID',
     /return "D:P\(A;;GA;;;SY\)\(A;;GRGW;;;" \+ userSID \+ "\)", nil/.test(pipe)
       && /windows\.PIPE_REJECT_REMOTE_CLIENTS/.test(host) && /access\|windows\.FILE_FLAG_FIRST_PIPE_INSTANCE/.test(host)
-      && /sddl, err := chat\.PipeSDDL\(u\.User\.Sid\.String\(\)\)/.test(host)
-      && /windows\.GetNamedPipeClientProcessId\(h, &pid\); err == nil && pid != pi\.ProcessId \{/.test(host)
+      && /sddl, err := tray\.PipeSDDL\(u\.User\.Sid\.String\(\)\)/.test(host)
+      && /windows\.GetNamedPipeClientProcessId\(hp, &pid\); err == nil && pid != pi\.ProcessId \{/.test(host)
       && (host.match(/exec\.Command/g) ?? []).length === 1 && /exec\.CommandContext\(ctx, rd, "--get-id"\)/.test(host),
     'PipeSDDL protected DACL (SY + user GRGW); FIRST_PIPE_INSTANCE and REJECT_REMOTE_CLIENTS; client PID == launched PID; one exec (rustdesk --get-id)');
   const tab = read('apps/web/components/endpoints/workspace/chat-tab.tsx');
@@ -2453,10 +2468,11 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     !/dangerouslySetInnerHTML|<a\s|href=|linkify|marked|markdown/i.test(tab) && /\{m\.body\}/.test(tab),
     'chat-tab.tsx renders {m.body} as React text, with no dangerouslySetInnerHTML or anchors');
   const ws = read('apps/api/src/public/windows-script.ts');
-  check('only the signed agent starts the chat host, and the remote pause says it covers chat',
-    (ws.match(/ArgumentList @\('chat'\)/g) ?? []).length === 1 && ws.indexOf("ArgumentList @('chat')") > ws.indexOf('export function buildSignedWindowsScript(')
+  check('only the signed agent starts the tray host, and the remote pause says it covers chat',
+    (ws.match(/ArgumentList @\('tray-host'\)/g) ?? []).length === 1 && ws.indexOf("ArgumentList @('tray-host')") > ws.indexOf('export function buildSignedWindowsScript(')
+      && !/ArgumentList @\('chat'\)/.test(ws)
       && /remote: 'remote connections and chat'/.test(read('apps/api/src/containment/pause.ts')),
-    "one Start-Process ... @('chat'), in the signed variant's hook; pause label 'remote connections and chat'");
+    "one Start-Process ... @('tray-host'), in the signed variant's hook; pause label 'remote connections and chat'");
 }
 
 // 46. Device groups as a policy scope (0.35). Monitors and client-update
@@ -3060,6 +3076,145 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && ![...onAccent(login), ...onAccent(quick)].some((t) => /text-white/.test(t))
       && !/text-white/.test(login.slice(login.indexOf('data-accent-band'), login.indexOf('data-accent-band') + 800)),
     'login: backgroundColor band, color bandInk = inkOn(band); quick: two accent elements with color ink = inkOn(accent); no text-white on either');
+}
+
+// 55. The tray (0.36). A tray icon in every signed-in session on Windows:
+//     chat, a support request, self-help tools. Three credentials, none of
+//     which is the device secret in a user's hands: the signed tray holds
+//     nothing and asks the SYSTEM tray host over the 0.34 pipes; the standard
+//     tray holds a tray key that only reaches /tray/* (paired with the device
+//     secret by the SYSTEM heartbeat, replaced on every pairing, never an
+//     elevated tool); the chat page holds an HttpOnly cookie on /assist. The
+//     link the tray opens carries a one-time code: consumed by one
+//     conditional update, 60 seconds, answered with a 303 off the URL. The
+//     page has its own strict CSP (the console's is not applied there) and
+//     writes need x-assist. Self-help is a closed catalog that is the same in
+//     the API, the agent and the database; the elevated tools run only in
+//     the SYSTEM host, which runs only ipconfig and ping from System32 and
+//     the RustDesk restart, under the containment kinds each tool names, and
+//     starts only the tray whose sha256 the signed install recorded. Whether
+//     chats are recorded needs a fresh sign-in and is audited; an unrecorded
+//     chat's messages are deleted once both sides have them and at the end.
+//     Screenshots and usage are served only to someone who can see the
+//     computer, inert. No message text, request text or Windows account in
+//     the audit log.
+{
+  const pol = read('apps/api/src/tray/tray-policy.ts');
+  const asv = read('apps/api/src/tray/assist.service.ts');
+  const tsv = read('apps/api/src/tray/tray.service.ts');
+  const tctl = read('apps/api/src/tray/tray.controller.ts');
+  const page = read('apps/api/src/tray/assist-page.ts');
+  const next = read('apps/web/next.config.js');
+  const csvc = read('apps/api/src/chat/chat.service.ts');
+  const ssvc = read('apps/api/src/support-requests/support-requests.service.ts');
+  const sctl = read('apps/api/src/support-requests/support-requests.controller.ts');
+  const sql = read('apps/api/prisma/migrations/0062_tray/migration.sql');
+  const cat = read('tools/windows-installer/internal/tray/catalog.go');
+  const core = read('tools/windows-installer/internal/tray/core.go');
+  const tools = read('tools/windows-installer/internal/tray/tools.go');
+  const winos = read('tools/windows-installer/internal/tray/os_windows.go');
+  const host = read('tools/windows-installer/trayhost_windows.go');
+  const trayMain = read('tools/windows-installer/cmd/rem0te-tray/main_windows.go');
+  const trayArgs = read('tools/windows-installer/cmd/rem0te-tray/args.go');
+  const fnBody = (src, sig) => { const i = src.indexOf(sig); const j = src.indexOf('\n  }\n', i); return i < 0 ? '' : src.slice(i, j); };
+
+  check('a chat code is single-use: one conditional update consumes it, and nothing is read before it',
+    /const claimed = await this\.prisma\.assistCode\.updateMany\(\{ where: \{ codeHash: hash, usedAt: null, expiresAt: \{ gt: now \} \}, data: \{ usedAt: now \} \}\);\s*\n\s*if \(claimed\.count !== 1\) return null;/.test(asv)
+      && fnBody(asv, 'async exchange(').indexOf('assistCode.find') > fnBody(asv, 'async exchange(').indexOf('assistCode.updateMany')
+      && /export const CODE_TTL_MS = 60_000;/.test(pol) && /CHECK \("expiresAt" <= "createdAt" \+ interval '5 minutes'\)/.test(sql)
+      && /res\.redirect\(303, 'chat'\);/.test(tctl),
+    'exchange(): updateMany on {codeHash, usedAt: null, expiresAt > now} then count !== 1 → null, before any read; CODE_TTL_MS 60 s; AssistCode_short_lived; /assist/open redirects 303');
+  check('the /assist cookie is HttpOnly, Secure, SameSite=Strict on Path=/assist, and is the only credential the page accepts',
+    /return `\$\{ASSIST_COOKIE\}=\$\{token\}; Path=\$\{ASSIST_COOKIE_PATH\}; Max-Age=\$\{Math\.floor\(maxAgeMs \/ 1000\)\}; HttpOnly; Secure; SameSite=Strict`;/.test(pol)
+      && /export const ASSIST_COOKIE_PATH = '\/assist';/.test(pol)
+      && /@Controller\('assist'\)\s*\nexport class AssistController/.test(tctl)
+      && !/JwtAuthGuard|@Actor\(\)/.test(tctl.slice(tctl.indexOf('export class AssistController'))),
+    'assistCookie(): HttpOnly; Secure; SameSite=Strict; Path=/assist; AssistController uses no JwtAuthGuard or @Actor');
+  check('the page has its own strict CSP, the console\'s CSP is not applied to /assist, and page writes need x-assist',
+    /"default-src 'none'",\s*\n\s*"script-src 'self'",/.test(pol) && /"frame-ancestors 'none'",/.test(pol) && !/unsafe-(inline|eval)/.test(pol.slice(pol.indexOf('export const ASSIST_CSP'), pol.indexOf("].join('; ');", pol.indexOf('export const ASSIST_CSP'))))
+      && /res\.setHeader\('Content-Security-Policy', ASSIST_CSP\);/.test(tctl)
+      && /source: '\/:path\(\(\?!assist\(\?:\/\|\$\)\)\.\*\)',/.test(next)
+      && /if \(req\.headers\['x-assist'\] !== '1'\) throw new ForbiddenException/.test(tctl)
+      && (tctl.match(/assertPageWrite\(req\);/g) ?? []).length === 4,
+    "ASSIST_CSP default-src 'none', script-src 'self', no unsafe-*; pageHeaders sets it; next.config.js applies the console CSP to /:path((?!assist(?:/|$)).*); assertPageWrite in start, messages, receipts, end");
+  check('no device secret, tray key or code reaches the page, and the tray is handed a code, never a URL',
+    !/agentSecret|trayKey|heartbeat\.dat|rem0te_assist/.test(page)
+      && /return \{ code, expiresAt: new Date\(now \+ CODE_TTL_MS\), conversationId \};/.test(tsv)
+      && /func AssistURL\(portal, code string\) \(string, error\) \{/.test(cat)
+      && !/heartbeat\.dat|AgentSecret|agentSecret/.test(trayMain + trayArgs),
+    'assist-page.ts has no secret names; chatCode returns { code, expiresAt, conversationId }; the tray builds the URL (AssistURL) and never reads heartbeat.dat');
+  check('a tray key never runs or reports an elevated tool, and a standard computer\'s device secret is not a tray credential',
+    /if \(t\.elevated && dev\.via !== 'signed'\) \{\s*\n\s*throw new ForbiddenException\(\{ code: 'SELF_HELP_SIGNED_ONLY'/.test(tsv)
+      && /if \(t\.elevated && dev\.via !== 'signed'\) throw new ForbiddenException\(\{ code: 'SELF_HELP_SIGNED_ONLY'/.test(tsv)
+      && /CHECK \(\s*\n\s*"via" = 'signed' OR "tool" IN \('dns\.check', 'net\.test', 'net\.details'\)\);/.test(sql)
+      && /if \(ep\.updateChannel !== 'signed'\) \{[\s\S]{0,200}throw new ForbiddenException\(\{ code: 'TRAY_KEY_REQUIRED'/.test(tsv)
+      && /ep\.updateChannel === 'signed' \|\| ep\.status === 'ARCHIVED'\) \{/.test(tsv)
+      && /Run:\s+&tray\.Runner\{OS: tray\.WinOS\{\}, Portal: tf\.Portal, Elevated: false\},/.test(trayMain)
+      && /if t\.Elevated && !r\.Elevated \{/.test(tools)
+      && /func \(WinOS\) FlushDNS\(\) \(string, error\)\s+\{ return "", ErrNotHere \}/.test(winos)
+      && /func \(WinOS\) RenewIP\(\) \(string, error\)\s+\{ return "", ErrNotHere \}/.test(winos)
+      && /func \(WinOS\) RestartRustDesk\(\) error\s+\{ return ErrNotHere \}/.test(winos),
+    'selfHelpBegin and selfHelpResult refuse elevated tools from a tray key; TraySelfHelpRun_elevated_signed_only; identify() refuses a standard device secret and a tray key on a signed computer; the standard tray\'s Runner is Elevated: false; WinOS elevated methods return ErrNotHere');
+  {
+    const ts = [...pol.matchAll(/\{ id: '([a-z.]+)', title: '[^']+', elevated: (true|false), perWindow: \d+, windowMs: [^,]+, blockedBy: \[([^\]]*)\] \}/g)].map((m) => `${m[1]}:${m[2]}:${m[3].replace(/[' ]/g, '')}`);
+    const go = [...cat.matchAll(/\{ID: "([a-z.]+)", Title: "[^"]+", Elevated: (true|false), PerWindow: \d+, Window: [^,}]+(?:, BlockedBy: \[\]string\{([^}]*)\})?\}/g)].map((m) => `${m[1]}:${m[2]}:${(m[3] ?? '').replace(/[" ]/g, '')}`);
+    const db = (sql.match(/"tool" IN \(([^)]*)\)\);/) ?? [])[1]?.replace(/[' ]/g, '').split(',') ?? [];
+    check('the self-help catalog is the same closed list in the API, the agent and the database: six tools, the same elevated flags and containment kinds',
+      ts.length === 6 && JSON.stringify(ts) === JSON.stringify(go) && JSON.stringify(ts.map((t) => t.split(':')[0])) === JSON.stringify(db)
+        && JSON.stringify(ts) === JSON.stringify(['dns.check:false:', 'dns.flush:true:actions', 'ip.renew:true:actions', 'net.test:false:', 'net.details:false:', 'rustdesk.restart:true:actions,remote']),
+      `api ${JSON.stringify(ts)}\n      go  ${JSON.stringify(go)}\n      db  ${JSON.stringify(db)}`);
+  }
+  check('the tray host runs only ipconfig and ping from System32, and nothing else is passed to RunSystem32',
+    /var System32Allowed = map\[string\]bool\{"ipconfig\.exe": true, "ping\.exe": true\}/.test(winos)
+      && /if !System32Allowed\[exe\] \{/.test(winos)
+      && JSON.stringify([...(host + winos).matchAll(/RunSystem32\([^,]+, [^,]+, "([a-z0-9.]+)"((?:, "[^"]*")*)/g)].map((m) => m[1] + m[2])) === JSON.stringify(['ipconfig.exe, "/flushdns"', 'ipconfig.exe, "/renew"', 'ping.exe, "-n", "2", "-w", "1000"'])
+      && !/exec\.Command/.test(winos.replace(/func RunSystem32\([\s\S]*?\n\}\n/, '')),
+    'System32Allowed = {ipconfig.exe, ping.exe}; RunSystem32 refuses others; the only calls are ipconfig /flushdns, ipconfig /renew and ping -n 2 -w 1000');
+  check('every elevated tool is stopped by the containment kinds it names, server and agent, and a refused run is recorded',
+    /for \(const kind of t\.blockedBy\) \{\s*\n\s*const p = await this\.containment\.blocking\(kind, dev\.customerId\);\s*\n\s*if \(p\) \{\s*\n\s*const run = await this\.prisma\.traySelfHelpRun\.create\(\{ data: \{ \.\.\.base, status: 'refused'/.test(tsv)
+      && fnBody(tsv, 'async selfHelpBegin(').indexOf('t.blockedBy') < fnBody(tsv, 'async selfHelpBegin(').indexOf("status: 'running'")
+      && /if t\.Elevated && c\.SignedPause != nil \{/.test(core)
+      && /SignedPause: func\(ctx context\.Context, businessID string\) \(string, error\) \{/.test(host),
+    "selfHelpBegin: for kind of t.blockedBy → containment.blocking → a 'refused' run, before any 'running' run; the host's core consults the signed pause for elevated tools");
+  check('the host starts only the tray whose sha256 the signed install recorded',
+    /sum, err := agent\.FileSHA256\(exe\)[\s\S]{0,120}if sum != h\.traySum \{\s*\n\s*return fmt\.Errorf\("refusing to start/.test(host)
+      && host.indexOf('if sum != h.traySum {') < host.indexOf('windows.WTSQueryUserToken(', host.indexOf('func (h *trayHost) launchAndServe('))
+      && host.indexOf('func (h *trayHost) launchAndServe(') > 0
+      && /if json\.Unmarshal\(bytes\.TrimPrefix\(raw, \[\]byte\("\\xef\\xbb\\xbf"\)\), &st\) != nil \|\| len\(st\.TraySHA256\) != 64 \{/.test(host),
+    'launchAndServe: FileSHA256 then sum != h.traySum → refuse, before WTSQueryUserToken; installedTraySHA requires a 64-char TraySHA256');
+  check('changing whether chats are recorded needs a fresh sign-in, is audited before/after, and is owner or Platform Admin only',
+    (tctl.match(/fresh\(this\.stepUp, req\);/g) ?? []).length === 2
+      && /assertFresh\(u\?\.sub \? stepUp\.read\(req, u\.sub, u\.iat\)\?\.method \?\? null : null,/.test(tctl)
+      && /if \(!actor\.isPlatformAdmin\) throw new ForbiddenException\('Platform Admin access required'\);\s*\n\s*fresh\(this\.stepUp, req\);/.test(tctl)
+      && /action: 'CHAT_RECORDING_CHANGED'[\s\S]{0,200}meta: \{ scope: 'business', before: before\.chatRecording, after: recording \},/.test(tsv)
+      && /meta: \{ scope: 'platform', before: before\?\.chatRecordingDefault \?\? true, after: recording \},/.test(tsv),
+    'both PUTs call fresh() (assertFresh); the platform one checks isPlatformAdmin first; CHAT_RECORDING_CHANGED meta is scope/before/after only');
+  check('an unrecorded chat keeps no text: technician messages go once read, replies once a technician\'s panel saw them, everything at the end',
+    /const r = await this\.prisma\.chatMessage\.deleteMany\(\{ where: \{ conversationId, sender: 'TECHNICIAN', readAt: \{ not: null \} \} \}\);/.test(csvc)
+      && /const purged = read\.length \? await this\.purgeRead\(conversationId\) : 0;/.test(csvc)
+      && /const deleted = c\.recorded \? \{ count: 0 \} : await this\.prisma\.chatMessage\.deleteMany\(\{ where: \{ \.\.\.mine, technicianSeenAt: \{ not: null \} \} \}\);/.test(csvc)
+      && /if \(!c\.recorded\) await tx\.chatMessage\.deleteMany\(\{ where: \{ conversationId \} \}\);/.test(csvc)
+      && /export function chatRecorded\(business: boolean \| null \| undefined, platformDefault: boolean \| null \| undefined\): boolean \{\s*\n\s*if \(business === true \|\| business === false\) return business;\s*\n\s*return platformDefault !== false;/.test(pol),
+    'purgeRead deletes read TECHNICIAN rows; assistReceipts calls it; ack deletes seen END_USER rows; end() deletes all when !recorded; chatRecorded: the business\'s boolean, else the default unless it is false');
+  check('tray audit rows hold ids, tools and outcomes — no message text, request text, Windows account or key',
+    [...tsv.matchAll(/meta: \{([^}]*)\}/g)].every((m) => !/localUser|description|summary|detail|\btrayKey\b|secret|\btext\b/.test(m[1]))
+      && /meta: \{ runId, tool, outcome, offline \},/.test(tsv)
+      && /meta: \{ origin: 'AGENT', endpointId: ep\.id, screenshot: !!shot\?\.ok, usage: !!usage \},/.test(ssvc)
+      && [...asv.matchAll(/meta: \{([^}]*)\}/g)].every((m) => !/text|localUser|description/.test(m[1]))
+      && !/activityLog\.(update|updateMany|delete|deleteMany|upsert)/.test(tsv + asv),
+    'tray.service / assist.service meta: no localUser, description, summary, text or key; SUPPORT_REQUEST_SUBMITTED meta is flags only');
+  check('screenshots and usage are served only to someone who can see the computer, and served inert',
+    /if \(!r\.endpointId \|\| !\(await this\.computerVisible\(actor, r\.endpointId\)\)\) throw new NotFoundException\('Attachment not found'\);/.test(ssvc)
+      && /const visible = r\.endpointId \? await this\.computerVisible\(actor, r\.endpointId\) : false;/.test(ssvc)
+      && /res\.setHeader\('X-Content-Type-Options', 'nosniff'\);\s*\n\s*res\.setHeader\('Content-Security-Policy', "default-src 'none'; sandbox"\);/.test(sctl)
+      && /res\.setHeader\('Content-Type', a\.contentType === 'image\/png' \? 'image\/png' : 'image\/jpeg'\);/.test(sctl)
+      && /"contentType" IN \('image\/jpeg', 'image\/png'\) AND "bytes" IS NOT NULL AND "sizeBytes" BETWEEN 1 AND 716800/.test(sql),
+    'attachment(): computerVisible or 404; detail() lists them only when visible; nosniff + sandbox CSP; JPEG/PNG ≤ 700 KiB in the database');
+  check('TRAY_SWEEP=off is exact, and set for run-e2e.sh and the browser suite',
+    /if \(process\.env\.TRAY_SWEEP === 'off'\) return;/.test(tsv)
+      && /\nexport TRAY_SWEEP=off\n/.test(read('scripts/run-e2e.sh'))
+      && /TRAY_SWEEP: 'off',/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    "onModuleInit: TRAY_SWEEP === 'off' → no timer; run-e2e.sh exports it; e2e-ui's API env sets it");
 }
 
 if (failures.length > 0) {

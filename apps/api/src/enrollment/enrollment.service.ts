@@ -590,6 +590,7 @@ export class EnrollmentService {
     updateChannel?: 'signed' | 'legacy'; trustRootVersion?: number; targetsVersion?: number;
     agentActions?: string[]; agentSha256?: string; actionResults?: unknown[];
     patchPosture?: Record<string, unknown>; agentChat?: number;
+    agentTray?: number; trayKeyId?: string;
     agentUpdateCheckedAt?: string; agentUpdateResult?: string;
   }, remoteIp?: string) {
     // Names and versions as text, never control codes (0.32) — see device-text.ts.
@@ -726,6 +727,20 @@ export class EnrollmentService {
       },
     });
 
+    // The tray (0.36). Signed: what agent-status.json says. Standard: only
+    // with the key id on record — otherwise the heartbeat is told to pair.
+    let trayProtocol: number | null = null;
+    let trayPair = false;
+    if (authenticated && node.endpointId && (dto.agentTray ?? 0) >= 1) {
+      if (dto.updateChannel === 'signed') {
+        trayProtocol = dto.agentTray!;
+      } else {
+        const cur = await this.prisma.endpoint.findUnique({ where: { id: node.endpointId }, select: { trayKeyId: true } });
+        if (cur?.trayKeyId && dto.trayKeyId === cur.trayKeyId) trayProtocol = dto.agentTray!;
+        else trayPair = true;
+      }
+    }
+
     const updateData: Record<string, unknown> = {
       lastSeenAt: new Date(),
       isOnline: true,
@@ -754,6 +769,7 @@ export class EnrollmentService {
         agentSha256: dto.updateChannel === 'signed' ? dto.agentSha256 ?? null : null,
         // Chat (0.34): only the signed agent has a chat host.
         chatProtocol: dto.updateChannel === 'signed' ? dto.agentChat ?? null : null,
+        trayProtocol,
       }),
       // Agent upgrade (0.34): the agent's own last update check, from
       // agent-status.json — the signed agent's, or a migrate run's on a
@@ -1024,7 +1040,7 @@ export class EnrollmentService {
     // authenticated signed agent that reports a chat protocol, so the rest of
     // the fleet's heartbeats cost no query.
     let chat: { open: boolean } | null = null;
-    if (authenticated && dto.updateChannel === 'signed' && (dto.agentChat ?? 0) >= 1) {
+    if (authenticated && ((dto.updateChannel === 'signed' && (dto.agentChat ?? 0) >= 1) || (trayProtocol ?? 0) >= 1)) {
       try {
         chat = await this.chat.forHeartbeat(node.endpointId);
       } catch (e) {
@@ -1057,6 +1073,9 @@ export class EnrollmentService {
       monitor,
       diagnostics,
       chat,
+      // The tray (0.36): a standard computer whose tray key is missing or not
+      // the one on record pairs again (POST /tray/pair, device secret).
+      tray: trayPair ? { pair: true } : null,
       rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
     };
   }

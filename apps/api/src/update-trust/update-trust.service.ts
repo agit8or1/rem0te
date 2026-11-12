@@ -24,6 +24,8 @@ export const UPDATE_TRUST_MODES: UpdateTrustMode[] = ['legacy_allowed', 'signed_
 const META_RE = /^(?:[1-9][0-9]{0,6}\.(?:root|targets|snapshot)|timestamp|root)\.json$/;
 const SEGMENT_RE = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const AGENT_TARGET = 'windows/rem0te-agent.exe';
+/** The tray (0.36): the same signed bytes the standard agent's installer downloads and pins. */
+const TRAY_TARGET = 'windows/rem0te-tray.exe';
 const INSTALLER_TARGET = 'windows/install.ps1';
 
 interface Role { version: number; expires: string }
@@ -152,6 +154,7 @@ export class UpdateTrustService {
   }
 
   agentTarget() { return this.targetFile(AGENT_TARGET); }
+  trayTarget() { return this.targetFile(TRAY_TARGET); }
 
   /** Signed RustDesk builds, newest first, from targets custom metadata or name. */
   signedRustdeskVersions(): string[] {

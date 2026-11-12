@@ -7,6 +7,7 @@ import { usePermissions } from '@/lib/auth';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { PublicAddressCard } from '@/components/settings/public-address-card';
 import { SnapshotScheduleCard } from '@/components/settings/snapshot-schedule-card';
+import { ChatRecordingCard } from '@/components/settings/chat-recording-card';
 import { Copy, KeyRound, RefreshCw, ShieldCheck, Siren } from 'lucide-react';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
@@ -209,6 +210,7 @@ export default function SettingsPage() {
         <TabsContent value="general" className="mt-4 space-y-4">
           <PublicAddressCard />
           <SupportLinkCard />
+          <ChatRecordingCard />
 
           <Card>
             <CardHeader><CardTitle className="text-sm">General</CardTitle></CardHeader>

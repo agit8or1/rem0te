@@ -113,12 +113,17 @@ Run these on the release machine, from the release tag.
    ```bash
    cd tools/windows-installer
    GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o ~/release/rem0te-agent.exe .
+   GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-H=windowsgui -s -w" -o ~/release/rem0te-tray.exe ./cmd/rem0te-tray
    cd ../../apps/api && npx nest build
    node scripts/build-signed-installer.mjs --out ~/release/install.ps1   # prints its SHA-256
    ```
 
    The script is deterministic. Anyone can rebuild it from the tag and compare its digest with the one in the signed
    metadata.
+
+   The tray (0.36, [tray.md](tray.md)) is a separate GUI executable: `-H=windowsgui` stops a console window
+   appearing. It is **optional**. A release without it installs no tray, and the agent then reports no tray and no
+   chat, so the portal says chat is unavailable instead of pretending.
 
 2. **Add a RustDesk build.** Download it from RustDesk's GitHub release, check it against the digest GitHub publishes,
    and add it under its exact name.
@@ -130,6 +135,7 @@ Run these on the release machine, from the release tag.
      -targets-key ~/keys/targets.pem -snapshot-key ~/keys/snapshot.pem -timestamp-key ~/keys/timestamp.pem \
      -add windows/rem0te-agent.exe=$HOME/release/rem0te-agent.exe \
      -add windows/install.ps1=$HOME/release/install.ps1 \
+     -add windows/rem0te-tray.exe=$HOME/release/rem0te-tray.exe \
      -add windows/rustdesk/rustdesk-1.4.6-x86_64.exe=$HOME/release/rustdesk-1.4.6-x86_64.exe \
      -custom 'windows/rustdesk/rustdesk-1.4.6-x86_64.exe={"version":"1.4.6"}'
    ```

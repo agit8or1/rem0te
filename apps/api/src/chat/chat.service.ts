@@ -14,6 +14,10 @@ import {
   MAX_MESSAGE_CHARS, POLL_RECHECK_MS, TRANSCRIPT_PAGE, chatConfig, chatSupport, chatText, deviceName, deviceState, idList, isId,
   presence, receipt, retentionCutoff, technicianDisplayName, type ChatSweepConfig,
 } from './chat-policy';
+import { chatRecorded } from '../tray/tray-policy';
+
+/** The technician name an end-user-started chat shows until a technician first writes. */
+export const AWAITING_TECHNICIAN = 'Waiting for a technician';
 
 /**
  * Chat (0.34): a technician in the portal and the person at a managed
@@ -29,6 +33,15 @@ import {
  *               POST /enrollment/chat/reply  device secret
  *   sweep       ends conversations quiet for 2 h; deletes those ended over
  *               400 days ago (CHAT_RETENTION_SWEEP=off stops it)
+ *   tray (0.36) the /assist page and the tray reach the same conversation
+ *               through TrayService / AssistService; the panel's ack route
+ *               POST /endpoints/:id/chat/conversations/:cid/ack (support:chat)
+ *
+ * Recording (0.36): a conversation is `recorded` or not, frozen when it
+ * starts from the business's setting (or the platform default). One that is
+ * not keeps no transcript: a technician message is deleted once the page
+ * reports it read, a reply once a technician's panel confirms it showed it,
+ * and whatever is left when the chat ends.
  *
  * Every technician route starts from assertEndpointInScope AND
  * endpointVisibilityWhere; another business's computer is a 404. A
@@ -45,6 +58,7 @@ const CONV_SUMMARY = {
   id: true, status: true, startedById: true, technicianName: true, businessName: true, supportRequestId: true,
   deviceState: true, deviceDetail: true, deviceUser: true, deviceStateAt: true, deviceSeenAt: true, lastActivityAt: true,
   endedAt: true, endedById: true, endedReason: true, technicianMessages: true, endUserMessages: true, createdAt: true,
+  startedBy: true, recorded: true,
 } satisfies Prisma.ChatConversationSelect;
 
 @Injectable()
@@ -93,7 +107,8 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
       where: { AND: [this.acl.endpointVisibilityWhere(actor), { id: endpointId }] },
       select: {
         id: true, tenantId: true, customerId: true, status: true, platform: true, updateChannel: true, chatProtocol: true,
-        customer: { select: { name: true } },
+        trayProtocol: true, trayKeyId: true,
+        customer: { select: { name: true, chatRecording: true } },
         rustdeskNode: { select: { agentSecretHash: true } },
         inventory: { select: { loggedOnUser: true, liveSampledAt: true } },
       },
@@ -106,7 +121,14 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     if (!ep.customerId) {
       return { supported: false as const, reason: 'no_business' as const, message: 'Assign this computer to a business first: the chat window shows the business name.' };
     }
-    return chatSupport({ ...ep, agentBound: !!ep.rustdeskNode?.agentSecretHash });
+    return chatSupport({ ...ep, agentBound: !!ep.rustdeskNode?.agentSecretHash, trayPaired: !!ep.trayKeyId });
+  }
+
+  /** Whether a chat started now is recorded: the business's choice, else the platform default. */
+  async recordingFor(customerChoice: boolean | null | undefined): Promise<boolean> {
+    if (customerChoice === true || customerChoice === false) return customerChoice;
+    const p = await this.prisma.platformSettings.findUnique({ where: { id: 'singleton' }, select: { chatRecordingDefault: true } });
+    return chatRecorded(customerChoice, p?.chatRecordingDefault);
   }
 
   /** May this actor write in chats on this computer? The same test assertEndpointInScope makes, without throwing. */
@@ -116,14 +138,14 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     return true;
   }
 
-  private conversationView(c: Pick<ChatConversation, keyof typeof CONV_SUMMARY>, now = Date.now()) {
-    return { ...c, presence: presence(c, now) };
+  private conversationView(c: Pick<ChatConversation, keyof typeof CONV_SUMMARY>, now = Date.now(), via: 'window' | 'tray' = 'window') {
+    return { ...c, presence: presence(c, now, via) };
   }
 
   private messageView(m: ChatMessage) {
     return {
       id: m.id, sender: m.sender, authorName: m.authorName, body: m.body, createdAt: m.createdAt,
-      deliveredAt: m.deliveredAt, shownAt: m.shownAt, readAt: m.readAt, receipt: receipt(m),
+      deliveredAt: m.deliveredAt, shownAt: m.shownAt, readAt: m.readAt, technicianSeenAt: m.technicianSeenAt, receipt: receipt(m),
     };
   }
 
@@ -138,24 +160,29 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     ]);
     const now = Date.now();
     const open = rows.find((r) => r.status === 'OPEN') ?? null;
+    const support = this.support(ep);
+    const via = support.supported ? support.via : 'window';
     return {
-      support: this.support(ep),
+      support,
+      // What a chat started now would be: recorded or not (0.36).
+      recordNew: await this.recordingFor(ep.customer?.chatRecording),
       canSend: this.maySend(actor, endpointId),
       contained: pause ? { pauseId: pause.id, message: pauseMessage(pause, 'remote') } : null,
       // What the last heartbeat said about who is signed in — a hint only; the
       // chat window's own report (presence) is what counts.
       lastSignedInUser: ep.inventory?.liveSampledAt ? { name: ep.inventory.loggedOnUser || null, at: ep.inventory.liveSampledAt } : null,
-      open: open ? this.conversationView(open, now) : null,
-      conversations: rows.map((r) => this.conversationView(r, now)),
+      open: open ? this.conversationView(open, now, via) : null,
+      conversations: rows.map((r) => this.conversationView(r, now, via)),
       limits: { maxChars: MAX_MESSAGE_CHARS, perMinute: MAX_PER_MINUTE.technician, retentionDays: this.cfg.retentionDays },
     };
   }
 
   /** GET /endpoints/:id/chat/conversations/:cid[?after=messageId]: the transcript, oldest first. */
   async transcript(actor: ActorContext, endpointId: string, conversationId: string, after?: string) {
-    await this.visibleEndpoint(actor, endpointId);
+    const ep = await this.visibleEndpoint(actor, endpointId);
     const c = await this.prisma.chatConversation.findFirst({ where: { id: conversationId, endpointId }, select: CONV_SUMMARY });
     if (!c) throw new NotFoundException('Conversation not found');
+    const sup = this.support(ep);
     let since: Date | undefined;
     if (after !== undefined) {
       if (!isId(after)) throw new BadRequestException('after must be a message id');
@@ -170,7 +197,13 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: TRANSCRIPT_PAGE,
     });
     rows.reverse();
-    return { conversation: this.conversationView(c), messages: rows.map((m) => this.messageView(m)), truncated: rows.length === TRANSCRIPT_PAGE };
+    return {
+      conversation: this.conversationView(c, Date.now(), sup.supported ? sup.via : 'window'),
+      messages: rows.map((m) => this.messageView(m)),
+      truncated: rows.length === TRANSCRIPT_PAGE,
+      // Not recorded (0.36): what is here is only what has not yet reached both sides.
+      recorded: c.recorded,
+    };
   }
 
   /** POST /endpoints/:id/chat/conversations: open a chat window on the computer (or return the one already open). */
@@ -199,17 +232,18 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     const user = await this.prisma.user.findUnique({ where: { id: actor.userId }, select: { firstName: true, lastName: true } });
     const technicianName = technicianDisplayName(user ?? {});
     const businessName = deviceName(ep.customer?.name ?? '') ?? 'Your IT provider';
+    const recorded = await this.recordingFor(ep.customer?.chatRecording);
     try {
       const conv = await this.prisma.$transaction(async (tx) => {
         const c = await tx.chatConversation.create({
-          data: { tenantId: ep.tenantId, customerId: ep.customerId, endpointId, supportRequestId, startedById: actor.userId, technicianName, businessName },
+          data: { tenantId: ep.tenantId, customerId: ep.customerId, endpointId, supportRequestId, startedById: actor.userId, startedBy: 'technician', technicianName, businessName, recorded },
           select: CONV_SUMMARY,
         });
         await tx.activityLog.create({
           data: this.audit.entry({
             tenantId: ep.tenantId ?? undefined, customerId: ep.customerId ?? undefined, actorId: actor.userId, actorIp: actor.ip,
             action: 'CHAT_STARTED', resource: 'endpoint', resourceId: endpointId,
-            meta: { conversationId: c.id, ...(supportRequestId ? { supportRequestId } : {}) },
+            meta: { conversationId: c.id, recorded, ...(supportRequestId ? { supportRequestId } : {}) },
           }),
         });
         return c;
@@ -245,11 +279,14 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     const c = await this.openConversation(endpointId, conversationId);
     await this.assertRate(c, 'TECHNICIAN', MAX_PER_MINUTE.technician);
     const user = await this.prisma.user.findUnique({ where: { id: actor.userId }, select: { firstName: true, lastName: true } });
+    const name = user ? technicianDisplayName(user) : c.technicianName;
     const m = await this.prisma.$transaction(async (tx) => {
       const msg = await tx.chatMessage.create({
-        data: { conversationId, sender: 'TECHNICIAN', authorId: actor.userId, authorName: user ? technicianDisplayName(user) : c.technicianName, body: t.text },
+        data: { conversationId, sender: 'TECHNICIAN', authorId: actor.userId, authorName: name, body: t.text },
       });
-      await tx.chatConversation.update({ where: { id: conversationId }, data: { technicianMessages: { increment: 1 }, lastActivityAt: new Date() } });
+      // A chat the person started (0.36) names whoever first answers it.
+      const named = c.startedBy === 'end_user' && c.technicianName === AWAITING_TECHNICIAN ? { technicianName: name } : {};
+      await tx.chatConversation.update({ where: { id: conversationId }, data: { technicianMessages: { increment: 1 }, lastActivityAt: new Date(), ...named } });
       return msg;
     });
     this.wake(endpointId);
@@ -267,6 +304,37 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * POST /endpoints/:id/chat/conversations/:cid/ack { ids } (0.36): the
+   * technician's panel has shown these replies from the person at the
+   * computer. Recorded or not, technicianSeenAt is set once; in a chat that is
+   * not recorded the replies are then deleted — both sides have them. Needs
+   * support:chat on the computer: a viewer's panel acknowledges nothing, so
+   * it cannot make a reply vanish before the chatting technician sees it.
+   */
+  async ack(actor: ActorContext, endpointId: string, conversationId: string, body: { ids?: unknown }) {
+    await this.visibleEndpoint(actor, endpointId, CAP.CHAT_SEND);
+    const c = await this.prisma.chatConversation.findFirst({ where: { id: conversationId, endpointId }, select: { id: true, recorded: true } });
+    if (!c) throw new NotFoundException('Conversation not found');
+    const ids = idList(body?.ids);
+    if (!ids.length) return { seen: 0, deleted: 0 };
+    const mine = { id: { in: ids }, conversationId: c.id, sender: 'END_USER' as const };
+    const seen = await this.prisma.chatMessage.updateMany({ where: { ...mine, technicianSeenAt: null }, data: { technicianSeenAt: new Date() } });
+    const deleted = c.recorded ? { count: 0 } : await this.prisma.chatMessage.deleteMany({ where: { ...mine, technicianSeenAt: { not: null } } });
+    return { seen: seen.count, deleted: deleted.count };
+  }
+
+  /**
+   * Not recorded (0.36): delete the technician messages the person's window
+   * has reported read — the last receipt there is. Their row is the only copy.
+   */
+  async purgeRead(conversationId: string) {
+    const c = await this.prisma.chatConversation.findUnique({ where: { id: conversationId }, select: { recorded: true } });
+    if (!c || c.recorded) return 0;
+    const r = await this.prisma.chatMessage.deleteMany({ where: { conversationId, sender: 'TECHNICIAN', readAt: { not: null } } });
+    return r.count;
+  }
+
+  /**
    * OPEN → ENDED, at most once whoever asks (technician, agent, sweep): the
    * conditional update decides, and only the caller that made it writes the
    * CHAT_ENDED entry, in the same transaction. Ids and counts only.
@@ -280,6 +348,8 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
       });
       if (r.count !== 1) return null;
       const c = await tx.chatConversation.findUniqueOrThrow({ where: { id: conversationId } });
+      // Not recorded (0.36): nothing of the conversation's text outlives it.
+      if (!c.recorded) await tx.chatMessage.deleteMany({ where: { conversationId } });
       await tx.activityLog.create({
         data: this.audit.entry({
           tenantId: c.tenantId ?? undefined, customerId: c.customerId ?? undefined, actorId, actorIp,
@@ -345,6 +415,10 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     if (delivered.length) await this.prisma.chatMessage.updateMany({ where: { id: { in: delivered }, deliveredAt: null, ...mine }, data: { deliveredAt: now } });
     if (shown.length) await this.prisma.chatMessage.updateMany({ where: { id: { in: shown }, shownAt: null, ...mine }, data: { shownAt: now } });
     if (read.length) await this.prisma.chatMessage.updateMany({ where: { id: { in: read }, readAt: null, ...mine }, data: { readAt: now } });
+    if (read.length && dto.conversationId && isId(dto.conversationId)) {
+      const own = await this.prisma.chatConversation.findFirst({ where: { id: dto.conversationId, endpointId }, select: { id: true } });
+      if (own) await this.purgeRead(own.id);
+    }
 
     // The conversation it asks about (to learn it ended), else the open one.
     let conv = dto.conversationId && isId(dto.conversationId)
@@ -465,6 +539,137 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
       }
       throw e;
     }
+  }
+
+  // ── The tray and the /assist page (0.36) ─────────────────────────────────
+  //
+  // Called by TrayService (the tray's routes, authenticated by the device
+  // secret or the tray key) and AssistService (the page, authenticated by
+  // its /assist cookie). Neither caller is a portal user: every method takes
+  // the endpoint id its credential proved, and touches only that computer's
+  // conversations.
+
+  /** The open conversation, what the tray needs for its badge, and the receipts it brings. */
+  async forTray(endpointId: string, delivered: unknown) {
+    const ids = idList(delivered);
+    if (ids.length) {
+      await this.prisma.chatMessage.updateMany({ where: { id: { in: ids }, deliveredAt: null, sender: 'TECHNICIAN', conversation: { endpointId } }, data: { deliveredAt: new Date() } });
+    }
+    const c = await this.prisma.chatConversation.findFirst({ where: { endpointId, status: 'OPEN' }, select: { ...CONV_SUMMARY } });
+    if (!c) return null;
+    const unread = await this.prisma.chatMessage.findMany({
+      where: { conversationId: c.id, sender: 'TECHNICIAN', shownAt: null }, select: { id: true }, orderBy: { createdAt: 'asc' }, take: POLL_BATCH,
+    });
+    return { conversation: c, unread: unread.map((u) => u.id) };
+  }
+
+  /**
+   * Bind the open conversation to the person at the computer, or refuse: a
+   * chat is with one Windows account. The first account to open it claims
+   * it; another account on the same computer is told so (409), and never
+   * sees the transcript.
+   */
+  async bindForUser(endpointId: string, localUser: string | null) {
+    const c = await this.prisma.chatConversation.findFirst({ where: { endpointId, status: 'OPEN' } });
+    if (!c) return null;
+    if (c.deviceUser && localUser && c.deviceUser !== localUser) {
+      throw new ConflictException({ code: 'CHAT_OTHER_USER', message: 'This chat is with someone else signed in on this computer.' });
+    }
+    if (!c.deviceUser && localUser) {
+      await this.prisma.chatConversation.updateMany({ where: { id: c.id, deviceUser: null }, data: { deviceUser: localUser } });
+    }
+    await this.prisma.chatConversation.update({ where: { id: c.id }, data: { deviceSeenAt: new Date(), ...(c.deviceState ? {} : { deviceState: 'connecting', deviceStateAt: new Date() }) } });
+    return c.id;
+  }
+
+  /**
+   * The person at the computer starts a chat from the tray (0.36). It needs
+   * a business (the window names it), and is refused while a `remote` pause
+   * covers it. The conversation is recorded or not as a technician's would
+   * be. Returns the new conversation — or the open one, if a technician
+   * started one meanwhile.
+   */
+  async endUserStart(ep: { id: string; tenantId: string | null; customerId: string | null; customerName: string | null; customerRecording: boolean | null },
+    localUser: string | null, supportRequestId: string | null) {
+    if (!ep.customerId) throw new ConflictException({ code: 'CHAT_UNSUPPORTED', reason: 'no_business', message: 'This computer is not assigned to a business yet.' });
+    await this.containment.assertOpen('remote', ep.customerId);
+    const existing = await this.prisma.chatConversation.findFirst({ where: { endpointId: ep.id, status: 'OPEN' }, select: { id: true } });
+    if (existing) return { id: existing.id, existing: true };
+    const recorded = await this.recordingFor(ep.customerRecording);
+    try {
+      const c = await this.prisma.$transaction(async (tx) => {
+        const conv = await tx.chatConversation.create({
+          data: {
+            tenantId: ep.tenantId, customerId: ep.customerId, endpointId: ep.id, supportRequestId, startedById: null, startedBy: 'end_user',
+            technicianName: AWAITING_TECHNICIAN, businessName: deviceName(ep.customerName ?? '') ?? 'Your IT provider', recorded,
+            deviceUser: localUser, deviceState: 'window_open', deviceStateAt: new Date(), deviceSeenAt: new Date(),
+          },
+          select: { id: true },
+        });
+        await tx.activityLog.create({
+          data: this.audit.entry({
+            tenantId: ep.tenantId ?? undefined, customerId: ep.customerId ?? undefined,
+            action: 'CHAT_STARTED', resource: 'endpoint', resourceId: ep.id,
+            meta: { conversationId: conv.id, recorded, by: 'end_user', ...(supportRequestId ? { supportRequestId } : {}) },
+          }),
+        });
+        return conv;
+      });
+      this.wake(ep.id);
+      return { id: c.id, existing: false };
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        const c = await this.prisma.chatConversation.findFirst({ where: { endpointId: ep.id, status: 'OPEN' }, select: { id: true } });
+        if (c) return { id: c.id, existing: true };
+      }
+      throw e;
+    }
+  }
+
+  /** What the /assist page shows: the conversation, and its messages oldest first (newest 200). */
+  async assistView(endpointId: string, conversationId: string) {
+    const c = await this.prisma.chatConversation.findFirst({ where: { id: conversationId, endpointId } });
+    if (!c) return null;
+    if (c.status === 'OPEN') {
+      await this.prisma.chatConversation.update({
+        where: { id: c.id },
+        data: { deviceSeenAt: new Date(), ...(c.deviceState !== 'window_open' ? { deviceState: 'window_open', deviceStateAt: new Date() } : {}) },
+      });
+    }
+    const rows = await this.prisma.chatMessage.findMany({ where: { conversationId: c.id }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 200 });
+    rows.reverse();
+    return {
+      conversation: {
+        id: c.id, status: c.status, recorded: c.recorded, startedBy: c.startedBy, businessName: c.businessName,
+        technicianName: c.technicianName, endedReason: c.endedReason, startedAt: c.createdAt,
+      },
+      messages: rows.map((m) => ({
+        id: m.id, from: m.sender === 'TECHNICIAN' ? 'technician' : 'user', name: m.authorName, text: m.body, at: m.createdAt,
+        clientId: m.clientId, receivedBySupport: m.sender === 'END_USER' ? !!m.technicianSeenAt : undefined,
+      })),
+    };
+  }
+
+  /** The page drew these technician messages (shown), while it was in front (read). Then, if not recorded, purge. */
+  async assistReceipts(endpointId: string, conversationId: string, body: { shown?: unknown; read?: unknown }) {
+    const now = new Date();
+    const read = idList(body?.read), shown = [...new Set([...idList(body?.shown), ...read])];
+    const mine = { sender: 'TECHNICIAN' as const, conversationId, conversation: { endpointId } };
+    if (shown.length) {
+      await this.prisma.chatMessage.updateMany({ where: { id: { in: shown }, deliveredAt: null, ...mine }, data: { deliveredAt: now } });
+      await this.prisma.chatMessage.updateMany({ where: { id: { in: shown }, shownAt: null, ...mine }, data: { shownAt: now } });
+    }
+    if (read.length) await this.prisma.chatMessage.updateMany({ where: { id: { in: read }, readAt: null, ...mine }, data: { readAt: now } });
+    const purged = read.length ? await this.purgeRead(conversationId) : 0;
+    return { shown: shown.length, read: read.length, purged };
+  }
+
+  /** The person ended the chat from the page. */
+  async assistEnd(endpointId: string, conversationId: string) {
+    const c = await this.prisma.chatConversation.findFirst({ where: { id: conversationId, endpointId }, select: { id: true, status: true } });
+    if (!c) throw new NotFoundException('Conversation not found');
+    if (c.status !== 'OPEN') return { ended: false };
+    return { ended: await this.close(conversationId, 'end_user') };
   }
 
   // ── Sweep ─────────────────────────────────────────────────────────────────
