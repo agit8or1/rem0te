@@ -95,14 +95,14 @@ export default function SoftwareDeploymentPage() {
     onError: (e) => toast({ title: 'Not changed', description: refusalText(e, 'Refused.'), variant: 'destructive' }),
   });
 
-  if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (error || !d) return <p className="text-sm text-muted-foreground">{refusalText(error, 'This deployment could not be loaded.')}</p>;
+  if (isLoading) return <p className="p-4 md:p-6 text-sm text-muted-foreground">Loading…</p>;
+  if (error || !d) return <p className="p-4 md:p-6 text-sm text-muted-foreground">{refusalText(error, 'This deployment could not be loaded.')}</p>;
   const nextRing = d.next.ring !== null ? d.rings[d.next.ring] : null;
   const excludedAll = nextRing ? nextRing.computers.every((c) => (exclude[c.endpointId] ?? '').trim()) : false;
   const badExclusion = Object.values(exclude).some((w) => w.trim() && w.trim().length < 3);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 p-4 md:p-6">
       <Link href={d.entryId ? `/automation/software/${d.entryId}` : '/automation/software'} className="text-xs text-muted-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3 w-3" />{d.entryId ? 'Catalog entry' : 'Software catalog'}</Link>
       <PageHeader title={d.name} description={`${d.operation === 'install' ? 'Install' : 'Uninstall'} · created ${formatDate(d.createdAt)}${d.single ? ' · one computer' : ` · soak ${d.soakHours} h · ${plural(d.failureThreshold, 'failure')} allowed per ring`} · ${d.windowHours} h window`}>
         <div className="flex gap-2 items-center">

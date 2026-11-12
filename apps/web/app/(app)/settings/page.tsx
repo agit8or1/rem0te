@@ -6,6 +6,7 @@ import { authApi, platformApi, supportRequestsApi } from '@/lib/api-client';
 import { usePermissions } from '@/lib/auth';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { PublicAddressCard } from '@/components/settings/public-address-card';
+import { SnapshotScheduleCard } from '@/components/settings/snapshot-schedule-card';
 import { Copy, KeyRound, RefreshCw, ShieldCheck, Siren } from 'lucide-react';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
@@ -351,6 +352,7 @@ export default function SettingsPage() {
               </Button>
             </CardContent>
           </Card>
+          <SnapshotScheduleCard />
           <Card>
             <CardHeader><CardTitle className="text-sm">API keys</CardTitle></CardHeader>
             <CardContent className="flex flex-wrap items-center justify-between gap-3">

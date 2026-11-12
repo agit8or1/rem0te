@@ -299,6 +299,15 @@ const SECTIONS: Section[] = [
           cover every device, not just the page on screen. Click a column heading to sort by it.
         </p>
         <p>
+          <strong className="text-foreground">Green, amber, grey (0.35).</strong> A green dot means the agent is
+          checking in. Amber, <em>Reachable (RustDesk) · agent silent 12 d</em>, means the RustDesk server can still
+          reach the computer — remote control should work — but its agent has not checked in for 30 minutes or more,
+          so monitoring, patching and actions are not reporting; try <strong className="text-foreground">Update
+          agent</strong> on its Agent card. Grey is offline. The Online filter has all three, the dashboard counts
+          agent-silent computers apart from online ones, and the CSV has a Connectivity column. On a phone the
+          filters sit behind a <strong className="text-foreground">Filters (n)</strong> button.
+        </p>
+        <p>
           <strong className="text-foreground">Health</strong> is the worst open monitoring alert;{' '}
           <strong className="text-foreground">Pending patches</strong> comes from the last update scan; CPU, RAM,
           disk and the logged-in user come from the last heartbeat. Each shows its age, and a value that is stale —
@@ -325,7 +334,7 @@ const SECTIONS: Section[] = [
           A <strong className="text-foreground">rule group</strong> (Views → Save filters as a rule group…) holds
           whichever computers of its business match the current filters — online, platform, site, tag, updates,
           alerts, RustDesk version range, last seen (More filters) — worked out each time it is read, so a computer
-          that goes offline leaves an &ldquo;online&rdquo; group at once. Nobody adds to it by hand. Everyone sees only
+          that goes offline (or whose agent goes silent) leaves an &ldquo;online&rdquo; group at once. Nobody adds to it by hand. Everyone sees only
           the members they can already see, and a rule on alerts needs the monitoring:alerts permission. Filtered by
           a rule group, the bulk bar acts on its current members (at most 200).
         </p>
@@ -515,8 +524,10 @@ const SECTIONS: Section[] = [
         <p className="font-medium text-foreground">The device page</p>
         <p>
           The top of the page says whether the computer is online (or offline since
-          when), its business and site, and when its agent last checked in, marked
-          stale when it has missed check-ins. The strip under it lists what needs
+          when, or — in amber — reachable through RustDesk with its agent silent), its business and site, and when its agent last checked in, marked
+          stale when it has missed check-ins. From 0.35 the Overview&apos;s Assignment card lists every group it is
+          in, static and rule, each a link to the list filtered by it. Restart and update wording names the
+          computer&apos;s own system: a Linux server&apos;s restart comes from its package manager, not Windows. The strip under it lists what needs
           attention: open alerts, a pending restart, pending updates with the age of
           the scan, and which agent it runs. Each opens the tab that explains it.
           Connect, Diagnose, Run action and Patch sit beside it; Archive and the other
@@ -591,6 +602,15 @@ const SECTIONS: Section[] = [
           with the standard agent only; the Linux agent does not collect them. More in{' '}
           <Link href="/docs/diagnostics#the-processes-services-and-network-tabs" className="underline text-foreground">One-click diagnostics</Link>.
         </p>
+        <p>
+          Since 0.35 the server also takes them on its own: every 6 hours, and every 5 minutes
+          while you have the tab open, on the computer&apos;s own check-in. The tab updates itself —
+          no reload — and says when the next automatic refresh is due. When nothing can arrive it
+          says why: the agent has not checked in (even if RustDesk can still reach the computer),
+          the agent is older than 0.33, the computer is not Windows, or automatic snapshots are
+          off. A Platform Admin sets the intervals in Settings → Monitoring &amp; API. See{' '}
+          <Link href="/docs/diagnostics#automatic-snapshots" className="underline text-foreground">Automatic snapshots</Link>.
+        </p>
         <p className="font-medium text-foreground">The AI-written summary</p>
         <p>
           <em>History</em> ends with an <strong className="text-foreground">AI-written summary</strong> of the
@@ -640,7 +660,8 @@ const SECTIONS: Section[] = [
           what is missing, such as a signed release that has not been published yet. It is refused while the portal is
           in <em>Signed only</em> mode and held while updates are paused for the business. Several computers can be
           moved at once from the device list, and{' '}
-          <Link href="/endpoints/agent-migrations" className="underline">Agent migrations</Link> lists what is pending,
+          <Link href="/endpoints/agent-migrations" className="underline">Agent migrations</Link> (a Devices tab for
+          whoever may request one) lists what is pending,
           held, not confirmed or done. More in{' '}
           <Link href="/docs/update-signing#moving-existing-agents" className="underline">Update signing</Link>.
         </p>
@@ -669,8 +690,17 @@ const SECTIONS: Section[] = [
         <p>
           <Link href="/settings/monitoring" className="underline text-foreground">Settings → Monitoring</Link>.
           Start with <strong className="text-foreground">Add recommended</strong>. Monitors are inherited:
-          global, then business, then site, then computer; a monitor with the same key lower down replaces
+          global, then business, then site, then device group, then computer; a monitor with the same key lower down replaces
           the one above it, and a disabled one switches it off there.
+        </p>
+        <p className="font-medium text-foreground">Monitors for a device group</p>
+        <p>
+          Under <em>New monitor</em>, pick a group and give it a priority. It applies to the computers in the
+          group right now — a rule group&apos;s members are worked out each time, so a computer that stops
+          matching drops the monitor at the next check and its open alert closes. A computer in two groups
+          with a monitor of the same key follows the lower number (1 first); two cannot share a number. A
+          computer&apos;s Monitoring tab says where each monitor came from and what it beat. See{' '}
+          <Link href="/docs/group-policies" className="underline text-foreground">Device-group policies</Link>.
         </p>
         <p className="font-medium text-foreground">One alert per problem</p>
         <p>
@@ -713,6 +743,15 @@ const SECTIONS: Section[] = [
           on. Daylight-saving changes are handled: on the night the clocks go forward a window that starts in
           the missing hour opens when the clock reaches the next real time. The page shows when the window
           next opens. A site can have its own policy, which replaces the business one for that site.
+        </p>
+        <p className="font-medium text-foreground">Policies for device groups</p>
+        <p>
+          A device group can have its own policy too, with a priority (1 first). A group policy beats a site
+          override, which beats the business policy; a computer in several groups with a policy follows the
+          lowest number. The Computers table and the computer&apos;s own page say which policy governs it and
+          why. Turning a group policy on, or removing one, asks you to confirm it is you, and a group that has
+          a policy cannot be deleted until the policy is removed. See{' '}
+          <Link href="/docs/group-policies" className="underline text-foreground">Device-group policies</Link>.
         </p>
         <p className="font-medium text-foreground">What happens</p>
         <p>
@@ -999,6 +1038,7 @@ const SECTIONS: Section[] = [
           computers, with typed arguments and a timeout of 1 to 30 minutes; two more approvers approve each run on the
           signer&apos;s page. The signed agent checks the hash before it runs anything, as SYSTEM, and each computer&apos;s
           Actions tab shows the exit code and the first 64 KB of output, redacted, for 90 days. Revoking is permanent.
+          On a server with no approval signer the panel says so and offers nothing to propose, request or revoke.
           It has been tested with PowerShell 7 on Linux, <strong className="text-foreground">not yet on a real Windows
           computer</strong>. Writing needs <em>Write scripts</em>; reviewing, proposing and revoking need <em>Review
           scripts</em>; requesting a run also needs <em>Request approved actions</em>. More in{' '}
@@ -1007,7 +1047,8 @@ const SECTIONS: Section[] = [
         <p>
           The <Link href="/dashboard" className="underline text-foreground">Dashboard</Link> (0.31) says what is broken,
           which businesses it affects, which devices need attention, what is already being worked on, and what to
-          do next — only for what you can see. <strong className="text-foreground">Work on next</strong> is a ranked
+          do next — only for what you can see. From 0.35 it fits the window on a desktop screen: figures first, then
+          the lists and the map, each long list scrolling inside its own card. <strong className="text-foreground">Work on next</strong> is a ranked
           list and each item says why it is there: site outages, then critical alerts, actions whose outcome is
           unknown, failed actions, warnings, approval requests, restarts pending and info alerts, oldest first.
           Acknowledged alerts and alerts in a maintenance window are left out. <em>Patch compliance</em> counts only
@@ -1030,6 +1071,9 @@ const SECTIONS: Section[] = [
           <Link href="/docs/reports" className="underline text-foreground">Reports</Link>.
         </p>
         <p>
+          From 0.35 each schedulable report has <strong className="text-foreground">Schedule this report</strong>{' '}
+          beside Export CSV, which opens the schedule form prefilled with the report and its filters; it is shown to
+          a Platform Admin or a Business Owner, who may own a schedule.{' '}
           From 0.34 a report can be <Link href="/reports/schedules" className="underline text-foreground">scheduled</Link>:
           weekly or monthly (days 1–28), at a time in a time zone, emailed to confirmed addresses with a link and,
           optionally, the CSV — the same audited export, with the same row limit. It is computed with its owner&apos;s

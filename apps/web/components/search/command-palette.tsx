@@ -11,6 +11,7 @@
  * which applies its own access rule again when it loads.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { connectivityFrom } from '@/lib/connectivity';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { Building2, Laptop, Loader2, MapPin, Search, Siren, User } from 'lucide-react';
@@ -51,7 +52,8 @@ function toItems(r: SearchResults): Record<GroupKey, Item[] | null> {
       key: `c:${c.id}`, group: 'computers', href: `/endpoints/${c.id}`,
       title: c.name,
       detail: join(c.match ? `${FIELD_LABEL[c.match.field] ?? c.match.field}: ${c.match.value ?? ''}` : c.hostname, c.business?.name, c.site?.name),
-      tag: c.isOnline ? { text: 'Online', tone: 'ok' } : { text: 'Offline', tone: 'muted' },
+      // 0.35: reachable through RustDesk with a silent agent is not "Online".
+      tag: (() => { const k = connectivityFrom(c); return k === 'online' ? { text: 'Online', tone: 'ok' as const } : k === 'agent_silent' ? { text: 'Agent silent', tone: 'warn' as const } : { text: 'Offline', tone: 'muted' as const }; })(),
     })) ?? null,
     businesses: g.businesses?.items.map((b) => ({
       key: `b:${b.id}`, group: 'businesses', href: `/businesses/${b.id}`,

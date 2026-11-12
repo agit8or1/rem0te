@@ -6,6 +6,7 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { CAP } from '../rbac/capabilities';
 import { MonitoringAdminService } from '../monitoring/monitoring-admin.service';
 import { effectiveRules, scopesFor, type RuleLike } from '../monitoring/engine';
+import { GroupMembershipService } from '../group-policy/membership.service';
 import { STALE_AFTER_MS } from '../patching/summary';
 import { deviceCompliance, tally, PATCH_COMPLIANCE_DEFINITION, PATCH_INVENTORY_SELECT, type DeviceCompliance } from '../patching/compliance';
 import { csvCell, EXPORT_MAX_ROWS } from '../endpoints/endpoint-list.service';
@@ -116,6 +117,7 @@ export class ReportsService {
     private readonly acl: AccessControlService,
     private readonly audit: AuditService,
     private readonly monitoring: MonitoringAdminService,
+    private readonly groups: GroupMembershipService,
   ) {}
 
   // ── Scope ─────────────────────────────────────────────────────────────────
@@ -465,10 +467,12 @@ export class ReportsService {
     if (this.acl.can(actor, CAP.COMPUTERS_VIEW)) {
       const [eps, rules] = await Promise.all([
         this.prisma.endpoint.findMany({ where: this.devicesWhere(actor, q), select: { id: true, name: true, hostname: true, customerId: true, siteId: true, customer: { select: { id: true, name: true } }, site: { select: { id: true, name: true } } } }),
-        this.prisma.monitorRule.findMany({ select: { id: true, scopeKey: true, key: true, kind: true, enabled: true, severity: true, params: true, name: true } }),
+        this.prisma.monitorRule.findMany({ select: { id: true, scopeKey: true, key: true, kind: true, enabled: true, severity: true, params: true, name: true, priority: true, groupId: true } }),
       ]);
       const rl = rules as unknown as RuleLike[];
-      const not = eps.filter((e) => !effectiveRules(rl, scopesFor(e)).some((r) => r.kind === 'OFFLINE'))
+      // 0.35: device-group monitors count, by the groups each computer is in now.
+      const membership = await this.groups.snapshot(rules.filter((r) => r.groupId).map((r) => r.groupId!), eps.map((e) => e.id));
+      const not = eps.filter((e) => !effectiveRules(rl, scopesFor(e, membership.groupsOf(e.id))).some((r) => r.kind === 'OFFLINE'))
         .map((e) => ({ device: { id: e.id, name: label(e) }, business: e.customer as Ref | null, site: e.site as Ref | null }))
         .sort((a, b) => a.device.name.localeCompare(b.device.name));
       coverage = { computers: eps.length, monitored: eps.length - not.length, notMonitored: { total: not.length, rows: not.slice(0, PAGE_LIST_MAX) } };

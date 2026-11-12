@@ -11,6 +11,7 @@ import { endpointsApi } from '@/lib/api-client';
 import { usePermissions, CAP } from '@/lib/auth';
 import { formatDate } from '@/lib/utils';
 import { ago } from '@/components/endpoints/workspace/device-model';
+import { connectivityHint, connectivityLabel, connectivityOf } from '@/lib/connectivity';
 
 /**
  * Agent migrations (0.34): every per-computer move from the standard agent to
@@ -98,7 +99,7 @@ export default function AgentMigrationsPage() {
                     <tr key={r.id} className="align-top">
                       <td className="px-3 py-2">
                         <Link href={`/endpoints/${r.endpointId}`} className="font-medium hover:underline">{r.name}</Link>
-                        <p className="text-xs text-muted-foreground">{r.online ? 'Online' : `Offline · seen ${ago(r.lastSeenAt)}`}</p>
+                        <p className="text-xs text-muted-foreground" title={connectivityHint(connectivityOf(r.online, r.lastSeenAt))}>{connectivityOf(r.online, r.lastSeenAt) === 'offline' ? `Offline · seen ${ago(r.lastSeenAt)}` : connectivityLabel(connectivityOf(r.online, r.lastSeenAt), r.lastSeenAt)}</p>
                       </td>
                       <td className="px-3 py-2">{r.business?.name ?? '—'}</td>
                       <td className="px-3 py-2 max-w-[22rem]">

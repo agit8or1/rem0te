@@ -40,6 +40,7 @@ const ACTION_COLORS: Record<string, string> = {
   REPORT_EXPORTED: 'bg-yellow-100 text-yellow-700',
   ENDPOINT_DIAGNOSTIC_REQUESTED: 'bg-sky-100 text-sky-700',
   ENDPOINT_DIAGNOSTIC_COMPLETED: 'bg-sky-100 text-sky-700',
+  SNAPSHOT_SCHEDULE_CHANGED: 'bg-sky-100 text-sky-700',
 };
 
 function ActionBadge({ action }: { action: string }) {

@@ -184,6 +184,8 @@ enum ActivityAction {
   REPORT_SCHEDULE_CHANGED
   REPORT_SCHEDULE_SENT
   REPORT_SCHEDULE_FAILED
+  // 0.35 automatic snapshots: the platform-wide schedule changed (before/after)
+  SNAPSHOT_SCHEDULE_CHANGED
   // 0.33 device groups, shared device views and bulk actions
   DEVICE_GROUP_CREATED
   DEVICE_GROUP_UPDATED
@@ -827,6 +829,9 @@ model EndpointGroup {
   rule        Json?
 
   members EndpointGroupMember[]
+  /// 0.35: policies scoped to this group. They keep the group from being deleted.
+  monitorRules         MonitorRule[]
+  clientUpdatePolicies ClientUpdatePolicy[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1271,7 +1276,10 @@ model DiagnosticRun {
   status DiagnosticRunStatus @default(REQUESTED)
 
   // Not a relation, like EndpointCommand.requestedById: a run outlives its requester.
-  requestedById String
+  // Null (0.35) means the server asked on its own — an automatic snapshot
+  // (diagnostics-catalog/snapshot-schedule.ts). The database allows that for
+  // the three snapshot keys only (migration 0059).
+  requestedById String?
   requestedAt   DateTime  @default(now())
   deliveredAt   DateTime?
   startedAt     DateTime?
@@ -1294,6 +1302,8 @@ model DiagnosticRun {
   @@index([status, expiresAt])
   @@index([endpointId, key, completedAt])
   @@index([requestedAt]) // 0.34 retention cutoff
+  // 0.35: at most one open automatic run per key per computer is a partial
+  // unique index in migration 0059 (Prisma cannot express it).
 }
 
 // ─── Technician Devices & Launcher ───────────────────────────────────────────
@@ -1648,6 +1658,16 @@ model PlatformSettings {
   // the portal. That one run trusts the portal (as every legacy run does);
   // afterwards the machine verifies everything. Off = GPO/Intune/local only.
   legacyPortalMigration Boolean @default(false)
+
+  // Automatic snapshots (0.35, diagnostics-catalog/snapshot-schedule.ts):
+  // the platform switch, minutes between automatic snapshots per key
+  // (0 = off; else 60–10080), and minutes between them while the key's tab
+  // is open (0 = off; else 3–60). CHECKs in migration 0059.
+  snapshotAutoEnabled    Boolean @default(true)
+  snapshotProcessMinutes Int     @default(360)
+  snapshotServiceMinutes Int     @default(360)
+  snapshotNetworkMinutes Int     @default(360)
+  snapshotWatchMinutes   Int     @default(5)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2731,6 +2751,14 @@ model MonitorRule {
   site        Site?         @relation(fields: [siteId], references: [id], onDelete: Cascade)
   endpointId  String?
   endpoint    Endpoint?     @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  /// 0.35: a device-group monitor (scopeKey 'g:<groupId>'). The group must be
+  /// this business's (trigger, 0057) and cannot be deleted while this exists.
+  groupId     String?
+  group       EndpointGroup? @relation(fields: [groupId], references: [id], onDelete: NoAction)
+  /// 0.35: group monitors only, 1–999, 1 first. Unique per business and key
+  /// among group monitors (partial index, 0057), so a computer in two groups
+  /// with the same key is decided by this, never by row order.
+  priority    Int?
   key         String
   kind        MonitorKind
   name        String
@@ -2744,6 +2772,7 @@ model MonitorRule {
 
   @@unique([scopeKey, key])
   @@index([customerId])
+  @@index([groupId])
 }
 
 /// One problem on one computer (or one site, for SITE_OUTAGE). At most one
@@ -2988,6 +3017,13 @@ model ClientUpdatePolicy {
   customer          Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   siteId            String?  @unique
   site              Site?    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  /// 0.35: a device-group policy. The group must be this business's (trigger,
+  /// 0057) and cannot be deleted while this exists. Never both site and group.
+  groupId           String?        @unique
+  group             EndpointGroup? @relation(fields: [groupId], references: [id], onDelete: NoAction)
+  /// 0.35: group policies only, 1–999, 1 first; unique per business among
+  /// group policies (partial index, 0057).
+  priority          Int?
   enabled           Boolean  @default(false)
   timeZone          String
   windows           Json

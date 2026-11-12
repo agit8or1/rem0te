@@ -31,6 +31,9 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[monitoring.md](monitoring.md)** — monitors (offline, disk, CPU, memory,
   services, event log, pending restart), inheritance, alerts, site outages,
   maintenance windows, escalation and ClientSt0r tickets (0.29).
+- **[group-policies.md](group-policies.md)** — monitors and client-update policies for a device group (0.35):
+  computer > group > site > business, priorities between groups, membership computed at each evaluation,
+  what the pages show, and the measured cost at 5,000 computers.
 - **[metric-history.md](metric-history.md)** — CPU, memory and disk over 24 hours to 90 days on a computer's
   Performance tab: what is recorded, gaps, roll-up and retention settings, storage per 1,000 computers (0.33).
 - **[reports.md](reports.md)** — patch compliance, agent coverage, alert frequency and offline time per

@@ -199,7 +199,7 @@ export default function TechnicianOverviewPage() {
                 <CardContent className="space-y-3 text-sm">
                   <div className="grid grid-cols-4 gap-2">
                     <Stat label="Computers" value={b.computers} />
-                    <Stat label="Online" value={b.online} />
+                    <Stat label="Reachable" value={b.online} />
                     <Stat label="Open sessions" value={b.openSessions} />
                     <Stat label="Waiting requests" value={b.waitingRequests} />
                   </div>

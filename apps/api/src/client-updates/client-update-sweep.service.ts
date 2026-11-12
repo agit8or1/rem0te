@@ -4,7 +4,7 @@ import { AuditService } from '../audit/audit.service';
 import { ContainmentService } from '../containment/containment.service';
 import { openSessionReason } from '../admin/session-evidence';
 import { ClientUpdatesService } from './client-updates.service';
-import { blocker, effectivePolicy, policyWindow, ROLLOUT_OPEN } from './policy';
+import { blocker, effectivePolicy, policyScope, policyWindow, ROLLOUT_OPEN } from './policy';
 import { describeWindow, isWindowOpen } from './update-window';
 
 /** A live sample older than this does not say who is logged on now. */
@@ -121,10 +121,13 @@ export class ClientUpdateSweepService implements OnModuleInit, OnModuleDestroy {
         where: { endpointId: { in: candidates.map((c) => c.id) }, status: { in: [...ROLLOUT_OPEN] } },
         select: { endpointId: true },
       })).map((j) => j.endpointId));
+      // 0.35: device-group membership, for this business in this tick only —
+      // the groups that carry a policy, evaluated once over the business.
+      const membership = await this.svc.membershipFor(policies);
 
       for (const e of candidates) {
         if (budget <= 0) break;
-        const p = effectivePolicy(policies, customerId, e.siteId);
+        const p = effectivePolicy(policies, customerId, e.siteId, membership.groupsOf(e.id));
         if (!p || !open.some((o) => o.id === p.id)) continue;
         const n = e.rustdeskNode!;
         if (blocker({ status: e.status, isOnline: e.isOnline, platform: e.platform, node: n, inRollout: inRollout.has(e.id) }, target.version)) continue;
@@ -150,7 +153,7 @@ export class ClientUpdateSweepService implements OnModuleInit, OnModuleDestroy {
           tenantId: e.tenantId ?? undefined, customerId,
           action: 'CLIENT_UPDATE_AUTO_QUEUED', resource: 'endpoint', resourceId: e.id,
           meta: {
-            policyId: p.id, scope: p.siteId ? 'site' : 'business', siteId: p.siteId,
+            policyId: p.id, scope: policyScope(p), siteId: p.siteId, ...(p.groupId ? { groupId: p.groupId, priority: p.priority } : {}),
             rustdeskFrom: n.version, rustdeskTo: target.version, pinned: target.pinned,
             window: describeWindow(policyWindow(p)),
           },

@@ -7,7 +7,7 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { CAP } from '../rbac/capabilities';
 import { EndpointListService } from '../endpoints/endpoint-list.service';
 import { ID, MAX_GROUPS_PER_BUSINESS, manageRefusal } from './rules';
-import { MAX_RULE_GROUPS_PER_BUSINESS, parseRule, ruleFilters, type StoredRule } from './group-rule';
+import { MAX_RULE_GROUPS_PER_BUSINESS, parseRule, ruleFilters, ruleNeedsAlerts, type StoredRule } from './group-rule';
 
 const GroupInput = z.object({
   businessId: z.string().regex(ID).optional(),
@@ -180,6 +180,12 @@ export class DeviceGroupsService {
       throw new BadRequestException({ code: 'NOT_A_RULE_GROUP', message: 'This is a static group: its members are kept by hand, and its kind cannot change.' });
     }
     const rule = d.rule !== undefined ? await this.validRule(d.rule, g.customerId) : undefined;
+    // 0.35: a group that carries a policy cannot be made to pick computers by
+    // their alerts — monitors raise alerts, so it would decide its own scope.
+    if (rule && ruleNeedsAlerts(ruleFilters(rule))) {
+      const n = await this.policiesOn(g.id);
+      if (n) throw new ConflictException({ code: 'GROUP_HAS_POLICIES', message: `This group carries ${n} polic${n === 1 ? 'y' : 'ies'} (monitors or client updates). A rule on alerts cannot scope a policy; remove ${n === 1 ? 'it' : 'them'} first.` });
+    }
     let after;
     try {
       after = await this.prisma.endpointGroup.update({
@@ -208,8 +214,22 @@ export class DeviceGroupsService {
   }
 
   /** Deleting a group removes its members from it (they keep their other groups) and is audited with how many. */
+  /** 0.35: monitors and client-update policies scoped to this group. */
+  private async policiesOn(groupId: string): Promise<number> {
+    const [m, c] = await Promise.all([
+      this.prisma.monitorRule.count({ where: { groupId } }),
+      this.prisma.clientUpdatePolicy.count({ where: { groupId } }),
+    ]);
+    return m + c;
+  }
+
   async remove(a: ActorContext, id: string) {
     const g = await this.findManageable(a, id);
+    // 0.35: the foreign keys refuse this too (NO ACTION, 0057). Removing a
+    // client-update group policy needs fresh authentication — it can hand the
+    // computers to an enabled one — so deleting the group is not a way round it.
+    const held = await this.policiesOn(g.id);
+    if (held) throw new ConflictException({ code: 'GROUP_HAS_POLICIES', message: `This group carries ${held} polic${held === 1 ? 'y' : 'ies'} (monitors or client updates). Remove ${held === 1 ? 'it' : 'them'} first, under Settings → Monitoring and Settings → Client updates.` });
     const released = await this.prisma.$transaction(async (tx) => {
       const r = await tx.endpointGroupMember.deleteMany({ where: { endpointGroupId: g.id } });
       await tx.endpointGroup.delete({ where: { id: g.id } });

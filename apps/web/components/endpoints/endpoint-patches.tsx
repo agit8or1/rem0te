@@ -13,6 +13,8 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { AlertTriangle, Download, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
+import { osName, updateSourceLabel } from '@/lib/platform-wording';
+import { connectivityLabel, connectivityOf } from '@/lib/connectivity';
 
 /**
  * Windows Update posture of one computer (v0.27), as its signed agent's
@@ -69,7 +71,10 @@ const MANAGED: Record<Summary['managedBy']['state'], string> = { rem0te_or_windo
 const age = (h: number | null) => (h == null ? '' : h < 1 ? 'under an hour old' : h < 48 ? `${Math.round(h)} h old` : `${Math.round(h / 24)} days old`);
 
 /** The evidence first: where it came from, how old it is, and who manages updates here. */
-export function PatchSummaryCard({ s }: { s: Summary }) {
+export function PatchSummaryCard({ s, platform }: { s: Summary; platform?: unknown }) {
+  // Linux and macOS (0.35): their own package manager, no KBs, and nothing rem0te deploys.
+  const os = osName(platform);
+  const posix = os === 'Linux' || os === 'macOS';
   const row = (k: string, v: React.ReactNode) => (<div className="flex flex-wrap gap-x-2"><dt className="text-muted-foreground w-44 shrink-0">{k}</dt><dd className="min-w-0">{v}</dd></div>);
   return (
     <Card data-testid="patch-summary">
@@ -79,10 +84,10 @@ export function PatchSummaryCard({ s }: { s: Summary }) {
           {row('Evidence', <span className="flex flex-wrap items-center gap-2">{SOURCE[s.evidence.source]}<Badge variant={FRESH[s.evidence.freshness]} className="text-[10px]">{s.evidence.freshness === 'none' ? 'unknown' : s.evidence.freshness}</Badge>{s.evidence.at && <span className="text-muted-foreground">{formatDate(s.evidence.at)} · {age(s.evidence.ageHours)}</span>}</span>)}
           {row('Last successful scan', s.evidence.lastSuccessfulScanAt ? formatDate(s.evidence.lastSuccessfulScanAt) : 'none')}
           {row('Last boot', s.lastBootAt ? formatDate(s.lastBootAt) : 'unknown')}
-          {row('Connection', s.online.isOnline ? 'online' : `offline${s.online.lastSeenAt ? ` since ${formatDate(s.online.lastSeenAt)}` : ''}`)}
+          {row('Connection', connectivityOf(s.online.isOnline, s.online.lastSeenAt) === 'offline' ? `offline${s.online.lastSeenAt ? ` since ${formatDate(s.online.lastSeenAt)}` : ''}` : connectivityLabel(connectivityOf(s.online.isOnline, s.online.lastSeenAt), s.online.lastSeenAt))}
           {row('Restart pending', s.rebootRequired == null ? 'unknown' : s.rebootRequired ? 'yes' : 'no')}
-          {row('Who manages patching', <span>{s.managedBy.state === 'external' ? s.managedBy.managers.map((m) => m.label).join(', ') : MANAGED[s.managedBy.state]}</span>)}
-          {row('Relevant KBs', s.relevantKbs.length ? s.relevantKbs.join(', ') : s.evidence.source === 'none' ? 'unknown' : 'none offered')}
+          {row('Who manages patching', <span>{posix ? (os === 'Linux' ? 'The package manager on the computer (apt, dnf or zypper)' : 'Software Update on the computer') : s.managedBy.state === 'external' ? s.managedBy.managers.map((m) => m.label).join(', ') : MANAGED[s.managedBy.state]}</span>)}
+          {!posix && row('Relevant KBs', s.relevantKbs.length ? s.relevantKbs.join(', ') : s.evidence.source === 'none' ? 'unknown' : 'none offered')}
           {row('Deploy from rem0te', s.deploy.possible ? 'available' : <span className="text-muted-foreground">{s.deploy.reason}</span>)}
         </dl>
         {s.managedBy.explanation && s.managedBy.state !== 'rem0te_or_windows_update' && (
@@ -219,7 +224,10 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
   );
 }
 
-export function EndpointPatches({ endpointId, onOpenAgentCard }: { endpointId: string; onOpenAgentCard?: () => void }) {
+export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { endpointId: string; platform?: unknown; onOpenAgentCard?: () => void }) {
+  // The read-only Linux and macOS agents report through the same basic scan; their words are their own (0.35).
+  const os = osName(platform);
+  const source = updateSourceLabel(platform);
   const { toast } = useToast();
   const qc = useQueryClient();
   // A basic scan has no request marker on the server, so poll for a while after Scan now.
@@ -243,11 +251,11 @@ export function EndpointPatches({ endpointId, onOpenAgentCard }: { endpointId: s
     const b = p.basic;
     return (
       <div className="space-y-4">
-        <PatchSummaryCard s={p.summary} />
+        <PatchSummaryCard s={p.summary} platform={platform} />
         <InstallUpdates endpointId={endpointId} p={p} onOpenAgentCard={onOpenAgentCard} />
         <Card>
           <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
-            <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Windows Update</CardTitle>
+            <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />{source}</CardTitle>
             <Button size="sm" variant="outline" disabled={rescan.isPending} onClick={() => rescan.mutate()}>
               {rescan.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1" />}Scan now
             </Button>
@@ -259,9 +267,13 @@ export function EndpointPatches({ endpointId, onOpenAgentCard }: { endpointId: s
             {b?.rebootRequired && (
               <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending. Rem0te restarts a computer only when an approved update install with the in-window restart rule does it.</p>
             )}
-            {b?.checkedAt && <p className="text-xs">{b.updates.length === 0 ? 'Windows Update offers nothing.' : `${b.updates.length} update${b.updates.length === 1 ? '' : 's'} offered.`}</p>}
+            {b?.checkedAt && <p className="text-xs">{b.updates.length === 0 ? (os === 'Windows' ? 'Windows Update offers nothing.' : 'No pending updates reported.') : `${b.updates.length} update${b.updates.length === 1 ? '' : 's'} offered.`}</p>}
             <p className="text-xs text-muted-foreground">
-              Reported by the standard agent. Installing these through a <Link className="underline" href="/patching">patch deployment</Link> needs the signed agent (update channel <code>signed</code>), which runs only plans approved on the roster — see <Link className="underline" href="/docs/staged-patching">Staged patching</Link>.
+              {os === 'Linux' || os === 'macOS' ? (
+                <>Reported by the read-only {os} agent{os === 'Linux' ? ', from apt, dnf or zypper as they stand (it never refreshes a repository)' : ', from softwareupdate'}. rem0te installs nothing on {os}: <Link className="underline" href="/patching">patch deployments</Link> are Windows only.</>
+              ) : (
+                <>Reported by the standard agent. Installing these through a <Link className="underline" href="/patching">patch deployment</Link> needs the signed agent (update channel <code>signed</code>), which runs only plans approved on the roster — see <Link className="underline" href="/docs/staged-patching">Staged patching</Link>.</>
+              )}
             </p>
           </CardContent>
         </Card>
@@ -287,7 +299,7 @@ export function EndpointPatches({ endpointId, onOpenAgentCard }: { endpointId: s
   const installable = p.updates.filter((u) => u.installable);
   return (
     <div className="space-y-4">
-      <PatchSummaryCard s={p.summary} />
+      <PatchSummaryCard s={p.summary} platform={platform} />
       <InstallUpdates endpointId={endpointId} p={p} onOpenAgentCard={onOpenAgentCard} />
       <Card>
         <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">

@@ -55,6 +55,12 @@ export CHAT_RETENTION_SWEEP=off
 # and every other suite that starts an API turns them off itself. Scratch APIs
 # below get both off explicitly.
 export SCRIPT_OUTPUT_SWEEP=off
+# Automatic snapshots (0.35) stage a run on every heartbeat that finds a
+# computer's process list, service list or network adapters stale — in every
+# suite that heartbeats a current Windows agent, which would hand those
+# suites runs they did not ask for. e2e-auto-snapshots turns it on for its
+# own API.
+export SNAPSHOT_SWEEP=off
 export ENCRYPTION_KEY="${ENCRYPTION_KEY:-$(openssl rand -hex 32)}"
 export SEED_ADMIN_EMAIL="${SEED_ADMIN_EMAIL:-e2e-admin@example.com}"
 export SEED_ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD:-$(openssl rand -base64 18)}"
@@ -79,7 +85,7 @@ run() { # name, command...
 }
 
 echo "── self-starting suites"
-for t in credentials security-features presets monitoring integration dashboard diagnostics-catalog system-inventory device-list endpoint-visibility device-views dynamic-groups add-device auto-updates reports script-library linux-agent macos-agent enrol-stepup search metric-history retention presence-cache ai-timeline email chat; do run "$t" node "scripts/e2e-$t.mjs"; done
+for t in credentials security-features presets monitoring integration dashboard diagnostics-catalog system-inventory device-list endpoint-visibility device-views dynamic-groups add-device auto-updates group-policies reports script-library linux-agent macos-agent enrol-stepup search metric-history retention presence-cache ai-timeline email chat polish auto-snapshots; do run "$t" node "scripts/e2e-$t.mjs"; done
 for t in containment approved-action staged-patching maintenance-actions patch-policies software-deploy signed-updates ticket-workflow agent-upgrade; do
   if [[ -n "${RELEASE_BIN:-}" && -n "${ACTION_SIM:-}" ]]; then run "$t" node "scripts/e2e-$t.mjs"
   else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM not set)\n' "$t"; skipped+=("$t"); fi

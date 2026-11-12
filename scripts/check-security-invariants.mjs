@@ -728,7 +728,9 @@ check(
   const dr = enr.slice(enr.indexOf('async diagnosticResult('), enr.indexOf('async diagnosticResult(') + 1000);
   check('a diagnostic result needs the device secret', /secretMatches\(node\.agentSecretHash, dto\.agentSecret\)/.test(dr) && /UnauthorizedException/.test(dr), 'diagnostic-result must authenticate like command-result');
   check('only an authenticated heartbeat is handed diagnostic runs', /if \(authenticated\) \{\s*try \{\s*diagnostics = await this\.diagnostics\.forHeartbeat\(node\.endpointId\);/.test(enr), 'forHeartbeat must be gated on authenticated');
-  check('a run is re-authorized against its requester at delivery', /const why = !entry \? 'unknown_key' : !ep \? 'endpoint_missing' : await this\.requesterStillAllowed\(r, entry, ep\);/.test(dsvc), 'forHeartbeat must check the requester before DELIVERED');
+  // 0.35: a run with no requester (an automatic snapshot, §50) has nobody to
+  // re-check; every run that has one still is.
+  check('a run is re-authorized against its requester at delivery', /const why = !entry \? 'unknown_key' : !ep \? 'endpoint_missing' : r\.requestedById === null \? \(isSnapshotKey\(r\.key\) \? null : 'not_a_snapshot'\) : await this\.requesterStillAllowed\(r, entry, ep\);/.test(dsvc), 'forHeartbeat must check the requester before DELIVERED');
 }
 
 // 21. Scheduled client updates (0.32). A business's update policy makes the
@@ -756,8 +758,8 @@ check(
     'putPolicy and deleteSiteOverride must call assertEdit');
   check('turning a policy on, or removing a site override, needs fresh authentication',
     /if \(input\.enabled && !fresh\) throw new FreshAuthNeeded\(\);/.test(svc) && /\/\/ The site falls back to the business policy, which may be on\.\s*if \(!fresh\) throw new FreshAuthNeeded\(\);/.test(svc)
-      && (ctl.match(/this\.isFresh\(req\)/g) ?? []).length === 2 && /code: 'STEP_UP_REQUIRED'/.test(ctl),
-    'the service must refuse without fresh auth and the controller must pass isFresh(req) on both writes');
+      && (ctl.match(/this\.isFresh\(req\)/g) ?? []).length === 3 && /code: 'STEP_UP_REQUIRED'/.test(ctl),
+    'the service must refuse without fresh auth and the controller must pass isFresh(req) on all three writes (0.35 added removing a group policy, §46)');
   check('a site override must belong to the business it is set in',
     /if \(!site \|\| site\.customerId !== customerId\) throw new NotFoundException/.test(svc), 'siteOf must compare site.customerId');
   check('withdrawing automatic requests never touches a manual one',
@@ -2334,8 +2336,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const before = ui.slice(0, ui.indexOf('// ── The stack'));
   check('e2e-ui.mjs refuses ports 3000, 3001, 443, 4000 and 4001 before it starts anything',
     /const FORBIDDEN_PORTS = \[3000, 3001, 443, 4000, 4001\];/.test(before)
-      && /for \(const p of \[WEB_PORT, API_PORT\]\) \{\s*if \(!Number\.isInteger\(p\) \|\| FORBIDDEN_PORTS\.includes\(p\)\) throw new Error\(`Refusing/.test(before),
-    'production (3000/3001/443) and the docs stack (4000/4001) are refused for both the web and the API port');
+      && /for \(const p of \[WEB_PORT, API_PORT(, SMTP_PORT, PEER_PORT)?\]\) \{\s*if \(!Number\.isInteger\(p\) \|\| FORBIDDEN_PORTS\.includes\(p\)\) throw new Error\(`Refusing/.test(before),
+    'production (3000/3001/443) and the docs stack (4000/4001) are refused for the web and API ports (and, from 0.35, the SMTP sink and reference peer ports)');
   check('e2e-ui.mjs refuses a database whose name lacks test or scratch, before Prisma is loaded',
     /if \(!\/test\|scratch\/\.test\(dbName\)\) throw new Error\(`Refusing/.test(before) && before.indexOf('test|scratch') < before.indexOf('new PrismaClient'),
     'it migrates, seeds and deletes fixtures');
@@ -2353,6 +2355,14 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       // 0.34 integration: and the four sweeps the other 0.34 branches added.
       && /RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off',/.test(ui),
     'a sweep acts on everything in the database, fixtures included');
+  // 0.35 integration: two more switches arrived (STALE_SWEEP, SNAPSHOT_SWEEP),
+  // each from a different branch. Rather than list them again, every
+  // `X_SWEEP` / `X_SEALER` off switch the API reads must be 'off' here.
+  const switches = [...new Set(walk('apps/api/src').flatMap((f) => [...read(f).matchAll(/\b([A-Z][A-Z_]*(?:SWEEP|SEALER))\s*[!=]==\s*'off'/g)].map((m) => m[1])))].sort();
+  const missing = switches.filter((n) => !new RegExp(`\\b${n}: 'off'`).test(ui));
+  check(`e2e-ui.mjs turns off every sweep switch the API reads (${switches.length})`,
+    switches.length >= 11 && missing.length === 0,
+    `not set to 'off' in e2e-ui.mjs's API env: ${missing.join(', ')}`);
 }
 
 // 45. Chat (0.34). A technician and the person at a computer. Every portal
@@ -2442,6 +2452,273 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     (ws.match(/ArgumentList @\('chat'\)/g) ?? []).length === 1 && ws.indexOf("ArgumentList @('chat')") > ws.indexOf('export function buildSignedWindowsScript(')
       && /remote: 'remote connections and chat'/.test(read('apps/api/src/containment/pause.ts')),
     "one Start-Process ... @('chat'), in the signed variant's hook; pause label 'remote connections and chat'");
+}
+
+// 46. Device groups as a policy scope (0.35). Monitors and client-update
+//     policies may be set for a device group. Rule-group membership is
+//     computed, never stored: the group's business AND its rule AND
+//     endpointVisibilityWhere for the business as a whole, through the device
+//     list's own evaluator, with an unreadable or alert-reading rule matching
+//     nothing. The sweeps build membership once per tick and keep it nowhere.
+//     Precedence is computer > group > site > business > global, groups by a
+//     priority that is unique per business (partial unique indexes) and tie-
+//     broken by id, never by row order. Another business's group is a 404;
+//     turning a group client-update policy on, or removing one, needs fresh
+//     authentication, and deleting the group is not a way round that (NO
+//     ACTION foreign keys, and a 409). Who is notified stays global or
+//     business and keeps §17's step-up.
+{
+  const mem = read('apps/api/src/group-policy/membership.service.ts');
+  const prec = read('apps/api/src/group-policy/precedence.ts');
+  const eng = read('apps/api/src/monitoring/engine.ts');
+  const msvc = read('apps/api/src/monitoring/monitoring.service.ts');
+  const madm = read('apps/api/src/monitoring/monitoring-admin.service.ts');
+  const cpol = read('apps/api/src/client-updates/policy.ts');
+  const csvc = read('apps/api/src/client-updates/client-updates.service.ts');
+  const cctl = read('apps/api/src/client-updates/client-updates.controller.ts');
+  const csw = read('apps/api/src/client-updates/client-update-sweep.service.ts');
+  const dgs = read('apps/api/src/device-views/device-groups.service.ts');
+  const mctl = read('apps/api/src/monitoring/monitoring.controller.ts');
+  const sql = read('apps/api/prisma/migrations/0057_group_policy_scope/migration.sql');
+  const schema = read('apps/api/prisma/schema.prisma');
+  const body = (src, sig) => { const i = src.indexOf(sig); const j = src.indexOf('\n  }\n', i); return i < 0 ? '' : src.slice(i, j); };
+
+  check('group membership is computed, never stored: the membership service writes nothing and keeps no state between calls',
+    !/prisma\.\w+\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(|\$executeRaw/.test(mem)
+      && !/(private|protected|public|static) (readonly )?\w+\s*(:\s*(Map|Set|Membership)|=\s*new (Map|Set))/.test(mem.slice(mem.indexOf('export class GroupMembershipService')).replace(/constructor\([\s\S]*?\) \{\}/, ''))
+      && /^export class Membership \{\s*\n\s*constructor\(private readonly byEndpoint: Map<string, Set<string>>, readonly groups: Map<string, PolicyGroup>\) \{\}/m.test(mem)
+      && !/model \w*(GroupPolicyMember|PolicyMembership)\w* \{/.test(schema),
+    'membership.service.ts must not write to the database or hold a Map field; no membership model in schema.prisma');
+  check('a rule group is evaluated by the device list’s own evaluator, as the business AND its rule AND endpointVisibilityWhere; unreadable and alert-reading rules match nothing',
+    /this\.list\.evaluateRuleGroups\(actor, ruled,/.test(mem)
+      && /const visible = \{ AND: \[this\.acl\.endpointVisibilityWhere\(actor\), \{ status: \{ not: 'ARCHIVED' as const \} \}/.test(mem)
+      && /if \(g\.kind !== 'rule' \|\| g\.use !== 'ok'\) continue;/.test(mem)
+      && /userId: 'policy-evaluation', email: '', tenantId: null, businessId: customerId, isPlatformAdmin: false,\s*\n\s*roleType: 'BUSINESS_OWNER', capabilities: \[CAP\.COMPUTERS_VIEW, CAP\.ALERTS_VIEW\], technician: null,/.test(mem)
+      && /use: f === null \? 'unreadable' : ruleNeedsAlerts\(f\) \? 'reads_alerts' : 'ok'/.test(mem)
+      && (read('apps/api/src/group-policy/membership.service.ts').match(/businessWide\(/g) ?? []).length === 2
+      && !walk('apps/api/src').some((f) => f !== 'apps/api/src/group-policy/membership.service.ts' && /policy-evaluation/.test(read(f))),
+    'snapshot(): evaluateRuleGroups(actor, …) with businessWide(customerId) (never a Platform Admin), visibility AND not-archived, skip use !== ok; the synthetic actor exists only in membership.service.ts');
+  check('the sweeps build membership once per tick, inside the pass, and keep it on nothing',
+    /const membership = await this\.groups\.snapshot\(rules\.filter\(\(r\) => r\.groupId\)\.map\(\(r\) => r\.groupId!\)\);\s*\n\s*for \(const ep of eps\) \{\s*\n\s*const eff = effectiveRules\(rules, scopesFor\(ep, membership\.groupsOf\(ep\.id\)\)\);/.test(body(msvc, 'private async evaluateSweepRules('))
+      && /const membership = await this\.svc\.membershipFor\(policies\);/.test(body(csw, 'private async pass('))
+      && /effectivePolicy\(policies, customerId, e\.siteId, membership\.groupsOf\(e\.id\)\)/.test(csw)
+      && ![msvc, csw, csvc, mem].some((s) => /this\.(membership|snapshotCache|groupCache)\b/.test(s)),
+    'evaluateSweepRules and the client-update pass call snapshot/membershipFor locally; no this.membership anywhere');
+  check('precedence is computer > group > site > business > global, groups by priority then id — never by row order',
+    /export const SCOPE_RANK: Record<PolicyScope, number> = \{ global: 0, business: 1, site: 2, group: 3, endpoint: 4 \};/.test(prec)
+      && /if \(pa !== pb\) return pa - pb;\s*\n\s*\}\s*\n\s*return a\.id < b\.id \? -1 : a\.id > b\.id \? 1 : 0;/.test(prec)
+      && /const ranked = \[\.\.\.applicable\]\.sort\(comparePrecedence\);/.test(prec)
+      && /l\.sort\(\(a, b\) => comparePrecedence\(asScoped\(a\), asScoped\(b\)\)\);/.test(eng)
+      && /return resolve\(cands\);/.test(cpol) && !/mine\.find\(/.test(cpol),
+    'precedence.ts SCOPE_RANK and comparePrecedence (priority, then id); effectiveRules and resolvePolicy sort with it');
+  check('the database refuses priority ties, scope mixtures, another business’s group, and deleting a group that carries a policy',
+    /CREATE UNIQUE INDEX "MonitorRule_group_priority_key" ON "MonitorRule"\("customerId", "key", "priority"\) WHERE "groupId" IS NOT NULL;/.test(sql)
+      && /CREATE UNIQUE INDEX "ClientUpdatePolicy_group_priority_key" ON "ClientUpdatePolicy"\("customerId", "priority"\) WHERE "groupId" IS NOT NULL;/.test(sql)
+      && /CREATE UNIQUE INDEX "ClientUpdatePolicy_business_row" ON "ClientUpdatePolicy"\("customerId"\) WHERE "siteId" IS NULL AND "groupId" IS NULL;/.test(sql)
+      && /"scopeKey" = 'g:' \|\| "groupId"/.test(sql) && /"groupId" IS NOT NULL AND "siteId" IS NULL AND "priority" BETWEEN 1 AND 999/.test(sql)
+      && (sql.match(/EXECUTE FUNCTION group_policy_same_business\(\)/g) ?? []).length === 2
+      && (sql.match(/REFERENCES "EndpointGroup"\("id"\) ON DELETE NO ACTION/g) ?? []).length === 2
+      && (schema.match(/group +EndpointGroup\? @relation\(fields: \[groupId\], references: \[id\], onDelete: NoAction\)/g) ?? []).length === 2,
+    '0057: two partial unique priority indexes, business_row excluding groups, the CHECKs, the same-business trigger on both tables, NO ACTION FKs');
+  check('another business’s group is a 404 for monitors and client updates',
+    /const g = await this\.prisma\.endpointGroup\.findFirst\(\{ where: \{ id: groupId, customerId \}/.test(mem)
+      && /if \(!g\?\.customerId\) throw new NotFoundException\('Group not found'\);/.test(mem)
+      && /if \(!this\.isMsp\(a\) && customerId !== a\.businessId\) throw new NotFoundException\('Group not found'\);\s*\n\s*const g = await this\.groups\.groupForPolicy\(customerId, s\.groupId\);\s*\n\s*this\.assertConfigure\(a, g\.customerId\);/.test(madm)
+      && /const group = groupId \? await this\.groups\.groupForPolicy\(customerId, groupId\) : null;/.test(csvc)
+      && /const before = await this\.prisma\.clientUpdatePolicy\.findFirst\(\{ where: \{ customerId, groupId \} \}\);/.test(body(csvc, 'async deleteGroupPolicy(')),
+    'groupForPolicy finds by id AND business; monitoring scopeFor and putPolicy use it; deleteGroupPolicy looks up by business AND group');
+  check('turning a group client-update policy on, or removing one, needs fresh authentication; deleting the group is refused while it carries one',
+    /const group = groupId \? await this\.groups\.groupForPolicy[\s\S]{0,900}if \(input\.enabled && !fresh\) throw new FreshAuthNeeded\(\);/.test(body(csvc, 'async putPolicy('))
+      && /if \(!before\) throw new NotFoundException\('This group has no policy'\);\s*\n\s*if \(!fresh\) throw new FreshAuthNeeded\(\);/.test(body(csvc, 'async deleteGroupPolicy('))
+      && /this\.fresh\(\(\) => this\.svc\.deleteGroupPolicy\(a, biz\(q\), groupId, this\.isFresh\(req\)\)\)/.test(cctl)
+      && /const held = await this\.policiesOn\(g\.id\);\s*\n\s*if \(held\) throw new ConflictException\(\{ code: 'GROUP_HAS_POLICIES'/.test(body(dgs, 'async remove(')),
+    'putPolicy: enabled && !fresh after the group checks; deleteGroupPolicy: !fresh → FreshAuthNeeded, routed through this.fresh; DeviceGroupsService.remove refuses a group with policies');
+  check('who is notified stays global or business only, and changing it still needs fresh authentication (§17)',
+    /export const NotifyPolicyInput = z\.object\(\{\s*\n\s*scope: z\.enum\(\['global', 'business'\]\),/.test(eng)
+      && /@Put\('notify-policy'\)\s*\n\s*async putPolicy\(@Actor\(\) a: ActorContext, @Body\(\) body: unknown, @Req\(\) req: Request\) \{\s*\n\s*this\.fresh\(req\);/.test(mctl),
+    'NotifyPolicyInput scope is exactly global|business; PUT notify-policy calls this.fresh(req) first');
+  check('a computer’s effective client-update policy is read through assertEndpointInScope and the visibility rule AND-ed with the id',
+    /await this\.acl\.assertEndpointInScope\(a, endpointId, CAP\.COMPUTERS_VIEW\);\s*\n\s*const ep = await this\.prisma\.endpoint\.findFirst\(\{\s*\n\s*where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(a\), \{ id: endpointId \}\] \},/.test(body(csvc, 'async endpointPolicy(')),
+    'endpointPolicy: assertEndpointInScope(a, endpointId, CAP.COMPUTERS_VIEW), then findFirst AND [visibility, id]');
+}
+
+// 47. UI coverage (0.35). The browser suite now drives the 0.34 screens, and
+//     what it found is held here. The Run panel offers Request a run and
+//     Revoke only when an approval signer is configured: both go through the
+//     signer, and a mirrored ACTIVE entry without one showed both beside
+//     "scripts cannot be run here". Saving Email settings puts the saved
+//     relay into the cache before the form is rebuilt, or the form came back
+//     blank with "Send email" unticked, one Save away from switching it off.
+//     The suite's own servers (the SMTP sink, the reference ClientSt0r peer)
+//     listen on loopback, on ports the same refusal list covers, and the
+//     global SMTP settings it changes are put back.
+{
+  const svc = read('apps/api/src/script-run/script-run.service.ts');
+  check('the Run panel offers a run or a revoke only when an approval signer is configured',
+    /const signerConfigured = this\.signer\.configured\(\);/.test(svc)
+      && /canRevoke: signerConfigured && this\.mayPropose\(/.test(svc)
+      && /canRun: signerConfigured && v\.status === 'APPROVED' && current\?\.status === 'ACTIVE',/.test(svc),
+    'script-run.service.ts readiness(): canRun and canRevoke must both start with signerConfigured');
+  const email = read('apps/web/app/(app)/settings/email/page.tsx');
+  const set = email.indexOf("qc.setQueryData(['smtp-settings'], r);"), clear = email.indexOf('setF(null); qc.invalidateQueries');
+  check('saving Email settings rebuilds the form from what was saved, not from the settings before the save',
+    set > 0 && clear > set,
+    "settings/email/page.tsx: qc.setQueryData(['smtp-settings'], r) before setF(null) in the save's onSuccess");
+  const ui = read('apps/web/scripts/e2e-ui.mjs');
+  check('e2e-ui.mjs: the SMTP sink and the reference peer listen on loopback, on refused-port-checked ports, and the SMTP settings are restored',
+    /for \(const p of \[WEB_PORT, API_PORT, SMTP_PORT, PEER_PORT\]\) \{/.test(ui)
+      && /srv\.listen\(port, '127\.0\.0\.1', r\)/.test(ui)
+      && /smtpBefore\.row = await prisma\.smtpSettings\.findUnique\(/.test(ui) && /await cleanup035\(\);\n\s*await cleanup\(\);/.test(ui),
+    'ports loop over WEB/API/SMTP/PEER; listen on 127.0.0.1; smtpBefore saved in seed035 and restored by cleanup035 in the final clean-up');
+}
+
+// 48. Groups on the device page (0.35). GET /endpoints/:id (and the public
+//     API's copy of it) lists the rule groups a computer is in, so it must
+//     answer exactly what the device list would, for the same reader: rule
+//     groups only of that computer's own business, evaluated by the list's
+//     evaluateRuleGroups AS the caller (their visibility and alert access),
+//     over that one computer. A group whose rule reads alerts evaluates to
+//     null for a reader without monitoring:alerts and must be dropped, not
+//     shown — membership of "computers with critical alerts" would tell them
+//     the alert state the list refuses them. findOne still checks scope
+//     before anything is read, so another business's computer is a 404 and
+//     its groups are never computed.
+{
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const es = strip(read('apps/api/src/endpoints/endpoints.service.ts'));
+  const ls = strip(read('apps/api/src/endpoints/endpoint-list.service.ts'));
+  const findOne = es.slice(es.indexOf('async findOne('), es.indexOf('async findOne(') + 2400);
+  check('the device page’s groups come from the device list’s own evaluation, after the scope check',
+    /^\s*async findOne\(actor: ActorContext, id: string\) \{\s*await this\.acl\.assertEndpointInScope\(actor, id\);/m.test(findOne)
+      && /const groups = await this\.deviceList\.groupsOfComputer\(actor, \{ id: endpoint\.id, customerId: endpoint\.customerId \}, groupMemberships\.map\(\(m\) => m\.group\)\);/.test(findOne)
+      && !/endpointGroup\.findMany|kind: 'RULE'/.test(findOne),
+    'findOne: assertEndpointInScope first; groups = this.deviceList.groupsOfComputer(actor, {id, customerId}, static); no RULE-group query of its own');
+  const fn = ls.slice(ls.indexOf('async groupsOfComputer('), ls.indexOf('private rowView('));
+  check('a rule group is evaluated as the caller, only in the computer’s own business, and dropped when the caller may not evaluate it',
+    /const groups = e\.customerId \? await this\.ruleGroupsOf\(\[e\.customerId\]\) : \[\];/.test(fn)
+      && /await this\.evaluateRuleGroups\(actor, groups, \{ status: 'all', within: \[e\.id\] \}\)/.test(fn)
+      && /groups\.filter\(\(g\) => members\.get\(g\.id\)\?\.includes\(e\.id\)\)/.test(fn)
+      && /if \(ruleNeedsAlerts\(g\.rule\) && !alerts\.visible\) return null;/.test(ls),
+    'groupsOfComputer: ruleGroupsOf([e.customerId]); evaluateRuleGroups(actor, …, { within: [e.id] }); keep only members.get(id)?.includes(e.id); evaluateRuleGroups returns null for an alert rule without alert access');
+}
+
+// 49. Reachable is not reporting (0.35). `isOnline` is true while the agent
+//     heartbeats AND while hbbs can reach the computer with its agent silent
+//     — the stale sweep keeps it so on purpose. Drawn as "Online", a computer
+//     whose agent had been dead for twelve days looked healthy while its
+//     monitoring, patching and actions were twelve days stale. Not an access
+//     rule, but a console that says a machine is reporting when it is not is
+//     the same kind of silent failure this file exists for. So: one window
+//     (the API's HEARTBEAT_STALE_MS, which the sweep itself uses, and the web
+//     copy of it must agree); the list's "online" filter needs a heartbeat
+//     inside it and "silent" is the rest of isOnline; and the dashboard
+//     counts online from connectivityOf, never from isOnline.
+{
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const windowOf = (file) => {
+    const m = /^export const HEARTBEAT_STALE_MS = ([0-9_ *]+);$/m.exec(read(file));
+    return m ? Function(`return (${m[1].replace(/_/g, '')});`)() : NaN;
+  };
+  const apiMs = windowOf('apps/api/src/common/connectivity.ts');
+  const webMs = windowOf('apps/web/lib/connectivity.ts');
+  const en = strip(read('apps/api/src/enrollment/enrollment.service.ts'));
+  const ec = strip(read('apps/api/src/enrollment/enrollment.controller.ts'));
+  const dm = strip(read('apps/web/components/endpoints/workspace/device-model.ts'));
+  check('one heartbeat window: the sweep, the API and the console agree',
+    Number.isFinite(apiMs) && apiMs > 0 && apiMs === webMs
+      && /async markStaleEndpointsOffline\(thresholdMinutes = HEARTBEAT_STALE_MS \/ 60_000\)/.test(en)
+      && /this\.enrollment\.markStaleEndpointsOffline\(\)/.test(ec) && !/markStaleEndpointsOffline\(\s*\d/.test(ec)
+      && /import \{[^}]*\bHEARTBEAT_STALE_MS\b[^}]*\} from '@\/lib\/connectivity';/.test(dm) && /^export \{ HEARTBEAT_STALE_MS \};$/m.test(dm) && !/HEARTBEAT_STALE_MS\s*=/.test(dm),
+    `API ${apiMs} ms, web ${webMs} ms; markStaleEndpointsOffline(thresholdMinutes = HEARTBEAT_STALE_MS / 60_000) called with no argument; device-model re-exports the web constant`);
+  const ls = strip(read('apps/api/src/endpoints/endpoint-list.service.ts'));
+  check('the device list’s “online” needs a heartbeat inside the window; “silent” is reachable without one',
+    /if \(f\.online === 'online'\) and\.push\(\{ isOnline: true, lastSeenAt: \{ gte: heartbeatCutoff\(\) \} \}\);/.test(ls)
+      && /if \(f\.online === 'silent'\) and\.push\(\{ isOnline: true, OR: \[\{ lastSeenAt: null \}, \{ lastSeenAt: \{ lt: heartbeatCutoff\(\) \} \}\] \}\);/.test(ls)
+      && /connectivity: connectivityOf\(r\.isOnline, r\.lastSeenAt, now\)/.test(ls),
+    "filterConds: online → { isOnline: true, lastSeenAt: { gte: heartbeatCutoff() } }; silent → isOnline and (null or older); rows carry connectivityOf");
+  const ov = strip(read('apps/api/src/dashboard/overview.service.ts'));
+  const ds = strip(read('apps/api/src/dashboard/dashboard.service.ts'));
+  check('the dashboard counts online from connectivityOf and agent-silent apart',
+    /const c = connectivityOf\(e\.isOnline, e\.lastSeenAt, now\.getTime\(\)\);\s*if \(c === 'online'\) online\+\+;/.test(ov)
+      && !/if \(e\.isOnline\) online\+\+/.test(ov)
+      && /isOnline: true, lastSeenAt: \{ gte: heartbeatCutoff\(\) \}, status: 'ACTIVE'/.test(ds)
+      && /if \(c === 'online'\) p\.online \+= 1;/.test(ds) && !/if \(r\.isOnline\) p\.online/.test(ds),
+    "overview: online++ only when connectivityOf is 'online'; GET /dashboard and the map count online with the heartbeat cutoff");
+  // Integration (0.35): the automatic-snapshot scheduler (§50) has its own
+  // "agent silent" reason. It was written against 10 minutes, so for twenty
+  // minutes a computer's header said Online while its Processes tab said the
+  // agent was silent. It must be the same constant.
+  const sch = strip(read('apps/api/src/diagnostics-catalog/snapshot-schedule.ts'));
+  check('the snapshot tabs call an agent silent on the same window as the header',
+    /^export const AGENT_SILENT_MS = HEARTBEAT_STALE_MS;$/m.test(sch)
+      && /import \{ HEARTBEAT_STALE_MS \} from '\.\.\/common\/connectivity';/.test(sch),
+    'snapshot-schedule.ts: AGENT_SILENT_MS = HEARTBEAT_STALE_MS, imported from common/connectivity');
+}
+
+// 50. Automatic snapshots (0.35). The server asks a checking-in computer for
+//     its process list, service list and network adapters on its own. What
+//     must hold: only the three snapshot keys can ever be asked for without
+//     a requester (the database CHECK, and the scheduler iterating
+//     SNAPSHOT_KEYS); the scheduler runs only inside forHeartbeat, which only
+//     an authenticated heartbeat reaches; a requester-less run skips the
+//     requester re-check only for a snapshot key; reading a snapshot marks
+//     the tab "watched" (which shortens the interval) only after the
+//     visibility and capability checks, so nobody can make a computer they
+//     cannot see collect anything; automatic runs are not audited one by one
+//     but the schedule change is, Platform Admin only; pruning deletes only
+//     finished automatic runs and never touches ActivityLog; and the off
+//     switch is exact and set for the e2e runner and the browser suite.
+{
+  const svc = read('apps/api/src/diagnostics-catalog/diagnostics-catalog.service.ts');
+  const sch = read('apps/api/src/diagnostics-catalog/snapshot-schedule.ts');
+  const sql = read('apps/api/prisma/migrations/0059_auto_snapshots/migration.sql');
+  const ctl = read('apps/api/src/diagnostics-catalog/diagnostics-catalog.controller.ts');
+  const body = (name) => { const i = svc.indexOf(`  ${name}(`); const j = svc.indexOf('\n  }\n', i); return i < 0 ? '' : svc.slice(i, j); };
+  const asyncBody = (name) => body(`async ${name}`) || body(`private async ${name}`);
+  check('automatic runs are snapshot keys only: the database refuses any other key without a requester',
+    /ADD CONSTRAINT "DiagnosticRun_automatic_snapshot_only" CHECK \(\s*"requestedById" IS NOT NULL OR "key" IN \('process_list', 'service_list', 'network_adapters'\)\s*\);/.test(sql)
+      && /CREATE UNIQUE INDEX "DiagnosticRun_one_open_automatic" ON "DiagnosticRun"\("endpointId", "key"\)\s*WHERE "requestedById" IS NULL AND "status" IN \('REQUESTED', 'DELIVERED', 'RUNNING'\);/.test(sql),
+    'migration 0059: DiagnosticRun_automatic_snapshot_only and the one-open-automatic partial unique index');
+  const sched = asyncBody('scheduleAutomatic');
+  check('the scheduler stages only what dueKeys returns, and dueKeys walks SNAPSHOT_KEYS',
+    /for \(const key of SNAPSHOT_KEYS\) \{/.test(sch.slice(sch.indexOf('export function dueKeys('), sch.indexOf('export function automaticState(')))
+      && /const due = dueKeys\(schedule, now,/.test(sched) && /for \(const d of due\) \{/.test(sched) && /key: d\.key,\s*requestedById: null, expiresAt:/.test(sched)
+      && (svc.match(/requestedById: null, expiresAt:/g) ?? []).length === 1 && !/diagnosticRun\.(create|createMany|upsert)\(/.test(svc.replace(sched, '').replace(asyncBody('request'), '')),
+    'one requester-less create in the service, inside scheduleAutomatic, keyed by dueKeys');
+  check('the scheduler runs only from forHeartbeat, and only for an eligible computer with the switches on',
+    (svc.match(/this\.scheduleAutomatic\(/g) ?? []).length === 1 && /await this\.scheduleAutomatic\(endpointId\);/.test(asyncBody('forHeartbeat'))
+      && /if \(!this\.autoEnabled\) return;/.test(sched) && /if \(!schedule\.enabled\) return;/.test(sched)
+      && /if \(!ep \|\| ineligible\(\{ \.\.\.ep, agentBound: !!node\?\.agentSecretHash \}, now\)\) return;/.test(sched)
+      && /if \(authenticated\) \{\s*try \{\s*diagnostics = await this\.diagnostics\.forHeartbeat\(node\.endpointId\);/.test(read('apps/api/src/enrollment/enrollment.service.ts')),
+    'scheduleAutomatic called once, from forHeartbeat; forHeartbeat called only under `if (authenticated)`');
+  check('a requester-less run skips the requester re-check only for a snapshot key',
+    /r\.requestedById === null \? \(isSnapshotKey\(r\.key\) \? null : 'not_a_snapshot'\) : await this\.requesterStillAllowed\(r, entry, ep\)/.test(asyncBody('forHeartbeat'))
+      && /if \(!r\.requestedById\) return 'no_requester';/.test(svc),
+    "forHeartbeat: requestedById === null ? (isSnapshotKey ? null : 'not_a_snapshot') : requesterStillAllowed");
+  const snap = asyncBody('snapshot');
+  check('reading a snapshot marks it watched only after visibility and the capability are checked',
+    snap.indexOf('this.markWatched(endpointId, key)') > snap.indexOf('await this.assertVisible(actor, endpointId, cap);')
+      && snap.indexOf('this.markWatched(endpointId, key)') > snap.indexOf('this.acl.assertCapability(actor, cap);')
+      && snap.indexOf('await this.assertVisible(') > 0 && (svc.match(/this\.markWatched\(/g) ?? []).length === 1,
+    'snapshot(): assertVisible, assertCapability, then markWatched — and nowhere else');
+  check('automatic runs are not audited one by one; a schedule change is, by a Platform Admin',
+    /private async auditDone\([^)]*\) \{\s*(\/\/[^\n]*\n\s*)*if \(r\.requestedById === null\) return;/.test(svc)
+      && /this\.acl\.assertPlatformAdmin\(actor\);\s*const parsed = parseScheduleUpdate\(body\);/.test(svc)
+      && /action: 'SNAPSHOT_SCHEDULE_CHANGED', resource: 'platform_settings', resourceId: 'singleton',\s*meta: \{ before, after \},/.test(svc)
+      && /@Controller\('admin\/snapshot-schedule'\)\s*@UseGuards\(PlatformAdminGuard\)/.test(ctl)
+      && (ctl.match(/@(Get|Put|Post|Delete|Patch)\(/g) ?? []).length === 7,
+    'auditDone returns for requestedById null; updateSchedule: assertPlatformAdmin then audit before/after; controller PlatformAdminGuard; GET + PUT only');
+  const prune = asyncBody('pruneAutomatic');
+  check('pruning deletes only finished automatic runs, and nothing here touches the audit log',
+    /deleteMany\(\{\s*where: \{ endpointId, key, requestedById: null, status: \{ in: \[\.\.\.DONE\] \}/.test(prune)
+      && /const DONE = \['COMPLETED', 'FAILED', 'EXPIRED'\] as const;/.test(svc)
+      && !/activityLog\.(update|delete|upsert)|"ActivityLog"/.test(svc + sch),
+    'pruneAutomatic: requestedById null and a finished status; no ActivityLog write in the diagnostics service or the schedule');
+  check('SNAPSHOT_SWEEP=off is exact, and set for run-e2e.sh and the browser suite',
+    /export const sweepEnabled = \(env: Record<string, string \| undefined>\) => env\.SNAPSHOT_SWEEP !== 'off';/.test(sch)
+      && /\nexport SNAPSHOT_SWEEP=off\n/.test(read('scripts/run-e2e.sh'))
+      && /SNAPSHOT_SWEEP: 'off',/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    "sweepEnabled: env.SNAPSHOT_SWEEP !== 'off'; run-e2e.sh exports it; e2e-ui's API env sets it");
 }
 
 if (failures.length > 0) {

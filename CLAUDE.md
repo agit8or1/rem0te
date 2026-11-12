@@ -208,6 +208,12 @@ previous build's files 404s every browser that already had the app open.
   demo or fixture alerts will resolve, group and notify them. Run the docs
   stack's API with `MONITOR_SWEEP=off`, and never give a scratch database a
   notification policy with a real destination.
+- **`STALE_SWEEP=off` must never be set in production.** It stops the
+  every-minute sweep that marks computers offline, so no machine would ever go
+  offline again. It exists for test stacks whose agent-silent fixtures need a
+  lasting `isOnline` with no hbbs to keep it (`e2e-polish.mjs`, `e2e-ui.mjs`).
+  The same goes for `SNAPSHOT_SWEEP=off`, which silently stops the automatic
+  Processes / Services / Network snapshots.
 - **A maintenance window is not containment.** `MonitorSuppression` only
   holds notifications (and ClientSt0r's `alert.raised`); it never touches
   `ContainmentPause`. Keep them apart — §17 checks it.
@@ -453,8 +459,9 @@ with its audit entry. §29's bulk list is six actions (`agent.update`,
 database not named `test` or `scratch` before Prisma loads. It writes only to
 its temporary copy of the standalone build, and stops if the build's baked-in
 API destination (on this host, production's 3001) survives the patch. Its API
-runs with every sweep off (all eight switches). §18 covers it too. CI runs it
-as the `UI suite (browser)` step of the `e2e` job.
+runs with every sweep off (eleven switches in 0.35, found from the API source).
+§18 covers it too. CI runs it as the `UI suite (browser)` step of the `e2e`
+job.
 
 §45 is chat with the person at a computer. Every portal route names its
 capability (`computers:view` to read, `support:chat` to start, write and end)
@@ -472,6 +479,60 @@ SYSTEM and the session user with the client PID checked, and text is drawn in
 read-only plain `EDIT` controls. **The window has never run on real Windows.**
 Behavioural proof: `e2e-chat.mjs` (port 3531); unit: `unit-chat.mjs` and the
 Go `internal/chat` tests.
+
+0.35 added five sections, §46 to §50, one per part of the release. §44 also
+now requires every `*_SWEEP` / `*_SEALER` off switch the API reads to be
+`'off'` in `e2e-ui.mjs`, found from the source rather than listed, because two
+more arrived in 0.35 from two different branches.
+
+§46 is device groups as a policy scope. Monitors and client-update policies
+may be set for a group; membership is computed, never stored — the membership
+service writes nothing and holds no Map between calls, and a rule group goes
+through the device list's own `evaluateRuleGroups` as the business AND its
+rule AND `endpointVisibilityWhere`, with an unreadable or alert-reading rule
+matching nothing. The sweeps build membership once per tick, locally.
+Precedence is computer > group > site > business > global, groups by priority
+and then id, never row order. 0057 refuses priority ties (partial unique
+indexes), mixed scopes, another business's group (trigger) and deleting a
+group that carries a policy (NO ACTION). Another business's group is a 404;
+enabling or removing a group client-update policy needs fresh authentication;
+who is notified stays global or business (§17). Behavioural proof:
+`e2e-group-policies.mjs` (port 3541); unit: `unit-group-policy.mjs`.
+
+§47 is the browser coverage of the 0.34 screens. The Run panel offers
+*Request a run* and *Revoke* only when an approval signer is configured.
+Saving Email settings puts the saved relay into the cache before the form is
+rebuilt, or it came back blank one Save away from switching mail off.
+`e2e-ui.mjs`'s SMTP sink and reference ClientSt0r peer listen on loopback, on
+ports inside its refusal loop (`UI_SMTP_PORT` 3503, `UI_PEER_PORT` 3504), and
+it puts the global SMTP settings back.
+
+§48 is groups on the device page. `GET /endpoints/:id` checks scope first and
+takes its `groups` from `deviceList.groupsOfComputer`, which evaluates only
+the computer's own business, as the caller, over that one computer, and drops
+a rule the caller may not evaluate (the alert gate). It runs no rule-group
+query of its own.
+
+§49 is "reachable is not reporting". There is one heartbeat window,
+`HEARTBEAT_STALE_MS` (30 minutes), in `apps/api/src/common/connectivity.ts`
+and its web copy, which must agree; the stale sweep's default reads it and it
+is called with no literal; the automatic-snapshot scheduler's "agent silent"
+is the same constant. The device list's `online` filter needs a heartbeat
+inside it and `silent` is the rest of `isOnline`; the dashboard and the map
+count online from it, never from `isOnline`. Behavioural proof:
+`e2e-polish.mjs` (port 3551); unit: `unit-polish.mjs`.
+
+§50 is automatic snapshots. Only `process_list`, `service_list` and
+`network_adapters` can be asked for with no requester (0059's CHECK, and the
+scheduler iterating `SNAPSHOT_KEYS`); the scheduler runs only inside
+`forHeartbeat`, which only an authenticated heartbeat reaches; a requester-less
+run skips the requester re-check only for a snapshot key; a read marks a tab
+"watched" only after the visibility and capability checks; automatic runs are
+not audited one by one but a schedule change is, Platform Admin only; pruning
+deletes only finished automatic runs and never touches `ActivityLog`; and
+`SNAPSHOT_SWEEP=off` is exported by `run-e2e.sh` and set by `e2e-ui.mjs`.
+Behavioural proof: `e2e-auto-snapshots.mjs` (ports 3571–3573); unit:
+`unit-snapshot-schedule.mjs`.
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 

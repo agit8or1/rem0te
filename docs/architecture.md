@@ -241,6 +241,24 @@ loopback on that port as its text console; override with `HBBS_PRESENCE_HOST`
 connected therefore shows online, which is what Connect actually needs; the
 device page's "last seen" stays the agent's own check-in so a dead agent is
 still visible. If hbbs cannot be asked, liveness falls back to heartbeat only.
+
+**The console shows three states, not two (0.35).** `isOnline` alone means
+*reachable*, so it no longer draws as "Online". `connectivity`
+(`apps/api/src/common/connectivity.ts`) is derived from `isOnline` and
+`lastSeenAt` against `HEARTBEAT_STALE_MS` (30 minutes), the same window the
+stale sweep uses: **online** (green) when the agent heartbeat is inside it;
+**agent_silent** (amber, "Reachable (RustDesk) · agent silent 12 d") when
+`isOnline` holds with no heartbeat inside it, never reported included; and
+**offline** (grey). The device list, device page, `GET /endpoints`, My
+computers, search, the dashboard and its map, and the RustDesk client-update
+list send it. The list's `online` filter takes `online`, `silent` or
+`offline` server-side, and an "online" rule group means the first. The sweep
+is unchanged — `isOnline` stays true for a silent agent, because Connect still
+works. The web copy of the window (`apps/web/lib/connectivity.ts`) must equal
+the API's; §49 of the security invariants checks it.
+`STALE_SWEEP=off` stops the sweep in that process — for a test stack whose
+fixtures must keep `isOnline` with no hbbs to keep them reachable; never in
+production, where machines would then never go offline.
 `deploy/scripts/hbbs-probe.py` still exists to test the full punch-hole path.
 
 A second, different question — *has hbbs ever accepted a registration from

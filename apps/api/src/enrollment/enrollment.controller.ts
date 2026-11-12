@@ -25,17 +25,23 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly enrollment: EnrollmentService, private readonly stepUp: StepUpService, private readonly chat: ChatService) {}
 
   onModuleInit() {
+    // STALE_SWEEP=off (0.35) stops it in this process, for a test stack whose
+    // fixtures must keep their isOnline (no hbbs there to keep them reachable),
+    // as MONITOR_SWEEP and the other sweeps can be stopped. Default on.
+    if (process.env.STALE_SWEEP === 'off') return;
     // Every minute: hbbs presence is near real-time (30 s registration
     // window), and the heartbeat-staleness half is cheap.
     this.cleanupInterval = setInterval(() => {
-      // Threshold is generous (30 min) because:
+      // The window is HEARTBEAT_STALE_MS (common/connectivity.ts), 30 min,
+      // the method's default. Generous because:
       //   * older installers that pre-date the Rem0teHeartbeat task ping
       //     only once at install time; we don't want to mark them offline
       //     just because they haven't been re-installed yet
       //   * new installers heartbeat every 3 min so a real 30-min silence
       //     is either a genuinely-offline machine or a broken heartbeat
       //     task worth investigating
-      this.enrollment.markStaleEndpointsOffline(30).catch((e) =>
+      // The console calls a computer "agent silent" past the same window.
+      this.enrollment.markStaleEndpointsOffline().catch((e) =>
         this.logger.error('Stale endpoint cleanup failed', e),
       );
     }, 60 * 1000);

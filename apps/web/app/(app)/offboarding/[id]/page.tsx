@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { usePermissions } from '@/lib/auth';
 import { cn, formatDate } from '@/lib/utils';
+import { connectivityHint, connectivityLabel, connectivityOf } from '@/lib/connectivity';
 
 // ─── Types (OffboardingService.get) ──────────────────────────────────────────
 
@@ -172,7 +173,9 @@ export default function OffboardingCasePage() {
                             {r.state === 'failed' && <Badge variant="destructive">Failed</Badge>}
                           </td>
                           <td className="px-4 py-2">
-                            {r.online
+                            {r.online && connectivityOf(r.online, r.lastSeenAt) === 'agent_silent'
+                              ? <span className="flex items-center gap-1 text-amber-700 dark:text-amber-400" title={connectivityHint('agent_silent')}><Wifi className="h-3.5 w-3.5" />{connectivityLabel('agent_silent', r.lastSeenAt)}</span>
+                              : r.online
                               ? <span className="flex items-center gap-1 text-green-700 dark:text-green-400"><Wifi className="h-3.5 w-3.5" />Online</span>
                               : <span className="flex items-center gap-1 text-muted-foreground"><WifiOff className="h-3.5 w-3.5" />Offline{r.lastSeenAt ? ` · seen ${formatDate(r.lastSeenAt)}` : ''}</span>}
                           </td>

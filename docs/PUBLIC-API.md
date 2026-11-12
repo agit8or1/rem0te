@@ -256,8 +256,12 @@ Two things worth knowing:
   stored; the credential itself is not exposed through this API at all.
 
 `status` is the administrative state (`ACTIVE`, `OFFLINE`, `ARCHIVED`,
-`PENDING_ENROLLMENT`); `isOnline` is liveness from the agent heartbeat. They can
-disagree — an `ACTIVE` machine that stopped checking in is `isOnline: false`.
+`PENDING_ENROLLMENT`); `isOnline` is reachability — the agent heartbeat **or** a
+live RustDesk registration. They can disagree — an `ACTIVE` machine that stopped
+checking in, and that RustDesk cannot reach, is `isOnline: false`. From 0.35
+`connectivity` says which kind of online: `online` (the agent checked in within
+30 minutes), `agent_silent` (reachable through RustDesk, agent silent — remote
+control works, nothing the agent reports is current) or `offline`.
 
 ### users
 

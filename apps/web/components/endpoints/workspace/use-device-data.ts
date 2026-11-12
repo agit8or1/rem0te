@@ -18,7 +18,14 @@ import type { Patches } from '@/components/endpoints/endpoint-patches';
 /** GET /monitoring/endpoints/:id — monitoring-admin.service.ts endpointView(). */
 export interface MonitoringView {
   scopes: string[];
-  rules: { key: string; kind: string; name: string; severity: string; params: Record<string, unknown>; inheritedFrom: string; overrides: string[]; id: string }[];
+  /** 0.35: a name for every scope key ("group Kiosks", "site HQ"). */
+  scopeNames?: Record<string, string>;
+  rules: {
+    key: string; kind: string; name: string; severity: string; params: Record<string, unknown>; inheritedFrom: string; overrides: string[]; id: string;
+    /** 0.35: the winning rule's priority when it is a group monitor, and what it beat and why. */
+    priority?: number | null;
+    outranked?: { scopeKey: string; priority: number | null; reason: 'more_specific' | 'priority' | 'tie_id' }[];
+  }[];
   report: {
     services?: { name: string; status: string; startType: string | null }[];
     events?: { key: string; checkedAt: string; count: number; newestAt: string | null; sample: { eventId: number | null; message: string | null } | null }[];

@@ -2,13 +2,14 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { endpointsApi } from '@/lib/api-client';
-import { HOLD_LABEL } from '@/lib/client-updates';
+import { clientUpdatesApi, endpointsApi } from '@/lib/api-client';
+import { HOLD_LABEL, type EndpointPolicy } from '@/lib/client-updates';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
+import { updateSourceLabel, updateSourcePhrase } from '@/lib/platform-wording';
 import { MeterGauge } from '@/components/common/gauge';
 import {
   Cpu, HardDrive, MemoryStick, Network, PackageCheck, RefreshCw,
@@ -180,7 +181,30 @@ function SectionCard({
   );
 }
 
-function UpdatesCard({ data, onOpenPatches }: { data: InventoryPayload; onOpenPatches?: () => void }) {
+/**
+ * Which automatic client-update policy governs this computer, and why (0.35):
+ * a device group's (the lowest priority number among its groups that have
+ * one), its site's override, or its business's. Decided by the API
+ * (client-updates/policy.ts resolvePolicy); this only says it.
+ */
+function ClientUpdatePolicyRow({ endpointId }: { endpointId: string }) {
+  const { data, isError } = useQuery<EndpointPolicy>({
+    queryKey: ['client-update-endpoint-policy', endpointId],
+    queryFn: () => clientUpdatesApi.endpointPolicy(endpointId).then((r) => r.data?.data as EndpointPolicy),
+    retry: false,
+  });
+  if (isError || !data) return null;
+  const p = data.policy;
+  const where = !p ? 'None' : p.scope === 'group' ? `Group ${p.group?.name ?? ''} (priority ${p.priority ?? '—'})` : p.scope === 'site' ? `Site ${p.site?.name ?? ''} override` : 'Business policy';
+  return (
+    <Row label="Client-update policy">
+      <span className="text-xs" data-testid="client-update-policy">{where}{p ? ` — ${p.enabled ? 'on' : 'off'}` : ''}</span>
+      <div className="text-[11px] text-muted-foreground">{data.text}</div>
+    </Row>
+  );
+}
+
+function UpdatesCard({ data, platform, onOpenPatches, endpointId }: { data: InventoryPayload; platform: unknown; onOpenPatches?: () => void; endpointId: string }) {
   const [open, setOpen] = useState(false);
   const inv = data.inventory;
   const count = inv?.pendingUpdateCount ?? null;
@@ -198,7 +222,7 @@ function UpdatesCard({ data, onOpenPatches }: { data: InventoryPayload; onOpenPa
         ) : null
       }
     >
-      <Row label="Windows Update">
+      <Row label={updateSourceLabel(platform)}>
         {count === null ? (
           <span className="text-muted-foreground">Not checked yet</span>
         ) : count === 0 ? (
@@ -256,6 +280,7 @@ function UpdatesCard({ data, onOpenPatches }: { data: InventoryPayload; onOpenPa
             <span className="text-muted-foreground">Unknown</span>
           )}
         </Row>
+        <ClientUpdatePolicyRow endpointId={endpointId} />
         {data.rustdesk.stagedVersion && (
           <Row label="Upgrade staged">
             <span className="font-mono text-xs">
@@ -263,7 +288,7 @@ function UpdatesCard({ data, onOpenPatches }: { data: InventoryPayload; onOpenPa
             </span>
             <div className="text-[11px] text-muted-foreground">
               {data.rustdesk.stagedSource === 'policy'
-                ? `automatic — applies inside the business's update window${data.rustdesk.stagedHoldReason ? ` (waiting: ${HOLD_LABEL[data.rustdesk.stagedHoldReason] ?? data.rustdesk.stagedHoldReason})` : ''}`
+                ? `automatic — applies inside its update policy's window${data.rustdesk.stagedHoldReason ? ` (waiting: ${HOLD_LABEL[data.rustdesk.stagedHoldReason] ?? data.rustdesk.stagedHoldReason})` : ''}`
                 : 'applies on the next heartbeat'}
             </div>
           </Row>
@@ -380,7 +405,7 @@ export function EndpointSpecs({
       toast({
         title: 'Queued',
         description:
-          'This computer collects its specs and checks Windows Update on its next heartbeat — up to about three minutes.',
+          `This computer collects its specs and checks ${updateSourcePhrase(endpoint.platform)} on its next heartbeat — up to about three minutes.`,
       });
       qc.invalidateQueries({ queryKey: ['endpoint-inventory', endpointId] });
     },
@@ -721,7 +746,7 @@ export function EndpointSpecs({
           )}
         </SectionCard>
 
-        {data && <UpdatesCard data={data} onOpenPatches={onOpenPatches} />}
+        {data && <UpdatesCard data={data} platform={endpoint.platform} onOpenPatches={onOpenPatches} endpointId={endpointId} />}
       </div>
     </div>
   );

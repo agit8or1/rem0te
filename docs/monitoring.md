@@ -69,12 +69,21 @@ monitors you then adjust. Nothing is created without that click.
 
 ### Inheritance
 
-Monitors are set at four levels: **global** (the MSP, for every business),
-**business**, **site** and **computer**. For each key, the most specific
-monitor wins. So to change the offline threshold for one business, add a
-business monitor with the key `offline`; to switch it off there, add it
+Monitors are set at five levels: **global** (the MSP, for every business),
+**business**, **site**, **device group** (0.35) and **computer**. For each
+key, the most specific monitor wins — computer, then group, then site, then
+business, then global. So to change the offline threshold for one business,
+add a business monitor with the key `offline`; to switch it off there, add it
 disabled ("Switch off for this business" does exactly that). Removing the
 override brings the inherited one back.
+
+A **device-group** monitor applies to the computers in that group *now* — a
+rule group's members are computed at each evaluation — and carries a
+**priority**: a computer in two groups with a monitor of the same key follows
+the lower number (1 first), and two group monitors with the same key cannot
+share one. A group that picks computers by their alerts cannot carry a
+monitor. See [Device-group policies](group-policies.md) for the full rule,
+what the pages show and the measured cost.
 
 A computer's **Monitoring** tab leads with its alerts (open ones first, worst
 severity first; resolved ones folded away), then lists the monitors actually in

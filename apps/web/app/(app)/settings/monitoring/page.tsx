@@ -15,19 +15,22 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiError } from '@/components/security-controls/shared';
+import { deviceGroupsApi } from '@/components/endpoints/list/api';
 
 /**
  * Settings → Monitoring (0.29).
  *
- * Monitors are inherited global → business → site → computer; the most
- * specific monitor with a given key wins, and a disabled one switches the
- * inherited monitor off there. Maintenance windows hold notifications (the
+ * Monitors are inherited global → business → site → device group → computer;
+ * the most specific monitor with a given key wins, and a disabled one
+ * switches the inherited monitor off there. Between two device groups a
+ * computer is in (0.35), the lower priority number wins. Maintenance windows hold notifications (the
  * alert is still recorded) and are unrelated to containment, which stops
  * writes. Who is notified needs fresh authentication to change.
  */
 
 type Rule = {
-  id: string; scopeKey: string; scope: 'global' | 'business' | 'site' | 'endpoint'; businessId: string | null; siteId: string | null; endpointId: string | null;
+  id: string; scopeKey: string; scope: 'global' | 'business' | 'site' | 'group' | 'endpoint'; businessId: string | null; siteId: string | null; endpointId: string | null;
+  groupId?: string | null; priority?: number | null; group?: { id: string; name: string | null } | null;
   key: string; kind: MonitorKindId; name: string; enabled: boolean; severity: Severity; params: Record<string, unknown>; updatedAt: string;
 };
 type Rules = { rules: Rule[]; recommended: { key: string; kind: MonitorKindId; name: string; severity: Severity; params: Record<string, unknown> }[]; may: { global: boolean; business: boolean } };
@@ -63,11 +66,12 @@ const KIND: Record<MonitorKindId, { label: string; hint: string; fields: { k: st
       { k: 'threshold', label: 'Events before alerting', type: 'int', def: 1 }, { k: 'clearAfterMinutes', label: 'Clear after minutes quiet', type: 'int', def: 60 },
     ],
   },
-  REBOOT_PENDING: { label: 'Restart pending', hint: 'Windows has wanted a restart for this long.', fields: [{ k: 'hours', label: 'Hours', type: 'int', def: 72 }] },
+  REBOOT_PENDING: { label: 'Restart pending', hint: 'The computer has reported a pending restart (Windows, or a Linux package manager) for this long.', fields: [{ k: 'hours', label: 'Hours', type: 'int', def: 72 }] },
 };
 
 const fmt = (d: string | null | undefined) => (d ? new Date(d).toLocaleString() : '—');
-const scopeLabel = (r: { scope: string }) => ({ global: 'Global', business: 'Business', site: 'Site', endpoint: 'Computer' } as Record<string, string>)[r.scope] ?? r.scope;
+const scopeLabel = (r: { scope: string; group?: { name: string | null } | null; priority?: number | null }) =>
+  r.scope === 'group' ? `Group ${r.group?.name ?? ''} · priority ${r.priority ?? '—'}` : ({ global: 'Global', business: 'Business', site: 'Site', endpoint: 'Computer' } as Record<string, string>)[r.scope] ?? r.scope;
 const paramsText = (p: Record<string, unknown>) => Object.entries(p).filter(([, v]) => v !== '' && !(Array.isArray(v) && v.length === 0)).map(([k, v]) => `${k}=${Array.isArray(v) ? v.join(',') : String(v)}`).join(' · ');
 
 function Notice({ n }: { n: { ok: boolean; text: string } | null }) {
@@ -176,9 +180,16 @@ function Monitors({ businessId, ok, fail }: Props) {
   const [params, setParams] = useState<Record<string, unknown>>(defaults('SERVICE_STOPPED'));
   const [editing, setEditing] = useState<string | null>(null);
   const [editParams, setEditParams] = useState<Record<string, unknown>>({});
+  // 0.35: a monitor for one of this business's device groups, with a priority.
+  const [groupId, setGroupId] = useState('');
+  const [priority, setPriority] = useState('');
+  const [editPriority, setEditPriority] = useState('');
+  const groups = useQuery({ queryKey: ['mon-groups', businessId], queryFn: () => deviceGroupsApi.list(businessId!), enabled: !!businessId, retry: false });
 
   const create = useMutation({
-    mutationFn: () => monitoringApi.createRule({ scope: atScope, ...(businessId ? { businessId } : {}), key, kind, name, severity, params: clean(params) }),
+    mutationFn: () => monitoringApi.createRule(groupId && businessId
+      ? { scope: 'group', businessId, groupId, priority: priority === '' ? undefined : Number(priority), key, kind, name, severity, params: clean(params) }
+      : { scope: atScope, ...(businessId ? { businessId } : {}), key, kind, name, severity, params: clean(params) }),
     onSuccess: () => { ok(`Monitor “${name}” added.`); setAdding(false); setKey(''); setName(''); refresh(); }, onError: fail,
   });
   const recommended = useMutation({
@@ -227,7 +238,18 @@ function Monitors({ businessId, ok, fail }: Props) {
                 <select className="w-full rounded-md border bg-background p-2" value={severity} onChange={(e) => setSeverity(e.target.value as Severity)}>{SEVERITIES.map((s) => <option key={s}>{s}</option>)}</select>
               </div>
             </div>
-            <p className="text-xs text-muted-foreground">{KIND[kind].hint} The key is how inheritance works: a monitor here with the key of an inherited one replaces it.</p>
+            {businessId && (
+              <div className="grid gap-2 md:grid-cols-4">
+                <div className="space-y-1"><Label>For</Label>
+                  <select className="w-full rounded-md border bg-background p-2" value={groupId} onChange={(e) => setGroupId(e.target.value)} data-testid="mon-new-group">
+                    <option value="">The whole business</option>
+                    {(groups.data?.groups ?? []).filter((g) => !g.legacy).map((g) => <option key={g.id} value={g.id}>Group: {g.name}</option>)}
+                  </select>
+                </div>
+                {groupId && <div className="space-y-1"><Label>Priority (1 first)</Label><Input type="number" min={1} max={999} value={priority} placeholder="e.g. 10" onChange={(e) => setPriority(e.target.value)} /></div>}
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">{KIND[kind].hint} The key is how inheritance works: a monitor here with the key of an inherited one replaces it.{groupId ? ' A group monitor beats the business and site ones for the group’s computers; a computer in two groups with this key follows the lower priority number.' : ''}</p>
             <ParamFields kind={kind} value={params} onChange={setParams} />
             <Button size="sm" disabled={!key || !name || create.isPending} onClick={() => create.mutate()}>Add monitor</Button>
           </div>
@@ -248,7 +270,7 @@ function Monitors({ businessId, ok, fail }: Props) {
                   {((r.scope === 'global' && data.may.global && !businessId) || (r.scope !== 'global' && data.may.business)) && (
                     <>
                       <Button size="sm" variant="ghost" onClick={() => update.mutate({ id: r.id, data: { enabled: !r.enabled } })}>{r.enabled ? 'Switch off' : 'Switch on'}</Button>
-                      <Button size="sm" variant="ghost" onClick={() => { setEditing(editing === r.id ? null : r.id); setEditParams(r.params); }}>Edit</Button>
+                      <Button size="sm" variant="ghost" onClick={() => { setEditing(editing === r.id ? null : r.id); setEditParams(r.params); setEditPriority(r.priority != null ? String(r.priority) : ''); }}>Edit</Button>
                       <Button size="sm" variant="ghost" onClick={() => { if (window.confirm(`Remove “${r.name}”?${r.scope === 'global' ? '' : ' The inherited monitor with this key, if any, applies again.'}`)) remove.mutate(r.id); }}><Trash2 className="h-4 w-4" /></Button>
                     </>
                   )}
@@ -262,7 +284,8 @@ function Monitors({ businessId, ok, fail }: Props) {
                   <ParamFields kind={r.kind} value={editParams} onChange={setEditParams} />
                   <div className="flex gap-2">
                     <select className="rounded-md border bg-background p-1 text-sm" defaultValue={r.severity} id={`sev-${r.id}`}>{SEVERITIES.map((s) => <option key={s}>{s}</option>)}</select>
-                    <Button size="sm" onClick={() => update.mutate({ id: r.id, data: { params: clean(editParams), severity: (document.getElementById(`sev-${r.id}`) as HTMLSelectElement).value as Severity } })}>Save</Button>
+                    {r.scope === 'group' && <Input type="number" min={1} max={999} className="w-24" aria-label="Priority" value={editPriority} onChange={(e) => setEditPriority(e.target.value)} />}
+                    <Button size="sm" onClick={() => update.mutate({ id: r.id, data: { params: clean(editParams), severity: (document.getElementById(`sev-${r.id}`) as HTMLSelectElement).value as Severity, ...(r.scope === 'group' && editPriority !== '' ? { priority: Number(editPriority) } : {}) } })}>Save</Button>
                   </div>
                 </div>
               )}

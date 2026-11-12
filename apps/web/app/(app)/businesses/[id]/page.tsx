@@ -16,7 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { StatusIndicator } from '@/components/common/status-indicator';
+import { ConnectivityIndicator } from '@/components/common/connectivity-indicator';
 import { formatDate } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions, CAP } from '@/lib/auth';
@@ -225,7 +225,7 @@ export default function BusinessDetailPage() {
                       {ep.platform ? <Badge variant="secondary">{ep.platform as string}</Badge> : '—'}
                     </td>
                     <td className="px-4 py-3">
-                      <StatusIndicator status={(ep.isOnline as boolean) ? 'online' : 'offline'} />
+                      <ConnectivityIndicator x={ep} short />
                     </td>
                     <td className="px-4 py-3 text-muted-foreground text-xs">
                       {formatDate(ep.lastSeenAt as string)}

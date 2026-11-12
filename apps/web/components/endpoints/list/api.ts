@@ -56,7 +56,7 @@ const PATCH_LABEL: Record<string, string> = { pending: 'updates pending', curren
 /** A rule in words, for the groups dialog and the save dialog. Site names come from the caller. */
 export function describeRule(r: DeviceRule, siteName?: (id: string) => string | undefined): string {
   const out: string[] = [];
-  if (r.online) out.push(r.online === 'online' ? 'online' : 'offline');
+  if (r.online) out.push(r.online === 'online' ? 'online (agent checking in)' : r.online === 'silent' ? 'reachable, agent silent' : 'offline');
   if (r.platform) out.push(PLATFORM_LABEL[String(r.platform)] ?? String(r.platform));
   if (r.os) out.push(`OS contains “${r.os}”`);
   if (r.siteId) out.push(`site ${siteName?.(String(r.siteId)) ?? '(a site)'}`);

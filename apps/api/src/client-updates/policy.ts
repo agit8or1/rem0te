@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { compareVersions } from '../common/agent-contract';
 import { isWindowOpen, storedWindow, type UpdateWindow } from './update-window';
+import { applies, explain, PRIORITY_MAX, PRIORITY_MIN, resolve, type PolicyScope, type Resolution } from '../group-policy/precedence';
 
 /**
  * Client-update policy (0.32): the pure decisions, kept here so they are
@@ -14,6 +15,9 @@ export const PolicyInput = z.object({
   businessId: z.string().regex(ID),
   /** Omitted or null: the business policy. Set: that site's override. */
   siteId: z.string().regex(ID).nullable().optional(),
+  /** 0.35: set — that device group's policy (never with siteId), with a priority (1 first). */
+  groupId: z.string().regex(ID).nullable().optional(),
+  priority: z.number().int().min(PRIORITY_MIN).max(PRIORITY_MAX).nullable().optional(),
   enabled: z.boolean(),
   timeZone: z.string().min(1).max(64),
   windows: z.array(z.object({
@@ -30,6 +34,9 @@ export interface PolicyLike {
   id: string;
   customerId: string;
   siteId: string | null;
+  /** 0.35 */
+  groupId?: string | null;
+  priority?: number | null;
   enabled: boolean;
   timeZone: string;
   windows: unknown;
@@ -37,17 +44,39 @@ export interface PolicyLike {
   skipLoggedOnUser: boolean;
 }
 
+export const policyScope = (p: Pick<PolicyLike, 'siteId' | 'groupId'>): PolicyScope => (p.groupId ? 'group' : p.siteId ? 'site' : 'business');
+
 /**
- * The policy that governs one computer: its site's override when there is one,
- * otherwise its business's. An override replaces the business policy for that
- * site entirely — including being off when the business is on.
+ * Every policy that could govern one computer, ranked (group-policy/
+ * precedence.ts): a device-group policy for a group it is in — between two,
+ * the lower priority — then its site's override, then its business's. There
+ * is no per-computer client-update policy: the one-off is the Update button.
+ * The winner replaces the others entirely, including being off when a
+ * broader one is on.
  */
+export function resolvePolicy<P extends PolicyLike>(
+  policies: P[], ep: { id: string; customerId: string | null; siteId: string | null; groupIds?: ReadonlySet<string> | readonly string[] },
+): Resolution<P & { scope: PolicyScope }> {
+  if (!ep.customerId) return { winner: null, ranked: [] };
+  const groupIds = ep.groupIds ?? [];
+  const cands = policies
+    .map((p) => ({ ...p, scope: policyScope(p) }))
+    .filter((p) => applies(p, { id: ep.id, customerId: ep.customerId, siteId: ep.siteId, groupIds }));
+  return resolve(cands);
+}
+
+/** The policy that governs one computer, or null. */
 export function effectivePolicy<P extends PolicyLike>(
-  policies: P[], customerId: string | null, siteId: string | null,
+  policies: P[], customerId: string | null, siteId: string | null, groupIds: ReadonlySet<string> | readonly string[] = [],
 ): P | null {
-  if (!customerId) return null;
-  const mine = policies.filter((p) => p.customerId === customerId);
-  return (siteId ? mine.find((p) => p.siteId === siteId) : undefined) ?? mine.find((p) => p.siteId === null) ?? null;
+  const w = resolvePolicy(policies, { id: '', customerId, siteId, groupIds }).winner;
+  if (!w) return null;
+  return policies.find((p) => p.id === w.id) ?? null;
+}
+
+/** Why the winner governs this computer, in one sentence, naming groups and sites by `names`. */
+export function explainPolicy<P extends PolicyLike>(r: Resolution<P & { scope: PolicyScope }>, names: { group: (id: string) => string; site: (id: string) => string }): string {
+  return explain(r, (p) => (p.scope === 'group' ? `the policy of group ${names.group(p.groupId!)}` : p.scope === 'site' ? `the override for site ${names.site(p.siteId!)}` : 'the business policy'));
 }
 
 export function policyWindow(p: Pick<PolicyLike, 'timeZone' | 'windows'> | null): UpdateWindow | null {

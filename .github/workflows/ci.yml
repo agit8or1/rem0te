@@ -138,6 +138,13 @@ jobs:
       - name: System inventory tests
         run: node apps/api/scripts/unit-system-inventory.mjs
 
+      # Automatic snapshots (0.35): who can be asked, when a key is due (the
+      # schedule, the watched interval, the failure back-off), what the tab is
+      # told, the Settings validation, the fleet-wide pacer, and the stored
+      # size of a typical snapshot from the real sanitiser.
+      - name: Automatic snapshot tests
+        run: node apps/api/scripts/unit-snapshot-schedule.mjs
+
       # Scheduled client updates (0.32): the update window's validation, time
       # zones (+5:30, +5:45, a 30-minute DST zone), windows across midnight,
       # both DST transitions, next opening/closing against a minute-by-minute
@@ -198,6 +205,21 @@ jobs:
       # version comparison, and bulk's endpointIds XOR targetGroupId.
       - name: Dynamic group tests
         run: node apps/api/scripts/unit-dynamic-groups.mjs
+
+      # Group-scoped policies (0.35): computer > group > site > business >
+      # global for monitors and client updates, two groups decided by
+      # priority (1 first) in every row order, membership changes dropping a
+      # group policy, and what beat what reported.
+      - name: Group policy tests
+        run: node apps/api/scripts/unit-group-policy.mjs
+
+      # Polish (0.35): connectivity's three states — online inside the
+      # heartbeat window, agent_silent when reachable through RustDesk without
+      # one, offline — with the API and web copies agreeing; restart and update
+      # wording by platform; black-or-white ink on any branding accent at
+      # 4.5:1 or better across 4096 colours.
+      - name: Polish tests
+        run: node apps/api/scripts/unit-polish.mjs
 
       # Metric history (0.33): samples from heartbeat values, the hourly
       # roll-up, which hours a pass rolls, retention caps and gap detection.
@@ -330,8 +352,17 @@ jobs:
       - name: UI suite (browser)
         id: ui
         if: ${{ !cancelled() }}
+        # Every port the suite listens on, stated (0.35): web and API, the
+        # loopback SMTP sink (Email settings) and the reference ClientSt0r peer
+        # (the History tab's AI summary). The suite's own API runs with every
+        # background sweep off, STALE_SWEEP and SNAPSHOT_SWEEP included (set
+        # in e2e-ui.mjs, checked by the invariants).
         env:
           OUT_DIR: ${{ runner.temp }}/ui-screenshots
+          UI_WEB_PORT: '3501'
+          UI_API_PORT: '3502'
+          UI_SMTP_PORT: '3503'
+          UI_PEER_PORT: '3504'
         run: node apps/web/scripts/e2e-ui.mjs
       - name: Logs
         if: failure()

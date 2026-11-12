@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { AlertTriangle, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { ago } from './device-model';
+import { connectivityLabel } from '@/lib/connectivity';
 
 /**
  * Processes, Services and Network (0.33): full read-only snapshots.
@@ -20,6 +21,13 @@ import { ago } from './device-model';
  * how old it is. Refresh asks for a new one exactly as the Diagnostics tab's
  * Run does — POST /diagnostics/runs with the key and nothing else — and the
  * computer collects it on its next check-in.
+ *
+ * 0.35: the server also asks for each snapshot on its own — every few hours,
+ * and every few minutes while this tab is open (snapshot-schedule.ts). The
+ * tab re-reads every 30 s while it is visible (4 s while a refresh is on its
+ * way), so a new snapshot appears without a reload, and when nothing can
+ * arrive it says why (`automatic.reason`) rather than inviting a Refresh
+ * that would only expire.
  *
  * There is deliberately nothing here that acts on the computer: no end
  * process, stop, start or restart. Changing a computer is a signed
@@ -33,15 +41,74 @@ type RunStatus = 'REQUESTED' | 'DELIVERED' | 'RUNNING' | 'COMPLETED' | 'FAILED' 
 interface Run {
   id: string; key: string; status: RunStatus;
   requestedAt: string; completedAt: string | null;
-  requestedBy: { id: string; name: string | null };
+  requestedBy: { id: string | null; name: string | null };
+  /** 0.35: the server asked on its own (no requester). */
+  automatic?: boolean;
   error: string | null; truncated: boolean; resultBytes: number | null;
   result: Record<string, unknown> | null;
+}
+type AutoReason =
+  | 'not_active' | 'unsupported_platform' | 'not_bound' | 'agent_unknown' | 'agent_too_old' | 'agent_silent'
+  | 'disabled' | 'key_off' | 'process_off';
+interface Automatic {
+  state: 'on' | 'off' | 'blocked';
+  reason: AutoReason | null;
+  /** Roughly when the next automatic snapshot is asked for (it goes on the first check-in after). */
+  nextAt: string | null;
+  intervalMinutes: number | null;
+  basis: 'schedule' | 'watch' | null;
 }
 interface Snapshot {
   key: SnapshotKey; label: string;
   supported: boolean; agentBound: boolean; isOnline: boolean; lastSeenAt: string | null;
+  agentVersion?: string | null; agentSilent?: boolean; automatic?: Automatic;
   takenAt: string | null; latest: Run | null; pending: Run | null; lastFailure: Run | null;
 }
+
+/** While the tab is open and visible: re-read this often (the server also treats a read as "someone is looking"). */
+export const SNAPSHOT_REFETCH_MS = 30_000;
+/** While a refresh is on its way. */
+export const SNAPSHOT_PENDING_REFETCH_MS = 4_000;
+
+function every(min: number | null): string {
+  if (!min) return '';
+  if (min < 60) return `every ${min} minutes`;
+  const h = min / 60;
+  return h === 1 ? 'every hour' : Number.isInteger(h) ? `every ${h} hours` : `every ${min} minutes`;
+}
+function inAbout(at: string): string {
+  const ms = new Date(at).getTime() - Date.now();
+  if (!Number.isFinite(ms)) return '';
+  if (ms <= 60_000) return 'within a few minutes';
+  const m = Math.round(ms / 60_000);
+  if (m < 90) return `in about ${m} minutes`;
+  return `in about ${Math.round(m / 60)} hours`;
+}
+
+/**
+ * Why nothing will arrive on its own, said exactly. Null when automatic
+ * collection is on and the computer can be asked. The wording for a silent
+ * agent leads with the header's own label ("Reachable (RustDesk) · agent
+ * silent 12 d", lib/connectivity.ts) when RustDesk still reaches it, and the
+ * window is the same HEARTBEAT_STALE_MS.
+ */
+export function automaticBlocker(s: Snapshot): string | null {
+  const a = s.automatic;
+  if (!a) return null;
+  switch (a.reason) {
+    case 'unsupported_platform': return 'Collected by the Windows agents only. The Linux and macOS agents report inventory and pending updates, and run nothing the console asks for.';
+    case 'not_bound': return 'This computer has never authenticated with a device secret, so it cannot be asked for anything. Re-run the installer on it once.';
+    case 'not_active': return 'This computer is not active (archived or not enrolled yet), so nothing is collected from it.';
+    case 'agent_unknown': return 'This computer’s agent has never reported its version, so it is not asked automatically: it probably predates 0.33, which first collected this. Reinstall the agent from the Specs tab.';
+    case 'agent_too_old': return `This computer’s agent (${s.agentVersion ?? 'unknown'}) predates 0.33, which first collected this, so it is not asked automatically and a Refresh would expire unanswered. Reinstall the agent from the Specs tab.`;
+    case 'agent_silent': return `${s.isOnline ? `${connectivityLabel('agent_silent', s.lastSeenAt)}. ` : ''}Its agent has not checked in since ${ago(s.lastSeenAt)}${s.isOnline ? ', so remote control should work but' : ', so'} nothing can be collected until it does.`;
+    case 'disabled': return 'Automatic snapshots are turned off on this server (Settings → Monitoring & API). Refresh still asks for one.';
+    case 'process_off': return 'Automatic snapshots are switched off where this server runs (SNAPSHOT_SWEEP=off). Refresh still asks for one.';
+    case 'key_off': return 'This snapshot is not on an automatic schedule (Settings → Monitoring & API). Refresh asks for one.';
+    default: return null;
+  }
+}
+
 
 /** A snapshot older than this is called out: it is a picture, not a live view. */
 const OLD_MS = 24 * 3600_000;
@@ -72,8 +139,10 @@ function useSnapshot(endpointId: string, key: SnapshotKey) {
   return useQuery({
     queryKey: ['diagnostics-snapshot', endpointId, key],
     queryFn: () => api.get(`/endpoints/${endpointId}/diagnostics/snapshots/${key}`).then((r) => r.data?.data as Snapshot),
-    // Polled only while a refresh is on its way.
-    refetchInterval: (q) => (q.state.data?.pending ? 4000 : false),
+    // Fast while a refresh is on its way, then every 30 s while the tab is
+    // visible (react-query stops when the browser tab is hidden), so an
+    // automatic snapshot shows up without a reload.
+    refetchInterval: (q) => (q.state.data?.pending ? SNAPSHOT_PENDING_REFETCH_MS : SNAPSHOT_REFETCH_MS),
   });
 }
 
@@ -98,13 +167,20 @@ function SnapshotFrame({ endpointId, snapKey, title, note, children }: {
   if (q.isLoading) return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading…</div>;
   if (q.isError || !q.data) return <p className="text-sm text-red-600">{errText(q.error, 'Not available for this computer.')}</p>;
   const s = q.data;
+  // Refresh cannot work at all on these: the button is disabled and the reason shown.
   const blocked = !s.supported
-    ? 'Collected by the standard Windows agent only. The Linux agent reports inventory and pending updates, and runs nothing the console asks for.'
+    ? 'Collected by the Windows agents only. The Linux and macOS agents report inventory and pending updates, and run nothing the console asks for.'
     : !s.agentBound
       ? 'This computer has never authenticated with a device secret, so it cannot be asked for anything. Re-run the installer on it once.'
       : null;
+  const auto = s.automatic;
+  const why = blocked ? null : automaticBlocker(s);
   const old = !!s.takenAt && Date.now() - new Date(s.takenAt).getTime() > OLD_MS;
   const waiting = !!s.pending || refresh.isPending;
+  const by = s.latest?.automatic ? ', automatically' : s.latest?.requestedBy.name ? `, asked for by ${s.latest.requestedBy.name}` : '';
+  const schedule = auto?.state === 'on' && auto.intervalMinutes
+    ? auto.basis === 'watch' ? `${every(auto.intervalMinutes)} while this tab is open` : every(auto.intervalMinutes)
+    : null;
 
   return (
     <Card data-testid={`snapshot-${snapKey}`}>
@@ -114,19 +190,29 @@ function SnapshotFrame({ endpointId, snapKey, title, note, children }: {
             {title}
             <Badge variant="outline" className="gap-1 font-normal"><ShieldCheck className="h-3 w-3" />Read-only snapshot</Badge>
           </CardTitle>
-          <p className="text-xs text-muted-foreground" data-testid="snapshot-age">
+          <p className="text-xs text-muted-foreground" data-testid="snapshot-age" data-taken-at={s.takenAt ?? ''}>
             {s.takenAt
-              ? <>Taken <span title={formatDate(s.takenAt)}>{ago(s.takenAt)}</span> ({formatDate(s.takenAt)}){s.latest?.requestedBy.name ? `, asked for by ${s.latest.requestedBy.name}` : ''}. This is a picture of that moment, not a live view.</>
-              : 'Never taken on this computer. Refresh asks for one.'}
+              ? <>Taken <span title={formatDate(s.takenAt)}>{ago(s.takenAt)}</span> ({formatDate(s.takenAt)}){by}. This is a picture of that moment, not a live view.</>
+              : blocked || why
+                ? 'Never taken on this computer.'
+                : auto?.state === 'on'
+                  ? 'Not taken yet. It is asked for automatically on this computer’s next check-in; Refresh asks now.'
+                  : 'Never taken on this computer. Refresh asks for one.'}
           </p>
+          {auto?.state === 'on' && !s.pending && (
+            <p className="text-xs text-muted-foreground" data-testid="snapshot-next">
+              Refreshed automatically {schedule}.{auto.nextAt && <> Next automatic refresh around <span title={formatDate(auto.nextAt)}>{formatDate(auto.nextAt)}</span> ({inAbout(auto.nextAt)}).</>}
+            </p>
+          )}
+          {why && <p className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-1" data-testid="snapshot-blocked" data-reason={auto?.reason ?? ''}><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />{why}</p>}
           {old && <p className="text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" />Over a day old — refresh before relying on it.</p>}
           {s.pending && (
             <p className="text-xs text-muted-foreground" data-testid="snapshot-pending">
-              Refresh requested {ago(s.pending.requestedAt)} — {s.pending.status === 'REQUESTED' ? 'waiting for the computer’s next check-in (normally within three minutes; it expires after fifteen).' : 'the computer is collecting it.'}
+              {s.pending.automatic ? 'Automatic refresh' : 'Refresh'} requested {ago(s.pending.requestedAt)} — {s.pending.status === 'REQUESTED' ? 'waiting for the computer’s next check-in (normally within three minutes; it expires after fifteen).' : 'the computer is collecting it.'} This page updates when it arrives.
             </p>
           )}
           {s.lastFailure?.error && <p className="text-xs text-red-600 dark:text-red-400">Last refresh {s.lastFailure.status === 'EXPIRED' ? 'expired' : 'failed'} {ago(s.lastFailure.completedAt ?? s.lastFailure.requestedAt)}: {s.lastFailure.error}</p>}
-          {!s.isOnline && s.supported && <p className="text-xs text-muted-foreground">This computer looks offline (last seen {ago(s.lastSeenAt)}).</p>}
+          {!s.isOnline && s.supported && !why && <p className="text-xs text-muted-foreground">This computer looks offline (last seen {ago(s.lastSeenAt)}).</p>}
         </div>
         <Button size="sm" variant="outline" disabled={!!blocked || waiting} onClick={() => refresh.mutate()} data-testid="snapshot-refresh">
           {waiting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}

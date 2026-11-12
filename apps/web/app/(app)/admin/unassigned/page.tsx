@@ -7,7 +7,7 @@ import { adminApi, businessesApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { StatusIndicator } from '@/components/common/status-indicator';
+import { ConnectivityIndicator } from '@/components/common/connectivity-indicator';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { usePermissions } from '@/lib/auth';
@@ -116,7 +116,7 @@ export default function UnassignedDevicesPage() {
                         {formatDate((node?.lastSeenAt ?? dev.lastSeenAt) as string)}
                       </td>
                       <td className="px-4 py-3">
-                        <StatusIndicator status={(dev.isOnline as boolean) ? 'online' : 'offline'} />
+                        <ConnectivityIndicator x={dev} short />
                       </td>
                       <td className="px-4 py-3">
                         {assigningId === id ? (

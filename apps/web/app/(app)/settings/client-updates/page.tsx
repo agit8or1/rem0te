@@ -16,16 +16,23 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiError } from '@/components/security-controls/shared';
+import { connectivityFrom, connectivityHint, connectivityLabel, CONNECTIVITY_DOT } from '@/lib/connectivity';
 
 /**
  * Settings → Client updates (0.32).
  *
- * A business — and, optionally, each of its sites — gets a policy that lets
+ * A business — and, optionally, each of its sites and (0.35) device groups —
+ * gets a policy that lets
  * the server update outdated RustDesk clients by itself, but only inside an
  * update window outside working hours. Everything this page shows comes from
  * the API: the window's next opening, why a computer is waiting, and why one
  * will never update automatically. Turning a policy on asks the person to
  * confirm it is them (the step-up dialog); turning it off does not.
+ *
+ * Precedence (0.35), decided by the API: a device group's policy beats a site
+ * override, which beats the business policy; between two groups a computer
+ * is in, the lower priority number wins. The Computers table says which one
+ * governs each computer and why.
  */
 
 const fmt = (d: string | null | undefined) => (d ? new Date(d).toLocaleString() : '—');
@@ -131,6 +138,15 @@ export default function ClientUpdatesPage() {
             </Card>
           )}
 
+          <Card data-testid="cu-groups">
+            <CardHeader><CardTitle className="text-sm">Device groups</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">{d.precedence} Members are counted now, over the computers you can see; a rule group&apos;s members change by themselves as computers change.</p>
+              {d.groups.length === 0 && <p className="text-sm text-muted-foreground">This business has no device groups. Make one on the <Link href="/endpoints" className="underline">device list</Link>.</p>}
+              {d.groups.map((g) => <GroupRow key={g.id} businessId={d.business.id} group={g} canEdit={d.may.edit} setNotice={setNotice} />)}
+            </CardContent>
+          </Card>
+
           <Computers rows={computers.data?.computers ?? null} error={computers.isError ? apiError(computers.error).message : null} />
         </>
       )}
@@ -170,8 +186,51 @@ function SiteRow({ businessId, site, canEdit, setNotice }: {
   );
 }
 
-function PolicyForm({ businessId, siteId, current, defaultTz, canEdit, setNotice, onCancel }: {
-  businessId: string; siteId: string | null; current: PolicyView | null; defaultTz: string; canEdit: boolean;
+const USE_TEXT: Record<string, string> = {
+  unreadable: 'Its rule can no longer be read, so it matches no computer and its policy applies to none.',
+  reads_alerts: 'Its rule picks computers by their alerts, so its policy applies to none. Change the rule or remove the policy.',
+};
+
+function GroupRow({ businessId, group, canEdit, setNotice }: {
+  businessId: string; group: PolicyPayload['groups'][number]; canEdit: boolean; setNotice: (n: { ok: boolean; text: string } | null) => void;
+}) {
+  const qc = useQueryClient();
+  const [adding, setAdding] = useState(false);
+  const remove = useMutation({
+    mutationFn: () => clientUpdatesApi.removeGroupPolicy(businessId, group.id),
+    onSuccess: (r) => {
+      const n = (r.data?.data as { clearedQueued: number })?.clearedQueued ?? 0;
+      setNotice({ ok: true, text: `${group.name} no longer has a policy; its computers follow their site or business policy.${n ? ` ${n} automatic request${n === 1 ? '' : 's'} withdrawn.` : ''}` });
+      qc.invalidateQueries({ queryKey: ['client-update-policy'] }); qc.invalidateQueries({ queryKey: ['client-update-computers'] });
+    },
+    onError: (e) => setNotice({ ok: false, text: apiError(e).message }),
+  });
+  const p = group.policy;
+  return (
+    <div className="space-y-2 rounded-md border p-3" data-testid={`cu-group-${group.id}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="font-medium">
+          {group.name}{' '}
+          <Badge variant="outline" className="ml-1">{group.kind === 'rule' ? 'Rule' : 'Static'}</Badge>
+          {p && <Badge variant="secondary" className="ml-1">Priority {p.priority}</Badge>}
+          {p && group.members !== null && <span className="ml-2 text-xs text-muted-foreground">{group.members} computer{group.members === 1 ? '' : 's'} now</span>}
+        </div>
+        {canEdit && (p
+          ? <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}><Trash2 className="mr-1 h-4 w-4" />Remove policy</Button>
+          : !adding && <Button variant="outline" size="sm" onClick={() => setAdding(true)}><Plus className="mr-1 h-4 w-4" />Policy for this group</Button>)}
+      </div>
+      {group.use && USE_TEXT[group.use] && <p className="text-sm text-destructive">{USE_TEXT[group.use]}</p>}
+      {p && <WindowLine p={p} />}
+      {(p || adding) && (
+        <PolicyForm key={`g-${group.id}-${p?.updatedAt ?? 'new'}`} businessId={businessId} siteId={null} groupId={group.id} current={p}
+          defaultTz={browserTimeZone()} canEdit={canEdit} setNotice={setNotice} onCancel={p ? undefined : () => setAdding(false)} />
+      )}
+    </div>
+  );
+}
+
+function PolicyForm({ businessId, siteId, groupId = null, current, defaultTz, canEdit, setNotice, onCancel }: {
+  businessId: string; siteId: string | null; groupId?: string | null; current: PolicyView | null; defaultTz: string; canEdit: boolean;
   setNotice: (n: { ok: boolean; text: string } | null) => void; onCancel?: () => void;
 }) {
   const qc = useQueryClient();
@@ -180,14 +239,18 @@ function PolicyForm({ businessId, siteId, current, defaultTz, canEdit, setNotice
   const [windows, setWindows] = useState<WindowSpec[]>(current?.windows?.length ? current.windows : [DEFAULT_WINDOW]);
   const [skipActiveSession, setSkipActiveSession] = useState(current?.skipActiveSession ?? true);
   const [skipLoggedOnUser, setSkipLoggedOnUser] = useState(current?.skipLoggedOnUser ?? false);
+  const [priority, setPriority] = useState<string>(current?.priority != null ? String(current.priority) : '');
   const zones = useMemo(() => knownTimeZones(), []);
-  const listId = `tz-${siteId ?? 'business'}`;
+  const listId = `tz-${groupId ?? siteId ?? 'business'}`;
 
   const save = useMutation({
-    mutationFn: () => clientUpdatesApi.setPolicy({ businessId, siteId, enabled, timeZone, windows, skipActiveSession, skipLoggedOnUser }),
+    mutationFn: () => clientUpdatesApi.setPolicy({
+      businessId, siteId, enabled, timeZone, windows, skipActiveSession, skipLoggedOnUser,
+      ...(groupId ? { groupId, priority: priority === '' ? null : Number(priority) } : {}),
+    }),
     onSuccess: (r) => {
       const n = (r.data?.data as { clearedQueued: number })?.clearedQueued ?? 0;
-      setNotice({ ok: true, text: `Saved — automatic updates are ${enabled ? 'on' : 'off'}${siteId ? ' for this site' : ''}.${n ? ` ${n} automatic request${n === 1 ? '' : 's'} withdrawn.` : ''}` });
+      setNotice({ ok: true, text: `Saved — automatic updates are ${enabled ? 'on' : 'off'}${groupId ? ' for this group' : siteId ? ' for this site' : ''}.${n ? ` ${n} automatic request${n === 1 ? '' : 's'} withdrawn.` : ''}` });
       qc.invalidateQueries({ queryKey: ['client-update-policy'] }); qc.invalidateQueries({ queryKey: ['client-update-computers'] });
     },
     onError: (e) => setNotice({ ok: false, text: apiError(e).message }),
@@ -201,6 +264,13 @@ function PolicyForm({ businessId, siteId, current, defaultTz, canEdit, setNotice
         <input type="checkbox" checked={enabled} disabled={disabled} onChange={(e) => setEnabled(e.target.checked)} />
         Update outdated clients automatically inside the window
       </label>
+      {groupId && (
+        <div className="space-y-1 md:w-96">
+          <Label htmlFor={`${listId}-priority`}>Priority (1 first)</Label>
+          <Input id={`${listId}-priority`} type="number" min={1} max={999} value={priority} disabled={disabled} onChange={(e) => setPriority(e.target.value)} placeholder="e.g. 10" />
+          <p className="text-xs text-muted-foreground">A computer in several groups with a policy follows the one with the lowest number. Two groups of this business cannot share a number.</p>
+        </div>
+      )}
       <div className="space-y-1 md:w-96">
         <Label htmlFor={`${listId}-input`}>Time zone (the window’s times are in this zone)</Label>
         <Input id={`${listId}-input`} list={listId} value={timeZone} disabled={disabled} onChange={(e) => setTimeZone(e.target.value)} placeholder="Europe/London" />
@@ -270,6 +340,7 @@ function Computers({ rows, error }: { rows: ComputerRow[] | null; error: string 
                 <tr>
                   <th className="py-2 pr-3 text-left font-medium">Computer</th>
                   <th className="py-2 pr-3 text-left font-medium">Site</th>
+                  <th className="py-2 pr-3 text-left font-medium">Policy</th>
                   <th className="py-2 pr-3 text-left font-medium">RustDesk</th>
                   <th className="py-2 text-left font-medium">Automatic updates</th>
                 </tr>
@@ -279,12 +350,18 @@ function Computers({ rows, error }: { rows: ComputerRow[] | null; error: string 
                   <tr key={r.id} className="border-b last:border-0 align-top">
                     <td className="py-2 pr-3">
                       <div className="flex items-center gap-1.5 font-medium">
-                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.isOnline ? 'bg-green-500' : 'bg-muted-foreground/40'}`} title={r.isOnline ? 'Online' : 'Offline'} />
+                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${CONNECTIVITY_DOT[connectivityFrom(r)]}`} data-connectivity={connectivityFrom(r)} title={`${connectivityLabel(connectivityFrom(r), r.lastSeenAt)}. ${connectivityHint(connectivityFrom(r))}`} />
                         <Link href={`/endpoints/${r.id}`} className="truncate hover:underline">{r.name}</Link>
                       </div>
                       <div className="text-muted-foreground">{r.platform ?? 'unknown platform'}</div>
                     </td>
                     <td className="py-2 pr-3">{r.site?.name ?? '—'}{r.policy?.scope === 'site' && <span className="text-muted-foreground"> (override)</span>}</td>
+                    <td className="py-2 pr-3" title={r.policy?.why}>
+                      {!r.policy ? <span className="text-muted-foreground">None</span>
+                        : r.policy.scope === 'group' ? <>Group {r.policy.group?.name} <span className="text-muted-foreground">(priority {r.policy.group?.priority})</span></>
+                          : r.policy.scope === 'site' ? 'Site override' : 'Business'}
+                      {r.policy?.alsoIn?.length ? <div className="text-muted-foreground">ahead of {r.policy.alsoIn.map((g) => `${g.name} (${g.priority})`).join(', ')}</div> : null}
+                    </td>
                     <td className="py-2 pr-3 font-mono">{r.version ? `v${r.version}` : '—'}{r.queued?.targetVersion && <span className="text-muted-foreground"> → v{r.queued.targetVersion}</span>}</td>
                     <td className="py-2">
                       <Badge variant={STATE_BADGE[r.state].variant} className="mr-2 text-[10px]">{STATE_BADGE[r.state].label}</Badge>

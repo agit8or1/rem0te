@@ -23,6 +23,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/lib/auth';
 import { cn, formatDate } from '@/lib/utils';
+import { connectivityHint, connectivityLabel, connectivityOf } from '@/lib/connectivity';
 
 // ─── Types (apps/api/src/offboarding/offboarding.service.ts) ─────────────────
 
@@ -576,7 +577,9 @@ function PreviewBody({
                       <span className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">{c.name}</span>
                         {preview.scope === 'platform' && c.businessName && <span className="text-xs text-muted-foreground">{c.businessName}</span>}
-                        {c.online
+                        {c.online && connectivityOf(c.online, c.lastSeenAt) === 'agent_silent'
+                          ? <Badge variant="warning" className="font-normal" title={connectivityHint('agent_silent')}><Wifi className="mr-1 h-3 w-3" />{connectivityLabel('agent_silent', c.lastSeenAt)}</Badge>
+                          : c.online
                           ? <Badge variant="success" className="font-normal"><Wifi className="mr-1 h-3 w-3" />Online</Badge>
                           : <Badge variant="secondary" className="font-normal"><WifiOff className="mr-1 h-3 w-3" />Offline{c.lastSeenAt ? ` · seen ${formatDate(c.lastSeenAt)}` : ''}</Badge>}
                         {c.rotationAlreadyPending && <Badge variant="warning" className="font-normal">A rotation is already pending</Badge>}

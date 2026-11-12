@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
+import { connectivityOf, heartbeatCutoff, HEARTBEAT_STALE_MS, type Connectivity } from '../common/connectivity';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -66,6 +67,10 @@ interface SqlRow {
 }
 
 const SEVERITY = [null, 'INFO', 'WARNING', 'CRITICAL'] as const;
+/** 2 checking in, 1 reachable with the agent silent, 0 offline — connectivityOf in SQL, for the Online sort. */
+const CONNECTIVITY_RANK = `(CASE WHEN NOT e."isOnline" THEN 0 WHEN e."lastSeenAt" >= now() - interval '${HEARTBEAT_STALE_MS / 1000} seconds' THEN 2 ELSE 1 END)`;
+/** The CSV's Connectivity column: "Online" (yes) is reachable; this says whether the agent is reporting. */
+const CONNECTIVITY_CSV: Record<Connectivity, string> = { online: 'agent checking in', agent_silent: 'reachable (RustDesk), agent silent', offline: 'offline' };
 
 /** A rule group as the list evaluates it: its business and its parsed rule (null = unreadable, matches nothing). */
 export type RuleGroup = { id: string; name: string; customerId: string; rule: ListFilters | null };
@@ -123,7 +128,12 @@ export class EndpointListService {
   private filterConds(f: ListFilters): Prisma.EndpointWhereInput[] {
     const and: Prisma.EndpointWhereInput[] = [];
     if (f.siteId) and.push({ siteId: f.siteId });
-    if (f.online) and.push({ isOnline: f.online === 'online' });
+    // Connectivity (0.35), the three states of common/connectivity.ts: isOnline
+    // alone is "reachable" (hbbs keeps it true for a silent agent), so
+    // "online" also needs a heartbeat inside the sweep's window.
+    if (f.online === 'online') and.push({ isOnline: true, lastSeenAt: { gte: heartbeatCutoff() } });
+    if (f.online === 'silent') and.push({ isOnline: true, OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: heartbeatCutoff() } }] });
+    if (f.online === 'offline') and.push({ isOnline: false });
     if (f.agent === 'signed') and.push({ updateChannel: 'signed' });
     if (f.agent === 'standard') and.push({ OR: [{ updateChannel: null }, { updateChannel: { not: 'signed' } }], agentVersion: { not: null } });
     if (f.agent === 'none') and.push({ OR: [{ updateChannel: null }, { updateChannel: { not: 'signed' } }], agentVersion: null });
@@ -192,7 +202,8 @@ export class EndpointListService {
     // Whitelisted fragments only: `sort` is validated against SORT_KEYS, and
     // nothing from the request is ever spliced into this string.
     const expr: Record<SortKey, string> = {
-      online: `e."isOnline" ${dir === 'asc' ? 'DESC' : 'ASC'}`,
+      // Checking in, then reachable with the agent silent, then offline (0.35). The window is a constant, not request input.
+      online: `${CONNECTIVITY_RANK} ${dir === 'asc' ? 'DESC' : 'ASC'}`,
       name: `lower(e.name) ${d}`,
       business: `lower(c.name) ${d} NULLS LAST`,
       site: `lower(s.name) ${d} NULLS LAST`,
@@ -389,6 +400,28 @@ export class EndpointListService {
     });
   }
 
+  /**
+   * Every group ONE computer is in, as this caller sees it (0.35, the device
+   * page): its static memberships, plus each rule group of its business whose
+   * rule it matches — evaluateRuleGroups over just this computer, with the
+   * caller's own visibility and alert access, so the device page and the
+   * device list's Groups column cannot disagree. A rule group the caller may
+   * not evaluate (its rule reads alerts and they may not see alerts) is left
+   * out, as the list's facet leaves it out. The caller must already have
+   * been shown the computer (assertEndpointInScope). `status: 'all'`, so an
+   * archived computer still shows the rule groups it matches, as the list
+   * does with Archived chosen.
+   */
+  async groupsOfComputer(
+    actor: ActorContext, e: { id: string; customerId: string | null }, statics: { id: string; name: string }[],
+  ): Promise<{ id: string; name: string; kind: 'static' | 'rule' }[]> {
+    const groups = e.customerId ? await this.ruleGroupsOf([e.customerId]) : [];
+    const members = groups.length ? await this.evaluateRuleGroups(actor, groups, { status: 'all', within: [e.id] }) : new Map<string, string[] | null>();
+    const rule = groups.filter((g) => members.get(g.id)?.includes(e.id)).map((g) => ({ id: g.id, name: g.name, kind: 'rule' as const }));
+    return [...statics.map((g) => ({ id: g.id, name: g.name, kind: 'static' as const })), ...rule]
+      .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.id.localeCompare(b.id));
+  }
+
   private rowView(r: SqlRow, alerts: AlertAccess, now: number) {
     const seesAlerts = alerts.visible && (alerts.endpointIds === null || alerts.endpointIds.includes(r.id));
     const sampled = r.liveSampledAt ? new Date(r.liveSampledAt) : null;
@@ -400,6 +433,7 @@ export class EndpointListService {
       id: r.id, name: r.name, hostname: r.hostname,
       platform: r.platform, os: r.osCaption ?? r.osVersion ?? null,
       status: r.status, isOnline: r.isOnline, lastSeenAt: r.lastSeenAt,
+      connectivity: connectivityOf(r.isOnline, r.lastSeenAt, now),
       deviceClass: r.deviceClass, accessMode: r.accessMode,
       business: r.customerId ? { id: r.customerId, name: r.customerName } : null,
       site: r.siteId ? { id: r.siteId, name: r.siteName } : null,
@@ -466,7 +500,7 @@ export class EndpointListService {
       alertsVisible: alerts.visible,
       facets,
       generatedAt: new Date(now),
-      thresholds: { liveStaleMs: LIVE_STALE_MS, patchStaleMs: PATCH_STALE_AFTER_MS },
+      thresholds: { liveStaleMs: LIVE_STALE_MS, patchStaleMs: PATCH_STALE_AFTER_MS, heartbeatStaleMs: HEARTBEAT_STALE_MS },
     };
   }
 
@@ -528,7 +562,7 @@ export class EndpointListService {
     const now = Date.now();
     const views = rows.map((r) => this.rowView(r, alerts, now));
     const header = [
-      'Name', 'Hostname', 'Business', 'Site', 'Groups', 'OS', 'Status', 'Online', 'Last seen (UTC)',
+      'Name', 'Hostname', 'Business', 'Site', 'Groups', 'OS', 'Status', 'Online', 'Connectivity', 'Last seen (UTC)',
       'Agent', 'Agent version', 'Logged-in user',
       'CPU %', 'Memory used %', 'Disk used %', 'Resources sampled (UTC)', 'Resources stale',
       'Pending updates', 'Restart pending', 'Update scan source', 'Update scan (UTC)', 'Update scan stale',
@@ -537,7 +571,7 @@ export class EndpointListService {
     const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : '');
     const yn = (b: boolean | null | undefined) => (b === null || b === undefined ? '' : b ? 'yes' : 'no');
     const lines = [header, ...views.map((v) => [
-      v.name, v.hostname ?? '', v.business?.name ?? '', v.site?.name ?? '', groupsCell(v.groups), v.os ?? v.platform ?? '', v.status, yn(v.isOnline), iso(v.lastSeenAt),
+      v.name, v.hostname ?? '', v.business?.name ?? '', v.site?.name ?? '', groupsCell(v.groups), v.os ?? v.platform ?? '', v.status, yn(v.isOnline), CONNECTIVITY_CSV[v.connectivity], iso(v.lastSeenAt),
       v.agent.type, v.agent.version ?? '', v.loggedOnUser ?? '',
       v.resources?.cpuPercent ?? '', v.resources?.memoryUsedPercent ?? '', v.resources?.diskUsedPercent ?? '', iso(v.resources?.sampledAt), yn(v.resources?.stale),
       v.patches.pendingCount ?? '', yn(v.patches.rebootPending), v.patches.source, iso(v.patches.checkedAt), yn(v.patches.stale),
