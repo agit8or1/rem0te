@@ -227,6 +227,24 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'phone-width',
+    title: 'Using Rem0te on a Phone',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          On a screen narrower than 768 px the menu is not drawn beside the page. The{' '}
+          <strong className="text-foreground">menu button</strong> at the left of the top bar opens it over the page,
+          with everything the sidebar holds: the business switcher, Help, the theme and Sign out. Choosing a page closes
+          it, as do <strong className="text-foreground">Esc</strong>, tapping outside it and its close button.
+        </p>
+        <p>
+          Wide tables — the device list, the reports, API keys — scroll sideways inside their own box instead of
+          widening the page, so swipe the table rather than the page. A device&apos;s tab row scrolls the same way.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'global-search',
     title: 'Searching Everything (Ctrl+K)',
     content: (

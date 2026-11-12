@@ -187,7 +187,7 @@ export function PublicAddressCard() {
               <li>Enrolled computers are not affected: they check in through the RustDesk relay host.</li>
               <li>Links and downloads already handed out keep the old address.</li>
               <li>
-                SSO: update the redirect URI at each provider to <code className="font-mono">{(trimmed || info.effective)}/api/v1/auth/sso/callback</code>.
+                SSO: update the redirect URI at each provider to <code className="font-mono break-all">{(trimmed || info.effective)}/api/v1/auth/sso/callback</code>.
               </li>
               <li>
                 {info.webauthnRpIdPinned
