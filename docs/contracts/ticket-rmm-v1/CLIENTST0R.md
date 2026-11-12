@@ -27,6 +27,14 @@ Shapes, what rem0te sends and three open questions are in `INTEGRATION_COORDINAT
 `proposed/`. These are proposals: build them only once they are acknowledged there. Until then rem0te shows
 *Needs ClientSt0r support for device_timeline_v1* and sends nothing.
 
+## Proposed for revision 5: agent-silent alerts and tray support requests (rem0te 0.36.1, not agreed)
+
+`AGENT_SILENT` as an alert kind (P13), a signed `support_request.created` event (P14) and an authenticated read for
+a request and its attachments (P15). rem0te proposes to send them **only to a peer that declares
+`contract_revision` ≥ 5** in its capabilities document, never to an older one, because a strict validator would
+refuse them (your R2). Nothing is built on rem0te's side and nothing is sent. Shapes and three questions:
+`INTEGRATION_COORDINATION.md` §5B.
+
 ## Measured: ClientSt0r 3.17.659 does not interoperate
 
 `apps/api/scripts/interop-clientst0r.mjs` starts a real rem0te API on a scratch database and runs

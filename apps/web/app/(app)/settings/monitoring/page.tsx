@@ -34,8 +34,9 @@ type Rule = {
   key: string; kind: MonitorKindId; name: string; enabled: boolean; severity: Severity; params: Record<string, unknown>; updatedAt: string;
 };
 type Starter = { key: string; kind: MonitorKindId; name: string; severity: Severity; params: Record<string, unknown> };
-/** `optional` (0.36): offered one at a time in New monitor, never by Add recommended. */
-type Rules = { rules: Rule[]; recommended: Starter[]; optional?: Starter[]; may: { global: boolean; business: boolean } };
+type Rules = { rules: Rule[]; recommended: Starter[]; may: { global: boolean; business: boolean } };
+/** Kinds whose recommended starter fills in New monitor's key, name, severity and params when picked (0.36; from the recommended set since 0.36.1). */
+const PREFILL: readonly MonitorKindId[] = ['AGENT_SILENT'];
 type Window = { id: string; scopeKey: string; ruleKeys: string[]; reason: string; startsAt: string; endsAt: string; revokedAt: string | null; active: boolean };
 /** A webhook, or (0.34) a confirmed email recipient. `email`/`confirmed` come back from the server for display only. */
 type Dest = { label: string; url: string } | { label: string; recipientId: string; email?: string | null; confirmed?: boolean };
@@ -69,10 +70,10 @@ const KIND: Record<MonitorKindId, { label: string; hint: string; fields: { k: st
     ],
   },
   REBOOT_PENDING: { label: 'Restart pending', hint: 'The computer has reported a pending restart (Windows, or a Linux package manager) for this long.', fields: [{ k: 'hours', label: 'Hours', type: 'int', def: 72 }] },
-  // 0.36. Opt-in: never added by “Add recommended”.
+  // 0.36. Never on by default; one of the monitors “Add recommended” offers since 0.36.1.
   AGENT_SILENT: {
     label: 'Agent silent (RustDesk still reachable)',
-    hint: 'RustDesk still reaches the computer but its agent has not checked in for this long (30 minutes to 7 days), so its monitoring, patching and inventory values are going stale. It clears when the agent checks in again. Opt-in: “Add recommended” never adds it.',
+    hint: 'RustDesk still reaches the computer but its agent has not checked in for this long (30 minutes to 7 days), so its monitoring, patching and inventory values are going stale. It clears when the agent checks in again. Off until someone adds it — here or with “Add recommended”.',
     fields: [{ k: 'minutes', label: 'Minutes without an agent check-in', type: 'int', def: 60 }],
   },
 };
@@ -238,8 +239,8 @@ function Monitors({ businessId, ok, fail }: Props) {
               <div className="space-y-1"><Label>Kind</Label>
                 <select className="w-full rounded-md border bg-background p-2" value={kind} data-testid="mon-new-kind" onChange={(e) => {
                   const k = e.target.value as MonitorKindId; setKind(k); setParams(defaults(k));
-                  // An optional starter (agent silent) fills in its key, name and severity when they are still empty.
-                  const st = data.optional?.find((o) => o.kind === k);
+                  // The agent-silent starter fills in its key, name and severity when they are still empty.
+                  const st = PREFILL.includes(k) ? data.recommended.find((o) => o.kind === k) : undefined;
                   if (st) { if (!key) setKey(st.key); if (!name) setName(st.name); setSeverity(st.severity); setParams({ ...defaults(k), ...st.params }); }
                 }}>
                   {(Object.keys(KIND) as MonitorKindId[]).map((k) => <option key={k} value={k}>{KIND[k].label}</option>)}
@@ -267,7 +268,7 @@ function Monitors({ businessId, ok, fail }: Props) {
             <Button size="sm" disabled={!key || !name || create.isPending} onClick={() => create.mutate()}>Add monitor</Button>
           </div>
         )}
-        {shown.length === 0 && <p className="text-muted-foreground">No monitors yet. {mayHere ? '“Add recommended” sets up offline, disk, CPU, memory, restart-pending and disk-error monitors you can then adjust.' : ''}</p>}
+        {shown.length === 0 && <p className="text-muted-foreground">No monitors yet. {mayHere ? '“Add recommended” sets up offline, disk, CPU, memory, restart-pending, disk-error and agent-silent monitors you can then adjust.' : ''}</p>}
         <div className="divide-y rounded-md border">
           {shown.map((r) => (
             <div key={r.id} className="p-3">

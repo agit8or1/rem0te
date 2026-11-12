@@ -5,7 +5,7 @@
 //
 // Pure functions only:
 //   - the AGENT_SILENT monitor (monitoring/engine.ts): its parameters and
-//     bounds, that it is opt-in (never in RECOMMENDED), when it raises,
+//     bounds, that it is recommended but off unless created, when it raises,
 //     holds and clears, and what its alert says;
 //   - re-resolving a queued automatic client update (client-updates/
 //     policy.ts, reconcileQueued): keep, adopt, re-plan or withdraw, and why;
@@ -45,10 +45,12 @@ check(m.parseParams('AGENT_SILENT', { minutes: 10080 }).ok && !m.parseParams('AG
 check(!m.parseParams('AGENT_SILENT', { minutes: 60.5 }).ok && !m.parseParams('AGENT_SILENT', { minutes: '60' }).ok, 'minutes must be a whole number');
 check(!m.parseParams('AGENT_SILENT', { minutes: 60, notify: 'x' }).ok, 'unknown params are refused (strict)');
 
-section('Opt-in');
-check(!m.RECOMMENDED.some((r) => r.kind === 'AGENT_SILENT'), 'not in RECOMMENDED: “Add recommended” never creates it');
-const opt = m.OPTIONAL.find((r) => r.kind === 'AGENT_SILENT');
-check(!!opt && opt.key === 'agent-silent' && opt.params.minutes === 60 && m.parseParams('AGENT_SILENT', opt.params).ok, 'offered as an OPTIONAL starter, key agent-silent, 60 minutes');
+section('Recommended, but off until someone adds it (0.36.1)');
+const rec = m.RECOMMENDED.filter((r) => r.kind === 'AGENT_SILENT');
+check(rec.length === 1 && rec[0].key === 'agent-silent' && rec[0].severity === 'WARNING' && rec[0].params.minutes === m.AGENT_SILENT_BOUNDS.def && m.parseParams('AGENT_SILENT', rec[0].params).ok,
+  'one RECOMMENDED starter: key agent-silent, WARNING, AGENT_SILENT_BOUNDS.def (60) minutes', JSON.stringify(rec));
+check(m.RECOMMENDED.length === 7 && new Set(m.RECOMMENDED.map((r) => r.key)).size === 7, 'the recommended set is seven monitors with distinct keys', m.RECOMMENDED.map((r) => r.key).join(','));
+check(!('OPTIONAL' in m), 'the separate OPTIONAL list is gone');
 check(m.effectiveRules([], m.scopesFor({ id: 'e1', customerId: 'b1', siteId: null })).length === 0, 'no rule anywhere: nothing applies (off unless enabled)');
 const g = rule({ minutes: 60 });
 const off = { ...g, id: 'r2', scopeKey: 'b:b1', enabled: false };

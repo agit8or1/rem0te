@@ -3,8 +3,9 @@
  * End-to-end proof of 0.36 agent health:
  *
  *   1. The "Agent silent" monitor (AGENT_SILENT):
- *      - opt-in: with no monitor nothing is raised, and "Add recommended"
- *        does not add it (it is offered separately);
+ *      - off until created: with no monitor nothing is raised; since
+ *        0.36.1 "Add recommended" adds it (proved on a business with no
+ *        computers, so the click raises nothing mid-run);
  *      - bounds (30 minutes – 7 days) are enforced at the API;
  *      - it raises for a computer RustDesk still reaches (isOnline) whose
  *        agent has been silent past the threshold, and not for a fresh,
@@ -153,7 +154,8 @@ async function all() {
   section('Fixtures (synthetic): Acme (site HQ, groups Kiosks and Pilot) and Birch (group Pilot), the same hostnames in both');
   const A = await prisma.customer.create({ data: { tenantId: tenant.id, name: `${TAG} Acme` } });
   const B = await prisma.customer.create({ data: { tenantId: tenant.id, name: `${TAG} Birch` } });
-  created.businesses.push(A.id, B.id);
+  const C = await prisma.customer.create({ data: { tenantId: tenant.id, name: `${TAG} Cedar (no computers)` } });
+  created.businesses.push(A.id, B.id, C.id);
   const hq = await prisma.site.create({ data: { tenantId: tenant.id, customerId: A.id, name: `${TAG} HQ` } });
   const hash = await argon2.hash(PW, { type: argon2.argon2id });
   const mkUser = async (t, extra = {}) => { const u = await prisma.user.create({ data: { email: `ah-${t}-${sfx}@test.invalid`, passwordHash: hash, firstName: 'AH', lastName: t, status: 'ACTIVE', ...extra } }); created.users.push(u.id); return u; };
@@ -201,7 +203,7 @@ async function all() {
     { endpointGroupId: pilotA.id, endpointId: eps['a:CU1'].id }, { endpointGroupId: pilotA.id, endpointId: eps['a:CU2'].id }, { endpointGroupId: pilotA.id, endpointId: eps['a:CU4'].id },
     { endpointGroupId: pilotB.id, endpointId: eps['b:CU1'].id },
   ] });
-  check(true, `created 2 businesses, 1 site, ${Object.keys(eps).length} computers, 3 device groups, 3 people`);
+  check(true, `created 3 businesses (Cedar has no computers), 1 site, ${Object.keys(eps).length} computers, 3 device groups, 3 people`);
 
   await listen();
   startApi();
@@ -218,16 +220,23 @@ async function all() {
   check(r.status === 200, 'the MSP sets a global notification policy to a test webhook (fresh authentication)', msg(r));
   created.globalPolicy = r.status === 200;
 
-  // ── 1. Opt-in ──────────────────────────────────────────────────────────────
-  section('Opt-in: nothing is raised until someone creates the monitor');
+  // ── 1. Off until created ───────────────────────────────────────────────────
+  section('Off until created: nothing is raised until someone creates the monitor');
   await ticks(2);
   check((await prisma.monitorAlert.count({ where: { kind: 'AGENT_SILENT', customerId: { in: [A.id, B.id] } } })) === 0, 'no monitor anywhere: two sweeps raise no agent-silent alert, though SILENT has been silent 90 minutes');
   r = await req('GET', `/monitoring/rules?businessId=${A.id}`, { s: S.owen });
-  check(r.status === 200 && !r.data.recommended.some((x) => x.kind === 'AGENT_SILENT') && r.data.optional?.some((x) => x.kind === 'AGENT_SILENT' && x.key === 'agent-silent' && x.params.minutes === 60),
-    'the rules page lists it as optional (key agent-silent, 60 minutes), not among the recommended', J({ rec: r.data?.recommended?.map((x) => x.kind), opt: r.data?.optional }));
-  r = await req('POST', '/monitoring/rules/recommended', { s: S.owen, body: { scope: 'business', businessId: A.id } });
-  check(r.status === 201 && r.data.added.length > 0 && !r.data.added.some((x) => x.kind === 'AGENT_SILENT'), '“Add recommended” adds the starter set without the agent-silent monitor', msg(r));
-  await prisma.monitorRule.deleteMany({ where: { customerId: A.id } }); // keep the rest of the run to the monitor under test
+  check(r.status === 200 && r.data.recommended.some((x) => x.kind === 'AGENT_SILENT' && x.key === 'agent-silent' && x.severity === 'WARNING' && x.params.minutes === 60) && r.data.optional === undefined,
+    'the rules page lists it among the recommended (key agent-silent, WARNING, 60 minutes); there is no separate optional list', J({ rec: r.data?.recommended?.map((x) => x.kind), opt: r.data?.optional }));
+  check(r.status === 200 && !r.data.rules.some((x) => x.kind === 'AGENT_SILENT'), 'being recommended created nothing: Acme has no agent-silent rule', J(r.data?.rules?.map((x) => x.key)));
+  // The click itself, on Cedar, which has no computers: nothing it adds can raise mid-run.
+  r = await req('POST', '/monitoring/rules/recommended', { s: S.admin, body: { scope: 'business', businessId: C.id } });
+  const addedSilent = r.data?.added?.filter((x) => x.kind === 'AGENT_SILENT') ?? [];
+  check(r.status === 201 && r.data.added.length === 7 && addedSilent.length === 1 && addedSilent[0].key === 'agent-silent' && addedSilent[0].params.minutes === 60 && addedSilent[0].severity === 'WARNING',
+    '“Add recommended” adds the seven starters, the agent-silent monitor among them (60 minutes, WARNING)', msg(r));
+  check((await prisma.activityLog.count({ where: { customerId: C.id, action: 'MONITOR_RULE_CHANGED' } })) === 7, 'each one is an ordinary audited rule (seven MONITOR_RULE_CHANGED rows)');
+  r = await req('POST', '/monitoring/rules/recommended', { s: S.admin, body: { scope: 'business', businessId: C.id } });
+  check(r.status === 201 && r.data.added.length === 0, 'a second click adds nothing: the set is all there', msg(r));
+  await prisma.monitorRule.deleteMany({ where: { customerId: C.id } });
 
   section('Bounds');
   r = await rule(S.owen, { scope: 'business', businessId: A.id, key: 'agent-silent', params: { minutes: 29 } });

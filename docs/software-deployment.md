@@ -239,7 +239,9 @@ by winget, and the agent would not have hashed those bytes. Installing the agent
 (`winget install --manifest`) would close the window. It needs winget's `LocalManifestFiles` admin setting turned on
 machine-wide, which lets anyone with admin rights install from any local manifest, so it wasn't used. The window is
 seconds long and needs a change to the winget community repository. The detection rule still has to confirm the
-result.
+result. **This gap is accepted as documented (0.36.1 decision)**, and `LocalManifestFiles` stays off: turning it on
+would trade a seconds-long window that needs a repository compromise for a standing, machine-wide way for any local
+administrator to install from an arbitrary manifest.
 
 **Dependencies are not installed** (`--skip-dependencies`). A package that needs another one needs that one as its
 own catalog entry, installed first.

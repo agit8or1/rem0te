@@ -104,7 +104,14 @@ export function parseParams(kind: MonitorKind, raw: unknown): { ok: true; params
   return { ok: true, params: r.data as Record<string, unknown> };
 }
 
-/** Starter set offered on the Monitoring page — never created without a click. */
+/**
+ * Starter set offered on the Monitoring page — never created without a click.
+ * "Add recommended" creates each one that is missing at the scope, through
+ * createRule, as an ordinary audited rule; nothing installs them at startup,
+ * in a migration or a seed. The agent-silent monitor joined the set in 0.36.1
+ * (the owner's decision); a scope that already pressed "Add recommended"
+ * gets it only when someone presses it again.
+ */
 export const RECOMMENDED: { key: string; kind: MonitorKind; name: string; severity: Severity; params: Record<string, unknown> }[] = [
   { key: 'offline', kind: 'OFFLINE', name: 'Computer offline', severity: 'WARNING', params: { minutes: 15 } },
   { key: 'disk-free', kind: 'DISK_FREE', name: 'System disk nearly full', severity: 'WARNING', params: { minFreePercent: 10 } },
@@ -112,15 +119,6 @@ export const RECOMMENDED: { key: string; kind: MonitorKind; name: string; severi
   { key: 'memory-high', kind: 'MEMORY_HIGH', name: 'Memory exhausted', severity: 'WARNING', params: { percent: 95, samples: 5 } },
   { key: 'reboot-pending', kind: 'REBOOT_PENDING', name: 'Restart pending for 3 days', severity: 'INFO', params: { hours: 72 } },
   { key: 'disk-errors', kind: 'EVENT_MATCH', name: 'Disk errors in the System log', severity: 'CRITICAL', params: { log: 'System', ids: [7, 11, 51, 153], levels: [], threshold: 1, clearAfterMinutes: 1440 } },
-];
-
-/**
- * Offered on the Monitoring page one at a time, and never by "Add
- * recommended" (0.36). The agent-silent monitor is opt-in: whether it should
- * be on by default has not been decided, so it exists only where someone
- * created it. §51 of the security invariants keeps it out of RECOMMENDED.
- */
-export const OPTIONAL: typeof RECOMMENDED = [
   { key: 'agent-silent', kind: 'AGENT_SILENT', name: 'Agent silent, RustDesk still reachable', severity: 'WARNING', params: { minutes: AGENT_SILENT_BOUNDS.def } },
 ];
 

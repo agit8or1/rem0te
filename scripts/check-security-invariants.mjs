@@ -2742,12 +2742,16 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     "sweepEnabled: env.SNAPSHOT_SWEEP !== 'off'; run-e2e.sh exports it; e2e-ui's API env sets it");
 }
 
-// 51. Agent health (0.36). The agent-silent monitor is opt-in — the owner
-//     has not decided whether it should be on by default — so nothing may
-//     create it but a person: it is kept out of RECOMMENDED (which "Add
-//     recommended" creates in bulk), and no code or migration writes an
-//     AGENT_SILENT rule. Its floor is the console's own agent-silent window,
-//     so an alert never contradicts a header that still says Online. It
+// 51. Agent health (0.36). The agent-silent monitor is never on by default
+//     and nothing may create it, or any monitor, but a person. Since 0.36.1
+//     (the owner's decision) it is one of RECOMMENDED, which "Add
+//     recommended" creates in bulk — so that click is the only bulk path, and
+//     it must stay a click: addRecommended goes through createRule, the one
+//     place in the API that writes a MonitorRule, and is reached only from
+//     its route; nothing in the API reads RECOMMENDED to install it at
+//     startup, and no migration or the seed writes a rule. Its floor is the
+//     console's own agent-silent window, so an alert never contradicts a
+//     header that still says Online. It
 //     raises only while RustDesk reaches the computer and clears only when
 //     the agent checks in. The ClientSt0r contract names the alert kinds it
 //     carries; this one is not among them, so it is never signed or sent
@@ -2762,15 +2766,23 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const adm = strip(read('apps/api/src/monitoring/monitoring-admin.service.ts'));
   const block = (src, start) => { const i = src.indexOf(start); return i < 0 ? '' : src.slice(i, src.indexOf('\n];', i)); };
   const rec = block(eng, 'export const RECOMMENDED');
-  const opt = block(eng, 'export const OPTIONAL');
   const ra = adm.slice(adm.indexOf('async addRecommended('), adm.indexOf('private async ruleFor('));
-  const writers = walk('apps/api/src').filter((f) => f !== 'apps/api/src/monitoring/engine.ts' && /['"]AGENT_SILENT['"]/.test(strip(read(f))));
+  const cr = adm.slice(adm.indexOf('async createRule('), adm.indexOf('async addRecommended('));
+  const srcFiles = walk('apps/api/src').filter((f) => /\.ts$/.test(f));
+  const ruleWrites = srcFiles.flatMap((f) => (strip(read(f)).match(/monitorRule\.(create|createMany|upsert)\b/g) ?? []).map((m) => `${f}: ${m}`));
+  const recReaders = srcFiles.filter((f) => /\bRECOMMENDED\b/.test(strip(read(f))));
+  const addCallers = srcFiles.filter((f) => /\.addRecommended\(/.test(strip(read(f))));
   const migrations = walk('apps/api/prisma/migrations').filter((f) => /INSERT INTO "MonitorRule"/i.test(read(f)));
-  check('the agent-silent monitor is opt-in: never recommended, never created by the server',
-    rec.length > 0 && !/AGENT_SILENT/.test(rec) && /kind: 'AGENT_SILENT'/.test(opt)
-      && /for \(const r of RECOMMENDED\) \{/.test(ra) && !/OPTIONAL/.test(ra)
-      && writers.every((f) => !/monitorRule\.(create|createMany|upsert)/.test(read(f))) && migrations.length === 0,
-    `RECOMMENDED without AGENT_SILENT, OPTIONAL with it; addRecommended iterates RECOMMENDED only; no file naming AGENT_SILENT creates a rule (${writers.join(', ') || 'none'}); no migration inserts a MonitorRule`);
+  const seed = strip(read('apps/api/prisma/seed.ts'));
+  check('the agent-silent monitor is recommended, and only a click creates it',
+    /\{ key: 'agent-silent', kind: 'AGENT_SILENT', name: '[^']+', severity: 'WARNING', params: \{ minutes: AGENT_SILENT_BOUNDS\.def \} \},/.test(rec)
+      && /for \(const r of RECOMMENDED\) \{/.test(ra) && /added\.push\(await this\.createRule\(a, /.test(ra) && !/prisma\./.test(ra.replace(/this\.prisma\.monitorRule\.findMany\(/, ''))
+      && ruleWrites.length === 1 && ruleWrites[0] === 'apps/api/src/monitoring/monitoring-admin.service.ts: monitorRule.create' && /this\.prisma\.monitorRule\.create\(/.test(cr)
+      && recReaders.length === 2 && recReaders.includes('apps/api/src/monitoring/engine.ts') && recReaders.includes('apps/api/src/monitoring/monitoring-admin.service.ts')
+      && (adm.match(/\bRECOMMENDED\b/g) ?? []).length === 3
+      && addCallers.length === 1 && addCallers[0] === 'apps/api/src/monitoring/monitoring.controller.ts'
+      && migrations.length === 0 && !/monitorRule|RECOMMENDED/.test(seed),
+    `RECOMMENDED holds agent-silent (WARNING, AGENT_SILENT_BOUNDS.def); addRecommended loops RECOMMENDED into createRule and writes nothing itself; the API's only MonitorRule write is createRule's (${ruleWrites.join(', ') || 'none'}); only engine.ts and monitoring-admin read RECOMMENDED (${recReaders.join(', ')}), there for the import, the view and the loop; only the controller calls addRecommended (${addCallers.join(', ') || 'none'}); no migration inserts a MonitorRule and seed.ts writes none`);
   check('its threshold floor is the console’s agent-silent window',
     /export const AGENT_SILENT_BOUNDS = \{ min: HEARTBEAT_STALE_MS \/ 60_000, max: 7 \* 24 \* 60, def: 60 \} as const;/.test(eng)
       && /AGENT_SILENT: z\.object\(\{ minutes: ints\(AGENT_SILENT_BOUNDS\.min, AGENT_SILENT_BOUNDS\.max\)\.default\(AGENT_SILENT_BOUNDS\.def\) \}\)\.strict\(\),/.test(eng)

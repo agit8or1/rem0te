@@ -36,7 +36,10 @@ request and a note such as *2 attachments are hidden because you cannot see this
 when the request is anonymised, and in any case **45 days** after they were sent, even if the request is still
 open.
 
-Requests from the tray are **not sent to ClientSt0r**. No support request is today, from any origin.
+Requests from the tray are **not sent to ClientSt0r**. No support request is today, from any origin. A signed
+`support_request.created` event (ids, the computer, the business, a short redacted subject and whether usage or a
+screenshot was attached; attachments only by a separate authenticated read) is proposed to ClientSt0r as contract
+revision 5 and is not agreed or built (`INTEGRATION_COORDINATION.md` §5B, 0.36.1).
 
 ## What the customer sees
 

@@ -50,15 +50,19 @@ critical) and parameters.
 | Windows service stopped | the named service is not Running (optionally: missing; disabled ignored by default) | it is Running again |
 | Event log match | at least *threshold* events since the last report match *ids*, *levels* or *provider* in one of System, Application, Security, Setup | no match for *clearAfterMinutes* |
 | Restart pending | Windows has wanted a restart for *hours* | the restart happens |
-| Agent silent (0.36, opt-in) | RustDesk still reaches the computer but its agent has not checked in for *minutes* (default 60, 30 – 10,080) | the agent checks in again |
+| Agent silent (0.36; recommended from 0.36.1) | RustDesk still reaches the computer but its agent has not checked in for *minutes* (default 60, 30 – 10,080) | the agent checks in again |
 
 An event-log monitor must name at least one of IDs, levels or provider — a
 monitor on every event in a log is a flood, not a monitor. The agent asks
 for at most 100 events per query and sends one sample, truncated.
 
 **Add recommended** creates a starter set — offline, disk, CPU, memory,
-restart pending, and disk errors (System log IDs 7, 11, 51, 153) — as ordinary
-monitors you then adjust. Nothing is created without that click.
+restart pending, disk errors (System log IDs 7, 11, 51, 153) and, from 0.36.1,
+agent silent (60 minutes, *warning*) — as ordinary monitors you then adjust.
+Nothing is created without that click: no monitor is installed at startup, by
+an upgrade or by the seed, and the click adds only the starters missing at that
+scope. A scope where someone pressed *Add recommended* before 0.36.1 has no
+agent-silent monitor until someone presses it again or adds it by hand.
 
 ### Agent silent (0.36)
 
@@ -73,8 +77,9 @@ raises when:
 - `isOnline` is true (RustDesk reaches it), and
 - the agent's last heartbeat is at least *minutes* ago (default 60).
 
-It is **opt-in**. It is not in the recommended set and nothing creates it for
-you: whether it should be on by default has not been decided. Create it under
+It is **never on by default**, and nothing creates it for you. Since 0.36.1 it
+is one of the monitors **Add recommended** creates (the owner's decision; in
+0.36 it was offered only on its own); you can also create it alone under
 **New monitor → Agent silent (RustDesk still reachable)**, which fills in the
 key `agent-silent`, 60 minutes and *warning*. It follows the usual scopes —
 global, business, site, device group (by priority) and computer — so you can
@@ -257,7 +262,8 @@ skipping system components and updates, up to 500 entries. Agents older than
   its HTTP result. Check for an active maintenance window, an acknowledged
   alert, or a level whose minimum severity is above the alert's.
 - **A computer shows "agent silent" but no alert** — the agent-silent monitor
-  is opt-in; add it under New monitor. The Offline monitor does not fire for
+  exists only where someone added it — with *Add recommended* (0.36.1) or
+  under New monitor. The Offline monitor does not fire for
   it, because RustDesk still reaches the computer.
 - **Forty offline alerts for one site** — the site needs at least three
   computers assigned to it for outage grouping to apply.

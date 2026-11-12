@@ -264,7 +264,8 @@ list send it. The list's `online` filter takes `online`, `silent` or
 is unchanged — `isOnline` stays true for a silent agent, because Connect still
 works. The web copy of the window (`apps/web/lib/connectivity.ts`) must equal
 the API's; §49 of the security invariants checks it.
-An opt-in **agent-silent monitor** (0.36, `AGENT_SILENT`,
+An **agent-silent monitor** (0.36, `AGENT_SILENT`; off unless someone adds
+it, and one of *Add recommended*'s starters from 0.36.1,
 [monitoring.md](monitoring.md#agent-silent-036)) alerts on the same state, from a
 threshold no shorter than this window; the Offline monitor still keys on
 `isOnline` alone.
