@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Apple, Download, Loader2, Lock, Monitor, Server, Shield } from 'lucide-react';
+import { inkOn } from '@/lib/contrast';
 
 interface QuickInfo {
   enabled: boolean;
@@ -52,7 +53,13 @@ export default function QuickConnectLandingPage() {
   }, []);
 
   const title = info?.branding?.portalTitle || 'Rem0te';
-  const accent = info?.branding?.accentColor || '#3B82F6';
+  // Step numbers and download buttons are drawn on the accent; their text is
+  // black or white by luminance (0.36, the sidebar header's helper since
+  // 0.35), so a pale accent no longer gets white text. A non-hex accent falls
+  // back to the default blue rather than being drawn with a guessed ink.
+  const raw = info?.branding?.accentColor;
+  const accent = inkOn(raw) ? raw! : '#3B82F6';
+  const ink = inkOn(accent)!;
 
   if (loading) {
     return (
@@ -109,8 +116,9 @@ export default function QuickConnectLandingPage() {
             ].map((step) => (
               <li key={step.n} className="flex gap-3">
                 <span
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
-                  style={{ backgroundColor: accent }}
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+                  style={{ backgroundColor: accent, color: ink }}
+                  data-accent-ink
                 >
                   {step.n}
                 </span>
@@ -134,8 +142,9 @@ export default function QuickConnectLandingPage() {
                   <div key={d.os} className="space-y-1">
                     <a
                       href={d.path}
-                      className="flex w-full items-center justify-center gap-2 rounded-md px-4 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90"
-                      style={{ backgroundColor: accent }}
+                      className="flex w-full items-center justify-center gap-2 rounded-md px-4 py-3 text-sm font-semibold transition-opacity hover:opacity-90"
+                      style={{ backgroundColor: accent, color: ink }}
+                      data-accent-ink
                     >
                       <Icon className="h-4 w-4" />
                       Download for {d.label}

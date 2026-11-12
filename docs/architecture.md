@@ -124,6 +124,14 @@ Tenant  ─┬─ Customer (a BUSINESS — the security boundary)
   open, the signed agent long-polls `/enrollment/chat/poll` with the device
   secret, and the API holds each poll up to 25 s in memory. The poll carries
   chat text and receipts only, never commands. See [chat.md](chat.md).
+- **The tray** (0.36) is the person's side of chat, support requests and
+  self-help on Windows. The signed agent's SYSTEM tray host speaks for it with
+  the device secret on `/tray/*`. The standard agent's tray speaks for itself
+  with a tray key that opens only `/tray/*`. The chat window is the API's
+  `/assist` page, reached through the web app's rewrite with a one-time code
+  and a cookie on `/assist`. `AssistCode`, `AssistSession`,
+  `SupportRequestAttachment` and `TraySelfHelpRun` hold its state. See
+  [tray.md](tray.md).
 
 Full model in [access-control.md](access-control.md).
 
@@ -256,6 +264,10 @@ list send it. The list's `online` filter takes `online`, `silent` or
 is unchanged — `isOnline` stays true for a silent agent, because Connect still
 works. The web copy of the window (`apps/web/lib/connectivity.ts`) must equal
 the API's; §49 of the security invariants checks it.
+An opt-in **agent-silent monitor** (0.36, `AGENT_SILENT`,
+[monitoring.md](monitoring.md#agent-silent-036)) alerts on the same state, from a
+threshold no shorter than this window; the Offline monitor still keys on
+`isOnline` alone.
 `STALE_SWEEP=off` stops the sweep in that process — for a test stack whose
 fixtures must keep `isOnline` with no hbbs to keep them reachable; never in
 production, where machines would then never go offline.

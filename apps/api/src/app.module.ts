@@ -54,6 +54,7 @@ import { ScriptRunModule } from './script-run/script-run.module';
 import { SoftwareModule } from './software/software.module';
 import { DeviceViewsModule } from './device-views/device-views.module';
 import { AgentUpgradeModule } from './agent-upgrade/agent-upgrade.module';
+import { AgentAutoUpdateModule } from './agent-auto-update/agent-auto-update.module';
 import { SupportRequestsModule } from './support-requests/support-requests.module';
 import { OffboardingModule } from './offboarding/offboarding.module';
 import { SsoModule } from './sso/sso.module';
@@ -67,6 +68,7 @@ import { QuickConnectModule } from './quick-connect/quick-connect.module';
 import { DownloadsModule } from './downloads/downloads.module';
 import { TechniciansModule } from './technicians/technicians.module';
 import { IntegrationModule } from './integration/integration.module';
+import { TrayModule } from './tray/tray.module';
 
 @Module({
   imports: [
@@ -106,6 +108,7 @@ import { IntegrationModule } from './integration/integration.module';
     MetricsModule,
     RetentionModule,
     ChatModule,
+    TrayModule,
     ClientUpdatesModule,
     GroupPolicyModule,
     HealthModule,
@@ -134,6 +137,7 @@ import { IntegrationModule } from './integration/integration.module';
     ScriptRunModule,
     SoftwareModule,
     AgentUpgradeModule,
+    AgentAutoUpdateModule,
     DeviceViewsModule,
     SupportRequestsModule,
     OffboardingModule,

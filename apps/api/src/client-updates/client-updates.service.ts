@@ -8,7 +8,8 @@ import { ContainmentService } from '../containment/containment.service';
 import { latestRustdeskVersion } from '../common/rustdesk-release';
 import { openSessionReason } from '../admin/session-evidence';
 import {
-  BLOCKER, blocker, effectivePolicy, explainPolicy, HOLD_TEXT, policyHold, PolicyInput, policyScope, policyWindow, resolvePolicy, ROLLOUT_OPEN, type HoldReason,
+  BLOCKER, blocker, effectivePolicy, explainPolicy, HOLD_TEXT, policyHold, PolicyInput, policyScope, policyWindow, QUEUED_REASON_TEXT, reconcileQueued, resolvePolicy,
+  ROLLOUT_OPEN, type HoldReason,
 } from './policy';
 import { GroupMembershipService, type Membership } from '../group-policy/membership.service';
 import { describeWindow, parseUpdateWindow, windowState } from './update-window';
@@ -136,6 +137,7 @@ export class ClientUpdatesService {
     return {
       id: p.id, siteId: p.siteId, groupId: p.groupId, priority: p.priority, enabled: p.enabled, timeZone: p.timeZone, windows: p.windows,
       skipActiveSession: p.skipActiveSession, skipLoggedOnUser: p.skipLoggedOnUser,
+      agentMode: p.agentMode ?? null,
       description: describeWindow(w), valid: !!w,
       window: { open: st.open, opensAt: st.opensAt, closesAt: st.closesAt },
       updatedAt: p.updatedAt, updatedById: p.updatedById,
@@ -277,7 +279,7 @@ export class ClientUpdatesService {
   }
 
   private snapshot(p: ClientUpdatePolicy | null) {
-    return p ? { enabled: p.enabled, timeZone: p.timeZone, windows: p.windows, skipActiveSession: p.skipActiveSession, skipLoggedOnUser: p.skipLoggedOnUser, ...(p.groupId ? { priority: p.priority } : {}) } : null;
+    return p ? { enabled: p.enabled, timeZone: p.timeZone, windows: p.windows, skipActiveSession: p.skipActiveSession, skipLoggedOnUser: p.skipLoggedOnUser, agentMode: p.agentMode ?? null, ...(p.groupId ? { priority: p.priority } : {}) } : null;
   }
 
   private priorityTaken(priority: number) {
@@ -307,14 +309,19 @@ export class ClientUpdatesService {
     if (!group && priority !== null) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Only a device-group policy has a priority.' });
     if (group && await this.prisma.clientUpdatePolicy.findFirst({ where: { customerId, priority, groupId: { not: null, notIn: [group.id] } }, select: { id: true } })) throw this.priorityTaken(priority!);
     if (input.enabled && !fresh) throw new FreshAuthNeeded();
+    const before = await this.prisma.clientUpdatePolicy.findFirst({ where: group ? { customerId, groupId: group.id } : { customerId, siteId, groupId: null } });
+    // 0.36: a change of agent mode to anything but OFF can start installer
+    // runs nobody clicked for, so it needs fresh authentication too; opting
+    // out (OFF) never does.
+    if (input.agentMode !== undefined && input.agentMode !== 'OFF' && (input.agentMode ?? null) !== (before?.agentMode ?? null) && !fresh) throw new FreshAuthNeeded();
     const biz = await this.business(customerId);
 
     const data = {
       enabled: input.enabled, timeZone: window.timeZone, windows: window.windows as unknown as Prisma.InputJsonValue,
       skipActiveSession: input.skipActiveSession, skipLoggedOnUser: input.skipLoggedOnUser, updatedById: a.userId,
       ...(group ? { priority } : {}),
+      ...(input.agentMode !== undefined ? { agentMode: input.agentMode } : {}),
     };
-    const before = await this.prisma.clientUpdatePolicy.findFirst({ where: group ? { customerId, groupId: group.id } : { customerId, siteId, groupId: null } });
     let after: ClientUpdatePolicy;
     try {
       after = before
@@ -414,23 +421,71 @@ export class ClientUpdatesService {
    * POLICY requests in this business whose computer is no longer governed by
    * an enabled policy are withdrawn: turning a policy off must stop what it
    * queued, not leave it waiting for a window that is no longer meant to
-   * install anything. MANUAL requests are never touched here.
+   * install anything. MANUAL requests are never touched here. Run on every
+   * policy save (attributed to that change, counted in its audit entry).
    */
   private async clearUnwanted(customerId: string): Promise<number> {
-    const policies = await this.prisma.clientUpdatePolicy.findMany({ where: { customerId } });
+    return (await this.reconcileQueued({ customerId })).withdrawn;
+  }
+
+  /**
+   * Re-resolve every queued POLICY request (0.36) — in one business, or in
+   * all of them — against the policies and device-group membership of NOW,
+   * and withdraw or re-plan the ones whose policy no longer governs their
+   * computer (policy.ts, reconcileQueued). The client-update sweep calls it
+   * every tick, so a computer that leaves a group stops waiting on that
+   * group's policy within one sweep, not at the next policy save.
+   *
+   * `audit` (the sweep) records each withdrawal and re-plan per computer, with
+   * the reason; a policy save records only its count, in the save's own entry.
+   * Each write is conditional on the request being the one that was read, so a
+   * heartbeat handing it out at the same moment is never overwritten.
+   */
+  async reconcileQueued(o: { customerId?: string; audit?: boolean } = {}) {
+    const out = { withdrawn: 0, replanned: 0, adopted: 0 };
     const queued = await this.prisma.rustdeskNode.findMany({
-      where: { updateRequestSource: 'POLICY', updateRequestedAt: { not: null }, endpoint: { customerId } },
-      select: { id: true, endpointId: true, endpoint: { select: { siteId: true } } },
+      where: { updateRequestSource: 'POLICY', updateRequestedAt: { not: null }, ...(o.customerId ? { endpoint: { customerId: o.customerId } } : {}) },
+      select: {
+        id: true, endpointId: true, updateRequestedAt: true, updatePolicyId: true, updateTargetVersion: true,
+        endpoint: { select: { customerId: true, siteId: true, tenantId: true } },
+      },
+      orderBy: { id: 'asc' },
+      take: 10_000,
     });
-    if (!queued.length) return 0;
-    const m = await this.membershipFor(policies, queued.map((n) => n.endpointId));
-    const drop = queued.filter((n) => !effectivePolicy(policies, customerId, n.endpoint.siteId, m.groupsOf(n.endpointId))?.enabled).map((n) => n.id);
-    if (!drop.length) return 0;
-    const r = await this.prisma.rustdeskNode.updateMany({
-      where: { id: { in: drop }, updateRequestSource: 'POLICY' },
-      data: { updateRequestedAt: null, updateTargetVersion: null, updateRequestSource: null, updateRequestedById: null, updateHoldReason: null, updateHoldAt: null },
-    });
-    return r.count;
+    const byBiz = new Map<string | null, typeof queued>();
+    for (const n of queued) { const k = n.endpoint.customerId; const l = byBiz.get(k) ?? []; l.push(n); byBiz.set(k, l); }
+    for (const [customerId, nodes] of byBiz) {
+      const policies = customerId ? await this.prisma.clientUpdatePolicy.findMany({ where: { customerId } }) : [];
+      const m = await this.membershipFor(policies, nodes.map((n) => n.endpointId));
+      for (const n of nodes) {
+        const eff = effectivePolicy(policies, customerId, n.endpoint.siteId, m.groupsOf(n.endpointId));
+        const d = reconcileQueued(n.updatePolicyId ?? null, eff, policies);
+        if (d.action === 'keep') continue;
+        const same = { id: n.id, updateRequestSource: 'POLICY' as const, updateRequestedAt: n.updateRequestedAt, updatePolicyId: n.updatePolicyId };
+        const w = await this.prisma.rustdeskNode.updateMany({
+          where: same,
+          data: d.action === 'withdraw'
+            ? { updateRequestedAt: null, updateTargetVersion: null, updateRequestSource: null, updateRequestedById: null, updateHoldReason: null, updateHoldAt: null, updatePolicyId: null }
+            // A hold recorded under the old policy says nothing about the new one; the next heartbeat records its own.
+            : { updatePolicyId: d.to, ...(d.action === 'replan' ? { updateHoldReason: null, updateHoldAt: null } : {}) },
+        });
+        if (w.count !== 1) continue;
+        if (d.action === 'withdraw') out.withdrawn++; else if (d.action === 'replan') out.replanned++; else out.adopted++;
+        if (!o.audit || d.action === 'adopt') continue;
+        const to = d.to ? policies.find((p) => p.id === d.to) ?? null : null;
+        await this.audit.log({
+          tenantId: n.endpoint.tenantId ?? undefined, customerId: customerId ?? undefined,
+          action: d.action === 'withdraw' ? 'CLIENT_UPDATE_AUTO_WITHDRAWN' : 'CLIENT_UPDATE_AUTO_REPLANNED',
+          resource: 'endpoint', resourceId: n.endpointId,
+          meta: {
+            reason: d.reason, text: QUEUED_REASON_TEXT[d.reason!], fromPolicyId: d.from, toPolicyId: d.to,
+            ...(to ? { toScope: policyScope(to), ...(to.groupId ? { toGroupId: to.groupId, toPriority: to.priority } : {}), ...(to.siteId ? { toSiteId: to.siteId } : {}) } : {}),
+            targetVersion: n.updateTargetVersion, queuedAt: n.updateRequestedAt, by: 'client-update sweep',
+          },
+        });
+      }
+    }
+    return out;
   }
 
   // ── Heartbeat ─────────────────────────────────────────────────────────────

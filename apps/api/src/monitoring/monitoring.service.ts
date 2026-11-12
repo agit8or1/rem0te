@@ -18,7 +18,7 @@ import { GroupMembershipService } from '../group-policy/membership.service';
  *
  *   heartbeat      → onLiveSample: disk, processor and memory monitors
  *   monitor-report → ingestReport: service and event monitors
- *   sweep (60 s)   → offline and restart-pending monitors, event-alert
+ *   sweep (60 s)   → offline, agent-silent and restart-pending monitors, event-alert
  *                    clearing, orphan clean-up, site outage correlation,
  *                    then notification and escalation
  *
@@ -38,7 +38,8 @@ type Ep = { id: string; tenantId: string | null; customerId: string | null; site
 type Policy = { scopeKey: string; levels: NotifyLevel[]; ticketing: { enabled: boolean; minSeverity: Severity } };
 
 const LIVE_KINDS = new Set(['DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH']);
-const SWEEP_KINDS = new Set(['OFFLINE', 'REBOOT_PENDING']);
+/** 0.36: AGENT_SILENT — reachable through RustDesk, agent not checking in (opt-in). */
+const SWEEP_KINDS = new Set(['OFFLINE', 'REBOOT_PENDING', 'AGENT_SILENT']);
 /** What the agent is asked about and reports on: the heartbeat's monitor block and the monitor report. */
 const AGENT_KINDS: ReadonlySet<string> = new Set(['SERVICE_STOPPED', 'EVENT_MATCH']);
 const RECHECK_MS = 60 * 60_000;
@@ -270,7 +271,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
       select: { id: true, tenantId: true, customerId: true, siteId: true, name: true, isOnline: true, lastSeenAt: true, inventory: { select: { rebootRequired: true, updatesCheckedAt: true } } },
     });
     const valid = new Set<string>();
-    const openRows = await this.prisma.monitorAlert.findMany({ where: { state: { not: 'RESOLVED' }, kind: { not: 'SITE_OUTAGE' } }, select: { id: true, dedupKey: true, kind: true, endpointId: true } });
+    const openRows = await this.prisma.monitorAlert.findMany({ where: { state: { not: 'RESOLVED' }, kind: { not: 'SITE_OUTAGE' } }, select: { id: true, dedupKey: true, kind: true, endpointId: true, title: true } });
     const open = new Map(openRows.map((a) => [a.dedupKey, a]));
     const sweepKeys = [...new Set(rules.filter((r) => SWEEP_KINDS.has(r.kind) || r.kind === 'EVENT_MATCH').map((r) => r.key))];
     const stateRows = sweepKeys.length ? await this.prisma.endpointMonitorState.findMany({ where: { ruleKey: { in: sweepKeys } } }) : [];
@@ -295,7 +296,10 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
           // Write state only when it moved, or a fleet costs a write per computer per minute.
           const moved = (v.state.breachSince?.getTime() ?? null) !== (st.breachSince?.getTime() ?? null);
           const isOpen = open.has(dk);
-          if (v.verdict === 'breach' && isOpen && !moved) continue;
+          // An open agent-silent alert's title says how long ("silent for 3 d");
+          // it is rewritten when that coarse figure changes, not every tick.
+          const stale = v.verdict === 'breach' && r.kind === 'AGENT_SILENT' && open.get(dk)?.title !== v.title.slice(0, 300);
+          if (v.verdict === 'breach' && isOpen && !moved && !stale) continue;
           if (v.verdict !== 'breach' && !isOpen && !moved) continue;
           await this.apply(ep, r, v, now, { repeat: false, saveState: moved || v.verdict === 'breach' });
         } else if (r.kind === 'EVENT_MATCH' && open.has(dk)) {

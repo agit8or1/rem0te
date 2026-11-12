@@ -113,12 +113,17 @@ Run these on the release machine, from the release tag.
    ```bash
    cd tools/windows-installer
    GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o ~/release/rem0te-agent.exe .
+   GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-H=windowsgui -s -w" -o ~/release/rem0te-tray.exe ./cmd/rem0te-tray
    cd ../../apps/api && npx nest build
    node scripts/build-signed-installer.mjs --out ~/release/install.ps1   # prints its SHA-256
    ```
 
    The script is deterministic. Anyone can rebuild it from the tag and compare its digest with the one in the signed
    metadata.
+
+   The tray (0.36, [tray.md](tray.md)) is a separate GUI executable: `-H=windowsgui` stops a console window
+   appearing. It is **optional**. A release without it installs no tray, and the agent then reports no tray and no
+   chat, so the portal says chat is unavailable instead of pretending.
 
 2. **Add a RustDesk build.** Download it from RustDesk's GitHub release, check it against the digest GitHub publishes,
    and add it under its exact name.
@@ -130,6 +135,7 @@ Run these on the release machine, from the release tag.
      -targets-key ~/keys/targets.pem -snapshot-key ~/keys/snapshot.pem -timestamp-key ~/keys/timestamp.pem \
      -add windows/rem0te-agent.exe=$HOME/release/rem0te-agent.exe \
      -add windows/install.ps1=$HOME/release/install.ps1 \
+     -add windows/rem0te-tray.exe=$HOME/release/rem0te-tray.exe \
      -add windows/rustdesk/rustdesk-1.4.6-x86_64.exe=$HOME/release/rustdesk-1.4.6-x86_64.exe \
      -custom 'windows/rustdesk/rustdesk-1.4.6-x86_64.exe={"version":"1.4.6"}'
    ```
@@ -268,6 +274,35 @@ standard agent (the existing reinstall: same permission, same audit, refused und
 only). On a signed agent the same button is **Check for update now**: the agent runs `rem0te-agent.exe update`, which
 installs only what the signed repository lists. Linux and macOS agents act on nothing the portal sends, so the card
 gives the command to re-run on the computer instead.
+
+## Automatic update checks (0.36)
+
+Until 0.36 a signed agent ran `rem0te-agent.exe update` only when a heartbeat
+response carried `updateRustdesk` or `reinstallAgent` — when someone clicked
+*Check for update now*, or a rollout asked. Nothing checked on a schedule,
+whatever the Agent card's *Portal update mode* said (that is the portal's
+Legacy allowed / Signed only setting: what it hands **standard** agents, not how
+often a signed one checks).
+
+From 0.36 two things ask, both through the same `update` code path, so both
+are refused by the signed pause and install only what signed metadata lists:
+
+- **The portal**, when the build a signed agent reports is not the one the
+  repository publishes: automatic agent updates
+  ([updates.md](updates.md#the-rem0te-agent-automatic-updates-036)) hand it
+  `reinstallAgent`, paced and capped like a standard agent's. This works with
+  signed agents already installed.
+- **The agent itself**, about once a day (20 hours plus up to 8 hours of
+  jitter, so a fleet does not check in the same minute), on a heartbeat where
+  the portal sets `agentSelfCheck` — not opted out, inside a *window* policy's
+  window, no updates pause, no rollout, no session. The schedule lives in
+  `C:\ProgramData\Rem0te\update-check.next`; the first sighting only
+  schedules, and a due time more than two days out (a clock that jumped) is
+  rescheduled rather than acted on. This is in the signed `windows/install.ps1`
+  that writes the heartbeat, so **it reaches a computer only after a signed
+  release built from 0.36 is published with the owner's keys** and installed
+  there. A compromised portal can withhold the permission (no worse than
+  today) or grant it, which runs only signed code.
 
 ## Rotating keys
 

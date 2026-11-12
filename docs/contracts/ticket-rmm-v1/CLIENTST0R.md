@@ -13,6 +13,12 @@ shipped in **rem0te 0.30.0** (the commit tagged `v0.30.0`). This directory is th
 Read `contract_revision` from `/capabilities` and use nothing newer than you implement. Revisions only add
 fields. Revision 2 adds `contract_revision`, `organizations` and `alert.patch_summary`.
 
+## Revision 3: acknowledged 2026-11-11, not built
+
+ClientSt0r acknowledged P1–P10 (`INTEGRATION_COORDINATION.md` §5) as proposed; its notes and its requests R2–R16 are
+recorded in §9 and §9A there. rem0te has not built them, so build against revision 2 until `/capabilities` reports
+`contract_revision: 3`.
+
 ## Proposed for revision 4: the device summary (rem0te 0.34, not agreed)
 
 rem0te no longer calls a model provider for the device page's AI summary; it asks your gateway instead, with a new

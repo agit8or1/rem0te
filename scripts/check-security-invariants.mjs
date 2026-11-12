@@ -762,8 +762,13 @@ check(
     'the service must refuse without fresh auth and the controller must pass isFresh(req) on all three writes (0.35 added removing a group policy, §46)');
   check('a site override must belong to the business it is set in',
     /if \(!site \|\| site\.customerId !== customerId\) throw new NotFoundException/.test(svc), 'siteOf must compare site.customerId');
+  // 0.36: clearUnwanted is reconcileQueued, which the sweep also runs every
+  // tick: it reads only POLICY requests and writes only the one it read.
   check('withdrawing automatic requests never touches a manual one',
-    /updateMany\(\{\s*where: \{ id: \{ in: drop \}, updateRequestSource: 'POLICY' \}/.test(svc), 'clearUnwanted must be conditional on POLICY');
+    /return \(await this\.reconcileQueued\(\{ customerId \}\)\)\.withdrawn;/.test(svc)
+      && /where: \{ updateRequestSource: 'POLICY', updateRequestedAt: \{ not: null \},/.test(svc)
+      && /const same = \{ id: n\.id, updateRequestSource: 'POLICY' as const, updateRequestedAt: n\.updateRequestedAt, updatePolicyId: n\.updatePolicyId \};\s*const w = await this\.prisma\.rustdeskNode\.updateMany\(\{\s*where: same,/.test(svc),
+    'clearUnwanted → reconcileQueued: reads POLICY requests only, and each write is conditional on POLICY and on the request it read');
   const pass_ = sweep.slice(sweep.indexOf('private async pass('));
   check('the client-update sweep can be turned off', /onModuleInit\(\) \{\s*if \(process\.env\.CLIENT_UPDATE_SWEEP === 'off'\) return;/.test(sweep), 'CLIENT_UPDATE_SWEEP=off must stop it');
   check('the sweep skips a business under an "updates" containment pause',
@@ -1924,7 +1929,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /if \(!s \|\| !entry\) throw new Refused\('script_not_allowlisted'/.test(assertFn) && /if \(st === 'REVOKED'\) throw new Refused\('script_revoked'/.test(assertFn)
       && /if \(st !== 'ACTIVE'\) throw new Refused\('script_not_allowlisted'/.test(assertFn)
       && /if \(canonical\(s\) !== canonical\(scriptBlockOf\(entry\.proposal\)\)\) throw new Refused\('script_mismatch'/.test(assertFn)
-      && /admitPlan\(b\.plan, store\.policy\(\), now\(\), \(id\) => store\.scriptEntry\(id\)\)/.test(server)
+      && /admitPlan\(b\.plan, store\.policy\(\), now\(\), \(id\) => store\.scriptEntry\(id\)(, softwareRevoked)?\)/.test(server)
       && /if \(cur\.plan\.action\.id === SCRIPT_RUN_ACTION && c\.decision === 'approve'\) assertScriptAllowed\(cur\.plan, \(id\) => store\.scriptEntry\(id\)\);/.test(server),
     'requestRun must refuse a non-APPROVED version and a missing ACTIVE entry before createPlan; the signer must check its own entry (exact block, ACTIVE, not revoked) at admission and before signing');
 
@@ -2376,28 +2381,30 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //     ActivityLog row (pruning deletes transcripts, not audit). The 2,000
 //     character cap is the same in the API, the database and the agent; the
 //     400-day retention sweep has its off switch set in run-e2e.sh. On the
-//     agent, the window process holds no secret and speaks no HTTP: it talks
-//     only over two first-instance, local-only pipes whose DACL names SYSTEM
-//     and the session user, checked against the launched PID; and it draws
-//     text with plain read-only EDIT controls (no RichEdit or SysLink, which
-//     turn text into links). The portal renders transcripts as React text.
+//     agent (0.36: the tray replaced the 0.34 Win32 chat window), the tray
+//     process holds no secret and speaks no HTTP in the signed agent: it
+//     talks only over two first-instance, local-only pipes whose DACL names
+//     SYSTEM and the session user, checked against the launched PID. Its
+//     chat window is a WebView2 control that loads only /assist on the pinned
+//     portal, and the page draws text with textContent. The portal renders
+//     transcripts as React text.
 {
   const ctl = read('apps/api/src/chat/chat.controller.ts');
   const svc = read('apps/api/src/chat/chat.service.ts');
   const pol = read('apps/api/src/chat/chat-policy.ts');
   const routes = [...ctl.matchAll(/@(Get|Post)\(([^)]*)\)\s*\n((?:\s*@[A-Za-z]+\([^)]*\)\s*\n)*)\s*async (\w+)/g)];
   const capOf = Object.fromEntries(routes.map((m) => [m[4], (m[3].match(/@RequireCapability\(CAP\.(\w+)\)/) ?? [])[1]]));
-  check('every chat route names its capability: viewing needs COMPUTERS_VIEW, starting, writing and ending need CHAT_SEND',
-    routes.length === 5 && /@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)/.test(ctl) && !/@Public\(\)/.test(ctl)
+  check('every chat route names its capability: viewing needs COMPUTERS_VIEW, starting, writing, acknowledging and ending need CHAT_SEND',
+    routes.length === 6 && /@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)/.test(ctl) && !/@Public\(\)/.test(ctl)
       && capOf.overview === 'COMPUTERS_VIEW' && capOf.transcript === 'COMPUTERS_VIEW'
-      && capOf.start === 'CHAT_SEND' && capOf.send === 'CHAT_SEND' && capOf.end === 'CHAT_SEND',
+      && capOf.start === 'CHAT_SEND' && capOf.send === 'CHAT_SEND' && capOf.ack === 'CHAT_SEND' && capOf.end === 'CHAT_SEND',
     `routes: ${JSON.stringify(capOf)}`);
-  const methods = ['overview', 'transcript', 'start', 'send', 'end'];
+  const methods = ['overview', 'transcript', 'start', 'send', 'ack', 'end'];
   const body = (name) => { const i = svc.indexOf(`  async ${name}(`); const j = svc.indexOf('\n  }\n', i); return i < 0 ? '' : svc.slice(i, j); };
   check('chat reaches a computer only through visibleEndpoint: assertEndpointInScope, then the visibility rule AND-ed with the id',
     /await this\.acl\.assertEndpointInScope\(actor, endpointId, capability\);\s*\n\s*const ep = await this\.prisma\.endpoint\.findFirst\(\{\s*\n\s*where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(actor\), \{ id: endpointId \}\] \},/.test(svc)
       && methods.every((m) => /await this\.visibleEndpoint\(actor, endpointId/.test(body(m)))
-      && ['start', 'send', 'end'].every((m) => /this\.visibleEndpoint\(actor, endpointId, CAP\.CHAT_SEND\)/.test(body(m))),
+      && ['start', 'send', 'ack', 'end'].every((m) => /this\.visibleEndpoint\(actor, endpointId, CAP\.CHAT_SEND\)/.test(body(m))),
     'each technician method must begin with this.visibleEndpoint(actor, endpointId[, CAP.CHAT_SEND]); a spread visibility clause beside an OR widens it');
   check('starting a chat and sending in one both consult the remote containment pause',
     ['start', 'send'].every((m) => /await this\.containment\.assertOpen\('remote', ep\.customerId\)/.test(body(m))),
@@ -2409,12 +2416,13 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     (ec.match(/await this\.enrollment\.authenticateDevice\(dto\.rustdeskId, dto\.agentSecret, 'chat_(poll|reply)_unauthenticated'\);/g) ?? []).length === 2
       && /if \(!node\?\.agentSecretHash \|\| !agentSecret \|\| !this\.secretMatches\(node\.agentSecretHash, agentSecret\)\)/.test(auth)
       && /throw new UnauthorizedException/.test(auth)
-      && /if \(authenticated && dto\.updateChannel === 'signed' && \(dto\.agentChat \?\? 0\) >= 1\)/.test(es)
+      && /if \(authenticated && \(\(dto\.updateChannel === 'signed' && \(dto\.agentChat \?\? 0\) >= 1\) \|\| \(trayProtocol \?\? 0\) >= 1\)\) \{/.test(es)
+      && /if \(authenticated && node\.endpointId && \(dto\.agentTray \?\? 0\) >= 1\) \{/.test(es)
       && /chatProtocol: dto\.updateChannel === 'signed' \? dto\.agentChat \?\? null : null/.test(es),
-    'chat/poll and chat/reply call authenticateDevice (secretMatches); the heartbeat gate is authenticated && signed');
+    'chat/poll and chat/reply call authenticateDevice (secretMatches); the heartbeat gate is authenticated && (signed chat || a tray recorded only from an authenticated heartbeat)');
   const metas = [...svc.matchAll(/meta: \{([^}]*)\}/g)].map((m) => m[1]);
   check('chat audit rows carry ids and counts only, and chat never changes or deletes an ActivityLog row',
-    metas.length === 3 && metas.every((m) => !/\b(body|text|authorName|deviceUser|deviceDetail)\b/.test(m))
+    metas.length === 4 && metas.every((m) => !/\b(body|text|authorName|deviceUser|deviceDetail)\b/.test(m))
       && !/activityLog\.(update|updateMany|delete|deleteMany|upsert)/.test(svc) && !/\$executeRaw/.test(svc),
     `audit meta must hold no message text or names; no activityLog update/delete in chat.service.ts. meta: ${JSON.stringify(metas)}`);
   const sql = read('apps/api/prisma/migrations/0056_chat/migration.sql');
@@ -2428,19 +2436,31 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /export const RETENTION_DEFAULT_DAYS = 400;/.test(pol) && /enabled: env\.CHAT_RETENTION_SWEEP !== 'off',/.test(pol)
       && /export CHAT_RETENTION_SWEEP=off/.test(e2e),
     "RETENTION_DEFAULT_DAYS = 400; CHAT_RETENTION_SWEEP=off exported in scripts/run-e2e.sh");
-  const ui = read('tools/windows-installer/chatui_windows.go');
-  const host = read('tools/windows-installer/chat_windows.go');
-  const pipe = read('tools/windows-installer/internal/chat/pipe.go');
-  check('the chat window holds no secret and speaks no HTTP, and draws text in plain read-only EDIT controls',
-    !/net\/http|heartbeat\.dat|AgentSecret|agentSecret|chat\.Client|os\/exec/.test(ui)
-      && /w\.child\("EDIT", esMultiline\|esReadOnly\|/.test(ui)
-      && !/RichEdit|RICHEDIT|MSFTEDIT|SysLink|ShellExecute|shell32/i.test(ui),
-    'chatui_windows.go: no net/http, heartbeat.dat, secret, chat.Client or os/exec; transcript EDIT is ES_READONLY; no RichEdit/SysLink/ShellExecute');
-  check('the chat pipes are first-instance, local-only, ACL\'d to SYSTEM and the session user, and checked against the launched PID',
+  const win = read('tools/windows-installer/cmd/rem0te-tray/chatwin_windows.go');
+  const trayMain = read('tools/windows-installer/cmd/rem0te-tray/main_windows.go');
+  const host = read('tools/windows-installer/trayhost_windows.go');
+  const pipe = read('tools/windows-installer/internal/tray/pipe.go');
+  const ajs = read('apps/api/src/tray/assist-page.ts');
+  check('the chat window loads only /assist on the pinned portal, with dev tools, host objects and web messages off, and the page draws text as text',
+    /if err == nil && tray\.AllowedNavigation\(portal, uri\) \{\s*\n\s*return\s*\n\s*\}/.test(win)
+      && /CreateWebResourceResponse\(nil, 403, "Forbidden", ""\)/.test(win)
+      && /v\.AddWebResourceRequestedFilter\("\*", edge\.COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL\)/.test(win)
+      && ['PutAreDevToolsEnabled', 'PutAreHostObjectsAllowed', 'PutIsWebMessageEnabled', 'PutAreDefaultContextMenusEnabled'].every((k) => new RegExp(`s\\.${k}\\(false\\)`).test(win))
+      && !/AddHostObjectToScript|Bind\(|net\/http|heartbeat\.dat|AgentSecret|agentSecret/.test(win)
+      && !/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/.test(ajs.slice(ajs.indexOf('export const ASSIST_JS'), ajs.indexOf('export const ASSIST_EXPIRED_HTML')))
+      && /body\.textContent = m\.text;/.test(ajs),
+    'chatwin_windows.go: AllowedNavigation gate answering 403 on filter "*"; dev tools, host objects, web messages, context menus off; assist.js sets textContent, never innerHTML');
+  check('the signed tray holds no secret and speaks no HTTP: everything goes through the SYSTEM host over the pipes',
+    !/heartbeat\.dat|AgentSecret|agentSecret|net\/http/.test(trayMain.slice(trayMain.indexOf('func runSigned('), trayMain.indexOf('func runStandard(')))
+      && !/heartbeat\.dat|AgentSecret|agentSecret/.test(trayMain)
+      && (trayMain.match(/exec\.Command/g) ?? []).length === 1 && /exec\.Command\(exe, "--chat-window", "--portal", a\.portal\)/.test(trayMain)
+      && /cmd\.Stdin = strings\.NewReader\(u \+ "\\n"\)/.test(trayMain),
+    'main_windows.go runSigned: no heartbeat.dat, agent secret or net/http; the one exec is itself as --chat-window, the URL (with its one-time code) on stdin, never on a command line');
+  check('the tray pipes are first-instance, local-only, ACL\'d to SYSTEM and the session user, and checked against the launched PID',
     /return "D:P\(A;;GA;;;SY\)\(A;;GRGW;;;" \+ userSID \+ "\)", nil/.test(pipe)
       && /windows\.PIPE_REJECT_REMOTE_CLIENTS/.test(host) && /access\|windows\.FILE_FLAG_FIRST_PIPE_INSTANCE/.test(host)
-      && /sddl, err := chat\.PipeSDDL\(u\.User\.Sid\.String\(\)\)/.test(host)
-      && /windows\.GetNamedPipeClientProcessId\(h, &pid\); err == nil && pid != pi\.ProcessId \{/.test(host)
+      && /sddl, err := tray\.PipeSDDL\(u\.User\.Sid\.String\(\)\)/.test(host)
+      && /windows\.GetNamedPipeClientProcessId\(hp, &pid\); err == nil && pid != pi\.ProcessId \{/.test(host)
       && (host.match(/exec\.Command/g) ?? []).length === 1 && /exec\.CommandContext\(ctx, rd, "--get-id"\)/.test(host),
     'PipeSDDL protected DACL (SY + user GRGW); FIRST_PIPE_INSTANCE and REJECT_REMOTE_CLIENTS; client PID == launched PID; one exec (rustdesk --get-id)');
   const tab = read('apps/web/components/endpoints/workspace/chat-tab.tsx');
@@ -2448,10 +2468,11 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     !/dangerouslySetInnerHTML|<a\s|href=|linkify|marked|markdown/i.test(tab) && /\{m\.body\}/.test(tab),
     'chat-tab.tsx renders {m.body} as React text, with no dangerouslySetInnerHTML or anchors');
   const ws = read('apps/api/src/public/windows-script.ts');
-  check('only the signed agent starts the chat host, and the remote pause says it covers chat',
-    (ws.match(/ArgumentList @\('chat'\)/g) ?? []).length === 1 && ws.indexOf("ArgumentList @('chat')") > ws.indexOf('export function buildSignedWindowsScript(')
+  check('only the signed agent starts the tray host, and the remote pause says it covers chat',
+    (ws.match(/ArgumentList @\('tray-host'\)/g) ?? []).length === 1 && ws.indexOf("ArgumentList @('tray-host')") > ws.indexOf('export function buildSignedWindowsScript(')
+      && !/ArgumentList @\('chat'\)/.test(ws)
       && /remote: 'remote connections and chat'/.test(read('apps/api/src/containment/pause.ts')),
-    "one Start-Process ... @('chat'), in the signed variant's hook; pause label 'remote connections and chat'");
+    "one Start-Process ... @('tray-host'), in the signed variant's hook; pause label 'remote connections and chat'");
 }
 
 // 46. Device groups as a policy scope (0.35). Monitors and client-update
@@ -2500,7 +2521,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'snapshot(): evaluateRuleGroups(actor, …) with businessWide(customerId) (never a Platform Admin), visibility AND not-archived, skip use !== ok; the synthetic actor exists only in membership.service.ts');
   check('the sweeps build membership once per tick, inside the pass, and keep it on nothing',
     /const membership = await this\.groups\.snapshot\(rules\.filter\(\(r\) => r\.groupId\)\.map\(\(r\) => r\.groupId!\)\);\s*\n\s*for \(const ep of eps\) \{\s*\n\s*const eff = effectiveRules\(rules, scopesFor\(ep, membership\.groupsOf\(ep\.id\)\)\);/.test(body(msvc, 'private async evaluateSweepRules('))
-      && /const membership = await this\.svc\.membershipFor\(policies\);/.test(body(csw, 'private async pass('))
+      && /const membership = await this\.svc\.membershipFor\(policies\);/.test(body(csw, 'private async queue('))
       && /effectivePolicy\(policies, customerId, e\.siteId, membership\.groupsOf\(e\.id\)\)/.test(csw)
       && ![msvc, csw, csvc, mem].some((s) => /this\.(membership|snapshotCache|groupCache)\b/.test(s)),
     'evaluateSweepRules and the client-update pass call snapshot/membershipFor locally; no this.membership anywhere');
@@ -2719,6 +2740,481 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /\nexport SNAPSHOT_SWEEP=off\n/.test(read('scripts/run-e2e.sh'))
       && /SNAPSHOT_SWEEP: 'off',/.test(read('apps/web/scripts/e2e-ui.mjs')),
     "sweepEnabled: env.SNAPSHOT_SWEEP !== 'off'; run-e2e.sh exports it; e2e-ui's API env sets it");
+}
+
+// 51. Agent health (0.36). The agent-silent monitor is opt-in — the owner
+//     has not decided whether it should be on by default — so nothing may
+//     create it but a person: it is kept out of RECOMMENDED (which "Add
+//     recommended" creates in bulk), and no code or migration writes an
+//     AGENT_SILENT rule. Its floor is the console's own agent-silent window,
+//     so an alert never contradicts a header that still says Online. It
+//     raises only while RustDesk reaches the computer and clears only when
+//     the agent checks in. The ClientSt0r contract names the alert kinds it
+//     carries; this one is not among them, so it is never signed or sent
+//     (adding it is a contract revision, not a side effect). And the
+//     client-update sweep re-resolves queued automatic requests every tick,
+//     before queuing, in every business — a computer that left a group must
+//     not keep a request its policy no longer governs — writing only the
+//     POLICY request it read, and recording the policy that queued each one.
+{
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const eng = strip(read('apps/api/src/monitoring/engine.ts'));
+  const adm = strip(read('apps/api/src/monitoring/monitoring-admin.service.ts'));
+  const block = (src, start) => { const i = src.indexOf(start); return i < 0 ? '' : src.slice(i, src.indexOf('\n];', i)); };
+  const rec = block(eng, 'export const RECOMMENDED');
+  const opt = block(eng, 'export const OPTIONAL');
+  const ra = adm.slice(adm.indexOf('async addRecommended('), adm.indexOf('private async ruleFor('));
+  const writers = walk('apps/api/src').filter((f) => f !== 'apps/api/src/monitoring/engine.ts' && /['"]AGENT_SILENT['"]/.test(strip(read(f))));
+  const migrations = walk('apps/api/prisma/migrations').filter((f) => /INSERT INTO "MonitorRule"/i.test(read(f)));
+  check('the agent-silent monitor is opt-in: never recommended, never created by the server',
+    rec.length > 0 && !/AGENT_SILENT/.test(rec) && /kind: 'AGENT_SILENT'/.test(opt)
+      && /for \(const r of RECOMMENDED\) \{/.test(ra) && !/OPTIONAL/.test(ra)
+      && writers.every((f) => !/monitorRule\.(create|createMany|upsert)/.test(read(f))) && migrations.length === 0,
+    `RECOMMENDED without AGENT_SILENT, OPTIONAL with it; addRecommended iterates RECOMMENDED only; no file naming AGENT_SILENT creates a rule (${writers.join(', ') || 'none'}); no migration inserts a MonitorRule`);
+  check('its threshold floor is the console’s agent-silent window',
+    /export const AGENT_SILENT_BOUNDS = \{ min: HEARTBEAT_STALE_MS \/ 60_000, max: 7 \* 24 \* 60, def: 60 \} as const;/.test(eng)
+      && /AGENT_SILENT: z\.object\(\{ minutes: ints\(AGENT_SILENT_BOUNDS\.min, AGENT_SILENT_BOUNDS\.max\)\.default\(AGENT_SILENT_BOUNDS\.def\) \}\)\.strict\(\),/.test(eng)
+      && /import \{ HEARTBEAT_STALE_MS \} from '\.\.\/common\/connectivity';/.test(eng),
+    'AGENT_SILENT_BOUNDS.min = HEARTBEAT_STALE_MS / 60_000 (imported from common/connectivity), and PARAMS.AGENT_SILENT uses it');
+  const ev = eng.slice(eng.indexOf("case 'AGENT_SILENT': {"), eng.indexOf("case 'REBOOT_PENDING': {"));
+  const iSkip = ev.indexOf("if (!live.lastSeenAt) return { verdict: 'skip'");
+  const iClear = ev.indexOf("if (silentMin < P.minutes) return { verdict: 'ok',");
+  const iHold = ev.indexOf("if (!live.isOnline) return { verdict: 'pending', state: st };");
+  const iRaise = ev.indexOf("return { verdict: 'breach'");
+  check('it raises only while reachable, and clears only when the agent has checked in',
+    iSkip > 0 && iClear > iSkip && iHold > iClear && iRaise > iHold && (ev.match(/verdict: 'breach'/g) ?? []).length === 1
+      && /const SWEEP_KINDS = new Set\(\['OFFLINE', 'REBOOT_PENDING', 'AGENT_SILENT'\]\);/.test(strip(read('apps/api/src/monitoring/monitoring.service.ts'))),
+    "evaluateLive AGENT_SILENT: skip a never-reported agent, clear when silence < threshold, hold (pending) when not isOnline, and only then breach; swept, not heartbeat-driven");
+  const ae = strip(read('apps/api/src/monitoring/alert-events.service.ts'));
+  const emit = ae.slice(ae.indexOf('async emit('), ae.indexOf('private async patchFor('));
+  const contract = read('apps/api/src/integration/contract.ts');
+  check('agent-silent alerts are never signed or sent to ClientSt0r (not a contract kind)',
+    /const CONTRACT_ALERT_KINDS: ReadonlySet<string> = new Set\(Alert\.shape\.kind\.options\);/.test(ae)
+      && emit.indexOf('if (!CONTRACT_ALERT_KINDS.has(a.kind)) return 0;') > 0
+      && emit.indexOf('if (!CONTRACT_ALERT_KINDS.has(a.kind)) return 0;') < emit.indexOf('signAlertEvent(')
+      && /kind: z\.enum\(\['OFFLINE', 'DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH', 'SERVICE_STOPPED', 'EVENT_MATCH', 'REBOOT_PENDING', 'SITE_OUTAGE'\]\),/.test(contract),
+    'emit() returns before signing for a kind outside Alert.shape.kind; the contract enum is unchanged (adding AGENT_SILENT is a contract revision)');
+  const csw = strip(read('apps/api/src/client-updates/client-update-sweep.service.ts'));
+  const cus = strip(read('apps/api/src/client-updates/client-updates.service.ts'));
+  const pass51 = csw.slice(csw.indexOf('private async pass('), csw.indexOf('private async queue('));
+  const rq = cus.slice(cus.indexOf('async reconcileQueued('), cus.indexOf('async holdForHeartbeat('));
+  check('every sweep re-resolves queued automatic updates, in every business, before queuing',
+    /const r = await this\.svc\.reconcileQueued\(\{ audit: true \}\);/.test(pass51) && pass51.indexOf('reconcileQueued(') < pass51.indexOf('this.queue(now)')
+      && !/containment|enabled/.test(pass51)
+      && /updateRequestedById: null, updateHoldReason: null, updateHoldAt: null, updatePolicyId: p\.id,/.test(csw)
+      && /const eff = effectivePolicy\(policies, customerId, n\.endpoint\.siteId, m\.groupsOf\(n\.endpointId\)\);\s*const d = reconcileQueued\(n\.updatePolicyId \?\? null, eff, policies\);/.test(rq)
+      && /const m = await this\.membershipFor\(policies, nodes\.map\(\(n\) => n\.endpointId\)\);/.test(rq),
+    'pass(): reconcileQueued({ audit: true }) first, unconditionally, then queue(); queuing records updatePolicyId; reconcile resolves with this tick’s membership');
+  check('a re-resolved request is withdrawn whole or moved, and each change is audited with its reason',
+    /\? \{ updateRequestedAt: null, updateTargetVersion: null, updateRequestSource: null, updateRequestedById: null, updateHoldReason: null, updateHoldAt: null, updatePolicyId: null \}/.test(rq)
+      && /: \{ updatePolicyId: d\.to,/.test(rq)
+      && /if \(w\.count !== 1\) continue;/.test(rq)
+      && /action: d\.action === 'withdraw' \? 'CLIENT_UPDATE_AUTO_WITHDRAWN' : 'CLIENT_UPDATE_AUTO_REPLANNED',/.test(rq)
+      && /reason: d\.reason, text: QUEUED_REASON_TEXT\[d\.reason!\], fromPolicyId: d\.from, toPolicyId: d\.to,/.test(rq),
+    'withdraw clears every request field; replan only moves updatePolicyId (and the stale hold); audit only on a write that took, with reason, from and to');
+  // 0.36 heartbeat cost: a computer with nothing due skips the scheduler's
+  // queries until its next due time. Skipping can only delay a snapshot, never
+  // ask for one; it must never outlive what changes the answer.
+  const dsvc = strip(read('apps/api/src/diagnostics-catalog/diagnostics-catalog.service.ts'));
+  const dsch = strip(read('apps/api/src/diagnostics-catalog/snapshot-schedule.ts'));
+  const sa = dsvc.slice(dsvc.indexOf('private async scheduleAutomatic('), dsvc.indexOf('private async pruneAutomatic('));
+  check('the snapshot scheduler’s quiet window only skips, is bounded, and is dropped by whatever changes the answer',
+    /if \(q > t && !SNAPSHOT_KEYS\.some\(\(k\) => this\.isWatched\(endpointId, k, t\)\)\) return;/.test(sa)
+      && sa.indexOf('this.quiet.get(endpointId)') < sa.indexOf('this.prisma.')
+      && /if \(!due\.length\) \{\s*const until = quietUntil\(schedule, history, now, QUIET_CAP_MS\);/.test(sa)
+      && /export const QUIET_CAP_MS = 60 \* 60_000;/.test(dsch) && /if \(!h \|\| h\.open\) return null;/.test(dsch)
+      && /async report\([^)]*\) \{\s*if \(!isCatalogKey\(dto\.key\)\) return \{ accepted: false, reason: 'unknown_key' \};\s*this\.quiet\.delete\(endpointId\);/.test(dsvc)
+      && /if \(n\.count\) \{ this\.quiet\.delete\(r\.endpointId\);/.test(dsvc)
+      && /this\.scheduleCache = null;\s*this\.quiet\.clear\(\);/.test(dsvc)
+      && /if \(this\.quiet\.size >= QUIET_MAX_ENTRIES\) this\.quiet\.clear\(\);/.test(sa),
+    'scheduleAutomatic returns early only inside the window with no tab watched; the window is set only when nothing is due, capped at 1 h, never with a run open; report, expiry and a schedule change drop it; the map is bounded');
+}
+
+// 52. Signed revocation (0.36). A script hash taken off the signer's allowlist,
+//     or a software catalog entry archived, after a plan using it was signed:
+//     the plan is genuine and inside its window, so without this the agent
+//     runs it. What must hold: the signer signs one statement of every
+//     revocation under its own domain prefix, and the agent checks the same
+//     prefix against approval/keys.json only; the published set is a union
+//     with the ledger, so it never shrinks, and software revocations are
+//     write-once with nothing that removes one; the signer refuses a revoked
+//     install at admission and again at approval, and a software plan with no
+//     entry id at all; the agent refuses a lower seq or a statement leaving
+//     out one it holds; the check sits after the signed pause and before
+//     Precheck and the "executing" journal, a stale statement is NOT final
+//     (fail closed, nothing consumed) and a revoked plan is; the Windows agent
+//     actually fetches the statement and caps it; and the portal revokes on
+//     the signer before it archives, and drops its cached statement when it
+//     revokes or a plan is signed.
+{
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const core = code(read('apps/api/src/approval-signer/core.ts'));
+  const server = code(read('apps/api/src/approval-signer/server.ts'));
+  const store = code(read('apps/api/src/approval-signer/store.ts'));
+  const goRev = read('tools/windows-installer/internal/action/revocation.go');
+  const goAct = read('tools/windows-installer/internal/action/action.go');
+  const goAgent = read('tools/windows-installer/internal/agent/agent.go');
+  const goWin = read('tools/windows-installer/action_windows.go');
+  const sw = code(read('apps/api/src/software/software.service.ts'));
+  const sr = code(read('apps/api/src/script-run/script-run.service.ts'));
+  const acts = code(read('apps/api/src/actions/actions.service.ts'));
+  const relay = code(read('apps/api/src/actions/revocations.controller.ts'));
+  const goFn = (src, name) => { const i = src.indexOf(`func ${name}(`); const j = src.indexOf('\n}\n', i); return i < 0 ? '' : src.slice(i, j); };
+
+  check('the revocation statement is signed under its own prefix, the same on the signer and the agent, and verified only against the approval keys',
+    /export const REVOCATION_SIGNING_PREFIX = 'rem0te-revocations-v1\\n';/.test(core)
+      && /RevocationPrefix\s+= "rem0te-revocations-v1\\n"/.test(goRev)
+      && /edSign\(null, Buffer\.concat\(\[Buffer\.from\(REVOCATION_SIGNING_PREFIX, 'utf8'\), bytes\]\), k\.key\)/.test(core)
+      && /for _, k := range keys \{\s*if k\.Kid == env\.Kid \{/.test(goFn(goRev, 'ParseRevocations'))
+      && /!ed25519\.Verify\(key, append\(\[\]byte\(RevocationPrefix\), body\.\.\.\), sig\)/.test(goFn(goRev, 'ParseRevocations'))
+      && /r\.Seq != len\(r\.Scripts\)\+len\(r\.Software\)/.test(goFn(goRev, 'ParseRevocations'))
+      && /export const MAX_REVOCATIONS = 5000;/.test(core) && /MaxRevocations = 5000/.test(goRev),
+    'core.ts signs with REVOCATION_SIGNING_PREFIX; revocation.go verifies the same prefix against a key from o.Keys by kid, seq = entry count; MAX_REVOCATIONS = MaxRevocations = 5000');
+
+  check('the published statement never shrinks, and nothing removes a software revocation',
+    /const prev = store\.publishedRevocations\(\);\s*const set = mergeRevocations\(prev, \{ scripts: store\.scriptRevocations\(\), software: store\.softwareRevocations\(\) \}\);/.test(server)
+      && /\[\.\.\.\(prev\?\.scripts \?\? \[\]\), \.\.\.cur\.scripts\]/.test(core) && /\[\.\.\.\(prev\?\.software \?\? \[\]\), \.\.\.cur\.software\]/.test(core)
+      && /revokeSoftware\(entryId: string, rev: Revocation\): boolean \{[\s\S]{0,200}'software-revocations', `\$\{entryId\}\.json`\), JSON\.stringify\(rev, null, 2\), \{ mode: 0o600, flag: 'wx' \}\)/.test(store)
+      && (store.match(/unlinkSync\(/g) ?? []).length === 1 && /unlinkSync\(path\.join\(this\.dir, 'device-keys'/.test(store)
+      && !/software-revocations/.test(server) && !/\/software\/[^\n]*\/(unrevoke|restore|reinstate)/.test(server),
+    "server's revocations(): mergeRevocations(publishedRevocations(), on-disk); merge is a union; revokeSoftware writes flag 'wx'; the store's only unlink is device-keys; no HTTP route un-revokes");
+
+  check('the signer refuses an install from a revoked entry at admission and at approval, and a software plan naming no entry',
+    /if \(p\.action\.id === SCRIPT_RUN_ACTION\) assertScriptAllowed\(p, scripts\);\s*assertSoftwareAllowed\(p, softwareRevoked\);\s*return \{ plan: p, digest: planDigest\(p\) \};/.test(core)
+      && /if \(!id\) throw new Refused\('software_entry_missing'/.test(core)
+      && /if \(p\.action\.id === SOFTWARE_INSTALL_ACTION && softwareRevoked\(id\)\) throw new Refused\('software_revoked'/.test(core)
+      && /admitPlan\(b\.plan, store\.policy\(\), now\(\), \(id\) => store\.scriptEntry\(id\), softwareRevoked\)/.test(server)
+      && /if \(c\.decision === 'approve'\) assertSoftwareAllowed\(cur\.plan, softwareRevoked\);/.test(server)
+      && /const softwareRevoked = \(entryId: string\) => !!store\.softwareRevocation\(entryId\);/.test(server),
+    'admitPlan ends with assertSoftwareAllowed; it refuses software_entry_missing and software_revoked; server passes softwareRevoked at admission and re-checks before an approve');
+
+  const cur = goFn(goRev, 'currentRevocations');
+  check('the agent keeps the newest statement and refuses rollback: a lower seq, or one that leaves out a revocation it holds',
+    /case held != nil && got\.Seq < held\.Seq:\s*return held,/.test(cur)
+      && /case held != nil && !got\.covers\(held\):\s*return held,/.test(cur)
+      && /case err != nil:\s*return held,/.test(cur)
+      && /_ = atomicWrite\(revocationsPath\(o\), json\.RawMessage\(o\.Revocations\)\)\s*\}\s*return got, ""/.test(cur)
+      && /held, _ = ParseRevocations\(raw, o\.Keys\)/.test(cur),
+    'currentRevocations: an error, a lower seq or a non-superset returns the held one; only a taken statement is written; the held one is re-verified on read');
+
+  const chk = goFn(goRev, 'revocationCheck');
+  const iPause = goAct.indexOf('o.Pause.ActionsPaused(');
+  const iRev = goAct.indexOf('revocationCheck(plan, o)');
+  const iPre = goAct.indexOf('a.Precheck(plan, o)');
+  const iExec = goAct.indexOf('State: "executing"');
+  check('the agent checks revocations after the signed pause and before Precheck and "executing"; stale is not final, revoked is',
+    iPause > 0 && iRev > iPause && iPre > iRev && iExec > iPre
+      && /if rr, isFinal := revocationCheck\(plan, o\); rr != nil \{\s*r := \*rr\s*r\.JobID = jobID\s*if !isFinal \{\s*return r, nil\s*\}\s*return final\(o, jobID, planSHA, r\)\s*\}/.test(goAct)
+      && /if rv == nil \|\| rv\.asOf\.Before\(signed\) \{[\s\S]{0,700}return refuse\("revocations_stale", d\), false\s*\}/.test(chk)
+      && /if \(p\.Script != nil && rv\.scripts\[p\.Script\.ContentSHA256\]\) \|\| rv\.scripts\[sha\] \{\s*return refuse\("revoked", [^\n]*\), true/.test(chk)
+      && /if rv\.software\[id\] \{\s*return refuse\("revoked", [^\n]*\), true/.test(chk)
+      && /if id == "" \{\s*return refuse\("software_entry_missing", [^\n]*\), true/.test(chk),
+    'action.go: pause, then revocationCheck (non-final returns without final()), then Precheck, then the executing journal; revocation.go: no statement or an older one is revocations_stale (false); a revoked hash or entry is revoked (true)');
+
+  check('the Windows agent fetches the statement for every job, from the pinned portal, capped',
+    /revs, rerr := agent\.FetchRevocations\(agent\.Options\{PortalHost: pinnedPortal\(\), Paths: paths\}\)/.test(goWin)
+      && /Revocations: revs\}/.test(goWin)
+      && /io\.LimitReader\(resp\.Body, action\.MaxRevocationBytes\+1\)/.test(goFn(goAgent, 'FetchRevocations'))
+      && /if !ValidPortal\(o\.PortalHost\) \{/.test(goFn(goAgent, 'FetchRevocations')),
+    'action_windows.go: agent.FetchRevocations(pinnedPortal()) and Revocations: revs; FetchRevocations validates the portal and caps the body at MaxRevocationBytes');
+
+  const arch = sw.slice(sw.indexOf('async archive('), sw.indexOf('async archive(') + 2500);
+  const iRevoke = arch.indexOf('this.signer.revokeSoftware(e.id, p.data.reason)');
+  const iUpd = arch.indexOf('this.prisma.softwareCatalogEntry.updateMany(');
+  check('the portal revokes on the signer before it archives, and drops its cached statement whenever something is revoked or signed',
+    iRevoke > 0 && iUpd > iRevoke
+      && /if \(rv\.status !== 200 \|\| rv\.body\.status !== 'REVOKED'\) throw new ConflictException\(\{ code: 'APPROVAL_SIGNER_REFUSED'/.test(arch)
+      && arch.indexOf('this.relay.invalidate();') > iRevoke && arch.indexOf('this.relay.invalidate();') < iUpd
+      && /this\.relay\.invalidate\(\);/.test(sr)
+      && /if \(next\.status === 'APPROVED'\) this\.relay\?\.invalidate\(\);/.test(acts)
+      && /if \(gen === this\.generation\) this\.cached = \{ at: now, body \};/.test(relay)
+      && /invalidate\(\) \{ this\.cached = null; this\.generation\+\+; \}/.test(relay),
+    'archive(): signer.revokeSoftware, refuse unless REVOKED, relay.invalidate, then updateMany; script revoke and a newly APPROVED plan invalidate; a fetch that raced an invalidation is not cached');
+
+  check('the relay is a read-only courier: one public GET, four envelope fields passed on, nothing added',
+    (relay.match(/@(Get|Post|Put|Patch|Delete)\(/g) ?? []).length === 1 && /@Get\('revocations\.json'\)\s*@Public\(\)/.test(relay)
+      && /const body = JSON\.stringify\(\{ schema: r\.body\.schema, kid: r\.body\.kid, statement: r\.body\.statement, sig: r\.body\.sig \}\);/.test(relay),
+    "revocations.controller.ts: exactly one route, GET public/approval/revocations.json; the body is the signer's four fields");
+
+  const dispatch = acts.slice(acts.indexOf('private async dispatchBlock('));
+  check('an undelivered plan whose script or software entry was revoked is refused by the portal too, first',
+    /^private async dispatchBlock\(j: ActionJob, endpointId: string\): Promise<string \| null> \{\s*if \(await this\.revokedSinceSigning\(j\)\) return 'revoked';/.test(dispatch)
+      && /return e\?\.status === 'REVOKED';/.test(acts) && /return !e \|\| !!e\.archivedAt;/.test(acts),
+    "dispatchBlock's first line: revokedSinceSigning → 'revoked' (script entry REVOKED; software entry archived or gone)");
+}
+
+// 53. Automatic agent self-update (0.36). When a computer's agent is older
+//     than what this server serves, the heartbeat asks it to re-run its
+//     update path by itself. What must hold: it runs only for an authenticated
+//     heartbeat outside an updates pause, never replaces a flag another step
+//     set and comes before the containment override; it sends only the two
+//     flags agents already act on, with no nonce; nothing goes out under a
+//     pause, a rollout, another queued install or an open session, an
+//     attempt hands the flag out for less than the agent's 30-minute floor,
+//     the attempt cap is checked first and the global pace is counted under
+//     a lock; Linux and macOS are never asked; attempts are history rows, not
+//     audit entries, while the settings change is Platform Admin, fresh and
+//     audited, and opting a policy back in needs fresh authentication; the
+//     signed heartbeat's periodic check runs only `rem0te-agent.exe update`;
+//     and the off switch is exact and set for every other suite.
+{
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const sch = read('apps/api/src/agent-auto-update/schedule.ts');
+  const svc = read('apps/api/src/agent-auto-update/agent-auto-update.service.ts');
+  const ctl = read('apps/api/src/agent-auto-update/agent-auto-update.controller.ts');
+  const cus = read('apps/api/src/client-updates/client-updates.service.ts');
+  const up = read('apps/api/src/agent-upgrade/agent-upgrade.service.ts');
+  const ws = read('apps/api/src/public/windows-script.ts');
+  const hbStep = enr.slice(enr.indexOf('let agentSelfCheck = false;'), enr.indexOf('// v0.28: updates paused everywhere or for this business.'));
+  check('the heartbeat step runs only when authenticated and not paused, adds a flag only when none is going out, and precedes the containment override',
+    hbStep.length > 200 && /if \(authenticated && !updatesHeld\) \{\s*try \{\s*const auto = await this\.agentAuto\.forHeartbeat\(\{/.test(hbStep)
+      && /if \(auto\.flag && !updateRustdesk && !reinstallAgent\) \{/.test(hbStep)
+      && /flagGoingOut: !!\(updateRustdesk \|\| reinstallAgent\)/.test(hbStep)
+      && enr.indexOf('let agentSelfCheck = false;') > enr.indexOf('const mig = await this.agentMigration.forHeartbeat(')
+      && /if \(updatesHeld\) \{\s*updateRustdesk = null;\s*reinstallAgent = null;/.test(enr.slice(enr.indexOf('let agentSelfCheck = false;')))
+      && (enr.match(/this\.agentAuto\.forHeartbeat\(/g) ?? []).length === 1,
+    'enrollment.service: `if (authenticated && !updatesHeld)`, `if (auto.flag && !updateRustdesk && !reinstallAgent)`, after the migration step, before `if (updatesHeld)`');
+  check('it sends only reinstallAgent or updateRustdesk, with this server\'s version and no nonce',
+    /if \(auto\.flag === 'updateRustdesk'\) updateRustdesk = \{ targetVersion: this\.platformVersion\(\) \};\s*else reinstallAgent = \{ targetVersion: this\.platformVersion\(\) \};/.test(hbStep)
+      && !/nonce/.test(hbStep.replace(/\/\/[^\n]*/g, ''))
+      && /return channel === 'standard_pre015' \? 'updateRustdesk' : 'reinstallAgent';/.test(sch),
+    'the step\'s two assignments; flagFor returns one of the two flags');
+  const dec = sch.slice(sch.indexOf('export function decide('), sch.indexOf('export function selfCheckAllowed('));
+  const at = (t) => dec.indexOf(t);
+  check('nothing is dispatched under a pause, a rollout, another queued install, a closed window or an open session; the cap is checked before any dispatch',
+    at("if (i.paused) return out('queued', 'paused', t);") > 0 && at("if (i.rollout) return out('queued', 'rollout', t);") > 0
+      && at("if (i.pendingRequest) return out('queued', 'pending_request', t);") > 0 && at("if (i.sessionOpen) return out('queued', 'session_open', t);") > 0
+      && at("if (i.mode === 'WINDOW' && !i.windowOpen) return out('queued', 'outside_window', t);") > 0
+      && [ "if (i.paused)", "if (i.rollout)", "if (i.pendingRequest)", "if (i.sessionOpen)", 'if (i.attempts >= i.settings.maxAttempts && !inAttempt)' ].every((x) => at(x) > 0 && at(x) < at("dispatch: 'resend'") && at(x) < at("dispatch: 'new'"))
+      && at("if (i.mode === 'OFF') return out('opted_out', 'policy_off', t);") < at("dispatch: 'resend'")
+      && (dec.match(/dispatch: '(resend|new)'/g) ?? []).length === 2,
+    'decide(): every hold and the attempt cap return before the only two dispatching returns');
+  check('one attempt hands the flag out for less than the agent\'s 30-minute floor, and attempts back off',
+    /export const ATTEMPT_WINDOW_MS = 20 \* MIN;/.test(sch) && /export const BACKOFF_MS = \[0, 2 \* H, 8 \* H, 24 \* H\] as const;/.test(sch)
+      && /TotalMinutes -ge 30\)/.test(ws),
+    'ATTEMPT_WINDOW_MS = 20 * MIN; BACKOFF_MS [0, 2h, 8h, 24h]; the heartbeat keeps its 30-minute floor');
+  const start = svc.slice(svc.indexOf('private async startAttempt('), svc.indexOf('private async complete('));
+  check('the global pace is counted under an advisory lock, and the node moves only from the state this heartbeat read',
+    /await tx\.\$executeRawUnsafe\(`SELECT pg_advisory_xact_lock\(hashtext\('rem0te\.agent-auto-update\.pace'\)\)`\);\s*const used = await tx\.agentAutoUpdateAttempt\.count\(/.test(start)
+      && /if \(used >= settings\.perHour\) return 'pacing' as const;/.test(start)
+      && /where: \{ id: node\.id, agentAutoTarget: node\.agentAutoTarget, agentAutoAttempts: node\.agentAutoAttempts, agentAutoLastAt: node\.agentAutoLastAt \},/.test(start)
+      && /if \(moved\.count !== 1\) return 'raced' as const;/.test(start)
+      && (svc.match(/agentAutoUpdateAttempt\.create\(/g) ?? []).length === 1 && start.includes('agentAutoUpdateAttempt.create('),
+    'startAttempt: lock, count vs perHour, conditional updateMany, the only create');
+  check('Linux and macOS agents and computers without a device secret are never asked',
+    /if \(readOnlyAgentOs\(f\.platform\)\) return \{ none: 'read_only_agent' \};/.test(sch) && /if \(!f\.hasSecret\) return \{ none: 'no_device_secret' \};/.test(sch)
+      && /const ch = agentChannel\(facts\);\s*if \(!\('channel' in ch\)\) return \{ flag: null, selfCheck: false \};/.test(svc),
+    'agentChannel: read-only OS first, then the device secret; forHeartbeat returns nothing without a channel');
+  const put = svc.slice(svc.indexOf('async putSettings('));
+  check('attempts are not audit entries; the settings change is Platform Admin, fresh and audited before/after',
+    (svc.match(/this\.audit\.log\(/g) ?? []).length === 1 && put.includes('this.audit.log(')
+      && /this\.acl\.assertPlatformAdmin\(actor\);[\s\S]{0,300}assertFresh\(freshMethod, \{ action: 'agent\.autoupdate'/.test(put)
+      && /action: 'AGENT_AUTO_UPDATE_SETTINGS_CHANGED', resource: 'platform_settings', resourceId: 'singleton',\s*meta: \{ before: shape\(before\), after: shape\(after\) \},/.test(put)
+      && /async getSettings\(actor: ActorContext\) \{\s*this\.acl\.assertPlatformAdmin\(actor\);/.test(svc)
+      && /@Controller\('admin\/agent-auto-update'\)\s*@UseGuards\(PlatformAdminGuard\)/.test(ctl) && (ctl.match(/@(Get|Put|Post|Delete|Patch)\(/g) ?? []).length === 2
+      && !/activityLog\.(create|update|delete|upsert)/.test(svc + sch),
+    'one audit.log in the service, in putSettings after assertPlatformAdmin and assertFresh; PlatformAdminGuard; GET + PUT only');
+  check('opting a policy back in (any agent mode but OFF) needs fresh authentication; opting out does not',
+    /if \(input\.agentMode !== undefined && input\.agentMode !== 'OFF' && \(input\.agentMode \?\? null\) !== \(before\?\.agentMode \?\? null\) && !fresh\) throw new FreshAuthNeeded\(\);/.test(cus)
+      && cus.indexOf('throw new FreshAuthNeeded();\n    const biz') > cus.indexOf("input.agentMode !== 'OFF'") - 400,
+    'client-updates.service putPolicy: the agentMode fresh check');
+  check('the card\'s automatic-update state is read only after the computer\'s scope check',
+    (() => {
+      const cardFn = up.slice(up.indexOf('  async card(actor: ActorContext, id: string) {'), up.indexOf('  async updateAgent('));
+      const scope = cardFn.indexOf('await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_VIEW);');
+      return (up.match(/this\.auto\.card\(/g) ?? []).length === 1 && scope > 0 && cardFn.indexOf('this.auto.card(') > scope;
+    })(),
+    'agent-upgrade.service card(): assertEndpointInScope before this.auto.card');
+  const signedSc = ws.slice(ws.indexOf('selfCheckHook: `try {'), ws.indexOf('} catch {}`,', ws.indexOf('selfCheckHook: `try {')));
+  check('the signed periodic self-check runs only `rem0te-agent.exe update`, only when the portal allows it, and the legacy channel has none',
+    signedSc.length > 200 && /if \(\$resp\.data\.agentSelfCheck -eq \$true -and \(Test-Path -LiteralPath \$agentExe\)\) \{/.test(signedSc)
+      && (signedSc.match(/& \$agentExe/g) ?? []).length === 1 && signedSc.includes("& $agentExe @('update') *>$null")
+      && !/iex|Invoke-Expression|Invoke-WebRequest|Invoke-RestMethod|DownloadFile|Start-Process|irm /i.test(signedSc)
+      && /selfCheckHook: '# Periodic self-check: signed channel only\.',/.test(ws) && (ws.match(/selfCheckHook: ['`]/g) ?? []).length === 2
+      && /agentSelfCheck: true/.test(enr),
+    'windows-script.ts: one signed selfCheckHook calling only update; the legacy one is a comment');
+  check('AGENT_AUTO_UPDATE=off is exact, and set for run-e2e.sh and the browser suite',
+    /processOn: env\.AGENT_AUTO_UPDATE !== 'off',/.test(sch)
+      && /\nexport AGENT_AUTO_UPDATE=off\n/.test(read('scripts/run-e2e.sh'))
+      && /AGENT_AUTO_UPDATE: 'off',/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    "settingsFrom: env.AGENT_AUTO_UPDATE !== 'off'; run-e2e.sh exports it; e2e-ui's API env sets it");
+}
+
+// 54. Test stacks and the GeoIP database (0.36). The dashboard map resolves
+//     addresses with GeoipService, which falls back to the production path
+//     (/opt/reboot-remote/data/geoip/…) when GEOIP_DB_PATH is unset. On the
+//     production host that made the browser suite read production's file
+//     without saying so. The suite now writes its own database of RFC 5737
+//     documentation networks; the writer is test tooling, never server code;
+//     and the screens reachable signed out that draw text on the operator's
+//     accent choose their ink by luminance rather than hard-coding white.
+{
+  const ui = read('apps/web/scripts/e2e-ui.mjs');
+  const fixture = read('apps/api/scripts/lib/mmdb-fixture.mjs');
+  check('the browser suite hands its API a fixture GeoIP database, never the default path',
+    /GEOIP_DB_PATH: GEOIP_FILE,/.test(ui)
+      && /const GEOIP_FILE = writeCityMmdb\(path\.join\(GEO_DIR, 'fixture-city\.mmdb'\)/.test(ui)
+      && /const GEO_DIR = mkdtempSync\(path\.join\(tmpdir\(\), 'rem0te-ui-geo-'\)\);/.test(ui)
+      && !/reboot-remote\/data\/geoip|dbip-city-lite/.test(ui),
+    'e2e-ui.mjs: GEOIP_DB_PATH: GEOIP_FILE in startApi(), written with writeCityMmdb into a mkdtemp directory; no production GeoIP path');
+  const cidrs = [...ui.matchAll(/cidr: '([0-9./]+)'/g)].map((m) => m[1]);
+  const docRange = (c) => /^(192\.0\.2|198\.51\.100|203\.0\.113)\.\d+\/(2[4-9]|3[0-2])$/.test(c);
+  check('the fixture GeoIP networks are RFC 5737 documentation ranges only',
+    cidrs.length >= 3 && cidrs.every(docRange),
+    `cidrs in e2e-ui.mjs: ${JSON.stringify(cidrs)}`);
+  const srcImports = walk('apps/api/src').filter((f) => /mmdb-fixture/.test(read(f)));
+  check('the mmdb writer is test tooling: nothing under apps/api/src imports it, and it writes IPv4 only',
+    srcImports.length === 0 && /ip_version: \{ \$uint16: 4 \}/.test(fixture),
+    `imported by: ${srcImports.join(', ') || '(none)'}`);
+  const login = read('apps/web/app/(auth)/login/page.tsx');
+  const quick = read('apps/web/app/quick/page.tsx');
+  const onAccent = (src) => [...src.matchAll(/className="[^"]*"\s*style=\{\{ backgroundColor: [^}]*\}\}/g)].map((m) => m[0]);
+  check('the login band and Quick Connect draw text on the accent with inkOn(), never a fixed white',
+    /import \{ inkOn \} from '@\/lib\/contrast';/.test(login) && /import \{ inkOn \} from '@\/lib\/contrast';/.test(quick)
+      && /style=\{\{ backgroundColor: band, color: bandInk \}\}/.test(login) && /const bandInk = inkOn\(band\)!;/.test(login)
+      && (quick.match(/style=\{\{ backgroundColor: accent, color: ink \}\}/g) ?? []).length === 2 && /const ink = inkOn\(accent\)!;/.test(quick)
+      && ![...onAccent(login), ...onAccent(quick)].some((t) => /text-white/.test(t))
+      && !/text-white/.test(login.slice(login.indexOf('data-accent-band'), login.indexOf('data-accent-band') + 800)),
+    'login: backgroundColor band, color bandInk = inkOn(band); quick: two accent elements with color ink = inkOn(accent); no text-white on either');
+}
+
+// 55. The tray (0.36). A tray icon in every signed-in session on Windows:
+//     chat, a support request, self-help tools. Three credentials, none of
+//     which is the device secret in a user's hands: the signed tray holds
+//     nothing and asks the SYSTEM tray host over the 0.34 pipes; the standard
+//     tray holds a tray key that only reaches /tray/* (paired with the device
+//     secret by the SYSTEM heartbeat, replaced on every pairing, never an
+//     elevated tool); the chat page holds an HttpOnly cookie on /assist. The
+//     link the tray opens carries a one-time code: consumed by one
+//     conditional update, 60 seconds, answered with a 303 off the URL. The
+//     page has its own strict CSP (the console's is not applied there) and
+//     writes need x-assist. Self-help is a closed catalog that is the same in
+//     the API, the agent and the database; the elevated tools run only in
+//     the SYSTEM host, which runs only ipconfig and ping from System32 and
+//     the RustDesk restart, under the containment kinds each tool names, and
+//     starts only the tray whose sha256 the signed install recorded. Whether
+//     chats are recorded needs a fresh sign-in and is audited; an unrecorded
+//     chat's messages are deleted once both sides have them and at the end.
+//     Screenshots and usage are served only to someone who can see the
+//     computer, inert. No message text, request text or Windows account in
+//     the audit log.
+{
+  const pol = read('apps/api/src/tray/tray-policy.ts');
+  const asv = read('apps/api/src/tray/assist.service.ts');
+  const tsv = read('apps/api/src/tray/tray.service.ts');
+  const tctl = read('apps/api/src/tray/tray.controller.ts');
+  const page = read('apps/api/src/tray/assist-page.ts');
+  const next = read('apps/web/next.config.js');
+  const csvc = read('apps/api/src/chat/chat.service.ts');
+  const ssvc = read('apps/api/src/support-requests/support-requests.service.ts');
+  const sctl = read('apps/api/src/support-requests/support-requests.controller.ts');
+  const sql = read('apps/api/prisma/migrations/0062_tray/migration.sql');
+  const cat = read('tools/windows-installer/internal/tray/catalog.go');
+  const core = read('tools/windows-installer/internal/tray/core.go');
+  const tools = read('tools/windows-installer/internal/tray/tools.go');
+  const winos = read('tools/windows-installer/internal/tray/os_windows.go');
+  const host = read('tools/windows-installer/trayhost_windows.go');
+  const trayMain = read('tools/windows-installer/cmd/rem0te-tray/main_windows.go');
+  const trayArgs = read('tools/windows-installer/cmd/rem0te-tray/args.go');
+  const fnBody = (src, sig) => { const i = src.indexOf(sig); const j = src.indexOf('\n  }\n', i); return i < 0 ? '' : src.slice(i, j); };
+
+  check('a chat code is single-use: one conditional update consumes it, and nothing is read before it',
+    /const claimed = await this\.prisma\.assistCode\.updateMany\(\{ where: \{ codeHash: hash, usedAt: null, expiresAt: \{ gt: now \} \}, data: \{ usedAt: now \} \}\);\s*\n\s*if \(claimed\.count !== 1\) return null;/.test(asv)
+      && fnBody(asv, 'async exchange(').indexOf('assistCode.find') > fnBody(asv, 'async exchange(').indexOf('assistCode.updateMany')
+      && /export const CODE_TTL_MS = 60_000;/.test(pol) && /CHECK \("expiresAt" <= "createdAt" \+ interval '5 minutes'\)/.test(sql)
+      && /res\.redirect\(303, 'chat'\);/.test(tctl),
+    'exchange(): updateMany on {codeHash, usedAt: null, expiresAt > now} then count !== 1 → null, before any read; CODE_TTL_MS 60 s; AssistCode_short_lived; /assist/open redirects 303');
+  check('the /assist cookie is HttpOnly, Secure, SameSite=Strict on Path=/assist, and is the only credential the page accepts',
+    /return `\$\{ASSIST_COOKIE\}=\$\{token\}; Path=\$\{ASSIST_COOKIE_PATH\}; Max-Age=\$\{Math\.floor\(maxAgeMs \/ 1000\)\}; HttpOnly; Secure; SameSite=Strict`;/.test(pol)
+      && /export const ASSIST_COOKIE_PATH = '\/assist';/.test(pol)
+      && /@Controller\('assist'\)\s*\nexport class AssistController/.test(tctl)
+      && !/JwtAuthGuard|@Actor\(\)/.test(tctl.slice(tctl.indexOf('export class AssistController'))),
+    'assistCookie(): HttpOnly; Secure; SameSite=Strict; Path=/assist; AssistController uses no JwtAuthGuard or @Actor');
+  check('the page has its own strict CSP, the console\'s CSP is not applied to /assist, and page writes need x-assist',
+    /"default-src 'none'",\s*\n\s*"script-src 'self'",/.test(pol) && /"frame-ancestors 'none'",/.test(pol) && !/unsafe-(inline|eval)/.test(pol.slice(pol.indexOf('export const ASSIST_CSP'), pol.indexOf("].join('; ');", pol.indexOf('export const ASSIST_CSP'))))
+      && /res\.setHeader\('Content-Security-Policy', ASSIST_CSP\);/.test(tctl)
+      && /source: '\/:path\(\(\?!assist\(\?:\/\|\$\)\)\.\*\)',/.test(next)
+      && /if \(req\.headers\['x-assist'\] !== '1'\) throw new ForbiddenException/.test(tctl)
+      && (tctl.match(/assertPageWrite\(req\);/g) ?? []).length === 4,
+    "ASSIST_CSP default-src 'none', script-src 'self', no unsafe-*; pageHeaders sets it; next.config.js applies the console CSP to /:path((?!assist(?:/|$)).*); assertPageWrite in start, messages, receipts, end");
+  check('no device secret, tray key or code reaches the page, and the tray is handed a code, never a URL',
+    !/agentSecret|trayKey|heartbeat\.dat|rem0te_assist/.test(page)
+      && /return \{ code, expiresAt: new Date\(now \+ CODE_TTL_MS\), conversationId \};/.test(tsv)
+      && /func AssistURL\(portal, code string\) \(string, error\) \{/.test(cat)
+      && !/heartbeat\.dat|AgentSecret|agentSecret/.test(trayMain + trayArgs),
+    'assist-page.ts has no secret names; chatCode returns { code, expiresAt, conversationId }; the tray builds the URL (AssistURL) and never reads heartbeat.dat');
+  check('a tray key never runs or reports an elevated tool, and a standard computer\'s device secret is not a tray credential',
+    /if \(t\.elevated && dev\.via !== 'signed'\) \{\s*\n\s*throw new ForbiddenException\(\{ code: 'SELF_HELP_SIGNED_ONLY'/.test(tsv)
+      && /if \(t\.elevated && dev\.via !== 'signed'\) throw new ForbiddenException\(\{ code: 'SELF_HELP_SIGNED_ONLY'/.test(tsv)
+      && /CHECK \(\s*\n\s*"via" = 'signed' OR "tool" IN \('dns\.check', 'net\.test', 'net\.details'\)\);/.test(sql)
+      && /if \(ep\.updateChannel !== 'signed'\) \{[\s\S]{0,200}throw new ForbiddenException\(\{ code: 'TRAY_KEY_REQUIRED'/.test(tsv)
+      && /ep\.updateChannel === 'signed' \|\| ep\.status === 'ARCHIVED'\) \{/.test(tsv)
+      && /Run:\s+&tray\.Runner\{OS: tray\.WinOS\{\}, Portal: tf\.Portal, Elevated: false\},/.test(trayMain)
+      && /if t\.Elevated && !r\.Elevated \{/.test(tools)
+      && /func \(WinOS\) FlushDNS\(\) \(string, error\)\s+\{ return "", ErrNotHere \}/.test(winos)
+      && /func \(WinOS\) RenewIP\(\) \(string, error\)\s+\{ return "", ErrNotHere \}/.test(winos)
+      && /func \(WinOS\) RestartRustDesk\(\) error\s+\{ return ErrNotHere \}/.test(winos),
+    'selfHelpBegin and selfHelpResult refuse elevated tools from a tray key; TraySelfHelpRun_elevated_signed_only; identify() refuses a standard device secret and a tray key on a signed computer; the standard tray\'s Runner is Elevated: false; WinOS elevated methods return ErrNotHere');
+  {
+    const ts = [...pol.matchAll(/\{ id: '([a-z.]+)', title: '[^']+', elevated: (true|false), perWindow: \d+, windowMs: [^,]+, blockedBy: \[([^\]]*)\] \}/g)].map((m) => `${m[1]}:${m[2]}:${m[3].replace(/[' ]/g, '')}`);
+    const go = [...cat.matchAll(/\{ID: "([a-z.]+)", Title: "[^"]+", Elevated: (true|false), PerWindow: \d+, Window: [^,}]+(?:, BlockedBy: \[\]string\{([^}]*)\})?\}/g)].map((m) => `${m[1]}:${m[2]}:${(m[3] ?? '').replace(/[" ]/g, '')}`);
+    const db = (sql.match(/"tool" IN \(([^)]*)\)\);/) ?? [])[1]?.replace(/[' ]/g, '').split(',') ?? [];
+    check('the self-help catalog is the same closed list in the API, the agent and the database: six tools, the same elevated flags and containment kinds',
+      ts.length === 6 && JSON.stringify(ts) === JSON.stringify(go) && JSON.stringify(ts.map((t) => t.split(':')[0])) === JSON.stringify(db)
+        && JSON.stringify(ts) === JSON.stringify(['dns.check:false:', 'dns.flush:true:actions', 'ip.renew:true:actions', 'net.test:false:', 'net.details:false:', 'rustdesk.restart:true:actions,remote']),
+      `api ${JSON.stringify(ts)}\n      go  ${JSON.stringify(go)}\n      db  ${JSON.stringify(db)}`);
+  }
+  check('the tray host runs only ipconfig and ping from System32, and nothing else is passed to RunSystem32',
+    /var System32Allowed = map\[string\]bool\{"ipconfig\.exe": true, "ping\.exe": true\}/.test(winos)
+      && /if !System32Allowed\[exe\] \{/.test(winos)
+      && JSON.stringify([...(host + winos).matchAll(/RunSystem32\([^,]+, [^,]+, "([a-z0-9.]+)"((?:, "[^"]*")*)/g)].map((m) => m[1] + m[2])) === JSON.stringify(['ipconfig.exe, "/flushdns"', 'ipconfig.exe, "/renew"', 'ping.exe, "-n", "2", "-w", "1000"'])
+      && !/exec\.Command/.test(winos.replace(/func RunSystem32\([\s\S]*?\n\}\n/, '')),
+    'System32Allowed = {ipconfig.exe, ping.exe}; RunSystem32 refuses others; the only calls are ipconfig /flushdns, ipconfig /renew and ping -n 2 -w 1000');
+  check('every elevated tool is stopped by the containment kinds it names, server and agent, and a refused run is recorded',
+    /for \(const kind of t\.blockedBy\) \{\s*\n\s*const p = await this\.containment\.blocking\(kind, dev\.customerId\);\s*\n\s*if \(p\) \{\s*\n\s*const run = await this\.prisma\.traySelfHelpRun\.create\(\{ data: \{ \.\.\.base, status: 'refused'/.test(tsv)
+      && fnBody(tsv, 'async selfHelpBegin(').indexOf('t.blockedBy') < fnBody(tsv, 'async selfHelpBegin(').indexOf("status: 'running'")
+      && /if t\.Elevated && c\.SignedPause != nil \{/.test(core)
+      && /SignedPause: func\(ctx context\.Context, businessID string\) \(string, error\) \{/.test(host),
+    "selfHelpBegin: for kind of t.blockedBy → containment.blocking → a 'refused' run, before any 'running' run; the host's core consults the signed pause for elevated tools");
+  check('the host starts only the tray whose sha256 the signed install recorded',
+    /sum, err := agent\.FileSHA256\(exe\)[\s\S]{0,120}if sum != h\.traySum \{\s*\n\s*return fmt\.Errorf\("refusing to start/.test(host)
+      && host.indexOf('if sum != h.traySum {') < host.indexOf('windows.WTSQueryUserToken(', host.indexOf('func (h *trayHost) launchAndServe('))
+      && host.indexOf('func (h *trayHost) launchAndServe(') > 0
+      && /if json\.Unmarshal\(bytes\.TrimPrefix\(raw, \[\]byte\("\\xef\\xbb\\xbf"\)\), &st\) != nil \|\| len\(st\.TraySHA256\) != 64 \{/.test(host),
+    'launchAndServe: FileSHA256 then sum != h.traySum → refuse, before WTSQueryUserToken; installedTraySHA requires a 64-char TraySHA256');
+  check('changing whether chats are recorded needs a fresh sign-in, is audited before/after, and is owner or Platform Admin only',
+    (tctl.match(/fresh\(this\.stepUp, req\);/g) ?? []).length === 2
+      && /assertFresh\(u\?\.sub \? stepUp\.read\(req, u\.sub, u\.iat\)\?\.method \?\? null : null,/.test(tctl)
+      && /if \(!actor\.isPlatformAdmin\) throw new ForbiddenException\('Platform Admin access required'\);\s*\n\s*fresh\(this\.stepUp, req\);/.test(tctl)
+      && /action: 'CHAT_RECORDING_CHANGED'[\s\S]{0,200}meta: \{ scope: 'business', before: before\.chatRecording, after: recording \},/.test(tsv)
+      && /meta: \{ scope: 'platform', before: before\?\.chatRecordingDefault \?\? true, after: recording \},/.test(tsv),
+    'both PUTs call fresh() (assertFresh); the platform one checks isPlatformAdmin first; CHAT_RECORDING_CHANGED meta is scope/before/after only');
+  check('an unrecorded chat keeps no text: technician messages go once read, replies once a technician\'s panel saw them, everything at the end',
+    /const r = await this\.prisma\.chatMessage\.deleteMany\(\{ where: \{ conversationId, sender: 'TECHNICIAN', readAt: \{ not: null \} \} \}\);/.test(csvc)
+      && /const purged = read\.length \? await this\.purgeRead\(conversationId\) : 0;/.test(csvc)
+      && /const deleted = c\.recorded \? \{ count: 0 \} : await this\.prisma\.chatMessage\.deleteMany\(\{ where: \{ \.\.\.mine, technicianSeenAt: \{ not: null \} \} \}\);/.test(csvc)
+      && /if \(!c\.recorded\) await tx\.chatMessage\.deleteMany\(\{ where: \{ conversationId \} \}\);/.test(csvc)
+      && /export function chatRecorded\(business: boolean \| null \| undefined, platformDefault: boolean \| null \| undefined\): boolean \{\s*\n\s*if \(business === true \|\| business === false\) return business;\s*\n\s*return platformDefault !== false;/.test(pol),
+    'purgeRead deletes read TECHNICIAN rows; assistReceipts calls it; ack deletes seen END_USER rows; end() deletes all when !recorded; chatRecorded: the business\'s boolean, else the default unless it is false');
+  check('tray audit rows hold ids, tools and outcomes — no message text, request text, Windows account or key',
+    [...tsv.matchAll(/meta: \{([^}]*)\}/g)].every((m) => !/localUser|description|summary|detail|\btrayKey\b|secret|\btext\b/.test(m[1]))
+      && /meta: \{ runId, tool, outcome, offline \},/.test(tsv)
+      && /meta: \{ origin: 'AGENT', endpointId: ep\.id, screenshot: !!shot\?\.ok, usage: !!usage \},/.test(ssvc)
+      && [...asv.matchAll(/meta: \{([^}]*)\}/g)].every((m) => !/text|localUser|description/.test(m[1]))
+      && !/activityLog\.(update|updateMany|delete|deleteMany|upsert)/.test(tsv + asv),
+    'tray.service / assist.service meta: no localUser, description, summary, text or key; SUPPORT_REQUEST_SUBMITTED meta is flags only');
+  check('screenshots and usage are served only to someone who can see the computer, and served inert',
+    /if \(!r\.endpointId \|\| !\(await this\.computerVisible\(actor, r\.endpointId\)\)\) throw new NotFoundException\('Attachment not found'\);/.test(ssvc)
+      && /const visible = r\.endpointId \? await this\.computerVisible\(actor, r\.endpointId\) : false;/.test(ssvc)
+      && /res\.setHeader\('X-Content-Type-Options', 'nosniff'\);\s*\n\s*res\.setHeader\('Content-Security-Policy', "default-src 'none'; sandbox"\);/.test(sctl)
+      && /res\.setHeader\('Content-Type', a\.contentType === 'image\/png' \? 'image\/png' : 'image\/jpeg'\);/.test(sctl)
+      && /"contentType" IN \('image\/jpeg', 'image\/png'\) AND "bytes" IS NOT NULL AND "sizeBytes" BETWEEN 1 AND 716800/.test(sql),
+    'attachment(): computerVisible or 404; detail() lists them only when visible; nosniff + sandbox CSP; JPEG/PNG ≤ 700 KiB in the database');
+  check('TRAY_SWEEP=off is exact, and set for run-e2e.sh and the browser suite',
+    /if \(process\.env\.TRAY_SWEEP === 'off'\) return;/.test(tsv)
+      && /\nexport TRAY_SWEEP=off\n/.test(read('scripts/run-e2e.sh'))
+      && /TRAY_SWEEP: 'off',/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    "onModuleInit: TRAY_SWEEP === 'off' → no timer; run-e2e.sh exports it; e2e-ui's API env sets it");
 }
 
 if (failures.length > 0) {

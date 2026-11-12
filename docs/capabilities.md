@@ -32,7 +32,9 @@ far each part has been tested. "Tested" here means one of three things, and they
 | **Deploying updates** (canary, rings, two approvals) | **No** | Yes, when approvals are configured | **No** | **No** | No | No |
 | Approved actions (start the Print Spooler) | No | Yes, when approvals are configured | No | No | No | No |
 | Maintenance actions (restart an allowlisted service, schedule or cancel a restart, collect logs) | No | Yes (0.32+ agent), when approvals are configured | No | No | No | No |
-| Chat with the person at the computer (0.34; [chat.md](chat.md)) | No | Yes (0.34+ agent; **not yet run on real Windows**) | No | No | No | No |
+| Chat with the person at the computer (0.34; [chat.md](chat.md)) | Yes (0.36+, through the tray, once the installer has been re-run; **not yet run on real Windows**) | Yes (0.34+ agent; **not yet run on real Windows**) | No | No | No | No |
+| Tray icon: support request with usage and screenshot, read-only self-help (0.36; [tray.md](tray.md)) | Yes (**not yet run on real Windows**; the Windows account is reported, not proven) | Yes (**not yet run on real Windows**) | No | No | No | No |
+| Tray self-help as SYSTEM: flush DNS, renew IP, restart RustDesk (0.36) | No | Yes (**not yet run on real Windows**) | No | No | No | No |
 | Password rotation, reinstall, RustDesk client update from the console | Yes | Yes | **No** — the console refuses them; re-run the installer on the computer | **No** — the console refuses them; re-run the installer on the computer | No | No |
 | Agent card (0.34): type, version, current or behind, channel, portal update mode, last update result | Yes | Yes (last update result from 0.34 signed builds) | Yes, with the command to re-run the installer | Yes, with the command to re-run the installer | Type only | No |
 | **Update agent** from the console (0.34) | Yes: re-runs the current standard installer (the reinstall path) | **Check for update now**: `rem0te-agent.exe update`, signed files only | **No** — re-run the installer on the computer | **No** — re-run the installer on the computer | No | No |

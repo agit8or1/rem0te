@@ -44,7 +44,7 @@ function readUrl(): { filters: DeviceFilters; sort: SortKey; dir: 'asc' | 'desc'
         online: pick('online', ['', 'online', 'silent', 'offline'] as const, ''),
         alerts: pick('alerts', ['', 'any', 'critical'] as const, ''),
         restartPending: q.get('restartPending') === 'true',
-        agent: pick('agent', ['', 'signed', 'standard', 'none'] as const, ''),
+        agent: pick('agent', ['', 'signed', 'standard', 'none', 'outdated'] as const, ''),
         status: pick('status', ['current', 'archived', 'all'] as const, 'current'),
         groupId: q.get('groupId') ?? '',
         platform: pick('platform', ['', 'windows', 'linux', 'macos', 'other'] as const, ''),
@@ -389,7 +389,7 @@ export function DeviceList() {
         {groupOptions.length > 0 && sel(filters.groupId, (v) => setFilter('groupId', v), 'Group', groupOptions, w('w-[160px]'))}
         {sel(filters.online, (v) => setFilter('online', v as DeviceFilters['online']), 'Online', [['online', 'Online (agent checking in)'], ['silent', 'Reachable, agent silent'], ['offline', 'Offline']], w('w-[130px]'))}
         {alertsVisible && sel(filters.alerts, (v) => setFilter('alerts', v as DeviceFilters['alerts']), 'Alerts', [['any', 'Has open alerts'], ['critical', 'Has critical alerts']], w('w-[150px]'))}
-        {sel(filters.agent, (v) => setFilter('agent', v as DeviceFilters['agent']), 'Agent', [['signed', 'Signed agent'], ['standard', 'Standard agent'], ['none', 'No agent report']], w('w-[150px]'))}
+        {sel(filters.agent, (v) => setFilter('agent', v as DeviceFilters['agent']), 'Agent', [['signed', 'Signed agent'], ['standard', 'Standard agent'], ['none', 'No agent report'], ['outdated', 'Agent outdated']], w('w-[150px]'))}
         <Button variant={filters.restartPending ? 'default' : 'outline'} size="sm" className="h-9" onClick={() => setFilter('restartPending', !filters.restartPending)} aria-pressed={filters.restartPending}>
           Restart pending
         </Button>

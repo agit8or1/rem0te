@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **476** of them across
-**67** controllers.
+integration, under `/api/integration/v1`). There are **501** of them across
+**73** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -48,6 +48,15 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/admin/status` | signed in | — |
 | `GET` | `/api/v1/admin/unassigned-devices` | signed in | — |
 | `POST` | `/api/v1/admin/unassigned-devices/:id/assign` | signed in | — |
+
+## Agent auto update
+
+`apps/api/src/agent-auto-update/agent-auto-update.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/admin/agent-auto-update` | Platform Admin | — |
+| `PUT` | `/api/v1/admin/agent-auto-update` | Platform Admin, throttled | — |
 
 ## Agent upgrade agentmigrations
 
@@ -153,6 +162,7 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/endpoints/:id/chat` | signed in | `COMPUTERS_VIEW` |
 | `POST` | `/api/v1/endpoints/:id/chat/conversations` | signed in, throttled | `CHAT_SEND` |
 | `GET` | `/api/v1/endpoints/:id/chat/conversations/:cid` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/endpoints/:id/chat/conversations/:cid/ack` | signed in, throttled | `CHAT_SEND` |
 | `POST` | `/api/v1/endpoints/:id/chat/conversations/:cid/end` | signed in | `CHAT_SEND` |
 | `POST` | `/api/v1/endpoints/:id/chat/conversations/:cid/messages` | signed in, throttled | `CHAT_SEND` |
 
@@ -524,6 +534,7 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/public/install/:platform` | public | — |
 | `GET` | `/api/v1/public/install/linux/:token` | public | — |
 | `GET` | `/api/v1/public/install/mac/:token` | public | — |
+| `GET` | `/api/v1/public/install/rem0te-tray.exe` | public | — |
 | `GET` | `/api/v1/public/install/win/:token` | public | — |
 | `GET` | `/api/v1/public/install/windows-params.json` | public | — |
 | `GET` | `/api/v1/public/rustdesk-config` | public | — |
@@ -621,6 +632,14 @@ Admins and Business Owners are not confined by it; see
 | Method | Path | Access | Capability |
 |---|---|---|---|
 | `GET` | `/api/v1/admin/retention` | signed in | — |
+
+## Revocations
+
+`apps/api/src/actions/revocations.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/public/approval/revocations.json` | public | — |
 
 ## Rollouts
 
@@ -850,6 +869,7 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/support-requests` | signed in, throttled | — |
 | `GET` | `/api/v1/support-requests` | signed in | `SUPPORT_REQUESTS` |
 | `GET` | `/api/v1/support-requests/:id` | signed in | `SUPPORT_REQUESTS` |
+| `GET` | `/api/v1/support-requests/:id/attachments/:aid` | signed in | `SUPPORT_REQUESTS` |
 | `POST` | `/api/v1/support-requests/:id/cancel` | signed in | `SUPPORT_REQUESTS` |
 | `POST` | `/api/v1/support-requests/:id/claim` | signed in | `SUPPORT_REQUESTS` |
 | `POST` | `/api/v1/support-requests/:id/complete` | signed in | `SUPPORT_REQUESTS` |
@@ -912,6 +932,53 @@ Admins and Business Owners are not confined by it; see
 |---|---|---|---|
 | `GET` | `/api/v1/endpoints/:id/timeline` | signed in | `COMPUTERS_VIEW` |
 | `POST` | `/api/v1/endpoints/:id/timeline/generate` | signed in, throttled | `COMPUTERS_EDIT` |
+
+## Tray chat page (/assist)
+
+`apps/api/src/tray/tray.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `POST` | `/api/v1/assist/api/end` | public, throttled | — |
+| `POST` | `/api/v1/assist/api/messages` | public, throttled | — |
+| `POST` | `/api/v1/assist/api/receipts` | public, throttled | — |
+| `POST` | `/api/v1/assist/api/start` | public, throttled | — |
+| `GET` | `/api/v1/assist/api/state` | public, throttled | — |
+| `GET` | `/api/v1/assist/assist.css` | public, throttled | — |
+| `GET` | `/api/v1/assist/assist.js` | public, throttled | — |
+| `GET` | `/api/v1/assist/chat` | public, throttled | — |
+| `GET` | `/api/v1/assist/open` | public, throttled | — |
+
+## Chat recording
+
+`apps/api/src/tray/tray.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/chat-recording` | signed in | — |
+| `PUT` | `/api/v1/chat-recording` | signed in, throttled | — |
+| `PUT` | `/api/v1/chat-recording/platform` | signed in, throttled | — |
+
+## Tray on a computer
+
+`apps/api/src/tray/tray.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/endpoints/:id/tray` | signed in | `COMPUTERS_VIEW` |
+
+## Tray (device-authenticated)
+
+`apps/api/src/tray/tray.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `POST` | `/api/v1/tray/chat-code` | public, throttled | — |
+| `POST` | `/api/v1/tray/pair` | public, throttled | — |
+| `POST` | `/api/v1/tray/self-help/begin` | public, throttled | — |
+| `POST` | `/api/v1/tray/self-help/result` | public, throttled | — |
+| `POST` | `/api/v1/tray/status` | public, throttled | — |
+| `POST` | `/api/v1/tray/support-requests` | public, throttled | — |
 
 ## Updates
 

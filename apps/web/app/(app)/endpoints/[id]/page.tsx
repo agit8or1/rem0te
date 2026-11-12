@@ -234,7 +234,7 @@ export default function EndpointDetailPage() {
             sessions={sessions}
             onOpenTab={setTab}
             showAlertsAndPatches={canView}
-            agentCard={canView ? <AgentCard endpointId={id} canEdit={can(CAP.COMPUTERS_EDIT)} /> : undefined}
+            agentCard={canView ? <AgentCard endpointId={id} canEdit={can(CAP.COMPUTERS_EDIT)} alerts={mon.data?.alerts} /> : undefined}
             // Staged-update history (Platform Admin only, like rollouts).
             adminExtras={isPlatformAdmin ? <EndpointUpdateHistory endpointId={id} /> : undefined}
           />

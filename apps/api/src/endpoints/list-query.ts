@@ -41,7 +41,8 @@ export interface ListQuery {
   online?: 'online' | 'silent' | 'offline';
   alerts?: 'any' | 'critical';
   restartPending?: boolean;
-  agent?: 'signed' | 'standard' | 'none';
+  /** 0.36: outdated = a standard Windows agent reporting a version older than this server's, or a signed agent not on the published signed build. */
+  agent?: 'signed' | 'standard' | 'none' | 'outdated';
   status?: 'current' | 'archived' | 'all';
   /** A device group (0.33). Like siteId, it narrows the caller's visible set and never widens it. */
   groupId?: string;
@@ -138,7 +139,7 @@ export function parseListFilters(q: Record<string, unknown>): ListFilters {
     online: oneOf(q.online, ['online', 'silent', 'offline'] as const, 'online'),
     alerts: oneOf(q.alerts, ['any', 'critical'] as const, 'alerts'),
     restartPending: rp === 'true' ? true : undefined,
-    agent: oneOf(q.agent, ['signed', 'standard', 'none'] as const, 'agent'),
+    agent: oneOf(q.agent, ['signed', 'standard', 'none', 'outdated'] as const, 'agent'),
     status: oneOf(q.status, ['current', 'archived', 'all'] as const, 'status') ?? 'current',
     groupId: str(q.groupId, 64),
     platform: oneOf(q.platform, PLATFORMS, 'platform'),

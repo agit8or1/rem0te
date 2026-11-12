@@ -220,6 +220,10 @@ export const endpointsApi = {
   chatStart: (id: string, supportRequestId?: string) => api.post(`/endpoints/${id}/chat/conversations`, supportRequestId ? { supportRequestId } : {}),
   chatSend: (id: string, cid: string, text: string) => api.post(`/endpoints/${id}/chat/conversations/${cid}/messages`, { text }),
   chatEnd: (id: string, cid: string) => api.post(`/endpoints/${id}/chat/conversations/${cid}/end`, {}),
+  // 0.36: the panel has shown these replies (in a chat that is not recorded, the server then deletes them).
+  chatAck: (id: string, cid: string, ids: string[]) => api.post(`/endpoints/${id}/chat/conversations/${cid}/ack`, { ids }),
+  // 0.36: the tray on this computer, its self-help runs and the support requests sent from it.
+  tray: (id: string) => api.get(`/endpoints/${id}/tray`),
   // Queues a re-collection for the endpoint's next heartbeat — up to ~3
   // minutes away. Nothing is synchronous here.
   refreshInventory: (id: string) => api.post(`/endpoints/${id}/inventory/refresh`, {}),
@@ -608,6 +612,15 @@ export const supportRequestsApi = {
   cancel: (id: string, version: number, outcome?: string) => api.post(`/support-requests/${id}/cancel`, { version, outcome }),
 };
 
+// ─── v0.36: whether chats are recorded ───────────────────────────────────────
+// Changing either needs a fresh sign-in (403 STEP_UP_REQUIRED, which the
+// interceptor answers) and is audited.
+export const chatRecordingApi = {
+  get: (businessId?: string) => api.get('/chat-recording', { params: businessId ? { businessId } : {} }),
+  setBusiness: (businessId: string, recording: boolean | null) => api.put('/chat-recording', { businessId, recording }),
+  setPlatform: (recording: boolean) => api.put('/chat-recording/platform', { recording }),
+};
+
 /** The customer side: no account, the link is the only key. */
 export const publicSupportApi = {
   intake: (slug: string) => api.get(`/public/support/intake/${encodeURIComponent(slug)}`),
@@ -740,7 +753,7 @@ export const securityControlsApi = {
 // Monitoring and alerts (0.29).
 export type MonitorScope = 'global' | 'business' | 'site' | 'group' | 'endpoint';
 export type Severity = 'INFO' | 'WARNING' | 'CRITICAL';
-export type MonitorKindId = 'OFFLINE' | 'DISK_FREE' | 'CPU_HIGH' | 'MEMORY_HIGH' | 'SERVICE_STOPPED' | 'EVENT_MATCH' | 'REBOOT_PENDING';
+export type MonitorKindId = 'OFFLINE' | 'DISK_FREE' | 'CPU_HIGH' | 'MEMORY_HIGH' | 'SERVICE_STOPPED' | 'EVENT_MATCH' | 'REBOOT_PENDING' | 'AGENT_SILENT';
 /** A notification destination: a webhook, or (0.34) a confirmed email recipient of the policy's own scope. */
 export type NotifyDestination = { label: string; url: string } | { label: string; recipientId: string };
 const bq = (businessId?: string | null) => ({ params: businessId ? { businessId } : {} });
@@ -804,6 +817,8 @@ export const clientUpdatesApi = {
   setPolicy: (data: {
     businessId: string; siteId?: string | null; groupId?: string | null; priority?: number | null; enabled: boolean; timeZone: string;
     windows: { days: number[]; start: string; end: string }[]; skipActiveSession: boolean; skipLoggedOnUser: boolean;
+    /** 0.36: automatic agent updates here; null inherits, omitted leaves it as it is. */
+    agentMode?: 'ANY_TIME' | 'WINDOW' | 'OFF' | null;
   }) => api.put('/client-updates/policy', data),
   removeSiteOverride: (businessId: string, siteId: string) => api.delete(`/client-updates/policy/sites/${siteId}`, bq(businessId)),
   computers: (businessId?: string | null) => api.get('/client-updates/computers', bq(businessId)),
@@ -811,6 +826,20 @@ export const clientUpdatesApi = {
   removeGroupPolicy: (businessId: string, groupId: string) => api.delete(`/client-updates/policy/groups/${groupId}`, bq(businessId)),
   /** The effective policy for one computer, and why (the device page). */
   endpointPolicy: (endpointId: string) => api.get(`/client-updates/computers/${endpointId}/policy`),
+};
+
+// Automatic agent self-update (0.36): the platform-wide settings, Platform
+// Admin only; a change needs fresh authentication (the step-up dialog).
+export type AgentAutoUpdateSettings = {
+  enabled: boolean; perHour: number; maxAttempts: number; processOn: boolean;
+  served: { version: string; signedSha256: string | null };
+  pace: { usedLastHour: number; perHour: number };
+  lastDay: { started: number; updated: number; open: number; superseded: number };
+  failing: { count: number; computers: { id: string; name: string; business: { id: string; name: string } | null; agentVersion: string | null; attempts: number; lastAt: string | null }[] };
+};
+export const agentAutoUpdateApi = {
+  get: () => api.get<{ data: AgentAutoUpdateSettings }>('/admin/agent-auto-update'),
+  put: (body: { enabled?: boolean; perHour?: number; maxAttempts?: number }) => api.put('/admin/agent-auto-update', body),
 };
 
 // Outbound email (0.34). Saving the relay, and adding, re-sending or removing

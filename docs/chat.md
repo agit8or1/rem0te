@@ -1,29 +1,50 @@
 # Chat with the person at a computer
 
 From 0.34 a technician can chat with whoever is signed in at a managed Windows computer. The technician writes on
-the computer's **Chat** tab; the person at the computer gets a small window on their desktop and can reply or close
-it. Transcripts belong to the computer, are kept 400 days, and can be linked to a support request.
+the computer's **Chat** tab. Transcripts belong to the computer, are kept 400 days unless the business has turned
+recording off, and can be linked to a support request.
 
-> **Not yet run on real Windows.** The portal side, the agent's chat host and its pipe protocol are tested (an
-> end-to-end suite against the real API, and Go unit tests of the host against a fake portal and a fake desktop),
-> and the agent builds and vets for Windows. The desktop window itself — launching into the signed-in user's
-> session, the pipe ACL, and the Win32 window — **has never run on a Windows machine**. Treat it as untested until
-> it has.
+**From 0.36 the person's side is the [tray icon](tray.md)**, on both the signed and the standard agent. A badge on
+the icon shows new messages, and the chat opens in a small window showing the portal's `/assist` page. The person
+can also start a chat from the tray. The 0.34 Win32 chat window is gone. A signed agent that still speaks chat
+protocol 1 (0.34 or 0.35) keeps working through `/enrollment/chat/*` until it updates.
+
+> **Not yet run on real Windows.** The portal side, the tray host, the tray and their pipe protocol are tested: an
+> end-to-end suite against the real API, Go unit tests against a fake portal and a fake desktop, and the chat page
+> in a browser. The agent and the tray build and vet for Windows.
+>
+> These parts **have never run on a Windows machine**:
+> - starting the tray in the signed-in user's session;
+> - the pipe access list;
+> - the notification icon;
+> - the WebView2 window.
+>
+> Treat them as untested until they have run on Windows.
 
 ## Which computers can chat
 
-Only computers on the **signed agent** (update channel `signed`) whose agent reports chat protocol 1 or later. The
-Chat tab is on every computer you can see, and on the others it says why it is not available:
+Windows computers with a tray, which means either of these:
+
+- the **signed agent** reporting chat protocol 2 (the tray), or protocol 1 (the 0.34 window);
+- the **standard agent** with its tray installed and paired (see [tray.md](tray.md)).
+
+The Chat tab is on every computer you can see. On a computer that cannot chat, it says why:
 
 | The computer | What the tab says |
 |---|---|
-| Linux or macOS | Chat is not available on Linux / macOS yet |
-| Windows, standard agent | Chat needs the signed agent; the standard agent cannot open a window on the desktop |
+| Linux or macOS | Chat is not available on Linux / macOS yet: only the Windows agents have a tray |
+| Windows, standard agent without a tray | The standard agent cannot chat until its tray is installed. Re-run its installer from a 0.36 or later portal |
 | Windows, signed agent older than 0.34 | The agent is too old to chat; it gains chat with its next update |
 | No device secret bound | The computer has not been bound to a device secret; re-run the installer |
 | Archived | An archived computer cannot chat |
 
-**Why the signed agent and not the standard one.** A Windows service runs as SYSTEM in session 0, which has no
+**The standard agent from 0.36.** Its tray runs as the signed-in user from the machine's Run key. It reaches the
+portal with a tray key that only opens `/tray/*`, and shows chat in the same `/assist` page. The Windows account
+it reports is not verified the way the signed agent's is; [tray.md](tray.md) explains what that allows and what it
+does not. A technician's chat reaches a standard computer when its tray next asks: within 10 minutes, or sooner,
+because the heartbeat writes a signal file that the tray watches.
+
+**Why the 0.34 window needed the signed agent** (the signed tray host keeps this design): A Windows service runs as SYSTEM in session 0, which has no
 desktop the person can see. Showing a window means starting a process *as the signed-in user, in their session*
 (`WTSQueryUserToken` + `CreateProcessAsUser`) and talking to it over a pipe whose access list names only SYSTEM and
 that user. The standard agent is a PowerShell scheduled task: it could do this through P/Invoke, but the code would
@@ -32,8 +53,8 @@ exactly the part that must not be wrong. The signed agent is a compiled, signed 
 before it runs. Its code reaches a computer only through the signed update chain, so a compromised portal cannot
 change what the chat window does.
 
-The consequence: production computers on the standard channel **cannot chat until the signed agent is rolled out to
-them**. Nothing pretends otherwise; the tab says so.
+Until 0.36, production computers on the standard channel could not chat. From 0.36 they can, once their installer
+has been re-run from a 0.36 portal so that the tray is installed.
 
 ## What the technician sees
 
@@ -72,6 +93,11 @@ computer is a 404, exactly like the computer itself. Writing needs `support:chat
 an assignment that grants it over that computer.
 
 ## What the person at the computer sees
+
+From 0.36: the tray's chat window, described in [tray.md](tray.md). It has the same banner, the same plain text and
+the same Enter to send. It also has a line saying **whether this chat is recorded**. Closing the window does not end
+the chat: the person ends it with **End chat**, which asks once more, and the tray's badge brings them back. The
+rest of this section describes the 0.34 window, still used by signed agents on chat protocol 1.
 
 A small window titled **Support chat - *Business name***, with a banner that names the technician and the business
 and says the business **will never ask for your password** and that links in the chat are never opened. Both names
@@ -113,7 +139,7 @@ open stays readable, and it can still be ended.
 
 | Entry | When | Meta |
 |---|---|---|
-| `CHAT_STARTED` | A technician starts a chat | `conversationId`, `supportRequestId` if linked |
+| `CHAT_STARTED` | A technician starts a chat, or (0.36) the person starts one from the tray | `conversationId`, `recorded`, `by: end_user` when the person started it, `supportRequestId` if linked |
 | `CHAT_ENDED` | Ended by the technician, the person (closing the window) or inactivity | `conversationId`, `reason`, message counts each way, duration in seconds |
 | `CHAT_PRUNED` | The retention sweep deleted transcripts | how many conversations and messages, the retention, the cutoff |
 | `ENDPOINT_HEARTBEAT_REJECTED` | A chat poll or reply with a wrong or missing device secret | `rustdeskId`, `reason` (`chat_poll_unauthenticated` / `chat_reply_unauthenticated`) |
@@ -123,6 +149,10 @@ lives in its own tables. When it is pruned the audit entries stay, because they 
 or deletes an audit row.
 
 ## Retention
+
+A chat that is **not recorded** (0.36, set per business; see [tray.md](tray.md#recording)) keeps no text at all.
+Each message is deleted once both sides have it, and whatever is left is deleted when the chat ends. The rest of
+this section is about recorded chats.
 
 Ended conversations are deleted with their messages **400 days** after they ended. An hourly sweep in the API deletes
 them in batches and records one `CHAT_PRUNED` entry per pass that deleted anything. The same sweep ends chats that
@@ -141,6 +171,9 @@ Turn the sweep off on any scratch API pointed at a database that holds transcrip
 
 ## How it works
 
+This is the 0.34 path (chat protocol 1), still used by signed agents that have not updated. From 0.36 the tray
+host replaces the chat host and the window: see [tray.md](tray.md#credentials).
+
 ```
 Portal (technician)                API                          Computer (signed agent)
   Start chat ───────────────► ChatConversation OPEN
@@ -157,7 +190,8 @@ Portal (technician)                API                          Computer (signed
 ```
 
 - **The fast path.** The heartbeat is every three minutes, too slow for a conversation, so it only says *a chat is
-  open*. The signed agent then starts a chat host. The host **long-polls** `POST /enrollment/chat/poll` with the
+  open*. A 0.34 signed agent (chat protocol 1) then starts a chat host; a 0.36 agent starts the tray instead
+  ([tray.md](tray.md)). The host **long-polls** `POST /enrollment/chat/poll` with the
   device secret, exactly as the heartbeat authenticates. The API holds each poll for up to 25 s and answers early
   when a technician sends or ends. Between polls the host sends the receipts and the window's state, and it posts
   replies to `POST /enrollment/chat/reply`. A reply carries a client id, so a retry after a dropped connection
@@ -192,8 +226,9 @@ misbehaves. These figures are **estimated** from the code paths; chat has not be
 | `GET /endpoints/:id/chat/conversations/:cid` | `computers:view` | The transcript (newest 500, oldest first) |
 | `POST /endpoints/:id/chat/conversations` | `support:chat` | Start, or return the chat already open. Optional `supportRequestId` (needs `support:requests`, same business and computer) |
 | `POST /endpoints/:id/chat/conversations/:cid/messages` | `support:chat` | `{ text }` |
+| `POST /endpoints/:id/chat/conversations/:cid/ack` | `support:chat` | `{ ids }`: the panel has shown these replies. In a chat that is not recorded, that deletes them (0.36) |
 | `POST /endpoints/:id/chat/conversations/:cid/end` | `support:chat` | End it |
-| `POST /enrollment/chat/poll` | device secret | The agent's chat host only |
+| `POST /enrollment/chat/poll` | device secret | The 0.34 chat host only (chat protocol 1); the 0.36 tray uses `/tray/*` and `/assist` ([tray.md](tray.md)) |
 | `POST /enrollment/chat/reply` | device secret | The agent's chat host only |
 
 Refusals: `CHAT_UNSUPPORTED` (409, with the reason above), `CONTAINED` (403), `CHAT_ENDED` (409), `CHAT_TOO_LONG` /
@@ -205,7 +240,8 @@ Refusals: `CHAT_UNSUPPORTED` (409, with the reason above), `CONTAINED` (403), `C
 |---|---|
 | Portal routes, scoping (business A / B, a Business User without access gets 404), containment, caps, receipts only from the agent, the long-poll and its cap, user-closed and inactivity endings, retention pruning, no message text in the audit log | `apps/api/scripts/e2e-chat.mjs`, the real API from `dist` on a scratch database, with the device simulated over the real device routes |
 | Text, names, support reasons, presence, receipts, retention bounds | `apps/api/scripts/unit-chat.mjs` |
-| Chat host: frames, hello nonce, receipts sent once, history retries, the window being lost and reopened, end and close, reply retries and the per-minute cap | `go test ./internal/chat/` (race detector on), against a fake portal and a fake desktop |
+| The tray host and the tray (0.36, replacing the 0.34 chat host): frames, hello nonce, the closed field set per frame, receipts, the unread badge, the per-minute cap, the pipe server | `go test ./internal/tray/` against a fake portal and a fake operating system; text cleaning and the limiter in `go test ./internal/chat/` |
 | Windows build | `GOOS=windows go build` and `go vet` |
 | Static guarantees (routes, scoping, containment, secret, audit meta, caps, the window holding no secret, pipe flags and ACL) | `scripts/check-security-invariants.mjs`, the chat section |
-| **The window on a real Windows desktop, `CreateProcessAsUser`, the pipe DACL, session selection, Fast User Switching, RDP** | **None. Not run on Windows.** |
+| The tray path (0.36): codes, the `/assist` page, recording on and off, user-started chats | `apps/api/scripts/e2e-tray.mjs`; the page in Chromium by `apps/web/scripts/e2e-ui.mjs` |
+| **The window or the tray on a real Windows desktop, `CreateProcessAsUser`, the pipe DACL, session selection, Fast User Switching, RDP, WebView2** | **None. Not run on Windows.** |

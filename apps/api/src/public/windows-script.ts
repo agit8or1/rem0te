@@ -35,6 +35,8 @@ export interface LegacyScriptOptions {
   updateNonce?: string | null;
   agentVersion: string;
   fallbackVersion: string;
+  /** SHA-256 of the rem0te-tray.exe this portal serves (0.36); empty when it has none. */
+  traySha256?: string | null;
 }
 
 interface Variant {
@@ -42,8 +44,16 @@ interface Variant {
   constants: string;
   download: string;
   updateHook: string;
+  /** 0.36: the signed agent's own periodic update check; nothing on the legacy channel. */
+  selfCheckHook: string;
   channelReport: string;
   actionHook: string;
+  /** The tray (0.36): installed by the script (standard) or by the agent (signed). */
+  trayInstall: string;
+  /** In the heartbeat, before it is sent: what the tray is (standard only; signed reads agent-status.json). */
+  trayReport: string;
+  /** In the heartbeat, after the response: pair (standard) or start the tray host (signed). */
+  trayHook: string;
 }
 
 // ── Build-time guard for the 0.33 snapshot block ─────────────────────────────
@@ -137,6 +147,7 @@ export function buildLegacyWindowsScript(o: LegacyScriptOptions): string {
   const shaVal = /^[0-9a-f]{64}$/.test(o.clientSha256 ?? '') ? o.clientSha256! : '';
   const nonceVal = /^[A-Za-z0-9_-]{16,64}$/.test(o.updateNonce ?? '') ? o.updateNonce! : '';
   const agentVersion = VERSION_RE.test(o.agentVersion) ? o.agentVersion : 'unknown';
+  const traySha = /^[0-9a-f]{64}$/.test(o.traySha256 ?? '') ? o.traySha256! : '';
   // Argument for `rustdesk.exe --config`. Plain text on purpose: RustDesk
   // parses only a string containing `host=` (or a reversed-base64 licence),
   // so the plain base64 this used to send was silently ignored and an
@@ -172,9 +183,61 @@ try {
     Invoke-WebRequest -Uri $dlUrl -OutFile $INSTALLER -UseBasicParsing
 } catch { Fail "ERROR: Download failed: $($_.Exception.Message)" 10 }`,
     updateHook: `try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm '\$iu' | iex" *>\$null } catch {}`,
+    // A standard agent is kept current by the server asking (reinstallAgent);
+    // it has nothing of its own to check against.
+    selfCheckHook: '# Periodic self-check: signed channel only.',
     channelReport: "$body['updateChannel'] = 'legacy'",
     // Approved actions need the signed agent; a legacy machine is never sent one.
     actionHook: '# Approved actions: not on the legacy channel.',
+    // The tray (0.36), standard agent: the same rem0te-tray.exe the signed
+    // release carries, downloaded from this portal and installed only if its
+    // SHA-256 is the one pinned in this script. That is the trust the standard
+    // agent already places in the portal (it runs this script), no more.
+    trayInstall: `$TRAY_SHA256 = '${traySha}'
+if ($TRAY_SHA256) {
+    $trayTmp = "$SETUP_DIR\\rem0te-tray.exe"
+    try {
+        Invoke-WebRequest -Uri ('https://' + $REM0TE_HOST + '/api/v1/public/install/rem0te-tray.exe') -OutFile $trayTmp -UseBasicParsing -ErrorAction Stop
+        $trayGot = (Get-FileHash -Algorithm SHA256 -LiteralPath $trayTmp).Hash.ToLower()
+        if ($trayGot -cne $TRAY_SHA256) {
+            Log "  The tray download did not match its pinned SHA-256 ($trayGot); not installed." 'ERROR'
+        } else {
+            New-Item -ItemType Directory -Force -Path $TRAY_DIR | Out-Null
+            icacls $TRAY_DIR /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)(F)' '*S-1-5-32-544:(OI)(CI)(F)' '*S-1-5-32-545:(OI)(CI)(RX)' *>$null
+            # A running tray keeps its file open: move it aside (allowed) and put the new one in place.
+            if (Test-Path -LiteralPath $TRAY_EXE) { try { Move-Item -LiteralPath $TRAY_EXE -Destination "$TRAY_EXE.old" -Force -ErrorAction Stop } catch {} }
+            Copy-Item -LiteralPath $trayTmp -Destination $TRAY_EXE -Force -ErrorAction Stop
+            New-ItemProperty -Path $RUN_KEY -Name 'Rem0teTray' -Value ('"' + $TRAY_EXE + '" --standard') -PropertyType String -Force | Out-Null
+            Log "  Tray installed: it starts for each person at their next sign-in."
+        }
+    } catch { Log "  The tray could not be installed: $($_.Exception.Message)" 'WARN' }
+    Remove-Item -LiteralPath $trayTmp -Force -ErrorAction SilentlyContinue
+} else {
+    Log "  This portal has no tray build (rem0te-tray.exe) to install; skipped." 'WARN'
+}`,
+    trayReport: `# The tray (0.36): installed, and the key id it was paired under.
+if (Test-Path -LiteralPath $TRAY_EXE) {
+    $body['agentTray'] = 1
+    try {
+        $tj = Get-Content -Raw -LiteralPath $TRAY_JSON -ErrorAction Stop | ConvertFrom-Json
+        if ([string]$tj.keyId -cmatch '^[a-z0-9]{24}$') { $body['trayKeyId'] = [string]$tj.keyId }
+    } catch {}
+}`,
+    // Pairing: the SYSTEM heartbeat asks for the tray key with the device
+    // secret, and writes it where the tray (running as the signed-in user) can
+    // read it. That key does what the person at the computer can do through
+    // the tray, and nothing a heartbeat does.
+    trayHook: `try {
+    if ($state.agentSecret -and (Test-Path -LiteralPath $TRAY_EXE) -and ((-not (Test-Path -LiteralPath $TRAY_JSON)) -or ($resp.data.tray -and $resp.data.tray.pair -eq $true))) {
+        $pb = @{ rustdeskId = $id; agentSecret = $state.agentSecret } | ConvertTo-Json -Compress
+        $pr = Invoke-RestMethod -Uri ('https://' + $state.host + '/api/v1/tray/pair') -Method Post -Body $pb -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+        $tk = [string]$pr.data.trayKey
+        if ($tk -cmatch '^tk_[a-z0-9]{24}[.][A-Za-z0-9_-]{43}$') {
+            (@{ portal = [string]$state.host; trayKey = $tk; keyId = [string]$pr.data.keyId } | ConvertTo-Json -Compress) | Set-Content -LiteralPath $TRAY_JSON -Encoding ASCII
+            icacls $TRAY_JSON /inheritance:r /grant:r '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' '*S-1-5-32-545:(R)' *>$null
+        }
+    }
+} catch {}`,
   };
   return assertSnapshotBlockSafe(template(v, host));
 }
@@ -221,6 +284,30 @@ try {
             $aargs = @('update')
             if ($upd.nonce -and ([string]$upd.nonce -match '^[A-Za-z0-9_-]{16,64}$')) { $aargs += @('--nonce', [string]$upd.nonce) }
             if (Test-Path -LiteralPath $agentExe) { try { & $agentExe @aargs *>$null } catch {} }`,
+    // 0.36: about once a day (20 h plus up to 8 h of jitter, so a fleet does
+    // not check at the same minute), and only on a heartbeat where the portal
+    // says this computer may (agentSelfCheck: not opted out, inside its
+    // policy's window, no updates pause, no rollout, no session). What runs is
+    // the same \`rem0te-agent.exe update\`, which refuses under the signed
+    // pause and installs only what the signed repository lists. The first
+    // sighting only schedules; a due time more than two days out (a clock
+    // that jumped) is rescheduled, never acted on. It takes effect once a
+    // signed release built from this template is published.
+    selfCheckHook: `try {
+    $agentExe = Join-Path $env:ProgramFiles 'Rem0te\\rem0te-agent.exe'
+    if ($resp.data.agentSelfCheck -eq $true -and (Test-Path -LiteralPath $agentExe)) {
+        $scFile = 'C:\\ProgramData\\Rem0te\\update-check.next'
+        $nowU = (Get-Date).ToUniversalTime()
+        $due = $null
+        try { $due = ([DateTime]::Parse(([string](Get-Content -Raw -LiteralPath $scFile -ErrorAction Stop)).Trim())).ToUniversalTime() } catch {}
+        if (-not $due -or $nowU -ge $due -or $due -gt $nowU.AddDays(2)) {
+            $next = $nowU.AddMinutes(1200 + (Get-Random -Minimum 0 -Maximum 480))
+            Set-Content -LiteralPath $scFile -Value $next.ToString('o') -Encoding ASCII
+            # Not twice in one check-in: a flag above may already have run it.
+            if ($due -and $nowU -ge $due -and -not ($upd -and $upd.targetVersion)) { try { & $agentExe @('update') *>$null } catch {} }
+        }
+    }
+} catch {}`,
     channelReport: `$body['updateChannel'] = 'signed'
 try {
     $ast = Get-Content -Raw 'C:\\ProgramData\\Rem0te\\agent-status.json' -ErrorAction Stop | ConvertFrom-Json
@@ -231,8 +318,10 @@ try {
     if ([string]$ast.agentSha256 -cmatch '^[0-9a-f]{64}$') { $body['agentSha256'] = [string]$ast.agentSha256 }
     $acts = @(@($ast.actions) | Where-Object { [string]$_ -cmatch '^[a-z0-9.]{3,64}@[0-9]{1,4}$' } | Select-Object -First 16 | ForEach-Object { [string]$_ })
     if ($acts.Count -gt 0) { $body['agentActions'] = $acts }
-    # Chat (0.34): the chat protocol this signed build speaks.
+    # Chat (0.34): the chat protocol this signed build speaks (2: the tray, 0.36).
     if ([int]$ast.chat -ge 1 -and [int]$ast.chat -le 99) { $body['agentChat'] = [int]$ast.chat }
+    # The tray (0.36): the tray protocol this signed build speaks.
+    if ([int]$ast.tray -ge 1 -and [int]$ast.tray -le 99) { $body['agentTray'] = [int]$ast.tray }
 } catch {}
 # Results the agent wrote for approved actions, until the portal acknowledges them.
 $ACT_RESULTS = 'C:\\ProgramData\\Rem0te\\actions\\results'
@@ -319,13 +408,21 @@ try {
             Start-Process -FilePath $agentExe -ArgumentList @('patch-scan') -WindowStyle Hidden
         }
     }
-} catch {}
-try {
-    # Chat (0.34): a chat is open on this computer. Start the chat host; it
-    # fetches everything else itself with the device secret, and a second
-    # start while one runs leaves at once (it holds a lock).
-    if ($resp.data.chat.open -eq $true -and (Test-Path -LiteralPath $agentExe)) {
-        Start-Process -FilePath $agentExe -ArgumentList @('chat') -WindowStyle Hidden
+} catch {}`,
+    // The tray (0.36): the signed agent installs rem0te-tray.exe itself (a
+    // signed target, verified like the agent), and its tray host starts it in
+    // each signed-in session. The standard agent's Run entry is removed so a
+    // migrated computer does not run two.
+    trayInstall: `try { Remove-ItemProperty -Path $RUN_KEY -Name 'Rem0teTray' -ErrorAction SilentlyContinue } catch {}
+Log "  Tray: started by the signed agent in each signed-in session."`,
+    trayReport: '# The tray (0.36): reported from agent-status.json above.',
+    // Every beat: start the tray host (SYSTEM). It replaces the 0.34 chat host
+    // and chat window: it starts the tray in each session, speaks for it with
+    // the device secret, and runs the elevated self-help tools. A second start
+    // while one runs leaves at once (it holds a lock).
+    trayHook: `try {
+    if ([int]$ast.tray -ge 1 -and (Test-Path -LiteralPath $agentExe)) {
+        Start-Process -FilePath $agentExe -ArgumentList @('tray-host') -WindowStyle Hidden
     }
 } catch {}`,
   };
@@ -1041,6 +1138,9 @@ try {
         \$body['systemDiskFreeMb'] = [int]([math]::Round(([double]\$ld.FreeSpace) / 1048576))
     }
 } catch {}
+\$TRAY_EXE = 'C:\\Program Files\\Rem0te\\tray\\rem0te-tray.exe'
+\$TRAY_JSON = 'C:\\ProgramData\\Rem0te\\tray\\tray.json'
+${v.trayReport}
 # Depth 6: action results carry an 'observed' map, which the default depth of
 # 2 would flatten into a string the portal rejects.
 \$body = \$body | ConvertTo-Json -Compress -Depth 6
@@ -1663,11 +1763,38 @@ try {
         }
     }
 } catch {}
+${v.selfCheckHook}
 ${v.actionHook}
+# ---- The tray (0.36) ---------------------------------------------------------
+# Whether a chat is open, for the tray: it asks the portal often only while one
+# is. A flag and a time, readable by the signed-in users; nothing else.
+try {
+    \$tOpen = [bool](\$resp.data.chat -and \$resp.data.chat.open -eq \$true)
+    (@{ chat = \$tOpen; at = (Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json -Compress) | Set-Content -LiteralPath 'C:\\ProgramData\\Rem0te\\tray\\signal.json' -Encoding ASCII
+} catch {}
+${v.trayHook}
 '@
 Set-Content -Path $hbScript -Value $hbBody -Encoding UTF8
 schtasks /Create /F /TN 'Rem0teHeartbeat' /SC MINUTE /MO 3 /RU SYSTEM /RL HIGHEST /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \`"$hbScript\`"" *>$null
 Log "  Heartbeat task installed: 'Rem0teHeartbeat' (every 3 minutes, persistent)."
+
+# ── The tray (0.36) ─────────────────────────────────────────────────────────
+# A tray icon in each signed-in session: chat, a support request, self-help.
+# Its state directory: SYSTEM and Administrators write, signed-in users read
+# (the tray runs as them; it reads the chat signal and, on the standard agent,
+# its tray key). The tray program has its own directory, which signed-in
+# users may read and run but not write: the agent's own directory is SYSTEM
+# and Administrators only (the signed agent's SecureDir), and a program the
+# user's session starts must be readable by that user.
+$TRAY_DIR = 'C:\\Program Files\\Rem0te\\tray'
+$TRAY_EXE = "$TRAY_DIR\\rem0te-tray.exe"
+$TRAY_STATE = "$STATEDIR\\tray"
+$RUN_KEY = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run'
+try {
+    New-Item -ItemType Directory -Force -Path $TRAY_STATE | Out-Null
+    icacls $TRAY_STATE /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)(F)' '*S-1-5-32-544:(OI)(CI)(F)' '*S-1-5-32-545:(OI)(CI)(RX)' *>$null
+} catch {}
+${v.trayInstall}
 # The task runs as SYSTEM and reads both of these on every beat. If either is
 # unreadable the machine goes quiet with nothing on screen to say why, so say
 # it here, where someone is watching.

@@ -15,7 +15,7 @@ export interface DeviceFilters {
   online: '' | 'online' | 'silent' | 'offline';
   alerts: '' | 'any' | 'critical';
   restartPending: boolean;
-  agent: '' | 'signed' | 'standard' | 'none';
+  agent: '' | 'signed' | 'standard' | 'none' | 'outdated';
   status: 'current' | 'archived' | 'all';
   /** A device group (0.33). */
   groupId: string;

@@ -69,6 +69,20 @@ const PAGES = [
  */
 const CALLOUT_PAGES = [
   {
+    // 0.36: signed out, so it is captured in the clean context below. It had
+    // been made by hand in 0.13 and never regenerated, so it still showed
+    // white text on the accent band — 3.7:1 on the default blue.
+    name: 'guide/tech-01-signin',
+    signedOut: true,
+    path: '/login',
+    before: async (page) => { await page.waitForSelector('[data-accent-band], input[type=email]', { timeout: 15_000 }); await page.waitForTimeout(800); },
+    callouts: [
+      { find: 'input[type=email]' },
+      { find: 'input[type=password]' },
+      { find: 'button[type=submit]' },
+    ],
+  },
+  {
     name: 'guide/tech-02-computers',
     path: '/endpoints',
     callouts: [
@@ -196,7 +210,9 @@ const CALLOUT_PAGES = [
   },
   {
     name: 'guide/monitoring-notify',
-    height: 1000,
+    // 1250 from 0.36: the outbound-email notice (0.34) pushed the ClientSt0r
+    // row and Save below a 1000 px window, so callouts 3–4 drew off the page.
+    height: 1250,
     path: '/settings/monitoring',
     before: async (page) => {
       await page.waitForSelector('[role="tablist"]', { timeout: 15_000 });
@@ -255,8 +271,8 @@ const CALLOUT_PAGES = [
     ],
   },
   {
-    // The map sits at the foot of the dashboard; scrolled into view rather
-    // than captured with a page-tall viewport.
+    // From 0.35 the map is in the dashboard's grid; scrollIntoView is a no-op
+    // at this height and kept for narrower runs.
     name: 'guide/dashboard-map',
     height: 1000,
     path: '/dashboard',
@@ -504,7 +520,7 @@ const CALLOUT_PAGES = [
     path: '/automation/scripts',
     before: async (page) => { await page.waitForSelector('text=Clear stuck print queue', { timeout: 15_000 }); await page.waitForTimeout(500); },
     callouts: [
-      { find: { text: "Running scripts isn't available yet.", tag: 'div' } },
+      { find: { text: 'How a script runs', tag: 'div' }, card: true },
       { find: 'main select' },
       { find: { text: 'Clear stuck print queue', tag: 'a' } },
       { find: { text: 'New script', tag: 'button' } },
@@ -525,7 +541,9 @@ const CALLOUT_PAGES = [
   },
   {
     name: 'guide/client-updates',
-    height: 2250,
+    // 3400 from 0.36: the Device groups card (0.35) pushed the computers'
+    // table below a 2250 px window, so callouts 5–6 drew off the page.
+    height: 3400,
     path: '/settings/client-updates',
     before: async (page) => {
       await page.waitForSelector('#cu-business', { timeout: 15_000 });
@@ -538,6 +556,8 @@ const CALLOUT_PAGES = [
       { find: { text: 'CLIENT_UPDATE_SWEEP=off', tag: 'div' } },
       { find: { text: '— business policy', tag: 'div' }, card: true },
       { find: { text: 'Override' }, card: true },
+      // 0.35: a device-group policy (the docs demo's Remote depots group).
+      { find: { text: 'Remote depots', tag: 'div' }, card: true },
       { find: { text: 'Auto, waiting' } },
       { find: { text: 'Not automatic' } },
     ],
@@ -909,6 +929,7 @@ async function main() {
         console.log(`  ✓ ${p.name}/${theme} → ${file}`);
       }
       for (const spec of CALLOUT_PAGES) {
+        if (spec.signedOut) continue;
         if (ONLY.length && !ONLY.includes(spec.name)) continue;
         try {
           const ok = await captureWithCallouts(page, spec, OUT_DIR, theme);
@@ -923,7 +944,7 @@ async function main() {
 
     // ── Public pages, captured signed-OUT in a clean context ──────────────
     for (const theme of THEMES) {
-      const anon = await browser.newContext({ viewport: VIEWPORT, colorScheme: theme, ignoreHTTPSErrors: true });
+      const anon = await browser.newContext({ viewport: VIEWPORT, colorScheme: theme, ignoreHTTPSErrors: true, timezoneId: 'America/Los_Angeles' });
       const anonPage = await anon.newPage();
       for (const p of ONLY.length ? [] : PUBLIC_PAGES) {
         try {
@@ -940,6 +961,18 @@ async function main() {
         const file = path.join(OUT_DIR, `${p.name}-${theme}.png`);
         await anonPage.screenshot({ path: file, fullPage: true });
         console.log(`  ✓ ${p.name}/${theme} → ${file}`);
+      }
+      // Marked-up signed-out pages (the sign-in page), same zone and theme store.
+      for (const spec of CALLOUT_PAGES) {
+        if (!spec.signedOut || (ONLY.length && !ONLY.includes(spec.name))) continue;
+        await anonPage.addInitScript((t) => { try { localStorage.setItem('theme', t); } catch { /* */ } }, theme);
+        try {
+          const ok = await captureWithCallouts(anonPage, spec, OUT_DIR, theme);
+          if (!ok) calloutMisses.push(`${spec.name}/${theme}`);
+        } catch (e) {
+          console.log(`  ✗ ${spec.name}/${theme} — ${e.message.split('\n')[0]}`);
+          calloutMisses.push(`${spec.name}/${theme}`);
+        }
       }
       await anon.close();
     }

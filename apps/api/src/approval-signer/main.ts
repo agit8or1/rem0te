@@ -18,6 +18,9 @@
  *   node dist/approval-signer/main.js device-key forget --endpoint <id> --reason '<why>'
  *   node dist/approval-signer/main.js script list
  *   node dist/approval-signer/main.js script revoke --id <id> --reason '<why>'
+ *   node dist/approval-signer/main.js software list
+ *   node dist/approval-signer/main.js software revoke --entry <catalogEntryId> --reason '<why>'
+ *   node dist/approval-signer/main.js revocations show
  *
  * Environment: APPROVAL_SIGNER_DIR, APPROVAL_ORIGIN, APPROVAL_RP_ID,
  * APPROVAL_PUBLIC_PORT (3201), APPROVAL_INTERNAL_PORT (3202).
@@ -30,7 +33,10 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { createPublicKey, generateKeyPairSync } from 'node:crypto';
 import * as path from 'node:path';
-import { approvalsOf, effectivePolicyStatus, effectiveScriptStatus, fingerprint, keysDocument, loadSigningKey, resultKeyFingerprint, verifyPolicy, type RosterMember } from './core';
+import {
+  approvalsOf, effectivePolicyStatus, effectiveScriptStatus, fingerprint, keysDocument, loadSigningKey, mergeRevocations, resultKeyFingerprint, revocationStatement,
+  SOFTWARE_ENTRY_ID, verifyPolicy, type RosterMember,
+} from './core';
 import { SignerStore } from './store';
 import { startSigner } from './server';
 
@@ -214,6 +220,33 @@ switch (cmd) {
     die('script list|revoke --id <id> --reason <why>');
     break;
   }
+  case 'software': {
+    // v0.36. Archived software catalog entries: the portal asks for one when
+    // an entry is archived. Entries archived before 0.36 were never sent, so
+    // the operator revokes those here. Nothing un-revokes one.
+    if (sub === 'list') {
+      for (const id of store.softwareRevocations()) { const r = store.softwareRevocation(id)!; console.log(`${id}  revoked ${r.at} by ${r.by}: ${r.reason}`); }
+      break;
+    }
+    if (sub === 'revoke') {
+      const id = arg('entry') || die('--entry is required');
+      if (!SOFTWARE_ENTRY_ID.test(id)) die('--entry is a catalog entry id');
+      const reason = arg('reason') || die('--reason is required');
+      if (store.softwareRevocation(id)) die(`${id} was already revoked`);
+      if (!store.revokeSoftware(id, { at: new Date().toISOString(), by: 'operator', reason })) die(`${id} was revoked a moment ago`);
+      console.log(`revoked ${id}`);
+      break;
+    }
+    die('software list|revoke --entry <id> --reason <why>');
+    break;
+  }
+  case 'revocations': {
+    // v0.36. What the next signed statement will say (it is signed when the portal asks).
+    if (sub !== 'show') die('revocations show');
+    const st = revocationStatement(mergeRevocations(store.publishedRevocations(), { scripts: store.scriptRevocations(), software: store.softwareRevocations() }), new Date());
+    console.log(JSON.stringify({ ...st, kid: loadSigningKey(store.keyPem()).kid }, null, 2));
+    break;
+  }
   default:
-    die('usage: main.js serve|keygen|keys|roster list|roster add|roster disable|policy set|pause list|set|clear|patch-policy list|revoke|device-key list|forget|script list|revoke');
+    die('usage: main.js serve|keygen|keys|roster list|roster add|roster disable|policy set|pause list|set|clear|patch-policy list|revoke|device-key list|forget|script list|revoke|software list|revoke|revocations show');
 }

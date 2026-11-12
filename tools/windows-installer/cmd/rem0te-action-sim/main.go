@@ -54,6 +54,12 @@
 // -winget-timeout replaces every winget timeout (e.g. 300ms, to prove the
 // timeout path); 0 keeps the agent's defaults.
 //
+// Revocation (v0.36): -portal HOST:PORT fetches the approval signer's signed
+// revocation statement from that portal's relay with the agent's own code
+// (internal/agent.FetchRevocations, over http); -revocations FILE delivers
+// one from a file instead. With neither, none is delivered, and the agent
+// decides from the newest one held in -state.
+//
 // It prints the Result as JSON. The state directory carries the journal, so
 // running it twice with the same job is a replay, as on a real machine.
 package main
@@ -71,6 +77,7 @@ import (
 	"time"
 
 	"github.com/agit8or1/rem0te/windows-installer/internal/action"
+	"github.com/agit8or1/rem0te/windows-installer/internal/agent"
 	"github.com/agit8or1/rem0te/windows-installer/internal/devsig"
 	"github.com/agit8or1/rem0te/windows-installer/internal/patch"
 	"github.com/agit8or1/rem0te/windows-installer/internal/winget/stub"
@@ -205,6 +212,8 @@ func main() {
 	fire := flag.Bool("fire-restart", false, "if a restart is scheduled in -state, it happens; then exit")
 	offset := flag.Duration("clock-offset", 0, "added to the agent's clock")
 	resultKey := flag.Bool("result-key", false, "print this computer's result-signing key (created in -state if absent) and exit")
+	revPath := flag.String("revocations", "", "a revocation statement envelope, as delivered (v0.36)")
+	portal := flag.String("portal", "", "fetch the revocation statement from this portal (host:port, http), as the Windows agent does (v0.36)")
 	flag.Parse()
 
 	fail := func(err error) {
@@ -357,6 +366,19 @@ func main() {
 		o.Winget = stub.New(self, abs)
 		o.Software = swProbe{stub.Probe{State: abs}}
 		o.SoftwareTimeout = *wingetTimeout
+	}
+	// v0.36: the revocation statement, either fetched through the agent's own
+	// code from the portal's relay or given as a file (a test's forgery).
+	switch {
+	case *revPath != "":
+		if o.Revocations, err = os.ReadFile(*revPath); err != nil {
+			fail(err)
+		}
+	case *portal != "":
+		if o.Revocations, err = agent.FetchRevocations(agent.Options{PortalHost: *portal, Scheme: "http"}); err != nil {
+			fmt.Fprintln(os.Stderr, "revocations:", err)
+			o.Revocations = nil
+		}
 	}
 	r, err := action.Run(*job, env, o)
 	if err != nil {

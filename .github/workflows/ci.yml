@@ -145,6 +145,15 @@ jobs:
       - name: Automatic snapshot tests
         run: node apps/api/scripts/unit-snapshot-schedule.mjs
 
+      # Automatic agent self-update (0.36): which agent has which update path,
+      # what it updates to, which policy's mode governs, and decide() — the
+      # opt-outs, holds, attempt window, back-off, cap and failing state — and,
+      # with the runner's pwsh, both Windows installers and heartbeats parsed
+      # and the signed heartbeat's periodic self-check run against a stub
+      # agent; the Linux and macOS agents through sh -n.
+      - name: Agent auto-update tests
+        run: node apps/api/scripts/unit-agent-auto-update.mjs
+
       # Scheduled client updates (0.32): the update window's validation, time
       # zones (+5:30, +5:45, a 30-minute DST zone), windows across midnight,
       # both DST transitions, next opening/closing against a minute-by-minute
@@ -275,6 +284,20 @@ jobs:
       - name: Chat tests
         run: node apps/api/scripts/unit-chat.mjs
 
+      # Agent health (0.36): the opt-in agent-silent monitor's bounds, raise /
+      # hold / clear and alert text; re-resolving a queued automatic client
+      # update (keep, adopt, re-plan, withdraw, and why).
+      - name: Agent health tests
+        run: node apps/api/scripts/unit-agent-health.mjs
+
+      # The tray (0.36): one-time chat codes and the /assist cookie, the
+      # page's CSP and that its script never builds HTML, tray keys, recorded
+      # or not, the self-help catalog (equal to the agent's and the
+      # migration's), screenshots and usage samples, and which computers can
+      # chat through the tray.
+      - name: Tray tests
+        run: node apps/api/scripts/unit-tray.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.
@@ -355,7 +378,7 @@ jobs:
         # Every port the suite listens on, stated (0.35): web and API, the
         # loopback SMTP sink (Email settings) and the reference ClientSt0r peer
         # (the History tab's AI summary). The suite's own API runs with every
-        # background sweep off, STALE_SWEEP and SNAPSHOT_SWEEP included (set
+        # background sweep off, STALE_SWEEP, SNAPSHOT_SWEEP and AGENT_AUTO_UPDATE included (set
         # in e2e-ui.mjs, checked by the invariants).
         env:
           OUT_DIR: ${{ runner.temp }}/ui-screenshots
@@ -426,9 +449,12 @@ jobs:
       # And windows.script.run (0.34): every refusal, and — with the runner's
       # pwsh (PowerShell 7, not Windows PowerShell 5.1) — arguments passed as
       # data, the timeout killing the process tree, and the output cap.
-      # And the chat host (0.34): pipe frames and their size and field limits,
-      # message text, the hello nonce, receipts sent once, history retries,
-      # reconnect after a lost window, and the per-minute reply cap.
+      # And the tray (0.36, replacing the 0.34 chat host and window): pipe
+      # frames and their size and field limits, the hello nonce, the closed
+      # self-help catalog (compared with the portal's and the migration's),
+      # local rate limits, the one-time chat link and the window's navigation
+      # rule, the device secret never reaching the tray, a tray key never
+      # running an elevated tool, offline runs, and the signed tray install.
       - name: Signed update chain and approved-action tests
         working-directory: tools/windows-installer
         run: go test ./...

@@ -221,3 +221,60 @@ func openLog(p agent.Paths) *os.File {
 	fmt.Fprintf(f, "\n=== %s %v\n", time.Now().UTC().Format(time.RFC3339), os.Args[1:])
 	return f
 }
+
+// traySDDL is the tray's directory (0.36): SYSTEM and Administrators full,
+// signed-in users read and execute (0x1200a9, FILE_GENERIC_READ |
+// FILE_GENERIC_EXECUTE) and nothing more — the tray runs as them, so they
+// must be able to run it, and must not be able to replace it.
+const traySDDL = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)"
+
+// InstallTray places the verified tray at dst (InstallDir\tray), in a
+// directory with traySDDL, coping with a running tray as InstallAgent does.
+func (w *winPlatform) InstallTray(src, dst string) error {
+	dir := filepath.Dir(dst)
+	if err := w.SecureDir(dir); err != nil { // creates it, refuses a reparse point
+		return err
+	}
+	sd, err := windows.SecurityDescriptorFromString(traySDDL)
+	if err != nil {
+		return err
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return err
+	}
+	if err := windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil); err != nil {
+		return err
+	}
+	if _, err := os.Stat(dst); err == nil {
+		old := fmt.Sprintf("%s.old-%d", dst, time.Now().UnixNano())
+		if err := os.Rename(dst, old); err != nil {
+			return err
+		}
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	in.Close()
+	os.Remove(src)
+	if olds, _ := filepath.Glob(dst + ".old-*"); len(olds) > 0 {
+		for _, o := range olds {
+			_ = os.Remove(o)
+		}
+	}
+	return nil
+}

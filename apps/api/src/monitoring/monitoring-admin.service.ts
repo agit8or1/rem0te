@@ -8,7 +8,7 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { CAP } from '../rbac/capabilities';
 import { validatePeerUrl } from '../integration/peers';
 import {
-  type Destination, isEmailDestination, LIMITS, NotifyPolicyInput, parseParams, RECOMMENDED, RULE_KEY, RuleInput, RulePatch, scopeKeyOf, scopeOfKey, SEVERITIES,
+  type Destination, isEmailDestination, LIMITS, NotifyPolicyInput, OPTIONAL, parseParams, RECOMMENDED, RULE_KEY, RuleInput, RulePatch, scopeKeyOf, scopeOfKey, SEVERITIES,
 } from './engine';
 import { MonitoringService, VIEW_INCLUDE } from './monitoring.service';
 import { EmailService } from '../email/email.service';
@@ -258,7 +258,7 @@ export class MonitoringAdminService {
     let mayConfigure = false;
     if (scope) { try { this.assertConfigure(a, scope); mayConfigure = true; } catch { /* read-only */ } }
     return {
-      rules: rows.map((r) => this.ruleView(r)), recommended: RECOMMENDED, severities: SEVERITIES,
+      rules: rows.map((r) => this.ruleView(r)), recommended: RECOMMENDED, optional: OPTIONAL, severities: SEVERITIES,
       may: { global: this.isMsp(a), business: mayConfigure },
     };
   }

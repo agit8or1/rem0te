@@ -1,7 +1,7 @@
 import {
-  Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Req, UseGuards,
+  Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Req, Res, UseGuards,
 } from '@nestjs/common';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { SupportRequestsService } from './support-requests.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -77,6 +77,28 @@ export class SupportRequestsController {
   @RequireCapability(CAP.SUPPORT_REQUESTS)
   async detail(@Actor() actor: ActorContext, @Param('id') id: string) {
     return { success: true, data: await this.svc.detail(actor, id) };
+  }
+
+  /**
+   * A screenshot or usage sample the tray attached (0.36). The queue's scope
+   * AND the computer's visibility; served inert: nosniff, a sandboxing CSP,
+   * never cached, never as anything but its own type.
+   */
+  @Get(':id/attachments/:aid')
+  @RequireCapability(CAP.SUPPORT_REQUESTS)
+  async attachment(@Actor() actor: ActorContext, @Param('id') id: string, @Param('aid') aid: string, @Res() res: Response) {
+    const a = await this.svc.attachment(actor, id, aid);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    if (a.kind === 'usage') {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.send(JSON.stringify({ success: true, data: a.data }));
+      return;
+    }
+    res.setHeader('Content-Type', a.contentType === 'image/png' ? 'image/png' : 'image/jpeg');
+    res.setHeader('Content-Disposition', `inline; filename="screenshot-${a.id}.${a.contentType === 'image/png' ? 'png' : 'jpg'}"`);
+    res.send(a.bytes);
   }
 
   @Get(':id/handoff-candidates')

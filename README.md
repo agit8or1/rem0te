@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.35.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.36.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -242,9 +242,9 @@ dot.
 </tr>
 </table>
 
-**[→ See all 56 screenshots](docs/screenshots.md)** — the dashboard, search, the device list and
+**[→ See all 59 screenshots](docs/screenshots.md)** — the dashboard, search, the device list and
 every device tab, reports, the script library, patching, administration and configuration, in light
-and dark and at phone width. Captured from v0.33.
+and dark and at phone width. Captured from v0.36.
 
 ---
 

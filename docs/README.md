@@ -46,8 +46,10 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[integration-clientst0r.md](integration-clientst0r.md)** — ClientSt0r ticket
   analysis (contract ticket-rmm-v1): staff-only findings, what a job can and
   cannot touch, peers file, mappings. Contract: [contracts/ticket-rmm-v1](contracts/ticket-rmm-v1/README.md).
-- **[chat.md](chat.md)** — chatting with the person at a Windows computer: the window on their desktop, receipts,
-  limits, containment, audit and 400-day retention; signed agent only, not yet run on real Windows (0.34).
+- **[chat.md](chat.md)** — chatting with the person at a Windows computer: receipts, recording, limits,
+  containment, audit and 400-day retention; not yet run on real Windows (0.34, through the tray from 0.36).
+- **[tray.md](tray.md)** — the tray icon on Windows computers, with either agent: chat, support requests with
+  usage and a screenshot, self-help tools, the credentials each part holds; not yet run on real Windows (0.36).
 - **[support-requests.md](support-requests.md)** — the customer support link,
   the status page, and the technician queue.
 - **[technicians.md](technicians.md)** — MSP technicians: per-business,

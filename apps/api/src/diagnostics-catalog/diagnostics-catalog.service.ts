@@ -19,8 +19,8 @@ import {
   type CatalogEntry, type SnapshotKey,
 } from './catalog';
 import {
-  Pacer, WATCH_WINDOW_MS, automaticState, dueKeys, ineligible, isWindows, parseScheduleUpdate, perMinuteFrom,
-  scheduleFrom, sweepEnabled, type KeyHistory, type SnapshotSchedule,
+  Pacer, QUIET_CAP_MS, QUIET_MAX_ENTRIES, WATCH_WINDOW_MS, automaticState, dueKeys, ineligible, isWindows, parseScheduleUpdate, perMinuteFrom,
+  quietUntil, scheduleFrom, sweepEnabled, type KeyHistory, type SnapshotSchedule,
 } from './snapshot-schedule';
 
 const OPEN = ['REQUESTED', 'DELIVERED', 'RUNNING'] as const;
@@ -53,6 +53,15 @@ export class DiagnosticsCatalogService {
    * (docs/server-sizing.md); a restart only forgets who was looking.
    */
   private readonly watched = new Map<string, number>();
+  /**
+   * endpointId → until when its heartbeats need not re-check the schedule
+   * (0.36, snapshot-schedule.ts quietUntil): it was checked, nothing was due,
+   * and nothing is due before then. Dropped by a result, an expiry or a
+   * schedule change; bounded; a restart only means one full check each.
+   */
+  private readonly quiet = new Map<string, number>();
+  /** SNAPSHOT_QUIET=off: check the schedule on every heartbeat (a suite that moves run times in the database). */
+  private readonly quietEnabled = process.env.SNAPSHOT_QUIET !== 'off';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -293,7 +302,7 @@ export class DiagnosticsCatalogService {
       }
       if (!why) continue;
       const n = await this.prisma.diagnosticRun.updateMany({ where: { id: r.id, status: r.status }, data: { status: 'EXPIRED', error: why, completedAt: new Date() } });
-      if (n.count) await this.auditDone(r, 'expired', { reason: why.split(':')[0] });
+      if (n.count) { this.quiet.delete(r.endpointId); await this.auditDone(r, 'expired', { reason: why.split(':')[0] }); }
     }
   }
 
@@ -364,13 +373,28 @@ export class DiagnosticsCatalogService {
     if (!this.autoEnabled) return;
     const schedule = await this.schedule();
     if (!schedule.enabled) return;
+    // Nothing can be due yet (and no tab is open on it): no queries at all.
+    const q = this.quiet.get(endpointId);
+    if (q !== undefined) {
+      const t = Date.now();
+      if (q > t && !SNAPSHOT_KEYS.some((k) => this.isWatched(endpointId, k, t))) return;
+      this.quiet.delete(endpointId);
+    }
     const [ep, node] = await Promise.all([
       this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { status: true, platform: true, agentVersion: true, lastSeenAt: true, tenantId: true, customerId: true } }),
       this.prisma.rustdeskNode.findUnique({ where: { endpointId }, select: { agentSecretHash: true } }),
     ]);
     const now = Date.now();
     if (!ep || ineligible({ ...ep, agentBound: !!node?.agentSecretHash }, now)) return;
-    const due = dueKeys(schedule, now, await this.keyHistory(endpointId), (k) => this.isWatched(endpointId, k, now));
+    const history = await this.keyHistory(endpointId);
+    const due = dueKeys(schedule, now, history, (k) => this.isWatched(endpointId, k, now));
+    if (!due.length) {
+      const until = quietUntil(schedule, history, now, QUIET_CAP_MS);
+      if (until !== null && this.quietEnabled) {
+        if (this.quiet.size >= QUIET_MAX_ENTRIES) this.quiet.clear();
+        this.quiet.set(endpointId, until);
+      }
+    }
     for (const d of due) {
       // Someone is looking: not held back. Otherwise the fleet-wide pacer decides.
       if (d.basis !== 'watch' && !this.pacer.take(now)) continue;
@@ -419,6 +443,7 @@ export class DiagnosticsCatalogService {
     const before = await this.schedule(true);
     await this.prisma.platformSettings.upsert({ where: { id: 'singleton' }, create: { id: 'singleton', ...parsed.data }, update: parsed.data });
     this.scheduleCache = null;
+    this.quiet.clear();
     const after = await this.schedule(true);
     if (JSON.stringify(before) !== JSON.stringify(after)) {
       await this.audit.log({
@@ -492,6 +517,7 @@ export class DiagnosticsCatalogService {
    */
   async report(endpointId: string, dto: { runId: string; key: string; state: string; result?: unknown; error?: string }) {
     if (!isCatalogKey(dto.key)) return { accepted: false, reason: 'unknown_key' };
+    this.quiet.delete(endpointId);
     const run = await this.prisma.diagnosticRun.findFirst({ where: { id: dto.runId, endpointId } });
     if (!run) return { accepted: false, reason: 'unknown_run' };
     if (run.key !== dto.key) return { accepted: false, reason: 'key_mismatch' };

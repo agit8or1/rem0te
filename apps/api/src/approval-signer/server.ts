@@ -9,7 +9,10 @@
  *             POST /internal/v1/scripts, GET /internal/v1/scripts/:id,
  *             POST /internal/v1/scripts/:id/revoke (v0.34: the portal may
  *             PROPOSE an allowlist entry and revoke one; it cannot add,
- *             approve or edit one)
+ *             approve or edit one),
+ *             GET /internal/v1/revocations, POST /internal/v1/software/:entryId/revoke
+ *             (v0.36: the signed revocation statement the portal relays to
+ *             agents, and the one-way revocation of an archived catalog entry)
  *   public    (behind the reverse proxy, on its OWN origin — not the
  *             portal's, so no script the portal serves can reach into it):
  *             GET /approve/:id, GET /approve/:id/state,
@@ -29,6 +32,7 @@ import {
   admitPolicy, approvalsOf, effectivePolicyStatus, policyRolesFor, recordPolicyDecision, signPolicy, signUnderPolicy,
   deviceIdentity, deviceKeyChangedMessage, newPins, pinConflicts,
   admitScriptProposal, assertScriptAllowed, effectiveScriptStatus, recordScriptDecision, scriptRolesFor,
+  assertSoftwareAllowed, mergeRevocations, revocationStatement, signRevocations, SOFTWARE_ENTRY_ID,
   type Challenge, type JobRecord, type PolicyRecord, type Role, type ScriptAllowRecord,
 } from './core';
 import { SCRIPT_RUN_ACTION, canonical } from '../actions/script-run';
@@ -116,6 +120,19 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
   };
 
   const pins = (identity: string) => store.devicePin(identity);
+  const softwareRevoked = (entryId: string) => !!store.softwareRevocation(entryId);
+  /**
+   * The signed revocation statement (v0.36), as of now: every revocation ever
+   * published plus everything on disk, so it never shrinks. Signed fresh on
+   * each request — asOf is what lets an agent tell it is at least as new as
+   * a plan it is about to run.
+   */
+  const revocations = () => store.exclusive(() => {
+    const prev = store.publishedRevocations();
+    const set = mergeRevocations(prev, { scripts: store.scriptRevocations(), software: store.softwareRevocations() });
+    if (!prev || set.scripts.length + set.software.length !== prev.scripts.length + prev.software.length) store.savePublishedRevocations(set);
+    return signRevocations(revocationStatement(set, now()), k);
+  });
   /** For the approval page: whether each computer's key is pinned already, new here, or not the pinned one. */
   const keyStatus = (r: PolicyRecord) => Object.fromEntries(r.doc.rings.flat().map((c) => {
     const pin = c.resultKey ? store.devicePin(deviceIdentity(c)) : null;
@@ -357,6 +374,22 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       const url = new URL(req.url ?? '/', 'http://internal');
       const m = planRoute(url.pathname);
       if (req.method === 'GET' && url.pathname === '/internal/v1/keys') return send(res, 200, keysDocument([k]));
+      if (req.method === 'GET' && url.pathname === '/internal/v1/revocations') return send(res, 200, await revocations());
+      // v0.36: an archived software catalog entry, revoked for good. Like a
+      // script's revocation it only ever adds: nothing over HTTP removes one.
+      const sw = url.pathname.match(/^\/internal\/v1\/software\/([^/]+)\/revoke$/);
+      if (sw) {
+        if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
+        if (!SOFTWARE_ENTRY_ID.test(sw[1])) return send(res, 404, { error: 'not_found' });
+        const b = await body(req) as { reason?: unknown };
+        if (typeof b.reason !== 'string' || b.reason.trim().length < 3) throw new Refused('bad_request', 'a reason is required');
+        const reason = [...b.reason].slice(0, 300).map((c) => (c < ' ' ? ' ' : c)).join('');
+        const rev = await store.exclusive(() => {
+          if (store.revokeSoftware(sw[1], { at: now().toISOString(), by: 'portal', reason })) console.log(`[approval-signer] software catalog entry ${sw[1]} revoked at the portal's request: ${reason}`);
+          return store.softwareRevocation(sw[1])!;
+        });
+        return send(res, 200, { entryId: sw[1], status: 'REVOKED', revokedAt: rev.at });
+      }
       const pm = url.pathname.match(/^\/internal\/v1\/policy\/([A-Za-z0-9_-]{8,64})$/);
       if (req.method === 'GET' && pm) return send(res, 200, policyFor(store.policy(), pm[1]));
       if (url.pathname === '/internal/v1/pauses') {
@@ -376,7 +409,7 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       // a count only, for the portal's pre-flight check. Who they are stays here.
       if (req.method === 'GET' && url.pathname === '/internal/v1/capabilities') {
         const people = new Set(store.roster().members.filter((x) => !x.disabled && x.approve.length).map((x) => x.userId));
-        return send(res, 200, { patchPolicies: 1, scripts: 1, kid: k.kid, roster: { approvers: people.size } });
+        return send(res, 200, { patchPolicies: 1, scripts: 1, revocations: 1, kid: k.kid, roster: { approvers: people.size } });
       }
       const pol = policyRoute(url.pathname);
       if (pol) return await internalPolicy(req, res, pol);
@@ -386,7 +419,7 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       if (req.method === 'POST' && !m[1]) {
         const b = await body(req) as { plan?: unknown };
         const out = await store.exclusive(() => {
-          const { plan, digest } = admitPlan(b.plan, store.policy(), now(), (id) => store.scriptEntry(id));
+          const { plan, digest } = admitPlan(b.plan, store.policy(), now(), (id) => store.scriptEntry(id), softwareRevoked);
           const held = store.activePause(plan.targets[0]?.businessId ?? null);
           if (held) throw new Refused('paused', `the approval signer is paused${held.scope === 'business' ? ' for this business' : ''}: ${held.reason}`);
           const existing = store.job(plan.jobId);
@@ -474,6 +507,8 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
         if (store.activePause(cur.plan.targets[0]?.businessId ?? null)) throw new Refused('paused', 'approvals were paused while you decided');
         // 0.34: a script revoked after the plan was proposed is never signed.
         if (cur.plan.action.id === SCRIPT_RUN_ACTION && c.decision === 'approve') assertScriptAllowed(cur.plan, (id) => store.scriptEntry(id));
+        // 0.36: nor is an install from a catalog entry archived meanwhile.
+        if (c.decision === 'approve') assertSoftwareAllowed(cur.plan, softwareRevoked);
         const status = recordDecision(cur, member, c.role as Role, c.decision, now());
         if (status === 'SIGNED') signJob(cur, k, now());
         store.saveJob(cur);

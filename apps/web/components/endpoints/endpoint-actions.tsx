@@ -341,6 +341,7 @@ function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => voi
       </p>
       {j.approvers?.length ? <p className="text-xs text-muted-foreground">Approved by {j.approvers.map((a) => `${a.name}${a.role === 'customer' ? ' (customer)' : ''}`).join(', ')}</p> : null}
       {j.statusReason && <p className="text-xs text-muted-foreground">Reason: {j.statusReason.replace(/_/g, ' ')}</p>}
+      {(j.statusReason === 'revoked' || mine?.statusReason === 'revoked') && <p className="text-xs text-muted-foreground">The script or software entry this runs was revoked after the plan was signed, so it will never run here.</p>}
       {(j.ringSize ?? 1) > 1 && mine && <p className="text-xs text-muted-foreground">This computer: {mine.status.toLowerCase().replace(/_/g, ' ')}{mine.statusReason ? ` (${mine.statusReason.replace(/_/g, ' ')})` : ''}</p>}
       {result && (
         <p className="text-xs">

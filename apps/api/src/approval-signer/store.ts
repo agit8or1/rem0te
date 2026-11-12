@@ -21,6 +21,10 @@
  *                               the content, the hashes this process computed, decisions
  *   <dir>/script-revocations/<sha256>.json  revoked script CONTENT hashes: write-once,
  *                               never removed, and never proposable again
+ *   <dir>/software-revocations/<entryId>.json  archived software catalog entries (v0.36):
+ *                               write-once, never removed; nothing from them is installed again
+ *   <dir>/revocations.json      every revocation ever published in a statement (v0.36), so
+ *                               the signed statement never shrinks, whatever is on disk
  *
  * The serving process never writes roster.json or policy.json: those belong
  * to the operator CLI. Counters live apart so that saving one can never
@@ -33,14 +37,14 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
-import type { Challenge, DevicePin, JobRecord, Policy, PolicyRecord, Roster, ScriptAllowRecord } from './core';
+import type { Challenge, DevicePin, JobRecord, Policy, PolicyRecord, RevocationSet, Roster, ScriptAllowRecord } from './core';
 
 const ID = /^[a-f0-9]{32}$/;
 
 export class SignerStore {
   private chain: Promise<unknown> = Promise.resolve();
   constructor(readonly dir: string) {
-    for (const d of ['jobs', 'challenges', 'counters', 'pauses', 'policies', 'revocations', 'device-keys', 'scripts', 'script-revocations']) mkdirSync(path.join(dir, d), { recursive: true, mode: 0o700 });
+    for (const d of ['jobs', 'challenges', 'counters', 'pauses', 'policies', 'revocations', 'device-keys', 'scripts', 'script-revocations', 'software-revocations']) mkdirSync(path.join(dir, d), { recursive: true, mode: 0o700 });
   }
 
   /** Run fn with every other mutation waiting. */
@@ -158,6 +162,34 @@ export class SignerStore {
       throw e;
     }
   }
+
+  /** Every revoked script content hash on disk. */
+  scriptRevocations(): string[] {
+    return readdirSync(path.join(this.dir, 'script-revocations')).filter((f) => /^[a-f0-9]{64}\.json$/.test(f)).map((f) => f.slice(0, -5));
+  }
+
+  // ── Software revocations (v0.36) ──────────────────────────────────────────
+  // One write-once file per archived catalog entry id. The portal asks when an
+  // entry is archived; the operator CLI can too. Nothing removes one.
+  softwareRevocation(entryId: string): Revocation | null {
+    return /^[A-Za-z0-9_-]{8,64}$/.test(entryId) ? this.read<Revocation>(path.join(this.dir, 'software-revocations', `${entryId}.json`)) : null;
+  }
+  /** Revoke a software catalog entry. Returns false if it already was; the first revocation stands. */
+  revokeSoftware(entryId: string, rev: Revocation): boolean {
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(entryId)) throw new Error('bad software entry id');
+    try { writeFileSync(path.join(this.dir, 'software-revocations', `${entryId}.json`), JSON.stringify(rev, null, 2), { mode: 0o600, flag: 'wx' }); return true; } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
+      throw e;
+    }
+  }
+  softwareRevocations(): string[] {
+    return readdirSync(path.join(this.dir, 'software-revocations')).filter((f) => /^[A-Za-z0-9_-]{8,64}\.json$/.test(f)).map((f) => f.slice(0, -5));
+  }
+
+  // ── The published revocation set (v0.36) ──────────────────────────────────
+  // Only ever replaced by a superset (core.ts mergeRevocations).
+  publishedRevocations(): RevocationSet | null { return this.read<RevocationSet>(path.join(this.dir, 'revocations.json')); }
+  savePublishedRevocations(set: RevocationSet) { this.write(path.join(this.dir, 'revocations.json'), set); }
 
   // ── Pauses (v0.28) ────────────────────────────────────────────────────────
   // One file each, so the serving process (which only ever creates one) and

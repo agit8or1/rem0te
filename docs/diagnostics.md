@@ -142,7 +142,8 @@ snapshot is refreshed and roughly when the next automatic one is due.
 ![The Processes tab: the read-only notice, the snapshot's age, Refresh, the filter and the sortable columns](screenshots/guide/device-processes.png)
 
 1. **Read-only snapshot** — what the tab is, and that nothing on it acts on the computer.
-2. **When it was taken** — and how old it is; flagged after a day.
+2. **When it was taken** — how old it is (flagged after a day) and who asked, or *automatically*. The amber line
+   under it is the docs server's own: it runs with `SNAPSHOT_SWEEP=off`, so it never asks for one itself, and the tab says so.
 3. **Refresh** — asks for a new one on the computer's next check-in.
 4. **Filter** — by name, PID or user.
 5. **The columns** — click one to sort.
@@ -191,6 +192,15 @@ After a failed or expired automatic run the next one waits an hour (or the inter
 out on the next heartbeat. At most `SNAPSHOT_MAX_PER_MINUTE` (default 120) scheduled runs start per minute across the
 server, so the first round after an upgrade or an outage is spread over a couple of hours; a key held back stays due.
 Watched runs are not held back.
+
+**A computer with nothing due is not re-checked on every heartbeat (0.36).** When a heartbeat finds none of the
+three keys due and none open, the API remembers, in its own memory, when the soonest one falls due — capped at an
+hour — and answers that computer's heartbeats until then without the three database reads that decide it. Opening a
+tab, a result arriving, a run expiring and a change to the intervals all end the window at once, so a watched key is
+still asked for on the next heartbeat. What it does not see is a row changed in the database by hand or by the
+[retention sweep](data-retention.md): that is noticed when the window ends, at most an hour later. A restart forgets
+every window, which costs one full check per computer. `SNAPSHOT_QUIET=off` turns it off. The cost it removed is in
+[server-sizing.md](server-sizing.md#automatic-snapshots-035).
 
 **Who is asked.** A computer that is active, on Windows, bound to a device secret, running an agent from **0.33 or
 later** (older agents do not know the snapshot keys: 0.31–0.32 refuse them and anything earlier never starts them),

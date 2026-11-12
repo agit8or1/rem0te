@@ -50,31 +50,37 @@
     },
     {
       "name": "device-detail-light",
-      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3",
       "theme": "light",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "device-resources-light",
-      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3",
       "theme": "light",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "device-performance-light",
-      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d?tab=performance",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=performance",
       "theme": "light",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "device-services-light",
-      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d?tab=services",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=services",
       "theme": "light",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "device-patches-light",
-      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d?tab=patches",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=patches",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "device-agent-silent-light",
+      "route": "/endpoints/cmwdpnw9q001onivn3qy7subq",
       "theme": "light",
       "viewport": "1440x1000@2x"
     },
@@ -110,7 +116,7 @@
     },
     {
       "name": "script-review-light",
-      "route": "/automation/scripts/cmwcqxzzl003r30f9dvrlxrv0",
+      "route": "/automation/scripts/cmwdpp1h1003lx6yrzkhsujas",
       "theme": "light",
       "viewport": "1440x1000@2x"
     },
@@ -164,7 +170,7 @@
     },
     {
       "name": "business-overview-dark",
-      "route": "/businesses/cmwcqwwkf004nkynnqnuoq449",
+      "route": "/businesses/cmwdpnwoe004nnivnv57k9nl0",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
@@ -212,43 +218,49 @@
     },
     {
       "name": "business-computers-dark",
-      "route": "/businesses/cmwcqwwkf004nkynnqnuoq449",
+      "route": "/businesses/cmwdpnwoe004nnivnv57k9nl0",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "device-specs-dark",
-      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "device-performance-dark",
-      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d?tab=performance",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=performance",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "device-processes-dark",
-      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d?tab=processes",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=processes",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "device-network-dark",
-      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d?tab=network",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=network",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "device-event-log-dark",
-      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d?tab=events",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=events",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "device-linux-dark",
-      "route": "/endpoints/cmwcqwwid003fkynn6ukol55i",
+      "route": "/endpoints/cmwdpnwj4003fnivnnrgxd14y",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "device-group-monitor-dark",
+      "route": "/endpoints/cmwdpnwtt006mnivn8tj395qt?tab=monitoring",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
@@ -332,8 +344,14 @@
     },
     {
       "name": "device-overview-narrow-light",
-      "route": "/endpoints/cmwcqwwkr004ykynnbyuop01d",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3",
       "theme": "light",
+      "viewport": "390x844@2x"
+    },
+    {
+      "name": "dashboard-narrow-dark",
+      "route": "/dashboard",
+      "theme": "dark",
       "viewport": "390x844@2x"
     },
     {

@@ -34,6 +34,19 @@ const OFFLINE = new Set([
   'HARB-OPS-MB', 'CRV-LAB-PC', 'PSL-PARTNER-MB', 'ACF-ESTIMATING',
 ]);
 
+/**
+ * 0.36: one computer is reachable through RustDesk with its agent silent —
+ * the amber state 0.35 introduced (common/connectivity.ts). Its agent last
+ * checked in SILENT_FOR ago; hbbs still reports its RustDesk peer, so it
+ * stays `isOnline` with a fresh RustDesk node. It sits alone in Eugene, so the
+ * map draws that marker amber. Keep in step with _docs-demo-workbench.ts,
+ * which stops its metric history when the agent went quiet. The docs API must
+ * run with STALE_SWEEP=off: with no hbbs on that stack, the sweep would take
+ * it offline within a minute.
+ */
+const AGENT_SILENT = new Set(['NWD-BILLING-RMT']);
+const SILENT_FOR = 3 * 24 * 60 * MIN + 2 * 60 * MIN;
+
 async function main() {
   const all = await prisma.endpoint.findMany({ select: { id: true, name: true } });
   for (const e of all) {
@@ -43,11 +56,18 @@ async function main() {
   }
 
   // Online machines: a scatter of very recent check-ins.
-  const online = await prisma.endpoint.findMany({ where: { isOnline: true }, select: { id: true } });
+  const online = await prisma.endpoint.findMany({ where: { isOnline: true, name: { notIn: [...AGENT_SILENT] } }, select: { id: true } });
   for (let i = 0; i < online.length; i++) {
     const seen = ago((1 + (i % 9)) * MIN);
     await prisma.endpoint.update({ where: { id: online[i].id }, data: { lastSeenAt: seen } });
     await prisma.rustdeskNode.updateMany({ where: { endpointId: online[i].id }, data: { lastSeenAt: seen } });
+  }
+
+  // Agent silent: reachable (isOnline, RustDesk node fresh), heartbeat days old.
+  const silent = await prisma.endpoint.findMany({ where: { name: { in: [...AGENT_SILENT] } }, select: { id: true } });
+  for (const e of silent) {
+    await prisma.endpoint.update({ where: { id: e.id }, data: { isOnline: true, lastSeenAt: ago(SILENT_FOR) } });
+    await prisma.rustdeskNode.updateMany({ where: { endpointId: e.id }, data: { lastSeenAt: ago(2 * MIN) } });
   }
 
   // Offline machines keep a believable spread of staleness.
@@ -62,11 +82,16 @@ async function main() {
   // The Resources card's sample carries its own timestamp and is read as
   // "minutes old". Leaving it behind while every other clock moves would make
   // a gauge on a freshly-captured screenshot claim to be hours stale.
-  const inv = await prisma.endpointInventory.findMany({ select: { id: true } });
+  // A silent agent's samples stop when it went quiet.
+  const silentIds = new Set(silent.map((e) => e.id));
+  const inv = await prisma.endpointInventory.findMany({ select: { id: true, endpointId: true } });
   for (let i = 0; i < inv.length; i++) {
+    const quiet = silentIds.has(inv[i].endpointId);
     await prisma.endpointInventory.update({
       where: { id: inv[i].id },
-      data: { liveSampledAt: ago((1 + (i % 3)) * MIN), collectedAt: ago((4 + (i % 7) * 3) * MIN) },
+      data: quiet
+        ? { liveSampledAt: ago(SILENT_FOR), collectedAt: ago(SILENT_FOR + 20 * MIN) }
+        : { liveSampledAt: ago((1 + (i % 3)) * MIN), collectedAt: ago((4 + (i % 7) * 3) * MIN) },
     });
   }
 
@@ -81,7 +106,7 @@ async function main() {
     });
   }
 
-  console.log(`refreshed: ${online.length} online, ${offline.length} offline, ${live.length} live sessions, ${inv.length} inventory samples`);
+  console.log(`refreshed: ${online.length} online, ${silent.length} agent silent, ${offline.length} offline, ${live.length} live sessions, ${inv.length} inventory samples`);
 }
 
 main().finally(() => prisma.$disconnect());

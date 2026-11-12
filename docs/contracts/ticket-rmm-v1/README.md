@@ -27,6 +27,7 @@ implements.
 |---|---|---|
 | 1 | 0.25–0.29 | Jobs, events, action proposals (0.26), alerts and ticket links (0.29) |
 | 2 | 0.30 | `contract_revision`; `organizations` in `/capabilities` (each organization's `business_id`, `business_name` and `paused` kinds — the binding made explicit); `alert.patch_summary` on REBOOT_PENDING alerts (schema `patch-summary`) |
+| *3 (agreed, not built)* | *—* | *P1–P10 of [`INTEGRATION_COORDINATION.md`](../../../INTEGRATION_COORDINATION.md) §5: capabilities list and diagnostic catalog, diagnostic requests and events, fix referrals and events, remote launch, handoff notes, `Idempotency-Key`, device health summary. Acknowledged by ClientSt0r on 2026-11-11 as proposed (§9). No schema here yet: `contract_revision` stays 2 until rem0te ships them* |
 | *4 (proposed)* | *0.34, rem0te side only* | *P11: inference task `device_timeline_v1` (the device page's AI summary). P12: ClientSt0r's own capabilities document at the peers file's `capabilitiesUrl`. Not agreed; see `proposed/`* |
 
 ## Milestone status

@@ -35,6 +35,12 @@ const SESSION_COUNT_FRESH_MS = 10 * 60_000;
  * business entirely — nothing is queued, and the heartbeat withholds anything
  * queued earlier.
  *
+ * Each tick first re-resolves what is already queued (0.36,
+ * ClientUpdatesService.reconcileQueued): a request whose policy no longer
+ * governs its computer — it left the device group, the policy was removed or
+ * switched off — is withdrawn, or moved to the enabled policy that governs it
+ * now, and audited as CLIENT_UPDATE_AUTO_WITHDRAWN / _REPLANNED with why.
+ *
  * CLIENT_UPDATE_SWEEP=off turns it off in this process. Two API instances are
  * safe: the write is conditional on nothing being queued, so a computer is
  * queued — and audited — once.
@@ -67,7 +73,7 @@ export class ClientUpdateSweepService implements OnModuleInit, OnModuleDestroy {
     return Number.isInteger(n) && n >= 1 ? Math.min(n, 500) : 25;
   }
 
-  async sweep(now = new Date()): Promise<{ queued: number }> {
+  async sweep(now = new Date()): Promise<{ queued: number; withdrawn?: number; replanned?: number }> {
     if (this.busy) return { queued: 0 };
     this.busy = true;
     try {
@@ -78,7 +84,20 @@ export class ClientUpdateSweepService implements OnModuleInit, OnModuleDestroy {
     } finally { this.busy = false; }
   }
 
-  private async pass(now: Date): Promise<{ queued: number }> {
+  private async pass(now: Date): Promise<{ queued: number; withdrawn: number; replanned: number }> {
+    // 0.36: first, every request already queued is re-resolved against the
+    // policies and group membership of this tick — in every business, not
+    // only those with a policy on (a business whose last enabled policy was
+    // its group's is exactly the case). Withdrawing is never paused: an
+    // "updates" containment pause stops installs, and removing a request
+    // installs nothing.
+    const r = await this.svc.reconcileQueued({ audit: true });
+    if (r.withdrawn || r.replanned) this.logger.log(`re-resolved queued updates: ${r.withdrawn} withdrawn, ${r.replanned} moved to the policy that governs them now`);
+    const q = await this.queue(now);
+    return { ...q, withdrawn: r.withdrawn, replanned: r.replanned };
+  }
+
+  private async queue(now: Date): Promise<{ queued: number }> {
     const enabled = await this.prisma.clientUpdatePolicy.findMany({
       where: { enabled: true, customer: { isActive: true, isArchived: false } },
       select: { customerId: true },
@@ -144,7 +163,7 @@ export class ClientUpdateSweepService implements OnModuleInit, OnModuleDestroy {
           where: { id: n.id, updateRequestedAt: null },
           data: {
             updateRequestedAt: now, updateTargetVersion: target.version, updateRequestSource: 'POLICY',
-            updateRequestedById: null, updateHoldReason: null, updateHoldAt: null,
+            updateRequestedById: null, updateHoldReason: null, updateHoldAt: null, updatePolicyId: p.id,
           },
         });
         if (w.count !== 1) continue;

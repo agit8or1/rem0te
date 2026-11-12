@@ -191,6 +191,12 @@ export const STATUS_DOT: Record<DeviceStatus['tone'], string> = {
 
 const SEVERITY_RANK: Record<AlertRow['severity'], number> = { CRITICAL: 3, WARNING: 2, INFO: 1 };
 
+/** The computer's open agent-silent alert (0.36), if a monitor raised one. The Agent card and the header link to it. */
+export function agentSilentAlert(alerts: AlertRow[] | null | undefined): AlertRow | null {
+  return (alerts ?? []).find((a) => a.kind === 'AGENT_SILENT' && a.state !== 'RESOLVED') ?? null;
+}
+export const alertHref = (a: Pick<AlertRow, 'id'>) => `/alerts?alert=${encodeURIComponent(a.id)}`;
+
 export function openAlerts(alerts: AlertRow[] | null | undefined): AlertRow[] {
   return (alerts ?? [])
     .filter((a) => a.state !== 'RESOLVED')
@@ -211,6 +217,7 @@ export const MONITOR_KIND_LABEL: Record<string, string> = {
   SERVICE_STOPPED: 'Windows service',
   EVENT_MATCH: 'Event log',
   REBOOT_PENDING: 'Restart pending',
+  AGENT_SILENT: 'Agent silent',
 };
 
 const EVENT_LEVEL: Record<number, string> = { 0: 'any', 1: 'Critical', 2: 'Error', 3: 'Warning', 4: 'Information', 5: 'Verbose' };
@@ -225,6 +232,7 @@ export function describeMonitor(kind: string, p: Record<string, unknown>): strin
     case 'MEMORY_HIGH': return `memory above ${n('percent') ?? 95}% for ${n('samples') ?? 5} check-ins in a row`;
     case 'SERVICE_STOPPED': return `${String(p.service ?? '?')} not running${p.alertIfMissing ? ' or missing' : ''}`;
     case 'REBOOT_PENDING': return `a restart pending for over ${n('hours') ?? 72} hours`;
+    case 'AGENT_SILENT': return `RustDesk reachable but no agent check-in for ${n('minutes') ?? 60} minutes`;
     case 'EVENT_MATCH': {
       const ids = Array.isArray(p.ids) && p.ids.length ? `event ID ${(p.ids as number[]).join(', ')}` : null;
       const levels = Array.isArray(p.levels) && p.levels.length ? (p.levels as number[]).map((l) => EVENT_LEVEL[l] ?? l).join(' / ') : null;

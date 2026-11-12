@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { OctagonPause } from 'lucide-react';
 import { containmentApi } from '@/lib/api-client';
@@ -24,10 +25,28 @@ export function ContainmentBanner() {
     refetchInterval: 60_000,
     retry: false,
   });
-  if (!data?.length) return null;
+  const shown = !!data?.length;
+  const ref = useRef<HTMLDivElement>(null);
+  // Publish the strip's height as --containment-banner-h on <html> (0.36).
+  // The dashboard is sized to the viewport below the top bar from `lg` up, so
+  // without this a banner pushed it down by its own height and the page
+  // scrolled — the one page designed not to. A ResizeObserver, because the
+  // strip wraps to more lines as the window narrows or more pauses apply; the
+  // variable is removed with the strip.
+  useEffect(() => {
+    const root = document.documentElement;
+    const el = ref.current;
+    if (!shown || !el) { root.style.removeProperty('--containment-banner-h'); return; }
+    const set = () => root.style.setProperty('--containment-banner-h', `${el.getBoundingClientRect().height}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(el);
+    return () => { ro.disconnect(); root.style.removeProperty('--containment-banner-h'); };
+  }, [shown, data]);
+  if (!shown) return null;
   return (
-    <div role="status" className="border-b border-red-300 bg-red-50 px-4 py-2 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-100">
-      {data.map((p) => (
+    <div ref={ref} data-testid="containment-banner" role="status" className="border-b border-red-300 bg-red-50 px-4 py-2 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-100">
+      {data!.map((p) => (
         <div key={p.id} className="flex flex-wrap items-center gap-x-2">
           <OctagonPause className="h-4 w-4 shrink-0" />
           <strong>{p.scope === 'global' ? 'Write pause (all businesses)' : `${p.businessName ?? 'This business'} is suspended`}:</strong>

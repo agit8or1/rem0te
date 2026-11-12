@@ -305,7 +305,8 @@ const SECTIONS: Section[] = [
           so monitoring, patching and actions are not reporting; try <strong className="text-foreground">Update
           agent</strong> on its Agent card. Grey is offline. The Online filter has all three, the dashboard counts
           agent-silent computers apart from online ones, and the CSV has a Connectivity column. On a phone the
-          filters sit behind a <strong className="text-foreground">Filters (n)</strong> button.
+          filters sit behind a <strong className="text-foreground">Filters (n)</strong> button. To be alerted
+          when an agent goes silent, add the opt-in <em>Agent silent</em> monitor (0.36) in Settings → Monitoring.
         </p>
         <p>
           <strong className="text-foreground">Health</strong> is the worst open monitoring alert;{' '}
@@ -412,36 +413,79 @@ const SECTIONS: Section[] = [
       <div className="space-y-3 text-sm text-muted-foreground">
         <p>
           Open a computer and choose the <strong className="text-foreground">Chat</strong> tab. <strong className="text-foreground">Start chat</strong>{' '}
-          opens a small window on that computer&apos;s desktop, titled with the business name and headed with your name,
-          saying the business will never ask for a password and that links are never opened. The computer picks the
-          chat up at its next check-in, normally within three minutes; after that, messages arrive within seconds.
+          puts a badge on the Rem0te icon in the computer&apos;s notification area. The chat opens in a small window,
+          titled with the business name and headed with your name, saying the business will never ask for a password and
+          that links are never opened. A computer on the signed agent picks the chat up at its next check-in, normally
+          within three minutes. A standard agent&apos;s tray asks within ten. After that, messages arrive within seconds.
         </p>
         <ul className="list-disc pl-5 space-y-1">
           <li>
-            <strong className="text-foreground">Windows with the signed agent only.</strong> Linux, macOS and the
-            standard Windows agent cannot chat yet, and the tab says so for those computers. The desktop window has not
-            yet been run on real Windows.
+            <strong className="text-foreground">Windows only, with either agent.</strong> Linux and macOS cannot chat,
+            and the tab says so for those computers. A standard agent needs its installer re-run from this version so that
+            its tray is installed. The tray has not yet been run on real Windows.
+          </li>
+          <li>
+            The person can also <strong className="text-foreground">start a chat from the tray</strong>. It appears as open
+            on the Chat tab and as a request in the support queue.
           </li>
           <li>
             Each message shows <em>Sent</em>, <em>Delivered</em>, <em>Shown</em> or <em>Read</em>, and only what the computer
-            has confirmed. The panel also says what the computer last reported: window open, nobody signed in, the window
-            could not be opened, or the computer has gone quiet.
+            has confirmed. The panel also says what the computer last reported.
           </li>
           <li>
-            The person can reply or close the window. Closing it ends the chat, and so do <em>End chat</em> and two hours
-            with no message.
+            <strong className="text-foreground">Recording</strong> is set per business, under{' '}
+            <em>Settings → General → Chat recording</em>. Changing it asks you to confirm it is you, and the change is
+            audited. Each chat says whether it is recorded. In a chat that is not recorded, each message is deleted from
+            the server once both sides have it, and anything left is deleted when the chat ends.
           </li>
           <li>
             Up to 2,000 characters a message and 20 messages a minute. Text is shown as plain text on both sides.
           </li>
           <li>
             Starting and writing need the <em>Chat with the person at a computer</em> permission. Anyone who can see the
-            computer can read its transcripts, which are deleted 400 days after the chat ends. A <em>remote connections</em>{' '}
-            containment pause stops new chats and messages. The audit log records each start and end, never the text.
+            computer can read a recorded transcript, which is deleted 400 days after the chat ends. A{' '}
+            <em>remote connections</em> containment pause stops new chats and messages. The audit log records each start
+            and end, never the text.
           </li>
         </ul>
         <p>
-          See <Link href="/docs/chat" className="underline text-foreground">Chat</Link> for the details.
+          See <Link href="/docs/chat" className="underline text-foreground">Chat</Link> and{' '}
+          <Link href="/docs/tray" className="underline text-foreground">The tray icon</Link> for the details.
+        </p>
+      </div>
+    ),
+  },
+  {
+    id: 'tray',
+    title: 'The Tray Icon on Windows Computers',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          Every managed Windows computer has a Rem0te icon in the notification area for each person signed in. Its menu
+          has four items: <em>Chat with support</em>, <em>Open a support request</em>, <em>Self-help tools</em> and{' '}
+          <em>About</em>.
+        </p>
+        <ul className="list-disc pl-5 space-y-1">
+          <li>
+            <strong className="text-foreground">Support requests</strong> from the tray arrive in the support queue,
+            already linked to the computer. The person may attach their resource usage and a screenshot; both are off
+            until they tick them. Attachments are shown only to someone who can see the computer, and are deleted after 45
+            days.
+          </li>
+          <li>
+            <strong className="text-foreground">Self-help tools:</strong> check DNS, test the connection and show
+            network details, with either agent. Flush DNS, renew the IP address and restart the remote support service
+            run as the system, so they are available on the signed agent only, and an <em>actions</em> containment pause
+            stops them. Each run is listed on the computer&apos;s <em>History</em> tab under <em>Tray</em>.
+          </li>
+          <li>
+            On a standard agent, the Windows account the tray reports is not proven. Treat the name on a chat or a
+            request from a standard computer as what the computer said.
+          </li>
+          <li>Not yet run on real Windows. Linux and macOS have no tray.</li>
+        </ul>
+        <p>
+          See <Link href="/docs/tray" className="underline text-foreground">The tray icon</Link> for the details.
         </p>
       </div>
     ),
@@ -665,6 +709,23 @@ const SECTIONS: Section[] = [
           held, not confirmed or done. More in{' '}
           <Link href="/docs/update-signing#moving-existing-agents" className="underline">Update signing</Link>.
         </p>
+        <p className="font-medium text-foreground">Agents keep themselves up to date (0.36)</p>
+        <p>
+          You don&apos;t need to click Update agent after a release. When a Windows computer&apos;s agent is older than
+          this server&apos;s version, its next check-in re-runs the installer by itself (a signed agent runs its own
+          verified update instead). It is paced across the platform, never runs during a remote session, and waits
+          while updates are paused or a rollout owns the computer. A computer gets at most three attempts per
+          release, spaced hours apart. After that its Agent card says <strong>Auto-update failing</strong>, and
+          clicking Update agent tries again. The <strong>Automatic updates</strong> part of the card says which
+          state it&apos;s in: up to date, queued (with the window it waits for), updating, failing, opted out, or{' '}
+          <strong>update manually</strong>. Update manually covers Linux and macOS agents, which act on nothing the
+          server sends, and agents older than 0.13. For those the card gives the exact command. A business, site or
+          device group can opt out, or limit it to its update window, in{' '}
+          <Link href="/settings/client-updates" className="underline">Settings → Client updates</Link>. A Platform
+          Admin sets the platform switch, the hourly pace and the attempts there. The device list&apos;s{' '}
+          <em>Agent outdated</em> filter shows every computer still behind. More in{' '}
+          <Link href="/docs/updates#the-rem0te-agent-automatic-updates-036" className="underline">Updates</Link>.
+        </p>
       </div>
     ),
   },
@@ -692,6 +753,16 @@ const SECTIONS: Section[] = [
           Start with <strong className="text-foreground">Add recommended</strong>. Monitors are inherited:
           global, then business, then site, then device group, then computer; a monitor with the same key lower down replaces
           the one above it, and a disabled one switches it off there.
+        </p>
+        <p className="font-medium text-foreground">Agent silent (0.36, opt-in)</p>
+        <p>
+          The Offline monitor does not fire for a computer RustDesk can still reach, even when its agent has
+          stopped checking in. The <em>Agent silent</em> monitor does: under <em>New monitor</em>, pick
+          <em> Agent silent (RustDesk still reachable)</em> — 60 minutes by default, anything from 30 minutes to
+          7 days. <em>Add recommended</em> never adds it; it is on only where someone creates it. Its alert says
+          remote control should still work and suggests <strong className="text-foreground">Update agent</strong>{' '}
+          or re-running the installer, it clears when the agent checks in again, and the computer&apos;s page
+          and Agent card link to it. It is not offered to ClientSt0r for a ticket.
         </p>
         <p className="font-medium text-foreground">Monitors for a device group</p>
         <p>
@@ -752,6 +823,12 @@ const SECTIONS: Section[] = [
           why. Turning a group policy on, or removing one, asks you to confirm it is you, and a group that has
           a policy cannot be deleted until the policy is removed. See{' '}
           <Link href="/docs/group-policies" className="underline text-foreground">Device-group policies</Link>.
+        </p>
+        <p>
+          Every sweep re-checks updates already queued automatically (0.36): if a computer has left the group
+          whose policy queued it — or that policy was switched off or removed — the update is withdrawn, or kept
+          under the policy that governs the computer now if that one is on. Both are in the audit log with the
+          reason.
         </p>
         <p className="font-medium text-foreground">What happens</p>
         <p>
@@ -1037,7 +1114,11 @@ const SECTIONS: Section[] = [
           write it add its exact SHA-256 to the signer&apos;s own allowlist. Then you can request a run on up to 25 Windows
           computers, with typed arguments and a timeout of 1 to 30 minutes; two more approvers approve each run on the
           signer&apos;s page. The signed agent checks the hash before it runs anything, as SYSTEM, and each computer&apos;s
-          Actions tab shows the exit code and the first 64 KB of output, redacted, for 90 days. Revoking is permanent.
+          Actions tab shows the exit code and the first 64 KB of output, redacted, for 90 days. Revoking is permanent,
+          and from 0.36 it also stops a run that was already signed: the signer publishes a signed list of revoked
+          scripts and archived software, and a computer on the 0.36 signed agent refuses a revoked run before it starts
+          (<em>Refused by the computer · revoked</em>). Such a computer runs nothing signed after the newest list it
+          has, so a run can wait a moment for a fresh one; it isn&apos;t failed.
           On a server with no approval signer the panel says so and offers nothing to propose, request or revoke.
           It has been tested with PowerShell 7 on Linux, <strong className="text-foreground">not yet on a real Windows
           computer</strong>. Writing needs <em>Write scripts</em>; reviewing, proposing and revoking need <em>Review
@@ -1048,7 +1129,8 @@ const SECTIONS: Section[] = [
           The <Link href="/dashboard" className="underline text-foreground">Dashboard</Link> (0.31) says what is broken,
           which businesses it affects, which devices need attention, what is already being worked on, and what to
           do next — only for what you can see. From 0.35 it fits the window on a desktop screen: figures first, then
-          the lists and the map, each long list scrolling inside its own card. <strong className="text-foreground">Work on next</strong> is a ranked
+          the lists and the map, each long list scrolling inside its own card — and from 0.36 it still fits with a
+          containment strip at the top. <strong className="text-foreground">Work on next</strong> is a ranked
           list and each item says why it is there: site outages, then critical alerts, actions whose outcome is
           unknown, failed actions, warnings, approval requests, restarts pending and info alerts, oldest first.
           Acknowledged alerts and alerts in a maintenance window are left out. <em>Patch compliance</em> counts only
@@ -1164,7 +1246,10 @@ const SECTIONS: Section[] = [
           Configuration Manager or Intune refuses software plans (<em>managed elsewhere</em>), and the portal stops offering
           them there. A computer without a usable winget — App Installer missing, or older than 1.7 — reports{' '}
           <em>winget unavailable</em> or <em>winget too old</em> and runs nothing; its Software tab then warns before the
-          next request. Software plans need the signed agent and the approval signer.
+          next request. Software plans need the signed agent and the approval signer.{' '}
+          <strong className="text-foreground">Archiving an entry (0.36)</strong> revokes it on the approval signer for good,
+          so a computer on the 0.36 signed agent refuses an install from it even if that install was approved before the
+          archive. Uninstalls still run. If the signer doesn&apos;t confirm, nothing is archived.
         </p>
         <p>
           <strong className="text-foreground">None of this has run on real Windows yet.</strong> It has been tested against

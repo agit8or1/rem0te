@@ -12,8 +12,11 @@
  *      sqlite3 presence lookup runs as in production, never against the real
  *      hbbs database);
  *   2. warm-up: one heartbeat per computer, answering the inventory command it
- *      is handed with a synthetic 150-application inventory, so steady state
- *      is "nothing due" as it is between 6-hourly inventories;
+ *      is handed with a synthetic 150-application inventory and (0.36, with
+ *      BENCH_SNAPSHOTS=on, the default) the three automatic snapshots it is
+ *      asked for with desktop-sized results (250 processes, 280 services, 4
+ *      adapters), so steady state is "nothing due" as it is between
+ *      6-hourly inventories and snapshots;
  *   3. measures BENCH_ROUNDS rounds of one heartbeat per computer at
  *      BENCH_CONCURRENCY parallel requests: latency, throughput, the API
  *      process's CPU time (including its sqlite3 children), the CPU time of
@@ -25,6 +28,11 @@
  * database refuses to update and which are expected on a scratch database).
  * Each computer has its own client address, as real ones do, so the
  * per-address throttles apply as they would in production.
+ *
+ * BENCH_SNAPSHOTS=off runs the API with SNAPSHOT_SWEEP=off, for the same run
+ * without 0.35's automatic snapshots. With it on (production's default) the
+ * pacer is raised (SNAPSHOT_MAX_PER_MINUTE=10000) so the warm-up can collect
+ * every computer's snapshots instead of spreading them over two hours.
  *
  * Run:  DATABASE_URL=…/rem0te_<x>_test node scripts/bench-heartbeat.mjs
  */
@@ -47,6 +55,7 @@ if ([3000, 3001, 443, 4000, 4001].includes(PORT)) { console.error(`Refusing port
 const N = Math.min(10_000, Number(process.env.BENCH_ENDPOINTS ?? 1000));
 const ROUNDS = Math.min(20, Number(process.env.BENCH_ROUNDS ?? 3));
 const CONC = Math.min(256, Number(process.env.BENCH_CONCURRENCY ?? 16));
+const SNAPSHOTS = (process.env.BENCH_SNAPSHOTS ?? 'on') !== 'off';
 const API = `http://127.0.0.1:${PORT}/api/v1`;
 const VERSION_FILE = path.resolve(here, '..', '..', '..', 'version.json');
 const AGENT_VERSION = JSON.parse(readFileSync(VERSION_FILE, 'utf8')).version;
@@ -106,6 +115,13 @@ function inventoryOf(d) {
     software,
   };
 }
+// Desktop-sized snapshot results, shaped like unit-snapshot-schedule.mjs's (≈ 35 KB, 41 KB and 2 KB stored).
+const PNAMES = ['svchost', 'chrome', 'msedge', 'explorer', 'RuntimeBroker', 'SearchHost', 'Teams', 'OUTLOOK', 'conhost', 'dllhost', 'WmiPrvSE', 'MsMpEng', 'spoolsv', 'lsass', 'csrss'];
+const SNAPSHOT_RESULTS = {
+  process_list: { processCount: 250, userNamesRead: true, processes: Array.from({ length: 250 }, (_, i) => ({ name: PNAMES[i % PNAMES.length], pid: 1000 + i * 4, cpuSeconds: (i * 37) % 5000 / 10, workingSetBytes: 1e6 + i * 98765, user: i % 3 ? 'NT AUTHORITY\\SYSTEM' : 'BENCH\\user', startedAt: '2026-11-12T07:58:13.000Z' })) },
+  service_list: { serviceCount: 280, services: Array.from({ length: 280 }, (_, i) => ({ name: `Service${i}Name`, displayName: `Windows Example Service Number ${i} Host`, state: i % 2 ? 'Running' : 'Stopped', startMode: i % 3 ? 'Manual' : 'Automatic', account: i % 4 ? 'LocalSystem' : 'NT AUTHORITY\\LocalService' })) },
+  network_adapters: { adapters: Array.from({ length: 4 }, (_, i) => ({ name: `Intel(R) Ethernet Connection ${i}`, connectionId: `Ethernet ${i}`, status: 'Connected', up: true, mac: `00-11-22-33-44-5${i}`, speedBps: 1e9, ipv4: [`10.0.${i}.5`], ipv6: [`fe80::1:${i}%12`], gateway: [`10.0.${i}.1`], dnsServers: ['10.0.0.1', '10.0.0.2'], dnsSuffix: 'bench.example.com', dhcpEnabled: true, dhcpServer: '10.0.0.1' })) },
+};
 let reqBytes = 0, resBytes = 0;
 async function post(p, d, body) {
   const s = JSON.stringify(body);
@@ -129,7 +145,11 @@ async function main() {
   const busy = await fetch(`${API}/health`).then(() => true, () => false);
   if (busy) throw new Error(`port ${PORT} is already in use; set BENCH_API_PORT`);
 
-  console.log(`fixtures: ${N} computers in one synthetic business (${TAG})`);
+  console.log(`fixtures: ${N} computers in one synthetic business (${TAG}); automatic snapshots ${SNAPSHOTS ? 'ON' : 'off'}`);
+  if (SNAPSHOTS) {
+    const ps = await prisma.platformSettings.findUnique({ where: { id: 'singleton' } });
+    if (ps && ps.snapshotAutoEnabled === false) throw new Error('automatic snapshots are switched off in this database’s PlatformSettings; turn them on or run with BENCH_SNAPSHOTS=off');
+  }
   const biz = await prisma.customer.create({ data: { tenantId: tenant.id, name: `${TAG} Bench` } });
   businessId = biz.id;
   for (let i = 0; i < N; i++) devs.push({ i: i + 1, rid: String(700_000_000 + Math.floor(Math.random() * 99_999_999)), secret: randomBytes(24).toString('base64url'), host: `${TAG}-${i}` });
@@ -153,6 +173,7 @@ async function main() {
       JWT_SECRET: randomBytes(32).toString('hex'), LAUNCHER_TOKEN_SECRET: randomBytes(32).toString('hex'),
       ENCRYPTION_KEY: process.env.ENCRYPTION_KEY ?? randomBytes(32).toString('hex'), TRUSTED_PROXIES: 'loopback',
       HBBS_PRESENCE_HOST: '127.0.0.2', RUSTDESK_DB_PATH: hbbsDb, MONITOR_SWEEP: 'off', CLIENT_UPDATE_SWEEP: 'off', VERSION_FILE,
+      SNAPSHOT_SWEEP: SNAPSHOTS ? 'on' : 'off', SNAPSHOT_MAX_PER_MINUTE: '10000',
       LOG_LEVEL: 'warn',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -163,9 +184,17 @@ async function main() {
   const idleRss = rssMb(api.pid);
 
   // ── warm-up ──
-  console.log('warm-up: first heartbeat + inventory per computer');
-  let invCount = 0, invMs = 0;
+  console.log(`warm-up: first heartbeat + inventory${SNAPSHOTS ? ' + automatic snapshots' : ''} per computer`);
+  let invCount = 0, invMs = 0, snapCount = 0, snapMs = 0, snapCpu = 0;
   const cpuW0 = cpuMs(api.pid, true);
+  const answerSnapshots = async (d, handed) => {
+    for (const x of handed) {
+      await post('/enrollment/diagnostic-result', d, { rustdeskId: d.rid, agentSecret: d.secret, runId: x.id, key: x.key, state: 'running' });
+      const y = await post('/enrollment/diagnostic-result', d, { rustdeskId: d.rid, agentSecret: d.secret, runId: x.id, key: x.key, state: 'completed', result: SNAPSHOT_RESULTS[x.key] ?? {} });
+      if (y.status !== 200) throw new Error(`snapshot result ${y.status} ${JSON.stringify(y.json).slice(0, 300)}`);
+      snapCount++; snapMs += y.ms;
+    }
+  };
   await pool(devs, CONC, async (d) => {
     const r = await post('/enrollment/heartbeat', d, heartbeatBody(d));
     if (r.status !== 200) throw new Error(`warm-up heartbeat ${r.status} ${JSON.stringify(r.json).slice(0, 300)}`);
@@ -177,9 +206,28 @@ async function main() {
         await post('/enrollment/command-result', d, { rustdeskId: d.rid, agentSecret: d.secret, commandId: c.id, ok: true });
       }
     }
+    await answerSnapshots(d, r.json?.data?.diagnostics ?? []);
   });
   const warmCpu = cpuMs(api.pid, true) - cpuW0;
   console.log(`  ${invCount} inventories answered, mean ${(invMs / Math.max(1, invCount)).toFixed(1)} ms`);
+  if (SNAPSHOTS) {
+    // The pacer or the per-heartbeat cap may have left some: heartbeat again until nothing is asked.
+    for (let pass = 2; pass <= 6; pass++) {
+      let handed = 0;
+      const c0 = cpuMs(api.pid, true);
+      await pool(devs, CONC, async (d) => {
+        const r = await post('/enrollment/heartbeat', d, heartbeatBody(d));
+        const h = r.json?.data?.diagnostics ?? [];
+        handed += h.length;
+        await answerSnapshots(d, h);
+      });
+      snapCpu += cpuMs(api.pid, true) - c0;
+      if (!handed) break;
+      console.log(`  warm-up pass ${pass}: ${handed} more snapshots asked for`);
+    }
+    const stored = await prisma.diagnosticRun.count({ where: { customerId: biz.id, requestedById: null, status: 'COMPLETED' } });
+    console.log(`  ${snapCount} automatic snapshots answered (${stored} stored, ${(stored / N).toFixed(2)} per computer), result upload mean ${(snapMs / Math.max(1, snapCount)).toFixed(1)} ms`);
+  }
 
   // ── steady state ──
   const results = [];
@@ -191,7 +239,8 @@ async function main() {
     const c0 = cpuMs(api.pid, true);
     const self0 = cpuMs(api.pid, false);
     const t0 = performance.now();
-    const lat = await pool(devs, CONC, async (d) => { const r = await post('/enrollment/heartbeat', d, heartbeatBody(d)); if (r.status !== 200) throw new Error(`heartbeat ${r.status}`); return r.ms; });
+    let asked = 0;
+    const lat = await pool(devs, CONC, async (d) => { const r = await post('/enrollment/heartbeat', d, heartbeatBody(d)); if (r.status !== 200) throw new Error(`heartbeat ${r.status}`); asked += (r.json?.data?.diagnostics ?? []).length; return r.ms; });
     const wall = (performance.now() - t0) / 1000;
     const apiCpu = cpuMs(api.pid, true) - c0;
     const selfCpu = cpuMs(api.pid, false) - self0;
@@ -200,7 +249,7 @@ async function main() {
     const s1 = await dbStats();
     lat.sort((a, b) => a - b);
     const d = Object.fromEntries(Object.keys(s1).map((k) => [k, (s1[k] - s0[k]) / N]));
-    results.push({ round, wall, rate: N / wall, p50: pct(lat, 0.5), p95: pct(lat, 0.95), p99: pct(lat, 0.99), apiCpuPerHb: apiCpu / N, selfCpuPerHb: selfCpu / N, childCpuPerHb: (apiCpu - selfCpu) / N, pgCpuPerHb: (pg1 - pg0) / N, pgBackends: pids.length, perHb: d, reqB: reqBytes / N, resB: resBytes / N, rss: rssMb(api.pid) });
+    results.push({ round, asked, wall, rate: N / wall, p50: pct(lat, 0.5), p95: pct(lat, 0.95), p99: pct(lat, 0.99), apiCpuPerHb: apiCpu / N, selfCpuPerHb: selfCpu / N, childCpuPerHb: (apiCpu - selfCpu) / N, pgCpuPerHb: (pg1 - pg0) / N, pgBackends: pids.length, perHb: d, reqB: reqBytes / N, resB: resBytes / N, rss: rssMb(api.pid) });
     await sleep(1500);
   }
 
@@ -215,7 +264,7 @@ async function main() {
   const auditByAction = await prisma.$queryRaw`SELECT action::text AS action, count(*)::bigint AS n, avg(pg_column_size(a.*))::float AS avg FROM "ActivityLog" a GROUP BY action ORDER BY count(*) DESC LIMIT 40`;
 
   console.log('\n── steady-state heartbeats');
-  console.table(results.map((r) => ({ round: r.round, 'hb/s': r.rate.toFixed(0), 'p50 ms': r.p50.toFixed(1), 'p95 ms': r.p95.toFixed(1), 'p99 ms': r.p99.toFixed(1), 'API cpu ms/hb': r.apiCpuPerHb.toFixed(2), 'node ms/hb': r.selfCpuPerHb.toFixed(2), 'sqlite3 ms/hb': r.childCpuPerHb.toFixed(2), 'PG cpu ms/hb': r.pgCpuPerHb.toFixed(2), 'PG backends': r.pgBackends, 'req B': r.reqB.toFixed(0), 'res B': r.resB.toFixed(0), 'RSS MB': r.rss.toFixed(0) })));
+  console.table(results.map((r) => ({ round: r.round, snapshots: SNAPSHOTS ? 'on' : 'off', 'asked': r.asked, 'hb/s': r.rate.toFixed(0), 'p50 ms': r.p50.toFixed(1), 'p95 ms': r.p95.toFixed(1), 'p99 ms': r.p99.toFixed(1), 'API cpu ms/hb': r.apiCpuPerHb.toFixed(2), 'node ms/hb': r.selfCpuPerHb.toFixed(2), 'sqlite3 ms/hb': r.childCpuPerHb.toFixed(2), 'PG cpu ms/hb': r.pgCpuPerHb.toFixed(2), 'PG backends': r.pgBackends, 'req B': r.reqB.toFixed(0), 'res B': r.resB.toFixed(0), 'RSS MB': r.rss.toFixed(0) })));
   console.log('per heartbeat, this database:'); console.table(results.map((r) => Object.fromEntries(Object.entries(r.perHb).map(([k, v]) => [k, v.toFixed(2)]))));
   console.log(`API RSS idle ${idleRss.toFixed(0)} MB; warm-up API CPU ${(warmCpu / N).toFixed(2)} ms per computer (heartbeat + inventory)`);
   console.log(`inventory row (150 apps): ${Math.round(invRow[0]?.row ?? 0)} B, of which software ${Math.round(invRow[0]?.sw ?? 0)} B`);
@@ -236,6 +285,7 @@ async function cleanup() {
         await prisma.endpointInventory.deleteMany({ where: { endpointId: { in: c } } });
         await prisma.rustdeskNode.deleteMany({ where: { endpointId: { in: c } } });
         await prisma.endpointMonitorState.deleteMany({ where: { endpointId: { in: c } } }).catch(() => {});
+        await prisma.diagnosticRun.deleteMany({ where: { endpointId: { in: c } } });
         await prisma.endpoint.deleteMany({ where: { id: { in: c } } });
       }
       await prisma.customer.delete({ where: { id: businessId } });

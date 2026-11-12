@@ -1,6 +1,6 @@
 # Rem0te — screenshot gallery
 
-Every image below is a capture of **Rem0te v0.33** running against an isolated demo
+Every image below is a capture of **Rem0te v0.36** running against an isolated demo
 database, at **1440×1000** or, where marked, **390×844** (phone width), both at
 `deviceScaleFactor: 2`.
 Nothing is mocked, drawn, or AI-generated.
@@ -53,11 +53,14 @@ The same view in dark. Both themes ship with the product and are switched from
 the sidebar.
 
 ### Dashboard at phone width — light
-<a href="images/github/dashboard-narrow-light.png"><img src="images/github/dashboard-narrow-light.png" alt="The dashboard at 390 pixels wide in light theme, the outage strip and tiles squeezed into a narrow column beside the full sidebar."></a>
+<a href="images/github/dashboard-narrow-light.png"><img src="images/github/dashboard-narrow-light.png" alt="The dashboard at 390 pixels wide in light theme: a menu button and search across the top, the whole site-outage sentence with Open alerts, then the tiles two to a row."></a>
 
-At 390 px, captured on 0.33, before the phone layout: the sidebar did not collapse, so the
-content got what was left. From 0.34 the sidebar is a drawer behind a menu button below 768 px;
-these phone-width images have not been recaptured since.
+At 390 px the sidebar is a drawer behind the menu button, and the page scrolls
+instead of fitting the screen. The outage strip is capped only on the fitted
+desktop layout, so on a phone it shows its whole sentence.
+
+### Dashboard at phone width — dark
+<a href="images/github/dashboard-narrow-dark.png"><img src="images/github/dashboard-narrow-dark.png" alt="The same phone-width dashboard in dark theme."></a>
 
 ### Search everything — dark
 <a href="images/github/search-dark.png"><img src="images/github/search-dark.png" alt="The Ctrl+K search box in dark theme with harb typed: eight Harbor Logistics devices with online or offline badges and the matched letters highlighted, then the business."></a>
@@ -143,13 +146,13 @@ filtering, so it covers every page, not just the one on screen.
 <a href="images/github/computers-inventory-dark.png"><img src="images/github/computers-inventory-dark.png" alt="The same device list in dark theme."></a>
 
 ### Bulk actions — dark
-<a href="images/github/device-bulk-dark.png"><img src="images/github/device-bulk-dark.png" alt="The device list in dark theme with three devices ticked and the bulk bar showing group membership, Refresh inventory, Queue client update and Export selection."></a>
+<a href="images/github/device-bulk-dark.png"><img src="images/github/device-bulk-dark.png" alt="The device list in dark theme with three devices ticked and the bulk bar showing group membership, Refresh inventory, Queue client update, Update agent, Upgrade to signed and Export selection."></a>
 
-Tick devices for group membership, an inventory refresh, a client update or an
-export of just those rows.
+Tick devices for group membership, an inventory refresh, a client update, an agent
+update or upgrade, or an export of just those rows.
 
 ### Saved views — light
-<a href="images/github/device-views-light.png"><img src="images/github/device-views-light.png" alt="The Views menu open on the device list in light theme, listing views shared in each business such as Harbor — offline, with Save current view and Device groups below."></a>
+<a href="images/github/device-views-light.png"><img src="images/github/device-views-light.png" alt="The Views menu open on the device list in light theme, listing views shared in each business such as Harbor — offline, with Save current view, Save filters as a rule group and Device groups below."></a>
 
 Filters, sort, columns and density saved under a name, for yourself or shared in a
 business. A shared view still shows each person only what they may see.
@@ -169,7 +172,22 @@ One device: its state, what is wrong with it, and the tabs for everything else. 
 action that is not available says why underneath.
 
 ### A device at phone width — light
-<a href="images/github/device-overview-narrow-light.png"><img src="images/github/device-overview-narrow-light.png" alt="The same device page at 390 pixels wide in light theme."></a>
+<a href="images/github/device-overview-narrow-light.png"><img src="images/github/device-overview-narrow-light.png" alt="The same device page at 390 pixels wide in light theme, the actions and the attention strip wrapping onto their own rows and the tabs scrolling sideways."></a>
+
+### Agent silent — light
+<a href="images/github/device-agent-silent-light.png"><img src="images/github/device-agent-silent-light.png" alt="NWD-BILLING-RMT's page in light theme in the amber agent-silent state: reachable through RustDesk, but its agent has not checked in for three days, so monitoring, patching and actions are not reporting."></a>
+
+Reachable, but not reporting. RustDesk still sees the computer, so Connect works;
+the agent has not checked in for 30 minutes or more, so nothing it measures is
+current. The dashboard counts it apart from online and offline, and the map draws
+it amber.
+
+### A device group's monitor — dark
+<a href="images/github/device-group-monitor-dark.png"><img src="images/github/device-group-monitor-dark.png" alt="HARB-DEPOT-BOI's Monitoring tab in dark theme, showing the Offline monitor coming from the Remote depots device group with its 60-minute threshold rather than the business default."></a>
+
+Policy by device group: the Remote depots group raises its Offline monitor to 60
+minutes because the depot VPN drops, and the tab says which scope each rule came
+from.
 
 ### Resource gauges — light
 <a href="images/github/device-resources-light.png"><img src="images/github/device-resources-light.png" alt="The Resources card on a computer's page in light theme: CPU, memory and system disk shown as labelled meters with percentages, the memory meter reading 44 percent of 16 GB and the disk meter showing free space, above a note saying when the sample was taken."></a>
@@ -321,9 +339,10 @@ Measured from the Offline monitor's episodes. There is no availability percentag
 because the time each computer was monitored is not recorded.
 
 ### Script library — dark
-<a href="images/github/script-library-dark.png"><img src="images/github/script-library-dark.png" alt="The Script library in dark theme with a notice that running scripts is not available yet, and three scripts with their scope, review state and risk."></a>
+<a href="images/github/script-library-dark.png"><img src="images/github/script-library-dark.png" alt="The Script library in dark theme with How a script runs (only an approved version, only as a signed action, approved twice) and what is and is not proven yet, above three scripts with their scope, review state and risk."></a>
 
-Scripts written, versioned and reviewed in the portal. It cannot run them, and says so.
+Scripts written, versioned and reviewed in the portal, and run only as signed
+actions. The notice says what has been proven and what has not.
 
 ### Reviewing a script — light
 <a href="images/github/script-review-light.png"><img src="images/github/script-review-light.png" alt="Version 2 of Clear stuck print queue in review in light theme: its versions, hashes, static checks, the content, and Approve and Reject."></a>
@@ -331,7 +350,7 @@ Scripts written, versioned and reviewed in the portal. It cannot run them, and s
 The reviewer approves an exact hash, and cannot be the person who wrote the content.
 
 ### Client updates in a window — light
-<a href="images/github/client-updates-light.png"><img src="images/github/client-updates-light.png" alt="Settings, Client updates for Harbor Logistics in light theme: a notice that the sweep is off on this server, the business policy's windows, the Tacoma warehouse override, and each computer's automatic-update state."></a>
+<a href="images/github/client-updates-light.png"><img src="images/github/client-updates-light.png" alt="Settings, Client updates for Harbor Logistics in light theme: a notice that the sweep is off on this server, the business policy's windows, the Tacoma warehouse override, the Remote depots device-group policy, and each computer's automatic-update state."></a>
 
 Outdated RustDesk clients updated by the server, only inside a window outside
 working hours, skipping computers with a session open.
@@ -422,11 +441,15 @@ DATABASE_URL=… ENCRYPTION_KEY=… npx tsx prisma/_docs-demo-data.ts
 #    how recently a device checked in, and the API sweeps the flag as data
 #    ages — without this the dashboard counts stop matching the inventory.
 DATABASE_URL=… npx tsx prisma/_docs-demo-monitoring.ts # monitors, alerts, a site outage, API keys
-DATABASE_URL=… npx tsx prisma/_docs-demo-workbench.ts  # 0.31–0.33 pages, see below
+DATABASE_URL=… npx tsx prisma/_docs-demo-workbench.ts  # 0.31–0.36 pages, see below
 DATABASE_URL=… npx tsx prisma/_docs-demo-refresh.ts    # last, right before capturing
 # Run the demo API with every sweep off, or it acts on the demo data:
 #   MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off \
-#   METRIC_SWEEP=off RETENTION_SWEEP=off
+#   METRIC_SWEEP=off RETENTION_SWEEP=off REPORT_SCHEDULE_SWEEP=off \
+#   SCRIPT_OUTPUT_SWEEP=off CHAT_RETENTION_SWEEP=off AUDIT_SEALER=off \
+#   STALE_SWEEP=off SNAPSHOT_SWEEP=off
+# STALE_SWEEP=off matters: the demo's agent-silent computer is isOnline with
+# an old heartbeat, and the stale sweep would mark it offline.
 # The client-update and patching pages then say their sweep is off; that is
 # what the screenshots show, and it is true of the demo server.
 WEB_URL=http://127.0.0.1:4000 EMAIL=… PASSWORD=… \
@@ -454,7 +477,7 @@ ONLY=guide/alerts,guide/api-keys …                 # just some of them
 Each guide image is followed in the markdown by a numbered list explaining
 its callouts; keep the two in step when a callout is added or moved.
 
-`_docs-demo-workbench.ts` (0.34) seeds what the 0.31–0.33 pages need, and can be
+`_docs-demo-workbench.ts` (0.34, extended in 0.36) seeds what the 0.31–0.36 pages need, and can be
 re-run: it deletes what it owns first. It refuses any database not named
 `reboot_remote_docs`, like the other demo modules. It writes:
 
@@ -466,13 +489,17 @@ re-run: it deletes what it owns first. It refuses any database not named
 - device groups and shared saved views;
 - resolved alert history, which the alert and offline-time reports count;
 - scripts with an approved version and a version in review;
-- client-update policies with a site override, and two held updates;
+- client-update policies with a site override, a device-group policy on
+  Remote depots, and two held updates;
+- a device-group Offline monitor on Remote depots (60 minutes);
 - two patch policies, one awaiting approval and one active;
 - a fictional relay host (`remote.example.net`) and Quick Connect turned on.
 
-Capturing takes a few minutes, and a computer that has not checked in for ten
-minutes reads *agent silent*. Re-run `_docs-demo-refresh.ts` every couple of
-minutes while capturing; it only moves timestamps.
+`_docs-demo-refresh.ts` keeps one computer, NWD-BILLING-RMT, deliberately *agent
+silent*: still online to RustDesk, heartbeat three days old, so the amber state
+is on the dashboard, the map and its own page. Every other computer reads agent
+silent too once it has gone 30 minutes without a heartbeat, so re-run the
+refresh every few minutes while capturing; it only moves timestamps.
 
 `screenshots.mjs` deletes the audit rows its throwaway admin wrote when it
 finishes. The audit chain on the docs database then reports those rows as

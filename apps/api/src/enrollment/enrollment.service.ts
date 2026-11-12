@@ -34,6 +34,7 @@ import { compareVersions } from '../common/agent-contract';
 import { assertFresh } from '../security-controls/review';
 import { MetricsService } from '../metrics/metrics.service';
 import { ChatService } from '../chat/chat.service';
+import { AgentAutoUpdateService } from '../agent-auto-update/agent-auto-update.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -69,6 +70,7 @@ export class EnrollmentService {
     private readonly metrics: MetricsService,
     private readonly agentMigration: AgentMigrationService,
     private readonly chat: ChatService,
+    private readonly agentAuto: AgentAutoUpdateService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -588,6 +590,7 @@ export class EnrollmentService {
     updateChannel?: 'signed' | 'legacy'; trustRootVersion?: number; targetsVersion?: number;
     agentActions?: string[]; agentSha256?: string; actionResults?: unknown[];
     patchPosture?: Record<string, unknown>; agentChat?: number;
+    agentTray?: number; trayKeyId?: string;
     agentUpdateCheckedAt?: string; agentUpdateResult?: string;
   }, remoteIp?: string) {
     // Names and versions as text, never control codes (0.32) — see device-text.ts.
@@ -708,7 +711,7 @@ export class EnrollmentService {
         node.updateTargetVersion &&
         dto.rustdeskVersion &&
         compareVersions(dto.rustdeskVersion, node.updateTargetVersion) >= 0
-          ? { updateRequestedAt: null, updateTargetVersion: null, updateRequestSource: null, updateRequestedById: null, updateHoldReason: null, updateHoldAt: null }
+          ? { updateRequestedAt: null, updateTargetVersion: null, updateRequestSource: null, updateRequestedById: null, updateHoldReason: null, updateHoldAt: null, updatePolicyId: null }
           : {}),
         // A reinstall clears once the endpoint reports an agent matching this
         // server AND the request has been handed out at least once. Without
@@ -723,6 +726,20 @@ export class EnrollmentService {
           : {}),
       },
     });
+
+    // The tray (0.36). Signed: what agent-status.json says. Standard: only
+    // with the key id on record — otherwise the heartbeat is told to pair.
+    let trayProtocol: number | null = null;
+    let trayPair = false;
+    if (authenticated && node.endpointId && (dto.agentTray ?? 0) >= 1) {
+      if (dto.updateChannel === 'signed') {
+        trayProtocol = dto.agentTray!;
+      } else {
+        const cur = await this.prisma.endpoint.findUnique({ where: { id: node.endpointId }, select: { trayKeyId: true } });
+        if (cur?.trayKeyId && dto.trayKeyId === cur.trayKeyId) trayProtocol = dto.agentTray!;
+        else trayPair = true;
+      }
+    }
 
     const updateData: Record<string, unknown> = {
       lastSeenAt: new Date(),
@@ -752,6 +769,7 @@ export class EnrollmentService {
         agentSha256: dto.updateChannel === 'signed' ? dto.agentSha256 ?? null : null,
         // Chat (0.34): only the signed agent has a chat host.
         chatProtocol: dto.updateChannel === 'signed' ? dto.agentChat ?? null : null,
+        trayProtocol,
       }),
       // Agent upgrade (0.34): the agent's own last update check, from
       // agent-status.json — the signed agent's, or a migrate run's on a
@@ -890,6 +908,32 @@ export class EnrollmentService {
       }
     }
 
+    // Automatic agent self-update (0.36). Last of the update steps on
+    // purpose: it only ever ADDS a flag when nothing above is going out, and
+    // never replaces one; the containment check below still has the final
+    // word. It holds itself while a rollout owns the computer, a RustDesk
+    // update or Reinstall is queued, a session is open, or the policy's
+    // window is closed, and paces and caps its own attempts
+    // (agent-auto-update/schedule.ts). A signed agent may also be told it may
+    // run its own periodic update check (`agentSelfCheck`).
+    let agentSelfCheck = false;
+    if (authenticated && !updatesHeld) {
+      try {
+        const auto = await this.agentAuto.forHeartbeat({
+          node,
+          dto: { ...dto, platform: dto.platform ?? node.platform ?? undefined },
+          updatesHeld, rolloutManaged, flagGoingOut: !!(updateRustdesk || reinstallAgent),
+        });
+        if (auto.flag && !updateRustdesk && !reinstallAgent) {
+          if (auto.flag === 'updateRustdesk') updateRustdesk = { targetVersion: this.platformVersion() };
+          else reinstallAgent = { targetVersion: this.platformVersion() };
+        }
+        agentSelfCheck = auto.selfCheck;
+      } catch (e) {
+        this.logger.warn(`Agent auto-update step failed for endpoint ${node.endpointId}: ${String(e)}`);
+      }
+    }
+
     // v0.28: updates paused everywhere or for this business. Nothing is
     // started; a staged rollout simply does not advance on this computer.
     if (updatesHeld) {
@@ -996,7 +1040,7 @@ export class EnrollmentService {
     // authenticated signed agent that reports a chat protocol, so the rest of
     // the fleet's heartbeats cost no query.
     let chat: { open: boolean } | null = null;
-    if (authenticated && dto.updateChannel === 'signed' && (dto.agentChat ?? 0) >= 1) {
+    if (authenticated && ((dto.updateChannel === 'signed' && (dto.agentChat ?? 0) >= 1) || (trayProtocol ?? 0) >= 1)) {
       try {
         chat = await this.chat.forHeartbeat(node.endpointId);
       } catch (e) {
@@ -1020,6 +1064,7 @@ export class EnrollmentService {
       rotate,
       updateRustdesk,
       reinstallAgent,
+      ...(agentSelfCheck ? { agentSelfCheck: true } : {}),
       commands,
       actions,
       actionAcks,
@@ -1028,6 +1073,9 @@ export class EnrollmentService {
       monitor,
       diagnostics,
       chat,
+      // The tray (0.36): a standard computer whose tray key is missing or not
+      // the one on record pairs again (POST /tray/pair, device secret).
+      tray: trayPair ? { pair: true } : null,
       rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
     };
   }

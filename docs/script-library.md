@@ -25,10 +25,10 @@ exact hash to the approval signer's own allowlist, and two approvers approving e
 It doesn't schedule a script, run one on Linux or macOS, run one outside a plan, or collect more than 64 KB of output
 per stream.
 
-![The script library: the not-yet notice, the scope filter, a script and New script](screenshots/guide/script-library.png)
+![The script library: how a script runs, the scope filter, a script and New script](screenshots/guide/script-library.png)
 
-1. **The notice** — captured on 0.33, when it said running scripts was not available yet. From 0.34 the same
-   notice says how an approved version runs, and that it has not run on a real Windows computer.
+1. **How a script runs** — only an approved version runs, as a signed action approved twice on the signer; what is
+   proven, and that it has not yet run on a real Windows computer.
 2. **Scope** — global scripts, or one business's.
 3. **A script** — its latest version and review state.
 4. **New script** — writes version 1 as a draft.
@@ -118,9 +118,50 @@ anything is signed: one library reviewer, two allowlist approvers, two run appro
 
 A reviewer chooses **Revoke from the allowlist** with a reason. The signer records the revocation **by content
 SHA-256, write-once**: those exact bytes can never be allowlisted again, under any entry, even if the portal forgets
-it revoked them. From then on the signer refuses every new run and every run not yet signed. A run already signed
-can still be delivered inside its window; cancel it from the computer's Actions tab. To run a fix, edit it into a new
-version and have that reviewed and allowlisted.
+it revoked them. From then on the signer refuses every new run and every run not yet signed. To run a fix, edit it
+into a new version and have that reviewed and allowlisted.
+
+**A run already signed is refused too (0.36)**, once the computer runs a signed agent from 0.36 on. The signer
+publishes a **signed revocation statement**: every revoked script content hash and every archived
+[software catalog entry](software-deployment.md#archiving-an-entry-revokes-it), signed with its job-approval key under
+its own prefix (`rem0te-revocations-v1`). The portal relays it, unauthenticated, at
+`GET /api/v1/public/approval/revocations.json`; the agent fetches it before each job and checks it against
+`approval/keys.json` from the offline-rooted update chain, the same keys it checks plans with. The portal can delay it
+or withhold it. It can't forge it, drop an entry, or pass an older one off as newer.
+
+| Field | Meaning |
+|---|---|
+| `seq` | How many revocations it lists. Revocations are permanent, so a genuine statement never lists fewer. The agent keeps the newest it has seen and refuses a lower `seq`, or one that leaves out an entry it already holds (rollback) |
+| `asOf` | When the signer signed it, on the signer's clock — the same clock that wrote the plan's `signedAt`. The statement is signed fresh on every request |
+| `scripts`, `software` | Revoked script content SHA-256s; revoked software catalog entry ids |
+
+The agent's rule, after the signature, the target, the window, the build, the approvals and the signed pause, and
+**before the job is journaled "executing"**:
+
+1. **Freshness — fail closed.** A plan runs only with a statement whose `asOf` is no older than the plan's
+   `signedAt`. Such a statement lists every revocation made before the plan was signed. Without one the computer
+   refuses with `revocations_stale` and **nothing is consumed**: like a window that hasn't opened, the job stays
+   queued and the next delivery tries again. The Actions tab shows it waiting, not failed.
+2. **Revocation — final.** A script run whose content hash is in the statement is refused `revoked`, journaled done
+   and reported. It can never run later on that computer.
+
+The portal also refuses a run it hasn't delivered yet once its entry is revoked: those computers show **Canceled**
+with the reason *revoked* on the Actions tab, without the agent being asked. A run delivered before the revocation is
+**Refused by the computer** with the reason *revoked*, and the computer's detail names the statement's `seq`.
+
+**Why fail closed.** Failing open (run if the computer has no fresh statement) would let a portal that withholds the
+statement run anything that was ever signed, which is the attack this exists for. Failing closed costs availability
+only when the signer or the relay is down — and then no new plan can be signed either. A computer that can't reach
+the relay decides from the newest statement it already holds (kept at `actions\revocations.json` in the agent's state
+directory), so a plan signed before that statement still runs.
+
+**What it doesn't stop.** A portal that withholds the newest statement can still have a computer run a plan that was
+signed before the revocation and that the computer has never refused, until that plan's window closes (at most 24
+hours). Cancel such a run from the Actions tab as well. Agents older than 0.36 ignore the statement entirely.
+
+The statement lists at most 5,000 revocations; past that the signer refuses to sign it and every new plan waits. The
+signer keeps every revocation it has ever published in `revocations.json`, so a revocation file that goes missing
+from its directory stays revoked.
 
 The signer's operator can do the same on the signer host:
 
@@ -128,6 +169,7 @@ The signer's operator can do the same on the signer host:
 S="sudo -u rem0te-approver env APPROVAL_SIGNER_DIR=/var/lib/rem0te-approver node /opt/rem0te-approver/dist/approval-signer/main.js"
 $S script list                                   # every entry: id, status, content SHA-256, name and version
 $S script revoke --id <entry id> --reason "why"  # one-way, by content SHA-256
+$S revocations show                              # the statement agents get now, and its key id
 ```
 
 There is no command, and no route, that adds or re-activates an entry. Entries are added only by two passkey
@@ -252,6 +294,9 @@ The signer doesn't run its own static checks; its approvers read the content on 
 | Signer | `script_not_allowlisted`, `script_revoked`, `script_mismatch`, `arguments_not_allowed` | On a run plan (admission and signing) |
 | Agent | `script_missing`, `script_mismatch`, `bad_declarations`, `arguments_not_allowed`, `contributor_approved`, `no_content`, `content_mismatch` | Refused before anything runs |
 | Agent | `no_script_host` | An agent built without the script runner |
+| Agent | `revoked` | The script's content hash was revoked after the run was signed (0.36). Final |
+| Agent | `revocations_stale` | No revocation statement as new as the run's signature yet (0.36). Not final: retried on the next delivery |
+| Portal | `revoked` (target canceled) | The entry was revoked before the run was delivered to that computer (0.36) |
 | Agent result | `succeeded` (exit 0), `failed` / `exit_code`, `timed_out`, `failed` / `start_failed`, `failed` / `workdir_failed` | After it ran |
 
 An agent that stops while a script is running reports the run **uncertain** on its next start and never runs it
@@ -266,6 +311,15 @@ again. Reconcile it on the computer's Actions tab before requesting another run 
 - **Agents:** a computer is offered script runs only once it runs a 0.34 signed agent build that reports
   `windows.script.run@1`.
 - Nothing runs until a reviewer proposes a version and two approvers add it on the signer.
+
+## Upgrading to 0.36
+
+- **Signer first:** rebuild and redeploy the approval signer. It adds `software-revocations/` and `revocations.json`
+  to its directory and `GET /internal/v1/revocations`; nothing else about it changes.
+- **Then the portal.** It relays the statement; it fails with 503 until the signer answers.
+- **Agents:** the protection takes effect only on computers running a **0.36 signed agent build, published with the
+  owner's release keys**. Until that is published nothing changes on any computer. Once a computer runs it, it runs
+  nothing new without a fresh statement, so deploy the signer and portal before publishing the agent.
 
 ## What has been proven, and what hasn't
 

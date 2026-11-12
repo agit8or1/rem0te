@@ -242,6 +242,37 @@ export function nextDueAt(s: SnapshotSchedule, key: SnapshotKey, h: KeyHistory, 
   return { at, basis: iv.basis };
 }
 
+/**
+ * Until when a computer that was just checked and had nothing due can skip
+ * the check (0.36), or null if it must be checked on every heartbeat. The
+ * heartbeat-time scheduler costs three queries (the computer, its node, its
+ * key history) on every authenticated heartbeat, ≈ 4 ms of API CPU measured
+ * at 1,000 computers with nothing due — to find, almost every time, that the
+ * next snapshot is hours away. This is that "hours away", from the same
+ * history dueKeys just read:
+ *   - the earliest unwatched next-due time over the keys, capped at `capMs`;
+ *   - null when a key has a run open (its outcome changes the answer soon),
+ *     or nothing is ever due (off), or it is already due.
+ * Watched keys are not covered: the caller re-checks whenever a tab is open.
+ * Anything that changes the history earlier — a result, an expiry, a
+ * schedule change — drops the entry (DiagnosticsCatalogService).
+ */
+/** quietUntil's cap: a computer is re-checked at least this often. */
+export const QUIET_CAP_MS = 60 * 60_000;
+/** Entries kept at most (one per checking-in computer); past it the map is cleared. */
+export const QUIET_MAX_ENTRIES = 50_000;
+export function quietUntil(s: SnapshotSchedule, history: Record<SnapshotKey, KeyHistory>, now: number, capMs: number): number | null {
+  if (!s.enabled) return null;
+  let at = now + capMs;
+  for (const key of SNAPSHOT_KEYS) {
+    const h = history[key];
+    if (!h || h.open) return null;
+    const next = nextDueAt(s, key, h, false);
+    if (next) at = Math.min(at, next.at);
+  }
+  return at > now ? at : null;
+}
+
 /** The keys to ask this computer for on this heartbeat. The caller has checked `ineligible` and the off switches. */
 export function dueKeys(s: SnapshotSchedule, now: number, history: Record<SnapshotKey, KeyHistory>, watched: (k: SnapshotKey) => boolean): { key: SnapshotKey; basis: 'schedule' | 'watch' }[] {
   if (!s.enabled) return [];

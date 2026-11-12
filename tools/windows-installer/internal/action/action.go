@@ -19,6 +19,9 @@
 //     computes from its own product type (a server is always high impact,
 //     whatever the plan says), none of them the requester, plus a customer
 //     sign-off when the plan's policy says so.
+//  8. (v0.36) The signed pause, then the signed revocation statement: a
+//     statement at least as new as the plan's signature, and nothing the
+//     plan runs revoked in it (revocation.go).
 //
 // Only then is the journal written ("executing"), and only then does the
 // action run. Its result says what was observed and nothing more.
@@ -130,7 +133,9 @@ type Plan struct {
 		NotAfter  string `json:"notAfter"`
 	} `json:"window"`
 	// Display: what the approver was shown (update KBs and titles). Signed,
-	// and deliberately never read here: decisions come from Windows Update.
+	// and never used to decide what runs: decisions come from Windows Update.
+	// The one field read (v0.36) is a software plan's catalog entry id, and
+	// only to refuse it if that entry was revoked (revocation.go).
 	Display json.RawMessage `json:"display,omitempty"`
 	// Script: windows.script.run only (v0.34). The approval signer's
 	// allowlist entry for the version, signed with everything else; the
@@ -216,6 +221,11 @@ type Options struct {
 	Winget          Winget
 	Software        SoftwareProbe
 	SoftwareTimeout time.Duration
+	// Revocations (v0.36): the approval signer's signed revocation
+	// statement as delivered for this run, unverified (nil when none was).
+	// revocation.go verifies it, keeps the newest, and refuses a plan
+	// signed after the newest it holds.
+	Revocations []byte
 }
 
 var jobRE = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -304,7 +314,20 @@ func Run(jobID string, envelope []byte, o Options) (Result, error) {
 		}
 	}
 
-	// 1c. Read-only checks an action needs on this computer now (v0.32: no
+	// 1c. The signed revocation statement (v0.36, revocation.go): a plan
+	// signed after the newest statement this computer holds waits, unconsumed
+	// and unreported, like one whose window has not opened; a script or
+	// software entry revoked since the plan was signed is refused for good.
+	if rr, isFinal := revocationCheck(plan, o); rr != nil {
+		r := *rr
+		r.JobID = jobID
+		if !isFinal {
+			return r, nil
+		}
+		return final(o, jobID, planSHA, r)
+	}
+
+	// 1d. Read-only checks an action needs on this computer now (v0.32: no
 	// RustDesk session open before a restart). Final, like a refusal.
 	if a := Lookup(plan.Action.ID, plan.Action.Version); a.Precheck != nil {
 		if pr := a.Precheck(plan, o); pr != nil {
