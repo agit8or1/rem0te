@@ -19,6 +19,9 @@ export type WindowSpec = { days: number[]; start: string; end: string };
 export type PolicyView = {
   id: string;
   siteId: string | null;
+  /** 0.35: a device group's policy, with its priority (1 first). */
+  groupId?: string | null;
+  priority?: number | null;
   enabled: boolean;
   timeZone: string;
   windows: WindowSpec[];
@@ -35,6 +38,9 @@ export type PolicyPayload = {
   business: { id: string; name: string };
   policy: PolicyView | null;
   sites: { id: string; name: string; timezone: string | null; override: PolicyView | null }[];
+  /** 0.35: every device group of the business, in precedence order; members counted over what the reader sees. */
+  groups: { id: string; name: string; kind: 'static' | 'rule'; policy: PolicyView | null; members: number | null; use: 'ok' | 'unreadable' | 'reads_alerts' | null }[];
+  precedence: string;
   target: { version: string | null; pinned: boolean };
   containment: { paused: boolean; scope?: string; reason?: string };
   may: { edit: boolean; reason: string | null };
@@ -50,7 +56,13 @@ export type ComputerRow = {
   isOnline: boolean;
   lastSeenAt: string | null;
   version: string | null;
-  policy: { id: string; scope: 'business' | 'site'; enabled: boolean; window: { open: boolean; opensAt: string | null; closesAt: string | null } } | null;
+  policy: {
+    id: string; scope: 'business' | 'site' | 'group'; enabled: boolean; window: { open: boolean; opensAt: string | null; closesAt: string | null };
+    /** 0.35 */
+    group: { id: string; name: string; priority: number | null } | null;
+    why: string;
+    alsoIn: { id: string; name: string; priority: number | null }[];
+  } | null;
   state: 'current' | 'blocked' | 'manual_only' | 'eligible' | 'queued_manual' | 'queued_auto' | 'queued_auto_waiting';
   text: string;
   blocker?: { code: string; permanent: boolean };
@@ -73,3 +85,10 @@ export function knownTimeZones(): string[] {
     return f ? f('timeZone') : [];
   } catch { return []; }
 }
+
+/** GET /client-updates/computers/:id/policy (0.35): the device page's "effective policy". */
+export type EndpointPolicy = {
+  policy: (PolicyView & { scope: 'business' | 'site' | 'group'; group?: { id: string; name: string }; site?: { id: string; name: string } | null }) | null;
+  considered: { id: string; scope: 'business' | 'site' | 'group'; group?: { id: string; name: string }; site?: { id: string; name: string } | null; priority: number | null; enabled: boolean; outcome: 'won' | 'more_specific' | 'priority' | 'tie_id' }[];
+  text: string;
+};

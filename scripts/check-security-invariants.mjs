@@ -756,8 +756,8 @@ check(
     'putPolicy and deleteSiteOverride must call assertEdit');
   check('turning a policy on, or removing a site override, needs fresh authentication',
     /if \(input\.enabled && !fresh\) throw new FreshAuthNeeded\(\);/.test(svc) && /\/\/ The site falls back to the business policy, which may be on\.\s*if \(!fresh\) throw new FreshAuthNeeded\(\);/.test(svc)
-      && (ctl.match(/this\.isFresh\(req\)/g) ?? []).length === 2 && /code: 'STEP_UP_REQUIRED'/.test(ctl),
-    'the service must refuse without fresh auth and the controller must pass isFresh(req) on both writes');
+      && (ctl.match(/this\.isFresh\(req\)/g) ?? []).length === 3 && /code: 'STEP_UP_REQUIRED'/.test(ctl),
+    'the service must refuse without fresh auth and the controller must pass isFresh(req) on all three writes (0.35 added removing a group policy, §46)');
   check('a site override must belong to the business it is set in',
     /if \(!site \|\| site\.customerId !== customerId\) throw new NotFoundException/.test(svc), 'siteOf must compare site.customerId');
   check('withdrawing automatic requests never touches a manual one',
@@ -2442,6 +2442,94 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     (ws.match(/ArgumentList @\('chat'\)/g) ?? []).length === 1 && ws.indexOf("ArgumentList @('chat')") > ws.indexOf('export function buildSignedWindowsScript(')
       && /remote: 'remote connections and chat'/.test(read('apps/api/src/containment/pause.ts')),
     "one Start-Process ... @('chat'), in the signed variant's hook; pause label 'remote connections and chat'");
+}
+
+// 46. Device groups as a policy scope (0.35). Monitors and client-update
+//     policies may be set for a device group. Rule-group membership is
+//     computed, never stored: the group's business AND its rule AND
+//     endpointVisibilityWhere for the business as a whole, through the device
+//     list's own evaluator, with an unreadable or alert-reading rule matching
+//     nothing. The sweeps build membership once per tick and keep it nowhere.
+//     Precedence is computer > group > site > business > global, groups by a
+//     priority that is unique per business (partial unique indexes) and tie-
+//     broken by id, never by row order. Another business's group is a 404;
+//     turning a group client-update policy on, or removing one, needs fresh
+//     authentication, and deleting the group is not a way round that (NO
+//     ACTION foreign keys, and a 409). Who is notified stays global or
+//     business and keeps §17's step-up.
+{
+  const mem = read('apps/api/src/group-policy/membership.service.ts');
+  const prec = read('apps/api/src/group-policy/precedence.ts');
+  const eng = read('apps/api/src/monitoring/engine.ts');
+  const msvc = read('apps/api/src/monitoring/monitoring.service.ts');
+  const madm = read('apps/api/src/monitoring/monitoring-admin.service.ts');
+  const cpol = read('apps/api/src/client-updates/policy.ts');
+  const csvc = read('apps/api/src/client-updates/client-updates.service.ts');
+  const cctl = read('apps/api/src/client-updates/client-updates.controller.ts');
+  const csw = read('apps/api/src/client-updates/client-update-sweep.service.ts');
+  const dgs = read('apps/api/src/device-views/device-groups.service.ts');
+  const mctl = read('apps/api/src/monitoring/monitoring.controller.ts');
+  const sql = read('apps/api/prisma/migrations/0057_group_policy_scope/migration.sql');
+  const schema = read('apps/api/prisma/schema.prisma');
+  const body = (src, sig) => { const i = src.indexOf(sig); const j = src.indexOf('\n  }\n', i); return i < 0 ? '' : src.slice(i, j); };
+
+  check('group membership is computed, never stored: the membership service writes nothing and keeps no state between calls',
+    !/prisma\.\w+\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(|\$executeRaw/.test(mem)
+      && !/(private|protected|public|static) (readonly )?\w+\s*(:\s*(Map|Set|Membership)|=\s*new (Map|Set))/.test(mem.slice(mem.indexOf('export class GroupMembershipService')).replace(/constructor\([\s\S]*?\) \{\}/, ''))
+      && /^export class Membership \{\s*\n\s*constructor\(private readonly byEndpoint: Map<string, Set<string>>, readonly groups: Map<string, PolicyGroup>\) \{\}/m.test(mem)
+      && !/model \w*(GroupPolicyMember|PolicyMembership)\w* \{/.test(schema),
+    'membership.service.ts must not write to the database or hold a Map field; no membership model in schema.prisma');
+  check('a rule group is evaluated by the device list’s own evaluator, as the business AND its rule AND endpointVisibilityWhere; unreadable and alert-reading rules match nothing',
+    /this\.list\.evaluateRuleGroups\(actor, ruled,/.test(mem)
+      && /const visible = \{ AND: \[this\.acl\.endpointVisibilityWhere\(actor\), \{ status: \{ not: 'ARCHIVED' as const \} \}/.test(mem)
+      && /if \(g\.kind !== 'rule' \|\| g\.use !== 'ok'\) continue;/.test(mem)
+      && /userId: 'policy-evaluation', email: '', tenantId: null, businessId: customerId, isPlatformAdmin: false,\s*\n\s*roleType: 'BUSINESS_OWNER', capabilities: \[CAP\.COMPUTERS_VIEW, CAP\.ALERTS_VIEW\], technician: null,/.test(mem)
+      && /use: f === null \? 'unreadable' : ruleNeedsAlerts\(f\) \? 'reads_alerts' : 'ok'/.test(mem)
+      && (read('apps/api/src/group-policy/membership.service.ts').match(/businessWide\(/g) ?? []).length === 2
+      && !walk('apps/api/src').some((f) => f !== 'apps/api/src/group-policy/membership.service.ts' && /policy-evaluation/.test(read(f))),
+    'snapshot(): evaluateRuleGroups(actor, …) with businessWide(customerId) (never a Platform Admin), visibility AND not-archived, skip use !== ok; the synthetic actor exists only in membership.service.ts');
+  check('the sweeps build membership once per tick, inside the pass, and keep it on nothing',
+    /const membership = await this\.groups\.snapshot\(rules\.filter\(\(r\) => r\.groupId\)\.map\(\(r\) => r\.groupId!\)\);\s*\n\s*for \(const ep of eps\) \{\s*\n\s*const eff = effectiveRules\(rules, scopesFor\(ep, membership\.groupsOf\(ep\.id\)\)\);/.test(body(msvc, 'private async evaluateSweepRules('))
+      && /const membership = await this\.svc\.membershipFor\(policies\);/.test(body(csw, 'private async pass('))
+      && /effectivePolicy\(policies, customerId, e\.siteId, membership\.groupsOf\(e\.id\)\)/.test(csw)
+      && ![msvc, csw, csvc, mem].some((s) => /this\.(membership|snapshotCache|groupCache)\b/.test(s)),
+    'evaluateSweepRules and the client-update pass call snapshot/membershipFor locally; no this.membership anywhere');
+  check('precedence is computer > group > site > business > global, groups by priority then id — never by row order',
+    /export const SCOPE_RANK: Record<PolicyScope, number> = \{ global: 0, business: 1, site: 2, group: 3, endpoint: 4 \};/.test(prec)
+      && /if \(pa !== pb\) return pa - pb;\s*\n\s*\}\s*\n\s*return a\.id < b\.id \? -1 : a\.id > b\.id \? 1 : 0;/.test(prec)
+      && /const ranked = \[\.\.\.applicable\]\.sort\(comparePrecedence\);/.test(prec)
+      && /l\.sort\(\(a, b\) => comparePrecedence\(asScoped\(a\), asScoped\(b\)\)\);/.test(eng)
+      && /return resolve\(cands\);/.test(cpol) && !/mine\.find\(/.test(cpol),
+    'precedence.ts SCOPE_RANK and comparePrecedence (priority, then id); effectiveRules and resolvePolicy sort with it');
+  check('the database refuses priority ties, scope mixtures, another business’s group, and deleting a group that carries a policy',
+    /CREATE UNIQUE INDEX "MonitorRule_group_priority_key" ON "MonitorRule"\("customerId", "key", "priority"\) WHERE "groupId" IS NOT NULL;/.test(sql)
+      && /CREATE UNIQUE INDEX "ClientUpdatePolicy_group_priority_key" ON "ClientUpdatePolicy"\("customerId", "priority"\) WHERE "groupId" IS NOT NULL;/.test(sql)
+      && /CREATE UNIQUE INDEX "ClientUpdatePolicy_business_row" ON "ClientUpdatePolicy"\("customerId"\) WHERE "siteId" IS NULL AND "groupId" IS NULL;/.test(sql)
+      && /"scopeKey" = 'g:' \|\| "groupId"/.test(sql) && /"groupId" IS NOT NULL AND "siteId" IS NULL AND "priority" BETWEEN 1 AND 999/.test(sql)
+      && (sql.match(/EXECUTE FUNCTION group_policy_same_business\(\)/g) ?? []).length === 2
+      && (sql.match(/REFERENCES "EndpointGroup"\("id"\) ON DELETE NO ACTION/g) ?? []).length === 2
+      && (schema.match(/group +EndpointGroup\? @relation\(fields: \[groupId\], references: \[id\], onDelete: NoAction\)/g) ?? []).length === 2,
+    '0057: two partial unique priority indexes, business_row excluding groups, the CHECKs, the same-business trigger on both tables, NO ACTION FKs');
+  check('another business’s group is a 404 for monitors and client updates',
+    /const g = await this\.prisma\.endpointGroup\.findFirst\(\{ where: \{ id: groupId, customerId \}/.test(mem)
+      && /if \(!g\?\.customerId\) throw new NotFoundException\('Group not found'\);/.test(mem)
+      && /if \(!this\.isMsp\(a\) && customerId !== a\.businessId\) throw new NotFoundException\('Group not found'\);\s*\n\s*const g = await this\.groups\.groupForPolicy\(customerId, s\.groupId\);\s*\n\s*this\.assertConfigure\(a, g\.customerId\);/.test(madm)
+      && /const group = groupId \? await this\.groups\.groupForPolicy\(customerId, groupId\) : null;/.test(csvc)
+      && /const before = await this\.prisma\.clientUpdatePolicy\.findFirst\(\{ where: \{ customerId, groupId \} \}\);/.test(body(csvc, 'async deleteGroupPolicy(')),
+    'groupForPolicy finds by id AND business; monitoring scopeFor and putPolicy use it; deleteGroupPolicy looks up by business AND group');
+  check('turning a group client-update policy on, or removing one, needs fresh authentication; deleting the group is refused while it carries one',
+    /const group = groupId \? await this\.groups\.groupForPolicy[\s\S]{0,900}if \(input\.enabled && !fresh\) throw new FreshAuthNeeded\(\);/.test(body(csvc, 'async putPolicy('))
+      && /if \(!before\) throw new NotFoundException\('This group has no policy'\);\s*\n\s*if \(!fresh\) throw new FreshAuthNeeded\(\);/.test(body(csvc, 'async deleteGroupPolicy('))
+      && /this\.fresh\(\(\) => this\.svc\.deleteGroupPolicy\(a, biz\(q\), groupId, this\.isFresh\(req\)\)\)/.test(cctl)
+      && /const held = await this\.policiesOn\(g\.id\);\s*\n\s*if \(held\) throw new ConflictException\(\{ code: 'GROUP_HAS_POLICIES'/.test(body(dgs, 'async remove(')),
+    'putPolicy: enabled && !fresh after the group checks; deleteGroupPolicy: !fresh → FreshAuthNeeded, routed through this.fresh; DeviceGroupsService.remove refuses a group with policies');
+  check('who is notified stays global or business only, and changing it still needs fresh authentication (§17)',
+    /export const NotifyPolicyInput = z\.object\(\{\s*\n\s*scope: z\.enum\(\['global', 'business'\]\),/.test(eng)
+      && /@Put\('notify-policy'\)\s*\n\s*async putPolicy\(@Actor\(\) a: ActorContext, @Body\(\) body: unknown, @Req\(\) req: Request\) \{\s*\n\s*this\.fresh\(req\);/.test(mctl),
+    'NotifyPolicyInput scope is exactly global|business; PUT notify-policy calls this.fresh(req) first');
+  check('a computer’s effective client-update policy is read through assertEndpointInScope and the visibility rule AND-ed with the id',
+    /await this\.acl\.assertEndpointInScope\(a, endpointId, CAP\.COMPUTERS_VIEW\);\s*\n\s*const ep = await this\.prisma\.endpoint\.findFirst\(\{\s*\n\s*where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(a\), \{ id: endpointId \}\] \},/.test(body(csvc, 'async endpointPolicy(')),
+    'endpointPolicy: assertEndpointInScope(a, endpointId, CAP.COMPUTERS_VIEW), then findFirst AND [visibility, id]');
 }
 
 if (failures.length > 0) {

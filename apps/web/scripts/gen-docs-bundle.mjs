@@ -49,6 +49,7 @@ const ORDER = [
   ['inventory.md', 'Inventory and event logs', 'Computers and monitoring', 'Specs, installed software, change history, pending updates and event-log slices.'],
   ['diagnostics.md', 'One-click diagnostics', 'Computers and monitoring', 'Read-only checks a technician runs with one click: disk, services, errors, network, DNS, updates, restart.'],
   ['monitoring.md', 'Monitoring and alerts', 'Computers and monitoring', 'Monitors, inheritance, alerts, site outages, maintenance windows and escalation.'],
+  ['group-policies.md', 'Device-group policies', 'Computers and monitoring', 'Monitors and client-update policies for a device group: precedence, priorities, live membership and cost.'],
   ['metric-history.md', 'Metric history', 'Computers and monitoring', 'CPU, memory and disk over time: the Performance tab, gaps, roll-up, retention and storage.'],
   ['reports.md', 'Reports', 'Computers and monitoring', 'Patch compliance, agent coverage, alert frequency, offline time and software compliance, from stored data, with audited CSV export.'],
   ['email.md', 'Email and scheduled reports', 'Computers and monitoring', 'The SMTP relay, confirmed recipients, alert emails, and reports emailed weekly or monthly.'],

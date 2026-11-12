@@ -669,8 +669,17 @@ const SECTIONS: Section[] = [
         <p>
           <Link href="/settings/monitoring" className="underline text-foreground">Settings → Monitoring</Link>.
           Start with <strong className="text-foreground">Add recommended</strong>. Monitors are inherited:
-          global, then business, then site, then computer; a monitor with the same key lower down replaces
+          global, then business, then site, then device group, then computer; a monitor with the same key lower down replaces
           the one above it, and a disabled one switches it off there.
+        </p>
+        <p className="font-medium text-foreground">Monitors for a device group</p>
+        <p>
+          Under <em>New monitor</em>, pick a group and give it a priority. It applies to the computers in the
+          group right now — a rule group&apos;s members are worked out each time, so a computer that stops
+          matching drops the monitor at the next check and its open alert closes. A computer in two groups
+          with a monitor of the same key follows the lower number (1 first); two cannot share a number. A
+          computer&apos;s Monitoring tab says where each monitor came from and what it beat. See{' '}
+          <Link href="/docs/group-policies" className="underline text-foreground">Device-group policies</Link>.
         </p>
         <p className="font-medium text-foreground">One alert per problem</p>
         <p>
@@ -713,6 +722,15 @@ const SECTIONS: Section[] = [
           on. Daylight-saving changes are handled: on the night the clocks go forward a window that starts in
           the missing hour opens when the clock reaches the next real time. The page shows when the window
           next opens. A site can have its own policy, which replaces the business one for that site.
+        </p>
+        <p className="font-medium text-foreground">Policies for device groups</p>
+        <p>
+          A device group can have its own policy too, with a priority (1 first). A group policy beats a site
+          override, which beats the business policy; a computer in several groups with a policy follows the
+          lowest number. The Computers table and the computer&apos;s own page say which policy governs it and
+          why. Turning a group policy on, or removing one, asks you to confirm it is you, and a group that has
+          a policy cannot be deleted until the policy is removed. See{' '}
+          <Link href="/docs/group-policies" className="underline text-foreground">Device-group policies</Link>.
         </p>
         <p className="font-medium text-foreground">What happens</p>
         <p>

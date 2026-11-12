@@ -199,6 +199,13 @@ jobs:
       - name: Dynamic group tests
         run: node apps/api/scripts/unit-dynamic-groups.mjs
 
+      # Group-scoped policies (0.35): computer > group > site > business >
+      # global for monitors and client updates, two groups decided by
+      # priority (1 first) in every row order, membership changes dropping a
+      # group policy, and what beat what reported.
+      - name: Group policy tests
+        run: node apps/api/scripts/unit-group-policy.mjs
+
       # Metric history (0.33): samples from heartbeat values, the hourly
       # roll-up, which hours a pass rolls, retention caps and gap detection.
       - name: Metric history tests

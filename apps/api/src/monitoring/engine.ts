@@ -8,6 +8,7 @@
  * inventory (EndpointInventoryService).
  */
 import { z } from 'zod';
+import { comparePrecedence, PRIORITY_MAX, PRIORITY_MIN, type PolicyScope } from '../group-policy/precedence';
 
 export const MONITOR_KINDS = ['OFFLINE', 'DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH', 'SERVICE_STOPPED', 'EVENT_MATCH', 'REBOOT_PENDING'] as const;
 export type MonitorKind = (typeof MONITOR_KINDS)[number];
@@ -63,9 +64,12 @@ export const PARAMS: Record<MonitorKind, z.ZodTypeAny> = {
 export const RULE_KEY = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 export const RuleInput = z.object({
-  scope: z.enum(['global', 'business', 'site', 'endpoint']),
+  /** 0.35: 'group' — a device group of the business, with a priority (1 first). */
+  scope: z.enum(['global', 'business', 'site', 'group', 'endpoint']),
   businessId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/).optional(),
   siteId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/).optional(),
+  groupId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/).optional(),
+  priority: z.number().int().min(PRIORITY_MIN).max(PRIORITY_MAX).optional(),
   endpointId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/).optional(),
   key: z.string().regex(RULE_KEY, 'lowercase letters, digits, . _ - (64 max)'),
   kind: z.enum(MONITOR_KINDS),
@@ -79,6 +83,8 @@ export const RulePatch = z.object({
   enabled: z.boolean().optional(),
   severity: z.enum(SEVERITIES).optional(),
   params: z.record(z.string(), z.unknown()).optional(),
+  /** Group monitors only. */
+  priority: z.number().int().min(PRIORITY_MIN).max(PRIORITY_MAX).optional(),
 }).strict();
 
 export function parseParams(kind: MonitorKind, raw: unknown): { ok: true; params: Record<string, unknown> } | { ok: false; error: string } {
@@ -99,41 +105,60 @@ export const RECOMMENDED: { key: string; kind: MonitorKind; name: string; severi
 
 // ── Scope and inheritance ───────────────────────────────────────────────────
 
-export type ScopeKey = string; // "global" | "b:<id>" | "s:<id>" | "e:<id>"
-export const scopeKeyOf = (s: { scope: 'global' | 'business' | 'site' | 'endpoint'; id?: string | null }): ScopeKey =>
-  s.scope === 'global' ? 'global' : `${s.scope === 'business' ? 'b' : s.scope === 'site' ? 's' : 'e'}:${s.id}`;
+export type ScopeKey = string; // "global" | "b:<id>" | "s:<id>" | "g:<id>" | "e:<id>"
+export const scopeKeyOf = (s: { scope: 'global' | 'business' | 'site' | 'group' | 'endpoint'; id?: string | null }): ScopeKey =>
+  s.scope === 'global' ? 'global' : `${({ business: 'b', site: 's', group: 'g', endpoint: 'e' } as const)[s.scope]}:${s.id}`;
 
-const SPECIFICITY: Record<string, number> = { global: 0, b: 1, s: 2, e: 3 };
-const specificity = (k: ScopeKey) => SPECIFICITY[k === 'global' ? 'global' : k.slice(0, 1)] ?? -1;
+const SCOPE_OF_PREFIX: Record<string, PolicyScope> = { b: 'business', s: 'site', g: 'group', e: 'endpoint' };
+/** The scope a key names ('global', 'business', 'site', 'group', 'endpoint'), or null for a key this build does not know. */
+export const scopeOfKey = (k: ScopeKey): PolicyScope | null => (k === 'global' ? 'global' : SCOPE_OF_PREFIX[k.slice(0, 1)] ?? null);
 
-/** The scope keys that apply to one computer, broadest first. */
-export function scopesFor(ep: { id: string; customerId: string | null; siteId: string | null }): ScopeKey[] {
-  return ['global', ...(ep.customerId ? [`b:${ep.customerId}`] : []), ...(ep.siteId ? [`s:${ep.siteId}`] : []), `e:${ep.id}`];
+/**
+ * The scope keys that apply to one computer, broadest first: global, its
+ * business, its site, each device group it is in (0.35; only the groups that
+ * carry a monitor are ever looked up), then the computer itself.
+ */
+export function scopesFor(ep: { id: string; customerId: string | null; siteId: string | null }, groupIds: Iterable<string> = []): ScopeKey[] {
+  const groups = [...new Set(groupIds)].sort().map((g) => `g:${g}`);
+  return ['global', ...(ep.customerId ? [`b:${ep.customerId}`] : []), ...(ep.siteId ? [`s:${ep.siteId}`] : []), ...(ep.customerId ? groups : []), `e:${ep.id}`];
 }
 
-export interface RuleLike { id: string; scopeKey: string; key: string; kind: MonitorKind; enabled: boolean; severity: Severity; params: unknown; name: string }
+export interface RuleLike { id: string; scopeKey: string; key: string; kind: MonitorKind; enabled: boolean; severity: Severity; params: unknown; name: string; priority?: number | null }
+
+/** What a winning rule beat, and why: a broader scope, or (between groups) a later priority. */
+export type Outranked = { scopeKey: ScopeKey; priority: number | null; reason: 'more_specific' | 'priority' | 'tie_id' };
 
 /**
  * Inheritance: for each key, the rule at the most specific scope wins —
- * including a disabled one, which switches the inherited monitor off. A rule
- * whose kind differs from the inherited one with the same key still replaces
- * it; keys are names, not types. Returns enabled rules only, with where each
- * came from.
+ * computer, then device group, then site, then business, then global
+ * (group-policy/precedence.ts) — including a disabled one, which switches the
+ * inherited monitor off. Between two device groups the computer is in, the
+ * lower priority wins (1 first); priorities are unique per business and key,
+ * and the rule id settles anything else, so the order never depends on how
+ * the rows came back. A rule whose kind differs from the inherited one with
+ * the same key still replaces it; keys are names, not types. Returns enabled
+ * rules only, with where each came from and what it beat.
  */
-export function effectiveRules<R extends RuleLike>(rules: R[], scopes: ScopeKey[]): (R & { inheritedFrom: ScopeKey; overrides: ScopeKey[] })[] {
+export function effectiveRules<R extends RuleLike>(rules: R[], scopes: ScopeKey[]): (R & { inheritedFrom: ScopeKey; overrides: ScopeKey[]; outranked: Outranked[] })[] {
   const allowed = new Set(scopes);
   const byKey = new Map<string, R[]>();
   for (const r of rules) {
-    if (!allowed.has(r.scopeKey)) continue;
+    if (!allowed.has(r.scopeKey) || !scopeOfKey(r.scopeKey)) continue;
     const l = byKey.get(r.key) ?? [];
     l.push(r); byKey.set(r.key, l);
   }
-  const out: (R & { inheritedFrom: ScopeKey; overrides: ScopeKey[] })[] = [];
+  const asScoped = (r: R) => ({ id: r.id, scope: scopeOfKey(r.scopeKey)!, priority: r.priority ?? null });
+  const out: (R & { inheritedFrom: ScopeKey; overrides: ScopeKey[]; outranked: Outranked[] })[] = [];
   for (const [, l] of byKey) {
-    l.sort((a, b) => specificity(b.scopeKey) - specificity(a.scopeKey));
+    l.sort((a, b) => comparePrecedence(asScoped(a), asScoped(b)));
     const win = l[0];
     if (!win.enabled) continue;
-    out.push({ ...win, inheritedFrom: win.scopeKey, overrides: l.slice(1).map((r) => r.scopeKey) });
+    const ws = scopeOfKey(win.scopeKey);
+    const outranked = l.slice(1).map((r): Outranked => ({
+      scopeKey: r.scopeKey, priority: r.priority ?? null,
+      reason: scopeOfKey(r.scopeKey) !== ws ? 'more_specific' : (r.priority ?? null) !== (win.priority ?? null) ? 'priority' : 'tie_id',
+    }));
+    out.push({ ...win, inheritedFrom: win.scopeKey, overrides: l.slice(1).map((r) => r.scopeKey), outranked });
   }
   return out.sort((a, b) => a.key.localeCompare(b.key));
 }

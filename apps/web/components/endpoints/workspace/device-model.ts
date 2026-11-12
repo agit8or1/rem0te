@@ -234,7 +234,24 @@ export function describeMonitor(kind: string, p: Record<string, unknown>): strin
 }
 
 export const SCOPE_LABEL = (k: string) =>
-  k === 'global' ? 'all computers' : ({ b: 'this business', s: 'this site', e: 'this computer' } as Record<string, string>)[k[0]] ?? k;
+  k === 'global' ? 'all computers' : ({ b: 'this business', s: 'this site', g: 'a device group', e: 'this computer' } as Record<string, string>)[k[0]] ?? k;
+
+/**
+ * Where a monitor came from and what it beat, in words (0.35): "group Kiosks
+ * (priority 2) — ahead of group Tills (priority 5) on priority; replacing
+ * site HQ, business Acme". Names come from the API's scopeNames.
+ */
+export function monitorSource(
+  r: { inheritedFrom: string; priority?: number | null; overrides?: string[]; outranked?: { scopeKey: string; priority: number | null; reason: string }[] },
+  names: Record<string, string> = {},
+): string {
+  const name = (k: string) => names[k] ?? SCOPE_LABEL(k);
+  const head = `set for ${name(r.inheritedFrom)}${r.inheritedFrom.startsWith('g:') && r.priority != null ? ` (priority ${r.priority})` : ''}`;
+  const out = r.outranked ?? (r.overrides ?? []).map((k) => ({ scopeKey: k, priority: null, reason: 'more_specific' }));
+  const byPriority = out.filter((o) => o.reason !== 'more_specific').map((o) => `${name(o.scopeKey)}${o.priority != null ? ` (priority ${o.priority})` : ''}`);
+  const broader = out.filter((o) => o.reason === 'more_specific').map((o) => name(o.scopeKey));
+  return [head, byPriority.length ? `ahead of ${byPriority.join(', ')} on priority` : '', broader.length ? `replacing ${broader.join(', ')}` : ''].filter(Boolean).join(' — ');
+}
 
 export const CHANGE_LABEL: Record<string, string> = {
   hardware: 'Hardware', os: 'Windows', disk: 'Disk', network: 'Network', software: 'Software',

@@ -3,7 +3,7 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **472** of them across
+integration, under `/api/integration/v1`). There are **474** of them across
 **66** controllers.
 
 For request and response shapes, worked examples and error codes, see
@@ -163,8 +163,10 @@ Admins and Business Owners are not confined by it; see
 | Method | Path | Access | Capability |
 |---|---|---|---|
 | `GET` | `/api/v1/client-updates/computers` | signed in | — |
+| `GET` | `/api/v1/client-updates/computers/:endpointId/policy` | signed in | — |
 | `GET` | `/api/v1/client-updates/policy` | signed in | — |
 | `PUT` | `/api/v1/client-updates/policy` | signed in | — |
+| `DELETE` | `/api/v1/client-updates/policy/groups/:groupId` | signed in | — |
 | `DELETE` | `/api/v1/client-updates/policy/sites/:siteId` | signed in | — |
 
 ## Containment

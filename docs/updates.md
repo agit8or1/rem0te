@@ -92,6 +92,18 @@ can instead let the server do it, outside working hours:
 A **site** can have its own policy. It replaces the business policy for that
 site's computers entirely, including being off when the business is on.
 
+A **device group** (0.35) can have one too, with a **priority** (1 first). A
+group policy beats a site override, which beats the business policy; a
+computer in several groups with a policy follows the lowest number, and two
+group policies of a business cannot share one. Membership is evaluated at each
+decision — a computer that leaves a rule group follows its site or business
+policy at the next sweep and heartbeat. Turning a group policy on, and
+removing one, need fresh authentication, and a group that carries a policy
+cannot be deleted. The **Device groups** card lists them in precedence order
+with their current member counts; the **Policy** column of the Computers table
+and the computer's own page say which policy governs each computer and why.
+See [Device-group policies](group-policies.md).
+
 ![Settings → Client updates for one business: its policy, a site's override and each computer's state](screenshots/guide/client-updates.png)
 
 1. **Business** — the policy is per business.
@@ -141,7 +153,11 @@ Requests staged before 0.32 are recorded as manual.
 
 **Turning a policy off withdraws** the POLICY requests it queued that have not
 completed; manual requests are left alone. So does removing a site override
-when the business policy is off.
+or a group policy when what governs those computers next is off. A computer
+that *leaves a group* keeps a request queued under the group's policy until
+the next policy save in its business withdraws it; meanwhile the heartbeat
+holds it (*the update policy that queued it is now off*) if its new policy is
+off.
 
 **Containment.** An `updates` pause (global, or for the business) stops the
 sweep queuing anything there and the heartbeat handing anything out, as it
