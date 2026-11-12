@@ -762,8 +762,13 @@ check(
     'the service must refuse without fresh auth and the controller must pass isFresh(req) on all three writes (0.35 added removing a group policy, §46)');
   check('a site override must belong to the business it is set in',
     /if \(!site \|\| site\.customerId !== customerId\) throw new NotFoundException/.test(svc), 'siteOf must compare site.customerId');
+  // 0.36: clearUnwanted is reconcileQueued, which the sweep also runs every
+  // tick: it reads only POLICY requests and writes only the one it read.
   check('withdrawing automatic requests never touches a manual one',
-    /updateMany\(\{\s*where: \{ id: \{ in: drop \}, updateRequestSource: 'POLICY' \}/.test(svc), 'clearUnwanted must be conditional on POLICY');
+    /return \(await this\.reconcileQueued\(\{ customerId \}\)\)\.withdrawn;/.test(svc)
+      && /where: \{ updateRequestSource: 'POLICY', updateRequestedAt: \{ not: null \},/.test(svc)
+      && /const same = \{ id: n\.id, updateRequestSource: 'POLICY' as const, updateRequestedAt: n\.updateRequestedAt, updatePolicyId: n\.updatePolicyId \};\s*const w = await this\.prisma\.rustdeskNode\.updateMany\(\{\s*where: same,/.test(svc),
+    'clearUnwanted → reconcileQueued: reads POLICY requests only, and each write is conditional on POLICY and on the request it read');
   const pass_ = sweep.slice(sweep.indexOf('private async pass('));
   check('the client-update sweep can be turned off', /onModuleInit\(\) \{\s*if \(process\.env\.CLIENT_UPDATE_SWEEP === 'off'\) return;/.test(sweep), 'CLIENT_UPDATE_SWEEP=off must stop it');
   check('the sweep skips a business under an "updates" containment pause',
@@ -2500,7 +2505,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'snapshot(): evaluateRuleGroups(actor, …) with businessWide(customerId) (never a Platform Admin), visibility AND not-archived, skip use !== ok; the synthetic actor exists only in membership.service.ts');
   check('the sweeps build membership once per tick, inside the pass, and keep it on nothing',
     /const membership = await this\.groups\.snapshot\(rules\.filter\(\(r\) => r\.groupId\)\.map\(\(r\) => r\.groupId!\)\);\s*\n\s*for \(const ep of eps\) \{\s*\n\s*const eff = effectiveRules\(rules, scopesFor\(ep, membership\.groupsOf\(ep\.id\)\)\);/.test(body(msvc, 'private async evaluateSweepRules('))
-      && /const membership = await this\.svc\.membershipFor\(policies\);/.test(body(csw, 'private async pass('))
+      && /const membership = await this\.svc\.membershipFor\(policies\);/.test(body(csw, 'private async queue('))
       && /effectivePolicy\(policies, customerId, e\.siteId, membership\.groupsOf\(e\.id\)\)/.test(csw)
       && ![msvc, csw, csvc, mem].some((s) => /this\.(membership|snapshotCache|groupCache)\b/.test(s)),
     'evaluateSweepRules and the client-update pass call snapshot/membershipFor locally; no this.membership anywhere');
@@ -2719,6 +2724,94 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /\nexport SNAPSHOT_SWEEP=off\n/.test(read('scripts/run-e2e.sh'))
       && /SNAPSHOT_SWEEP: 'off',/.test(read('apps/web/scripts/e2e-ui.mjs')),
     "sweepEnabled: env.SNAPSHOT_SWEEP !== 'off'; run-e2e.sh exports it; e2e-ui's API env sets it");
+}
+
+// 51. Agent health (0.36). The agent-silent monitor is opt-in — the owner
+//     has not decided whether it should be on by default — so nothing may
+//     create it but a person: it is kept out of RECOMMENDED (which "Add
+//     recommended" creates in bulk), and no code or migration writes an
+//     AGENT_SILENT rule. Its floor is the console's own agent-silent window,
+//     so an alert never contradicts a header that still says Online. It
+//     raises only while RustDesk reaches the computer and clears only when
+//     the agent checks in. The ClientSt0r contract names the alert kinds it
+//     carries; this one is not among them, so it is never signed or sent
+//     (adding it is a contract revision, not a side effect). And the
+//     client-update sweep re-resolves queued automatic requests every tick,
+//     before queuing, in every business — a computer that left a group must
+//     not keep a request its policy no longer governs — writing only the
+//     POLICY request it read, and recording the policy that queued each one.
+{
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const eng = strip(read('apps/api/src/monitoring/engine.ts'));
+  const adm = strip(read('apps/api/src/monitoring/monitoring-admin.service.ts'));
+  const block = (src, start) => { const i = src.indexOf(start); return i < 0 ? '' : src.slice(i, src.indexOf('\n];', i)); };
+  const rec = block(eng, 'export const RECOMMENDED');
+  const opt = block(eng, 'export const OPTIONAL');
+  const ra = adm.slice(adm.indexOf('async addRecommended('), adm.indexOf('private async ruleFor('));
+  const writers = walk('apps/api/src').filter((f) => f !== 'apps/api/src/monitoring/engine.ts' && /['"]AGENT_SILENT['"]/.test(strip(read(f))));
+  const migrations = walk('apps/api/prisma/migrations').filter((f) => /INSERT INTO "MonitorRule"/i.test(read(f)));
+  check('the agent-silent monitor is opt-in: never recommended, never created by the server',
+    rec.length > 0 && !/AGENT_SILENT/.test(rec) && /kind: 'AGENT_SILENT'/.test(opt)
+      && /for \(const r of RECOMMENDED\) \{/.test(ra) && !/OPTIONAL/.test(ra)
+      && writers.every((f) => !/monitorRule\.(create|createMany|upsert)/.test(read(f))) && migrations.length === 0,
+    `RECOMMENDED without AGENT_SILENT, OPTIONAL with it; addRecommended iterates RECOMMENDED only; no file naming AGENT_SILENT creates a rule (${writers.join(', ') || 'none'}); no migration inserts a MonitorRule`);
+  check('its threshold floor is the console’s agent-silent window',
+    /export const AGENT_SILENT_BOUNDS = \{ min: HEARTBEAT_STALE_MS \/ 60_000, max: 7 \* 24 \* 60, def: 60 \} as const;/.test(eng)
+      && /AGENT_SILENT: z\.object\(\{ minutes: ints\(AGENT_SILENT_BOUNDS\.min, AGENT_SILENT_BOUNDS\.max\)\.default\(AGENT_SILENT_BOUNDS\.def\) \}\)\.strict\(\),/.test(eng)
+      && /import \{ HEARTBEAT_STALE_MS \} from '\.\.\/common\/connectivity';/.test(eng),
+    'AGENT_SILENT_BOUNDS.min = HEARTBEAT_STALE_MS / 60_000 (imported from common/connectivity), and PARAMS.AGENT_SILENT uses it');
+  const ev = eng.slice(eng.indexOf("case 'AGENT_SILENT': {"), eng.indexOf("case 'REBOOT_PENDING': {"));
+  const iSkip = ev.indexOf("if (!live.lastSeenAt) return { verdict: 'skip'");
+  const iClear = ev.indexOf("if (silentMin < P.minutes) return { verdict: 'ok',");
+  const iHold = ev.indexOf("if (!live.isOnline) return { verdict: 'pending', state: st };");
+  const iRaise = ev.indexOf("return { verdict: 'breach'");
+  check('it raises only while reachable, and clears only when the agent has checked in',
+    iSkip > 0 && iClear > iSkip && iHold > iClear && iRaise > iHold && (ev.match(/verdict: 'breach'/g) ?? []).length === 1
+      && /const SWEEP_KINDS = new Set\(\['OFFLINE', 'REBOOT_PENDING', 'AGENT_SILENT'\]\);/.test(strip(read('apps/api/src/monitoring/monitoring.service.ts'))),
+    "evaluateLive AGENT_SILENT: skip a never-reported agent, clear when silence < threshold, hold (pending) when not isOnline, and only then breach; swept, not heartbeat-driven");
+  const ae = strip(read('apps/api/src/monitoring/alert-events.service.ts'));
+  const emit = ae.slice(ae.indexOf('async emit('), ae.indexOf('private async patchFor('));
+  const contract = read('apps/api/src/integration/contract.ts');
+  check('agent-silent alerts are never signed or sent to ClientSt0r (not a contract kind)',
+    /const CONTRACT_ALERT_KINDS: ReadonlySet<string> = new Set\(Alert\.shape\.kind\.options\);/.test(ae)
+      && emit.indexOf('if (!CONTRACT_ALERT_KINDS.has(a.kind)) return 0;') > 0
+      && emit.indexOf('if (!CONTRACT_ALERT_KINDS.has(a.kind)) return 0;') < emit.indexOf('signAlertEvent(')
+      && /kind: z\.enum\(\['OFFLINE', 'DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH', 'SERVICE_STOPPED', 'EVENT_MATCH', 'REBOOT_PENDING', 'SITE_OUTAGE'\]\),/.test(contract),
+    'emit() returns before signing for a kind outside Alert.shape.kind; the contract enum is unchanged (adding AGENT_SILENT is a contract revision)');
+  const csw = strip(read('apps/api/src/client-updates/client-update-sweep.service.ts'));
+  const cus = strip(read('apps/api/src/client-updates/client-updates.service.ts'));
+  const pass51 = csw.slice(csw.indexOf('private async pass('), csw.indexOf('private async queue('));
+  const rq = cus.slice(cus.indexOf('async reconcileQueued('), cus.indexOf('async holdForHeartbeat('));
+  check('every sweep re-resolves queued automatic updates, in every business, before queuing',
+    /const r = await this\.svc\.reconcileQueued\(\{ audit: true \}\);/.test(pass51) && pass51.indexOf('reconcileQueued(') < pass51.indexOf('this.queue(now)')
+      && !/containment|enabled/.test(pass51)
+      && /updateRequestedById: null, updateHoldReason: null, updateHoldAt: null, updatePolicyId: p\.id,/.test(csw)
+      && /const eff = effectivePolicy\(policies, customerId, n\.endpoint\.siteId, m\.groupsOf\(n\.endpointId\)\);\s*const d = reconcileQueued\(n\.updatePolicyId \?\? null, eff, policies\);/.test(rq)
+      && /const m = await this\.membershipFor\(policies, nodes\.map\(\(n\) => n\.endpointId\)\);/.test(rq),
+    'pass(): reconcileQueued({ audit: true }) first, unconditionally, then queue(); queuing records updatePolicyId; reconcile resolves with this tick’s membership');
+  check('a re-resolved request is withdrawn whole or moved, and each change is audited with its reason',
+    /\? \{ updateRequestedAt: null, updateTargetVersion: null, updateRequestSource: null, updateRequestedById: null, updateHoldReason: null, updateHoldAt: null, updatePolicyId: null \}/.test(rq)
+      && /: \{ updatePolicyId: d\.to,/.test(rq)
+      && /if \(w\.count !== 1\) continue;/.test(rq)
+      && /action: d\.action === 'withdraw' \? 'CLIENT_UPDATE_AUTO_WITHDRAWN' : 'CLIENT_UPDATE_AUTO_REPLANNED',/.test(rq)
+      && /reason: d\.reason, text: QUEUED_REASON_TEXT\[d\.reason!\], fromPolicyId: d\.from, toPolicyId: d\.to,/.test(rq),
+    'withdraw clears every request field; replan only moves updatePolicyId (and the stale hold); audit only on a write that took, with reason, from and to');
+  // 0.36 heartbeat cost: a computer with nothing due skips the scheduler's
+  // queries until its next due time. Skipping can only delay a snapshot, never
+  // ask for one; it must never outlive what changes the answer.
+  const dsvc = strip(read('apps/api/src/diagnostics-catalog/diagnostics-catalog.service.ts'));
+  const dsch = strip(read('apps/api/src/diagnostics-catalog/snapshot-schedule.ts'));
+  const sa = dsvc.slice(dsvc.indexOf('private async scheduleAutomatic('), dsvc.indexOf('private async pruneAutomatic('));
+  check('the snapshot scheduler’s quiet window only skips, is bounded, and is dropped by whatever changes the answer',
+    /if \(q > t && !SNAPSHOT_KEYS\.some\(\(k\) => this\.isWatched\(endpointId, k, t\)\)\) return;/.test(sa)
+      && sa.indexOf('this.quiet.get(endpointId)') < sa.indexOf('this.prisma.')
+      && /if \(!due\.length\) \{\s*const until = quietUntil\(schedule, history, now, QUIET_CAP_MS\);/.test(sa)
+      && /export const QUIET_CAP_MS = 60 \* 60_000;/.test(dsch) && /if \(!h \|\| h\.open\) return null;/.test(dsch)
+      && /async report\([^)]*\) \{\s*if \(!isCatalogKey\(dto\.key\)\) return \{ accepted: false, reason: 'unknown_key' \};\s*this\.quiet\.delete\(endpointId\);/.test(dsvc)
+      && /if \(n\.count\) \{ this\.quiet\.delete\(r\.endpointId\);/.test(dsvc)
+      && /this\.scheduleCache = null;\s*this\.quiet\.clear\(\);/.test(dsvc)
+      && /if \(this\.quiet\.size >= QUIET_MAX_ENTRIES\) this\.quiet\.clear\(\);/.test(sa),
+    'scheduleAutomatic returns early only inside the window with no tab watched; the window is set only when nothing is due, capped at 1 h, never with a run open; report, expiry and a schedule change drop it; the map is bounded');
 }
 
 if (failures.length > 0) {

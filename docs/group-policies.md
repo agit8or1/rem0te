@@ -90,7 +90,7 @@ Two kinds of rule group match **nothing** for a policy:
 | Where | How often | What is evaluated |
 |---|---|---|
 | Monitor sweep | every `MONITOR_SWEEP_SECONDS` (60) | every group carrying a monitor, once over its business, for the whole tick |
-| Client-update sweep | every `CLIENT_UPDATE_SWEEP_SECONDS` (120) | per business with an enabled policy, its groups carrying a policy, once for the tick |
+| Client-update sweep | every `CLIENT_UPDATE_SWEEP_SECONDS` (120) | per business with an enabled policy, its groups carrying a policy, once for the tick; and (0.36) per business with a queued automatic update, its groups carrying a policy, for those computers |
 | Heartbeat (monitor block, live-sample monitors, monitor report) | each heartbeat | only groups that can change that answer: those carrying a monitor whose key has a monitor of a kind the heartbeat asks about |
 | Heartbeat (client-update hold) | only when a POLICY update is queued for the computer | the business's group policies, for that computer |
 | Device page, policy pages | each read | the groups carrying a policy, for the computers shown |
@@ -171,7 +171,9 @@ it is not built.
   Monitoring tab and the Client-update policy row say which scope won and
   what it beat. A computer that is not in the group *now* — offline when the
   rule says online, untagged — does not get the policy.
-- **A queued automatic update is held with "policy_off" after a computer left
-  a group.** Its request was queued under the group's policy and the policy
-  that governs it now is off. Saving any client-update policy for the
-  business withdraws such requests; until then the heartbeat holds it.
+- **A queued automatic update was withdrawn or moved after a computer left a
+  group (0.36).** Its request was queued under the group's policy. The next
+  client-update sweep withdraws it if the policy that governs the computer now
+  is off (`CLIENT_UPDATE_AUTO_WITHDRAWN`), or keeps it under that policy if it
+  is on (`CLIENT_UPDATE_AUTO_REPLANNED`); the audit entry says why. Before
+  0.36 it stayed queued, held as "policy_off", until the next policy save.

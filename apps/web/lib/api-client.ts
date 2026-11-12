@@ -740,7 +740,7 @@ export const securityControlsApi = {
 // Monitoring and alerts (0.29).
 export type MonitorScope = 'global' | 'business' | 'site' | 'group' | 'endpoint';
 export type Severity = 'INFO' | 'WARNING' | 'CRITICAL';
-export type MonitorKindId = 'OFFLINE' | 'DISK_FREE' | 'CPU_HIGH' | 'MEMORY_HIGH' | 'SERVICE_STOPPED' | 'EVENT_MATCH' | 'REBOOT_PENDING';
+export type MonitorKindId = 'OFFLINE' | 'DISK_FREE' | 'CPU_HIGH' | 'MEMORY_HIGH' | 'SERVICE_STOPPED' | 'EVENT_MATCH' | 'REBOOT_PENDING' | 'AGENT_SILENT';
 /** A notification destination: a webhook, or (0.34) a confirmed email recipient of the policy's own scope. */
 export type NotifyDestination = { label: string; url: string } | { label: string; recipientId: string };
 const bq = (businessId?: string | null) => ({ params: businessId ? { businessId } : {} });

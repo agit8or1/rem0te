@@ -31,7 +31,7 @@ interface Data {
 const KEYS: (keyof ReportFilters)[] = ['businessId', 'siteId', 'days'];
 const KIND: Record<string, string> = {
   OFFLINE: 'Offline', DISK_FREE: 'Disk space', CPU_HIGH: 'Processor', MEMORY_HIGH: 'Memory', SERVICE_STOPPED: 'Service stopped',
-  EVENT_MATCH: 'Event log', REBOOT_PENDING: 'Restart pending', SITE_OUTAGE: 'Site outage',
+  EVENT_MATCH: 'Event log', REBOOT_PENDING: 'Restart pending', AGENT_SILENT: 'Agent silent', SITE_OUTAGE: 'Site outage',
 };
 const head = ['Raised', 'Critical', 'Warning', 'Info', 'Open', 'Resolved', 'Median to resolve', 'Longest'];
 const cells = (g: Summary) => [g.raised, g.critical, g.warning, g.info, g.open, g.resolved, duration(g.medianResolveMinutes), duration(g.longestResolveMinutes)];

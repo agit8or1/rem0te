@@ -1,6 +1,6 @@
 # Server sizing
 
-*Added in 0.33; heartbeat figures re-measured in 0.34.* How big a server to give Rem0te for 50, 250, 1,000 and 5,000 computers, and why.
+*Added in 0.33; heartbeat figures re-measured in 0.34; the automatic-snapshot cost measured in 0.36.* How big a server to give Rem0te for 50, 250, 1,000 and 5,000 computers, and why.
 
 Every figure here is labelled:
 
@@ -116,11 +116,54 @@ sweep over the fleet.
 | Uploads at 5,000 computers, every 6 h (**estimated**) | 3 × 4 × 5,000 = 60,000 a day: **0.7 a second**, beside the 27.8 heartbeats a second |
 | Data uploaded and written (**estimated**) | ≈ 1.6 GB a day |
 | Kept (**estimated**) | one completed automatic run per key per computer: ≈ 78 KB × 5,000 ≈ **400 MB**, flat |
-| Extra work per heartbeat when nothing is due (**estimated** from the code path, not benchmarked) | a cached settings read, one endpoint and one node lookup by key, and one grouped query over that computer's snapshot runs (a handful of rows) — roughly 1–2 ms beside the ≈ 35–50 ms measured above |
+| Extra work per heartbeat when nothing is due (**measured** in 0.36, below) | 0.35 as shipped: ≈ 3 more database transactions per heartbeat (≈ 30–31 against ≈ 27–28 with snapshots off). From 0.36: none — the same ≈ 26–28 as with snapshots off |
 | After an upgrade or an outage | every computer is due at once; `SNAPSHOT_MAX_PER_MINUTE` (default 120) spreads 15,000 runs at 5,000 computers over ≈ 2 hours (2 uploads a second) |
 
 Processes every hour instead would be 120,000 uploads and ≈ 4 GB a day for a list that is out of date within minutes
-of being taken; that is why it has the open-tab interval instead. `bench-heartbeat.mjs` was not re-run for 0.35.
+of being taken; that is why it has the open-tab interval instead.
+
+#### Measured in 0.36
+
+0.35 shipped with the per-heartbeat cost estimated, not measured. 0.36 re-ran `bench-heartbeat.mjs` with automatic
+snapshots on (`BENCH_SNAPSHOTS=on`, the default): during warm-up every synthetic computer is asked for, and
+answers, all three keys with desktop-sized results (250 processes, 280 services, 4 adapters), and the steady-state
+rounds then measure heartbeats with nothing due. 16 in flight, three rounds each, on the shared host at load average
+4–12 (2026-11-12):
+
+| Build, fleet | Snapshots | Transactions per heartbeat | API CPU per heartbeat | Throughput |
+|---|---|---|---|---|
+| 0.35, 1,000 | off | 25.9–27.9 | 37.3–37.7 ms (56 ms in a round during a load spike) | 71–126 /s |
+| 0.35, 1,000 | on | **29.6–30.9** | 41.0–42.0 ms (56 ms in one round) | 86–113 /s |
+| 0.35, 5,000 | off | 27.4–28.7 | 42.6–45.6 ms | 92–120 /s |
+| 0.35, 5,000 | on | **30.4–31.1** | 43.6–65.4 ms | 55–93 /s |
+| 0.36, 1,000 | on | **25.7–28.6** | 37.6–37.9 ms (49 ms in one round) | 98–122 /s |
+| 0.36, 1,000 | on, `SNAPSHOT_QUIET=off` | 29.7–30.3 | 40.1–51.2 ms | 75–115 /s |
+| 0.36, 1,000 | off | 27.1–28.1 | 43–86 ms (load average 7–11 during this run) | 42–60 /s |
+| 0.36, 5,000 | on | **26.9–28.2** | 38.9–72.0 ms | 43–121 /s |
+| 0.36, 5,000 | off | 27.7–29.0 | 39.8–63.1 ms | 67–88 /s |
+
+The transaction count is the steady figure; CPU and throughput moved with the host's other work by more than the
+difference being measured, so read them as a range, not a comparison. Every round asked for no snapshot (the
+*asked* column was 0 throughout), so the difference is purely the cost of deciding nothing was due.
+
+**What regressed, and the fix.** In 0.35 every authenticated heartbeat from an eligible computer ran three reads to
+decide whether a snapshot was due: the endpoint, its node, and a grouped query over its snapshot runs — about three
+more transactions and, on the quieter runs, roughly 3–4 ms of API CPU per heartbeat, against the 1–2 ms 0.35
+estimated. Almost every one of those heartbeats concluded *nothing is due*, because a key is due every 6 hours and a
+computer heartbeats every 3 minutes. From 0.36 the API remembers, per computer and in memory only, when the soonest
+key falls due (capped at an hour) and skips the three reads until then. Anything that would make a key due sooner
+ends the window at once: a tab being opened (checked on every heartbeat, from memory), a result arriving, a run
+expiring, a change to the intervals. The one thing it cannot see is a row changed in the database behind the API's
+back (by hand, or by the retention sweep); that is picked up when the window ends, at most an hour later. With
+snapshots on, a steady-state heartbeat now costs what it did with them off. `SNAPSHOT_QUIET=off` restores the 0.35
+behaviour, which is what the row above measures. The map holds at most 50,000 computers and is emptied if it
+reaches that; a restart empties it too, which costs one full check per computer.
+
+Warm-up with snapshots on (**measured**, 0.35 build): the result upload averaged 47–83 ms at 1,000 and 76–79 ms at
+5,000, and the first heartbeat, inventory and three snapshots together cost ≈ 194–205 ms of API CPU per computer
+(≈ 100–124 ms without the snapshots). That is the cost the `SNAPSHOT_MAX_PER_MINUTE` pacer spreads out after an
+upgrade. A stored snapshot measured 4,776 bytes per row (heap plus indexes) for the bench's results, whose payloads
+are smaller than a real desktop's; the ≈ 78 KB per computer above is the computed figure for real ones.
 
 ## Database growth
 

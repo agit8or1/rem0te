@@ -15,7 +15,8 @@ import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { Row } from '@/components/endpoints/endpoint-specs';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
-import { ago } from './device-model';
+import { agentSilentAlert, ago, alertHref } from './device-model';
+import type { AlertRow } from '@/components/monitoring/alerts';
 
 /** GET /endpoints/:id/agent (0.34). */
 export interface AgentCardData {
@@ -58,7 +59,9 @@ function apiMessage(e: unknown, fallback: string) {
  * Every button is re-checked by the server, which also says why when it
  * refuses; a button that cannot work is replaced by its reason.
  */
-export function AgentCard({ endpointId, canEdit }: { endpointId: string; canEdit: boolean }) {
+export function AgentCard({ endpointId, canEdit, alerts }: { endpointId: string; canEdit: boolean; alerts?: AlertRow[] | null }) {
+  // 0.36: an open agent-silent alert, from the Monitoring view the page already reads (null without monitoring:alerts).
+  const silent = agentSilentAlert(alerts);
   const { toast } = useToast();
   const qc = useQueryClient();
   const [confirmUpdate, setConfirmUpdate] = React.useState(false);
@@ -110,6 +113,12 @@ export function AgentCard({ endpointId, canEdit }: { endpointId: string; canEdit
       <CardContent className="space-y-2.5 text-sm">
         {isLoading ? <p className="text-muted-foreground">Loading…</p> : isError || !a ? <p className="text-muted-foreground">The agent’s details could not be loaded.</p> : (
           <>
+            {silent && (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-2 text-xs space-y-0.5" data-testid="agent-silent-alert">
+                <p><span className="font-medium">Agent silent</span> — <Link className="underline" href={alertHref(silent)}>open alert</Link>, raised {ago(silent.firstSeenAt)}.</p>
+                <p className="text-muted-foreground">Remote control should still work: RustDesk is reachable. Update the agent below, or re-run the installer on the machine.</p>
+              </div>
+            )}
             <Row label="Type"><Badge variant="secondary">{KIND_LABEL[a.kind]}</Badge></Row>
             <Row label="Version">{a.version ?? '—'}</Row>
             <Row label="Current">

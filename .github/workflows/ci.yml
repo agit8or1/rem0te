@@ -275,6 +275,12 @@ jobs:
       - name: Chat tests
         run: node apps/api/scripts/unit-chat.mjs
 
+      # Agent health (0.36): the opt-in agent-silent monitor's bounds, raise /
+      # hold / clear and alert text; re-resolving a queued automatic client
+      # update (keep, adopt, re-plan, withdraw, and why).
+      - name: Agent health tests
+        run: node apps/api/scripts/unit-agent-health.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.

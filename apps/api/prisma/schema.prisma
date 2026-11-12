@@ -174,6 +174,9 @@ enum ActivityAction {
   ENDPOINT_LIST_EXPORTED
   CLIENT_UPDATE_POLICY_CHANGED
   CLIENT_UPDATE_AUTO_QUEUED
+  // 0.36: the client-update sweep re-resolves queued POLICY requests each tick
+  CLIENT_UPDATE_AUTO_WITHDRAWN
+  CLIENT_UPDATE_AUTO_REPLANNED
   REPORT_EXPORTED
   // 0.34 outbound email
   SMTP_SETTINGS_CHANGED
@@ -962,6 +965,12 @@ model RustdeskNode {
   // when it changes; cleared when the request is handed out or clears.
   updateHoldReason    String?
   updateHoldAt        DateTime?
+  // 0.36: the ClientUpdatePolicy that queued a POLICY request. No foreign
+  // key: the sweep must still be able to say which policy it was after that
+  // policy is deleted. Re-resolved every sweep (client-update-sweep.service.ts):
+  // the request is withdrawn when no enabled policy governs the computer any
+  // more, and moved to the policy that does when that changed.
+  updatePolicyId      String?
 
   // Operator-requested agent reinstall, staged the same way.
   //
@@ -2724,6 +2733,7 @@ enum MonitorKind {
   SERVICE_STOPPED
   EVENT_MATCH
   REBOOT_PENDING
+  AGENT_SILENT // 0.36: reachable through RustDesk, agent not checking in (opt-in)
 }
 
 enum AlertSeverity {

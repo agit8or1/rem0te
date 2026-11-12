@@ -50,6 +50,7 @@ critical) and parameters.
 | Windows service stopped | the named service is not Running (optionally: missing; disabled ignored by default) | it is Running again |
 | Event log match | at least *threshold* events since the last report match *ids*, *levels* or *provider* in one of System, Application, Security, Setup | no match for *clearAfterMinutes* |
 | Restart pending | Windows has wanted a restart for *hours* | the restart happens |
+| Agent silent (0.36, opt-in) | RustDesk still reaches the computer but its agent has not checked in for *minutes* (default 60, 30 – 10,080) | the agent checks in again |
 
 An event-log monitor must name at least one of IDs, levels or provider — a
 monitor on every event in a log is a flood, not a monitor. The agent asks
@@ -58,6 +59,48 @@ for at most 100 events per query and sends one sample, truncated.
 **Add recommended** creates a starter set — offline, disk, CPU, memory,
 restart pending, and disk errors (System log IDs 7, 11, 51, 153) — as ordinary
 monitors you then adjust. Nothing is created without that click.
+
+### Agent silent (0.36)
+
+A computer can be *reachable* without *reporting*. `isOnline` stays true while
+hbbs sees its RustDesk peer, so a computer whose agent died but whose RustDesk
+still runs shows amber *Reachable (RustDesk) · agent silent* on its page
+(0.35, [architecture.md](architecture.md#two-meanings-of-online)) — and its
+monitoring, patch and inventory values stop updating. The **Offline** monitor
+cannot see this: it watches `isOnline`, which is true. The agent-silent monitor
+raises when:
+
+- `isOnline` is true (RustDesk reaches it), and
+- the agent's last heartbeat is at least *minutes* ago (default 60).
+
+It is **opt-in**. It is not in the recommended set and nothing creates it for
+you: whether it should be on by default has not been decided. Create it under
+**New monitor → Agent silent (RustDesk still reachable)**, which fills in the
+key `agent-silent`, 60 minutes and *warning*. It follows the usual scopes —
+global, business, site, device group (by priority) and computer — so you can
+turn it on for one business, give kiosks a longer threshold, or switch it off
+for a site.
+
+- **Threshold** 30 minutes to 7 days. Not below 30 minutes: that is the window
+  in which the page still says *Online*, and an alert would contradict it.
+- **The alert** reads "*PC*: agent silent for 3 d — remote control should still
+  work", and its detail says what to do: **Update agent** on the computer's
+  Agent card, or re-run the installer on the machine. The title's age is
+  rewritten as it grows (tens of minutes, then hours, then days), not every
+  sweep.
+- **Clears** on the first sweep after the agent checks in.
+- **Not reachable any more** — the computer drops off RustDesk too: no new
+  agent-silent alert is raised (that is the Offline monitor's case), and an open
+  one stays open rather than resolving and re-raising every time hbbs restarts.
+- **Never reported** — a computer whose agent has never checked in (RustDesk
+  only, or an install that never completed) is not this monitor's case.
+- **Where it shows** — the alert list, the computer's Monitoring tab, an
+  *Agent silent alert* chip at the top of the computer's page, and a line on
+  its Agent card, the last two linking straight to the alert.
+- **Not sent to ClientSt0r.** The integration contract lists the alert kinds it
+  carries and this is not one; with ticketing on, an agent-silent alert is
+  notified as usual but not offered for a ticket. Carrying it needs a contract
+  revision agreed with ClientSt0r.
 
 ![Monitoring settings for one business: its own monitors above the inherited global ones](screenshots/guide/monitoring-settings.png)
 
@@ -200,7 +243,7 @@ skipping system components and updates, up to 500 entries. Agents older than
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `MONITOR_SWEEP` | on | `off` stops the sweep (offline, restart pending, outage correlation, notification) |
+| `MONITOR_SWEEP` | on | `off` stops the sweep (offline, agent silent, restart pending, outage correlation, notification) |
 | `MONITOR_SWEEP_SECONDS` | 60 | how often the sweep runs |
 | `MONITOR_OFFLINE_HOLD_SECONDS` | 180 | how long an offline alert waits before notifying |
 
@@ -213,5 +256,8 @@ skipping system components and updates, up to 500 entries. Agents older than
 - **Nobody was notified** — the alert's history shows each notification and
   its HTTP result. Check for an active maintenance window, an acknowledged
   alert, or a level whose minimum severity is above the alert's.
+- **A computer shows "agent silent" but no alert** — the agent-silent monitor
+  is opt-in; add it under New monitor. The Offline monitor does not fire for
+  it, because RustDesk still reaches the computer.
 - **Forty offline alerts for one site** — the site needs at least three
   computers assigned to it for outage grouping to apply.

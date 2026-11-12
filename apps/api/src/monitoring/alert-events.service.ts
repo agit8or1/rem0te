@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
-import { AlertEvent, AlertTicketLink, CONTRACT, type ALERT_EVENT_TYPES } from '../integration/contract';
+import { Alert, AlertEvent, AlertTicketLink, CONTRACT, type ALERT_EVENT_TYPES } from '../integration/contract';
 import { loadTrust, type Peer } from '../integration/peers';
 import { signAlertEvent } from '../integration/signer';
 import { E, IntegrationError } from '../integration/errors';
@@ -40,6 +40,9 @@ export function toContractAlert(a: Row, patchSummary: ReturnType<typeof redacted
   };
 }
 
+/** The alert kinds the integration contract carries (integration/contract.ts). */
+const CONTRACT_ALERT_KINDS: ReadonlySet<string> = new Set(Alert.shape.kind.options);
+
 /**
  * Monitoring → ClientSt0r (v0.29). Alert events are signed, sequenced per
  * (peer, organization) and stored; the integration worker pushes them to
@@ -66,6 +69,10 @@ export class AlertEventsService {
     if (!trust) return 0;
     const a = await this.prisma.monitorAlert.findUnique({ where: { id: alertId }, include: INCLUDE });
     if (!a?.customerId) return 0;
+    // 0.36: the contract names the alert kinds it carries. One it does not
+    // (AGENT_SILENT) is not sent at all, rather than failing AlertEvent.parse
+    // per peer; carrying it is a contract revision agreed with ClientSt0r.
+    if (!CONTRACT_ALERT_KINDS.has(a.kind)) return 0;
     const maps = await this.prisma.integrationOrgMapping.findMany({ where: { customerId: a.customerId, revokedAt: null } });
     const patch = await this.patchFor(a);
     let n = 0;

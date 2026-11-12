@@ -153,11 +153,28 @@ Requests staged before 0.32 are recorded as manual.
 
 **Turning a policy off withdraws** the POLICY requests it queued that have not
 completed; manual requests are left alone. So does removing a site override
-or a group policy when what governs those computers next is off. A computer
-that *leaves a group* keeps a request queued under the group's policy until
-the next policy save in its business withdraws it; meanwhile the heartbeat
-holds it (*the update policy that queued it is now off*) if its new policy is
-off.
+or a group policy when what governs those computers next is off.
+
+**Every sweep re-checks what is queued (0.36).** Each POLICY request records
+the policy that queued it. On every tick, before queuing anything, the sweep
+works out which policy governs each queued computer *now* — group membership
+as it is this tick — in every business, including one with no policy on and
+one under an `updates` pause (withdrawing installs nothing):
+
+| Now | What happens | Audit |
+|---|---|---|
+| the policy that queued it still governs it, and is on | nothing | — |
+| another policy governs it, and is on (it left the group; its site's override applies; a higher-priority group policy now does) | the request stays, under that policy's window and conditions | `CLIENT_UPDATE_AUTO_REPLANNED` |
+| nothing that is on governs it | the request is withdrawn | `CLIENT_UPDATE_AUTO_WITHDRAWN` |
+| queued before 0.36 (no policy recorded) and a policy that is on governs it | that policy is recorded; nothing else changes | — |
+
+Each entry records the reason — `no_longer_applies` (the policy is still
+there and on, but no longer governs the computer), `policy_off`,
+`policy_removed`, or `no_policy_recorded` — with the policy it came from and
+the one it moved to. Before 0.36 only a policy save re-checked queued requests,
+so a computer that left a group kept its request queued, held by the heartbeat
+as *the update policy that queued it is now off*, until someone next saved a
+policy in its business.
 
 **Containment.** An `updates` pause (global, or for the business) stops the
 sweep queuing anything there and the heartbeat handing anything out, as it

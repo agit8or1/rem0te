@@ -708,7 +708,7 @@ export class EnrollmentService {
         node.updateTargetVersion &&
         dto.rustdeskVersion &&
         compareVersions(dto.rustdeskVersion, node.updateTargetVersion) >= 0
-          ? { updateRequestedAt: null, updateTargetVersion: null, updateRequestSource: null, updateRequestedById: null, updateHoldReason: null, updateHoldAt: null }
+          ? { updateRequestedAt: null, updateTargetVersion: null, updateRequestSource: null, updateRequestedById: null, updateHoldReason: null, updateHoldAt: null, updatePolicyId: null }
           : {}),
         // A reinstall clears once the endpoint reports an agent matching this
         // server AND the request has been handed out at least once. Without
