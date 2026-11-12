@@ -92,7 +92,15 @@ func swParams(over map[string]any) map[string]any {
 	return p
 }
 
-func swPlan(id string, params map[string]any) map[string]any { return highPlan(id, params) }
+// swPlan: as the signer signs one since 0.36, naming its catalog entry.
+func swPlan(id string, params map[string]any) map[string]any {
+	p := highPlan(id, params)
+	p["display"] = map[string]any{"updates": []any{}, "deployment": nil, "software": map[string]any{"name": "7-Zip", "publisher": nil, "hashSource": "winget_pkgs", "manifestSha256": nil, "entryId": swEntry, "entryRevision": 1}}
+	return p
+}
+
+const swEntry = "entry-7zip-0001"
+
 
 const install, uninstall = "windows.software.install", "windows.software.uninstall"
 

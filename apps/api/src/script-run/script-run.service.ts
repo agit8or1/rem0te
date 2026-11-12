@@ -9,6 +9,7 @@ import { CAP, type Capability } from '../rbac/capabilities';
 import { PLATFORM_PERM } from '../rbac/platform-permissions';
 import { ActionsService } from '../actions/actions.service';
 import { SignerClient } from '../actions/signer.client';
+import { RevocationRelay } from '../actions/revocations.controller';
 import { MAX_RING_TARGETS, MAX_WINDOW_HOURS, SCRIPT_RUN } from '../actions/catalog';
 import {
   MAX_SCRIPT_OUTPUT_BYTES, SCRIPT_OUTPUT_RETENTION_DAYS, TIMEOUT_MINUTES, ScriptRunParams, argumentsProblem, type ParameterDecl, type ScriptBlock, type ScriptProposal,
@@ -73,6 +74,7 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
     private readonly acl: AccessControlService,
     private readonly actions: ActionsService,
     private readonly signer: SignerClient,
+    private readonly relay: RevocationRelay,
   ) {}
 
   // ── Retention ───────────────────────────────────────────────────────────
@@ -222,6 +224,9 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
     if (!live) throw new ConflictException({ code: 'NOT_ALLOWLISTED', message: 'This version has no live entry on the approval signer\'s allowlist.' });
     const r = await this.signer.revokeScript(live.id, d.data.reason);
     if (r.status !== 200 || r.body.status !== 'REVOKED') throw new ConflictException({ code: 'APPROVAL_SIGNER_REFUSED', message: r.body.error ?? 'The approval signer did not revoke it.' });
+    // 0.36: the next agent to ask gets a statement naming this hash, and
+    // refuses a run of it that was signed before now (revocation.go).
+    this.relay.invalidate();
     const e = await this.prisma.scriptAllowlistEntry.update({ where: { id: live.id }, data: { status: 'REVOKED', revokedAt: r.body.revokedAt ? new Date(r.body.revokedAt) : new Date(), revokeReason: d.data.reason } });
     await this.audit.log({
       tenantId: v.script.tenantId ?? actor.tenantId ?? undefined, customerId: v.script.customerId ?? undefined, actorId: actor.userId, actorIp: actor.ip,

@@ -143,7 +143,8 @@ async function approve(jobId, who) {
 
 // ── A simulated computer ────────────────────────────────────────────────────
 const ACTIONS = ['windows.service.start@1', 'windows.update.install@1'];
-function sim(pc, args) { return execFileSync(SIM, ['-wua', pc.wua, '-registry', pc.reg, ...args], { encoding: 'utf8' }); }
+// 0.36: '-portal': the agent fetches the signer's revocation statement from the portal's relay before each job.
+function sim(pc, args) { return execFileSync(SIM, ['-wua', pc.wua, '-registry', pc.reg, '-portal', `127.0.0.1:${PORT}`, ...args], { encoding: 'utf8' }); }
 const scan = (pc) => JSON.parse(sim(pc, ['-scan']).trim());
 const restart = (pc) => sim(pc, ['-restart']);
 const setWUA = (pc, f) => { const w = JSON.parse(readFileSync(pc.wua, 'utf8')); f(w); writeFileSync(pc.wua, JSON.stringify(w)); };

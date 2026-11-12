@@ -177,7 +177,8 @@ async function until(what, f, ms = 30_000) {
 
 // ── A simulated computer ────────────────────────────────────────────────────
 const ACTIONS = ['windows.service.start@1', 'windows.update.install@1'];
-function sim(pc, args) { return execFileSync(SIM, ['-wua', pc.wua, '-registry', pc.reg, ...args], { encoding: 'utf8' }); }
+// 0.36: '-portal': the agent fetches the signer's revocation statement from the portal's relay before each job.
+function sim(pc, args) { return execFileSync(SIM, ['-wua', pc.wua, '-registry', pc.reg, '-portal', `127.0.0.1:${PORT}`, ...args], { encoding: 'utf8' }); }
 // 0.34: the sim signs the scan with the computer's own key, kept in its state directory, as patch-scan does.
 const scan = (pc) => JSON.parse(sim(pc, ['-scan', '-state', pc.state, '-rustdesk-id', pc.rid, '-secret', pc.secret]).trim());
 const unsignedScan = (pc) => { const p = scan(pc); delete p.signed; return p; };

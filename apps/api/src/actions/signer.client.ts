@@ -65,6 +65,13 @@ export class SignerClient {
   }
   revokeScript(id: string, reason: string) { return this.call<{ status?: string; revokedAt?: string; error?: string }>('POST', `/internal/v1/scripts/${id}/revoke`, { reason }); }
 
+  // ── Revocation (v0.36) ────────────────────────────────────────────────────
+  // The signed statement agents check plans against, which the portal only
+  // relays (it cannot forge or shrink it), and the one-way revocation of an
+  // archived software catalog entry.
+  revocations() { return this.call<{ schema?: string; kid?: string; statement?: string; sig?: string; error?: string }>('GET', '/internal/v1/revocations'); }
+  revokeSoftware(entryId: string, reason: string) { return this.call<{ status?: string; revokedAt?: string; error?: string; message?: string }>('POST', `/internal/v1/software/${encodeURIComponent(entryId)}/revoke`, { reason }); }
+
   /** v0.28: ask the signer to hold a pause. It cannot be asked to lift one; its operator does that. */
   pause(p: { scope: 'global' | 'business'; businessId?: string; reason: string; ref: string }) { return this.call<{ id?: string; error?: string }>('POST', '/internal/v1/pauses', p); }
   pauses() { return this.call<{ pauses?: { id: string; scope: string; businessId?: string; reason: string; setBy: string; at: string; ref?: string }[] }>('GET', '/internal/v1/pauses'); }

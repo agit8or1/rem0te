@@ -189,6 +189,8 @@ function runAgent(ep, jobId, envelope, { productType = ep.productType, rid = ep.
   writeFileSync(envFile, JSON.stringify(envelope));
   const args = ['-state', state, '-keys', keysFile, '-job', jobId, '-envelope', envFile, '-rustdesk-id', rid, '-secret', secret, '-product-type', String(productType), '-self-sha', self];
   if (service) args.push('-service', service);
+  // 0.36: the agent fetches the signer's revocation statement from the portal's relay before each job.
+  args.push('-portal', `127.0.0.1:${PORT}`);
   const out = execFileSync(SIM, args, { encoding: 'utf8' });
   return JSON.parse(out.trim());
 }

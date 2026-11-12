@@ -229,6 +229,8 @@ function runAgent(ep, jobId, envelope, { pause, timeout } = {}) {
   const args = ['-state', ep.state, '-keys', keysFile, '-job', jobId, '-envelope', envFile, '-rustdesk-id', ep.rid, '-secret', ep.secret, '-product-type', '1', '-self-sha', AGENT_SHA, '-winget', wingetFile(ep)];
   if (pause) args.push('-pause', pause);
   if (timeout) args.push('-winget-timeout', timeout);
+  // 0.36: the agent fetches the signer's revocation statement from the portal's relay before each job.
+  args.push('-portal', `127.0.0.1:${PORT}`);
   return JSON.parse(execFileSync(SIM, args, { encoding: 'utf8', timeout: 120_000 }).trim());
 }
 const WINGET = 'v1.9.25200';

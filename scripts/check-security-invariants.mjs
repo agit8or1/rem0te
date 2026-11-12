@@ -1924,7 +1924,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /if \(!s \|\| !entry\) throw new Refused\('script_not_allowlisted'/.test(assertFn) && /if \(st === 'REVOKED'\) throw new Refused\('script_revoked'/.test(assertFn)
       && /if \(st !== 'ACTIVE'\) throw new Refused\('script_not_allowlisted'/.test(assertFn)
       && /if \(canonical\(s\) !== canonical\(scriptBlockOf\(entry\.proposal\)\)\) throw new Refused\('script_mismatch'/.test(assertFn)
-      && /admitPlan\(b\.plan, store\.policy\(\), now\(\), \(id\) => store\.scriptEntry\(id\)\)/.test(server)
+      && /admitPlan\(b\.plan, store\.policy\(\), now\(\), \(id\) => store\.scriptEntry\(id\)(, softwareRevoked)?\)/.test(server)
       && /if \(cur\.plan\.action\.id === SCRIPT_RUN_ACTION && c\.decision === 'approve'\) assertScriptAllowed\(cur\.plan, \(id\) => store\.scriptEntry\(id\)\);/.test(server),
     'requestRun must refuse a non-APPROVED version and a missing ACTIVE entry before createPlan; the signer must check its own entry (exact block, ACTIVE, not revoked) at admission and before signing');
 
@@ -2719,6 +2719,119 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /\nexport SNAPSHOT_SWEEP=off\n/.test(read('scripts/run-e2e.sh'))
       && /SNAPSHOT_SWEEP: 'off',/.test(read('apps/web/scripts/e2e-ui.mjs')),
     "sweepEnabled: env.SNAPSHOT_SWEEP !== 'off'; run-e2e.sh exports it; e2e-ui's API env sets it");
+}
+
+// 51. Signed revocation (0.36). A script hash taken off the signer's allowlist,
+//     or a software catalog entry archived, after a plan using it was signed:
+//     the plan is genuine and inside its window, so without this the agent
+//     runs it. What must hold: the signer signs one statement of every
+//     revocation under its own domain prefix, and the agent checks the same
+//     prefix against approval/keys.json only; the published set is a union
+//     with the ledger, so it never shrinks, and software revocations are
+//     write-once with nothing that removes one; the signer refuses a revoked
+//     install at admission and again at approval, and a software plan with no
+//     entry id at all; the agent refuses a lower seq or a statement leaving
+//     out one it holds; the check sits after the signed pause and before
+//     Precheck and the "executing" journal, a stale statement is NOT final
+//     (fail closed, nothing consumed) and a revoked plan is; the Windows agent
+//     actually fetches the statement and caps it; and the portal revokes on
+//     the signer before it archives, and drops its cached statement when it
+//     revokes or a plan is signed.
+{
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const core = code(read('apps/api/src/approval-signer/core.ts'));
+  const server = code(read('apps/api/src/approval-signer/server.ts'));
+  const store = code(read('apps/api/src/approval-signer/store.ts'));
+  const goRev = read('tools/windows-installer/internal/action/revocation.go');
+  const goAct = read('tools/windows-installer/internal/action/action.go');
+  const goAgent = read('tools/windows-installer/internal/agent/agent.go');
+  const goWin = read('tools/windows-installer/action_windows.go');
+  const sw = code(read('apps/api/src/software/software.service.ts'));
+  const sr = code(read('apps/api/src/script-run/script-run.service.ts'));
+  const acts = code(read('apps/api/src/actions/actions.service.ts'));
+  const relay = code(read('apps/api/src/actions/revocations.controller.ts'));
+  const goFn = (src, name) => { const i = src.indexOf(`func ${name}(`); const j = src.indexOf('\n}\n', i); return i < 0 ? '' : src.slice(i, j); };
+
+  check('the revocation statement is signed under its own prefix, the same on the signer and the agent, and verified only against the approval keys',
+    /export const REVOCATION_SIGNING_PREFIX = 'rem0te-revocations-v1\\n';/.test(core)
+      && /RevocationPrefix\s+= "rem0te-revocations-v1\\n"/.test(goRev)
+      && /edSign\(null, Buffer\.concat\(\[Buffer\.from\(REVOCATION_SIGNING_PREFIX, 'utf8'\), bytes\]\), k\.key\)/.test(core)
+      && /for _, k := range keys \{\s*if k\.Kid == env\.Kid \{/.test(goFn(goRev, 'ParseRevocations'))
+      && /!ed25519\.Verify\(key, append\(\[\]byte\(RevocationPrefix\), body\.\.\.\), sig\)/.test(goFn(goRev, 'ParseRevocations'))
+      && /r\.Seq != len\(r\.Scripts\)\+len\(r\.Software\)/.test(goFn(goRev, 'ParseRevocations'))
+      && /export const MAX_REVOCATIONS = 5000;/.test(core) && /MaxRevocations = 5000/.test(goRev),
+    'core.ts signs with REVOCATION_SIGNING_PREFIX; revocation.go verifies the same prefix against a key from o.Keys by kid, seq = entry count; MAX_REVOCATIONS = MaxRevocations = 5000');
+
+  check('the published statement never shrinks, and nothing removes a software revocation',
+    /const prev = store\.publishedRevocations\(\);\s*const set = mergeRevocations\(prev, \{ scripts: store\.scriptRevocations\(\), software: store\.softwareRevocations\(\) \}\);/.test(server)
+      && /\[\.\.\.\(prev\?\.scripts \?\? \[\]\), \.\.\.cur\.scripts\]/.test(core) && /\[\.\.\.\(prev\?\.software \?\? \[\]\), \.\.\.cur\.software\]/.test(core)
+      && /revokeSoftware\(entryId: string, rev: Revocation\): boolean \{[\s\S]{0,200}'software-revocations', `\$\{entryId\}\.json`\), JSON\.stringify\(rev, null, 2\), \{ mode: 0o600, flag: 'wx' \}\)/.test(store)
+      && (store.match(/unlinkSync\(/g) ?? []).length === 1 && /unlinkSync\(path\.join\(this\.dir, 'device-keys'/.test(store)
+      && !/software-revocations/.test(server) && !/\/software\/[^\n]*\/(unrevoke|restore|reinstate)/.test(server),
+    "server's revocations(): mergeRevocations(publishedRevocations(), on-disk); merge is a union; revokeSoftware writes flag 'wx'; the store's only unlink is device-keys; no HTTP route un-revokes");
+
+  check('the signer refuses an install from a revoked entry at admission and at approval, and a software plan naming no entry',
+    /if \(p\.action\.id === SCRIPT_RUN_ACTION\) assertScriptAllowed\(p, scripts\);\s*assertSoftwareAllowed\(p, softwareRevoked\);\s*return \{ plan: p, digest: planDigest\(p\) \};/.test(core)
+      && /if \(!id\) throw new Refused\('software_entry_missing'/.test(core)
+      && /if \(p\.action\.id === SOFTWARE_INSTALL_ACTION && softwareRevoked\(id\)\) throw new Refused\('software_revoked'/.test(core)
+      && /admitPlan\(b\.plan, store\.policy\(\), now\(\), \(id\) => store\.scriptEntry\(id\), softwareRevoked\)/.test(server)
+      && /if \(c\.decision === 'approve'\) assertSoftwareAllowed\(cur\.plan, softwareRevoked\);/.test(server)
+      && /const softwareRevoked = \(entryId: string\) => !!store\.softwareRevocation\(entryId\);/.test(server),
+    'admitPlan ends with assertSoftwareAllowed; it refuses software_entry_missing and software_revoked; server passes softwareRevoked at admission and re-checks before an approve');
+
+  const cur = goFn(goRev, 'currentRevocations');
+  check('the agent keeps the newest statement and refuses rollback: a lower seq, or one that leaves out a revocation it holds',
+    /case held != nil && got\.Seq < held\.Seq:\s*return held,/.test(cur)
+      && /case held != nil && !got\.covers\(held\):\s*return held,/.test(cur)
+      && /case err != nil:\s*return held,/.test(cur)
+      && /_ = atomicWrite\(revocationsPath\(o\), json\.RawMessage\(o\.Revocations\)\)\s*\}\s*return got, ""/.test(cur)
+      && /held, _ = ParseRevocations\(raw, o\.Keys\)/.test(cur),
+    'currentRevocations: an error, a lower seq or a non-superset returns the held one; only a taken statement is written; the held one is re-verified on read');
+
+  const chk = goFn(goRev, 'revocationCheck');
+  const iPause = goAct.indexOf('o.Pause.ActionsPaused(');
+  const iRev = goAct.indexOf('revocationCheck(plan, o)');
+  const iPre = goAct.indexOf('a.Precheck(plan, o)');
+  const iExec = goAct.indexOf('State: "executing"');
+  check('the agent checks revocations after the signed pause and before Precheck and "executing"; stale is not final, revoked is',
+    iPause > 0 && iRev > iPause && iPre > iRev && iExec > iPre
+      && /if rr, isFinal := revocationCheck\(plan, o\); rr != nil \{\s*r := \*rr\s*r\.JobID = jobID\s*if !isFinal \{\s*return r, nil\s*\}\s*return final\(o, jobID, planSHA, r\)\s*\}/.test(goAct)
+      && /if rv == nil \|\| rv\.asOf\.Before\(signed\) \{[\s\S]{0,700}return refuse\("revocations_stale", d\), false\s*\}/.test(chk)
+      && /if \(p\.Script != nil && rv\.scripts\[p\.Script\.ContentSHA256\]\) \|\| rv\.scripts\[sha\] \{\s*return refuse\("revoked", [^\n]*\), true/.test(chk)
+      && /if rv\.software\[id\] \{\s*return refuse\("revoked", [^\n]*\), true/.test(chk)
+      && /if id == "" \{\s*return refuse\("software_entry_missing", [^\n]*\), true/.test(chk),
+    'action.go: pause, then revocationCheck (non-final returns without final()), then Precheck, then the executing journal; revocation.go: no statement or an older one is revocations_stale (false); a revoked hash or entry is revoked (true)');
+
+  check('the Windows agent fetches the statement for every job, from the pinned portal, capped',
+    /revs, rerr := agent\.FetchRevocations\(agent\.Options\{PortalHost: pinnedPortal\(\), Paths: paths\}\)/.test(goWin)
+      && /Revocations: revs\}/.test(goWin)
+      && /io\.LimitReader\(resp\.Body, action\.MaxRevocationBytes\+1\)/.test(goFn(goAgent, 'FetchRevocations'))
+      && /if !ValidPortal\(o\.PortalHost\) \{/.test(goFn(goAgent, 'FetchRevocations')),
+    'action_windows.go: agent.FetchRevocations(pinnedPortal()) and Revocations: revs; FetchRevocations validates the portal and caps the body at MaxRevocationBytes');
+
+  const arch = sw.slice(sw.indexOf('async archive('), sw.indexOf('async archive(') + 2500);
+  const iRevoke = arch.indexOf('this.signer.revokeSoftware(e.id, p.data.reason)');
+  const iUpd = arch.indexOf('this.prisma.softwareCatalogEntry.updateMany(');
+  check('the portal revokes on the signer before it archives, and drops its cached statement whenever something is revoked or signed',
+    iRevoke > 0 && iUpd > iRevoke
+      && /if \(rv\.status !== 200 \|\| rv\.body\.status !== 'REVOKED'\) throw new ConflictException\(\{ code: 'APPROVAL_SIGNER_REFUSED'/.test(arch)
+      && arch.indexOf('this.relay.invalidate();') > iRevoke && arch.indexOf('this.relay.invalidate();') < iUpd
+      && /this\.relay\.invalidate\(\);/.test(sr)
+      && /if \(next\.status === 'APPROVED'\) this\.relay\?\.invalidate\(\);/.test(acts)
+      && /if \(gen === this\.generation\) this\.cached = \{ at: now, body \};/.test(relay)
+      && /invalidate\(\) \{ this\.cached = null; this\.generation\+\+; \}/.test(relay),
+    'archive(): signer.revokeSoftware, refuse unless REVOKED, relay.invalidate, then updateMany; script revoke and a newly APPROVED plan invalidate; a fetch that raced an invalidation is not cached');
+
+  check('the relay is a read-only courier: one public GET, four envelope fields passed on, nothing added',
+    (relay.match(/@(Get|Post|Put|Patch|Delete)\(/g) ?? []).length === 1 && /@Get\('revocations\.json'\)\s*@Public\(\)/.test(relay)
+      && /const body = JSON\.stringify\(\{ schema: r\.body\.schema, kid: r\.body\.kid, statement: r\.body\.statement, sig: r\.body\.sig \}\);/.test(relay),
+    "revocations.controller.ts: exactly one route, GET public/approval/revocations.json; the body is the signer's four fields");
+
+  const dispatch = acts.slice(acts.indexOf('private async dispatchBlock('));
+  check('an undelivered plan whose script or software entry was revoked is refused by the portal too, first',
+    /^private async dispatchBlock\(j: ActionJob, endpointId: string\): Promise<string \| null> \{\s*if \(await this\.revokedSinceSigning\(j\)\) return 'revoked';/.test(dispatch)
+      && /return e\?\.status === 'REVOKED';/.test(acts) && /return !e \|\| !!e\.archivedAt;/.test(acts),
+    "dispatchBlock's first line: revokedSinceSigning → 'revoked' (script entry REVOKED; software entry archived or gone)");
 }
 
 if (failures.length > 0) {

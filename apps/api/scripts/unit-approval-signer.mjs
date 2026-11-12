@@ -8,7 +8,7 @@
 // signer's real WebAuthn verification checks. No database, no portal: the
 // point of the signer is that it needs neither to decide.
 
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -501,6 +501,87 @@ check('canceling a signed plan does not unsign it (the portal stops delivery ins
   check('`script list` shows each entry with its status and hash', o.status === 0 && o.stdout.includes(pq.allowlistId) && /REVOKED/.test(o.stdout) && /ACTIVE/.test(o.stdout) && o.stdout.includes(sr.sha256Hex(CONTENT)), o.stderr || o.stdout.slice(0, 300));
   o = cliS(['script', 'revoke', '--id', pq.allowlistId, '--reason', 'operator test']);
   check('`script revoke` on the signer host revokes', o.status === 0 && JSON.parse(readFileSync(join(dir, 'scripts', `${pq.allowlistId}.json`), 'utf8')) && (await j(`${INTERNAL}/internal/v1/scripts/${pq.allowlistId}`)).body.status === 'REVOKED', o.stderr);
+}
+
+// ── 0.36: the signed revocation statement and software revocation ─────────
+{
+  const post = (path, body) => j(`${INTERNAL}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const pubOf = (kid) => { const k = keysDoc.keys.find((x) => x.kid === kid); return k ? createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(k.ed25519, 'base64')]), format: 'der', type: 'spki' }) : null; };
+  const statement = async () => {
+    const r = await j(`${INTERNAL}/internal/v1/revocations`);
+    const st = r.status === 200 ? core.verifyRevocations(r.body, { kid: r.body.kid, publicKey: pubOf(r.body.kid) }) : null;
+    return { r, st };
+  };
+  const t0 = Date.now();
+  let { r, st } = await statement();
+  const revokedScripts = readdirSync(join(dir, 'script-revocations')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)).sort();
+  check('GET /internal/v1/revocations: an envelope signed with the job-approval key (kid from keys.json)', r.status === 200 && r.body.schema === 'rem0te-revocations-envelope/1' && r.body.kid === keysDoc.keys[0].kid && !!st, JSON.stringify(r.body).slice(0, 200));
+  check('it lists every revoked script content hash, and seq counts them', st && st.schema === 'rem0te-revocations/1' && JSON.stringify(st.scripts) === JSON.stringify(revokedScripts) && revokedScripts.length >= 2 && st.software.length === 0 && st.seq === revokedScripts.length, JSON.stringify(st));
+  check('asOf is this process\'s clock, now', st && Math.abs(Date.parse(st.asOf) - t0) < 5000, st?.asOf);
+  {
+    const bytes = Buffer.from(r.body.statement, 'base64');
+    const asPlan = verify(null, Buffer.concat([Buffer.from('rem0te-action-plan-v1\n'), bytes]), pubOf(r.body.kid), Buffer.from(r.body.sig, 'base64'));
+    const asRev = verify(null, Buffer.concat([Buffer.from('rem0te-revocations-v1\n'), bytes]), pubOf(r.body.kid), Buffer.from(r.body.sig, 'base64'));
+    check('it is signed under its own domain prefix: never valid as a plan signature', asRev && !asPlan);
+    const forged = { ...r.body, statement: Buffer.from(JSON.stringify({ ...st, scripts: [], seq: 0 })).toString('base64') };
+    check('an edited statement (revocations dropped) does not verify', core.verifyRevocations(forged, { kid: r.body.kid, publicKey: pubOf(r.body.kid) }) === null);
+    const other = generateKeyPairSync('ed25519').publicKey;
+    check('nor under another key', core.verifyRevocations(r.body, { kid: r.body.kid, publicKey: other }) === null);
+  }
+  const seq0 = st.seq, asOf0 = st.asOf;
+
+  // A software plan must name its catalog entry.
+  const bare = swPlan({ display: { updates: [], deployment: null } });
+  r = await submit(bare);
+  check('a software plan that names no catalog entry is refused (software_entry_missing)', r.status === 409 && r.body?.error === 'software_entry_missing', JSON.stringify(r.body));
+  // An install half-approved before its entry is revoked.
+  const halfDisplay = { ...swDisplay, software: { ...swDisplay.software, entryId: 'entry_half_0001' } };
+  const half = swPlan({ display: halfDisplay });
+  r = await submit(half);
+  const d1 = await decide(half.jobId, people.olivia);
+  check('(an install from entry_half_0001 is admitted and approved once)', r.status === 201 && d1.body?.status === 'AWAITING_APPROVAL', JSON.stringify([r.body, d1.body]));
+  r = await post('/internal/v1/software/entry_half_0001/revoke', {});
+  check('a software revocation needs a reason', r.status === 409 && r.body?.error === 'bad_request', JSON.stringify(r.body));
+  r = await post('/internal/v1/software/..%2Fpolicy/revoke', { reason: 'path games' });
+  check('an id that is not a catalog entry id → 404', r.status === 404, JSON.stringify(r.body));
+  r = await post('/internal/v1/software/entry_half_0001/revoke', { reason: 'archived: vendor withdrew 24.08' });
+  check('the portal can revoke a software catalog entry', r.status === 200 && r.body.status === 'REVOKED' && !!r.body.revokedAt, JSON.stringify(r.body));
+  const firstAt = r.body.revokedAt;
+  r = await post('/internal/v1/software/entry_half_0001/revoke', { reason: 'again' });
+  check('revoking again changes nothing: the first revocation stands', r.status === 200 && r.body.revokedAt === firstAt && JSON.parse(readFileSync(join(dir, 'software-revocations', 'entry_half_0001.json'), 'utf8')).reason === 'archived: vendor withdrew 24.08');
+  r = await decide(half.jobId, people.quinn);
+  check('an install approved halfway before the revocation is not signed after it (software_revoked)', r.status === 409 && r.body?.error === 'software_revoked', JSON.stringify(r.body));
+  r = await submit(swPlan({ display: halfDisplay }));
+  check('a new install from the revoked entry is refused at admission', r.status === 409 && r.body?.error === 'software_revoked', JSON.stringify(r.body));
+  const un = swPlan({ action: { id: 'windows.software.uninstall', version: 1 }, display: halfDisplay });
+  r = await submit(un);
+  check('an uninstall from it is still admitted (removing a withdrawn package is what an archive is for)', r.status === 201, JSON.stringify(r.body));
+
+  ({ st } = await statement());
+  check('the next statement lists the entry, seq up by one, asOf later', st && st.software.includes('entry_half_0001') && st.seq === seq0 + 1 && Date.parse(st.asOf) >= Date.parse(asOf0), JSON.stringify(st));
+  // Nothing on disk can shrink it: a revocation file that disappears stays published.
+  const victim = join(dir, 'script-revocations', `${revokedScripts[0]}.json`);
+  const kept = readFileSync(victim, 'utf8');
+  rmSync(victim);
+  ({ st } = await statement());
+  check('a revocation file removed from disk is still in the statement (revocations.json only grows)', st && st.scripts.includes(revokedScripts[0]) && st.seq === seq0 + 1, JSON.stringify(st));
+  writeFileSync(victim, kept, { mode: 0o600 });
+  r = await j(`${INTERNAL}/internal/v1/capabilities`);
+  check('capabilities say the signer publishes revocations', r.body?.revocations === 1, JSON.stringify(r.body));
+
+  // The CLI, on the signer's host: entries archived before 0.36 are revoked here.
+  const cliR = (args) => spawnSync(process.execPath, [join(dist, 'approval-signer', 'main.js'), ...args], { encoding: 'utf8', env: { ...process.env, APPROVAL_SIGNER_DIR: dir } });
+  let o = cliR(['software', 'revoke', '--entry', 'entry_old_00001']);
+  check('`software revoke` needs a reason', o.status !== 0);
+  o = cliR(['software', 'revoke', '--entry', 'entry_old_00001', '--reason', 'archived in 0.35']);
+  check('`software revoke` revokes an entry archived before 0.36', o.status === 0 && existsSync(join(dir, 'software-revocations', 'entry_old_00001.json')), o.stderr);
+  o = cliR(['software', 'revoke', '--entry', 'entry_old_00001', '--reason', 'twice']);
+  check('and refuses to do it twice', o.status !== 0);
+  o = cliR(['software', 'list']);
+  check('`software list` shows both, with who revoked them', o.status === 0 && /entry_half_0001 {2}revoked .* by portal/.test(o.stdout) && /entry_old_00001 {2}revoked .* by operator/.test(o.stdout), o.stdout);
+  o = cliR(['revocations', 'show']);
+  const shown = o.status === 0 ? JSON.parse(o.stdout) : null;
+  check('`revocations show` prints what the next statement will list', shown?.seq === seq0 + 2 && shown.software.includes('entry_old_00001') && shown.kid === keysDoc.keys[0].kid, o.stdout + o.stderr);
 }
 
 // ── restart: state survives, a used challenge stays used ───────────────────

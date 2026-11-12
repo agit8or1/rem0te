@@ -100,7 +100,9 @@ export function policyFor(policy: Policy, businessId: string) {
  * arguments against the entry's declared parameters — this process's copy,
  * not the portal's.
  */
-export function admitPlan(raw: unknown, policy: Policy, now: Date, scripts?: (id: string) => ScriptAllowRecord | null): { plan: Plan; digest: string } {
+export function admitPlan(
+  raw: unknown, policy: Policy, now: Date, scripts?: (id: string) => ScriptAllowRecord | null, softwareRevoked: (entryId: string) => boolean = () => false,
+): { plan: Plan; digest: string } {
   const parsed = Plan.safeParse(raw);
   if (!parsed.success) throw new Refused('invalid_plan', parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
   const p = parsed.data;
@@ -114,8 +116,24 @@ export function admitPlan(raw: unknown, policy: Policy, now: Date, scripts?: (id
   if (p.policy.approvalsRequired !== APPROVALS_REQUIRED[p.policy.risk]) throw new Refused('policy_mismatch', 'approvals required does not match the catalog risk');
   if (Date.parse(p.window.notAfter) <= now.getTime()) throw new Refused('window_closed');
   if (p.action.id === SCRIPT_RUN_ACTION) assertScriptAllowed(p, scripts);
+  assertSoftwareAllowed(p, softwareRevoked);
   return { plan: p, digest: planDigest(p) };
 }
+
+/**
+ * A software plan (0.36) must name the catalog entry it comes from — the
+ * agent keys a software revocation by that id — and an install from an
+ * entry this signer holds revoked is never signed. An uninstall still is:
+ * removing a withdrawn package is what an archive is usually for.
+ */
+export function assertSoftwareAllowed(p: Plan, softwareRevoked: (entryId: string) => boolean) {
+  if (!SOFTWARE_ACTIONS.includes(p.action.id)) return;
+  const id = p.display?.software?.entryId;
+  if (!id) throw new Refused('software_entry_missing', 'a software plan must name the catalog entry that is its source');
+  if (p.action.id === SOFTWARE_INSTALL_ACTION && softwareRevoked(id)) throw new Refused('software_revoked', 'this software catalog entry was archived; nothing from it is installed any more');
+}
+export const SOFTWARE_INSTALL_ACTION = 'windows.software.install';
+const SOFTWARE_ACTIONS = [SOFTWARE_INSTALL_ACTION, 'windows.software.uninstall'];
 
 /** A script-run plan against this signer's allowlist. Throws unless it may be signed. */
 export function assertScriptAllowed(p: Plan, scripts?: (id: string) => ScriptAllowRecord | null) {
@@ -418,4 +436,74 @@ export function recordScriptDecision(r: ScriptAllowRecord, m: RosterMember, deci
   if (decision === 'reject') { r.status = 'REJECTED'; return r.status; }
   if (new Set(r.decisions.filter((d) => d.decision === 'approve').map((d) => d.userId)).size >= SCRIPT_ALLOWLIST_APPROVALS) r.status = 'ACTIVE';
   return r.status;
+}
+
+// ── The revocation statement (v0.36) ───────────────────────────────────────
+// What an agent needs to refuse a plan that was signed before its script or
+// software entry was withdrawn: every revoked script CONTENT hash and every
+// revoked (archived) software catalog entry id, signed with the job-approval
+// key. The portal relays it and can withhold it, but cannot forge it, drop an
+// entry from it, or pass an old one off as new:
+//
+//   seq   the number of revocations it lists. Revocations are permanent, so
+//         the set only grows and seq only rises; an agent refuses a lower
+//         seq than it holds (rollback) and any statement that leaves out an
+//         entry it already holds.
+//   asOf  when this process signed it. An agent runs a plan only with a
+//         statement whose asOf is not older than the plan's signedAt — both
+//         are this process's clock — so a plan signed after a revocation can
+//         never run on an agent that has not seen that revocation, and a
+//         portal that never relays a statement gets nothing run at all.
+//
+// The domain prefix keeps this signature from ever being a plan's or a
+// policy's, though the key is the same.
+
+export const REVOCATION_SCHEMA = 'rem0te-revocations/1';
+export const REVOCATION_ENVELOPE_SCHEMA = 'rem0te-revocations-envelope/1';
+export const REVOCATION_SIGNING_PREFIX = 'rem0te-revocations-v1\n';
+/** The agent refuses a statement listing more (internal/action/revocation.go MaxRevocations). */
+export const MAX_REVOCATIONS = 5000;
+export const SOFTWARE_ENTRY_ID = /^[A-Za-z0-9_-]{8,64}$/;
+const HEX64 = /^[a-f0-9]{64}$/;
+
+export interface RevocationSet { scripts: string[]; software: string[] }
+export interface RevocationStatement extends RevocationSet { schema: typeof REVOCATION_SCHEMA; seq: number; asOf: string }
+export interface RevocationEnvelope { schema: typeof REVOCATION_ENVELOPE_SCHEMA; kid: string; statement: string; sig: string }
+
+const sortedUnique = (xs: string[]) => [...new Set(xs)].sort();
+
+/**
+ * The set to publish: everything held before, plus everything on disk now.
+ * A revocation file that has gone missing (it is never deleted by this
+ * process) therefore stays revoked: the statement never shrinks.
+ */
+export function mergeRevocations(prev: RevocationSet | null, cur: RevocationSet): RevocationSet {
+  const scripts = sortedUnique([...(prev?.scripts ?? []), ...cur.scripts].filter((h) => HEX64.test(h)));
+  const software = sortedUnique([...(prev?.software ?? []), ...cur.software].filter((id) => SOFTWARE_ENTRY_ID.test(id)));
+  if (scripts.length + software.length > MAX_REVOCATIONS) throw new Error(`more than ${MAX_REVOCATIONS} revocations: agents would refuse the statement`);
+  return { scripts, software };
+}
+
+export function revocationStatement(set: RevocationSet, now: Date): RevocationStatement {
+  return { schema: REVOCATION_SCHEMA, seq: set.scripts.length + set.software.length, asOf: now.toISOString(), scripts: set.scripts, software: set.software };
+}
+
+export function signRevocations(st: RevocationStatement, k: { key: KeyObject; kid: string }): RevocationEnvelope {
+  const bytes = Buffer.from(canonicalJson(st), 'utf8');
+  const sig = edSign(null, Buffer.concat([Buffer.from(REVOCATION_SIGNING_PREFIX, 'utf8'), bytes]), k.key);
+  return { schema: REVOCATION_ENVELOPE_SCHEMA, kid: k.kid, statement: bytes.toString('base64'), sig: sig.toString('base64') };
+}
+
+/** The statement inside an envelope, if this key signed it and it is well-formed; else null. The agent's own check is revocation.go. */
+export function verifyRevocations(env: unknown, k: { kid: string; publicKey: KeyObject }): RevocationStatement | null {
+  const e = env as Partial<RevocationEnvelope> | null;
+  if (!e || e.schema !== REVOCATION_ENVELOPE_SCHEMA || e.kid !== k.kid || typeof e.statement !== 'string' || typeof e.sig !== 'string') return null;
+  const bytes = Buffer.from(e.statement, 'base64');
+  let ok: boolean;
+  try { ok = edVerify(null, Buffer.concat([Buffer.from(REVOCATION_SIGNING_PREFIX, 'utf8'), bytes]), k.publicKey, Buffer.from(e.sig, 'base64')); } catch { ok = false; }
+  if (!ok) return null;
+  let st: RevocationStatement;
+  try { st = JSON.parse(bytes.toString('utf8')) as RevocationStatement; } catch { return null; }
+  if (st.schema !== REVOCATION_SCHEMA || !Array.isArray(st.scripts) || !Array.isArray(st.software) || st.seq !== st.scripts.length + st.software.length || Number.isNaN(Date.parse(st.asOf))) return null;
+  return st;
 }

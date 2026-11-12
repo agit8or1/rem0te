@@ -191,6 +191,8 @@ function runAgent(ep, jobId, item, { content, pwsh = PWSH, minute = '3s' } = {})
   const c = content ?? item.script?.content;
   if (c !== undefined) { const f = path.join(work, `script-${tag}.b64`); writeFileSync(f, c); args.push('-script', f); }
   if (pwsh) args.push('-pwsh', pwsh, '-script-minute', minute);
+  // 0.36: the agent fetches the signer's revocation statement from the portal's relay before each job.
+  args.push('-portal', `127.0.0.1:${PORT}`);
   return JSON.parse(execFileSync(SIM, args, { encoding: 'utf8' }).trim());
 }
 

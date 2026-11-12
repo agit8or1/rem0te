@@ -9,6 +9,7 @@ import { AccessPolicyService } from '../security-controls/access-policy.service'
 import { assertFresh } from '../security-controls/review';
 import { ActionsService } from '../actions/actions.service';
 import { SignerClient } from '../actions/signer.client';
+import { RevocationRelay } from '../actions/revocations.controller';
 import { SOFTWARE_INSTALL, SOFTWARE_UNINSTALL, SoftwareParams, type CatalogAction } from '../actions/catalog';
 import { Posture, MANAGER_LABEL } from '../patching/posture';
 import { readOnlyAgentRefusal } from '../common/platform';
@@ -66,6 +67,7 @@ export class SoftwareService {
     private readonly policy: AccessPolicyService,
     private readonly actions: ActionsService,
     private readonly signer: SignerClient,
+    private readonly relay: RevocationRelay,
   ) {}
 
   // ── Who may see and change an entry ───────────────────────────────────────
@@ -221,11 +223,26 @@ export class SoftwareService {
     const p = ArchiveEntryDto.safeParse(raw);
     if (!p.success) bad(p.error);
     assertFresh(freshMethod, { action: 'software.catalog' });
+    if (e.archivedAt || e.revision !== p.data.expectedRevision) throw new ConflictException({ code: 'ENTRY_CHANGED', message: 'This entry changed or was archived since you opened it.' });
+    // 0.36: archiving revokes the entry on the approval signer first, for
+    // good. Its next signed revocation statement names the entry, and an
+    // agent then refuses an install from it that was signed before the
+    // archive and is still inside its window. Without a signer no software
+    // plan was ever signed, so there is nothing to revoke. If the signer does
+    // not answer, nothing is archived: archiving here alone would leave
+    // delivered plans runnable.
+    let revokedOnSigner = false;
+    if (this.signer.configured()) {
+      const rv = await this.signer.revokeSoftware(e.id, p.data.reason);
+      if (rv.status !== 200 || rv.body.status !== 'REVOKED') throw new ConflictException({ code: 'APPROVAL_SIGNER_REFUSED', message: rv.body.message ?? rv.body.error ?? 'The approval signer did not revoke the entry, so it was not archived.' });
+      revokedOnSigner = true;
+      this.relay.invalidate();
+    }
     const r = await this.prisma.softwareCatalogEntry.updateMany({ where: { id: e.id, revision: p.data.expectedRevision, archivedAt: null }, data: { archivedAt: new Date(), updatedById: actor.userId, revision: { increment: 1 } } });
     if (!r.count) throw new ConflictException({ code: 'ENTRY_CHANGED', message: 'This entry changed or was archived since you opened it.' });
     await this.audit.log({
       tenantId: e.tenantId ?? actor.tenantId ?? undefined, customerId: e.customerId ?? undefined, actorId: actor.userId, actorIp: actor.ip, actorAgent: actor.userAgent,
-      action: 'SOFTWARE_CATALOG_ARCHIVED', resource: 'software_catalog_entry', resourceId: e.id, meta: { packageId: e.packageId, version: e.version, reason: p.data.reason },
+      action: 'SOFTWARE_CATALOG_ARCHIVED', resource: 'software_catalog_entry', resourceId: e.id, meta: { packageId: e.packageId, version: e.version, reason: p.data.reason, revokedOnSigner },
     });
     return this.view(actor, (await this.prisma.softwareCatalogEntry.findUnique({ where: { id: e.id } }))!);
   }

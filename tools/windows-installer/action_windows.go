@@ -93,10 +93,18 @@ func cmdAction(args []string) int {
 		fmt.Fprintf(out, "  action %s: approval keys unavailable: %v\n", *job, err)
 		return 4
 	}
+	// The signed revocation statement (v0.36), fetched for every job: the
+	// newest one decides. Unavailable is not an error here — internal/action
+	// then uses the newest it holds, and runs nothing signed after that one.
+	revs, rerr := agent.FetchRevocations(agent.Options{PortalHost: pinnedPortal(), Paths: paths})
+	if rerr != nil {
+		revs = nil
+		fmt.Fprintf(out, "  action %s: revocation statement unavailable: %v\n", *job, rerr)
+	}
 	wa := &winActions{paths: paths}
 	o := action.Options{StateDir: paths.StateDir, Keys: keys, Platform: wa, Now: time.Now,
 		WUA: winWUA{paths: paths}, Registry: winRegistry{}, Pause: pause, Maint: wa, ScriptContent: script,
-		Winget: winLocatedWinget{}, Software: winSoftware{}}
+		Winget: winLocatedWinget{}, Software: winSoftware{}, Revocations: revs}
 	// Windows PowerShell 5.1 from System32, by absolute path (v0.34).
 	if d, err := windows.GetSystemDirectory(); err == nil {
 		o.Scripts = action.ExecHost{PowerShell: filepath.Join(d, "WindowsPowerShell", "v1.0", "powershell.exe")}
