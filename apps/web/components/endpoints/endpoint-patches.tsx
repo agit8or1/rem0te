@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { AlertTriangle, Download, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
 
 /**
  * Windows Update posture of one computer (v0.27), as its signed agent's
@@ -49,7 +50,11 @@ export interface Patches {
   updates: PatchUpdate[]; history: History[];
   basic: { checkedAt: string | null; rebootRequired: boolean | null; updates: { title: string; kb: string | null; severity: string | null; sizeBytes: number | null }[] } | null;
   /** 0.32: whether Install updates is offered here, and if not, why and what to do. */
-  install: { possible: boolean; reason: string | null; fix: string | null; installable: number };
+  install: {
+    possible: boolean; reason: string | null; fix: string | null; installable: number;
+    // 0.34: the fix is the Agent card's button, or a page to read.
+    fixAction?: 'agent-card'; fixLink?: { href: string; label: string } | null;
+  };
 }
 
 const REBOOT_SOURCE: Record<string, string> = {
@@ -114,24 +119,25 @@ function apiMessage(e: unknown, fallback: string) {
  * deployment; its plan awaits two approvals on the approval signer. When it
  * is not possible: the reason and the next step, never a disabled button.
  */
-function InstallUpdates({ endpointId, p }: { endpointId: string; p: Patches }) {
+function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string; p: Patches; onOpenAgentCard?: () => void }) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [reason, setReason] = useState('');
   const [windowHours, setWindowHours] = useState(8);
+  const [reboot, setReboot] = useState<RebootRule>('never');
   const [done, setDone] = useState<{ approvalUrl: string; deploymentId: string } | null>(null);
   const installable = p.updates.filter((u) => u.installable);
   const go = useMutation({
     mutationFn: () => patchingApi.install(endpointId, {
       updates: installable.filter((u) => picked.has(`${u.updateId}@${u.revision}`)).map((u) => ({ updateId: u.updateId, revision: u.revision })),
-      reboot: 'never', reason: reason.trim(), windowHours,
+      reboot, reason: reason.trim(), windowHours,
     }),
     onSuccess: (r) => {
       const d = r.data.data as { job: { approvalUrl: string }; deployment: { id: string } };
       setDone({ approvalUrl: d.job.approvalUrl, deploymentId: d.deployment.id });
-      setOpen(false); setPicked(new Set()); setReason('');
+      setOpen(false); setPicked(new Set()); setReason(''); setReboot('never');
       qc.invalidateQueries({ queryKey: ['endpoint-patches', endpointId] });
       toast({ title: 'Install requested', description: 'It awaits two approvals on the approval signer.' });
     },
@@ -148,7 +154,14 @@ function InstallUpdates({ endpointId, p }: { endpointId: string; p: Patches }) {
         <CardContent className="space-y-1 text-xs">
           <p><strong>Not available on this computer.</strong> {p.install.reason}</p>
           {p.install.fix && (
-            <p className="text-muted-foreground">What to do: {p.install.fix}{/Patching setup/.test(p.install.fix) && <> See <Link className="underline" href="/docs/patching-setup">Patching setup</Link>.</>}</p>
+            <p className="text-muted-foreground">
+              What to do: {p.install.fix}
+              {p.install.fixLink && <> See <Link className="underline" href={p.install.fixLink.href}>{p.install.fixLink.label}</Link>.</>}
+              {!p.install.fixLink && /Patching setup/.test(p.install.fix) && <> See <Link className="underline" href="/docs/patching-setup">Patching setup</Link>.</>}
+            </p>
+          )}
+          {p.install.fixAction === 'agent-card' && onOpenAgentCard && (
+            <Button size="sm" variant="outline" className="mt-1 h-7 text-xs" onClick={onOpenAgentCard} data-testid="open-agent-card">Open the Agent card</Button>
           )}
           {requested}
         </CardContent>
@@ -182,13 +195,7 @@ function InstallUpdates({ endpointId, p }: { endpointId: string; p: Patches }) {
               })}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
-              <div className="space-y-1">
-                <Label htmlFor="inst-reboot" className="text-xs">Restart</Label>
-                {/* The only rule this release has: a restart option is a change to the agent's closed parameters, not a UI switch. */}
-                <select id="inst-reboot" className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value="never" onChange={() => undefined}>
-                  <option value="never">Never restart (someone restarts it later)</option>
-                </select>
-              </div>
+              <RebootChoice id="inst-reboot" value={reboot} onChange={setReboot} scope="plan" />
               <div className="space-y-1">
                 <Label htmlFor="inst-window" className="text-xs">Window to run in (hours)</Label>
                 <Input id="inst-window" type="number" min={1} max={24} value={windowHours} onChange={(e) => setWindowHours(Math.min(24, Math.max(1, Number(e.target.value) || 1)))} />
@@ -212,7 +219,7 @@ function InstallUpdates({ endpointId, p }: { endpointId: string; p: Patches }) {
   );
 }
 
-export function EndpointPatches({ endpointId }: { endpointId: string }) {
+export function EndpointPatches({ endpointId, onOpenAgentCard }: { endpointId: string; onOpenAgentCard?: () => void }) {
   const { toast } = useToast();
   const qc = useQueryClient();
   // A basic scan has no request marker on the server, so poll for a while after Scan now.
@@ -237,7 +244,7 @@ export function EndpointPatches({ endpointId }: { endpointId: string }) {
     return (
       <div className="space-y-4">
         <PatchSummaryCard s={p.summary} />
-        <InstallUpdates endpointId={endpointId} p={p} />
+        <InstallUpdates endpointId={endpointId} p={p} onOpenAgentCard={onOpenAgentCard} />
         <Card>
           <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Windows Update</CardTitle>
@@ -250,7 +257,7 @@ export function EndpointPatches({ endpointId }: { endpointId: string }) {
               {b?.checkedAt ? `Last scanned ${formatDate(b.checkedAt)}` : 'Not scanned yet — the agent scans automatically within 12 hours of its first check-in.'}
             </p>
             {b?.rebootRequired && (
-              <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending. Rem0te never restarts a computer.</p>
+              <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending. Rem0te restarts a computer only when an approved update install with the in-window restart rule does it.</p>
             )}
             {b?.checkedAt && <p className="text-xs">{b.updates.length === 0 ? 'Windows Update offers nothing.' : `${b.updates.length} update${b.updates.length === 1 ? '' : 's'} offered.`}</p>}
             <p className="text-xs text-muted-foreground">
@@ -281,7 +288,7 @@ export function EndpointPatches({ endpointId }: { endpointId: string }) {
   return (
     <div className="space-y-4">
       <PatchSummaryCard s={p.summary} />
-      <InstallUpdates endpointId={endpointId} p={p} />
+      <InstallUpdates endpointId={endpointId} p={p} onOpenAgentCard={onOpenAgentCard} />
       <Card>
         <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Windows Update</CardTitle>
@@ -302,7 +309,7 @@ export function EndpointPatches({ endpointId }: { endpointId: string }) {
             </div>
           )}
           {p.reboot?.pending && (
-            <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending ({p.reboot.sources.map((s) => REBOOT_SOURCE[s] ?? s).join(', ')}). Rem0te never restarts a computer; installed updates take effect after someone does.</p>
+            <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending ({p.reboot.sources.map((s) => REBOOT_SOURCE[s] ?? s).join(', ')}). Installed updates take effect after a restart: someone restarts it, or an approved install with the in-window restart rule does.</p>
           )}
           <p className="text-xs">
             {p.updates.length === 0 ? 'Windows Update offers nothing.' : `${p.updates.length} offered, ${installable.length} installable by a deployment.`}{' '}

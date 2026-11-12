@@ -86,7 +86,7 @@ export const patchingApi = {
   candidates: (businessId: string) => api.get('/patching/candidates', { params: { businessId } }),
   list: (businessId: string) => api.get('/patching/deployments', { params: { businessId } }),
   get: (id: string) => api.get(`/patching/deployments/${id}`),
-  create: (body: { businessId: string; name: string; updates: UpdateIdentity[]; rings: string[][]; soakHours: number; failureThreshold: number; windowHours: number }) =>
+  create: (body: { businessId: string; name: string; updates: UpdateIdentity[]; rings: string[][]; soakHours: number; failureThreshold: number; windowHours: number; reboot?: 'never' | 'if_required_in_window' }) =>
     api.post('/patching/deployments', body),
   requestRing: (id: string, ring: number, body: { reason: string; startsInMinutes?: number; exclude?: { endpointId: string; why: string }[] }) =>
     api.post(`/patching/deployments/${id}/rings/${ring}/request`, body),
@@ -95,7 +95,7 @@ export const patchingApi = {
   cancel: (id: string, reason: string) => api.post(`/patching/deployments/${id}/cancel`, { reason }),
   // 0.32. "Install updates" builds a one-computer deployment; its canary
   // still needs two approvals on the approval signer.
-  install: (endpointId: string, body: { updates: UpdateIdentity[]; reboot: 'never'; reason: string; windowHours: number }) =>
+  install: (endpointId: string, body: { updates: UpdateIdentity[]; reboot: 'never' | 'if_required_in_window'; reason: string; windowHours: number }) =>
     api.post(`/endpoints/${endpointId}/patches/install`, body),
   preflight: () => api.get('/patching/preflight'),
   policies: (businessId: string) => api.get('/patching/policies', { params: { businessId } }),
@@ -105,12 +105,50 @@ export const patchingApi = {
   revokePolicy: (id: string, reason: string) => api.post(`/patching/policies/${id}/revoke`, { reason }),
 };
 
+// 0.34 software deployment (docs/software-deployment.md). The catalog is
+// allowlisted winget packages pinned to one version and installer SHA-256.
+// Changing it needs a fresh sign-in (the interceptor prompts). There is no
+// approve route: each ring's plan is approved on the approval signer.
+export type SoftwareDetection =
+  | { kind: 'display_name'; name: string; match: 'exact' | 'prefix'; compare: 'gte' | 'eq'; version: string }
+  | { kind: 'uninstall_key'; key: string; compare: 'gte' | 'eq'; version: string }
+  | { kind: 'file_version'; base: 'ProgramFiles' | 'ProgramFilesX86'; file: string; compare: 'gte' | 'eq'; version: string };
+export type SoftwareHash =
+  | { source: 'winget_pkgs'; architecture: 'x64' | 'x86' | 'arm64' | 'neutral'; installerSha256?: string }
+  | { source: 'admin_pasted'; installerSha256: string };
+export interface SoftwareEntryInput { name: string; publisher?: string; version: string; hash: SoftwareHash; detection: SoftwareDetection; notes?: string }
+export const softwareApi = {
+  list: (businessId?: string | null, archived?: boolean) =>
+    api.get('/software/catalog', { params: { ...(businessId ? { businessId } : {}), ...(archived ? { archived: '1' } : {}) } }),
+  get: (id: string) => api.get(`/software/catalog/${id}`),
+  create: (body: SoftwareEntryInput & { scope: 'global' | 'business'; businessId?: string; packageId: string }) => api.post('/software/catalog', body),
+  update: (id: string, body: SoftwareEntryInput & { expectedRevision: number }) => api.post(`/software/catalog/${id}`, body),
+  archive: (id: string, body: { reason: string; expectedRevision: number }) => api.post(`/software/catalog/${id}/archive`, body),
+  manifestPreview: (body: { packageId: string; version: string }) => api.post('/software/manifest-preview', body),
+  deployments: (businessId?: string | null) => api.get('/software/deployments', bq(businessId)),
+  deployment: (id: string) => api.get(`/software/deployments/${id}`),
+  createDeployment: (body: { entryId: string; operation: 'install' | 'uninstall'; name?: string; rings: string[][]; soakHours: number; failureThreshold: number; windowHours: number }) =>
+    api.post('/software/deployments', body),
+  requestRing: (id: string, ring: number, body: { reason: string; startsInMinutes?: number; exclude?: { endpointId: string; why: string }[] }) =>
+    api.post(`/software/deployments/${id}/rings/${ring}/request`, body),
+  pause: (id: string, reason: string) => api.post(`/software/deployments/${id}/pause`, { reason }),
+  resume: (id: string, reason: string) => api.post(`/software/deployments/${id}/resume`, { reason }),
+  cancel: (id: string, reason: string) => api.post(`/software/deployments/${id}/cancel`, { reason }),
+  endpoint: (endpointId: string) => api.get(`/endpoints/${endpointId}/software/catalog`),
+  // One computer: a one-ring deployment; the returned job carries the approval link.
+  single: (endpointId: string, entryId: string, operation: 'install' | 'uninstall', body: { reason: string; windowHours: number; startsInMinutes?: number }) =>
+    api.post(`/endpoints/${endpointId}/software/${entryId}/${operation}`, body),
+  // The report (report-kit's useReport/ExportButton call the same two routes).
+  compliance: (params: Record<string, string>) => api.get('/reports/software-compliance', { params }),
+  complianceCsv: (params: Record<string, string>) => api.get('/reports/software-compliance/export.csv', { params, responseType: 'blob' }),
+};
+
 export interface PatchPolicyInput {
   businessId: string; name: string; rings: string[][];
   allow: { classifications: string[]; severities?: string[]; excludeKbs?: string[] };
   soakHours: number; failureThreshold: number;
   window: { days: string[]; start: string; end: string; timezone: string };
-  reboot: 'never'; expiresInDays: number; reason: string;
+  reboot: 'never' | 'if_required_in_window'; expiresInDays: number; reason: string;
 }
 
 // ─── Endpoints ───────────────────────────────────────────────────────────────
@@ -155,6 +193,8 @@ export const endpointsApi = {
   update: (id: string, data: Record<string, unknown>) => api.patch(`/endpoints/${id}`, data),
   archive: (id: string) => api.patch(`/endpoints/${id}/archive`),
   restore: (id: string) => api.patch(`/endpoints/${id}/restore`),
+  /** 0.34: whether the AI summary can be requested through ClientSt0r, and exactly what would be sent. */
+  timelineStatus: (id: string) => api.get(`/endpoints/${id}/timeline`),
   generateTimeline: (id: string) => api.post(`/endpoints/${id}/timeline/generate`),
   saveTimeline: (id: string, aiTimeline: string) => api.patch(`/endpoints/${id}`, { aiTimeline }),
   getPassword: (id: string) => api.get(`/endpoints/${id}/password`),
@@ -174,6 +214,12 @@ export const endpointsApi = {
   // Metric history (0.33): CPU, memory and disk over 24h | 7d | 30d | 90d.
   // Gaps come back as intervals; nothing is interpolated.
   metrics: (id: string, range: string) => api.get(`/endpoints/${id}/metrics`, { params: { range } }),
+  // Chat (0.34): the person at the computer, through the signed Windows agent.
+  chat: (id: string) => api.get(`/endpoints/${id}/chat`),
+  chatTranscript: (id: string, cid: string) => api.get(`/endpoints/${id}/chat/conversations/${cid}`),
+  chatStart: (id: string, supportRequestId?: string) => api.post(`/endpoints/${id}/chat/conversations`, supportRequestId ? { supportRequestId } : {}),
+  chatSend: (id: string, cid: string, text: string) => api.post(`/endpoints/${id}/chat/conversations/${cid}/messages`, { text }),
+  chatEnd: (id: string, cid: string) => api.post(`/endpoints/${id}/chat/conversations/${cid}/end`, {}),
   // Queues a re-collection for the endpoint's next heartbeat — up to ~3
   // minutes away. Nothing is synchronous here.
   refreshInventory: (id: string) => api.post(`/endpoints/${id}/inventory/refresh`, {}),
@@ -181,6 +227,13 @@ export const endpointsApi = {
   // keeping its config, password and enrolment. The only way to refresh the
   // agent on a computer whose RustDesk client is already current.
   reinstallAgent: (id: string) => api.post(`/endpoints/${id}/reinstall-agent`, {}),
+  // 0.34 Agent card: what the computer runs, and updating or upgrading it.
+  // Upgrading needs a fresh sign-in (the interceptor asks) and a reason.
+  agent: (id: string) => api.get(`/endpoints/${id}/agent`),
+  updateAgent: (id: string) => api.post(`/endpoints/${id}/agent/update`, {}),
+  migrateAgent: (id: string, reason: string) => api.post(`/endpoints/${id}/agent/migrate`, { reason }),
+  cancelAgentMigration: (id: string) => api.post(`/endpoints/${id}/agent/migrate/cancel`, {}),
+  agentMigrations: (params?: { state?: string; businessId?: string }) => api.get('/agent-migrations', { params }),
   // Trust the new device secret a computer is heartbeating with after its
   // bound one stopped matching (e.g. an installer re-run that lost it).
   acceptDeviceSecret: (id: string) => api.post(`/endpoints/${id}/accept-device-secret`, {}),
@@ -613,7 +666,7 @@ export const updateTrustApi = {
 
 // Containment (0.28): global write pause and business suspension. Setting
 // needs no step-up; lifting does (the interceptor prompts and retries).
-export type ContainmentKind = 'actions' | 'remote' | 'updates' | 'integration';
+export type ContainmentKind = 'actions' | 'remote' | 'updates' | 'integration' | 'notifications';
 export const containmentApi = {
   state: () => api.get('/containment'),
   banner: () => api.get('/containment/banner'),
@@ -669,6 +722,8 @@ export const securityControlsApi = {
 export type MonitorScope = 'global' | 'business' | 'site' | 'endpoint';
 export type Severity = 'INFO' | 'WARNING' | 'CRITICAL';
 export type MonitorKindId = 'OFFLINE' | 'DISK_FREE' | 'CPU_HIGH' | 'MEMORY_HIGH' | 'SERVICE_STOPPED' | 'EVENT_MATCH' | 'REBOOT_PENDING';
+/** A notification destination: a webhook, or (0.34) a confirmed email recipient of the policy's own scope. */
+export type NotifyDestination = { label: string; url: string } | { label: string; recipientId: string };
 const bq = (businessId?: string | null) => ({ params: businessId ? { businessId } : {} });
 export const monitoringApi = {
   summary: (businessId?: string | null) => api.get('/monitoring/summary', bq(businessId)),
@@ -691,7 +746,7 @@ export const monitoringApi = {
     api.post('/monitoring/suppressions', data),
   revokeSuppression: (id: string) => api.post(`/monitoring/suppressions/${id}/revoke`),
   policy: (businessId?: string | null) => api.get('/monitoring/notify-policy', bq(businessId)),
-  setPolicy: (data: { scope: 'global' | 'business'; businessId?: string; levels: { afterMinutes: number; minSeverity: Severity; destinations: { label: string; url: string }[] }[]; ticketing: { enabled: boolean; minSeverity: Severity } }) =>
+  setPolicy: (data: { scope: 'global' | 'business'; businessId?: string; levels: { afterMinutes: number; minSeverity: Severity; destinations: NotifyDestination[] }[]; ticketing: { enabled: boolean; minSeverity: Severity } }) =>
     api.put('/monitoring/notify-policy', data),
   endpoint: (id: string) => api.get(`/monitoring/endpoints/${id}`),
 };
@@ -734,6 +789,45 @@ export const clientUpdatesApi = {
   computers: (businessId?: string | null) => api.get('/client-updates/computers', bq(businessId)),
 };
 
+// Outbound email (0.34). Saving the relay, and adding, re-sending or removing
+// a recipient, need fresh authentication (the interceptor prompts and retries).
+export type TlsMode = 'implicit' | 'starttls' | 'none';
+export interface SmtpSettingsView {
+  configured: boolean; enabled: boolean; host?: string; port?: number; tlsMode?: TlsMode; username?: string | null; passwordSet?: boolean;
+  fromAddress?: string; fromName?: string | null; updatedAt?: string; lastTestAt?: string | null; lastTestResult?: string | null;
+  localRelay: 'none' | 'loopback' | 'private'; passwordChange?: string;
+}
+export interface EmailRecipientView {
+  id: string; scopeKey: string; businessId: string | null; address: string; label: string | null; verified: boolean;
+  verifiedAt: string | null; lastSentAt: string | null; tokenExpiresAt: string | null; createdAt: string;
+}
+export const emailApi = {
+  status: () => api.get('/email/status'),
+  settings: () => api.get('/email/settings'),
+  saveSettings: (data: { enabled: boolean; host: string; port: number; tlsMode: TlsMode; username?: string | null; password?: string | null; fromAddress: string; fromName?: string | null }) =>
+    api.put('/email/settings', data),
+  test: (recipientId?: string) => api.post('/email/settings/test', recipientId ? { recipientId } : {}),
+  recipients: (scope: 'global' | 'business', businessId?: string | null) => api.get('/email/recipients', { params: { scope, ...(businessId ? { businessId } : {}) } }),
+  addRecipient: (data: { scope: 'global' | 'business'; businessId?: string; address: string; label?: string }) => api.post('/email/recipients', data),
+  resend: (id: string) => api.post(`/email/recipients/${id}/resend`),
+  removeRecipient: (id: string) => api.delete(`/email/recipients/${id}`),
+  verify: (token: string) => api.post('/email/verify', { token }),
+};
+
+// Scheduled reports (0.34). Creating or changing one needs fresh authentication.
+export type ScheduledReportKey = 'patch-compliance' | 'agent-coverage' | 'alert-frequency' | 'offline-time';
+export interface ReportScheduleInput {
+  report: ScheduledReportKey; businessId?: string | null; siteId?: string | null; silentDays?: number;
+  frequency: 'weekly' | 'monthly'; dayOfWeek?: number | null; dayOfMonth?: number | null; time: string; timeZone: string;
+  attachCsv: boolean; recipientIds: string[]; enabled?: boolean;
+}
+export const reportSchedulesApi = {
+  list: (businessId?: string | null) => api.get('/reports/schedules', bq(businessId)),
+  create: (data: ReportScheduleInput) => api.post('/reports/schedules', data),
+  update: (id: string, data: Partial<ReportScheduleInput>) => api.patch(`/reports/schedules/${id}`, data),
+  remove: (id: string) => api.delete(`/reports/schedules/${id}`),
+};
+
 // API keys for the public API (/api/v1/pub/v1, docs/PUBLIC-API.md). The raw key is returned once, at creation.
 export const API_KEY_SCOPES = [
   'companies:read', 'companies:write', 'users:read', 'users:write',
@@ -765,4 +859,16 @@ export const scriptsApi = {
   withdraw: (id: string, version: number) => api.post(`/scripts/${id}/versions/${version}/withdraw`),
   review: (id: string, version: number, data: { decision: 'approve' | 'reject'; expectedSha256: string; note: string }) =>
     api.post(`/scripts/${id}/versions/${version}/review`, data),
+};
+
+// Running an approved library version (0.34). The portal proposes a version to
+// the approval signer's own allowlist and requests runs; it cannot add to the
+// allowlist or approve a run — both happen on the approval signer's page.
+export type ScriptArgument = string | number | boolean;
+export const scriptRunsApi = {
+  readiness: (versionId: string) => api.get(`/script-runs/versions/${versionId}`),
+  propose: (versionId: string) => api.post(`/script-runs/versions/${versionId}/allowlist`),
+  revoke: (versionId: string, reason: string) => api.post(`/script-runs/versions/${versionId}/allowlist/revoke`, { reason }),
+  run: (data: { scriptVersionId: string; endpointIds: string[]; parameters: Record<string, ScriptArgument>; timeoutMinutes: number; reason: string; windowHours?: number }) =>
+    api.post('/script-runs', data),
 };

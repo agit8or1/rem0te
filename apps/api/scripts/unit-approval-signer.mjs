@@ -16,6 +16,8 @@ import { createRequire } from 'node:module';
 import { generateKeyPairSync, verify, createPublicKey, randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { syntheticPasskey } from './lib/synthetic-passkey.mjs';
+import { deviceKey, signStatement, resultStatement, scanStatement } from './lib/device-sign.mjs';
+import { createHash } from 'node:crypto';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -62,6 +64,7 @@ const INTERNAL = `http://127.0.0.1:${s.internal.address().port}`;
 const PUBLIC = `http://127.0.0.1:${s.pub.address().port}`;
 
 const jobId = () => randomBytes(16).toString('hex');
+const UPD_ID = { updateId: '5a1b2c3d-0000-4000-8000-000000000001', revision: 201 };
 const AGENT_SHA = 'a'.repeat(64);
 function plan({ biz = BIZ_A, deviceClass = 'WORKSTATION', customerSignoff = false, risk, approvalsRequired, hours = 4, origin = { kind: 'technician', ticketRef: null }, ...over } = {}) {
   const now = Date.now();
@@ -101,6 +104,12 @@ function verifyEnvelope(env) {
   return ok ? JSON.parse(bytes.toString('utf8')) : null;
 }
 
+// 0.34: a software plan, as the portal builds one from a catalog entry.
+const SW = { packageId: '7zip.7zip', version: '24.08', installerSha256: 'e'.repeat(64), scope: 'machine', detection: { kind: 'display_name', name: '7-Zip', match: 'prefix', compare: 'gte', version: '24.08' } };
+const swDisplay = { updates: [], deployment: null, software: { name: '7-Zip', publisher: 'Igor Pavlov', hashSource: 'winget_pkgs', manifestSha256: 'f'.repeat(64), entryId: 'entry_7zip_0001', entryRevision: 1 } };
+const swTarget = { endpointId: 'ep_frontdesk_a', businessId: BIZ_A, businessName: 'Acme', hostname: 'FRONTDESK', deviceClass: 'WORKSTATION', rustdeskId: '123456789', deviceSecretSha256: 'b'.repeat(64) };
+const swPlan = (over = {}) => plan({ action: { id: 'windows.software.install', version: 1 }, params: SW, risk: 'high', display: swDisplay, ...over });
+
 // ── admission: the portal's claims about policy are re-derived ─────────────
 check('keys document lists one 16-hex kid', keysDoc.schema === 'rem0te-approval-keys/1' && /^[0-9a-f]{16}$/.test(keysDoc.keys[0]?.kid));
 for (const [name, p, code] of [
@@ -123,9 +132,41 @@ for (const [name, p, code] of [
   ['a restart plan with a window over 2 hours', plan({ action: { id: 'windows.reboot.schedule', version: 1 }, params: { delayMinutes: 30 }, risk: 'high', hours: 3 }), null],
   ['a log collection naming a path', plan({ action: { id: 'windows.logs.collect', version: 1 }, params: { log: 'C:\\Windows\\System32\\config\\SAM' }, risk: 'high' }), null],
   ['a restart cancel with parameters', plan({ action: { id: 'windows.reboot.cancel', version: 1 }, params: { all: true }, risk: 'high' }), null],
+  // 0.34: an update plan's restart rule is one of two fixed strings, with nothing beside it.
+  ...[['always'], ['if_required'], [''], [true], [{ delayMinutes: 5 }]].map(([rb]) => [`an update plan with restart rule ${JSON.stringify(rb)}`, plan({ action: { id: 'windows.update.install', version: 1 }, params: { updates: [UPD_ID], reboot: rb }, risk: 'high' }), null]),
+  ['an update plan with a restart delay beside the rule', plan({ action: { id: 'windows.update.install', version: 1 }, params: { updates: [UPD_ID], reboot: 'if_required_in_window', delayMinutes: 1 }, risk: 'high' }), null],
+  ['an update plan with a restart message beside the rule', plan({ action: { id: 'windows.update.install', version: 1 }, params: { updates: [UPD_ID], reboot: 'if_required_in_window', message: 'click here' }, risk: 'high' }), null],
+  ['an update plan with no restart rule', plan({ action: { id: 'windows.update.install', version: 1 }, params: { updates: [UPD_ID] }, risk: 'high' }), null],
+  // 0.34 software: closed params, charset-checked, high impact, at most 25 computers.
+  ['a software install claimed as low risk', swPlan({ risk: 'low', approvalsRequired: 1 }), 'risk_mismatch'],
+  ['a software install with one approval', swPlan({ approvalsRequired: 1 }), 'too_few_approvals_required'],
+  ['a software install with a shell separator in the package id', swPlan({ params: { ...SW, packageId: '7zip.7zip;calc' } }), null],
+  ['a software install whose package id is a flag', swPlan({ params: { ...SW, packageId: '--override.x' } }), null],
+  ['a software install whose version is a flag', swPlan({ params: { ...SW, version: '--force' } }), null],
+  ['a software install with an upper-case hash', swPlan({ params: { ...SW, installerSha256: SW.installerSha256.toUpperCase() } }), null],
+  ['a software install for one user', swPlan({ params: { ...SW, scope: 'user' } }), null],
+  ['a software install with installer arguments', swPlan({ params: { ...SW, args: '/S /D=C:\\evil' } }), null],
+  ['a software install with no detection rule', swPlan({ params: { packageId: SW.packageId, version: SW.version, installerSha256: SW.installerSha256, scope: 'machine' } }), null],
+  ['a software install whose detection file leaves Program Files', swPlan({ params: { ...SW, detection: { kind: 'file_version', base: 'ProgramFiles', file: '..\\Windows\\cmd.exe', compare: 'gte', version: '1' } } }), null],
+  ['a software install whose detection runs something', swPlan({ params: { ...SW, detection: { kind: 'script', script: 'Get-Item' } } }), null],
+  ['a software uninstall on 26 computers', swPlan({ action: { id: 'windows.software.uninstall', version: 1 }, targets: Array.from({ length: 26 }, (_, i) => ({ ...swTarget, endpointId: `ep_ring_${String(i).padStart(4, '0')}`, rustdeskId: String(100000000 + i) })) }), null],
 ]) {
   const r = await submit(p);
   check(`admission refuses ${name}`, r.status === 409 && (!code || r.body?.error === code), JSON.stringify(r.body));
+}
+
+// ── 0.34: an update plan that restarts in its window is admitted and says so ──
+{
+  const pu = plan({ action: { id: 'windows.update.install', version: 1 }, params: { updates: [UPD_ID], reboot: 'if_required_in_window' }, risk: 'high' });
+  const su = await submit(pu);
+  check('an update plan with the in-window restart rule (high, two approvals) is admitted', su.status === 201, JSON.stringify(su.body));
+  const html = await (await fetch(`${PUBLIC}/approve/${pu.jobId}`)).text();
+  check('its approval page says it restarts if required, with the fixed warning, and that this has not run on real Windows',
+    /restarting if Windows requires it/.test(html) && /15-minute warning/.test(html) && /not yet run on a real Windows computer/.test(html) && !/never restarting/.test(html));
+  const pn = plan({ action: { id: 'windows.update.install', version: 1 }, params: { updates: [UPD_ID], reboot: 'never' }, risk: 'high' });
+  check('a never-restart update plan is admitted', (await submit(pn)).status === 201);
+  check('and its page says never restarting', /never restarting/.test(await (await fetch(`${PUBLIC}/approve/${pn.jobId}`)).text()));
+  check('an update plan under-stated as low risk is refused (installs are high on any computer)', (await submit(plan({ action: { id: 'windows.update.install', version: 1 }, params: { updates: [UPD_ID], reboot: 'if_required_in_window' } }))).body?.error === 'risk_mismatch');
 }
 
 // ── 0.32: a scheduled restart needs two distinct approvers, even on a workstation ──
@@ -143,6 +184,31 @@ for (const [name, p, code] of [
   const signedPlan = verifyEnvelope(d.body?.envelope ?? (await j(`${INTERNAL}/internal/v1/plans/${pr.jobId}`)).body?.envelope);
   check('a second, different approver signs it; the envelope carries the delay and both approvers',
     d.body?.status === 'SIGNED' && signedPlan?.params?.delayMinutes === 30 && signedPlan.approvers.length === 2, JSON.stringify(d.body).slice(0, 200));
+}
+
+// ── 0.34: a software install needs two distinct approvers; the page shows the pin ──
+{
+  const pr = swPlan();
+  const sr = await submit(pr);
+  check('a software install (high, two approvals, closed params) is admitted', sr.status === 201, JSON.stringify(sr.body));
+  const html3 = await (await fetch(`${PUBLIC}/approve/${pr.jobId}`)).text();
+  check('its approval page shows the package, version, pinned SHA-256, where it came from and the detection rule',
+    html3.includes('7zip.7zip') && html3.includes('24.08') && html3.includes('e'.repeat(64)) && /read from the winget-pkgs manifest/.test(html3) && /Detection rule/.test(html3) && /Igor Pavlov/.test(html3));
+  const pasted = swPlan({ display: { ...swDisplay, software: { ...swDisplay.software, hashSource: 'admin_pasted', manifestSha256: null } } });
+  await submit(pasted);
+  const html4 = await (await fetch(`${PUBLIC}/approve/${pasted.jobId}`)).text();
+  check('a pasted hash is shown as typed in by the catalog\'s editor', /typed in by the catalog(&#39;|')s editor/.test(html4));
+  let d = await decide(pr.jobId, people.olivia);
+  check('one approval does not sign a software install', d.status === 200 && d.body.status === 'AWAITING_APPROVAL', JSON.stringify(d.body));
+  d = await decide(pr.jobId, people.olivia);
+  check('the same approver cannot count twice for a software install', d.status === 409, JSON.stringify(d.body));
+  d = await decide(pr.jobId, people.quinn);
+  const signedPlan = verifyEnvelope(d.body?.envelope ?? (await j(`${INTERNAL}/internal/v1/plans/${pr.jobId}`)).body?.envelope);
+  check('a second, different approver signs it; the envelope carries exactly the closed params and both approvers',
+    d.body?.status === 'SIGNED' && canonicalJson(signedPlan?.params ?? null) === canonicalJson(SW) && signedPlan.approvers.length === 2, JSON.stringify(d.body).slice(0, 200));
+  const ring = swPlan({ action: { id: 'windows.software.uninstall', version: 1 }, targets: Array.from({ length: 25 }, (_, i) => ({ ...swTarget, endpointId: `ep_ring_${String(i).padStart(4, '0')}`, rustdeskId: String(100000000 + i) })) });
+  const rr = await submit(ring);
+  check('a software uninstall ring of 25 computers is admitted', rr.status === 201, JSON.stringify(rr.body));
 }
 
 // ── low risk: one roster approver, not the requester ───────────────────────
@@ -271,6 +337,172 @@ check('a canceled plan cannot be approved', r.status === 409);
 const cancelSigned = await j(`${INTERNAL}/internal/v1/plans/${p1.jobId}/cancel`, { method: 'POST' });
 check('canceling a signed plan does not unsign it (the portal stops delivery instead)', cancelSigned.body.status === 'SIGNED');
 
+// ── 0.34: the script allowlist, and runs against it ────────────────────────
+{
+  const sr = require(join(dist, 'actions', 'script-run.js'));
+  const hex32 = () => randomBytes(16).toString('hex');
+  const CONTENT = 'param([Parameter(Mandatory)][string]$Name, [int]$Count = 1)\nfor ($i = 0; $i -lt $Count; $i++) { Write-Output "hello $Name" }\n';
+  const DECLS = [
+    { name: 'Name', type: 'string', required: true, charset: 'identifier', maxLength: 32 },
+    { name: 'Count', type: 'integer', required: false, min: 1, max: 5 },
+  ];
+  const AUTHOR = { userId: 'user_author01', name: 'Ann (author)' };
+  const REVIEWER = { userId: 'user_review01', name: 'Rob (library reviewer)' };
+  function proposal({ content = CONTENT, biz = BIZ_A, contributors = [AUTHOR], proposedBy = { userId: people.requester.userId, name: people.requester.name }, ...over } = {}) {
+    return {
+      allowlistId: hex32(), scriptId: 'scr_' + hex32().slice(0, 12), versionId: 'ver_' + hex32().slice(0, 12), name: 'Say hello', version: 1, description: 'Greets',
+      businessId: biz, businessName: biz ? (biz === BIZ_A ? 'Acme' : 'Birch') : null, language: 'powershell', targetOs: 'windows', risk: 'medium',
+      parameters: DECLS, contentSha256: sr.sha256Hex(content), content, contributors,
+      reviewedBy: { ...REVIEWER, at: new Date().toISOString() }, proposedBy, ...over,
+    };
+  }
+  const propose = (p) => j(`${INTERNAL}/internal/v1/scripts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ proposal: p }) });
+  const scrPost = (id, path, b, origin = ORIGIN) => j(`${PUBLIC}/approve/script/${id}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...(origin ? { origin } : {}) }, body: JSON.stringify(b) });
+  async function decideScript(id, who, decision = 'approve') {
+    const c = await scrPost(id, '/challenge', { decision });
+    if (c.status !== 200) return c;
+    return scrPost(id, '/decide', { challengeId: c.body.challengeId, assertion: who.assert(c.body.options, { origin: ORIGIN }) });
+  }
+  function runPlan(prop, { args = { Name: 'world' }, timeoutMinutes = 5, block, biz = BIZ_A, ...over } = {}) {
+    const b = block ?? sr.scriptBlockOf(prop);
+    return plan({
+      biz, deviceClass: 'WORKSTATION', risk: 'high', approvalsRequired: 2,
+      action: { id: 'windows.script.run', version: 1 },
+      params: { scriptVersionId: prop.versionId, sha256: b.contentSha256, parameters: args, timeoutMinutes },
+      script: b, ...over,
+    });
+  }
+
+  // Proposal: the signer hashes the content itself.
+  const bad = proposal();
+  bad.contentSha256 = sr.sha256Hex('Write-Output "something else"');
+  let r = await propose(bad);
+  check('a proposal whose content does not hash to the named SHA-256 is refused', r.status === 409 && r.body?.error === 'hash_mismatch', JSON.stringify(r.body));
+  r = await propose({ ...proposal(), status: 'ACTIVE' });
+  check('a proposal cannot carry its own status (strict schema)', r.status === 409 && r.body?.error === 'invalid_script', JSON.stringify(r.body));
+  r = await propose(proposal({ contributors: [AUTHOR, REVIEWER] }));
+  check('a proposal whose library reviewer is a contributor is refused', r.status === 409 && r.body?.error === 'invalid_script', JSON.stringify(r.body));
+
+  const pa = proposal();
+  r = await propose(pa);
+  check('a valid proposal is admitted awaiting two approvals, with the signer-computed hash', r.status === 201 && r.body.status === 'AWAITING_APPROVAL' && r.body.contentSha256 === sr.sha256Hex(CONTENT) && r.body.approvalUrl === `${ORIGIN}/approve/script/${pa.allowlistId}`, JSON.stringify(r.body));
+  r = await propose(pa);
+  check('the same proposal again returns the same entry', r.status === 201 && r.body.id === pa.allowlistId);
+  r = await propose({ ...pa, content: CONTENT + '# edited\n', contentSha256: sr.sha256Hex(CONTENT + '# edited\n') });
+  check('the portal cannot edit an entry by re-proposing under its id', r.status === 409 && r.body?.error === 'script_id_reused', JSON.stringify(r.body));
+  for (const [m, path] of [['POST', '/approve'], ['POST', '/activate'], ['PUT', ''], ['PATCH', ''], ['DELETE', '']]) {
+    r = await j(`${INTERNAL}/internal/v1/scripts/${pa.allowlistId}${path}`, { method: m, headers: { 'content-type': 'application/json' }, body: m === 'DELETE' ? undefined : JSON.stringify({ status: 'ACTIVE' }) });
+    check(`the internal listener has no ${m} ${path || '/'} that changes an entry`, r.status === 405 || r.status === 404, `${r.status}`);
+  }
+  check('nothing on the internal listener activated it', (await j(`${INTERNAL}/internal/v1/scripts/${pa.allowlistId}`)).body.status === 'AWAITING_APPROVAL');
+
+  const pageRes = await fetch(`${PUBLIC}/approve/script/${pa.allowlistId}`);
+  const spage = await pageRes.text();
+  check('the allowlist page shows the content and the signer-computed hash, under a nonce CSP',
+    spage.includes('hello $Name') && spage.includes(sr.sha256Hex(CONTENT)) && /script-src 'nonce-/.test(pageRes.headers.get('content-security-policy') || ''), spage.slice(0, 200));
+
+  // A run before the entry is ACTIVE.
+  r = await submit(runPlan(pa));
+  check('a run of a script awaiting allowlist approval is refused', r.status === 409 && r.body?.error === 'script_not_allowlisted', JSON.stringify(r.body));
+  r = await submit(runPlan(proposal()));
+  check('a run of a script never proposed is refused', r.status === 409 && r.body?.error === 'script_not_allowlisted', JSON.stringify(r.body));
+
+  r = await decideScript(pa.allowlistId, people.requester);
+  check('the proposer cannot approve the allowlist entry', r.status === 403 && r.body?.error === 'requester_cannot_approve', JSON.stringify(r.body));
+  r = await decideScript(pa.allowlistId, people.birchOnly);
+  check('an approver for another business cannot approve the entry', r.status === 403 && r.body?.error === 'not_authorized', JSON.stringify(r.body));
+  r = await scrPost(pa.allowlistId, '/challenge', { decision: 'approve' }, 'https://evil.example.com');
+  check('a cross-origin allowlist challenge is refused', r.status === 403);
+  r = await decideScript(pa.allowlistId, people.olivia);
+  check('one approval does not add a script to the allowlist', r.status === 200 && r.body.status === 'AWAITING_APPROVAL', JSON.stringify(r.body));
+  r = await decideScript(pa.allowlistId, people.olivia);
+  check('the same approver cannot count twice for an allowlist entry', r.status === 409, JSON.stringify(r.body));
+  r = await decideScript(pa.allowlistId, people.quinn);
+  check('a second, different approver makes the entry ACTIVE', r.status === 200 && r.body.status === 'ACTIVE', JSON.stringify(r.body));
+  check('the entry is on disk in the signer\'s own directory', existsSync(join(dir, 'scripts', `${pa.allowlistId}.json`)));
+
+  // Contributors cannot approve the entry.
+  const pc = proposal({ contributors: [{ userId: people.quinn.userId, name: people.quinn.name }] });
+  await propose(pc);
+  r = await decideScript(pc.allowlistId, people.quinn);
+  check('a contributor cannot approve the allowlist entry for their own script', r.status >= 400 && r.body?.error === 'contributor_cannot_approve', JSON.stringify(r.body));
+
+  // A global script needs approvers for every business.
+  const pg = proposal({ biz: null });
+  await propose(pg);
+  r = await decideScript(pg.allowlistId, people.quinn);
+  check('an approver for one business cannot add a global script', r.status === 403 && r.body?.error === 'not_authorized', JSON.stringify(r.body));
+
+  // Runs of the ACTIVE entry.
+  for (const [name, p, code] of [
+    ['a block that is not the allowlisted one (contributors dropped)', runPlan(pa, { block: { ...sr.scriptBlockOf(pa), contributors: ['user_someone1'] } }), 'script_mismatch'],
+    ['a block with a hash for other content', runPlan(pa, { block: (() => { const b = sr.scriptBlockOf(pa); const h = sr.sha256Hex('other'); return { ...b, contentSha256: h, definitionSha256: sr.definitionSha256({ ...b, contentSha256: h }) }; })() }), null],
+    ['parameters widened in the block', runPlan(pa, { block: (() => { const b = sr.scriptBlockOf(pa); const parameters = [{ ...DECLS[0], charset: 'safe_text' }, DECLS[1]]; return { ...b, parameters, definitionSha256: sr.definitionSha256({ ...b, parameters }) }; })() }), 'script_mismatch'],
+    ['an argument outside its charset (injection)', runPlan(pa, { args: { Name: 'x"; Remove-Item C:\\ -Recurse; "' } }), 'arguments_not_allowed'],
+    ['an undeclared argument', runPlan(pa, { args: { Name: 'world', Command: 'whoami' } }), 'arguments_not_allowed'],
+    ['a missing required argument', runPlan(pa, { args: { Count: 2 } }), 'arguments_not_allowed'],
+    ['an integer passed as a string', runPlan(pa, { args: { Name: 'world', Count: '2' } }), null],
+    ['an integer out of range', runPlan(pa, { args: { Name: 'world', Count: 99 } }), 'arguments_not_allowed'],
+    ['a timeout off the list', runPlan(pa, { timeoutMinutes: 45 }), null],
+    ['a business script on another business\'s computer', runPlan(pa, { biz: BIZ_B }), null],
+    ['a run claimed as low risk with one approver', runPlan(pa, { risk: 'low', approvalsRequired: 1 }), 'risk_mismatch'],
+    ['a run with no script block', (() => { const p = runPlan(pa); delete p.script; return p; })(), null],
+    ['a script block on another action', plan({ script: sr.scriptBlockOf(pa) }), null],
+  ]) {
+    r = await submit(p);
+    check(`a script run is refused for ${name}`, r.status === 409 && (!code || r.body?.error === code), JSON.stringify(r.body));
+  }
+
+  const run1 = runPlan(pa, { args: { Name: 'world', Count: 2 } });
+  r = await submit(run1);
+  check('a run of the ACTIVE entry with conforming arguments is admitted', r.status === 201 && r.body.status === 'AWAITING_APPROVAL', JSON.stringify(r.body));
+  const rhtml = await (await fetch(`${PUBLIC}/approve/${run1.jobId}`)).text();
+  check('the run approval page shows the script content from the signer\'s allowlist and its hash', rhtml.includes('hello $Name') && rhtml.includes(sr.sha256Hex(CONTENT)) && /SYSTEM/.test(rhtml));
+  r = await decide(run1.jobId, people.olivia);
+  check('one approval does not sign a script run', r.status === 200 && r.body.status === 'AWAITING_APPROVAL', JSON.stringify(r.body));
+  r = await decide(run1.jobId, people.quinn);
+  const signedRun = verifyEnvelope(r.body?.envelope ?? (await j(`${INTERNAL}/internal/v1/plans/${run1.jobId}`)).body?.envelope);
+  check('two distinct approvers sign it; the envelope carries the script block, its hash and the arguments',
+    r.body?.status === 'SIGNED' && signedRun?.script?.contentSha256 === sr.sha256Hex(CONTENT) && signedRun.params.parameters.Count === 2 && signedRun.script.contributors[0] === AUTHOR.userId && signedRun.approvers.length === 2, JSON.stringify(r.body).slice(0, 200));
+
+  // A contributor cannot approve a run of their script.
+  const pq = proposal({ content: CONTENT + '# quinn\'s copy\n', contributors: [{ userId: people.quinn.userId, name: people.quinn.name }], proposedBy: { userId: 'user_portal01', name: 'Portal' } });
+  await propose(pq);
+  await decideScript(pq.allowlistId, people.olivia);
+  r = await decideScript(pq.allowlistId, people.requester);
+  check('(an entry for quinn\'s script is ACTIVE)', r.body?.status === 'ACTIVE', JSON.stringify(r.body));
+  const run2 = runPlan(pq);
+  await submit(run2);
+  r = await decide(run2.jobId, people.quinn);
+  check('the script\'s author cannot approve a run of it (SAME_PERSON)', r.status >= 400 && r.body?.error === 'contributor_cannot_approve', JSON.stringify(r.body));
+
+  // Revocation is one-way.
+  const run3 = runPlan(pa);
+  await submit(run3);
+  await decide(run3.jobId, people.olivia);
+  r = await j(`${INTERNAL}/internal/v1/scripts/${pa.allowlistId}/revoke`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}) });
+  check('a revocation needs a reason', r.status === 409 || r.status === 400, `${r.status}`);
+  r = await j(`${INTERNAL}/internal/v1/scripts/${pa.allowlistId}/revoke`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'found a bug' }) });
+  check('the portal can revoke an entry', r.status === 200 && r.body.status === 'REVOKED', JSON.stringify(r.body));
+  r = await decide(run3.jobId, people.quinn);
+  check('a run admitted before the revocation is not signed after it', r.status === 409 && r.body?.error === 'script_revoked', JSON.stringify(r.body));
+  r = await submit(runPlan(pa));
+  check('a new run of a revoked script is refused', r.status === 409 && r.body?.error === 'script_revoked', JSON.stringify(r.body));
+  r = await propose(proposal());
+  check('the same content cannot be proposed again under a new id after revocation', r.status === 409 && r.body?.error === 'script_revoked', JSON.stringify(r.body));
+  check('the revocation is a write-once file keyed by content hash', existsSync(join(dir, 'script-revocations', `${sr.sha256Hex(CONTENT)}.json`)));
+  r = await scrPost(pa.allowlistId, '/challenge', { decision: 'approve' });
+  check('a revoked entry takes no further decisions', r.status === 409 && r.body?.error === 'not_awaiting', JSON.stringify(r.body));
+  check('the run that was already signed stays signed (the portal stops delivery; the agent re-checks the hash)', (await j(`${INTERNAL}/internal/v1/plans/${run1.jobId}`)).body.status === 'SIGNED');
+
+  // The CLI lists and revokes, from the signer's host.
+  const cliS = (args) => spawnSync(process.execPath, [join(dist, 'approval-signer', 'main.js'), ...args], { encoding: 'utf8', env: { ...process.env, APPROVAL_SIGNER_DIR: dir } });
+  let o = cliS(['script', 'list']);
+  check('`script list` shows each entry with its status and hash', o.status === 0 && o.stdout.includes(pq.allowlistId) && /REVOKED/.test(o.stdout) && /ACTIVE/.test(o.stdout) && o.stdout.includes(sr.sha256Hex(CONTENT)), o.stderr || o.stdout.slice(0, 300));
+  o = cliS(['script', 'revoke', '--id', pq.allowlistId, '--reason', 'operator test']);
+  check('`script revoke` on the signer host revokes', o.status === 0 && JSON.parse(readFileSync(join(dir, 'scripts', `${pq.allowlistId}.json`), 'utf8')) && (await j(`${INTERNAL}/internal/v1/scripts/${pq.allowlistId}`)).body.status === 'REVOKED', o.stderr);
+}
+
 // ── restart: state survives, a used challenge stays used ───────────────────
 const p8 = plan();
 await submit(p8);
@@ -301,6 +533,120 @@ out = cli(['roster', 'disable', '--user', newbie.userId]);
 check('roster disable takes effect in the file the server reads', out.status === 0 && JSON.parse(readFileSync(join(dir, 'roster.json'), 'utf8')).members.find((m) => m.userId === newbie.userId)?.disabled === true);
 out = cli(['keygen']);
 check('keygen refuses to overwrite a signing key', out.status !== 0 && /refusing to overwrite/.test(out.stderr));
+
+// ── 0.34: device result keys — pinned on approval, verified before a later ring ──
+{
+  const s3 = startSigner({ dir, origin: ORIGIN, rpId: '127.0.0.1', publicPort: 0, internalPort: 0 });
+  await Promise.all([s3.internal, s3.pub].map((x) => new Promise((r) => (x.listening ? r() : x.once('listening', r)))));
+  const INTERNAL = `http://127.0.0.1:${s3.internal.address().port}`;
+  const PUBLIC = `http://127.0.0.1:${s3.pub.address().port}`;
+  const P = require(join(dist, 'actions', 'patch-policy.js'));
+  const sha = (x) => createHash('sha256').update(x).digest('hex');
+  const hhmm = (t) => `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`;
+  const t0 = new Date();
+  const SEC = '0fa1201d-4330-4fa8-8ae9-b877473b6441';
+  const CU = { updateId: '5a1b2c3d-0000-4000-8000-000000000001', revision: 201, kb: 'KB5044284', title: '2026-11 Cumulative Update', className: 'Security Updates', severity: 'Critical' };
+  const dev = { canary: deviceKey(), r1: deviceKey(), forger: deviceKey() };
+  const computer = (name, rid, k) => ({ endpointId: `ep_${name}_0001`, hostname: name.toUpperCase(), rustdeskId: rid, deviceSecretSha256: sha(name), resultKey: k.key });
+  const CANARY = computer('canary', '210000001', dev.canary), R1 = computer('ringone', '210000002', dev.r1);
+  const author = { userId: people.requester.userId, name: people.requester.name };
+  const window = { days: ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'], start: hhmm(new Date(t0.getTime() - 3600_000)), end: hhmm(new Date(t0.getTime() + 3 * 3600_000)), timezone: 'UTC' };
+  const mkDoc = (rings) => ({
+    schema: 'rem0te-patch-policy/1', policyId: randomBytes(16).toString('hex'), name: 'Acme nightly', businessId: BIZ_A, businessName: 'Acme',
+    rings, allow: { classifications: [SEC] }, soakHours: 0, failureThreshold: 0, window, reboot: 'never',
+    createdAt: t0.toISOString(), expiresAt: new Date(t0.getTime() + 7 * 86_400_000).toISOString(), createdBy: author, reason: 'signed results test',
+  });
+  const propose = (doc) => j(`${INTERNAL}/internal/v1/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy: doc }) });
+  const approvePolicy = async (id, who) => {
+    const c = await j(`${PUBLIC}/approve/policy/${id}/challenge`, { method: 'POST', headers: { 'content-type': 'application/json', origin: ORIGIN }, body: JSON.stringify({ decision: 'approve', role: 'approver' }) });
+    if (c.status !== 200) return c;
+    return j(`${PUBLIC}/approve/policy/${id}/decide`, { method: 'POST', headers: { 'content-type': 'application/json', origin: ORIGIN }, body: JSON.stringify({ challengeId: c.body.challengeId, assertion: who.assert(c.body.options, { origin: ORIGIN }) }) });
+  };
+  const ringPlan = (doc, digest, ring, computers, dep) => ({
+    schema: 'rem0te-action-plan/1', jobId: jobId(), action: { id: 'windows.update.install', version: 1 },
+    artifact: { target: 'windows/rem0te-agent.exe', sha256: AGENT_SHA },
+    params: { updates: [{ updateId: CU.updateId, revision: CU.revision }], reboot: 'never', allow: P.allowParams(doc.allow) },
+    targets: computers.map((c) => ({ endpointId: c.endpointId, businessId: BIZ_A, businessName: 'Acme', hostname: c.hostname, deviceClass: 'WORKSTATION', rustdeskId: c.rustdeskId, deviceSecretSha256: c.deviceSecretSha256 })),
+    requestedBy: { ...author, via: 'portal' }, origin: { kind: 'technician', ticketRef: null }, reason: `ring ${ring}`,
+    policy: { risk: 'high', approvalsRequired: 2, customerSignoff: false },
+    // A later ring starts after the ring before it was signed.
+    window: { notBefore: new Date(Date.now() + (ring ? 2000 : -1000)).toISOString(), notAfter: new Date(Date.now() + 3600_000).toISOString() },
+    display: { updates: [CU], deployment: { id: dep, name: 'Acme nightly', ring, rings: doc.rings.length }, policy: { id: doc.policyId, name: doc.name, digest } },
+    createdAt: new Date().toISOString(), approvers: [], signedAt: null,
+  });
+  const underPolicy = (id, body) => j(`${INTERNAL}/internal/v1/policies/${id}/plans`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+  const doc1 = mkDoc([[CANARY], [R1]]);
+  const unkeyed = mkDoc([[{ ...CANARY, resultKey: undefined }], [R1]]);
+  delete unkeyed.rings[0][0].resultKey;
+  let r = await propose(unkeyed);
+  check('the signer refuses a policy whose canary has no result key (a pre-0.34 agent) → result_key_missing', r.status === 409 && r.body?.error === 'result_key_missing', JSON.stringify(r.body));
+  r = await propose(doc1);
+  check('a policy naming each computer\'s result key is accepted for approval', r.status === 201, JSON.stringify(r.body));
+  const digest1 = r.body.digest;
+  const page = await (await fetch(`${PUBLIC}/approve/policy/${doc1.policyId}`)).text();
+  check('the approval page shows each computer\'s result-key fingerprint, as first seen here, with how to check it',
+    page.includes(core.resultKeyFingerprint(CANARY.resultKey)) && page.includes(core.resultKeyFingerprint(R1.resultKey)) && /first time this signer sees it/.test(page) && /rem0te-agent\.exe status/.test(page));
+  check('nothing is pinned before the policy is approved', !existsSync(join(dir, 'device-keys', `${core.deviceIdentity(CANARY)}.json`)));
+  await approvePolicy(doc1.policyId, people.olivia);
+  r = await approvePolicy(doc1.policyId, people.quinn);
+  check('two approvers make the policy active', r.status === 200 && r.body.status === 'ACTIVE', JSON.stringify(r.body).slice(0, 200));
+  const pinFile = join(dir, 'device-keys', `${core.deviceIdentity(CANARY)}.json`);
+  check('approving it pins each computer\'s key to its enrolled identity, on the signer\'s disk', existsSync(pinFile) && JSON.parse(readFileSync(pinFile, 'utf8')).resultKey === CANARY.resultKey);
+  const page2 = await (await fetch(`${PUBLIC}/approve/policy/${doc1.policyId}`)).text();
+  check('the page then says the key is pinned', /— pinned /.test(page2));
+
+  // A compromised portal proposes a second policy for the same canary, with a key of its own.
+  const swapped = mkDoc([[{ ...CANARY, resultKey: dev.forger.key }], [R1]]);
+  r = await propose(swapped);
+  check('a later policy naming another key for a pinned computer is refused at proposal → device_key_changed', r.status === 409 && r.body?.error === 'device_key_changed' && /device-key forget/.test(r.body.message), JSON.stringify(r.body));
+
+  // The canary under the approved policy; the ledger records the plan's hash.
+  const dep = `dep_${randomBytes(4).toString('hex')}`;
+  const p0 = ringPlan(doc1, digest1, 0, [CANARY], dep);
+  r = await underPolicy(doc1.policyId, { plan: p0, policyDigest: digest1, evidence: null });
+  check('the canary is signed under the policy', r.status === 201, JSON.stringify(r.body));
+  const env0 = (await j(`${INTERNAL}/internal/v1/plans/${p0.jobId}`)).body.envelope;
+  const planSha = sha(Buffer.from(env0.plan, 'base64'));
+  const rec = JSON.parse(readFileSync(join(dir, 'policies', `${doc1.policyId}.json`), 'utf8'));
+  check('the signer\'s ledger records the sha256 of the exact plan bytes it signed', rec.ledger[0].planSha256 === planSha);
+
+  const resultAt = new Date(Date.now() - 1000);
+  const genuine = signStatement(dev.canary, 'result', resultStatement({ jobId: p0.jobId, planSha256: planSha, rustdeskId: CANARY.rustdeskId, deviceSecretSha256: CANARY.deviceSecretSha256, outcome: 'succeeded', completedAt: resultAt.toISOString(), updates: [{ updateId: CU.updateId, revision: CU.revision, state: 'installed' }] }));
+  const scan = (k) => signStatement(k, 'scan', scanStatement({ rustdeskId: CANARY.rustdeskId, deviceSecretSha256: CANARY.deviceSecretSha256, scannedAt: new Date(resultAt.getTime() + 500).toISOString(), installed: [`${CU.updateId}@${CU.revision}`] }));
+  const target = (res, sc) => ({ endpointId: CANARY.endpointId, status: 'SUCCEEDED', statusReason: null, reconciled: false, resultAt: resultAt.toISOString(),
+    result: { outcome: 'succeeded', updates: [{ updateId: CU.updateId, revision: CU.revision, state: 'installed' }] },
+    scan: { scannedAt: new Date(resultAt.getTime() + 500).toISOString(), error: false, rebootPending: false, offered: [], installed: [`${CU.updateId}@${CU.revision}`] },
+    ...(res ? { signedResult: res } : {}), ...(sc ? { signedScan: sc } : {}) });
+  const ev = (t) => ({ previousJobId: p0.jobId, jobStatus: 'SUCCEEDED', targets: [t] });
+  r = await underPolicy(doc1.policyId, { plan: ringPlan(doc1, digest1, 1, [R1], dep), policyDigest: digest1, evidence: ev(target(null, null)) });
+  check('ring 1 on the portal\'s word alone (no device signature) → 409 result_signature_missing', r.status === 409 && r.body?.error === 'result_signature_missing', JSON.stringify(r.body));
+  const forgedRes = signStatement(dev.forger, 'result', JSON.parse(Buffer.from(genuine.statement, 'base64').toString('utf8')));
+  r = await underPolicy(doc1.policyId, { plan: ringPlan(doc1, digest1, 1, [R1], dep), policyDigest: digest1, evidence: ev(target(forgedRes, scan(dev.forger))) });
+  check('ring 1 on a canary success the portal signed itself → 409 result_wrong_device', r.status === 409 && r.body?.error === 'result_wrong_device', JSON.stringify(r.body));
+  const replayed = signStatement(dev.canary, 'result', resultStatement({ ...JSON.parse(Buffer.from(genuine.statement, 'base64').toString('utf8')), jobId: jobId() }));
+  r = await underPolicy(doc1.policyId, { plan: ringPlan(doc1, digest1, 1, [R1], dep), policyDigest: digest1, evidence: ev(target(replayed, scan(dev.canary))) });
+  check('ring 1 on the canary\'s genuine result about another job → 409 result_wrong_plan', r.status === 409 && r.body?.error === 'result_wrong_plan', JSON.stringify(r.body));
+  r = await underPolicy(doc1.policyId, { plan: ringPlan(doc1, digest1, 1, [R1], dep), policyDigest: digest1, evidence: ev(target(genuine, scan(dev.canary))) });
+  check('ring 1 on the canary\'s genuine signed success and scan → signed', r.status === 201, JSON.stringify(r.body));
+  const st = await j(`${INTERNAL}/internal/v1/policies/${doc1.policyId}`);
+  check('each refusal is kept with the policy, by code', ['result_signature_missing', 'result_wrong_device', 'result_wrong_plan'].every((c) => st.body.refusals.some((x) => x.code === c)), JSON.stringify(st.body.refusals.map((x) => x.code)));
+
+  // The pin is write-once for the serving process, and only the operator CLI removes it.
+  const { SignerStore } = require(join(dist, 'approval-signer', 'store.js'));
+  const store = new SignerStore(dir);
+  check('the store will not overwrite a pin', store.pinDeviceKey({ ...JSON.parse(readFileSync(pinFile, 'utf8')), resultKey: dev.forger.key }) === false && JSON.parse(readFileSync(pinFile, 'utf8')).resultKey === CANARY.resultKey);
+  const cli = (args) => spawnSync(process.execPath, [join(dist, 'approval-signer', 'main.js'), ...args], { encoding: 'utf8', env: { ...process.env, APPROVAL_SIGNER_DIR: dir } });
+  let out = cli(['device-key', 'list']);
+  check('device-key list shows each pinned computer with its fingerprint', out.status === 0 && out.stdout.includes(CANARY.endpointId) && out.stdout.includes(core.resultKeyFingerprint(CANARY.resultKey)), out.stdout + out.stderr);
+  out = cli(['device-key', 'forget', '--endpoint', CANARY.endpointId]);
+  check('device-key forget needs a reason', out.status !== 0);
+  out = cli(['device-key', 'forget', '--endpoint', CANARY.endpointId, '--reason', 'agent state lost; new fingerprint read from the computer']);
+  check('device-key forget removes the pin', out.status === 0 && !existsSync(pinFile), out.stderr);
+  r = await propose(swapped);
+  check('after the operator forgets the pin, a policy naming the new key may be proposed (and needs two approvals again)', r.status === 201 && r.body.status === 'AWAITING_APPROVAL', JSON.stringify(r.body));
+  await s3.close();
+}
 
 // ── the boundary itself: the signer loads nothing of the portal's ─────────
 const loaded = Object.keys(require.cache).filter((k) => /node_modules[\\/](@nestjs|@prisma|\.prisma)/.test(k));

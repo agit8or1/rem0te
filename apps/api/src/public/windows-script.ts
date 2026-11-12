@@ -231,13 +231,20 @@ try {
     if ([string]$ast.agentSha256 -cmatch '^[0-9a-f]{64}$') { $body['agentSha256'] = [string]$ast.agentSha256 }
     $acts = @(@($ast.actions) | Where-Object { [string]$_ -cmatch '^[a-z0-9.]{3,64}@[0-9]{1,4}$' } | Select-Object -First 16 | ForEach-Object { [string]$_ })
     if ($acts.Count -gt 0) { $body['agentActions'] = $acts }
+    # Chat (0.34): the chat protocol this signed build speaks.
+    if ([int]$ast.chat -ge 1 -and [int]$ast.chat -le 99) { $body['agentChat'] = [int]$ast.chat }
 } catch {}
 # Results the agent wrote for approved actions, until the portal acknowledges them.
 $ACT_RESULTS = 'C:\\ProgramData\\Rem0te\\actions\\results'
 try {
     $ars = @()
+    $arBytes = 0
     foreach ($rf in @(Get-ChildItem -LiteralPath $ACT_RESULTS -Filter '*.json' -File -ErrorAction Stop | Select-Object -First 10)) {
         if ($rf.BaseName -cnotmatch '^[0-9a-f]{32}$') { continue }
+        # A script run's result carries up to ~180 KB of output (0.34): keep
+        # the heartbeat under the portal's 1 MB body limit; the rest go next time.
+        if ($ars.Count -gt 0 -and ($arBytes + $rf.Length) -gt 600000) { break }
+        $arBytes += $rf.Length
         try { $ars += (Get-Content -Raw -LiteralPath $rf.FullName -ErrorAction Stop | ConvertFrom-Json) } catch {}
     }
     if ($ars.Count -gt 0) { $body['actionResults'] = $ars }
@@ -280,10 +287,20 @@ try {
         # ASCII: every envelope field is base64 or an identifier, and Windows
         # PowerShell 5 would otherwise prefix a BOM.
         ($aj.envelope | ConvertTo-Json -Compress -Depth 4) | Set-Content -LiteralPath $ef -Encoding ASCII
+        $aargs = @('action', '--job', $jid, '--envelope', $ef)
+        # A script run (0.34) comes with the script, base64. The agent hashes
+        # the decoded bytes and refuses them unless they are the signed SHA-256.
+        $sc = ''
+        if ($aj.PSObject.Properties['script'] -and $aj.script -and $aj.script.PSObject.Properties['content']) { $sc = [string]$aj.script.content }
+        if ($sc -and $sc.Length -le 100000 -and $sc -cmatch '^[A-Za-z0-9+/]+={0,2}$') {
+            $sf = Join-Path $inbox "$jid.script"
+            Set-Content -LiteralPath $sf -Value $sc -Encoding ASCII -NoNewline
+            $aargs += @('--script', $sf)
+        }
         # Detached (0.27): an update install outlives many heartbeats. The
         # agent reads the envelope, removes it from the inbox, and holds a lock
         # for the job while it runs; a re-delivery finds the lock and leaves.
-        try { Start-Process -FilePath $agentExe -ArgumentList @('action', '--job', $jid, '--envelope', $ef) -WindowStyle Hidden } catch {}
+        try { Start-Process -FilePath $agentExe -ArgumentList $aargs -WindowStyle Hidden } catch {}
     }
 } catch {}
 try {
@@ -301,6 +318,14 @@ try {
             Set-Content -LiteralPath $stamp -Value '' -Encoding ASCII
             Start-Process -FilePath $agentExe -ArgumentList @('patch-scan') -WindowStyle Hidden
         }
+    }
+} catch {}
+try {
+    # Chat (0.34): a chat is open on this computer. Start the chat host; it
+    # fetches everything else itself with the device secret, and a second
+    # start while one runs leaves at once (it holds a lock).
+    if ($resp.data.chat.open -eq $true -and (Test-Path -LiteralPath $agentExe)) {
+        Start-Process -FilePath $agentExe -ArgumentList @('chat') -WindowStyle Hidden
     }
 } catch {}`,
   };
@@ -934,6 +959,20 @@ if (\$state.agentSecret) { \$body['agentSecret'] = \$state.agentSecret }
 # upgraded reports the new version without this line changing.
 if (\$state.agentVersion) { \$body['agentVersion'] = [string]\$state.agentVersion }
 ${v.channelReport}
+# The agent's own last update check (0.34), from agent-status.json: written by
+# the signed agent after every update, and by a migrate run on a standard
+# machine - so a migration that failed says why. Read and reported, never acted on.
+try {
+    \$aus = Get-Content -Raw 'C:\\ProgramData\\Rem0te\\agent-status.json' -ErrorAction Stop | ConvertFrom-Json
+    \$auAt = \$aus.lastCheck
+    if (\$auAt -is [DateTime]) { \$auAt = \$auAt.ToUniversalTime().ToString('o') }
+    if ([string]\$auAt -match '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]{8,20}(Z|[+-][0-9]{2}:[0-9]{2})\$') {
+        \$body['agentUpdateCheckedAt'] = [string]\$auAt
+        \$auR = ([string]\$aus.lastResult) -replace '[^ -~]', ' '
+        if (\$auR.Length -gt 300) { \$auR = \$auR.Substring(0, 300) }
+        \$body['agentUpdateResult'] = \$auR
+    }
+} catch {}
 # Installed RustDesk version, read from the binary rather than by spawning it.
 # Normalised to three segments: FileVersion reports 1.4.9.0 while the server
 # compares against the GitHub release tag 1.4.9.

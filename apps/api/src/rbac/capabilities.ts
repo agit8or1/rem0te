@@ -31,6 +31,12 @@ export const CAP = {
   HISTORY_VIEW: 'support:history_view',
   // Seeing and working the support-request queue (claim, hand off, close).
   SUPPORT_REQUESTS: 'support:requests',
+  // Chat (0.34): starting a chat with the person at a computer, writing in it
+  // and ending it. Reading a transcript needs only `computers:view` — it
+  // belongs to the computer. Separate from `computers:connect` because a
+  // message on someone's desktop under the business's name is a different
+  // thing from a remote session, and not on by default for a Business User.
+  CHAT_SEND: 'support:chat',
 
   // Users
   USERS_VIEW: 'users:view',
@@ -105,6 +111,7 @@ export const CAPABILITY_GROUPS: {
       { key: CAP.SESSIONS_VIEW, label: 'View active sessions', description: 'See sessions currently in progress.' },
       { key: CAP.HISTORY_VIEW, label: 'View session history', description: 'See past sessions for this business.' },
       { key: CAP.SUPPORT_REQUESTS, label: 'Handle support requests', description: 'See the support request queue, claim requests, hand them off and close them.' },
+      { key: CAP.CHAT_SEND, label: 'Chat with the person at a computer', description: "Open a chat window on a Windows computer they can see, write in it and end it. The window shows the business name and their own name. Anyone who can see the computer can read its transcripts." },
     ],
   },
   {
@@ -123,7 +130,7 @@ export const CAPABILITY_GROUPS: {
   {
     group: 'Integration',
     items: [
-      { key: CAP.TICKET_ANALYSIS, label: 'Ticket analysis (ClientSt0r)', description: 'Submit read-only ticket analysis from ClientSt0r for this business and read the staff-only findings. Grants no remote access and no actions.' },
+      { key: CAP.TICKET_ANALYSIS, label: 'Ticket analysis (ClientSt0r)', description: 'Submit read-only ticket analysis from ClientSt0r for this business and read the staff-only findings, and (with Rename/edit computers) ask ClientSt0r for a computer\'s AI summary from its redacted notes and sessions. Grants no remote access and no actions.' },
     ],
   },
   {
@@ -142,8 +149,8 @@ export const CAPABILITY_GROUPS: {
   {
     group: 'Automation',
     items: [
-      { key: CAP.SCRIPTS_AUTHOR, label: 'Write scripts', description: "Add scripts to this business's library, edit them (each edit is a new version) and submit versions for review. Scripts cannot be run yet." },
-      { key: CAP.SCRIPTS_REVIEW, label: 'Review scripts', description: "Approve or reject someone else's script version. Never one they wrote or edited. Approving needs a fresh sign-in, and runs nothing." },
+      { key: CAP.SCRIPTS_AUTHOR, label: 'Write scripts', description: "Add scripts to this business's library, edit them (each edit is a new version) and submit versions for review. Never approves a run." },
+      { key: CAP.SCRIPTS_REVIEW, label: 'Review scripts', description: "Approve or reject someone else's script version. Never one they wrote or edited. Approving needs a fresh sign-in, and runs nothing; with this permission they can also propose an approved version to the approval signer's allowlist, which its own approvers decide." },
     ],
   },
 ];

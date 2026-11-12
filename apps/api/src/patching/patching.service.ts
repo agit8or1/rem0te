@@ -1,3 +1,5 @@
+import { AgentMigrationService } from '../update-trust/agent-migration.service';
+import { migrationState } from '../update-trust/agent-migration';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, type ActionJob, type ActionTarget, type PatchDeployment } from '@prisma/client';
 import { z } from 'zod';
@@ -7,7 +9,7 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { AccessPolicyService } from '../security-controls/access-policy.service';
 import { ActionsService } from '../actions/actions.service';
 import { SignerClient } from '../actions/signer.client';
-import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, UPDATE_ID_RE, UPDATE_INSTALL } from '../actions/catalog';
+import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, UPDATE_ID_RE, UPDATE_INSTALL, UpdateReboot, type UpdateRebootRule } from '../actions/catalog';
 import { evaluateRingGate, targetStates, toEvidenceTarget, type Gate, type GateTarget, type RingEvidence } from '../actions/patch-policy';
 import { CLASSIFICATIONS, MANAGER_LABEL, Posture, eligibility, idKey } from './posture';
 import { patchSummaryFor, type PatchSummary } from './summary-db';
@@ -41,6 +43,8 @@ export const CreateDeploymentDto = z.object({
   soakHours: z.number().int().min(0).max(168).default(24),
   failureThreshold: z.number().int().min(0).max(MAX_RING_TARGETS).default(0),
   windowHours: z.number().int().min(1).max(24).default(8),
+  /** 0.34: never (the default), or restart if required inside each ring plan's window. */
+  reboot: UpdateReboot.default('never'),
 }).strict();
 
 export const RequestRingDto = z.object({
@@ -60,8 +64,8 @@ const ReasonDto = z.object({ reason: z.string().trim().min(3).max(300) }).strict
  */
 export const InstallDto = z.object({
   updates: z.array(Ident).min(1).max(MAX_UPDATES_PER_PLAN),
-  /** The only rule this release has: computers are never restarted. */
-  reboot: z.literal('never'),
+  /** 0.34: never (the default), or restart if required inside the plan's window. */
+  reboot: UpdateReboot.default('never'),
   reason: z.string().trim().min(3).max(400),
   windowHours: z.number().int().min(1).max(24).default(8),
   startsInMinutes: z.number().int().min(0).max(24 * 60).default(0),
@@ -77,6 +81,9 @@ export interface PolicyOrigin { policyId: string; windowKey: string; createdById
 /** What a ring request under a policy adds: the policy, the exact window, and the filter the agent applies. */
 export interface UnderPolicy { policyId: string; name: string; digest: string; allow: Record<string, string[]>; window: { notBefore: Date; notAfter: Date } }
 
+/** A deployment's restart rule. Anything the column should never hold (it has a CHECK) reads as never. */
+export const rebootOf = (d: Pick<PatchDeployment, 'reboot'>): UpdateRebootRule => (UpdateReboot.safeParse(d.reboot).success ? d.reboot as UpdateRebootRule : 'never');
+
 @Injectable()
 export class PatchingService {
   constructor(
@@ -86,6 +93,7 @@ export class PatchingService {
     private readonly policy: AccessPolicyService,
     private readonly actions: ActionsService,
     private readonly signer: SignerClient,
+    private readonly migration: AgentMigrationService,
   ) {}
 
   private bad(code: string, message: string, extra: Record<string, unknown> = {}): never {
@@ -245,11 +253,11 @@ export class PatchingService {
       data: {
         tenantId: first.tenantId, customerId: dto.businessId, name: dto.name, updates: updates as unknown as Prisma.InputJsonValue,
         rings: dto.rings.map((r) => ({ endpointIds: r })) as unknown as Prisma.InputJsonValue,
-        soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, windowHours: dto.windowHours, createdById: actor.userId,
+        soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, windowHours: dto.windowHours, reboot: dto.reboot, createdById: actor.userId,
         origin, policyId: policy?.policyId ?? null, windowKey: policy?.windowKey ?? null,
       },
     });
-    await this.audit.log({ tenantId: first.tenantId ?? undefined, customerId: dto.businessId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_DEPLOYMENT_CREATED', resource: 'patch_deployment', resourceId: d.id, meta: { name: dto.name, origin, policyId: policy?.policyId ?? null, windowKey: policy?.windowKey ?? null, updates: updates.map((u) => u.kb ?? u.updateId), rings: dto.rings.map((r) => r.length), soakHours: dto.soakHours, failureThreshold: dto.failureThreshold } });
+    await this.audit.log({ tenantId: first.tenantId ?? undefined, customerId: dto.businessId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_DEPLOYMENT_CREATED', resource: 'patch_deployment', resourceId: d.id, meta: { name: dto.name, origin, policyId: policy?.policyId ?? null, windowKey: policy?.windowKey ?? null, updates: updates.map((u) => u.kb ?? u.updateId), rings: dto.rings.map((r) => r.length), soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, reboot: dto.reboot } });
     return d;
   }
 
@@ -261,14 +269,26 @@ export class PatchingService {
    * `possible`; the same checks run again when the request arrives, and once
    * more inside build().
    */
-  async installState(actor: ActorContext, endpointId: string): Promise<{ possible: boolean; reason: string | null; fix: string | null; installable: number }> {
+  async installState(actor: ActorContext, endpointId: string): Promise<{
+    possible: boolean; reason: string | null; fix: string | null; installable: number;
+    fixAction?: 'agent-card'; fixLink?: { href: string; label: string } | null;
+  }> {
     const no = (reason: string, fix: string | null) => ({ possible: false, reason, fix, installable: 0 });
     const ep = await this.actions.endpointFor(endpointId);
     if (!ep || !ep.customerId) return no('This computer is not in a business.', null);
     const full = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { isOnline: true, updateChannel: true } });
     if (full?.updateChannel !== 'signed') {
-      return no('This computer runs the standard agent, which only reports updates. Installing needs the signed agent, which runs only plans approved on the roster.',
-        'Switch this computer to the signed channel: publish a signed release, then migrate it (Patching setup, step 2).');
+      // 0.34: point at the Agent card's button when it would work, and name
+      // exactly what is missing when it would not (agent-migration.ts).
+      const standard = 'This computer runs the standard agent, which only reports updates. Installing needs the signed agent, which runs only plans approved on the roster.';
+      const open = await this.migration.openFor(endpointId);
+      if (open) {
+        const st = migrationState(open);
+        return { ...no(standard, `An upgrade to the signed agent is already requested. ${st.text} Follow it on the Agent card (Overview tab).`), fixAction: 'agent-card' };
+      }
+      const b = await this.migration.block(endpointId);
+      if (!b) return { ...no(standard, 'Upgrade it: press "Upgrade to signed agent" on the Agent card (Overview tab). It keeps the enrolment, device secret and RustDesk configuration.'), fixAction: 'agent-card' };
+      return { ...no(standard, `${b.reason}${b.fix ? ` ${b.fix}` : ''}`), fixLink: b.link ?? null };
     }
     const notReady = this.actions.readiness(ep, `${UPDATE_INSTALL.id}@${UPDATE_INSTALL.version}`);
     if (notReady) {
@@ -305,7 +325,7 @@ export class PatchingService {
     const host = (ep.hostname ?? ep.name).slice(0, 64);
     const d = await this.build(actor, {
       businessId: ep.customerId!, name: `Install on ${host}`.slice(0, 120), updates: dto.updates, rings: [[endpointId]],
-      soakHours: 0, failureThreshold: 0, windowHours: dto.windowHours,
+      soakHours: 0, failureThreshold: 0, windowHours: dto.windowHours, reboot: dto.reboot,
     }, 'MANUAL', null);
     const out = await this.requestRing(actor, d.id, 0, { reason: dto.reason, startsInMinutes: dto.startsInMinutes });
     await this.audit.log({ tenantId: d.tenantId ?? undefined, customerId: d.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_INSTALL_REQUESTED', resource: 'endpoint', resourceId: endpointId, meta: { deploymentId: d.id, jobId: out.job.id, updates: dto.updates.length, reboot: dto.reboot } });
@@ -403,7 +423,7 @@ export class PatchingService {
     const next = this.nextRing(d, jobs, gates);
     return {
       id: d.id, name: d.name, businessId: d.customerId, origin: d.origin, policyId: d.policyId, windowKey: d.windowKey, status: d.status, pausedReason: d.pausedReason,
-      soakHours: d.soakHours, failureThreshold: d.failureThreshold, windowHours: d.windowHours, createdById: d.createdById, createdAt: d.createdAt,
+      soakHours: d.soakHours, failureThreshold: d.failureThreshold, windowHours: d.windowHours, reboot: rebootOf(d), createdById: d.createdById, createdAt: d.createdAt,
       updates: d.updates,
       next,
       rings: rings.map((r, i) => {
@@ -418,6 +438,8 @@ export class PatchingService {
               endpointId: e, hostname: names.get(e) ?? null, inPlan: !!t, status: t?.status ?? null, statusReason: t?.statusReason ?? null, outcome: t?.outcome ?? null,
               reconciled: t?.reconciledAt ? t.reconcileNote : null,
               rebootPending: p?.reboot.pending ?? null, scannedAt: p?.scannedAt ?? null,
+              // 0.34: what the agent did about a restart, under the in-window rule.
+              restart: (t?.result as { restart?: { state: string; reason?: string; scheduledFor?: string } } | null)?.restart ?? null,
               updates: this.computerStates(d, j, e, p),
             };
           }),
@@ -477,7 +499,7 @@ export class PatchingService {
     const updates = d.updates as unknown as DeploymentUpdate[];
     const job = await this.actions.createPlan(actor, {
       action: UPDATE_INSTALL, endpointIds,
-      params: { updates: updates.map((u) => ({ updateId: u.updateId, revision: u.revision })), reboot: 'never', ...(under ? { allow: under.allow } : {}) },
+      params: { updates: updates.map((u) => ({ updateId: u.updateId, revision: u.revision })), reboot: rebootOf(d), ...(under ? { allow: under.allow } : {}) },
       reason: `${d.name} — ${ring === 0 ? 'canary' : `ring ${ring}`}: ${dto.reason}`.slice(0, 500),
       startsInMinutes: dto.startsInMinutes, windowHours: d.windowHours,
       display: {

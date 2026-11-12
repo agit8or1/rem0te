@@ -375,7 +375,9 @@ export class EndpointInventoryService {
     ]);
     const at = inv?.patchScannedAt;
     if (!at || Date.now() - at.getTime() > staleHours * 3_600_000) return true;
-    return !!ep?.patchScanRequestedAt && ep.patchScanRequestedAt > at;
+    // 0.34: a request may name a future time (a scan after a scheduled
+    // restart); it falls due then, not before.
+    return !!ep?.patchScanRequestedAt && ep.patchScanRequestedAt > at && ep.patchScanRequestedAt.getTime() <= Date.now();
   }
 
   private sanitizeDisks(v: unknown) {

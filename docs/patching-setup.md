@@ -38,6 +38,11 @@ Set up the offline-signed update chain and publish the agent (`windows/rem0te-ag
 - [Update signing → Shipping a release](update-signing.md#shipping-a-release)
 - [Update signing → Portal configuration](update-signing.md#portal-configuration) (`UPDATE_REPO_DIR`)
 
+A patch policy with more than one ring needs the **0.34** agent on every computer in every ring but the last: those
+computers' signed results are what open the next ring
+([Staged patching → Signed results](staged-patching.md#signed-results-034)). An older agent signs nothing, and the
+policy is refused (`RESULT_KEY_MISSING`) until it has upgraded and scanned once.
+
 Plans name the build by its digest, and a computer on any other build refuses the plan. So "published" here means the
 build the computers will actually run.
 
@@ -47,7 +52,10 @@ Pre-flight checks: **Computers are on the signed channel, on the published build
 reported a Windows Update scan.**
 
 Follow [Update signing → Moving existing agents](update-signing.md#moving-existing-agents). GPO or Intune is the
-method that doesn't trust the portal. Each computer then:
+method that doesn't trust the portal. From 0.34 you can also move one computer, or a selection, from the console:
+**Upgrade to signed agent** on the computer's **Overview → Agent** card (or **Upgrade to signed…** for selected devices
+on **All devices**), with a reason and a fresh sign-in, and follow it on **Devices → Agent migrations**. That run trusts
+the portal once, as every standard-agent update already does; it is refused in *Signed only* mode. Each computer then:
 
 - reports `windows.update.install@1` in its heartbeat;
 - updates itself to the published build;
@@ -55,7 +63,9 @@ method that doesn't trust the portal. Each computer then:
   **Patches** tab.
 
 A computer still on the standard agent shows its updates read-only. Its Patches tab has no **Install updates** button
-and says why: *switch this computer to the signed channel*.
+and says why. When the computer can be moved from the console it says so and offers **Open the Agent card**; when it
+can't, it names exactly what is missing — for example *No signed release is published. Publishing one needs the
+offline signing keys only you hold*, with a link to [Update signing → Roles and keys](update-signing.md#roles-and-keys).
 
 ## 3. Install the approval signer on a separate host or user
 
@@ -72,6 +82,10 @@ Follow [Approved actions → Setting it up](approved-actions.md#setting-it-up), 
 
 Patch policies need the **0.32** signer. An older signer answers 404 on `/internal/v1/capabilities`, and the
 pre-flight reports it as too old.
+
+Signed results need the **0.34** signer, rebuilt with `build-approval-signer.mjs`. Policies approved by an older
+signer carry no result keys; after the upgrade they can run their canary but no later ring
+(`result_key_not_pinned`), so approve them again once their computers run the 0.34 agent.
 
 ## 4. Point the portal at the signer
 
@@ -116,8 +130,19 @@ Then:
      The window follows daylight-saving time.
    - the soak time between rings;
    - the number of failed computers allowed per ring;
-   - the expiry, at most 90 days.
+   - the expiry, at most 90 days;
+   - the restart rule: **Never restart** (the default) or **Restart if required, inside the window** (0.34).
 5. Propose it. Two approvers open the signer's approval page and approve it with their passkeys.
+
+![Patching for one business: the pre-flight checks and the policies](screenshots/guide/patch-policies.png)
+
+1. **Business** — policies belong to one business.
+2. **Pre-flight** — each requirement in this guide, checked against the server as it is. On this demo server every
+   check fails (no signer, sweep off), which is what it should say.
+3. **Check again** — re-runs them.
+4. **Awaiting approval** — proposed, not yet approved by two people on the signer.
+5. **Active** — approved; it acts only inside its windows.
+6. **New policy** — needs a fresh sign-in.
 
 From then on, inside each open window:
 
@@ -136,8 +161,14 @@ $S patch-policy revoke --id <policyId> --reason 'why'
 $S patch-policy list
 ```
 
-Computers are never restarted in this release. A restart rule needs a change to what the agent accepts (§15 of the
-security invariants), and isn't in 0.32. "Restart required" waits for a person.
+**Restarts.** By default computers are never restarted, and "restart required" waits for a person. From 0.34 a
+policy, a deployment or a Patches-tab install can choose **Restart if required, inside the window**: after
+installing, a computer Windows says needs a restart shows the fixed warning and restarts 15 minutes later, unless a
+RustDesk session is open (or it cannot tell) or the window would close first, in which case it reports the restart
+deferred. See [Staged patching → Restarting after updates](staged-patching.md#restarting-after-updates). It has been
+tested against a simulated Windows only and has not yet run on a real Windows computer: try it with **Install
+updates** on one computer you can watch before choosing it for a policy. Leave enough of the maintenance window after
+the install for the 15-minute warning, or every restart defers.
 
 ## Settings
 

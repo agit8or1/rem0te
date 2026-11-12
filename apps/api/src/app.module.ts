@@ -5,7 +5,10 @@ import { PatchingModule } from './patching/patching.module';
 import { ContainmentModule } from './containment/containment.module';
 import { AuditChainModule } from './audit/audit-chain.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
+import { EmailModule } from './email/email.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { RetentionModule } from './retention/retention.module';
+import { ChatModule } from './chat/chat.module';
 import { ClientUpdatesModule } from './client-updates/client-updates.module';
 import { HealthModule } from './health/health.module';
 import { Module } from '@nestjs/common';
@@ -46,7 +49,10 @@ import { AdminModule } from './admin/admin.module';
 import { DiagnosticsModule } from './diagnostics/diagnostics.module';
 import { DiagnosticsCatalogModule } from './diagnostics-catalog/diagnostics-catalog.module';
 import { ScriptLibraryModule } from './script-library/script-library.module';
+import { ScriptRunModule } from './script-run/script-run.module';
+import { SoftwareModule } from './software/software.module';
 import { DeviceViewsModule } from './device-views/device-views.module';
+import { AgentUpgradeModule } from './agent-upgrade/agent-upgrade.module';
 import { SupportRequestsModule } from './support-requests/support-requests.module';
 import { OffboardingModule } from './offboarding/offboarding.module';
 import { SsoModule } from './sso/sso.module';
@@ -95,7 +101,10 @@ import { IntegrationModule } from './integration/integration.module';
     ContainmentModule,
     AuditChainModule,
     MonitoringModule,
+    EmailModule,
     MetricsModule,
+    RetentionModule,
+    ChatModule,
     ClientUpdatesModule,
     HealthModule,
     AuthModule,
@@ -120,6 +129,9 @@ import { IntegrationModule } from './integration/integration.module';
     DiagnosticsModule,
     DiagnosticsCatalogModule,
     ScriptLibraryModule,
+    ScriptRunModule,
+    SoftwareModule,
+    AgentUpgradeModule,
     DeviceViewsModule,
     SupportRequestsModule,
     OffboardingModule,

@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsIP, IsISO8601, IsObject, IsOptional, IsString, Length, Matches, Max, Min, ArrayMaxSize } from 'class-validator';
+import { IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsIP, IsISO8601, IsObject, IsOptional, IsString, Length, Matches, Max, MaxLength, Min, ArrayMaxSize } from 'class-validator';
 
 export enum EndpointAccessMode {
   ASSIGNED_USERS = 'ASSIGNED_USERS',
@@ -134,6 +134,15 @@ export class HeartbeatDto {
   // Staged patching (0.27): the signed agent's patch-scan posture, validated
   // field by field in EndpointInventoryService.recordPatchPosture.
   @IsOptional() @IsObject() @Type(() => Object) patchPosture?: Record<string, unknown>;
+  // Agent upgrade (0.34): lastCheck and lastResult from agent-status.json,
+  // which the signed agent writes after every update (and a migrate run
+  // writes on a standard machine). Display only; made inert server side.
+  @IsOptional() @IsISO8601() agentUpdateCheckedAt?: string;
+  @IsOptional() @IsString() @MaxLength(400) agentUpdateResult?: string;
+  // Chat (0.34): the chat protocol the signed agent speaks, from its
+  // agent-status.json. Stored only for a signed agent; it decides whether the
+  // portal offers a chat, and the heartbeat says so only when one is open.
+  @IsOptional() @IsInt() @Min(1) @Max(99) agentChat?: number;
 }
 
 /**
@@ -250,4 +259,38 @@ export class ConfirmRotationDto {
   @Length(16, 128)
   @Matches(/^[A-Za-z0-9_-]+$/, { message: 'agentSecret must be URL-safe base64' })
   agentSecret!: string;
+}
+
+// ── Chat (0.34): the signed agent's chat host, device secret required ───────
+
+class ChatDeviceAuthDto {
+  @IsString() @Matches(/^[0-9]{6,15}$/, { message: 'rustdeskId must be numeric' }) rustdeskId!: string;
+  @IsString() @Length(16, 128) agentSecret!: string;
+}
+
+/**
+ * One long-poll from the agent's chat host. Every field is optional except
+ * the identity: the ids are checked again (cuid shape, this computer's own
+ * technician messages) before any of them is written.
+ */
+export class ChatPollDto extends ChatDeviceAuthDto {
+  @IsOptional() @IsString() @Length(1, 40) conversationId?: string;
+  @IsOptional() @IsIn(['connecting', 'window_open', 'no_user', 'window_failed', 'user_closed']) state?: string;
+  @IsOptional() @IsString() @Length(0, 200) detail?: string;
+  @IsOptional() @IsString() @Length(0, 128) userName?: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(100) @IsString({ each: true }) delivered?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(100) @IsString({ each: true }) shown?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(100) @IsString({ each: true }) read?: string[];
+  // The window was (re)opened: send the transcript so far, not only what is new.
+  @IsOptional() @IsBoolean() history?: boolean;
+  // Return at once rather than holding the poll (state changes, acks).
+  @IsOptional() @IsBoolean() noWait?: boolean;
+}
+
+/** What the person at the computer typed. Plain text; length is checked after normalising. */
+export class ChatReplyDto extends ChatDeviceAuthDto {
+  @IsString() @Length(1, 40) conversationId!: string;
+  @IsString() @Matches(/^[A-Za-z0-9_-]{8,64}$/) clientId!: string;
+  // Generous here; chatText() applies the 2,000-character rule after CRLF and controls are normalised.
+  @IsString() @Length(1, 8000) text!: string;
 }

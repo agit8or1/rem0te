@@ -390,7 +390,17 @@ export function suppressionFor<S extends SuppressionLike>(alert: AlertScope, sup
 
 // ── Notification and escalation ─────────────────────────────────────────────
 
-export const Destination = z.object({ label: z.string().trim().min(1).max(60), url: z.string().url().max(500) }).strict();
+/**
+ * Where a level sends: a webhook (`url`) or, from 0.34, a confirmed email
+ * recipient of the policy's own scope (`recipientId` — checked against
+ * EmailRecipient when the policy is saved and again when mail is sent).
+ */
+export const Destination = z.union([
+  z.object({ label: z.string().trim().min(1).max(60), url: z.string().url().max(500) }).strict(),
+  z.object({ label: z.string().trim().min(1).max(60), recipientId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/) }).strict(),
+]);
+export type Destination = z.infer<typeof Destination>;
+export const isEmailDestination = (d: Destination): d is { label: string; recipientId: string } => 'recipientId' in d;
 export const NotifyLevel = z.object({
   afterMinutes: ints(0, 10080),
   minSeverity: z.enum(SEVERITIES).default('WARNING'),

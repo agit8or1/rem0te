@@ -5,7 +5,7 @@ import { api } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Cpu, HardDrive, MemoryStick, Activity, RefreshCw, Server } from 'lucide-react';
+import { Cpu, HardDrive, MemoryStick, Activity, RefreshCw, Server, Archive } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface ServiceStatus {
@@ -22,6 +22,100 @@ interface StatusData {
   services: ServiceStatus[];
   nodeVersion: string;
   platform: string;
+}
+
+interface RetentionTable {
+  key: string; table: string; label: string; class: 'evidence' | 'history' | 'transient';
+  sweep: 'retention' | 'metrics' | 'support-requests' | 'own-expiry' | 'none';
+  rule: string; rows: number; oldest: string | null; oldestNote?: string; windowDays: number | null;
+}
+interface RetentionData {
+  generatedAt: string;
+  sweep: {
+    enabled: boolean; everySeconds: number; perPassCap: number;
+    lastPass: null | { at: string; total: number; counts: Record<string, number>; capped: string[]; ms: number };
+    lastError: null | { at: string; message: string };
+  };
+  metricSweep: boolean;
+  tables: RetentionTable[];
+}
+
+const CLASS_LABEL: Record<RetentionTable['class'], string> = { evidence: 'Evidence', history: 'History', transient: 'Transient' };
+const SWEEP_LABEL: Record<RetentionTable['sweep'], string> = {
+  retention: 'Retention sweep', metrics: 'Metric sweep', 'support-requests': 'Support-request sweep', 'own-expiry': 'On expiry', none: 'Never',
+};
+
+function windowText(t: RetentionTable) {
+  if (t.class === 'evidence') return 'Kept';
+  if (t.windowDays === null) return t.sweep === 'own-expiry' ? 'Until it expires' : t.sweep === 'support-requests' ? 'Details erased 30 d after closing' : 'Not pruned';
+  return `${t.windowDays} d`;
+}
+
+/**
+ * Data retention (0.34): what each growing table holds and how long it is
+ * kept, from real counts (GET /admin/retention, cached for a minute server
+ * side). Platform Admin only, like the rest of this page.
+ */
+function RetentionCard() {
+  const { data, isLoading, refetch, isFetching } = useQuery<RetentionData>({
+    queryKey: ['admin-retention'],
+    queryFn: () => api.get('/admin/retention').then((r) => r.data?.data),
+    refetchInterval: 5 * 60_000,
+  });
+  const last = data?.sweep.lastPass;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2"><Archive className="h-4 w-4" /> Data retention</span>
+          <Button variant="outline" size="sm" onClick={() => api.get('/admin/retention?fresh=1').then(() => refetch())} disabled={isFetching} aria-label="Recount">
+            <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
+          </Button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {isLoading && !data ? <p className="text-sm text-muted-foreground">Counting rows…</p> : !data ? (
+          <p className="text-sm text-destructive">Could not load retention status.</p>
+        ) : (
+          <>
+            <p className="text-xs text-muted-foreground">
+              {data.sweep.enabled
+                ? <>The retention sweep runs every {Math.round(data.sweep.everySeconds / 60)} min and removes at most {data.sweep.perPassCap.toLocaleString()} rows per table per pass. </>
+                : <>The retention sweep is <strong>off</strong> in this API process (RETENTION_SWEEP=off): nothing below is being pruned. </>}
+              {last ? <>Last pass {new Date(last.at).toLocaleString()}: {last.total ? `${last.total.toLocaleString()} rows removed or trimmed` : 'nothing was due'}{last.capped.length ? ` (more due: ${last.capped.join(', ')})` : ''}. </> : data.sweep.enabled ? <>No pass has run since the API started. </> : null}
+              {data.sweep.lastError && <span className="text-destructive">Last failure {new Date(data.sweep.lastError.at).toLocaleString()}: {data.sweep.lastError.message}. </span>}
+              {!data.metricSweep && <>The metric sweep is off too (METRIC_SWEEP=off). </>}
+              The audit log is never pruned. Counted {new Date(data.generatedAt).toLocaleString()}.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-muted-foreground border-b">
+                    <th className="py-2 pr-3 font-medium">Data</th><th className="py-2 pr-3 font-medium">Kind</th>
+                    <th className="py-2 pr-3 font-medium text-right">Rows</th><th className="py-2 pr-3 font-medium">Oldest</th>
+                    <th className="py-2 pr-3 font-medium">Kept</th><th className="py-2 font-medium">Removed by</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {data.tables.map((t) => (
+                    <tr key={t.key} data-testid={`retention-${t.key}`} title={t.rule}>
+                      <td className="py-2 pr-3"><p className="font-medium">{t.label}</p><p className="text-xs text-muted-foreground font-mono">{t.table}</p></td>
+                      <td className="py-2 pr-3"><Badge variant={t.class === 'evidence' ? 'default' : 'secondary'}>{CLASS_LABEL[t.class]}</Badge></td>
+                      <td className="py-2 pr-3 text-right tabular-nums">{t.rows.toLocaleString()}</td>
+                      <td className="py-2 pr-3 text-xs">{t.oldest ? new Date(t.oldest).toLocaleDateString() : '—'}{t.oldestNote && t.oldest ? <span className="text-muted-foreground"> ({t.oldestNote})</span> : null}</td>
+                      <td className="py-2 pr-3 text-xs">{windowText(t)}</td>
+                      <td className="py-2 text-xs">{SWEEP_LABEL[t.sweep]}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-muted-foreground">Hover a row for its rule. Windows are set in the server&apos;s environment (RETENTION_*_DAYS); see the Data retention page in the documentation.</p>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 function fmt(bytes: number) {
@@ -154,6 +248,7 @@ export default function StatusPage() {
           </Card>
         </div>
       )}
+      <RetentionCard />
     </div>
   );
 }

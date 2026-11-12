@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { canonicalJson } from '../integration/crypto';
+import { MAX_SCRIPT_OUTPUT_BYTES, ScriptBlock, ScriptRunParams, TIMEOUT_MINUTES, scriptPlanProblem } from './script-run';
 
 /**
  * The approved-action catalog (v0.26) and the canonical plan an approver
@@ -8,14 +9,19 @@ import { canonicalJson } from '../integration/crypto';
  * the Windows agent (tools/windows-installer/internal/action/catalog.go),
  * which is the copy that decides what actually runs.
  *
- * Six actions. Starting the Print Spooler on one computer (0.26); installing
- * named Windows updates on a ring of computers (0.27); and four maintenance
+ * Nine actions. Starting the Print Spooler on one computer (0.26); installing
+ * named Windows updates on a ring of computers (0.27); four maintenance
  * actions (0.32): restarting one service from a fixed allowlist, scheduling a
- * warned restart, canceling it, and collecting a fixed set of logs. Nothing
- * here can carry a command line, a script, a path or a URL — parameters are
- * closed enums, bounded integers or update identities — so an AI suggestion, a
- * ticket or a compromised portal cannot turn a catalog entry into arbitrary
- * execution.
+ * warned restart, canceling it, and collecting a fixed set of logs; (0.34)
+ * running one approved script-library version whose exact SHA-256 is on
+ * the approval signer's own allowlist; and (0.34) installing or
+ * uninstalling one allowlisted winget package, pinned by version and
+ * installer SHA-256. Nothing here can carry a
+ * command line, a path or a URL, and the script action names a hash, not
+ * text — parameters are closed enums, bounded integers, update identities or
+ * typed script arguments checked against a reviewed schema — so an AI
+ * suggestion, a ticket or a compromised portal cannot turn a catalog entry
+ * into arbitrary execution.
  */
 
 export const PLAN_SCHEMA = 'rem0te-action-plan/1';
@@ -45,6 +51,8 @@ export interface CatalogAction {
   resultDeadlineMinutes: number;
   /** Requestable one computer at a time from its Actions tab (false: only through its own workflow). */
   direct: boolean;
+  /** 0.34: what ACTION_NOT_DIRECT tells someone who tries anyway (direct: false only). */
+  indirectVia?: string;
   /**
    * Offered to ClientSt0r as proposable (capabilities and action-proposals).
    * The 0.32 maintenance actions are not: advertising them is a change to the
@@ -100,15 +108,40 @@ export const UpdateFilter = z.object({
   excludeKbs: z.array(z.string().regex(/^KB[0-9]{4,10}$/)).min(1).max(50).refine(uniq, 'duplicate').optional(),
 }).strict();
 
+/**
+ * An update plan's restart rule (0.34). Two fixed values, nothing to choose
+ * beyond them: no delay, time, message or command. The agent has the same
+ * two (updates.go RebootNever / RebootInWindow) and refuses anything else.
+ *
+ *   never                  the computer is never restarted (0.27–0.33).
+ *   if_required_in_window  after the install, and only if Windows then says
+ *                          a restart is required, the agent schedules one
+ *                          through windows.reboot.schedule's own path: the
+ *                          fixed warning, UPDATE_RESTART_WARNING_MINUTES
+ *                          later, never while a RustDesk session is open (or
+ *                          when it cannot tell), never after the plan's
+ *                          signed window closes. Otherwise restart_deferred.
+ */
+export const UPDATE_REBOOT_RULES = ['never', 'if_required_in_window'] as const;
+export type UpdateRebootRule = (typeof UPDATE_REBOOT_RULES)[number];
+export const UpdateReboot = z.enum(UPDATE_REBOOT_RULES);
+/** The fixed warning before an update plan's restart; the agent uses the same (UpdateRestartWarningMinutes). */
+export const UPDATE_RESTART_WARNING_MINUTES = 15;
+/** Does a plan's rule ask for no more than `allowed`? (never ≤ if_required_in_window) */
+export const rebootWithin = (plan: unknown, allowed: UpdateRebootRule) =>
+  UpdateReboot.safeParse(plan).success && UPDATE_REBOOT_RULES.indexOf(plan as UpdateRebootRule) <= UPDATE_REBOOT_RULES.indexOf(allowed);
+/** Said wherever the restart rule is offered or described. */
+export const REBOOT_UNPROVEN = 'The in-window restart has been tested against a simulated Windows only; it has not yet run on a real Windows computer.';
+
 export const UPDATE_INSTALL: CatalogAction = {
   id: 'windows.update.install',
   version: 1,
   title: 'Install Windows updates',
-  description: 'Downloads and installs the named Windows updates from Windows Update on each named computer, then reports each update\'s result. It never restarts a computer.',
+  description: 'Downloads and installs the named Windows updates from Windows Update on each named computer, then reports each update\'s result. It restarts a computer only if the plan\'s restart rule allows it and Windows says a restart is required; by default it never does.',
   params: z.object({
     updates: z.array(UpdateIdentity).min(1).max(MAX_UPDATES_PER_PLAN)
       .refine((u) => new Set(u.map((x) => `${x.updateId}@${x.revision}`)).size === u.length, 'duplicate update'),
-    reboot: z.literal('never'),
+    reboot: UpdateReboot,
     // 0.32: a plan signed under a patch policy carries the policy's filter,
     // and the agent applies it to Windows Update's own answer
     // (patch.InstallFiltered). It can only narrow what Eligible allows.
@@ -116,19 +149,21 @@ export const UPDATE_INSTALL: CatalogAction = {
   }).strict(),
   warnings: [
     'Installing updates changes the computer. An update can break a driver or an application, and some cannot be uninstalled.',
-    'Many updates need a restart before they take effect. This plan never restarts a computer: until someone restarts it, it keeps running the old code and reports "restart required".',
+    'Many updates need a restart before they take effect. With the restart rule "never", the computer is not restarted: until someone restarts it, it keeps running the old code and reports "restart required".',
+    `With the restart rule "restart if required, inside the window", a computer that Windows says needs a restart after the install shows the fixed restart warning and restarts ${UPDATE_RESTART_WARNING_MINUTES} minutes later: programs still open are closed without saving. It does not restart while a RustDesk session is open (or when it cannot tell), or if the restart would fall after the plan's window closes; it reports the restart deferred and leaves the computer as it is. ${REBOOT_UNPROVEN}`,
     'Updates download from Microsoft. People using the computer may notice it slow down while they install.',
     'Each computer installs only the named updates that Windows Update offers it and that are security, critical, rollup or ordinary updates. Drivers, feature upgrades and optional updates are never installed, and no licence is accepted on anyone\'s behalf.',
   ],
-  verification: 'Each computer reports what Windows Update said for every named update, and whether a restart is pending. A later scan, after any restart, shows whether the update took effect.',
-  doesNotProve: ['that the update fixed any problem', 'that applications still work afterwards', 'that the computer has been restarted'],
+  verification: 'Each computer reports what Windows Update said for every named update, whether a restart is pending, and — under the in-window rule — whether it scheduled a restart and for when, or why it deferred it. A later scan, after any restart, shows whether the update took effect.',
+  doesNotProve: ['that the update fixed any problem', 'that applications still work afterwards', 'that a scheduled restart happened (a later scan with no restart pending shows that)'],
   // Software installation is high impact on any computer, at any count.
   risk: () => 'high',
   maxTargets: MAX_RING_TARGETS,
   resultDeadlineMinutes: 6 * 60,
   direct: false,
+  indirectVia: 'Windows updates are installed through a patch deployment, ring by ring, not one computer at a time.',
   integration: true,
-  acknowledge: 'I understand that these updates change the computers and may need a restart.',
+  acknowledge: 'I understand that these updates change the computers, may need a restart, and that under the in-window rule the computers restart after a fixed warning.',
 };
 
 // ── Maintenance actions (0.32) ──────────────────────────────────────────────
@@ -247,7 +282,140 @@ export const LOGS_COLLECT: CatalogAction = {
   acknowledge: 'I understand that the collected text may include personal details that redaction does not catch.',
 };
 
-export const CATALOG: CatalogAction[] = [SERVICE_START, UPDATE_INSTALL, SERVICE_RESTART, REBOOT_SCHEDULE, REBOOT_CANCEL, LOGS_COLLECT];
+// ── Running an approved library script (0.34) ───────────────────────────────
+// The one entry whose effect is not fixed by the catalog: it runs a script.
+// It can only name a library version whose exact SHA-256 the approval signer
+// put on its OWN allowlist after its approvers read the content
+// (script-run.ts, docs/script-library.md). Parameters are closed — a
+// version, its hash, typed arguments, a timeout from a fixed list — and the
+// arguments are checked against the version's declared schema by the
+// portal, the signer and the agent. Always high impact; never offered to
+// ClientSt0r; requested through the script-run module, not the Actions tab.
+
+export const SCRIPT_RUN: CatalogAction = {
+  id: 'windows.script.run', // = SCRIPT_RUN_ACTION; written out so the catalog's ids read as one list (§ 14)
+  version: 1,
+  title: 'Run an approved script',
+  description: `Runs one approved script-library version, whose exact SHA-256 the approval signer has on its own allowlist, as SYSTEM in Windows PowerShell (no profile, not interactive) in a fresh temporary folder, with the declared arguments. Stopped at the timeout (${TIMEOUT_MINUTES.join(', ')} minutes); the first ${MAX_SCRIPT_OUTPUT_BYTES / 1024} KB of each of its output and error streams are kept, redacted.`,
+  params: ScriptRunParams,
+  warnings: [
+    'The script runs as SYSTEM with full PowerShell: it can do anything an administrator can on each computer. The timeout, the output limits and the temporary folder limit accidents; they do not stop a script that means harm. Read the script before you approve.',
+    'The agent runs exactly the bytes whose SHA-256 is shown here and refuses any others. Approving this plan approves those bytes, with these arguments, on these computers.',
+    'A script stopped at its timeout may have done part of its work. Everything it started is stopped with it.',
+    'Its output can contain personal details redaction does not catch. Output is kept for 90 days and shown on each computer\'s Actions tab.',
+  ],
+  verification: 'Each computer reports the script\'s exit code, whether it was stopped at the timeout, how long it ran, and its output and errors (bounded and redacted, on the computer and again on receipt).',
+  doesNotProve: ['that the script did what its description says', 'that a zero exit code means success, unless the script makes it so', 'that nothing else changed'],
+  risk: () => 'high',
+  maxTargets: MAX_RING_TARGETS,
+  // The longest timeout, plus a heartbeat or two either side.
+  resultDeadlineMinutes: 90,
+  direct: false,
+  indirectVia: 'Scripts are run from an approved version in the script library, which names the script and its allowlist entry.',
+  integration: false,
+  acknowledge: 'I understand that this runs the script as SYSTEM on every computer named, and that a stopped script may have done part of its work.',
+};
+
+// ── Software deployment (0.34) ─────────────────────────────────────────────
+// Install or uninstall one allowlisted winget package, pinned by version and
+// installer SHA-256. Keep in step with
+// tools/windows-installer/internal/action/software.go: the agent re-checks
+// every value below, downloads with winget, hashes the installer itself and
+// refuses a mismatch before installing (docs/software-deployment.md).
+
+/** A winget package identifier: dot-separated segments; never starts with '-', no spaces, quotes or shell characters. */
+// eslint-disable-next-line security/detect-unsafe-regex -- every repetition starts with a literal '.', which the segment class excludes: no overlap to backtrack over
+export const PACKAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9+_-]{0,63}(\.[A-Za-z0-9+_-]{1,64}){1,7}$/;
+export const PACKAGE_ID_MAX = 128;
+/** A package (or detected) version: never starts with '-'. */
+export const SOFTWARE_VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$/;
+export const SHA256_RE = /^[0-9a-f]{64}$/;
+/** An installed program's display name, as Programs and Features shows it. */
+export const DISPLAY_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._()+&,'-]{0,119}$/;
+/** An uninstall registry subkey name (no backslash: one key, never a path). */
+export const UNINSTALL_KEY_RE = /^[A-Za-z0-9{}][A-Za-z0-9{}._+ -]{0,127}$/;
+const FILE_SEGMENT_RE = /^[A-Za-z0-9 ._()+-]{1,64}$/;
+/** A file under Program Files: up to 8 plain segments, the last an .exe or .dll. Read for its version only. */
+export function fileUnderBaseOk(f: string): boolean {
+  if (typeof f !== 'string' || f.length < 1 || f.length > 200) return false;
+  const segs = f.split('\\');
+  if (segs.length > 8) return false;
+  if (!segs.every((s) => FILE_SEGMENT_RE.test(s) && s !== '.' && s !== '..' && !s.startsWith(' ') && !s.endsWith(' ') && !s.endsWith('.'))) return false;
+  return /\.(exe|dll)$/i.test(segs[segs.length - 1]);
+}
+const SwVersion = z.string().regex(SOFTWARE_VERSION_RE);
+const Compare = z.enum(['gte', 'eq']);
+/** How a computer tells the package is there: three closed forms, nothing that runs. */
+export const Detection = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('display_name'), name: z.string().regex(DISPLAY_NAME_RE), match: z.enum(['exact', 'prefix']), compare: Compare, version: SwVersion }).strict(),
+  z.object({ kind: z.literal('uninstall_key'), key: z.string().regex(UNINSTALL_KEY_RE), compare: Compare, version: SwVersion }).strict(),
+  z.object({ kind: z.literal('file_version'), base: z.enum(['ProgramFiles', 'ProgramFilesX86']), file: z.string().refine(fileUnderBaseOk, 'a file under the base: plain segments, ending .exe or .dll'), compare: Compare, version: SwVersion }).strict(),
+]);
+export type Detection = z.infer<typeof Detection>;
+/** The closed parameters both software actions sign. */
+export const SoftwareParams = z.object({
+  packageId: z.string().max(PACKAGE_ID_MAX).regex(PACKAGE_ID_RE),
+  version: SwVersion,
+  installerSha256: z.string().regex(SHA256_RE),
+  scope: z.literal('machine'),
+  detection: Detection,
+}).strict();
+export type SoftwareParams = z.infer<typeof SoftwareParams>;
+/** What the approval page shows about a software plan. Signed, never consulted by the agent. */
+export const SoftwareDisplay = z.object({
+  name: z.string().max(120), publisher: z.string().max(120).nullable(),
+  hashSource: z.enum(['winget_pkgs', 'admin_pasted']), manifestSha256: z.string().regex(SHA256_RE).nullable(),
+  entryId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/), entryRevision: z.number().int().min(1),
+}).strict();
+
+export const SOFTWARE_INSTALL: CatalogAction = {
+  id: 'windows.software.install',
+  version: 1,
+  title: 'Install software (winget)',
+  description: 'Installs one allowlisted winget package at one exact version, machine-wide and silently. The computer downloads it from winget\'s own source, hashes the installer itself and installs only if the hash is the one pinned here.',
+  params: SoftwareParams,
+  warnings: [
+    'Installing software changes the computer. An installer can replace files, add services or startup items, and change other programs.',
+    'The installer comes from the winget community source (winget-pkgs), not from rem0te. Its hash is pinned and checked by each computer before installing; who published the package is the package\'s own claim.',
+    'Some installers close running copies of the program, or need a restart before the program works. This plan never restarts a computer.',
+    'Dependencies are not installed. A package that needs another one needs it as its own catalog entry, installed first.',
+    'Accepting the package and source agreements is part of the plan: winget is told the agreements are accepted on the business\'s behalf.',
+  ],
+  verification: 'Each computer reports the hash it computed, winget\'s exit code, and what the detection rule saw before and after.',
+  doesNotProve: ['that the program works', 'that the publisher is who the package claims', 'that nothing else changed on the computer'],
+  // Software installation is high impact on any computer, at any count.
+  risk: () => 'high',
+  maxTargets: MAX_RING_TARGETS,
+  resultDeadlineMinutes: 90,
+  direct: false,
+  indirectVia: 'Software is installed from the software catalog, as a deployment (one computer, or a canary and rings).',
+  integration: false,
+  acknowledge: 'I understand that this installs software on the computers, and that I accept the package and source agreements on the business\'s behalf.',
+};
+
+export const SOFTWARE_UNINSTALL: CatalogAction = {
+  id: 'windows.software.uninstall',
+  version: 1,
+  title: 'Uninstall software (winget)',
+  description: 'Uninstalls one allowlisted winget package, machine-wide and silently, then checks with the detection rule that it is gone.',
+  params: SoftwareParams,
+  warnings: [
+    'Uninstalling removes the program for everyone on the computer. Its settings and data may be removed with it.',
+    'Running copies of the program may be closed without saving.',
+    'It removes whatever version of the package winget finds installed, not only the version pinned here.',
+  ],
+  verification: 'Each computer reports winget\'s exit code and whether the detection rule still finds the program afterwards.',
+  doesNotProve: ['that every file and setting was removed', 'that nothing depended on the program'],
+  risk: () => 'high',
+  maxTargets: MAX_RING_TARGETS,
+  resultDeadlineMinutes: 60,
+  direct: false,
+  indirectVia: 'Software is uninstalled from the software catalog, as a deployment (one computer, or a canary and rings).',
+  integration: false,
+  acknowledge: 'I understand that this removes the program for everyone on the computers.',
+};
+
+export const CATALOG: CatalogAction[] = [SERVICE_START, UPDATE_INSTALL, SERVICE_RESTART, REBOOT_SCHEDULE, REBOOT_CANCEL, LOGS_COLLECT, SCRIPT_RUN, SOFTWARE_INSTALL, SOFTWARE_UNINSTALL];
 
 /** The log sources windows.logs.collect returns, in order; the agent sends the same. */
 export const LOG_SOURCES = ['system_errors', 'application_errors', 'agent_journal', 'agent_log', 'rustdesk_log'] as const;
@@ -319,7 +487,15 @@ export const Plan = z.object({
     deployment: z.object({ id: Id, name: z.string().max(120), ring: z.number().int().min(0).max(9), rings: z.number().int().min(1).max(10) }).strict().nullable(),
     /** 0.32: the patch policy this plan was signed under, if any (the signer checks it is the one it holds). */
     policy: z.object({ id: z.string().regex(/^[a-f0-9]{32}$/), name: z.string().max(120), digest: Hex64 }).strict().optional(),
+    /** 0.34: the catalog entry a software plan comes from (name, publisher, where its hash came from). */
+    software: SoftwareDisplay.optional(),
   }).strict().optional(),
+  /**
+   * 0.34, windows.script.run only: the signer's allowlist entry for the
+   * version it runs (script-run.ts ScriptBlock). Bound by the signature; the
+   * signer refuses a plan whose block is not exactly its entry.
+   */
+  script: ScriptBlock.optional(),
   createdAt: Iso,
   /** Filled in by the signer when the quorum is met. */
   approvers: z.array(Approver).max(6),
@@ -342,6 +518,8 @@ export function validatePlanAction(p: Plan): { ok: true; action: CatalogAction }
   const a = catalogEntry(p.action.id, p.action.version);
   if (!a) return { ok: false, reason: 'unknown_action' };
   if (!a.params.safeParse(p.params).success) return { ok: false, reason: 'params_not_allowed' };
+  const sp = scriptPlanProblem(p);
+  if (sp) return { ok: false, reason: sp };
   if (p.targets.length > a.maxTargets) return { ok: false, reason: 'too_many_targets' };
   const eps = new Set(p.targets.map((t) => t.endpointId)), rids = new Set(p.targets.map((t) => t.rustdeskId));
   if (eps.size !== p.targets.length || rids.size !== p.targets.length) return { ok: false, reason: 'duplicate_target' };

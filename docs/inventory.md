@@ -410,6 +410,10 @@ numbers.
 
 ## Software and change history (0.29)
 
+> From 0.34 the same list is one source of evidence for [software version compliance](software-deployment.md#version-compliance)
+> (display-name rules only), and the computer's Software tab also shows **Managed software**: the catalog entries,
+> with Install / Uninstall through the software catalog's signed, two-approver plans.
+
 From 0.29 the inventory includes **installed software**: what Windows lists under Programs and Features, from
 the 64- and 32-bit uninstall registry keys, skipping system components and updates, up to 500 entries. It is
 shown on the computer's **Software** tab (0.31; before that, the Monitoring tab) with a filter, the age of the
@@ -420,6 +424,9 @@ software that were added, removed or changed are recorded as a change history on
 7-Zip 24.08*, *memory changed: 16 GB → 32 GB*. The first inventory is the baseline and records nothing; a list an
 older agent does not report (software, before 0.29) is not compared, so upgrading an agent does not log every
 program as newly installed.
+
+From 0.34 changes are kept for `RETENTION_CHANGE_DAYS` (default 400 days) and then deleted; see
+[data-retention.md](data-retention.md).
 
 Monitors — offline, disk, CPU, memory, services, event-log matches, pending restart — and alerts are described in
 [monitoring.md](monitoring.md).

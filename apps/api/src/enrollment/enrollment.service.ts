@@ -1,5 +1,6 @@
 import { ActionsService } from '../actions/actions.service';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
+import { AgentMigrationService } from '../update-trust/agent-migration.service';
 import {
   Injectable,
   NotFoundException,
@@ -25,11 +26,13 @@ import { ContainmentService } from '../containment/containment.service';
 import { ClientUpdatesService } from '../client-updates/client-updates.service';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
 import { CANDIDATE_LIVE_MS, CANDIDATE_SETTLE_MS } from './device-secret';
-import { withDeviceText } from './device-text';
+import { deviceText, withDeviceText } from './device-text';
 import { queryHbbsOnline } from './hbbs-presence';
+import { HbbsPeerSnapshot, PEER_SNAPSHOT_SQL, parsePeerIds } from './hbbs-peer-snapshot';
 import { compareVersions } from '../common/agent-contract';
 import { assertFresh } from '../security-controls/review';
 import { MetricsService } from '../metrics/metrics.service';
+import { ChatService } from '../chat/chat.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -63,6 +66,8 @@ export class EnrollmentService {
     private readonly diagnostics: DiagnosticsCatalogService,
     private readonly clientUpdates: ClientUpdatesService,
     private readonly metrics: MetricsService,
+    private readonly agentMigration: AgentMigrationService,
+    private readonly chat: ChatService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -98,7 +103,7 @@ export class EnrollmentService {
    * whatever their role and whatever step-up actions are configured. An API
    * key cannot step up; it keeps the ability because the key is itself the
    * second proof — a separate secret, bound to one business, carrying the
-   * explicit `enrollment:write` scope, and minting such a key needs the same
+   * explicit `enrollment:write` scope, and creating any key needs the same
    * fresh re-authentication (ApiKeysService.create). The check runs after
    * every scope and input check, so someone with no business here is refused
    * outright rather than asked to re-authenticate first.
@@ -142,9 +147,11 @@ export class EnrollmentService {
       // same tenant (0.33: a group holds only its own business's computers).
       const group = await this.prisma.endpointGroup.findFirst({
         where: { id: dto.endpointGroupId, OR: [{ customerId: businessId }, { customerId: null, tenantId: business.tenantId }] },
-        select: { id: true },
+        select: { id: true, kind: true },
       });
       if (!group) throw new BadRequestException('Unknown computer group');
+      // 0.34: a claim adds a membership row, which a rule group never has.
+      if (group.kind === 'RULE') throw new BadRequestException({ code: 'RULE_GROUP', message: 'That is a rule group: a new computer is in it when it matches the rule. Pick a static group, or none.' });
     }
 
     // The site, like the business, is fixed now. It must be an active site of
@@ -403,9 +410,14 @@ export class EnrollmentService {
     // The token's device group, the same way (0.33): it must still exist and
     // still be this business's (or a pre-0.33 group of the tenant). A group
     // deleted since the token was made is dropped, not an install failure.
+    // Since 0.34 it is a membership the claim ADDS: a re-enrolled computer
+    // keeps its other groups in the same business.
     const groupId = record.endpointGroupId
       ? (await this.prisma.endpointGroup.findFirst({
-          where: { id: record.endpointGroupId, OR: [{ customerId: record.customerId ?? '__none__' }, { customerId: null, tenantId: record.tenantId }] },
+          // kind STATIC: a token can never name a rule group (refused when it
+          // was made, and a group's kind never changes), but the claim must
+          // not depend on that — the 0053 trigger would fail the install.
+          where: { id: record.endpointGroupId, kind: 'STATIC', OR: [{ customerId: record.customerId ?? '__none__' }, { customerId: null, tenantId: record.tenantId }] },
           select: { id: true },
         }))?.id ?? null
       : null;
@@ -432,21 +444,28 @@ export class EnrollmentService {
           ...(adoptedEndpointId && dto.hostname ? { name: dto.hostname } : {}),
           ...(record.customerId ? { customerId: record.customerId } : {}),
           ...(siteId ? { siteId } : {}),
-          // A computer that changes business leaves its old business's group.
-          ...(groupId ? { endpointGroupId: groupId } : record.customerId && record.customerId !== endpoint.customerId ? { endpointGroupId: null } : {}),
+          // A computer that changes business leaves its old business's
+          // groups: the endpoint_leaves_foreign_groups trigger (0049) does
+          // that in this statement; the token's group is added below.
           accessMode: record.accessMode,
         },
       });
+      // After the update, so the trigger has already cleared any group of a
+      // business the computer just left; the insert trigger refuses a group
+      // of any other business.
+      if (groupId) {
+        await this.prisma.endpointGroupMember.createMany({ data: [{ endpointGroupId: groupId, endpointId: endpoint.id }], skipDuplicates: true });
+      }
     } else {
-      // Create new endpoint from token+claim context. customerId and
-      // endpointGroupId come from the token so the endpoint cannot enroll
-      // itself into a different business.
+      // Create new endpoint from token+claim context. customerId and the
+      // group come from the token so the endpoint cannot enroll itself into
+      // a different business.
       endpoint = await this.prisma.endpoint.create({
         data: {
           tenantId: record.tenantId,
           customerId: record.customerId ?? null,
           siteId,
-          endpointGroupId: groupId,
+          ...(groupId ? { groupMemberships: { create: { endpointGroupId: groupId } } } : {}),
           accessMode: record.accessMode,
           name: dto.hostname ?? dto.rustdeskId,
           hostname: dto.hostname ?? null,
@@ -549,6 +568,7 @@ export class EnrollmentService {
         accessMode: record.accessMode,
         assignedUsers: record.assignedUserIds.length,
         ...(siteId ? { siteId } : {}),
+        ...(groupId ? { groupId } : {}),
         ...(adoptedEndpointId ? { adoptedFromPool: true } : {}),
       },
     });
@@ -566,7 +586,8 @@ export class EnrollmentService {
     rustdeskSessions?: number; updateNonce?: string;
     updateChannel?: 'signed' | 'legacy'; trustRootVersion?: number; targetsVersion?: number;
     agentActions?: string[]; agentSha256?: string; actionResults?: unknown[];
-    patchPosture?: Record<string, unknown>;
+    patchPosture?: Record<string, unknown>; agentChat?: number;
+    agentUpdateCheckedAt?: string; agentUpdateResult?: string;
   }, remoteIp?: string) {
     // Names and versions as text, never control codes (0.32) — see device-text.ts.
     dto = withDeviceText(dto);
@@ -696,7 +717,7 @@ export class EnrollmentService {
         ...(authenticated &&
         node.reinstallRequestedAt &&
         node.reinstallDispatchedAt &&
-        dto.agentVersion === this.platformVersion()
+        (dto.agentVersion === this.platformVersion() || signedCheckedSince(dto, node.reinstallDispatchedAt))
           ? { reinstallRequestedAt: null, reinstallRequestedBy: null, reinstallDispatchedAt: null }
           : {}),
       },
@@ -728,6 +749,16 @@ export class EnrollmentService {
         // a legacy agent's claim is discarded rather than stored.
         agentActions: dto.updateChannel === 'signed' ? dto.agentActions ?? [] : [],
         agentSha256: dto.updateChannel === 'signed' ? dto.agentSha256 ?? null : null,
+        // Chat (0.34): only the signed agent has a chat host.
+        chatProtocol: dto.updateChannel === 'signed' ? dto.agentChat ?? null : null,
+      }),
+      // Agent upgrade (0.34): the agent's own last update check, from
+      // agent-status.json — the signed agent's, or a migrate run's on a
+      // standard machine. Shown, never acted on; made inert like every other
+      // device-reported string.
+      ...(authenticated && plausibleCheck(dto.agentUpdateCheckedAt) && {
+        agentUpdateCheckedAt: new Date(dto.agentUpdateCheckedAt as string),
+        agentUpdateResult: deviceText(dto.agentUpdateResult, 200) ?? null,
       }),
     };
 
@@ -802,6 +833,7 @@ export class EnrollmentService {
     // A staged rollout owns this computer's updates while it has a job here:
     // exact version, batch, window, backoff and evidence all come from it,
     // and the legacy one-click staging above must not also fire.
+    let rolloutManaged = false;
     if (authenticated) {
       try {
         const managed = await this.rollouts.onHeartbeat({
@@ -810,6 +842,7 @@ export class EnrollmentService {
           reportedPassword: !!dto.password, rdSessionsActive: dto.rustdeskSessions, contained: updatesHeld,
         });
         if (managed.managed) {
+          rolloutManaged = true;
           updateRustdesk = managed.updateRustdesk ?? null;
           reinstallAgent = managed.reinstallAgent ?? null;
         }
@@ -831,6 +864,28 @@ export class EnrollmentService {
       } else if (gate === 'migrate') {
         updateRustdesk = null;
         reinstallAgent = { targetVersion: this.platformVersion() };
+      }
+    }
+
+    // Per-computer migration to the signed agent (0.34). Only this computer's
+    // own open request is read; the nonce goes out with the reinstall flag,
+    // and windows.ps1 serves the migration script for that nonce alone. The
+    // request is held — not handed out — under an updates pause, in Signed
+    // only without portal migration (the gate above said withhold), or while
+    // a rollout owns this computer. A signed heartbeat completes it.
+    if (authenticated) {
+      try {
+        const mig = await this.agentMigration.forHeartbeat({
+          endpointId: node.endpointId, channel: dto.updateChannel === 'signed' ? 'signed' : 'legacy',
+          updatesHeld, rolloutManaged,
+          gate: dto.updateChannel === 'signed' ? 'pass' : await this.updateTrust.gateForHeartbeat('legacy'),
+        });
+        if (mig) {
+          updateRustdesk = null;
+          reinstallAgent = { targetVersion: this.platformVersion(), nonce: mig.nonce };
+        }
+      } catch (e) {
+        this.logger.warn(`Agent migration step failed for endpoint ${node.endpointId}: ${String(e)}`);
       }
     }
 
@@ -934,6 +989,20 @@ export class EnrollmentService {
       }
     }
 
+    // Chat (0.34): whether a conversation is open, so the signed agent starts
+    // its chat host. A flag only — no names, no text: the host fetches those
+    // over /enrollment/chat/poll with the device secret. Asked only of an
+    // authenticated signed agent that reports a chat protocol, so the rest of
+    // the fleet's heartbeats cost no query.
+    let chat: { open: boolean } | null = null;
+    if (authenticated && dto.updateChannel === 'signed' && (dto.agentChat ?? 0) >= 1) {
+      try {
+        chat = await this.chat.forHeartbeat(node.endpointId);
+      } catch (e) {
+        this.logger.warn(`Chat step failed for endpoint ${node.endpointId}: ${String(e)}`);
+      }
+    }
+
     // An unauthenticated caller gets the liveness ack and nothing that would
     // tell it which record a RustDesk ID belongs to.
     if (!authenticated) {
@@ -957,8 +1026,34 @@ export class EnrollmentService {
       patchScan,
       monitor,
       diagnostics,
+      chat,
       rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
     };
+  }
+
+  /**
+   * The device secret check every device-side route makes (0.34: the chat
+   * routes), in one place: the node for this RustDesk ID must hold a secret
+   * and the one offered must match it. A failure is audited exactly as the
+   * other device routes audit theirs, and is the same 401.
+   */
+  async authenticateDevice(rustdeskId: string, agentSecret: string | undefined, reason: string) {
+    const node = await this.prisma.rustdeskNode.findUnique({
+      where: { rustdeskId },
+      select: { id: true, tenantId: true, endpointId: true, agentSecretHash: true },
+    });
+    if (!node?.agentSecretHash || !agentSecret || !this.secretMatches(node.agentSecretHash, agentSecret)) {
+      await this.audit.log({
+        tenantId: node?.tenantId ?? undefined,
+        action: 'ENDPOINT_HEARTBEAT_REJECTED',
+        resource: 'endpoint', resourceId: node?.endpointId,
+        meta: { rustdeskId, reason },
+      });
+      throw new UnauthorizedException('This device is not recognised');
+    }
+    // A node not (or no longer) attached to a computer has no chat to serve.
+    if (!node.endpointId) throw new NotFoundException('This device is not attached to a computer');
+    return { endpointId: node.endpointId, tenantId: node.tenantId };
   }
 
   /**
@@ -1201,29 +1296,47 @@ export class EnrollmentService {
    * truth. We shell out to the sqlite3 CLI rather than take a dependency:
    * node:sqlite does not exist on the Node 20 this service runs under, and
    * better-sqlite3 would mean a compiled native module for one read-only
-   * query. The id is validated as digits before it reaches the SQL text.
+   * query.
+   *
+   * Since 0.34 the read is shared: one sqlite3 reads every digits-only peer ID
+   * at most once per HBBS_PEER_CACHE_SECONDS (default 10, clamped to 1–30) and
+   * every heartbeat in that window answers from it — see hbbs-peer-snapshot.ts
+   * for why that cannot make an unregistered ID look registered for longer
+   * than the window. It was one process per heartbeat, which was most of the
+   * API's CPU at 5,000 computers.
    *
    * Returns null — never throws, never false — when the question cannot be
    * answered (hbbs on another host, file unreadable, sqlite3 absent, WAL
    * unreadable). Callers MUST treat null as "unknown", not as a failure:
    * refusing an install because we could not read a file would be worse than
-   * the bug this exists to catch.
+   * the bug this exists to catch. A failed read discards any earlier snapshot,
+   * so it is null for everyone, never an older answer.
    */
   async peerRegisteredWithHbbs(rustdeskId: string): Promise<boolean | null> {
-    if (!/^[0-9]{6,15}$/.test(rustdeskId)) return null;
-    const dbPath =
-      this.config.get<string>('RUSTDESK_DB_PATH') ??
-      '/var/lib/rustdesk-server/db_v2.sqlite3';
-    try {
-      const { stdout } = await execFileAsync(
-        'sqlite3',
-        [`file:${dbPath}?mode=ro`, `SELECT 1 FROM peer WHERE id='${rustdeskId}' LIMIT 1;`],
-        { timeout: 3000 },
+    return this.hbbsPeers.has(rustdeskId);
+  }
+
+  private _hbbsPeers: HbbsPeerSnapshot | null = null;
+  private get hbbsPeers(): HbbsPeerSnapshot {
+    if (!this._hbbsPeers) {
+      const dbPath =
+        this.config.get<string>('RUSTDESK_DB_PATH') ??
+        '/var/lib/rustdesk-server/db_v2.sqlite3';
+      const seconds = Number(this.config.get<string>('HBBS_PEER_CACHE_SECONDS'));
+      this._hbbsPeers = new HbbsPeerSnapshot(
+        async () => {
+          const { stdout } = await execFileAsync(
+            'sqlite3',
+            [`file:${dbPath}?mode=ro`, PEER_SNAPSHOT_SQL],
+            // 5,000 IDs are ~60 KB; 16 MB is over a million.
+            { timeout: 3000, maxBuffer: 16 * 1024 * 1024 },
+          );
+          return parsePeerIds(stdout);
+        },
+        Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined,
       );
-      return stdout.trim() === '1';
-    } catch {
-      return null;
     }
+    return this._hbbsPeers;
   }
 
   /**
@@ -1289,4 +1402,23 @@ export class EnrollmentService {
     });
     return { revoked: true };
   }
+}
+
+/**
+ * A signed agent asked to "check now" (the reinstall flag, which it answers
+ * with `rem0te-agent.exe update`) has done so once it reports an update check
+ * newer than the dispatch. Without this the request stayed set until the
+ * signed release's version equalled the portal's, which it need not ever do,
+ * and the agent re-ran update every 30 minutes.
+ */
+function signedCheckedSince(dto: { updateChannel?: string; agentUpdateCheckedAt?: string }, dispatchedAt: Date): boolean {
+  if (dto.updateChannel !== 'signed' || !dto.agentUpdateCheckedAt || !plausibleCheck(dto.agentUpdateCheckedAt)) return false;
+  return new Date(dto.agentUpdateCheckedAt).getTime() > dispatchedAt.getTime();
+}
+
+/** A reported check time worth storing: not Go's zero time, not from the future. */
+function plausibleCheck(v: string | undefined): boolean {
+  if (!v) return false;
+  const t = new Date(v).getTime();
+  return Number.isFinite(t) && t > Date.UTC(2024, 0, 1) && t < Date.now() + 24 * 3600_000;
 }

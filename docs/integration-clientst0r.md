@@ -1,7 +1,8 @@
 # ClientSt0r integration (ticket analysis)
 
 rem0te can analyse a ClientSt0r ticket, optionally with evidence from one enrolled computer, and hand back
-**staff-only** findings and draft replies. This is contract **ticket-rmm-v1**, defined in
+**staff-only** findings and draft replies. Since 0.34 the device page's AI summary is also written through
+ClientSt0r ([below](#the-device-pages-ai-summary-034)): **rem0te holds no model-provider key anywhere.** This is contract **ticket-rmm-v1**, defined in
 [`docs/contracts/ticket-rmm-v1/`](contracts/ticket-rmm-v1/README.md).
 
 > **Status (0.30.0): proved against a reference peer; the real ClientSt0r does not pair yet.** Every behaviour
@@ -23,7 +24,9 @@ rem0te can analyse a ClientSt0r ticket, optionally with evidence from one enroll
 | Receiving events (`POST /api/integration/v1/events`) | `GET /capabilities`, `POST /jobs`, `GET /jobs/{id}`, `GET /jobs/{id}/events` |
 
 rem0te never receives a provider key. It asks the gateway for a *profile* (for example `triage-fast`), and
-ClientSt0r decides which model and key that means.
+ClientSt0r decides which model and key that means. There is no model-provider SDK, endpoint or key variable in
+rem0te's API at all (`check-security-invariants.mjs` §41); an `ANTHROPIC_API_KEY` left in `api.env` from before
+0.34 is ignored and can be deleted.
 
 ## What a job can and cannot do
 
@@ -77,7 +80,8 @@ technician delegation tokens — and gives you only the public halves.
     "delegationKeys": [{ "kid": "del-2026-11", "publicKeyPem": "-----BEGIN PUBLIC KEY-----\n…" }],
     "inferenceUrl": "https://tickets.example.com/api/integration/v1/inference",
     "eventsUrl":    "https://tickets.example.com/api/integration/v1/events",
-    "modelProfiles": ["triage-fast", "triage-deep"],
+    "capabilitiesUrl": "https://tickets.example.com/api/integration/v1/capabilities",
+    "modelProfiles": ["triage-fast", "triage-deep", "summary-fast"],
     "clientCertSha256": []
   }]
 }
@@ -86,6 +90,8 @@ technician delegation tokens — and gives you only the public halves.
 Add `INTEGRATION_PEERS_FILE=/etc/reboot-remote/integration/peers.json` to `/etc/reboot-remote/api.env`. URLs
 must be `https` (plain `http` is accepted only for loopback, for the lab simulator) and may carry no
 credentials, query or fragment. The file is read once at start: restart the API and the worker after editing it.
+`capabilitiesUrl` is optional (0.34) and is only used for the [device summary](#the-device-pages-ai-summary-034);
+without it that summary stays off.
 
 **Nothing in the portal can edit this file.** That is the point: a compromised database or Platform Admin
 account cannot add a peer, swap a key or redirect the worker.
@@ -144,7 +150,8 @@ assignments need it granted. Removing it stops in-flight jobs before their next 
 | Events not arriving | Check `lastDeliveryError` on `IntegrationEvent`; ClientSt0r can always poll `GET /jobs/{id}/events` |
 
 Audit actions: `INTEGRATION_JOB_ACCEPTED`, `INTEGRATION_JOB_REJECTED`, `INTEGRATION_JOB_FINISHED`,
-`INTEGRATION_MAPPING_CHANGED`.
+`INTEGRATION_MAPPING_CHANGED`, and for the device summary `AI_TIMELINE_REQUESTED`, `AI_TIMELINE_FINISHED`,
+`AI_TIMELINE_REFUSED`.
 
 ## Proposing an approved action (0.26)
 
@@ -209,6 +216,84 @@ which business is which organization.
   computer's Patches tab: evidence source and age, freshness, last boot, who manages patching, restart pending,
   pending KB numbers and which KBs were confirmed by a later scan, failed or await confirmation. No update titles,
   error text, identifiers, user names or addresses. See [What each agent can do](capabilities.md).
+
+## The device page's AI summary (0.34)
+
+**History → AI-written summary** on a computer asks ClientSt0r's gateway to summarise that computer's notes and
+remote sessions. Before 0.34 rem0te called a model provider itself, with `ANTHROPIC_API_KEY` in its own
+environment, and sent the computer's name, hostname, business, site, tags and every note verbatim. That call and
+the `@anthropic-ai/sdk` dependency are gone.
+
+> **Status: built on rem0te's side, unavailable against the real ClientSt0r.** The operation it needs,
+> `device_timeline_v1`, and the ClientSt0r capabilities document that advertises it, are **proposals ClientSt0r has
+> not agreed** (P11 and P12 in [INTEGRATION_COORDINATION.md](../INTEGRATION_COORDINATION.md) §5A; schemas in
+> [`contracts/ticket-rmm-v1/proposed/`](contracts/ticket-rmm-v1/proposed/)). Until ClientSt0r's capabilities list
+> it, the button is disabled and the panel says *Needs ClientSt0r support for device_timeline_v1*. No summary is
+> invented in the meantime. `e2e-ai-timeline.mjs` proves the behaviour against a reference peer, which is not
+> ClientSt0r.
+
+**How a request goes**
+
+1. The computer's business must be mapped to exactly one ClientSt0r organization (the same mapping as ticket
+   analysis). Mapped to none: `NOT_MAPPED`. To two peers: `AMBIGUOUS_MAPPING` — rem0te will not guess.
+2. An `integration` [containment](containment.md) pause for the business, or a global one, stops it (`CONTAINED`)
+   before rem0te contacts ClientSt0r for anything, capabilities included.
+3. rem0te reads ClientSt0r's capabilities document from the peers file's `capabilitiesUrl`: a signed `GET`, whose
+   response must be signed by ClientSt0r over rem0te's nonce and name this peer. It is believed for 60 seconds
+   (`INTEGRATION_CAPABILITIES_TTL_MS`). No `capabilitiesUrl`, or a document that does not list
+   `device_timeline_v1`: `PEER_UNSUPPORTED`. Unreadable or badly signed: `PEER_UNREACHABLE`.
+4. The profile is the first one ClientSt0r offers for the task that the peers file's `modelProfiles` also lists.
+   None: `PROFILE_NOT_ALLOWED`.
+5. `AI_TIMELINE_REQUESTED` is written to the audit log; if it cannot be written, nothing is sent.
+6. One signed `POST {inferenceUrl}` with `task: "device_timeline_v1"`, the organization, the profile and the
+   redacted payload. The answer is accepted only if signed by ClientSt0r over the nonce and echoing the same
+   request id, organization, profile and task. Its `output.summary` (at most 4,000 characters, control and
+   bidi characters stripped, any other field dropped and counted) is stored on the computer. A forged, mismatched,
+   refused or malformed answer saves nothing and returns `502` with the reason.
+7. `AI_TIMELINE_FINISHED` records the outcome, model, latency and token usage.
+
+**Who may.** Seeing the panel and the preview needs `computers:view`. Requesting a summary needs
+`computers:edit` (it replaces the stored summary) **and** `integration:ticket_analysis` (it sends the computer's
+notes to ClientSt0r's AI) in that business. Business Owners hold both. Another business's computer is a 404.
+
+**What leaves rem0te.** The panel's *What is sent to ClientSt0r* lists it, shows the redaction counts, and
+*Show the exact text* displays the segments exactly as they are sent (the preview and the request are built by the
+same function from the same rows):
+
+| Sent | Never sent |
+|---|---|
+| The computer's rem0te id (opaque), platform, OS version and agent version (plain character set only), enrolment state, online flag, last seen and enrolled dates | The computer's name and hostname; the business, site and tags |
+| The 30 newest notes: date, pinned, text (each cut to 2,000 characters) | Who wrote a note or ran a session |
+| The 20 newest remote sessions: date, state, minutes, issue and resolution text | A session's contact name and e-mail, its separate notes field, telemetry and events |
+| How many values of each kind were redacted (counts) | IP and MAC addresses, the logged-on user and domain, the RustDesk ID and any password |
+
+The payload is capped at 24,000 characters; the oldest notes and sessions are dropped first.
+
+**Redaction** (`integration/timeline.ts`, `redactForPeer`), applied to every note and every session issue and
+resolution: `key=value` / `key: value` credentials and *"password is …"* in prose; `Bearer`/`Basic` tokens and
+credentials in URLs; prefixed keys (`rk_…`, `sk-…`, `ghp_…`, `xox…`); e-mail addresses; **every** IPv4 and IPv6
+address, private ranges included (stricter than screenshot masking, because the integration's rule is that
+addresses never reach the gateway); MAC addresses; 9–10-digit RustDesk IDs; hex of 32+ and opaque strings of
+40+ characters; Windows user-profile paths. It is pattern-based: a secret written in a shape none of these
+match (a password spelled out in a sentence without the word "password", say) is sent as written.
+
+**Audit.** `AI_TIMELINE_REQUESTED` (peer, organization, profile, request id, field list, note and session counts,
+characters, redaction counts), `AI_TIMELINE_FINISHED` (status, code, model, latency, usage, summary length) and
+`AI_TIMELINE_REFUSED` (the code). None of them holds a note, a session's text or the summary.
+
+| Code | Meaning |
+|---|---|
+| `NOT_CONFIGURED` | No `INTEGRATION_PEERS_FILE` |
+| `NO_BUSINESS` / `NOT_MAPPED` / `AMBIGUOUS_MAPPING` | The computer's business is not mapped to exactly one organization |
+| `CONTAINED` (403) | An `integration` pause covers the business |
+| `PEER_UNSUPPORTED` | No `capabilitiesUrl`, or ClientSt0r does not list `device_timeline_v1` — *Needs ClientSt0r support for device_timeline_v1* |
+| `PEER_UNREACHABLE` (503) | The capabilities document could not be read or was not signed by the peer |
+| `PROFILE_NOT_ALLOWED` | ClientSt0r offers the task only with profiles the peers file does not allow |
+| `NO_CAPABILITY` (403) | Missing `computers:edit` or `integration:ticket_analysis` |
+| `RESPONSE_SIGNATURE_INVALID`, `RESPONSE_MISMATCH`, `MODEL_REFUSED`, `OUTPUT_SCHEMA_INVALID`, `GATEWAY_UNAVAILABLE` (502) | ClientSt0r's answer was not usable; nothing was saved |
+
+Routes: `GET /api/v1/endpoints/{id}/timeline` (status and preview) and
+`POST /api/v1/endpoints/{id}/timeline/generate` (10 a minute).
 
 ## Which business a request is for
 

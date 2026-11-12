@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.33.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.34.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -19,9 +19,9 @@ server that keeps them organised and separate.
 
 ---
 
-<a href="docs/images/github/dashboard-light.png"><img src="docs/images/github/dashboard-light.png" alt="The Rem0te dashboard: tiles showing 34 total computers with 26 online and 8 offline, three active sessions and session counts for the last 7 and 30 days, above a map of client locations across the western United States." width="100%"></a>
+<a href="docs/images/github/dashboard-light.png"><img src="docs/images/github/dashboard-light.png" alt="The Rem0te dashboard: a site-outage strip for one customer's warehouse, tiles for devices, critical alerts, failed actions, approvals, restart pending, patch compliance and active sessions, a ranked Work on next list and the customers affected." width="100%"></a>
 
-<sub><i>The operator's view — every customer business, computer and session in one place. <a href="docs/images/github/dashboard-light.png">Full size</a> · <a href="docs/screenshots.md">34 more screenshots</a></i></sub>
+<sub><i>The operator's view — every customer business, computer and session in one place. <a href="docs/images/github/dashboard-light.png">Full size</a> · <a href="docs/screenshots.md">55 more screenshots</a></i></sub>
 
 ---
 
@@ -229,7 +229,7 @@ dot.
 <td width="50%"><a href="docs/images/github/device-event-log-dark.png"><img src="docs/images/github/device-event-log-dark.png" alt="The Event Log tab on a computer's page in dark theme, with log, time range and count selectors, level chips, and a table of System log entries showing timestamps, colour-coded level badges, event IDs, providers and messages."></a><br><sub><b>Read the event log without connecting.</b> Five Windows logs, filtered by level and window — and reading them is its own permission. <i>Dark</i></sub></td>
 </tr>
 <tr>
-<td width="50%"><a href="docs/images/github/enroll-device-light.png"><img src="docs/images/github/enroll-device-light.png" alt="The three-step enrollment form in light theme: choose business, choose which users may connect, choose platform."></a><br><sub><b>Onboard a machine in one run.</b> The business is fixed into the installer; the machine cannot pick another. <i>Light</i></sub></td>
+<td width="50%"><a href="docs/images/github/add-device-light.png"><img src="docs/images/github/add-device-light.png" alt="The Add device page in light theme: business and site chosen, and the operating system step offering Windows, Linux or macOS, each saying which agent it installs."></a><br><sub><b>Onboard a machine in one run.</b> The business and site are fixed into the install link; the machine cannot pick another. <i>Light</i></sub></td>
 <td width="50%"><a href="docs/images/github/access-users-dark.png"><img src="docs/images/github/access-users-dark.png" alt="The Business Users tab in dark theme showing each person's level and the number of capabilities granted."></a><br><sub><b>Delegate safely.</b> Each user shows the capabilities actually granted, not a role name. <i>Dark</i></sub></td>
 </tr>
 <tr>
@@ -242,8 +242,9 @@ dot.
 </tr>
 </table>
 
-**[→ See all 35 screenshots](docs/screenshots.md)** — dashboards, monitoring,
-inventory, workflows, administration and configuration, in light and dark.
+**[→ See all 56 screenshots](docs/screenshots.md)** — the dashboard, search, the device list and
+every device tab, reports, the script library, patching, administration and configuration, in light
+and dark and at phone width. Captured from v0.33.
 
 ---
 

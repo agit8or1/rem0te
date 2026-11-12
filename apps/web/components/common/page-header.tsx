@@ -17,7 +17,9 @@ export function PageHeader({
   className,
 }: PageHeaderProps) {
   return (
-    <div className={cn('flex items-start justify-between gap-4 mb-6', className)}>
+    // Stacked below `sm`: beside a phone-width title, the actions column left
+    // the title and description a few words per line, or pushed the page wider.
+    <div className={cn('mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4', className)}>
       <div className="min-w-0 flex-1">
         <h1 className="text-2xl font-semibold text-foreground truncate">{title}</h1>
         {description && (
@@ -25,7 +27,7 @@ export function PageHeader({
         )}
       </div>
       {(actions || children) && (
-        <div className="flex items-center gap-2 shrink-0">{actions}{children}</div>
+        <div className="flex flex-wrap items-center gap-2 sm:shrink-0">{actions}{children}</div>
       )}
     </div>
   );

@@ -14,8 +14,15 @@
  *     own visibility, and a filter they may not use (alerts) is still refused;
  *   - groups: only an owner, a whole-business computers:edit technician or the
  *     MSP edits them; a group cannot hold another business's computer (not
- *     through bulk, endpoint creation or an enrolment token); another
- *     business's group is a 404; the group filter never widens the list;
+ *     through bulk, endpoint creation or an enrolment token — nor a direct
+ *     database insert, which the 0049 trigger refuses); another business's
+ *     group is a 404; the group filter never widens the list;
+ *   - (0.34) a computer may be in several groups: adding it to one never
+ *     takes it out of another, removing it from one leaves the rest, the
+ *     list row, the facet counts, the group list and the CSV carry every
+ *     group, a claim ADDS the token's group, and a computer that changes
+ *     business (moved by the Platform Admin, or re-enrolled by a token of
+ *     another business) leaves every group of the old one — audited;
  *   - bulk: per-computer results with reasons — not found (another business,
  *     ungranted, made up), no permission, containment, archived, Linux, no
  *     device secret, already current — the 200 cap, no other action, the
@@ -321,7 +328,7 @@ async function all() {
   r = await bulk(S.admin, { action: 'group.add', groupId: gA.id, endpointIds: [b1.id, b2.id] });
   m = byId(r);
   check(r.status === 200 && m.get(b1.id)?.code === 'OTHER_BUSINESS' && m.get(b2.id)?.code === 'OTHER_BUSINESS', 'even the Platform Admin cannot put a B computer in an A group (OTHER_BUSINESS)', msg(r));
-  check((await prisma.endpoint.count({ where: { id: { in: [b1.id, b2.id] }, endpointGroupId: { not: null } } })) === 0, 'and B’s computers are in no group');
+  check((await prisma.endpointGroupMember.count({ where: { endpointId: { in: [b1.id, b2.id] } } })) === 0, 'and B’s computers are in no group');
   r = await bulk(S.ownerB, { action: 'group.add', groupId: gA.id, endpointIds: [b1.id] });
   check(r.status === 404, 'Business B naming A’s group: 404 for the whole request', msg(r));
   r = await bulk(S.userA, { action: 'group.add', groupId: gA.id, endpointIds: [a5.id] });
@@ -332,10 +339,26 @@ async function all() {
   check(r.status === 200 && byId(r).get(a1.id)?.ok && byId(r).get(a1.id)?.unchanged, 'adding again is safe: ok, unchanged');
   r = await bulk(S.techWhole, { action: 'group.add', groupId: gA2.id, endpointIds: [a1.id, a3.id] });
   m = byId(r);
-  check(m.get(a1.id)?.code === 'IN_OTHER_GROUP' && /Front desk/.test(m.get(a1.id)?.reason ?? '') && m.get(a3.id)?.ok, 'a computer is in one group at a time: IN_OTHER_GROUP names the other; A3 goes in', msg(r));
+  check(r.status === 200 && m.get(a1.id)?.ok && !m.get(a1.id)?.unchanged && m.get(a3.id)?.ok && !m.get(a3.id)?.unchanged, 'A1, already in Front desk, joins Servers too (0.34: no IN_OTHER_GROUP); A3 goes in', msg(r));
+  const a1groups = (await prisma.endpointGroupMember.findMany({ where: { endpointId: a1.id } })).map((x) => x.endpointGroupId).sort();
+  check(a1groups.join() === [gA.id, gA2.id].sort().join(), 'A1 is now in both groups', JSON.stringify(a1groups));
   r = await list(S.ownerA, { groupId: gA.id });
-  check(r.status === 200 && r.data.total === 2 && ids(r).sort().join() === [a1.id, a2.id].sort().join() && r.data.rows[0].group?.id === gA.id, 'the group filter lists exactly its members, each row naming the group', msg(r));
-  check(r.data.facets.groups?.some((g) => g.id === gA.id && g.count === 2), 'and the facets offer it with its count');
+  check(r.status === 200 && r.data.total === 2 && ids(r).sort().join() === [a1.id, a2.id].sort().join() && r.data.rows.every((x) => x.groups.some((g) => g.id === gA.id)), 'the group filter lists exactly its members, each row naming the group', msg(r));
+  const a1row = r.data.rows.find((x) => x.id === a1.id);
+  check(J(a1row?.groups?.map((g) => g.id)) === J([gA.id, gA2.id]) && a1row.groups[0].name === `${TAG} Front desk`, 'A1’s row carries BOTH groups, ordered by name', J(a1row?.groups));
+  check(r.data.facets.groups?.some((g) => g.id === gA.id && g.count === 2) && r.data.facets.groups?.some((g) => g.id === gA2.id && g.count === 2), 'and the facets count each group (A1 counts once in each)', J(r.data.facets.groups));
+  r = await list(S.ownerA, { groupId: gA2.id });
+  check(r.status === 200 && ids(r).sort().join() === [a1.id, a3.id].sort().join(), 'filtering on the second group finds A1 as well', msg(r));
+  r = await req('GET', '/device-groups', S.ownerA);
+  check(r.data?.groups?.find((g) => g.id === gA.id)?.members === 2 && r.data?.groups?.find((g) => g.id === gA2.id)?.members === 2, 'the group list counts each group’s members', J(r.data?.groups));
+  r = await req('GET', `/endpoints/${a1.id}`, S.ownerA);
+  check(r.status === 200 && J((r.data?.groups ?? []).map((g) => g.id)) === J([gA.id, gA2.id]), 'the device record names both groups', msg(r));
+  r = await req('GET', `/endpoints/${a1.id}`, S.ownerB);
+  check(r.status === 404 || r.status === 403, 'Business B cannot read A1 (or its groups)', msg(r));
+  let threw = null;
+  try { await prisma.endpointGroupMember.create({ data: { endpointGroupId: gA.id, endpointId: b1.id } }); } catch (e) { threw = String(e.message); }
+  check(threw && /not in the group's business/.test(threw) && (await prisma.endpointGroupMember.count({ where: { endpointId: b1.id } })) === 0,
+    'a direct database insert of B1 into A’s group is refused by the trigger (migration 0049)', threw ?? 'it was inserted');
   r = await list(S.ownerB, { groupId: gA.id });
   check(r.status === 200 && r.data.total === 0, 'Business B filtering on A’s group finds nothing (the filter never widens)');
   r = await list(S.techNamed, { groupId: gA.id });
@@ -345,6 +368,11 @@ async function all() {
   r = await bulk(S.ownerA, { action: 'group.remove', groupId: gA.id, endpointIds: [a2.id, a5.id] });
   m = byId(r);
   check(m.get(a2.id)?.ok && !m.get(a2.id)?.unchanged && m.get(a5.id)?.ok && m.get(a5.id)?.unchanged, 'remove: A2 leaves; A5 was never in it (ok, unchanged)', msg(r));
+  r = await bulk(S.ownerA, { action: 'group.remove', groupId: gA2.id, endpointIds: [a1.id] });
+  check(r.status === 200 && byId(r).get(a1.id)?.ok && !byId(r).get(a1.id)?.unchanged, 'remove A1 from Servers', msg(r));
+  check(J((await prisma.endpointGroupMember.findMany({ where: { endpointId: a1.id } })).map((x) => x.endpointGroupId)) === J([gA.id]), 'A1 is still in Front desk: removing it from one group leaves the others');
+  r = await bulk(S.ownerA, { action: 'group.add', groupId: gA2.id, endpointIds: [a1.id] });
+  check(r.status === 200 && byId(r).get(a1.id)?.ok, 'and back into Servers');
   const memberAudit = await prisma.activityLog.findMany({ where: { action: 'DEVICE_GROUP_MEMBERS_CHANGED', resourceId: gA.id }, orderBy: { createdAt: 'asc' } });
   check(memberAudit.length === 2 && memberAudit[0].customerId === A.id && memberAudit[0].metadata.op === 'add' && memberAudit[0].metadata.endpointIds.length === 2 && memberAudit[1].metadata.op === 'remove' && memberAudit[1].metadata.endpointIds[0] === a2.id,
     'membership changes are audited: who, which group, which computers — and only real changes', JSON.stringify(memberAudit.map((x) => x.metadata)));
@@ -364,9 +392,14 @@ async function all() {
   r = await req('PATCH', `/device-groups/${gA.id}`, S.userA, { body: { name: 'x' } });
   check(r.status === 403, 'a Business User cannot rename');
   r = await req('DELETE', `/device-groups/${gA2.id}`, S.techWhole);
-  check(r.status === 200 && r.data.membersReleased === 1 && !(await prisma.endpoint.findUnique({ where: { id: a3.id } })).endpointGroupId, 'delete releases its members', msg(r));
+  check(r.status === 200 && r.data.membersReleased === 2 && (await prisma.endpointGroupMember.count({ where: { endpointGroupId: gA2.id } })) === 0, 'delete releases its members (A1 and A3)', msg(r));
+  check(J((await prisma.endpointGroupMember.findMany({ where: { endpointId: a1.id } })).map((x) => x.endpointGroupId)) === J([gA.id]), 'A1 keeps its other group');
   const delAudit = await prisma.activityLog.findFirst({ where: { action: 'DEVICE_GROUP_DELETED', resourceId: gA2.id } });
-  check(delAudit?.customerId === A.id && delAudit.metadata.membersReleased === 1 && delAudit.metadata.viaTechnicianAssignment === true, 'deletion is audited, marked as via an assignment');
+  check(delAudit?.customerId === A.id && delAudit.metadata.membersReleased === 2 && delAudit.metadata.viaTechnicianAssignment === true, 'deletion is audited, marked as via an assignment');
+  r = await req('POST', '/device-groups', S.ownerA, { body: { name: `${TAG} Workshop` } });
+  const gA3 = r.data;
+  r = await bulk(S.ownerA, { action: 'group.add', groupId: gA3.id, endpointIds: [a1.id] });
+  check(r.status === 200 && byId(r).get(a1.id)?.ok, 'A1 joins a third group, Workshop (for the export below)', msg(r));
   check(!!(await prisma.activityLog.findFirst({ where: { action: 'DEVICE_GROUP_UPDATED', resourceId: gA.id } })), 'rename is audited');
 
   // ── Bulk refresh ──────────────────────────────────────────────────────────
@@ -439,7 +472,7 @@ async function all() {
   r = await req('POST', '/endpoints/bulk/export.csv', S.ownerA, { body: { endpointIds: [a1.id, a8.id, b1.id] }, raw: true });
   const lines = (r.text ?? '').replace(/^\uFEFF/, '').trim().split(/\r\n/);
   check(r.status === 200 && lines.length === 3 && r.headers.get('x-rows') === '2' && r.headers.get('x-not-exported') === '1', 'A1 and archived A8 are exported; B1 is not (X-Not-Exported: 1)', `HTTP ${r.status} lines ${lines.length} rows ${r.headers.get('x-rows')}`);
-  check(!r.text.includes(b1.name) && lines[0].includes('"Group"') && lines.some((l) => l.includes(`${TAG} Reception`)), 'no trace of B1; the Group column carries A1’s group');
+  check(!r.text.includes(b1.name) && lines[0].includes('"Groups"') && lines.some((l) => l.includes(`"${TAG} Reception; ${TAG} Workshop"`)), 'no trace of B1; the Groups column carries both of A1’s groups, "; "-separated', lines.find((l) => l.includes(a1.name)));
   const exAudit = await prisma.activityLog.findFirst({ where: { action: 'ENDPOINT_LIST_EXPORTED', actorId: ownerA.id }, orderBy: { createdAt: 'desc' } });
   check(await auditCount({ action: 'ENDPOINT_LIST_EXPORTED', actorId: ownerA.id }) === exBefore + 1 && exAudit.customerId === A.id && exAudit.metadata.rows === 2 && exAudit.metadata.selection?.requested === 3,
     'audited as ENDPOINT_LIST_EXPORTED with the selection', JSON.stringify(exAudit?.metadata));
@@ -455,6 +488,46 @@ async function all() {
   const adminUpd = await prisma.activityLog.findMany({ where: { action: 'DEVICE_BULK_ACTION', actorId: admin.id, metadata: { path: ['action'], equals: 'client.update' } } });
   check(adminUpd.some((x) => x.customerId === A.id) && adminUpd.some((x) => x.customerId === B.id && x.metadata.refused.CONTAINED === 1), 'the admin’s mixed request has an entry for A and one for B (with its CONTAINED refusal)');
   check(await auditCount({ action: 'DEVICE_BULK_ACTION', customerId: B.id, actorId: ownerA.id }) === 0, 'nothing owner A did is recorded against B');
+
+  // ── Changing business leaves the old business's groups ───────────────────
+  section('A computer that changes business leaves every group of the old one (0.34)');
+  const mover = await mkEp(A, `${TAG}-MOVER`);
+  for (const g of [gA, gA3]) {
+    r = await bulk(S.ownerA, { action: 'group.add', groupId: g.id, endpointIds: [mover.id] });
+    check(r.status === 200 && byId(r).get(mover.id)?.ok, `MOVER joins ${g.name}`, msg(r));
+  }
+  check((await prisma.endpointGroupMember.count({ where: { endpointId: mover.id } })) === 2, 'MOVER is in two of A’s groups');
+  r = await req('PATCH', `/endpoints/${mover.id}`, S.admin, { body: { customerId: B.id } });
+  check(r.status === 200, 'the Platform Admin moves it to B', msg(r));
+  check((await prisma.endpointGroupMember.count({ where: { endpointId: mover.id } })) === 0, 'it is in none of A’s groups any more');
+  const moveAudit = await prisma.activityLog.findFirst({ where: { action: 'ENDPOINT_UPDATED', resourceId: mover.id }, orderBy: { createdAt: 'desc' } });
+  check(moveAudit?.metadata?.movedToBusiness === B.id && J((moveAudit.metadata.leftGroups ?? []).map((g) => g.id).sort()) === J([gA.id, gA3.id].sort()), 'the move is audited with the groups it left', J(moveAudit?.metadata));
+  r = await list(S.ownerA, { groupId: gA.id });
+  check(!ids(r).includes(mover.id), 'A’s group filter no longer lists it');
+  r = await bulk(S.ownerB, { action: 'group.add', groupId: gB.id, endpointIds: [mover.id] });
+  check(r.status === 200 && byId(r).get(mover.id)?.ok, 'B’s owner can now put it in B’s group', msg(r));
+
+  section('A claim ADDS the token’s group; a re-enrolment into another business leaves the old groups');
+  await stepUp(S.admin);
+  const rd = String(100000000 + ((Math.random() * 899999999) | 0));
+  r = await req('POST', '/enrollment/tokens', S.admin, { body: { businessId: A.id, accessMode: 'COMPANY_WIDE', endpointGroupId: gA.id } });
+  check(r.status === 201 && !!r.data?.token, 'an enrolment token for A, into Front desk', msg(r));
+  r = await req('POST', '/enrollment/claim', null, { body: { token: r.data.token, rustdeskId: rd, agentSecret: randomBytes(16).toString('hex'), hostname: `${TAG}-CLAIMED`, platform: 'Windows' } });
+  const claimed = await prisma.endpoint.findFirst({ where: { rustdeskNode: { rustdeskId: rd } }, include: { groupMemberships: true } });
+  check(r.status < 300 && claimed?.customerId === A.id && J(claimed.groupMemberships.map((x) => x.endpointGroupId)) === J([gA.id]), 'the new computer is in A and in Front desk', msg(r));
+  const claimAudit = claimed ? await prisma.activityLog.findFirst({ where: { action: 'ENDPOINT_CLAIMED', resourceId: claimed.id } }) : null;
+  check(claimAudit?.metadata?.groupId === gA.id, 'the claim audit names the group', J(claimAudit?.metadata));
+  await bulk(S.ownerA, { action: 'group.add', groupId: gA3.id, endpointIds: [claimed.id] });
+  r = await req('POST', '/enrollment/tokens', S.admin, { body: { businessId: A.id, endpointId: claimed.id, endpointGroupId: gA3.id } });
+  await req('POST', '/enrollment/claim', null, { body: { token: r.data?.token, rustdeskId: rd, agentSecret: randomBytes(16).toString('hex'), hostname: `${TAG}-CLAIMED`, platform: 'Windows' } });
+  check(J((await prisma.endpointGroupMember.findMany({ where: { endpointId: claimed.id }, orderBy: { endpointGroupId: 'asc' } })).map((x) => x.endpointGroupId)) === J([gA.id, gA3.id].sort()),
+    're-enrolling in the same business keeps its groups (0.33 replaced the one group with the token’s)');
+  r = await req('POST', '/enrollment/tokens', S.admin, { body: { businessId: B.id, endpointId: claimed.id, endpointGroupId: gB.id } });
+  const moveTok = r.data?.token;
+  r = await req('POST', '/enrollment/claim', null, { body: { token: moveTok, rustdeskId: rd, agentSecret: randomBytes(16).toString('hex'), hostname: `${TAG}-CLAIMED`, platform: 'Windows' } });
+  const after = await prisma.endpoint.findUnique({ where: { id: claimed.id }, include: { groupMemberships: true } });
+  check(r.status < 300 && after?.customerId === B.id && J(after.groupMemberships.map((x) => x.endpointGroupId)) === J([gB.id]),
+    'a token of B re-enrols it into B: it leaves both of A’s groups and joins only B’s', J({ status: r.status, c: after?.customerId, g: after?.groupMemberships?.map((x) => x.endpointGroupId) }));
 }
 
 async function cleanup() {

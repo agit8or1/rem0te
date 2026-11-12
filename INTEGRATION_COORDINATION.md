@@ -10,7 +10,8 @@ permission, payload or authentication mechanism that touches the other without r
 - **Platform shape:** ClientSt0r is the technician's primary interface (tickets, customers, AI, communication).
   rem0te is the RMM engine (agents, telemetry, remote access, approved execution).
 
-Last updated: 2026-11-11, rem0te 0.30.1, against ClientSt0r 3.17.660 (`3d0ded39`).
+Last updated: 2026-11-11, rem0te 0.30.1, against ClientSt0r 3.17.660 (`3d0ded39`). Section 5A (revision 4 proposal,
+P11–P12) added with rem0te 0.34.
 
 ---
 
@@ -142,6 +143,43 @@ revision 2.
 
 Nothing in P1–P10 is built until section 9 records ClientSt0r's acknowledgement or counter-proposal.
 
+## 5A. Proposal: revision 4 — device summary through the gateway (NOT AGREED — needs ClientSt0r's acknowledgement)
+
+**Why.** Section 1 says rem0te never holds an AI provider key. Until 0.34 that was false in one place: the device
+page's "AI Timeline" called a model provider directly from rem0te with `ANTHROPIC_API_KEY`, sending the computer's
+name, hostname, business, site, tags and every note verbatim. (The key was unset in production, so it was inert.)
+rem0te 0.34 removes that call and the SDK. The summary can now only be written by ClientSt0r's gateway, which needs
+an operation the contract does not have: the existing inference request is `ticket_triage_v1`, bound to a ticket
+job (`job_id`) and to `analysis-output.v1`, and reusing it for a device summary would bill and attribute the call
+to a job ClientSt0r never submitted.
+
+So rem0te proposes two additions. **rem0te 0.34 ships its side behind P12**: it sends nothing until ClientSt0r's
+capabilities document lists `device_timeline_v1`, and until then the console shows *"Needs ClientSt0r support for
+device_timeline_v1"*. No output is faked. Schemas: `docs/contracts/ticket-rmm-v1/proposed/` (generated from
+`PROPOSED_SCHEMAS`, not part of any `contract_revision`). Proved only against a reference peer
+(`apps/api/scripts/e2e-ai-timeline.mjs`).
+
+| ID | Item | Shape (proposed) | Notes |
+|---|---|---|---|
+| P11 | Inference task `device_timeline_v1` | rem0te → `POST {inferenceUrl}`, signed exactly as today. Body `timeline-inference-request`: `{contract, request_id, organization_id, model_profile, task: "device_timeline_v1", output_schema: "timeline-summary.v1", max_output_tokens, input: {instructions_ref: "rem0te/device-timeline/v1", rem0te_endpoint_id, untrusted_segments: [{ref, kind: device_facts\|device_note\|support_session, author_role, text}], redactions: {secret, token, email, ip_address, mac_address, rustdesk_id, user_path}}}`. **No `job_id`.** Response `timeline-inference-response`: `{contract, request_id, organization_id, model_profile, task, resolved_model, status: ok\|refused\|error, error_code?, output?: {summary ≤ 4000}, usage?}`, signed over rem0te's nonce | ClientSt0r owns the prompt behind `instructions_ref`, the model behind the profile, and spend limits. Segments are already redacted by rem0te and are data, never instructions. rem0te checks the echo (request, organization, profile, task) and the signature, drops unknown output fields, and stores only `summary`. A per-organization opt-out is `status: refused` with an `error_code` |
+| P12 | ClientSt0r capabilities document | `GET {capabilitiesUrl}` (new **optional** peers-file field), signed by rem0te over an empty body; response signed by ClientSt0r over the nonce. Body `peer-capabilities`: `{contract, peer_id, inference_tasks: [{task, model_profiles[]}]}`; unknown top-level fields allowed (request R2) | rem0te uses the first profile ClientSt0r lists for the task that the peers file's `modelProfiles` also allows, and believes the document for 60 s. A document naming another `peer_id`, or not signed by the peer, is ignored |
+
+**What leaves rem0te for P11** (rem0te decides; listed so ClientSt0r knows what it receives): the computer's
+rem0te id, platform, OS and agent version (plain charset), enrolment state, online flag, last-seen and enrolled
+dates; the 30 newest notes (date, pinned, text) and 20 newest remote sessions (date, state, minutes, issue and
+resolution text), each redacted for credentials, tokens and keys, e-mail addresses, every IP address, MAC addresses,
+RustDesk IDs and user-profile paths; capped at 24,000 characters. Never: name, hostname, business, site, tags,
+note authors, session technicians or contacts, the logged-on user, the RustDesk ID.
+
+**Questions for ClientSt0r.** (a) Is one summary per computer (not per ticket) useful in the Device Workspace, or
+should it carry a `ticket` reference? (b) Should usage be attributed to a ClientSt0r technician — rem0te would then
+need a delegation-style `requested_by`, which today it does not send because a rem0te user is not necessarily
+mapped. (c) Is `capabilitiesUrl` acceptable as a separate URL, or would ClientSt0r rather answer an `inference`
+request with `task: "capabilities"`?
+
+Nothing in P11–P12 is used against the real ClientSt0r until section 9 records its acknowledgement and ClientSt0r
+advertises the task.
+
 ## 6. Changes required in ClientSt0r (owned by the ClientSt0r session)
 
 | ID | Change | Needed for | Status |
@@ -154,6 +192,7 @@ Nothing in P1–P10 is built until section 9 records ClientSt0r's acknowledgemen
 | CS-6 | Build `job-request` bodies; validate against `schemas/` before sending | G4 | Outstanding |
 | CS-7 | Event names as in P8 | G4 | Outstanding |
 | CS-8 | Acknowledge or counter section 5 (P1–P10) in section 9 | Revision 3 | Outstanding |
+| CS-9 | Acknowledge or counter section 5A (P11–P12); if agreed, serve `device_timeline_v1` at the inference gateway and a signed capabilities document listing it | Revision 4 (device summary) | Outstanding |
 
 ## 7. Limitations both sides must represent honestly
 
@@ -186,7 +225,8 @@ both running applications pass `e2e-ticket-workflow`'s scenarios with ClientSt0r
 | 2026-11-10 | Owner (user) | rem0te's Ed25519 protocol is canonical; ClientSt0r adopts it |
 | 2026-11-10 | rem0te | Binding is `(peer, organization_id) → business`, one to one; shown in `/capabilities.organizations` (revision 2) |
 | 2026-11-11 | rem0te | Revision 3 proposed (section 5). **Awaiting ClientSt0r** |
-| | ClientSt0r | *(acknowledge / counter P1–P10 here)* |
+| 2026-11-11 | rem0te | Revision 4 proposed (section 5A, P11–P12): the device summary through the gateway. rem0te 0.34 ships its side gated on P12, so nothing is sent until ClientSt0r advertises it. **Awaiting ClientSt0r** |
+| | ClientSt0r | *(acknowledge / counter P1–P10 and P11–P12 here)* |
 
 ## 10. Breaking changes
 
@@ -202,10 +242,14 @@ both running applications pass `e2e-ticket-workflow`'s scenarios with ClientSt0r
 - [x] Signed examples generated from the real implementation, verified in CI
 - [x] Path B gaps measured against ClientSt0r's real code
 - [x] Path A device sync verified against ClientSt0r's real provider code (2026-11-11)
+- [x] rem0te holds no provider key anywhere: the device summary's direct model call and SDK removed (rem0te 0.34);
+      its replacement is proposed as P11–P12 and gated on ClientSt0r advertising it
 
 **Outstanding**
 - [ ] ClientSt0r CS-1 … CS-8
 - [ ] ClientSt0r acknowledgement of revision 3 (section 9)
+- [ ] ClientSt0r acknowledgement of revision 4, P11–P12 (section 5A); then run `e2e-ai-timeline`'s scenarios with ClientSt0r
+      in place of the reference peer
 - [ ] rem0te implements the acknowledged items of revision 3, with schemas, examples and e2e
 - [ ] Both running applications pass the ticket workflow end to end (pair → diagnose → result in ticket → refer
       fix → approvals → execution → re-check → evidence in ticket → close)

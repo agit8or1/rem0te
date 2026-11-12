@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * The 0.31 navigation (and 0.32's Reports), in a real browser: every sidebar entry and section tab
+ * The 0.31 navigation (and 0.32's Reports, 0.34's Automation hub and software
+ * compliance report), in a real browser: every sidebar entry and section tab
  * leads to a page that renders, each persona sees exactly its entries, the
  * Settings group works, nothing overflows sideways, at desktop and tablet
  * widths, in the light and dark themes. It also writes screenshots to OUT_DIR
@@ -40,7 +41,7 @@ const check = (c, m, d = '') => { if (c) { pass++; console.log(`  \x1b[32m✓\x1
 
 const VIEWPORTS = { desktop: { width: 1440, height: 900 }, tablet: { width: 820, height: 1180 } };
 const SETTINGS_ADMIN = ['/settings', '/users', '/offboarding', '/technician-approvals', '/audit', '/businesses', '/admin/technicians', '/admin/access', '/admin/sso',
-  '/admin/rollouts', '/admin/security', '/admin/status', '/about'];
+  '/admin/rollouts', '/settings/email', '/admin/security', '/admin/status', '/about'];
 
 async function signIn(context, email, password) {
   const page = await context.newPage();
@@ -92,18 +93,46 @@ async function visit(page, href) {
   return pageHealth(page);
 }
 
-/** No control anywhere on a library page that could read as running a script. */
+/**
+ * Controls on a library page that read as running a script, outside the Run
+ * panel (0.34). The panel is the one place a run is requested, and it only
+ * requests one: approval happens on the approval signer's page.
+ */
 async function noRunControl(page) {
   return page.evaluate(() => [...document.querySelectorAll('main button, main a, main [role=button]')]
+    .filter((e) => !e.closest('[data-script-run-panel]'))
     .map((e) => (e.textContent ?? '').trim()).filter((t) => /\b(run|execute|deploy|dispatch|send to)\b/i.test(t)));
 }
 
-async function automationChecks(page) {
+/** No control on a software page that could read as approving: approval happens on the approval signer. */
+async function noApproveControl(page) {
+  return page.evaluate(() => [...document.querySelectorAll('main button, main [role=button]')]
+    .map((e) => (e.textContent ?? '').trim()).filter((t) => /\b(approve|sign)\b/i.test(t)));
+}
+
+/**
+ * 0.34: Automation is a hub — the Script library (script authors and
+ * reviewers) and the Software catalog (computers:view). A Business User with
+ * computers:view sees only the catalog, so no tab bar, and cannot add to it.
+ */
+async function automationChecks(page, who) {
+  await follow(page, 'nav[aria-label="Main"] [data-nav="automation"]');
+  const tabs = await page.$$eval('[data-section-tabs="automation"] a', (els) => els.map((e) => e.textContent.trim()));
+  const want = who === 'user' ? [] : ['Script library', 'Software catalog'];
+  check(JSON.stringify(tabs) === JSON.stringify(want), want.length ? `Automation tabs: ${want.join(' · ')}` : 'a user who sees only the software catalog gets no Automation tab bar', tabs.join(' · '));
+  await softwareChecks(page, who);
+  if (who === 'user') {
+    const h = await visit(page, '/automation/scripts');
+    const txt = await page.evaluate(() => document.querySelector('main')?.innerText ?? '');
+    check(!!h.h1 && /permission/i.test(txt) && !(await page.$('[data-script-row]')), 'without library rights, /automation/scripts loads but lists nothing and says a permission is needed', txt.slice(0, 200));
+    return;
+  }
+  await visit(page, '/dashboard');
   await follow(page, 'nav[aria-label="Main"] [data-nav="automation"]');
   const h = await pageHealth(page);
   check(new URL(page.url()).pathname === '/automation/scripts' && h.h1 === 'Script library', 'Automation opens the Script library', JSON.stringify(h));
-  const notice = await page.$eval('[data-not-runnable]', (e) => e.textContent).catch(() => '');
-  check(/isn.t available yet/i.test(notice) && /signed agent/i.test(notice) && /real Windows/i.test(notice), 'it says plainly that running scripts is not available yet, and why', notice.slice(0, 200));
+  const notice = await page.$eval('[data-script-run-notice]', (e) => e.textContent).catch(() => '');
+  check(/signed action/i.test(notice) && /allowlist/i.test(notice) && /Not yet run on a real Windows computer/i.test(notice), 'it says how a script runs (signed, allowlisted) and that it has not run on real Windows', notice.slice(0, 200));
   const runs = await noRunControl(page);
   check(runs.length === 0, 'the library page has no Run button', runs.join(' | '));
   const row = await page.$('[data-script-row]');
@@ -112,7 +141,37 @@ async function automationChecks(page) {
     await page.waitForSelector('[data-script-content]', { timeout: 15_000 }).catch(() => {});
     const d = await pageHealth(page);
     const runs2 = await noRunControl(page);
-    check(!!(await page.$('[data-not-runnable]')) && !!(await page.$('[data-static-checks]')) && runs2.length === 0 && d.overflow <= 1, 'a script\'s page shows the notice and the static checks, has no Run button, no overflow', `${runs2.join(' | ')} ${JSON.stringify(d)}`);
+    check(!!(await page.$('[data-script-run-notice]')) && !!(await page.$('[data-static-checks]')) && runs2.length === 0 && d.overflow <= 1, 'a script\'s page shows the notice and the static checks, no run control outside the Run panel, no overflow', `${runs2.join(' | ')} ${JSON.stringify(d)}`);
+  }
+}
+
+/** The software catalog: renders, explains itself, offers Add only to whoever may change it, and never an approve button. */
+async function softwareChecks(page, who) {
+  const h = await visit(page, '/automation/software');
+  await page.waitForSelector('[data-software-explainer]', { timeout: 15_000 }).catch(() => {});
+  const txt = await page.evaluate(() => document.querySelector('main')?.innerText ?? '');
+  check(!h.notFound && h.h1 === 'Software catalog' && h.overflow <= 1 && !/could not be loaded/i.test(txt), 'Software catalog renders and loads, no overflow', JSON.stringify(h));
+  const explain = await page.$eval('[data-software-explainer]', (e) => e.textContent).catch(() => '');
+  check(/hashes the file itself/i.test(explain) && /two approvers/i.test(explain) && /real Windows/i.test(explain), 'it explains the hash check, the two approvers, and that nothing has run on real Windows yet', explain.slice(0, 200));
+  const add = await page.$$eval('main button', (els) => els.some((e) => /Add software/.test(e.textContent ?? '')));
+  check(who === 'user' ? !add : add, who === 'user' ? 'a Business User is not offered Add software' : 'Add software is offered', String(add));
+  const approves = await noApproveControl(page);
+  check(approves.length === 0, 'the catalog has no approve button', approves.join(' | '));
+  const row = await page.$('[data-software-row]');
+  if (row) {
+    await row.click();
+    await page.waitForSelector('main h1', { timeout: 15_000 }).catch(() => {});
+    const d = await pageHealth(page);
+    const a2 = await noApproveControl(page);
+    check(!d.notFound && d.overflow <= 1 && a2.length === 0, 'a catalog entry renders, no overflow, no approve button', `${a2.join(' | ')} ${JSON.stringify(d)}`);
+  }
+  const dep = await page.$('[data-deployment-row]');
+  if (dep) {
+    await dep.click();
+    await page.waitForSelector('[data-next-why]', { timeout: 15_000 }).catch(() => {});
+    const d = await pageHealth(page);
+    const a3 = await noApproveControl(page);
+    check(!d.notFound && d.overflow <= 1 && a3.length === 0 && !!(await page.$('[data-next-why]')), 'a software deployment says what is next, has no approve button, no overflow', `${a3.join(' | ')} ${JSON.stringify(d)}`);
   }
 }
 
@@ -135,7 +194,7 @@ try {
     admin: { email: await mk('admin', { isPlatformAdmin: true }), expect: ['dashboard', 'devices', 'alerts', 'automation', 'patching', 'remote', 'reports', 'settings'] },
     owner: { email: await mk('owner', {}, { roleId: ownerRole.id, capabilities: [] }), expect: ['dashboard', 'devices', 'alerts', 'automation', 'patching', 'remote', 'reports', 'settings'] },
     // computers:view without monitoring:alerts: the device reports, not the alert ones (0.32).
-    user: { email: await mk('user', {}, { roleId: userRole.id, capabilities: ['computers:view', 'computers:connect'] }), expect: ['dashboard', 'devices', 'patching', 'remote', 'reports'] },
+    user: { email: await mk('user', {}, { roleId: userRole.id, capabilities: ['computers:view', 'computers:connect'] }), expect: ['dashboard', 'devices', 'automation', 'patching', 'remote', 'reports'] },
   };
   const anyEndpoint = await prisma.endpoint.findFirst({ where: { customerId: biz.id, status: 'ACTIVE' }, select: { id: true } });
   // 0.33: the Processes, Services and Network tabs belong to a Windows computer.
@@ -161,13 +220,10 @@ try {
         check(!h.notFound && h.h1 && h.overflow <= 1 && active, `${id} → ${new URL(page.url()).pathname} renders "${h.h1}", highlighted, no overflow`, JSON.stringify(h));
       }
 
-      // Automation: the script library, which says it cannot run scripts and offers nothing that would.
-      if (got.includes('automation')) await automationChecks(page);
-      else {
-        const h = await visit(page, '/automation/scripts');
-        const txt = await page.evaluate(() => document.querySelector('main')?.innerText ?? '');
-        check(!!h.h1 && /permission/i.test(txt) && !(await page.$('[data-script-row]')), 'without library rights, /automation/scripts loads but lists nothing and says a permission is needed', txt.slice(0, 200));
-      }
+      // Automation: the script library, which says how a script runs and offers
+      // no run control outside an approved version's Run panel, and the
+      // software catalog (0.34).
+      if (got.includes('automation')) await automationChecks(page, who);
 
       // Section tabs: on Devices and Remote Support, never on a device's own page.
       if (got.includes('devices')) {
@@ -220,6 +276,25 @@ try {
             check(true, `this device shows no Performance tab (${wtabs.join(' · ')}) — its agent reports nothing`);
           }
         }
+        // 0.34: the Software tab's Managed software section either offers Install /
+        // Uninstall or says why not (with the server's reason), and never approves.
+        if (windowsEndpoint) {
+          await visit(page, `/endpoints/${windowsEndpoint.id}`);
+          if (await page.$('[data-testid="tab-software"]')) {
+            await page.click('[data-testid="tab-software"]');
+            await page.waitForSelector('[data-testid="managed-software"]', { timeout: 15_000 }).catch(() => {});
+            const ms = await page.$eval('[data-testid="managed-software"]', (el) => ({
+              buttons: [...el.querySelectorAll('button')].map((b) => (b.textContent ?? '').trim()),
+              notPossible: el.querySelectorAll('[data-not-possible]').length,
+              rows: el.querySelectorAll('[data-managed-row]').length,
+              text: (el.textContent ?? '').slice(0, 300),
+            })).catch(() => null);
+            const h = await pageHealth(page);
+            const offers = ms ? ms.buttons.some((b) => /^(Install|Uninstall)$/.test(b)) : false;
+            check(!!ms && (offers || ms.notPossible > 0 || ms.rows === 0) && !ms.buttons.some((b) => /\bapprove\b/i.test(b)) && h.overflow <= 1,
+              'Managed software offers Install/Uninstall or gives the server\'s reason, never an approve button', JSON.stringify({ ms, overflow: h.overflow }));
+          }
+        }
         // 0.33: read-only snapshot tabs, each with its age and a Refresh, and no
         // control that acts on the computer (no end task, stop or start).
         if (windowsEndpoint && who !== 'user') {
@@ -238,6 +313,18 @@ try {
             const h = await pageHealth(page);
             check(!!info && /Taken|Never taken/.test(info.age) && info.refresh && info.actions.length === 0 && h.overflow <= 1, `${t} tab: shows when it was taken, a Refresh, no action buttons, no overflow`, JSON.stringify({ info, overflow: h.overflow }));
           }
+          // 0.34: the Chat tab is on every computer the viewer can see. On one
+          // whose agent cannot chat it says so (and why) and offers no Start.
+          check(wsTabs.includes('Chat') && wsTabs.indexOf('Chat') === wsTabs.length - 2, 'the device workspace has a Chat tab, just before History', wsTabs.join(' · '));
+          await page.click('[data-testid="tab-chat"]');
+          await page.waitForSelector('[data-testid="chat-tab"]', { timeout: 15_000 }).catch(() => {});
+          const chat = await page.evaluate(() => ({
+            tab: !!document.querySelector('[data-testid="chat-tab"]'),
+            unsupported: document.querySelector('[data-testid="chat-unsupported"]')?.textContent ?? null,
+            start: !!document.querySelector('[data-testid="chat-start"]'),
+          }));
+          const ch = await pageHealth(page);
+          check(chat.tab && ch.overflow <= 1 && (chat.unsupported ? !chat.start && /not available/.test(chat.unsupported) : true), `Chat tab renders${chat.unsupported ? ' and says why this computer cannot chat' : ''}, no overflow`, JSON.stringify({ chat, overflow: ch.overflow }));
         }
       }
       if (got.includes('remote')) {
@@ -250,7 +337,8 @@ try {
       if (got.includes('reports')) {
         await follow(page, 'nav[aria-label="Main"] [data-nav="reports"]');
         const tabs = await page.$$eval('[data-section-tabs="reports"] a', (els) => els.map((e) => e.textContent.trim()));
-        const want = who === 'user' ? ['Patch compliance', 'Agent coverage'] : ['Patch compliance', 'Agent coverage', 'Alert frequency', 'Offline time'];
+        // 0.34: Software compliance; and Scheduled reports, last, for a Business Owner or a Platform Admin.
+        const want = who === 'user' ? ['Patch compliance', 'Agent coverage', 'Software compliance'] : ['Patch compliance', 'Agent coverage', 'Alert frequency', 'Offline time', 'Software compliance', 'Scheduled reports'];
         check(JSON.stringify(tabs) === JSON.stringify(want), `Reports tabs: ${want.join(' · ')}`, `got ${tabs.join(' · ')}`);
         for (const t of tabs) {
           await follow(page, `[data-section-tabs="reports"] a:text-is("${t}")`);
@@ -291,6 +379,24 @@ try {
         await visit(page, '/alerts?state=open&severity=critical');
         const sel = await page.evaluate(() => [document.querySelector('#al-state')?.value, document.querySelector('#al-sev')?.value]);
         check(sel[0] === 'open' && sel[1] === 'critical', '/alerts?state=open&severity=critical opens filtered', JSON.stringify(sel));
+        // 0.34: an alert email links to /alerts?alert=<id>. One that is not visible says so rather than loading forever.
+        await visit(page, '/alerts?alert=doesnotexist0000');
+        const linked = await page.waitForSelector('[data-testid="alerts-linked"]', { timeout: 10_000 }).then(() => true).catch(() => false);
+        await page.waitForFunction(() => /not found, or is not one you can see/.test(document.querySelector('[data-testid="alerts-linked"]')?.textContent ?? ''), null, { timeout: 10_000 }).catch(() => {});
+        const said = await page.evaluate(() => document.querySelector('[data-testid="alerts-linked"]')?.textContent ?? '');
+        check(linked && /not found, or is not one you can see/.test(said), '/alerts?alert=<id> opens that alert, and an unknown one says it is not visible', said.slice(0, 200));
+      }
+
+      // 0.34: the email confirmation page is public and confirms nothing until its button is pressed.
+      if (who === 'admin') {
+        const anon = await browser.newContext({ viewport: VIEWPORTS[vpName] });
+        const p2 = await anon.newPage();
+        await p2.goto(`${WEB}/verify-email?token=${'x'.repeat(43)}`);
+        await p2.waitForSelector('button', { timeout: 15_000 }).catch(() => {});
+        const atPage = new URL(p2.url()).pathname === '/verify-email';
+        const btn = await p2.$('button:has-text("Confirm this address")');
+        check(atPage && !!btn, '/verify-email is public and waits for a click (a mail scanner opening it confirms nothing)', p2.url());
+        await anon.close();
       }
 
       // Help & docs, at the bottom.

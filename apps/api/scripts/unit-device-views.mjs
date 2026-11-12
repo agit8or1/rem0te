@@ -8,11 +8,15 @@
 //   - an update applies no defaults (a PATCH never resets what it did not name);
 //   - who may manage a business's groups and shared views;
 //   - the bulk selection: de-duplicated, capped at 200 with BULK_TOO_LARGE,
-//     ids only, four actions only, groupId exactly where it belongs;
+//     ids only, six actions only (0.34: agent.update, agent.migrate with a
+//     reason), groupId exactly where it belongs;
 //   - the fleet budget stops at the guard's limits, counts a computer once,
 //     lets an exempt computer through, and records only what it is told;
 //   - a single action's exception becomes a per-computer reason (a 404 never
-//     says more than "Computer not found").
+//     says more than "Computer not found");
+//   - (0.34) group membership: add/remove for one computer depends on the
+//     manage rule, the computer's business and whether it is a member of
+//     THIS group only; the CSV cell lists every group.
 //
 // Build first: pnpm --filter @reboot-remote/api build
 import { join, dirname } from 'node:path';
@@ -87,7 +91,12 @@ section('Bulk selection and actions');
   check(refusal(() => R.parseSelection([])) && refusal(() => R.parseSelection('x')) && refusal(() => R.parseSelection(['../etc'])), 'empty, non-list and non-id selections are refused');
   // The cap counts what was SENT: 250 copies of one id are still over it.
   check(refusal(() => R.parseSelection(Array(250).fill(ID1)))?.code === 'BULK_TOO_LARGE', 'the cap counts what was sent, before de-duplication');
-  check(JSON.stringify(R.BULK_ACTIONS) === JSON.stringify(['group.add', 'group.remove', 'inventory.refresh', 'client.update']), 'exactly four actions');
+  // 0.34 added the Agent card's two actions.
+  check(JSON.stringify(R.BULK_ACTIONS) === JSON.stringify(['group.add', 'group.remove', 'inventory.refresh', 'client.update', 'agent.update', 'agent.migrate']), 'exactly six actions');
+  check(refusal(() => R.parseBulk({ action: 'agent.migrate', endpointIds: [ID1] }))?.code === 'REASON_REQUIRED', 'agent.migrate needs a reason');
+  check(R.parseBulk({ action: 'agent.migrate', endpointIds: [ID1], reason: '  pilot  ' }).reason === 'pilot', 'its reason is trimmed');
+  check(refusal(() => R.parseBulk({ action: 'agent.update', endpointIds: [ID1], reason: 'abc' })) !== null, 'a reason on any other action is refused');
+  check(refusal(() => R.parseBulk({ action: 'agent.migrate', endpointIds: [ID1], reason: 'x'.repeat(401) })) !== null, 'a reason over 400 characters is refused');
   for (const action of ['connect', 'archive', 'delete', 'restore', 'action.request', 'scripts.run', 'reboot']) {
     check(refusal(() => R.parseBulk({ action, endpointIds: [ID1] })) !== null, `no "${action}"`);
   }
@@ -112,6 +121,27 @@ section('Fleet budget');
   const c = new R.FleetBudget([], []);
   c.wouldExceed('e1', 'A', L);
   check(c.wouldExceed('e2', 'A', { devices: 1, businesses: 1 }) === null, 'asking records nothing; only admitted() does');
+}
+
+section('Group membership: many groups per computer (0.34)');
+{
+  const A = { customerId: 'A' }, gA = { customerId: 'A' };
+  const S = (action, t, member, why = null) => R.membershipStep(action, t, gA, member, why);
+  check(S('group.add', A, false).kind === 'write', 'add: a computer of the business that is not yet a member is written');
+  check(S('group.add', A, true).kind === 'unchanged', 'add: already a member is unchanged (safe to repeat)');
+  check(S('group.remove', A, true).kind === 'write', 'remove: a member is removed');
+  check(S('group.remove', A, false).kind === 'unchanged', 'remove: not a member is unchanged');
+  const other = S('group.add', { customerId: 'B' }, false);
+  check(other.kind === 'refuse' && other.code === 'OTHER_BUSINESS', 'another business’s computer: OTHER_BUSINESS, whoever asks');
+  check(S('group.add', { customerId: null }, false).code === 'OTHER_BUSINESS', 'an unassigned computer cannot join a business’s group');
+  check(S('group.remove', { customerId: 'B' }, false).code === 'OTHER_BUSINESS', 'nor be removed through it');
+  const no = S('group.add', A, false, 'nope');
+  check(no.kind === 'refuse' && no.code === 'NOT_ALLOWED' && no.reason === 'nope', 'no manage right: NOT_ALLOWED with the manage rule’s reason, decided first');
+  check(S('group.add', { customerId: 'B' }, false, 'nope').code === 'NOT_ALLOWED', 'the manage refusal wins over the business check (nothing about the computer is said)');
+  check(R.membershipStep.length === 5 && !/IN_OTHER_GROUP/.test(R.membershipStep.toString()), 'membership of OTHER groups is not an input: no IN_OTHER_GROUP any more');
+  check(R.groupsCell([{ name: 'Front desk' }, { name: 'Servers' }]) === 'Front desk; Servers', 'the CSV cell lists every group, "; "-separated, in the order given (the list orders by name)');
+  check(R.groupsCell([]) === '' && R.groupsCell(null) === '' && R.groupsCell(undefined) === '', 'no group: an empty cell');
+  check(R.groupsCell([{ name: null }, { name: 'X' }]) === 'X', 'a nameless entry is skipped');
 }
 
 section('A single action’s refusal, per computer');

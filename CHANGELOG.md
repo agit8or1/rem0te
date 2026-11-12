@@ -5,6 +5,1893 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.34.0] — 2026-11-11 · *Switchboard*
+
+The fourth increment of the RMM overhaul. Its theme is acting on computers through the approval chain, and
+telling people about it. Thirteen parts were built separately from 0.33 and integrated here:
+
+- **Signed actions.** Script runs (`windows.script.run@1`) and winget software install/uninstall join the signed
+  catalog. Staged patching gains a restart rule. A patch policy's later rings now open only on results the computers
+  signed themselves.
+- **Operations.** Outbound email with scheduled reports. A retention sweep for the tables that grew without bound. A
+  shared hbbs peer read that halves heartbeat CPU. Agent upgrade from the console.
+- **Groups and keys.** Multi-group and rule-based device groups. A step-up for every API key.
+- **ClientSt0r.** The AI summary now goes through ClientSt0r, and rem0te holds no model-provider SDK or key.
+- **Chat.** Two-way chat between a technician and the person at a Windows computer, from the signed agent.
+- **Console.** A phone-width layout, with a browser suite in CI. Regenerated screenshots.
+
+**Nothing new that acts on Windows has run on a real Windows computer.** That covers the restart rule, signed results,
+script runs, software, the migration script and the chat window. Each was proven against the action simulator, stubs and, for
+scripts, PowerShell 7 on Linux. The pages and docs that offer them say so.
+
+### Fixed
+- **The alert-frequency and offline-time reports were empty for a Platform Admin.**
+
+  `ReportsService.alertsWhere` limited computer alerts with
+  `{ OR: [{ endpointId: null }, { endpoint: <visibility> }] }`.
+
+  - For a caller who can see every computer, the visibility filter is `{}`.
+  - Prisma 5 reads `{ endpoint: {} }` inside an OR as matching nothing.
+  - So a Platform Admin's *Alert frequency* and *Offline time* reports held only
+    site-wide outage alerts: "26 episodes" read as 0.
+  - Owners, technicians and Business Users were unaffected, because their filter
+    is never empty.
+
+  The fix is `endpoint: { is: <visibility> }`.
+
+  - `e2e-reports.mjs` now checks that an unfiltered Platform Admin counts A's and
+    B's computer alerts: 104 passed, 0 failed.
+  - With the fix reverted, it gives 102 passed, 2 failed.
+  - Invariant §22 (reports) now requires the `is:` form.
+
+  **Upgrade:** nothing to do. No migration, and no setting changes.
+  **Verify:** as a Platform Admin, open Reports → Offline time with no business
+  chosen. It should list computers, not only site outages.
+
+### Data retention
+
+#### Added
+- **A retention sweep for the tables that grew without bound.** Before this, nothing that grows was ever pruned
+  (docs/server-sizing.md, 0.33). Commands, inventory changes, alerts and diagnostics accumulated at about 1.3 MB per
+  computer per year: about 6.5 GB a year at 5,000 computers, with no end. One sweep inside the API
+  (`apps/api/src/retention/`), built like the metric sweep, now ages out operational history and transient rows:
+  - finished agent commands after **90 days** (`RETENTION_COMMAND_DAYS`, 7–3650), always keeping the newest of each
+    type per computer and the newest that succeeded, because the Event Log tab and the diagnostic panels show "the
+    last result";
+  - finished diagnostic runs after **90 days** (`RETENTION_DIAGNOSTIC_DAYS`, 7–3650), the same way per diagnostic;
+  - inventory change history after **400 days** (`RETENTION_CHANGE_DAYS`, 30–3650);
+  - alerts resolved more than **400 days** ago, with their events (`RETENTION_ALERT_DAYS`, 30–3650). The alert
+    reports offer periods up to 365 days, so the default covers the longest of them with a month to spare;
+  - on finished remote sessions, the free-form detail of events older than **400 days**
+    (`RETENTION_SESSION_DETAIL_DAYS`). The session and event rows are kept, because they are evidence of who
+    connected to what and offboarding reads them;
+  - launcher tokens and connection grants that were **never used**, 30 days after they expired
+    (`RETENTION_TOKEN_DAYS`, 1–365). A used one is kept, because offboarding lists the computers a person reached
+    through it;
+  - abuse-guard rows (`PrivilegedActivity`) after **30 days** (`RETENTION_PRIVILEGED_ACTIVITY_DAYS`, 2–365). The
+    floor exceeds the guard's longest window (1,440 minutes).
+
+  Out-of-range values are clamped and unparsable ones take the default, so `RETENTION_ALERT_DAYS=0` means 30 days,
+  not "delete everything". Each pass removes at most `RETENTION_BATCH` × `RETENTION_BATCHES` (2,000 × 10) rows per
+  table, every `RETENTION_SWEEP_SECONDS` (3,600). The first pass starts two minutes after the API does.
+  `RETENTION_SWEEP=off` stops the sweep. Statements delete by cutoff and finished state, so a pass is idempotent and
+  two API processes are safe (alert batches lock `SKIP LOCKED`).
+- **Nothing open or live is touched.** Every statement names the finished states. Pending and dispatched commands,
+  unfinished diagnostics, OPEN and ACKNOWLEDGED alerts, a site-outage alert with an open child, sessions that have
+  not ended, and unexpired or used tokens all stay at any age.
+- **The audit chain is never pruned or modified.** The sweep names no audit table. Each pass that removed anything
+  writes one `RETENTION_PRUNED` audit entry (counts per table, windows in force, which tables had more to do). That
+  entry is an insert into the chain. A pass with nothing to do writes nothing.
+- **Settings → System status → Data retention** (Platform Admin only, `GET /admin/retention`). Every growing table,
+  including the evidence ones and those other sweeps handle, with its real row count, oldest row, window and what
+  removes it. Counts are cached for a minute; the refresh button recounts. The route only reads: no route runs,
+  changes or turns off the sweep. Retention is set in the server's environment, so a stolen session cannot shorten
+  it.
+- **The alert reports say how far back they can see.** Alert frequency and Offline time return
+  `retention: { alertDays, periodDays, complete, coversDays }`. When the period is longer than the alert window,
+  the page says it covers only the last N days. Patch compliance and Agent coverage say they read current records,
+  which retention never removes.
+- `docs/data-retention.md` (in the app at `/docs/data-retention`) gives the classification, the defaults and why,
+  what pruning changes, the measured cost and what is not done. It is linked from server-sizing, setup, reports,
+  inventory and `/help`. Server sizing now gives the levelled-off size: about 0.45 MB per computer of pruned history
+  after the first year, plus sessions and audit entries, which are kept (estimated).
+
+#### Upgrade notes
+- **Migration `0046_data_retention`** adds the `RETENTION_PRUNED` audit action and eight indexes for the cutoffs:
+  `EndpointCommand(createdAt)`, `EndpointCommand(endpointId, type, createdAt)`, `DiagnosticRun(requestedAt)`,
+  `EndpointChange(detectedAt)`, `MonitorAlert(state, resolvedAt)`, `LauncherToken(expiresAt)`,
+  `PrivilegedActivity(at)`, and a partial `SupportSessionEvent(timestamp) WHERE metadata IS NOT NULL`, which the
+  schema cannot express. The Prisma client at the target must be regenerated (CLAUDE.md, *A schema change*).
+- **The first passes after upgrading clear a backlog** at up to 20,000 rows per table per hour. A year of commands
+  on 1,000 computers is about 1.6 million rows past 90 days, which takes about three and a half days. Raise
+  `RETENTION_BATCHES` for a while to go faster, or set `RETENTION_SWEEP=off` to postpone it.
+- PostgreSQL does not give deleted space back to the operating system. The tables stop growing; to shrink them,
+  run `VACUUM (FULL, ANALYZE)` in a maintenance window.
+- To keep the old behaviour (nothing pruned), set `RETENTION_SWEEP=off`.
+
+#### Verification
+- `apps/api/scripts/unit-retention.mjs` (CI): **47** checks. Defaults, floors, ceilings and parsing of every
+  variable, the cutoffs, the per-pass cap and batch loop, report coverage, and the table inventory.
+- `apps/api/scripts/e2e-retention.mjs` (`scripts/run-e2e.sh`): **43** checks against its own API on port 3411,
+  started three times. Seeds aged and current rows in every swept table for Business A and B, then proves:
+  - with the sweep off, nothing goes in 7 s;
+  - with it on, at two rows per table per pass, every aged row goes and every open, newest, used or in-window row
+    stays;
+  - no pass removes more than two rows from a table, and five old changes take three or more passes;
+  - each removing pass writes one entry, and later passes write none;
+  - the audit chain verifies with no new problem, with every previously sealed entry, its hash and every checkpoint
+    intact, and audit rows 3,000 days old untouched;
+  - the status route returns the database's counts and oldest rows, refuses both businesses' owners and a business
+    user (403) and the anonymous caller (401), and reports clamped windows;
+  - the reports state their coverage, including a 365-day report under a 30-day window.
+- `scripts/check-security-invariants.mjs` **§33**, 7 checks, each proven to fail with its guard removed (12
+  mutations):
+  - the sweep never names the audit chain and writes only to nine allow-listed tables;
+  - the policy lists the audit log and checkpoints as evidence that nothing sweeps;
+  - every statement names the finished states;
+  - the newest command and diagnostic survive;
+  - every statement is bounded and goes through the batch loop;
+  - `RETENTION_SWEEP=off` is honoured and set for every other e2e suite;
+  - the status route is one Platform Admin GET.
+- `RETENTION_SWEEP=off` is exported by `scripts/run-e2e.sh` and passed to its scratch APIs, because the sweep acts on
+  the whole database. `e2e-reports.mjs` still passes (102).
+- Sweep cost, **measured** on a loaded shared host with 540,000 synthetic commands and 180,000 changes: 180–460 ms
+  per 2,000-row command batch, 30–50 ms per change batch, 5 ms with nothing due. Not measured on a real fleet.
+
+### API key step-up and multi-group membership
+
+Two follow-ups from 0.33: the API-key step-up covered only keys that can enrol computers, and a computer could be
+in one device group at a time.
+
+#### Security
+
+- **Creating any API key needs a fresh re-authentication.** 0.33 asked only when the key carried
+  `enrollment:write` (`apikey.enrollment`). But every key is Business Owner access to its business, within its
+  scopes, that keeps working after the session that made it is signed out, revoked or has its password changed.
+  A stolen or unattended session that could quietly mint a `computers:read` or `audit:read` key kept reading the
+  business long after the session was gone. Now `POST /apikeys` answers `403 STEP_UP_REQUIRED`
+  (`action: "apikey.create"`) for every key until the person confirms it is them.
+  - **Not configurable.** It uses `assertFresh`, like the enrolment-token mint; emptying
+    `PlatformSettings.stepUpActions` does not lift it (the e2e suite checks).
+  - **Scope and validation first.** Another business is still a 403, an unknown one a 404, a request with no valid
+    scope a 400, and a Business User (no `api_keys:write`) a 403. None of them prompts, and no refusal writes a row.
+  - **Audited.** `API_KEY_CREATED` now records `stepUpMethod` and `expiresAt` beside the name and scopes.
+  - **Keys are immutable, so creation is the only gate needed.** There is no route that widens a key's scopes or
+    restores a revoked key (`PATCH`/`PUT /apikeys/:id`, `/restore`, `/scopes` are all 404), and the only writes to
+    an existing key set `revokedAt` or `lastUsedAt`. Revoking, which only takes access away, never needs a step-up.
+    To change a key's scopes, create a new key and revoke the old one.
+  - **Console.** The api-client interceptor opens the step-up dialog and retries the same request, so the name,
+    scopes, expiry and business are all kept. If the person cancels, nothing is created and the page says the
+    entries are kept. The page now says up front that creating a key asks, and that keys cannot be edited.
+  - Keys created before this release without a step-up keep working; review them under *Settings → API keys* if a
+    session may have been stolen.
+
+#### Changed
+
+- **A computer can be in several device groups of its own business.** 0.33 kept membership in
+  `Endpoint.endpointGroupId`, so adding a computer to a second group was refused (`IN_OTHER_GROUP`). Membership is
+  now a join table, `EndpointGroupMember` (`endpointGroupId`, `endpointId`, `addedById`, `createdAt`; composite
+  key). Adding to one group never takes a computer out of another; removing it from one, or deleting a group,
+  leaves its other groups. `IN_OTHER_GROUP` is gone.
+  - **Device list.** The group filter lists every member (a computer in three groups appears under each); the
+    facet and the *Device groups* list count a computer once per group, over what the reader can see; each row has
+    `groups: [{ id, name }]` (ordered by name) instead of `group`; the CSV column is *Groups*, names separated by
+    `; `. The column id stays `group`, so 0.33 saved views keep it. `GET /endpoints/:id` returns `groups` instead
+    of `endpointGroup`.
+  - **Every 0.33 rule holds:** same business only (bulk `OTHER_BUSINESS`, endpoint creation and token minting
+    still check the group's business), the manage rule for membership changes, `DEVICE_GROUP_MEMBERS_CHANGED`
+    audit entries, and a computer that changes business leaving the old business's groups.
+  - **The business rule is now in the database.** Migration `0049_device_group_members` adds two triggers:
+    `endpoint_group_member_same_business` refuses a membership row whose computer is not in the group's business
+    (or, for a pre-0.33 group with no business, its tenant), whatever code writes it (SQLSTATE 23514); and
+    `endpoint_leaves_foreign_groups` deletes every membership that is not the new business's own when a computer's
+    `customerId` or `tenantId` changes. Before, each path that moved a computer had to remember to clear the
+    column; the Platform Admin's *Unassigned → business* assignment did not need to, but nothing guaranteed it.
+    A move through `PATCH /endpoints/:id` now records `movedToBusiness` and `leftGroups` in its `ENDPOINT_UPDATED`
+    entry.
+  - **Enrolment tokens.** `DeviceClaimToken.endpointGroupId` is kept as *the group a new device joins at claim*,
+    and `Endpoint.endpointGroupId` is dropped. Keeping both would be two records of one fact: a count or filter that
+    read the column would silently disagree with the table, and the column could no longer mean anything once a
+    computer has several groups. The claim adds a membership (re-checked against the token's business, as 0.33
+    did); re-enrolling a computer in the same business keeps its other groups (0.33 replaced the one group with the
+    token's), and re-enrolling it with another business's token leaves the old business's groups first.
+    `ENDPOINT_CLAIMED` records `groupId`. `POST /endpoints` still takes `endpointGroupId` as the first group.
+
+#### Upgrade notes
+
+- Migration `0049_device_group_members` copies every 0.33 membership into the join table, then drops
+  `Endpoint.endpointGroupId`. A membership is copied only if it satisfies the rule above; a pre-0.33 row whose group
+  belongs to another business (0.33 never cleaned those up) is dropped, and the migration's `NOTICE` says how many
+  were copied and dropped. To see them beforehand:
+  `SELECT e.id, e."customerId", g."customerId" FROM "Endpoint" e JOIN "EndpointGroup" g ON g.id = e."endpointGroupId" WHERE g."customerId" IS NOT NULL AND e."customerId" IS DISTINCT FROM g."customerId";`
+- A schema change: `prisma migrate deploy`, then rsync `prisma/` and `prisma generate` at the target, or the API
+  throws `Unknown field groupMemberships`.
+- API consumers: device-list rows have `groups` (array) in place of `group`; `GET /endpoints/:id` has `groups`
+  in place of `endpointGroup`; the CSV header is *Groups*. A script that creates API keys from a session must now
+  step up first (`POST /auth/step-up`) — the public API itself is unchanged.
+
+#### Verification
+
+- `e2e-enrol-stepup.mjs` 67 passed (API-key sections rewritten: every scope refused stale, Platform Admin too,
+  scope/validation before the prompt, fresh creation audited with the method, no widen/restore route, revoke
+  stale, revoked key 401, unconfigurable).
+- `e2e-device-views.mjs` 142 passed (new: A1 in two groups, both on its row in name order, facets and group list
+  count each, `GET /endpoints/:id` names both, removing from one keeps the other, deleting a group releases 2 and
+  keeps the other, CSV `"Reception; Workshop"`, a direct database insert across businesses refused by the trigger,
+  a Platform Admin move leaves both groups and is audited with them, a claim adds the token's group, re-enrolling
+  in the same business keeps both, re-enrolling with business B's token leaves A's groups and joins B's).
+- `unit-device-views.mjs` 73 passed (13 new: `membershipStep`, `groupsCell`).
+- Unchanged suites still pass: `e2e-device-list` 113, `e2e-add-device` 62, `e2e-credentials` 44 (the claim check
+  now reads the membership), `e2e-public-api` passed and `e2e-security-audit` 57 (both now step up before creating
+  a key; the audit suite also checks a read-only key is refused without one).
+- Migration checked on a scratch database seeded with a 0.33-shaped row set (a same-business member, a
+  cross-business member, a member of a pre-0.33 group): 2 copied, 1 dropped; the triggers refuse a cross-business
+  insert, allow a second group, and clear memberships on a business change.
+- `check-security-invariants.mjs`: new §34 (9 checks — any key needs `assertFresh` after scope and validation and
+  before the write, audited; only list/create/revoke routes, revoke ungated; nothing widens or un-revokes a key;
+  the console labels and retries; the join table replaces the column; both triggers, the insert check before the
+  copy; only the three known paths write membership; the filter and counts stay inside visibility; the suites run
+  in CI). §27's key check and §29's membership checks updated for the new code. Each §34 check, and the two
+  updated §29/§27 checks, was proven to fail with its guard removed (14 mutations) and to pass restored. 255 checks
+  hold.
+- `pnpm -r lint`, `tsc --noEmit` (api, web), `nest build`, `next build`, `check-versions.mjs` pass.
+
+### Rule-based (dynamic) device groups
+
+Built on multi-group membership (`EndpointGroupMember`, migration 0049, from the API-keys / groups branch). The
+0.33 gap analysis listed "rule-based groups not implemented": a group could only be a hand-kept list, so "every
+offline computer", "everything still on RustDesk 1.2" or "kiosks with updates pending" had to be re-ticked by hand
+and went stale the moment a computer changed.
+
+#### Added
+- **A device group is now `static` or `rule`.** A rule group's rule is the device list's own filter parameters,
+  stored as the same validated JSON a saved view stores (`EndpointGroup.kind` / `EndpointGroup.rule`, migration
+  0053). It can use site, online/offline, alerts, *Restart pending*, agent type and the new list filters below.
+  Search (free text), business (the group already belongs to one), group (no nesting) and the archived filter (the
+  list's own Archived filter governs) are refused by name, as are unknown keys and an empty rule. Validation is
+  `parseRule()` in `apps/api/src/device-views/group-rule.ts`, which calls the list's own `parseListFilters()`, so a
+  rule can never accept something the list refuses or vice versa.
+- **New device-list filters** (also usable in saved views, the URL and rules): `platform` (windows / linux / macos
+  / other, by the prefixes `common/platform.ts` recognises), `os` (OS caption or version contains; letters,
+  digits, space and `. _ ( ) + -` only, LIKE-escaped), `tag` (exact), `patches` (pending / current / unknown /
+  stale), `rustdeskMin` / `rustdeskMax` (dotted numbers, compared as four-part integer arrays so 1.10 > 1.9 and
+  1.4 = 1.4.0; a missing or non-numeric version such as a nightly never matches a range), `notSeenDays` (includes
+  never seen) and `seenWithinDays` (1–3650). The console has a *More filters* dialog for them.
+- **Membership is computed on every read, never stored.** `EndpointListService.evaluateRuleGroups()` is the rule
+  AND the group's business AND `scopedWhere()` — the reader's own visibility — through the same `filterConds()` /
+  `derivedConds()` the list uses for its filters. So a computer that goes offline has left an "Online" group the
+  next time anyone looks, with no sweep to fall behind; a Business User sees only their computers in it; a
+  technician only the ones their grant names. A stored rule that no longer parses matches nothing, never the whole
+  business, and the groups dialog says so.
+- **Where rule groups appear:** the group filter (marked *rule*, with a live count), the facet, the *Groups*
+  column (outlined badge), the CSV's *Groups* cell, `GET /device-groups` (`kind`, `rule`, `ruleReadable`, and
+  `members` counted as the reader sees them) and the bulk bar.
+- **Bulk on a group:** `POST /endpoints/bulk` takes `targetGroupId` instead of `endpointIds` (one or the other).
+  The server resolves the members at request time, as the caller (a static group's visible member rows, or the
+  rule evaluated), refuses more than 200 with `BULK_TOO_LARGE` naming the number — never a silent cut — and then
+  runs exactly the per-computer path a selection takes. `DEVICE_BULK_ACTION` records `targetGroup: { id, kind,
+  resolved }`. In the console, filtering by a rule group shows the bulk bar for the group itself; *Copy into*
+  puts the computers that match now into a static group.
+- **Console:** *Views → Save filters as a rule group…* makes one from the current filters (and says which set
+  filters are not part of a rule); *Device groups…* shows each rule in words, *Use current filters* replaces it,
+  and *Show* filters the list by any group.
+
+#### Security
+- **A rule group cannot be added to by anything.** Bulk `group.add` / `group.remove` naming one is refused for the
+  whole request (`RULE_GROUP`); so are `POST /endpoints` and `POST /enrollment/tokens` with a rule group's
+  `endpointGroupId`, and the claim only ever looks up a STATIC group. Underneath, the
+  `endpoint_group_member_static_only` trigger refuses the row (SQLSTATE 23514), `endpoint_group_kind_fixed`
+  refuses any change of `kind`, and a CHECK requires a rule exactly when `kind = 'RULE'`.
+- **A rule is never SQL.** Prisma filters, or `Prisma.sql` fragments with each value a bound parameter; the only
+  `Prisma.raw` in the list service is still the whitelisted ORDER BY. The e2e suite stores a tag of
+  `x'); DELETE FROM "Endpoint"; --`, and the rule finds exactly the one computer carrying that text and deletes
+  nothing.
+- **A rule on alerts is not evaluated for a reader without `monitoring:alerts`.** Filtering by it is a 403 (its
+  membership would disclose alert state), bulk on it is a 403, it is left out of that reader's facet and rows, and
+  `GET /device-groups` gives `members: null`.
+- **Another business's rule group lists nothing** (the same as a made-up id) and is a 404 to edit, delete or act
+  on; its rule cannot name another business's site.
+- Editing needs the same `manageRefusal()` as a static group (no step-up), and `DEVICE_GROUP_CREATED` /
+  `_UPDATED` / `_DELETED` carry `kind` and the rule — before and after on an update.
+
+#### Limits and what is not done
+- At most **50 rule groups per business** (within the existing 500 groups). Each is evaluated on every device-list
+  read that shows groups. Measured on the e2e scratch stack: a 260-computer business's list takes a median of
+  71–82 ms with no rule groups and 101–105 ms with 20 (facet and column), 90 ms filtered by one. Materialising
+  membership was not needed and was not done.
+- **Not done (next):** scoping monitoring rules or client-update policies to a group. Both resolve by precedence
+  over a single scope (`MonitorRule.scopeKey` global → business → site → computer; `ClientUpdatePolicy` business
+  with per-site overrides), and a computer can now be in several groups, so a group scope needs a precedence rule
+  of its own — not a clean seam. The device page does not yet list the rule groups a computer is in (the list's
+  *Groups* column does).
+
+#### Upgrade notes
+- Migration **0053** (`0053_dynamic_device_groups`): adds `EndpointGroupKind`, `EndpointGroup.kind` (default
+  `STATIC`, so every existing group is unchanged) and `rule`, the CHECK, an index on `(customerId, kind)` and two
+  triggers. Run `prisma migrate deploy` and `prisma generate` at the target.
+- No new routes. `POST /endpoints/bulk` accepts `targetGroupId`; `POST/PATCH /device-groups` accept `kind` and
+  `rule`; `GET /endpoints/list` accepts the eight new filters. `docs/API-REFERENCE.md` regenerated (424 routes,
+  unchanged).
+
+#### Verification
+- `unit-dynamic-groups.mjs` **68** (new): round-trip, refusal of unknown and refused keys and of every value the
+  list refuses (SQL-looking terms, versions, days), unreadable rule → null, one parser for list / view / rule,
+  numeric versions, bulk `endpointIds` XOR `targetGroupId`.
+- `e2e-dynamic-groups.mjs` **98** (new, port 3481): membership follows a computer going offline and coming back
+  and a computer changing business; each of 14 rules lists exactly what the list shows with the same filters;
+  A/B isolation; a restricted Business User sees only their computers (list, facet, group list, bulk, CSV); the
+  alerts rule refused without `monitoring:alerts`; no hand membership (bulk, enrolment token, direct insert, kind
+  change, CHECK); edits audited before/after; unreadable rule; bulk on a rule group and a static group, re-resolved
+  per request, the 200 cap with 210 matches; the SQL tag; CSV; the timing above.
+- Re-run: `e2e-device-views` 142, `e2e-device-list` 113, `unit-device-views` 73, `e2e-add-device` 62,
+  `e2e-enrol-stepup` 67, `e2e-search` 113.
+- Security invariants: new **§ 35** (8 checks; each proved to fail when its guard is removed — 16 mutations, all
+  caught); § 28, § 29 and § 34 regexes updated for the refactored filter code (`filterConds`, `parseListFilters`,
+  `targetGroupId`). 263 checks pass.
+
+### hbbs peer snapshot cache
+
+#### Changed
+
+- **A heartbeat no longer starts a process.** 0.33's sizing work found that most of a steady-state heartbeat's API
+  CPU (≈ 70 ms) went on one thing: `peerRegisteredWithHbbs` spawned `sqlite3` on every heartbeat to ask hbbs's peer
+  table whether that one RustDesk ID had ever registered. The query is trivial; the fork was not, and it cost the
+  Node process as much again as the child (the "node" CPU fell too once it was gone). At 5,000 computers that was
+  the difference between fitting on one API process and not.
+
+  The answer is now read from one shared snapshot of the peer table (`apps/api/src/enrollment/hbbs-peer-snapshot.ts`):
+  one `sqlite3` reads every digits-only peer ID at most once per `HBBS_PEER_CACHE_SECONDS` (default 10, clamped to
+  1–30 whatever is configured), and every heartbeat in that window answers from a `Set`. Concurrent heartbeats
+  share the read in flight.
+
+  What the answer is *for* did not change, and the snapshot is built so it cannot drift from it. `rustdeskRegistered`
+  in an authenticated heartbeat response is what the Windows installer polls for up to 90 s, refusing to report
+  success (exit 22) when the server is *certain* hbbs has never seen the computer; it is also the "has registered
+  before" line in diagnostics. Nothing binds or trusts a RustDesk ID on the strength of it — device trust is the
+  device secret — but a wrong `true` would let an installer report success for a machine nobody can connect to,
+  which is the 0.8.x bug this lookup exists to catch. So:
+  - **The window is the only staleness.** A snapshot is never consulted after it; its age is measured from when its
+    read *started*, so a slow read cannot stretch it; a clock that went backwards counts as stale. A peer deleted
+    from hbbs (as the unauthorised one was in 0.8.x) stops answering `true` within one window.
+  - **An unreadable database behaves exactly as before**: `null` (unknown), never `false`, and never an older
+    snapshot — a failed read discards the previous one. The failure is remembered for the window, so a host without
+    hbbs (or with the file unreadable) no longer spawns a process per heartbeat to learn the same thing.
+  - **Digits only, in the SQL and again in the parser** (`… AND id NOT GLOB '*[^0-9]*'`). The old query interpolated
+    one validated ID; reading the whole table instead means a peer ID containing a newline could otherwise have
+    added a second "ID" to the parsed output.
+  - The live "registered within 30 s" question (the `OnlineRequest` on 21115, `HBBS_PRESENCE_HOST`) is unchanged; it
+    was never per heartbeat.
+
+  Measured with `bench-heartbeat.mjs` on the same shared 16-core host, the old and new builds interleaved run for
+  run, 1,000 synthetic computers (rounds after warm-up; the host's load average was 3–17 from other work, so the
+  ranges are wide):
+
+  | | 0.33 build | 0.34 build |
+  |---|---|---|
+  | API CPU per heartbeat, 4 in flight | 56–135 ms (of which `sqlite3` 8–19 ms) | **34–39 ms** (`sqlite3` ≈ 0.02 ms) |
+  | API CPU per heartbeat, 16 in flight | 64–134 ms | **35–36 ms**; 61–71 ms in one run at load average 10 |
+  | Throughput, 4 in flight | 14–37 /s | **61–83 /s** |
+  | Throughput, 16 in flight | 22–47 /s | **61–136 /s** |
+  | p50 latency, 4 in flight | 97–273 ms | 45–50 ms |
+
+  At 5,000 synthetic computers and 16 in flight the 0.34 build did 49–72 heartbeats a second at 46–51 ms of API CPU
+  each, against the 27.8 a second 5,000 computers need: 1.8–2.6× headroom on one process, on a busy host.
+  `docs/server-sizing.md` is updated with these numbers; the 5,000 row is no longer "at the measured limit".
+
+- **`bench-heartbeat.mjs` can now build a 5,000-computer peer table.** It passed every `INSERT` as one `sqlite3`
+  argument, which is over Linux's 128 KB per-argument limit above ≈ 3,500 computers (`E2BIG`) — why 0.33's largest
+  run was 2,000. The SQL now goes on stdin.
+
+#### Upgrade notes
+
+- No migration. New optional setting `HBBS_PEER_CACHE_SECONDS` (default 10; values outside 1–30 are clamped).
+- An installer polling for registration may now see `true` up to one window (10 s) later than before; its loop
+  polls every 5 s for 90 s, so this only shortens its margin, never its outcome.
+- `sqlite3` is still required on the API host for this lookup, exactly as before (Node 20, which production runs,
+  has no `node:sqlite`; no new dependency).
+
+#### Verification
+
+- New `apps/api/scripts/unit-hbbs-peer-snapshot.mjs` (in CI): **29 passed** — window clamp (default 10 s, ceiling
+  30 s, floor 1 s, nonsense values), digits-only parsing; registered/unregistered/invalid answers; 500 lookups share
+  one read; a deleted ID answers `true` until the window ends and `false` from the first instant after; a new one
+  the reverse; unreadable → `null` (also for an ID the expired snapshot had), the failure not re-read inside the
+  window, retried after it, recovery; a backwards clock forces a re-read; a slow read does not stretch the window;
+  50 concurrent callers share one read and all get `null` when it fails; and against a real scratch SQLite file the
+  production query returns only digit IDs, refuses a newline-smuggled ID, and errors (→ `null`) on a missing file
+  or a database without a `peer` table. Mutating dist (no discard of the expired snapshot plus fallback to it;
+  a doubled window without the backwards-clock guard) fails 4+ checks each.
+- New `apps/api/scripts/e2e-presence-cache.mjs` (self-starting, port 3403, in `scripts/run-e2e.sh`): **18 passed** —
+  real heartbeats with a scratch peer database and a counting `sqlite3` wrapper on the API's PATH: true/false
+  answers; 60 heartbeats over ~10–13 s started 5–7 `sqlite3` (bound: one per 2 s window + 1); an added peer turns
+  true and a deleted one false within the window, and the deleted one never turns true again; with the file gone
+  every heartbeat succeeds and answers `null` for both computers, without a read per heartbeat, and recovers; a
+  corrupt file answers `null`; business A/B: B's device secret with A's RustDesk ID (and the reverse), or none, is
+  refused 401 with no `rustdeskRegistered`. Run against the 0.33 build as a negative control it fails exactly the
+  two boundedness checks (60 of 60 heartbeats spawned `sqlite3`; 10 of 10 while unreadable) and passes the 16
+  semantic ones — the answers are the same as before.
+- `check-security-invariants.mjs` §36 (5 checks): window clamp ≤ 30 s applied in the constructor; freshness is
+  `age >= 0 && age < window` from a start time taken before the read; the expired snapshot is dropped and a failed
+  read is `ids: null`, answered as `null`; digits-only SQL, parser and lookup; one read-only `sqlite3` in
+  `enrollment.service.ts`, running the snapshot query, with `peerRegisteredWithHbbs` delegating to it. Nine
+  mutations (ceiling raised, clamp removed, backwards-clock guard removed, start time taken after the read, expired
+  snapshot kept, fallback to it on failure, GLOB filter removed, parser filter removed, a per-call `sqlite3`
+  restored) each fail the matching check.
+- Re-run against this build: `e2e-security-audit` **56 passed** and `e2e-rollouts` **46 passed** (each against its own
+  scratch API, `HBBS_PRESENCE_HOST=127.0.0.2`), `e2e-linux-agent` **86 passed**, `e2e-macos-agent` **106 passed**,
+  `e2e-add-device` **62 passed**, `e2e-credentials` **44 passed**. `check-security-invariants.mjs` and
+  `check-versions.mjs` pass; `pnpm -r lint`, `tsc --noEmit` in both apps, `nest build` and `next build` clean.
+
+### Restarts after Windows updates
+
+0.32 deferred this ("Reboot: deferred. Policies and manual installs keep reboot: never. A restart rule needs a full
+§15 change to the agent's closed parameters, plus window, warning and open-session rules"). This is that change.
+**Fixture-tested only: the in-window restart has not run on a real Windows computer**, and the UI, the approval
+pages and the docs say so wherever the rule is offered.
+
+#### Added
+- **A restart rule for update plans.** `windows.update.install@1`'s closed `reboot` parameter now takes exactly two
+  values: `never` (unchanged, and the default everywhere) or `if_required_in_window`. Nothing can be chosen beside
+  it: no delay, time, message or command. The portal (`UpdateReboot` in `actions/catalog.ts`), the approval signer
+  (the same schema, through `validatePlanAction`) and the agent (`UpdateReboot` in `internal/action/updates.go`)
+  each check it independently; any other value, a missing one, or an extra key beside it is refused by all three.
+- **What the agent does under `if_required_in_window`** (`restartInWindow`, after the install and after releasing the
+  Windows Update lock), in this order:
+  1. an uncertain install (the installer died) is `restart_deferred` / `install_uncertain` — never restart under it;
+  2. no restart pending is `not_required` / `no_restart_pending`; a restart pending when nothing was installed is
+     `not_required` / `nothing_installed` (someone else's pending restart is not this plan's);
+  3. a restart 15 minutes from now that would fall after the plan's signed `notAfter` is `restart_deferred` /
+     `window_closed`;
+  4. `sessionCheck("the restart")` — the maintenance actions' own check, so "cannot tell" counts as open
+     (`remote_session_open`, `session_state_unknown`);
+  5. otherwise `scheduleWarnedRestart`, factored out of `windows.reboot.schedule`: the one `Maint.ScheduleRestart`
+     call (`shutdown.exe /r /t 900 /d p:4:1`), the same fixed `RestartMessage`, and the same `reboot.json` record,
+     so *Cancel a scheduled restart* cancels it like any other. Windows already having a restart pending is
+     `restart_already_scheduled` and is not replaced.
+  The result carries `restart: { state, reason?, scheduledFor?, delayMinutes? }`. A deferral is final for that
+  plan: nothing retries later, the update stays *restart required* and the gate waits, as before. `wua.ps1` is
+  unchanged and still never restarts.
+- **Proof after the restart.** When a result reports a scheduled restart, the portal sets the computer's
+  `patchScanRequestedAt` to two minutes after the restart time. `patchScanDue` now treats a request in the future as
+  not yet due, so the agent is asked for a scan on its first heartbeat after the restart, not every heartbeat of
+  the warning. The canary gate is unchanged: it opens only on a later scan showing the update effective and no
+  restart pending, so a restart that never happened (canceled, blocked) keeps it shut.
+- **Policies.** `PolicyDoc.reboot` is now the same pair and is part of the signed, digested document. The signer's
+  `evaluatePolicyPlan` refuses a plan asking for more than its policy (`rebootWithin`, `reboot_not_allowed`): under a
+  `never` policy a restart plan is refused; under an in-window policy a plan may ask for either. The sweep builds each
+  window's deployment with the policy's rule.
+- **Deployments** store the rule (`PatchDeployment.reboot`, migration `0047_patch_reboot`, with a CHECK constraint
+  holding it to the pair); every ring plan carries it. `POST /patching/deployments`, `POST
+  /endpoints/:id/patches/install` and `POST /patching/policies` take `reboot` and default to `never`. No new routes.
+- **Console.** A shared *Restart* choice (`components/patching/patch-reboot-choice.tsx`) on New deployment, Install
+  updates and New policy, defaulting to *Never restart*; choosing the in-window rule explains the warning, the
+  session and window rules, and that it has not run on real Windows. The deployment page shows the rule and, per
+  computer, *restart scheduled for …* or *restart deferred: why*; the policy page shows the approved rule. The
+  approval signer's plan and policy pages state the rule (and the not-on-Windows caveat) instead of "never
+  restarting" when it applies. The restart text that said "Rem0te never restarts a computer" now says when it does.
+- **Security Features**: Staged Windows patching describes the rule and cites § 37.
+
+#### Security
+- **§ 37 in `check-security-invariants.mjs`** (9 checks): the fixed 15-minute warning, the same on both sides and no
+  shorter than a scheduled restart's 5-minute floor; one `Maint.ScheduleRestart` call, shared through
+  `scheduleWarnedRestart` with the fixed message; `restartInWindow` checking outcome, pending, window and then
+  sessions before scheduling, with `window_closed` and `install_uncertain` deferrals; `wua.ps1` with no restart and
+  the Windows side's `shutdown.exe /r` call unchanged; the portal's pair, `UPDATE_INSTALL.params.reboot` and every
+  DTO defaulting to `never`; the signer's `rebootWithin` comparison; the database CHECK; the portal keeping a
+  `restart` report only from an update plan whose signed rule allowed one; and the caveat in the catalog, the
+  console component, both signer pages and `docs/staged-patching.md`. § 15's closed-params check and § 25's policy
+  check were rewritten for the pair. Each of the 18 guards (§ 15 ×2, § 25, § 37 ×15) was removed in turn and the
+  script failed on that check, then restored.
+
+#### Upgrade notes
+- **Migration `0047_patch_reboot`** adds `PatchDeployment.reboot` (`TEXT NOT NULL DEFAULT 'never'`, CHECK). Run
+  `prisma migrate deploy`, rsync `prisma/` and `prisma generate` at the target, as for any schema change.
+- **The signed agent must be rebuilt and published** for the rule to be honoured. An agent from before this change
+  refuses a plan with `if_required_in_window` as `params_not_allowed` (its params check admits only `never`), so
+  nothing restarts on an old agent — the plan is refused whole and nothing is installed. Plans with `never` are
+  unchanged for old and new agents.
+- Existing deployments and policies are `never`; policy digests are unchanged.
+- `rem0te-action-sim` gains `-fire-restart` (the scheduled restart, if any, happens) and `-clock-offset`.
+
+#### Verification
+- Go: `go test ./...` passes; new `internal/action` tests cover the closed rule, scheduling through the shared path
+  with the fixed warning and record, a replay not scheduling twice, `never` never asking or scheduling, and each
+  deferral (session open, cannot tell, window closing first, a restart already pending, installer crash, no
+  restart needed, nothing installed, no maintenance surface), and an interrupted job's note. `go vet` passes for
+  linux and windows.
+- `unit-patch-policy.mjs`: 126 checks (was 114). `unit-approval-signer.mjs`: 92 checks (was 79): every bad rule and
+  anything beside it refused at admission, the in-window plan admitted with its page wording.
+- `e2e-staged-patching.mjs`: 94 checks (was 67): bad rules refused; the plan carries exactly the rule; the approval
+  page; restart in the window scheduled (900 s, fixed message, job reference), stored, a post-restart scan
+  requested and not due early, the simulated restart, the post-restart scan to *effective* and a completed
+  deployment; an open session and a window closing first each deferring with nothing scheduled and the gate held;
+  a replay not retrying. `e2e-patch-policies.mjs`: 84 checks (was 75): a `never` policy's signer refusing a restart
+  plan (`reboot_not_allowed`) and an out-of-pair rule; a portal policy with the in-window rule and its approval
+  page; an in-window policy signing restart and `never` plans. `e2e-maintenance-actions.mjs` 64,
+  `e2e-approved-action.mjs` 76, `e2e-containment.mjs` 70 and `e2e-security-features.mjs` 42 still pass.
+- `check-security-invariants.mjs` (255 checks) and `check-versions.mjs` pass; `pnpm -r lint`, `tsc --noEmit` in both
+  apps, `nest build` and `next build` pass. `docs/API-REFERENCE.md` regenerated (424 routes, unchanged) and the docs
+  bundle regenerated.
+
+### Agent-signed action results
+
+**The residual risk 0.32 left open is closed.** Under a patch policy the approval signer signs every ring after the
+canary itself, on the strength of the previous ring's results. Until now those results reached it only through the
+portal. A compromised portal could write a whole canary success (every update `installed`, a later scan showing it
+effective) and have ring 1 signed early. Nothing failed or logged when that happened, because the signer had no way
+to tell a result the computer reported from one the portal made up.
+
+- **Each signed agent has its own result key.** The 0.34 agent generates an Ed25519 key from the OS random source
+  the first time it needs one and keeps it in `C:\ProgramData\Rem0te\result-key.json`. Two processes creating it at
+  once agree on one key (it's linked into place only if absent). An unusable file is set aside as `.unusable` and a
+  new key is generated, which the signer then refuses as changed. The key never leaves the computer.
+  `rem0te-agent.exe status` prints its public half and fingerprint.
+- **It signs what the ring gate reads.**
+  - Every final action result: the job id, the sha256 of the exact plan bytes the computer verified, its enrolled
+    identity, the outcome, each update's final state, and whether a restart is pending.
+  - Every `patch-scan`: what was offered, what history records installed, and whether a restart is pending.
+  - Each statement kind has its own prefix, so a scan can't be passed off as a result. Statements travel as base64
+    of the exact bytes signed, because PowerShell re-serializes the heartbeat files.
+  - The journal keeps the signature, so a replayed plan returns the same one. A result journaled by an older agent
+    is signed on replay.
+- **The policy names each computer's key, and the signer pins it.** The portal learns the key only from that
+  computer's own signed scan naming its enrolled identity, and puts it in the policy. The signer's approval page
+  shows each fingerprint, marked "first time this signer sees it", "pinned" or "changed". On approval, the signer
+  pins each key write-once in `device-keys/`. A later policy naming a different key is refused at proposal and at
+  signing (`device_key_changed`). Only the operator CLI removes a pin:
+  `device-key list` and `device-key forget --endpoint --reason`.
+- **The signer verifies before the gate.** `verifiedGateTargets` opens every previous-ring result, and the canary's
+  newest scan, under the policy's key. It never uses the key a statement names. Then `evaluateRingGate` runs on the
+  signed facts only. The soak counts from the signed completion time. Refusals are named:
+
+  | Code | Refused when |
+  |---|---|
+  | `result_signature_missing` | The canary has no signed result or scan, or a target reported succeeded is unsigned |
+  | `result_signature_invalid` | The statement is edited, malformed, or signed under another prefix |
+  | `result_wrong_device` | It's signed by a forger's key or another computer's genuine key, or names another identity |
+  | `result_wrong_plan` | It names another job, or plan bytes other than those in the signer's own ledger (a replay) |
+  | `result_stale` | It's dated outside the plan's window plus 4 h, or in the future, or the canary's scan is over 36 h old |
+  | `result_key_not_pinned` | The policy predates 0.34 |
+
+  An unsigned target can only count against a ring: pending waits, anything else (canceled included) counts as failed.
+- **The portal passes the signatures through unmodified.** `AgentResult.signed` and `Posture.signed` are stored as
+  received and relayed in the evidence. The portal holds no device key and verifies only to learn which key to
+  propose.
+
+**Trust on first use.** The portal also holds each computer's device secret, so the signer cannot prove a key is
+the computer's the first time it sees one. Until a computer's first policy is approved, a portal that was already
+compromised could propose its own key for it. After approval the key is pinned. The window is closed by comparing
+the fingerprint on the signer's approval page with `rem0te-agent.exe status` on the computer, the same read-back as
+the roster ceremony. A substituted key still can't widen a ring or add a computer.
+
+**Upgrade notes.**
+- Rebuild and reinstall the approval signer (`build-approval-signer.mjs`; `actions/device-result.js` is in its
+  allowlist).
+- Every computer in every policy ring except the last must run the 0.34 agent and have scanned once. Otherwise
+  creating the policy is refused with `409 RESULT_KEY_MISSING`, and the signer refuses `result_key_missing`. The last
+  ring opens nothing, so a pre-0.34 agent may sit there.
+- **Policies approved under 0.32/0.33 can still run their canary but no later ring** (`result_key_not_pinned`).
+  Approve them again once their computers have upgraded.
+- Manual deployments are unaffected: people approve each ring.
+- No migration and no new server settings.
+
+**Verification.**
+- `node scripts/check-security-invariants.mjs`: 254 checks, including the new §38 (9 checks: only one file holds the
+  statement prefixes and it signs nothing; verification uses the policy's key and precedes the gate; a missing
+  signature never opens the canary; the portal relays without re-signing; pins are write-once with no HTTP route to
+  remove one; `result_key_missing`; one agent signing path whose prefixes match the verifier's). Each check was proved
+  to fail with its guard removed (17 mutations, all caught). §14's signer-import allowlist admits `device-result`.
+- Go: new `internal/devsig` tests and `internal/action` signing tests; `go test ./...` and `GOOS=windows go vet` pass.
+- `unit-patch-policy.mjs`: 151 checks (was 114).
+- `unit-approval-signer.mjs`: 99 (was 79).
+- `e2e-patch-policies.mjs`: 89 (was 75). Five forged canary successes are refused: unsigned, forger-signed, edited,
+  another computer's, and another job's. The genuine one opens ring 1.
+- Unchanged and still passing: `e2e-staged-patching` 67, `e2e-approved-action` 76, `e2e-maintenance-actions` 64.
+
+### Running approved scripts (windows.script.run@1)
+
+#### Added
+- **An approved script-library version can now run on Windows computers, as the seventh signed catalog action,
+  `windows.script.run@1`.** Until now the library could write, version and review PowerShell but said plainly that
+  nothing could run; this is the run path it described, built on the existing approved-action chain (separate
+  signer, passkey approvals, agent-side verification, journal, containment, audit) with no second path. A run needs
+  three separate approvals: the library review (an APPROVED version, approved by someone who did not write it), two
+  approvers adding the version's exact SHA-256 to the **approval signer's own allowlist**, and two approvers
+  approving each run. None of the five may have written or edited the content (SAME_PERSON: `contributor_cannot_approve`
+  at the signer, `contributor_approved` at the agent); the run's requester can't approve it.
+- **Signer-side allowlist.** The signer keeps approved script hashes in its own state directory (`scripts/`,
+  `script-revocations/`), outside the portal database. The portal can propose an entry (the signer hashes the
+  content itself and refuses `hash_mismatch`), read its status and revoke it; there is no route or CLI command that
+  adds, activates or edits one — an entry goes ACTIVE only after two passkey approvals on the signer's own page
+  (`/approve/script/:id`, showing the content as the signer holds it and the hash it computed). Revocation is keyed by
+  content SHA-256 and write-once, so the same bytes can never be allowlisted again, even if the portal forgets.
+  Run plans are refused unless their `script` block is exactly an ACTIVE entry (`script_not_allowlisted`,
+  `script_revoked`, `script_mismatch`, `arguments_not_allowed`), checked at admission and again before signing. A
+  forged ACTIVE row in the portal database does not help: the signer refuses the plan. Operator CLI: `script list`,
+  `script revoke --id --reason`.
+- **Closed parameters.** `{scriptVersionId, sha256, parameters, timeoutMinutes}`; timeouts 1, 5, 10, 15 or 30
+  minutes; always high risk; at most 25 computers of one business per plan; not offered to ClientSt0r; requested from
+  the library (`POST /endpoints/:id/actions` with it is `ACTION_NOT_DIRECT`). Arguments are typed against the
+  version's declared parameters (string with a closed charset and length, integer in range, boolean, choice), with
+  nothing coerced, and checked by the portal, the signer and the agent with the same charsets (TypeScript and Go).
+- **The agent** verifies the signature, the signed pause and containment as for every plan, then the declared
+  parameters, every argument, that no approver is a contributor, and that the content delivered beside the envelope
+  is exactly the signed length and SHA-256 (`content_mismatch` otherwise) — and only then journals *executing*. It
+  writes `script.ps1`, `params.json` and a fixed wrapper to a fresh temporary folder and runs
+  `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+  -File run.ps1` as SYSTEM; the command line is constant and the wrapper splats the JSON arguments (`& script.ps1
+  @bound`), so an argument is never parsed as PowerShell. On Windows the process runs in a job object (started
+  suspended, assigned, resumed; 1 GiB job memory limit; terminated at the timeout with everything it started).
+  The first 64 KB of stdout and stderr are kept, invalid UTF-8 replaced, redacted, and reported with the exit code,
+  duration and whether the temporary folder was removed. Full PowerShell, not Constrained Language Mode: the limits
+  bound accidents, not a hostile script; the approvers reading the bytes are the control.
+- **Output** is redacted again by the portal, stored apart from the job (`ScriptRunOutput`; the job keeps only exit
+  code, timeout flag, duration and byte counts), shown on each computer's Actions tab, and deleted after 90 days by a
+  new sweep (every 6 h; `SCRIPT_OUTPUT_SWEEP=off`). A pruned run keeps its status and exit code.
+- **Routes** (`/api/v1/script-runs`): `GET versions/:versionId` (readiness), `POST versions/:versionId/allowlist`
+  (propose; `scripts:review`, global scripts a Platform Admin or independent reviewer), `POST
+  versions/:versionId/allowlist/revoke` (the same), `POST /` (request a run: library visibility and
+  `actions:request` on every computer). Refusals: `NOT_APPROVED`, `NOT_A_REVIEWER`, `SCRIPT_NOT_ALLOWLISTED`,
+  `SCRIPT_REVOKED`, `PARAMS_NOT_ALLOWED`, `SCRIPT_WRONG_BUSINESS`. Another business's version or run is a 404.
+- **UI.** An approved version's page has a *Run this version* panel: propose to the signer, open the signer's page,
+  pick computers, fill typed arguments, timeout, reason and acknowledgement, request, then a link to the approval
+  page; revoke with a reason. The library notice now says how a script runs and that it hasn't run on real Windows.
+  Device Actions history shows the script's name and version, exit code or timeout, and the redacted output.
+
+#### Changed
+- The heartbeat (`heartbeat.ps1`, signed channel) writes a delivered script's base64 content (≤ 100,000 characters,
+  base64 charset only) to `<inbox>\<job>.script` and passes `--script <file>` to the agent; result uploads stop adding
+  results past 600,000 bytes (always at least one) so script output can't push the body over 1 MB.
+- `GET /scripts/:id/versions/:n` now returns the version's `id` (what the run routes take) and `execution.available`
+  is true for an approved version; `GET /scripts` says how scripts run and what is proven.
+- The library's parameter, content and hash rules moved to `actions/script-run.ts` (pure; also loaded by the signer)
+  and are re-exported by `script-library/definition.ts`, so there is one copy.
+- Security invariants: §14's exact catalog list now has seven actions, the agent's closed-param forms include
+  `scriptParamsOK`, `integration: false` count is 5, the catalog's one `script:` field (the signed block) is allowed
+  exactly once, the signer may import `actions/script-run`; §23 allows the script-run controller's four routes. New
+  **§39**: no run without an APPROVED version and an ACTIVE signer entry; the portal can't write the allowlist
+  (propose/read/revoke only, ACTIVE only from two passkey approvals, revocation write-once); the argument schema in
+  all three places with identical charsets and timeouts; the agent never builds a command line (one exec, constant
+  args, fixed wrapper, no `Invoke-Expression`/`-Command`); output redacted twice and only the redacted copy stored;
+  90-day retention.
+
+#### Upgrade notes
+- Migration `0050_script_run` (two enum values, `ScriptAllowlistEntry`, `ScriptRunOutput` with 64 KiB CHECKs). It
+  is a schema change: run `prisma migrate deploy`, rsync `prisma/` and run `prisma generate` at the target.
+- **Rebuild and redeploy the approval signer** (`apps/api/scripts/build-approval-signer.mjs`; it now bundles
+  `actions/script-run.js`, still no Nest or Prisma). It creates `scripts/` and `script-revocations/` itself; the
+  roster and policy are unchanged.
+- Computers are offered script runs only on a 0.34 signed agent that reports `windows.script.run@1`; publish the new
+  agent build through the release chain as usual.
+- Nothing runs until a reviewer proposes a version and two signer approvers add it.
+
+#### Verification
+- `tools/windows-installer` `go test ./...` passes, `internal/action` 52 tests, 11 of them new for scripts —
+  including four under **real PowerShell 7 (pwsh) on Linux**: arguments arrive as data (`"x -Count 99"` stays one
+  string), a hostile `$(...)` argument is never evaluated, the timeout kills the child process tree, and the output
+  cap holds; plus success with redaction and cleanup, at-most-once, exit code and timeout, the cap, 14 refusals
+  (hash mismatch, wrong length, injection, undeclared/mistyped arguments, author as approver, no content…), paused,
+  no host, interruption. `GOOS=windows go build ./... && go vet ./...` pass (the job-object code compiles; it has
+  not run).
+- `apps/api/scripts/e2e-script-run.mjs` (new, in `scripts/run-e2e.sh`; needs `RELEASE_BIN`, `ACTION_SIM` and pwsh):
+  **81 passed** — library review, proposal, the author refused on the signer, two passkey approvals, a forged ACTIVE
+  portal row refused by the signer, eight injection/type refusals at the portal, business A/B isolation, a run on two
+  computers through two approvals, delivery, verification, execution in PowerShell 7, redaction by the agent and
+  again by the portal (a broken agent's unredacted output is caught), device history, at-most-once, a swapped
+  content refused `content_mismatch`, exit code 7, a timeout, the author refused on the run, revocation (a
+  half-approved run is not signed after it; re-proposal refused even after the portal deletes its record) and the
+  90-day prune.
+- `unit-approval-signer.mjs` **132 passed** (79 before): the signer's own hash, strict proposals, quorum of two,
+  proposer/contributor/other-business refused, global needs `*`, every run refusal, contributor can't approve a run,
+  revocation by content hash, the CLI.
+- `unit-script-run.mjs` (new, in CI): **136 passed** — the argument table shared with the Go test, charsets vs
+  PowerShell metacharacters, the shared plan rule, the catalog entry, the portal's second redaction and cap.
+- Still passing: `e2e-maintenance-actions` **64** (now expects the seventh action), `e2e-approved-action` **76**,
+  `e2e-script-library` **138** (now expects `execution.available`), `unit-signed-installer` **52** (with pwsh parse;
+  one new check for the script handoff), `unit-script-library` 125, `unit-diagnostics-catalog` 110,
+  `unit-monitoring` 100, `unit-system-inventory` 92; `check-security-invariants` (251 checks; each §39 guard and the
+  changed §14/§23 guards removed one at a time — 25 mutations — and every one fails the run); `check-versions`;
+  `pnpm -r lint`; `tsc --noEmit` both apps; `nest build`; `next build`; `gen-api-reference --check` against the
+  runtime route table (428 = 428).
+- **Not proven:** anything on real Windows — Windows PowerShell 5.1, the SYSTEM context, the job object (suspended
+  start, memory limit, termination) and System32 paths have not run on a Windows computer. The Run panel and the
+  device-history output view were type-checked and built but not driven in a browser; `e2e-navigation.mjs` was
+  updated for the new notice but not run (it needs the docs demo stack).
+
+### Software deployment (winget allowlist)
+
+Closes the gap analysis's "Not implemented: Software deployment — catalog, verified packages, install/uninstall
+jobs, detection rules, version compliance. Inventory only." The design is the owner's decision. A catalog holds
+allowlisted winget package ids, each pinned by version and installer SHA-256. Install and uninstall are signed actions
+with two approvers. Detection rules drive version compliance. Nothing is uploaded to the portal. **Fixture-tested
+only:** winget, App Installer under SYSTEM, the uninstall registry and file version resources are simulated. None of
+this has run on a real Windows computer, and the docs, the UI and the approval page say so.
+
+#### Added
+- **Software catalog** (`SoftwareCatalogEntry`, migration `0051_software_catalog`; **Automation → Software catalog**;
+  `docs/software-deployment.md`, in the in-app docs). An entry is global (Platform Admin) or per business (its
+  Business Owner, in person, not through a technician assignment). Each entry has:
+  - a package id, checked against `^[A-Za-z0-9][A-Za-z0-9+_-]{0,63}(\.[A-Za-z0-9+_-]{1,64}){1,7}$` and at most 128
+    characters, so it can never start with `-` or carry a space, quote, slash or shell character;
+  - one exact version;
+  - a lower-case installer SHA-256;
+  - scope `machine`;
+  - a detection rule in one of three closed forms: a display name with version from Programs and Features, an
+    uninstall registry key, or a file version under Program Files / Program Files (x86).
+
+  The hash is either read from the package's winget-pkgs installer manifest or pasted, and the entry records which:
+  - **Read from the manifest:** one GET to `raw.githubusercontent.com/microsoft/winget-pkgs`, with no credentials and
+    no redirects, a 10 s timeout and a 256 KB cap. The entry stores the manifest URL and its own SHA-256. An ambiguous
+    manifest is refused rather than guessed (`AMBIGUOUS_INSTALLER`, `NO_MACHINE_INSTALLER`, `HASH_NOT_IN_MANIFEST`,
+    `MANIFEST_MISMATCH`).
+  - **Pasted:** recorded as `ADMIN_PASTED`.
+
+  Database CHECKs repeat the charsets and the scope/business pairing, and partial unique indexes allow one live entry
+  per package per catalog. Adding, changing and archiving:
+  - each needs `assertFresh` (`STEP_UP_REQUIRED`, action `software.catalog`) after the permission check and before
+    the write;
+  - are audited as `SOFTWARE_CATALOG_CREATED` / `UPDATED` / `ARCHIVED`, with the hash and its source, and the before
+    and after on a change;
+  - name the revision they were made against; a stale one is `ENTRY_CHANGED`.
+- **Two actions**, `windows.software.install@1` and `windows.software.uninstall@1`, appended to the end of both catalogs:
+  - closed params of exactly five keys: `packageId`, `version`, `installerSha256`, `scope` and `detection`;
+  - always high risk, so two approvers on the signer, on any computer;
+  - at most 25 computers per plan;
+  - `direct: false`: `POST /endpoints/:id/actions` answers `ACTION_NOT_DIRECT` and points at the catalog;
+  - not offered to ClientSt0r.
+
+  The approval page shows:
+  - the package, version and pinned hash;
+  - where the hash came from: the manifest, with the start of its digest, or *typed in by the catalog's editor*;
+  - the detection rule.
+- **Deployments** (`SoftwareDeployment`, with `ActionJob.softwareDeploymentId`) work like staged patching:
+  - Ring 0 is a single canary, then up to four rings of at most 25 computers, all in one business. Every computer is
+    checked as if requested alone.
+  - Each ring is one signed plan, requested separately.
+  - The canary passes only if the agent's own detection confirms the change (`effective`). A canary that already had
+    the package is `canary_proved_nothing`.
+  - Too many failures pause the deployment, and the failed ring is retried, never promoted past. Soak, failure
+    threshold and window are set per deployment, as in patching.
+  - Params are frozen at creation. A changed or archived entry stops further rings (`ENTRY_CHANGED`,
+    `ENTRY_ARCHIVED`).
+  - **Install** / **Uninstall** on one computer makes a one-computer deployment, which completes as soon as its plan
+    has a final answer.
+- **Device Software tab: Managed software.** Each entry shows its compliance with its evidence and age, and the last
+  plan. **Install** / **Uninstall** appear only when possible; otherwise the tab gives the server's reason and fix:
+  - a macOS or Linux computer;
+  - an agent older than 0.34;
+  - a legacy agent;
+  - ConfigMgr in the patch posture;
+  - Intune, after the agent refused with `managed_elsewhere`;
+  - the computer is offline;
+  - no signer is configured;
+  - the person has no high-risk access;
+  - a plan is already pending, or an earlier one is uncertain.
+
+  It also warns when the last run reported winget unavailable.
+- **The agent** (`internal/action/software.go`; `internal/winget` is the only exec site; `software_windows.go`), in
+  order:
+  1. Refuses `managed_elsewhere` when the ConfigMgr client (`CcmExec`) or the Intune Management Extension is present,
+     before winget is asked anything.
+  2. Finds winget for SYSTEM: the newest provisioned `Microsoft.DesktopAppInstaller_*_8wekyb3d8bbwe` under
+     `%ProgramFiles%\WindowsApps`, refusing reparse points. If none is there, it answers `winget_unavailable`
+     honestly; below 1.7 it answers `winget_too_old`.
+  3. Detects before: if the package is already installed (or, for an uninstall, already absent), the outcome is
+     `no_change` and nothing else runs.
+  4. Runs `winget download` (exact id and version, `--source winget`, `--scope machine`, `--skip-dependencies`) into a
+     SYSTEM-only directory.
+  5. Hashes the installer itself and refuses `hash_mismatch`; refuses `manifest_hash_mismatch` if the downloaded
+     manifest doesn't declare the pin.
+  6. Runs `winget install --id --version --exact --source winget --silent --scope machine --skip-dependencies --accept-package-agreements --accept-source-agreements --disable-interactivity`.
+     The argument array is fixed; nothing is concatenated, and no override, custom, location, force, manifest,
+     header or hash-skipping flag is passed.
+  7. Detects after: `succeeded` (effective), `not_effective`, or `restart_required` on winget's reboot codes.
+
+  It journals `downloading` / `verifying` / `installing` / `detecting`, honours the signed pause and containment, and
+  applies timeouts: 30 s `--version`, 20 min download, 30 min install, 20 min uninstall. An install or uninstall
+  timeout is `uncertain` / `timeout`, with what detection sees then, and must be reconciled. Uninstall is
+  `winget uninstall --id --exact` without `--version`, and the warning says it removes whatever version is
+  installed.
+- **Software compliance report** (**Reports → Software compliance**, `GET /reports/software-compliance` and
+  `/export.csv`, `docs/reports.md`):
+  - Each entry's Windows computers are counted as compliant, outdated, missing or unknown.
+  - The newest evidence decides: the inventory's software list (display-name rules only) or the agent's own detection
+    from a software plan (same package and rule only). None, or none in 14 days, is unknown, and stale ones are
+    counted.
+  - Business entries count only that business's computers; global entries count every visible computer, through
+    `devicesWhere`.
+  - The CSV export is capped and audited like the other reports.
+
+#### Security
+- **Who verifies what**, documented in `docs/software-deployment.md`:
+  - the catalog editor and the approvers see the pin and its source;
+  - the signer and the agent check the closed params;
+  - the agent hashes what `winget download` fetched;
+  - winget checks what it installs against the source manifest;
+  - the detection rule confirms the result.
+- **Residual, stated:** `winget install` downloads again. The agent doesn't re-hash those bytes, so an edit to the
+  winget-pkgs manifest between the two steps is a window measured in seconds. Installing the verified local copy
+  (`--manifest`) would close it, but needs the machine-wide `LocalManifestFiles` admin setting, which would let any
+  admin install from any local manifest, so it was rejected. Dependencies are not installed.
+- **No upload route, and no approve route.** The portal never holds an installer.
+- **`check-security-invariants.mjs` §40 (new, 17 checks):**
+  - the charset regexes are identical on agent and portal, and a hostile list (leading `-`, `;`, space, quotes, `|`,
+    `$()`, backticks, `%`, slashes, newline) matches neither;
+  - the params are exactly five keys with scope `machine`, and `softwareParamsOK` is the real parser;
+  - both actions are high, never direct, never offered to ClientSt0r, at most `MaxRingTargets`;
+  - `internal/winget` is the only exec site (`exec.CommandContext(ctx, r.Path, args...)`), with no shell and literal
+    argument lists;
+  - winget gets only `--version` or the three fixed lists;
+  - no weakening flag, and always `--exact --source winget --scope machine`;
+  - the hash and manifest checks run before install, and Execute re-parses the params;
+  - `managed_elsewhere` comes before winget;
+  - plans are made only through `createPlan`;
+  - every route names its capability; there is no approve, sign or upload route; nothing accepts a file;
+  - `assertFresh` comes before each catalog write and the audit after it;
+  - the owner-in-person edit rule, and 404 for another business's entry or deployment;
+  - canary of one, rings of at most 25;
+  - the bounded manifest fetch, with a loopback-only `WINGET_MANIFEST_BASE`.
+
+  §14 now lists the eight actions, adds `softwareParamsOK` to the closed forms, counts six `integration: false`, and
+  includes `software.go` in "the action package runs no process". §22 expects ten report routes. Each of 36 guard
+  removals (§40, and the §14/§22 changes) was shown to fail the script, then restored.
+
+#### Upgrade notes
+- Migration `0051_software_catalog` adds two tables, two enums, six `ActivityAction` values (added with `ALTER TYPE
+  … ADD VALUE`, not recreated) and `ActionJob.softwareDeploymentId`. Run `prisma migrate deploy`, rsync
+  `apps/api/prisma/` and `prisma generate` at the target, as for every schema change.
+- The software actions need a 0.34 signed agent build (the agent must report `windows.software.install@1` /
+  `uninstall@1`) and an installed approval signer. Production has neither, so the catalog can be filled but every
+  computer shows Install as not possible. That is honest: it is inert, as approved actions and patching are.
+- `WINGET_MANIFEST_BASE` exists only for the end-to-end test's fixture server and is ignored unless it is a
+  `http://127.0.0.1:<port>` URL. Don't set it in production.
+
+#### Verification
+- Go (`tools/windows-installer`): 166 tests pass (`go test ./...`), 40 of them for software against a stub winget
+  re-executed through the agent's real exec path: success, already installed, hash mismatch, manifest hash mismatch,
+  winget missing and too old, managed elsewhere, download and install failure, timeout, not effective, restart
+  required, uninstall, interruption, and argument injection in every field. `GOOS=windows go vet ./...` is clean.
+- `unit-software.mjs` (new, in CI): 146 checks. `unit-approval-signer.mjs`: 98 (19 new: software admission refusals
+  including injection, 26 targets and understated risk; two distinct approvers; the pinned hash and its source on the
+  page; a 25-computer ring admitted).
+- `e2e-software-deploy.mjs` (new, in `run-e2e.sh`, with `RELEASE_BIN` / `ACTION_SIM`; ports 3461–3464): 156 checks.
+  They cover:
+  - the catalog with the manifest fixture: read, mismatch, too large, ambiguous, per-user only;
+  - step-up and roles, 22 injection refusals, and A/B isolation (404s);
+  - availability states: 0.33 agent, macOS, ConfigMgr, L2, another business;
+  - a single install end to end, with the exact winget argv and the journal answering a replay;
+  - the already-installed no-op, the changed entry blocking a ring, hash and manifest mismatch;
+  - bulk: canary not effective → paused → resumed → retried → soak → ring of two;
+  - winget unavailable, a hung winget → uncertain → reconciled, Intune `managed_elsewhere`;
+  - uninstall, and Globex's file-version rule;
+  - containment at the portal and a signed pause at the agent;
+  - the compliance numbers per entry, per business and as admin, the CSV and its audit;
+  - archiving, and no upload or approve route.
+- Unchanged suites still pass: `e2e-maintenance-actions` 64 (its catalog check now asserts the six through 0.32 as a
+  prefix), `e2e-staged-patching` 67, `e2e-reports` 102, `e2e-approved-action` 76, `e2e-patch-policies` 75,
+  `e2e-containment` 71.
+- Static checks and builds: `check-security-invariants.mjs` and `check-versions.mjs` pass, as do `pnpm -r lint`,
+  `tsc --noEmit` (api, web), `nest build` and `next build`. `docs/API-REFERENCE.md` regenerated and `--check`ed
+  against the runtime route table (441 = 441).
+- `e2e-navigation.mjs` was extended (Automation hub, the catalog page, Reports tab, the Managed software section) but
+  not run here: it needs the docs stack and the `reboot_remote_docs` database.
+
+### AI summary through ClientSt0r
+
+#### Security
+- **rem0te no longer calls a model provider. "Provider keys stay in ClientSt0r" is now true everywhere.** Until
+  this release the device page's *History → AI-written summary* (once the "AI Timeline" tab) called Anthropic
+  directly from the API with `ANTHROPIC_API_KEY` from `api.env`, via `@anthropic-ai/sdk`, and sent the computer's
+  name, hostname, business, site, tags and up to 30 notes verbatim — passwords, e-mail and IP addresses included if
+  a technician had written them in a note. It contradicted the integration's ownership rule (ClientSt0r holds every
+  provider key) and was outside every integration control: no mapping, no containment, no audit of what left. It was
+  inert in production only because the key was unset. The call, its `InternalServerErrorException("ANTHROPIC_API_KEY
+  is not configured")` and the SDK are removed; `EndpointsService.generateTimeline` is gone.
+- **The summary is now one signed request to ClientSt0r's inference gateway** (`apps/api/src/integration/
+  timeline.service.ts`, `timeline.client.ts`), with the same peer, keys, request signature and response check as
+  ticket analysis: the answer must be signed by the peer over rem0te's nonce and echo the request id, organization,
+  profile and task, or nothing is saved (`502` with `RESPONSE_SIGNATURE_INVALID` / `RESPONSE_MISMATCH` /
+  `MODEL_REFUSED` / `OUTPUT_SCHEMA_INVALID` / `GATEWAY_UNAVAILABLE`). Only `output.summary` is stored (≤ 4,000
+  characters, control and bidi characters stripped, other fields dropped and counted). It is sent for the
+  organization the computer's business is mapped to (none: `NOT_MAPPED`; more than one peer: `AMBIGUOUS_MAPPING`,
+  rem0te will not guess), with the first profile ClientSt0r offers for the task that the peers file also allows.
+- **It needs an operation ClientSt0r has not agreed, so it ships switched off against the real ClientSt0r.** The
+  contract's only inference task is `ticket_triage_v1`, bound to a ticket job; reusing it would attribute the call
+  to a job ClientSt0r never submitted. rem0te proposes **revision 4** in `INTEGRATION_COORDINATION.md` §5A: **P11**,
+  task `device_timeline_v1` (no `job_id`); **P12**, a ClientSt0r capabilities document at a new optional peers-file
+  field `capabilitiesUrl`, fetched with a signed `GET` and believed only if signed by the peer over the nonce and
+  naming that peer. rem0te sends nothing until that document lists `device_timeline_v1`; until then the panel says
+  *"Needs ClientSt0r support for device_timeline_v1"* and the button is disabled. No output is invented. The
+  schemas are generated to `docs/contracts/ticket-rmm-v1/proposed/` from `PROPOSED_SCHEMAS`, never into
+  `schemas/`, and `contract_revision` stays 2. Revision 3 (P1–P10) is still unacknowledged in §9 too.
+- **What leaves rem0te is the listed minimum, redacted.** Sent: the computer's rem0te id; platform, OS and agent
+  version (plain charset); enrolment state, online flag, last-seen and enrolled dates; the 30 **newest** notes (the
+  old code took the 30 oldest) with date, pinned and text cut to 2,000 characters; the 20 newest sessions with date,
+  state, minutes, issue and resolution cut to 500; redaction counts. Never: name, hostname, business, site, tags,
+  addresses, the logged-on user, the RustDesk ID, note authors, session technicians and contacts, a session's
+  separate notes field. Every free-text field passes `redactForPeer()` (`integration/timeline.ts`): `key=value` and
+  "password is …" credentials, Bearer/Basic, URL userinfo, prefixed keys (`rk_`, `sk-`, `ghp_`, `xox…`), e-mail
+  addresses, **every** IPv4 and IPv6 address including private ranges (stricter than the screenshot masks, because
+  the integration's rule is that addresses never reach the gateway), MAC addresses, 9–10-digit RustDesk IDs, hex of
+  32+ and opaque strings of 40+, user-profile paths. Pattern-based: a secret in a shape none of these match is sent
+  as written. Each text is clipped to four times its cap before redaction; every pattern is bounded, and the unit
+  test feeds 100,000-character pathological inputs (the first draft's e-mail and URL patterns took 15–25 s on
+  `a.a.a…@`; now < 200 ms).
+- **The technician sees exactly what is sent.** `GET /endpoints/{id}/timeline` returns availability and its reason
+  code, the field list, what is never sent, and a preview built by the same function from the same rows as the
+  request; the panel's *What is sent to ClientSt0r* shows the list and counts, and *Show the exact text* the segments
+  word for word. The e2e suite asserts the preview and the sent request are byte-identical.
+- **Gated, contained, audited.** Requesting needs `computers:edit` **and** `integration:ticket_analysis` in the
+  business (`NO_CAPABILITY` 403, audited; Business Owners hold both; another business's computer is 404 for both
+  routes). An `integration` containment pause, business or global, refuses it with `403 CONTAINED` before rem0te
+  contacts ClientSt0r for anything, capabilities included. `AI_TIMELINE_REQUESTED` is written with `logOrFail`
+  *before* the request leaves (peer, organization, profile, request id, field list, counts, redaction counts);
+  `AI_TIMELINE_FINISHED` records outcome, model, latency and usage; `AI_TIMELINE_REFUSED` the code. No audit row
+  holds a note, a session's text or the summary. `POST …/timeline/generate` is limited to 10 a minute.
+- **New invariant §41** (12 checks): no model-provider SDK, endpoint or key variable anywhere in `apps/api/src` and
+  none in `apps/api/package.json`; the stored summary is written from a model only by `timeline.service.ts`; the
+  request goes only `timeline.service → timeline.client → signer.signedPost(peer, 'inference')`; the capabilities
+  `GET` takes its URL only from `peer.capabilitiesUrl`; containment before any peer contact; nothing sent until the
+  task is advertised with an allowed profile; both capabilities checked after scope; audit before send, without
+  text; the snapshot selects no name, hostname, address, business, site, tags, author, contact or RustDesk field;
+  every free-text field through `redactForPeer`; the proposal kept out of `CONTRACT_SCHEMAS`. Each check was made
+  to fail by removing its guard and restored. §10's "one outbound call site" still holds: the capabilities `GET`
+  and `signedPost` share one `fetch` in `signer.ts`, with `redirect: 'error'`.
+
+#### Changed
+- `integration:ticket_analysis`'s description now says it also covers requesting a computer's AI summary.
+- `apps/api/.env.example` no longer documents `ANTHROPIC_API_KEY`; a leftover one is ignored.
+- `GET /admin/integration/peers` is unchanged; the peers file accepts `capabilitiesUrl` (https, or http on
+  loopback; no credentials, query or fragment — the same rules as the other two URLs).
+
+#### Upgrade notes
+- **Production dependency removed: `@anthropic-ai/sdk`.** This is a production dependency change, so per CLAUDE.md
+  the deploy must **regenerate the target manifest and run `npm install --omit=dev` at the target**, not rsync
+  `dist` alone:
+  ```bash
+  pnpm deploy:manifest -o /tmp/prod-package.json
+  cd /tmp && npm install --omit=dev --package-lock-only     # checked: exits 0
+  sudo cp /tmp/prod-package.json /opt/reboot-remote/api/package.json
+  cd /opt/reboot-remote/api && sudo npm install --omit=dev
+  ```
+  The new `dist` requires nothing from the SDK, so a stale `node_modules` would still start; the reinstall keeps the
+  target honest and drops the package.
+- **Migration `0052_ai_timeline`** adds three `ActivityAction` values (`AI_TIMELINE_REQUESTED`,
+  `AI_TIMELINE_FINISHED`, `AI_TIMELINE_REFUSED`). Schema change: run `prisma migrate deploy`, rsync `prisma/` and
+  `prisma generate` at the target, or the audit writes fail with an invalid enum value.
+- Remove `ANTHROPIC_API_KEY` from `/etc/reboot-remote/api.env` if present (unset in production today).
+- Nothing else to configure. The summary stays unavailable until ClientSt0r acknowledges P11/P12 and serves them;
+  then add `"capabilitiesUrl"` and a profile ClientSt0r offers for `device_timeline_v1` (e.g. `summary-fast`) to the
+  peer in `peers.json` and restart the API. A summary stored earlier is still shown and editable.
+
+#### Verification
+- `apps/api/scripts/e2e-ai-timeline.mjs` (new, in `scripts/run-e2e.sh`): **61 passed**, against a reference peer
+  modelled on the proposal (not ClientSt0r): capability off (not listed, 404, unlisted profile, forged and
+  other-peer capabilities documents — nothing reaches the gateway), READY and the request (schema, task,
+  organization, profile, endpoint id, no `job_id`), redaction (none of nine planted secrets nor the name, hostname,
+  business, site, tag, author, contact, session notes or address; preview byte-identical to the request; a provider
+  key in the environment is never used), audit (order, metadata, no text), capabilities (view-only 403, edit
+  without ticket analysis 403 audited, assigned technician allowed), A/B isolation with B as the negative control,
+  unmapped business, containment (business, other kinds, global; no peer contact at all), five bad answers saving
+  nothing, extra output fields dropped, no `capabilitiesUrl`, no peers file.
+- `apps/api/scripts/unit-ai-timeline.mjs` (new, in CI): **24 passed** — redaction per kind and false positives,
+  pathological-input timing, payload order/caps/size-drop, closed request schema, field list completeness, output
+  parsing, proposed schemas kept out of the contract, `capabilitiesUrl` URL rules.
+- Still passing: `e2e-integration` **77**, `e2e-ticket-workflow` **53** (with `RELEASE_BIN` / `ACTION_SIM`),
+  `e2e-endpoint-visibility` **114** (now also covers `GET …/timeline`), `unit-integration` **35**;
+  `gen-integration-contracts --check` (18 schemas + 4 proposed, 11 signed examples); `check-security-invariants`;
+  `check-versions`; `pnpm -r lint`; `tsc --noEmit` both apps; `nest build`; `next build`;
+  `gen-api-reference --check` against the runtime route table (425 = 425).
+- **Not proven:** anything against the real ClientSt0r (it implements neither P11 nor P12); the History panel was
+  type-checked and built but not driven in a browser.
+
+### Outbound email: alert emails and scheduled reports
+
+0.32's reports said: "No scheduled or emailed reports: there is no outbound mail, and alert webhooks aren't a safe way
+to send device inventories out." This adds outbound mail through one SMTP relay. It sends alert emails and scheduled
+reports, and only to addresses whose mailbox confirmed it wants them. Mail stays off until a Platform Admin
+configures it.
+
+#### Added
+- **The relay: Settings → Email** (`apps/api/src/email/`, `/settings/email`).
+  - **Fields:** host, port, TLS mode, username, password, and the from address and name. There is a **Send test
+    email** button.
+  - **Who:** Platform Admin only. `PlatformAdminGuard` runs before anything is read.
+  - **Saving** needs a fresh re-authentication (`assertFresh`, not the switchable step-up list). It is audited as
+    `SMTP_SETTINGS_CHANGED` with the before and after relay. The password itself is never recorded, only
+    whether it was `set`, `kept`, `cleared` or `cleared_relay_changed`.
+  - **The password** is stored with AES-256-GCM under `ENCRYPTION_KEY`, bound to its purpose by AAD
+    `rem0te-smtp-password-v1`. It is decrypted only to hand to the transport. No response carries it, not even
+    as ciphertext: the view says only `passwordSet`.
+  - **Changing host, port, username or TLS mode drops the saved password** unless a new one is entered in the same
+    request. Otherwise a session that could reach the form could point the relay at its own server and receive
+    the stored password at the next send.
+  - **The test email** goes to the admin's own account address or to a confirmed global recipient, never to a
+    typed address.
+  - **Send errors** are recorded as a short code (`EAUTH 535`, `ETIMEDOUT`), never the server's text, which can
+    echo what was sent, the username included.
+- **The host rule (SSRF).** The API connects to a host an admin typed and speaks a line protocol to it. The
+  rule is §17's rule for a business's alert destinations (a public DNS name: no IP literal, no `localhost`, no
+  single-label or `.local`/`.internal`/`.corp`… name), applied twice:
+  - **on save,** the name is checked, so a mistake is a 400 with the reason;
+  - **on every send,** the name is resolved and *every* address returned is checked. The connection is made to
+    that checked address, and the name is kept only for TLS (`servername`). A name that resolved to a public
+    address when it was saved and resolves to `127.0.0.1` or `169.254.169.254` now (DNS rebinding) is refused,
+    because what is checked is what is connected to. A mixed answer (one public, one internal) is refused whole.
+
+  **A local relay** is allowed only from the API's environment, not from the portal, where a stolen admin
+  session could switch it on:
+  - `SMTP_ALLOW_LOCAL_RELAY=loopback` allows `localhost`, 127/8 and ::1;
+  - `=private` also allows RFC 1918, 100.64/10, fc00::/7 and internal names (for an on-premises Exchange).
+
+  **Never allowed, at any setting:** link-local (the cloud metadata address, fe80::/10), unspecified, multicast,
+  documentation and NAT64. IPv4-mapped IPv6 (`::ffff:127.0.0.1`) is judged as the IPv4 address it carries.
+
+  **TLS:** implicit TLS or STARTTLS with `requireTLS`. A relay that does not offer STARTTLS gets nothing; there is
+  no fallback to plaintext. Certificates are verified, TLS 1.2 or later. Plaintext (`none`) is allowed only when
+  the address actually connected to is loopback. Nodemailer runs with `disableFileAccess` and `disableUrlAccess`,
+  so nothing in a message is read from disk or fetched.
+- **Confirmed recipients** (`EmailRecipient`; Settings → Monitoring → *Email recipients* per business, Settings →
+  Email for the MSP's global ones).
+  - **How an address becomes usable:** it is added, a confirmation link is mailed to it, and it can be used once
+    someone opens the link and presses *Confirm* on the public `/verify-email` page. A GET never confirms,
+    because mail scanners follow links. The token is single-use and lasts 7 days. It is stored as a SHA-256 hash
+    and consumed by a conditional `updateMany`, so two clicks cannot both confirm it.
+  - **Who:** adding, re-sending and removing are done by whoever decides who is notified for that scope (a
+    Business Owner of the business in their own right, or the MSP). Each needs a fresh re-authentication and is
+    audited (`EMAIL_RECIPIENT_ADDED`/`_VERIFIED`/`_REMOVED`).
+  - **Limits:** at most 25 addresses per scope; re-send at most every 5 minutes.
+  - **Scope:** a business's policies and schedules may name only that business's confirmed addresses, and global
+    ones only global addresses. This is checked on save and again on send. Another business's address looks like
+    a missing one (404 for lists and changes; `RECIPIENT_NOT_CONFIRMED` when named in a policy or schedule).
+  - **Why confirmation links and not "users of the business":** a stolen session that can edit a policy could
+    otherwise type any address and mail alert text, or a CSV of the fleet, to it. A user's account email proves
+    nothing either, because accounts carry whatever an admin typed. The confirmation proves the mailbox's owner
+    asked for the mail. Fresh authentication proves the person adding it has more than a cookie.
+- **Email as an alert destination.** A notification level's destination is either `{label, url}` (a webhook, as
+  before) or `{label, recipientId}` (a confirmed recipient of the policy's own scope).
+  - **Fresh authentication** is still required to change who is notified, as before.
+  - **Content:** the mail is plain text with the title, severity, computer (or site, for an outage), business,
+    when the alert was raised, and a link to `/alerts?alert=<id>`. It carries none of the alert's `detail`, no
+    hostname, no address and no inventory.
+  - **Untrusted values** (titles and device-reported names) are reduced to one printable line first:
+    control characters, line separators and bidi overrides are removed, and values are capped. So a computer
+    name cannot add a header or a fake line.
+  - **The result** is recorded in the alert's `notified` event (`email sent`, `email contained`,
+    `email recipient_not_confirmed`…).
+- **Scheduled reports: Reports → Scheduled reports** (`ReportSchedule`, `ReportDelivery`).
+  - **The schedule:** weekly (a day and a time) or monthly (day 1–28, which every month has), with a time and an
+    IANA time zone. It goes to up to 10 confirmed recipients, with a link to the report and optionally the CSV.
+  - **Who:** a Business Owner of the business, or a Platform Admin (a platform-wide schedule is a Platform Admin's
+    alone). They need the report's own capability. Creating or changing a schedule needs a fresh
+    re-authentication; deleting one does not. Whoever saves a schedule becomes its owner. All of this is audited
+    (`REPORT_SCHEDULE_CHANGED`).
+  - **Evaluated as the owner, re-checked at send.** The owner is rebuilt from the database with
+    `ActorResolverService.contextFor`, as an approved action or a patch policy is. If they are suspended, no
+    longer an owner of that business, or lack the capability, the schedule **fails closed**:
+    - nothing of the report is produced or sent;
+    - each recipient gets a short "was not sent, and why" note with no data;
+    - the schedule switches itself off, saying why;
+    - the period is recorded as `failed` and audited as `REPORT_SCHEDULE_FAILED`.
+  - **The CSV is the same export a person downloads** (`ReportsService.exportCsv`): the same row cap (refused
+    above it, and the recipients are told so, never sent a truncated file), the same formula-cell
+    neutralisation, and the same `REPORT_EXPORTED` audit row as the owner. That row now also records
+    `via: 'schedule'`, the schedule id and the recipient count.
+  - **Period:** a weekly schedule reports on 7 days, a monthly one on 30.
+  - **Exactly once per period.** A `ReportDelivery` row unique on (schedule, period) is created *before* anything
+    is sent. A second sweep, a restart or a second API process finds the row and sends nothing. The period key is
+    the occurrence's local date (`W:2026-11-09`) or month (`M:2026-11`).
+  - **A crash between the claim and the send leaves the period `sending` and it is not retried.** A missed report
+    can be recovered by a person; a duplicate CSV in someone's mailbox cannot.
+  - **Late periods:** a period that the server was not running to send within a day (`CATCH_UP_MS`) is recorded
+    as `missed`, not sent days late as if on time.
+  - **Time zones and daylight saving** use the 0.32 update-window maths (`utcOffsetMinutes`; wall clocks read
+    with Intl, never computed):
+    - a time that does not exist that night (spring forward) is due at the jump, when a window starting then
+      would open;
+    - a time that happens twice (fall back) is due the first time only, because the period key is the date.
+  - **The sweep** runs every `REPORT_SCHEDULE_SWEEP_SECONDS` (60), takes at most 20 due schedules a pass, and
+    moves each schedule's `nextRunAt` on before sending. `REPORT_SCHEDULE_SWEEP=off` stops it in a process.
+- **A `notifications` containment kind** stops every email this server sends: alert emails, scheduled reports,
+  confirmation and test messages. It works globally or per business; a blocked report period is recorded as
+  `blocked`, not queued.
+  - **Not `integration`:** the two answer different incidents. A business suspending ClientSt0r jobs still wants
+    to hear about a disk filling, and stopping mail (say, a schedule sending a fleet list somewhere it should not)
+    should not stop ticket analysis.
+  - **New pauses:** "pause everything" (the default kinds) now includes it.
+  - **Webhooks are not covered.** They go to systems the MSP or business configured as its own, and 0.29 keeps
+    monitoring telling people during a pause on purpose. Whether a `notifications` pause should also hold
+    webhooks is left as a decision.
+
+#### Security
+- §42 in `scripts/check-security-invariants.mjs` checks:
+  - relay settings are Platform Admin only, with fresh authentication;
+  - fresh authentication on recipients (add, re-send, remove) and on creating or changing a schedule;
+  - the host rule on save, and on send every address resolved and checked, with the connection to the checked
+    address and the name only as `servername`;
+  - plaintext only to loopback, certificates verified, STARTTLS required;
+  - no file or URL access in messages;
+  - the `notifications` pause in `send()` and in schedule delivery;
+  - recipients filtered on scope and confirmation, and `assertConfirmed` on policies and schedules;
+  - the conditional token consumption, and no GET verify route;
+  - no password in the audit row, view, logs or error codes, and the password dropped when the relay moves;
+  - the delivery claim made before the send, unique per period;
+  - the owner rebuilt and refused before the export;
+  - the alert mail built from the listed fields only.
+
+  Each of its 15 checks was shown to fail when its guard is removed: 22 mutations, all caught.
+
+#### Changed
+- `MonitoringAdminService`'s rule for who decides who is notified is now `mayManageNotifications` in
+  `monitoring/notify-who.ts` (no service imports). Email recipients and scheduled reports use the same rule.
+- `ReportsService.exportCsv` takes an optional `via` (schedule id and recipient count) for its audit row.
+- The containment page offers *Outbound email*.
+- The alerts page opens `/alerts?alert=<id>`, and says so when the alert is not one you can see.
+
+#### Upgrade notes
+- **A production dependency:** `nodemailer` 10.2.1 (pinned, no dependencies of its own, ships its own types).
+  Regenerate the deploy manifest and install it at the target, checking npm's exit code before rsyncing
+  anything (CLAUDE.md):
+  ```bash
+  pnpm deploy:manifest -o /tmp/prod-package.json
+  cd /tmp && npm install --omit=dev --package-lock-only     # must exit 0
+  sudo cp /tmp/prod-package.json /opt/reboot-remote/api/package.json
+  cd /opt/reboot-remote/api && sudo npm install --omit=dev
+  ```
+  Rsyncing `dist` without this works until the next restart, then the API fails to start
+  (`Cannot find module 'nodemailer'`).
+- **A migration:** `0054_outbound_email`. It adds eight `ActivityAction` values and the tables `SmtpSettings`,
+  `EmailRecipient`, `ReportSchedule` and `ReportDelivery`, with CHECK constraints (singleton row, TLS modes,
+  report keys, the weekly/monthly shape, `HH:MM`, 1–10 recipients, delivery statuses). Run
+  `prisma migrate deploy`, rsync `prisma/` and run `prisma generate` at the target, as for any schema change.
+- **Mail is off until configured.** Nothing is sent after the upgrade until a Platform Admin saves and enables a
+  relay. A relay on the same host needs `SMTP_ALLOW_LOCAL_RELAY=loopback` in `/etc/reboot-remote/api.env`; one on
+  the LAN needs `=private`.
+- `REPORT_SCHEDULE_SWEEP=off` is now in `scripts/run-e2e.sh`'s global and scratch-API environments. The email
+  suite turns it on for its own API.
+- An existing pause made with "every kind" does not gain `notifications`, because its kinds are stored. Add a
+  new pause to stop mail.
+
+#### Verification
+- `apps/api/scripts/unit-email.mjs` (in CI): **122 passed, 0 failed**. It covers:
+  - every address class, including IPv4-mapped IPv6, and what each `SMTP_ALLOW_LOCAL_RELAY` value admits;
+  - every resolved address checked, and plaintext only to loopback;
+  - schedule validation, and weekly and monthly occurrences in +5:30, +13 and New York;
+  - both DST transitions, Lord Howe's 30-minute shift and a London monthly on its DST day;
+  - **400 random weekly schedules in nine DST-heavy zones, each equal to the update window's own next opening**;
+  - previous ≤ now < next across 480 cases;
+  - alert mail redaction and header-injection attempts, and address normalisation.
+- `apps/api/scripts/e2e-email.mjs` (in `run-e2e.sh`; ports 3491–3493): **92 passed, 0 failed**, against the real
+  built API and an SMTP server written into the test (no dependency). It covers:
+  - the relay: off until configured; refused without fresh authentication or as a Business Owner; six refused
+    hosts; plaintext to a non-loopback host refused; a header in the from address refused;
+  - the password: not in the response, stored as AES-GCM, kept on an identical save, and refused-to-reuse when
+    the port changes;
+  - the test email, which reached the relay authenticated with the saved credentials as the relay saw them;
+  - STARTTLS required against a relay that does not offer it: nothing reached it;
+  - recipients: the confirmation link works once and a made-up token does nothing; B cannot list, add to or
+    remove from A; a Business User cannot add; a policy or schedule naming an unconfirmed address, or another
+    business's, is refused;
+  - the alert email has title, severity, computer, business and link, and none of the detail, hostname, computer
+    id, site or B;
+  - a business `notifications` pause stops A's alert mail but not B's or the platform's test email; a global
+    pause stops even the test email;
+  - a scheduled report is mailed with the audited CSV (`REPORT_EXPORTED` via the schedule);
+  - exactly once per period: across repeated sweeps, across an API restart, and with **two API processes sweeping
+    one database**;
+  - a period more than a day late is recorded `missed`; a paused business's period is `blocked`;
+  - a demoted owner's schedule fails closed: a no-data notice, the schedule switched off, `REPORT_SCHEDULE_FAILED`,
+    and no export;
+  - the relay password in no audit row, response or API output.
+- Re-run because their code changed: `e2e-monitoring.mjs` 108 passed, `e2e-reports.mjs` 102 passed,
+  `e2e-containment.mjs` 71 passed. Its "every kind" check now expects five kinds.
+- `node scripts/check-security-invariants.mjs`: all hold, including §42's 15 checks. `check-versions.mjs` passes.
+- `pnpm -r lint`, `npx tsc --noEmit` in both apps, `npx nest build` and `npx next build`: pass.
+  `gen-api-reference.mjs --check` against the runtime route table: 437 = 437.
+- **Not run:** `apps/web/scripts/e2e-navigation.mjs`, which was extended for the new menu entries, `?alert=` and
+  the public `/verify-email`. It needs the isolated docs stack (port 4000 and the `reboot_remote_docs` database).
+  Real TLS (implicit or STARTTLS) against a relay with a certificate has not been exercised. Only plaintext to
+  loopback, and the refusal when STARTTLS is not offered, were.
+
+### Agent upgrade from the console
+
+**What changed**
+
+- **Agent card** on the device workspace (Overview): the agent type (standard, signed, read-only Linux/macOS), its version and whether it is current, the update channel, the portal's update mode, and for a signed agent the result and time of its last update check. `GET /endpoints/:id/agent` (computers:view).
+- **Update agent** (`POST /endpoints/:id/agent/update`, computers:edit). A standard Windows agent re-runs the current installer through the existing reinstall path, with the same permission, containment and audit. A signed agent gets **Check for update now** (the hook runs `rem0te-agent.exe update`, which installs only what the signed repository lists). Linux and macOS are refused with the exact `curl … | sudo bash` command to run on the computer.
+- **Upgrade to signed agent** (`POST /endpoints/:id/agent/migrate`, `…/migrate/cancel`). This queues for one computer the same migration script that *Signed only + portal migration* serves. It needs computers:edit (the same as reinstall), a fresh sign-in (`assertFresh`, action `agent.migrate`) and a 3–400 character reason. Audited as `AGENT_MIGRATION_REQUESTED`, `_CANCELLED` and `_COMPLETED`. Each unmet precondition is refused by name: `NO_SIGNED_RELEASE` (with a link to Update signing → Roles and keys), `NO_DEVICE_SECRET`, `NOT_WINDOWS`, `LINUX_AGENT_READ_ONLY`/`MACOS_AGENT_READ_ONLY`, `ALREADY_SIGNED`, `ARCHIVED`, `NO_PORTAL_ADDRESS`, `SIGNED_ONLY`, `CONTAINED` and `IN_ROLLOUT`.
+- **Bulk:** `agent.update` and `agent.migrate` join the 0.33 bulk path. It takes at most 200 computers, checks fresh auth once, and gives per-computer results and refusals. The fleet-abuse budget stops the run before a person's thresholds.
+- **Migration status** page (`/endpoints/agent-migrations`, `GET /agent-migrations`) lists computers by state: pending, held (with the reason), dispatched, downloaded, not confirmed, completed and cancelled.
+- **Patches tab:** "What to do" now points at the Agent card when the computer can be moved. Otherwise it names exactly what is missing, for example "No signed release is published. Publishing one needs the offline signing keys only you hold", with a link.
+- **Heartbeat:** the standard heartbeat's script reads `C:\ProgramData\Rem0te\agent-status.json` (the signed agent's last check and result) and reports them. They are stored only if the time is plausible, and only as inert text.
+
+**How it works, and why**
+
+- **Targeting:** only that computer's own authenticated heartbeat is handed the reinstall flag with a one-off nonce (`mig_` + 40 characters).
+- **The served script:** `windows.ps1?updateNonce=<nonce>` serves the migration script, pinned to the digest of `windows/rem0te-agent.exe` in the signed targets the portal serves at that moment.
+- **Holds:** the request is held, not handed out, while:
+  - an `updates` pause applies;
+  - a staged rollout owns the computer;
+  - no signed agent is published;
+  - or the mode is tightened to Signed only after the request. In that case the nonce serves a script that runs nothing.
+- **Completion:** the request completes when the computer's heartbeat reports the signed channel. At most one request per computer is open (partial unique index).
+- **Mode boundary:** allowed in *Legacy allowed* and in *Signed only + portal migration*; refused in *Signed only*. That mode contains legacy agents by withholding portal-served scripts. Allowing a per-computer migration there would let one person reopen, machine by machine, a path that turning on portal migration puts to review. A per-computer request never writes the mode (§43).
+- **Why no second approver:** a standard agent already trusts the portal completely, since anyone who can press Reinstall can run the portal's installer there as SYSTEM. The migration is one more such run of a fixed script, and it leaves the machine trusting only offline-signed code.
+
+**Fixed along the way**
+
+- **The portal-migration script built a broken staging path.** The script served by *Signed only + portal migration* (shared since this release) wrote `'Rem0te\setup\migrate'` inside a JavaScript template literal, so the backslashes were swallowed and the path became `Rem0tesetupmigrate`.
+  - It now stages in a fresh, randomly named `Rem0te-migrate-<guid>` directory, created without `-Force` and locked to SYSTEM and Administrators.
+  - The script is now parsed under pwsh in `unit-agent-migration.mjs`.
+- **The reinstall flag now clears on a signed agent.** It is cleared when a signed agent reports a check after the flag went out, so Check for update now no longer re-runs on every heartbeat.
+
+**Upgrade notes**
+
+- **Migration `0055_agent_migration`:** three ActivityAction values, `Endpoint.agentUpdateCheckedAt` / `agentUpdateResult`, and the `AgentMigration` table. Run `prisma migrate deploy`, rsync `prisma/` and run `prisma generate` at the target.
+- **Re-sign install.ps1:** `windows-script.ts` changed (the agent-status block). Standard agents pick it up on their next reinstall. The signed channel's `install.ps1` must be re-signed and published before signed agents report their last update result. Until then the card says the result is not reported.
+- **No new production dependency.**
+- **Expect "not confirmed":** the standard heartbeat does not report the migration script's exit code. A request dispatched over 2 h ago whose computer still reports standard shows as *not confirmed*, not *failed*.
+- **Agents older than 0.20** ignore the nonce: they first reinstall the current standard agent, and migrate on a later attempt.
+- **Never run on real Windows:** neither the migration script nor `migrate` has been.
+
+**Verification**
+
+| Check | Result |
+|---|---|
+| `e2e-agent-upgrade.mjs` | 94 passed. Covers: a real signed repo built with `rem0te-release` from the branch; every precondition and refusal; heartbeat targeting (only the named computer gets the nonce); the digest pin; held states; update-agent per agent type; bulk refusals with per-computer codes; audit (the 200 cap is the existing bulk path's, covered by e2e-device-views and §29); business A/B isolation as 404 |
+| `unit-agent-migration.mjs` | 57 passed, including a pwsh parse of the served script and the heartbeat's agent-status block run against fixtures |
+| `unit-device-views.mjs` | 64 passed |
+| `unit-signed-installer.mjs` (with PWSH) | 51 passed |
+| `e2e-signed-updates.mjs` | 46 passed |
+| `e2e-device-views.mjs` | 117 passed |
+| `e2e-rollouts.mjs` (with `HBBS_PRESENCE_HOST=127.0.0.2`) | 46 passed |
+| `check-security-invariants.mjs` | all hold. New §43 has 8 checks: per-computer migration never writes the mode; the served script pins the repository digest; it is served only for an open nonce; the request needs computers:edit and `assertFresh`, single and bulk; Signed only without portal migration refuses, holds and serves nothing; only an authenticated heartbeat is handed a nonce; and the request is recorded only with its audit entry. 10 of 10 mutants were caught. §29 now expects six bulk actions |
+| `API-REFERENCE.md` | regenerated (429 routes) and verified against the runtime route table |
+| `pnpm -r lint`, `tsc --noEmit` (both apps), `nest build`, `next build` | clean |
+
+### Phone-width layout and a browser suite in CI
+
+#### Fixed
+- **The console was unusable at phone width.** The sidebar was a fixed 240 px column on every signed-in page, so a
+  375 px phone had 135 px left for the page itself, and nothing collapsed it (found in 0.33). Below Tailwind's `md`
+  (768 px) the sidebar is now an off-canvas drawer opened by a **menu button** at the left of the top bar
+  (`components/layout/nav-drawer.tsx`). It is the same `Sidebar` component, so it holds everything the sidebar does:
+  the business switcher, Settings, Help, the theme toggle, Sign out and the version.
+  The drawer is a Radix dialog, which is what makes it accessible rather than only visible. Focus moves into it and
+  Tab / Shift+Tab stay there. The page behind is `aria-hidden`, and the dialog carries `aria-modal` and the name
+  *Main menu*. Esc, a tap outside and its close button all close it. Focus then returns to the menu button, which
+  Radix does not do on its own for a trigger outside its tree, so `onCloseAutoFocus` does it. The menu button reports
+  `aria-expanded`. The drawer also closes on navigation: on any route change, and on a click on a link to the page
+  already open, which changes no pathname. Widening the window past `md` closes it too.
+- **Pages that scrolled sideways at 375 px**, each found by the new suite and fixed where the overflow started,
+  never by clipping `<main>`:
+  - **`<main>` itself** had no `min-w-0`. A flex child's minimum width is its content's by default, so one wide row
+    could widen the whole page instead of scrolling in its own container.
+  - **Device list:** the Views / Columns / density / Export CSV group did not wrap, so the page was 132 px too wide
+    (241 px with a saved view's name on the Views button).
+  - **Settings:** the SSO redirect URI on the public-address card is one unbreakable string. It now breaks anywhere.
+  - **Settings → Monitoring:** the *Add recommended* / *New monitor* buttons sat beside the card title on one line.
+  - **About / Updates:** release notes are `whitespace-pre-wrap` text with long package names, which do not break.
+    They now wrap anywhere (`break-words`). The overflow was 59 px.
+  - **`PageHeader`** (every page title) stacks the title above its actions below `sm`, and the actions wrap. Before,
+    the description was squeezed to a few words a line beside the buttons.
+  - **Register by RustDesk ID** used a fixed two-column grid at every width. It is one column below `sm`.
+- **Nothing else broke in the browser.** The suite found no console error, uncaught exception or unexpected failed
+  request on any page it opens, at either width or in either theme. Several of those pages had never been opened by
+  any test: the device views and bulk UI, the step-up on API keys and Add device, the Performance / Processes /
+  Services / Network tabs, the Reports pages and System status.
+
+#### Added
+- **`apps/web/scripts/e2e-ui.mjs`: the console in a real browser, with no docs stack.** It starts its own API from
+  `apps/api/dist` on 3502 against `DATABASE_URL`, with every sweep off. It copies the web standalone build, building
+  it first if there is none, and patches the copy's baked-in API rewrite (`server.js`, `routes-manifest.json`,
+  `required-server-files.json`; CLAUDE.md) to that API, then serves the copy on 3501. It migrates the database, runs
+  the seed if there is no tenant, and adds its own fixtures: two businesses, a Platform Admin, a Business Owner and
+  seven devices. One device has inventory, a day of metric samples, a week of hourly roll-ups and stored
+  process, service and adapter snapshots. The fixtures are removed afterwards.
+  At **1440 × 900 and 375 × 812, in the light and dark themes** (set through the app's own `localStorage.theme`
+  before its scripts run, then checked on `<html class>` and the body colour), it covers:
+  - **sign-in;**
+  - **the shell:** the desktop sidebar, or at 375 px the drawer: role, name, `aria-modal`, `aria-expanded`, fit,
+    a 48-key Tab / Shift+Tab focus-trap walk, Esc with focus return, a tap outside, and navigation to another page
+    and to the same page;
+  - **Devices:** the list, then one device and **all twelve workspace tabs**. Overview, Performance (a chart),
+    Processes, Services and Network must show the fixture data, not just render;
+  - **saved views:** saved (checked in the database), cleared, and reopened with its search and rows;
+  - **bulk selection:** two rows, *Refresh inventory* with its per-device result, the select-all header and Clear
+    selection;
+  - **the search palette:** Ctrl+K at desktop, the button at 375 px, Enter to open the device, Esc to close;
+  - **Add device:** the step-up dialog is cancelled (no token in the database, the "No link was made" note, the
+    choices kept), then confirmed (exactly one token, the install command shown);
+  - **API keys** as the Business Owner: a key with `enrollment:write` asks for step-up; closing it creates nothing
+    and keeps the form, and confirming creates the key, shows it once and lists it;
+  - **Reports:** `/reports` opens the first one, and each of the four renders;
+  - **System status:** its cards, and the Data retention card's table rows where the build has that card.
+  At 375 px no checked page may scroll sideways (the document or `<main>`), and the device list's table must
+  scroll inside its own container. In the light theme it also sweeps every page in the menu (Settings expanded)
+  plus the hub tabs and reports, 32 pages, at both widths: no sideways scroll, no error.
+  **Any console error, uncaught exception, failed same-origin request or network failure** on a page fails that
+  page's check. The only exceptions are the 403 `STEP_UP_REQUIRED` answers the step-up flows provoke on purpose, and
+  the 401s from `/auth/*` on the sign-in page before signing in. Each sign-in first injects a `console.error` and a
+  thrown exception and checks that both are caught, so a broken detector cannot pass as a clean page.
+  Finally it runs `e2e-search-palette.mjs` (24 checks) against the same stack. That suite, like
+  `e2e-navigation.mjs`, used to need the docs stack and ran by hand.
+- **Hydration marker.** `<html data-hydrated="1">` is set once React has hydrated (`HydrationMarker` in the root
+  layout). The suite waits for it before every interaction. A server-rendered button is visible before its handler
+  is attached, and a click in that gap does nothing. That is the race that makes browser suites flaky enough to be
+  switched off. Every other wait is on a condition, never a fixed sleep: rows equal to a count, a dialog's
+  visibility, a database row.
+- **CI:** the `e2e` job now builds the web app, installs the browser
+  (`npx playwright install --with-deps chromium-headless-shell`, the shell Playwright 1.65 runs headless) and runs
+  the suite as the step `UI suite (browser)` (`id: ui`) against the job's database, after `scripts/run-e2e.sh`. It
+  is a step in the required `e2e` context, not a new job, so branch protection covers it with no settings change.
+  It runs even when an API suite failed (`if: !cancelled()`), so one red suite does not hide the other. Screenshots
+  go to the failure artifact with the e2e logs. The job's timeout is 60 → 80 minutes: about 4 minutes locally for
+  the suite, plus a web build.
+- **Security invariants §44** (and §18 now includes `e2e-ui.mjs`). The suite refuses ports 3000, 3001, 443, 4000
+  and 4001 for both servers before starting anything, and https. It refuses a database not named `test` or
+  `scratch` before Prisma is loaded. It writes only to files joined from its temporary copy. It stops if the
+  build's API destination survives the patch: on this host that destination is the production API on 3001, so a
+  missed patch would point a fixture-seeding browser at production. Its API runs with every sweep off. Each check
+  was proven to fail with its guard removed (7 mutations, including dropping the https refusal for §18).
+- Docs: *On a phone or a narrow window* in the technician guide (and in the app at `/docs`), *Using Rem0te on a
+  Phone* in `/help`, a row and a not-implemented bullet in `docs/rmm-gap-analysis.md`, and `.github/SECURITY.md`.
+
+#### Upgrade notes
+- No migration, no API change, no new dependency (Playwright was already a devDependency of the web app).
+- Running it locally:
+  `DATABASE_URL=postgresql://…/<name with test or scratch> node apps/web/scripts/e2e-ui.mjs`, after
+  `pnpm --filter @reboot-remote/api build` and `npx playwright install chromium-headless-shell`. An existing
+  `apps/web/.next/standalone` is used as it is. **Rebuild the web app after changing it** (or set `UI_REBUILD=1`),
+  or the suite tests the old build. `UI_WEB_PORT` / `UI_API_PORT` move it off 3501/3502, `OUT_DIR` keeps the
+  screenshots, `UI_SKIP_PALETTE=1` skips the palette suite, and `UI_HOLD=1` leaves the stack up for debugging (and
+  reports a failure, so it can never pass as a run).
+- `e2e-navigation.mjs` still needs the docs stack (it reads the demo data) and stays a manual run.
+
+#### Not done
+- Chromium only. No WebKit/Safari and no real phone, so iOS-specific behaviour (safe areas, the URL bar resizing the
+  viewport) is untested.
+- Pages are made to fit a phone, not redesigned for one. The device list's eight filters still stack above the
+  table at 375 px.
+- The screenshots are kept but compared to nothing: there is no visual-regression check.
+
+#### Verification
+- `e2e-ui.mjs`: **3 consecutive green runs, 406 passed, 0 failed each** (230–239 s each), against a scratch
+  database, with the search-palette suite's 24 checks inside. Before the fixes, the first full run failed 10 checks:
+  the drawer's `aria-modal` and focus return, the device-list toolbar, the bulk bar's Views button, `/settings`,
+  `/about`, `/settings/monitoring` and an API-key list race in the suite itself.
+- `check-security-invariants.mjs` (§44: 5 checks, plus §18 for the new script; all 7 mutations caught),
+  `check-versions.mjs`, `pnpm -r lint`, `tsc --noEmit` in both apps, `nest build`, `next build`.
+
+### Screenshots and gallery regenerated from 0.33 (usability finding 7)
+
+The GitHub gallery still showed v0.18.10: the old dashboard tiles, *Enroll Client*
+and *Generate Enrollment Link*, and none of the 0.31–0.33 pages. The in-app
+guide had no images for any of those pages either.
+
+- **Gallery** (`docs/images/github/`, `docs/screenshots.md`). 56 images from
+  0.33, in light and dark, with three at phone width (390×844): the dashboard,
+  the device list and a device page. They are honest about the layout: the
+  sidebar does not collapse on a phone yet.
+  - Added: search, alerts, bulk actions, saved views, a Linux device, every
+    device tab, three reports, the script library and review, client-update
+    windows, and patching.
+  - `enroll-device-*` is replaced by `add-device-*`.
+  - `manifest.json` now records the viewport of each shot.
+  - README counts and alt text updated.
+- **Guide** (`docs/screenshots/guide/`). 20 new numbered-callout images, each
+  followed by its key, in these pages:
+  - technician-guide: dashboard, device map, device list, views, search, device
+    overview, Patches, and Add device steps 1–3
+  - metric-history, diagnostics (Processes, Services, Network), reports,
+    script-library, updates (client updates), patching-setup
+  - `tech-02-computers` was re-pointed at the 0.32 *Add device*, and its
+    "predates 0.31" note was removed.
+- **Demo data.** New `apps/api/prisma/_docs-demo-workbench.ts`. It is
+  idempotent and refuses any database other than `reboot_remote_docs`. It seeds:
+  - Linux and macOS computers
+  - 30 days of metric history, with one gap
+  - process, service and network snapshots, passed through the API's own
+    sanitiser and cap
+  - groups and shared views
+  - resolved alert history
+  - scripts with approved and in-review versions
+  - client-update policies
+  - patch policies
+  - a fictional relay host, and Quick Connect turned on
+- **Capture scripts.**
+  - Callout boxes are clamped to the window. A table taller than the screen
+    used to stretch the image to about 2,700 px of empty frame.
+  - The finder supports `exact`, `within`, `card` and selector tags.
+  - Both scripts resolve `@script:<name>`.
+  - capture-media adds `narrow` viewports and `before` hooks.
+  - The `@resources` and `@specs` anchors were fixed: the card heading is now
+    an `<h3>`. Without the fix, *device-resources* was silently a full-page shot.
+  - The specs grid is captured without the sticky search bar printed over it.
+  - The §18 refusals are unchanged.
+
+### Chat with the person at a computer
+
+#### Added
+- **Two-way chat between a technician and whoever is signed in at a managed Windows computer**
+  ([docs/chat.md](docs/chat.md)). Before this, the only way to talk to the person at a computer was outside Rem0te
+  (phone, e-mail) or RustDesk's in-session chat, which needs a session to be running. A technician now opens the
+  computer's new **Chat** tab and presses **Start chat**. A small window opens on that computer's desktop and the
+  person can reply or close it. The tab sits on the device workspace before History, on every computer the viewer can
+  see (`?tab=chat`).
+- **The window says who is writing, where a message cannot reach.** Its title is `Support chat - <business>` and its
+  banner names the technician and the business. The technician is shown by first and last name, never the e-mail; an
+  empty name is "Technician". The banner also says the business will never ask for a password and that links are
+  never opened. Both names are fixed when the chat starts and come from the portal, so nothing in a message can set
+  them. Messages appear in a read-only plain `EDIT` control, so nothing in them becomes a link. The window has no
+  rich-text control and does no `ShellExecute`.
+- **Signed agent only, and the portal says so for everything else.** Chat needs the signed agent (update channel
+  `signed`) reporting chat protocol 1. The agent adds `chat: 1` to its status and the signed heartbeat sends it as
+  `agentChat`. Every other computer shows on the Chat tab why it cannot chat, and `POST …/chat/conversations` is
+  refused with `409 CHAT_UNSUPPORTED` and the same reason:
+  - Linux or macOS: "not available … yet";
+  - the standard Windows agent;
+  - a signed agent older than 0.34;
+  - no device secret bound;
+  - archived.
+
+  Why the signed agent: a SYSTEM service has no visible desktop, so showing a window means
+  `WTSQueryUserToken` + `CreateProcessAsUser` into the user's session, plus a pipe ACL'd to that user. In the
+  standard agent that would be generated PowerShell P/Invoke that nothing on the build host can parse or test. In the
+  signed agent it is compiled, unit-tested Go that reaches a computer only through the signed update chain.
+  **Production is on the standard channel, so chat does nothing there until the signed agent is rolled out.**
+- **A bounded fast path.** The 3-minute heartbeat only says `chat: { open: true }` to an authenticated signed agent
+  that can chat. The signed heartbeat hook then starts `rem0te-agent.exe chat`, which is single-instance through a
+  lock file. That host long-polls `POST /enrollment/chat/poll` with the device secret, exactly as the heartbeat
+  authenticates:
+  - the API holds a poll for up to 25 s, re-reads the database every 10 s, and wakes the poll at once when the
+    technician sends or ends;
+  - there is one held poll per computer, and a newer poll releases the older;
+  - at most `CHAT_MAX_WAITERS` (500) polls are held at once; past that the API answers at once with `retryAfterMs`;
+  - replies go to `POST /enrollment/chat/reply` with a client id, so a retry stores nothing twice.
+
+  A wrong or missing secret is `401` and is audited as `ENDPOINT_HEARTBEAT_REJECTED`
+  (`chat_poll_unauthenticated` / `chat_reply_unauthenticated`).
+- **The window process is unprivileged and holds no secret.** It is the same signed binary started as the user with
+  `chat-window`, and it talks only to the host:
+  - **No secret, no network.** It has no HTTP client and cannot read `heartbeat.dat`.
+  - **Locked-down pipes.** Two one-way named pipes are created with `FILE_FLAG_FIRST_PIPE_INSTANCE` and
+    `PIPE_REJECT_REMOTE_CLIENTS`. Their protected DACL is `D:P(A;;GA;;;SY)(A;;GRGW;;;<user SID>)`, and the SID must
+    be a real user account's.
+  - **Checked peer.** The host checks that the pipe client's PID is the process it launched, and that its first frame
+    carries a per-launch random nonce.
+  - **Strict frames.** Each frame is JSON of at most 16 KB, with a closed field set per type. Anything else closes
+    the window.
+  - **Session choice.** The console session comes first. Otherwise the window goes to the single active RDP session.
+    With none, or several, the host reports "nobody is signed in" instead of choosing.
+- **Status the technician can trust.** Each technician message shows *Sent*, *Delivered* (the agent has it), *Shown*
+  (the window drew it) or *Read* (drawn while the window was in front). Each is set only when the agent confirms it,
+  once, and only for that computer's own messages; a shown receipt also implies delivered. The panel also shows what
+  the agent last reported:
+  - waiting for the next check-in;
+  - opening the window;
+  - window open, with the signed-in account;
+  - nobody signed in;
+  - the window could not be opened, with the reason;
+  - the computer silent for over a minute;
+  - ended, saying by whom.
+
+  "No user signed in" and "agent version can't chat" are real states, not errors.
+- **Endings.** A chat ends when the technician ends it, when the person closes the window (`end_user`), or after two
+  hours with no message (`inactive`). The chat host exits after 12 hours, and the next heartbeat restarts it if the
+  chat is still open.
+- **Transcripts belong to the computer** and can be linked to a support request. Linking needs *Handle support
+  requests*, and the request must be in the same business and on the same computer or none. Anyone who can see the
+  computer can read its transcripts (`computers:view`). The tab lists the last 25 conversations.
+- **400-day retention with its own sweep** (`apps/api/src/chat/`). Ended conversations are deleted with their messages
+  400 days after they ended. The sweep runs hourly, deletes in batches and records one `CHAT_PRUNED` audit entry
+  (counts only) per pass that deleted anything. The same sweep ends chats that have been quiet for two hours.
+  Settings:
+  - `CHAT_RETENTION_SWEEP=off` stops it;
+  - `CHAT_RETENTION_DAYS` (30–3650);
+  - `CHAT_SWEEP_SECONDS`;
+  - `CHAT_PRUNE_BATCH` / `CHAT_PRUNE_BATCHES` (500 / 20);
+  - `CHAT_MAX_WAITERS` (1–20,000).
+
+  Out-of-range values are clamped, and ones that cannot be parsed take the default.
+- New capability **`support:chat`** (*Chat with the person at a computer*) to start, write and end. It is in the
+  Support group and in no preset or default; Business Owners and Platform Admins hold it implicitly. For an MSP
+  technician the assignment must grant it over that computer.
+- New routes:
+  - `GET /endpoints/:id/chat`;
+  - `GET /endpoints/:id/chat/conversations/:cid`;
+  - `POST /endpoints/:id/chat/conversations`;
+  - `POST …/:cid/messages`;
+  - `POST …/:cid/end`;
+  - `POST /enrollment/chat/poll`;
+  - `POST /enrollment/chat/reply`.
+
+  Migration `0056_chat` adds:
+  - `ChatConversation` and `ChatMessage`, and `Endpoint.chatProtocol`;
+  - the audit actions `CHAT_STARTED`, `CHAT_ENDED` and `CHAT_PRUNED`;
+  - a partial unique index (one open chat per computer);
+  - CHECKs on the device state, on the ended reason and its consistency, on body length (1–2,000), and that receipts
+    exist only on technician messages.
+
+#### Security
+- **Scoping.** Every technician route goes through `assertEndpointInScope` and then
+  `findFirst({ where: { AND: [endpointVisibilityWhere(actor), { id }] } })`. Another business's computer, or one a
+  Business User has not been given, is a 404 like the computer itself. A conversation is found only through its
+  computer.
+- **Containment.** A `remote` pause now covers chat: while one covers the business, starting a chat and sending a
+  message are `403 CONTAINED`, and the tab says why. An open chat stays readable and can be ended. The pause label is
+  now "remote connections and chat", in the API and in the banner.
+- **Untrusted text, both ways.**
+  - **Length.** At most 2,000 characters, refused rather than cut. The cap is enforced in the API, the database and
+    the agent.
+  - **Rate.** 20 messages a minute per side per conversation, 30 a minute per computer, and 1,000 per conversation
+    (`CHAT_RATE_LIMITED` 429, `CHAT_FULL` 409).
+  - **Control characters.** C0/C1 controls, ESC, DEL, bidi overrides and isolates, and U+2028/2029 are dropped;
+    tabs and newlines are kept, with at most 20 newlines in a row.
+  - **Device-reported names** are reduced to one line of at most 64 characters.
+  - **Rendering.** Text is stored as plain text and rendered as React text, never HTML. No links are made.
+- **Audit.** `CHAT_STARTED` carries the conversation id (and the support request id if linked). `CHAT_ENDED` carries
+  the id, the reason, message counts each way and the duration. **Message text is never audited**, and neither are
+  names or the signed-in account. The prune deletes transcripts, never an `ActivityLog` row, so the sealed chain is
+  untouched. The e2e suite runs with sealed rows and checks every audit row written during it for message text.
+- New invariant section **§45** (11 checks):
+  - route capabilities;
+  - visibility AND-ed scoping on every technician method;
+  - `assertOpen('remote')` in start and send;
+  - device routes through `authenticateDevice` / `secretMatches`, and the heartbeat gate authenticated and signed;
+  - audit meta with no text, and no `activityLog` update or delete;
+  - the 2,000 cap agreeing in TS, SQL and Go;
+  - the 400-day default, with the sweep off in `run-e2e.sh`;
+  - the window file with no `net/http`, secret, `os/exec` or rich text, and a read-only transcript;
+  - pipe flags, DACL and the PID check, with one `exec` (rustdesk `--get-id`);
+  - no `dangerouslySetInnerHTML` or anchors in the chat tab;
+  - only the signed script starting the host, and the pause label.
+
+  Each check was shown to fail when its guard was removed (22 mutations, each failing exactly that check) and then
+  restored.
+
+#### Upgrade notes
+- Apply migration `0056_chat` (`prisma migrate deploy`). Then regenerate the Prisma client at the target, as for any
+  schema change.
+- **Nothing changes for computers on the standard agent.** Their Chat tab says chat needs the signed agent. Signed
+  agents gain chat with the 0.34 agent release. Until a computer's heartbeat reports `agentChat`, it shows "too old".
+- Grant `support:chat` to whoever should chat. It is in no preset.
+- The chat sweep is separate from any other retention sweep. Set `CHAT_RETENTION_SWEEP=off` on scratch APIs whose
+  transcripts must survive. `scripts/run-e2e.sh` now exports it and passes it to its scratch API, and `e2e-chat`
+  turns it on for its own API.
+- Chat's held polls live in the API process, which is another reason it must stay a single process.
+- **The desktop window has not run on real Windows.** `CreateProcessAsUser` into the session, the pipe DACL, session
+  selection with Fast User Switching or RDP, and the Win32 window are built, vetted and statically checked but
+  unproven. Test it on a lab machine before relying on it.
+
+#### Verification
+- `apps/api/scripts/e2e-chat.mjs` (port 3531, its own API from `dist`; refuses a database without `test`/`scratch`)
+  **89 passed, 0 failed**. The device is simulated over the real device routes. The suite covers:
+  - unsupported computers (Linux, macOS, standard and old agents) refused with their reasons;
+  - start, dedupe and audit;
+  - the heartbeat flag only for an authenticated, signed agent that can chat;
+  - wrong-secret polls 401 and audited;
+  - receipts only from the agent, only for that computer's messages, in order;
+  - the long-poll woken by a send, and the held-poll cap returning `retryAfterMs`;
+  - the opening, nobody-signed-in and window-open states (window-failed is covered by `unit-chat` only);
+  - closing the window ending the chat;
+  - reply dedupe by client id;
+  - A/B isolation, including a Business User without the computer getting 404 and a conversation id from business B
+    refused on A's computer;
+  - `remote` containment on start and send, with reading and ending still allowed;
+  - length, control-character and rate caps per side and per computer;
+  - support-request linking and its scope;
+  - inactivity ending and retention pruning with a sealed audit chain intact;
+  - no message text in any `ActivityLog` row.
+- `apps/api/scripts/unit-chat.mjs` **52 passed** (added to CI).
+- `go test ./...` passes in `tools/windows-installer`, including 21 tests in `internal/chat`, also under `-race`. The
+  host is tested against a fake portal and a fake desktop:
+  - frame limits and field sets, and the hello nonce;
+  - receipts sent once;
+  - history retried without closing the window;
+  - a lost window reopened;
+  - technician end and user close;
+  - reply retries and the per-minute cap.
+
+  `GOOS=windows go vet ./...` and `go build` pass.
+- `scripts/check-security-invariants.mjs` passes, with §45's 11 checks proven by mutation. `check-versions.mjs`
+  passes.
+- `pnpm -r lint` and `tsc --noEmit` pass in both apps, as do `nest build` and `next build`.
+- Existing suites touching changed code also pass: `unit-signed-installer` (51, run under pwsh 7.4),
+  `e2e-system-inventory` (68), `e2e-endpoint-visibility` (112) and `e2e-linux-agent` (86).
+- `docs/API-REFERENCE.md` was regenerated and matches the runtime route table (431 routes).
+- `e2e-navigation.mjs` gains a Chat-tab check (present before History; on a computer that cannot chat it says why
+  and offers no Start). **It was not run here**, because it needs the docs stack's `reboot_remote_docs` database;
+  it was syntax-checked only.
+
+### Integration notes
+
+The parts were merged into one branch in this order: retention, groups and keys (which carries the API-key work),
+presence, restart rule, signed results, script run, software, AI summary, email, agent upgrade, phone layout,
+screenshots, and chat. Each branch numbered its invariant section §33. Here they are §33–§45 in that order:
+
+| § | Part |
+|---|---|
+| 33 | Data retention |
+| 34 | API keys and device-group membership |
+| 35 | Rule-based device groups |
+| 36 | hbbs peer snapshot |
+| 37 | Restarts after Windows updates |
+| 38 | Agent-signed action results |
+| 39 | `windows.script.run@1` |
+| 40 | Software deployment |
+| 41 | AI without a provider key |
+| 42 | Outbound email |
+| 43 | Agent upgrade from the console |
+| 44 | The browser UI suite |
+| 45 | Chat |
+
+The sections above keep each branch's own text, renumbered. Their check counts are each branch's own; the integrated
+counts are under *Verification*. These changes were made where the branches met:
+
+- **The action catalog is nine actions, in one fixed order on both sides.** The six through 0.32 come first, then
+  `windows.script.run@1`, `windows.software.install@1` and `windows.software.uninstall@1`.
+  - Updated to match: `catalog.ts`, `catalog.go`, the Go catalog tests, §14's exact list (with both
+    `scriptParamsOK` and `softwareParamsOK` closed forms, and seven `integration: false`), `unit-script-run.mjs`,
+    `unit-software.mjs` and `e2e-maintenance-actions.mjs`.
+  - The software branch had relaxed `e2e-maintenance-actions.mjs` to a six-action prefix. It asserts the exact nine
+    again.
+- **`ACTION_NOT_DIRECT`:** each indirect action names its own workflow. The software branch's per-entry
+  `indirectVia` is used, and `windows.script.run` carries the script library's message in its own `indirectVia`.
+- **One result-status table.** Signed results made `RESULT_STATUS` the table that both the portal and the signer use.
+  Script runs added the outcome `timed_out`. It is now in that table (→ FAILED) and in the signed `ResultStatement`
+  enum, so a timed-out run's signed result still parses.
+- **The approval signer carries both device-key pins and the script allowlist.** That means two state directories,
+  both sets of store methods, both CLI commands, and a build allowlist admitting `actions/device-result` and
+  `actions/script-run`.
+  - The script branch's check forbade any deletion in the signer's store. Signed results needs one: the
+    operator-only `device-key forget`, which §38 requires.
+  - §39 now requires every `unlinkSync` there to target `device-keys/`. Deleting a script entry or revocation still
+    fails the check; a mutation proved it.
+  - The plan page shows a script block first, then the restart wording for update plans, then the software rows.
+- **Bulk actions:**
+  - The bulk endpoint takes both `targetGroupId` (rule groups) and the migration `reason` (agent upgrade), and keeps
+    every refusal from both.
+  - The bulk bar's *Update agent* / *Upgrade to signed* work on a rule-group target as well as a selection.
+  - §29's bulk list is the six actions.
+- **Scheduled reports cover the four 0.32 reports, not Software compliance.** Merging the software report made the
+  schedule service's capability map incomplete, and the build failed.
+  - Schedules now accept `SCHEDULABLE_REPORTS` explicitly. That is what migration 0054's CHECK admits.
+  - The software report takes no period or site query, so scheduling it is its own change.
+- **Every sweep that acts on the whole database is off in the e2e runs.**
+  - `scripts/run-e2e.sh` exports `RETENTION_SWEEP`, `REPORT_SCHEDULE_SWEEP`, `CHAT_RETENTION_SWEEP` and
+    `SCRIPT_OUTPUT_SWEEP` as `off`, and passes all of them to its scratch APIs.
+  - `MONITOR_SWEEP` and `CLIENT_UPDATE_SWEEP` are deliberately **not** exported off. An earlier integration build did
+    export them, and `e2e-monitoring` (63 passed, 13 failed) and `e2e-ticket-workflow` (crashed waiting for a
+    monitor state row) broke. Both start their own API and rely on the monitoring sweep's default (on, every
+    `MONITOR_SWEEP_SECONDS`). Every other suite that starts an API already turns those two off itself, and the
+    scratch-API loop passes them off explicitly.
+  - `e2e-ui.mjs` (written before email, script runs and chat landed) now also turns off `RETENTION_SWEEP`,
+    `REPORT_SCHEDULE_SWEEP`, `SCRIPT_OUTPUT_SWEEP` and `CHAT_RETENTION_SWEEP`, and §44 requires them.
+  - The suites that test a sweep still turn it on for their own API.
+- **Tests that pinned a sibling's absence:**
+  - `e2e-script-run.mjs` asserted the catalog was exactly seven actions, and `e2e-software-deploy.mjs` that it was
+    exactly eight with software last. Both now assert the exact nine, in order. Their "older agent" fixtures are
+    still the original six.
+  - `e2e-patch-policies.mjs` expected a standard-agent computer's Patches tab to say "switch to the signed channel".
+    The agent-upgrade part changed that remedy to the Agent card's *Upgrade to signed agent*. Its fixture had no
+    platform, so it got `NOT_WINDOWS` instead, which no real standard Windows computer reports. The fixture now
+    reports `Windows 11 Pro`. The check now requires `fixAction: 'agent-card'` and the *Upgrade to signed agent*
+    wording, which is stricter than the old regex.
+  - `e2e-ui.mjs` (the phone-layout part, written against 0.33) expected the API-key step-up to say it was for a key
+    that can "enrol computers". From 0.34 (§34) every key needs a fresh sign-in, and the dialog says "To create an
+    API key, confirm your identity". The first integrated browser run failed exactly that check in all four
+    viewport/theme passes (416 passed, 4 failed). The check now expects the 0.34 wording.
+- **The docs demo seeder (`prisma/_docs-demo-workbench.ts`) wrote `Endpoint.endpointGroupId`.** Migration 0049
+  drops that column, and `tsc` failed on it. It now clears and creates `EndpointGroupMember` rows. The screenshots
+  part was written against 0.33's schema.
+- **Chat met email in containment.** The `remote` pause label is "remote connections and chat" (§45), and email's
+  new `notifications` kind is kept beside it. Chat's `agentChat` heartbeat field and `chatProtocol` column sit
+  beside agent upgrade's `agentUpdateCheckedAt` / `agentUpdateResult`, and both services are injected into
+  enrolment.
+- **Docs written against a sibling's absence:**
+  - Staged patching's limitations no longer say a policy can't restart computers.
+  - The signer's policy page and the gap analysis no longer say results are unsigned.
+  - The script-library screenshot's callout says it was captured on 0.33, when the "not available yet" notice was
+    shown.
+  - The phone-width gallery caption says the images predate the phone layout. They show the 0.33 sidebar, which no
+    longer appears at that width.
+- **Migration numbers.** 0046, 0047 and 0049–0056 are used. 0048 was not taken by any branch and stays unused, as
+  0039, 0043 and 0044 did in 0.33.
+- `feat/0.34-retention`, `-presence`, `-reboot` and `-signedresults` were based on the pre-squash `feat/v0.33.0`
+  history. Their tip is tree-identical to main's 0.33.0, and it was used as the merge base, so the 0.33 history
+  produced no conflicts.
+
+### Verification (integrated)
+
+Run on the integrated branch with all thirteen parts merged, against the scratch database
+`rem0te_integrate34_test` (recreated empty, all migrations applied by `run-e2e.sh`):
+
+- **Static:**
+  - `scripts/check-security-invariants.mjs`: **366 checks hold**, including §33–§45.
+  - `check-versions.mjs` passes, and so does `gen-integration-contracts --check`.
+  - `pnpm -r lint` and `pnpm typecheck` (api and web) exit 0.
+  - `prisma generate`, `nest build` and `next build` succeed.
+- **Prisma:** all 50 migrations, 0000–0056, apply to an empty database (0048 is unused). `prisma migrate diff` from the
+  migrations to the schema reports *No difference detected*, and so does a diff from the migrated database.
+- **Production manifest:**
+  - `pnpm deploy:manifest` gives 0.34.0 with 30 dependencies: `nodemailer` 10.2.1, no `@anthropic-ai/sdk`, no
+    devDependencies.
+  - `npm install --omit=dev --package-lock-only` exits 0 with 0 vulnerabilities.
+- **Routes:** `docs/API-REFERENCE.md` has 472 routes, regenerated. `--check` against a scratch API's
+  RouterExplorer log matches exactly (472 / 472). The docs bundle is 38 pages.
+- **Go agent (`tools/windows-installer`):** `go test -count=1 ./...` with `PWSH` (PowerShell 7.4.6) runs 237 tests
+  and subtests: all pass, none skipped. `go vet` passes on Linux and with `GOOS=windows`. The Windows agent build
+  and the `rem0te-release` and `rem0te-action-sim` builds succeed.
+- **Unit scripts, every one in `ci.yml`, all exit 0:**
+
+  | Script | Passed |
+  |---|---|
+  | `agent-migration` | 57 |
+  | `ai-timeline` | 24 |
+  | `approval-signer` | 184 |
+  | `audit-chain` | 35 |
+  | `chat` | 52 |
+  | `device-views` | 77 |
+  | `diagnostics-catalog` | 110 |
+  | `dynamic-groups` | 68 |
+  | `email` | 122 |
+  | `hbbs-peer-snapshot` | 29 |
+  | `integration` | 35 |
+  | `macos-agent` | 27 |
+  | `metric-history` | all |
+  | `monitoring` | 100 |
+  | `patch-policy` | 163 |
+  | `patch-summary` | 27 |
+  | `presets` | 26 |
+  | `retention` | 47 |
+  | `script-library` | 125 |
+  | `script-run` | 136 |
+  | `search` | 37 |
+  | `session-mutations` | 30 |
+  | `signed-installer` | 52 |
+  | `software` | 146 |
+  | `system-inventory` | 92 |
+  | `update-signing` | 16 |
+  | `update-window` | 85 |
+
+  `build-approval-signer --list` also exits 0.
+- **`scripts/run-e2e.sh`:** run in full, with `RELEASE_BIN` / `ACTION_SIM` built from this tree and `PWSH` set.
+  **All 49 suites passed and none were skipped.** Passed counts:
+
+  | Suite | Passed |
+  |---|---|
+  | credentials | 44 |
+  | security-features | 42 |
+  | presets | 114 |
+  | monitoring | 108 |
+  | integration | 77 |
+  | dashboard | 53 |
+  | diagnostics-catalog | 70 |
+  | system-inventory | 68 |
+  | device-list | 113 |
+  | endpoint-visibility | 114 |
+  | device-views | 142 |
+  | dynamic-groups | 98 |
+  | add-device | 62 |
+  | auto-updates | 73 |
+  | reports | 104 |
+  | script-library | 138 |
+  | linux-agent | 86 |
+  | macos-agent | 106 |
+  | enrol-stepup | 67 |
+  | search | 113 |
+  | metric-history | 59 |
+  | retention | 43 |
+  | ai-timeline | 61 |
+  | email | 92 |
+  | chat | 89 |
+  | containment | 70 |
+  | approved-action | 76 |
+  | staged-patching | 94 |
+  | maintenance-actions | 64 |
+  | patch-policies | 98 |
+  | software-deploy | 156 |
+  | signed-updates | 46 |
+  | ticket-workflow | 53 |
+  | script-run | 81 |
+  | business-access | 83 |
+  | offboarding | 63 |
+  | public-address | 43 |
+  | rollouts | 46 |
+  | security-audit | 57 |
+  | session-mutations | 43 |
+  | support-requests | 47 |
+  | sso-passkeys | 70 |
+
+  These report a pass without a count: presence-cache, agent-upgrade, smoke, full, public-api, candidate-password
+  and secreg.
+
+  The first integrated run failed five suites, all fixed above:
+  - monitoring and ticket-workflow, from the over-broad sweep export;
+  - script-run and software-deploy, whose catalog counts predated the nine actions;
+  - patch-policies, which expected the pre-0.34 remedy.
+- **`apps/web/scripts/e2e-ui.mjs`**, run as CI runs it (after `run-e2e.sh`, with its own API on 3502, a patched copy
+  of this tree's `next build` on 3501, and `OUT_DIR` set): **420 passed, 0 failed**. That includes the
+  search-palette suite (24).
+- **Not run:** anything on real Windows; `e2e-navigation.mjs` and the capture scripts, which need the docs stack's
+  `reboot_remote_docs` database.
+
+### Upgrade notes (all of 0.34)
+
+- **Schema change: ten migrations.** Take a `pg_dump` first. Then run `prisma migrate deploy`, rsync
+  `apps/api/prisma/` to the target and run `prisma generate` there, as `CLAUDE.md` describes. Without the last two
+  steps the API throws `Unknown field groupMemberships` or an invalid enum value at runtime. The migrations:
+
+  | Migration | Adds |
+  |---|---|
+  | `0046_data_retention` | Retention indexes and `RETENTION_PRUNED` |
+  | `0047_patch_reboot` | `PatchDeployment.reboot` |
+  | `0049_device_group_members` | Copies memberships into the join table, drops `Endpoint.endpointGroupId`; its `NOTICE` says how many were dropped |
+  | `0050_script_run` | Script runs |
+  | `0051_software_catalog` | The software catalog |
+  | `0052_ai_timeline` | AI summary audit actions |
+  | `0053_dynamic_device_groups` | Rule-based groups |
+  | `0054_outbound_email` | Outbound email |
+  | `0055_agent_migration` | Agent migration |
+  | `0056_chat` | Chat conversations and messages, `Endpoint.chatProtocol` |
+
+  0048 is unused.
+- **A production dependency changed both ways.** `nodemailer` 10.2.1 is added and `@anthropic-ai/sdk` is removed.
+  Rsyncing `dist` alone works until the next restart, then the API fails with `Cannot find module 'nodemailer'`.
+  Regenerate the target manifest and reinstall, checking npm's exit code before rsyncing anything:
+  ```bash
+  pnpm deploy:manifest -o /tmp/prod-package.json
+  cd /tmp && npm install --omit=dev --package-lock-only     # must exit 0
+  sudo cp /tmp/prod-package.json /opt/reboot-remote/api/package.json
+  cd /opt/reboot-remote/api && sudo npm install --omit=dev
+  ```
+  Remove `ANTHROPIC_API_KEY` from `/etc/reboot-remote/api.env` if it is there. It is ignored.
+- **Patch policies need approving again.**
+  - Policies approved under 0.32/0.33 can still run their canary but no later ring (`result_key_not_pinned`).
+  - Approve them again once every computer in every ring but the last runs the 0.34 agent and has scanned once.
+  - Before then, creating a policy is refused with `409 RESULT_KEY_MISSING`.
+  - On the signer's approval page, compare each key fingerprint with `rem0te-agent.exe status` on the computer.
+- **The signed agent must be rebuilt and published through the release chain** for the restart rule, signed results,
+  script runs, software actions and chat:
+  - An older agent refuses a restart-rule plan whole (`params_not_allowed`), so nothing is installed or restarted.
+  - An older agent signs nothing, so its results can't open a policy ring.
+  - An older agent doesn't report `windows.script.run@1` or the software actions, so those are never offered to it.
+  - An older agent doesn't report `agentChat`, so its Chat tab says it is too old. Computers on the standard agent
+    (production today) cannot chat at all.
+  - The signed channel's `install.ps1` must also be re-signed for signed agents to report their last update check.
+    `windows-script.ts` changed.
+- **The approval signer must be rebuilt and reinstalled** (`apps/api/scripts/build-approval-signer.mjs`). It now
+  bundles `actions/device-result.js` and `actions/script-run.js`, still with no Nest or Prisma. It creates
+  `device-keys/`, `scripts/` and `script-revocations/` in its state directory itself.
+- **Grant `support:chat`** to whoever should chat with the person at a computer. It is in no preset.
+- **Creating any API key now needs a fresh sign-in.** Scripts that create keys from a session must call
+  `POST /auth/step-up` first.
+- **API consumers:**
+  - Device-list rows have `groups` (an array) instead of `group`.
+  - `GET /endpoints/:id` has `groups` instead of `endpointGroup`.
+  - The CSV column is *Groups*.
+- **Retention starts two minutes after the API does.**
+  - Its first passes clear the backlog at up to 20,000 rows per table per hour.
+  - Set `RETENTION_SWEEP=off` to postpone it, or raise `RETENTION_BATCHES` to go faster.
+  - `VACUUM (FULL, ANALYZE)` in a maintenance window gives the space back.
+- **Mail is off until a Platform Admin configures a relay.**
+  - A relay on the same host needs `SMTP_ALLOW_LOCAL_RELAY=loopback`; one on the LAN needs `=private`.
+  - An existing "every kind" containment pause does not gain the new `notifications` kind.
+- **The AI summary stays unavailable** until ClientSt0r acknowledges and serves P11/P12
+  (`INTEGRATION_COORDINATION.md` §5A). It is not available against the real ClientSt0r today.
+- **New optional settings:**
+  - `HBBS_PEER_CACHE_SECONDS` (10, clamped to 1–30).
+  - `RETENTION_*` (see *Data retention*).
+  - `REPORT_SCHEDULE_SWEEP` / `_SECONDS`, `SCRIPT_OUTPUT_SWEEP` and `SMTP_ALLOW_LOCAL_RELAY`.
+  - `CHAT_RETENTION_SWEEP`, `CHAT_RETENTION_DAYS`, `CHAT_SWEEP_SECONDS`, `CHAT_PRUNE_BATCH(ES)` and
+    `CHAT_MAX_WAITERS` (see *Chat*).
+  - `WINGET_MANIFEST_BASE` is for the e2e fixture only and is ignored unless it is a loopback http URL.
+- **Expect "not confirmed" for an agent migration** dispatched over two hours ago whose computer still reports the
+  standard agent. The standard heartbeat does not report the migration script's exit code.
+
+---
+
 ## [0.33.0] — 2026-11-11 · *Lookout*
 
 The third increment of the RMM overhaul: finding things and seeing what a computer is doing. Six parts, each built

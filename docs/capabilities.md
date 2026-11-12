@@ -32,7 +32,11 @@ far each part has been tested. "Tested" here means one of three things, and they
 | **Deploying updates** (canary, rings, two approvals) | **No** | Yes, when approvals are configured | **No** | **No** | No | No |
 | Approved actions (start the Print Spooler) | No | Yes, when approvals are configured | No | No | No | No |
 | Maintenance actions (restart an allowlisted service, schedule or cancel a restart, collect logs) | No | Yes (0.32+ agent), when approvals are configured | No | No | No | No |
+| Chat with the person at the computer (0.34; [chat.md](chat.md)) | No | Yes (0.34+ agent; **not yet run on real Windows**) | No | No | No | No |
 | Password rotation, reinstall, RustDesk client update from the console | Yes | Yes | **No** — the console refuses them; re-run the installer on the computer | **No** — the console refuses them; re-run the installer on the computer | No | No |
+| Agent card (0.34): type, version, current or behind, channel, portal update mode, last update result | Yes | Yes (last update result from 0.34 signed builds) | Yes, with the command to re-run the installer | Yes, with the command to re-run the installer | Type only | No |
+| **Update agent** from the console (0.34) | Yes: re-runs the current standard installer (the reinstall path) | **Check for update now**: `rem0te-agent.exe update`, signed files only | **No** — re-run the installer on the computer | **No** — re-run the installer on the computer | No | No |
+| **Upgrade to signed agent** from the console, one computer or a selection (0.34) | Yes, with a fresh sign-in and a reason, while the portal is not in *Signed only*; **fixture-tested only** | Already signed | No signed agent for Linux | No signed agent for macOS | No | No |
 | Containment honoured on the device | Server side only | Server side, and the agent checks the signed pause | Server side only (it acts on nothing anyway) | Server side only (it acts on nothing anyway) | Server side only | Server side only |
 
 The standard agent never deploys anything. The Linux and macOS agents go further: they act on **nothing** the
@@ -78,7 +82,7 @@ values.
 | To use | You need |
 |---|---|
 | Monitoring and notifications | Nothing to start: global monitors are seeded. Webhooks: a notification policy ([monitoring.md](monitoring.md)) |
-| The signed agent | The signed update channel ([update-signing.md](update-signing.md)), and endpoints moved to it |
+| The signed agent | The signed update channel ([update-signing.md](update-signing.md)), and endpoints moved to it — locally, by GPO/Intune, or from the computer's Agent card (0.34) |
 | Approved actions, update deployment | The approval signer, installed separately, with roster approvers who have passkeys ([approved-actions.md](approved-actions.md), [staged-patching.md](staged-patching.md)) |
 | ClientSt0r ticket analysis and alert tickets | A peers file, the integration worker, organization and technician mappings ([integration-clientst0r.md](integration-clientst0r.md)). **ClientSt0r cannot pair yet**: see the contract's [CLIENTST0R.md](contracts/ticket-rmm-v1/CLIENTST0R.md) |
 
@@ -99,6 +103,7 @@ values.
 | Patch status: offline, stale evidence | **No** | Yes (scan time moved back 80 hours in the database) | Yes |
 | Patch status: externally managed (WSUS, Intune) | **No** | Yes (the agent's registry detection against a simulated registry) | Yes |
 | Approved actions (Print Spooler) | **No** | Yes (`e2e-approved-action.mjs`) | Yes |
+| Agent upgrade from the console (0.34): the request, the heartbeat handing exactly that computer its nonce, the served script and its digest pin | **No** — `migrate` itself has never run on Windows | The heartbeat's agent-status block under pwsh against fixture files (`unit-agent-migration.mjs`) | Yes: real API, real signed repository from `rem0te-release`, a stand-in agent binary (`e2e-agent-upgrade.mjs`) |
 | Maintenance actions (service restart, restart schedule/cancel, log collection) | **No** | Yes (`e2e-maintenance-actions.mjs`; service manager, `shutdown.exe`, `wevtutil` and the session count simulated) | Yes |
 | ClientSt0r workflow | — | — | Against a contract-conformant reference peer (`e2e-ticket-workflow.mjs`). **Against the real ClientSt0r: does not interoperate yet** (`interop-clientst0r.mjs`, four measured gaps) |
 

@@ -34,12 +34,17 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[metric-history.md](metric-history.md)** — CPU, memory and disk over 24 hours to 90 days on a computer's
   Performance tab: what is recorded, gaps, roll-up and retention settings, storage per 1,000 computers (0.33).
 - **[reports.md](reports.md)** — patch compliance, agent coverage, alert frequency and offline time per
-  business and site, what each is computed from and what it cannot tell you, and the audited CSV export (0.32).
+  business and site, what each is computed from and what it cannot tell you, and the audited CSV export (0.32);
+  software version compliance per catalog entry (0.34).
+- **[email.md](email.md)** — outbound email (0.34): the SMTP relay and which hosts it may be, confirmed recipients,
+  alert emails, scheduled reports (exactly once per period, evaluated as their owner), and stopping all mail.
 - **[tactical-rmm.md](tactical-rmm.md)** — connecting and querying from inside
   Tactical RMM: URL Actions, agent matching, and the Collector Task.
 - **[integration-clientst0r.md](integration-clientst0r.md)** — ClientSt0r ticket
   analysis (contract ticket-rmm-v1): staff-only findings, what a job can and
   cannot touch, peers file, mappings. Contract: [contracts/ticket-rmm-v1](contracts/ticket-rmm-v1/README.md).
+- **[chat.md](chat.md)** — chatting with the person at a Windows computer: the window on their desktop, receipts,
+  limits, containment, audit and 400-day retention; signed agent only, not yet run on real Windows (0.34).
 - **[support-requests.md](support-requests.md)** — the customer support link,
   the status page, and the technician queue.
 - **[technicians.md](technicians.md)** — MSP technicians: per-business,
@@ -58,9 +63,13 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[staged-patching.md](staged-patching.md)** — Windows updates in stages (0.27): a canary, then rings, each a
   signed plan two approvers authorize; what is installed and refused, the promotion gate, what *effective* means,
   and what is and is not proven.
+- **[software-deployment.md](software-deployment.md)** — software deployment (0.34): a catalog of allowlisted winget
+  packages pinned by version and installer SHA-256, installed or uninstalled on one computer or by canary and rings
+  as signed two-approver actions; detection rules, version compliance, who verifies what, and what is not proven.
 - **[script-library.md](script-library.md)**: the script library. PowerShell scripts with immutable, hashed
-  versions, static-check warnings, and review by someone other than the author. Scripts can't run yet; the page
-  explains the signed path they'll take and the threat model.
+  versions, static-check warnings, and review by someone other than the author. From 0.34 an approved version
+  runs on Windows as the signed action `windows.script.run@1`, only once its hash is on the approval signer's own
+  allowlist; the page covers that path, its limits, the threat model, and that it hasn't run on real Windows yet.
   and what is and is not proven. Since 0.32 it also covers installing from one computer's Patches tab and patch
   policies, which are approved once and then signed ring by ring by the signer inside a maintenance window.
 - **[patching-setup.md](patching-setup.md)** — turning on signed patching in production, in order (0.32): signed
@@ -75,6 +84,7 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   review of trust changes, and what this build can and cannot enforce.
 - **[setup.md](setup.md)** — installation, configuration, ports, operations.
 - **[server-sizing.md](server-sizing.md)** — how big a server for 50 to 5,000 computers, from measured heartbeat cost and row sizes.
+- **[data-retention.md](data-retention.md)** — what ages out of the database and when, what never does (the audit log), and the `RETENTION_*` settings.
 - **[updates.md](updates.md)** — the three things that can be out of date
   (Rem0te, the RustDesk clients, hbbs/hbbr) and how each is updated.
 - **[architecture.md](architecture.md)** — what runs where, the data model, and

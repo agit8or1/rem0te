@@ -373,13 +373,15 @@ check(
 {
   const signerDir = 'apps/api/src/approval-signer';
   const signerFiles = readdirSync(join(ROOT, signerDir)).filter((f) => f.endsWith('.ts')).map((f) => `${signerDir}/${f}`);
-  const ALLOWED_IMPORT = /^(node:|crypto$|\.\/|@simplewebauthn\/server$|zod$|\.\.\/actions\/catalog$|\.\.\/actions\/patch-policy$|\.\.\/integration\/crypto$)/;
+  const ALLOWED_IMPORT = /^(node:|crypto$|\.\/|@simplewebauthn\/server$|zod$|\.\.\/actions\/catalog$|\.\.\/actions\/patch-policy$|\.\.\/actions\/device-result$|\.\.\/actions\/script-run$|\.\.\/integration\/crypto$)/;
   const importsOf = (src) => [...src.matchAll(/(?:from|require\()\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
   const bad = [];
   // 0.32: the patch-policy evaluator (and the posture module it judges with)
-  // run inside the signer, so they are held to the same rule.
-  for (const f of [...signerFiles, 'apps/api/src/actions/catalog.ts', 'apps/api/src/integration/crypto.ts', 'apps/api/src/actions/patch-policy.ts', 'apps/api/src/patching/posture.ts']) {
-    const own = f.startsWith(signerDir) ? ALLOWED_IMPORT : /^(node:|crypto$|zod$|\.\/crypto$|\.\/catalog$|\.\.\/actions\/catalog$|\.\.\/patching\/posture$|\.\.\/integration\/crypto$)/;
+  // run inside the signer, so they are held to the same rule; so (0.34) is
+  // the device-result verifier, and the script-run rules (argument schema,
+  // plan block, allowlist proposal).
+  for (const f of [...signerFiles, 'apps/api/src/actions/catalog.ts', 'apps/api/src/integration/crypto.ts', 'apps/api/src/actions/patch-policy.ts', 'apps/api/src/patching/posture.ts', 'apps/api/src/actions/device-result.ts', 'apps/api/src/actions/script-run.ts']) {
+    const own = f.startsWith(signerDir) ? ALLOWED_IMPORT : /^(node:|crypto$|zod$|\.\/crypto$|\.\/catalog$|\.\/device-result$|\.\/script-run$|\.\.\/actions\/catalog$|\.\.\/actions\/device-result$|\.\.\/patching\/posture$|\.\.\/integration\/crypto$)/;
     for (const i of importsOf(read(f))) if (!own.test(i)) bad.push(`${f} imports ${i}`);
   }
   check('approval signer loads no Nest, Prisma or portal module', signerFiles.length >= 4 && bad.length === 0,
@@ -396,9 +398,11 @@ check(
   const goCat = read('tools/windows-installer/internal/action/catalog.go');
   const goIds = [...goCat.matchAll(/ID: "([^"]+)"/g)].map((m) => m[1]);
   // 0.27 added windows.update.install (§ 15); 0.32 the four maintenance
-  // actions. The list is exact and ordered: anything further is a review.
-  const CATALOG_IDS = ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect'];
-  check('agent catalog is exactly the Spooler start, update install, service restart, restart schedule/cancel and log collection',
+  // actions; 0.34 windows.script.run (§ 39), then software install and
+  // uninstall (§ 40). The list is exact and ordered: anything further is a
+  // review.
+  const CATALOG_IDS = ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect', 'windows.script.run', 'windows.software.install', 'windows.software.uninstall'];
+  check('agent catalog is exactly the Spooler start, update install, service restart, restart schedule/cancel, log collection, approved-script run and software install/uninstall',
     goIds.join(',') === CATALOG_IDS.join(',') && /const ServiceName = "Spooler"/.test(goCat) && /s == ServiceName/.test(goCat),
     `agent catalog ids: ${goIds.join(', ')}`);
   const tsCat = read('apps/api/src/actions/catalog.ts');
@@ -409,11 +413,15 @@ check(
     `portal catalog ids: ${tsIds.join(', ')}; CATALOG = [${tsList}]`);
   // Every agent entry's parameters are one of the closed forms below, and
   // nothing else: a fixed service, update identities, an allowlisted service,
-  // a bounded integer, or no parameters at all.
+  // a bounded integer, no parameters at all, or (0.34) a script version, its
+  // hash, typed arguments and a timeout from a fixed list (§ 39 holds that
+  // form to its rules).
   const entries = goCat.slice(goCat.indexOf('var catalog = []Action{')).split(/\n\t\{\n/).slice(1);
   const CLOSED = [/ParamsOK: func\(p map\[string\]any\) bool \{\s*if len\(p\) != 1 \{\s*return false\s*\}\s*s, ok := p\["service"\]\.\(string\)\s*return ok && s == ServiceName/,
     /ParamsOK:\s+updateParamsOK,/, /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return RestartService\(p\) != "" \},/,
-    /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return RestartDelay\(p\) != 0 \},/, /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return len\(p\) == 0 \},/];
+    /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return RestartDelay\(p\) != 0 \},/, /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return len\(p\) == 0 \},/, /ParamsOK:\s+scriptParamsOK,/,
+    // 0.34: the five closed software keys, checked in § 40.
+    /ParamsOK:\s+softwareParamsOK,/];
   const openParams = entries.filter((e) => !CLOSED.some((re) => re.test(e))).map((e) => (e.match(/ID: "([^"]+)"/) ?? [])[1] ?? '?');
   check('every agent catalog entry has closed parameters', entries.length === CATALOG_IDS.length && openParams.length === 0, `not closed: ${openParams.join(', ')}`);
   const maint = read('tools/windows-installer/internal/action/maintenance.go');
@@ -436,14 +444,19 @@ check(
       && /if err != nil \{\s*return &Result\{Outcome: "not_executed", Reason: "session_state_unknown"/.test(maint),
     'maintenance risk must be "high" and "cannot tell" must count as a session');
   check('the agent\'s action package runs no process; the Windows side runs only shutdown.exe and wevtutil.exe from System32',
-    !/"os\/exec"|exec\.Command/.test(maint + read('tools/windows-installer/internal/action/action.go') + goCat)
+    !/"os\/exec"|exec\.Command/.test(maint + read('tools/windows-installer/internal/action/action.go') + goCat + read('tools/windows-installer/internal/action/software.go'))
       && [...read('tools/windows-installer/action_windows.go').matchAll(/runSystem32\([^,]+, "([^"]+)"/g)].map((m) => m[1]).every((x) => x === 'shutdown.exe' || x === 'wevtutil.exe')
       && (read('tools/windows-installer/action_windows.go').match(/exec\.Command(?:Context)?\(/g) ?? []).length === 2,
     'maintenance must not grow a way to run something else');
-  check('the maintenance actions are not offered to ClientSt0r', (tsCat.match(/integration: false,/g) ?? []).length === 4 && /proposable\(\): string\[\] \{[^}]{0,200}CATALOG\.filter\(\(a\) => a\.integration\)\.map/.test(read('apps/api/src/integration/action-proposals.service.ts'))
+  // Four maintenance actions (0.32), the script run and the two software actions (0.34).
+  check('the maintenance actions, the script run and the software actions are not offered to ClientSt0r', (tsCat.match(/integration: false,/g) ?? []).length === 7 && /export const SCRIPT_RUN: CatalogAction = \{[\s\S]{0,2000}?\bintegration: false,/.test(tsCat) && /proposable\(\): string\[\] \{[^}]{0,200}CATALOG\.filter\(\(a\) => a\.integration\)\.map/.test(read('apps/api/src/integration/action-proposals.service.ts'))
       && /if \(!catalogEntry\(body\.action\.id, body\.action\.version\)\?\.integration\)/.test(read('apps/api/src/integration/action-proposals.service.ts')),
     'advertising them changes the ticket-rmm contract');
-  check('portal catalog has no command, script, path or URL parameter', !/\b(command|script|path|url|args|cmd)\s*:/i.test(tsCat.replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, '')),
+  // 0.34: the plan's one `script:` field is the signed ScriptBlock — hashes,
+  // ids and declared parameters, never text — and is allowed once, exactly.
+  const tsCatCode = tsCat.replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, '');
+  check('portal catalog has no command, script, path or URL parameter',
+    (tsCatCode.match(/^ {2}script: ScriptBlock\.optional\(\),$/gm) ?? []).length === 1 && !/\b(command|script|path|url|args|cmd)\s*:/i.test(tsCatCode.replace(/^ {2}script: ScriptBlock\.optional\(\),$/m, '')),
     'the catalog must not grow a free-form parameter');
   const act = read('tools/windows-installer/internal/action/action.go');
   const iExec = act.indexOf('State: "executing"'), iRun = act.indexOf('r := Lookup(plan.Action.ID, plan.Action.Version).Execute(plan, o)'), iJournal = act.indexOf('readJournal(o, jobID)');
@@ -452,7 +465,7 @@ check(
     'the journal write must precede execute() and a failed write must stop it');
   const iPre = act.indexOf('a.Precheck(plan, o)'), iPz = act.indexOf('o.Pause.ActionsPaused(');
   check('an action\'s own checks run after verification and the signed pause, before the executing journal entry, and end the job',
-    iPre > iPz && iPz > 0 && iExec > iPre && /if pr := a\.Precheck\(plan, o\); pr != nil \{[\s\S]{0,200}writeJournal\(o, journal\{JobID: jobID, State: "done"[\s\S]{0,120}return report\(o, r\)/.test(act),
+    iPre > iPz && iPz > 0 && iExec > iPre && /if pr := a\.Precheck\(plan, o\); pr != nil \{[\s\S]{0,200}return final\(o, jobID, planSHA, r\)/.test(act) && /func final\([\s\S]{0,400}writeJournal\(o, journal\{JobID: jobID, State: "done"[\s\S]{0,120}return report\(o, r\)/.test(act),
     'Precheck must sit between the pause and the executing journal, and its result must be final');
   // class-transformer's implicit conversion turns an untyped array of objects
   // into [[]] — silently. It broke command-result events in production.
@@ -475,8 +488,11 @@ check(
   const upd = read('tools/windows-installer/internal/action/updates.go');
   // 0.32 adds an optional "allow" filter (a patch policy's classes, severities
   // and excluded KBs). It can only narrow: closed keys, fixed values.
-  check('agent update params are closed: exactly updates + reboot "never" (+ optional allow), each {updateId, revision}',
-    /want := 2\s*if hasAllow \{\s*want = 3\s*\}\s*if len\(p\) != want \|\| p\["reboot"\] != "never"/.test(upd) && /!ok \|\| len\(m\) != 2/.test(upd)
+  // 0.34: reboot is one of two fixed strings (§ 37 has the restart's rules).
+  check('agent update params are closed: exactly updates + reboot "never" | "if_required_in_window" (+ optional allow), each {updateId, revision}',
+    /want := 2\s*if hasAllow \{\s*want = 3\s*\}\s*if len\(p\) != want \|\| UpdateReboot\(p\) == ""/.test(upd) && /!ok \|\| len\(m\) != 2/.test(upd)
+      && /func UpdateReboot\(p map\[string\]any\) string \{\s*switch s, _ := p\["reboot"\]\.\(string\); s \{\s*case RebootNever, RebootInWindow:\s*return s\s*\}\s*return ""\s*\}/.test(upd)
+      && /RebootNever = "never"/.test(upd) && /RebootInWindow = "if_required_in_window"/.test(upd)
       && /if k != "classifications" && k != "severities" && k != "excludeKbs" \{\s*return nil, paramErr/.test(upd)
       && /_, ok := patch\.Installable\[s\]; return ok/.test(upd),
     'the update action must not accept any other parameter, and allow may only narrow');
@@ -611,7 +627,7 @@ check(
 //     touches anything. screenshots.mjs had no such guard and defaulted to
 //     port 3000 — the production web port — until 0.29.
 {
-  for (const f of ['apps/web/scripts/screenshots.mjs', 'apps/web/scripts/capture-media.mjs', 'apps/web/scripts/capture-video.mjs', 'apps/web/scripts/e2e-navigation.mjs', 'apps/web/scripts/e2e-search-palette.mjs']) {
+  for (const f of ['apps/web/scripts/screenshots.mjs', 'apps/web/scripts/capture-media.mjs', 'apps/web/scripts/capture-video.mjs', 'apps/web/scripts/e2e-navigation.mjs', 'apps/web/scripts/e2e-search-palette.mjs', 'apps/web/scripts/e2e-ui.mjs']) {
     const src = read(f);
     check(`${f.split('/').pop()} refuses https and ports 3000/443`, /:\(3000\|443\)\\b/.test(src) && /https:\\\/\\\//.test(src) && /throw new Error\(`Refusing/.test(src), `${f} must throw before capturing against a production-looking WEB_URL`);
   }
@@ -783,8 +799,10 @@ check(
     /this\.acl\.assertCapability\(actor, CAP\.COMPUTERS_VIEW\);/.test(dw) && /\[this\.acl\.endpointVisibilityWhere\(actor, q\.businessId\), \{ status: 'ACTIVE' \}\]/.test(dw) && /return \{ AND: and \};/.test(dw),
     'devicesWhere must assert computers:view and AND the visibility fragment');
   check('reports: alerts start from MonitoringAdminService.alertWhere, AND-ed with device visibility',
-    /this\.monitoring\.alertWhere\(actor, q\.businessId\)/.test(aw) && /\{ OR: \[\{ endpointId: null \}, \{ endpoint: this\.acl\.endpointVisibilityWhere\(actor, q\.businessId\) \}\] \}/.test(aw) && /return \{ AND: and \};/.test(aw),
-    'alertsWhere must call alertWhere and AND the visibility rule');
+    /this\.monitoring\.alertWhere\(actor, q\.businessId\)/.test(aw) && /\{ OR: \[\{ endpointId: null \}, \{ endpoint: \{ is: this\.acl\.endpointVisibilityWhere\(actor, q\.businessId\) \} \}\] \}/.test(aw) && /return \{ AND: and \};/.test(aw),
+    // `is:` (0.34): a bare `{ endpoint: {} }` inside an OR matches nothing in
+    // Prisma 5, which emptied a Platform Admin's alert reports.
+    'alertsWhere must call alertWhere and AND the visibility rule, as `endpoint: { is: … }`');
   const epQueries = [...rsvc.matchAll(/this\.prisma\.endpoint\.(findMany|groupBy|count|aggregate)\(\{[\s\S]{0,160}/g)].map((m) => m[0]);
   const alQueries = [...rsvc.matchAll(/this\.prisma\.monitorAlert\.(findMany|groupBy|count|aggregate)\(\{[\s\S]{0,160}/g)].map((m) => m[0]);
   check('reports: every endpoint query is scoped by devicesWhere and every alert query by alertsWhere',
@@ -794,9 +812,9 @@ check(
   check('reports: the visibility rule is never spread into another object', !/\.\.\.\s*this\.acl\.endpointVisibilityWhere/.test(rsvc), 'spread found');
   const routes = rctl.split('@Get(').slice(1);
   check('reports: every route names its capability; every export is throttled',
-    routes.length === 8 && routes.every((r) => /^\s*'[^']+'\)\s*@RequireCapability\(CAP\.(COMPUTERS_VIEW|ALERTS_VIEW)\)/.test(r)) && routes.filter((r) => /export\.csv/.test(r.slice(0, 60))).every((r) => /@RateLimit\(10\)/.test(r.slice(0, 200)))
+    routes.length === 10 && routes.every((r) => /^\s*'[^']+'\)\s*@RequireCapability\(CAP\.(COMPUTERS_VIEW|ALERTS_VIEW)\)/.test(r)) && routes.filter((r) => /export\.csv/.test(r.slice(0, 60))).every((r) => /@RateLimit\(10\)/.test(r.slice(0, 200)))
       && routes.filter((r) => /^'(alert-frequency|offline-time)/.test(r)).every((r) => /CAP\.ALERTS_VIEW/.test(r.slice(0, 120))),
-    'eight routes, each @RequireCapability; alert reports need ALERTS_VIEW; exports @RateLimit');
+    'ten routes (0.34 added software compliance and its export), each @RequireCapability; alert reports need ALERTS_VIEW; exports @RateLimit');
   const ex = rsvc.slice(rsvc.indexOf('async exportCsv('));
   check('reports: an export is capped, neutralised and audited (logOrFail) before it is returned',
     /if \(lines\.length > EXPORT_MAX_ROWS\) \{\s*throw new BadRequestException/.test(ex) && /cells\.map\(csvCell\)/.test(ex)
@@ -818,7 +836,9 @@ check(
   const files = readdirSync(join(ROOT, dir)).filter((f) => f.endsWith('.ts')).map((f) => `${dir}/${f}`);
   const src = Object.fromEntries(files.map((f) => [f, read(f)]));
   const code = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
-  const ALLOWED = /^(node:crypto|zod|express|@nestjs\/common|@prisma\/client|\.\/(definition|static-checks|script-library\.(service|controller))|\.\.\/(prisma\/prisma\.service|audit\/audit\.(service|module)|rbac\/(access-control\.service|capabilities|platform-permissions)|security-controls\/review|common\/guards\/jwt-auth\.guard|common\/decorators\/actor\.decorator|common\/throttling|auth\/step-up\.service))$/;
+  // 0.34: the pure parameter/hash rules live in actions/script-run (zod and
+  // node:crypto only, also loaded by the signer); the library takes them from there.
+  const ALLOWED = /^(node:crypto|zod|express|@nestjs\/common|@prisma\/client|\.\/(definition|static-checks|script-library\.(service|controller))|\.\.\/(prisma\/prisma\.service|audit\/audit\.(service|module)|rbac\/(access-control\.service|capabilities|platform-permissions)|security-controls\/review|common\/guards\/jwt-auth\.guard|common\/decorators\/actor\.decorator|common\/throttling|auth\/step-up\.service|actions\/script-run))$/;
   const importsOf = (s) => [...s.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s*['"]([^'"]+)['"]|\b(?:require|import)\(\s*['"]([^'"]+)['"]/gm)].map((m) => m[1] ?? m[2]);
   const badImports = files.flatMap((f) => importsOf(src[f]).filter((i) => !ALLOWED.test(i)).map((i) => `${f} imports ${i}`));
   const touches = files.flatMap((f) => [...code(src[f]).matchAll(/\b(actionJob|actionTarget|ActionsService|SignerClient|createPlan|endpointCommand|diagnosticRun|rustdeskNode|EnrollmentService|DiagnosticsCatalogService|PatchingService|heartbeat|forHeartbeat|envelope)\b|\.endpoint\./gi)].map((m) => `${f}: ${m[0]}`));
@@ -831,8 +851,14 @@ check(
   const ctl = src[`${dir}/script-library.controller.ts`] ?? '';
   const routes = [...ctl.matchAll(/@(Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)')?\s*\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''}`);
   const EXPECT = ['GET ', 'POST ', 'GET :id', 'GET :id/diff', 'POST :id/versions', 'GET :id/versions/:version', 'POST :id/versions/:version/submit', 'POST :id/versions/:version/withdraw', 'POST :id/versions/:version/review'];
+  // 0.34: the one other controller with script routes is the script-run
+  // module's, and its routes are exactly these (§ 39 checks what they do).
+  const RUN_CTL = 'apps/api/src/script-run/script-run.controller.ts';
+  const runRoutes = [...read(RUN_CTL).matchAll(/@(Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)')?\s*\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''}`);
+  const RUN_EXPECT = ['GET versions/:versionId', 'POST versions/:versionId/allowlist', 'POST versions/:versionId/allowlist/revoke', 'POST '];
   const elsewhere = walk('apps/api/src').filter((f) => /controller\.ts$/.test(f) && !f.startsWith(dir))
-    .filter((f) => /@(?:Get|Post|Put|Patch|Delete)\('[^']*scripts?\b|@Controller\(\s*\[?\s*'[^']*scripts?\b/i.test(read(f)));
+    .filter((f) => /@(?:Get|Post|Put|Patch|Delete)\('[^']*scripts?\b|@Controller\(\s*\[?\s*'[^']*scripts?\b/i.test(read(f)))
+    .filter((f) => !(f === RUN_CTL && /@Controller\('script-runs'\)/.test(read(f)) && JSON.stringify(runRoutes) === JSON.stringify(RUN_EXPECT)));
   check('the script library has no run route, here or anywhere else',
     /@Controller\('scripts'\)/.test(ctl) && JSON.stringify(routes) === JSON.stringify(EXPECT) && !routes.some((r) => /run|exec|dispatch|deploy|send|schedule|push|approve/i.test(r)) && elsewhere.length === 0,
     `routes: ${routes.join(', ')}${elsewhere.length ? `; other controllers with script routes: ${elsewhere.join(', ')}` : ''}`);
@@ -1004,8 +1030,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('ACTION_NOT_DIRECT still holds for updates',
     /ACTION_NOT_DIRECT/.test(read('apps/api/src/actions/actions.service.ts')) && /direct: false/.test(read('apps/api/src/actions/catalog.ts')),
     'POST /endpoints/:id/actions must refuse windows.update.install');
-  check('a policy can never restart a computer in this release', /reboot: z\.literal\('never'\)/.test(ev) && /reboot: z\.literal\('never'\)/.test(pol),
-    'a reboot rule is a §15 change to the agent\'s closed params');
+  // 0.34: the reboot rule is the closed pair (§ 37); a policy defaults to never.
+  check('a policy\'s restart rule is the closed pair, defaults to never, and is signed into the policy',
+    /reboot: UpdateReboot,/.test(ev) && /reboot: UpdateReboot\.default\('never'\),/.test(pol) && /window: dto\.window, reboot: dto\.reboot,/.test(pol),
+    'PolicyDoc.reboot must be UpdateReboot and CreatePolicyDto must default to never');
 }
 
 // 26. Within-business computer visibility (0.31.2). A Business User sees only
@@ -1045,10 +1073,11 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //     one: a person needs a fresh re-authentication, whatever their role and
 //     whatever step-up actions are configured (assertFresh, never the
 //     configurable StepUpService.assert). An API key cannot step up and keeps
-//     the ability, so minting a key that carries enrollment:write needs the
-//     same fresh re-authentication. Every caller must say which proof it
-//     has; nothing else writes a DeviceClaimToken. Registering by RustDesk ID
-//     mints no credential and so is not gated.
+//     the ability, so minting a key needs the same fresh re-authentication
+//     (0.33: keys carrying enrollment:write; 0.34: every key, § 34). Every
+//     caller must say which proof it has; nothing else writes a
+//     DeviceClaimToken. Registering by RustDesk ID mints no credential and so
+//     is not gated.
 {
   const enr = read('apps/api/src/enrollment/enrollment.service.ts');
   const ctl = read('apps/api/src/enrollment/enrollment.controller.ts');
@@ -1081,11 +1110,11 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const keys = read('apps/api/src/apikeys/apikeys.service.ts');
   const keysCtl = read('apps/api/src/apikeys/apikeys.controller.ts');
   const keyFn = keys.slice(keys.indexOf('async create('), keys.indexOf('async revoke('));
-  check('a key that can mint enrolment tokens needs a fresh re-authentication to create',
-    /if \(validScopes\.includes\('enrollment:write'\)\) \{\s*assertFresh\(freshMethod, \{/.test(keyFn)
-      && keyFn.indexOf("validScopes.includes('enrollment:write')") < keyFn.indexOf('apiKey.create(')
+  check('a key that can mint enrolment tokens needs a fresh re-authentication to create (every key does since 0.34, § 34)',
+    /\n    assertFresh\(freshMethod, \{\s*action: 'apikey\.create',/.test(keyFn)
+      && keyFn.indexOf('assertFresh(freshMethod') < keyFn.indexOf('apiKey.create(')
       && /this\.stepUp\.read\(req, u\.sub, u\.iat\)\?\.method \?\? null : null;\s*return \{ success: true, data: await this\.svc\.create\(actor, dto, freshMethod\) \};/.test(keysCtl),
-    'ApiKeysService.create must assertFresh on enrollment:write (the filtered scopes) before writing; the controller passes the step-up');
+    'ApiKeysService.create must assertFresh before writing; the controller passes the step-up');
   const eps = read('apps/api/src/endpoints/endpoints.service.ts');
   check('registering by RustDesk ID mints no credential (which is why it is not gated)',
     /rustdeskNode: \{ create: \{ tenantId: business\.tenantId, rustdeskId: dto\.rustdeskId, platform: dto\.platform \} \},/.test(eps)
@@ -1126,7 +1155,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /where: this\.listWhere\(actor, search \? likeEscape\(search\) : undefined\),/.test(read('apps/api/src/businesses/businesses.service.ts'))
       && /where: this\.listWhere\(actor, businessId\),/.test(read('apps/api/src/sites/sites.service.ts'))
       && /where: this\.memberWhere\(actor, businessId\),/.test(read('apps/api/src/users/users.service.ts'))
-      && /where: this\.scopedWhere\(actor, \{ status: q\.status \}\)/.test(read('apps/api/src/endpoints/endpoint-list.service.ts')),
+      && /const scoped = this\.scopedWhere\(actor, \{ status: q\.status \}\);[\s\S]{0,200}where: scoped,/.test(read('apps/api/src/endpoints/endpoint-list.service.ts')),
     'GET /businesses, /sites, /users and the device list must build their where with the builders search uses');
   {
     // 0.33: the list routes' own searches escape too, with the same helper —
@@ -1137,7 +1166,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     check('search: GET /businesses, GET /endpoints and the device list escape LIKE metacharacters in a search',
       /const term = params\.search \? likeEscape\(params\.search\) : undefined;/.test(eps) && !/contains: params\.search/.test(eps)
         && (term.match(/contains: term,/g) ?? []).length === 6
-        && /const c = \{ contains: likeEscape\(q\.search\), mode: 'insensitive' as const \};/.test(lst) && !/contains: q\.search/.test(lst)
+        && /const c = \{ contains: likeEscape\(f\.search\), mode: 'insensitive' as const \};/.test(lst) && /const c = \{ contains: likeEscape\(f\.os\), mode: 'insensitive' as const \};/.test(lst)
+        && !/contains: [qf]\.(search|os)/.test(lst)
         && [eps, lst, read('apps/api/src/businesses/businesses.service.ts')].every((src) => /import \{ likeEscape \} from '\.\.\/common\/like';/.test(src)),
       'every user-typed contains: on those routes must go through common/like.ts likeEscape');
   }
@@ -1190,14 +1220,15 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const listSvc = read('apps/api/src/endpoints/endpoint-list.service.ts');
   const listQuery = read('apps/api/src/endpoints/list-query.ts');
 
-  check('bulk: exactly four repeatable actions, and nothing that connects, archives, deletes or runs an action',
-    /export const BULK_ACTIONS = \['group\.add', 'group\.remove', 'inventory\.refresh', 'client\.update'\] as const;/.test(rules)
-      && !/\b(authorizeConnect|connect\(|archive|restore\(|\.delete\(|deleteMany|ActionsService|actionJob|createPlan|SignerClient|scriptVersion)\b/i.test(code(bulkSvc).replace(/endpointGroup\.findUnique/g, '')),
-    'BULK_ACTIONS must stay the four, and the bulk service must not reach connect/archive/delete/approved actions');
+  // 0.34 adds agent.update and agent.migrate, through AgentUpgradeService (§ 43).
+  check('bulk: exactly six repeatable actions, and nothing that connects, archives, deletes or runs an action',
+    /export const BULK_ACTIONS = \['group\.add', 'group\.remove', 'inventory\.refresh', 'client\.update', 'agent\.update', 'agent\.migrate'\] as const;/.test(rules)
+      && !/\b(authorizeConnect|connect\(|archive|restore\(|\.delete\(|deleteMany|ActionsService|actionJob|createPlan|SignerClient|scriptVersion)\b/i.test(code(bulkSvc).replace(/this\.prisma\.endpointGroupMember\.deleteMany\(\{ where: \{ endpointGroupId: g\.id, endpointId: t\.id \} \}\)/g, '')),
+    'BULK_ACTIONS must stay the six, and the bulk service must not reach connect/archive/delete/approved actions');
   check('bulk: at most 200 per request, counted before de-duplication, for the export too',
     /export const BULK_MAX = 200;/.test(rules)
       && /if \(ids\.length > BULK_MAX\) throw bad\('BULK_TOO_LARGE'/.test(rules) && rules.indexOf('ids.length > BULK_MAX') < rules.indexOf('[...new Set(ids as string[])]')
-      && /const endpointIds = parseSelection\(body\.endpointIds\);/.test(rules) && /const ids = parseSelection\(body\.endpointIds\);/.test(bulkSvc),
+      && /const endpointIds = byGroup \? undefined : parseSelection\(body\.endpointIds\);/.test(rules) && /const ids = parseSelection\(body\.endpointIds\);/.test(bulkSvc),
     'parseSelection must cap the raw list; parseBulk and exportSelection must both use it');
   check('bulk: every computer is found through the visibility rule, AND-ed, and anything else is NOT_FOUND',
     /where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(a\), \{ id: \{ in: ids \} \}\] \}/.test(bulkSvc)
@@ -1224,22 +1255,23 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /if \(a\.businessId !== customerId\) return [^;]+;\s*if \(isOwnerRole\(a\.roleType\)\) return null;\s*return '[^']+';\s*\}/.test(refusal),
     'manageRefusal must mirror the client-update rule');
   check('groups: every write checks manageRefusal first, and a member must be in the group’s business',
-    /async create\(a: ActorContext, raw: unknown\) \{[\s\S]{0,400}const why = manageRefusal\(a, customerId\);\s*if \(why\) throw new ForbiddenException/.test(groupSvc)
+    /async create\(a: ActorContext, raw: unknown\) \{[\s\S]{0,900}const why = manageRefusal\(a, customerId\);\s*if \(why\) throw new ForbiddenException/.test(groupSvc)
       && /const g = await this\.findManageable\(a, id\);/.test(groupSvc.slice(groupSvc.indexOf('async update('))) && /const g = await this\.findManageable\(a, id\);/.test(groupSvc.slice(groupSvc.indexOf('async remove(')))
-      && /const why = manageRefusal\(a, g\.customerId\);/.test(bulkSvc) && /if \(t\.customerId !== g\.customerId\) \{/.test(bulkSvc)
-      && /updateMany\(\{ where: \{ id: t\.id, customerId: g\.customerId, endpointGroupId: null \}, data: \{ endpointGroupId: g\.id \} \}\)/.test(bulkSvc),
-    'create/update/remove and bulk membership must check manageRefusal; additions are conditional on the business');
+      && /const why = manageRefusal\(a, g\.customerId\);/.test(bulkSvc)
+      && /const step = membershipStep\(action, t, group, members\.has\(t\.id\), why\);\s*if \(step\.kind === 'refuse'\)/.test(bulkSvc)
+      && /if \(refusal\) return \{ kind: 'refuse', code: 'NOT_ALLOWED'/.test(rules) && /if \(t\.customerId !== group\.customerId\) return \{ kind: 'refuse', code: 'OTHER_BUSINESS'/.test(rules),
+    'create/update/remove and bulk membership must check manageRefusal and the business (membershipStep); the 0049 trigger backs the insert (§ 34)');
   check('groups: another business’s group is a 404',
     /if \(!g\.customerId \|\| g\.customerId !== a\.businessId\) throw new NotFoundException\('Group not found'\);/.test(groupSvc), 'findVisible must compare the business');
   const eps = read('apps/api/src/endpoints/endpoints.service.ts');
   const enr = read('apps/api/src/enrollment/enrollment.service.ts');
-  check('a computer gets only its own business’s group: creation, enrolment tokens, claims, and moving business',
+  check('a computer gets only its own business’s group: creation, enrolment tokens, claims (moving business: § 34’s trigger)',
     /if \(dto\.endpointGroupId\) await this\.assertGroupFor\(dto\.endpointGroupId, businessId, business\.tenantId\);/.test(eps)
       && /where: \{ id: groupId, OR: \[\{ customerId: businessId \}, \{ customerId: null, tenantId \}\] \}/.test(eps)
-      && /\.\.\.\(leavesGroup \? \{ endpointGroupId: null \} : \{\}\)/.test(eps)
       && /where: \{ id: dto\.endpointGroupId, OR: \[\{ customerId: businessId \}, \{ customerId: null, tenantId: business\.tenantId \}\] \}/.test(enr)
-      && /endpointGroupId: groupId,/.test(enr) && !/endpointGroupId: record\.endpointGroupId/.test(enr),
-    'create, update, token minting and claim must all tie the group to the business');
+      && /groupMemberships: \{ create: \{ endpointGroupId: groupId \} \}/.test(enr) && /data: \[\{ endpointGroupId: groupId, endpointId: endpoint\.id \}\]/.test(enr)
+      && !/endpointGroupId: record\.endpointGroupId/.test(enr.replace(/where: \{ id: record\.endpointGroupId,/, '')),
+    'create, token minting and claim must all tie the group to the business; the claim uses the re-checked groupId, never the token\'s raw id');
   const views = [...ctl.matchAll(/@(Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)')?\s*\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''}`);
   const handlers = ctl.split(/\n  @(?:Get|Post|Put|Patch|Delete)\(/).slice(1);
   check('views and groups: every route names its capability, no route runs a view, bulk has two routes',
@@ -1249,10 +1281,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     `routes: ${views.join(', ')}`);
   check('views store list parameters only, parsed by the list’s own parser; nothing in the view service reads computers',
     /const unknown = Object\.keys\(raw\)\.filter\(\(k\) => !\(LIST_FILTER_KEYS as readonly string\[\]\)\.includes\(k\)\);\s*if \(unknown\.length\) throw bad/.test(rules)
-      && /const q = parseListQuery\(asQuery\);/.test(rules)
+      && /const out: StoredFilters = storedForm\(parseListFilters\(asQuery\)\);/.test(rules)
       && /export const ViewUpdate = z\.object\(viewFields\)\.partial\(\)\.strict\(\);/.test(rules) && !/shared|businessId/.test(rules.slice(rules.indexOf('const viewFields = {'), rules.indexOf('export const ViewInput')))
       && !/this\.prisma\.endpoint\./.test(viewSvc) && /if \(f\.businessId && f\.businessId !== customerId\) \{/.test(viewSvc),
-    'normalizeViewFilters must refuse unknown keys and use parseListQuery; updates cannot change who a view is for; shared filters stay in the business');
+    'normalizeViewFilters must refuse unknown keys and use the list’s parseListFilters; updates cannot change who a view is for; shared filters stay in the business');
   check('a personal view is its author’s alone; a shared view is its business’s',
     /if \(!v\.shared\) \{\s*if \(v\.userId !== a\.userId\) throw new NotFoundException/.test(viewSvc)
       && /if \(!v\.customerId \|\| !\(a\.isPlatformAdmin \|\| v\.customerId === a\.businessId\)\) throw new NotFoundException/.test(viewSvc)
@@ -1266,7 +1298,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     ['DEVICE_GROUP_CREATED', 'DEVICE_GROUP_UPDATED', 'DEVICE_GROUP_DELETED'].every((x) => groupSvc.includes(`action: '${x}'`))
       && bulkSvc.includes("action: 'DEVICE_GROUP_MEMBERS_CHANGED'") && bulkSvc.includes("action: 'DEVICE_BULK_ACTION'") && viewSvc.includes("action: 'DEVICE_VIEW_SHARED_CHANGED'")
       && /if \(v\.shared\) await this\.auditShared\(a, v, 'created', null\);/.test(viewSvc) && /if \(v\.shared\) await this\.auditShared\(a, v, 'updated', before\);/.test(viewSvc) && /if \(v\.shared\) await this\.auditShared\(a, v, 'deleted', v\);/.test(viewSvc)
-      && /await this\.auditBulk\(a, input\.action, targets, ordered, group\);/.test(bulkSvc),
+      && /await this\.auditBulk\(a, input\.action, targets, ordered, group, target\);/.test(bulkSvc),
     'every write path must write its audit entry');
 }
 
@@ -1441,6 +1473,975 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('macOS is a read-only agent platform for every console refusal',
     /if \(isMacPlatform\(platform\)\) return 'macOS';/.test(plat) && /'MACOS_AGENT_READ_ONLY'/.test(plat),
     'readOnlyAgentOs must return macOS for a Mac, with its own refusal code');
+}
+
+// 33. Data retention (0.34). One sweep ages out operational history; it must
+//     never become a way to erase evidence or a live record. The audit chain
+//     (ActivityLog, AuditCheckpoint, AuditChainState) is named nowhere in the
+//     sweep — its one audit entry per pass is an insert through AuditService —
+//     and every statement writes only to an allow-listed table. Every
+//     statement names the finished states, so a pending command, an open
+//     diagnostic, an OPEN or ACKNOWLEDGED alert, a live session, or a used
+//     token or grant (offboarding's evidence of access) is never touched.
+//     Every statement is bounded and run through the batch loop.
+//     RETENTION_SWEEP=off stops it, and the status route is a Platform Admin
+//     read with no way to run or change the sweep.
+{
+  const svcRaw = read('apps/api/src/retention/retention.service.ts');
+  const svc = svcRaw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\s\/\/ [^\n`]*$/gm, '');
+  const policy = read('apps/api/src/retention/retention-policy.ts');
+  const ctl = read('apps/api/src/retention/retention.controller.ts');
+  const ALLOWED = ['EndpointCommand', 'DiagnosticRun', 'EndpointChange', 'MonitorAlert', 'MonitorAlertEvent', 'SupportSessionEvent', 'LauncherToken', 'ConnectionGrant', 'PrivilegedActivity'];
+  const writes = [...svc.matchAll(/\b(DELETE FROM|(?<!FOR )UPDATE|INSERT INTO|TRUNCATE)\s+"?([A-Za-z]+)"?/g)].map((m) => [m[1], m[2]]);
+  check('retention: the sweep never names the audit chain, and writes only to allow-listed tables',
+    !/ActivityLog|AuditCheckpoint|AuditChainState|activityLog|auditCheckpoint|auditChainState|TRUNCATE|INSERT INTO/i.test(svc)
+      && writes.length >= 9 && writes.every(([op, t]) => (op === 'DELETE FROM' || op === 'UPDATE') && ALLOWED.includes(t))
+      && !/\$(execute|query)RawUnsafe|\.(delete|deleteMany|update|updateMany|upsert|create|createMany)\(/.test(svc)
+      && (svc.match(/this\.audit\.(log|logOrFail)\(/g) ?? []).length === 1 && /action: 'RETENTION_PRUNED'/.test(svc),
+    `writes: ${writes.map((w) => w.join(' ')).join(' | ')}; the only audit call is one RETENTION_PRUNED insert`);
+  check('retention: the audit log and its checkpoints are evidence the policy never sweeps',
+    /key: 'audit', table: 'ActivityLog', label: '[^']+', class: 'evidence', sweep: 'none'/.test(policy)
+      && /key: 'checkpoints', table: 'AuditCheckpoint', label: '[^']+', class: 'evidence', sweep: 'none'/.test(policy)
+      && /export const NEVER_SWEPT = \['ActivityLog', 'AuditCheckpoint', 'AuditChainState'\] as const;/.test(policy),
+    'ActivityLog and AuditCheckpoint must be class evidence, sweep none');
+  const stmt = (table) => { const i = svc.indexOf(`DELETE FROM "${table}"`) >= 0 ? svc.indexOf(`DELETE FROM "${table}"`) : svc.indexOf(`UPDATE "${table}"`); return i < 0 ? '' : svc.slice(i, svc.indexOf('`', i)); };
+  const alertSel = svc.slice(svc.indexOf('SELECT a."id" FROM "MonitorAlert" a'), svc.indexOf('SKIP LOCKED'));
+  check('retention: nothing open, live or used is ever touched',
+    /const DONE_COMMAND = Prisma\.raw\(`\('SUCCEEDED','FAILED','EXPIRED'\)`\);/.test(svc)
+      && /const DONE_DIAGNOSTIC = Prisma\.raw\(`\('COMPLETED','FAILED','EXPIRED'\)`\);/.test(svc)
+      && /const DONE_SESSION = Prisma\.raw\(`\('SESSION_COMPLETED','FAILED','CANCELED','STATUS_UNKNOWN'\)`\);/.test(svc)
+      && (stmt('EndpointCommand').match(/"status" IN \$\{DONE_COMMAND\}/g) ?? []).length === 2
+      && (stmt('DiagnosticRun').match(/"status" IN \$\{DONE_DIAGNOSTIC\}/g) ?? []).length === 2
+      && /a\."state" = 'RESOLVED'/.test(alertSel) && /k\."state" <> 'RESOLVED'/.test(alertSel)
+      && /DELETE FROM "MonitorAlert" WHERE "state" = 'RESOLVED' AND/.test(svc)
+      && /s\."status"::text IN \$\{DONE_SESSION\}/.test(stmt('SupportSessionEvent'))
+      && ['LauncherToken', 'ConnectionGrant'].every((t) => (stmt(t).match(/"usedAt" IS NULL/g) ?? []).length === 2),
+    'commands/diagnostics finished states twice (outer and inner); alerts RESOLVED, no open child; sessions finished; tokens and grants unused, outer and inner');
+  check('retention: the newest command of each type, and the newest that succeeded, survive at any age',
+    /x\."type" = c\."type"\s+AND \(x\."createdAt", x\."id"\) > \(c\."createdAt", c\."id"\)\)\s+AND \(c\."status" <> 'SUCCEEDED' OR EXISTS/.test(stmt('EndpointCommand'))
+      && /x\."key" = r\."key"\s+AND \(x\."requestedAt", x\."id"\) > \(r\."requestedAt", r\."id"\)\)\s+AND \(r\."status" <> 'COMPLETED' OR EXISTS/.test(stmt('DiagnosticRun')),
+    'the "newer exists" and "newer success exists" conditions');
+  const limits = (svc.match(/LIMIT \$\{n\}/g) ?? []).length, runs = (svc.match(/await run\(\(\) => /g) ?? []).length;
+  check('retention: every statement is bounded and runs through the batch loop',
+    // Eight tables, eight bounded statements; the alert batch's two DELETEs
+    // act on the ids its bounded, locked SELECT returned.
+    limits === 8 && runs === 8 && /= ANY\(\$\{ids\}::text\[\]\)/.test(svc) && /const run = \(one: \(\) => Promise<number>\) => drain\(one, n, k\);/.test(svc)
+      && /for \(let i = 0; i < batches; i\+\+\) \{[\s\S]{0,120}if \(k < batch\) break;/.test(policy)
+      && /batch: \{ def: 2000, min: 1, max: 50_000/.test(policy) && /batches: \{ def: 10, min: 1, max: 100/.test(policy),
+    `${limits} LIMIT \${n}, ${runs} run(); want 8 of each`);
+  const e2e = read('scripts/run-e2e.sh');
+  check('retention: RETENTION_SWEEP=off stops the sweep, and the suites run with it off',
+    /export const sweepEnabled = \(env: Record<string, string \| undefined>\) => env\.RETENTION_SWEEP !== 'off';/.test(policy)
+      && /onModuleInit\(\) \{\s*if \(!this\.enabled\) return;/.test(svc)
+      && /^export RETENTION_SWEEP=off$/m.test(e2e) && /METRIC_SWEEP=off RETENTION_SWEEP=off/.test(e2e),
+    'sweepEnabled, onModuleInit guard, and run-e2e.sh exports it and passes it to the scratch API');
+  check('retention: the status route is a Platform Admin read and nothing else',
+    /@Get\(\)\s*async status\(@Actor\(\) actor: ActorContext, @Query\('fresh'\) fresh\?: string\) \{\s*this\.acl\.assertPlatformAdmin\(actor\);/.test(ctl)
+      && !/@(Post|Put|Patch|Delete)\(/.test(ctl) && (ctl.match(/@Get\(/g) ?? []).length === 1
+      && /private async countOf\(t: TableEntry\)/.test(svcRaw) && !/countOf\([^t)]/.test(svc),
+    'one GET, assertPlatformAdmin first; countOf only takes RETENTION_TABLES entries');
+}
+
+// 34. API keys and device-group membership (0.34).
+//     A key is long-lived Business Owner access that outlives the session
+//     that made it, so creating ANY key needs a fresh re-authentication
+//     (assertFresh, unconditional — 0.33 asked only for enrollment:write),
+//     after scope and before the row is written. Keys are immutable: the only
+//     routes are list, create and revoke; nothing widens a key's scopes or
+//     clears revokedAt, so creation is the one way to get a key's access, and
+//     revoking (never gated) only ever takes it away.
+//     A computer may be in many groups (EndpointGroupMember). The rule that a
+//     group holds only its own business's computers is two database
+//     triggers (migration 0049): the insert is refused across businesses, and
+//     a computer that changes business or tenant leaves every group not its
+//     new business's own. Endpoint.endpointGroupId is gone, and only the
+//     known paths write membership rows.
+{
+  const keys = read('apps/api/src/apikeys/apikeys.service.ts');
+  const keysCtl = read('apps/api/src/apikeys/apikeys.controller.ts');
+  const keyFn = keys.slice(keys.indexOf('async create('), keys.indexOf('async revoke('));
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  check('creating any API key needs a fresh re-authentication, after scope and validation, before the write',
+    /\n    assertFresh\(freshMethod, \{\s*action: 'apikey\.create',/.test(keyFn)
+      && !/if \([^)]*\) \{\s*assertFresh\(freshMethod/.test(keyFn)
+      && keyFn.indexOf('this.acl.requireScope(actor') < keyFn.indexOf('assertFresh(freshMethod')
+      && keyFn.indexOf("if (validScopes.length === 0)") < keyFn.indexOf('assertFresh(freshMethod')
+      && keyFn.indexOf('assertFresh(freshMethod') < keyFn.indexOf('this.prisma.apiKey.create(')
+      && /stepUpMethod: freshMethod/.test(keyFn),
+    'ApiKeysService.create: requireScope → validate → assertFresh (no condition around it) → apiKey.create; the audit records the method');
+  const routes = [...keysCtl.matchAll(/@(Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)')?\s*\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''}`.trim());
+  check('API keys are immutable: list, create and revoke are the only routes, and revoke needs no step-up',
+    JSON.stringify(routes) === JSON.stringify(['GET', 'POST', 'DELETE :id'])
+      && !/stepUp|freshMethod/.test(keysCtl.slice(keysCtl.indexOf("@Delete(':id')")))
+      && /@Controller\('apikeys'\)/.test(keysCtl),
+    `routes: ${routes.join(', ')} — a route that edits a key needs its own step-up decision here`);
+  const keyWriters = walk('apps/api/src').filter((f) => !f.endsWith('.spec.ts') && /\.apiKey\.(create|createMany|update|updateMany|upsert)\(/.test(read(f)));
+  const updates = [...strip(keys).matchAll(/this\.prisma\.apiKey\.update\(\{[^;]*?data: \{([^}]*)\}/g)].map((m) => m[1].trim());
+  check('nothing widens a key or restores a revoked one',
+    keyWriters.length === 1 && keyWriters[0].endsWith('apikeys/apikeys.service.ts')
+      && !/\.apiKey\.(updateMany|upsert|createMany)\(/.test(keys)
+      && updates.length === 2 && updates.every((d) => /^(revokedAt: new Date\(\)|lastUsedAt: new Date\(\))$/.test(d))
+      && !/revokedAt:\s*null/.test(strip(keys)),
+    `apiKey writers: ${keyWriters.join(', ')}; update data: ${JSON.stringify(updates)}`);
+  const dlg = read('apps/web/components/auth/step-up-dialog.tsx');
+  check('the console asks for the step-up and retries, keeping the form',
+    /'apikey\.create':/.test(dlg) && /cfg\._stepUpRetried = true;\s*return api\.request\(cfg\);/.test(read('apps/web/lib/api-client.ts')),
+    'StepUpDialog must label apikey.create; the interceptor must retry the original request');
+
+  const mig = read('apps/api/prisma/migrations/0049_device_group_members/migration.sql');
+  const schema = read('apps/api/prisma/schema.prisma');
+  const model = schema.slice(schema.indexOf('model Endpoint {'), schema.indexOf('}', schema.indexOf('model Endpoint {')));
+  check('membership is a join table and Endpoint.endpointGroupId is gone',
+    /model EndpointGroupMember \{[\s\S]*?@@id\(\[endpointGroupId, endpointId\]\)/.test(schema)
+      && !/^\s*endpointGroupId\b/m.test(model) && /groupMemberships EndpointGroupMember\[\]/.test(model)
+      && /ALTER TABLE "Endpoint" DROP COLUMN "endpointGroupId";/.test(mig),
+    'EndpointGroupMember with a composite key; no endpointGroupId on Endpoint');
+  check('the database refuses a cross-business membership and drops foreign groups on a move',
+    /CREATE TRIGGER endpoint_group_member_same_business\s+BEFORE INSERT OR UPDATE ON "EndpointGroupMember"/.test(mig)
+      && /IF g_customer IS NOT NULL THEN\s+IF e_customer IS DISTINCT FROM g_customer THEN\s+RAISE EXCEPTION/.test(mig)
+      && /ELSIF e_tenant IS DISTINCT FROM g_tenant THEN\s+RAISE EXCEPTION/.test(mig)
+      && /CREATE TRIGGER endpoint_leaves_foreign_groups\s+AFTER UPDATE OF "customerId", "tenantId" ON "Endpoint"/.test(mig)
+      && /AND \(g\."customerId" IS NULL OR g\."customerId" IS DISTINCT FROM NEW\."customerId"\);/.test(mig)
+      && mig.indexOf('CREATE TRIGGER endpoint_group_member_same_business') < mig.indexOf('INSERT INTO "EndpointGroupMember"'),
+    'migration 0049 must create both triggers, the insert check before the copy of 0.33 memberships');
+  const memberWriters = walk('apps/api/src').filter((f) => !f.endsWith('.spec.ts') && /endpointGroupMember\.(create|createMany|upsert|update|updateMany)\(|groupMemberships: \{ create:/.test(read(f))).sort();
+  check('only the known paths add a computer to a group',
+    JSON.stringify(memberWriters) === JSON.stringify(['apps/api/src/device-views/device-bulk.service.ts', 'apps/api/src/endpoints/endpoints.service.ts', 'apps/api/src/enrollment/enrollment.service.ts'])
+      && !/endpointGroupMember\.(update|updateMany|upsert)\(/.test(memberWriters.map(read).join('\n')),
+    `writers: ${memberWriters.join(', ')} — a new path must check the business (and rely on the trigger)`);
+  const listSvc = read('apps/api/src/endpoints/endpoint-list.service.ts');
+  check('the group filter and facet stay inside the caller’s visibility',
+    /\} else if \(q\.groupId\) \{\s*and\.push\(\{ groupMemberships: \{ some: \{ endpointGroupId: q\.groupId \} \} \}\);/.test(listSvc)
+      && /this\.prisma\.endpointGroupMember\.groupBy\(\{ by: \['endpointGroupId'\], where: \{ endpoint: scoped \}/.test(listSvc)
+      && /const scoped = this\.scopedWhere\(actor, \{ status: q\.status \}\);/.test(listSvc)
+      && /where: \{ endpointGroupId: \{ in: groups\.map\(\(g\) => g\.id\) \}, endpoint: \{ AND: \[this\.acl\.endpointVisibilityWhere\(a, scope\),/.test(read('apps/api/src/device-views/device-groups.service.ts')),
+    'filteredWhere AND-s the membership filter; facet and group-list counts go through scopedWhere / endpointVisibilityWhere');
+  check('the API key and device-group suites run in CI',
+    /\benrol-stepup\b/.test(read('scripts/run-e2e.sh')) && /\bdevice-views\b/.test(read('scripts/run-e2e.sh')) && /unit-device-views\.mjs/.test(read('.github/workflows/ci.yml')),
+    'run-e2e.sh must run enrol-stepup and device-views; ci.yml unit-device-views');
+}
+
+// 35. Rule-based device groups (0.34). A rule group's members are computed on
+//     every read, never stored: the rule (the device list's own closed
+//     filters, parsed by the list's own parser) AND the group's business AND
+//     the reader's visibility, through scopedWhere. A rule's values reach SQL
+//     only as bound parameters. Nothing — bulk, an enrolment token, a claim,
+//     endpoint creation, or a direct insert (0053 trigger) — adds a computer
+//     to a rule group, and a group's kind never changes. A rule that reads
+//     alerts is not evaluated for a reader who may not see alerts. Bulk on a
+//     group resolves membership at request time, as the caller, capped, and
+//     then takes the ordinary per-computer path. Edits carry the rule before
+//     and after in the audit.
+{
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const gr = read('apps/api/src/device-views/group-rule.ts');
+  const lq = read('apps/api/src/endpoints/list-query.ts');
+  const listSvc = read('apps/api/src/endpoints/endpoint-list.service.ts');
+  const groupSvc = read('apps/api/src/device-views/device-groups.service.ts');
+  const bulkSvc = read('apps/api/src/device-views/device-bulk.service.ts');
+  const mig = read('apps/api/prisma/migrations/0053_dynamic_device_groups/migration.sql').replace(/--.*$/gm, '');
+  const ruleKeys = (gr.match(/export const RULE_KEYS = \[([\s\S]*?)\] as const/) ?? [])[1] ?? '';
+  const listKeys = (lq.match(/export const LIST_FILTER_KEYS = \[([\s\S]*?)\] as const/) ?? [])[1] ?? '';
+  const keysOf = (x) => [...x.matchAll(/'([a-zA-Z]+)'/g)].map((m) => m[1]);
+  const parseFn = gr.slice(gr.indexOf('export function parseRule('), gr.indexOf('export function ruleFilters('));
+  check('a rule is closed: only list filters, never search/businessId/groupId/status, unknown keys refused, parsed by the list’s parser, never empty',
+    keysOf(ruleKeys).length >= 10 && keysOf(ruleKeys).every((k) => keysOf(listKeys).includes(k))
+      && !['search', 'businessId', 'groupId', 'status'].some((k) => keysOf(ruleKeys).includes(k))
+      && /const refused = keys\.filter\(\(k\) => k in RULE_REFUSED\);\s*if \(refused\.length\) throw bad/.test(parseFn)
+      && /const unknown = keys\.filter\(\(k\) => !\(RULE_KEYS as readonly string\[\]\)\.includes\(k\)\);\s*if \(unknown\.length\) throw bad/.test(parseFn)
+      && /f = parseListFilters\(asQuery\);/.test(parseFn) && /if \(!Object\.keys\(out\)\.length\) throw bad\('A rule needs at least one condition\.'\);/.test(parseFn)
+      && /if \(groupRule|groupRule:/.test(strip(lq.slice(lq.indexOf('export function parseListFilters(')))) === false,
+    'RULE_KEYS ⊆ LIST_FILTER_KEYS minus search/businessId/groupId/status; parseRule refuses refused and unknown keys, parses with parseListFilters, refuses an empty rule; no parser reads groupRule from a request');
+  const derived = listSvc.slice(listSvc.indexOf('private derivedConds('), listSvc.indexOf('private filteredWhere('));
+  const rawUses = walk('apps/api/src').filter((f) => /\$queryRawUnsafe|\$executeRawUnsafe/.test(strip(read(f))) && /device-views|endpoint-list|list-query/.test(f));
+  check('a rule never becomes SQL text: bound parameters only, one whitelisted Prisma.raw, no unsafe raw query',
+    rawUses.length === 0 && (strip(listSvc).match(/Prisma\.raw\(/g) ?? []).length === 1
+      && /return Prisma\.raw\(`\$\{expr\[sort\]\}/.test(listSvc)
+      && derived.split('\n').filter((l) => /out\.push\(/.test(l)).every((l) => /out\.push\(Prisma\.sql`[^`]*`\);/.test(l))
+      && !/Prisma\.raw|Unsafe/.test(strip(gr) + strip(groupSvc) + strip(bulkSvc))
+      && /export const OS_TERM = /.test(lq) && /export function isVersion\(/.test(lq),
+    `derivedConds must push only Prisma.sql templates; the only Prisma.raw is orderSql; unsafe raw in: ${rawUses.join(', ')}`);
+  const evalFn = listSvc.slice(listSvc.indexOf('async evaluateRuleGroups('), listSvc.indexOf('private async withRuleGroups('));
+  const fw = listSvc.slice(listSvc.indexOf('private filteredWhere('), listSvc.indexOf('private orderSql('));
+  const wgr = listSvc.slice(listSvc.indexOf('private async withGroupRule('), listSvc.indexOf('async ruleGroupsOf('));
+  check('membership is computed as the reader: scopedWhere AND the group’s business AND the rule; an unreadable rule matches nothing',
+    /const scoped = this\.scopedWhere\(actor, \{ status: opts\.status \}\);/.test(evalFn)
+      && /AND: \[scoped, \{ customerId: g\.customerId \}, \.\.\.this\.filterConds\(g\.rule\)/.test(evalFn)
+      && /if \(!g\.rule\) return \[\];/.test(evalFn)
+      && /const and: Prisma\.EndpointWhereInput\[\] = \[this\.scopedWhere\(actor, q\), \.\.\.this\.filterConds\(q\)\];/.test(fw)
+      && /if \(q\.groupRule\) \{\s*and\.push\(\{ customerId: q\.groupRule\.customerId \}\);\s*\/\/[^\n]*\n\s*and\.push\(\.\.\.\(q\.groupRule\.rule \? this\.filterConds\(q\.groupRule\.rule\) : \[\{ id: \{ in: \[\] \} \}\]\)\);/.test(fw)
+      && /customerId: actor\.isPlatformAdmin \? \{ not: null \} : \(actor\.businessId \?\? '__none__'\)/.test(wgr)
+      && /if \(q\.groupRule\?\.rule\) conds\.push\(\.\.\.this\.derivedConds\(q\.groupRule\.rule\)\);/.test(listSvc)
+      && !/endpointGroupMember\.(create|createMany)/.test(listSvc + groupSvc.slice(groupSvc.indexOf('async create('))),
+    'evaluateRuleGroups and filteredWhere must AND scopedWhere, the business and the rule; withGroupRule only attaches a rule the caller may address');
+  check('a rule on alerts is not evaluated for a reader without monitoring:alerts',
+    /if \(ruleNeedsAlerts\(g\.rule\) && !alerts\.visible\) return null;/.test(evalFn)
+      && /if \(q\.groupRule && ruleNeedsAlerts\(q\.groupRule\.rule\)\) \{\s*throw new ForbiddenException/.test(listSvc)
+      && listSvc.indexOf('const q = await this.withGroupRule(actor, query);\n    this.assertAlertUse(q, alerts);') > 0
+      && /if \(got === null \|\| got === undefined\) throw new ForbiddenException/.test(bulkSvc),
+    'evaluateRuleGroups returns null, the list filter and bulk refuse');
+  const eps = read('apps/api/src/endpoints/endpoints.service.ts');
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const ga = bulkSvc.slice(bulkSvc.indexOf('private async groupAction('), bulkSvc.indexOf('// ── Refresh inventory'));
+  check('nothing adds a computer to a rule group, and a group’s kind never changes',
+    /if \(g\.kind === 'RULE'\) \{\s*throw new BadRequestException\(\{ code: 'RULE_GROUP'/.test(ga) && ga.indexOf("g.kind === 'RULE'") < ga.indexOf('endpointGroupMember.create(')
+      && /if \(g\.kind === 'RULE'\) throw new BadRequestException\(\{ code: 'RULE_GROUP'/.test(eps)
+      && /if \(group\.kind === 'RULE'\) throw new BadRequestException\(\{ code: 'RULE_GROUP'/.test(enr)
+      && /where: \{ id: record\.endpointGroupId, kind: 'STATIC',/.test(enr)
+      && /CREATE TRIGGER endpoint_group_member_static_only\s+BEFORE INSERT OR UPDATE ON "EndpointGroupMember"/.test(mig)
+      && /IF EXISTS \(SELECT 1 FROM "EndpointGroup" WHERE id = NEW\."endpointGroupId" AND "kind" = 'RULE'\) THEN\s+RAISE EXCEPTION/.test(mig)
+      && /CREATE TRIGGER endpoint_group_kind_fixed\s+BEFORE UPDATE OF "kind" ON "EndpointGroup"/.test(mig)
+      && /IF NEW\."kind" IS DISTINCT FROM OLD\."kind" THEN\s+RAISE EXCEPTION/.test(mig)
+      && /CHECK \(\("kind" = 'RULE' AND "rule" IS NOT NULL/.test(mig)
+      && /const GroupUpdate = z\.object\(\{\s*name: GroupInput\.shape\.name,\s*description: GroupInput\.shape\.description,\s*rule: z\.unknown\(\),\s*\}\)\.partial\(\)\.strict\(\);/.test(groupSvc),
+    'bulk group.add/remove, endpoint creation and enrolment tokens refuse RULE groups; the claim takes STATIC only; 0053 has the static-only and kind-fixed triggers and the CHECK; PATCH has no kind');
+  const rt = bulkSvc.slice(bulkSvc.indexOf('private async resolveTarget('), bulkSvc.indexOf('async run('));
+  const run = bulkSvc.slice(bulkSvc.indexOf('async run('), bulkSvc.indexOf('// ── Groups'));
+  check('bulk on a group: resolved now, as the caller, capped, then the ordinary per-computer path',
+    /const g = await this\.groups\.findVisible\(a, groupId\);/.test(rt)
+      && /await this\.list\.evaluateRuleGroups\(a, \[/.test(rt)
+      && /endpoint: \{ AND: \[this\.acl\.endpointVisibilityWhere\(a\), \{ status: \{ not: 'ARCHIVED' \} \}\] \}/.test(rt)
+      && /if \(ids\.length > BULK_MAX\) \{\s*throw new BadRequestException\(\{ code: 'BULK_TOO_LARGE'/.test(rt)
+      && /const input = \{ \.\.\.parsed, endpointIds: target \? target\.ids : parsed\.endpointIds! \};\s*const seen = await this\.visible\(a, input\.endpointIds\);/.test(run)
+      && /if \(byGroup && body\.endpointIds !== undefined\) throw bad/.test(read('apps/api/src/device-views/rules.ts')),
+    'resolveTarget must use findVisible and the list’s evaluation (or visible static members), refuse over BULK_MAX, and feed visible()');
+  const upd = groupSvc.slice(groupSvc.indexOf('async update('), groupSvc.indexOf('async remove('));
+  check('rule groups: same manage rule as static ones, a site from the business, audited with the rule before and after',
+    /const g = await this\.findManageable\(a, id\);/.test(upd) && /await this\.validRule\(d\.rule, g\.customerId\)/.test(upd)
+      && /before: \{ name: g\.name, description: g\.description, \.\.\.\(g\.kind === 'RULE' \? \{ rule: g\.rule \} : \{\}\) \}/.test(upd)
+      && /after: \{ name: after\.name, description: after\.description, \.\.\.\(g\.kind === 'RULE' \? \{ rule: after\.rule \} : \{\}\) \}/.test(upd)
+      && /kind: rule \? 'rule' : 'static', \.\.\.\(rule \? \{ rule \} : \{\}\)/.test(groupSvc)
+      && /where: \{ id: rule\.siteId, customerId \}/.test(groupSvc)
+      && /const rule = d\.kind === 'rule' \? await this\.validRule\(d\.rule, customerId\) : null;/.test(groupSvc)
+      && groupSvc.indexOf('const why = manageRefusal(a, customerId);') < groupSvc.indexOf('const rule = d.kind === \'rule\''),
+    'update must go through findManageable and validRule and audit before/after rule; create audits kind and rule');
+  check('the dynamic-group suites run in CI',
+    /\bdynamic-groups\b/.test(read('scripts/run-e2e.sh')) && /unit-dynamic-groups\.mjs/.test(read('.github/workflows/ci.yml')),
+    'run-e2e.sh must run dynamic-groups; ci.yml unit-dynamic-groups');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 36. The shared hbbs peer snapshot (0.34). Whether hbbs has ever registered a
+//     RustDesk ID decides whether the Windows installer may report success
+//     (`rustdeskRegistered`), and it used to be one sqlite3 process per
+//     heartbeat. It is now one read shared for a short window, and the window
+//     is the only staleness allowed: a snapshot is never consulted after it
+//     (age measured from when its read started, and a clock that went
+//     backwards is stale), the window is clamped to 30 s whatever is
+//     configured, a failed read answers null and discards the older snapshot
+//     rather than falling back to it, the query keeps digit IDs only (so a
+//     peer ID with a newline cannot add a second "ID" to the output), and
+//     nothing else on the heartbeat path spawns sqlite3.
+{
+  const snap = read('apps/api/src/enrollment/hbbs-peer-snapshot.ts');
+  const en = read('apps/api/src/enrollment/enrollment.service.ts');
+  const maxW = /export const MAX_WINDOW_MS = ([0-9_]+);/.exec(snap);
+  check('the peer snapshot window is clamped to at most 30 s',
+    !!maxW && Number(maxW[1].replace(/_/g, '')) <= 30_000
+      && /return Math\.min\(MAX_WINDOW_MS, Math\.max\(MIN_WINDOW_MS, Math\.round\(n\)\)\);/.test(snap)
+      && /this\.windowMs = clampWindowMs\(windowMs\);/.test(snap),
+    'MAX_WINDOW_MS ≤ 30000 and the constructor must clamp the configured window');
+  check('a peer snapshot is used only inside its window, measured from the start of its read',
+    /const age = this\.now\(\) - s\.startedAt;\s*\n(?:\s*\/\/[^\n]*\n)*\s*return age >= 0 && age < this\.windowMs;/.test(snap)
+      && /const startedAt = this\.now\(\);\s*\n\s*this\.loads\+\+;\s*\n\s*this\.inflight = this\.load\(\)/.test(snap),
+    'fresh() must be age >= 0 && age < windowMs, with startedAt taken before load() is called');
+  check('an expired or unreadable peer snapshot never answers from an older copy',
+    /if \(this\.fresh\(this\.snap\)\) return this\.snap;\s*\n(?:\s*\/\/[^\n]*\n)*\s*this\.snap = null;/.test(snap)
+      && /\.then\(\(ids\) => \(\{ startedAt, ids \}\), \(\) => \(\{ startedAt, ids: null \}\)\)/.test(snap)
+      && /return s\.ids === null \? null : s\.ids\.has\(rustdeskId\);/.test(snap),
+    'drop the expired snapshot before re-reading; a rejected read is ids: null, answered as null');
+  check('the peer snapshot query and parser keep 6–15 digit IDs only',
+    /PEER_SNAPSHOT_SQL =\s*\n?\s*"SELECT id FROM peer WHERE length\(id\) BETWEEN 6 AND 15 AND id NOT GLOB '\*\[\^0-9\]\*';"/.test(snap)
+      && /export const PEER_ID_RE = \/\^\[0-9\]\{6,15\}\$\/;/.test(snap)
+      && /if \(PEER_ID_RE\.test\(id\)\) ids\.add\(id\);/.test(snap)
+      && /if \(!PEER_ID_RE\.test\(rustdeskId\)\) return null;/.test(snap),
+    'the SQL must refuse non-digit IDs and both the parser and the lookup must apply PEER_ID_RE');
+  check('the heartbeat asks hbbs registration only through the shared snapshot',
+    (en.match(/'sqlite3'/g) ?? []).length === 1
+      && /async peerRegisteredWithHbbs\(rustdeskId: string\): Promise<boolean \| null> \{\s*\n\s*return this\.hbbsPeers\.has\(rustdeskId\);\s*\n\s*\}/.test(en)
+      && /\[`file:\$\{dbPath\}\?mode=ro`, PEER_SNAPSHOT_SQL\]/.test(en),
+    'one sqlite3 call in enrollment.service.ts, read-only, running PEER_SNAPSHOT_SQL, and peerRegisteredWithHbbs delegating to it');
+}
+
+// 37. Restarts after Windows updates (0.34). An update plan's restart rule
+//     is one of two fixed strings: never, or if_required_in_window. Under the
+//     second the agent restarts only when Windows reports a restart required
+//     after something was installed, only through windows.reboot.schedule's
+//     own path (shutdown.exe via Maintenance.ScheduleRestart, the fixed
+//     message, the reboot record), after a fixed warning, never while a
+//     RustDesk session is open or when it cannot tell, and never after the
+//     plan's signed window closes — otherwise restart_deferred. wua.ps1 still
+//     never restarts (§ 15). The portal, the signer (a plan may not ask for
+//     more than its policy allows) and the agent each check the closed form,
+//     and every way to ask for an install defaults to never.
+{
+  const upd = read('tools/windows-installer/internal/action/updates.go');
+  const maint = read('tools/windows-installer/internal/action/maintenance.go');
+  const tsCat = read('apps/api/src/actions/catalog.ts');
+  const fn = upd.slice(upd.indexOf('func restartInWindow('), upd.indexOf('\n}\n', upd.indexOf('func restartInWindow(')));
+  const goWarn = Number((upd.match(/UpdateRestartWarningMinutes = (\d+)/) ?? [])[1]);
+  const tsWarn = Number((tsCat.match(/export const UPDATE_RESTART_WARNING_MINUTES = (\d+);/) ?? [])[1]);
+  check('the update restart warning is fixed, the same on both sides, and no shorter than a scheduled restart\'s',
+    goWarn === tsWarn && goWarn >= 5 && /MinRestartDelayMinutes = 5/.test(maint),
+    `agent ${goWarn}, portal ${tsWarn}`);
+  check('an update restart goes through the one scheduling path windows.reboot.schedule uses',
+    /when, err := scheduleWarnedRestart\(p, o, UpdateRestartWarningMinutes\)/.test(fn) && /at, err := scheduleWarnedRestart\(p, o, minutes\)/.test(maint)
+      && (`${upd}\n${maint}`.match(/o\.Maint\.ScheduleRestart\(/g) ?? []).length === 1
+      && /func scheduleWarnedRestart\([^)]*\) \(time\.Time, error\) \{\s*at := o\.now\(\)\.Add\(time\.Duration\(minutes\) \* time\.Minute\)\s*if err := o\.Maint\.ScheduleRestart\(minutes\*60, RestartMessage\(at\.Local\(\), minutes, p\.JobID\)\); err != nil/.test(maint),
+    'one call to Maint.ScheduleRestart, with the fixed RestartMessage, shared by both actions');
+  const iUnc = fn.indexOf('case r.Outcome == "uncertain":'), iPend = fn.indexOf('case !pending:'), iInst = fn.indexOf('case r.Outcome != "restart_required" && r.Outcome != "partial":');
+  const iWin = fn.indexOf('if err != nil || at.After(na) {'), iSess = fn.indexOf('if pr := sessionCheck("the restart")(p, o); pr != nil {'), iSched = fn.indexOf('scheduleWarnedRestart(');
+  check('the agent restarts only after an install Windows says needs one, inside the window, with no session open — else restart_deferred',
+    iUnc > 0 && iPend > iUnc && iInst > iPend && iWin > iInst && iSess > iWin && iSched > iSess
+      && /na, err := time\.Parse\(time\.RFC3339Nano, p\.Window\.NotAfter\)\s*at := o\.now\(\)\.Add\(UpdateRestartWarningMinutes \* time\.Minute\)/.test(fn)
+      && /deferred\("window_closed"/.test(fn) && /deferred\("install_uncertain"/.test(fn) && /State: "restart_deferred"/.test(fn)
+      && /if UpdateReboot\(p\.Params\) == RebootInWindow \{\s*restartInWindow\(p, o, &r\)/.test(upd),
+    'restartInWindow must check outcome, pending, window, then sessions, in that order, before scheduling');
+  check('wua.ps1 still never restarts: the only restart is the agent\'s shutdown.exe path',
+    !/Restart-Computer|shutdown|InitiateSystemShutdown|CommitInstall|\.Reboot\(/i.test(read('tools/windows-installer/internal/patch/wua.ps1').replace(/^\s*#.*$/gm, ''))
+      && /runSystem32\(30\*time\.Second, "shutdown\.exe", "\/r", "\/t", strconv\.Itoa\(seconds\)/.test(read('tools/windows-installer/action_windows.go')),
+    'no restart in the Windows Update script');
+  check('the portal\'s restart rule is the same closed pair, and an install asked for any way defaults to never',
+    /export const UPDATE_REBOOT_RULES = \['never', 'if_required_in_window'\] as const;/.test(tsCat) && /reboot: UpdateReboot,\s*\/\/ 0\.32/.test(tsCat)
+      && (read('apps/api/src/patching/patching.service.ts').match(/reboot: UpdateReboot\.default\('never'\),/g) ?? []).length === 2
+      && /reboot: UpdateReboot\.default\('never'\),/.test(read('apps/api/src/patching/policies.service.ts')),
+    'UPDATE_INSTALL.params.reboot, CreateDeploymentDto, InstallDto and CreatePolicyDto');
+  const ev = read('apps/api/src/actions/patch-policy.ts');
+  check('the signer refuses a plan whose restart rule asks for more than its policy allows',
+    /if \(!rebootWithin\(params\.reboot, doc\.reboot\)\) return no\('reboot_not_allowed'/.test(ev)
+      && /export const rebootWithin = \(plan: unknown, allowed: UpdateRebootRule\) =>\s*UpdateReboot\.safeParse\(plan\)\.success && UPDATE_REBOOT_RULES\.indexOf\(plan as UpdateRebootRule\) <= UPDATE_REBOOT_RULES\.indexOf\(allowed\);/.test(tsCat),
+    'evaluatePolicyPlan must compare the plan\'s rule with the policy\'s');
+  check('the database holds a deployment\'s rule to the pair',
+    /^ALTER TABLE "PatchDeployment" ADD CONSTRAINT "PatchDeployment_reboot_check" CHECK \("reboot" IN \('never', 'if_required_in_window'\)\);$/m.test(read('apps/api/prisma/migrations/0047_patch_reboot/migration.sql')),
+    'PatchDeployment_reboot_check');
+  const asvc = read('apps/api/src/actions/actions.service.ts');
+  check('a restart report is kept only from an update plan whose signed rule allowed a restart',
+    /if \(r\.restart && !\(t\.job\.actionId === UPDATE_INSTALL\.id && planReboot === 'if_required_in_window'\)\) r\.restart = undefined;/.test(asvc),
+    'recordResults must drop restart from any other plan');
+  const UNPROVEN = 'The in-window restart has been tested against a simulated Windows only; it has not yet run on a real Windows computer.';
+  const comp = read('apps/web/components/patching/patch-reboot-choice.tsx');
+  const doc = read('docs/staged-patching.md').replace(/\n>\s*/g, ' ').replace(/\s+/g, ' ');
+  check('the UI, the approval page and the docs say the restart has not run on real Windows',
+    tsCat.includes(`REBOOT_UNPROVEN = '${UNPROVEN}'`) && comp.includes(`REBOOT_UNPROVEN = '${UNPROVEN}'`) && /<strong>\{REBOOT_UNPROVEN\}<\/strong>/.test(comp)
+      && (read('apps/api/src/approval-signer/page.ts').match(/esc\(REBOOT_UNPROVEN\)/g) ?? []).length === 2 && doc.includes(`**Not proven on Windows.** ${UNPROVEN}`),
+    'catalog.ts and patch-reboot-choice.tsx define it, the reboot choice shows it, the signer page and docs/staged-patching.md say it');
+}
+
+// 38. Agent-signed action results (0.34). A later ring of a patch policy
+//     opens only on results the computers signed with their own key, which
+//     two approvers bound to each computer in the policy and the signer then
+//     pinned. So: the portal and signer only VERIFY device statements (the
+//     statement prefixes appear in one file, which signs nothing); the
+//     evaluator verifies every previous-ring result under the policy's key —
+//     never the key a statement names — before the gate runs, and the gate
+//     reads only the signed facts; a missing signature can only count
+//     against a ring and never opens the canary's; the portal relays the
+//     signatures as received; a pin is write-once and nothing over HTTP
+//     removes one; a policy whose gating computers cannot sign is refused;
+//     and the agent signs every final result in one place, with prefixes
+//     that match the verifier's.
+{
+  const dr = read('apps/api/src/actions/device-result.ts');
+  const drCode = dr.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const PREFIXES = ['rem0te-device-result-v1', 'rem0te-device-scan-v1'];
+  // The docs bundle is docs/ compiled to prose (staged-patching.md names the prefixes); it is not code.
+  const elsewhere = walk('apps/api/src').concat(walk('apps/web')).filter((f) => !f.endsWith('actions/device-result.ts') && !f.endsWith('lib/docs-content.generated.ts') && PREFIXES.some((x) => read(f).includes(x)));
+  check('device statements are only verified in the portal and signer: one file holds the prefixes, and it signs nothing',
+    PREFIXES.every((x) => drCode.includes(x)) && elsewhere.length === 0 && !/\bsign\s*\(|edSign|createPrivateKey|generateKeyPair|createSign\b/.test(drCode),
+    elsewhere.length ? `the statement prefixes appear in ${elsewhere.join(', ')}` : 'device-result.ts must not sign or hold a private key');
+  check('a statement is verified under the trusted key, never the key it names',
+    /if \(env\.data\.key !== trustedKey\) return \{ ok: false, code: 'result_wrong_device'/.test(dr) && /const pub = publicKey\(trustedKey\);/.test(dr) && !/publicKey\(env\.data\.key\)/.test(dr),
+    'openDeviceStatement must compare the named key with the trusted one and verify with the trusted one');
+  const pp = read('apps/api/src/actions/patch-policy.ts');
+  const evFn = pp.slice(pp.indexOf('export function evaluatePolicyPlan('), pp.indexOf('// ── Signed evidence (v0.34)'));
+  const vi = evFn.indexOf('const verified = verifiedGateTargets(doc.rings[ring - 1], prev, r.evidence, now);');
+  check('the signer verifies the previous ring\'s signatures before any later-ring gate, and the gate reads only the verified facts',
+    vi > 0 && vi < evFn.indexOf('evaluateRingGate({') && /if \(!verified\.ok\) return verified;/.test(evFn) && /targets: verified\.targets,/.test(evFn) && !/fromEvidenceTarget\(/.test(evFn),
+    'evaluatePolicyPlan must call verifiedGateTargets and pass verified.targets (never fromEvidenceTarget) to evaluateRingGate');
+  const vg = pp.slice(pp.indexOf('export function verifiedGateTargets('));
+  check('each previous-ring result and scan is checked: the policy\'s key, the identity, the plan, the time; missing never opens the canary',
+    /openDeviceStatement\('result', t\.signedResult, c\.resultKey\)/.test(vg) && /openDeviceStatement\('scan', t\.signedScan, c\.resultKey\)/.test(vg)
+      && /st\.jobId !== prev\.jobId \|\| \(prev\.planSha256 && st\.planSha256 !== prev\.planSha256\)/.test(vg)
+      && /st\.rustdeskId !== c\.rustdeskId \|\| st\.deviceSecretSha256 !== c\.deviceSecretSha256/.test(vg)
+      && ['result_key_not_pinned', 'result_signature_missing', 'result_wrong_plan', 'result_wrong_device', 'result_stale'].every((x) => vg.includes(`'${x}'`))
+      && /if \(canary\) return \{ ok: false, code: 'result_signature_missing'/.test(vg) && /if \(t\.status === 'SUCCEEDED'\) return \{ ok: false, code: 'result_signature_missing'/.test(vg)
+      && /status: RESULT_STATUS\[st\.outcome\]/.test(vg) && /resultAt: new Date\(at\)/.test(vg),
+    'verifiedGateTargets must open each signature under c.resultKey, bind job, plan, identity and time, and refuse an unsigned canary or "succeeded"');
+  check('a policy whose results would open a ring must name a result key for each such computer (fail closed)',
+    /const unsigned = doc\.rings\.slice\(0, -1\)\.flat\(\)\.filter\(\(c\) => !c\.resultKey\);/.test(pp) && /reason: 'result_key_missing'/.test(pp)
+      && /code: 'RESULT_KEY_MISSING'/.test(read('apps/api/src/patching/policies.service.ts')),
+    'validatePolicyDoc (signer and portal) and PatchPolicyService.create must refuse it');
+  const toEv = pp.slice(pp.indexOf('export function toEvidenceTarget('), pp.indexOf('export function fromEvidenceTarget('));
+  check('the portal relays device signatures as received',
+    /const signedResult = \(t\.result as \{ signed\?: unknown \} \| null\)\?\.signed \?\? null;/.test(toEv) && /const signedScan = \(s as \{ signed\?: unknown \} \| null\)\?\.signed \?\? null;/.test(toEv) && /signedResult, signedScan,/.test(toEv),
+    'toEvidenceTarget must copy result.signed and scan.signed unchanged');
+  const st = read('apps/api/src/approval-signer/store.ts');
+  const srv = read('apps/api/src/approval-signer/server.ts');
+  const core = read('apps/api/src/approval-signer/core.ts');
+  check('a device key pin is write-once, made only on approval, checked on proposal and on every policy plan, and removed only by the operator CLI',
+    /pinDeviceKey\(p: DevicePin\)[\s\S]{0,400}flag: 'wx'/.test(st) && !/forgetDevicePin/.test(srv) && /forgetDevicePin/.test(read('apps/api/src/approval-signer/main.ts'))
+      && /if \(status === 'ACTIVE'\) for \(const p of newPins\(cur, pins, now\(\)\)\) store\.pinDeviceKey\(p\);/.test(srv)
+      && /const changed = pinConflicts\(doc\.rings\.flat\(\), pins\);\s*if \(changed\.length\) throw new Refused\('device_key_changed'/.test(srv)
+      && /signUnderPolicy\(r, b, k, store\.policy\(\), now\(\), pins\)/.test(srv)
+      && core.indexOf("throw new Refused('device_key_changed'") > core.indexOf('export function signUnderPolicy(') && core.indexOf("throw new Refused('device_key_changed'") < core.indexOf('evaluatePolicyPlan({', core.indexOf('export function signUnderPolicy(')),
+    'store.pinDeviceKey must use wx; the server pins on ACTIVE only, checks pins at proposal and passes them to signUnderPolicy, which refuses before evaluating; only main.ts forgets');
+  const goSig = read('tools/windows-installer/internal/devsig/devsig.go');
+  const goAct = read('tools/windows-installer/internal/action/action.go');
+  check('the agent signs with the verifier\'s prefixes, keeps only a seed on disk, and signs every final result in one place',
+    /ResultPrefix = "rem0te-device-result-v1\\n"/.test(goSig) && /ScanPrefix\s+= "rem0te-device-scan-v1\\n"/.test(goSig)
+      && /const RESULT_PREFIX = 'rem0te-device-result-v1\\n';/.test(dr) && /const SCAN_PREFIX = 'rem0te-device-scan-v1\\n';/.test(dr)
+      && /type keyFile struct \{\s*Schema string `json:"schema"`\s*Seed\s+string `json:"seed"`\s*\}/.test(goSig) && !/Seed|Private/.test(goSig.slice(goSig.indexOf('type Signed struct'), goSig.indexOf('type keyFile struct')))
+      && (goAct.match(/State: "done"/g) ?? []).length === 1 && /func final\([\s\S]{0,300}signResult\(&o, &r, planSHA, [\s\S]{0,200}State: "done"/.test(goAct),
+    'devsig prefixes must equal device-result.ts; the key file holds only a seed; action.go journals "done" only in final(), after signResult');
+}
+
+// 39. Running approved scripts (0.34): windows.script.run@1. A script runs as
+//     SYSTEM with full PowerShell, so everything rests on WHICH bytes run and
+//     WHO agreed. No run without an APPROVED library version and an ACTIVE
+//     entry on the approval signer's own allowlist, which only two passkey
+//     approvals on the signer's origin can create and the portal can neither
+//     write nor un-revoke; the typed argument schema is checked by the
+//     portal, the signer and the agent, with the same closed charsets; the
+//     agent never builds a command line from anything in a plan; and output
+//     is redacted on the computer and again by the portal before it is
+//     stored. Behavioural proof: apps/api/scripts/e2e-script-run.mjs (real
+//     PowerShell 7 through the sim) and unit-approval-signer.mjs.
+{
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const runSvc = code(read('apps/api/src/script-run/script-run.service.ts'));
+  const req = runSvc.slice(runSvc.indexOf('async requestRun('));
+  const iApproved = req.search(/if \(v\.status !== 'APPROVED' \|\| !v\.decidedById\) throw new ConflictException\(\{ code: 'NOT_APPROVED'/);
+  const iActive = req.search(/const entry = \(await this\.entries\(v\.id\)\)\.find\(\(e\) => e\.status === 'ACTIVE'\);\s*if \(!entry\) throw new ConflictException\(\{ code: 'SCRIPT_NOT_ALLOWLISTED'/);
+  const iPlan = req.indexOf('this.actions.createPlan(');
+  const core = code(read('apps/api/src/approval-signer/core.ts'));
+  const server = code(read('apps/api/src/approval-signer/server.ts'));
+  const assertFn = core.slice(core.indexOf('export function assertScriptAllowed('), core.indexOf('export function rolesFor('));
+  check('no run without an APPROVED version and an ACTIVE entry on the signer\'s own allowlist (portal asks; the signer decides at admission and again at signing)',
+    iApproved > 0 && iActive > iApproved && iPlan > iActive
+      && /if \(p\.action\.id === SCRIPT_RUN_ACTION\) assertScriptAllowed\(p, scripts\);/.test(core)
+      && /if \(!s \|\| !entry\) throw new Refused\('script_not_allowlisted'/.test(assertFn) && /if \(st === 'REVOKED'\) throw new Refused\('script_revoked'/.test(assertFn)
+      && /if \(st !== 'ACTIVE'\) throw new Refused\('script_not_allowlisted'/.test(assertFn)
+      && /if \(canonical\(s\) !== canonical\(scriptBlockOf\(entry\.proposal\)\)\) throw new Refused\('script_mismatch'/.test(assertFn)
+      && /admitPlan\(b\.plan, store\.policy\(\), now\(\), \(id\) => store\.scriptEntry\(id\)\)/.test(server)
+      && /if \(cur\.plan\.action\.id === SCRIPT_RUN_ACTION && c\.decision === 'approve'\) assertScriptAllowed\(cur\.plan, \(id\) => store\.scriptEntry\(id\)\);/.test(server),
+    'requestRun must refuse a non-APPROVED version and a missing ACTIVE entry before createPlan; the signer must check its own entry (exact block, ACTIVE, not revoked) at admission and before signing');
+
+  const internal = server.slice(server.indexOf('async function internalScript('), server.indexOf('// ── internal: patch policies'));
+  const store = code(read('apps/api/src/approval-signer/store.ts'));
+  const client = code(read('apps/api/src/actions/signer.client.ts'));
+  const clientPaths = [...client.matchAll(/this\.call<[^>]*>\('(GET|POST|PUT|PATCH|DELETE)', `?'?(\/internal\/v1\/scripts[^'`,]*)/g)].map((m) => `${m[1]} ${m[2].replace(/\$\{[^}]+\}/g, ':id')}`);
+  const decide = core.slice(core.indexOf('export function recordScriptDecision('));
+  const scriptCore = core.slice(core.indexOf('export function admitScriptProposal('), core.indexOf('export function recordScriptDecision(') + decide.slice(1).search(/\nexport |$/) + 1);
+  check('the portal cannot write the signer\'s allowlist: propose, read and revoke only; ACTIVE only from two passkey approvals; revocation is write-once by content hash',
+    /if \(req\.method !== 'POST' \|\| sub !== 'revoke'\) return send\(res, 405/.test(internal)
+      && /const r = admitScriptProposal\(b\.proposal, now\(\)\);/.test(internal) && /if \(store\.scriptRevocation\(r\.contentSha256\)\) throw new Refused\('script_revoked'/.test(internal)
+      && /throw new Refused\('script_id_reused'/.test(internal)
+      && /id: p\.allowlistId, status: 'AWAITING_APPROVAL'/.test(core) && /if \(sha !== p\.contentSha256\) throw new Refused\('hash_mismatch'/.test(core)
+      && (scriptCore.match(/status = 'ACTIVE'|status: 'ACTIVE'/g) ?? []).length === 1 && /\.size >= SCRIPT_ALLOWLIST_APPROVALS\) r\.status = 'ACTIVE';/.test(decide)
+      && /export const SCRIPT_ALLOWLIST_APPROVALS = 2;/.test(read('apps/api/src/actions/script-run.ts'))
+      && (server.match(/recordScriptDecision\(/g) ?? []).length === 1 && /const member = await verifiedMember\(c, b\.assertion\);[\s\S]{0,200}recordScriptDecision\(cur, member,/.test(server)
+      && /'script-revocations', `\$\{contentSha256\}\.json`\), JSON\.stringify\(rev, null, 2\), \{ mode: 0o600, flag: 'wx' \}/.test(store)
+      && !/this\.write\([^)]*'script-revocations'/.test(store) && !/rmSync|\bunlink\(|\brm\(/.test(store)
+      // The store's only deletion is the operator CLI's device-pin removal (§ 38); nothing removes a script entry or revocation.
+      && [...store.matchAll(/unlinkSync\(([^;]*)\)/g)].every((m) => /^path\.join\(this\.dir, 'device-keys', /.test(m[1]))
+      && JSON.stringify(clientPaths.sort()) === JSON.stringify(['GET /internal/v1/scripts/:id', 'POST /internal/v1/scripts', 'POST /internal/v1/scripts/:id/revoke']),
+    `signer client script calls: ${clientPaths.join(', ')}`);
+
+  const goScript = read('tools/windows-installer/internal/action/script.go');
+  const tsRun = read('apps/api/src/actions/script-run.ts');
+  const tsCs = Object.fromEntries([...((tsRun.match(/export const CHARSETS = \{([\s\S]*?)\} as const;/) ?? [])[1] ?? '').matchAll(/(\w+): \/(.+?)\/,$/gm)].map((m) => [m[1], m[2]]));
+  const goCs = Object.fromEntries([...((goScript.match(/scriptCharsets = map\[string\]\*regexp\.Regexp\{([\s\S]*?)\n\t\}/) ?? [])[1] ?? '').matchAll(/"(\w+)":\s+regexp\.MustCompile\(`([^`]+)`\)/g)].map((m) => [m[1], m[2]]));
+  const tsTimeouts = (tsRun.match(/export const TIMEOUT_MINUTES = \[([^\]]+)\] as const;/) ?? [])[1]?.replace(/\s/g, '');
+  const goTimeouts = (goScript.match(/var ScriptTimeouts = \[\]int\{([^}]+)\}/) ?? [])[1]?.replace(/\s/g, '');
+  const pre = goScript.slice(goScript.indexOf('func scriptPrecheck('), goScript.indexOf('const scriptWrapper'));
+  const actSvc = code(read('apps/api/src/actions/actions.service.ts'));
+  check('the argument schema is checked by the portal, the signer and the agent, with the same closed charsets and timeouts',
+    Object.keys(tsCs).length === 4 && JSON.stringify(tsCs) === JSON.stringify(goCs)
+      && tsTimeouts === '1,5,10,15,30' && goTimeouts === tsTimeouts
+      && /const why = argumentsProblem\(decls, d\.parameters\);[\s\S]{0,300}throw new BadRequestException\(\{ code: 'PARAMS_NOT_ALLOWED'/.test(req)
+      && /const scriptProblem = scriptPlanProblem\(check\.data\);\s*if \(scriptProblem\) throw/.test(actSvc)
+      && /const sp = scriptPlanProblem\(p\);\s*if \(sp\) return \{ ok: false, reason: sp \};/.test(read('apps/api/src/actions/catalog.ts'))
+      && /if \(argumentsProblem\(s\.parameters, params\.data\.parameters\)\) return 'arguments_not_allowed';/.test(tsRun)
+      && /const why = argumentsProblem\(entry\.proposal\.parameters, \(p\.params as \{ parameters\?: unknown \}\)\.parameters\);\s*if \(why\) throw new Refused\('arguments_not_allowed'/.test(assertFn)
+      && /if why := declsProblem\(s\.Parameters\); why != "" \{\s*return refuse\("bad_declarations"/.test(pre) && /if why := argumentsProblem\(s\.Parameters, args\); why != "" \{\s*return refuse\("arguments_not_allowed"/.test(pre)
+      && /if hex\.EncodeToString\(sum\[:\]\) != s\.ContentSHA256 \{\s*return refuse\("content_mismatch"/.test(pre)
+      && /if ap\.UserID == c \{\s*return refuse\("contributor_approved"/.test(pre),
+    `charsets portal ${JSON.stringify(tsCs)} agent ${JSON.stringify(goCs)}; timeouts ${tsTimeouts} / ${goTimeouts}`);
+
+  const actDir = 'tools/windows-installer/internal/action';
+  const execFiles = readdirSync(join(ROOT, actDir)).filter((f) => f.endsWith('.go') && !f.endsWith('_test.go') && /exec\.Command|"os\/exec"/.test(read(`${actDir}/${f}`)));
+  const se = read(`${actDir}/scriptexec.go`);
+  const wrapper = (goScript.match(/const scriptWrapper = `([\s\S]*?)`/) ?? [])[1] ?? '';
+  const aw = read('tools/windows-installer/action_windows.go');
+  check('the agent never builds a command line: one fixed PowerShell invocation, a fixed wrapper, arguments as data in params.json',
+    JSON.stringify(execFiles.sort()) === JSON.stringify(['scriptexec.go', 'scriptexec_unix.go', 'scriptexec_windows.go'])
+      && (se.match(/exec\.Command(?:Context)?\(/g) ?? []).length === 1 && /cmd := exec\.Command\(h\.PowerShell, scriptArgs\(wrapper\)\.\.\.\)/.test(se)
+      && /return \[\]string\{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", wrapper\}/.test(se)
+      && !/exec\.Command/.test(read(`${actDir}/scriptexec_unix.go`) + read(`${actDir}/scriptexec_windows.go`))
+      && /run := o\.Scripts\.RunPowerShell\(dir, filepath\.Join\(dir, "run\.ps1"\), timeoutOf\(p, o\), MaxScriptOutput\)/.test(goScript)
+      && /"run\.ps1": \[\]byte\(scriptWrapper\)/.test(goScript) && /pj, _ := json\.Marshal\(args\)/.test(goScript)
+      && /ConvertFrom-Json/.test(wrapper) && /& \(Join-Path \$here 'script\.ps1'\) @bound/.test(wrapper) && !/Invoke-Expression|\biex\b|-Command|\[scriptblock\]|ExpandString|Start-Process/i.test(wrapper)
+      && /o\.Scripts = action\.ExecHost\{PowerShell: filepath\.Join\(d, "WindowsPowerShell", "v1\.0", "powershell\.exe"\)\}/.test(aw),
+    `files that start a process: ${execFiles.join(', ')}`);
+
+  const out = code(read('apps/api/src/actions/script-output.ts'));
+  const rec = actSvc.slice(actSvc.indexOf('async recordResults('));
+  check('script output is redacted twice — on the computer and again by the portal — and only the redacted copy is stored',
+    /sr\.Stdout, sr\.StdoutTruncated = streamOut\(run\.Stdout, run\.StdoutTotal\)/.test(goScript) && /sr\.Stderr, sr\.StderrTruncated = streamOut\(run\.Stderr, run\.StderrTotal\)/.test(goScript)
+      && /func streamOut\(b \[\]byte, total int64\) \(string, bool\) \{\s*s := RedactLog\(/.test(goScript)
+      && /const red = redactLog\(decoded\);\s*const text = headBytes\(red, MAX_SCRIPT_OUTPUT_BYTES\);/.test(out)
+      && /stdout: sanitizeStream\(r\.stdout, r\.stdoutTruncated\), stderr: sanitizeStream\(r\.stderr, r\.stderrTruncated\)/.test(out)
+      && /const stored = \{ \.\.\.r, script: script \? scriptSummary\(script\) : undefined \};/.test(rec)
+      && /const o = sanitizeScriptOutput\(script\);[\s\S]{0,800}stdout: o\.stdout\.text, stderr: o\.stderr\.text,/.test(rec)
+      && (rec.match(/scriptRunOutput\.create\(/g) ?? []).length === 1,
+    'streamOut must call RedactLog; recordResults must store sanitizeScriptOutput\'s text, and the target row only the summary');
+
+  const mig = read('apps/api/prisma/migrations/0050_script_run/migration.sql');
+  check('run output is kept 90 days and pruned by its own sweep',
+    /export const SCRIPT_OUTPUT_RETENTION_DAYS = 90;/.test(tsRun) && /if \(process\.env\.SCRIPT_OUTPUT_SWEEP === 'off'\) return;/.test(runSvc)
+      && /scriptRunOutput\.deleteMany\(\{ where: \{ createdAt: \{ lt: new Date\(now\.getTime\(\) - SCRIPT_OUTPUT_RETENTION_DAYS \* 86_400_000\) \} \} \}\)/.test(runSvc)
+      && /octet_length\("stdout"\) <= 65536/.test(mig) && /octet_length\("stderr"\) <= 65536/.test(mig),
+    'SCRIPT_OUTPUT_RETENTION_DAYS = 90, the prune query, and the 64 KiB column limits');
+}
+
+// 40. Software deployment (0.34). A catalog entry pins one winget package id,
+//     one version and one installer SHA-256; installing or uninstalling it is
+//     a signed, two-approver plan. The parameters are closed and charset-checked
+//     the same way on both sides (a package id can never start with "-", so
+//     winget can never read it as an option); the agent passes them to winget
+//     as an argument array from one exec site, never a shell string, never an
+//     override flag, and refuses an installer whose hash is not the pin before
+//     installing; the portal installs only through ActionsService.createPlan,
+//     changes the catalog only after a fresh sign-in, and has no route that
+//     accepts a file.
+{
+  const goSw = read('tools/windows-installer/internal/action/software.go');
+  const goWg = read('tools/windows-installer/internal/winget/winget.go');
+  const goWin = read('tools/windows-installer/software_windows.go');
+  const tsCat = read('apps/api/src/actions/catalog.ts');
+  const goRe = (name) => (goSw.match(new RegExp(`${name}\\s*= regexp\\.MustCompile\\(\`([^\`]+)\`\\)`)) ?? [])[1] ?? null;
+  const tsRe = (name) => (tsCat.match(new RegExp(`(?:export )?const ${name} = /(.+)/;`)) ?? [])[1] ?? null;
+  const pairs = [['PackageIDRE', 'PACKAGE_ID_RE'], ['PkgVersionRE', 'SOFTWARE_VERSION_RE'], ['sha256RE', 'SHA256_RE'], ['displayNameRE', 'DISPLAY_NAME_RE'], ['uninstallKeyRE', 'UNINSTALL_KEY_RE'], ['fileSegmentRE', 'FILE_SEGMENT_RE']];
+  const differ = pairs.filter(([g, t]) => !goRe(g) || goRe(g) !== tsRe(t)).map(([g, t]) => `${g}=${goRe(g)} vs ${t}=${tsRe(t)}`);
+  check('software: every parameter charset is the same regular expression on the agent and the portal', differ.length === 0, differ.join('; '));
+  // Whatever the regex is, these must never be a package id or a version.
+  const HOSTILE = ['-h.x', '--override.x', '--force', '7zip.7zip;calc', '7zip.7zip calc', '7zip.7zip"', "7zip.7zip'", '7zip.7zip&calc', '7zip.7zip|calc', '$(calc).x', '7zip.`calc`', '%TEMP%.x', '7zip\\7zip', '7zip/7zip', '7zip.7zip\n--force', 'a.b>c'];
+  const idRe = goRe('PackageIDRE'), verRe = goRe('PkgVersionRE');
+  const lets = idRe && verRe ? HOSTILE.filter((h) => new RegExp(idRe).test(h) || new RegExp(verRe).test(h)) : ['(regex not found)'];
+  check('software: no package id or version can start with "-" or carry a space, quote or shell character', lets.length === 0 && /^\^\[A-Za-z0-9\]/.test(idRe) && /^\^\[0-9A-Za-z\]/.test(verRe), `accepted: ${lets.map((x) => JSON.stringify(x)).join(', ')}`);
+  check('software: the params are exactly five keys, scope machine, on both sides',
+    /if !exactKeys\(p, "packageId", "version", "installerSha256", "scope", "detection"\) \{/.test(goSw) && /func softwareParamsOK\(p map\[string\]any\) bool \{\s*_, err := SoftwareParams\(p\)\s*return err == nil\s*\}/.test(goSw) && /!ok \|\| s\.Scope != "machine"/.test(goSw) && /func ValidPackageID\(s string\) bool \{ return len\(s\) <= 128 && PackageIDRE\.MatchString\(s\) \}/.test(goSw)
+      && /export const SoftwareParams = z\.object\(\{\s*packageId: z\.string\(\)\.max\(PACKAGE_ID_MAX\)\.regex\(PACKAGE_ID_RE\),\s*version: SwVersion,\s*installerSha256: z\.string\(\)\.regex\(SHA256_RE\),\s*scope: z\.literal\('machine'\),\s*detection: Detection,\s*\}\)\.strict\(\);/.test(tsCat)
+      && (tsCat.match(/\}\)\.strict\(\),?\n/g) ?? []).length >= 3 && /z\.discriminatedUnion\('kind', \[\s*z\.object\(\{ kind: z\.literal\('display_name'\)[\s\S]{0,200}\.strict\(\),\s*z\.object\(\{ kind: z\.literal\('uninstall_key'\)[\s\S]{0,200}\.strict\(\),\s*z\.object\(\{ kind: z\.literal\('file_version'\)[\s\S]{0,300}\.strict\(\),\s*\]\)/.test(tsCat),
+    'SoftwareParams (Go and zod) must stay exactly packageId, version, installerSha256, scope "machine" and one of three strict detection forms');
+  const swEntries = read('tools/windows-installer/internal/action/catalog.go').split(/\n\t\{\n/).filter((e) => /ID: "windows\.software\./.test(e));
+  const tsSw = [...tsCat.matchAll(/export const SOFTWARE_(INSTALL|UNINSTALL): CatalogAction = \{([\s\S]*?)\n\};/g)].map((m) => m[2]);
+  check('software: install and uninstall are high impact on any computer, never direct, never offered to ClientSt0r, at most one ring',
+    swEntries.length === 2 && swEntries.every((e) => /Risk:\s+func\(int, int\) string \{ return "high" \},/.test(e) && /MaxTargets:\s+MaxRingTargets,/.test(e) && /ParamsOK:\s+softwareParamsOK,/.test(e))
+      && tsSw.length === 2 && tsSw.every((e) => /risk: \(\) => 'high',/.test(e) && /direct: false,/.test(e) && /integration: false,/.test(e) && /maxTargets: MAX_RING_TARGETS,/.test(e) && /params: SoftwareParams,/.test(e)),
+    'both entries: Risk "high", MaxRingTargets, softwareParamsOK; portal risk high, direct false, integration false');
+  // The one process: winget.exe by its located path, an argument array.
+  const execs = (src) => (src.match(/exec\.Command(?:Context)?\(/g) ?? []).length;
+  const swPath = goSw + goWin;
+  check('software: the agent starts winget from exactly one place, with an argument array, and never a shell',
+    execs(goWg) === 1 && /exec\.CommandContext\(ctx, r\.Path, args\.\.\.\)/.test(goWg) && execs(swPath) === 0 && !/"os\/exec"/.test(swPath)
+      && !/cmd\.exe|cmd \/c|powershell|pwsh|ShellExecute|CreateProcess|\/bin\/sh/i.test(swPath + goWg.replace(/^\s*\/\/.*$/gm, '')) && !/strings\.Join\(|fmt\.Sprint|"\s*\+|\+\s*"/.test(goSw.slice(goSw.indexOf('func downloadArgs('), goSw.indexOf('// wingetVersion'))),
+    'internal/winget is the only exec site (exec.CommandContext(ctx, r.Path, args...)); software.go and software_windows.go start nothing, and the argument lists are literals');
+  const runs = [...goSw.matchAll(/o\.Winget\.Run\((.+?), swTimeout\(/g)].map((m) => m[1].trim());
+  check('software: winget is only ever given --version or one of the three fixed argument lists',
+    runs.length === 4 && runs.every((r) => ['[]string{"--version"}', 'downloadArgs(s, dir)', 'installArgs(s)', 'uninstallArgs(s)'].includes(r)),
+    `o.Winget.Run arguments: ${runs.join(' | ')}`);
+  const argFns = goSw.slice(goSw.indexOf('func downloadArgs('), goSw.indexOf('// wingetVersion'));
+  check('software: no override, force, custom, location, manifest, header or hash-skipping flag; always --exact, --source winget, --scope machine',
+    !/--ignore-security-hash|--force|--override|--custom|--location|--manifest|"-h"|--header|--rainbow|--ignore-local-archive-malware-scan|--allow-reboot/.test(goSw + goWin)
+      && (argFns.match(/"--exact", "--source", "winget"/g) ?? []).length === 3 && (argFns.match(/"--scope", "machine"/g) ?? []).length === 3
+      && /func installArgs[\s\S]{0,300}"--skip-dependencies"/.test(argFns) && /func downloadArgs[\s\S]{0,300}"--skip-dependencies"/.test(argFns),
+    'the three lists must stay fixed: exact id from the winget source, machine scope, no dependencies, nothing that weakens winget\'s own checks');
+  const iHash = goSw.indexOf('if got != s.InstallerSHA256 {'), iMan = goSw.indexOf('if !manifestDeclares(yamls, s.InstallerSHA256) {'), iInst = goSw.indexOf('o.Winget.Run(installArgs(s)');
+  check('software: the agent hashes the downloaded installer itself and refuses a mismatch before installing',
+    iHash > 0 && iMan > iHash && iInst > iMan && /if got != s\.InstallerSHA256 \{\s*r\.Outcome, r\.Reason, r\.Detail = "refused", "hash_mismatch",[^\n]*\n\s*return r/.test(goSw)
+      && /if !manifestDeclares\(yamls, s\.InstallerSHA256\) \{\s*r\.Outcome, r\.Reason, r\.Detail = "refused", "manifest_hash_mismatch",[^\n]*\n\s*return r/.test(goSw)
+      && /got, err := fileSHA256\(inst\)/.test(goSw) && /s, err := SoftwareParams\(p\.Params\) \/\/ verified already; checked again before use/.test(goSw),
+    'Execute re-parses the params, computes the installer hash, refuses hash_mismatch / manifest_hash_mismatch, and only then runs install');
+  check('software: the agent refuses when something else manages the computer\'s applications, before winget is asked anything',
+    /if m := o\.Software\.AppManagers\(\); len\(m\) > 0 \{\s*obs\["managers"\][^\n]*\n\s*return &Result\{Outcome: "refused", Reason: "managed_elsewhere"/.test(goSw) && goSw.indexOf('o.Software.AppManagers()') < goSw.indexOf('wingetVersion(o)', goSw.indexOf('func softwarePrecheck(')),
+    'softwarePrecheck must refuse managed_elsewhere before it locates or runs winget');
+  // The portal side.
+  const svc = read('apps/api/src/software/software.service.ts');
+  const ctl = read('apps/api/src/software/software.controller.ts');
+  const swDir = readdirSync(join(ROOT, 'apps/api/src/software')).filter((f) => f.endsWith('.ts')).map((f) => read(`apps/api/src/software/${f}`)).join('\n');
+  check('software: a plan is made only by ActionsService.createPlan; nothing here writes jobs or talks to the signer itself',
+    (svc.match(/this\.actions\.createPlan\(/g) ?? []).length === 1 && !/actionJob\.(create|update|upsert)|actionTarget\.(create|update|upsert)|signer\.submit|\/internal\/v1\/plans/.test(swDir),
+    'requestRing must go through createPlan, which re-checks access, readiness and containment and submits to the signer');
+  const routeList = [...ctl.matchAll(/@(Get|Post|Put|Patch|Delete)\('([^']*)'\)\s*(?:@HttpCode\([^)]*\)\s*)?@RequireCapability\(CAP\.([A-Z_]+)\)/g)].map((m) => [m[1], m[2], m[3]]);
+  const allRoutes = [...ctl.matchAll(/@(?:Get|Post|Put|Patch|Delete)\('([^']*)'\)/g)].map((m) => m[1]);
+  check('software: every route names its capability; there is no approve, sign or upload route',
+    allRoutes.length === 15 && routeList.length === allRoutes.length && !allRoutes.some((r) => /approv|sign|upload|installer|file|blob|binary/i.test(r))
+      && routeList.filter(([m, r]) => m === 'Post' && /^software\/(catalog|manifest-preview)/.test(r)).every(([, , c]) => c === 'COMPUTERS_EDIT'),
+    `routes: ${allRoutes.join(', ')}`);
+  check('software: nothing in the software module accepts a file',
+    !/FileInterceptor|FilesInterceptor|UploadedFile|multer|multipart|@Req\(\) req: Request\)[^{]*\{[^}]*req\.pipe|express\.raw/.test(swDir),
+    'the portal never receives an installer: each computer downloads it with winget and checks the pinned hash');
+  const method = (name) => svc.slice(svc.indexOf(`  async ${name}(`), svc.indexOf('\n  }\n', svc.indexOf(`  async ${name}(`)));
+  const fresh = ['create', 'update', 'archive'].map((n) => { const b = method(n); const a = b.indexOf("assertFresh(freshMethod, { action: 'software.catalog' });"); const w = b.search(/this\.prisma\.softwareCatalogEntry\.(create|updateMany)\(/); const au = b.indexOf("action: 'SOFTWARE_CATALOG_"); return [n, a > 0 && w > a && au > w]; });
+  check('software: adding, changing or archiving a catalog entry needs a fresh sign-in before the write, and is audited after it',
+    fresh.every(([, ok]) => ok) && (ctl.match(/this\.fresh\(req\)/g) ?? []).length === 3 && /this\.stepUp\.read\(req, u\.sub, u\.iat\)/.test(ctl),
+    `per method: ${fresh.map(([n, ok]) => `${n}=${ok}`).join(', ')}`);
+  check('software: only a business\'s own owner (not a technician) or a Platform Admin changes its entries; only an admin the global ones',
+    /private canEdit\(actor: ActorContext, e: [^)]*\): boolean \{\s*if \(actor\.isPlatformAdmin\) return true;\s*if \(e\.scope === 'GLOBAL'\) return false;[\s\S]{0,120}return !actor\.technician && actor\.businessId === e\.customerId && this\.acl\.isBusinessOwner\(actor\);/.test(svc),
+    'canEdit must keep the owner-in-person rule');
+  check('software: another business\'s entry or deployment looks like a missing one',
+    /if \(!e \|\| !this\.canRead\(actor, e\)\) throw new NotFoundException\('Catalog entry not found'\);/.test(svc)
+      && /for \(const e of r\.endpointIds\) await this\.acl\.assertEndpointInScope\(actor, e\)\.catch\(\(\) => \{ throw new NotFoundException\('Deployment not found'\); \}\);/.test(svc),
+    'entry() and scoped() must 404');
+  check('software: a deployment\'s first ring is one computer and no ring exceeds the signed maximum',
+    /if \(dto\.rings\[0\]\.length !== 1\) throw new BadRequestException\(\{ code: 'BAD_RINGS'/.test(svc) && /rings: z\.array\(z\.array\(Id\)\.min\(1\)\.max\(MAX_RING_TARGETS\)\)\.min\(1\)\.max\(MAX_SOFTWARE_RINGS\),/.test(read('apps/api/src/software/definition.ts')),
+    'ring 0 is the canary; each ring at most MAX_RING_TARGETS (25)');
+  const man = read('apps/api/src/software/manifest.ts');
+  check('software: the manifest fetch is one bounded GET with no credentials, no redirects, and a loopback-only test override',
+    /redirect: 'error', credentials: 'omit'/.test(man) && /signal: AbortSignal\.timeout\(10_000\)/.test(man) && /if \(n > MANIFEST_MAX_BYTES\)/.test(man)
+      && /if \(o && \/\^http:\\\/\\\/127\\\.0\\\.0\\\.1:\[0-9\]\{2,5\}\(\\\/\[A-Za-z0-9\._\/-\]\*\)\?\$\/\.test\(o\)\)/.test(man)
+      && /export const WINGET_PKGS_RAW = 'https:\/\/raw\.githubusercontent\.com\/microsoft\/winget-pkgs\/master\/manifests';/.test(read('apps/api/src/software/definition.ts')),
+    'fetchInstallerManifest must stay bounded and WINGET_MANIFEST_BASE loopback-only');
+}
+
+// 41. AI without a provider key (0.34). The device page's AI summary used to
+//     call a model provider directly with a key in rem0te's environment,
+//     sending the computer's name, hostname, business and every note
+//     verbatim. "Provider keys stay in ClientSt0r" is now true everywhere:
+//     no provider SDK or key variable anywhere in the API, the summary goes
+//     only through the integration client to the peer's gateway, and what it
+//     carries is fixed here.
+{
+  const files = walk('apps/api/src');
+  const PROVIDER = /@anthropic-ai\/|\bopenai\b|@google\/generative-ai|@google-cloud\/vertexai|@mistralai\/|cohere-ai|groq-sdk|\b(ANTHROPIC|OPENAI|AZURE_OPENAI|GEMINI|GOOGLE_AI|MISTRAL|COHERE|GROQ)_[A-Z_]*KEY\b|api\.anthropic\.com|api\.openai\.com|generativelanguage\.googleapis\.com/i;
+  const hits = files.filter((f) => PROVIDER.test(read(f)));
+  check('no model-provider SDK, endpoint or key variable is referenced in apps/api/src', hits.length === 0, hits.join(', '));
+  const pkg = JSON.parse(read('apps/api/package.json'));
+  const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
+  const sdk = deps.filter((d) => /^(@anthropic-ai\/|openai$|@google\/generative-ai|@mistralai\/|cohere-ai$|groq-sdk$|@ai-sdk\/|ai$)/.test(d));
+  check('apps/api/package.json depends on no model-provider SDK', sdk.length === 0, sdk.join(', '));
+
+  const svc = read('apps/api/src/integration/timeline.service.ts');
+  const cli = read('apps/api/src/integration/timeline.client.ts');
+  const signer = read('apps/api/src/integration/signer.ts');
+  const writers = files.filter((f) => [...read(f).matchAll(/aiTimeline:\s*([^,}\s]+)/g)].some((m) => m[1] !== 'true' && m[1] !== 'dto.aiTimeline'));
+  check('the stored AI summary is written from a model only by timeline.service.ts',
+    writers.length === 1 && writers[0].endsWith('integration/timeline.service.ts') && /data: \{ aiTimeline: result\.summary \}/.test(svc),
+    `aiTimeline writers: ${writers.join(', ')} (the PATCH route's dto.aiTimeline is a person's edit and is allowed)`);
+  check('the summary request goes only through the integration client, to the peer\'s inference URL',
+    /from '\.\/timeline\.client'/.test(svc) && /signedPost\(peer, 'inference', JSON\.stringify\(request\)/.test(cli) && !/\bfetch\(/.test(svc + cli),
+    'timeline.service → timeline.client.requestTimeline → signer.signedPost(peer, "inference")');
+  check('the peer\'s capabilities document is fetched only from the peers file\'s capabilitiesUrl, signed, with redirects refused',
+    /export async function signedGetCapabilities\(peer: Peer[^)]*\)[^{]*\{\n\s*const url = peer\.capabilitiesUrl;/.test(signer) && /redirect: 'error'/.test(signer),
+    'signedGetCapabilities must take its URL from peer.capabilitiesUrl');
+  const gate = svc.slice(svc.indexOf('async gate('), svc.indexOf('async status('));
+  check('containment is asked before the peer is contacted at all',
+    gate.indexOf("activePause(this.prisma, 'integration'") > 0 && gate.indexOf("activePause(this.prisma, 'integration'") < gate.indexOf('this.peerCaps('),
+    "gate() must call activePause('integration') before peerCaps()");
+  check('nothing is sent until the peer advertises device_timeline_v1 with a profile the peers file allows',
+    /inference_tasks\.find\(\(t\) => t\.task === TIMELINE_TASK\)/.test(gate) && /peer\.modelProfiles\.includes\(p\)/.test(gate),
+    'gate() must require the task in the peer capabilities and intersect profiles with the peers file');
+  const gen = svc.slice(svc.indexOf('async generate('));
+  check('generate needs computers:edit and integration:ticket_analysis, checked after scope and before the gate',
+    /assertEndpointInScope\(actor, id, CAP\.COMPUTERS_EDIT\)/.test(gen) && /!this\.acl\.can\(actor, CAP\.COMPUTERS_EDIT\) \|\| !this\.acl\.can\(actor, CAP\.TICKET_ANALYSIS\)/.test(gen)
+      && gen.indexOf('!this.acl.can(actor, CAP.TICKET_ANALYSIS)') < gen.indexOf('this.gate('),
+    'scope, then both capabilities, then the gate');
+  check('every request is audited before it leaves, and the audit carries no text',
+    gen.indexOf("action: 'AI_TIMELINE_REQUESTED'") > 0 && /await this\.audit\.logOrFail\(\{\s*\.\.\.base, action: 'AI_TIMELINE_REQUESTED'/.test(gen)
+      && gen.indexOf('logOrFail') < gen.indexOf('requestTimeline(') && !/meta: \{[^}]*(segments|content|text|summary:)/.test(gen),
+    'logOrFail(AI_TIMELINE_REQUESTED) before requestTimeline(); no segments/content/text/summary in audit meta');
+  const snap = svc.slice(svc.indexOf('private async snapshot('), svc.indexOf('private async peerCaps('));
+  const forbidden = ['name:', 'hostname:', 'ipAddress', 'customer', 'site', 'tags', 'author', 'contactName', 'contactEmail', 'notes: true', 'technician', 'rustdesk', 'inventory'];
+  const selected = forbidden.filter((f) => snap.includes(f));
+  check('the summary reads only the fields it sends: no name, hostname, address, business, site, tags, authors, contacts or RustDesk',
+    snap.length > 200 && selected.length === 0 && /noteRels: \{.*select: \{ createdAt: true, content: true, isPinned: true \} \}/.test(snap), `reads: ${selected.join(', ') || '(note select changed)'}`);
+  const tl = read('apps/api/src/integration/timeline.ts');
+  check('every free-text field passes redactForPeer before it is sent',
+    /redactForPeer\(n\.content(\.slice\([^)]*\))?, counts\)/.test(tl) && /redactForPeer\(s\.issueDescription(\.slice\([^)]*\))?, counts\)/.test(tl) && /redactForPeer\(s\.disposition(\.slice\([^)]*\))?, counts\)/.test(tl)
+      && !/\$\{n\.content\}|\$\{s\.issueDescription\}|\$\{s\.disposition\}/.test(tl),
+    'notes, session issue and resolution must go through redactForPeer()');
+  const contract = read('apps/api/src/integration/contract.ts');
+  const agreed = contract.slice(contract.indexOf('export const CONTRACT_SCHEMAS = {'), contract.indexOf('} as const;', contract.indexOf('export const CONTRACT_SCHEMAS = {')));
+  check('the proposed timeline operation is not presented as agreed contract',
+    !/timeline|peer-capabilities/.test(agreed) && /export const CONTRACT_REVISION = 2 as const;/.test(contract) && /PROPOSED, revision 4/.test(contract),
+    'P11/P12 stay in PROPOSED_SCHEMAS until ClientSt0r acknowledges them (INTEGRATION_COORDINATION.md §9)');
+}
+
+// 42. Outbound email (0.34). Mail leaves for good, so: the relay is a Platform
+//     Admin's, changed with fresh authentication; its host is a public DNS
+//     name checked on save AND resolved and checked on send, the connection
+//     made to the checked address (SSRF and DNS rebinding); plaintext only to
+//     loopback; nothing in a message is read from disk or a URL. Mail goes
+//     only to recipients confirmed by their mailbox, of the policy's or
+//     schedule's own scope, added and removed with fresh authentication; the
+//     confirmation token is consumed conditionally. The relay password is in
+//     no audit row, response or log line, and pointing the relay elsewhere
+//     drops it. A `notifications` pause stops every send. A scheduled report
+//     is claimed (unique per period) before it is sent, and its owner's
+//     access is rebuilt from the database before anything is produced.
+{
+  const ctl = read('apps/api/src/email/email.controller.ts');
+  const svc = read('apps/api/src/email/email.service.ts');
+  const host = read('apps/api/src/email/smtp-host.ts');
+  const smtpCtl = ctl.slice(ctl.indexOf("@Controller('email/settings')"), ctl.indexOf("@Controller('email')"));
+  check('the SMTP relay settings are Platform Admin only and saving them needs fresh authentication',
+    /@UseGuards\(PlatformAdminGuard\)\s*export class SmtpSettingsController/.test(smtpCtl) && /@Put\(\)[\s\S]{0,200}fresh\(this\.stepUp, req\)/.test(smtpCtl) && /assertFresh\(/.test(ctl),
+    'SmtpSettingsController must carry PlatformAdminGuard, and PUT must call fresh()');
+  const rcpCtl = ctl.slice(ctl.indexOf("@Controller('email')"));
+  check('adding, re-sending to and removing an email recipient need fresh authentication',
+    /@Post\('recipients'\)[\s\S]{0,200}fresh\(this\.stepUp, req\)/.test(rcpCtl) && /@Post\('recipients\/:id\/resend'\)[\s\S]{0,250}fresh\(this\.stepUp, req\)/.test(rcpCtl) && /@Delete\('recipients\/:id'\)[\s\S]{0,200}fresh\(this\.stepUp, req\)/.test(rcpCtl),
+    'POST recipients, POST recipients/:id/resend and DELETE recipients/:id must call fresh()');
+  const sch = read('apps/api/src/reports/report-schedules.controller.ts');
+  check('creating or changing a scheduled report needs fresh authentication',
+    /@Post\(\)[\s\S]{0,200}this\.fresh\(req\)/.test(sch) && /@Patch\(':id'\)[\s\S]{0,250}this\.fresh\(req\)/.test(sch) && /assertFresh\(/.test(sch),
+    'POST and PATCH reports/schedules must call assertFresh');
+  check('the SMTP host must be a public DNS name unless the operator allows a local relay',
+    /if \(c === 'public'\) return \{ ok: false/.test(host) && /if \(!h\.includes\('\.'\) \|\| INTERNAL_SUFFIX\.test\(h\)\)/.test(host)
+      && /if \(a === 0 \|\| \(a === 169 && b === 254\) \|\| a >= 224\) return 'blocked'/.test(host) && /process\.env\.SMTP_ALLOW_LOCAL_RELAY/.test(host)
+      && /const h = checkSmtpHostName\(d\.data\.host\);\s*if \(!h\.ok\) throw/.test(svc),
+    'checkSmtpHostName must refuse IP literals, internal names and link-local; putSettings must call it');
+  const send = svc.slice(svc.indexOf('async send('), svc.indexOf('private errorCode('));
+  check('every send resolves the relay, checks every address, and connects to the checked one',
+    /for \(const a of addresses\) \{\s*const c = classifyAddress\(a\);\s*if \(!addressAllowed\(c, allow\)\) return \{ ok: false/.test(host)
+      && /await lookup\(h\.host, \{ all: true/.test(send) && /const r = checkResolved\(addresses, allow\);\s*if \(!r\.ok\)/.test(send) && /host: r\.address,/.test(send) && /servername: h\.host/.test(send),
+    'send() must lookup → checkResolved(all addresses) → createTransport({ host: r.address, tls.servername: name })');
+  check('plaintext SMTP only to loopback, TLS certificates always verified',
+    /return mode !== 'none' \|\| isLoopback;/.test(host) && /tlsModeAllowed\(d\.data\.tlsMode, loop\)/.test(svc) && /tlsModeAllowed\(s\.tlsMode as TlsMode, r\.loopback\)/.test(send)
+      && /rejectUnauthorized: true/.test(send) && /requireTLS: s\.tlsMode === 'starttls'/.test(send),
+    'tlsModeAllowed on save and on send (with the resolved address); rejectUnauthorized true; STARTTLS required, never opportunistic');
+  check('nothing in a message is read from disk or fetched from a URL',
+    /disableFileAccess: true, disableUrlAccess: true/.test(send), 'createTransport must set disableFileAccess and disableUrlAccess');
+  check('a `notifications` containment pause stops every send',
+    /'notifications'\] as const/.test(read('apps/api/src/containment/pause.ts')) && /activePause\(this\.prisma, 'notifications', opts\.customerId\);\s*if \(pause\) return all\('contained'\)/.test(send)
+      && /activePause\(this\.prisma, 'notifications', s\.customerId\)/.test(read('apps/api/src/reports/report-schedules.service.ts')),
+    'send() and the schedule delivery must consult the notifications pause');
+  check('mail goes only to recipients confirmed in the right scope',
+    /emailRecipient\.findMany\(\{ where: \{ id: \{ in: ids \}, scopeKey, verifiedAt: \{ not: null \} \} \}\)/.test(svc)
+      && /await this\.email\.assertConfirmed\(emailIds, scopeKey\)/.test(read('apps/api/src/monitoring/monitoring-admin.service.ts'))
+      && /await this\.email\.assertConfirmed\(d\.data\.recipientIds, s\.scopeKey\)/.test(read('apps/api/src/reports/report-schedules.service.ts'))
+      && /this\.email\.sendToRecipients\(\[d\.recipientId\], scopeKey/.test(read('apps/api/src/monitoring/monitoring.service.ts')),
+    'sendToRecipients must filter on scopeKey + verifiedAt; putPolicy and schedules must assertConfirmed; alert mail must go through sendToRecipients');
+  const ver = svc.slice(svc.indexOf('async verify('), svc.indexOf('async assertConfirmed('));
+  check('a confirmation link is consumed conditionally, and a GET never confirms',
+    /updateMany\(\{ where: \{ tokenHash: hash, verifiedAt: null, tokenExpiresAt: \{ gt: now \} \}/.test(ver) && /if \(!u\.count/.test(ver)
+      && /@Post\('verify'\)\s*@Public\(\)/.test(ctl) && !/@Get\('verify/.test(ctl),
+    'verify must updateMany on (token, unverified, unexpired) and check the count; only POST verify is public');
+  const put = svc.slice(svc.indexOf('async putSettings('), svc.indexOf('async sendTest('));
+  const auditCall = put.slice(put.indexOf("action: 'SMTP_SETTINGS_CHANGED'"), put.indexOf('return {', put.indexOf("action: 'SMTP_SETTINGS_CHANGED'")));
+  check('the relay password is in no audit row, response or log line',
+    auditCall.length > 50 && !/passwordEnc|d\.data\.password|\bpass\b/.test(auditCall) && /password: passwordChange/.test(auditCall)
+      && !/passwordEnc/.test(svc.slice(svc.indexOf('private settingsView('), svc.indexOf('async getSettings(')).replace('passwordSet: !!s.passwordEnc', ''))
+      && !/this\.log\.[a-z]+\([^)]*(pass|password)/.test(svc) && !/\.message\b|\.response\b/.test(svc.slice(svc.indexOf('private errorCode('), svc.indexOf('async sendToRecipients('))),
+    'audit only whether the password changed; the view only passwordSet; errorCode must not echo the server\'s text');
+  check('pointing the relay elsewhere drops the saved password',
+    /else if \(cur\?\.passwordEnc && relayMoved\) \{ passwordEnc = null;/.test(put) && /cur\.host !== h\.host \|\| cur\.port !== d\.data\.port/.test(put),
+    'a change of host, port, username or TLS mode must clear passwordEnc unless a new password is given');
+  const rs = read('apps/api/src/reports/report-schedules.service.ts');
+  const run = rs.slice(rs.indexOf('private async runOne('), rs.indexOf('private async finish('));
+  check('a scheduled report is claimed once per period before anything is sent',
+    /CREATE UNIQUE INDEX "ReportDelivery_scheduleId_periodKey_key" ON "ReportDelivery"\("scheduleId", "periodKey"\)/.test(read('apps/api/prisma/migrations/0054_outbound_email/migration.sql'))
+      && run.indexOf('reportDelivery.create(') > 0 && run.indexOf('reportDelivery.create(') < run.indexOf('this.deliver(') && /'P2002'\) return;/.test(run),
+    'runOne must create the (schedule, period) delivery row first and return on a unique violation');
+  const del = rs.slice(rs.indexOf('private async deliver('), rs.indexOf('private ownerRefusal('));
+  check('a scheduled report is evaluated as its owner, re-checked from the database at send',
+    /const actor = await this\.actors\.contextFor\(s\.ownerId/.test(del) && del.indexOf('this.ownerRefusal(actor, s)') < del.indexOf('this.reports.exportCsv(') && /if \(refusal\) \{[\s\S]{0,600}enabled: false/.test(del)
+      && /this\.reports\.exportCsv\(actor!, report, q, \{ scheduleId: s\.id/.test(del),
+    'deliver must rebuild the owner (contextFor), refuse before exporting and switch the schedule off; the CSV is the audited exportCsv');
+  const mon = read('apps/api/src/monitoring/monitoring.service.ts');
+  const am = mon.slice(mon.indexOf('const mail = alertMail({'), mon.indexOf("}, type, `${this.urls.web()}/alerts"));
+  const content = read('apps/api/src/email/mail-content.ts');
+  const alertFn = content.slice(content.indexOf('export function alertMail('), content.indexOf('export const REPORT_TITLE'));
+  check('an alert email carries the title, computer, business and a link — not the detail or a hostname',
+    am.length > 50 && !/detail|hostname|ticket/.test(am) && !/\.detail|hostname/.test(alertFn) && /oneLine\(/.test(alertFn),
+    'alertMail must be built from the listed fields only, each through oneLine()');
+}
+
+// 43. Agent upgrade from the console (0.34). One computer can be moved from
+//     the standard agent to the signed agent, or have its agent updated. A
+//     per-computer migration is allowed without independent review because a
+//     standard agent already runs whatever reinstall the portal hands it — so
+//     it must stay exactly that: it never writes the platform's update-trust
+//     mode, it is refused (and held, and served nothing) in Signed only
+//     without portal migration, the script it serves always pins the digest
+//     of the signed agent the offline-signed repository lists, only the
+//     requesting computer's authenticated heartbeat is handed its nonce, the
+//     request needs a fresh sign-in (single and bulk) and computers:edit, and
+//     an updates pause holds it like every other update flag.
+{
+  const mig = read('apps/api/src/update-trust/agent-migration.ts');
+  const msvc = read('apps/api/src/update-trust/agent-migration.service.ts');
+  const usvc = read('apps/api/src/agent-upgrade/agent-upgrade.service.ts');
+  const uctl = read('apps/api/src/agent-upgrade/agent-upgrade.controller.ts');
+  check('a per-computer migration never writes the update-trust mode',
+    ![msvc, usvc].some((t) => /platformSettings\s*\.\s*(update|upsert|create|updateMany)\b|\.setMode\(|trust\.request\(|updateTrustMode\s*:|\$execute/.test(t)),
+    'agent-migration.service.ts / agent-upgrade.service.ts must not write PlatformSettings or request a trust change');
+  const build = mig.slice(mig.indexOf('export function buildMigrationScript('), mig.indexOf('export const MIGRATION_UNAVAILABLE'));
+  check('the migration script pins and checks the signed agent digest',
+    /!\/\^\[0-9a-f\]\{64\}\$\/\.test\(agentSha256\)/.test(build) && /targets\/windows\/\$\{agentSha256\}\.rem0te-agent\.exe/.test(build)
+      && /\(Get-FileHash -Algorithm SHA256 -LiteralPath \$exe\)\.Hash\.ToLower\(\) -ne '\$\{agentSha256\}'\) \{ Remove-Item -LiteralPath \$exe -Force; exit 12 \}/.test(build)
+      && build.indexOf('Get-FileHash') < build.indexOf('& $exe migrate'),
+    'buildMigrationScript must validate the digest, download by it, and refuse a mismatch before running migrate');
+  const sfn = msvc.slice(msvc.indexOf('async scriptForNonce('));
+  check('the served script takes its digest from the signed repository, at the moment it is fetched',
+    /const agent = this\.updateTrust\.agentTarget\(\);/.test(sfn) && /return buildMigrationScript\(host, agent\.sha256\);/.test(sfn) && !/sha256\s*:/.test(read('apps/api/prisma/migrations/0055_agent_migration/migration.sql')),
+    'scriptForNonce must pin updateTrust.agentTarget().sha256 (no stored digest)');
+  const pub = read('apps/api/src/public/public.controller.ts');
+  check('windows.ps1 serves a migration only for an open migration nonce',
+    /if \(updateNonce && !jobNonce\) \{\s*const mig = await this\.agentMigration\.scriptForNonce\(updateNonce\);/.test(pub)
+      && /MIGRATION_NONCE_RE\.test\(nonce\)/.test(sfn) && /where: \{ nonce, \.\.\.OPEN \}/.test(sfn),
+    'the nonce branch must go through scriptForNonce, which matches only open requests');
+  check('Signed only without portal migration: refused, held and served nothing',
+    /\n\s*if \(f\.mode === 'signed_only' && !f\.legacyPortalMigration\) \{\s*return \{\s*code: 'SIGNED_ONLY'/.test(mig)
+      && /const allowed = mode\.mode === 'legacy_allowed' \|\| mode\.legacyPortalMigration;\s*if \(!allowed \|\| !agent \|\| !host\) return MIGRATION_UNAVAILABLE;/.test(sfn)
+      && /i\.updatesHeld \? 'contained'\s*: i\.gate === 'withhold' \? 'signed_only'/.test(msvc)
+      && !/Invoke-|iex|Start-|&\s*\$/.test(mig.slice(mig.indexOf('export const MIGRATION_UNAVAILABLE'), mig.indexOf('export const MIGRATION_NONCE_RE'))),
+    'migrationBlock, scriptForNonce and forHeartbeat must each keep the Signed only boundary; MIGRATION_UNAVAILABLE runs nothing');
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const step = enr.slice(enr.indexOf('// Per-computer migration to the signed agent (0.34).'), enr.indexOf('// v0.28: updates paused everywhere or for this business.'));
+  const fh = msvc.slice(msvc.indexOf('async forHeartbeat('), msvc.indexOf('async scriptForNonce('));
+  check('only the requesting computer\'s authenticated heartbeat is handed its nonce, before the updates-pause null',
+    step.length > 200 && /if \(authenticated\) \{\s*try \{\s*const mig = await this\.agentMigration\.forHeartbeat\(\{\s*endpointId: node\.endpointId,/.test(step)
+      && /updatesHeld, rolloutManaged,/.test(step) && /const open = await this\.openFor\(i\.endpointId\);/.test(fh)
+      && /openFor\(endpointId: string\) \{\s*return this\.prisma\.agentMigration\.findFirst\(\{ where: \{ endpointId, \.\.\.OPEN \} \}\);/.test(msvc)
+      && /if \(updatesHeld\) \{\s*updateRustdesk = null;\s*reinstallAgent = null;/.test(enr.slice(enr.indexOf('// v0.28: updates paused everywhere'))),
+    'forHeartbeat must run under authenticated, read only this endpoint\'s open request, and precede the updatesHeld block');
+  const mfn = usvc.slice(usvc.indexOf('async migrate('), usvc.indexOf('async cancelMigration('));
+  check('a migration request needs computers:edit and a fresh sign-in, single and bulk',
+    /assertEndpointInScope\(actor, id, CAP\.COMPUTERS_EDIT\);\s*this\.acl\.assertCapability\(actor, CAP\.COMPUTERS_EDIT\);\s*assertFresh\(freshMethod,/.test(mfn)
+      && mfn.indexOf('assertFresh(') < mfn.indexOf('this.migration.request(')
+      && /if \(action === 'agent\.migrate'\) \{\s*assertFresh\(opts\.freshMethod,/.test(usvc)
+      && /@Post\(':id\/agent\/migrate'\)\s*@RequireCapability\(CAP\.COMPUTERS_EDIT\)/.test(uctl) && /this\.svc\.migrate\(actor, id, body\?\.reason, this\.freshMethod\(req\)\)/.test(uctl)
+      && /@Post\(':id\/agent\/update'\)\s*@RequireCapability\(CAP\.COMPUTERS_EDIT\)/.test(uctl),
+    'migrate() must assert computers:edit then assertFresh before recording; bulk agent.migrate must assertFresh once');
+  const rq = msvc.slice(msvc.indexOf('async request('), msvc.indexOf('async cancel('));
+  check('a migration request is recorded only with its audit entry, and re-checks every precondition',
+    /const b = await this\.block\(endpointId\);\s*if \(b\) throw/.test(rq) && /await this\.audit\.logOrFail\(\{[\s\S]{0,200}action: 'AGENT_MIGRATION_REQUESTED'/.test(rq)
+      && /catch \(e\) \{\s*await this\.prisma\.agentMigration\.delete\(/.test(rq),
+    'request() must refuse on migrationBlock and roll back a request whose audit entry failed');
+}
+
+// 44. The browser UI suite (0.34). e2e-ui.mjs is the first browser test CI
+//     runs, and it starts a web server, an API and a seeding Prisma client by
+//     itself, on a runner and on the production host alike. Everything that
+//     keeps it off production is a refusal before anything starts, and the
+//     one that matters most is the rewrite: a standalone build carries the API
+//     address it was built with — on this host, the production API on 3001 —
+//     so a copy whose patch silently missed would drive the live API from a
+//     browser seeding fixtures.
+{
+  const ui = read('apps/web/scripts/e2e-ui.mjs');
+  const before = ui.slice(0, ui.indexOf('// ── The stack'));
+  check('e2e-ui.mjs refuses ports 3000, 3001, 443, 4000 and 4001 before it starts anything',
+    /const FORBIDDEN_PORTS = \[3000, 3001, 443, 4000, 4001\];/.test(before)
+      && /for \(const p of \[WEB_PORT, API_PORT\]\) \{\s*if \(!Number\.isInteger\(p\) \|\| FORBIDDEN_PORTS\.includes\(p\)\) throw new Error\(`Refusing/.test(before),
+    'production (3000/3001/443) and the docs stack (4000/4001) are refused for both the web and the API port');
+  check('e2e-ui.mjs refuses a database whose name lacks test or scratch, before Prisma is loaded',
+    /if \(!\/test\|scratch\/\.test\(dbName\)\) throw new Error\(`Refusing/.test(before) && before.indexOf('test|scratch') < before.indexOf('new PrismaClient'),
+    'it migrates, seeds and deletes fixtures');
+  const prep = ui.slice(ui.indexOf('function prepareWeb('), ui.indexOf('function startWeb('));
+  check('e2e-ui.mjs patches a copy of the web build, never the build',
+    /const COPY = mkdtempSync\(/.test(prep) && /cpSync\(standalone, COPY/.test(prep)
+      && (prep.match(/writeFileSync\(/g) ?? []).length === 1 && /for \(const f of files\) \{\s*const before = readFileSync\(f, 'utf8'\);\s*writeFileSync\(f,/.test(prep)
+      && /const files = \[[^\]]+\]\.map\(\(f\) => path\.join\(COPY, f\)\)/.test(prep),
+    'the only write is to files joined from the temporary copy');
+  check('e2e-ui.mjs stops if the build\'s API destination survives the patch',
+    /if \(after\.includes\(`\$\{origin\}\/api\/`\) \|\| !after\.includes\(`\$\{API_ORIGIN\}\/api\/`\)\) throw new Error/.test(prep),
+    'every patched file must lose the old destination and gain the suite\'s own API');
+  check('e2e-ui.mjs runs its API with every background sweep off',
+    /MONITOR_SWEEP: 'off', CLIENT_UPDATE_SWEEP: 'off', PATCH_POLICY_SWEEP: 'off', METRIC_SWEEP: 'off'/.test(ui)
+      // 0.34 integration: and the four sweeps the other 0.34 branches added.
+      && /RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off',/.test(ui),
+    'a sweep acts on everything in the database, fixtures included');
+}
+
+// 45. Chat (0.34). A technician and the person at a computer. Every portal
+//     route names its capability and reaches the computer through the
+//     device-list visibility rule AND-ed with the id, so another business's
+//     computer is a 404; starting and writing consult the `remote`
+//     containment pause. The two device routes need the device secret
+//     (secretMatches, never a RustDesk ID alone), and the heartbeat hands
+//     chat only to an authenticated signed agent. Audit rows carry ids and
+//     counts, never message text, and chat never updates or deletes an
+//     ActivityLog row (pruning deletes transcripts, not audit). The 2,000
+//     character cap is the same in the API, the database and the agent; the
+//     400-day retention sweep has its off switch set in run-e2e.sh. On the
+//     agent, the window process holds no secret and speaks no HTTP: it talks
+//     only over two first-instance, local-only pipes whose DACL names SYSTEM
+//     and the session user, checked against the launched PID; and it draws
+//     text with plain read-only EDIT controls (no RichEdit or SysLink, which
+//     turn text into links). The portal renders transcripts as React text.
+{
+  const ctl = read('apps/api/src/chat/chat.controller.ts');
+  const svc = read('apps/api/src/chat/chat.service.ts');
+  const pol = read('apps/api/src/chat/chat-policy.ts');
+  const routes = [...ctl.matchAll(/@(Get|Post)\(([^)]*)\)\s*\n((?:\s*@[A-Za-z]+\([^)]*\)\s*\n)*)\s*async (\w+)/g)];
+  const capOf = Object.fromEntries(routes.map((m) => [m[4], (m[3].match(/@RequireCapability\(CAP\.(\w+)\)/) ?? [])[1]]));
+  check('every chat route names its capability: viewing needs COMPUTERS_VIEW, starting, writing and ending need CHAT_SEND',
+    routes.length === 5 && /@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)/.test(ctl) && !/@Public\(\)/.test(ctl)
+      && capOf.overview === 'COMPUTERS_VIEW' && capOf.transcript === 'COMPUTERS_VIEW'
+      && capOf.start === 'CHAT_SEND' && capOf.send === 'CHAT_SEND' && capOf.end === 'CHAT_SEND',
+    `routes: ${JSON.stringify(capOf)}`);
+  const methods = ['overview', 'transcript', 'start', 'send', 'end'];
+  const body = (name) => { const i = svc.indexOf(`  async ${name}(`); const j = svc.indexOf('\n  }\n', i); return i < 0 ? '' : svc.slice(i, j); };
+  check('chat reaches a computer only through visibleEndpoint: assertEndpointInScope, then the visibility rule AND-ed with the id',
+    /await this\.acl\.assertEndpointInScope\(actor, endpointId, capability\);\s*\n\s*const ep = await this\.prisma\.endpoint\.findFirst\(\{\s*\n\s*where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(actor\), \{ id: endpointId \}\] \},/.test(svc)
+      && methods.every((m) => /await this\.visibleEndpoint\(actor, endpointId/.test(body(m)))
+      && ['start', 'send', 'end'].every((m) => /this\.visibleEndpoint\(actor, endpointId, CAP\.CHAT_SEND\)/.test(body(m))),
+    'each technician method must begin with this.visibleEndpoint(actor, endpointId[, CAP.CHAT_SEND]); a spread visibility clause beside an OR widens it');
+  check('starting a chat and sending in one both consult the remote containment pause',
+    ['start', 'send'].every((m) => /await this\.containment\.assertOpen\('remote', ep\.customerId\)/.test(body(m))),
+    "start() and send() must call this.containment.assertOpen('remote', ep.customerId)");
+  const ec = read('apps/api/src/enrollment/enrollment.controller.ts');
+  const es = read('apps/api/src/enrollment/enrollment.service.ts');
+  const auth = es.slice(es.indexOf('async authenticateDevice('), es.indexOf('async authenticateDevice(') + 1200);
+  check('the device chat routes need the device secret, and the heartbeat offers chat only to an authenticated signed agent',
+    (ec.match(/await this\.enrollment\.authenticateDevice\(dto\.rustdeskId, dto\.agentSecret, 'chat_(poll|reply)_unauthenticated'\);/g) ?? []).length === 2
+      && /if \(!node\?\.agentSecretHash \|\| !agentSecret \|\| !this\.secretMatches\(node\.agentSecretHash, agentSecret\)\)/.test(auth)
+      && /throw new UnauthorizedException/.test(auth)
+      && /if \(authenticated && dto\.updateChannel === 'signed' && \(dto\.agentChat \?\? 0\) >= 1\)/.test(es)
+      && /chatProtocol: dto\.updateChannel === 'signed' \? dto\.agentChat \?\? null : null/.test(es),
+    'chat/poll and chat/reply call authenticateDevice (secretMatches); the heartbeat gate is authenticated && signed');
+  const metas = [...svc.matchAll(/meta: \{([^}]*)\}/g)].map((m) => m[1]);
+  check('chat audit rows carry ids and counts only, and chat never changes or deletes an ActivityLog row',
+    metas.length === 3 && metas.every((m) => !/\b(body|text|authorName|deviceUser|deviceDetail)\b/.test(m))
+      && !/activityLog\.(update|updateMany|delete|deleteMany|upsert)/.test(svc) && !/\$executeRaw/.test(svc),
+    `audit meta must hold no message text or names; no activityLog update/delete in chat.service.ts. meta: ${JSON.stringify(metas)}`);
+  const sql = read('apps/api/prisma/migrations/0056_chat/migration.sql');
+  const txt = read('tools/windows-installer/internal/chat/text.go');
+  check('the message cap is 2,000 characters in the API, the database and the agent',
+    /export const MAX_MESSAGE_CHARS = 2000;/.test(pol) && /char_length\("body"\) BETWEEN 1 AND 2000\)/.test(sql)
+      && /const MaxMessageChars = 2000\n/.test(txt) && /if utf16Len\(s\) > MaxMessageChars \{/.test(txt),
+    'MAX_MESSAGE_CHARS, ChatMessage_body_bounded and MaxMessageChars must agree');
+  const e2e = read('scripts/run-e2e.sh');
+  check('transcripts are kept 400 days by default, and the e2e runner turns the sweep off for scratch APIs',
+    /export const RETENTION_DEFAULT_DAYS = 400;/.test(pol) && /enabled: env\.CHAT_RETENTION_SWEEP !== 'off',/.test(pol)
+      && /export CHAT_RETENTION_SWEEP=off/.test(e2e),
+    "RETENTION_DEFAULT_DAYS = 400; CHAT_RETENTION_SWEEP=off exported in scripts/run-e2e.sh");
+  const ui = read('tools/windows-installer/chatui_windows.go');
+  const host = read('tools/windows-installer/chat_windows.go');
+  const pipe = read('tools/windows-installer/internal/chat/pipe.go');
+  check('the chat window holds no secret and speaks no HTTP, and draws text in plain read-only EDIT controls',
+    !/net\/http|heartbeat\.dat|AgentSecret|agentSecret|chat\.Client|os\/exec/.test(ui)
+      && /w\.child\("EDIT", esMultiline\|esReadOnly\|/.test(ui)
+      && !/RichEdit|RICHEDIT|MSFTEDIT|SysLink|ShellExecute|shell32/i.test(ui),
+    'chatui_windows.go: no net/http, heartbeat.dat, secret, chat.Client or os/exec; transcript EDIT is ES_READONLY; no RichEdit/SysLink/ShellExecute');
+  check('the chat pipes are first-instance, local-only, ACL\'d to SYSTEM and the session user, and checked against the launched PID',
+    /return "D:P\(A;;GA;;;SY\)\(A;;GRGW;;;" \+ userSID \+ "\)", nil/.test(pipe)
+      && /windows\.PIPE_REJECT_REMOTE_CLIENTS/.test(host) && /access\|windows\.FILE_FLAG_FIRST_PIPE_INSTANCE/.test(host)
+      && /sddl, err := chat\.PipeSDDL\(u\.User\.Sid\.String\(\)\)/.test(host)
+      && /windows\.GetNamedPipeClientProcessId\(h, &pid\); err == nil && pid != pi\.ProcessId \{/.test(host)
+      && (host.match(/exec\.Command/g) ?? []).length === 1 && /exec\.CommandContext\(ctx, rd, "--get-id"\)/.test(host),
+    'PipeSDDL protected DACL (SY + user GRGW); FIRST_PIPE_INSTANCE and REJECT_REMOTE_CLIENTS; client PID == launched PID; one exec (rustdesk --get-id)');
+  const tab = read('apps/web/components/endpoints/workspace/chat-tab.tsx');
+  check('the portal renders chat as text: no HTML injection, no links made from messages',
+    !/dangerouslySetInnerHTML|<a\s|href=|linkify|marked|markdown/i.test(tab) && /\{m\.body\}/.test(tab),
+    'chat-tab.tsx renders {m.body} as React text, with no dangerouslySetInnerHTML or anchors');
+  const ws = read('apps/api/src/public/windows-script.ts');
+  check('only the signed agent starts the chat host, and the remote pause says it covers chat',
+    (ws.match(/ArgumentList @\('chat'\)/g) ?? []).length === 1 && ws.indexOf("ArgumentList @('chat')") > ws.indexOf('export function buildSignedWindowsScript(')
+      && /remote: 'remote connections and chat'/.test(read('apps/api/src/containment/pause.ts')),
+    "one Start-Process ... @('chat'), in the signed variant's hook; pause label 'remote connections and chat'");
 }
 
 if (failures.length > 0) {

@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { canonicalJson } from '../integration/crypto';
-import { APPROVALS_REQUIRED, MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, MAX_WINDOW_HOURS, UPDATE_ID_RE, UPDATE_INSTALL, type Plan } from './catalog';
+import { APPROVALS_REQUIRED, MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, MAX_WINDOW_HOURS, UPDATE_ID_RE, UPDATE_INSTALL, UpdateReboot, rebootWithin, type Plan } from './catalog';
 import { CLASSIFICATIONS, idKey, updateState, type PostureLike, type TargetView, type UpdateState } from '../patching/posture';
+import { RESULT_STATUS, ResultKey, openDeviceStatement } from './device-result';
 
 /**
  * Patch policies (v0.32): automatic patching that people approve once.
@@ -28,13 +29,19 @@ import { CLASSIFICATIONS, idKey, updateState, type PostureLike, type TargetView,
  * deployment), the updates (each ring a subset of the ring before it), and
  * the retry limit.
  *
- * What it cannot authenticate: the previous ring's results. Agents do not sign
- * their results, so the canary's evidence reaches the signer through the
- * portal. The signer re-runs the gate (`evaluateRingGate`, the same function
- * the portal uses) over that evidence and refuses unless it says passed —
- * including the canary being *effective* — but a portal that fabricates a
- * whole canary result can get ring 1 signed early. It still cannot add a
- * computer, an update, a class or an hour to it.
+ * The previous ring's results (v0.34) are signed by the computers that
+ * produced them, with a key each one generated itself and two approvers bound
+ * to it in this document (`resultKey`). The portal relays those signatures
+ * unmodified; `verifiedGateTargets` checks each one — this computer's key,
+ * this plan, this computer's identity, a time inside the plan's run — and
+ * the gate (`evaluateRingGate`, the same function the portal uses) is run
+ * over the signed facts alone, never over the portal's copy of them. So a
+ * portal that fabricates a canary success no longer gets ring 1 signed: it
+ * would need the canary's key, which never leaves the canary.
+ *
+ * Before 0.34 it could; see docs/staged-patching.md "Signed results" for the
+ * trust-on-first-use window that remains (who vouches for the key the first
+ * time a policy names a computer).
  */
 
 /** Installable classification ids and their names, re-exported for the signer's pages. */
@@ -70,7 +77,15 @@ export const PolicyComputer = z.object({
   hostname: z.string().max(64),
   rustdeskId: z.string().regex(/^[0-9]{6,15}$/),
   deviceSecretSha256: Hex64,
+  /**
+   * v0.34: the public key this computer signs its results with, as its signed
+   * scans reported it. Approving the policy is what makes the signer trust it
+   * (and pin it to this identity). Absent in 0.32/0.33 policies, and for an
+   * agent older than 0.34 — whose results then can never open a later ring.
+   */
+  resultKey: ResultKey.optional(),
 }).strict();
+export type PolicyComputer = z.infer<typeof PolicyComputer>;
 
 export const PolicyWindow = z.object({
   days: z.array(z.enum(WEEKDAYS)).min(1).max(7).refine((d) => new Set(d).size === d.length, 'a day is listed twice'),
@@ -103,8 +118,12 @@ export const PolicyDoc = z.object({
   soakHours: z.number().int().min(0).max(168),
   failureThreshold: z.number().int().min(0).max(MAX_RING_TARGETS),
   window: PolicyWindow,
-  /** 0.32 never restarts a computer. A later reboot rule is a §15 change to the agent's closed params. */
-  reboot: z.literal('never'),
+  /**
+   * The most a plan under this policy may ask (0.34): never, or a restart if
+   * required inside the window. Signed with the rest, so the signer refuses
+   * a plan asking for more (reboot_not_allowed).
+   */
+  reboot: UpdateReboot,
   createdAt: Iso,
   expiresAt: Iso,
   createdBy: z.object({ userId: Id, name: z.string().max(120) }).strict(),
@@ -138,6 +157,12 @@ export function validatePolicyDoc(doc: PolicyDoc, now: Date): { ok: true } | { o
   }
   if (created > now.getTime() + CLOCK_SKEW_MS) return { ok: false, reason: 'bad_created', message: 'The policy is dated in the future.' };
   if (!nextOccurrence(now, doc.window, new Date(exp))) return { ok: false, reason: 'window_never_opens', message: 'The maintenance window never opens before the policy expires.' };
+  // v0.34, fail closed: a computer whose results open the next ring must be
+  // able to sign them. Only the last ring's results gate nothing.
+  const unsigned = doc.rings.slice(0, -1).flat().filter((c) => !c.resultKey);
+  if (unsigned.length) {
+    return { ok: false, reason: 'result_key_missing', message: `${unsigned.map((c) => c.hostname).slice(0, 3).join(', ')}${unsigned.length > 3 ? ` and ${unsigned.length - 3} more` : ''}: no result-signing key. Its results would open the next ring, and an agent older than 0.34 cannot sign them. Update its agent and let it scan, or put it in the last ring.` };
+  }
   return { ok: true };
 }
 
@@ -308,6 +333,11 @@ export function evaluateRingGate(g: GateInput, now: Date): Gate {
 // ── Evidence: what the portal relays about the previous ring ────────────────
 
 const UpdKey = z.string().regex(/^[0-9a-f-]{36}@[0-9]{1,7}$/);
+/**
+ * The portal's copy of a target (status, result, scan) is kept for the
+ * operator's record, but from 0.34 the signer's gate reads only what the
+ * computer signed: `signedResult` and `signedScan`, relayed as received.
+ */
 export const EvidenceTarget = z.object({
   endpointId: Id,
   status: z.enum(['PENDING', 'DISPATCHED', 'SUCCEEDED', 'FAILED', 'REFUSED_BY_ENDPOINT', 'NOT_EXECUTED', 'UNKNOWN', 'CANCELED']),
@@ -323,6 +353,9 @@ export const EvidenceTarget = z.object({
     scannedAt: Iso, error: z.boolean(), rebootPending: z.boolean(),
     offered: z.array(UpdKey).max(MAX_UPDATES_PER_PLAN), installed: z.array(UpdKey).max(MAX_UPDATES_PER_PLAN),
   }).strict().nullable(),
+  /** v0.34: the computer's own signature over its result and its latest scan, exactly as it sent them. Checked by `openDeviceStatement`. */
+  signedResult: z.unknown().optional(),
+  signedScan: z.unknown().optional(),
 }).strict();
 export const RingEvidence = z.object({
   previousJobId: Hex32,
@@ -335,7 +368,12 @@ export type RingEvidence = z.infer<typeof RingEvidence>;
 export function toEvidenceTarget(t: GateTarget, updates: { updateId: string; revision: number }[]): z.infer<typeof EvidenceTarget> {
   const keys = new Set(updates.map(idKey));
   const s = t.scan;
+  // Passed through as the computer sent them: the portal neither builds nor
+  // edits a device signature, and could not make one verify if it did.
+  const signedResult = (t.result as { signed?: unknown } | null)?.signed ?? null;
+  const signedScan = (s as { signed?: unknown } | null)?.signed ?? null;
   return {
+    signedResult, signedScan,
     endpointId: t.endpointId, status: t.status as z.infer<typeof EvidenceTarget>['status'], statusReason: t.statusReason?.slice(0, 200) ?? null,
     reconciled: t.reconciled, resultAt: t.resultAt ? t.resultAt.toISOString() : null,
     result: t.result ? {
@@ -368,7 +406,11 @@ export function fromEvidenceTarget(e: z.infer<typeof EvidenceTarget>): GateTarge
 
 export type PolicyStatus = 'AWAITING_APPROVAL' | 'ACTIVE' | 'REJECTED' | 'REVOKED' | 'EXPIRED';
 /** One plan the signer signed under a policy: its ledger, kept on the signer's own disk. */
-export interface LedgerEntry { jobId: string; deploymentId: string; ring: number; signedAt: string; notBefore: string; notAfter: string; endpointIds: string[]; updates: string[] }
+export interface LedgerEntry {
+  jobId: string; deploymentId: string; ring: number; signedAt: string; notBefore: string; notAfter: string; endpointIds: string[]; updates: string[];
+  /** v0.34: sha256 of the signed plan bytes, which each computer's signed result must name. */
+  planSha256?: string;
+}
 export interface PolicyState {
   doc: PolicyDoc;
   digest: string;
@@ -412,7 +454,7 @@ export function evaluatePolicyPlan(s: PolicyState, r: PolicyPlanRequest, opts: {
   // The action and what it installs.
   if (p.action.id !== UPDATE_INSTALL.id || p.action.version !== UPDATE_INSTALL.version) return no('action_not_in_policy', 'A patch policy signs Windows update installs only.');
   const params = p.params as { updates?: { updateId: string; revision: number }[]; reboot?: unknown; allow?: unknown };
-  if (params.reboot !== doc.reboot) return no('reboot_not_allowed', 'The plan\'s reboot rule is not the policy\'s.');
+  if (!rebootWithin(params.reboot, doc.reboot)) return no('reboot_not_allowed', `The plan's restart rule asks for more than the policy allows (${doc.reboot === 'never' ? 'never restart' : 'restart if required, inside the window'}).`);
   if (canonicalJson(params.allow ?? null) !== canonicalJson(allowParams(doc.allow))) return no('filter_mismatch', 'The plan must carry exactly the policy\'s update filter, so each computer applies it.');
   const updates = params.updates ?? [];
   const shown = p.display?.updates ?? [];
@@ -463,12 +505,103 @@ export function evaluatePolicyPlan(s: PolicyState, r: PolicyPlanRequest, opts: {
   if (named.size !== r.evidence.targets.length || named.size !== prev.endpointIds.length || !prev.endpointIds.every((e) => named.has(e))) {
     return no('evidence_mismatch', `The evidence must cover every computer in ring ${ring - 1}, and only those.`);
   }
+  // v0.34: the gate below reads only facts the computers signed.
+  const verified = verifiedGateTargets(doc.rings[ring - 1], prev, r.evidence, now);
+  if (!verified.ok) return verified;
   const gate = evaluateRingGate({
-    ring: ring - 1, jobStatus: r.evidence.jobStatus, targets: r.evidence.targets.map(fromEvidenceTarget),
+    ring: ring - 1, jobStatus: r.evidence.jobStatus, targets: verified.targets,
     updates: prev.updates.map((k) => { const [updateId, rev] = k.split('@'); return { updateId, revision: Number(rev) }; }),
     failureThreshold: doc.failureThreshold, soakHours: doc.soakHours,
   }, new Date(Math.max(now.getTime(), nb.getTime())));
   if (!gate.ok) return no(gate.reason === 'canary_not_effective' || gate.reason === 'canary_proved_nothing' ? gate.reason : 'gate_not_passed', gate.detail);
   if (nb.getTime() < Date.parse(prev.signedAt)) return no('ring_out_of_order', 'A ring cannot start before the ring before it was signed.');
   return { ok: true };
+}
+
+// ── Signed evidence (v0.34) ─────────────────────────────────────────────────
+
+/** A signed scan older than this is not evidence about the canary now. The Patches tab calls a scan stale at the same age. */
+export const SIGNED_SCAN_MAX_AGE_HOURS = 36;
+/** The agent gives an install four hours; a result is dated at most this long after its plan's window closes. */
+const RESULT_AFTER_WINDOW_MS = 4 * 3_600_000 + CLOCK_SKEW_MS;
+
+/**
+ * The previous ring's targets as the gate needs them, built from what each
+ * computer signed, after checking every signature against the key this
+ * policy binds to that computer. Refuses — never ignores — a signature that
+ * is invalid, another computer's, about another plan, or dated outside its
+ * plan's run. A computer that sent no signed result can only count against
+ * the ring: it is counted as failed (and for the canary, which must prove
+ * something, it is refused).
+ */
+export function verifiedGateTargets(
+  computers: PolicyComputer[], prev: LedgerEntry, ev: RingEvidence, now: Date,
+): { ok: true; targets: GateTarget[] } | { ok: false; code: string; message: string } {
+  const canary = prev.ring === 0;
+  const byId = new Map(computers.map((c) => [c.endpointId, c]));
+  const nb = Date.parse(prev.notBefore), na = Date.parse(prev.notAfter);
+  const out: GateTarget[] = [];
+  for (const t of ev.targets) {
+    const c = byId.get(t.endpointId);
+    if (!c) return { ok: false, code: 'evidence_mismatch', message: 'The evidence names a computer this ring of the policy does not.' };
+    const name = c.hostname;
+    if (!c.resultKey) {
+      return { ok: false, code: 'result_key_not_pinned', message: `${name} has no result-signing key in this policy (it was approved before 0.34, or for an older agent), so its results cannot be verified and no later ring is signed under it. Update the agent, let it scan, and approve a new policy.` };
+    }
+    if (t.signedResult == null) {
+      if (canary) return { ok: false, code: 'result_signature_missing', message: `The canary, ${name}, has no signed result for ring 0. Only a result the canary signed can open ring 1.` };
+      if (t.status === 'SUCCEEDED') return { ok: false, code: 'result_signature_missing', message: `${name} is reported succeeded, but its result is not signed by it.` };
+      // Not answered yet: the gate waits. Anything else counts against the ring.
+      const waiting = t.status === 'PENDING' || t.status === 'DISPATCHED';
+      out.push({
+        endpointId: t.endpointId, status: waiting ? t.status : t.status === 'UNKNOWN' ? 'UNKNOWN' : 'FAILED',
+        statusReason: 'no signed result', reconciled: t.status === 'UNKNOWN' ? t.reconciled : false, reconcileNote: null, resultAt: null, result: null, scan: null,
+      });
+      continue;
+    }
+    const res = openDeviceStatement('result', t.signedResult, c.resultKey);
+    if (!res.ok) return { ok: false, code: res.code, message: `${name}: ${res.message}` };
+    const st = res.statement;
+    if (st.rustdeskId !== c.rustdeskId || st.deviceSecretSha256 !== c.deviceSecretSha256) {
+      return { ok: false, code: 'result_wrong_device', message: `${name}: the signed result names another enrolled identity.` };
+    }
+    if (st.jobId !== prev.jobId || (prev.planSha256 && st.planSha256 !== prev.planSha256)) {
+      return { ok: false, code: 'result_wrong_plan', message: `${name}: the signed result is about another plan, not ring ${prev.ring} as this signer signed it.` };
+    }
+    const at = Date.parse(st.completedAt);
+    if (at < nb - CLOCK_SKEW_MS || at > na + RESULT_AFTER_WINDOW_MS || at > now.getTime() + CLOCK_SKEW_MS) {
+      return { ok: false, code: 'result_stale', message: `${name}: the signed result is dated ${st.completedAt}, outside ring ${prev.ring}'s run (${prev.notBefore} to four hours after ${prev.notAfter}).` };
+    }
+    let scan: PostureLike | null = null;
+    if (t.signedScan != null) {
+      const sc = openDeviceStatement('scan', t.signedScan, c.resultKey);
+      if (!sc.ok) return { ok: false, code: sc.code, message: `${name}: ${sc.message}` };
+      const ss = sc.statement;
+      if (ss.rustdeskId !== c.rustdeskId || ss.deviceSecretSha256 !== c.deviceSecretSha256) {
+        return { ok: false, code: 'result_wrong_device', message: `${name}: the signed scan names another enrolled identity.` };
+      }
+      const sAt = Date.parse(ss.scannedAt);
+      if (sAt > now.getTime() + CLOCK_SKEW_MS) return { ok: false, code: 'result_stale', message: `${name}: the signed scan is dated in the future (${ss.scannedAt}).` };
+      const old = now.getTime() - sAt > SIGNED_SCAN_MAX_AGE_HOURS * 3_600_000;
+      if (old && canary && sAt > at) return { ok: false, code: 'result_stale', message: `The canary's latest signed scan is from ${ss.scannedAt}, more than ${SIGNED_SCAN_MAX_AGE_HOURS} hours ago. It must scan again before it can open ring 1.` };
+      const split = (k: string) => { const [updateId, rev] = k.split('@'); return { updateId, revision: Number(rev) }; };
+      if (!old) {
+        scan = {
+          scannedAt: ss.scannedAt, error: ss.error ? 'reported' : undefined, reboot: { pending: ss.rebootPending },
+          updates: ss.offered.map(split), history: ss.installed.map((k) => ({ ...split(k), operation: 'install', result: 'succeeded' })),
+        };
+      }
+    } else if (canary) {
+      return { ok: false, code: 'result_signature_missing', message: `The canary, ${name}, has no signed scan. Only a scan the canary signed can show its updates took effect.` };
+    }
+    out.push({
+      endpointId: t.endpointId, status: RESULT_STATUS[st.outcome], statusReason: st.reason ?? null,
+      // Reconciliation is a person's note in the portal; it only ever turns an uncertain computer into a failed one.
+      reconciled: st.outcome === 'uncertain' ? t.reconciled : false, reconcileNote: null,
+      resultAt: new Date(at),
+      result: { outcome: st.outcome, ...(st.reason ? { reason: st.reason } : {}), ...(st.updates ? { updates: st.updates.map((u) => ({ updateId: u.updateId, revision: u.revision, state: u.state, ...(u.hresult ? { hresult: u.hresult } : {}) })) } : {}) },
+      scan,
+    });
+  }
+  return { ok: true, targets: out };
 }

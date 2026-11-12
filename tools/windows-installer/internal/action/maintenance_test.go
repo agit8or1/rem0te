@@ -95,8 +95,9 @@ func (f *fixture) runMaint(env []byte, m Maintenance) Result {
 	return r
 }
 
-func TestCatalogIsExactlyTheSixActions(t *testing.T) {
-	want := []string{"windows.service.start@1", "windows.update.install@1", "windows.service.restart@1", "windows.reboot.schedule@1", "windows.reboot.cancel@1", "windows.logs.collect@1"}
+func TestCatalogIsExactlyTheNineActions(t *testing.T) {
+	want := []string{"windows.service.start@1", "windows.update.install@1", "windows.service.restart@1", "windows.reboot.schedule@1", "windows.reboot.cancel@1", "windows.logs.collect@1",
+		"windows.script.run@1", "windows.software.install@1", "windows.software.uninstall@1"}
 	if got := Supported(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("catalog %v", got)
 	}

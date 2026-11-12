@@ -88,6 +88,7 @@ function Notes({ endpointId }: { endpointId: string }) {
     onSuccess: () => {
       setNewNote('');
       qc.invalidateQueries({ queryKey: ['notes', 'endpoint', endpointId] });
+      qc.invalidateQueries({ queryKey: ['endpoint-timeline', endpointId] });
       toast({ title: 'Note added' });
     },
     onError: () => toast({ title: 'Error', description: 'Failed to add note', variant: 'destructive' }),
@@ -97,6 +98,7 @@ function Notes({ endpointId }: { endpointId: string }) {
     onSuccess: () => {
       setEditingNoteId(null);
       qc.invalidateQueries({ queryKey: ['notes', 'endpoint', endpointId] });
+      qc.invalidateQueries({ queryKey: ['endpoint-timeline', endpointId] });
       toast({ title: 'Note updated' });
     },
     onError: () => toast({ title: 'Error', description: 'Failed to update note', variant: 'destructive' }),
@@ -163,6 +165,81 @@ function Notes({ endpointId }: { endpointId: string }) {
   );
 }
 
+interface TimelineStatus {
+  operation: string;
+  available: boolean;
+  code: string;
+  message: string;
+  peerId: string | null;
+  organizationId: string | null;
+  modelProfile: string | null;
+  canRequest: boolean;
+  requires: string[];
+  fields: { field: string; from: string; redacted: boolean }[];
+  notSent: string[];
+  preview: {
+    untrusted_segments: { ref: string; kind: string; text: string }[];
+    redactions: Record<string, number>;
+    chars: number;
+    droppedForSize: number;
+    notes: number;
+    sessions: number;
+  };
+}
+
+const REDACTION_LABEL: Record<string, string> = {
+  secret: 'passwords and secrets', token: 'tokens and keys', email: 'e-mail addresses', ip_address: 'IP addresses',
+  mac_address: 'MAC addresses', rustdesk_id: 'RustDesk IDs', user_path: 'user-profile paths',
+};
+
+/** The API answers `{ code, message }`, sometimes nested under `message`. */
+function apiError(e: unknown, fallback: string): string {
+  const d = (e as { response?: { data?: { message?: unknown; code?: string } } })?.response?.data;
+  const m = d?.message;
+  if (typeof m === 'string') return m;
+  if (m && typeof m === 'object' && typeof (m as { message?: unknown }).message === 'string') return (m as { message: string }).message;
+  return fallback;
+}
+
+/**
+ * What leaves rem0te when the summary is requested: the field list, what is
+ * never sent, how many values were redacted, and — on demand — the exact
+ * segments, which are the same object the server sends.
+ */
+function OutboundDisclosure({ st }: { st: TimelineStatus }) {
+  const [showExact, setShowExact] = useState(false);
+  const red = Object.entries(st.preview.redactions).filter(([, n]) => n > 0);
+  return (
+    <details className="rounded-md border px-3 py-2 text-xs" data-testid="ai-summary-outbound">
+      <summary className="cursor-pointer font-medium text-foreground">What is sent to ClientSt0r</summary>
+      <div className="mt-2 space-y-2 text-muted-foreground">
+        <ul className="list-disc pl-5 space-y-0.5">
+          {st.fields.map((f) => (
+            <li key={f.field}><code>{f.field}</code>: {f.from}{f.redacted ? ' (redacted)' : ''}</li>
+          ))}
+        </ul>
+        <p><span className="text-foreground">Never sent:</span> {st.notSent.join('; ')}.</p>
+        <p>
+          Now: {st.preview.notes} note{st.preview.notes === 1 ? '' : 's'}, {st.preview.sessions} session{st.preview.sessions === 1 ? '' : 's'},{' '}
+          {st.preview.chars.toLocaleString()} characters
+          {st.preview.droppedForSize > 0 ? `, ${st.preview.droppedForSize} oldest left out for size` : ''}.{' '}
+          {red.length > 0
+            ? <>Removed before sending: {red.map(([k, n]) => `${n} ${REDACTION_LABEL[k] ?? k}`).join(', ')}.</>
+            : 'Nothing needed redacting.'}
+        </p>
+        <button type="button" className="underline hover:text-foreground" onClick={() => setShowExact((v) => !v)}>
+          {showExact ? 'Hide the exact text' : 'Show the exact text'}
+        </button>
+        {showExact && (
+          <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-[11px] text-foreground" data-testid="ai-summary-exact">
+            {st.preview.untrusted_segments.map((s) => `[${s.ref}]\n${s.text}`).join('\n\n')}
+          </pre>
+        )}
+      </div>
+    </details>
+  );
+}
+
 function AiSummary({ endpointId, stored }: { endpointId: string; stored: string | null }) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -174,6 +251,12 @@ function AiSummary({ endpointId, stored }: { endpointId: string; stored: string 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stored]);
 
+  const status = useQuery({
+    queryKey: ['endpoint-timeline', endpointId],
+    queryFn: () => endpointsApi.timelineStatus(endpointId).then((r) => r.data?.data as TimelineStatus),
+  });
+  const st = status.data;
+
   const generate = useMutation({
     mutationFn: () => endpointsApi.generateTimeline(endpointId),
     onSuccess: (res) => {
@@ -182,7 +265,10 @@ function AiSummary({ endpointId, stored }: { endpointId: string; stored: string 
       qc.invalidateQueries({ queryKey: ['endpoint', endpointId] });
       toast({ title: 'Summary generated' });
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to generate the summary. Check ANTHROPIC_API_KEY.', variant: 'destructive' }),
+    onError: (e) => {
+      qc.invalidateQueries({ queryKey: ['endpoint-timeline', endpointId] });
+      toast({ title: 'No summary', description: apiError(e, 'ClientSt0r did not return a summary. Nothing was saved.'), variant: 'destructive' });
+    },
   });
   const save = useMutation({
     mutationFn: (t: string) => endpointsApi.saveTimeline(endpointId, t),
@@ -196,6 +282,12 @@ function AiSummary({ endpointId, stored }: { endpointId: string; stored: string 
     onError: () => toast({ title: 'Error', description: 'Failed to save the summary', variant: 'destructive' }),
   });
 
+  const canGenerate = !!st?.available && !!st?.canRequest && !generate.isPending;
+  const why = !st ? (status.isError ? 'Could not check whether ClientSt0r can write the summary.' : 'Checking ClientSt0r…')
+    : !st.available ? st.message
+    : !st.canRequest ? `Requesting it needs ${st.requires.join(' and ')} in this business.`
+    : null;
+
   return (
     <Section
       id="history-ai-summary"
@@ -207,7 +299,7 @@ function AiSummary({ endpointId, stored }: { endpointId: string; stored: string 
               <Pencil className="h-3 w-3 mr-1" />Edit
             </Button>
           )}
-          <Button size="sm" variant="outline" onClick={() => generate.mutate()} disabled={generate.isPending}>
+          <Button size="sm" variant="outline" onClick={() => generate.mutate()} disabled={!canGenerate} title={why ?? undefined} data-testid="ai-summary-generate">
             <RefreshCw className={`h-3 w-3 mr-1 ${generate.isPending ? 'animate-spin' : ''}`} />
             {text ? 'Regenerate' : 'Generate'}
           </Button>
@@ -215,8 +307,16 @@ function AiSummary({ endpointId, stored }: { endpointId: string; stored: string 
       }
     >
       <p className="text-xs text-muted-foreground">
-        Written by an AI model from this computer&apos;s notes, sessions and status. It can be wrong; it is a starting point, not a record.
+        Written by a model that ClientSt0r runs, from a redacted copy of this computer&apos;s notes, sessions and status.
+        Rem0te holds no AI provider key. It can be wrong; it is a starting point, not a record.
       </p>
+      {why && <p className="text-xs rounded-md border border-dashed px-3 py-2 text-muted-foreground" data-testid="ai-summary-unavailable">{why}</p>}
+      {st?.available && (
+        <p className="text-xs text-muted-foreground">
+          Sent to ClientSt0r <code>{st.peerId}</code>, organization <code>{st.organizationId}</code>, profile <code>{st.modelProfile}</code>.
+        </p>
+      )}
+      {st && <OutboundDisclosure st={st} />}
       {editing ? (
         <div className="space-y-2">
           <Textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={10} className="resize-y font-sans text-sm" autoFocus aria-label="Edit summary" />
@@ -228,7 +328,7 @@ function AiSummary({ endpointId, stored }: { endpointId: string; stored: string 
       ) : text ? (
         <p className="leading-relaxed whitespace-pre-wrap text-foreground">{text}</p>
       ) : (
-        <p className="text-muted-foreground">No summary yet. <strong>Generate</strong> writes one from this computer&apos;s notes, sessions and status.</p>
+        <p className="text-muted-foreground">No summary yet.{canGenerate ? <> <strong>Generate</strong> asks ClientSt0r to write one.</> : null}</p>
       )}
     </Section>
   );

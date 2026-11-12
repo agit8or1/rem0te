@@ -66,8 +66,9 @@ const apiEnv = {
   JWT_SECRET: randomBytes(32).toString('hex'), LAUNCHER_TOKEN_SECRET: randomBytes(32).toString('hex'),
   ENCRYPTION_KEY: process.env.ENCRYPTION_KEY ?? randomBytes(32).toString('hex'), TRUSTED_PROXIES: 'loopback',
   HBBS_PRESENCE_HOST: '127.0.0.2', MONITOR_SWEEP: 'off', AUDIT_SEALER: 'off',
-  // Nothing here may call out: the timeline route would otherwise reach the model.
-  ANTHROPIC_API_KEY: '',
+  // Nothing here may call out: no INTEGRATION_PEERS_FILE, so the timeline
+  // route (0.34, through ClientSt0r) has no peer to reach.
+  INTEGRATION_PEERS_FILE: '',
   VERSION_FILE: path.resolve(here, '..', '..', '..', 'version.json'),
 };
 let api;
@@ -223,6 +224,7 @@ async function all() {
     // reads
     ['GET', `/endpoints/${ep.id}`],
     ['GET', `/endpoints/${ep.id}/inventory`],
+    ['GET', `/endpoints/${ep.id}/timeline`],
     ['GET', `/endpoints/${ep.id}/event-log/latest`],
     ['GET', `/endpoints/${ep.id}/commands/${cmdId}`],
     ['GET', `/endpoints/${ep.id}/access`],

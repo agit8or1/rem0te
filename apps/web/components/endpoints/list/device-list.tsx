@@ -8,7 +8,7 @@ import {
   Loader2, MoreHorizontal, Rows3, Search, Trash2, Users, X,
 } from 'lucide-react';
 import { endpointsApi } from '@/lib/api-client';
-import { usePermissions } from '@/lib/auth';
+import { usePermissions, CAP } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,7 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { COLUMNS, DEFAULT_COLUMNS, ago, type CellContext } from './columns';
-import { BULK_MAX, deviceGroupsApi, deviceListApi, deviceViewsApi, refusalMessage, storedFilters, toParams, viewFilters } from './api';
+import { BULK_MAX, describeRule, deviceGroupsApi, deviceListApi, deviceViewsApi, refusalMessage, ruleFromFilters, storedFilters, toParams, viewFilters } from './api';
 import { clearLegacyViews, loadLegacyViews, loadPrefs, savePrefs, type LegacyView } from './prefs';
 import { BulkBar, BulkResultDialog, GroupsDialog } from './bulk';
 import { EMPTY_FILTERS, type BulkResponse, type Density, type DeviceFilters, type DeviceRow, type SavedView, type SortKey } from './types';
@@ -44,6 +44,11 @@ function readUrl(): { filters: DeviceFilters; sort: SortKey; dir: 'asc' | 'desc'
         agent: pick('agent', ['', 'signed', 'standard', 'none'] as const, ''),
         status: pick('status', ['current', 'archived', 'all'] as const, 'current'),
         groupId: q.get('groupId') ?? '',
+        platform: pick('platform', ['', 'windows', 'linux', 'macos', 'other'] as const, ''),
+        os: q.get('os') ?? '', tag: q.get('tag') ?? '',
+        patches: pick('patches', ['', 'pending', 'current', 'unknown', 'stale'] as const, ''),
+        rustdeskMin: q.get('rustdeskMin') ?? '', rustdeskMax: q.get('rustdeskMax') ?? '',
+        notSeenDays: q.get('notSeenDays') ?? '', seenWithinDays: q.get('seenWithinDays') ?? '',
       },
       sort, dir: pick('dir', ['asc', 'desc'] as const, DEFAULT_DIR[sort] ?? 'desc'),
       page: Math.max(1, parseInt(q.get('page') ?? '1', 10) || 1),
@@ -75,6 +80,11 @@ export function DeviceList() {
   const [shareView, setShareView] = React.useState(false);
   const [activeView, setActiveView] = React.useState<SavedView | null>(null);
   const [groupsOpen, setGroupsOpen] = React.useState(false);
+  // 0.34: the less common filters (also what a rule group is made of), edited as a draft and applied together.
+  const [moreOpen, setMoreOpen] = React.useState(false);
+  const [moreDraft, setMoreDraft] = React.useState<DeviceFilters>(EMPTY_FILTERS);
+  const [ruleOpen, setRuleOpen] = React.useState(false);
+  const [ruleName, setRuleName] = React.useState('');
   // Selected rows, kept across pages and filters (id → name). Capped: the server refuses more than BULK_MAX per request.
   const [selected, setSelected] = React.useState<Map<string, string>>(new Map());
   const [bulkResult, setBulkResult] = React.useState<BulkResponse | null>(null);
@@ -300,15 +310,44 @@ export function DeviceList() {
     }
   }
 
+  async function saveRuleGroup() {
+    const name = ruleName.trim().slice(0, 60);
+    const { rule } = ruleFromFilters(filters);
+    if (!name || !Object.keys(rule).length) return;
+    try {
+      const g = await deviceGroupsApi.create({ name, kind: 'rule', rule, ...(targetBusinessId ? { businessId: targetBusinessId } : {}) });
+      qc.invalidateQueries({ queryKey: ['device-groups'] });
+      qc.invalidateQueries({ queryKey: ['device-list'] });
+      toast({ title: 'Rule group created', description: 'It holds whichever computers match the rule each time it is read; nothing is copied.' });
+      setRuleOpen(false); setRuleName('');
+      setFilters({ ...EMPTY_FILTERS, ...(filters.businessId ? { businessId: filters.businessId } : {}), groupId: g.id });
+      setSearchInput(''); setPage(1);
+    } catch (e) {
+      toast({ title: 'Rule group not created', description: await refusalMessage(e, 'The group could not be created.'), variant: 'destructive' });
+    }
+  }
+  const MORE_KEYS = ['platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays'] as const;
+  const moreActive = MORE_KEYS.filter((k) => !!filters[k]).length;
+  const siteName = (id: string) => data?.facets.sites.find((x) => x.id === id)?.name;
+
   const sites = (data?.facets.sites ?? []).filter((s) => !filters.businessId || s.businessId === filters.businessId);
   const businesses = data?.facets.businesses ?? [];
   // Groups to filter on: those with devices this viewer can see, plus any the viewer manages (an empty group can still be picked).
   const groupOptions: [string, string][] = (() => {
     const m = new Map<string, string>();
-    for (const g of data?.facets.groups ?? []) if (!filters.businessId || g.businessId === filters.businessId) m.set(g.id, `${g.name} (${g.count})`);
-    for (const g of groups) if (!m.has(g.id) && g.may.manage) m.set(g.id, `${g.name} (0)`);
+    const label = (name: string, kind: string | undefined, n: number | string) => `${name}${kind === 'rule' ? ' · rule' : ''} (${n})`;
+    for (const g of data?.facets.groups ?? []) if (!filters.businessId || g.businessId === filters.businessId) m.set(g.id, label(g.name, g.kind, g.count));
+    for (const g of groups) if (!m.has(g.id) && g.may.manage && g.members !== null) m.set(g.id, label(g.name, g.kind, 0));
     if (filters.groupId && !m.has(filters.groupId)) m.set(filters.groupId, 'Selected group');
     return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  })();
+  // The list filtered by a rule group: the bulk bar can act on its current members (resolved by the server).
+  const ruleTarget = (() => {
+    if (!filters.groupId) return undefined;
+    const g = groups.find((x) => x.id === filters.groupId);
+    const f = data?.facets.groups.find((x) => x.id === filters.groupId);
+    if ((g?.kind ?? f?.kind) !== 'rule') return undefined;
+    return { id: filters.groupId, name: g?.name ?? f?.name ?? 'Rule group', count: f ? f.count : g?.members ?? null };
   })();
   const pageRows = data?.rows ?? [];
   const pageAllSelected = pageRows.length > 0 && pageRows.every((r) => selected.has(r.id));
@@ -345,6 +384,9 @@ export function DeviceList() {
         <Button variant={filters.restartPending ? 'default' : 'outline'} size="sm" className="h-9" onClick={() => setFilter('restartPending', !filters.restartPending)} aria-pressed={filters.restartPending}>
           Restart pending
         </Button>
+        <Button variant={moreActive ? 'default' : 'outline'} size="sm" className="h-9" onClick={() => { setMoreDraft(filters); setMoreOpen(true); }}>
+          More filters{moreActive ? ` (${moreActive})` : ''}
+        </Button>
         {sel(filters.status === 'current' ? '' : filters.status, (v) => setFilter('status', (v || 'current') as DeviceFilters['status']), 'Archived', [['archived', 'Archived only'], ['all', 'Include archived']], 'w-[150px]')}
         {active > 0 && (
           <Button variant="ghost" size="sm" className="h-9" onClick={() => { setFilters(EMPTY_FILTERS); setSearchInput(''); setPage(1); }}>
@@ -352,7 +394,7 @@ export function DeviceList() {
           </Button>
         )}
 
-        <div className="flex items-center gap-2 sm:ml-auto">
+        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-9" title={activeView ? `View: ${activeView.name}` : 'Saved views'}>
@@ -389,6 +431,7 @@ export function DeviceList() {
               <DropdownMenuItem onSelect={() => setSaveOpen(true)}>Save current view…</DropdownMenuItem>
               {legacy.length > 0 && <DropdownMenuItem onSelect={importLegacy}>Import {legacy.length} view{legacy.length === 1 ? '' : 's'} saved in this browser</DropdownMenuItem>}
               <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setRuleOpen(true)}>Save filters as a rule group…</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setGroupsOpen(true)}><FolderTree className="h-4 w-4 mr-2" />Device groups…</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -418,10 +461,13 @@ export function DeviceList() {
         </div>
       </div>
 
-      {selected.size > 0 && (
-        <BulkBar selected={selected} groups={groups} isPlatformAdmin={isPlatformAdmin} sort={sort} dir={dir}
+      {selected.size > 0 ? (
+        <BulkBar selected={selected} groups={groups} isPlatformAdmin={isPlatformAdmin} canEdit={can(CAP.COMPUTERS_EDIT)} sort={sort} dir={dir}
           onClear={() => setSelected(new Map())} onDone={bulkDone} />
-      )}
+      ) : ruleTarget ? (
+        <BulkBar selected={selected} target={ruleTarget} groups={groups} isPlatformAdmin={isPlatformAdmin} canEdit={can(CAP.COMPUTERS_EDIT)} sort={sort} dir={dir}
+          onClear={() => setFilter('groupId', '')} onDone={bulkDone} />
+      ) : null}
 
       {refused ? (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm">
@@ -560,12 +606,106 @@ export function DeviceList() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={moreOpen} onOpenChange={setMoreOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>More filters</DialogTitle>
+            <DialogDescription>
+              Narrow the list further. These are also what a rule group can be made of. A computer with no reported
+              RustDesk version, or one that is not plain numbers (a nightly build), never matches a version range.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+            <label className="space-y-1"><span className="text-xs text-muted-foreground">Platform</span>
+              <Select value={moreDraft.platform || ALL} onValueChange={(v) => setMoreDraft((d) => ({ ...d, platform: (v === ALL ? '' : v) as DeviceFilters['platform'] }))}>
+                <SelectTrigger className="h-9" aria-label="Platform"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>Any</SelectItem>
+                  <SelectItem value="windows">Windows</SelectItem><SelectItem value="linux">Linux</SelectItem>
+                  <SelectItem value="macos">macOS</SelectItem><SelectItem value="other">Other / unknown</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
+            <label className="space-y-1"><span className="text-xs text-muted-foreground">Updates</span>
+              <Select value={moreDraft.patches || ALL} onValueChange={(v) => setMoreDraft((d) => ({ ...d, patches: (v === ALL ? '' : v) as DeviceFilters['patches'] }))}>
+                <SelectTrigger className="h-9" aria-label="Updates"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>Any</SelectItem>
+                  <SelectItem value="pending">Updates pending</SelectItem><SelectItem value="current">No updates pending</SelectItem>
+                  <SelectItem value="stale">Scan is stale</SelectItem><SelectItem value="unknown">Never scanned</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
+            <label className="space-y-1"><span className="text-xs text-muted-foreground">OS name contains</span>
+              <Input className="h-9" maxLength={60} placeholder="e.g. Server 2022" value={moreDraft.os} onChange={(e) => setMoreDraft((d) => ({ ...d, os: e.target.value }))} />
+            </label>
+            <label className="space-y-1"><span className="text-xs text-muted-foreground">Tag (exact)</span>
+              <Input className="h-9" maxLength={64} placeholder="e.g. kiosk" value={moreDraft.tag} onChange={(e) => setMoreDraft((d) => ({ ...d, tag: e.target.value }))} />
+            </label>
+            <label className="space-y-1"><span className="text-xs text-muted-foreground">RustDesk version from</span>
+              <Input className="h-9" maxLength={30} placeholder="e.g. 1.3" inputMode="decimal" value={moreDraft.rustdeskMin} onChange={(e) => setMoreDraft((d) => ({ ...d, rustdeskMin: e.target.value }))} />
+            </label>
+            <label className="space-y-1"><span className="text-xs text-muted-foreground">RustDesk version up to</span>
+              <Input className="h-9" maxLength={30} placeholder="e.g. 1.4.1" inputMode="decimal" value={moreDraft.rustdeskMax} onChange={(e) => setMoreDraft((d) => ({ ...d, rustdeskMax: e.target.value }))} />
+            </label>
+            <label className="space-y-1"><span className="text-xs text-muted-foreground">Not seen for at least (days)</span>
+              <Input className="h-9" type="number" min={1} max={3650} value={moreDraft.notSeenDays} onChange={(e) => setMoreDraft((d) => ({ ...d, notSeenDays: e.target.value }))} />
+            </label>
+            <label className="space-y-1"><span className="text-xs text-muted-foreground">Seen within (days)</span>
+              <Input className="h-9" type="number" min={1} max={3650} value={moreDraft.seenWithinDays} onChange={(e) => setMoreDraft((d) => ({ ...d, seenWithinDays: e.target.value }))} />
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setMoreDraft((d) => ({ ...d, ...Object.fromEntries(MORE_KEYS.map((k) => [k, ''])) }))}>Clear these</Button>
+            <Button onClick={() => {
+              setFilters((f) => ({ ...f, ...Object.fromEntries(MORE_KEYS.map((k) => [k, moreDraft[k]])) }));
+              setPage(1); setMoreOpen(false);
+            }}>Apply</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={ruleOpen} onOpenChange={setRuleOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Save filters as a rule group</DialogTitle>
+            <DialogDescription>
+              A rule group holds whichever of {targetBusinessName ?? 'the business'}’s computers match these filters each time it is
+              read — a computer that goes offline leaves an “online” group at once. Nothing is copied, and nobody adds to it by hand.
+              Everyone sees only the members they can already see.
+            </DialogDescription>
+          </DialogHeader>
+          {(() => {
+            const { rule, left } = ruleFromFilters(filters);
+            const has = Object.keys(rule).length > 0;
+            return (
+              <>
+                <p className="text-sm"><span className="text-muted-foreground">Rule: </span>{has ? describeRule(rule, siteName) : 'set at least one filter first (online, platform, site, updates…)'}</p>
+                {left.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Not part of the rule: {left.join(', ')} — search, business, group and the archived filter are never stored in a rule.
+                  </p>
+                )}
+                {isPlatformAdmin && !filters.businessId && <p className="text-xs text-muted-foreground">Pick a business filter first: a group belongs to one business.</p>}
+                <Input autoFocus placeholder="e.g. Offline for a week" value={ruleName} maxLength={60}
+                  onChange={(e) => setRuleName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveRuleGroup(); }} />
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setRuleOpen(false)}>Cancel</Button>
+                  <Button onClick={saveRuleGroup} disabled={!ruleName.trim() || !has || (isPlatformAdmin && !filters.businessId)}>Create rule group</Button>
+                </DialogFooter>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
       <BulkResultDialog result={bulkResult} onClose={() => setBulkResult(null)} />
       <GroupsDialog open={groupsOpen} onOpenChange={setGroupsOpen}
         groups={groups.filter((g) => !filters.businessId || g.business?.id === filters.businessId)}
         businessId={targetBusinessId} businessLabel={targetBusinessName}
         canCreate={!!groupsQ.data?.may.manage && (!isPlatformAdmin || !!filters.businessId)}
-        onChanged={() => { qc.invalidateQueries({ queryKey: ['device-groups'] }); qc.invalidateQueries({ queryKey: ['device-list'] }); }} />
+        onChanged={() => { qc.invalidateQueries({ queryKey: ['device-groups'] }); qc.invalidateQueries({ queryKey: ['device-list'] }); }}
+        currentRule={ruleFromFilters(filters).rule} siteName={siteName} onShow={(id) => setFilter('groupId', id)} />
     </div>
   );
 }

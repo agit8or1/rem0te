@@ -33,6 +33,13 @@ was stored, so there is nothing to backfill.
 
 ## Reading the charts
 
+![The Performance tab over 7 days: range, processor, a disk volume and Show as a table](screenshots/guide/device-performance.png)
+
+1. **Range** — 24 hours, 7, 30 or 90 days.
+2. **A chart** — the hourly mean as the line, the hour's lowest to highest as the band.
+3. **A volume** — disk use is sampled every six hours, so its line moves in steps.
+4. **Show as a table** — latest, lowest, mean and highest of each series over the range.
+
 - **24 h** draws every sample. **7, 30 and 90 days** draw each hour's **mean** as the line and the hour's
   **lowest to highest** sample as a pale band — a processor that spiked to 100 % for three minutes shows in
   the band even when the hourly mean is 20 %.

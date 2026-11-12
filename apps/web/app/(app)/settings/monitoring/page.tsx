@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, BellOff, Plus, Sparkles, Trash2 } from 'lucide-react';
-import { businessesApi, monitoringApi, type MonitorKindId, type Severity } from '@/lib/api-client';
+import { businessesApi, emailApi, monitoringApi, type EmailRecipientView, type MonitorKindId, type Severity } from '@/lib/api-client';
+import { EmailOffNotice, RecipientsCard } from '@/components/email/recipients-card';
 import { usePermissions } from '@/lib/auth';
 import { PageHeader } from '@/components/common/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -31,7 +32,13 @@ type Rule = {
 };
 type Rules = { rules: Rule[]; recommended: { key: string; kind: MonitorKindId; name: string; severity: Severity; params: Record<string, unknown> }[]; may: { global: boolean; business: boolean } };
 type Window = { id: string; scopeKey: string; ruleKeys: string[]; reason: string; startsAt: string; endsAt: string; revokedAt: string | null; active: boolean };
-type Level = { afterMinutes: number; minSeverity: Severity; destinations: { label: string; url: string }[] };
+/** A webhook, or (0.34) a confirmed email recipient. `email`/`confirmed` come back from the server for display only. */
+type Dest = { label: string; url: string } | { label: string; recipientId: string; email?: string | null; confirmed?: boolean };
+type Level = { afterMinutes: number; minSeverity: Severity; destinations: Dest[] };
+const isEmailHint = (l: Level) => l.destinations.some((d) => 'recipientId' in d);
+const isEmail = (d: Dest): d is { label: string; recipientId: string; email?: string | null; confirmed?: boolean } => 'recipientId' in d;
+/** What the API accepts: the display-only fields are dropped. */
+const wire = (d: Dest) => (isEmail(d) ? { label: d.label, recipientId: d.recipientId } : { label: d.label, url: d.url });
 type PolicyView = { scopeKey: string; levels: Level[]; ticketing: { enabled: boolean; minSeverity: Severity }; updatedAt: string };
 type Policy = { global: PolicyView | null; business: PolicyView | null; effective: 'business' | 'global' | 'none'; may: { global: boolean; business: boolean } };
 
@@ -119,7 +126,10 @@ export default function MonitoringSettingsPage() {
         </TabsList>
         <TabsContent value="monitors"><Monitors businessId={businessId} ok={ok} fail={fail} /></TabsContent>
         <TabsContent value="windows"><Windows businessId={businessId} ok={ok} fail={fail} /></TabsContent>
-        <TabsContent value="notify"><Notify businessId={businessId} ok={ok} fail={fail} /></TabsContent>
+        <TabsContent value="notify" className="space-y-4">
+          <Notify businessId={businessId} ok={ok} fail={fail} />
+          <RecipientsCard scope={businessId ? 'business' : 'global'} businessId={businessId} ok={ok} fail={fail} />
+        </TabsContent>
       </Tabs>
     </div>
   );
@@ -192,10 +202,10 @@ function Monitors({ businessId, ok, fail }: Props) {
 
   return (
     <Card data-testid="mon-rules">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
         <CardTitle className="text-sm">Monitors {businessId ? 'for this business (and inherited)' : '— global, inherited by every business'}</CardTitle>
         {mayHere && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" disabled={recommended.isPending} onClick={() => recommended.mutate()}><Sparkles className="mr-1 h-4 w-4" />Add recommended</Button>
             <Button size="sm" onClick={() => setAdding((x) => !x)}><Plus className="mr-1 h-4 w-4" />New monitor</Button>
           </div>
@@ -330,10 +340,17 @@ function Notify({ businessId, ok, fail }: Props) {
   const [draft, setDraft] = useState<{ levels: Level[]; ticketing: { enabled: boolean; minSeverity: Severity } } | null>(null);
   const edit = draft ?? { levels: current?.levels ?? [], ticketing: current?.ticketing ?? { enabled: false, minSeverity: 'CRITICAL' as Severity } };
   const save = useMutation({
-    mutationFn: () => monitoringApi.setPolicy({ scope, ...(businessId ? { businessId } : {}), ...edit }),
+    mutationFn: () => monitoringApi.setPolicy({ scope, ...(businessId ? { businessId } : {}), ticketing: edit.ticketing, levels: edit.levels.map((l) => ({ ...l, destinations: l.destinations.map(wire) })) }),
     onSuccess: () => { ok('Notification policy saved.'); setDraft(null); qc.invalidateQueries({ queryKey: ['mon-policy'] }); }, onError: fail,
   });
   const setLevels = (levels: Level[]) => setDraft({ ...edit, levels });
+  const { data: mail } = useQuery<{ enabled: boolean }>({ queryKey: ['email-status'], queryFn: () => emailApi.status().then((r) => r.data.data), retry: false });
+  // Confirmed recipients of this policy's scope: the only addresses an email destination may name.
+  const { data: book } = useQuery<{ recipients: EmailRecipientView[] }>({
+    queryKey: ['email-recipients', scope, businessId], queryFn: () => emailApi.recipients(scope, businessId).then((r) => r.data.data), retry: false, enabled: may,
+  });
+  const confirmed = (book?.recipients ?? []).filter((r) => r.verified);
+  const setDest = (i: number, k: number, d: Dest) => setLevels(edit.levels.map((x, j) => (j === i ? { ...x, destinations: x.destinations.map((y, m) => (m === k ? d : y)) } : x)));
 
   if (error) return <p className="p-4 text-sm text-muted-foreground">{apiError(error).message}</p>;
   if (!data) return <p className="p-4 text-sm text-muted-foreground">Loading…</p>;
@@ -345,8 +362,10 @@ function Notify({ businessId, ok, fail }: Props) {
           In effect{businessId ? ' here' : ''}: <strong>{data.effective === 'business' ? "this business's own policy" : data.effective === 'global' ? 'the global policy' : 'nothing — alerts are recorded but nobody is notified'}</strong>.
           Each level fires once an alert has been open that many minutes and is not acknowledged. Destinations receive a JSON POST
           (Slack/Teams-style incoming webhooks and ticketing relays work). {businessId ? 'A business destination must be https on a public host name.' : ''}
+          {' '}An email destination is one of the confirmed addresses below; the email says only the alert, the computer, the business and a link.
           {' '}Saving asks you to confirm it is you: a destination receives alert text, including computer names.
         </p>
+        <EmailOffNotice enabled={mail?.enabled} />
         {!may && <p className="text-muted-foreground">Only {businessId ? 'a Business Owner of this business or the MSP' : 'the MSP'} can change this; addresses are shown shortened.</p>}
         {edit.levels.map((l, i) => (
           <div key={i} className="space-y-2 rounded-md border p-3">
@@ -360,11 +379,26 @@ function Notify({ businessId, ok, fail }: Props) {
             </div>
             {l.destinations.map((d, k) => (
               <div key={k} className="flex flex-wrap gap-2">
-                <Input className="w-40" placeholder="Label" disabled={!may} value={d.label} onChange={(e) => setLevels(edit.levels.map((x, j) => (j === i ? { ...x, destinations: x.destinations.map((y, m) => (m === k ? { ...y, label: e.target.value } : y)) } : x)))} />
-                <Input className="min-w-0 flex-1" placeholder="https://hooks.example.com/…" disabled={!may} value={d.url} data-secret onChange={(e) => setLevels(edit.levels.map((x, j) => (j === i ? { ...x, destinations: x.destinations.map((y, m) => (m === k ? { ...y, url: e.target.value } : y)) } : x)))} />
+                <select aria-label="Destination type" className="rounded-md border bg-background p-2" disabled={!may} value={isEmail(d) ? 'email' : 'webhook'}
+                  onChange={(e) => setDest(i, k, e.target.value === 'email' ? { label: d.label, recipientId: confirmed[0]?.id ?? '' } : { label: d.label, url: '' })}>
+                  <option value="webhook">Webhook</option>
+                  <option value="email">Email</option>
+                </select>
+                <Input className="w-40" placeholder="Label" disabled={!may} value={d.label} onChange={(e) => setDest(i, k, { ...d, label: e.target.value })} />
+                {isEmail(d) ? (
+                  may ? (
+                    <select aria-label="Recipient" className="min-w-0 flex-1 rounded-md border bg-background p-2" value={d.recipientId} onChange={(e) => setDest(i, k, { label: d.label, recipientId: e.target.value })}>
+                      {!confirmed.some((r) => r.id === d.recipientId) && <option value={d.recipientId}>{d.email ? `${d.email} (not confirmed)` : 'Choose a confirmed address'}</option>}
+                      {confirmed.map((r) => <option key={r.id} value={r.id}>{r.address}{r.label ? ` — ${r.label}` : ''}</option>)}
+                    </select>
+                  ) : <span className="self-center">{d.email ?? 'an address that was removed'}{d.confirmed === false ? ' (not confirmed)' : ''}</span>
+                ) : (
+                  <Input className="min-w-0 flex-1" placeholder="https://hooks.example.com/…" disabled={!may} value={d.url} data-secret onChange={(e) => setDest(i, k, { label: d.label, url: e.target.value })} />
+                )}
                 {may && <Button size="sm" variant="ghost" onClick={() => setLevels(edit.levels.map((x, j) => (j === i ? { ...x, destinations: x.destinations.filter((_, m) => m !== k) } : x)))}>Remove</Button>}
               </div>
             ))}
+            {may && isEmailHint(l) && confirmed.length === 0 && <p className="text-xs text-muted-foreground">No confirmed address yet: add one under Email recipients and confirm it first.</p>}
             {may && l.destinations.length < 5 && <Button size="sm" variant="outline" onClick={() => setLevels(edit.levels.map((x, j) => (j === i ? { ...x, destinations: [...x.destinations, { label: '', url: '' }] } : x)))}>Add destination</Button>}
           </div>
         ))}

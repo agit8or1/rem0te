@@ -21,12 +21,15 @@
 //	rem0te-agent.exe migrate [--portal HOST]             legacy agent → signed chain, keeps enrolment
 //	rem0te-agent.exe update  [--portal HOST] [--nonce N] signed update (heartbeat)
 //	rem0te-agent.exe status                              trust state as JSON
-//	rem0te-agent.exe action --job ID --envelope FILE     approved catalog action (heartbeat, v0.26)
+//	rem0te-agent.exe action --job ID --envelope FILE [--script FILE]  approved catalog action (heartbeat, v0.26; --script v0.34)
 //	rem0te-agent.exe patch-scan                          read-only Windows Update posture (heartbeat, v0.27)
+//	rem0te-agent.exe chat                                chat host while a chat is open (heartbeat, v0.34)
+//	rem0te-agent.exe chat-window --down P --up P --nonce N  the chat window, in the user's session (started by `chat`)
 package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	_ "embed"
 	"encoding/json"
 	"flag"
@@ -42,6 +45,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"github.com/agit8or1/rem0te/windows-installer/internal/agent"
+	"github.com/agit8or1/rem0te/windows-installer/internal/devsig"
 	"github.com/agit8or1/rem0te/windows-installer/internal/trust"
 )
 
@@ -137,6 +141,11 @@ func main() {
 	if len(args) > 0 && args[0] == "status" {
 		os.Exit(cmdStatus())
 	}
+	// The chat window (0.34) runs as the signed-in user, unelevated, by
+	// design: it must never ask to elevate.
+	if len(args) > 0 && args[0] == "chat-window" {
+		os.Exit(cmdChatWindow(args[1:]))
+	}
 	if !isElevated() {
 		fmt.Println("  Requesting administrator privileges...")
 		selfElevate(args)
@@ -204,6 +213,9 @@ func subcommand(args []string) int {
 	}
 	if args[0] == "patch-scan" {
 		return cmdPatchScan(args[1:])
+	}
+	if args[0] == "chat" {
+		return cmdChat(args[1:])
 	}
 	mode := agent.Mode(args[0])
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
@@ -273,6 +285,12 @@ func cmdStatus() int {
 		if json.Unmarshal(raw, &pin) == nil {
 			out["pin"] = pin
 		}
+	}
+	// v0.34: the key this computer signs its results with. Compare the
+	// fingerprint with the one the approval signer's policy page shows for
+	// this computer before approving its first patch policy.
+	if k, err := devsig.Load(p.StateDir); err == nil {
+		out["resultKey"] = map[string]string{"publicKey": devsig.PublicB64(k), "fingerprint": devsig.Fingerprint(k.Public().(ed25519.PublicKey))}
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")

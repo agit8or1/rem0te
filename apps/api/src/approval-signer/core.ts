@@ -24,8 +24,12 @@ import {
 } from '../actions/catalog';
 import {
   POLICY_PROPOSAL_DAYS, PolicyDoc, RingEvidence as RingEvidenceSchema, evaluatePolicyPlan, policyDigest, policyQuorum, policySigningBytes, validatePolicyDoc,
-  type LedgerEntry, type PolicyApproval, type PolicyDecision, type PolicyPlanRequest, type PolicyStatus,
+  type LedgerEntry, type PolicyApproval, type PolicyComputer, type PolicyDecision, type PolicyPlanRequest, type PolicyStatus,
 } from '../actions/patch-policy';
+import { resultKeyFingerprint } from '../actions/device-result';
+import {
+  SCRIPT_ALLOWLIST_APPROVALS, SCRIPT_RUN_ACTION, ScriptProposal, argumentsProblem, canonical, contentProblem, scriptBlockOf, sha256Hex,
+} from '../actions/script-run';
 
 export type Role = 'approver' | 'customer';
 export interface RosterMember {
@@ -58,8 +62,12 @@ export interface JobRecord {
   createdAt: string;
   updatedAt: string;
 }
-/** One single-use WebAuthn challenge. `kind: 'policy'` (0.32) is a policy decision, and `jobId` is then the policy id. */
-export interface Challenge { id: string; kind?: 'policy'; jobId: string; digest: string; decision: 'approve' | 'reject'; role: Role; expiresAt: string; used: boolean }
+/**
+ * One single-use WebAuthn challenge. `kind: 'policy'` (0.32) is a policy
+ * decision and `kind: 'script'` (0.34) an allowlist decision; `jobId` is then
+ * the policy's or the entry's id.
+ */
+export interface Challenge { id: string; kind?: 'policy' | 'script'; jobId: string; digest: string; decision: 'approve' | 'reject'; role: Role; expiresAt: string; used: boolean }
 
 export class Refused extends Error { constructor(public code: string, msg?: string) { super(msg ?? code); } }
 
@@ -85,8 +93,14 @@ export function policyFor(policy: Policy, businessId: string) {
   return policy.businesses[businessId] ?? policy.default;
 }
 
-/** Accept a plan from the portal. Everything the portal claims about policy is re-derived here. */
-export function admitPlan(raw: unknown, policy: Policy, now: Date): { plan: Plan; digest: string } {
+/**
+ * Accept a plan from the portal. Everything the portal claims about policy is
+ * re-derived here. A script run (0.34) must name an ACTIVE entry of this
+ * process's own allowlist, carry exactly that entry's block, and pass its
+ * arguments against the entry's declared parameters — this process's copy,
+ * not the portal's.
+ */
+export function admitPlan(raw: unknown, policy: Policy, now: Date, scripts?: (id: string) => ScriptAllowRecord | null): { plan: Plan; digest: string } {
   const parsed = Plan.safeParse(raw);
   if (!parsed.success) throw new Refused('invalid_plan', parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
   const p = parsed.data;
@@ -99,7 +113,21 @@ export function admitPlan(raw: unknown, policy: Policy, now: Date): { plan: Plan
   if (p.policy.customerSignoff !== requireCustomer) throw new Refused('policy_mismatch', `customer sign-off is ${requireCustomer ? 'required' : 'not required'} for this business`);
   if (p.policy.approvalsRequired !== APPROVALS_REQUIRED[p.policy.risk]) throw new Refused('policy_mismatch', 'approvals required does not match the catalog risk');
   if (Date.parse(p.window.notAfter) <= now.getTime()) throw new Refused('window_closed');
+  if (p.action.id === SCRIPT_RUN_ACTION) assertScriptAllowed(p, scripts);
   return { plan: p, digest: planDigest(p) };
+}
+
+/** A script-run plan against this signer's allowlist. Throws unless it may be signed. */
+export function assertScriptAllowed(p: Plan, scripts?: (id: string) => ScriptAllowRecord | null) {
+  const s = p.script;
+  const entry = s && scripts ? scripts(s.allowlistId) : null;
+  if (!s || !entry) throw new Refused('script_not_allowlisted', 'this script version is not on the approval signer\'s allowlist');
+  const st = effectiveScriptStatus(entry);
+  if (st === 'REVOKED') throw new Refused('script_revoked', `this script was removed from the allowlist${entry.revokeReason ? `: ${entry.revokeReason}` : ''}`);
+  if (st !== 'ACTIVE') throw new Refused('script_not_allowlisted', `this script's allowlist entry is ${st.toLowerCase().replace(/_/g, ' ')}`);
+  if (canonical(s) !== canonical(scriptBlockOf(entry.proposal))) throw new Refused('script_mismatch', 'the plan does not describe the allowlisted script exactly');
+  const why = argumentsProblem(entry.proposal.parameters, (p.params as { parameters?: unknown }).parameters);
+  if (why) throw new Refused('arguments_not_allowed', why);
 }
 
 /** Who this member may act as for this plan, if anything. */
@@ -118,6 +146,9 @@ export function recordDecision(job: JobRecord, m: RosterMember, role: Role, deci
   if (Date.parse(job.plan.window.notAfter) <= now.getTime()) { job.status = 'EXPIRED'; throw new Refused('window_closed'); }
   if (!rolesFor(m, job.plan).includes(role)) throw new Refused('not_authorized', `this passkey is not on the roster as ${role} for this business`);
   if (m.userId === job.plan.requestedBy.userId) throw new Refused('requester_cannot_approve', 'the person who asked cannot approve it');
+  // SAME_PERSON (0.34): whoever wrote a script's content approves neither
+  // its review in the library nor a run of it here. The agent checks again.
+  if (job.plan.script?.contributors.includes(m.userId)) throw new Refused('contributor_cannot_approve', 'you wrote or edited this script, so someone else must approve running it');
   if (job.decisions.some((d) => d.userId === m.userId)) throw new Refused('already_decided', 'each person decides once; a second approval must come from someone else');
   job.decisions.push({ userId: m.userId, name: m.name, role, decision, credentialSha256: credentialSha256(m), at: now.toISOString() });
   job.updatedAt = now.toISOString();
@@ -247,9 +278,13 @@ export function verifyPolicy(r: PolicyRecord, publicKey: KeyObject): boolean {
  */
 export function signUnderPolicy(
   r: PolicyRecord, raw: { plan?: unknown; policyDigest?: unknown; evidence?: unknown }, k: { key: KeyObject; kid: string },
-  business: Policy, now: Date,
+  business: Policy, now: Date, pins: DevicePins = () => null,
 ): { job: JobRecord; entry: LedgerEntry } {
   const { plan, digest } = admitPlan(raw.plan, business, now);
+  // v0.34: a computer's result key is whatever this signer pinned for it
+  // first. A policy naming another key for the same computer signs nothing.
+  const changed = pinConflicts(r.doc.rings.flat(), pins);
+  if (changed.length) throw new Refused('device_key_changed', deviceKeyChangedMessage(changed));
   const ev = raw.evidence == null ? null : RingEvidenceSchema.safeParse(raw.evidence);
   if (ev && !ev.success) throw new Refused('bad_evidence', ev.error.issues.slice(0, 2).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
   const req: PolicyPlanRequest = { plan, policyDigest: typeof raw.policyDigest === 'string' ? raw.policyDigest : '', evidence: ev ? ev.data! : null };
@@ -267,7 +302,120 @@ export function signUnderPolicy(
   const entry: LedgerEntry = {
     jobId: plan.jobId, deploymentId: plan.display!.deployment!.id, ring: plan.display!.deployment!.ring, signedAt: now.toISOString(),
     notBefore: plan.window.notBefore, notAfter: plan.window.notAfter, endpointIds: plan.targets.map((t) => t.endpointId), updates: p.updates.map((u) => `${u.updateId}@${u.revision}`),
+    // Each computer's signed result must name exactly these bytes (v0.34).
+    planSha256: createHash('sha256').update(Buffer.from(job.envelope!.plan, 'base64')).digest('hex'),
   };
   r.ledger.push(entry); r.updatedAt = now.toISOString();
   return { job, entry };
+}
+
+// ── Device result keys (v0.34) ──────────────────────────────────────────────
+// A patch policy binds each computer to the key it signs its results with.
+// The key reaches the portal from the computer's own signed scans, and the
+// portal puts it in the policy; two approvers approving the policy is what
+// makes this process trust it. From then on it is pinned here, write-once,
+// to that computer's enrolled identity (endpoint, RustDesk ID, device-secret
+// hash): a later policy naming another key for the same computer is refused
+// (`device_key_changed`) until the operator forgets the pin. So a portal
+// compromised after a computer's first approved policy cannot substitute a
+// key of its choosing. Before that first approval it could, which is the
+// trust-on-first-use window docs/staged-patching.md describes: comparing the
+// fingerprint on the approval page with `rem0te-agent.exe status` on the
+// computer closes it.
+
+export { resultKeyFingerprint };
+
+export interface DevicePin { identity: string; endpointId: string; hostname: string; resultKey: string; policyId: string; pinnedAt: string }
+/** The pinned key for an identity, or null. */
+export type DevicePins = (identity: string) => DevicePin | null;
+
+export const deviceIdentity = (c: Pick<PolicyComputer, 'endpointId' | 'rustdeskId' | 'deviceSecretSha256'>) =>
+  createHash('sha256').update(`rem0te-device-identity-v1\n${c.endpointId}\n${c.rustdeskId}\n${c.deviceSecretSha256}`).digest('hex');
+
+/** Computers in a policy whose key is not the one pinned for them. */
+export function pinConflicts(computers: PolicyComputer[], pins: DevicePins): { computer: PolicyComputer; pin: DevicePin }[] {
+  const out: { computer: PolicyComputer; pin: DevicePin }[] = [];
+  for (const c of computers) {
+    if (!c.resultKey) continue;
+    const pin = pins(deviceIdentity(c));
+    if (pin && pin.resultKey !== c.resultKey) out.push({ computer: c, pin });
+  }
+  return out;
+}
+
+export function deviceKeyChangedMessage(changed: { computer: PolicyComputer; pin: DevicePin }[]): string {
+  const c = changed[0];
+  return `${c.computer.hostname}: this policy names a result key other than the one pinned for this computer on ${c.pin.pinnedAt} (policy ${c.pin.policyId}). If the computer really has a new key, the signer's operator removes the pin (device-key forget) and a new policy is approved.${changed.length > 1 ? ` ${changed.length - 1} more computer(s) likewise.` : ''}`;
+}
+
+/** The pins an approved policy makes: every computer with a key and no pin yet. */
+export function newPins(r: PolicyRecord, pins: DevicePins, now: Date): DevicePin[] {
+  return r.doc.rings.flat()
+    .filter((c) => c.resultKey && !pins(deviceIdentity(c)))
+    .map((c) => ({ identity: deviceIdentity(c), endpointId: c.endpointId, hostname: c.hostname, resultKey: c.resultKey!, policyId: r.policyId, pinnedAt: now.toISOString() }));
+}
+
+// ── The script allowlist (v0.34) ────────────────────────────────────────────
+// The signer's own list of script hashes it will sign a run of, on its own
+// disk. The portal proposes an entry (the content and what the library says
+// about it); this process hashes the content itself, and two roster
+// approvers who did not write it read it on this process's origin and add
+// it. Nothing over HTTP edits an entry, and revocation is one-way: a revoked
+// content hash can never be proposed again.
+
+export type ScriptStatus = 'AWAITING_APPROVAL' | 'ACTIVE' | 'REJECTED' | 'REVOKED';
+export interface ScriptAllowRecord {
+  id: string;
+  status: Exclude<ScriptStatus, 'REVOKED'>;
+  proposal: ScriptProposal;
+  /** Computed here from the content, never taken from the portal. */
+  contentSha256: string;
+  definitionSha256: string;
+  decisions: Decision[];
+  revokedAt: string | null;
+  revokedBy: 'portal' | 'operator' | null;
+  revokeReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Accept a proposed allowlist entry. The content is hashed here and must match what the portal claims. */
+export function admitScriptProposal(raw: unknown, now: Date): ScriptAllowRecord {
+  const parsed = ScriptProposal.safeParse(raw);
+  if (!parsed.success) throw new Refused('invalid_script', parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
+  const p = parsed.data;
+  const bad = contentProblem(p.content);
+  if (bad) throw new Refused('invalid_script', bad);
+  const sha = sha256Hex(p.content);
+  if (sha !== p.contentSha256) throw new Refused('hash_mismatch', `the content hashes to ${sha}, not the ${p.contentSha256} the portal named`);
+  if (p.contributors.some((c) => c.userId === p.reviewedBy.userId)) throw new Refused('invalid_script', 'the library reviewer is listed as a contributor');
+  const block = scriptBlockOf(p);
+  return {
+    id: p.allowlistId, status: 'AWAITING_APPROVAL', proposal: p, contentSha256: block.contentSha256, definitionSha256: block.definitionSha256,
+    decisions: [], revokedAt: null, revokedBy: null, revokeReason: null, createdAt: now.toISOString(), updatedAt: now.toISOString(),
+  };
+}
+
+export const effectiveScriptStatus = (r: ScriptAllowRecord): ScriptStatus => (r.revokedAt ? 'REVOKED' : r.status);
+
+/** Who may decide an entry: an approver for the script's business, or for every business ('*') for a global script. */
+export function scriptRolesFor(m: RosterMember, r: ScriptAllowRecord): Role[] {
+  if (m.disabled) return [];
+  const biz = r.proposal.businessId;
+  return m.approve.includes('*') || (biz !== null && m.approve.includes(biz)) ? ['approver'] : [];
+}
+
+/** Record one verified decision on an entry. Throws on anything that does not count. */
+export function recordScriptDecision(r: ScriptAllowRecord, m: RosterMember, decision: 'approve' | 'reject', now: Date): ScriptStatus {
+  const st = effectiveScriptStatus(r);
+  if (st !== 'AWAITING_APPROVAL') throw new Refused('not_awaiting', `this script is ${st.toLowerCase().replace(/_/g, ' ')}`);
+  if (!scriptRolesFor(m, r).length) throw new Refused('not_authorized', r.proposal.businessId ? 'this passkey is not on the roster as an approver for this business' : 'a global script is added by approvers for every business');
+  if (m.userId === r.proposal.proposedBy.userId) throw new Refused('requester_cannot_approve', 'the person who proposed it cannot approve it');
+  if (r.proposal.contributors.some((c) => c.userId === m.userId)) throw new Refused('contributor_cannot_approve', 'you wrote or edited this script, so someone else must approve it');
+  if (r.decisions.some((d) => d.userId === m.userId)) throw new Refused('already_decided', 'each person decides once; a second approval must come from someone else');
+  r.decisions.push({ userId: m.userId, name: m.name, role: 'approver', decision, credentialSha256: credentialSha256(m), at: now.toISOString() });
+  r.updatedAt = now.toISOString();
+  if (decision === 'reject') { r.status = 'REJECTED'; return r.status; }
+  if (new Set(r.decisions.filter((d) => d.decision === 'approve').map((d) => d.userId)).size >= SCRIPT_ALLOWLIST_APPROVALS) r.status = 'ACTIVE';
+  return r.status;
 }

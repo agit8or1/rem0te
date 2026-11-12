@@ -5,11 +5,22 @@
  */
 import type { ContainmentPause, PrismaClient } from '@prisma/client';
 
-export const KINDS = ['actions', 'remote', 'updates', 'integration'] as const;
+/**
+ * `notifications` (0.34) stops every email this server sends: alert emails,
+ * scheduled reports, confirmation and test messages. It is its own kind, not
+ * part of `integration`, because the two answer different incidents — a
+ * business suspending ClientSt0r jobs still wants to hear about a disk
+ * filling, and stopping mail (say, a report schedule leaking a fleet list)
+ * should not stop ticket analysis. Alert webhooks are not covered: they go
+ * to destinations the MSP or business configured as its own systems, and
+ * monitoring keeps telling people during a pause by design (0.29).
+ */
+export const KINDS = ['actions', 'remote', 'updates', 'integration', 'notifications'] as const;
 export type Kind = (typeof KINDS)[number];
 
 export const KIND_LABEL: Record<Kind, string> = {
-  actions: 'approved actions and patch rings', remote: 'remote connections', updates: 'agent and RustDesk updates', integration: 'ClientSt0r jobs',
+  actions: 'approved actions and patch rings', remote: 'remote connections and chat', updates: 'agent and RustDesk updates', integration: 'ClientSt0r jobs',
+  notifications: 'outbound emails',
 };
 
 type Db = Pick<PrismaClient, 'containmentPause'>;

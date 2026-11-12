@@ -14,12 +14,15 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { NotRunnableNotice, RiskBadge, StatusBadge, VersionEditor, apiMessage, selectClass, shortHash } from '@/components/scripts/script-ui';
+import { ScriptRunPanel } from '@/components/scripts/script-run-panel';
+import { ScriptRunNotice, RiskBadge, StatusBadge, VersionEditor, apiMessage, selectClass, shortHash } from '@/components/scripts/script-ui';
 
 /**
  * One script: its versions, the selected version's content, parameters and
  * static-check warnings, a diff between any two versions, and the review
- * controls the API says this person may use. No Run button: see the notice.
+ * controls the API says this person may use. An approved version has a Run
+ * panel (0.34) that proposes it to the approval signer and requests runs;
+ * nothing on this page approves or runs anything.
  */
 
 type Person = { id: string; name: string } | null;
@@ -30,7 +33,7 @@ interface ScriptData {
 }
 interface Finding { rule: string; severity: 'caution' | 'danger'; title: string; why: string; line: number; excerpt: string }
 interface VersionData {
-  version: number; status: string; basedOn: number | null; description: string; language: string; targetOs: string; risk: ScriptRisk; parameters: ScriptParameter[];
+  id: string; version: number; status: string; basedOn: number | null; description: string; language: string; targetOs: string; risk: ScriptRisk; parameters: ScriptParameter[];
   content: string; contentBytes: number; contentSha256: string; definitionSha256: string; author: Person; createdAt: string; submittedAt: string | null;
   contributors?: Person[];
   decision: { by: Person; at: string; note: string; approvedSha256: string | null } | null;
@@ -67,7 +70,7 @@ export default function ScriptPage() {
       <PageHeader title={s.name} description={`${s.scope === 'global' ? 'Global script' : `Script for ${s.businessName ?? 'this business'}`} · added ${formatDate(s.createdAt)}${s.createdBy ? ` by ${s.createdBy.name}` : ''}`}>
         {v?.you.canEdit && !editing && <Button size="sm" variant="outline" onClick={() => setEditing(true)}><Pencil className="h-4 w-4 mr-1" />Edit as a new version</Button>}
       </PageHeader>
-      <NotRunnableNotice />
+      <ScriptRunNotice />
       {s.view === 'approved_only' && <p className="mb-4 text-xs text-muted-foreground">This is a global script. You see its approved versions only, read-only.</p>}
 
       {editing && v && (
@@ -202,6 +205,8 @@ function VersionView({ id, v, onChanged }: { id: string; v: VersionData; onChang
           </div>
         </CardContent>
       </Card>
+
+      {v.status === 'APPROVED' && <ScriptRunPanel versionId={v.id} />}
 
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-yellow-600" />Static checks{v.staticChecks.findings.length ? ` · ${v.staticChecks.findings.length} warning${v.staticChecks.findings.length === 1 ? '' : 's'}${danger ? `, ${danger} serious` : ''}` : ''}</CardTitle></CardHeader>

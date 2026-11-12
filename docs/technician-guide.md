@@ -25,6 +25,20 @@ computer in them is fictional.
 If your account has two-factor authentication enabled you are asked for a code
 next. Recovery codes work here too, and each one is single-use.
 
+### On a phone or a narrow window (0.34)
+
+Below 768 px wide (a phone, or a tablet held upright) the menu is not drawn
+beside the page. The **☰ menu button** at the left of the top bar opens it as a
+panel over the page; it holds everything the sidebar holds, including the
+business switcher, the theme and *Sign out*. Choosing a page closes it, and so
+do **Esc**, tapping outside it and the **✕** in its corner. While it is open,
+the keyboard stays inside it and a screen reader treats it as a dialog named
+*Main menu*.
+
+Wide tables — the device list, reports, API keys — scroll sideways inside their
+own box rather than widening the page; swipe the table, not the page. The
+device workspace's tab row scrolls the same way.
+
 ### The dashboard: what to work on (0.31)
 
 Signing in lands you on the **Dashboard**. It answers, from stored data, what is
@@ -34,6 +48,13 @@ a Business User sees the devices granted to them, a technician sees their
 assignment's business and computers, a Platform Admin sees every business. A
 section you have no permission for is not shown at all — it is never shown as a
 zero.
+
+![The dashboard: a site-outage strip, the tiles, Work on next and Customers affected](screenshots/guide/dashboard.png)
+
+1. **Site outage** — several devices at one site stopped reporting together; *Open alerts* goes to them.
+2. **The tiles** — each is a count with what it is counted from underneath; each one links to where you act on it.
+3. **Work on next** — the ranked list, every item with the reason it is there.
+4. **Customers affected** — the businesses with an outage, an alert, an offline device or a failed action.
 
 | Part | What it is built from |
 |---|---|
@@ -67,6 +88,12 @@ relay) is not on the dashboard: Platform Admins find it under **Settings →
 System status**. The device map is at the bottom; *Hide device
 locations* folds it away, and this browser remembers the choice.
 
+![The device map at the foot of the dashboard, with clustered markers per city](screenshots/guide/dashboard-map.png)
+
+1. **Client locations** — devices placed from the address they last checked in from, clustered by city with a count.
+   The map is drawn from a bundled outline; no tile server is asked where your customers are.
+2. **Hide device locations** — folds the map away; this browser remembers the choice.
+
 ---
 
 ## 2. Find a computer
@@ -85,10 +112,6 @@ company-wide; for a technician, only the machines your assignment names.
    click any column heading to sort by it instead (click again to reverse).
 4. **Add device** — enrol a new machine (§5). Until 0.32 there were two buttons
    here, *Enroll Client* and *Generate Enrollment Link*; both became this one.
-5. *(Removed in 0.32 — see 4.)*
-
-*(The screenshot predates 0.31's columns and 0.32's single Add device button; the
-numbered parts are where they were.)*
 
 ### What the columns mean
 
@@ -117,10 +140,17 @@ at the bottom.
 
 - **Filters** — business (when you can see more than one), site, device group,
   online/offline, open or critical alerts, *Restart pending*, agent type, and
-  archived devices.
+  archived devices. **More filters** (0.34) adds platform (Windows, Linux,
+  macOS, other), OS name contains, tag (exact), update state (pending, none
+  pending, scan stale, never scanned), a RustDesk version range (dotted numbers,
+  compared numerically — 1.10 is above 1.9; a computer with no reported version
+  or a non-numeric one such as a nightly never matches a range) and last seen
+  (not seen for N days, which includes never; seen within N days).
   They combine, and *Clear* resets them. The address bar carries the current view,
   so you can bookmark it; whoever opens the link still sees only their own devices.
-- **Columns** — choose which columns show (a *Group* column is available).
+- **Columns** — choose which columns show (a *Groups* column is available; it
+  lists every group the device is in, and the CSV's *Groups* column does the same,
+  separated by `; `).
   **Compact / Comfortable** sets the row height. Both are remembered in this
   browser.
 - **Views** (0.33) — save the current filters, sort, columns and density under a
@@ -137,15 +167,42 @@ at the bottom.
   0.31 or 0.32 are offered for import once (*Import N views saved in this
   browser*).
 - **Device groups** (0.33, *Views → Device groups…*) — named, static groups of
-  one business's computers, for filtering and for acting on together. A computer
-  is in at most one group at a time (the same group an enrolment link can put it
-  in). Creating, renaming and deleting groups, and adding or removing members, is
+  one business's computers, for filtering and for acting on together. From 0.34 a
+  computer can be in **several** groups of its business: adding it to one never
+  takes it out of another, removing it from one leaves the rest, and deleting a
+  group only removes that membership. The group filter shows every device in that
+  group, and each group's count in the menu counts a device once per group it is
+  in. An enrolment link can name a group: the new device joins it when it
+  installs (re-enrolling an existing device adds that group and keeps its others).
+  A device moved to another business leaves all of the old business's groups.
+  Creating, renaming and deleting groups, and adding or removing members, is
   for a Business Owner, a technician with *computers:edit* over the whole
   business, or the MSP — never a Business User, whatever they hold, because a
   Business User may see only some of the business's computers. A group cannot
   hold another business's computer. Groups grant no access to anything. Every
   change is audited. Groups made before 0.33 that span businesses (or have no
   members) belong to no business: they still filter, and cannot be edited here.
+- **Rule groups** (0.34, *Views → Save filters as a rule group…*) — a group
+  whose members are whichever of its business's computers match a rule **right
+  now**. The rule is the list's own filters: set them, then save. It can use
+  site, online/offline, alerts, *Restart pending*, agent type and everything
+  under *More filters*; search, business, group and the archived filter are
+  never part of a rule (the group already belongs to one business, and the
+  list's own Archived filter still applies). Nothing is copied or stored as
+  members: the server works the membership out every time the group is read, so
+  a computer that goes offline has left an "Online" group the next time anyone
+  looks, with no sweep to wait for. Everyone sees only the members they can
+  already see — a Business User sees their own computers in it — and a rule on
+  alerts is not offered to, and refused for, someone without
+  *monitoring:alerts*. A rule group is in the group filter (marked *rule*), the
+  *Groups* column and the CSV like any other group. It cannot be added to or
+  removed from by hand, named by an enrolment link, or turned into a static
+  group (or back). To change it, set the filters and use *Device groups… → Use
+  current filters*. Who may create, edit and delete one is the same as for a
+  static group, and each change is audited with the rule before and after. A
+  business can have at most 50 rule groups. If a stored rule can no longer be
+  read, it matches nothing (never the whole business) and the groups dialog says
+  so.
 - **Select and act on many** (0.33) — tick rows (the header box ticks the page;
   the selection survives paging and filtering) and a bar offers: **Add / Remove**
   from a group, **Refresh inventory** (also re-checks Windows Update),
@@ -154,17 +211,38 @@ at the bottom.
   device on its own, with the same checks as doing it to that one device, and
   the result lists every device it refused and why — not visible to you, no
   permission, archived, Linux, no device secret, under an *updates* containment
-  pause, already in another group, already current. A bulk refresh counts toward
+  pause, in another business than the group, already current. A bulk refresh counts toward
   your limit on distinct computers per window (the fleet-abuse guard); the list
   stops at that limit and says so, rather than tripping it and pausing you.
   There is deliberately no bulk connect, archive, delete or approved action.
   Each bulk request is recorded in the audit log, once per business it touched,
   alongside each device's own entry.
+  **Filtered by a rule group** (0.34), the same bar acts on the group itself:
+  the server works out its members when you click — as you see them, at most
+  200 (more is refused, never cut short) — and then checks each one exactly as
+  above. *Copy into* puts the computers that match now into a static group;
+  later matches are not added. The audit entry records the group and how many
+  it resolved to.
 - **Export CSV** — downloads every device in the current filtered view (not just
   this page), up to 10,000; narrow the filters if there are more. It needs
   *computers:view*, contains exactly what you can see, and **each export is
   recorded in the audit log** with its filters and row count. *Export selection*
   is the same export limited to the ticked devices.
+![Three devices ticked: the filters, Views, Columns and the bulk-action bar](screenshots/guide/device-list.png)
+
+1. **Search** — the device list's own search, across every page.
+2. **Group** — one of the filters; the others are business, site, online, alerts, agent, *Restart pending* and archived.
+3. **Views** — saved filters, sort, columns and density, personal or shared (below).
+4. **Columns** — which columns show; *Comfortable / Compact* beside it sets the row height.
+5. **The row's box** — ticks the device; the header box ticks the page.
+6. **The bulk bar** — appears while anything is ticked: group membership, *Refresh inventory*, *Queue client update*, *Export selection*.
+
+![The Views menu: personal views, views shared in a business, Save current view and Device groups](screenshots/guide/device-views.png)
+
+1. **Views** — shows the active view's name once one is open.
+2. **A shared view** — with the business it belongs to. Opening it still shows only the devices you can see.
+3. **Save current view…** — the filters, sort, columns and density, under a name; *Device groups…* below it manages groups.
+
 - **Connect** on a row works exactly as it does on the device page. **⋯** opens the
   device, or its Patches, Monitoring or Test connection tab, or copies its hostname.
 
@@ -182,6 +260,12 @@ from anywhere, searches devices, businesses, sites, people and open alerts in
 one go. Type at least two characters (at most 100); results appear when you
 pause. **↑ / ↓** move through them, **Enter** opens the highlighted one, **Esc**
 closes the box. Ctrl/⌘-click opens a result in a new tab.
+
+![Ctrl+K with "harb" typed: eight devices, then a business](screenshots/guide/search.png)
+
+1. **The search box** — at least two characters; the matched part is highlighted in each result.
+2. **Devices** — at most eight, online first among equals, with a link to the device list's own search for the rest.
+3. **Businesses** — then sites, people and open alerts, each group only if you have its list page's permission.
 
 | Group | Matches on | Opens | Needs |
 |---|---|---|---|
@@ -255,11 +339,19 @@ Patches) and **More**: view-only connect (technicians), the diagnostics report,
 *Reinstall agent* and *Archive computer*, each behind a confirmation that says
 what it does.
 
+![A device's page: status, actions, the attention strip and the tabs, on Overview](screenshots/guide/device-overview.png)
+
+1. **Status** — *Online*, *Offline since …*, or *Online (RustDesk only)* when the agent has gone quiet.
+2. **Actions** — with the reason underneath when one is unavailable (here: no approval signer on this server).
+3. **Attention strip** — open alerts, pending updates with the scan's age, and which agent it runs; each a link to its tab.
+4. **The tabs** — below.
+5. **Patch status** — the Overview's summary of the Patches tab: what the evidence is and how old.
+
 **The tabs**, each linkable with `?tab=`:
 
 | Tab | What is on it |
 |---|---|
-| Overview | Assignment, key alerts, patch status, recent activity, then the hardware, utilisation, storage, network and update cards, each with its age |
+| Overview | Assignment, key alerts, patch status, the **Agent** card, recent activity, then the hardware, utilisation, storage, network and update cards, each with its age |
 | Monitoring | Alerts first (acknowledge and resolve here), then what is watched on this computer in words, the agent's last report, and what changed |
 | Software | Installed software with a filter, and recent software changes (Windows agents only) |
 | Processes | Every running process, as a read-only snapshot with its age and a Refresh (standard Windows agent, 0.33) |
@@ -269,7 +361,31 @@ what it does.
 | Event logs | A page of one Windows event log, on request (Windows agents only) |
 | Diagnostics | Test connection: server, computer and your own RustDesk |
 | Actions | Request an approved action and see past requests |
+| Chat | Chat with the person at the computer, receipts and earlier transcripts (signed Windows agent; elsewhere it says why not — [chat.md](chat.md)) |
 | History | Remote sessions, technician notes, the AI-written summary (labelled as such) and who can connect |
+
+**The Agent card** (Overview, 0.34) says which agent the computer runs (*Standard*,
+*Signed*, or the read-only Linux/macOS agent), its version and whether that is the
+current one, the update channel and the portal's update mode, and — for a signed
+agent — the result of its last update check. Its buttons:
+
+- **Update agent** (standard Windows agent): re-runs the current installer at the
+  next check-in. It is the same as *Reinstall agent*: the same permission, refused
+  while updates are paused for the business, and audited.
+- **Check for update now** (signed agent): the agent runs its own signed update
+  at the next check-in. It installs only what the signed repository lists.
+- On Linux and macOS the card prints the exact command to re-run on the computer;
+  those agents act on nothing the portal sends.
+- **Upgrade to signed agent** (standard Windows agent): asks for a reason and a
+  fresh sign-in, then moves this computer to the signed agent at its next
+  check-in, keeping its enrolment and RustDesk ID. When it can't be offered, the
+  card says exactly why — no signed release published, no device secret, the
+  portal in *Signed only* mode, updates paused, a rollout running. A request can
+  be cancelled until it completes. **Devices → Agent migrations** lists pending,
+  held, not confirmed and completed requests. To move several computers, select
+  them on **All devices** and use **Upgrade to signed…** (at most 200; each one is
+  refused with its own reason). See
+  [Update signing → Moving existing agents](update-signing.md#moving-existing-agents).
 
 Processes, Services and Network are snapshots, not live views: each says when it
 was taken, and **Refresh** asks the computer for a new one on its next check-in.
@@ -277,6 +393,18 @@ They have no buttons that change the computer — restarting a service is a sign
 maintenance action on Actions, and ending a process is not offered
 ([diagnostics.md](diagnostics.md#the-processes-services-and-network-tabs)). Old links
 (`?tab=notes`, `?tab=timeline`, `?tab=access-review`) open History.
+
+The Performance tab is described in [metric-history.md](metric-history.md), with its
+screenshot; Processes, Services and Network in
+[diagnostics.md](diagnostics.md#the-processes-services-and-network-tabs).
+
+![The Patches tab: patch status, Install updates, Windows Update and the updates offered](screenshots/guide/device-patches.png)
+
+1. **Patches** — the tab.
+2. **Patch status** — the evidence (which agent's scan, how old), restart pending, and who manages patching where the signed agent can tell.
+3. **Install updates** — deploying from Rem0te; here it says why it is not available on this computer.
+4. **Scan now** — asks the computer for a new Windows Update scan on its next check-in.
+5. **Offered** — the updates the last scan listed, with KB, severity and size.
 
 ---
 
@@ -331,6 +459,28 @@ Rem0te does not store the Quick Connect password and never displays it again.
 
 **Devices → Add device** (the button on the Devices page, or the *Add device* tab)
 walks through it in six steps on one page:
+
+![Add device, step 1: business, site and who may connect](screenshots/guide/add-device-1.png)
+
+1. **Business** — only the businesses you manage are offered.
+2. **Site** — or *No site*; only that business's sites.
+3. **Who may connect** — specific people, or everyone in the business.
+4. **Continue** — the three choices are fixed into the link when it is made.
+5. **Wait for the device** — like every later step, greyed until it is its turn; it is where this page watches the
+   new device arrive (step 4, below).
+
+![Add device, step 2: the operating system](screenshots/guide/add-device-2.png)
+
+1. **Step 1, done** — what was chosen.
+2. **Operating system** — Windows, Linux or macOS, each saying which agent it installs.
+3. **The step-up note** — making the link asks you to confirm it is you.
+4. **Make the install command** — makes the single-use link.
+
+![Add device, step 3: the install command, and step 4 waiting for the device](screenshots/guide/add-device-3.png)
+
+1. **Run the installer** — the PowerShell one-liner and the one-click installer link, shown once. (The token is replaced with a placeholder in this screenshot.)
+2. **Wait for the device** — checks every few seconds; *Revoke this link* cancels an unused one.
+3. **First health** — fills in from what the server actually receives once the device checks in.
 
 1. **Business and site.** Pick the business, then a site or *No site*, and who
    may connect — specific people, or everyone in the business. All three are

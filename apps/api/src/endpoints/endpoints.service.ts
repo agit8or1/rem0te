@@ -7,7 +7,6 @@ import {
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import Anthropic from '@anthropic-ai/sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CANDIDATE_LIVE_MS } from '../enrollment/device-secret';
@@ -221,7 +220,7 @@ export class EndpointsService {
       include: {
         customer: true,
         site: true,
-        endpointGroup: true,
+        groupMemberships: { select: { group: { select: { id: true, name: true } } } },
         // The ciphertext is selected only to be collapsed into a boolean below.
         // Plaintext is reachable only through the audited password route.
         rustdeskNode: {
@@ -246,7 +245,10 @@ export class EndpointsService {
       },
     });
     if (!endpoint) throw new NotFoundException('Computer not found');
-    return this.stripSecrets(endpoint);
+    // Every group it is in (0.34), by name.
+    const { groupMemberships, ...rest } = endpoint;
+    const groups = groupMemberships.map((m) => m.group).sort((x, y) => x.name.localeCompare(y.name));
+    return this.stripSecrets({ ...rest, groups });
   }
 
   // ── Writes ────────────────────────────────────────────────────────────────
@@ -258,9 +260,11 @@ export class EndpointsService {
    */
   private async assertGroupFor(groupId: string, businessId: string, tenantId: string) {
     const g = await this.prisma.endpointGroup.findFirst({
-      where: { id: groupId, OR: [{ customerId: businessId }, { customerId: null, tenantId }] }, select: { id: true },
+      where: { id: groupId, OR: [{ customerId: businessId }, { customerId: null, tenantId }] }, select: { id: true, kind: true },
     });
     if (!g) throw new BadRequestException('Unknown device group for this business');
+    // 0.34: a rule group's members follow its rule; nothing joins one by hand.
+    if (g.kind === 'RULE') throw new BadRequestException({ code: 'RULE_GROUP', message: 'That is a rule group: a computer is in it when it matches the rule, so it cannot be put in one.' });
   }
 
   async create(actor: ActorContext, dto: CreateEndpointDto & { businessId?: string }) {
@@ -284,7 +288,8 @@ export class EndpointsService {
     }
 
     // So does a device group (0.33): a group holds only its own business's
-    // computers. Before 0.33 this id was stored unchecked.
+    // computers. Before 0.33 this id was stored unchecked. Since 0.34 it is
+    // the computer's first membership, not a column.
     if (dto.endpointGroupId) await this.assertGroupFor(dto.endpointGroupId, businessId, business.tenantId);
 
     // Typing in a RustDesk ID is a Platform Admin action. A node created this
@@ -312,7 +317,7 @@ export class EndpointsService {
         name: dto.name,
         description: dto.description,
         siteId: dto.siteId,
-        endpointGroupId: dto.endpointGroupId,
+        ...(dto.endpointGroupId ? { groupMemberships: { create: { endpointGroupId: dto.endpointGroupId, addedById: actor.userId } } } : {}),
         hostname: dto.hostname,
         platform: dto.platform,
         osVersion: dto.osVersion,
@@ -361,14 +366,18 @@ export class EndpointsService {
       if (!site) throw new BadRequestException('That site does not belong to this business');
     }
 
-    // Moving a computer to another business takes it out of its device group
-    // (0.33): a group holds only its own business's computers.
-    const leavesGroup = dto.customerId !== undefined && dto.customerId !== existing.customerId;
+    // Moving a computer to another business takes it out of every device
+    // group of the old one: the endpoint_leaves_foreign_groups trigger
+    // (migration 0049) does it in the same statement, for this path and any
+    // other that changes customerId. Which ones it left goes in the audit.
+    const movesBusiness = dto.customerId !== undefined && dto.customerId !== existing.customerId;
+    const leftGroups = movesBusiness
+      ? (await this.prisma.endpointGroupMember.findMany({ where: { endpointId: id }, select: { group: { select: { id: true, name: true } } } })).map((m) => m.group)
+      : [];
 
     const endpoint = await this.prisma.endpoint.update({
       where: { id },
       data: {
-        ...(leavesGroup ? { endpointGroupId: null } : {}),
         ...(dto.name !== undefined ? { name: dto.name } : {}),
         ...(dto.description !== undefined ? { description: dto.description } : {}),
         ...(dto.customerId !== undefined ? { customerId: dto.customerId } : {}),
@@ -386,6 +395,7 @@ export class EndpointsService {
       action: 'ENDPOINT_UPDATED', actorId: actor.userId, actorIp: actor.ip,
       tenantId: existing.tenantId ?? undefined, customerId: existing.customerId ?? undefined,
       resource: 'endpoint', resourceId: id,
+      ...(movesBusiness ? { meta: { movedToBusiness: dto.customerId ?? null, leftGroups } } : {}),
     });
     return endpoint;
   }
@@ -746,7 +756,8 @@ export class EndpointsService {
    * read-only collection (inventory, event logs). Same counter as launches, so
    * forty small jobs across forty computers trip the same cap one big job would.
    */
-  private async admitWrite(actor: ActorContext, endpointId: string, kind: 'WRITE' | 'EVIDENCE' = 'WRITE') {
+  /** The fleet-abuse admission every console write passes (public for the 0.34 agent-upgrade routes). */
+  async admitWrite(actor: ActorContext, endpointId: string, kind: 'WRITE' | 'EVIDENCE' = 'WRITE') {
     const ep = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { customerId: true } });
     const customerId = ep?.customerId ?? null;
     const r = await this.abuse.admit({
@@ -1180,96 +1191,8 @@ export class EndpointsService {
     });
   }
 
-  // ── AI timeline ───────────────────────────────────────────────────────────
-
-  async generateTimeline(actor: ActorContext, id: string): Promise<{ text: string }> {
-    await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
-    this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
-
-    const endpoint = await this.prisma.endpoint.findUnique({
-      where: { id },
-      include: {
-        customer: { select: { id: true, name: true } },
-        site: { select: { id: true, name: true } },
-        tags: true,
-        aliases: true,
-        noteRels: {
-          include: { author: { select: { email: true } } },
-          orderBy: { createdAt: 'asc' }, take: 30,
-        },
-        supportSessions: {
-          orderBy: { createdAt: 'asc' }, take: 20,
-          select: {
-            createdAt: true, status: true, issueDescription: true,
-            notes: true, disposition: true, duration: true,
-          },
-        },
-      },
-    });
-    if (!endpoint) throw new NotFoundException('Computer not found');
-
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new InternalServerErrorException('ANTHROPIC_API_KEY is not configured');
-
-    const lines: string[] = [
-      `Device: ${endpoint.name}`,
-      `Hostname: ${endpoint.hostname ?? 'Unknown'}`,
-      `Platform: ${endpoint.platform ?? 'Unknown'}`,
-      `OS: ${endpoint.osVersion ?? 'Unknown'}`,
-      `Status: ${endpoint.status}`,
-      `Currently online: ${endpoint.isOnline ? 'Yes' : 'No'}`,
-      `Last seen: ${endpoint.lastSeenAt ? endpoint.lastSeenAt.toISOString() : 'Never'}`,
-      `Business: ${endpoint.customer?.name ?? 'Unassigned'}`,
-      `Site: ${endpoint.site?.name ?? 'None'}`,
-      `Tags: ${endpoint.tags.map((t) => t.tag).join(', ') || 'None'}`,
-      `Enrolled: ${endpoint.createdAt.toISOString()}`,
-    ];
-
-    if (endpoint.noteRels.length > 0) {
-      lines.push('\nNotes (oldest to newest):');
-      for (const n of endpoint.noteRels) {
-        lines.push(`  [${n.createdAt.toLocaleDateString()}] ${n.content}`);
-      }
-    }
-    if (endpoint.supportSessions.length > 0) {
-      lines.push('\nSupport session history:');
-      for (const s of endpoint.supportSessions) {
-        const parts = [`[${s.createdAt.toLocaleDateString()}] ${s.status}`];
-        if (s.issueDescription) parts.push(`Issue: ${s.issueDescription}`);
-        if (s.disposition) parts.push(`Resolution: ${s.disposition}`);
-        if (s.duration) parts.push(`Duration: ${Math.round(s.duration / 60)}m`);
-        lines.push('  ' + parts.join(' | '));
-      }
-    }
-
-    const anthropic = new Anthropic({ apiKey });
-    // Thinking is always on for this model and counts toward max_tokens, so
-    // the limit leaves room for it as well as the few paragraphs returned.
-    // A safety-classifier decline is retried server-side on the model
-    // Anthropic recommends for that category instead of coming back empty.
-    const message = await anthropic.beta.messages.create({
-      model: 'claude-opus-5-5',
-      max_tokens: 16000,
-      output_config: { effort: 'medium' },
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
-      messages: [{
-        role: 'user',
-        content: `You are a technical support AI assistant. Based on the device information below, write a concise narrative summary (2–4 paragraphs) about this device: its current state, history, notable patterns, and anything a technician should know before working on it. Write in plain, direct prose — no bullet points, no headings, no markdown.\n\n${lines.join('\n')}`,
-      }],
-    });
-
-    // The reply can open with thinking blocks, so find the text by type. A
-    // refusal from the whole fallback chain has none; keep the old summary.
-    const block = message.content.find((b) => b.type === 'text');
-    if (message.stop_reason === 'refusal' || !block) {
-      throw new InternalServerErrorException('The AI summary could not be generated for this device');
-    }
-    const text = block.text;
-
-    await this.prisma.endpoint.update({ where: { id }, data: { aiTimeline: text } });
-    return { text };
-  }
+  // The AI summary moved to integration/timeline.service.ts in 0.34: it is
+  // requested through ClientSt0r's gateway, and rem0te holds no provider key.
 
   // ── Inventory, updates and event logs ─────────────────────────────────────
 

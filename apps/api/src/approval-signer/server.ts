@@ -5,11 +5,17 @@
  *             GET /internal/v1/plans/:id, POST /internal/v1/plans/:id/cancel,
  *             GET /internal/v1/policy/:businessId, GET /internal/v1/keys,
  *             GET/POST /internal/v1/pauses (v0.28: the portal may ADD a
- *             pause; nothing over HTTP clears one — that is the operator CLI)
+ *             pause; nothing over HTTP clears one — that is the operator CLI),
+ *             POST /internal/v1/scripts, GET /internal/v1/scripts/:id,
+ *             POST /internal/v1/scripts/:id/revoke (v0.34: the portal may
+ *             PROPOSE an allowlist entry and revoke one; it cannot add,
+ *             approve or edit one)
  *   public    (behind the reverse proxy, on its OWN origin — not the
  *             portal's, so no script the portal serves can reach into it):
  *             GET /approve/:id, GET /approve/:id/state,
- *             POST /approve/:id/challenge, POST /approve/:id/decide
+ *             POST /approve/:id/challenge, POST /approve/:id/decide,
+ *             and the same four under /approve/policy/:id (0.32) and
+ *             /approve/script/:id (0.34)
  *
  * The portal can propose and poll. It cannot decide: a decision is a passkey
  * assertion that this process verifies against its own roster.
@@ -21,10 +27,13 @@ import { catalogEntry } from '../actions/catalog';
 import {
   admitPlan, credentialSha256, webauthnChallenge, loadSigningKey, policyFor, recordDecision, Refused, rolesFor, signJob, keysDocument,
   admitPolicy, approvalsOf, effectivePolicyStatus, policyRolesFor, recordPolicyDecision, signPolicy, signUnderPolicy,
-  type Challenge, type JobRecord, type PolicyRecord, type Role,
+  deviceIdentity, deviceKeyChangedMessage, newPins, pinConflicts,
+  admitScriptProposal, assertScriptAllowed, effectiveScriptStatus, recordScriptDecision, scriptRolesFor,
+  type Challenge, type JobRecord, type PolicyRecord, type Role, type ScriptAllowRecord,
 } from './core';
+import { SCRIPT_RUN_ACTION, canonical } from '../actions/script-run';
 import { SignerStore } from './store';
-import { renderApprovalPage, renderPolicyApprovalPage } from './page';
+import { renderApprovalPage, renderPolicyApprovalPage, renderScriptApprovalPage } from './page';
 
 export interface SignerConfig {
   dir: string;
@@ -41,6 +50,9 @@ const CHALLENGE_TTL_MS = 5 * 60_000;
 const MAX_BODY = 64 * 1024;
 /** A ring plan under a policy carries the previous ring's evidence: up to 25 computers. */
 const MAX_POLICY_PLAN_BODY = 512 * 1024;
+/** A proposed allowlist entry carries the script: up to 64 KiB, JSON-escaped. */
+const MAX_SCRIPT_BODY = 512 * 1024;
+const canonicalOf = (r: ScriptAllowRecord) => canonical(r.proposal);
 
 function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
   const text = typeof body === 'string' ? body : JSON.stringify(body);
@@ -71,6 +83,17 @@ function policyView(r: PolicyRecord, now: Date) {
   };
 }
 
+/** View of an allowlist entry. The content only where asked (the public page, for its approvers). */
+function scriptView(r: ScriptAllowRecord, withContent: boolean) {
+  const { content, ...proposal } = r.proposal;
+  return {
+    id: r.id, status: effectiveScriptStatus(r), contentSha256: r.contentSha256, definitionSha256: r.definitionSha256,
+    proposal: withContent ? { ...proposal, content } : proposal,
+    decisions: r.decisions.map((d) => ({ name: d.name, role: d.role, decision: d.decision, at: d.at })),
+    revokedAt: r.revokedAt, revokedBy: r.revokedBy, revokeReason: r.revokeReason, createdAt: r.createdAt,
+  };
+}
+
 /** Public view of a job: what an approver needs, nothing about the roster. */
 function view(j: JobRecord) {
   const a = catalogEntry(j.plan.action.id, j.plan.action.version)!;
@@ -92,6 +115,12 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
     return j;
   };
 
+  const pins = (identity: string) => store.devicePin(identity);
+  /** For the approval page: whether each computer's key is pinned already, new here, or not the pinned one. */
+  const keyStatus = (r: PolicyRecord) => Object.fromEntries(r.doc.rings.flat().map((c) => {
+    const pin = c.resultKey ? store.devicePin(deviceIdentity(c)) : null;
+    return [c.endpointId, !c.resultKey ? 'none' : !pin ? 'first_sight' : pin.resultKey === c.resultKey ? `pinned ${pin.pinnedAt}` : 'changed'];
+  }));
   const assertNotPaused = (businessId: string) => {
     const p = store.activePause(businessId);
     if (p) throw new Refused('paused', `the approval signer is paused${p.scope === 'business' ? ' for this business' : ''}: ${p.reason}`);
@@ -129,7 +158,7 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
     if (!r) return send(res, 404, { error: 'not_found' });
     if (req.method === 'GET' && !sub) {
       const nonce = randomBytes(16).toString('base64');
-      return send(res, 200, renderPolicyApprovalPage(policyView(r, now()), nonce), pageHeaders(nonce));
+      return send(res, 200, renderPolicyApprovalPage({ ...policyView(r, now()), keyStatus: keyStatus(r) }, nonce), pageHeaders(nonce));
     }
     if (req.method === 'GET' && sub === '/state') return send(res, 200, policyView(r, now()));
     if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
@@ -161,10 +190,93 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       const status = recordPolicyDecision(cur, member, c.role as Role, c.decision, now(), policyFor(store.policy(), cur.doc.businessId).customerSignoff);
       if (status === 'ACTIVE') signPolicy(cur, k, now());
       store.savePatchPolicy(cur);
+      // v0.34: approving the policy is what makes its result keys trusted; pin them.
+      if (status === 'ACTIVE') for (const p of newPins(cur, pins, now())) store.pinDeviceKey(p);
       if (status === 'ACTIVE') console.log(`[approval-signer] policy ${cur.policyId} approved; plans inside it are now signed without further approval until ${cur.doc.expiresAt}`);
       return { cur, member };
     });
     return send(res, 200, { ...policyView(out.cur, now()), you: { name: out.member.name, credential: credentialSha256(out.member).slice(0, 16), roles: policyRolesFor(out.member, out.cur.doc) } });
+  }
+
+  /** The public pages for an allowlist entry (0.34): the content itself, this process's hash of it, and passkey decisions. */
+  async function publicScript(req: IncomingMessage, res: ServerResponse, id: string, sub: string | undefined) {
+    const r = store.scriptEntry(id);
+    if (!r) return send(res, 404, { error: 'not_found' });
+    if (req.method === 'GET' && !sub) {
+      const nonce = randomBytes(16).toString('base64');
+      return send(res, 200, renderScriptApprovalPage(scriptView(r, true), nonce), pageHeaders(nonce));
+    }
+    if (req.method === 'GET' && sub === '/state') return send(res, 200, scriptView(r, true));
+    if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
+    if (req.headers.origin !== cfg.origin) throw new Refused('not_authorized', 'cross-origin request refused');
+    const b = await body(req) as { decision?: string; challengeId?: string; assertion?: AuthenticationResponseJSON };
+    const held = store.activePause(r.proposal.businessId);
+    if (held) throw new Refused('paused', `approvals are paused${held.scope === 'business' ? ' for this business' : ''}: ${held.reason}`);
+    if (sub === '/challenge') {
+      const decision = b.decision === 'reject' ? 'reject' : b.decision === 'approve' ? 'approve' : null;
+      if (!decision) throw new Refused('bad_request', 'decision is required');
+      const st = effectiveScriptStatus(r);
+      if (st !== 'AWAITING_APPROVAL') throw new Refused('not_awaiting', `this script is ${st.toLowerCase().replace(/_/g, ' ')}`);
+      // The challenge binds the content hash this process computed: the passkey signs over it.
+      const c: Challenge = { id: randomBytes(32).toString('base64url'), kind: 'script', jobId: r.id, digest: r.definitionSha256, decision, role: 'approver', expiresAt: new Date(now().getTime() + CHALLENGE_TTL_MS).toISOString(), used: false };
+      store.saveChallenge(c);
+      return send(res, 200, { challengeId: c.id, options: { challenge: webauthnChallenge(c), rpId: cfg.rpId, timeout: CHALLENGE_TTL_MS, userVerification: 'required', allowCredentials: [] } });
+    }
+    // /decide
+    const out = await store.exclusive(async () => {
+      const c = b.challengeId ? store.challenge(b.challengeId) : null;
+      if (!c || c.kind !== 'script' || c.jobId !== r.id) throw new Refused('bad_challenge');
+      if (c.used) throw new Refused('challenge_used', 'this approval prompt was already used');
+      if (Date.parse(c.expiresAt) <= now().getTime()) throw new Refused('challenge_expired');
+      c.used = true; store.saveChallenge(c);
+      const cur = store.scriptEntry(r.id)!;
+      if (cur.definitionSha256 !== c.digest) throw new Refused('plan_changed');
+      const member = await verifiedMember(c, b.assertion);
+      if (store.activePause(cur.proposal.businessId)) throw new Refused('paused', 'approvals were paused while you decided');
+      const status = recordScriptDecision(cur, member, c.decision, now());
+      store.saveScriptEntry(cur);
+      if (status === 'ACTIVE') console.log(`[approval-signer] script ${cur.contentSha256} ("${cur.proposal.name}" v${cur.proposal.version}) added to the allowlist as ${cur.id}`);
+      return { cur, member };
+    });
+    return send(res, 200, { ...scriptView(out.cur, false), you: { name: out.member.name, credential: credentialSha256(out.member).slice(0, 16), roles: scriptRolesFor(out.member, out.cur) } });
+  }
+
+  // ── internal: the script allowlist (v0.34) ────────────────────────────────
+  //   POST /internal/v1/scripts               propose (awaits two approvals here)
+  //   GET  /internal/v1/scripts/:id           status, for the portal to mirror
+  //   POST /internal/v1/scripts/:id/revoke    one-way: the content hash is never allowed again
+  // There is no route that approves, activates or rewrites an entry.
+  async function internalScript(req: IncomingMessage, res: ServerResponse, [id, sub]: [string | undefined, string | undefined]) {
+    if (!id) {
+      if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
+      const b = await body(req, MAX_SCRIPT_BODY) as { proposal?: unknown };
+      const out = await store.exclusive(() => {
+        const r = admitScriptProposal(b.proposal, now());
+        assertNotPaused(r.proposal.businessId ?? '-');
+        if (store.scriptRevocation(r.contentSha256)) throw new Refused('script_revoked', 'this script content was revoked; it can never be allowlisted again');
+        const existing = store.scriptEntry(r.id);
+        if (existing) {
+          // The same proposal again: the same entry. Anything else under this id is refused — the portal cannot edit an entry.
+          if (existing.contentSha256 !== r.contentSha256 || canonicalOf(existing) !== canonicalOf(r)) throw new Refused('script_id_reused', 'a different script already has this allowlist id');
+          return existing;
+        }
+        store.saveScriptEntry(r);
+        return r;
+      });
+      return send(res, 201, { id: out.id, status: effectiveScriptStatus(out), contentSha256: out.contentSha256, definitionSha256: out.definitionSha256, approvalUrl: `${cfg.origin}/approve/script/${out.id}` });
+    }
+    const r0 = store.scriptEntry(id);
+    if (!r0) return send(res, 404, { error: 'not_found' });
+    if (req.method === 'GET' && !sub) return send(res, 200, { ...scriptView(r0, false), approvalUrl: `${cfg.origin}/approve/script/${r0.id}` });
+    if (req.method !== 'POST' || sub !== 'revoke') return send(res, 405, { error: 'method_not_allowed' });
+    const b = await body(req) as { reason?: unknown };
+    if (typeof b.reason !== 'string' || b.reason.trim().length < 3) throw new Refused('bad_request', 'a reason is required');
+    const out = await store.exclusive(() => {
+      const reason = [...b.reason as string].slice(0, 300).map((c) => (c < ' ' ? ' ' : c)).join('');
+      if (store.revokeScript(r0.contentSha256, { at: now().toISOString(), by: 'portal', reason })) console.log(`[approval-signer] script ${r0.contentSha256} revoked at the portal's request: ${reason}`);
+      return store.scriptEntry(id)!;
+    });
+    return send(res, 200, { id: out.id, status: effectiveScriptStatus(out), revokedAt: out.revokedAt });
   }
 
   // ── internal: patch policies (v0.32) ──────────────────────────────────────
@@ -179,6 +291,8 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       const out = await store.exclusive(() => {
         const { doc, digest } = admitPolicy(b.policy, now());
         assertNotPaused(doc.businessId);
+        const changed = pinConflicts(doc.rings.flat(), pins);
+        if (changed.length) throw new Refused('device_key_changed', deviceKeyChangedMessage(changed));
         const existing = store.patchPolicy(doc.policyId);
         if (existing) {
           if (existing.digest !== digest) throw new Refused('policy_id_reused', 'a different policy already has this id');
@@ -224,7 +338,7 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
           if (existing.digest !== again.digest || !r.ledger.some((e) => e.jobId === jobId)) throw new Refused('job_id_reused', 'a different plan already has this job id');
           return existing;
         }
-        const { job } = signUnderPolicy(r, b, k, store.policy(), now());
+        const { job } = signUnderPolicy(r, b, k, store.policy(), now(), pins);
         store.saveJob(job);
         store.savePatchPolicy(r);
         console.log(`[approval-signer] signed ${job.jobId} under policy ${r.policyId} (ring ${job.plan.display?.deployment?.ring}, ${job.plan.targets.length} computer(s))`);
@@ -262,15 +376,17 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       // a count only, for the portal's pre-flight check. Who they are stays here.
       if (req.method === 'GET' && url.pathname === '/internal/v1/capabilities') {
         const people = new Set(store.roster().members.filter((x) => !x.disabled && x.approve.length).map((x) => x.userId));
-        return send(res, 200, { patchPolicies: 1, kid: k.kid, roster: { approvers: people.size } });
+        return send(res, 200, { patchPolicies: 1, scripts: 1, kid: k.kid, roster: { approvers: people.size } });
       }
       const pol = policyRoute(url.pathname);
       if (pol) return await internalPolicy(req, res, pol);
+      const scr = scriptRoute(url.pathname);
+      if (scr) return await internalScript(req, res, scr);
       if (!m) return send(res, 404, { error: 'not_found' });
       if (req.method === 'POST' && !m[1]) {
         const b = await body(req) as { plan?: unknown };
         const out = await store.exclusive(() => {
-          const { plan, digest } = admitPlan(b.plan, store.policy(), now());
+          const { plan, digest } = admitPlan(b.plan, store.policy(), now(), (id) => store.scriptEntry(id));
           const held = store.activePause(plan.targets[0]?.businessId ?? null);
           if (held) throw new Refused('paused', `the approval signer is paused${held.scope === 'business' ? ' for this business' : ''}: ${held.reason}`);
           const existing = store.job(plan.jobId);
@@ -308,6 +424,8 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       const url = new URL(req.url ?? '/', cfg.origin);
       const pm = url.pathname.match(/^\/approve\/policy\/([a-f0-9]{32})(\/state|\/challenge|\/decide)?$/);
       if (pm) return await publicPolicy(req, res, pm[1], pm[2]);
+      const sm = url.pathname.match(/^\/approve\/script\/([a-f0-9]{32})(\/state|\/challenge|\/decide)?$/);
+      if (sm) return await publicScript(req, res, sm[1], sm[2]);
       const m = url.pathname.match(/^\/approve\/([a-f0-9]{32})(\/state|\/challenge|\/decide)?$/);
       if (!m) return send(res, 404, { error: 'not_found' });
       const j = store.job(m[1]);
@@ -315,7 +433,9 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       expireIfDue(j);
       if (req.method === 'GET' && !m[2]) {
         const nonce = randomBytes(16).toString('base64');
-        return send(res, 200, renderApprovalPage(view(j), nonce), {
+        // 0.34: a script run shows the script as this process holds it, from its own allowlist.
+        const scriptContent = j.plan.script ? store.scriptEntry(j.plan.script.allowlistId)?.proposal.content ?? null : undefined;
+        return send(res, 200, renderApprovalPage({ ...view(j), scriptContent }, nonce), {
           'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'`,
           'x-frame-options': 'DENY',
         });
@@ -352,6 +472,8 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
         if (cur.digest !== c.digest) throw new Refused('plan_changed');
         const member = await verifiedMember(c, b.assertion);
         if (store.activePause(cur.plan.targets[0]?.businessId ?? null)) throw new Refused('paused', 'approvals were paused while you decided');
+        // 0.34: a script revoked after the plan was proposed is never signed.
+        if (cur.plan.action.id === SCRIPT_RUN_ACTION && c.decision === 'approve') assertScriptAllowed(cur.plan, (id) => store.scriptEntry(id));
         const status = recordDecision(cur, member, c.role as Role, c.decision, now());
         if (status === 'SIGNED') signJob(cur, k, now());
         store.saveJob(cur);
@@ -378,6 +500,18 @@ function policyRoute(p: string): [string | undefined, string | undefined] | null
   if (!/^[a-f0-9]{32}$/.test(rest[0])) return null;
   if (rest.length === 1) return [rest[0], undefined];
   if (rest.length === 2 && (rest[1] === 'revoke' || rest[1] === 'plans')) return [rest[0], rest[1]];
+  return null;
+}
+
+/** /internal/v1/scripts, /scripts/<id>, /scripts/<id>/revoke → [id?, sub?]; else null. */
+function scriptRoute(p: string): [string | undefined, string | undefined] | null {
+  const base = '/internal/v1/scripts';
+  if (p === base) return [undefined, undefined];
+  if (!p.startsWith(`${base}/`)) return null;
+  const rest = p.slice(base.length + 1).split('/');
+  if (!/^[a-f0-9]{32}$/.test(rest[0])) return null;
+  if (rest.length === 1) return [rest[0], undefined];
+  if (rest.length === 2 && rest[1] === 'revoke') return [rest[0], rest[1]];
   return null;
 }
 

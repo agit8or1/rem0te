@@ -12,6 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { CLASS_NAMES, DEPLOYMENT_STATUS, POLICY_STATUS, describeWindow } from '@/lib/patching';
 import { AlertTriangle, ArrowLeft, ExternalLink } from 'lucide-react';
+import { rebootSummary } from '@/components/patching/patch-reboot-choice';
 
 /**
  * One patch policy (0.32): the exact document two approvers signed on the
@@ -24,7 +25,7 @@ interface PolicyDoc {
   name: string; businessName: string; reason: string; createdAt: string; expiresAt: string; createdBy: { name: string };
   rings: { endpointId: string; hostname: string }[][];
   allow: { classifications: string[]; severities?: string[]; excludeKbs?: string[] };
-  soakHours: number; failureThreshold: number; window: { days: string[]; start: string; end: string; timezone: string }; reboot: 'never';
+  soakHours: number; failureThreshold: number; window: { days: string[]; start: string; end: string; timezone: string }; reboot: 'never' | 'if_required_in_window';
 }
 interface Policy {
   id: string; name: string; status: string; digest: string; approvalUrl: string; expiresAt: string; createdAt: string;
@@ -36,6 +37,8 @@ interface Policy {
   signer: { reachable: boolean; status: string | null; signedPlans: number | null; refusals: { at: string; jobId: string; code: string; message: string }[] };
   deployments: { id: string; name: string; status: string; windowKey: string | null; pausedReason: string | null; createdAt: string }[];
   sweep: { enabled: boolean; everySeconds: number };
+  /** 0.34: each computer's result-key fingerprint as this portal holds it (null: none, a pre-0.34 agent). */
+  resultKeys?: Record<string, string | null>;
   mayRevoke: boolean;
 }
 
@@ -101,15 +104,32 @@ export default function PolicyPage() {
             {row('Window', describeWindow(d.window))}
             {row('Soak between rings', `${d.soakHours} h`)}
             {row('Failures allowed per ring', String(d.failureThreshold))}
-            {row('Restart', 'never')}
+            {row('Restart', rebootSummary(d.reboot))}
             {row('Reason', d.reason)}
             {row('Approved by', p.approvals.length ? p.approvals.map((a) => `${a.name} (${a.role}, ${formatDate(a.at)})`).join('; ') : 'nobody yet — two approvers other than its author approve it on the approval signer')}
             {row('Document digest', <code className="break-all">{p.digest}</code>)}
           </dl>
           <div className="space-y-1">
             {d.rings.map((r, i) => (
-              <p key={i}><strong>{i === 0 ? 'Canary' : `Ring ${i}`}:</strong> {r.map((c) => c.hostname).join(', ')}</p>
+              <p key={i}>
+                <strong>{i === 0 ? 'Canary' : `Ring ${i}`}:</strong>{' '}
+                {r.map((c, j) => {
+                  const fp = p.resultKeys?.[c.endpointId];
+                  return (
+                    <span key={c.endpointId}>
+                      {j > 0 && ', '}{c.hostname}
+                      {fp && <span className="text-muted-foreground"> (result key <code>{fp}</code>)</span>}
+                    </span>
+                  );
+                })}
+              </p>
             ))}
+            {p.resultKeys && (
+              <p className="text-xs text-muted-foreground">
+                Result-key fingerprints are this portal&apos;s copy. Compare the approval signer&apos;s page with{' '}
+                <code>rem0te-agent.exe status</code> on the computer, not with this list.
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>

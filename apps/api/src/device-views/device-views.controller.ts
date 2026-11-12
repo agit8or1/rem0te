@@ -1,5 +1,6 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
-import type { Response } from 'express';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import type { Request, Response } from 'express';
+import { StepUpService } from '../auth/step-up.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
 import { RequireCapability } from '../common/decorators/require-capability.decorator';
@@ -99,14 +100,17 @@ export class DeviceGroupsController {
 @Controller('endpoints/bulk')
 @UseGuards(JwtAuthGuard, CapabilitiesGuard)
 export class DeviceBulkController {
-  constructor(private readonly svc: DeviceBulkService) {}
+  constructor(private readonly svc: DeviceBulkService, private readonly stepUp: StepUpService) {}
 
   @Post()
   @RequireCapability(CAP.COMPUTERS_VIEW)
   @RateLimit(10)
   @HttpCode(HttpStatus.OK)
-  async run(@Actor() a: ActorContext, @Body() body: unknown) {
-    return { success: true, data: await this.svc.run(a, body) };
+  async run(@Actor() a: ActorContext, @Body() body: unknown, @Req() req: Request) {
+    // The fresh-sign-in method, for agent.migrate (0.34); asked by that action only.
+    const u = req.user as { sub?: string; iat?: number } | undefined;
+    const fresh = u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null;
+    return { success: true, data: await this.svc.run(a, body, fresh) };
   }
 
   /** The selected computers as CSV — the device list's export, audited (ENDPOINT_LIST_EXPORTED) before it is sent. */

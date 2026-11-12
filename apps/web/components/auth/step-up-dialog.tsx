@@ -25,7 +25,10 @@ const ACTION_LABEL: Record<string, string> = {
   'updates.schedule': 'turn on automatic client updates',
   // 0.33: an enrolment token adds a computer to a business.
   'enrollment.create': 'make an install link',
-  'apikey.enrollment': 'create an API key that can enrol computers',
+  // 0.34: every API key (0.33 asked only for keys that can enrol computers).
+  'apikey.create': 'create an API key',
+  // 0.34: a per-computer move to the signed agent runs a portal-served script once.
+  'agent.migrate': 'upgrade computers to the signed agent',
 };
 
 /**

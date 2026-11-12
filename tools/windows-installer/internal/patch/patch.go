@@ -19,6 +19,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/agit8or1/rem0te/windows-installer/internal/devsig"
 )
 
 // Script is the Windows Update Agent bridge (modes: scan, lookup, install).
@@ -145,6 +147,9 @@ type Posture struct {
 	// AutoUpdate: Windows' own automatic updates (enabled | disabled | notify | unknown).
 	AutoUpdate string `json:"autoUpdate"`
 	Error      string `json:"error,omitempty"`
+	// Signed (v0.34): this computer's signature over the facts of this scan
+	// that a patch policy's ring gate reads (SignScan).
+	Signed *devsig.Signed `json:"signed,omitempty"`
 }
 
 // Registry is the slice of the Windows registry and service list that

@@ -247,8 +247,9 @@ portal's `dist`. Its behavioural proof is `apps/api/scripts/e2e-approved-action.
 (needs `RELEASE_BIN` and `ACTION_SIM` built from `tools/windows-installer`).
 
 0.27.0 added §15 for staged patching: the agent's update params are closed
-(`updates` + `reboot: "never"`), its update risk is always high, `wua.ps1` has
-no restart, `AcceptEula`, `Invoke-Expression` or download-and-run, the agent
+(`updates` + `reboot`, which from 0.34 is exactly `"never"` or
+`"if_required_in_window"`, + an optional narrowing `allow`), its update risk is
+always high, `wua.ps1` has no restart, `AcceptEula`, `Invoke-Expression` or download-and-run, the agent
 checks other update managers before installing, the patching API has no
 approve route, the canary gate requires *effective*, and updates cannot be
 requested one computer at a time (`ACTION_NOT_DIRECT`). §14's agent-catalog
@@ -303,6 +304,174 @@ https and ports 3000/443, and that `screenshots.mjs` refuses any database but
 Behavioural proof: `apps/api/scripts/e2e-monitoring.mjs` — it refuses a
 database that already has global monitors or a global notification policy,
 because the sweep acts on everything in it.
+
+0.34 added thirteen sections, §33 to §45, one per part of the release.
+
+§33 is data retention. The retention sweep names no audit table (`ActivityLog`,
+`AuditCheckpoint`, `AuditChainState`); its one audit entry per pass is an
+insert. It deletes or trims only in nine allow-listed tables. Every statement
+names the finished states and keeps the newest command and diagnostic, is
+bounded, and runs through the batch loop. `RETENTION_SWEEP=off` stops it and is
+exported by `scripts/run-e2e.sh`. `GET /admin/retention` is one Platform Admin
+read with no way to run or change the sweep. Behavioural proof:
+`apps/api/scripts/e2e-retention.mjs` (port 3411); unit: `unit-retention.mjs`.
+
+§34 is API keys and device-group membership. Creating *any* API key needs
+`assertFresh`, after scope and validation and before the write. The step-up is
+not configurable. Keys are immutable: there are list, create and revoke routes
+only, and nothing widens a key's scopes or clears `revokedAt`. Membership is
+the `EndpointGroupMember` table (`Endpoint.endpointGroupId` is gone). Two 0049
+triggers enforce the business rule: a cross-business insert is refused, and a
+computer that changes business or tenant leaves the old business's groups.
+Behavioural proof: `e2e-enrol-stepup.mjs` and `e2e-device-views.mjs`.
+
+§35 is rule-based device groups. A rule group's members are computed on every
+read as the rule AND the group's business AND `scopedWhere`, through the
+device list's own `parseListFilters` / `filterConds`. A rule's values reach SQL
+only as bound parameters. Nothing adds a computer to a rule group: not bulk,
+an enrolment token, the claim, endpoint creation, or a direct insert (0053
+trigger). A group's kind never changes. A rule on alerts is not evaluated for a
+reader without `monitoring:alerts`. Bulk on a group (`targetGroupId`) resolves
+the members as the caller at request time, refuses more than 200, then takes
+the ordinary per-computer path. Behavioural proof: `e2e-dynamic-groups.mjs`
+(port 3481); unit: `unit-dynamic-groups.mjs`.
+
+§36 is the hbbs peer snapshot. `rustdeskRegistered` is answered from one shared
+read of hbbs's peer table, and its window is the only staleness allowed. The
+window is clamped to 30 s and measured from when the read started; a clock
+that went backwards is stale. A failed read answers `null` and discards the
+older snapshot. Digit IDs only, in the SQL and in the parser. Nothing else on
+the heartbeat path spawns `sqlite3`. Behavioural proof:
+`e2e-presence-cache.mjs` (port 3403, a counting `sqlite3` wrapper); unit:
+`unit-hbbs-peer-snapshot.mjs`.
+
+§37 is the update restart rule. Under `if_required_in_window` the agent
+restarts only after something was installed and Windows reports a restart
+required. It goes only through `scheduleWarnedRestart`, the one
+`Maint.ScheduleRestart` call that `windows.reboot.schedule` also uses, with the
+same fixed message. There is a fixed 15-minute warning (the same constant on
+both sides). The window check runs first, then `sessionCheck` ("cannot tell"
+counts as open). Anything else is `restart_deferred`, never a restart outside
+the signed window. Every way to ask for an install defaults to `never`. The
+signer refuses a plan asking for more than its policy (`rebootWithin` →
+`reboot_not_allowed`). The database CHECKs `PatchDeployment.reboot`. The portal
+keeps a `restart` report only from a plan whose rule allowed one. The UI and
+`docs/staged-patching.md` say it has not run on real Windows. The portal asks
+for a patch scan due just after the restart (`patchScanRequestedAt` may be in
+the future; `patchScanDue` waits for it), so the canary gate opens only on a
+post-restart scan. Behavioural proof: `e2e-staged-patching.mjs`
+(`rem0te-action-sim -fire-restart` is the restart happening, `-clock-offset`
+moves the agent's clock, `-sessions` opens a session) and
+`e2e-patch-policies.mjs`.
+
+§38 is agent-signed results. A patch policy's later ring opens only on results
+and scans the computers signed with their own Ed25519 key. Two approvers
+bound that key to the computer in the policy, and the signer pinned it
+write-once in `device-keys/`; only the operator CLI's `device-key forget`
+removes one. The statement prefixes live in one file (`actions/device-result.ts`),
+which signs nothing. The signer verifies every previous-ring statement under
+the *policy's* key, never the key a statement names, before `evaluateRingGate`,
+and the gate reads only signed facts. A missing signature only counts against a
+ring. The portal relays signatures as received, and a policy whose gating
+computers have no key is refused (`RESULT_KEY_MISSING`). The agent signs every
+final result in one place (`final()`), with the verifier's prefixes; the
+result-status table (`RESULT_STATUS`) is shared by the portal and the signer.
+Behavioural proof: `e2e-patch-policies.mjs` (five forged canary successes
+refused); unit: `unit-patch-policy.mjs`, `unit-approval-signer.mjs`.
+
+§39 is `windows.script.run@1`. There is no run without an APPROVED library
+version and an ACTIVE entry on the approval signer's *own* allowlist. Only two
+passkey approvals on the signer's origin make an entry ACTIVE. The portal can
+propose, read and revoke, never write. Revocation is by content hash and
+write-once, and the store's only deletion is the device-pin removal above.
+The typed argument schema is checked by the portal, the signer and the agent,
+with identical charsets. The agent runs one constant command line with a fixed
+wrapper and never builds one from the plan. Output is redacted on the computer
+and again by the portal, stored apart and pruned after 90 days
+(`SCRIPT_OUTPUT_SWEEP=off` stops that). Behavioural proof:
+`apps/api/scripts/e2e-script-run.mjs`. It needs `RELEASE_BIN`, `ACTION_SIM` and
+PowerShell 7 (`PWSH`, or `pwsh` on PATH); the sim takes `-script`, `-pwsh`,
+`-script-minute`. Unit: `unit-script-run.mjs`.
+
+§40 is software deployment (`windows.software.install@1` / `uninstall@1`). The
+five closed parameters use the same charsets on the agent and in the portal; a
+package id can never start with `-`. `internal/winget` is the only exec site:
+an argument array, no shell, no override or hash-skipping flag, and always
+`--exact --source winget --scope machine`. The agent hashes the downloaded
+installer and refuses a mismatch before installing, and refuses
+`managed_elsewhere` before asking winget anything. The portal makes plans only
+through `createPlan`. Catalog writes need `assertFresh`. There is no upload,
+approve or sign route. Canary of one, rings of at most 25. The manifest fetch
+is bounded, with a loopback-only `WINGET_MANIFEST_BASE`. Behavioural proof:
+`e2e-software-deploy.mjs` (ports 3461–3464, same `RELEASE_BIN` / `ACTION_SIM`;
+the sim takes `-winget STATE.json` and `-winget-timeout`); unit:
+`unit-software.mjs`.
+
+With §39 and §40, §14's exact, ordered catalog list is nine actions: the six
+through 0.32, then `windows.script.run`, `windows.software.install` and
+`windows.software.uninstall`. It is the same on the agent and in the portal,
+with `scriptParamsOK` and `softwareParamsOK` among the closed forms and seven
+`integration: false` entries.
+
+§41 is AI without a provider key. There is no model-provider SDK, endpoint or
+key variable anywhere in `apps/api/src` or `apps/api/package.json`
+(`@anthropic-ai/sdk` is gone). The device AI summary goes only `timeline.service
+→ timeline.client → signer.signedPost(peer, 'inference')`. The summary is sent
+only when ClientSt0r's signed capabilities document lists `device_timeline_v1`,
+after both capabilities and containment. It is audited before it leaves,
+without text. The snapshot selects no name, hostname, address, business, site,
+tag, author or RustDesk field, and every free-text field passes
+`redactForPeer`. Behavioural proof: `e2e-ai-timeline.mjs`; unit:
+`unit-ai-timeline.mjs`.
+
+§42 is outbound email. The relay is Platform Admin only and saved with
+`assertFresh`. Its host is a public DNS name, checked on save and resolved and
+checked on every send, and the connection is made to the checked address (SSRF
+and DNS rebinding). Plaintext goes only to loopback, certificates are verified,
+STARTTLS is required, and nodemailer gets no file or URL access. Mail goes only
+to mailbox-confirmed recipients of the policy's or schedule's own scope; the
+token is consumed conditionally and there is no GET verify route. The relay
+password appears in no audit row, view, log or error code, and moving the relay
+drops it. A `notifications` pause stops every send. A scheduled report period
+is claimed (unique) before it is sent, and the owner is rebuilt from the
+database before the export. `REPORT_SCHEDULE_SWEEP=off` stops the sweep and is
+exported by `run-e2e.sh`. Behavioural proof: `e2e-email.mjs` (ports
+3491–3493, an SMTP server in the test); unit: `unit-email.mjs`.
+
+§43 is agent upgrade from the console. A per-computer migration to the signed
+agent never writes the update-trust mode. In *Signed only* it is refused, held
+and served nothing. The served script pins the digest of
+`windows/rem0te-agent.exe` in the signed targets, and is served only for an
+open nonce handed to that computer's own authenticated heartbeat. A request
+needs `computers:edit` and `assertFresh`, single or bulk, and is recorded only
+with its audit entry. §29's bulk list is six actions (`agent.update`,
+`agent.migrate` added). Behavioural proof: `e2e-agent-upgrade.mjs` (with
+`RELEASE_BIN`); unit: `unit-agent-migration.mjs`.
+
+§44 is the browser UI suite, `apps/web/scripts/e2e-ui.mjs`. It refuses ports
+3000, 3001, 443, 4000 and 4001 and https before starting anything. It refuses a
+database not named `test` or `scratch` before Prisma loads. It writes only to
+its temporary copy of the standalone build, and stops if the build's baked-in
+API destination (on this host, production's 3001) survives the patch. Its API
+runs with every sweep off (all eight switches). §18 covers it too. CI runs it
+as the `UI suite (browser)` step of the `e2e` job.
+
+§45 is chat with the person at a computer. Every portal route names its
+capability (`computers:view` to read, `support:chat` to start, write and end)
+and reaches the computer through the visibility rule AND-ed with the id;
+starting and sending consult the `remote` containment pause, whose label is
+now "remote connections and chat". The two device routes need the device
+secret (`authenticateDevice` / `secretMatches`), and the heartbeat offers chat
+only to an authenticated signed agent. Audit rows carry ids and counts, never
+message text, and chat never updates or deletes an `ActivityLog` row. The
+2,000-character cap agrees in TS, SQL and Go, and `CHAT_RETENTION_SWEEP=off`
+is exported by `run-e2e.sh` — a separate sweep from `RETENTION_SWEEP`, so
+both switches are needed. On the agent the window process holds no secret and
+speaks no HTTP, its two pipes are first-instance, local-only and ACL'd to
+SYSTEM and the session user with the client PID checked, and text is drawn in
+read-only plain `EDIT` controls. **The window has never run on real Windows.**
+Behavioural proof: `e2e-chat.mjs` (port 3531); unit: `unit-chat.mjs` and the
+Go `internal/chat` tests.
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 

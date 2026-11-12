@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **424** of them across
-**56** controllers.
+integration, under `/api/integration/v1`). There are **472** of them across
+**66** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -48,6 +48,25 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/admin/status` | signed in | — |
 | `GET` | `/api/v1/admin/unassigned-devices` | signed in | — |
 | `POST` | `/api/v1/admin/unassigned-devices/:id/assign` | signed in | — |
+
+## Agent upgrade agentmigrations
+
+`apps/api/src/agent-upgrade/agent-upgrade.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/agent-migrations` | signed in | `COMPUTERS_VIEW` |
+
+## Agent upgrade endpoints
+
+`apps/api/src/agent-upgrade/agent-upgrade.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/endpoints/:id/agent` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/endpoints/:id/agent/migrate` | signed in, throttled | `COMPUTERS_EDIT` |
+| `POST` | `/api/v1/endpoints/:id/agent/migrate/cancel` | signed in, throttled | `COMPUTERS_EDIT` |
+| `POST` | `/api/v1/endpoints/:id/agent/update` | signed in, throttled | `COMPUTERS_EDIT` |
 
 ## API keys
 
@@ -124,6 +143,18 @@ Admins and Business Owners are not confined by it; see
 | `PATCH` | `/api/v1/customers/:id/users/:userId/capabilities` | signed in | `USERS_MANAGE` |
 | `POST` | `/api/v1/customers/:id/users/:userId/reset-access` | signed in | `USERS_MANAGE` |
 | `GET` | `/api/v1/customers/capability-catalog` | signed in | — |
+
+## Chat
+
+`apps/api/src/chat/chat.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/endpoints/:id/chat` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/endpoints/:id/chat/conversations` | signed in, throttled | `CHAT_SEND` |
+| `GET` | `/api/v1/endpoints/:id/chat/conversations/:cid` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/endpoints/:id/chat/conversations/:cid/end` | signed in | `CHAT_SEND` |
+| `POST` | `/api/v1/endpoints/:id/chat/conversations/:cid/messages` | signed in, throttled | `CHAT_SEND` |
 
 ## Client updates
 
@@ -225,6 +256,29 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/downloads/rustdesk/plain` | signed in | — |
 | `GET` | `/api/v1/downloads/rustdesk/setup.cmd` | signed in | — |
 
+## Email email
+
+`apps/api/src/email/email.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/email/recipients` | signed in | — |
+| `POST` | `/api/v1/email/recipients` | signed in, throttled | — |
+| `DELETE` | `/api/v1/email/recipients/:id` | signed in | — |
+| `POST` | `/api/v1/email/recipients/:id/resend` | signed in, throttled | — |
+| `GET` | `/api/v1/email/status` | signed in | — |
+| `POST` | `/api/v1/email/verify` | public, throttled | — |
+
+## Email emailsettings
+
+`apps/api/src/email/email.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/email/settings` | Platform Admin | — |
+| `PUT` | `/api/v1/email/settings` | Platform Admin, throttled | — |
+| `POST` | `/api/v1/email/settings/test` | Platform Admin, throttled | — |
+
 ## Computers
 
 `apps/api/src/endpoints/endpoints.controller.ts`
@@ -257,7 +311,6 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/endpoints/:id/rotate-credential` | signed in | `COMPUTERS_EDIT` |
 | `POST` | `/api/v1/endpoints/:id/tags` | signed in | `COMPUTERS_EDIT` |
 | `DELETE` | `/api/v1/endpoints/:id/tags/:tag` | signed in | `COMPUTERS_EDIT` |
-| `POST` | `/api/v1/endpoints/:id/timeline/generate` | signed in | `COMPUTERS_EDIT` |
 | `GET` | `/api/v1/endpoints/connected` | signed in | `COMPUTERS_VIEW` |
 | `POST` | `/api/v1/endpoints/grants/redeem` | public, throttled | — |
 | `GET` | `/api/v1/endpoints/list` | signed in | `COMPUTERS_VIEW` |
@@ -272,6 +325,8 @@ Admins and Business Owners are not confined by it; see
 
 | Method | Path | Access | Capability |
 |---|---|---|---|
+| `POST` | `/api/v1/enrollment/chat/poll` | public, throttled | — |
+| `POST` | `/api/v1/enrollment/chat/reply` | public, throttled | — |
 | `POST` | `/api/v1/enrollment/claim` | public, throttled | — |
 | `POST` | `/api/v1/enrollment/command-result` | public, throttled | — |
 | `POST` | `/api/v1/enrollment/confirm-rotation` | public, throttled | — |
@@ -520,6 +575,17 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/public/quick-connect` | public | — |
 | `GET` | `/api/v1/public/quick-connect/download/:os` | public | — |
 
+## Report schedules
+
+`apps/api/src/reports/report-schedules.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/reports/schedules` | signed in | — |
+| `POST` | `/api/v1/reports/schedules` | signed in, throttled | — |
+| `PATCH` | `/api/v1/reports/schedules/:id` | signed in, throttled | — |
+| `DELETE` | `/api/v1/reports/schedules/:id` | signed in | — |
+
 ## Reports
 
 `apps/api/src/reports/reports.controller.ts`
@@ -534,6 +600,16 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/reports/offline-time/export.csv` | signed in, throttled | `ALERTS_VIEW` |
 | `GET` | `/api/v1/reports/patch-compliance` | signed in | `COMPUTERS_VIEW` |
 | `GET` | `/api/v1/reports/patch-compliance/export.csv` | signed in, throttled | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/reports/software-compliance` | signed in | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/reports/software-compliance/export.csv` | signed in, throttled | `COMPUTERS_VIEW` |
+
+## Retention
+
+`apps/api/src/retention/retention.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/admin/retention` | signed in | — |
 
 ## Rollouts
 
@@ -569,6 +645,17 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/scripts/:id/versions/:version/review` | signed in, throttled | — |
 | `POST` | `/api/v1/scripts/:id/versions/:version/submit` | signed in | — |
 | `POST` | `/api/v1/scripts/:id/versions/:version/withdraw` | signed in | — |
+
+## Script run
+
+`apps/api/src/script-run/script-run.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `POST` | `/api/v1/script-runs` | signed in, throttled | — |
+| `GET` | `/api/v1/script-runs/versions/:versionId` | signed in | — |
+| `POST` | `/api/v1/script-runs/versions/:versionId/allowlist` | signed in, throttled | — |
+| `POST` | `/api/v1/script-runs/versions/:versionId/allowlist/revoke` | signed in, throttled | — |
 
 ## Search
 
@@ -683,6 +770,28 @@ Admins and Business Owners are not confined by it; see
 | `PATCH` | `/api/v1/sites/:id` | signed in | `COMPUTERS_EDIT` |
 | `DELETE` | `/api/v1/sites/:id` | signed in | `COMPUTERS_REMOVE` |
 
+## Software
+
+`apps/api/src/software/software.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `POST` | `/api/v1/endpoints/:id/software/:entryId/:operation` | signed in, throttled | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/endpoints/:id/software/catalog` | signed in | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/software/catalog` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/software/catalog` | signed in, throttled | `COMPUTERS_EDIT` |
+| `GET` | `/api/v1/software/catalog/:id` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/software/catalog/:id` | signed in, throttled | `COMPUTERS_EDIT` |
+| `POST` | `/api/v1/software/catalog/:id/archive` | signed in, throttled | `COMPUTERS_EDIT` |
+| `GET` | `/api/v1/software/deployments` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/software/deployments` | signed in, throttled | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/software/deployments/:id` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/software/deployments/:id/cancel` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/software/deployments/:id/pause` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/software/deployments/:id/resume` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/software/deployments/:id/rings/:ring/request` | signed in, throttled | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/software/manifest-preview` | signed in, throttled | `COMPUTERS_EDIT` |
+
 ## Sso authsso
 
 `apps/api/src/sso/sso.controller.ts`
@@ -783,6 +892,15 @@ Admins and Business Owners are not confined by it; see
 | `PATCH` | `/api/v1/tenants/:id/branding` | signed in | — |
 | `PATCH` | `/api/v1/tenants/:id/branding/logo` | signed in | — |
 | `PATCH` | `/api/v1/tenants/:id/settings` | signed in | — |
+
+## Timeline
+
+`apps/api/src/integration/timeline.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/endpoints/:id/timeline` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/endpoints/:id/timeline/generate` | signed in, throttled | `COMPUTERS_EDIT` |
 
 ## Updates
 

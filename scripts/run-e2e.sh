@@ -11,7 +11,11 @@
 # RELEASE_BIN and ACTION_SIM (built from tools/windows-installer) enable the
 # suites that drive the Windows agent's decision code; without them those
 # suites are reported as SKIPPED and the run fails — set E2E_ALLOW_SKIP=1 to
-# accept that (never in CI).
+# accept that (never in CI). script-run also needs pwsh (PWSH, or on PATH).
+#
+# The browser suite (apps/web/scripts/e2e-ui.mjs, 0.34) is not run from here: it
+# needs a web build and Playwright's browser, and CI runs it as its own step
+# after this one, against the same database.
 #
 # The suites write fixtures. Never point this at a database you care about.
 set -uo pipefail
@@ -34,6 +38,23 @@ export PATCH_POLICY_SWEEP=off
 # Likewise the metric roll-up and retention sweep (0.33); the metric-history
 # suite turns it on for its own API.
 export METRIC_SWEEP=off
+# And the data-retention sweep (0.34), which removes aged rows from the whole
+# database: other suites' fixtures included. The retention suite turns it on
+# for its own API.
+export RETENTION_SWEEP=off
+# And the scheduled-report sweep (0.34), which mails every due schedule in the
+# database; the email suite turns it on for its own API.
+export REPORT_SCHEDULE_SWEEP=off
+# Chat (0.34): the retention sweep deletes ended transcripts. e2e-chat turns
+# it on for its own API, with its own fixtures.
+export CHAT_RETENTION_SWEEP=off
+# And the script-output prune (0.34), which deletes every run's output past
+# its age. The monitoring and client-update sweeps are deliberately NOT
+# exported off here: the monitoring and ticket-workflow suites rely on the
+# monitoring sweep's default (on, at MONITOR_SWEEP_SECONDS) for their own API,
+# and every other suite that starts an API turns them off itself. Scratch APIs
+# below get both off explicitly.
+export SCRIPT_OUTPUT_SWEEP=off
 export ENCRYPTION_KEY="${ENCRYPTION_KEY:-$(openssl rand -hex 32)}"
 export SEED_ADMIN_EMAIL="${SEED_ADMIN_EMAIL:-e2e-admin@example.com}"
 export SEED_ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD:-$(openssl rand -base64 18)}"
@@ -58,11 +79,15 @@ run() { # name, command...
 }
 
 echo "── self-starting suites"
-for t in credentials security-features presets monitoring integration dashboard diagnostics-catalog system-inventory device-list endpoint-visibility device-views add-device auto-updates reports script-library linux-agent macos-agent enrol-stepup search metric-history; do run "$t" node "scripts/e2e-$t.mjs"; done
-for t in containment approved-action staged-patching maintenance-actions patch-policies signed-updates ticket-workflow; do
+for t in credentials security-features presets monitoring integration dashboard diagnostics-catalog system-inventory device-list endpoint-visibility device-views dynamic-groups add-device auto-updates reports script-library linux-agent macos-agent enrol-stepup search metric-history retention presence-cache ai-timeline email chat; do run "$t" node "scripts/e2e-$t.mjs"; done
+for t in containment approved-action staged-patching maintenance-actions patch-policies software-deploy signed-updates ticket-workflow agent-upgrade; do
   if [[ -n "${RELEASE_BIN:-}" && -n "${ACTION_SIM:-}" ]]; then run "$t" node "scripts/e2e-$t.mjs"
   else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM not set)\n' "$t"; skipped+=("$t"); fi
 done
+# Script runs (0.34) also need real PowerShell: PowerShell 7 (pwsh) runs the
+# script under the agent's decision code. PWSH, or pwsh on PATH (the CI image has it).
+if [[ -n "${RELEASE_BIN:-}" && -n "${ACTION_SIM:-}" ]] && { [[ -n "${PWSH:-}" ]] || command -v pwsh >/dev/null; }; then run script-run node scripts/e2e-script-run.mjs
+else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM / pwsh not available)\n' script-run; skipped+=(script-run); fi
 
 echo "── suites against a scratch API (one API per suite: the login throttle is per process)"
 PORT="${E2E_API_PORT:-3101}"
@@ -70,7 +95,7 @@ export API_BASE="http://127.0.0.1:$PORT/api/v1" FRONTEND_URL="http://scratch.exa
 for t in smoke full business-access offboarding public-api public-address rollouts security-audit session-mutations support-requests sso-passkeys candidate-password secreg; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then echo "port $PORT is busy" >&2; exit 1; fi
   env PORT=$PORT HBBS_PRESENCE_HOST=127.0.0.2 OIDC_ALLOW_INSECURE_LOOPBACK=true PUBLIC_API_URL="http://scratch.example.com:$PORT" \
-    JWT_SECRET="$(openssl rand -hex 32)" LAUNCHER_TOKEN_SECRET="$(openssl rand -hex 32)" MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off METRIC_SWEEP=off \
+    JWT_SECRET="$(openssl rand -hex 32)" LAUNCHER_TOKEN_SECRET="$(openssl rand -hex 32)" MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off METRIC_SWEEP=off RETENTION_SWEEP=off REPORT_SCHEDULE_SWEEP=off CHAT_RETENTION_SWEEP=off SCRIPT_OUTPUT_SWEEP=off \
     VERSION_FILE="$ROOT/version.json" node dist/main.js > "$OUT/api-$t.log" 2>&1 &
   pid=$!
   for _ in $(seq 1 180); do grep -q "listening on" "$OUT/api-$t.log" 2>/dev/null && break; sleep 1; done

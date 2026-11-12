@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
+import { ReportSchedulesController } from './report-schedules.controller';
+import { ReportSchedulesService } from './report-schedules.service';
 import { MonitoringAdminService } from '../monitoring/monitoring-admin.service';
 
 /**
@@ -9,7 +11,8 @@ import { MonitoringAdminService } from '../monitoring/monitoring-admin.service';
  * instead of a copy that could drift from it. It is stateless.
  */
 @Module({
-  controllers: [ReportsController],
-  providers: [ReportsService, MonitoringAdminService],
+  // ReportSchedulesController first: its `schedules` path must not be read as a report name.
+  controllers: [ReportSchedulesController, ReportsController],
+  providers: [ReportsService, ReportSchedulesService, MonitoringAdminService],
 })
 export class ReportsModule {}

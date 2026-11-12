@@ -3,9 +3,11 @@ package action
 import "time"
 
 // The agent's copy of the catalog (v0.26). It is compiled in, so a plan can
-// only ever name something this file implements: there is no command, script,
-// path or URL parameter anywhere, and no way to add one without shipping a new
-// signed agent build through the offline-rooted update chain.
+// only ever name something this file implements: there is no command, path or
+// URL parameter anywhere, and no way to add one without shipping a new signed
+// agent build through the offline-rooted update chain. The one action that
+// runs a script (v0.34) names its SHA-256, never its text: the bytes come
+// beside the envelope and are refused unless they hash to the signed value.
 //
 // Keep in step with apps/api/src/actions/catalog.ts; the portal and signer
 // copy decides what can be proposed, this copy decides what can run.
@@ -70,8 +72,10 @@ var catalog = []Action{
 		// Install named Windows updates (v0.27). Software installation is high
 		// impact on any computer: two approvers, always. The parameters name
 		// update identities and nothing else — no URL, package, path or
-		// script — and "reboot" admits one value, so a plan can never restart
-		// a computer in this release.
+		// script. "reboot" admits two fixed values (0.34): never, or a restart
+		// after the install only if Windows needs one, through the same
+		// warned, session-checked shutdown.exe path as windows.reboot.schedule
+		// and only inside the plan's signed window (restartInWindow).
 		ID: "windows.update.install", Version: 1, MaxTargets: MaxRingTargets,
 		ParamsOK:    updateParamsOK,
 		Risk:        func(int, int) string { return "high" },
@@ -118,6 +122,42 @@ var catalog = []Action{
 		Precheck:    needMaint,
 		Execute:     collectLogs,
 		Interrupted: func(map[string]any, Options) map[string]string { return nil },
+	},
+	{
+		// Run one approved library script (v0.34). The parameters name a
+		// version, its content SHA-256, typed arguments and a timeout from a
+		// fixed list; the plan's signed script block carries the declared
+		// parameters and the contributors. Precheck refuses content that does
+		// not hash to the signed SHA-256, arguments outside the declared
+		// schema, and a contributor among the approvers. High impact on any
+		// computer: two approvers, always.
+		ID: "windows.script.run", Version: 1, MaxTargets: MaxRingTargets,
+		ParamsOK:    scriptParamsOK,
+		Risk:        func(int, int) string { return "high" },
+		Precheck:    scriptPrecheck,
+		Execute:     runScript,
+		Interrupted: scriptInterrupted,
+	},
+	{
+		// Install one allowlisted winget package at an exact version, pinned
+		// by installer hash (v0.34). High impact on any computer: two
+		// approvers, always. The agent hashes the downloaded installer
+		// itself before winget installs anything (software.go).
+		ID: "windows.software.install", Version: 1, MaxTargets: MaxRingTargets,
+		ParamsOK:    softwareParamsOK,
+		Risk:        func(int, int) string { return "high" },
+		Precheck:    softwarePrecheck(false),
+		Execute:     installSoftware,
+		Interrupted: softwareInterrupted,
+	},
+	{
+		// Uninstall that package (v0.34). Same closed parameters.
+		ID: "windows.software.uninstall", Version: 1, MaxTargets: MaxRingTargets,
+		ParamsOK:    softwareParamsOK,
+		Risk:        func(int, int) string { return "high" },
+		Precheck:    softwarePrecheck(true),
+		Execute:     uninstallSoftware,
+		Interrupted: softwareInterrupted,
 	},
 }
 

@@ -53,6 +53,18 @@ export class SignerClient {
     return this.call<{ jobId?: string; digest?: string; status?: string; approvalUrl?: string; error?: string; message?: string }>('POST', `/internal/v1/policies/${id}/plans`, body);
   }
 
+  // ── The script allowlist (v0.34) ──────────────────────────────────────────
+  // The portal proposes an entry (the content and what the library says about
+  // it) and may revoke one. It cannot approve or edit one: approvers add it
+  // with passkeys on the signer's own page, after reading the content there.
+  proposeScript(proposal: unknown) {
+    return this.call<{ id?: string; status?: string; contentSha256?: string; definitionSha256?: string; approvalUrl?: string; error?: string; message?: string }>('POST', '/internal/v1/scripts', { proposal });
+  }
+  scriptStatus(id: string) {
+    return this.call<{ id?: string; status?: string; contentSha256?: string; approvalUrl?: string; decisions?: { name: string; decision: string; at: string }[]; revokedAt?: string | null; revokeReason?: string | null; error?: string }>('GET', `/internal/v1/scripts/${id}`);
+  }
+  revokeScript(id: string, reason: string) { return this.call<{ status?: string; revokedAt?: string; error?: string }>('POST', `/internal/v1/scripts/${id}/revoke`, { reason }); }
+
   /** v0.28: ask the signer to hold a pause. It cannot be asked to lift one; its operator does that. */
   pause(p: { scope: 'global' | 'business'; businessId?: string; reason: string; ref: string }) { return this.call<{ id?: string; error?: string }>('POST', '/internal/v1/pauses', p); }
   pauses() { return this.call<{ pauses?: { id: string; scope: string; businessId?: string; reason: string; setBy: string; at: string; ref?: string }[] }>('GET', '/internal/v1/pauses'); }

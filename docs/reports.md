@@ -10,6 +10,7 @@ behind it says *No data*, and an empty report says what is missing.
 | **Agent coverage** | Which agent each device runs and at what version; devices without a device secret; devices not heard from in N days; non-Windows devices with no inventory | View computers |
 | **Alert frequency** | How many alerts each business, site, computer and monitor type raised in a period, and how long they took to resolve | monitoring:alerts |
 | **Offline time** | How long computers were unreachable, from the offline episodes the Offline monitor recorded | monitoring:alerts |
+| **Software compliance** (0.34) | For each software catalog entry, how many Windows computers are compliant, outdated, missing or unknown | View computers |
 
 Each report shows only what you can already see elsewhere:
 
@@ -25,6 +26,14 @@ Filters: **Business** (a Platform Admin, or anyone who works in several), **Site
 **Period** (24 hours, 7, 30, 90 or 365 days). Agent coverage has its own *Not heard from in* choice (1 to 90
 days). The filters stay in the address bar, so a report can be bookmarked; whoever opens the link sees it with
 their own permissions.
+
+![Reports, on Patch compliance](screenshots/guide/reports.png)
+
+1. **The reports** — one tab each.
+2. **Offline time** — the one the next screenshot opens.
+3. **Business** — then Site; the filters stay in the address bar.
+4. **Export CSV** — the report as on screen, with the same visibility.
+5. **The totals** — each a count of devices, with *No data* where there is no scan to count from.
 
 ## Patch compliance
 
@@ -97,6 +106,42 @@ What this cannot tell you, and why there is **no availability percentage**:
 An availability percentage needs the time each computer was monitored, which is not recorded, so any
 percentage would be invented.
 
+## How far back the alert reports can see
+
+Resolved alerts are deleted `RETENTION_ALERT_DAYS` (default 400) days after they were resolved
+([data-retention.md](data-retention.md)). Every alert first raised inside that many days is still stored, so with the
+default the 365-day period is complete. If the setting is lower than the period you choose, Alert frequency and
+Offline time say so above the report, and say how many days they cover. Patch compliance and agent coverage
+read each device's current record, which retention never removes, and have no window.
+
+## Software compliance
+
+Per [software catalog](software-deployment.md) entry, over the Windows computers it applies to (a business's entries
+over that business's computers, global entries over every computer you can see), from the newest evidence:
+
+- the inventory's installed-software list, for a **display name** detection rule only; the inventory carries no
+  uninstall key names or file versions, so the other two rules are never answered from it;
+- the detection the computer reported when a software plan ran there (before, after, or at a timeout), for any
+  rule, counted only for the same package under the same rule.
+
+| State | Means |
+|---|---|
+| **Compliant** | The detection rule holds |
+| **Outdated** | Found, at a version the rule does not accept |
+| **Missing** | Not found |
+| **Unknown** | No evidence, or none newer than 14 days (counted separately as *stale*) |
+
+Unknown is never folded into compliant or missing. A rule nothing has evidence for is honestly all unknown. The page
+shows the totals, each entry's counts, how many visible computers are not Windows (and so not counted), and the
+computers needing attention (outdated, then missing, then unknown). The export has one row per entry and computer.
+
+![Offline time over 30 days](screenshots/guide/reports-offline.png)
+
+1. **The filters** — business, site and period.
+2. **By site** — computers, episodes and time offline; *By computer* below it lists each computer, its longest
+   episode and when it last went offline.
+3. **Export CSV** — the report as on screen.
+
 ## Exporting
 
 Every report has **Export CSV**. The export is the whole report as rows (one per device for patch compliance
@@ -110,18 +155,21 @@ with the same scoping and filters as the page.
   rows and with which filters) *before* the file is sent. If the audit log cannot be written, the export is
   refused.
 
+## Scheduled reports
+
+From 0.34 any report can be emailed weekly or monthly to confirmed addresses, with a link and optionally this
+same CSV export (same row cap, same `REPORT_EXPORTED` audit row, naming the schedule). It is computed with the
+schedule owner's access when it is sent, and fails closed if they have lost it. See
+[Email and scheduled reports](email.md).
+
 ## Not done
 
-- **Scheduled or emailed reports.** Rem0te has no outbound mail. Its only outbound channel, alert notification
-  webhooks, exists to deliver alerts to destinations a Business Owner approved with a fresh sign-in; reusing it
-  to send device inventories out on a timer would widen what it carries. Export the CSV and send it yourself
-  until a delivery mechanism is designed for this.
 - **Availability percentage**: see above.
 - **Trends over time** (compliance last month against this month): scans and agent versions are stored as the
   latest value, not as history.
 
 ## API
 
-`GET /api/v1/reports/{patch-compliance|agent-coverage|alert-frequency|offline-time}` and the same path with
+`GET /api/v1/reports/{patch-compliance|agent-coverage|alert-frequency|offline-time|software-compliance}` and the same path with
 `/export.csv`, taking `businessId`, `siteId`, `days` (1, 7, 30, 90, 365) and `silentDays` (1, 3, 7, 14, 30,
 90). Other values are a 400. See the [API reference](API-REFERENCE.md).

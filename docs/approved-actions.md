@@ -9,12 +9,23 @@ staged deployment of a canary and rings. See [Staged patching](staged-patching.m
 
 From 0.32 it has four **maintenance actions**, each on one computer: restart one service from a fixed list, schedule
 a warned restart, cancel a pending restart, and collect a fixed set of logs. See
-[Maintenance actions (0.32)](#maintenance-actions-032). The rest of this page describes the Print Spooler action, and
-the machinery every action shares.
+[Maintenance actions (0.32)](#maintenance-actions-032).
 
-Those six are the whole catalog. You can't request a command, a script, a path, a URL, a service off the list, a
-restart message of your own, a log file or time range of your own, or a change to any service's startup type. Credential extraction, removing backups, disabling defenses, granting admin rights and wiping
-disks aren't in the catalog and never will be. They aren't switched off; nothing exists to request them.
+From 0.34 it has a seventh, **running an approved script-library version** (`windows.script.run@1`) on up to 25
+computers. It runs only bytes whose SHA-256 two approvers have added to the signer's own allowlist, and each run is
+approved again by two approvers who did not write the script. See [Script runs (0.34)](#script-runs-034) and
+[Script library](script-library.md).
+
+Also from 0.34, the eighth and ninth are the **software actions**: install and uninstall one allowlisted winget
+package, pinned by version and installer SHA-256, requested only from the software catalog (one computer, or a
+canary and rings). See [Software deployment](software-deployment.md). The rest of this page describes the Print
+Spooler action, and the machinery every action shares.
+
+Those nine are the whole catalog. You can't request a command, a script that isn't an allowlisted library version,
+a path, a URL, a service off the list, a restart message of your own, a log file or time range of your own, or a
+change to any service's startup type. Credential extraction, removing backups, disabling defenses, granting admin rights and wiping
+disks aren't in the catalog and never will be. Nor can you request a package outside the catalog, an installer of
+your own, installer switches, or a per-user install. They aren't switched off; nothing exists to request them.
 
 > **Warning.** Documents already waiting in the print queue may print as soon as the spooler starts. They can't be
 > recalled once they reach the printer. The requester confirms this, and the approval page shows it.
@@ -195,7 +206,15 @@ and the agent refuse it too): a restart must not land many hours after the time 
 
 **Canceling** is a second action with its own two approvals. If you may need to cancel, request and approve the
 cancel early; a restart whose delay ends first is not stopped. It cancels whatever is pending on the computer,
-including a restart someone else scheduled there.
+including a restart someone else scheduled there — and, from 0.34, one an update plan scheduled.
+
+**Update restarts use the same path (0.34).** An update plan with the restart rule `if_required_in_window`
+([Staged patching → Restarting after updates](staged-patching.md#restarting-after-updates)) schedules its restart
+through the code `windows.reboot.schedule` runs: the same `shutdown.exe /r` call, the same fixed warning, the same
+reboot record for the cancel, after a fixed 15 minutes. The session rule is the same too, but its result differs: the
+updates are already installed, so an open session (or "cannot tell") does not end the job `not_executed`. The
+install's result stands, and the restart is reported `restart_deferred`. It also defers if the restart would fall
+after the plan's window. It has not yet run on a real Windows computer.
 
 **Open sessions.** Before scheduling a restart, and before restarting the RustDesk service, the agent counts
 incoming RustDesk sessions (the `rustdesk.exe --cm` connection-manager processes, the same signal the heartbeat
@@ -238,6 +257,40 @@ state now; reconcile it as for the spooler (`running`, `stopped`, `restart_sched
 signed agent build. Production has no signer installed, so the Actions tab says "no approval signer is configured"
 and requests nothing; a computer whose agent does not report an action shows that action as not available on it.
 
+## Script runs (0.34)
+
+`windows.script.run@1` runs one approved [script-library](script-library.md) version as SYSTEM in Windows
+PowerShell, with typed arguments and a timeout. It uses everything above unchanged — the separate signer, passkey
+approvals, the agent's checks, the journal, the dispatch rechecks, containment, the audit trail — and adds:
+
+- **An allowlist on the signer.** The signer keeps its own list of approved script hashes in its state directory
+  (`scripts/`, `script-revocations/`). An entry is added only by two passkey approvals on the signer's page, after
+  the approvers read the content the signer holds and the hash it computed. The portal can propose an entry and
+  revoke one; it can't add, activate or edit one. Revocation is by content SHA-256 and permanent.
+- **Closed parameters.** `{"scriptVersionId", "sha256", "parameters", "timeoutMinutes"}`: a version id, its content
+  hash, arguments checked against the version's declared parameters (by the portal, the signer and the agent), and a
+  timeout of 1, 5, 10, 15 or 30 minutes. The plan carries a `script` block that must be exactly the signer's entry.
+- **Always high risk.** Two different approvers on any computer. Neither may be the requester or anyone who wrote or
+  edited the script (`contributor_cannot_approve` at the signer, `contributor_approved` at the agent).
+- **Up to 25 computers** of one business per plan, each with its own result.
+- **Requested from the script library**, not the Actions tab: `POST /endpoints/:id/actions` with this action is
+  `ACTION_NOT_DIRECT`. Results appear on each computer's Actions tab.
+- **The content travels beside the envelope**, on the heartbeat. The agent refuses it unless it is exactly the signed
+  length and SHA-256.
+- **Bounded execution.** A fresh temporary folder, a constant command line
+  (`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File run.ps1`), arguments read from a JSON
+  file and splatted, a job object with a 1 GiB memory limit that is terminated at the timeout, and the first 64 KB of
+  stdout and stderr kept, redacted on the computer and again by the portal. Output is kept 90 days.
+- **Not offered to ClientSt0r.**
+
+Results: `succeeded` (exit code 0), `failed` with `exit_code`, `timed_out` (stopped with everything it started; it may
+have done part of its work), `failed` with `start_failed` or `workdir_failed`. Refusals before anything runs:
+`script_missing`, `script_mismatch`, `bad_declarations`, `arguments_not_allowed`, `contributor_approved`,
+`no_content`, `content_mismatch`, and `no_script_host` from an agent built without the runner.
+
+**Not yet run on a real Windows computer.** The decision code and real PowerShell 7 on Linux are tested end to end
+(`e2e-script-run.mjs`); Windows PowerShell 5.1, the SYSTEM context and the job object are not.
+
 ## Patch policies: approved once, signed by the signer
 
 From 0.32, a person can approve a bounded **patch policy** instead of each update ring
@@ -254,9 +307,19 @@ without its own two approvals, so the design keeps the decision on the signer:
   - the ring order, against the signer's own ledger;
   - classes, severities and KBs;
   - the window, the expiry and the requester;
-  - the previous ring's gate, including canary-effective.
+  - the restart rule: a plan may ask for no more than the policy allows (0.34, `reboot_not_allowed`);
+  - the previous ring's gate, including canary-effective, computed only from results and scans **the computers
+    signed themselves** (0.34).
 
   Only then is the plan signed, carrying the policy's approvers.
+- **Ring results are signed by the computers (0.34).** Each 0.34 agent has an Ed25519 result key it generated and
+  never exports. The policy names each computer's key, so two approvers vouch for it, and on approval the signer pins
+  it write-once to the computer's enrolled identity (`device-keys/`). Before a later ring is signed, the signer checks
+  every previous-ring result and the canary's scan under that key. A result that is missing, forged, from another
+  computer, about another plan or stale is refused with a named code. The portal relays the agents' signatures as
+  received; it holds no device key and has no code that signs a device statement. The first time a computer's key is
+  named is trusted on first use: compare the fingerprint on the approval page with `rem0te-agent.exe status`. See
+  [Staged patching → Signed results](staged-patching.md#signed-results-034).
 - **The portal can propose a policy and ask for it to be revoked.** It can't approve a policy, un-revoke one, or sign
   under one. `POST /internal/v1/policies/:id/plans` is a request for the signer to decide; a refusal comes back as
   `409` with the code, and the signer keeps the last 50 with the policy.
@@ -269,6 +332,8 @@ The signer operator's CLI:
 ```bash
 $S patch-policy list                                   # status, signature check, approvals, plans signed, last refusals
 $S patch-policy revoke --id <policyId> --reason 'why'  # one-way
+$S device-key list                                     # 0.34: pinned result keys, fingerprints, the policy that pinned each
+$S device-key forget --endpoint <endpointId> --reason 'why'  # remove a pin after reading the new fingerprint on the computer
 ```
 
 ## Setting it up
@@ -362,6 +427,7 @@ a passkey. A rejection is final.
 | Code | Meaning |
 |---|---|
 | `ACTION_NOT_IN_CATALOG` | Not a catalog action. Commands, scripts and the blocked categories are always this |
+| `ACTION_NOT_DIRECT` | Requested through its own workflow, not the Actions tab: update install (a patch deployment) and, from 0.34, software install and uninstall (the software catalog) |
 | `PARAMS_NOT_ALLOWED` | The parameters aren't the catalog's (another service, an extra field) |
 | `ACTION_NOT_GRANTED` | Your role or access level doesn't include requesting this, on this computer |
 | `PROTECTED_DEVICE_CLASS` | The computer is a protected class |
@@ -369,7 +435,9 @@ a passkey. A rejection is final.
 | `WINDOW_TOO_LONG` | 0.32: the requested window is longer than the action allows (a restart schedule: 2 hours) |
 | `ACTION_PENDING` | An earlier request for this action on this computer is still unresolved |
 | `ACTION_UNRECONCILED` | An earlier outcome is uncertain. Reconcile it first |
-| `APPROVAL_SIGNER_ERROR`, `APPROVAL_SIGNER_REFUSED`, `APPROVAL_SIGNER_UNREACHABLE` | The signer didn't answer, or refused the plan (e.g. `policy_mismatch` after a policy change, or `paused` while the signer holds a pause) |
+| `ACTION_NOT_DIRECT` | Updates are requested through a patch deployment, and (0.34) script runs from the script library |
+| `NOT_APPROVED`, `SCRIPT_NOT_ALLOWLISTED`, `SCRIPT_REVOKED`, `SCRIPT_WRONG_BUSINESS` | 0.34 script runs: see [Script library](script-library.md#refusals) |
+| `APPROVAL_SIGNER_ERROR`, `APPROVAL_SIGNER_REFUSED`, `APPROVAL_SIGNER_UNREACHABLE` | The signer didn't answer, or refused the plan (e.g. `policy_mismatch` after a policy change, `paused` while the signer holds a pause, or for a script run `script_not_allowlisted`) |
 | `CONTAINED` | Actions are paused for this business, or globally ([Containment](containment.md)). An approved plan is held, not canceled, and is delivered when the pause is lifted |
 
 Agent refusal reasons: `bad_signature`, `unknown_key`, `bad_plan`, `job_mismatch`, `not_signed`, `unknown_action`,
@@ -382,23 +450,35 @@ the job; request it again), `bad_window` (from 0.32 also a restart plan whose wi
 nothing changed), `restart_already_scheduled`, `stop_failed`, `start_failed`, `did_not_remain_running`,
 `schedule_failed`, `cancel_failed`, `no_maintenance` (an agent built without the maintenance surface).
 
+0.34 software results: `managed_elsewhere`, `hash_mismatch` and `manifest_hash_mismatch` (refused, nothing installed),
+`winget_unavailable`, `winget_too_old` and `detection_failed` (not executed), `download_failed`,
+`installer_not_found`, `install_failed`, `uninstall_failed` and `not_effective` (failed), `timeout` (uncertain),
+`no_software` (an agent built without the software surface). See
+[Software deployment](software-deployment.md#refusals-and-results).
+
 ## What has been proven, and what hasn't
 
 | Level | State |
 |---|---|
-| **Fixture-tested** | Yes. `internal/action` Go tests cover every refusal, replay, crash and verification path. `unit-approval-signer.mjs` (79 checks from 0.32) covers synthetic passkeys through the real WebAuthn verification: forged origin and RP ID, missing user verification, reused and cross-decision challenges, counter regression, the requester approving, quorum, customer sign-off and restart. `e2e-approved-action.mjs` (76 checks) runs the portal, the signer and the agent's real decision code against a simulated Windows, including the compromised-database envelopes |
+| **Fixture-tested** | Yes. `internal/action` Go tests cover every refusal, replay, crash and verification path. `unit-approval-signer.mjs` (99 checks from 0.34; 79 in 0.32) covers synthetic passkeys through the real WebAuthn verification: forged origin and RP ID, missing user verification, reused and cross-decision challenges, counter regression, the requester approving, quorum, customer sign-off and restart. `e2e-approved-action.mjs` (76 checks) runs the portal, the signer and the agent's real decision code against a simulated Windows, including the compromised-database envelopes |
 | **Fixture-tested, 0.32** | `internal/action` Go tests for the maintenance actions (allowlist, charset, delay bounds, session check, journal steps, interruption, redaction and size caps); `unit-approval-signer.mjs` adds the maintenance admission and two-approver cases; `e2e-maintenance-actions.mjs` runs all four through the portal, the signer and the agent's real decision code against a simulated Windows (service manager, `shutdown.exe`, `wevtutil` and the session count are simulated) |
-| **Paired lab** (real Windows workstation, real authenticator, real ClientSt0r) | **Not done.** The Windows calls (service control manager, registry product type, `rustdesk --get-id`, and from 0.32 `shutdown.exe`, `wevtutil.exe` and the RustDesk process count) are compiled and vetted for Windows but haven't run on a lab machine |
+| **Fixture-tested, 0.34** | `internal/action` Go tests for script runs (every refusal, at-most-once, interruption, exit code, timeout, output cap), including runs under real **PowerShell 7 on Linux**; `unit-approval-signer.mjs` adds the script allowlist and script-run cases; `e2e-script-run.mjs` runs the whole path through the portal, the signer and the agent's real decision code with PowerShell 7 |
+| **Fixture-tested, 0.34** | `internal/action` Go tests for the software actions against a stub winget run through the agent's real exec path (success, already installed, hash and manifest mismatch, winget missing or too old, managed elsewhere, timeout, not effective, restart required, argument injection in every field); `unit-approval-signer.mjs` adds the software admission, two-approver and 25-computer cases; `e2e-software-deploy.mjs` runs the catalog, single installs and uninstalls, rings, compliance and isolation through the portal, the signer and the agent's real decision code. winget, App Installer under SYSTEM, the uninstall registry and file versions are simulated |
+| **Paired lab** (real Windows workstation, real authenticator, real ClientSt0r) | **Not done.** (0.34: nor Windows PowerShell 5.1, the SYSTEM context or the job object for script runs, nor winget under SYSTEM for the software actions.) The Windows calls (service control manager, registry product type, `rustdesk --get-id`, and from 0.32 `shutdown.exe`, `wevtutil.exe` and the RustDesk process count) are compiled and vetted for Windows but haven't run on a lab machine |
 | **Production-ready** | **No.** It needs the paired lab first, and an operator who has done the key and roster ceremonies |
 
 ## Known limits
 
-- Six actions, on Windows only. Every action but update install names one computer per plan; an update ring names up to 25.
+- Nine actions, on Windows only. Every action but update install, script run and the two software actions names one
+  computer per plan; an update ring, a script run or a software ring names up to 25.
 - The RustDesk session check is made once, when a restart is scheduled, and sees RustDesk sessions only.
-- A scheduled restart is reported as scheduled. Whether it happened is seen only from the next boot time.
+- A scheduled restart is reported as scheduled. Whether it happened is seen only from the next boot time (and, after
+  an update restart, from the next patch scan).
 - A compromised portal can delay, cancel or withhold delivery. It can't sign or alter a plan.
-- Under a patch policy, the portal relays ring results to the signer. Results aren't signed by the agents yet, so
-  forged results could start the next ring early. That ring still holds only what the policy allows.
+- Under a patch policy, ring results are signed by the agents (0.34), but each computer's result key is trusted on
+  first use: the first approved policy that names it is what vouches for it. Comparing the fingerprint with
+  `rem0te-agent.exe status` is the only proof. A portal can still withhold results, so the next ring starts late or
+  never.
 - The signer is a single process with file state. Back up `/var/lib/rem0te-approver`; losing the key means
   generating a new one and publishing a new `approval/keys.json`. Plans signed by the old key are then refused.
 - Roster membership is managed by the operator CLI. The portal neither shows nor changes it.

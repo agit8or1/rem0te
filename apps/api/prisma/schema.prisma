@@ -53,6 +53,12 @@ enum UpdateRequestSource {
   POLICY
 }
 
+/// A device group's kind (0.34): a hand-kept list, or a rule over the device list's filters.
+enum EndpointGroupKind {
+  STATIC
+  RULE
+}
+
 enum EndpointStatus {
   ACTIVE
   OFFLINE
@@ -157,6 +163,11 @@ enum ActivityAction {
   SCRIPT_VERSION_APPROVED
   SCRIPT_VERSION_REJECTED
   SCRIPT_REVIEW_REFUSED
+  SCRIPT_ALLOWLIST_PROPOSED
+  SCRIPT_ALLOWLIST_REVOKED
+  CHAT_STARTED
+  CHAT_ENDED
+  CHAT_PRUNED
   ENDPOINT_AGENT_REINSTALL_REQUESTED
   ENDPOINT_DEVICE_SECRET_ACCEPTED
   ENDPOINT_RESTORED
@@ -164,6 +175,15 @@ enum ActivityAction {
   CLIENT_UPDATE_POLICY_CHANGED
   CLIENT_UPDATE_AUTO_QUEUED
   REPORT_EXPORTED
+  // 0.34 outbound email
+  SMTP_SETTINGS_CHANGED
+  EMAIL_TEST_SENT
+  EMAIL_RECIPIENT_ADDED
+  EMAIL_RECIPIENT_VERIFIED
+  EMAIL_RECIPIENT_REMOVED
+  REPORT_SCHEDULE_CHANGED
+  REPORT_SCHEDULE_SENT
+  REPORT_SCHEDULE_FAILED
   // 0.33 device groups, shared device views and bulk actions
   DEVICE_GROUP_CREATED
   DEVICE_GROUP_UPDATED
@@ -171,6 +191,10 @@ enum ActivityAction {
   DEVICE_GROUP_MEMBERS_CHANGED
   DEVICE_VIEW_SHARED_CHANGED
   DEVICE_BULK_ACTION
+  // 0.34 agent upgrade: one computer moved from the standard to the signed agent
+  AGENT_MIGRATION_REQUESTED
+  AGENT_MIGRATION_CANCELLED
+  AGENT_MIGRATION_COMPLETED
   CONNECTION_GRANT_CREATED
   CONNECTION_GRANT_REDEEMED
   CONNECTION_GRANT_DENIED
@@ -250,6 +274,10 @@ enum ActivityAction {
   INTEGRATION_JOB_REJECTED
   INTEGRATION_JOB_FINISHED
   INTEGRATION_MAPPING_CHANGED
+  // v0.34: the device page's AI summary, requested through ClientSt0r. Counts and ids only, never content.
+  AI_TIMELINE_REQUESTED
+  AI_TIMELINE_FINISHED
+  AI_TIMELINE_REFUSED
   TECHNICIAN_PRESET_CHANGED
   ACCESS_POLICY_CHANGED
   TRUST_CHANGE_REQUESTED
@@ -264,6 +292,15 @@ enum ActivityAction {
   ALERT_SUPPRESSION_CHANGED
   DEVICE_CLASS_CHANGED
   SECURITY_ALERT_RAISED
+  // 0.34 data retention: one entry per sweep pass that deleted or trimmed anything
+  RETENTION_PRUNED
+  // 0.34 software deployment (winget allowlist).
+  SOFTWARE_CATALOG_CREATED
+  SOFTWARE_CATALOG_UPDATED
+  SOFTWARE_CATALOG_ARCHIVED
+  SOFTWARE_DEPLOYMENT_CREATED
+  SOFTWARE_DEPLOYMENT_UPDATED
+  SOFTWARE_RING_REQUESTED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -564,9 +601,13 @@ model Customer {
   monitorSuppressions  MonitorSuppression[]
   clientUpdatePolicies ClientUpdatePolicy[]
   scripts              Script[]
+  softwareEntries      SoftwareCatalogEntry[]
+  softwareDeployments  SoftwareDeployment[]
   patchPolicies        PatchPolicy[]
   endpointGroups       EndpointGroup[]
   savedViews           SavedView[]
+  emailRecipients      EmailRecipient[]
+  reportSchedules      ReportSchedule[]
 
   @@index([tenantId])
   @@index([tenantId, name])
@@ -615,8 +656,9 @@ model Endpoint {
   customer        Customer?      @relation(fields: [customerId], references: [id])
   siteId          String?
   site            Site?          @relation(fields: [siteId], references: [id])
-  endpointGroupId String?
-  endpointGroup   EndpointGroup? @relation(fields: [endpointGroupId], references: [id])
+  // Device groups (0.34: many, through EndpointGroupMember — 0.33's single
+  // Endpoint.endpointGroupId was migrated into it and dropped).
+  groupMemberships EndpointGroupMember[]
 
   name         String
   description  String?
@@ -657,6 +699,16 @@ model Endpoint {
   // scan. The heartbeat asks the agent to scan until a posture newer than
   // this arrives.
   patchScanRequestedAt DateTime?
+  // Agent upgrade (v0.34): what the agent last wrote to agent-status.json —
+  // when the signed agent (or a migrate run on a standard machine) last
+  // checked the signed repository, and the result line. Self-reported on an
+  // authenticated heartbeat, made inert, and only ever shown.
+  agentUpdateCheckedAt DateTime?
+  agentUpdateResult    String?
+  // Chat (0.34): the chat protocol the signed agent says it speaks (1), from
+  // agent-status.json via an authenticated heartbeat. Null = this agent can't
+  // chat. Self-reported: it decides only whether the portal offers a chat.
+  chatProtocol         Int?
 
   isManaged  Boolean   @default(false)
   isOnline   Boolean   @default(false)
@@ -683,6 +735,8 @@ model Endpoint {
   connectionGrants  ConnectionGrant[]
   actionJobs        ActionJob[]
   actionTargets     ActionTarget[]
+  agentMigrations   AgentMigration[]
+  chatConversations ChatConversation[]
 
   // Access mode: how the computer's remote-access authorization is scoped.
   //   ASSIGNED_USERS  → only users listed in ComputerAccess may connect
@@ -709,7 +763,6 @@ model Endpoint {
   @@index([customerId])
   @@index([status])
   @@index([tenantId, status])
-  @@index([endpointGroupId])
 }
 
 // Which users have been granted remote access to which computers.
@@ -747,12 +800,14 @@ enum EndpointAccessMode {
   COMPANY_WIDE
 }
 
-// A static device group (0.33: managed from the device list). A computer is
-// in at most one group (Endpoint.endpointGroupId, which enrolment tokens have
-// set since before 0.33). `customerId` is the business the group belongs to;
-// every member must be in it. Groups made before 0.33 have no business
-// (customerId null): they still filter, and the console offers no way to
-// edit them.
+// A static device group (0.33: managed from the device list). `customerId`
+// is the business the group belongs to; every member must be in it. Groups
+// made before 0.33 have no business (customerId null): they still filter,
+// and the console offers no way to edit them.
+//
+// Membership is EndpointGroupMember (0.34): a computer may be in any number
+// of its own business's groups. An enrolment token's endpointGroupId is the
+// group a new device joins at claim, nothing more.
 model EndpointGroup {
   id          String    @id @default(cuid())
   tenantId    String
@@ -762,8 +817,16 @@ model EndpointGroup {
   name        String
   description String?
   createdById String?
+  // 0.34: STATIC groups hold EndpointGroupMember rows; a RULE group never
+  // does (trigger, migration 0053) — its members are computed on every read
+  // from `rule` AND-ed with the business and the reader's visibility. `rule`
+  // is the device list's own filter parameters, validated by parseRule()
+  // (device-views/group-rule.ts); never SQL or free text. `kind` is fixed at
+  // creation (trigger); `rule` is set exactly when kind = RULE (CHECK).
+  kind        EndpointGroupKind @default(STATIC)
+  rule        Json?
 
-  endpoints Endpoint[]
+  members EndpointGroupMember[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -772,6 +835,25 @@ model EndpointGroup {
   // pre-0.33 groups (no business) are not constrained by it.
   @@unique([customerId, name])
   @@index([tenantId])
+  @@index([customerId, kind])
+}
+
+// One computer in one device group (0.34). Two triggers in migration 0049
+// hold the business rule in the database, whatever code writes here: a row
+// whose computer is not in the group's business (or, for a pre-0.33 group,
+// its tenant) is refused on insert, and a computer that changes business or
+// tenant leaves every group that is not its new business's own.
+model EndpointGroupMember {
+  endpointGroupId String
+  group           EndpointGroup @relation(fields: [endpointGroupId], references: [id], onDelete: Cascade)
+  endpointId      String
+  endpoint        Endpoint      @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  // Who added it; null for a claim (the token's group) or a migrated row.
+  addedById       String?
+  createdAt       DateTime      @default(now())
+
+  @@id([endpointGroupId, endpointId])
+  @@index([endpointId])
 }
 
 model EndpointTag {
@@ -1143,6 +1225,9 @@ model EndpointCommand {
 
   @@index([endpointId, status])
   @@index([status, expiresAt])
+  // 0.34 retention: the age cutoff, and "is there a newer one of this type".
+  @@index([createdAt])
+  @@index([endpointId, type, createdAt])
 }
 
 enum EndpointCommandType {
@@ -1208,6 +1293,7 @@ model DiagnosticRun {
   @@index([requestedById, requestedAt])
   @@index([status, expiresAt])
   @@index([endpointId, key, completedAt])
+  @@index([requestedAt]) // 0.34 retention cutoff
 }
 
 // ─── Technician Devices & Launcher ───────────────────────────────────────────
@@ -1257,6 +1343,7 @@ model LauncherToken {
 
   @@index([token])
   @@index([userId])
+  @@index([expiresAt]) // 0.34 retention: unused tokens past expiry
 }
 
 // ─── Support Sessions ─────────────────────────────────────────────────────────
@@ -1353,6 +1440,8 @@ model SupportSessionEvent {
 
   @@unique([supportSessionId, dedupeKey])
   @@index([supportSessionId])
+  // 0.34 retention also has a partial index on ("timestamp") WHERE metadata
+  // IS NOT NULL (migration 0046), which Prisma's schema cannot express.
 }
 
 // ─── Notes ────────────────────────────────────────────────────────────────────
@@ -2234,6 +2323,7 @@ model PrivilegedActivity {
   at         DateTime @default(now())
 
   @@index([identity, at])
+  @@index([at]) // 0.34 retention cutoff
 }
 
 /// New privileged work for this identity is refused until someone else clears it.
@@ -2385,11 +2475,15 @@ model ActionJob {
   deploymentId      String?
   deployment        PatchDeployment? @relation(fields: [deploymentId], references: [id], onDelete: SetNull)
   ring              Int?
+  // 0.34: the software deployment this ring plan belongs to (windows.software.*).
+  softwareDeploymentId String?
+  softwareDeployment   SoftwareDeployment? @relation(fields: [softwareDeploymentId], references: [id], onDelete: SetNull)
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
   @@unique([integrationPeer, integrationKey])
   @@index([deploymentId])
+  @@index([softwareDeploymentId])
   @@index([endpointId, status])
   @@index([customerId, createdAt])
   @@index([status])
@@ -2432,6 +2526,9 @@ model ActionTarget {
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
 
+  // windows.script.run (0.34): what the script printed, kept 90 days.
+  scriptOutput    ScriptRunOutput?
+
   @@unique([jobId, endpointId])
   @@index([endpointId, status])
 }
@@ -2460,6 +2557,9 @@ model PatchDeployment {
   /// Failed computers a ring may have before the deployment pauses itself.
   failureThreshold Int                   @default(0)
   windowHours      Int                   @default(8)
+  /// 0.34: the restart rule every ring plan carries — 'never' or
+  /// 'if_required_in_window' (a CHECK constraint holds it to those two).
+  reboot           String                @default("never")
   status           PatchDeploymentStatus @default(ACTIVE)
   pausedReason     String?
   /// The ring plan a person resumed past after it tripped the failure
@@ -2696,6 +2796,7 @@ model MonitorAlert {
   @@index([siteId, kind, state])
   @@index([state, nextCheckAt])
   @@index([dedupKey])
+  @@index([state, resolvedAt]) // 0.34 retention: resolved alerts past the window
 }
 
 /// What happened to an alert: raised, repeated (counted, not logged),
@@ -2785,6 +2886,7 @@ model EndpointChange {
 
   @@index([endpointId, detectedAt])
   @@index([customerId, detectedAt])
+  @@index([detectedAt]) // 0.34 retention cutoff
 }
 
 /// Metric history (0.33): one row per computer per authenticated heartbeat,
@@ -2971,6 +3073,386 @@ model ScriptVersion {
   // The content hash the approver's page showed. Equal to contentSha256 (CHECK).
   approvedSha256 String?
 
+  // 0.34: the approval signer's allowlist entry for this version, as last
+  // mirrored. The signer's own copy is the one that decides.
+  allowlistEntries ScriptAllowlistEntry[]
+
   @@unique([scriptId, version])
   @@index([scriptId, status])
+}
+
+// ── Running approved scripts (0.34) ─────────────────────────────────────────
+
+// The portal's mirror of one entry on the approval signer's script allowlist.
+// The signer holds the entry itself, on its own disk, and decides from that;
+// this row only records that the portal proposed it, and what the signer last
+// said. Nothing here can make an entry active: that is two passkey approvals
+// on the signer's origin.
+model ScriptAllowlistEntry {
+  // The signer's entry id (32 hex), chosen by the portal when proposing.
+  id              String        @id
+  scriptVersionId String
+  scriptVersion   ScriptVersion @relation(fields: [scriptVersionId], references: [id], onDelete: Cascade)
+  // Null for a global script.
+  customerId      String?
+  contentSha256   String
+  // AWAITING_APPROVAL | ACTIVE | REJECTED | REVOKED, as the signer last answered.
+  status          String
+  approvalUrl     String
+  proposedById    String
+  revokedAt       DateTime?
+  revokeReason    String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([scriptVersionId])
+}
+
+// What one computer reported for one script run: exit code, timing, and the
+// first 64 KB of stdout and stderr, redacted by the agent and again by the
+// portal. Pruned after 90 days by the script-output sweep; the run's
+// ActionTarget keeps only the summary.
+model ScriptRunOutput {
+  id              String       @id @default(cuid())
+  targetId        String       @unique
+  target          ActionTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  jobId           String
+  endpointId      String
+  customerId      String
+  scriptVersionId String
+  contentSha256   String
+  exitCode        Int?
+  timedOut        Boolean
+  durationMs      Int?
+  stdout          String
+  stderr          String
+  stdoutBytes     Int
+  stderrBytes     Int
+  stdoutTruncated Boolean
+  stderrTruncated Boolean
+  createdAt       DateTime     @default(now())
+
+  @@index([createdAt])
+  @@index([endpointId, createdAt])
+}
+
+// ─── Software deployment (0.34) ─────────────────────────────────────────────
+// A catalog of allowlisted winget packages, each pinned to one version and
+// one installer SHA-256, and deployments of one entry ring by ring. Nothing
+// is uploaded: the computer downloads from winget's own source, hashes the
+// installer itself and refuses a mismatch (docs/software-deployment.md).
+
+enum SoftwareCatalogScope {
+  GLOBAL
+  BUSINESS
+}
+
+/// Where the pinned installer hash came from.
+enum SoftwareHashSource {
+  /// Read from the public winget-pkgs manifest at entry time (bounded GET, no credentials).
+  WINGET_PKGS
+  /// Typed in by the person who made the entry.
+  ADMIN_PASTED
+}
+
+model SoftwareCatalogEntry {
+  id              String               @id @default(cuid())
+  scope           SoftwareCatalogScope
+  tenantId        String?
+  // Null exactly when scope is GLOBAL (CHECK in 0051).
+  customerId      String?
+  customer        Customer?            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// The winget package identifier, charset-checked (actions/catalog.ts PACKAGE_ID_RE).
+  packageId       String
+  /// What people see; never sent to a computer.
+  name            String
+  publisher       String?
+  /// The one version a plan may name.
+  version         String
+  /// Lower-case hex SHA-256 of the installer winget downloads.
+  installerSha256 String
+  hashSource      SoftwareHashSource
+  /// The manifest the hash was read from, and the SHA-256 of its bytes (WINGET_PKGS only).
+  manifestUrl     String?
+  manifestSha256  String?
+  /// The installer the manifest names, for people (never fetched by rem0te).
+  installerUrl    String?
+  architecture    String?
+  /// The closed detection rule (actions/catalog.ts Detection).
+  detection       Json
+  notes           String?
+  /// Bumped on every change: a deployment records the revision it signed.
+  revision        Int                  @default(1)
+  archivedAt      DateTime?
+  // Not relations: the record outlives the people in it.
+  createdById     String
+  updatedById     String
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  deployments SoftwareDeployment[]
+
+  // One live entry per package per business, and per package globally:
+  // partial unique indexes in 0051.
+  @@index([customerId, packageId])
+  @@index([scope])
+}
+
+/// One catalog entry installed (or uninstalled) ring by ring. Each ring is
+/// one signed plan (an ActionJob) approved on the approval signer; ring 0 is
+/// the canary. A one-computer request is a deployment with one ring.
+model SoftwareDeployment {
+  id               String                @id @default(cuid())
+  tenantId         String?
+  customerId       String
+  customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  entryId          String?
+  entry            SoftwareCatalogEntry? @relation(fields: [entryId], references: [id], onDelete: SetNull)
+  /// The entry revision whose params every ring signs.
+  entryRevision    Int
+  operation        String // install | uninstall
+  /// Exactly the params each ring's plan signs (windows.software.*@1).
+  params           Json
+  /// What approvers and people see: name, publisher, hash source.
+  display          Json
+  name             String
+  /// [{ endpointIds: string[] }] — ring 0 is the canary, exactly one computer.
+  rings            Json
+  soakHours        Int                   @default(24)
+  failureThreshold Int                   @default(0)
+  windowHours      Int                   @default(8)
+  status           PatchDeploymentStatus @default(ACTIVE)
+  pausedReason     String?
+  resumedOverJobId String?
+  /// Requested from one computer's Software tab.
+  single           Boolean               @default(false)
+  createdById      String
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  jobs             ActionJob[]
+
+  @@index([customerId, createdAt])
+  @@index([entryId])
+}
+
+// ─── Outbound email (0.34) ───────────────────────────────────────────────────
+
+/// The one SMTP relay this server sends through. One row, id "singleton".
+/// Off until a Platform Admin configures and enables it. The password is
+/// AES-256-GCM under ENCRYPTION_KEY and never leaves the API: no response,
+/// audit row or log line carries it. tlsMode: implicit | starttls | none —
+/// "none" only for a loopback relay (email/smtp-host.ts).
+model SmtpSettings {
+  id             String    @id @default("singleton")
+  enabled        Boolean   @default(false)
+  host           String
+  port           Int
+  tlsMode        String
+  username       String?
+  passwordEnc    String?
+  fromAddress    String
+  fromName       String?
+  updatedById    String
+  updatedAt      DateTime  @updatedAt
+  lastTestAt     DateTime?
+  lastTestResult String?
+}
+
+/// An address mail may be sent to. Usable only once verifiedAt is set — by
+/// whoever reads that mailbox following the link sent to it. scopeKey is
+/// "global" (the MSP's) or "b:<customerId>"; a business's policies and
+/// schedules use only that business's recipients.
+model EmailRecipient {
+  id             String    @id @default(cuid())
+  scopeKey       String
+  customerId     String?
+  customer       Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  address        String
+  label          String?
+  tokenHash      String?   @unique
+  tokenExpiresAt DateTime?
+  lastSentAt     DateTime?
+  verifiedAt     DateTime?
+  addedById      String
+  createdAt      DateTime  @default(now())
+
+  @@unique([scopeKey, address])
+  @@index([customerId])
+}
+
+/// A report emailed on a schedule. Evaluated as ownerId, whose access is
+/// re-checked at every send (fails closed). customerId null = a platform-wide
+/// report, MSP only. frequency weekly (dayOfWeek 0 = Sunday) or monthly
+/// (dayOfMonth 1–28), at `time` in `timeZone` (reports/schedule.ts).
+model ReportSchedule {
+  id             String           @id @default(cuid())
+  tenantId       String?
+  customerId     String?
+  customer       Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  siteId         String?
+  report         String
+  params         Json             @default("{}")
+  frequency      String
+  dayOfWeek      Int?
+  dayOfMonth     Int?
+  time           String
+  timeZone       String
+  attachCsv      Boolean          @default(false)
+  recipientIds   String[]
+  ownerId        String
+  enabled        Boolean          @default(true)
+  disabledReason String?
+  nextRunAt      DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  deliveries     ReportDelivery[]
+
+  @@index([enabled, nextRunAt])
+  @@index([customerId])
+}
+
+/// One period of one schedule. The unique key is what makes a delivery
+/// happen at most once per period, across restarts and across two API
+/// processes: the row is claimed before anything is sent.
+/// status: sending | sent | partial | failed | blocked | missed
+model ReportDelivery {
+  id           String         @id @default(cuid())
+  scheduleId   String
+  schedule     ReportSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  periodKey    String
+  occurrenceAt DateTime
+  status       String
+  rows         Int?
+  detail       Json?
+  createdAt    DateTime       @default(now())
+  finishedAt   DateTime?
+
+  @@unique([scheduleId, periodKey])
+  @@index([scheduleId, createdAt])
+}
+
+// v0.34: one computer asked to move from the standard agent to the signed
+// agent through the portal. The heartbeat hands that computer — and no other —
+// the reinstall flag with `nonce`, and windows.ps1 fetched with that nonce
+// serves the same migration script the "Signed only + portal migration" mode
+// serves, pinning the signed agent's digest from the served repository at the
+// moment it is fetched. Complete when the computer reports the signed channel.
+// At most one open request per computer (a partial unique index, 0055).
+model AgentMigration {
+  id         String   @id @default(cuid())
+  endpointId String
+  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  tenantId   String?
+  customerId String?
+
+  // mig_ + 40 base64url characters: a name for this request in the
+  // windows.ps1 URL, not a secret (the script it names is harmless to read).
+  nonce            String    @unique
+  reason           String
+  // Not a relation, like DiagnosticRun.requestedById.
+  requestedById    String?
+  requestedAt      DateTime  @default(now())
+  // First and latest heartbeat that handed the flag out.
+  dispatchedAt     DateTime?
+  lastDispatchedAt DateTime?
+  dispatchCount    Int       @default(0)
+  // windows.ps1 was fetched with this nonce (the script was downloaded).
+  fetchedAt        DateTime?
+  // Why the latest heartbeat did not hand it out (contained, signed_only, rollout, no_release).
+  holdReason       String?
+  holdAt           DateTime?
+  completedAt      DateTime?
+  cancelledAt      DateTime?
+  cancelledById    String?
+
+  @@index([endpointId, requestedAt])
+  @@index([customerId, requestedAt])
+}
+
+// ─── Chat with the person at the computer (0.34) ────────────────────────────
+//
+// A conversation belongs to one computer. The technician side writes from the
+// device workspace; the computer side is the signed Windows agent, which
+// fetches and posts over device-secret routes. Message text lives here and
+// nowhere else: the audit log records start and end with ids and counts only.
+// Ended conversations are deleted 400 days after they end (ChatService sweep,
+// CHAT_RETENTION_SWEEP=off stops it); messages go with them.
+
+enum ChatStatus {
+  OPEN
+  ENDED
+}
+
+enum ChatSender {
+  TECHNICIAN
+  END_USER
+}
+
+model ChatConversation {
+  id         String   @id @default(cuid())
+  tenantId   String?
+  // The computer's business when the chat started.
+  customerId String?
+  endpointId String
+  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  // Optional link to a support request in the same business (validated on
+  // write; no foreign key, so a deleted request leaves the transcript).
+  supportRequestId String?
+
+  status ChatStatus @default(OPEN)
+  // Who started it, and the two names the desktop window shows, frozen at the
+  // start so the person at the computer always sees who they are talking to.
+  startedById    String
+  technicianName String
+  businessName   String
+
+  // What the agent last reported: connecting, window_open, no_user,
+  // window_failed, user_closed. Null until the computer picks the chat up.
+  deviceState     String?
+  deviceDetail    String?
+  deviceUser      String?
+  deviceStateAt   DateTime?
+  // Last time the computer polled this conversation.
+  deviceSeenAt    DateTime?
+  lastActivityAt  DateTime @default(now())
+
+  endedAt     DateTime?
+  endedById   String?
+  // technician | end_user | inactive (CHECK ChatConversation_ended_reason)
+  endedReason String?
+
+  technicianMessages Int @default(0)
+  endUserMessages    Int @default(0)
+
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  messages  ChatMessage[]
+
+  @@index([endpointId, createdAt])
+  @@index([status, lastActivityAt])
+  @@index([endedAt])
+}
+
+model ChatMessage {
+  id             String           @id @default(cuid())
+  conversationId String
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         ChatSender
+  // TECHNICIAN: the user who wrote it. END_USER: null.
+  authorId       String?
+  // Display name at the time: the technician's name, or the Windows account
+  // the agent reported for the person at the computer.
+  authorName     String
+  // Plain text, at most 2,000 characters (also a CHECK constraint).
+  body           String
+  // The agent's dedupe key for a reply it may post twice.
+  clientId       String?
+  createdAt      DateTime         @default(now())
+  // Technician messages only, each set only when the agent says so.
+  deliveredAt    DateTime?
+  shownAt        DateTime?
+  readAt         DateTime?
+
+  @@unique([conversationId, clientId])
+  @@index([conversationId, createdAt])
 }

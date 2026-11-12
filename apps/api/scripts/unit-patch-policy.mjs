@@ -19,7 +19,10 @@ const require = createRequire(import.meta.url);
 const dist = join(here, '..', 'dist');
 const P = require(join(dist, 'actions', 'patch-policy.js'));
 const core = require(join(dist, 'approval-signer', 'core.js'));
-const { PLAN_SIGNING_PREFIX } = require(join(dist, 'actions', 'catalog.js'));
+const C = require(join(dist, 'actions', 'catalog.js'));
+const { PLAN_SIGNING_PREFIX } = C;
+const DR = require(join(dist, 'actions', 'device-result.js'));
+import { deviceKey, signStatement, resultStatement, scanStatement } from './lib/device-sign.mjs';
 
 let passed = 0;
 const failures = [];
@@ -75,7 +78,13 @@ const hex = (n) => randomBytes(n).toString('hex');
 // ── Fixtures: one business, a canary and a ring of two ──────────────────────
 const SEC = '0fa1201d-4330-4fa8-8ae9-b877473b6441', UPD = 'cd5ffd1e-e932-4e3a-bf74-18bf0b1bbd83';
 const BIZ = 'biz_acme_0001';
-const pc = (name) => ({ endpointId: `ep_${name.toLowerCase()}_0001`, hostname: name, rustdeskId: String(100000000 + Math.floor(Math.random() * 8e8)), deviceSecretSha256: sha(name) });
+/** Each computer's own result key (v0.34): DEV holds the private halves, as only the computers would. */
+const DEV = {};
+const pc = (name) => {
+  const endpointId = `ep_${name.toLowerCase()}_0001`;
+  DEV[endpointId] = deviceKey();
+  return { endpointId, hostname: name, rustdeskId: String(100000000 + Math.floor(Math.random() * 8e8)), deviceSecretSha256: sha(name), resultKey: DEV[endpointId].key };
+};
 const CANARY = pc('CANARY'), R1A = pc('R1A'), R1B = pc('R1B'), OTHER = pc('OTHER');
 const CU = { updateId: '5a1b2c3d-0000-4000-8000-000000000001', revision: 201, kb: 'KB5044284', title: '2026-11 Cumulative Update', className: 'Security Updates', severity: 'Critical' };
 const NET = { updateId: '5a1b2c3d-0000-4000-8000-000000000002', revision: 3, kb: 'KB5044099', title: '.NET update', className: 'Updates', severity: null };
@@ -144,7 +153,21 @@ const code = (r) => (r.ok ? 'ok' : r.code);
   r = evaluate(s, plan(d, { allow: null }));
   check('a plan with no filter at all (the agent would install any eligible class) → filter_mismatch', code(r) === 'filter_mismatch', code(r));
   r = evaluate(s, plan(d, { reboot: 'in_window' }));
-  check('a reboot rule other than the policy\'s → reboot_not_allowed', code(r) === 'reboot_not_allowed', code(r));
+  check('a reboot rule outside the closed pair → reboot_not_allowed', code(r) === 'reboot_not_allowed', code(r));
+  // 0.34: the policy says never; a plan may not ask for the in-window restart under it.
+  r = evaluate(s, plan(d, { reboot: 'if_required_in_window' }));
+  check('a never-restart policy, a plan asking to restart in its window → reboot_not_allowed', code(r) === 'reboot_not_allowed', code(r));
+  const dRb = doc({ reboot: 'if_required_in_window' });
+  r = evaluate(state(dRb), plan(dRb, { reboot: 'if_required_in_window' }));
+  check('a policy that allows the in-window restart: a plan asking for it is accepted', r.ok, JSON.stringify(r));
+  r = evaluate(state(dRb), plan(dRb, { reboot: 'never' }));
+  check('…and one asking for less (never) is accepted too', r.ok, JSON.stringify(r));
+  for (const bad of [undefined, null, 'always', 'IF_REQUIRED_IN_WINDOW', 1, { rule: 'if_required_in_window' }]) {
+    const pb = plan(dRb); pb.params.reboot = bad; if (bad === undefined) delete pb.params.reboot;
+    check(`even under that policy, a reboot of ${JSON.stringify(bad)} → reboot_not_allowed`, code(evaluate(state(dRb), pb)) === 'reboot_not_allowed', code(evaluate(state(dRb), pb)));
+  }
+  check('rebootWithin orders the rules: never ≤ if_required_in_window', C.rebootWithin('never', 'never') && C.rebootWithin('never', 'if_required_in_window') && C.rebootWithin('if_required_in_window', 'if_required_in_window') && !C.rebootWithin('if_required_in_window', 'never') && !C.rebootWithin('sometimes', 'if_required_in_window'));
+  check('the policy\'s rule is in its digest: changing it changes the document approved', P.policyDigest(dRb) !== P.policyDigest({ ...dRb, reboot: 'never' }));
   r = evaluate(s, plan(d, { nb: new Date(NOW.getTime() + 6 * 3600_000), hours: 1 }));
   check('a plan that starts after the window closes → outside_window', code(r) === 'outside_window', code(r));
   r = evaluate(s, plan(d, { hours: 8 }));
@@ -192,24 +215,39 @@ const code = (r) => (r.ok ? 'ok' : r.code);
 }
 
 // ── The evaluator: ring order from the ledger, and the canary's evidence ────
+// From 0.34 the evidence the gate reads is what each computer SIGNED, with
+// the key the policy binds to it. The portal's own copy is relayed too, and
+// ignored for the decision.
 {
   const d = doc();
   const canaryJob = hex(16);
+  const CANARY_PLAN = sha(`plan ${canaryJob}`);
   const signedAt = iso(NOW.getTime() - 2 * 3600_000);
-  const ledger = [{ jobId: canaryJob, deploymentId: 'dep_acme_0001', ring: 0, signedAt, notBefore: signedAt, notAfter: iso(NOW.getTime() - 60_000), endpointIds: [CANARY.endpointId], updates: [key(CU)] }];
+  const ledger = [{ jobId: canaryJob, deploymentId: 'dep_acme_0001', ring: 0, signedAt, notBefore: signedAt, notAfter: iso(NOW.getTime() - 60_000), endpointIds: [CANARY.endpointId], updates: [key(CU)], planSha256: CANARY_PLAN }];
   const s = state(d, { ledger });
   const resultAt = new Date(NOW.getTime() - 90 * 60_000);
-  const gt = (over = {}) => ({
+  const scanAt = iso(resultAt.getTime() + 30 * 60_000);
+  /** What a computer signs about its ring-0 result and its later scan; `who` is whose key signs. */
+  const signedRes = (c, over = {}, opt = {}) => signStatement(opt.dev ?? DEV[c.endpointId], 'result', resultStatement({
+    jobId: canaryJob, planSha256: CANARY_PLAN, rustdeskId: c.rustdeskId, deviceSecretSha256: c.deviceSecretSha256,
+    outcome: 'restart_required', completedAt: iso(resultAt), updates: [{ ...id(CU), state: 'restart_required' }], rebootPending: true, ...over,
+  }), opt);
+  const signedScan = (c, over = {}, opt = {}) => signStatement(opt.dev ?? DEV[c.endpointId], 'scan', scanStatement({
+    rustdeskId: c.rustdeskId, deviceSecretSha256: c.deviceSecretSha256, scannedAt: scanAt, offered: [], installed: [key(CU)], ...over,
+  }), opt);
+  // A target as the portal holds it: its own copy of the result and scan, with the computer's signatures inside.
+  const gt = (over = {}, { res = signedRes(CANARY), scan = signedScan(CANARY) } = {}) => ({
     endpointId: CANARY.endpointId, status: 'SUCCEEDED', statusReason: null, reconciled: false, reconcileNote: null, resultAt,
-    result: { outcome: 'restart_required', updates: [{ ...id(CU), state: 'restart_required' }] },
-    scan: { scannedAt: iso(resultAt.getTime() + 30 * 60_000), reboot: { pending: false }, updates: [], history: [{ ...id(CU), operation: 'install', result: 'succeeded' }] },
+    result: { outcome: 'restart_required', updates: [{ ...id(CU), state: 'restart_required' }], ...(res ? { signed: res } : {}) },
+    scan: { scannedAt: scanAt, reboot: { pending: false }, updates: [], history: [{ ...id(CU), operation: 'install', result: 'succeeded' }], ...(scan ? { signed: scan } : {}) },
     ...over,
   });
   const ev = (targets, over = {}) => ({ previousJobId: canaryJob, jobStatus: 'SUCCEEDED', targets: targets.map((t) => P.toEvidenceTarget(t, [id(CU)])), ...over });
   const effective = ev([gt()]);
   const ring1 = (over) => plan(d, { ring: 1, computers: [R1A, R1B], ...over });
   let r = evaluate(s, ring1(), { evidence: effective });
-  check('ring 1 after the canary was signed and its evidence shows every update effective → accepted', r.ok, JSON.stringify(r));
+  check('ring 1 after the canary was signed and the canary SIGNED a result and a later scan showing every update effective → accepted', r.ok, JSON.stringify(r));
+  check('the portal relays the computer\'s signatures untouched', JSON.stringify(effective.targets[0].signedResult) === JSON.stringify(signedRes(CANARY)) && JSON.stringify(effective.targets[0].signedScan) === JSON.stringify(signedScan(CANARY)));
   const back = P.fromEvidenceTarget(effective.targets[0]);
   check('evidence round-trips: the signer reaches "effective" from the reduced scan', P.targetStates([id(CU)], back, 'SUCCEEDED')[0].state === 'effective');
   r = evaluate(s, ring1({ computers: [R1A, R1B, OTHER] }), { evidence: effective });
@@ -218,19 +256,16 @@ const code = (r) => (r.ok ? 'ok' : r.code);
   check('the canary slipped into ring 1 → computer_not_in_policy', code(r) === 'computer_not_in_policy', code(r));
   r = evaluate(s, ring1({ updates: [CU, { ...CU, updateId: '5a1b2c3d-0000-4000-8000-0000000000bb', kb: 'KB5099999' }] }), { evidence: effective });
   check('ring 1 carrying an update the canary never installed → updates_not_proven', code(r) === 'updates_not_proven', code(r));
-  const pending = ev([gt({ scan: { scannedAt: iso(resultAt.getTime() + 30 * 60_000), reboot: { pending: true }, updates: [], history: [{ ...id(CU), operation: 'install', result: 'succeeded' }] } })]);
-  r = evaluate(s, ring1(), { evidence: pending });
-  check('the canary installed but has not restarted (not yet effective) → canary_not_effective', code(r) === 'canary_not_effective', code(r));
-  const stale = ev([gt({ scan: { scannedAt: iso(resultAt.getTime() - 60_000), reboot: { pending: false }, updates: [], history: [] } })]);
-  r = evaluate(s, ring1(), { evidence: stale });
-  check('only a scan from before the install (proves nothing) → canary_not_effective', code(r) === 'canary_not_effective', code(r));
-  const failed = ev([gt({ status: 'FAILED', result: { outcome: 'failed', updates: [{ ...id(CU), state: 'failed', hresult: '0x80240022' }] } })]);
-  r = evaluate(s, ring1(), { evidence: failed });
-  check('the canary failed (over a threshold of 0) → gate_not_passed', code(r) === 'gate_not_passed', code(r));
-  r = evaluate(s, ring1(), { evidence: ev([gt({ status: 'UNKNOWN', result: null })]) });
-  check('the canary\'s outcome is uncertain and unreconciled → gate_not_passed', code(r) === 'gate_not_passed', code(r));
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { scan: signedScan(CANARY, { rebootPending: true }) })]) });
+  check('the canary signed that it installed but has not restarted (not yet effective) → canary_not_effective', code(r) === 'canary_not_effective', code(r));
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { scan: signedScan(CANARY, { scannedAt: iso(resultAt.getTime() - 60_000), installed: [] }) })]) });
+  check('only a signed scan from before the install (proves nothing) → canary_not_effective', code(r) === 'canary_not_effective', code(r));
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { res: signedRes(CANARY, { outcome: 'failed', updates: [{ ...id(CU), state: 'failed', hresult: '0x80240022' }] }) })]) });
+  check('the canary signed a failure (over a threshold of 0) → gate_not_passed', code(r) === 'gate_not_passed', code(r));
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { res: signedRes(CANARY, { outcome: 'uncertain', reason: 'interrupted', updates: undefined }) })]) });
+  check('the canary signed "uncertain" and nobody reconciled it → gate_not_passed', code(r) === 'gate_not_passed' && /Reconcile/.test(r.message), JSON.stringify(r));
   r = evaluate(s, ring1(), { evidence: ev([gt({ status: 'DISPATCHED', result: null })]) });
-  check('the canary has not answered, whatever the job status claims → gate_not_passed', code(r) === 'gate_not_passed', code(r));
+  check('the canary has not answered (no signed result), whatever the job status claims → result_signature_missing', code(r) === 'result_signature_missing', code(r));
   r = evaluate(s, ring1(), { evidence: ev([gt()], { previousJobId: hex(16) }) });
   check('evidence about some other plan → evidence_mismatch', code(r) === 'evidence_mismatch', code(r));
   r = evaluate(s, ring1(), { evidence: ev([]) });
@@ -242,7 +277,97 @@ const code = (r) => (r.ok ? 'ok' : r.code);
   const dSoak = doc({ soakHours: 24 });
   const sSoak = state(dSoak, { ledger });
   r = evaluate(sSoak, plan(dSoak, { ring: 1, computers: [R1A, R1B] }), { evidence: effective });
-  check('the soak time has not passed since the canary\'s result → gate_not_passed', code(r) === 'gate_not_passed' && /Soaking/.test(r.message), JSON.stringify(r));
+  check('the soak time has not passed since the canary\'s SIGNED completion time → gate_not_passed', code(r) === 'gate_not_passed' && /Soaking/.test(r.message), JSON.stringify(r));
+  r = evaluate(sSoak, plan(dSoak, { ring: 1, computers: [R1A, R1B] }), { evidence: ev([gt({ resultAt: new Date(NOW.getTime() - 30 * 3600_000) })]) });
+  check('…and the portal backdating its copy of the result time does not shorten the soak', code(r) === 'gate_not_passed' && /Soaking/.test(r.message), JSON.stringify(r));
+
+  // ── 0.34: a compromised portal forging the canary ─────────────────────────
+  const forger = deviceKey();
+  // Forged: the portal writes a whole canary success and signs it with a key of its own.
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { res: signedRes(CANARY, {}, { dev: forger }), scan: signedScan(CANARY, {}, { dev: forger }) })]) });
+  check('FORGED: a canary success signed by the portal\'s own key → result_wrong_device', code(r) === 'result_wrong_device', code(r));
+  // Forged: …and claims, in the envelope, to be the canary's key.
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { res: signedRes(CANARY, {}, { dev: forger, claimKey: CANARY.resultKey }) })]) });
+  check('FORGED: a canary success signed by another key but naming the canary\'s → result_signature_invalid', code(r) === 'result_signature_invalid', code(r));
+  // Forged: a genuine signature with the statement edited (failed → succeeded).
+  const genuineFail = signedRes(CANARY, { outcome: 'failed', updates: [{ ...id(CU), state: 'failed' }] });
+  const edited = { ...genuineFail, statement: Buffer.from(JSON.stringify(resultStatement({ jobId: canaryJob, planSha256: CANARY_PLAN, rustdeskId: CANARY.rustdeskId, deviceSecretSha256: CANARY.deviceSecretSha256, outcome: 'restart_required', completedAt: iso(resultAt), updates: [{ ...id(CU), state: 'restart_required' }], rebootPending: true }))).toString('base64') };
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { res: edited })]) });
+  check('FORGED: the canary\'s genuine failure, edited into a success → result_signature_invalid', code(r) === 'result_signature_invalid', code(r));
+  // Forged: the portal's copy says effective; the canary's signed scan says the update is still offered.
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { scan: signedScan(CANARY, { offered: [key(CU)], installed: [] }) })]) });
+  check('FORGED: the portal\'s copy of the scan shows effective, the canary signed "still offered" → the signer believes the canary (gate_not_passed)', code(r) === 'gate_not_passed' && /failed/.test(r.message), JSON.stringify(r));
+  // Missing: the portal relays its own copy only.
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { res: null })]) });
+  check('MISSING: a canary success with no signed result (a pre-0.34 agent, or the portal\'s word) → result_signature_missing', code(r) === 'result_signature_missing', code(r));
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { scan: null })]) });
+  check('MISSING: a signed result but no signed scan, so nothing shows the canary effective → result_signature_missing', code(r) === 'result_signature_missing', code(r));
+  // Replayed: a genuine canary success, from an earlier canary run (another job).
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { res: signedRes(CANARY, { jobId: hex(16) }) })]) });
+  check('REPLAYED: the canary\'s genuine success from another job → result_wrong_plan', code(r) === 'result_wrong_plan', code(r));
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { res: signedRes(CANARY, { planSha256: sha('another plan under the same job id') }) })]) });
+  check('CROSS-PLAN: a genuine result naming other plan bytes → result_wrong_plan', code(r) === 'result_wrong_plan', code(r));
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { res: signedRes(CANARY, { completedAt: iso(Date.parse(signedAt) - 3600_000) }) })]) });
+  check('STALE: a genuine result dated before its plan\'s window opened → result_stale', code(r) === 'result_stale', code(r));
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { res: signedRes(CANARY, { completedAt: iso(NOW.getTime() + 3600_000) }) })]) });
+  check('STALE: a result dated in the future → result_stale', code(r) === 'result_stale', code(r));
+  const later = new Date(NOW.getTime() + 7 * 86_400_000); // next Friday's window
+  const sLater = state(doc({ expiresAt: iso(NOW.getTime() + 30 * 86_400_000) }), { ledger });
+  r = evaluate(sLater, plan(sLater.doc, { ring: 1, computers: [R1A, R1B], nb: later }), { evidence: ev([gt()]), now: later, digest: sLater.digest });
+  check('STALE: a week later, the canary\'s latest signed scan is over 36 hours old → result_stale', code(r) === 'result_stale' && /36 hours/.test(r.message), JSON.stringify(r));
+  // Cross-device: R1A's genuine, valid signature relayed as the canary's.
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { res: signedRes(CANARY, {}, { dev: DEV[R1A.endpointId] }) })]) });
+  check('CROSS-DEVICE: another computer\'s genuine signature relayed as the canary\'s → result_wrong_device', code(r) === 'result_wrong_device', code(r));
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { res: signedRes(CANARY, { rustdeskId: R1A.rustdeskId, deviceSecretSha256: R1A.deviceSecretSha256 }) })]) });
+  check('CROSS-DEVICE: signed by the canary\'s key but naming another enrolled identity → result_wrong_device', code(r) === 'result_wrong_device', code(r));
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { scan: signedScan(CANARY, {}, { prefix: 'rem0te-device-result-v1\n' }) })]) });
+  check('a scan signature made over the result domain (a result passed off as a scan) → result_signature_invalid', code(r) === 'result_signature_invalid', code(r));
+  r = evaluate(s, ring1(), { evidence: ev([gt({}, { res: { schema: 'rem0te-device-signed/1', key: CANARY.resultKey, statement: 'e30=', sig: 'x' } })]) });
+  check('a malformed signature envelope → result_signature_invalid', code(r) === 'result_signature_invalid', code(r));
+  // A policy approved before 0.34: no key for the canary, nothing to verify against.
+  const dOld = doc({ rings: [[{ ...CANARY, resultKey: undefined }], [R1A, R1B]] });
+  delete dOld.rings[0][0].resultKey;
+  const sOld = state(dOld, { ledger });
+  r = evaluate(sOld, plan(dOld, { ring: 1, computers: [R1A, R1B] }), { evidence: effective, digest: sOld.digest });
+  check('a policy approved before 0.34 (no key for the canary): fail closed → result_key_not_pinned', code(r) === 'result_key_not_pinned', code(r));
+
+  // ── Later rings: a computer's missing signature can only count against the ring ──
+  {
+    const ring1Job = hex(16), R1_PLAN = sha(`plan ${ring1Job}`);
+    const d3 = doc({ rings: [[CANARY], [R1A, R1B], [OTHER]], failureThreshold: 0 });
+    const l3 = [...ledger, { jobId: ring1Job, deploymentId: 'dep_acme_0001', ring: 1, signedAt, notBefore: signedAt, notAfter: iso(NOW.getTime() - 60_000), endpointIds: [R1A.endpointId, R1B.endpointId], updates: [key(CU)], planSha256: R1_PLAN }];
+    const s3 = state(d3, { ledger: l3 });
+    const r1t = (c, over = {}, res) => ({
+      endpointId: c.endpointId, status: 'SUCCEEDED', statusReason: null, reconciled: false, reconcileNote: null, resultAt,
+      result: { outcome: 'succeeded', updates: [{ ...id(CU), state: 'installed' }], ...(res === null ? {} : { signed: res ?? signStatement(DEV[c.endpointId], 'result', resultStatement({ jobId: ring1Job, planSha256: R1_PLAN, rustdeskId: c.rustdeskId, deviceSecretSha256: c.deviceSecretSha256, outcome: 'succeeded', completedAt: iso(resultAt), updates: [{ ...id(CU), state: 'installed' }] })) }) },
+      scan: null, ...over,
+    });
+    const ev3 = (targets) => ({ previousJobId: ring1Job, jobStatus: 'SUCCEEDED', targets: targets.map((t) => P.toEvidenceTarget(t, [id(CU)])) });
+    const ring2 = () => plan(d3, { ring: 2, computers: [OTHER] });
+    r = evaluate(s3, ring2(), { evidence: ev3([r1t(R1A), r1t(R1B)]) });
+    check('ring 2 after both ring-1 computers signed success → accepted (no scan needed after the canary)', r.ok, JSON.stringify(r));
+    r = evaluate(s3, ring2(), { evidence: ev3([r1t(R1A), r1t(R1B, {}, null)]) });
+    check('a ring-1 computer the portal reports succeeded, with no signature → result_signature_missing', code(r) === 'result_signature_missing', code(r));
+    r = evaluate(s3, ring2(), { evidence: ev3([r1t(R1A), r1t(R1B, { status: 'CANCELED', result: null }, null)]) });
+    check('a ring-1 computer the portal calls canceled, with no signature, counts as FAILED (a hidden failure looks the same) → gate_not_passed', code(r) === 'gate_not_passed' && /2|1 computer/.test(r.message), JSON.stringify(r));
+    r = evaluate(s3, ring2(), { evidence: ev3([r1t(R1A), r1t(R1B, { status: 'DISPATCHED', result: null }, null)]) });
+    check('a ring-1 computer that has not answered → the gate waits (gate_not_passed, in progress)', code(r) === 'gate_not_passed' && /not answered/.test(r.message), JSON.stringify(r));
+    r = evaluate(s3, ring2(), { evidence: ev3([r1t(R1A), r1t(R1B, {}, signStatement(DEV[R1A.endpointId], 'result', resultStatement({ jobId: ring1Job, planSha256: R1_PLAN, rustdeskId: R1A.rustdeskId, deviceSecretSha256: R1A.deviceSecretSha256, outcome: 'succeeded', completedAt: iso(resultAt) })))]) });
+    check('R1A\'s genuine success relayed a second time, as R1B\'s → result_wrong_device', code(r) === 'result_wrong_device', code(r));
+    const d3last = doc({ rings: [[CANARY], [R1A, R1B], [{ ...OTHER, resultKey: undefined }]] });
+    delete d3last.rings[2][0].resultKey;
+    check('the last ring may hold a computer without a result key: its results open nothing', P.validatePolicyDoc(d3last, NOW).ok);
+    const d3mid = doc({ rings: [[CANARY], [{ ...R1A }, R1B], [OTHER]] });
+    delete d3mid.rings[1][0].resultKey;
+    const vm = P.validatePolicyDoc(d3mid, NOW);
+    check('a ring-1 computer without a result key in a three-ring policy → result_key_missing (fail closed)', !vm.ok && vm.reason === 'result_key_missing' && /R1A/.test(vm.message), JSON.stringify(vm));
+    const dc = doc({ rings: [[{ ...CANARY }], [R1A, R1B]] });
+    delete dc.rings[0][0].resultKey;
+    const vc = P.validatePolicyDoc(dc, NOW);
+    check('a canary without a result key → result_key_missing', !vc.ok && vc.reason === 'result_key_missing', JSON.stringify(vc));
+    check('a one-ring policy (a canary only) needs no key: nothing follows it', P.validatePolicyDoc(doc({ rings: [[{ ...CANARY, resultKey: undefined }].map((c) => { delete c.resultKey; return c; })] }), NOW).ok);
+  }
+
   r = evaluate(state(d, { ledger: [...ledger, { ...ledger[0], jobId: hex(16), ring: 1, endpointIds: [R1A.endpointId, R1B.endpointId] }] }), plan(d), {});
   check('the canary again, after ring 1 was signed → ring_out_of_order', code(r) === 'ring_out_of_order', code(r));
   const open = [{ ...ledger[0], notAfter: iso(NOW.getTime() + 3600_000) }];
@@ -256,6 +381,15 @@ const code = (r) => (r.ok ? 'ok' : r.code);
   const other = plan(d, { ring: 1, computers: [R1A], dep: 'dep_other_0001' });
   r = evaluate(s, other, { evidence: effective });
   check('ring 1 of a deployment whose canary was never signed (another deployment\'s canary does not count) → ring_out_of_order', code(r) === 'ring_out_of_order', code(r));
+
+  // The verifier itself.
+  const o = DR.openDeviceStatement('result', signedRes(CANARY), CANARY.resultKey);
+  check('openDeviceStatement opens a genuine result under the trusted key', o.ok && o.statement.jobId === canaryJob);
+  check('…and refuses it under any other computer\'s key', DR.openDeviceStatement('result', signedRes(CANARY), R1A.resultKey).code === 'result_wrong_device');
+  check('…and never opens a scan as a result', !DR.openDeviceStatement('result', signedScan(CANARY), CANARY.resultKey).ok);
+  check('a fingerprint is 16 hex in fours', /^[0-9a-f]{4}(-[0-9a-f]{4}){3}$/.test(DR.resultKeyFingerprint(CANARY.resultKey)));
+  check('selfSignedScanKey learns a key only from a scan naming that identity',
+    DR.selfSignedScanKey(signedScan(CANARY), CANARY) === CANARY.resultKey && DR.selfSignedScanKey(signedScan(CANARY), R1A) === null && DR.selfSignedScanKey(signedRes(CANARY), CANARY) === null);
 }
 
 // ── The ring gate, as the portal and signer share it ────────────────────────
@@ -291,7 +425,8 @@ const code = (r) => (r.ok ? 'ok' : r.code);
   check('admitPolicy refuses a computer in two rings', refused(() => core.admitPolicy(doc({ rings: [[CANARY], [CANARY, R1A]] }), NOW)) === 'bad_rings');
   check('admitPolicy refuses a driver classification', refused(() => core.admitPolicy(doc({ allow: { classifications: ['ebfc1fc5-71a4-4f7b-9aca-3b9a503104a0'] } }), NOW)) === 'invalid_policy');
   check('admitPolicy refuses an unknown timezone', refused(() => core.admitPolicy(doc({ window: { days: ['sat'], start: '22:00', end: '04:00', timezone: 'Mars/Olympus_Mons' } }), NOW)) === 'invalid_policy');
-  check('admitPolicy refuses a reboot rule (0.32 never restarts)', refused(() => core.admitPolicy(doc({ reboot: 'in_window' }), NOW)) === 'invalid_policy');
+  check('admitPolicy refuses a reboot rule outside the closed pair', refused(() => core.admitPolicy(doc({ reboot: 'in_window' }), NOW)) === 'invalid_policy' && refused(() => core.admitPolicy(doc({ reboot: 'always' }), NOW)) === 'invalid_policy');
+  check('admitPolicy accepts the in-window restart rule (0.34)', refused(() => core.admitPolicy(doc({ reboot: 'if_required_in_window' }), NOW)) === null);
   check('admitPolicy refuses a window that never opens before expiry', refused(() => core.admitPolicy(doc({ window: { days: ['sat'], start: '22:00', end: '23:00', timezone: 'UTC' }, expiresAt: iso(NOW.getTime() + 3600_000) }), NOW)) === 'window_never_opens');
   check('admitPolicy refuses a field it does not know', refused(() => core.admitPolicy({ ...doc(), extraComputers: [OTHER] }, NOW)) === 'invalid_policy');
 
@@ -342,6 +477,19 @@ const code = (r) => (r.ok ? 'ok' : r.code);
   check('malformed evidence is refused, not ignored', refused(() => core.signUnderPolicy(r, { plan: plan(d, { ring: 1, computers: [R1A] }), policyDigest: r.digest, evidence: { previousJobId: 'x' } }, k, business, NOW)) === 'bad_evidence');
   check('a tampered policy file signs nothing → policy_signature_invalid', refused(() => core.signUnderPolicy({ ...tampered, ledger: [] }, { plan: plan(tampered.doc, { ring: 1, computers: [OTHER] }), policyDigest: tampered.digest }, k, business, NOW)) === 'policy_signature_invalid');
   check('a revoked policy signs nothing → policy_revoked', refused(() => core.signUnderPolicy({ ...r, ledger: [], revokedAt: iso(NOW) }, { plan: plan(d, { dep: 'dep_acme_0002' }), policyDigest: r.digest }, k, business, NOW)) === 'policy_revoked');
+
+  // 0.34: result keys pinned by the signer.
+  check('the ledger records the sha256 of the signed plan bytes', entry.planSha256 === sha(bytes));
+  const pinsNone = () => null;
+  const made = core.newPins(r, pinsNone, NOW);
+  check('an approved policy pins every computer that has a key and no pin yet', made.length === d.rings.flat().length && made.every((m) => m.policyId === r.policyId && m.identity === core.deviceIdentity(d.rings.flat().find((c) => c.endpointId === m.endpointId))));
+  const pinned = new Map(made.map((m) => [m.identity, m]));
+  check('…and none once they are pinned', core.newPins(r, (i) => pinned.get(i) ?? null, NOW).length === 0);
+  const otherKey = { ...made[0], resultKey: deviceKey().key };
+  const pinsChanged = (i) => (i === made[0].identity ? otherKey : pinned.get(i) ?? null);
+  check('a plan under a policy whose key for a computer is not the pinned one → device_key_changed',
+    refused(() => core.signUnderPolicy(r, { plan: plan(d, { dep: 'dep_acme_0003' }), policyDigest: r.digest }, k, business, NOW, pinsChanged)) === 'device_key_changed');
+  check('a re-enrolled computer is another identity, so another pin', core.deviceIdentity({ ...CANARY, deviceSecretSha256: sha('re-enrolled') }) !== core.deviceIdentity(CANARY));
 }
 
 if (failures.length) {

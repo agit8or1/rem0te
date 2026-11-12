@@ -17,7 +17,13 @@
  *     widened ring, a disallowed class, outside the window, the canary
  *     skipped or not yet effective, an altered policy digest, an expired
  *     policy, a revoked policy, a containment pause;
- *   - a restart of the API proposes nothing twice.
+ *   - a restart of the API proposes nothing twice;
+ *   - 0.34: each computer signs its results and scans with its own key; the
+ *     policy binds those keys and the signer pins them on approval; a
+ *     canary success the portal forges (its own key, an edited statement,
+ *     another computer's genuine result, or no signature at all) is refused,
+ *     and the genuine one opens ring 1. A computer whose results would open
+ *     a ring but cannot sign them is refused at policy creation.
  *
  * Self-contained, like e2e-staged-patching.mjs: its own signed repository,
  * signer (ports 3262/3263) and API from dist (port 3261, sweep every 2 s),
@@ -29,7 +35,7 @@
  *
  * FIXTURE-TESTED: no Windows, no real Windows Update, no real authenticator.
  */
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import argon2 from 'argon2';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -39,6 +45,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { syntheticPasskey } from './lib/synthetic-passkey.mjs';
+import { deviceKey, signStatement } from './lib/device-sign.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(here, '..', 'dist');
@@ -171,7 +178,10 @@ async function until(what, f, ms = 30_000) {
 // ── A simulated computer ────────────────────────────────────────────────────
 const ACTIONS = ['windows.service.start@1', 'windows.update.install@1'];
 function sim(pc, args) { return execFileSync(SIM, ['-wua', pc.wua, '-registry', pc.reg, ...args], { encoding: 'utf8' }); }
-const scan = (pc) => JSON.parse(sim(pc, ['-scan']).trim());
+// 0.34: the sim signs the scan with the computer's own key, kept in its state directory, as patch-scan does.
+const scan = (pc) => JSON.parse(sim(pc, ['-scan', '-state', pc.state, '-rustdesk-id', pc.rid, '-secret', pc.secret]).trim());
+const unsignedScan = (pc) => { const p = scan(pc); delete p.signed; return p; };
+const resultKeyOf = (pc) => JSON.parse(execFileSync(SIM, ['-result-key', '-state', pc.state], { encoding: 'utf8' }).trim());
 const restart = (pc) => sim(pc, ['-restart']);
 const wuaNow = (pc) => JSON.parse(readFileSync(pc.wua, 'utf8'));
 const heartbeat = (pc, extra = {}) => req('POST', '/enrollment/heartbeat', {
@@ -228,8 +238,8 @@ async function all() {
   const olivia = await mkUser('olivia-approver', { platformPermissions: ['technicians:manage'] }), quinn = await mkUser('quinn-approver', { platformPermissions: ['technicians:manage'] });
   await prisma.membership.create({ data: { userId: owen.id, tenantId: tenant.id, customerId: acme.id, roleId: roleOwner.id, capabilities: [] } });
 
-  const mkPc = async (hostname, offered, wuaExtra = {}, channel = 'signed') => {
-    const e = await prisma.endpoint.create({ data: { tenantId: tenant.id, customerId: acme.id, name: hostname, hostname, status: 'ACTIVE', isOnline: true, isManaged: true, accessMode: 'COMPANY_WIDE', lastSeenAt: new Date(), deviceClass: 'WORKSTATION' } });
+  const mkPc = async (hostname, offered, wuaExtra = {}, channel = 'signed', extra = {}) => {
+    const e = await prisma.endpoint.create({ data: { tenantId: tenant.id, customerId: acme.id, name: hostname, hostname, status: 'ACTIVE', isOnline: true, isManaged: true, accessMode: 'COMPANY_WIDE', lastSeenAt: new Date(), deviceClass: 'WORKSTATION', ...extra } });
     const rid = String(100000000 + ((Math.random() * 899999999) | 0));
     const secret = hex(24);
     await prisma.rustdeskNode.create({ data: { tenantId: tenant.id, endpointId: e.id, rustdeskId: rid, agentSecretHash: sha(secret) } });
@@ -245,7 +255,9 @@ async function all() {
   const r1b = await mkPc('PP-R1-B', [CU]);
   const outsider = await mkPc('PP-OUTSIDER', [CU, NET]);
   const manual = await mkPc('PP-MANUAL', [NET]);
-  const std = await mkPc('PP-STANDARD', [CU], {}, 'standard');
+  // A standard-agent Windows computer, as one in the field reports itself (0.34: the
+  // Patches tab's remedy is the Agent card's upgrade, which needs Windows).
+  const std = await mkPc('PP-STANDARD', [CU], {}, 'standard', { platform: 'Windows 11 Pro' });
   check(true, 'six synthetic computers; the canary will need a restart after the CU');
 
   const pk = { owen: syntheticPasskey({ userId: owen.id, name: 'PP owen' }), olivia: syntheticPasskey({ userId: olivia.id, name: 'PP olivia' }), quinn: syntheticPasskey({ userId: quinn.id, name: 'PP quinn' }) };
@@ -292,7 +304,7 @@ async function all() {
   {
     const v = await req('GET', `/endpoints/${std.id}/patches`, { s: S.owen, business: acme.id });
     const i = v.body?.data?.install;
-    check(v.status === 200 && i?.possible === false && /standard agent/.test(i.reason) && /signed channel/.test(i.fix), 'a standard-agent computer: no Install button — it says why (standard agent) and what to do (switch to the signed channel)', msg(v));
+    check(v.status === 200 && i?.possible === false && /standard agent/.test(i.reason) && i.fixAction === 'agent-card' && /Upgrade to signed agent/.test(i.fix), 'a standard-agent computer: no Install button — it says why (standard agent) and what to do (0.34: Upgrade to signed agent, on the Agent card)', msg(v));
     const r0 = await req('POST', `/endpoints/${std.id}/patches/install`, { s: S.owen, business: acme.id, body: { updates: [id(CU)], reboot: 'never', reason: 'try anyway' } });
     check(r0.status === 409 && code(r0) === 'INSTALL_NOT_POSSIBLE', 'and asking anyway is refused with the same reason', msg(r0));
     const m = await req('GET', `/endpoints/${manual.id}/patches`, { s: S.owen, business: acme.id });
@@ -300,7 +312,7 @@ async function all() {
     const direct = await req('POST', `/endpoints/${manual.id}/actions`, { s: S.owen, business: acme.id, body: { actionId: 'windows.update.install', version: 1, params: { updates: [id(NET)], reboot: 'never' }, reason: 'direct' } });
     check(direct.status === 400 && code(direct) === 'ACTION_NOT_DIRECT', 'ACTION_NOT_DIRECT still holds on the Actions tab', msg(direct));
     const rb = await req('POST', `/endpoints/${manual.id}/patches/install`, { s: S.owen, business: acme.id, body: { updates: [id(NET)], reboot: 'if_required', reason: 'with a restart' } });
-    check(rb.status === 400, 'a reboot option other than "never" is refused', msg(rb));
+    check(rb.status === 400, 'a restart rule outside the closed pair ("never" | "if_required_in_window") is refused', msg(rb));
     const r = await req('POST', `/endpoints/${manual.id}/patches/install`, { s: S.owen, business: acme.id, body: { updates: [id(NET)], reboot: 'never', reason: 'user reports .NET app crash' } });
     const job = r.body?.data?.job, dep = r.body?.data?.deployment;
     check(r.status === 201 && job?.status === 'AWAITING_APPROVAL' && job.approvalsRequired === 2 && job.targets.length === 1, 'Install becomes one plan for one computer, awaiting TWO approvals', msg(r));
@@ -334,14 +346,26 @@ async function all() {
     r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, expiresInDays: 91 } });
     check(r.status === 400, 'an expiry beyond 90 days is refused', msg(r));
     r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, reboot: 'always' } });
-    check(r.status === 400, 'a reboot rule other than "never" is refused', msg(r));
+    check(r.status === 400, 'a policy restart rule outside the closed pair is refused', msg(r));
     r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, allow: { classifications: ['ebfc1fc5-71a4-4f7b-9aca-3b9a503104a0'] } } });
     check(r.status === 400, 'drivers are not a class a policy can allow', msg(r));
+    // 0.34, fail closed: a canary whose agent cannot sign its results (its latest scan is unsigned, as from a 0.33 agent).
+    await sleep(1100); await heartbeat(outsider, { patchPosture: unsignedScan(outsider) });
+    r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, rings: [[outsider.id], [r1a.id, r1b.id]] } });
+    check(r.status === 409 && code(r) === 'RESULT_KEY_MISSING' && /0\.34/.test(JSON.stringify(r.body)), 'a canary that cannot sign its results is refused: RESULT_KEY_MISSING (fail closed)', msg(r));
+    r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, rings: [[canary.id], [outsider.id], [r1a.id, r1b.id]] } });
+    check(r.status === 409 && code(r) === 'RESULT_KEY_MISSING' && /PP-OUTSIDER/.test(JSON.stringify(r.body)), '…and so is one in a middle ring, whose results open the next ring', msg(r));
+    await sleep(1100); await heartbeat(outsider, { patchPosture: scan(outsider) });
     r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body });
     pol = r.body?.data;
     check(r.status === 201 && pol?.status === 'AWAITING_APPROVAL' && /\/approve\/policy\/[0-9a-f]{32}$/.test(pol.approvalUrl), 'the policy is proposed and awaits approval on the signer', msg(r));
     const page = await (await fetch(pol.approvalUrl)).text();
     check(page.includes('PP-CANARY') && page.includes('PP-R1-B') && page.includes('Security Updates') && page.includes('UTC'), 'the signer\'s approval page shows its computers, classes and window', page.slice(0, 200));
+    // 0.34: the key the policy binds is the one the computer itself reports (rem0te-agent.exe status).
+    const own = resultKeyOf(canary);
+    check(pol.document.rings[0][0].resultKey === own.publicKey && pol.document.rings[1].every((c) => !!c.resultKey), 'the policy binds each computer to the result key its own signed scans name', JSON.stringify(pol.document.rings[0][0]));
+    check(page.includes(own.fingerprint) && /first time this signer sees it/.test(page), 'the approval page shows the canary\'s key fingerprint — the same one the computer\'s own status shows — as first seen', own.fingerprint);
+    check(pol.resultKeys?.[canary.id] === own.fingerprint, 'the portal\'s policy page shows the same fingerprint', JSON.stringify(pol.resultKeys));
     await sleep(2500);
     check((await prisma.patchDeployment.count({ where: { policyId: pol.id } })) === 0, 'an unapproved policy proposes nothing, though its window is open');
     const self = await approvePolicy(pol.id, pk.owen);
@@ -352,6 +376,8 @@ async function all() {
     check(a2.status === 200 && a2.body.status === 'ACTIVE', 'two approvals: the signer signs the policy and it is ACTIVE', JSON.stringify(a2.body).slice(0, 200));
     const list = signerCli(['patch-policy', 'list']);
     check(list.status === 0 && list.stdout.includes(pol.id) && /ACTIVE/.test(list.stdout) && /signature ok|verified/i.test(list.stdout), 'the signer operator\'s CLI lists it ACTIVE with a verified signature', list.stdout.slice(0, 300) + list.stderr);
+    const pins = signerCli(['device-key', 'list']);
+    check(pins.status === 0 && [canary, r1a, r1b].every((pc) => pins.stdout.includes(pc.id)) && pins.stdout.includes(resultKeyOf(canary).fingerprint), 'approving it pinned each computer\'s result key on the signer (device-key list)', pins.stdout + pins.stderr);
   }
 
   section('The sweep proposes the canary inside the window; the signer signs it under the policy');
@@ -401,6 +427,11 @@ async function all() {
     check(r.status === 409 && r.body?.error === 'ring_already_signed', 'the canary again while its window is open → ring_already_signed', JSON.stringify(r.body));
     r = await underPolicy(pol.id, { plan: craft(base, { requestedBy: { ...base.requestedBy, userId: olivia.id } }), policyDigest: cDigest, evidence: null });
     check(r.status === 409 && r.body?.error === 'requester_mismatch', 'a plan requested as someone other than the policy\'s author → requester_mismatch', JSON.stringify(r.body));
+    // 0.34: the policy says never; a plan may not ask for a restart under it.
+    r = await underPolicy(pol.id, { plan: craft(base, { params: { ...base.params, reboot: 'if_required_in_window' } }), policyDigest: cDigest, evidence: null });
+    check(r.status === 409 && r.body?.error === 'reboot_not_allowed', 'the policy forbids restarts; a plan asking to restart in its window → reboot_not_allowed', JSON.stringify(r.body));
+    r = await underPolicy(pol.id, { plan: craft(base, { params: { ...base.params, reboot: 'always' } }), policyDigest: cDigest, evidence: null });
+    check(r.status >= 400 && r.status < 500 && r.body?.error !== undefined && !r.body?.jobId, 'a restart rule outside the closed pair is refused outright', JSON.stringify(r.body));
     const st = await sj(`${INTERNAL}/internal/v1/policies/${pol.id}`);
     check(st.body?.refusals?.length >= 5, 'the signer keeps each refusal with the policy (for its operator and the portal)', JSON.stringify(st.body?.refusals?.length));
   }
@@ -423,6 +454,31 @@ async function all() {
     ] });
     const r = await underPolicy(pol.id, { plan: ring1, policyDigest: pol.digest, evidence: ev });
     check(r.status === 409 && r.body?.error === 'canary_not_effective', 'ring 1 sent before the canary is confirmed → canary_not_effective (the signer re-runs the gate)', JSON.stringify(r.body));
+
+    // 0.34: the portal stores and relays what the computer signed, unmodified
+    // (Postgres orders a jsonb object's keys its own way; every value is the agent's).
+    const same = (a, b) => !!a && !!b && ['schema', 'key', 'statement', 'sig'].every((f) => a[f] === b[f]) && Object.keys(a).length === 4 && Object.keys(b).length === 4;
+    check(same(t.result.signed, c.outs[0]?.signed), 'the canary\'s result carries its own signature, stored by the portal exactly as the agent wrote it', JSON.stringify(t.result?.signed ?? null).slice(0, 120));
+    check(same(ev.targets[0].signedResult, c.outs[0]?.signed) && same(ev.targets[0].signedScan, inv.patchPosture.signed), 'and the evidence relays the signed result and signed scan untouched');
+
+    // A compromised portal forges the canary's success: every way it can, refused by the signer.
+    const st0 = JSON.parse(Buffer.from(c.outs[0].signed.statement, 'base64').toString('utf8'));
+    const scanSt = JSON.parse(Buffer.from(inv.patchPosture.signed.statement, 'base64').toString('utf8'));
+    const effScan = { ...scanSt, scannedAt: new Date(Date.parse(st0.completedAt) + 60_000).toISOString(), rebootPending: false, offered: [], installed: [key(CU)] };
+    const portalKey = deviceKey();
+    const forgedEv = (signedResult, signedScan, over = {}) => ({ ...ev, targets: [{ ...ev.targets[0], status: 'SUCCEEDED', result: { outcome: 'succeeded', updates: [{ ...id(CU), state: 'installed' }] }, scan: { scannedAt: effScan.scannedAt, error: false, rebootPending: false, offered: [], installed: [key(CU)] }, signedResult, signedScan, ...over }] });
+    const attempt = async (label, evidence, want) => {
+      const x = await underPolicy(pol.id, { plan: craft(row.plan, { display: ring1.display, targets: ring1.targets }), policyDigest: pol.digest, evidence });
+      check(x.status === 409 && x.body?.error === want, `FORGED canary success: ${label} → ${want}`, JSON.stringify(x.body));
+    };
+    await attempt('the portal\'s own copy says effective, no signatures', forgedEv(null, null), 'result_signature_missing');
+    await attempt('the genuine signed result, plus an "effective" scan the portal signed with a key of its own', forgedEv(c.outs[0].signed, signStatement(portalKey, 'scan', effScan)), 'result_wrong_device');
+    await attempt('…the same, but the envelope claims the canary\'s key', forgedEv(c.outs[0].signed, signStatement(portalKey, 'scan', effScan, { claimKey: inv.patchPosture.signed.key })), 'result_signature_invalid');
+    await attempt('the canary\'s genuine scan statement, edited to "effective"', forgedEv(c.outs[0].signed, { ...inv.patchPosture.signed, statement: Buffer.from(JSON.stringify(effScan)).toString('base64') }), 'result_signature_invalid');
+    const manualRow = await prisma.actionTarget.findFirst({ where: { endpointId: manual.id, result: { not: Prisma.DbNull } }, orderBy: { resultAt: 'desc' } });
+    await attempt('another computer\'s genuine, valid signed success (PP-MANUAL\'s) relayed as the canary\'s', forgedEv(manualRow?.result?.signed ?? null, inv.patchPosture.signed), 'result_wrong_device');
+    const signerPolicy = await sj(`${INTERNAL}/internal/v1/policies/${pol.id}`);
+    check(['result_signature_missing', 'result_wrong_device', 'result_signature_invalid'].every((x) => signerPolicy.body?.refusals?.some((f) => f.code === x)), 'the signer keeps each forged-evidence refusal with the policy', JSON.stringify(signerPolicy.body?.refusals?.map((f) => f.code)));
   }
 
   section('Restart the API: nothing is proposed twice');
@@ -454,6 +510,32 @@ async function all() {
       await sleep(4500);
       check((await prisma.patchDeployment.count({ where: { policyId: pol.id } })) === 1, 'and no second deployment is proposed in the same window');
     }
+  }
+
+  section('A policy that allows a restart inside its window (0.34)');
+  {
+    // Through the portal: accepted, signed into the document, shown to the approvers. Left unapproved, so the sweep never acts on it.
+    const r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, name: 'Acme security, with restarts', reboot: 'if_required_in_window' } });
+    check(r.status === 201 && r.body?.data?.document?.reboot === 'if_required_in_window', 'the portal proposes a policy whose rule is "restart if required, inside the window"', msg(r));
+    const page = r.status === 201 ? await (await fetch(r.body.data.approvalUrl)).text() : '';
+    check(page.includes('if Windows requires one') && page.includes('15-minute warning') && page.includes('not yet run on a real Windows computer'), 'its approval page says it restarts, with the fixed warning, and that this has not run on real Windows', page.slice(0, 200));
+    const dflt = await prisma.patchPolicy.findUnique({ where: { id: pol.id } });
+    check(dflt.document.reboot === 'never', 'a policy proposed without a rule says never (the default)', JSON.stringify(dflt.document.reboot));
+    // Straight to the signer (the portal never sees it), approved, then plans under it.
+    const t0 = new Date();
+    const doc = { ...pol.document, policyId: hex(16), name: 'Restarts allowed', reboot: 'if_required_in_window', createdAt: t0.toISOString(), expiresAt: new Date(t0.getTime() + 86_400_000).toISOString() };
+    const sub = await sj(`${INTERNAL}/internal/v1/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy: doc }) });
+    check(sub.status === 201, 'the signer accepts it', JSON.stringify(sub.body));
+    await approvePolicy(doc.policyId, pk.olivia); const a = await approvePolicy(doc.policyId, pk.quinn);
+    check(a.body?.status === 'ACTIVE', 'approved by two', JSON.stringify(a.body).slice(0, 200));
+    const under = (rule) => craft(canaryJob.plan, {
+      params: { ...canaryJob.plan.params, reboot: rule },
+      display: { ...canaryJob.plan.display, policy: { id: doc.policyId, name: doc.name, digest: sub.body.digest }, deployment: { ...canaryJob.plan.display.deployment, id: `rb${hex(8)}` } },
+    });
+    const ok = await underPolicy(doc.policyId, { plan: under('if_required_in_window'), policyDigest: sub.body.digest, evidence: null });
+    check(ok.status === 201 && /^[0-9a-f]{32}$/.test(ok.body?.jobId ?? ''), 'a canary plan asking to restart in the window is signed under it', JSON.stringify(ok.body));
+    const less = await underPolicy(doc.policyId, { plan: under('never'), policyDigest: sub.body.digest, evidence: null });
+    check(less.status === 201, 'and so is one asking for less (never)', JSON.stringify(less.body));
   }
 
   section('Revoke: one-way, and it reaches the signer');

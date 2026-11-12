@@ -38,6 +38,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agit8or1/rem0te/windows-installer/internal/devsig"
 	"github.com/agit8or1/rem0te/windows-installer/internal/flock"
 	"github.com/agit8or1/rem0te/windows-installer/internal/patch"
 )
@@ -130,10 +131,14 @@ type Plan struct {
 	} `json:"window"`
 	// Display: what the approver was shown (update KBs and titles). Signed,
 	// and deliberately never read here: decisions come from Windows Update.
-	Display   json.RawMessage `json:"display,omitempty"`
-	CreatedAt string          `json:"createdAt"`
-	Approvers []Approver      `json:"approvers"`
-	SignedAt  *string         `json:"signedAt"`
+	Display json.RawMessage `json:"display,omitempty"`
+	// Script: windows.script.run only (v0.34). The approval signer's
+	// allowlist entry for the version, signed with everything else; the
+	// declared parameters and contributors are taken from here.
+	Script    *ScriptDef `json:"script,omitempty"`
+	CreatedAt string     `json:"createdAt"`
+	Approvers []Approver `json:"approvers"`
+	SignedAt  *string    `json:"signedAt"`
 }
 
 // Result is what the heartbeat reports. Observations only.
@@ -148,8 +153,16 @@ type Result struct {
 	// Updates and Reboot: windows.update.install only.
 	Updates []patch.Outcome `json:"updates,omitempty"`
 	Reboot  *patch.Reboot   `json:"reboot,omitempty"`
+	// Restart: windows.update.install with reboot if_required_in_window (0.34).
+	Restart *Restart `json:"restart,omitempty"`
 	// Logs: windows.logs.collect only. Bounded and redacted (maintenance.go).
 	Logs []LogSection `json:"logs,omitempty"`
+	// Signed (v0.34): this computer's signature over the facts above that a
+	// patch policy's ring gate reads (resultsig.go). The portal relays it;
+	// only the approval signer verifies it.
+	Signed *devsig.Signed `json:"signed,omitempty"`
+	// Script: windows.script.run only (v0.34). Bounded and redacted (script.go).
+	Script *ScriptResult `json:"script,omitempty"`
 }
 
 type journal struct {
@@ -162,7 +175,10 @@ type journal struct {
 	// what it was working on. Step: how far an executing job got.
 	Params map[string]any `json:"params,omitempty"`
 	Step   string         `json:"step,omitempty"`
-	Result *Result        `json:"result,omitempty"`
+	// PlanSHA256 (v0.34): sha256 of the signed plan bytes, so a result
+	// signed after an interruption still names the plan it was about.
+	PlanSHA256 string  `json:"planSha256,omitempty"`
+	Result     *Result `json:"result,omitempty"`
 }
 
 type Options struct {
@@ -183,6 +199,23 @@ type Options struct {
 	Maint Maintenance
 	// How long a service restart waits for the stop; 60 seconds by default.
 	StopTimeout time.Duration
+	// ResultKey signs results (v0.34). Nil: this computer's own key, loaded
+	// (or created) from StateDir. If it cannot be had, results go unsigned,
+	// and a patch policy's gate counts them as missing.
+	ResultKey ed25519.PrivateKey
+	// Script runs (v0.34): the content delivered beside the envelope (nil
+	// when none was), and what runs PowerShell; nil where not available.
+	ScriptContent []byte
+	Scripts       ScriptHost
+	// ScriptMinute: how long one minute of a plan's timeout lasts; a minute
+	// by default. The tests and the simulator shorten it.
+	ScriptMinute time.Duration
+	// Software deployment (v0.34): winget and the read-only detection
+	// probe; nil where not available. SoftwareTimeout, when set, replaces
+	// every winget timeout (tests); 0 means the defaults in software.go.
+	Winget          Winget
+	Software        SoftwareProbe
+	SoftwareTimeout time.Duration
 }
 
 var jobRE = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -226,6 +259,11 @@ func Run(jobID string, envelope []byte, o Options) (Result, error) {
 	// 1. The journal first: at most once, ever.
 	if j, ok := readJournal(o, jobID); ok {
 		if j.State == "done" && j.Result != nil {
+			if j.Result.Signed == nil {
+				// Journaled by an agent before 0.34: sign the recorded result
+				// as it stands, dated when it was recorded.
+				signResult(&o, j.Result, j.PlanSHA256, j.At)
+			}
 			return report(o, *j.Result)
 		}
 		r := Result{JobID: jobID, Outcome: "uncertain", Reason: "interrupted",
@@ -238,10 +276,10 @@ func Run(jobID string, envelope []byte, o Options) (Result, error) {
 		} else if st, err := o.Platform.ServiceState(ServiceName); err == nil && j.ActionID == "" {
 			r.Observed = map[string]string{"now": st} // journals written by 0.26
 		}
-		writeJournal(o, journal{JobID: jobID, State: "done", At: o.now().UTC().Format(time.RFC3339), Result: &r})
-		return report(o, r)
+		return final(o, jobID, j.PlanSHA256, r)
 	}
 
+	planSHA := planSHA256(envelope)
 	plan, refusal := verify(jobID, envelope, o)
 	if refusal != nil {
 		r := *refusal
@@ -252,8 +290,7 @@ func Run(jobID string, envelope []byte, o Options) (Result, error) {
 		if r.Reason == "not_yet_valid" {
 			return r, nil
 		}
-		writeJournal(o, journal{JobID: jobID, State: "done", At: o.now().UTC().Format(time.RFC3339), Result: &r})
-		return report(o, r)
+		return final(o, jobID, planSHA, r)
 	}
 
 	// 1b. The signed pause (v0.28). Checked once the plan is known to be
@@ -263,8 +300,7 @@ func Run(jobID string, envelope []byte, o Options) (Result, error) {
 		rid, _, _ := o.Platform.DeviceIdentity()
 		if o.Pause.ActionsPaused(plan.Targets[0].BusinessID, rid) {
 			r := Result{JobID: jobID, Outcome: "refused", Reason: "paused", Detail: "actions are paused by the signed pause (" + o.Pause.IssuedAt + "): " + o.Pause.Reason}
-			writeJournal(o, journal{JobID: jobID, State: "done", At: o.now().UTC().Format(time.RFC3339), Result: &r})
-			return report(o, r)
+			return final(o, jobID, planSHA, r)
 		}
 	}
 
@@ -274,18 +310,26 @@ func Run(jobID string, envelope []byte, o Options) (Result, error) {
 		if pr := a.Precheck(plan, o); pr != nil {
 			r := *pr
 			r.JobID = jobID
-			writeJournal(o, journal{JobID: jobID, State: "done", At: o.now().UTC().Format(time.RFC3339), Result: &r})
-			return report(o, r)
+			return final(o, jobID, planSHA, r)
 		}
 	}
 
 	// 2. Consume the job before acting on it.
-	if err := writeJournal(o, journal{JobID: jobID, State: "executing", At: o.now().UTC().Format(time.RFC3339), ActionID: plan.Action.ID, ActionVersion: plan.Action.Version, Params: plan.Params}); err != nil {
+	if err := writeJournal(o, journal{JobID: jobID, State: "executing", At: o.now().UTC().Format(time.RFC3339), ActionID: plan.Action.ID, ActionVersion: plan.Action.Version, Params: plan.Params, PlanSHA256: planSHA}); err != nil {
 		return Result{}, fmt.Errorf("journal: %w", err)
 	}
 	r := Lookup(plan.Action.ID, plan.Action.Version).Execute(plan, o)
 	r.JobID = jobID
-	writeJournal(o, journal{JobID: jobID, State: "done", At: o.now().UTC().Format(time.RFC3339), Result: &r})
+	return final(o, jobID, planSHA, r)
+}
+
+// final signs a job's last result, journals it "done" and reports it. The
+// journal holds the signed result, so a re-delivery is answered with the very
+// same signature.
+func final(o Options, jobID, planSHA string, r Result) (Result, error) {
+	at := o.now().UTC()
+	signResult(&o, &r, planSHA, at.Format(devsig.TimeFormat))
+	writeJournal(o, journal{JobID: jobID, State: "done", At: at.Format(time.RFC3339), PlanSHA256: planSHA, Result: &r})
 	return report(o, r)
 }
 

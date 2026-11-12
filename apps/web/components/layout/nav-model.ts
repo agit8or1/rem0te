@@ -17,12 +17,17 @@
  * scripts. It cannot run them yet, and its page says so. Reports joined in 0.32; each report
  * shows only for the capability of the data it summarises (computers:view or
  * monitoring:alerts), the same rule the API applies.
+ *
+ * 0.34 made Automation a hub: the script library and the software catalog
+ * (allowlisted winget packages, deployed ring by ring, each ring approved on
+ * the approval signer). Reports gained software compliance. Both show for
+ * computers:view, the capability the software routes require.
  */
 import type { LucideIcon } from 'lucide-react';
 import {
   Activity, BarChart3, BellRing, Building2, Cpu, WifiOff, Download, FileCode2, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
-  Monitor, MonitorCheck, MonitorX, PackageCheck, PlayCircle, RefreshCw, Settings, Shield, ShieldCheck, Siren,
-  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock,
+  Monitor, MonitorCheck, MonitorX, Package, PackageCheck, PlayCircle, RefreshCw, Settings, Shield, ShieldCheck, Siren,
+  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail,
 } from 'lucide-react';
 import { CAP, type Capability } from '@/lib/auth';
 
@@ -83,11 +88,14 @@ export const NAV: NavSection[] = [
     items: [{ href: '/alerts', label: 'Alerts', icon: Siren, show: (c) => c.can(CAP.ALERTS_VIEW) }],
   },
   {
-    id: 'automation', label: 'Automation', icon: FileCode2, kind: 'link',
-    items: [{
-      href: '/automation/scripts', label: 'Script library', icon: FileCode2,
-      show: (c) => c.can(CAP.SCRIPTS_AUTHOR) || c.can(CAP.SCRIPTS_REVIEW) || c.isIndependentReviewer,
-    }],
+    id: 'automation', label: 'Automation', icon: FileCode2, kind: 'hub',
+    items: [
+      {
+        href: '/automation/scripts', label: 'Script library', icon: FileCode2,
+        show: (c) => c.can(CAP.SCRIPTS_AUTHOR) || c.can(CAP.SCRIPTS_REVIEW) || c.isIndependentReviewer,
+      },
+      { href: '/automation/software', label: 'Software catalog', icon: Package, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
+    ],
   },
   {
     id: 'patching', label: 'Patching', icon: ShieldCheck, kind: 'link',
@@ -110,6 +118,10 @@ export const NAV: NavSection[] = [
       { href: '/reports/agent-coverage', label: 'Agent coverage', icon: Cpu, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
       { href: '/reports/alert-frequency', label: 'Alert frequency', icon: BellRing, show: (c) => c.can(CAP.ALERTS_VIEW) },
       { href: '/reports/offline-time', label: 'Offline time', icon: WifiOff, show: (c) => c.can(CAP.ALERTS_VIEW) },
+      { href: '/reports/software-compliance', label: 'Software compliance', icon: Package, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
+      // 0.34. Last, so /reports still opens a report. The API decides who may
+      // set one up (a Business Owner in their own business, or a Platform Admin).
+      { href: '/reports/schedules', label: 'Scheduled reports', icon: CalendarClock, show: (c) => c.isPlatformAdmin || (c.isBusinessOwner && !c.technician) },
     ],
     also: ['/reports'],
   },
@@ -131,6 +143,7 @@ export const NAV: NavSection[] = [
       // technician with computers:edit, the MSP); this only decides who sees the entry.
       { href: '/settings/client-updates', label: 'Client updates', icon: CalendarClock, show: (c) => c.isBusinessOwner || c.canManageTechnicians || (c.technician && c.can(CAP.COMPUTERS_EDIT)) },
       { href: '/admin/rollouts', label: 'Client rollouts', icon: PackageCheck, show: (c) => c.isPlatformAdmin },
+      { href: '/settings/email', label: 'Email', icon: Mail, show: (c) => c.isPlatformAdmin },
       { href: '/admin/security', label: 'Security', icon: Shield, show: (c) => c.isPlatformAdmin },
       { href: '/admin/status', label: 'System status', icon: Activity, show: (c) => c.isPlatformAdmin },
       { href: '/about', label: 'Updates', icon: RefreshCw, show: (c) => c.isPlatformAdmin },

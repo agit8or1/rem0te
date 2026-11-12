@@ -1,12 +1,13 @@
-import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { Parameters, sha256Hex, definitionSha256 } from '../actions/script-run';
 
 /**
  * Script library: what a version IS, and how it is hashed.
  *
- * Pure: no Nest, no Prisma, so unit-script-library.mjs can load it from dist
- * and the approval signer could one day load the same rules. Nothing here
- * runs a script, and nothing in the script library can (docs/script-library.md).
+ * Pure: no Nest, no Prisma, so unit-script-library.mjs can load it from dist.
+ * Nothing here runs a script, and nothing in the script library can: a run
+ * is the signed catalog action windows.script.run@1, requested through the
+ * script-run module (docs/script-library.md).
  *
  * Two hashes per version:
  *   contentSha256    — the exact UTF-8 bytes. What an agent would verify.
@@ -14,45 +15,19 @@ import { z } from 'zod';
  *                      as canonical JSON. What a reviewer approved ABOUT it.
  */
 
-export const MAX_CONTENT_BYTES = 65_536;
-export const MAX_PARAMETERS = 10;
-export const DEFINITION_PREFIX = 'rem0te-script-definition-v1\n';
+// The parameter rules, the content rule and the hashes are shared with the
+// run path (0.34): the portal's run request, the approval signer and the
+// agent check arguments against exactly these declarations, so there is one
+// copy, in actions/script-run.ts (pure; the signer loads it).
+export {
+  MAX_CONTENT_BYTES, MAX_PARAMETERS, DEFINITION_PREFIX, CHARSETS, ParameterDecl, Parameters, contentProblem, sha256Hex, canonical, definitionSha256,
+  type Charset,
+} from '../actions/script-run';
 
 export const LANGUAGES = ['powershell'] as const;
 export const TARGET_OS = ['windows'] as const;
 export const RISKS = ['low', 'medium', 'high'] as const;
 export type Risk = (typeof RISKS)[number];
-
-/**
- * Closed charsets for string parameters. Not author-supplied regexes: the
- * agent must enforce exactly the same rule, in Go, and a closed list can be
- * implemented identically and cannot be a catastrophic regex. None admits a
- * quote, `$`, a backtick, `;`, `|`, `&`, parentheses or a newline.
- */
-export const CHARSETS = {
-  alphanumeric: /^[A-Za-z0-9]*$/,
-  identifier: /^[A-Za-z0-9_.-]*$/,
-  hostname: /^[A-Za-z0-9.-]*$/,
-  safe_text: /^[A-Za-z0-9 _.,:@-]*$/,
-} as const;
-export type Charset = keyof typeof CHARSETS;
-const CHARSET_NAMES = Object.keys(CHARSETS) as [Charset, ...Charset[]];
-
-const ParamName = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,31}$/, 'a parameter name is a letter then up to 31 letters, digits or _');
-const ParamDescription = z.string().trim().max(200).optional();
-
-export const ParameterDecl = z.discriminatedUnion('type', [
-  z.object({ name: ParamName, type: z.literal('string'), description: ParamDescription, required: z.boolean(), charset: z.enum(CHARSET_NAMES), maxLength: z.number().int().min(1).max(256) }).strict(),
-  z.object({ name: ParamName, type: z.literal('integer'), description: ParamDescription, required: z.boolean(), min: z.number().int().min(-2_147_483_648).max(2_147_483_647), max: z.number().int().min(-2_147_483_648).max(2_147_483_647) }).strict()
-    .refine((p) => p.min <= p.max, { message: 'min must not exceed max' }),
-  z.object({ name: ParamName, type: z.literal('boolean'), description: ParamDescription, required: z.boolean() }).strict(),
-  z.object({ name: ParamName, type: z.literal('choice'), description: ParamDescription, required: z.boolean(), choices: z.array(z.string().regex(CHARSETS.identifier).min(1).max(64)).min(1).max(20) }).strict()
-    .refine((p) => new Set(p.choices).size === p.choices.length, { message: 'choices must be distinct' }),
-]);
-export type ParameterDecl = z.infer<typeof ParameterDecl>;
-
-export const Parameters = z.array(ParameterDecl).max(MAX_PARAMETERS)
-  .refine((ps) => new Set(ps.map((p) => p.name.toLowerCase())).size === ps.length, { message: 'parameter names must be distinct (PowerShell parameter names are case-insensitive)' });
 
 /** The executable definition of a version: everything but the text itself and who wrote it. */
 export const VersionFields = z.object({
@@ -64,36 +39,6 @@ export const VersionFields = z.object({
   content: z.string(),
 }).strict();
 export type VersionFields = z.infer<typeof VersionFields>;
-
-/** Why this content cannot be stored, or null. Bytes are hashed exactly as given. */
-export function contentProblem(content: string): string | null {
-  const bytes = Buffer.byteLength(content, 'utf8');
-  if (bytes === 0 || content.trim() === '') return 'The script is empty.';
-  if (bytes > MAX_CONTENT_BYTES) return `The script is ${bytes} bytes; the limit is ${MAX_CONTENT_BYTES}.`;
-  // A lone surrogate would not survive a UTF-8 round trip, so the stored text
-  // would not hash to what was shown.
-  if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(content)) {
-    return 'The script contains text that is not valid UTF-8.';
-  }
-  // eslint-disable-next-line no-control-regex
-  const ctl = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.exec(content);
-  if (ctl) return `The script contains a control character (U+${ctl[0].charCodeAt(0).toString(16).padStart(4, '0').toUpperCase()}). Only tab, CR and LF are allowed.`;
-  return null;
-}
-
-export const sha256Hex = (s: string | Buffer) => createHash('sha256').update(typeof s === 'string' ? Buffer.from(s, 'utf8') : s).digest('hex');
-
-/** Canonical JSON: sorted keys, no whitespace. Arrays keep their order. */
-export function canonical(v: unknown): string {
-  if (v === null || typeof v !== 'object') return JSON.stringify(v);
-  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
-  const o = v as Record<string, unknown>;
-  return `{${Object.keys(o).filter((k) => o[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`).join(',')}}`;
-}
-
-export function definitionSha256(d: { language: string; targetOs: string; risk: string; parameters: ParameterDecl[]; contentSha256: string }): string {
-  return sha256Hex(DEFINITION_PREFIX + canonical({ language: d.language, targetOs: d.targetOs, risk: d.risk, parameters: d.parameters, contentSha256: d.contentSha256 }));
-}
 
 export interface Hashed { contentSha256: string; contentBytes: number; definitionSha256: string }
 export function hashVersion(v: Pick<VersionFields, 'language' | 'targetOs' | 'risk' | 'parameters' | 'content'>): Hashed {

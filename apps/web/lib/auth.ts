@@ -24,6 +24,7 @@ export const CAP = {
   SESSIONS_VIEW: 'support:sessions_view',
   HISTORY_VIEW: 'support:history_view',
   SUPPORT_REQUESTS: 'support:requests',
+  CHAT_SEND: 'support:chat',
   USERS_VIEW: 'users:view',
   USERS_MANAGE: 'users:manage',
   AUDIT_VIEW: 'audit:view',

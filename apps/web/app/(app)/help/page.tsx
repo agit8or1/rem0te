@@ -104,8 +104,19 @@ const SECTIONS: Section[] = [
           How big a server to use for 50, 250, 1,000 or 5,000 computers — CPU, memory, disk and PostgreSQL, with the
           measured cost of a heartbeat and how fast the database grows — is in{' '}
           <Link href="/docs/server-sizing" className="underline text-foreground">Server sizing</Link>. In short: 2 vCPU
-          and 2–4 GB up to a few hundred computers, 4 vCPU and 8 GB for 1,000. At 5,000 a single API process is near its
-          measured limit; read the page before planning that size.
+          and 2–4 GB up to a few hundred computers, 4 vCPU and 8 GB for 1,000, 8 vCPU and 16 GB for 5,000. Since 0.34 a
+          heartbeat no longer starts a process to ask the RustDesk ID server about the computer, and one API process
+          measured roughly twice the rate 5,000 computers need; more than 5,000 has not been measured.
+        </p>
+        <p>
+          From 0.34 old history ages out of the database on its own: finished agent commands and diagnostics after 90
+          days, inventory changes and resolved alerts after 400, unused launch tokens 30 days after they expire. Remote
+          sessions are kept, and the audit log is never pruned. Each window is a <code>RETENTION_*_DAYS</code> setting in
+          the server&apos;s environment, with a floor and a ceiling; <code>RETENTION_SWEEP=off</code> stops the sweep.
+          What each table holds now is on{' '}
+          <Link href="/admin/status" className="underline text-foreground">Settings → System status</Link> (Platform
+          Admins), and the details are in{' '}
+          <Link href="/docs/data-retention" className="underline text-foreground">Data retention</Link>.
         </p>
       </div>
     ),
@@ -216,6 +227,24 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'phone-width',
+    title: 'Using Rem0te on a Phone',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          On a screen narrower than 768 px the menu is not drawn beside the page. The{' '}
+          <strong className="text-foreground">menu button</strong> at the left of the top bar opens it over the page,
+          with everything the sidebar holds: the business switcher, Help, the theme and Sign out. Choosing a page closes
+          it, as do <strong className="text-foreground">Esc</strong>, tapping outside it and its close button.
+        </p>
+        <p>
+          Wide tables — the device list, the reports, API keys — scroll sideways inside their own box instead of
+          widening the page, so swipe the table rather than the page. A device&apos;s tab row scrolls the same way.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'global-search',
     title: 'Searching Everything (Ctrl+K)',
     content: (
@@ -287,8 +316,18 @@ const SECTIONS: Section[] = [
         </p>
         <p>
           <strong className="text-foreground">Device groups</strong> (Views → Device groups…) are named groups of one
-          business&apos;s computers, for filtering and bulk actions; a computer is in one group at a time, and groups
-          grant nothing. They are managed by the same people who may share views, and every change is audited.
+          business&apos;s computers, for filtering and bulk actions. A computer can be in several groups of its
+          business — adding it to one never takes it out of another — and the Groups column lists them all. A computer
+          moved to another business leaves the old business&apos;s groups. Groups grant nothing. They are managed by the
+          same people who may share views, and every change is audited.
+        </p>
+        <p>
+          A <strong className="text-foreground">rule group</strong> (Views → Save filters as a rule group…) holds
+          whichever computers of its business match the current filters — online, platform, site, tag, updates,
+          alerts, RustDesk version range, last seen (More filters) — worked out each time it is read, so a computer
+          that goes offline leaves an &ldquo;online&rdquo; group at once. Nobody adds to it by hand. Everyone sees only
+          the members they can already see, and a rule on alerts needs the monitoring:alerts permission. Filtered by
+          a rule group, the bulk bar acts on its current members (at most 200).
         </p>
         <p>
           <strong className="text-foreground">Tick rows</strong> to act on up to 200 devices at once: add to or remove
@@ -353,6 +392,47 @@ const SECTIONS: Section[] = [
             Sessions
           </Link>
           .
+        </p>
+      </div>
+    ),
+  },
+  {
+    id: 'chat',
+    title: 'Chatting with the Person at a Computer',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          Open a computer and choose the <strong className="text-foreground">Chat</strong> tab. <strong className="text-foreground">Start chat</strong>{' '}
+          opens a small window on that computer&apos;s desktop, titled with the business name and headed with your name,
+          saying the business will never ask for a password and that links are never opened. The computer picks the
+          chat up at its next check-in, normally within three minutes; after that, messages arrive within seconds.
+        </p>
+        <ul className="list-disc pl-5 space-y-1">
+          <li>
+            <strong className="text-foreground">Windows with the signed agent only.</strong> Linux, macOS and the
+            standard Windows agent cannot chat yet, and the tab says so for those computers. The desktop window has not
+            yet been run on real Windows.
+          </li>
+          <li>
+            Each message shows <em>Sent</em>, <em>Delivered</em>, <em>Shown</em> or <em>Read</em>, and only what the computer
+            has confirmed. The panel also says what the computer last reported: window open, nobody signed in, the window
+            could not be opened, or the computer has gone quiet.
+          </li>
+          <li>
+            The person can reply or close the window. Closing it ends the chat, and so do <em>End chat</em> and two hours
+            with no message.
+          </li>
+          <li>
+            Up to 2,000 characters a message and 20 messages a minute. Text is shown as plain text on both sides.
+          </li>
+          <li>
+            Starting and writing need the <em>Chat with the person at a computer</em> permission. Anyone who can see the
+            computer can read its transcripts, which are deleted 400 days after the chat ends. A <em>remote connections</em>{' '}
+            containment pause stops new chats and messages. The audit log records each start and end, never the text.
+          </li>
+        </ul>
+        <p>
+          See <Link href="/docs/chat" className="underline text-foreground">Chat</Link> for the details.
         </p>
       </div>
     ),
@@ -511,6 +591,23 @@ const SECTIONS: Section[] = [
           with the standard agent only; the Linux agent does not collect them. More in{' '}
           <Link href="/docs/diagnostics#the-processes-services-and-network-tabs" className="underline text-foreground">One-click diagnostics</Link>.
         </p>
+        <p className="font-medium text-foreground">The AI-written summary</p>
+        <p>
+          <em>History</em> ends with an <strong className="text-foreground">AI-written summary</strong> of the
+          computer&apos;s notes and remote sessions. Rem0te holds no AI provider key: from 0.34 the summary is written by
+          ClientSt0r&apos;s AI, through the same signed connection as ticket analysis, for the ClientSt0r organization
+          the business is mapped to. <strong className="text-foreground">What is sent to ClientSt0r</strong> lists every
+          field, what is never sent (the computer&apos;s name and hostname, the business, addresses, who wrote a note,
+          the RustDesk ID) and how many passwords, tokens, e-mail and IP addresses were removed first; <em>Show the
+          exact text</em> shows it word for word. Generating one needs Rename/edit computers and Ticket analysis
+          (ClientSt0r); every request is in the audit log, without the text, and an integration pause stops it.
+        </p>
+        <p>
+          ClientSt0r does not offer this yet: the panel says <em>Needs ClientSt0r support for
+          device_timeline_v1</em> and the button stays off until ClientSt0r advertises it. A summary already written
+          can still be edited by hand. More in{' '}
+          <Link href="/docs/integration-clientst0r#the-device-pages-ai-summary-034" className="underline text-foreground">ClientSt0r integration</Link>.
+        </p>
         <p className="font-medium text-foreground">If a computer reports nothing</p>
         <p>
           Re-run the managed installer on it. The agent that collects all of this is
@@ -530,6 +627,22 @@ const SECTIONS: Section[] = [
           re-run the installer on the machine itself, since <strong>Update</strong>{' '}
           cannot reach it, then accept it as above. A computer archived by mistake
           comes back with <strong>Restore</strong> on the same page.
+        </p>
+        <p className="font-medium text-foreground">Updating or upgrading a computer&apos;s agent</p>
+        <p>
+          From 0.34 the <strong>Agent</strong> card on a computer&apos;s Overview tab says which agent it runs, its
+          version and whether that is current, its update channel and the portal&apos;s update mode.{' '}
+          <strong>Update agent</strong> re-runs the current installer on a standard agent (the same as Reinstall
+          agent); on a signed agent it is <strong>Check for update now</strong>, which installs only what the signed
+          repository lists. Linux and macOS agents act on nothing the console sends, so the card gives the command to
+          re-run on the computer. <strong>Upgrade to signed agent</strong> moves one Windows computer to the signed
+          agent at its next check-in, after a reason and a fresh sign-in; when it can&apos;t, the card says exactly
+          what is missing, such as a signed release that has not been published yet. It is refused while the portal is
+          in <em>Signed only</em> mode and held while updates are paused for the business. Several computers can be
+          moved at once from the device list, and{' '}
+          <Link href="/endpoints/agent-migrations" className="underline">Agent migrations</Link> lists what is pending,
+          held, not confirmed or done. More in{' '}
+          <Link href="/docs/update-signing#moving-existing-agents" className="underline">Update signing</Link>.
         </p>
       </div>
     ),
@@ -575,7 +688,7 @@ const SECTIONS: Section[] = [
         </p>
         <p className="font-medium text-foreground">Who is told</p>
         <p>
-          Up to four escalation levels, each with webhook destinations, under the Notifications tab, and
+          Up to four escalation levels, each with webhook or (0.34) email destinations — email only to confirmed addresses, saying only the alert, computer, business and a link — under the Notifications tab, and
           optionally a ticket in ClientSt0r. Changing who is notified asks you to confirm it is you.
           See <Link href="/docs/monitoring" className="underline text-foreground">Monitoring and alerts</Link>.
         </p>
@@ -647,7 +760,13 @@ const SECTIONS: Section[] = [
           A key belongs to one business and can do only what its scopes allow — tick only what the
           integration needs. It is shown once, when it is created; only a hash is kept, so a lost key is
           revoked and replaced. Revoking takes effect at once. Keys are managed by a Business Owner, or by a
-          Platform Admin for any business. See the{' '}
+          Platform Admin for any business.
+        </p>
+        <p>
+          Creating a key asks you to <strong className="text-foreground">confirm it&apos;s you</strong>, whatever its
+          scopes: a key keeps working after you sign out, so a stolen or unattended session must not be enough to make
+          one. Your entries stay in the form while you confirm. A key cannot be edited afterwards — to change its
+          scopes, create a new one and revoke the old. Revoking never asks. See the{' '}
           <Link href="/docs/public-api" className="underline text-foreground">API guide</Link>.
         </p>
       </div>
@@ -783,8 +902,9 @@ const SECTIONS: Section[] = [
           <Link href="/patching" className="underline text-foreground">Patching</Link>: one{' '}
           <strong className="text-foreground">canary</strong> computer first, then rings. Each ring is one plan that two
           people on the approval roster approve with a passkey, and the next ring cannot be requested until the canary
-          reports every update <em>effective</em> (installed, no longer offered, no restart pending). Rem0te never
-          restarts a computer, so &ldquo;restart required&rdquo; waits for someone to restart it. Only security,
+          reports every update <em>effective</em> (installed, no longer offered, no restart pending). Unless the plan&apos;s
+          restart rule says otherwise (below), Rem0te never restarts a computer, so &ldquo;restart required&rdquo; waits
+          for someone to restart it. Only security,
           critical, rollup and ordinary Microsoft updates are installed; drivers, feature upgrades, optional updates and
           computers managed by WSUS, Intune or Configuration Manager are refused. Each computer&apos;s{' '}
           <em>Patches</em> tab shows what Windows Update offers it. Every agent reports this; installing through a
@@ -830,10 +950,32 @@ const SECTIONS: Section[] = [
           people on the approval signer, and then run inside their maintenance window: the canary first, the next ring
           only once the canary is confirmed effective. The approval signer, not this portal, signs each ring, and only if
           it stays inside the policy&apos;s computers, update classes, excluded KBs, window and expiry. Revoking one is
-          one-way. Computers are still never restarted. Platform Admins see a pre-flight listing what a production
+          one-way. Platform Admins see a pre-flight listing what a production
           install still lacks. Fixture-tested only so far. More in{' '}
           <Link href="/docs/patching-setup" className="underline text-foreground">Patching setup</Link> and{' '}
           <Link href="/docs/staged-patching" className="underline text-foreground">Staged patching</Link>.
+        </p>
+        <p>
+          From 0.34, a deployment, an <em>Install updates</em> request and a patch policy each have a{' '}
+          <strong className="text-foreground">restart rule</strong>: <em>Never restart</em> (the default) or{' '}
+          <em>Restart if required, inside the window</em>. With the second, a computer that Windows says needs a restart
+          after the install shows the same fixed warning as a scheduled restart and restarts 15 minutes later. It does not
+          restart while a RustDesk session is open (or when it cannot tell), or if the restart would fall after the
+          plan&apos;s window; then the deployment shows the restart as <em>deferred</em>, with why, and the update stays
+          &ldquo;restart required&rdquo;. The approvers see and sign the rule, and a plan under a policy may never ask for
+          more than the policy allows. After the restart a new scan confirms the update effective. The in-window restart
+          has been tested against a simulated Windows only; it has not yet run on a real Windows computer. More in{' '}
+          <Link href="/docs/staged-patching#restarting-after-updates" className="underline text-foreground">Staged patching</Link>.
+        </p>
+        <p>
+          From 0.34, computers <strong className="text-foreground">sign their own patch results</strong> with a key
+          they generate and never send. A policy names each computer&apos;s key, and the approval signer checks the
+          canary&apos;s signed results and scan before it opens the next ring, so a result this portal altered or made
+          up is refused. Every ring of a policy except the last needs computers running the 0.34 agent. Before approving
+          a computer&apos;s first policy, compare the key fingerprint on the approval page with{' '}
+          <code>rem0te-agent.exe status</code> on the computer. Policies approved before 0.34 can still run their
+          canary, but no later ring. More in{' '}
+          <Link href="/docs/staged-patching#signed-results-034" className="underline text-foreground">Signed results</Link>.
         </p>
         <p>
           From 0.31 the menu is organised by job: <strong className="text-foreground">Dashboard</strong>,{' '}
@@ -851,9 +993,15 @@ const SECTIONS: Section[] = [
           own SHA-256. A version goes from draft to review to approved or rejected, and someone other than everyone who
           wrote it must approve it, with a fresh sign-in. Before you approve, the page shows warnings for things like{' '}
           <code>Invoke-Expression</code>, downloads, encoded commands, credentials and disabling Defender. They&apos;re
-          warnings, not a verdict. <strong className="text-foreground">Scripts can&apos;t run yet</strong>: they&apos;ll
-          only run through the signed agent and the approval roster, and that path hasn&apos;t been tested on real Windows.
-          Writing needs <em>Write scripts</em>; reviewing needs <em>Review scripts</em>. More in{' '}
+          warnings, not a verdict. <strong className="text-foreground">Running a script (0.34)</strong>: on an approved
+          version, <em>Run this version</em> first proposes it to the approval signer, where two approvers who didn&apos;t
+          write it add its exact SHA-256 to the signer&apos;s own allowlist. Then you can request a run on up to 25 Windows
+          computers, with typed arguments and a timeout of 1 to 30 minutes; two more approvers approve each run on the
+          signer&apos;s page. The signed agent checks the hash before it runs anything, as SYSTEM, and each computer&apos;s
+          Actions tab shows the exit code and the first 64 KB of output, redacted, for 90 days. Revoking is permanent.
+          It has been tested with PowerShell 7 on Linux, <strong className="text-foreground">not yet on a real Windows
+          computer</strong>. Writing needs <em>Write scripts</em>; reviewing, proposing and revoking need <em>Review
+          scripts</em>; requesting a run also needs <em>Request approved actions</em>. More in{' '}
           <Link href="/docs/script-library" className="underline text-foreground">Script library</Link>.
         </p>
         <p>
@@ -878,12 +1026,23 @@ const SECTIONS: Section[] = [
           because the online flag keeps no history. There is no availability percentage: which computers were
           monitored, and when, is not recorded. Each report shows only what you can already see and needs the
           permission of its data (View computers, or monitoring:alerts). <em>Export CSV</em> is capped at 10,000
-          rows and recorded in the audit log before the file is sent. Reports are not scheduled or emailed. More in{' '}
+          rows and recorded in the audit log before the file is sent. More in{' '}
           <Link href="/docs/reports" className="underline text-foreground">Reports</Link>.
         </p>
         <p>
+          From 0.34 a report can be <Link href="/reports/schedules" className="underline text-foreground">scheduled</Link>:
+          weekly or monthly (days 1–28), at a time in a time zone, emailed to confirmed addresses with a link and,
+          optionally, the CSV — the same audited export, with the same row limit. It is computed with its owner&apos;s
+          access when it is sent; if the owner has lost access, nothing of the report is sent, the recipients are told
+          it did not come, and the schedule switches itself off. Each period is sent at most once, even across a restart.
+          Outbound email is set up by a Platform Admin under{' '}
+          <Link href="/settings/email" className="underline text-foreground">Settings → Email</Link>. Mail only ever
+          goes to addresses whose owner clicked a confirmation link. See{' '}
+          <Link href="/docs/email" className="underline text-foreground">Email and scheduled reports</Link>.
+        </p>
+        <p>
           From 0.28, writes can be <strong className="text-foreground">paused</strong> while an incident is looked at:
-          approved actions, remote connections, agent updates and ClientSt0r jobs, for every business or for one. A red
+          approved actions, remote connections, agent updates and ClientSt0r jobs — and, from 0.34, outbound email — for every business or for one. A red
           strip at the top of the page says what is stopped and why; a refused click says <em>CONTAINED</em>. A Business
           Owner can suspend their own business, and only they can lift that. A pause set by the MSP is lifted by someone
           other than whoever set it, always with a fresh sign-in. The audit log is now tamper-evident: every entry is
@@ -894,7 +1053,7 @@ const SECTIONS: Section[] = [
         <p>
           <strong className="text-foreground">What Connect does and does not control.</strong> Rem0te decides who may
           launch a session to which computer and records it; RustDesk carries the session. Once connected, clipboard,
-          file transfer and chat are RustDesk&apos;s own defaults, a computer installed by Rem0te accepts its password
+          file transfer and RustDesk&apos;s in-session chat are RustDesk&apos;s own defaults (the Chat tab is separate), a computer installed by Rem0te accepts its password
           without asking the person at it, and nothing ends a session from the portal. <em>Client opened</em> is not a
           connection; <em>Connection confirmed</em> comes from the computer&apos;s agent or from you. Platform Admins,
           technician managers and Business Owners can see every control and its effective state under Settings →
@@ -914,6 +1073,64 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'software-deployment',
+    title: 'Software deployment',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          From 0.34, <Link href="/automation/software" className="underline text-foreground">Automation → Software catalog</Link>{' '}
+          holds the software Rem0te may install on Windows computers: winget packages, each pinned to one exact version,
+          one installer SHA-256 and a <strong className="text-foreground">detection rule</strong> that says how a computer
+          tells whether it is installed. A business&apos;s Business Owner keeps its own entries; a Platform Admin keeps the
+          global ones. Every change needs a fresh sign-in and is recorded in the audit log with the hash and rule before and
+          after. The hash comes from the package&apos;s installer manifest in the public winget-pkgs repository, which the
+          server reads when you save, or is pasted by you and recorded as pasted.
+        </p>
+        <p>
+          <strong className="text-foreground">The hash check.</strong> Nothing is uploaded to Rem0te and the portal serves no
+          installer. Each computer downloads the installer with winget from winget&apos;s own source, hashes the downloaded
+          file itself and refuses it — installing nothing — unless it matches the pinned SHA-256 and the hash in the manifest
+          winget downloaded beside it. winget&apos;s own hash check then applies when it installs.{' '}
+          <strong className="text-foreground">The gap that remains:</strong> the install step downloads the installer again,
+          so the bytes actually installed are verified by winget against the source manifest, not hashed again by the agent.
+        </p>
+        <p>
+          <strong className="text-foreground">Approval, canary and rings.</strong> Installing and uninstalling are always high
+          risk: every plan needs two approvers on the approval signer with a passkey, you cannot approve your own request,
+          and nothing in this portal can approve. Software plans are not offered to ClientSt0r. A deployment starts with one{' '}
+          <em>canary</em> computer and then up to four rings of 25. The next ring can be requested only once the one before
+          it has passed: the canary&apos;s detection rule must confirm the change (a canary that already had it proves
+          nothing), failures must stay within the threshold you set, and the soak time must have passed. A deployment
+          keeps the entry as it was; if the entry is changed or archived, no further ring is requested. Computers are never
+          restarted. On one computer, the <em>Software</em> tab&apos;s <strong className="text-foreground">Managed software</strong>{' '}
+          offers Install and Uninstall when the server allows them — a one-computer deployment, approved the same way — and
+          otherwise says why not and what to do.
+        </p>
+        <p>
+          <strong className="text-foreground">Detection rules and compliance.</strong> A rule is one of three kinds: a
+          Programs and Features display name (exact or starting with), an uninstall registry key, or the version of a file
+          under Program Files — each with a version that must be <em>at least</em> or <em>exactly</em> a value. The{' '}
+          <Link href="/reports/software-compliance" className="underline text-foreground">Software compliance</Link> report
+          counts each entry on each Windows computer it applies to as compliant, outdated, missing or unknown, from the
+          newest evidence: the inventory&apos;s installed-software list (display-name rules only) or what the computer
+          reported when a software plan ran there. Evidence older than the report&apos;s limit is unknown, never compliant.
+        </p>
+        <p>
+          <strong className="text-foreground">When a computer refuses.</strong> A computer whose software is managed by
+          Configuration Manager or Intune refuses software plans (<em>managed elsewhere</em>), and the portal stops offering
+          them there. A computer without a usable winget — App Installer missing, or older than 1.7 — reports{' '}
+          <em>winget unavailable</em> or <em>winget too old</em> and runs nothing; its Software tab then warns before the
+          next request. Software plans need the signed agent and the approval signer.
+        </p>
+        <p>
+          <strong className="text-foreground">None of this has run on real Windows yet.</strong> It has been tested against
+          a simulated winget and simulated computers only. More in{' '}
+          <Link href="/docs/software-deployment" className="underline text-foreground">Software deployment</Link>.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'sign-in-and-offboarding',
     title: 'Sign-in, Step-up and Offboarding',
     content: (
@@ -926,10 +1143,10 @@ const SECTIONS: Section[] = [
           enough. It lasts 10 minutes for that sign-in.
         </p>
         <p>
-          Making an install link, and creating an API key that can make them, always ask — for every role, and whatever
-          the step-up settings say. A link puts a computer into a business, so an unattended or stolen session must not
-          be enough. API keys that already have the enrolment scope keep working: a key cannot confirm anything, and is
-          itself the second proof.
+          Making an install link, and creating any API key, always ask — for every role, and whatever the step-up
+          settings say. A link puts a computer into a business, and a key keeps working after you sign out, so an
+          unattended or stolen session must not be enough for either. API keys that already have the enrolment scope
+          keep working: a key cannot confirm anything, and is itself the second proof.
         </p>
         <p>
           You can add passkeys and link a single sign-on provider from{' '}

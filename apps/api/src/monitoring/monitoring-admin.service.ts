@@ -8,9 +8,12 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { CAP } from '../rbac/capabilities';
 import { validatePeerUrl } from '../integration/peers';
 import {
-  LIMITS, NotifyPolicyInput, parseParams, RECOMMENDED, RULE_KEY, RuleInput, RulePatch, scopeKeyOf, scopesFor, SEVERITIES,
+  type Destination, isEmailDestination, LIMITS, NotifyPolicyInput, parseParams, RECOMMENDED, RULE_KEY, RuleInput, RulePatch, scopeKeyOf, scopesFor, SEVERITIES,
 } from './engine';
 import { MonitoringService, VIEW_INCLUDE } from './monitoring.service';
+import { EmailService } from '../email/email.service';
+import { maskAddress } from '../email/mail-content';
+import { isMspActor, mayManageNotifications } from './notify-who';
 import { AlertEventsService } from './alert-events.service';
 
 const bad = (e: z.ZodError) => new BadRequestException({ code: 'INVALID_REQUEST', message: e.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ') });
@@ -40,20 +43,6 @@ const AlertQuery = z.object({
 
 const MAX_WINDOW_MS = 14 * 24 * 3_600_000;
 
-/**
- * Monitoring, as people see it: alerts, monitors (rules), maintenance
- * windows and who is notified.
- *
- *   alerts          monitoring:alerts — for computers the person can see.
- *                   Site-outage alerts need the whole business in view.
- *   monitors,       monitoring:configure inside a business (or a Business
- *   windows         Owner). Global ones: the MSP (Platform Admin or
- *                   technicians:manage, not as a technician).
- *   notification    a Business Owner for their business, or the MSP —
- *                   with fresh authentication (the controller checks).
- *                   A destination is where alert text, including computer
- *                   names, is sent, so it is not a configure-level choice.
- */
 @Injectable()
 export class MonitoringAdminService {
   constructor(
@@ -62,13 +51,12 @@ export class MonitoringAdminService {
     private readonly acl: AccessControlService,
     private readonly mon: MonitoringService,
     private readonly events: AlertEventsService,
+    private readonly email: EmailService,
   ) {}
 
   // ── Who ───────────────────────────────────────────────────────────────────
 
-  isMsp(a: ActorContext) {
-    return a.isPlatformAdmin || (!a.technician && (a.platformPermissions ?? []).includes('technicians:manage' as never));
-  }
+  isMsp(a: ActorContext) { return isMspActor(a); }
 
   /**
    * The business a configuration read is about. An MSP manager who is not a
@@ -95,8 +83,7 @@ export class MonitoringAdminService {
   }
 
   private assertPolicy(a: ActorContext, customerId: string | null) {
-    if (this.isMsp(a)) return;
-    if (!customerId || a.technician || a.businessId !== customerId || !this.acl.isBusinessOwner(a)) {
+    if (!mayManageNotifications(a, customerId, this.acl.isBusinessOwner(a))) {
       throw new ForbiddenException({ code: 'NOT_ALLOWED', message: customerId ? 'Who is notified is set by a Business Owner of this business, or by the MSP.' : 'The global notification policy is set by the MSP.' });
     }
   }
@@ -373,12 +360,22 @@ export class MonitoringAdminService {
       scope ? this.prisma.monitorNotifyPolicy.findUnique({ where: { scopeKey: `b:${scope}` } }) : null,
     ]);
     const mayBusiness = !!scope && (() => { try { this.assertPolicy(a, scope); return true; } catch { return false; } })();
-    const show = (p: typeof g, full: boolean) => p && {
+    type Lv = { afterMinutes: number; minSeverity: string; destinations: Destination[] };
+    const ids = (p: typeof g) => (p ? (p.levels as Lv[]).flatMap((l) => l.destinations.filter(isEmailDestination).map((d) => d.recipientId)) : []);
+    const [ga, ba] = await Promise.all([this.email.addresses(ids(g), 'global'), b ? this.email.addresses(ids(b), b.scopeKey) : new Map()]);
+    const show = (p: typeof g, full: boolean, book: typeof ga) => p && {
       scopeKey: p.scopeKey, ticketing: p.ticketing, updatedAt: p.updatedAt, updatedById: p.updatedById,
-      levels: (p.levels as { afterMinutes: number; minSeverity: string; destinations: { label: string; url: string }[] }[]).map((l) => ({ ...l, destinations: l.destinations.map((d) => ({ label: d.label, url: full ? d.url : this.maskUrl(d.url) })) })),
+      levels: (p.levels as Lv[]).map((l) => ({
+        ...l,
+        destinations: l.destinations.map((d) => {
+          if (!isEmailDestination(d)) return { label: d.label, url: full ? d.url : this.maskUrl(d.url) };
+          const r = book.get(d.recipientId);
+          return { label: d.label, recipientId: d.recipientId, email: r ? (full ? r.address : maskAddress(r.address)) : null, confirmed: !!r?.verifiedAt };
+        }),
+      })),
     };
     return {
-      global: show(g, this.isMsp(a)), business: show(b, mayBusiness || this.isMsp(a)),
+      global: show(g, this.isMsp(a), ga), business: show(b, mayBusiness || this.isMsp(a), ba),
       effective: b ? 'business' : g ? 'global' : 'none',
       may: { global: this.isMsp(a), business: mayBusiness },
     };
@@ -394,8 +391,12 @@ export class MonitoringAdminService {
       if (!c) throw new NotFoundException('Business not found');
     }
     this.assertPolicy(a, customerId);
-    for (const l of d.data.levels) for (const dst of l.destinations) this.checkDestination(dst.url, !customerId);
     const scopeKey = customerId ? `b:${customerId}` : 'global';
+    for (const l of d.data.levels) for (const dst of l.destinations) if (!isEmailDestination(dst)) this.checkDestination(dst.url, !customerId);
+    // An email destination is a confirmed recipient of this policy's own scope — never a typed address.
+    const emailIds = d.data.levels.flatMap((l) => l.destinations.filter(isEmailDestination).map((x) => x.recipientId));
+    await this.email.assertConfirmed(emailIds, scopeKey);
+    const book = await this.email.addresses(emailIds, scopeKey);
     const levels = d.data.levels as unknown as Prisma.InputJsonValue, ticketing = d.data.ticketing as unknown as Prisma.InputJsonValue;
     const row = await this.prisma.monitorNotifyPolicy.upsert({ where: { scopeKey }, create: { scopeKey, customerId, levels, ticketing, updatedById: a.userId }, update: { levels, ticketing, updatedById: a.userId } });
     this.mon.forgetPolicies();
@@ -410,7 +411,7 @@ export class MonitoringAdminService {
     await this.audit.log({
       action: 'MONITOR_NOTIFY_POLICY_CHANGED', customerId: customerId ?? undefined, actorId: a.userId, actorIp: a.ip, resource: 'monitor_notify_policy', resourceId: row.id,
       // Hosts only: a webhook URL's path is often its secret.
-      meta: { scope: scopeKey, levels: d.data.levels.map((l) => ({ afterMinutes: l.afterMinutes, minSeverity: l.minSeverity, destinations: l.destinations.map((x) => `${x.label} → ${this.maskUrl(x.url)}`) })), ticketing: d.data.ticketing },
+      meta: { scope: scopeKey, levels: d.data.levels.map((l) => ({ afterMinutes: l.afterMinutes, minSeverity: l.minSeverity, destinations: l.destinations.map((x) => (isEmailDestination(x) ? `${x.label} → email ${book.get(x.recipientId)?.address ?? x.recipientId}` : `${x.label} → ${this.maskUrl(x.url)}`)) })), ticketing: d.data.ticketing },
     });
     return this.getPolicy(a, customerId);
   }
