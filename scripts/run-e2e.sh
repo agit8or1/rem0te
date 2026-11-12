@@ -112,6 +112,12 @@ PORT="${E2E_API_PORT:-3101}"
 export API_BASE="http://127.0.0.1:$PORT/api/v1" FRONTEND_URL="http://scratch.example.com:3100"
 for t in smoke full business-access offboarding public-api public-address rollouts security-audit session-mutations support-requests sso-passkeys candidate-password secreg; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then echo "port $PORT is busy" >&2; exit 1; fi
+  # Empty the log before the API starts. The `>` below runs in the background
+  # job, so the readiness grep can read the file before it is truncated; with
+  # an E2E_OUT left over from an earlier run it then finds that run's
+  # "listening on" and starts the suite before this API listens (0.36: full and
+  # offboarding failed "fetch failed" this way on a re-run).
+  : > "$OUT/api-$t.log"
   env PORT=$PORT HBBS_PRESENCE_HOST=127.0.0.2 OIDC_ALLOW_INSECURE_LOOPBACK=true PUBLIC_API_URL="http://scratch.example.com:$PORT" \
     JWT_SECRET="$(openssl rand -hex 32)" LAUNCHER_TOKEN_SECRET="$(openssl rand -hex 32)" MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off METRIC_SWEEP=off RETENTION_SWEEP=off REPORT_SCHEDULE_SWEEP=off CHAT_RETENTION_SWEEP=off TRAY_SWEEP=off SCRIPT_OUTPUT_SWEEP=off \
     VERSION_FILE="$ROOT/version.json" node dist/main.js > "$OUT/api-$t.log" 2>&1 &

@@ -5,6 +5,971 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.36.0] — 2026-11-12 · *Beacon*
+
+The sixth increment of the RMM overhaul. Its theme is agents that keep themselves alive, up to date and reachable,
+and say so when they cannot. Five parts were built separately from 0.35 and integrated here:
+
+- **Agent health.** A computer RustDesk can still reach whose agent has gone silent can now raise an alert (an
+  opt-in *Agent silent* monitor). A queued automatic client update that its policy no longer wants is withdrawn or
+  re-planned on the next sweep, instead of being delivered anyway. The heartbeat cost of 0.35's automatic snapshots
+  was measured, found to be about three transactions per heartbeat, and removed.
+- **Signed revocation.** Revoking a script or archiving a software entry used to stop only *new* plans. The approval
+  signer now publishes a signed revocation statement, and the 0.36 signed agent refuses an already-signed plan that
+  it lists.
+- **Agents keep themselves up to date.** An outdated Windows agent is asked at check-in to update itself, using the
+  flags agents in the field already act on, paced (120 an hour by default) and bounded (three attempts per release).
+  On by default.
+- **The tray icon.** A Rem0te icon in the notification area, on both Windows agents: chat with support through the
+  portal's own `/assist` page, support requests with optional resource usage and a screenshot, and six self-help
+  tools. Chat recording becomes a per-business setting.
+- **Docs and polish.** Every documentation image was recaptured on 0.36. Text on the accent on the sign-in page and
+  Quick Connect takes its ink by luminance (the default accent now gets black text). The dashboard fits the screen
+  with a containment banner showing, and the map's marker colours are tested against a fixture GeoIP database.
+
+Three migrations (`0060_agent_health`, `0062_tray`, `0063_agent_auto_update`; 0061 is unused). No production
+dependency changed. Signed revocation, the signed agent's daily update check and the signed tray take effect only
+once a signed release built from 0.36 is published with the owner's keys; see *Upgrade notes*.
+
+### Agent health
+
+#### Added
+- **An "Agent silent" monitor (`AGENT_SILENT`).** It was reported against a real computer, DESKTOP-4SADDCN, whose
+  agent had been dead for twelve days while RustDesk could still reach it. 0.35 showed that computer amber
+  (*Reachable (RustDesk) · agent silent 12 d*), but nothing alerted. No inventory, update scan, monitor report or
+  action had arrived from it in all that time, and the only way to find out was to look at the computer.
+  - **When it raises.** The computer is reachable (`isOnline`, which RustDesk keeps true; `connectivity.ts`) and its
+    agent's last heartbeat is older than the threshold. The default threshold is 60 minutes, set per monitor between
+    **30 minutes and 7 days**. The floor is the console's own agent-silent window, `HEARTBEAT_STALE_MS`. Below it the
+    computer still shows *Online*, and the alert would contradict the page it links to.
+  - **When it resolves.** On the first sweep after the agent checks in again.
+  - **Unreachable as well.** If the computer stops being reachable too, an open alert is **held, not resolved**, and
+    no new one is raised. A computer RustDesk cannot reach is the Offline monitor's case. Resolving and re-raising on
+    every hbbs restart would only be noise.
+  - **Never checked in.** A computer whose agent has never checked in is skipped: no agent ever started there, so
+    none went silent.
+  - **What the alert says.** The title reads *"<name>: agent silent for 3 h — remote control should still work"*. The
+    duration is coarse on purpose (tens of minutes, then hours, then days), and an open alert's title is rewritten
+    only when that wording changes. The detail carries `lastHeartbeatAt`, `silentMinutes`, `thresholdMinutes`, and
+    the advice: use **Update agent** on the computer's Agent card, or re-run the installer on the machine.
+  - **Built on the existing alert path.** It runs in the existing 60 s monitoring sweep (`SWEEP_KINDS`) and uses the
+    same partial unique index (one open alert per computer and monitor), the same outage grouping and notification
+    policies, and maintenance-window suppression. No new notification path exists, so §17's rules on who is notified
+    apply unchanged.
+- **Opt-in at every scope.** Nothing raises unless someone creates the monitor: globally, or for a business, site,
+  device group or one computer, under 0.35's precedence (a narrower scope overrides or disables a wider one). It is
+  **not** in *Add recommended*. The Monitoring page offers it under *New monitor → Agent silent*, which prefills the
+  key `agent-silent`, Warning severity and 60 minutes (`GET /admin/monitoring/rules` now returns `optional`).
+- **The Agent card and the device page link to the alert.** While an agent-silent alert is open, the device header
+  shows an amber *Agent silent alert* chip, and the Agent card shows the alert with *open alert* (to
+  `/alerts?alert=<id>`) and the same remote-control advice.
+- **Migration `0060_agent_health`.**
+  - Adds `AGENT_SILENT` to `MonitorKind`.
+  - Adds `RustdeskNode.updatePolicyId`, which records which automatic policy queued a pending client update. It is
+    plain text with no foreign key, because a deleted policy is exactly the case the sweep has to recognise.
+  - Adds two audit actions, `CLIENT_UPDATE_AUTO_WITHDRAWN` and `CLIENT_UPDATE_AUTO_REPLANNED`.
+
+#### Fixed
+- **A queued automatic client update outlived the policy that queued it.** The client-update sweep queues a computer
+  when its effective policy's window opens. Before 0.36, nothing afterwards checked that the queue entry still made
+  sense. Suppose a computer was queued by a group's policy and then left that group, or the group's policy was
+  disabled or deleted, or the computer moved to a site whose policy pins a different version. The request stayed,
+  and the next heartbeat delivered an update no policy wanted any more. A policy *save* withdrew requests for its own
+  business, but nothing caught the changes that are not saves: group membership (rule-based groups change as
+  computers change), site moves, deletions.
+  - **Every sweep tick now re-resolves first** (`ClientUpdatesService.reconcileQueued`). For each computer with a
+    POLICY-queued request, it computes the effective policy as it is now, with group membership from the same
+    snapshot the heartbeat uses, and compares it with the policy that queued the request:
+
+    | Now | What happens | Recorded reason |
+    |---|---|---|
+    | the same policy, still enabled | kept | — |
+    | no enabled policy applies | **withdrawn**; the request is cleared | `policy_removed` (the policy is gone), `policy_off` (disabled), or `no_longer_applies` (it no longer reaches this computer) |
+    | a different enabled policy applies | **re-planned** under that policy; its version, its window | `no_longer_applies`, plus where it now comes from |
+    | a request queued before 0.36 (no policy recorded) | adopted by the policy that applies now, or withdrawn if none does | `no_policy_recorded` |
+
+  - **Every withdrawal and re-plan is audited**, per computer: `CLIENT_UPDATE_AUTO_WITHDRAWN` or
+    `CLIENT_UPDATE_AUTO_REPLANNED`, with the reason, a sentence saying it, the from/to policy ids, the new scope,
+    the target version and when the request was first queued.
+  - **Manual requests are never touched.** A request staged by a person is not reconsidered. Each write is
+    conditional on the row still holding exactly the request that was read (source, time and policy), so a
+    technician's request or a heartbeat that just cleared the row is never overwritten.
+  - **Policy saves.** The policy-save path (`clearUnwanted`) now uses the same reconciliation, so a save also
+    re-plans rather than only withdrawing. It reports a count in the save's own audit entry, not one entry per
+    computer.
+- **Monitoring no longer sends ClientSt0r an alert kind its contract does not name.** `AlertEventsService.emit` now
+  emits only the kinds in the integration contract's `Alert.kind` (`Alert.shape.kind.options`). Before this, a new
+  kind would fail `AlertEvent.parse` before signing. `AGENT_SILENT` is not in that contract, so its alerts stay in
+  Rem0te: alerts page, notifications, maintenance windows. Sending it to ClientSt0r needs a contract revision on
+  both sides.
+
+#### Performance
+- **The heartbeat cost of automatic snapshots, measured, and the regression fixed.** 0.35 estimated 1–2 ms per
+  heartbeat for deciding whether a snapshot was due, and did not benchmark it. `bench-heartbeat.mjs` now runs with
+  snapshots on (`BENCH_SNAPSHOTS`, default on). During warm-up every synthetic computer answers all three keys with
+  desktop-sized results, and the steady-state rounds then measure heartbeats with nothing due.
+  - **The 0.35 build.** About 3 more transactions per heartbeat (29.6–31.1 against 25.9–28.7 with snapshots off, at
+    1,000 and 5,000 computers), and roughly 3–4 ms more API CPU on the quieter runs. Almost all of that work
+    concluded *nothing is due*: a key is due every 6 hours, and a computer heartbeats every 3 minutes.
+  - **The fix.** `scheduleAutomatic` now remembers, per computer and in memory only, when its soonest key falls due
+    (capped at an hour, `quietUntil` in `snapshot-schedule.ts`), and skips the three reads until then.
+  - **What ends the window at once.** A tab being opened (checked from memory on every heartbeat, so a watched key is
+    still asked for on the next one), a result arriving, a run expiring, or a change to the intervals.
+  - **What it cannot see.** A row changed in the database behind the API's back (by hand, or by the retention sweep).
+    That is picked up when the window ends, at most an hour later.
+  - **Limits.** The map holds at most 50,000 computers and is emptied when it reaches that. A restart also empties it.
+  - **Measured after the fix:** 25.7–28.6 transactions per heartbeat at 1,000 computers and 26.9–28.2 at 5,000 with
+    snapshots on, the same as with them off. The same build with `SNAPSHOT_QUIET=off` measured 29.7–30.3.
+  - **CPU on the shared host** (load average 4–12) moved more with other work than the difference being measured.
+    `docs/server-sizing.md` has the full table and says so.
+
+#### Upgrade notes
+- **Migration `0060_agent_health`** adds enum values and one nullable column. Apply it with `prisma migrate deploy`
+  and **regenerate the Prisma client at the target**: the new `MonitorKind` value and column are unknown to the old
+  client. No production dependency changed.
+- **Nothing raises until someone creates an Agent silent monitor.** Upgrading changes no alert, notification or
+  ClientSt0r traffic.
+- **Requests queued before 0.36 carry no policy id.** On the first sweep after the upgrade, each is adopted by the
+  policy that applies now. If no policy applies, it is withdrawn and audited `no_policy_recorded`. A fleet whose
+  policies did not change sees only adoptions, which are not audited.
+- **`GET /admin/monitoring/rules` adds `optional`** (the starter list behind *New monitor*). `MonitorKind` in API
+  responses can now be `AGENT_SILENT`. No route was added or removed (API-REFERENCE unchanged, 476 routes).
+- **`SNAPSHOT_QUIET=off`** is a new API environment switch that restores 0.35's check-on-every-heartbeat.
+
+#### Decided (for the owner)
+- **Opt-in, not on by default.** Whether an agent-silent monitor should exist out of the box, and at what threshold,
+  is a fleet policy question. It is offered, not installed. §51 keeps it out of `RECOMMENDED`.
+- **Not sent to ClientSt0r** until the integration contract names the kind.
+- **Policy saves record a count, not one audit entry per computer.** The sweep records one entry per computer.
+
+#### Verification
+- `unit-agent-health.mjs` — **52 passed, 0 failed**:
+  - parameters and bounds (the floor is `HEARTBEAT_STALE_MS`);
+  - opt-in, and scope precedence across global, business, site, group and computer;
+  - raise, hold and clear, including never-checked-in and the unreachable hold;
+  - the title and advice;
+  - every `reconcileQueued` decision and reason;
+  - `quietUntil` (cap, near due, already due, open run, failed retry, schedule off, never taken, and agreement with
+    `dueKeys`).
+- `e2e-agent-health.mjs` (ports 3601/3602, its own API from `dist`) — **69 passed, 0 failed**:
+  - opt-in (no monitor, no alert; *Add recommended* leaves it out) and the 30-minute / 7-day bounds;
+  - raised on a reachable silent computer only — not one that checked in recently, one that is unreachable, or one
+    whose agent never checked in; one alert per problem across sweeps;
+  - precedence: a site switches it off, a group sets 240 minutes, a computer sets 30, and a computer leaving a group
+    falls back to the business monitor on the next sweep;
+  - notification goes to a loopback hook; a maintenance window holds it and ending the window releases it;
+  - held, not resolved, while unreachable; resolved on check-in and the resolution notified;
+  - A/B isolation between two businesses with the same hostnames: Birch's owner gets a 404 for Acme's alert and
+    computer, and neither business's lists or audit carry the other's;
+  - a queued update is withdrawn within a sweep after the computer leaves its group (audited `no_longer_applies`,
+    and the next heartbeat is handed nothing), re-planned under the business policy when one applies (and then
+    delivered), adopted without audit when it predates 0.36; a sibling still in the group is kept, and a manual
+    request is left alone.
+- **Mutation.** With the sweep's reconcile disabled, the same suite failed 6 checks (63/69), so it catches the bug.
+- `check-security-invariants.mjs` — §51, seven checks:
+  - opt-in;
+  - the threshold floor;
+  - raises only while reachable;
+  - not sent to ClientSt0r;
+  - the sweep reconciles before queuing and records the policy;
+  - withdraw and re-plan writes are whole, conditional and audited;
+  - the quiet window ends when a tab is open, a result arrives, a run expires or the schedule changes.
+
+  Each check was proven to fail with its guard removed (15 mutations, all caught). The suite reports 400 checks, all holding.
+
+- Existing suites run against this build, all 0 failed: `e2e-auto-snapshots` 79 (with the quiet window on, the default), `e2e-diagnostics-catalog` 70, `e2e-monitoring` 108, `e2e-auto-updates` 73, `e2e-group-policies` 77, `e2e-reports` 104, `e2e-dashboard` 53; `unit-snapshot-schedule` 85, `unit-monitoring` 91, `unit-group-policy` 38. `pnpm -r lint`, `tsc --noEmit` (both apps), `nest build`, `next build`, `check-versions.mjs` pass.
+- `bench-heartbeat.mjs` at 1,000 and 5,000 computers, before and after (figures above).
+- **Not proven here.**
+  - No browser test drives the new header chip or the Agent card link. They render from the same alert list the
+    Monitoring tab uses, and are type-checked and built.
+  - Nothing ran against a real Windows agent: silence was produced by ageing `lastSeenAt`.
+
+### Signed revocation
+
+#### Fixed
+- **Revoking a script, or archiving a software catalog entry, did not stop a plan that was already signed.**
+
+  A script's content hash taken off the approval signer's allowlist made the signer refuse every *new* run, and an
+  archived catalog entry stopped new deployments. But a `windows.script.run@1` or `windows.software.install@1` plan
+  signed before that was still a genuine plan inside its window (up to 24 hours), and the agent checks plans, not the
+  allowlist. So it ran. The docs said as much ("a run already signed can still be delivered inside its window; cancel
+  it from the Actions tab"), which left the cancel to a person, and a compromised portal could deliver the plan
+  regardless.
+
+#### Added
+- **The approval signer publishes a signed revocation statement.** `GET /internal/v1/revocations` on the signer's
+  loopback listener returns `rem0te-revocations-envelope/1`: a canonical-JSON statement (`rem0te-revocations/1`:
+  `seq`, `asOf`, `scripts`, `software`) signed with the job-approval key under its own domain prefix
+  `rem0te-revocations-v1\n`, so it can never be mistaken for a plan or anything else that key signs.
+  - `seq` is the number of revocations listed. Revocations are permanent, so it only grows. The signer keeps every
+    revocation it has ever published in `revocations.json` and publishes the union of that and what is on disk, so a
+    revocation file that goes missing from its directory stays revoked. At most 5,000 (`MAX_REVOCATIONS`; the agent
+    refuses more).
+  - `asOf` is the signer's clock, the same clock that writes a plan's `signedAt`. The statement is signed fresh on
+    every request.
+  - Software revocations are a new write-once store, `software-revocations/<entryId>.json`, keyed by **catalog entry
+    id** (carried in the signed `display.software.entryId`), not by installer hash: two businesses' entries for the
+    same package share params, and archiving one must not touch the other. `POST /internal/v1/software/:entryId/revoke`
+    (needs a reason; one-way) and the CLI `software list`, `software revoke --entry <id> --reason`, `revocations show`.
+    Nothing over HTTP or the CLI un-revokes.
+  - The signer now refuses a software plan that names no entry (`software_entry_missing`) and an install from a
+    revoked entry (`software_revoked`), at admission and again when an approver approves.
+- **The portal relays it**, unauthenticated, at `GET /api/v1/public/approval/revocations.json` (`no-store`,
+  `nosniff`; 503 when there is no signer or it does not answer). It passes on the signer's four envelope fields and
+  nothing else. It caches for 5 seconds and drops the cache when it revokes a script, archives software, or stores a
+  newly signed plan — the last so a fresh plan's first delivery is never handed a statement older than its signature.
+  Public because the agent fetching it holds no session, and because what it lists (revoked hashes and entry ids,
+  the same for every business) gives nobody anything to act on.
+- **The signed agent verifies it, keeps the newest, and refuses revoked plans** (`internal/action/revocation.go`). The
+  agent fetches the statement itself before every job, from the pinned portal (`internal/agent.FetchRevocations`,
+  capped at 1 MB), so `heartbeat.ps1` is unchanged. It verifies the signature against `approval/keys.json` from the
+  offline-rooted update chain only, and requires `seq` to equal the entry count.
+  - **Rollback refused:** a lower `seq`, or a statement that leaves out an entry it already holds, is refused and the
+    held one is kept (`actions\revocations.json` in the state directory, under a lock).
+  - **The check sits after the signed pause and before Precheck and the "executing" journal.** A script run whose
+    content hash, or an install whose entry, is listed is refused **`revoked`** — final, journaled done, reported,
+    never run later. Uninstalls are not refused: removing a withdrawn package is what an archive is usually for.
+- **The portal cancels what it has not delivered yet.** `dispatchBlock` returns `revoked` for a pending target whose
+  script entry is REVOKED or whose software entry is archived or gone, so those computers show *Canceled* with the
+  reason *revoked* without the agent being asked. A delivered one comes back *Refused by the computer* (`revoked`),
+  with the statement's `seq` in the detail; the Actions tab explains it.
+- **Archiving a software entry revokes it on the signer first.** If a signer is configured and does not confirm,
+  nothing is archived (`409 APPROVAL_SIGNER_REFUSED`): archiving only in the portal would leave delivered plans
+  runnable. The audit entry carries `revokedOnSigner`.
+
+#### Decided
+- **A stale statement fails closed.** A plan runs only with a statement whose `asOf` is no older than the plan's
+  `signedAt`; that statement necessarily lists every revocation made before the plan was signed. Without one the
+  agent refuses `revocations_stale` — **not final, not journaled, not reported**, like a window that has not opened —
+  and the next delivery tries again. Failing open would let a portal that withholds the statement run anything ever
+  signed, which is the attack this closes; failing closed costs availability only when the signer or relay is down,
+  and then no new plan can be signed anyway. This rule needs no new plan field: old agents parse plans strictly, so
+  adding one would have broken every agent in the field before the new one shipped.
+
+#### Known limits
+- **It takes effect only once a new signed agent is published with the owner's release keys.** Agents before 0.36
+  never fetch or check the statement. Nothing in this release changes any computer until that build is published.
+- A portal that withholds the newest statement can still have a computer run a plan signed **before** the
+  revocation, until that plan's window closes (at most 24 hours). Cancel it from the Actions tab as before.
+- If the signer revokes an entry but the portal's database update then fails, the entry is revoked on the signer and
+  still live in the catalog; archiving it again succeeds (revocation is idempotent).
+- Not run on real Windows: the agent path ran in `rem0te-action-sim` with PowerShell 7 on Linux.
+
+#### Upgrade notes
+- **Order: signer, then portal, then (when published) the agent.** Rebuild and redeploy the approval signer first
+  (`apps/api/scripts/build-approval-signer.mjs`); it creates `software-revocations/` and `revocations.json`. Then the
+  portal. A 0.36 agent runs nothing new without a fresh statement, so the relay must work before that agent ships.
+- **Entries archived before 0.36 were never revoked on the signer.** After upgrading, run
+  `software revoke --entry <id> --reason "archived before 0.36"` on the signer for each, or a plan signed before its
+  archive stays runnable inside its window on new agents too.
+- No migration; no `heartbeat.ps1` change. §14's action catalog is unchanged (this adds no action).
+
+#### Verification
+Go: `go test ./...` in `tools/windows-installer` — 155 top-level tests (250 with subtests), all passed, with 7 new:
+`TestRevocationNoStatementFailsClosedAndIsNotConsumed`, `TestRevocationForgedStatementRefused` (6 cases: another key,
+an unknown kid, a body edited after signing, a plan's signing prefix, a seq that does not count the entries, an
+unknown field), `TestRevokedScriptRefusedBeforeExecuting`,
+`TestOlderPlanStillRunsAndNewerPlanWaits`, `TestRevocationRollbackRefused`, `TestRevokedSoftwareEntry`,
+`TestFetchRevocations`; `go vet` for linux and windows clean. `unit-approval-signer.mjs` 207 passed (23 new: the
+statement verifies and only under its prefix, forged and edited ones refused, `software_entry_missing`, a half-approved
+install refused after the revoke, `software_revoked` at admission, uninstall still admitted, `seq` up by one, a deleted
+revocation file still published, capabilities, the CLI). `e2e-revocation.mjs` (new; real signer, API from `dist`,
+`rem0te-action-sim` with PowerShell 7) 44 passed: the relay, two runs signed before a revocation, A/B isolation, the
+revoke, forged and rolled-back statements refused, the undelivered target canceled `revoked`, the delivered one
+refused `revoked` before executing, an unrevoked older plan still running, plans signed after the revocation waiting
+on a stale statement and running on a fresh one, fail-closed with no statement, a software archive refusing a
+pre-signed install, and another business untouched. The seven suites that drive the sim now pass `-portal` and all
+passed: `e2e-approved-action` 76, `e2e-staged-patching` 94, `e2e-containment` 71, `e2e-maintenance-actions` 64,
+`e2e-patch-policies` 98, `e2e-script-run` 81, `e2e-software-deploy` 156 (re-run after the final build: 156); `unit-software` 146 and `unit-script-run` 136 passed. Invariant **§52** (9 checks, 24 mutations,
+each caught); §39's admission check widened for the new argument, and a refusal message reworded that §14's import scan read as
+an import. `docs/API-REFERENCE.md` matches the runtime route
+table (477 routes).
+
+### Agents keep themselves up to date
+
+#### Added
+- **An outdated Windows agent is now asked to update itself, on by default.** Until now an agent moved forward only
+  when someone clicked *Update agent* on its Agent card (0.34), so a fleet stayed on whatever version enrolled it.
+  Production has 0.30.1 and 0.18.25 agents checking in against a 0.35 server. Now, when a computer's agent is older
+  than what this server serves, the heartbeat response carries the flag that agent *already* acts on. Nothing new has
+  to be installed first, and the 0.30.x agents in production are covered. Code: `apps/api/src/agent-auto-update/`.
+  All decisions are in `schedule.ts`, which is pure and unit-tested on its own.
+  - **What "outdated" means.**
+    - A standard agent reports the platform version of the installer that wrote it. It is outdated when that version
+      is numerically older than `version.json`, read by the same lookup enrolment uses.
+    - A signed agent is outdated when its reported `agentSha256` is not the build the signed repository publishes.
+  - **Which flag, by agent version.** This was worked out from every tagged `heartbeat.ps1` (`git show <tag>:…`), not
+    assumed:
+    - 0.15.0 and later get `reinstallAgent`, which runs the current `windows.ps1`, as *Update agent* does.
+    - 0.13.x–0.14.x get `updateRustdesk`. Those agents report no version but do hold a device secret, and their
+      heartbeats re-run the installer on that flag alone (it is honoured from 0.11.0).
+    - Signed agents get `reinstallAgent`, which runs `rem0te-agent.exe update`. That installs only what signed
+      metadata lists, and the signed pause still stops it inside the agent.
+    - Agents older than 0.13.0 have no device secret, so nothing they say is believed and nothing is handed to them.
+      The Agent card says **Manual update required** and gives the exact command: `irm '<base>/api/v1/public/install/windows.ps1?token=<token from Add device>' | iex`.
+    - Linux and macOS agents get the same treatment, with their `curl … | sudo bash` command. See *Decided*.
+  - **Bounded, so a release can never become a download loop.** Each attempt downloads the RustDesk client again
+    (about 40 MB).
+    - An attempt hands the flag out for **20 minutes**. That is shorter than the 30-minute floor every agent since
+      0.11.0 keeps between installer runs, so one attempt is at most one installer run.
+    - The server then waits **an hour** for the new version to be reported, and backs off before trying again:
+      attempt 2 comes at least **2 hours** after attempt 1, and attempt 3 at least **8 hours** after attempt 2.
+    - After the last attempt (**3** by default, 1–10) it stops. The computer is shown **Auto-update failing (3 of 3
+      attempts)** on its Agent card and in the settings card's failing list.
+    - It is not asked again until the next release, because a new target starts from zero, or until someone clicks
+      *Update agent*, which also resets the count.
+  - **A global pace.** At most *N* attempts start per hour across the whole platform (default **120**, 1–2,000).
+    - They are counted from the history table under `pg_advisory_xact_lock`, so the cap holds across API processes.
+    - Starting an attempt is a conditional update keyed on the state that heartbeat read, so two concurrent
+      heartbeats from one computer start one attempt, not two.
+    - At the default, 5,000 outdated computers take about 42 hours.
+  - **Holds.** Nothing goes out while any of these applies, and the Agent card names the one that does:
+    - an `updates` containment pause (business or global);
+    - a staged rollout owning the computer;
+    - another installer re-run already queued: a RustDesk client update, *Update agent*, or a move to the signed agent
+      (each of these updates the agent too);
+    - a remote session open (the install restarts RustDesk);
+    - outside the policy's window, under *Only inside this policy's window*;
+    - someone logged on, when that policy also skips computers with a user;
+    - the pace used up.
+- **Settings → Client updates → *Keep agents up to date automatically — every business*** (Platform Admin). It has an
+  on/off switch, starts per hour and attempts per computer per release. It also shows the pace used this hour, the
+  attempts in the last day, and the computers that are failing.
+  - Routes: `GET`/`PUT /admin/agent-auto-update`.
+  - A change needs fresh authentication and is audited as `AGENT_AUTO_UPDATE_SETTINGS_CHANGED`, with before and after.
+  - 478 routes in all.
+- **The client-update policy gains *Keep agents up to date automatically***, for a business, a site or a device group.
+  It is independent of the RustDesk checkbox.
+  - The options are *Any time, paced* (the default), *Only inside this policy's window*, *Off*, and (for a site or
+    group) *Inherit*.
+  - The 0.35 precedence decides: the most specific policy that sets a mode wins (group, then site, then business), and
+    *Inherit* passes the decision to the next one.
+  - Changing it to anything but *Off* needs fresh authentication. Opting out never does.
+  - Audited as `CLIENT_UPDATE_POLICY_CHANGED`, with `agentMode` in before and after.
+- **The Agent card shows the state.** It is one of: *Up to date*, *Queued* (with the reason and the window), *Updating
+  (attempt n of m)*, *Auto-update failing*, *Opted out* (and by what), or *Manual update required* (with a copy
+  button). An *Automatic update history* list sits below it.
+- **The device list gains *Agent: Agent outdated*** (`agent=outdated`). It covers standard Windows agents reporting an
+  older version and signed agents not on the published build. An agent that reports no version stays under *No agent
+  report*, because it cannot be told apart from a RustDesk-only computer.
+- **The signed agent checks for updates by itself.** Before this, a signed agent updated only when the portal set a
+  flag. Its heartbeat now runs `rem0te-agent.exe update` about once a day: every 20 hours plus up to 8 hours of jitter,
+  stamped in `C:\ProgramData\Rem0te\update-check.next`.
+  - It runs only on a heartbeat whose response says it may (`agentSelfCheck`): not opted out, inside a window policy's
+    window, no `updates` pause, no rollout and no open session.
+  - It never runs on the same heartbeat as a portal-requested update.
+  - A missing, past or more-than-two-days-out stamp is rescheduled rather than trusted.
+  - **This is part of the signed `windows/install.ps1`, so it takes effect only once a signed release built from 0.36
+    is published with the owner's keys.** Until then, signed agents update when the portal asks them to, which works
+    today wherever a signed build is published.
+
+#### Decided
+- **Every release counts as an agent update.** The standard agent's version *is* the platform version, so a release
+  that did not touch the heartbeat script still makes every agent outdated. The alternative was a separate "agent
+  script version" that someone has to remember to bump, and the 0.8.2 episode in `CLAUDE.md` shows how that ends. The
+  cost is one paced reinstall per computer per release.
+- **Linux and macOS agents are never updated from the server.** Those agents are read-only by design. They act on no
+  flag from the portal (§24, §32), and giving them one would make a compromised portal able to run a root installer
+  on every Unix computer. Their Agent card says *Manual update required* with the command.
+- **There is no canary-first.** The client-update machinery has no canary notion to reuse cheaply. A cautious business
+  gets the same effect by hand: *Off* on the business policy and *Any time* on a pilot device group's policy.
+- **Automatic attempts are history rows, not audit entries.** Each attempt is an `AgentAutoUpdateAttempt` with no
+  requester. One audit row per computer per release would bury a sealed log that can never be pruned. The settings
+  and policies that cause the attempts are audited.
+- **Opting out needs no fresh authentication;** turning it on or widening it does. This follows the containment rule
+  that making things safer is never harder than making them riskier.
+
+#### Upgrade notes
+- **Schema change: migration `0063_agent_auto_update`.** It adds an enum, `ClientUpdatePolicy.agentMode`
+  (nullable, so it inherits), three `RustdeskNode` columns, three `PlatformSettings` columns and the
+  `AgentAutoUpdateAttempt` table, with CHECK constraints on every bound. Run `prisma migrate deploy`, rsync
+  `prisma/` and run `prisma generate` at the target, as `CLAUDE.md` describes. Otherwise the API throws `Unknown
+  field` on the first heartbeat.
+- **It is on as soon as it is deployed.** The first round after the deploy reaches every outdated Windows agent,
+  paced at 120 an hour. To deploy without it, either switch it off in the settings card first (the setting lives in
+  the database, so set it after the migration and before the restart), or run the API with `AGENT_AUTO_UPDATE=off`.
+- No production dependency changed. Nothing needs the owner's keys except the signed self-check, as described above.
+- `scripts/run-e2e.sh` and `e2e-ui.mjs` set `AGENT_AUTO_UPDATE=off`, so the other suites' outdated fixture agents are
+  not handed flags they do not expect.
+
+#### Verification
+- `unit-agent-auto-update.mjs`: **89 passed, 0 failed** (new, in CI). It covers the scheduling logic (channel, target,
+  mode resolution, every hold, the attempt window, verify grace, back-off and the cap). It also checks that the
+  generated legacy and signed installers and heartbeats parse with the pwsh `Parser`, runs the signed self-check
+  under pwsh against a stub agent (due, not due, a rescheduled stamp, never on a portal-requested update), and runs
+  `sh -n` over the Linux and macOS agents.
+- `e2e-agent-auto-update.mjs`, port 3641 (3642 for the switched-off API), added to `run-e2e.sh`: **96 passed, 0
+  failed**, through the real heartbeat route. It covers:
+  - an outdated agent getting `reinstallAgent`, and a 0.13 agent getting `updateRustdesk`;
+  - an up-to-date one getting nothing, and a pre-0.13 one shown as manual;
+  - the window;
+  - the pacing cap;
+  - the attempt cap and back-off up to *failing*, with *Update agent* resetting it;
+  - an opted-out business, and a site opted back in with a window (the group scope reuses the 0.35 resolver and is
+    covered by `unit-agent-auto-update.mjs`'s mode resolution, not by this suite);
+  - an open session and a logged-on user holding it;
+  - the containment pause;
+  - a rollout owning the computer;
+  - the `AGENT_AUTO_UPDATE=off` process;
+  - step-up and audit on settings and policy;
+  - Business A against B isolation (404s).
+- Existing suites touched by the change, all passing:
+  - `e2e-device-list.mjs` 115;
+  - `e2e-agent-upgrade.mjs` 94;
+  - `e2e-auto-updates.mjs` 73;
+  - `e2e-group-policies.mjs` 77;
+  - `e2e-dynamic-groups.mjs` 98;
+  - `e2e-containment.mjs` 71;
+  - `e2e-signed-updates.mjs` 46;
+  - `unit-signed-installer.mjs` 52 (its legacy/signed line-count tolerance went from ±120 to ±140 for the 14-line
+    self-check);
+  - `unit-system-inventory.mjs` 92;
+  - `unit-diagnostics-catalog.mjs` 110;
+  - `unit-update-window.mjs` 85;
+  - `unit-group-policy.mjs` 38;
+  - `unit-device-views.mjs` 77;
+  - `unit-macos-agent.mjs` 27;
+  - `unit-agent-migration.mjs` 57.
+- `check-security-invariants.mjs`: all hold, including the new **§53** (11 checks). The checks cover:
+  - the flag goes out only on an authenticated, unpaused heartbeat, and never over a flag already going out;
+  - the attempt is bounded under the 30-minute floor and capped;
+  - the pace is counted under an advisory lock;
+  - Linux and macOS are never handed a flag;
+  - the settings route is platform-admin-only with `assertFresh` and an audit entry;
+  - widening a policy's agent mode needs fresh authentication;
+  - the card is scoped before anything is read;
+  - the self-check exists only in the signed variant and never runs beside a requested update;
+  - `AGENT_AUTO_UPDATE=off` is exact and set for the other suites.
+
+  Each guard was removed in turn: **17 mutations, all caught**, then restored. `check-versions.mjs` passes.
+  `pnpm -r lint`, `tsc --noEmit` in both apps, `nest build` and `next build` all pass.
+- `docs/API-REFERENCE.md` was regenerated and matches the runtime route table (478). The docs bundle was regenerated
+  (39 pages).
+- **Not run on a real Windows computer.** The signed self-check is unit-tested only and needs a signed release.
+
+### Docs, screenshots and console polish
+
+#### Fixed
+- **White text on a light accent, on the sign-in page and Quick Connect.** The sign-in band and the Quick Connect
+  step chips and download buttons drew `text-white` on whatever accent the business had set. A pale accent such as
+  `#FDE68A` gave about 1.4:1, so the product name and the step numbers were close to unreadable. Both pages now pick
+  the ink with `inkOn()` from `lib/contrast.ts` (0.35), which takes the WCAG relative luminance and returns black or
+  white, whichever contrasts more. An accent `inkOn` cannot parse falls back to `#3B82F6`. The default `#3B82F6`
+  therefore now gets **black** ink (5.71:1 against 3.68:1 for white). That is a visible change on every unbranded
+  install, and it is deliberate.
+- **The dashboard overflowed the screen while a containment banner was showing.** The 0.35 fitted layout sized itself
+  as `100dvh − 3rem`, leaving the banner out of the sum, so with a pause in force the page grew a scroll bar and the
+  bottom row of panels was cut off. `ContainmentBanner` now publishes its own height as `--containment-banner-h`,
+  measured with a ResizeObserver and removed when the banner goes. The dashboard subtracts it.
+- **On a phone, the site-outage strip cut its own sentence.** The strip's `max-h-24` cap is now applied only at `lg`,
+  where the layout is fitted. Below that the page scrolls, and the cap had hidden "Open alerts".
+- **The map marker colours had no test.** No suite could place a computer on the map, because the test stacks have no
+  GeoIP database and must not read production's. `apps/api/scripts/lib/mmdb-fixture.mjs` writes a real MaxMind DB
+  2.0 City file (IPv4, 24-bit records, no pointers) holding only the RFC 5737 networks a suite gives it. `e2e-ui`
+  writes one to a temporary directory and points its API at it with `GEOIP_DB_PATH`, so the API's own lookup code
+  resolves the addresses unchanged.
+
+#### Changed
+- **Every documentation image was recaptured on 0.36.** That is 59 gallery images, three of them new
+  (`dashboard-narrow-dark`, `device-agent-silent-light`, `device-group-monitor-dark`), and 36 guide images in light
+  and dark, including the phone widths. The phone-width captures date from 0.33 and no longer showed the 0.34 drawer.
+  - `tech-01-signin` is now generated as a signed-out callout capture. The old one was hand-made and showed white on
+    blue.
+  - Callout specs were fixed where the pages had moved. The script-library notice is now "How a script runs".
+    Monitoring notifications is now 1250 px tall, so callouts 3–4 stay on the page. Client updates is 3400 px with a
+    new callout on the device-group policy, so `docs/updates.md` now has 7 keys.
+  - The numbered keys in `technician-guide.md`, `updates.md`, `script-library.md`, `diagnostics.md` and
+    `containment.md` were rewritten to match.
+- **The docs demo now shows the amber state.** `_docs-demo-refresh.ts` keeps NWD-BILLING-RMT *agent silent*: it stays
+  `isOnline` with its RustDesk node fresh and a heartbeat 3 d 2 h old. The refresh now logs
+  `23 online, 1 agent silent, 10 offline`. Run the docs API with `STALE_SWEEP=off`, or the sweep marks that computer
+  offline.
+- **Device-group policy in the docs demo.** `_docs-demo-workbench.ts` seeds a client-update policy and an Offline
+  monitor on the Remote depots group ("Depot offline", 60 min). It clears group policies and monitor rules before it
+  deletes the groups.
+- **ClientSt0r's response to revision 3 is recorded.** It was received 2026-11-11 and is filed in
+  `INTEGRATION_COORDINATION.md` §5, §6, §8, §9, a new §9A (requests R2–R16), §10 and §11, in
+  `docs/integration-clientst0r.md` ("Revision status") and in the contract README and `CLIENTST0R.md`. ClientSt0r
+  acknowledges P1–P10 as proposed and answers P7: the intended effect of a handoff is a staff note in the computer's
+  History. Their development branch reports CS-1..CS-7 done, and their cross-peer run reports 99 passed and 3 failed.
+  Both are recorded as reported, not reproduced by rem0te. **`contract_revision` stays 2.** Revision 3 is agreed but
+  not built, and the response does not address revision 4 (P11/P12 and questions a–c). R10 was checked and is right:
+  `examples/index.json` says 0.29.1 under revision 2. It is not fixed here, because that file is generated. The repo
+  has no `responses/` convention, so the response is quoted, not copied.
+
+#### Upgrade notes
+- No migration and no API change. The web app is the only runtime change: the login band, Quick Connect, the
+  dashboard and the containment banner.
+- A business with a dark accent sees no change. With the default or a light accent, the sign-in band and the Quick
+  Connect chips switch to black text.
+- The repository grows by about 24.5 MB of new PNG blobs: 92 images replaced and 3 added. PNGs do not compress
+  further in a pack. In the working tree the images went from 22.9 MB to 24.5 MB (+1.6 MB, 0.8 MB of it the three
+  new ones).
+
+#### Verification
+- `e2e-navigation.mjs` against the docs stack (4000/4001, `reboot_remote_docs` migrated to 0059, workbench and
+  refresh run): **350 passed, 0 failed**. No navigation bugs were found.
+- `e2e-ui.mjs` (ports 3611–3614): **879 passed, 0 failed** (the last run on the final build). New checks:
+  - the map draws amber `rgb(245, 158, 11)`, green and grey markers from the fixture, and the tooltip reads
+    `1 computer · 0 online · 1 agent silent`;
+  - a business owner sees only their own business's marker;
+  - with a BUSINESS-scope containment pause at 1440×900, `--containment-banner-h` equals the banner's height, the page
+    does not scroll and every panel stays inside the viewport;
+  - for the accents `#FDE68A`, `#1E3A8A` and `#3B82F6`, the login band and `/quick` inks are ≥ 4.5:1.
+- `check-security-invariants.mjs` §54 adds 4 checks:
+  - e2e-ui uses a fixture `GEOIP_DB_PATH` and never a production path;
+  - the fixture's CIDRs are RFC 5737 only;
+  - nothing under `apps/api/src` imports the mmdb writer, and the writer is IPv4-only;
+  - login and `/quick` take their ink from `inkOn()` with no `text-white` on the accent.
+
+  Each was shown to fail with its guard removed (5 mutations), then restored. All invariants hold.
+- `check-versions.mjs`, `pnpm -r lint`, `tsc --noEmit` in both apps, `nest build` and `next build` all pass.
+- Every new and changed image was opened and checked. Masking held: the only addresses shown are 198.51.100.24,
+  `remote.example.com`/`.net` and 127.0.0.1, and no real hostname or the live domain appears. The docs demo reads the
+  host's default GeoIP file, as it always has, to place its fictional public addresses. The Updates guide image still
+  shows the capture host's kernel version and uptime.
+
+### The tray icon: chat, support requests, self-help
+
+#### Added
+- **A Rem0te icon in the notification area of every managed Windows computer, with either agent** ([tray.md](docs/tray.md)).
+  The owner asked for a tray icon with chat on both agents, an option to record chats, and, on the advanced agent,
+  opening a ticket (with resource usage and a screenshot), a DNS check, `ipconfig /renew` and similar. One Go program,
+  `rem0te-tray.exe` (`tools/windows-installer/cmd/rem0te-tray`), serves both agents, in the user's session. Its menu
+  is *Chat with support* (with an unread badge), *Open a support request…*, *Self-help tools* and *About*.
+  - **Signed agent:** `rem0te-tray.exe` is a new, optional signed target, `windows/rem0te-tray.exe`. Stage 2 installs
+    it to `C:\Program Files\Rem0te\tray\` (SYSTEM and Administrators full control; Users read and execute) and
+    records its SHA-256 in `agent-status.json` (`traySHA256`). The status then reports `tray: 1` and `chat: 2`, and
+    does so only if a tray was installed.
+
+    `rem0te-agent.exe tray-host` (SYSTEM) replaces the 0.34 chat host and the 0.34 Win32 chat window; `chat` stays
+    as an alias. Every 5 s it enumerates active sessions and starts the tray in each with `CreateProcessAsUser`, but
+    only a file whose SHA-256 matches the recorded one. It talks to the tray over the 0.34 pipe design, and the
+    Windows account comes from the session token. It also runs the elevated tools and consults the signed pause.
+  - **Standard agent:** the install script downloads the tray from `GET /public/install/rem0te-tray.exe`, pins it by
+    the SHA-256 printed into the script, and adds a `Rem0teTray` Run entry with `--standard`. The SYSTEM heartbeat
+    pairs it through `POST /tray/pair`, using the device secret, and writes a **tray key**
+    (`tk_<id>.<secret>`, hash stored, replaced on every pairing) to `C:\ProgramData\Rem0te\tray\tray.json`. The key
+    opens only `/tray/*`. A standard computer's device secret is refused there (`TRAY_KEY_REQUIRED`).
+- **Chat in the tray, through the portal's own page.** The chat window is `/assist/chat` in a WebView2 control,
+  running as its own process (`--chat-window`). It falls back to the default browser, with a balloon saying so, when
+  the WebView2 runtime is missing.
+  - **Signing in:** the tray asks for a **one-time code**, which is hashed and lives 60 s. It opens
+    `/assist/open?c=…`. One conditional update consumes the code and exchanges it for an `HttpOnly; Secure;
+    SameSite=Strict` cookie on `Path=/assist`, which lasts 2 h. The response is a **303** to `chat`, so the code
+    leaves the address bar.
+  - **The page** has its own CSP (`default-src 'none'`, `script-src 'self'`, no `unsafe-*`); the console's CSP is no
+    longer applied to `/assist`. Writes need `x-assist: 1`, and text is drawn with `textContent`.
+  - **The WebView2 control** answers 403 to anything outside `https://<portal>/assist/`. Dev tools, host objects,
+    web messages, the context menu and script dialogs are off. The URL reaches the window process on stdin, never
+    on a command line.
+  - **The person can start a chat** from the tray. It opens a chat and an `AGENT` support request with a fixed
+    description, and `CHAT_STARTED` records `by: end_user`. Chat protocol 2 means the tray; the
+    `/enrollment/chat/*` routes stay for protocol-1 agents.
+- **Chat recording, per business, with a platform default** (on). It is set on Settings → General → *Chat
+  recording*, and audited as `CHAT_RECORDING_CHANGED` (scope, before, after).
+  - **Who can change it:** a Business Owner for their own business, or a Platform Admin for any business and for
+    the default. Every change needs a **fresh sign-in**.
+  - **Each chat is frozen** as recorded or not when it starts. Both sides are told which.
+  - **A chat that is not recorded:**
+    - a technician's message is deleted when the person's page reports it read;
+    - a reply is deleted when a technician's panel acknowledges it (`POST …/chat/conversations/:cid/ack`,
+      `support:chat`);
+    - everything left is deleted at the end.
+
+    The conversation row keeps who, when and the counts.
+- **Support requests from the tray**, with optional **resource usage** (CPU, memory, system disk, uptime, the top 10
+  processes; path-like names dropped) and an optional **screenshot** (JPEG or PNG, ≤ 700 KB, ≤ 4096 px). Both boxes
+  are unticked by default, and the person sees the screenshot, and can remove it, before sending.
+  - Attachments are stored in the new `SupportRequestAttachment`. They are listed and served (`GET
+    /support-requests/:id/attachments/:aid`, nosniff, sandbox CSP, no-store) **only to someone who can see the
+    computer** as well as the queue. Anyone else sees "n attachments hidden".
+  - Attachments are deleted when the request is anonymised, and at 45 days regardless.
+  - Limits: 3 an hour per computer, 2 per Windows account, 3 open per computer. Refused content does not count.
+  - Containment never blocks a request.
+- **Self-help tools: a closed catalog of six**, identical in the API, the agent and a database `CHECK`:
+
+  | Tool | Agents | Runs as |
+  |---|---|---|
+  | `dns.check`, `net.test`, `net.details` | both | the user |
+  | `dns.flush`, `ip.renew` (with a confirmation) | signed only | SYSTEM |
+  | `rustdesk.restart` (refused while a session is open, or when that cannot be told) | signed only | SYSTEM |
+
+  - **Rate limits:** each tool has its own per-computer rate, and there are 30 runs an hour in all.
+  - **Containment:** `actions` stops the SYSTEM tools, and `remote` also stops the RustDesk restart. A refused run
+    is still recorded.
+  - **Offline:** the signed agent may run an elevated tool while offline if its last portal state and signed-pause
+    reading are each under an hour old. It reports the run later; at most 20 are queued, and the portal accepts
+    reports from the last 7 days, at most 20 a day.
+  - **Recording:** every run is in `TraySelfHelpRun`, on the computer's History tab under *Tray*
+    (`GET /endpoints/:id/tray`). It is audited as `TRAY_SELF_HELP` (run, tool, outcome, offline), with no username
+    and no output.
+- Migration `0062_tray`:
+  - new tables `AssistCode`, `AssistSession`, `SupportRequestAttachment`, `TraySelfHelpRun`;
+  - recording settings on `Customer` and `PlatformSettings`;
+  - `recorded` / `startedBy` on `ChatConversation`, and `technicianSeenAt` on `ChatMessage`;
+  - the tray key and `trayProtocol` on `Endpoint`.
+- `TRAY_SWEEP=off` stops the hourly clean-up: expired codes and sessions, runs older than 400 days, and runs never
+  reported on.
+
+#### Changed
+- **Chat now reaches standard Windows computers.** The tab says *the standard agent cannot chat until its tray is
+  installed* until the installer has been re-run from a 0.36 portal.
+- **The 0.34 chat window and its host are removed from the agent** (`chatui_windows.go`, `internal/chat`'s host,
+  client, protocol and transcript). The pipe code moved to `internal/tray`.
+
+#### Found while building this
+- **The 0.34 chat window was probably never runnable by the user it opened for.** The host started it from
+  `rem0te-agent.exe` in the agent's install directory, which `SecureDir` restricts to SYSTEM and Administrators. A
+  standard user's token would therefore have been refused execute on the very file it was asked to run. This was
+  never seen, because the window never ran on Windows. The tray lives in its own directory, which Users can read and
+  execute.
+- **No support request reaches ClientSt0r, from any origin.** Tray requests do not either; no new path was invented
+  for them. If tickets from the tray are wanted in ClientSt0r, that is a contract change on both sides.
+
+#### Decided
+- **The standard tray's Windows account is reported, not proven.** `tray.json` must be readable by the signed-in user,
+  so any local user of a standard computer can read the key, and can chat or file a request under another local
+  account's name and run the three read-only tools.
+
+  This is not a new way in:
+  - the key never runs an elevated tool, in the API or under the `CHECK`;
+  - it opens only `/tray/*`, for one computer;
+  - it reads nothing about any business;
+  - asking for help is already open to anyone with the business's support link.
+
+  The docs and the help page say so. On the signed agent the account comes from the session token.
+- **The page is the portal's, not the tray's.** Drawing chat in a web page shared by both agents means one renderer
+  of untrusted text, under a strict CSP, tested in a real browser. That is better than two hand-built Win32 views.
+  WebView2 runs in its own process because the wrapper library exits its process on internal errors.
+- **The local rate check counts only runs that go ahead.** A portal refusal does not use up the person's allowance.
+
+#### Upgrade notes
+- **Signed releases:** build `rem0te-tray.exe` with
+  `GOOS=windows go build -trimpath -ldflags "-H=windowsgui -s -w" -o rem0te-tray.exe ./cmd/rem0te-tray` and add
+  `-add windows/rem0te-tray.exe=…` ([update-signing.md](docs/update-signing.md)). A release without it installs no
+  tray, and the agent reports no chat.
+- **Standard computers** get the tray when their installer is next run from this portal. The portal serves the
+  signed target when an update repository is configured, otherwise `apps/api/dist/rem0te-tray.exe`; with neither,
+  the installer logs *no tray build* and continues.
+- **Schema:** run `prisma migrate deploy` and regenerate the Prisma client at the target (`0062_tray`).
+- **Not run on real Windows.** Nothing here — the icon, the menu, the form, the screenshot, WebView2,
+  `CreateProcessAsUser`, the pipe access list, `ipconfig` / `ping`, the Run key — has run on a Windows machine. The
+  UI and the docs say so.
+
+#### Verification
+- `apps/api/scripts/e2e-tray.mjs` — **142 passed**, against the API from `dist` on `rem0te_tray_test`. It covers:
+  - pairing and key replacement;
+  - code mint, exchange, replay, guess and expiry;
+  - cookie flags and page headers;
+  - technician and user-started chats;
+  - recording, with step-up, roles and audit, and unrecorded deletion counted in rows;
+  - support requests with usage and a PNG, attachment visibility and caps;
+  - self-help, with signed-only tools, rates, offline reports and history;
+  - containment (`actions`, `remote`);
+  - A/B isolation;
+  - no text, key, code or secret in the audit log.
+
+  Added to `scripts/run-e2e.sh` (with `TRAY_SWEEP=off`).
+- `apps/api/scripts/unit-tray.mjs` — **67 passed**; added to CI.
+- `apps/web/scripts/e2e-ui.mjs` `assistWindow` — the `/assist` page in Chromium at 420 × 600 (light) and 320 × 480
+  (dark): **36 checks** (18 per size; 41 in the narrowed run, with the stack checks).
+- `e2e-chat.mjs` **89 passed** and `unit-chat.mjs` **52 passed**, after the chat changes.
+- Go: `go test ./...` passes; `GOOS=windows go build ./...` and `go vet` pass on Windows and Linux.
+- PowerShell 7's parser accepts the generated standard (with and without a tray) and signed scripts, and their
+  heartbeat bodies.
+- `check-security-invariants.mjs`:
+  - **§55** (14 checks) is new;
+  - **§45** was rewritten for the tray: six chat routes, the WebView2 window, the tray holding no secret, and the
+    tray host's pipes.
+
+  Each of 27 guards was removed in turn and shown to fail its check, then restored.
+
+### Integration notes
+
+The parts were merged into `feat/v0.36.0` in this order: agent health, signed revocation, automatic agent update,
+docs and polish, the tray. Every branch started at 83bee2a (0.35.0) and wrote its invariant section as §51. Here they
+are §51–§55 in merge order, and the sections above use the final numbers:
+
+| § | Part | Checks |
+|---|---|---|
+| 51 | Agent health | 7 |
+| 52 | Signed revocation | 9 |
+| 53 | Automatic agent self-update | 11 |
+| 54 | Test stacks and the GeoIP database | 4 |
+| 55 | The tray | 14 (and §45 rewritten for the tray: 12 checks, from 11) |
+
+Check and test counts inside each part's section are that branch's own; the integrated counts are under
+*Verification (integrated)*. Where the branches met:
+
+- **Invariants.** Each merge after the first conflicted only at the end of `check-security-invariants.mjs`, where
+  each branch had appended its §51. All sections were kept and renumbered. Cross-references were fixed where they
+  named a number: `docs/rmm-gap-analysis.md` (the Console polish row's §51 is §54; the self-update and revocation rows
+  now name §53 and §52). `monitoring/engine.ts`'s "§51" is agent health's and stays. The tray's own references (`docs/tray.md`, `internal/tray/catalog.go`, `internal/tray/os_windows.go`) now say §55.
+- **`run-e2e.sh`.** Agent health and self-update both appended to the self-starting list; it ends `agent-health
+  agent-auto-update`, with `tray` after `chat`. Revocation's suite has its own `RELEASE_BIN` / `ACTION_SIM` / pwsh gate, and
+  `AGENT_AUTO_UPDATE=off` is exported beside the other switches.
+- **`docs/rmm-gap-analysis.md`.** The Console polish row takes docs-fresh's 0.36 wording, followed by agent health's
+  row. The *Not implemented* bullet combines agent health's "the agent-silent alert is done" with docs-fresh's "the
+  login ink and the guide's dashboard screenshots are fixed", and keeps self-update's own bullet.
+- **Client-update sweep and service.** Agent health (re-resolving queued requests, `updatePolicyId`) and self-update
+  (`agentMode` on the policy, its fresh-authentication rule) touched different functions and merged without conflict.
+  The two are independent: `reconcileQueued` keys on the RustDesk policy's `enabled`, self-update's mode resolver on
+  `agentMode`, so a policy with RustDesk updates off can still govern agent updates, and the reverse.
+- **Heartbeat path.** `enrollment.service.ts` and `windows-script.ts` merged without conflict between agent health
+  (the snapshot quiet window), self-update (the flag step and the signed daily check) and the tray. The tray adds the tray download and Run entry to the standard installer, the tray-host start to the signed heartbeat, `/tray/pair` from the SYSTEM heartbeat and the `windows/rem0te-tray.exe` signed target; self-update's daily `rem0te-agent.exe update` check and revocation's per-job statement fetch (in `action_windows.go` and `internal/agent`, not the heartbeat) sit beside it unchanged. The merged generated installers and heartbeats parse under PowerShell 7 (`unit-agent-auto-update`, `unit-tray`, `unit-signed-installer`).
+  `unit-signed-installer`'s legacy/signed line-count tolerance stays at self-update's 140; the integrated gap is
+  84 (1,614 against 1,698) lines.
+- **Signer and Go action package.** Only revocation touched them. §14 (the exact action catalog), §39 (script run)
+  and §40 (software deployment) still hold on the merged tree.
+- **Shared lists are unions:** `ci.yml` (`unit-agent-health`, `unit-agent-auto-update`, `unit-tray` — every
+  `unit-*.mjs` in `apps/api/scripts` is in CI), `e2e-ui.mjs` (docs-fresh's map, banner and accent checks and the mmdb
+  fixture; self-update's `AGENT_AUTO_UPDATE: 'off'`; the tray's `assistWindow` and `TRAY_SWEEP: 'off'`), `help/page.tsx`, `docs/server-sizing.md` (agent health's
+  bench figures, untouched by the others) and the docs bundle (40 pages; `tray.md` was added to ORDER by the tray branch). Generated files
+  (`docs/API-REFERENCE.md`, `docs-content.generated.ts`) were regenerated rather than merged.
+- **`CLAUDE.md`:** one paragraph per new section (§51–§55); §45's paragraph now describes the tray rather than the removed Win32 window, §44's note that `TRAY_SWEEP` and `AGENT_AUTO_UPDATE`
+  joined the sweep switches, and a *Things that will bite you* entry: `AGENT_AUTO_UPDATE=off` and `SNAPSHOT_QUIET=off` are test
+  or diagnostic switches.
+- **The 0.34 chat host and window are gone; their references are not.** The tray branch deleted
+  `internal/chat`'s host, client, protocol and transcript and `chatui_windows.go`. `e2e-chat.mjs` and
+  `lib/chat-device.mjs` still named `internal/chat/client.go` as the thing they imitate; they now say it is the chat
+  protocol 1 that 0.34 agents in the field still speak (the `/enrollment/chat/*` routes stay for them).
+  `docs/chat.md`'s fast-path paragraph says a 0.36 agent starts the tray instead. Nothing in code or the invariants
+  imports or reads a removed file: §45's agent checks read `internal/chat/text.go` (kept) and `internal/tray`.
+- **`schema.prisma`.** The tray branch had realigned `ClientUpdatePolicy`'s columns; self-update had added
+  `agentMode` to the same block. The merge keeps `agentMode` in the tray's alignment. `prisma format` was not run over
+  the whole file (it would rewrite 300 unrelated lines).
+### Verification (integrated)
+
+Run on the final tree, with all five parts merged and the release bookkeeping in place. The database was
+`rem0te_integrate36_test`, created empty for each full run. Steps 1–4 were also verified together before the tray
+was merged (all of `run-e2e.sh` passed then too).
+
+- **Static:**
+  - `scripts/check-security-invariants.mjs`: **439 checks hold**, including §51–§55. Before 0.36 there were 393.
+  - `check-versions.mjs` passes, and so does `gen-integration-contracts --check` (18 schemas, 11 signed examples).
+  - `pnpm -r lint` exits 0, and `tsc --noEmit` exits 0 in both apps.
+  - `prisma generate`, `nest build` and `next build` succeed.
+- **Prisma:** all 55 migrations, 0000–0063, apply to the empty database (0048, 0058 and 0061 are unused). `prisma
+  migrate diff` from the migrated database to `schema.prisma` reports *No difference detected*.
+- **Production manifest:** no branch changed an npm dependency. `pnpm deploy:manifest` gives 0.36.0 with 30
+  dependencies and no devDependencies, and `npm install --omit=dev --package-lock-only` exits 0 with 0
+  vulnerabilities. The Go module gains `github.com/wailsapp/go-webview2` v1.0.23 (and its indirect
+  `github.com/jchv/go-winloader`) for the tray's chat window; `go mod verify` passes.
+- **Routes:** `docs/API-REFERENCE.md` was regenerated and has 501 routes across 73 controllers (476 in 0.35, plus 1
+  revocation relay, 2 agent-auto-update settings routes and 22 tray routes). `--check` against the RouterExplorer
+  log of `run-e2e.sh`'s scratch API matches exactly (501 / 501). The docs bundle is 40 pages.
+- **Go agent (`tools/windows-installer`):**
+  - `go test -count=1 ./...`, with PowerShell 7.4.6 on `PATH`: 163 top-level tests, 258 with subtests, all pass,
+    none skipped.
+  - `GOOS=windows GOARCH=amd64 go build ./...` and `go vet ./...` pass, and `go vet ./...` passes for Linux.
+  - The `rem0te-release` and `rem0te-action-sim` builds (as CI builds them) succeed, and so does the tray as a
+    release builds it (`GOOS=windows go build -trimpath -ldflags "-H=windowsgui -s -w" ./cmd/rem0te-tray`).
+- **Unit scripts, every one in `ci.yml` (33, the same set as `apps/api/scripts/unit-*.mjs`), all exit 0, with pwsh
+  on `PATH`:**
+
+  | Script | Passed |
+  |---|---|
+  | `agent-auto-update` | 89 |
+  | `agent-health` | 52 |
+  | `agent-migration` | 57 |
+  | `ai-timeline` | 24 |
+  | `approval-signer` | 207 |
+  | `audit-chain` | 35 |
+  | `chat` | 52 |
+  | `device-views` | 77 |
+  | `diagnostics-catalog` | 110 |
+  | `dynamic-groups` | 68 |
+  | `email` | 122 |
+  | `group-policy` | 38 |
+  | `hbbs-peer-snapshot` | 29 |
+  | `integration` | 35 |
+  | `macos-agent` | 27 |
+  | `metric-history` | 42 |
+  | `monitoring` | 100 |
+  | `patch-policy` | 163 |
+  | `patch-summary` | 27 |
+  | `polish` | 25 |
+  | `presets` | 26 |
+  | `retention` | 47 |
+  | `script-library` | 125 |
+  | `script-run` | 136 |
+  | `search` | 37 |
+  | `session-mutations` | 30 |
+  | `signed-installer` | 52 |
+  | `snapshot-schedule` | 85 |
+  | `software` | 146 |
+  | `system-inventory` | 92 |
+  | `tray` | 67 |
+  | `update-signing` | 16 |
+  | `update-window` | 85 |
+
+  `build-approval-signer --list` also exits 0. `unit-signed-installer`'s legacy/signed line-count gap is 84 (1,614
+  against 1,698 lines) under its ±140 tolerance; the tray grew the standard script more than the signed one, so the
+  tolerance was not raised.
+- **`scripts/run-e2e.sh`:** run in full on the fresh database, with `RELEASE_BIN` / `ACTION_SIM` built from this tree
+  and `PWSH` (PowerShell 7.4.6) set. **All 56 suites passed and none were skipped.** Passed counts:
+
+  | Suite | Passed |
+  |---|---|
+  | `credentials` | 44 |
+  | `security-features` | 42 |
+  | `presets` | 114 |
+  | `monitoring` | 108 |
+  | `integration` | 77 |
+  | `dashboard` | 53 |
+  | `diagnostics-catalog` | 70 |
+  | `system-inventory` | 68 |
+  | `device-list` | 115 |
+  | `endpoint-visibility` | 114 |
+  | `device-views` | 142 |
+  | `dynamic-groups` | 98 |
+  | `add-device` | 62 |
+  | `auto-updates` | 73 |
+  | `group-policies` | 77 |
+  | `reports` | 104 |
+  | `script-library` | 138 |
+  | `linux-agent` | 86 |
+  | `macos-agent` | 106 |
+  | `enrol-stepup` | 67 |
+  | `search` | 113 |
+  | `metric-history` | 59 |
+  | `retention` | 43 |
+  | `presence-cache` | ALL PASSED |
+  | `ai-timeline` | 61 |
+  | `email` | 92 |
+  | `chat` | 89 |
+  | `tray` | 142 |
+  | `polish` | 49 |
+  | `auto-snapshots` | 79 |
+  | `agent-health` | 69 |
+  | `agent-auto-update` | 96 |
+  | `containment` | 70 |
+  | `approved-action` | 76 |
+  | `staged-patching` | 94 |
+  | `maintenance-actions` | 64 |
+  | `patch-policies` | 98 |
+  | `software-deploy` | 156 |
+  | `signed-updates` | 46 |
+  | `ticket-workflow` | 53 |
+  | `agent-upgrade` | ALL PASSED |
+  | `script-run` | 81 |
+  | `revocation` | 44 |
+  | `smoke` | end-to-end proof passed |
+  | `full` | FULL END-TO-END PROOF PASSED |
+  | `business-access` | 83 |
+  | `offboarding` | 63 |
+  | `public-api` | PUBLIC API END-TO-END PROOF PASSED |
+  | `public-address` | 43 |
+  | `rollouts` | 46 |
+  | `security-audit` | 57 |
+  | `session-mutations` | 43 |
+  | `support-requests` | 47 |
+  | `sso-passkeys` | 70 |
+  | `candidate-password` | ALL PASSED |
+  | `secreg` | All security regression checks passed |
+
+  **Fixed in `run-e2e.sh`: a readiness race on a re-run.** The first full run on the final tree reported `full` and
+  `offboarding` failed, each at once with `fetch failed`, with an empty API log. The scratch-API loop starts each API
+  in the background with `> "$OUT/api-$t.log"` and then greps that file for *listening on*. The redirect runs in the
+  background job, so the grep can read the file before it is truncated. With an `E2E_OUT` left over from an earlier
+  run (here the pre-tray run's), it found the old run's *listening on*, and the suite started before its API was
+  listening. CI never saw it because its log directory is always new. The loop now empties the log before it starts
+  the API. The passing run above reused the same stale log directory on purpose.
+- **`e2e-ui.mjs`, as CI runs it** (ports 3501–3504, against the database of the first final `run-e2e.sh` run, after it, as CI orders them;
+  the race below does not touch it): **915 passed,
+  0 failed**, including the tray's `/assist` window checks and the search-palette suite (24).
+- **Not run:**
+  - `e2e-navigation.mjs`: it needs the docs stack and is run by hand (docs-fresh ran it: 350 passed).
+  - `bench-heartbeat.mjs` was not re-run on the integrated tree; agent health's figures stand.
+  - Nothing ran on real Windows: not the tray, the tray host, WebView2, the agent's revocation check or the signed
+    daily update check.
+### Upgrade notes (all of 0.36)
+
+- **Schema change: three migrations.** Take a `pg_dump` first. Then:
+  1. Run `prisma migrate deploy`.
+  2. Rsync `apps/api/prisma/` to the target.
+  3. Run `npx prisma generate` there, as `CLAUDE.md` describes.
+
+  Without steps 2 and 3 the API throws `Unknown field` on the first heartbeat (`updatePolicyId`, `agentMode`, the
+  tray columns).
+
+  | Migration | Adds |
+  |---|---|
+  | `0060_agent_health` | `AGENT_SILENT` in `MonitorKind`; `RustdeskNode.updatePolicyId` (plain text, no foreign key); audit actions `CLIENT_UPDATE_AUTO_WITHDRAWN` and `CLIENT_UPDATE_AUTO_REPLANNED` |
+  | `0062_tray` | `AssistCode`, `AssistSession`, `SupportRequestAttachment`, `TraySelfHelpRun`; chat-recording settings on `Customer` and `PlatformSettings`; `recorded` / `startedBy` on `ChatConversation`, `technicianSeenAt` on `ChatMessage`; the tray key and `trayProtocol` on `Endpoint` |
+  | `0063_agent_auto_update` | an agent-mode enum and `ClientUpdatePolicy.agentMode` (nullable: inherit); three `RustdeskNode` and three `PlatformSettings` columns; the `AgentAutoUpdateAttempt` table; CHECKs on every bound |
+
+  0061 is unused.
+- **Deploy order: signer, portal, then the agent once it is published.**
+  1. Rebuild and redeploy the approval signer (`apps/api/scripts/build-approval-signer.mjs`). It creates
+     `software-revocations/` and `revocations.json`, and starts serving `GET /internal/v1/revocations`.
+  2. Then the portal (API and web). Its public relay, `GET /api/v1/public/approval/revocations.json`, answers 503
+     until the signer answers.
+  3. Then, when the owner publishes it, the 0.36 signed agent. It runs no new plan without a fresh statement, so the
+     relay must work before that agent ships.
+- **Run `software revoke` once for every software entry archived before 0.36.** Those archives happened only in the
+  portal and were never revoked on the signer, so a plan signed before the archive stays runnable inside its window,
+  on new agents too. The ids come from the portal's database, and the revoke runs on the signer host:
+
+  ```bash
+  # portal database: the entries archived before the upgrade
+  psql "$DATABASE_URL" -tAc 'SELECT id FROM "SoftwareCatalogEntry" WHERE "archivedAt" IS NOT NULL'
+  # signer host, once per id
+  node dist/approval-signer/main.js software revoke --entry <id> --reason "archived before 0.36"
+  node dist/approval-signer/main.js software list        # what the signer has revoked
+  node dist/approval-signer/main.js revocations show     # seq counts every revocation
+  ```
+
+  Revocation is one-way and idempotent. Scripts revoked before 0.36 need nothing: the signer already lists their
+  hashes.
+- **Automatic agent update is on by default.** The first round after the deploy reaches every outdated Windows agent:
+  every one, because the standard agent reports the platform version and every release counts as an agent update.
+  It is paced at **120 attempts an hour** across the platform (5,000 outdated computers take about 42 hours), each
+  attempt re-downloads the RustDesk client (about 40 MB), and a computer gets at most three attempts per release.
+  To defer it:
+  - switch it off in **Settings → Client updates → *Keep agents up to date automatically*** — the setting lives in
+    the database, so set it after `migrate deploy` and before the restart; or lower the pace there; or
+  - set a business, site or group policy's agent mode to *Off* (a pilot group set to *Any time* under a business
+    *Off* gives a canary by hand); or
+  - run the API with `AGENT_AUTO_UPDATE=off`, and take it out afterwards (it is a test switch; see `CLAUDE.md`).
+
+  Agents older than 0.13.0 have no device secret and are never asked; Linux and macOS agents are never updated from
+  the server. Their Agent card gives the command.
+- **The default accent's text colour changes.** On the sign-in band and the Quick Connect page, text on the accent
+  now takes black or white by WCAG luminance. The default `#3B82F6` gets **black** (5.71:1, against 3.68:1 for
+  white), so every unbranded install sees black text there. A business with a dark accent sees no change.
+- **What needs the owner's signed release.** Nothing in this list does anything until a signed release built from
+  0.36 is published with the owner's keys:
+  - the agent's revocation check (agents before 0.36 never fetch the statement; the portal-side cancel of undelivered
+    revoked targets works today);
+  - the signed agent's own daily update check (until then signed agents update when the portal asks, which works
+    wherever a signed build is published);
+  - the signed tray, `windows/rem0te-tray.exe`, built with `GOOS=windows go build -trimpath -ldflags "-H=windowsgui
+    -s -w" -o rem0te-tray.exe ./cmd/rem0te-tray` and added with `-add windows/rem0te-tray.exe=…`
+    (`docs/update-signing.md`). A release without it installs no tray, and the agent reports no chat.
+
+  Not needing keys: the agent-silent monitor, queued-update re-resolution, automatic update of standard agents
+  (they act on flags they already have), and the standard agent's tray (served by the portal and pinned by hash in
+  the install script, on the next installer run from this portal).
+- **Behaviour changes for API consumers:**
+  - `MonitorKind` can be `AGENT_SILENT`; `GET /admin/monitoring/rules` adds `optional`. `AGENT_SILENT` alerts are not
+    sent to ClientSt0r (not a contract kind).
+  - Archiving a software entry with a signer configured that does not confirm the revocation now fails
+    `409 APPROVAL_SIGNER_REFUSED`, and nothing is archived.
+  - The signer refuses a software plan naming no catalog entry (`software_entry_missing`).
+  - New routes: the revocation relay, `GET`/`PUT /admin/agent-auto-update`, and the tray's routes. 501 routes in
+    all.
+  - The device list adds `agent=outdated`.
+- **New environment switches, all for tests or diagnostics:** `AGENT_AUTO_UPDATE=off`, `SNAPSHOT_QUIET=off`,
+  `TRAY_SWEEP=off`. None should be set in production.
+- **No production dependency changed.** The target manifest does not need regenerating; `pnpm deploy:manifest` still
+  resolves under npm (see *Verification (integrated)*).
+- **Not run on real Windows.** The tray, the agent's revocation check and the signed daily update check ran only in
+  unit tests, `rem0te-action-sim` and PowerShell 7 on Linux.
+
+---
+
 ## [0.35.0] — 2026-11-12 · *Lantern*
 
 The fifth increment of the RMM overhaul. Its theme is a console that tells the truth about what it can see. Four

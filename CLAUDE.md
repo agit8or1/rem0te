@@ -214,6 +214,16 @@ previous build's files 404s every browser that already had the app open.
   lasting `isOnline` with no hbbs to keep it (`e2e-polish.mjs`, `e2e-ui.mjs`).
   The same goes for `SNAPSHOT_SWEEP=off`, which silently stops the automatic
   Processes / Services / Network snapshots.
+- **`AGENT_AUTO_UPDATE=off` and `SNAPSHOT_QUIET=off` are test or diagnostic
+  switches (0.36).** `AGENT_AUTO_UPDATE=off` stops the heartbeat handing
+  outdated agents an update flag. `run-e2e.sh` and `e2e-ui.mjs` set it so other
+  suites' outdated fixture agents are not asked to reinstall; in production
+  the setting belongs in *Settings → Client updates*, which is audited, not in
+  a unit file nobody reads. Using it to defer the first round after a deploy
+  is fine, but take it out afterwards. `SNAPSHOT_QUIET=off` restores 0.35's
+  three snapshot-schedule reads on every heartbeat; it exists to benchmark the
+  quiet window (`bench-heartbeat.mjs`) and costs about three transactions per
+  heartbeat for nothing.
 - **A maintenance window is not containment.** `MonitorSuppression` only
   holds notifications (and ClientSt0r's `alert.raised`); it never touches
   `ContainmentPause`. Keep them apart — §17 checks it.
@@ -459,7 +469,8 @@ with its audit entry. §29's bulk list is six actions (`agent.update`,
 database not named `test` or `scratch` before Prisma loads. It writes only to
 its temporary copy of the standalone build, and stops if the build's baked-in
 API destination (on this host, production's 3001) survives the patch. Its API
-runs with every sweep off (eleven switches in 0.35, found from the API source).
+runs with every sweep off (eleven switches in 0.35, found from the API source;
+`TRAY_SWEEP` and `AGENT_AUTO_UPDATE` joined them in 0.36).
 §18 covers it too. CI runs it as the `UI suite (browser)` step of the `e2e`
 job.
 
@@ -473,12 +484,15 @@ only to an authenticated signed agent. Audit rows carry ids and counts, never
 message text, and chat never updates or deletes an `ActivityLog` row. The
 2,000-character cap agrees in TS, SQL and Go, and `CHAT_RETENTION_SWEEP=off`
 is exported by `run-e2e.sh` — a separate sweep from `RETENTION_SWEEP`, so
-both switches are needed. On the agent the window process holds no secret and
-speaks no HTTP, its two pipes are first-instance, local-only and ACL'd to
-SYSTEM and the session user with the client PID checked, and text is drawn in
-read-only plain `EDIT` controls. **The window has never run on real Windows.**
-Behavioural proof: `e2e-chat.mjs` (port 3531); unit: `unit-chat.mjs` and the
-Go `internal/chat` tests.
+both switches are needed. On the agent (0.36: the tray replaced the 0.34 Win32
+chat window and its host) the signed tray holds no secret and speaks no HTTP:
+it talks only over two first-instance, local-only pipes whose DACL names
+SYSTEM and the session user, with the client PID checked. Its chat window is a
+WebView2 control that loads only `/assist` on the pinned portal, with dev
+tools, host objects and web messages off, and the page draws text with
+`textContent`. **The tray has never run on real Windows.** Behavioural proof:
+`e2e-chat.mjs` (port 3531); unit: `unit-chat.mjs` and the Go `internal/tray`
+tests.
 
 0.35 added five sections, §46 to §50, one per part of the release. §44 also
 now requires every `*_SWEEP` / `*_SEALER` off switch the API reads to be
@@ -533,6 +547,94 @@ deletes only finished automatic runs and never touches `ActivityLog`; and
 `SNAPSHOT_SWEEP=off` is exported by `run-e2e.sh` and set by `e2e-ui.mjs`.
 Behavioural proof: `e2e-auto-snapshots.mjs` (ports 3571–3573); unit:
 `unit-snapshot-schedule.mjs`.
+
+0.36 added §51 to §55, one per branch, numbered in merge order. Each branch
+wrote its section as §51; the integrator renumbers, so a branch's own notes
+and fragment say §51 whatever its final number.
+
+§51 is agent health. The agent-silent monitor (`AGENT_SILENT`) is opt-in: it
+is in `OPTIONAL`, never `RECOMMENDED`, `addRecommended` iterates only the
+latter, and no code or migration creates such a rule. Its threshold floor is
+`HEARTBEAT_STALE_MS`, so an alert never contradicts a header still saying
+Online. It skips an agent that never checked in, clears when the silence is
+under the threshold, holds (neither raises nor resolves) while the computer
+is unreachable, and only then breaches; it is swept, not heartbeat-driven.
+`AlertEventsService.emit` sends ClientSt0r only the kinds the contract's
+`Alert.kind` names, so this one stays in Rem0te until a contract revision.
+The client-update sweep calls `reconcileQueued` first, unconditionally, every
+tick, records `updatePolicyId` when it queues, and a withdraw or re-plan is
+a conditional write audited with its reason (`CLIENT_UPDATE_AUTO_WITHDRAWN` /
+`_REPLANNED`). The snapshot scheduler's quiet window only skips, is capped at
+an hour and 50,000 computers, and is dropped by an open tab, a result, an
+expiry or a schedule change. Behavioural proof: `e2e-agent-health.mjs` (ports
+3601/3602); unit: `unit-agent-health.mjs`.
+
+§52 is the signed revocation statement. The signer signs it under its own
+prefix, `rem0te-revocations-v1\n`, and the agent verifies the same prefix
+against `approval/keys.json` only, with `seq` equal to the entry count and at
+most 5,000 entries on both sides. The published set is the union of the
+ledger and what is on disk, so it never shrinks; software revocations are
+write-once (`flag: 'wx'`) and nothing over HTTP or the CLI un-revokes. The
+signer refuses `software_revoked` at admission and again at approval, and a
+software plan naming no entry. The agent keeps the newest statement and
+refuses a lower `seq` or one leaving out an entry it holds. Its check sits
+after the signed pause and before Precheck and the *executing* journal: a
+stale statement is `revocations_stale`, not final and not journaled; a
+revoked plan is final. The Windows agent fetches the statement from the
+pinned portal for every job, capped at 1 MB. The portal revokes on the signer
+before it archives (`409 APPROVAL_SIGNER_REFUSED` otherwise), its relay is
+one public GET passing the four envelope fields, and `dispatchBlock` cancels
+an undelivered revoked target first. Behavioural proof: `e2e-revocation.mjs`
+(needs `RELEASE_BIN`, `ACTION_SIM` and pwsh); unit: `unit-approval-signer.mjs`
+and the Go `internal/action` tests.
+
+§53 is automatic agent self-update. The heartbeat step runs only for an
+authenticated heartbeat outside an `updates` pause, adds a flag only when
+none is already going out, and comes before the containment override. It
+sends only `reinstallAgent` or `updateRustdesk`, with no nonce. Nothing is
+dispatched under a pause, a rollout, another queued install, a closed window
+or an open session, and the attempt cap is checked first. One attempt hands
+the flag out for 20 minutes, under the agent's 30-minute floor, and attempts
+back off. The global pace is counted under `pg_advisory_xact_lock`, and the
+node moves only from the state that heartbeat read. Linux and macOS agents,
+and computers without a device secret, are never asked. Attempts are
+`AgentAutoUpdateAttempt` history rows, not audit entries; the settings route
+is Platform Admin, `assertFresh` and audited, and a policy agent mode other
+than `OFF` needs fresh authentication. The signed heartbeat's daily check
+runs only `rem0te-agent.exe update`, only when the portal allows it, and the
+legacy channel has none. `AGENT_AUTO_UPDATE=off` is exact and set by
+`run-e2e.sh` and `e2e-ui.mjs`. Behavioural proof: `e2e-agent-auto-update.mjs`
+(ports 3641/3642); unit: `unit-agent-auto-update.mjs`.
+
+§54 is test stacks and the GeoIP database. `GeoipService` falls back to the
+production path when `GEOIP_DB_PATH` is unset, so on this host the browser
+suite used to read production's file. `e2e-ui.mjs` now writes its own City
+database with `apps/api/scripts/lib/mmdb-fixture.mjs` and hands it to its
+API; the fixture's networks are RFC 5737 only; nothing under `apps/api/src`
+imports the writer, which is IPv4-only. The login band and Quick Connect take
+their ink on the accent from `inkOn()`, never a fixed `text-white`.
+
+§55 is the tray. Three credentials, none of them the device secret in a
+user's hands: the signed tray holds nothing and asks the SYSTEM tray host over
+the pipes; the standard tray holds a tray key that opens only `/tray/*`,
+paired by the SYSTEM heartbeat with the device secret, replaced on every
+pairing, never able to run or report an elevated tool, while a standard
+computer's device secret is refused there; and the chat page holds an
+`HttpOnly; Secure; SameSite=Strict` cookie on `Path=/assist`, the only
+credential the page accepts. The link the tray opens carries a one-time code
+consumed by one conditional update with nothing read first, and no device
+secret, tray key or code reaches the page. `/assist` has its own strict CSP,
+the console's is not applied there, and page writes need `x-assist`. The
+self-help catalog is the same six tools, elevated flags and containment kinds
+in the API, the agent and 0062's CHECK; the tray host runs only `ipconfig` and
+`ping` from System32 (and the RustDesk restart), under the containment kinds
+each tool names, records refused runs, and starts only the tray whose SHA-256
+the signed install recorded. Changing chat recording is owner or Platform
+Admin, `assertFresh` and audited; an unrecorded chat keeps no text. Tray audit
+rows hold ids, tools and outcomes only; screenshots and usage are served,
+inert, only to someone who can see the computer; and `TRAY_SWEEP=off` is exact
+and set by `run-e2e.sh` and `e2e-ui.mjs`. Behavioural proof: `e2e-tray.mjs` (port 3632);
+unit: `unit-tray.mjs` and the Go `internal/tray` tests.
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
