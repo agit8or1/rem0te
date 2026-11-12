@@ -4,7 +4,8 @@ import {
 } from '@nestjs/common';
 import { Request } from 'express';
 import { EnrollmentService } from './enrollment.service';
-import { CreateClaimTokenDto, ClaimEndpointDto, HeartbeatDto, CommandResultDto, MonitorReportDto, ConfirmRotationDto } from './dto/enrollment.dto';
+import { CreateClaimTokenDto, ClaimEndpointDto, HeartbeatDto, CommandResultDto, MonitorReportDto, ConfirmRotationDto, ChatPollDto, ChatReplyDto } from './dto/enrollment.dto';
+import { ChatService } from '../chat/chat.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
 import { RequireCapability } from '../common/decorators/require-capability.decorator';
@@ -21,7 +22,7 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(EnrollmentController.name);
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private readonly enrollment: EnrollmentService, private readonly stepUp: StepUpService) {}
+  constructor(private readonly enrollment: EnrollmentService, private readonly stepUp: StepUpService, private readonly chat: ChatService) {}
 
   onModuleInit() {
     // Every minute: hbbs presence is near real-time (30 s registration
@@ -152,5 +153,31 @@ export class EnrollmentController implements OnModuleInit, OnModuleDestroy {
   async confirmRotation(@Body() body: ConfirmRotationDto) {
     const result = await this.enrollment.confirmRotation(body.rustdeskId, body.sha256, body.agentSecret);
     return { success: true, data: result };
+  }
+
+  // Public endpoint — the signed agent's chat host (0.34), while a chat is
+  // open on this computer: a long-poll held for at most 25 s, carrying the
+  // agent's acknowledgements (delivered / shown / read) and window state.
+  // Device secret required, like command-result. Bounded per process
+  // (CHAT_MAX_WAITERS) and one held poll per computer: see ChatService.
+  @Post('chat/poll')
+  @Public()
+  @RateLimit(120)
+  @HttpCode(HttpStatus.OK)
+  async chatPoll(@Body() dto: ChatPollDto) {
+    const dev = await this.enrollment.authenticateDevice(dto.rustdeskId, dto.agentSecret, 'chat_poll_unauthenticated');
+    return { success: true, data: await this.chat.devicePoll(dev.endpointId, dto) };
+  }
+
+  // Public endpoint — what the person at the computer typed (0.34). Device
+  // secret required; length and rate are capped per conversation and per
+  // computer in ChatService.
+  @Post('chat/reply')
+  @Public()
+  @RateLimit(60)
+  @HttpCode(HttpStatus.OK)
+  async chatReply(@Body() dto: ChatReplyDto) {
+    const dev = await this.enrollment.authenticateDevice(dto.rustdeskId, dto.agentSecret, 'chat_reply_unauthenticated');
+    return { success: true, data: await this.chat.deviceReply(dev.endpointId, dto) };
   }
 }

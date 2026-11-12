@@ -32,6 +32,7 @@ bundled into `/docs`. Integration work is tracked separately in
 | Containment | Pause actions, remote, updates or integration, per business or globally; three enforcement layers | I (70) |
 | Global search (0.33) | Ctrl+K palette and `GET /search`: devices (name, hostname, RustDesk ID, serial, signed-in user, IP, adapter IPv4, alias), businesses, sites, people and open alerts, eight per group. Each group reuses its list route's where builder and capability; another business's objects are not found even by exact hostname or RustDesk ID; throttled, not audited, query not logged | U (37), I (search 98; business-access 83 after /admin/search was removed); browser 24 (`e2e-search-palette.mjs`: light, dark, phone width; in CI from 0.34, run by `e2e-ui.mjs`) |
 | Phone-width layout and browser tests (0.34) | Below `md` (768 px) the sidebar is an off-canvas drawer from the top bar's menu button: a Radix dialog named *Main menu*, focus trapped, Esc / tap outside / navigation close it, focus returns to the button. No main page scrolls sideways at 375 px; wide tables scroll in their own container. `e2e-ui.mjs` runs in CI's `e2e` job with no docs stack: its own API and a patched copy of the web build, its own fixtures, desktop and 375 px, light and dark — sign-in, the drawer, Devices → every workspace tab, saved views, bulk selection, Ctrl+K, Add device and API keys through step-up (cancelled, then confirmed), Reports, System status, and a sweep of every menu page — failing on any console error, uncaught exception or unexpected failed request; then the search-palette suite against the same stack | Browser (`e2e-ui.mjs`, CI) — Chromium only; no WebKit/Safari or real-device test |
+| Chat (0.34) | Technician ↔ person at the computer: Chat tab on the device workspace, a window on the user's desktop from the signed agent (business and technician named), receipts only from the agent, long-poll fast path with a held-poll cap, containment (`remote`), rate and length caps, audited start/end with counts only, 400-day retention sweep (`CHAT_RETENTION_SWEEP=off`). [chat.md](chat.md) | I (e2e-chat), U (unit-chat, Go host tests), Windows build/vet; **window never run on real Windows**; signed agent only, so not available on production's standard channel |
 | Device sync to ClientSt0r | ClientSt0r's provider syncs computers by API key, scoped to one business | Code-level interop with ClientSt0r 3.17.660 (`INTEGRATION_COORDINATION.md` §8) |
 
 ## Partially working
@@ -90,8 +91,9 @@ bundled into `/docs`. Integration work is tracked separately in
   restart rule exists, **S** only. Not implemented: letting the person at the computer postpone it, retrying a
   deferred restart later in the window, checking console or Remote Desktop sessions (only RustDesk sessions are
   counted), and any run on real Windows.
-- **Remote-session controls:** file-transfer authorization, chat, recording, clipboard policy, multi-monitor
-  selection. RustDesk doesn't report enforcement, so none of these can be offered as restrictions (see Security).
+- **Remote-session controls:** file-transfer authorization, recording, clipboard policy, multi-monitor
+  selection. (Chat with the person at the computer is built in 0.34, outside RustDesk — see Working today. Not
+  implemented: chat on the standard agent, Linux or macOS; attachments; chat inside a RustDesk session.) RustDesk doesn't report enforcement, so none of these can be offered as restrictions (see Security).
 - **Browser-based remote desktop.**
 - **AI device summary in practice** (0.34): rem0te's side is built and proved against a reference peer, but
   ClientSt0r has neither agreed to nor implemented `device_timeline_v1` and its capabilities document (P11/P12), so

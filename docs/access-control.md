@@ -73,6 +73,7 @@ Stored on `Membership.capabilities` as an allowlisted string array. The vocabula
 | Support | `support:quick_connect` | Use Quick Connect |
 | | `support:sessions_view` | See sessions currently in progress |
 | | `support:history_view` | See past sessions for this business — read only, see below |
+| | `support:chat` | Start a [chat](chat.md) with the person at a computer they can see, write in it and end it (0.34). Reading transcripts needs only `computers:view` |
 | Users | `users:view` | See the other people in this business |
 | | `users:manage` | Invite, disable and remove business users; set their permissions |
 | Audit | `audit:view` | See this business's audit history |

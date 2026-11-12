@@ -214,6 +214,12 @@ export const endpointsApi = {
   // Metric history (0.33): CPU, memory and disk over 24h | 7d | 30d | 90d.
   // Gaps come back as intervals; nothing is interpolated.
   metrics: (id: string, range: string) => api.get(`/endpoints/${id}/metrics`, { params: { range } }),
+  // Chat (0.34): the person at the computer, through the signed Windows agent.
+  chat: (id: string) => api.get(`/endpoints/${id}/chat`),
+  chatTranscript: (id: string, cid: string) => api.get(`/endpoints/${id}/chat/conversations/${cid}`),
+  chatStart: (id: string, supportRequestId?: string) => api.post(`/endpoints/${id}/chat/conversations`, supportRequestId ? { supportRequestId } : {}),
+  chatSend: (id: string, cid: string, text: string) => api.post(`/endpoints/${id}/chat/conversations/${cid}/messages`, { text }),
+  chatEnd: (id: string, cid: string) => api.post(`/endpoints/${id}/chat/conversations/${cid}/end`, {}),
   // Queues a re-collection for the endpoint's next heartbeat — up to ~3
   // minutes away. Nothing is synchronous here.
   refreshInventory: (id: string) => api.post(`/endpoints/${id}/inventory/refresh`, {}),

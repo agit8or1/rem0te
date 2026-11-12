@@ -8,6 +8,7 @@ import { MonitoringModule } from './monitoring/monitoring.module';
 import { EmailModule } from './email/email.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { RetentionModule } from './retention/retention.module';
+import { ChatModule } from './chat/chat.module';
 import { ClientUpdatesModule } from './client-updates/client-updates.module';
 import { HealthModule } from './health/health.module';
 import { Module } from '@nestjs/common';
@@ -103,6 +104,7 @@ import { IntegrationModule } from './integration/integration.module';
     EmailModule,
     MetricsModule,
     RetentionModule,
+    ChatModule,
     ClientUpdatesModule,
     HealthModule,
     AuthModule,

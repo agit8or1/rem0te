@@ -231,6 +231,8 @@ try {
     if ([string]$ast.agentSha256 -cmatch '^[0-9a-f]{64}$') { $body['agentSha256'] = [string]$ast.agentSha256 }
     $acts = @(@($ast.actions) | Where-Object { [string]$_ -cmatch '^[a-z0-9.]{3,64}@[0-9]{1,4}$' } | Select-Object -First 16 | ForEach-Object { [string]$_ })
     if ($acts.Count -gt 0) { $body['agentActions'] = $acts }
+    # Chat (0.34): the chat protocol this signed build speaks.
+    if ([int]$ast.chat -ge 1 -and [int]$ast.chat -le 99) { $body['agentChat'] = [int]$ast.chat }
 } catch {}
 # Results the agent wrote for approved actions, until the portal acknowledges them.
 $ACT_RESULTS = 'C:\\ProgramData\\Rem0te\\actions\\results'
@@ -316,6 +318,14 @@ try {
             Set-Content -LiteralPath $stamp -Value '' -Encoding ASCII
             Start-Process -FilePath $agentExe -ArgumentList @('patch-scan') -WindowStyle Hidden
         }
+    }
+} catch {}
+try {
+    # Chat (0.34): a chat is open on this computer. Start the chat host; it
+    # fetches everything else itself with the device secret, and a second
+    # start while one runs leaves at once (it holds a lock).
+    if ($resp.data.chat.open -eq $true -and (Test-Path -LiteralPath $agentExe)) {
+        Start-Process -FilePath $agentExe -ArgumentList @('chat') -WindowStyle Hidden
     }
 } catch {}`,
   };

@@ -19,6 +19,7 @@ import { DevicePerformanceTab } from '@/components/endpoints/workspace/performan
 import { DeviceSoftwareTab } from '@/components/endpoints/workspace/software-tab';
 import { DeviceNetworkTab, DeviceProcessesTab, DeviceServicesTab } from '@/components/endpoints/workspace/snapshot-tabs';
 import { DeviceHistoryTab, type SessionRow } from '@/components/endpoints/workspace/history-tab';
+import { DeviceChatTab } from '@/components/endpoints/workspace/chat-tab';
 import { DiagnosticsPanel } from '@/components/endpoints/workspace/diagnostics-panel';
 import { AgentCard } from '@/components/endpoints/workspace/agent-card';
 import type { AccessReview } from '@/components/endpoints/workspace/access-review-panel';
@@ -175,6 +176,9 @@ export default function EndpointDetailPage() {
     ...(canView ? (['patches'] as const) : []),
     ...(canEventLogs && windowsDetail ? (['events'] as const) : []),
     ...(canView ? (['diagnostics', 'actions'] as const) : []),
+    // Chat (0.34): on every computer the viewer can see; the tab itself says
+    // when this one cannot chat (Linux, macOS, the standard agent) and why.
+    ...(canView ? (['chat'] as const) : []),
     'history',
   ];
   const active: WorkspaceTab = tabs.includes(tab) ? tab : 'overview';
@@ -310,6 +314,12 @@ export default function EndpointDetailPage() {
         {tabs.includes('actions') && (
           <TabsContent value="actions" className="mt-4">
             {active === 'actions' && <EndpointActions endpointId={id} isOnline={isOnline} unavailableReason={actionReason === 'Checking…' ? null : actionReason} agentActions={agentActionKeys(ep)} />}
+          </TabsContent>
+        )}
+
+        {tabs.includes('chat') && (
+          <TabsContent value="chat" className="mt-4">
+            {active === 'chat' && <DeviceChatTab endpointId={id} />}
           </TabsContent>
         )}
 

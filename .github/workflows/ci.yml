@@ -247,6 +247,12 @@ jobs:
       - name: Agent migration tests
         run: node apps/api/scripts/unit-agent-migration.mjs
 
+      # Chat (0.34): message text and the controls it drops, reported names,
+      # which computers can chat and why not, presence and receipts, device
+      # ids, and the retention window and its bounds.
+      - name: Chat tests
+        run: node apps/api/scripts/unit-chat.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.
@@ -389,6 +395,9 @@ jobs:
       # And windows.script.run (0.34): every refusal, and — with the runner's
       # pwsh (PowerShell 7, not Windows PowerShell 5.1) — arguments passed as
       # data, the timeout killing the process tree, and the output cap.
+      # And the chat host (0.34): pipe frames and their size and field limits,
+      # message text, the hello nonce, receipts sent once, history retries,
+      # reconnect after a lost window, and the per-minute reply cap.
       - name: Signed update chain and approved-action tests
         working-directory: tools/windows-installer
         run: go test ./...

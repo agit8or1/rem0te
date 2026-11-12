@@ -8,7 +8,7 @@ import { useCurrentUser } from '@/lib/auth';
 
 type BannerPause = { id: string; scope: 'global' | 'business'; businessName: string | null; kinds: string[]; reason: string; setBy: 'msp' | 'customer'; createdAt: string };
 
-const KIND: Record<string, string> = { actions: 'approved actions', remote: 'remote connections', updates: 'agent updates', integration: 'ClientSt0r jobs' };
+const KIND: Record<string, string> = { actions: 'approved actions', remote: 'remote connections and chat', updates: 'agent updates', integration: 'ClientSt0r jobs' };
 
 /**
  * A strip across the top of every page while something that applies to the

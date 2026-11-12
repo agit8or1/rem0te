@@ -19,7 +19,7 @@ export const KINDS = ['actions', 'remote', 'updates', 'integration', 'notificati
 export type Kind = (typeof KINDS)[number];
 
 export const KIND_LABEL: Record<Kind, string> = {
-  actions: 'approved actions and patch rings', remote: 'remote connections', updates: 'agent and RustDesk updates', integration: 'ClientSt0r jobs',
+  actions: 'approved actions and patch rings', remote: 'remote connections and chat', updates: 'agent and RustDesk updates', integration: 'ClientSt0r jobs',
   notifications: 'outbound emails',
 };
 

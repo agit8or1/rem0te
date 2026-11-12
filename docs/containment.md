@@ -12,7 +12,7 @@ the top of every page says what is stopped and why.
 | Kind | Stops | Checked at |
 |---|---|---|
 | **Approved actions** | New action requests and patch deployments; delivery of plans **already approved** (they are held, not canceled) | Request, dispatch recheck, every heartbeat delivery |
-| **Remote connections** | Connect, launcher links, Quick Connect | Every launch decision |
+| **Remote connections** | Connect, launcher links, Quick Connect; starting a [chat](chat.md) and sending in one (0.34) | Every launch decision; chat start and send |
 | **Agent updates** | RustDesk and agent update or reinstall instructions on the heartbeat, and update-rollout dispatch (deferred as `contained`) | Every heartbeat, before anything is recorded as sent |
 | **ClientSt0r jobs** | New ticket-analysis jobs (`423 CONTAINED`), and queued ones (ended `CONTAINED`) | Submit and the worker |
 | **Outbound email** (`notifications`, 0.34) | Every email: alert emails, scheduled reports (the period is recorded *blocked*, not sent later), confirmation links (`403 CONTAINED`) and test emails. **Not** alert webhooks | The one send path every email goes through ([email.md](email.md)) |
