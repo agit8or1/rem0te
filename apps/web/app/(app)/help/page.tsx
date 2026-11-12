@@ -876,6 +876,16 @@ const SECTIONS: Section[] = [
           <Link href="/docs/staged-patching#restarting-after-updates" className="underline text-foreground">Staged patching</Link>.
         </p>
         <p>
+          From 0.34, computers <strong className="text-foreground">sign their own patch results</strong> with a key
+          they generate and never send. A policy names each computer&apos;s key, and the approval signer checks the
+          canary&apos;s signed results and scan before it opens the next ring, so a result this portal altered or made
+          up is refused. Every ring of a policy except the last needs computers running the 0.34 agent. Before approving
+          a computer&apos;s first policy, compare the key fingerprint on the approval page with{' '}
+          <code>rem0te-agent.exe status</code> on the computer. Policies approved before 0.34 can still run their
+          canary, but no later ring. More in{' '}
+          <Link href="/docs/staged-patching#signed-results-034" className="underline text-foreground">Signed results</Link>.
+        </p>
+        <p>
           From 0.31 the menu is organised by job: <strong className="text-foreground">Dashboard</strong>,{' '}
           <strong className="text-foreground">Devices</strong> (all devices, your own, adding one),{' '}
           <strong className="text-foreground">Alerts</strong>, <strong className="text-foreground">Automation</strong>,{' '}

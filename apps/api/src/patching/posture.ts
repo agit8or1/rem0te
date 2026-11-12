@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { UPDATE_ID_RE } from '../actions/catalog';
+import { DeviceSigned } from '../actions/device-result';
 
 /**
  * Windows Update posture as the signed agent's `patch-scan` reports it
@@ -60,6 +61,13 @@ export const Posture = z.object({
   managers: z.array(z.enum(MANAGERS)).max(4),
   autoUpdate: z.enum(['enabled', 'disabled', 'notify', 'unknown']),
   error: Text(200).optional(),
+  /**
+   * v0.34: the computer's own signature over this scan's gate facts, kept as
+   * received and relayed to the approval signer. Never verified as trust here
+   * (the portal cannot tell its own forgery from the computer's); a malformed
+   * one is dropped rather than refusing the posture.
+   */
+  signed: DeviceSigned.optional().catch(undefined),
 }).strict();
 export type Posture = z.infer<typeof Posture>;
 

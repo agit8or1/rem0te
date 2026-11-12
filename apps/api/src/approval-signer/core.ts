@@ -24,8 +24,9 @@ import {
 } from '../actions/catalog';
 import {
   POLICY_PROPOSAL_DAYS, PolicyDoc, RingEvidence as RingEvidenceSchema, evaluatePolicyPlan, policyDigest, policyQuorum, policySigningBytes, validatePolicyDoc,
-  type LedgerEntry, type PolicyApproval, type PolicyDecision, type PolicyPlanRequest, type PolicyStatus,
+  type LedgerEntry, type PolicyApproval, type PolicyComputer, type PolicyDecision, type PolicyPlanRequest, type PolicyStatus,
 } from '../actions/patch-policy';
+import { resultKeyFingerprint } from '../actions/device-result';
 
 export type Role = 'approver' | 'customer';
 export interface RosterMember {
@@ -247,9 +248,13 @@ export function verifyPolicy(r: PolicyRecord, publicKey: KeyObject): boolean {
  */
 export function signUnderPolicy(
   r: PolicyRecord, raw: { plan?: unknown; policyDigest?: unknown; evidence?: unknown }, k: { key: KeyObject; kid: string },
-  business: Policy, now: Date,
+  business: Policy, now: Date, pins: DevicePins = () => null,
 ): { job: JobRecord; entry: LedgerEntry } {
   const { plan, digest } = admitPlan(raw.plan, business, now);
+  // v0.34: a computer's result key is whatever this signer pinned for it
+  // first. A policy naming another key for the same computer signs nothing.
+  const changed = pinConflicts(r.doc.rings.flat(), pins);
+  if (changed.length) throw new Refused('device_key_changed', deviceKeyChangedMessage(changed));
   const ev = raw.evidence == null ? null : RingEvidenceSchema.safeParse(raw.evidence);
   if (ev && !ev.success) throw new Refused('bad_evidence', ev.error.issues.slice(0, 2).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
   const req: PolicyPlanRequest = { plan, policyDigest: typeof raw.policyDigest === 'string' ? raw.policyDigest : '', evidence: ev ? ev.data! : null };
@@ -267,7 +272,55 @@ export function signUnderPolicy(
   const entry: LedgerEntry = {
     jobId: plan.jobId, deploymentId: plan.display!.deployment!.id, ring: plan.display!.deployment!.ring, signedAt: now.toISOString(),
     notBefore: plan.window.notBefore, notAfter: plan.window.notAfter, endpointIds: plan.targets.map((t) => t.endpointId), updates: p.updates.map((u) => `${u.updateId}@${u.revision}`),
+    // Each computer's signed result must name exactly these bytes (v0.34).
+    planSha256: createHash('sha256').update(Buffer.from(job.envelope!.plan, 'base64')).digest('hex'),
   };
   r.ledger.push(entry); r.updatedAt = now.toISOString();
   return { job, entry };
+}
+
+// ── Device result keys (v0.34) ──────────────────────────────────────────────
+// A patch policy binds each computer to the key it signs its results with.
+// The key reaches the portal from the computer's own signed scans, and the
+// portal puts it in the policy; two approvers approving the policy is what
+// makes this process trust it. From then on it is pinned here, write-once,
+// to that computer's enrolled identity (endpoint, RustDesk ID, device-secret
+// hash): a later policy naming another key for the same computer is refused
+// (`device_key_changed`) until the operator forgets the pin. So a portal
+// compromised after a computer's first approved policy cannot substitute a
+// key of its choosing. Before that first approval it could, which is the
+// trust-on-first-use window docs/staged-patching.md describes: comparing the
+// fingerprint on the approval page with `rem0te-agent.exe status` on the
+// computer closes it.
+
+export { resultKeyFingerprint };
+
+export interface DevicePin { identity: string; endpointId: string; hostname: string; resultKey: string; policyId: string; pinnedAt: string }
+/** The pinned key for an identity, or null. */
+export type DevicePins = (identity: string) => DevicePin | null;
+
+export const deviceIdentity = (c: Pick<PolicyComputer, 'endpointId' | 'rustdeskId' | 'deviceSecretSha256'>) =>
+  createHash('sha256').update(`rem0te-device-identity-v1\n${c.endpointId}\n${c.rustdeskId}\n${c.deviceSecretSha256}`).digest('hex');
+
+/** Computers in a policy whose key is not the one pinned for them. */
+export function pinConflicts(computers: PolicyComputer[], pins: DevicePins): { computer: PolicyComputer; pin: DevicePin }[] {
+  const out: { computer: PolicyComputer; pin: DevicePin }[] = [];
+  for (const c of computers) {
+    if (!c.resultKey) continue;
+    const pin = pins(deviceIdentity(c));
+    if (pin && pin.resultKey !== c.resultKey) out.push({ computer: c, pin });
+  }
+  return out;
+}
+
+export function deviceKeyChangedMessage(changed: { computer: PolicyComputer; pin: DevicePin }[]): string {
+  const c = changed[0];
+  return `${c.computer.hostname}: this policy names a result key other than the one pinned for this computer on ${c.pin.pinnedAt} (policy ${c.pin.policyId}). If the computer really has a new key, the signer's operator removes the pin (device-key forget) and a new policy is approved.${changed.length > 1 ? ` ${changed.length - 1} more computer(s) likewise.` : ''}`;
+}
+
+/** The pins an approved policy makes: every computer with a key and no pin yet. */
+export function newPins(r: PolicyRecord, pins: DevicePins, now: Date): DevicePin[] {
+  return r.doc.rings.flat()
+    .filter((c) => c.resultKey && !pins(deviceIdentity(c)))
+    .map((c) => ({ identity: deviceIdentity(c), endpointId: c.endpointId, hostname: c.hostname, resultKey: c.resultKey!, policyId: r.policyId, pinnedAt: now.toISOString() }));
 }

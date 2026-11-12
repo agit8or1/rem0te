@@ -373,13 +373,14 @@ check(
 {
   const signerDir = 'apps/api/src/approval-signer';
   const signerFiles = readdirSync(join(ROOT, signerDir)).filter((f) => f.endsWith('.ts')).map((f) => `${signerDir}/${f}`);
-  const ALLOWED_IMPORT = /^(node:|crypto$|\.\/|@simplewebauthn\/server$|zod$|\.\.\/actions\/catalog$|\.\.\/actions\/patch-policy$|\.\.\/integration\/crypto$)/;
+  const ALLOWED_IMPORT = /^(node:|crypto$|\.\/|@simplewebauthn\/server$|zod$|\.\.\/actions\/catalog$|\.\.\/actions\/patch-policy$|\.\.\/actions\/device-result$|\.\.\/integration\/crypto$)/;
   const importsOf = (src) => [...src.matchAll(/(?:from|require\()\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
   const bad = [];
   // 0.32: the patch-policy evaluator (and the posture module it judges with)
-  // run inside the signer, so they are held to the same rule.
-  for (const f of [...signerFiles, 'apps/api/src/actions/catalog.ts', 'apps/api/src/integration/crypto.ts', 'apps/api/src/actions/patch-policy.ts', 'apps/api/src/patching/posture.ts']) {
-    const own = f.startsWith(signerDir) ? ALLOWED_IMPORT : /^(node:|crypto$|zod$|\.\/crypto$|\.\/catalog$|\.\.\/actions\/catalog$|\.\.\/patching\/posture$|\.\.\/integration\/crypto$)/;
+  // run inside the signer, so they are held to the same rule; so (0.34) is
+  // the device-result verifier.
+  for (const f of [...signerFiles, 'apps/api/src/actions/catalog.ts', 'apps/api/src/integration/crypto.ts', 'apps/api/src/actions/patch-policy.ts', 'apps/api/src/patching/posture.ts', 'apps/api/src/actions/device-result.ts']) {
+    const own = f.startsWith(signerDir) ? ALLOWED_IMPORT : /^(node:|crypto$|zod$|\.\/crypto$|\.\/catalog$|\.\/device-result$|\.\.\/actions\/catalog$|\.\.\/actions\/device-result$|\.\.\/patching\/posture$|\.\.\/integration\/crypto$)/;
     for (const i of importsOf(read(f))) if (!own.test(i)) bad.push(`${f} imports ${i}`);
   }
   check('approval signer loads no Nest, Prisma or portal module', signerFiles.length >= 4 && bad.length === 0,
@@ -452,7 +453,7 @@ check(
     'the journal write must precede execute() and a failed write must stop it');
   const iPre = act.indexOf('a.Precheck(plan, o)'), iPz = act.indexOf('o.Pause.ActionsPaused(');
   check('an action\'s own checks run after verification and the signed pause, before the executing journal entry, and end the job',
-    iPre > iPz && iPz > 0 && iExec > iPre && /if pr := a\.Precheck\(plan, o\); pr != nil \{[\s\S]{0,200}writeJournal\(o, journal\{JobID: jobID, State: "done"[\s\S]{0,120}return report\(o, r\)/.test(act),
+    iPre > iPz && iPz > 0 && iExec > iPre && /if pr := a\.Precheck\(plan, o\); pr != nil \{[\s\S]{0,200}return final\(o, jobID, planSHA, r\)/.test(act) && /func final\([\s\S]{0,400}writeJournal\(o, journal\{JobID: jobID, State: "done"[\s\S]{0,120}return report\(o, r\)/.test(act),
     'Precheck must sit between the pause and the executing journal, and its result must be final');
   // class-transformer's implicit conversion turns an untyped array of objects
   // into [[]] — silently. It broke command-result events in production.
@@ -1801,6 +1802,74 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     tsCat.includes(`REBOOT_UNPROVEN = '${UNPROVEN}'`) && comp.includes(`REBOOT_UNPROVEN = '${UNPROVEN}'`) && /<strong>\{REBOOT_UNPROVEN\}<\/strong>/.test(comp)
       && (read('apps/api/src/approval-signer/page.ts').match(/esc\(REBOOT_UNPROVEN\)/g) ?? []).length === 2 && doc.includes(`**Not proven on Windows.** ${UNPROVEN}`),
     'catalog.ts and patch-reboot-choice.tsx define it, the reboot choice shows it, the signer page and docs/staged-patching.md say it');
+}
+
+// 38. Agent-signed action results (0.34). A later ring of a patch policy
+//     opens only on results the computers signed with their own key, which
+//     two approvers bound to each computer in the policy and the signer then
+//     pinned. So: the portal and signer only VERIFY device statements (the
+//     statement prefixes appear in one file, which signs nothing); the
+//     evaluator verifies every previous-ring result under the policy's key —
+//     never the key a statement names — before the gate runs, and the gate
+//     reads only the signed facts; a missing signature can only count
+//     against a ring and never opens the canary's; the portal relays the
+//     signatures as received; a pin is write-once and nothing over HTTP
+//     removes one; a policy whose gating computers cannot sign is refused;
+//     and the agent signs every final result in one place, with prefixes
+//     that match the verifier's.
+{
+  const dr = read('apps/api/src/actions/device-result.ts');
+  const drCode = dr.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const PREFIXES = ['rem0te-device-result-v1', 'rem0te-device-scan-v1'];
+  // The docs bundle is docs/ compiled to prose (staged-patching.md names the prefixes); it is not code.
+  const elsewhere = walk('apps/api/src').concat(walk('apps/web')).filter((f) => !f.endsWith('actions/device-result.ts') && !f.endsWith('lib/docs-content.generated.ts') && PREFIXES.some((x) => read(f).includes(x)));
+  check('device statements are only verified in the portal and signer: one file holds the prefixes, and it signs nothing',
+    PREFIXES.every((x) => drCode.includes(x)) && elsewhere.length === 0 && !/\bsign\s*\(|edSign|createPrivateKey|generateKeyPair|createSign\b/.test(drCode),
+    elsewhere.length ? `the statement prefixes appear in ${elsewhere.join(', ')}` : 'device-result.ts must not sign or hold a private key');
+  check('a statement is verified under the trusted key, never the key it names',
+    /if \(env\.data\.key !== trustedKey\) return \{ ok: false, code: 'result_wrong_device'/.test(dr) && /const pub = publicKey\(trustedKey\);/.test(dr) && !/publicKey\(env\.data\.key\)/.test(dr),
+    'openDeviceStatement must compare the named key with the trusted one and verify with the trusted one');
+  const pp = read('apps/api/src/actions/patch-policy.ts');
+  const evFn = pp.slice(pp.indexOf('export function evaluatePolicyPlan('), pp.indexOf('// ── Signed evidence (v0.34)'));
+  const vi = evFn.indexOf('const verified = verifiedGateTargets(doc.rings[ring - 1], prev, r.evidence, now);');
+  check('the signer verifies the previous ring\'s signatures before any later-ring gate, and the gate reads only the verified facts',
+    vi > 0 && vi < evFn.indexOf('evaluateRingGate({') && /if \(!verified\.ok\) return verified;/.test(evFn) && /targets: verified\.targets,/.test(evFn) && !/fromEvidenceTarget\(/.test(evFn),
+    'evaluatePolicyPlan must call verifiedGateTargets and pass verified.targets (never fromEvidenceTarget) to evaluateRingGate');
+  const vg = pp.slice(pp.indexOf('export function verifiedGateTargets('));
+  check('each previous-ring result and scan is checked: the policy\'s key, the identity, the plan, the time; missing never opens the canary',
+    /openDeviceStatement\('result', t\.signedResult, c\.resultKey\)/.test(vg) && /openDeviceStatement\('scan', t\.signedScan, c\.resultKey\)/.test(vg)
+      && /st\.jobId !== prev\.jobId \|\| \(prev\.planSha256 && st\.planSha256 !== prev\.planSha256\)/.test(vg)
+      && /st\.rustdeskId !== c\.rustdeskId \|\| st\.deviceSecretSha256 !== c\.deviceSecretSha256/.test(vg)
+      && ['result_key_not_pinned', 'result_signature_missing', 'result_wrong_plan', 'result_wrong_device', 'result_stale'].every((x) => vg.includes(`'${x}'`))
+      && /if \(canary\) return \{ ok: false, code: 'result_signature_missing'/.test(vg) && /if \(t\.status === 'SUCCEEDED'\) return \{ ok: false, code: 'result_signature_missing'/.test(vg)
+      && /status: RESULT_STATUS\[st\.outcome\]/.test(vg) && /resultAt: new Date\(at\)/.test(vg),
+    'verifiedGateTargets must open each signature under c.resultKey, bind job, plan, identity and time, and refuse an unsigned canary or "succeeded"');
+  check('a policy whose results would open a ring must name a result key for each such computer (fail closed)',
+    /const unsigned = doc\.rings\.slice\(0, -1\)\.flat\(\)\.filter\(\(c\) => !c\.resultKey\);/.test(pp) && /reason: 'result_key_missing'/.test(pp)
+      && /code: 'RESULT_KEY_MISSING'/.test(read('apps/api/src/patching/policies.service.ts')),
+    'validatePolicyDoc (signer and portal) and PatchPolicyService.create must refuse it');
+  const toEv = pp.slice(pp.indexOf('export function toEvidenceTarget('), pp.indexOf('export function fromEvidenceTarget('));
+  check('the portal relays device signatures as received',
+    /const signedResult = \(t\.result as \{ signed\?: unknown \} \| null\)\?\.signed \?\? null;/.test(toEv) && /const signedScan = \(s as \{ signed\?: unknown \} \| null\)\?\.signed \?\? null;/.test(toEv) && /signedResult, signedScan,/.test(toEv),
+    'toEvidenceTarget must copy result.signed and scan.signed unchanged');
+  const st = read('apps/api/src/approval-signer/store.ts');
+  const srv = read('apps/api/src/approval-signer/server.ts');
+  const core = read('apps/api/src/approval-signer/core.ts');
+  check('a device key pin is write-once, made only on approval, checked on proposal and on every policy plan, and removed only by the operator CLI',
+    /pinDeviceKey\(p: DevicePin\)[\s\S]{0,400}flag: 'wx'/.test(st) && !/forgetDevicePin/.test(srv) && /forgetDevicePin/.test(read('apps/api/src/approval-signer/main.ts'))
+      && /if \(status === 'ACTIVE'\) for \(const p of newPins\(cur, pins, now\(\)\)\) store\.pinDeviceKey\(p\);/.test(srv)
+      && /const changed = pinConflicts\(doc\.rings\.flat\(\), pins\);\s*if \(changed\.length\) throw new Refused\('device_key_changed'/.test(srv)
+      && /signUnderPolicy\(r, b, k, store\.policy\(\), now\(\), pins\)/.test(srv)
+      && core.indexOf("throw new Refused('device_key_changed'") > core.indexOf('export function signUnderPolicy(') && core.indexOf("throw new Refused('device_key_changed'") < core.indexOf('evaluatePolicyPlan({', core.indexOf('export function signUnderPolicy(')),
+    'store.pinDeviceKey must use wx; the server pins on ACTIVE only, checks pins at proposal and passes them to signUnderPolicy, which refuses before evaluating; only main.ts forgets');
+  const goSig = read('tools/windows-installer/internal/devsig/devsig.go');
+  const goAct = read('tools/windows-installer/internal/action/action.go');
+  check('the agent signs with the verifier\'s prefixes, keeps only a seed on disk, and signs every final result in one place',
+    /ResultPrefix = "rem0te-device-result-v1\\n"/.test(goSig) && /ScanPrefix\s+= "rem0te-device-scan-v1\\n"/.test(goSig)
+      && /const RESULT_PREFIX = 'rem0te-device-result-v1\\n';/.test(dr) && /const SCAN_PREFIX = 'rem0te-device-scan-v1\\n';/.test(dr)
+      && /type keyFile struct \{\s*Schema string `json:"schema"`\s*Seed\s+string `json:"seed"`\s*\}/.test(goSig) && !/Seed|Private/.test(goSig.slice(goSig.indexOf('type Signed struct'), goSig.indexOf('type keyFile struct')))
+      && (goAct.match(/State: "done"/g) ?? []).length === 1 && /func final\([\s\S]{0,300}signResult\(&o, &r, planSHA, [\s\S]{0,200}State: "done"/.test(goAct),
+    'devsig prefixes must equal device-result.ts; the key file holds only a seed; action.go journals "done" only in final(), after signResult');
 }
 
 if (failures.length > 0) {

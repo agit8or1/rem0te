@@ -89,6 +89,11 @@ bundled into `/docs`. Integration work is tracked separately in
   [data-retention.md](data-retention.md) (U, I). Not implemented: archiving rows before they are deleted,
   per-business windows, pruning the ClientSt0r job and alert-event outboxes (needs the peer to agree a horizon),
   and any way to shorten the audit log (deliberately: it is evidence).
+- ~~Agent-signed patch results~~ — done in 0.34: the signer opens a policy's later ring only on results and scans
+  each computer signed with its own key ([staged-patching.md](staged-patching.md#signed-results-034), I). Not
+  implemented: proof of a computer's key on first sight (it is trusted on first use, checked by a fingerprint
+  read-back), signed results from the Linux and macOS agents, and any check of signed results outside patch
+  policies (manual rings are approved by people, who read the portal's copy).
 
 ## Security limitations (current, honest)
 
@@ -106,6 +111,7 @@ bundled into `/docs`. Integration work is tracked separately in
 |---|---|---|
 | A stolen session could mint an API key of any scope — long-lived access that outlives the session | 0.34 | Creating any key needs a fresh re-authentication (`apikey.create`, not configurable; 0.33 asked only for `enrollment:write`), after scope and validation, before the write; the audit records the method. Keys are immutable — no route widens scopes or restores a revoked key — and revoking never asks. [sign-in.md](sign-in.md#always-on-whatever-is-configured); `e2e-enrol-stepup.mjs`; invariant §34 (**I**) |
 | A stolen admin session could create enrolment tokens (known since 0.23) | 0.33 | Making a token needs a fresh re-authentication for every role (`enrollment.create`, not configurable), and so does creating an API key with `enrollment:write` (`apikey.enrollment`). API keys keep minting without one: the key is the second proof. Registering by RustDesk ID mints no credential and is not gated. [sign-in.md](sign-in.md#always-on-whatever-is-configured); `e2e-enrol-stepup.mjs`; invariant §27 (**I**) |
+| A compromised portal could forge a canary success and start a patch policy's ring 1 early (known since 0.32) | 0.34 | Agents sign their results and scans with a key generated on the computer; the policy names each key, the signer pins it on approval and verifies every previous-ring result under it before a later ring. Missing, forged, cross-device, cross-plan and stale results are refused by name. Trust-on-first-use until the first approved policy, closed by a fingerprint read-back. [staged-patching.md](staged-patching.md#signed-results-034); `e2e-patch-policies.mjs`; invariant §38 (**I**) |
 
 ## Usability findings from the screenshots
 
@@ -142,7 +148,7 @@ owner's approval.
 | 9 | Script library with review and immutable approval binding | P1 | Largest new surface. Design note first |
 | 10 | Reports: patch compliance, agent coverage, alert frequency | P1/P2 | |
 | 11 | Linux and macOS heartbeat and inventory | P2 | Linux done in 0.32 (`e2e-linux-agent.mjs`), macOS in 0.33 (`e2e-macos-agent.mjs`, against stubs); both integration-tested only, real-endpoint tests outstanding |
-| 11b | ~~Patch approval policies and maintenance-window rollouts; install from the Patches tab; production setup runbook and pre-flight~~ **Done in 0.32** (fixture-tested only); the restart rule followed in 0.34 (fixture-tested only). Left: agent-signed results, and a run on real Windows | P1 | Deployments were created and approved by hand, ring by ring |
+| 11b | ~~Patch approval policies and maintenance-window rollouts; install from the Patches tab; production setup runbook and pre-flight~~ **Done in 0.32** (fixture-tested only); the restart rule followed in 0.34 (fixture-tested only), and agent-signed results **done in 0.34** ([staged-patching.md](staged-patching.md#signed-results-034); invariant §38, I). Left: a run on real Windows | P1 | Deployments were created and approved by hand, ring by ring |
 | 12 | **Scheduled RustDesk client updates** (requested 2026-11-11): opt-in per business or site, applied only inside an update window outside working hours, never while a session is open, honouring the `updates` containment pause; reuses the staged-rollout path (signed agent) or the queued-reinstall path (standard agent) | P1 | Today every client update is queued by hand and applied on the next heartbeat, whatever the time |
 
 **Real-device dependency.** Items 5 and 8 need a disposable Windows 11 machine and a Windows Server 2022 machine

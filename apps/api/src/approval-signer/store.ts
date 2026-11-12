@@ -14,6 +14,9 @@
  *   <dir>/revocations/<id>.json patch policy revocations: write-once, never removed
  *   <dir>/pauses/<id>.json      pauses (v0.28): created by the operator CLI or at the
  *                               portal's request; cleared only by the operator CLI
+ *   <dir>/device-keys/<sha>.json  device result keys (v0.34), pinned when a policy naming
+ *                               the computer is first approved: write-once, removed only
+ *                               by the operator CLI (device-key forget)
  *
  * The serving process never writes roster.json or policy.json: those belong
  * to the operator CLI. Counters live apart so that saving one can never
@@ -23,17 +26,17 @@
  * new one, never half of either. One process; a promise chain serialises
  * every mutation so two approvals cannot race past the quorum check.
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
-import type { Challenge, JobRecord, Policy, PolicyRecord, Roster } from './core';
+import type { Challenge, DevicePin, JobRecord, Policy, PolicyRecord, Roster } from './core';
 
 const ID = /^[a-f0-9]{32}$/;
 
 export class SignerStore {
   private chain: Promise<unknown> = Promise.resolve();
   constructor(readonly dir: string) {
-    for (const d of ['jobs', 'challenges', 'counters', 'pauses', 'policies', 'revocations']) mkdirSync(path.join(dir, d), { recursive: true, mode: 0o700 });
+    for (const d of ['jobs', 'challenges', 'counters', 'pauses', 'policies', 'revocations', 'device-keys']) mkdirSync(path.join(dir, d), { recursive: true, mode: 0o700 });
   }
 
   /** Run fn with every other mutation waiting. */
@@ -101,6 +104,30 @@ export class SignerStore {
   }
   savePatchPolicy(r: PolicyRecord) { if (!ID.test(r.policyId)) throw new Error('bad policy id'); this.write(path.join(this.dir, 'policies', `${r.policyId}.json`), r); }
   patchPolicies(): string[] { return readdirSync(path.join(this.dir, 'policies')).filter((f) => /^[a-f0-9]{32}\.json$/.test(f)).map((f) => f.slice(0, -5)); }
+
+  // ── Device result keys (v0.34) ────────────────────────────────────────────
+  // One file per enrolled identity, created with 'wx': the serving process
+  // can add a pin and never change one. Only the operator CLI removes one.
+  devicePin(identity: string): DevicePin | null {
+    return /^[a-f0-9]{64}$/.test(identity) ? this.read<DevicePin>(path.join(this.dir, 'device-keys', `${identity}.json`)) : null;
+  }
+  /** Pin a key. Returns false if the identity already has one; the first pin stands. */
+  pinDeviceKey(p: DevicePin): boolean {
+    if (!/^[a-f0-9]{64}$/.test(p.identity)) throw new Error('bad device identity');
+    try { writeFileSync(path.join(this.dir, 'device-keys', `${p.identity}.json`), JSON.stringify(p, null, 2), { mode: 0o600, flag: 'wx' }); return true; } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
+      throw e;
+    }
+  }
+  devicePins(): DevicePin[] {
+    return readdirSync(path.join(this.dir, 'device-keys')).filter((f) => /^[a-f0-9]{64}\.json$/.test(f))
+      .map((f) => this.read<DevicePin>(path.join(this.dir, 'device-keys', f))).filter((p): p is DevicePin => !!p);
+  }
+  /** Operator CLI only. */
+  forgetDevicePin(identity: string): boolean {
+    if (!/^[a-f0-9]{64}$/.test(identity)) return false;
+    try { unlinkSync(path.join(this.dir, 'device-keys', `${identity}.json`)); return true; } catch { return false; }
+  }
 
   // ── Pauses (v0.28) ────────────────────────────────────────────────────────
   // One file each, so the serving process (which only ever creates one) and

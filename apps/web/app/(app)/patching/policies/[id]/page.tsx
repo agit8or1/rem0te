@@ -37,6 +37,8 @@ interface Policy {
   signer: { reachable: boolean; status: string | null; signedPlans: number | null; refusals: { at: string; jobId: string; code: string; message: string }[] };
   deployments: { id: string; name: string; status: string; windowKey: string | null; pausedReason: string | null; createdAt: string }[];
   sweep: { enabled: boolean; everySeconds: number };
+  /** 0.34: each computer's result-key fingerprint as this portal holds it (null: none, a pre-0.34 agent). */
+  resultKeys?: Record<string, string | null>;
   mayRevoke: boolean;
 }
 
@@ -109,8 +111,25 @@ export default function PolicyPage() {
           </dl>
           <div className="space-y-1">
             {d.rings.map((r, i) => (
-              <p key={i}><strong>{i === 0 ? 'Canary' : `Ring ${i}`}:</strong> {r.map((c) => c.hostname).join(', ')}</p>
+              <p key={i}>
+                <strong>{i === 0 ? 'Canary' : `Ring ${i}`}:</strong>{' '}
+                {r.map((c, j) => {
+                  const fp = p.resultKeys?.[c.endpointId];
+                  return (
+                    <span key={c.endpointId}>
+                      {j > 0 && ', '}{c.hostname}
+                      {fp && <span className="text-muted-foreground"> (result key <code>{fp}</code>)</span>}
+                    </span>
+                  );
+                })}
+              </p>
             ))}
+            {p.resultKeys && (
+              <p className="text-xs text-muted-foreground">
+                Result-key fingerprints are this portal&apos;s copy. Compare the approval signer&apos;s page with{' '}
+                <code>rem0te-agent.exe status</code> on the computer, not with this list.
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>

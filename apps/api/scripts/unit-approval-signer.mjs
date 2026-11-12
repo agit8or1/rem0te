@@ -16,6 +16,8 @@ import { createRequire } from 'node:module';
 import { generateKeyPairSync, verify, createPublicKey, randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { syntheticPasskey } from './lib/synthetic-passkey.mjs';
+import { deviceKey, signStatement, resultStatement, scanStatement } from './lib/device-sign.mjs';
+import { createHash } from 'node:crypto';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -321,6 +323,120 @@ out = cli(['roster', 'disable', '--user', newbie.userId]);
 check('roster disable takes effect in the file the server reads', out.status === 0 && JSON.parse(readFileSync(join(dir, 'roster.json'), 'utf8')).members.find((m) => m.userId === newbie.userId)?.disabled === true);
 out = cli(['keygen']);
 check('keygen refuses to overwrite a signing key', out.status !== 0 && /refusing to overwrite/.test(out.stderr));
+
+// ── 0.34: device result keys — pinned on approval, verified before a later ring ──
+{
+  const s3 = startSigner({ dir, origin: ORIGIN, rpId: '127.0.0.1', publicPort: 0, internalPort: 0 });
+  await Promise.all([s3.internal, s3.pub].map((x) => new Promise((r) => (x.listening ? r() : x.once('listening', r)))));
+  const INTERNAL = `http://127.0.0.1:${s3.internal.address().port}`;
+  const PUBLIC = `http://127.0.0.1:${s3.pub.address().port}`;
+  const P = require(join(dist, 'actions', 'patch-policy.js'));
+  const sha = (x) => createHash('sha256').update(x).digest('hex');
+  const hhmm = (t) => `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`;
+  const t0 = new Date();
+  const SEC = '0fa1201d-4330-4fa8-8ae9-b877473b6441';
+  const CU = { updateId: '5a1b2c3d-0000-4000-8000-000000000001', revision: 201, kb: 'KB5044284', title: '2026-11 Cumulative Update', className: 'Security Updates', severity: 'Critical' };
+  const dev = { canary: deviceKey(), r1: deviceKey(), forger: deviceKey() };
+  const computer = (name, rid, k) => ({ endpointId: `ep_${name}_0001`, hostname: name.toUpperCase(), rustdeskId: rid, deviceSecretSha256: sha(name), resultKey: k.key });
+  const CANARY = computer('canary', '210000001', dev.canary), R1 = computer('ringone', '210000002', dev.r1);
+  const author = { userId: people.requester.userId, name: people.requester.name };
+  const window = { days: ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'], start: hhmm(new Date(t0.getTime() - 3600_000)), end: hhmm(new Date(t0.getTime() + 3 * 3600_000)), timezone: 'UTC' };
+  const mkDoc = (rings) => ({
+    schema: 'rem0te-patch-policy/1', policyId: randomBytes(16).toString('hex'), name: 'Acme nightly', businessId: BIZ_A, businessName: 'Acme',
+    rings, allow: { classifications: [SEC] }, soakHours: 0, failureThreshold: 0, window, reboot: 'never',
+    createdAt: t0.toISOString(), expiresAt: new Date(t0.getTime() + 7 * 86_400_000).toISOString(), createdBy: author, reason: 'signed results test',
+  });
+  const propose = (doc) => j(`${INTERNAL}/internal/v1/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy: doc }) });
+  const approvePolicy = async (id, who) => {
+    const c = await j(`${PUBLIC}/approve/policy/${id}/challenge`, { method: 'POST', headers: { 'content-type': 'application/json', origin: ORIGIN }, body: JSON.stringify({ decision: 'approve', role: 'approver' }) });
+    if (c.status !== 200) return c;
+    return j(`${PUBLIC}/approve/policy/${id}/decide`, { method: 'POST', headers: { 'content-type': 'application/json', origin: ORIGIN }, body: JSON.stringify({ challengeId: c.body.challengeId, assertion: who.assert(c.body.options, { origin: ORIGIN }) }) });
+  };
+  const ringPlan = (doc, digest, ring, computers, dep) => ({
+    schema: 'rem0te-action-plan/1', jobId: jobId(), action: { id: 'windows.update.install', version: 1 },
+    artifact: { target: 'windows/rem0te-agent.exe', sha256: AGENT_SHA },
+    params: { updates: [{ updateId: CU.updateId, revision: CU.revision }], reboot: 'never', allow: P.allowParams(doc.allow) },
+    targets: computers.map((c) => ({ endpointId: c.endpointId, businessId: BIZ_A, businessName: 'Acme', hostname: c.hostname, deviceClass: 'WORKSTATION', rustdeskId: c.rustdeskId, deviceSecretSha256: c.deviceSecretSha256 })),
+    requestedBy: { ...author, via: 'portal' }, origin: { kind: 'technician', ticketRef: null }, reason: `ring ${ring}`,
+    policy: { risk: 'high', approvalsRequired: 2, customerSignoff: false },
+    // A later ring starts after the ring before it was signed.
+    window: { notBefore: new Date(Date.now() + (ring ? 2000 : -1000)).toISOString(), notAfter: new Date(Date.now() + 3600_000).toISOString() },
+    display: { updates: [CU], deployment: { id: dep, name: 'Acme nightly', ring, rings: doc.rings.length }, policy: { id: doc.policyId, name: doc.name, digest } },
+    createdAt: new Date().toISOString(), approvers: [], signedAt: null,
+  });
+  const underPolicy = (id, body) => j(`${INTERNAL}/internal/v1/policies/${id}/plans`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+  const doc1 = mkDoc([[CANARY], [R1]]);
+  const unkeyed = mkDoc([[{ ...CANARY, resultKey: undefined }], [R1]]);
+  delete unkeyed.rings[0][0].resultKey;
+  let r = await propose(unkeyed);
+  check('the signer refuses a policy whose canary has no result key (a pre-0.34 agent) → result_key_missing', r.status === 409 && r.body?.error === 'result_key_missing', JSON.stringify(r.body));
+  r = await propose(doc1);
+  check('a policy naming each computer\'s result key is accepted for approval', r.status === 201, JSON.stringify(r.body));
+  const digest1 = r.body.digest;
+  const page = await (await fetch(`${PUBLIC}/approve/policy/${doc1.policyId}`)).text();
+  check('the approval page shows each computer\'s result-key fingerprint, as first seen here, with how to check it',
+    page.includes(core.resultKeyFingerprint(CANARY.resultKey)) && page.includes(core.resultKeyFingerprint(R1.resultKey)) && /first time this signer sees it/.test(page) && /rem0te-agent\.exe status/.test(page));
+  check('nothing is pinned before the policy is approved', !existsSync(join(dir, 'device-keys', `${core.deviceIdentity(CANARY)}.json`)));
+  await approvePolicy(doc1.policyId, people.olivia);
+  r = await approvePolicy(doc1.policyId, people.quinn);
+  check('two approvers make the policy active', r.status === 200 && r.body.status === 'ACTIVE', JSON.stringify(r.body).slice(0, 200));
+  const pinFile = join(dir, 'device-keys', `${core.deviceIdentity(CANARY)}.json`);
+  check('approving it pins each computer\'s key to its enrolled identity, on the signer\'s disk', existsSync(pinFile) && JSON.parse(readFileSync(pinFile, 'utf8')).resultKey === CANARY.resultKey);
+  const page2 = await (await fetch(`${PUBLIC}/approve/policy/${doc1.policyId}`)).text();
+  check('the page then says the key is pinned', /— pinned /.test(page2));
+
+  // A compromised portal proposes a second policy for the same canary, with a key of its own.
+  const swapped = mkDoc([[{ ...CANARY, resultKey: dev.forger.key }], [R1]]);
+  r = await propose(swapped);
+  check('a later policy naming another key for a pinned computer is refused at proposal → device_key_changed', r.status === 409 && r.body?.error === 'device_key_changed' && /device-key forget/.test(r.body.message), JSON.stringify(r.body));
+
+  // The canary under the approved policy; the ledger records the plan's hash.
+  const dep = `dep_${randomBytes(4).toString('hex')}`;
+  const p0 = ringPlan(doc1, digest1, 0, [CANARY], dep);
+  r = await underPolicy(doc1.policyId, { plan: p0, policyDigest: digest1, evidence: null });
+  check('the canary is signed under the policy', r.status === 201, JSON.stringify(r.body));
+  const env0 = (await j(`${INTERNAL}/internal/v1/plans/${p0.jobId}`)).body.envelope;
+  const planSha = sha(Buffer.from(env0.plan, 'base64'));
+  const rec = JSON.parse(readFileSync(join(dir, 'policies', `${doc1.policyId}.json`), 'utf8'));
+  check('the signer\'s ledger records the sha256 of the exact plan bytes it signed', rec.ledger[0].planSha256 === planSha);
+
+  const resultAt = new Date(Date.now() - 1000);
+  const genuine = signStatement(dev.canary, 'result', resultStatement({ jobId: p0.jobId, planSha256: planSha, rustdeskId: CANARY.rustdeskId, deviceSecretSha256: CANARY.deviceSecretSha256, outcome: 'succeeded', completedAt: resultAt.toISOString(), updates: [{ updateId: CU.updateId, revision: CU.revision, state: 'installed' }] }));
+  const scan = (k) => signStatement(k, 'scan', scanStatement({ rustdeskId: CANARY.rustdeskId, deviceSecretSha256: CANARY.deviceSecretSha256, scannedAt: new Date(resultAt.getTime() + 500).toISOString(), installed: [`${CU.updateId}@${CU.revision}`] }));
+  const target = (res, sc) => ({ endpointId: CANARY.endpointId, status: 'SUCCEEDED', statusReason: null, reconciled: false, resultAt: resultAt.toISOString(),
+    result: { outcome: 'succeeded', updates: [{ updateId: CU.updateId, revision: CU.revision, state: 'installed' }] },
+    scan: { scannedAt: new Date(resultAt.getTime() + 500).toISOString(), error: false, rebootPending: false, offered: [], installed: [`${CU.updateId}@${CU.revision}`] },
+    ...(res ? { signedResult: res } : {}), ...(sc ? { signedScan: sc } : {}) });
+  const ev = (t) => ({ previousJobId: p0.jobId, jobStatus: 'SUCCEEDED', targets: [t] });
+  r = await underPolicy(doc1.policyId, { plan: ringPlan(doc1, digest1, 1, [R1], dep), policyDigest: digest1, evidence: ev(target(null, null)) });
+  check('ring 1 on the portal\'s word alone (no device signature) → 409 result_signature_missing', r.status === 409 && r.body?.error === 'result_signature_missing', JSON.stringify(r.body));
+  const forgedRes = signStatement(dev.forger, 'result', JSON.parse(Buffer.from(genuine.statement, 'base64').toString('utf8')));
+  r = await underPolicy(doc1.policyId, { plan: ringPlan(doc1, digest1, 1, [R1], dep), policyDigest: digest1, evidence: ev(target(forgedRes, scan(dev.forger))) });
+  check('ring 1 on a canary success the portal signed itself → 409 result_wrong_device', r.status === 409 && r.body?.error === 'result_wrong_device', JSON.stringify(r.body));
+  const replayed = signStatement(dev.canary, 'result', resultStatement({ ...JSON.parse(Buffer.from(genuine.statement, 'base64').toString('utf8')), jobId: jobId() }));
+  r = await underPolicy(doc1.policyId, { plan: ringPlan(doc1, digest1, 1, [R1], dep), policyDigest: digest1, evidence: ev(target(replayed, scan(dev.canary))) });
+  check('ring 1 on the canary\'s genuine result about another job → 409 result_wrong_plan', r.status === 409 && r.body?.error === 'result_wrong_plan', JSON.stringify(r.body));
+  r = await underPolicy(doc1.policyId, { plan: ringPlan(doc1, digest1, 1, [R1], dep), policyDigest: digest1, evidence: ev(target(genuine, scan(dev.canary))) });
+  check('ring 1 on the canary\'s genuine signed success and scan → signed', r.status === 201, JSON.stringify(r.body));
+  const st = await j(`${INTERNAL}/internal/v1/policies/${doc1.policyId}`);
+  check('each refusal is kept with the policy, by code', ['result_signature_missing', 'result_wrong_device', 'result_wrong_plan'].every((c) => st.body.refusals.some((x) => x.code === c)), JSON.stringify(st.body.refusals.map((x) => x.code)));
+
+  // The pin is write-once for the serving process, and only the operator CLI removes it.
+  const { SignerStore } = require(join(dist, 'approval-signer', 'store.js'));
+  const store = new SignerStore(dir);
+  check('the store will not overwrite a pin', store.pinDeviceKey({ ...JSON.parse(readFileSync(pinFile, 'utf8')), resultKey: dev.forger.key }) === false && JSON.parse(readFileSync(pinFile, 'utf8')).resultKey === CANARY.resultKey);
+  const cli = (args) => spawnSync(process.execPath, [join(dist, 'approval-signer', 'main.js'), ...args], { encoding: 'utf8', env: { ...process.env, APPROVAL_SIGNER_DIR: dir } });
+  let out = cli(['device-key', 'list']);
+  check('device-key list shows each pinned computer with its fingerprint', out.status === 0 && out.stdout.includes(CANARY.endpointId) && out.stdout.includes(core.resultKeyFingerprint(CANARY.resultKey)), out.stdout + out.stderr);
+  out = cli(['device-key', 'forget', '--endpoint', CANARY.endpointId]);
+  check('device-key forget needs a reason', out.status !== 0);
+  out = cli(['device-key', 'forget', '--endpoint', CANARY.endpointId, '--reason', 'agent state lost; new fingerprint read from the computer']);
+  check('device-key forget removes the pin', out.status === 0 && !existsSync(pinFile), out.stderr);
+  r = await propose(swapped);
+  check('after the operator forgets the pin, a policy naming the new key may be proposed (and needs two approvals again)', r.status === 201 && r.body.status === 'AWAITING_APPROVAL', JSON.stringify(r.body));
+  await s3.close();
+}
 
 // ── the boundary itself: the signer loads nothing of the portal's ─────────
 const loaded = Object.keys(require.cache).filter((k) => /node_modules[\\/](@nestjs|@prisma|\.prisma)/.test(k));

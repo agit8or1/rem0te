@@ -5,6 +5,7 @@
  */
 import { REBOOT_UNPROVEN, UPDATE_RESTART_WARNING_MINUTES, type Plan } from '../actions/catalog';
 import { CLASSIFICATIONS as CLASS_NAME, type PolicyDoc } from '../actions/patch-policy';
+import { resultKeyFingerprint } from '../actions/device-result';
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 
@@ -105,6 +106,8 @@ interface PolicyView {
   policyId: string; status: string; digest: string; doc: PolicyDoc;
   decisions: { name: string; role: string; decision: string; at: string }[];
   revokedAt: string | null; revokeReason: string | null; signedPlans: number;
+  /** v0.34, by endpoint id: 'none', 'first_sight', 'changed' or 'pinned <iso>'. */
+  keyStatus?: Record<string, string>;
 }
 
 /** The approval page for a patch policy (0.32). Approving it is approving every plan inside it, so it says so first. */
@@ -112,7 +115,15 @@ export function renderPolicyApprovalPage(v: PolicyView, nonce: string): string {
   const d = v.doc;
   const row = (k: string, val: string) => `<tr><th>${esc(k)}</th><td>${val}</td></tr>`;
   const fmt = (iso: string) => `${esc(new Date(iso).toUTCString())}`;
-  const pc = (c: PolicyDoc['rings'][number][number]) => `${esc(c.hostname)} <span class="mut">(RustDesk ID ${esc(c.rustdeskId)})</span>`;
+  const key = (c: PolicyDoc['rings'][number][number]) => {
+    if (!c.resultKey) return ' <span class="mut">— no result key (its results cannot open a later ring)</span>';
+    const st = v.keyStatus?.[c.endpointId] ?? '';
+    const note = st === 'changed' ? ' <strong>— NOT the key pinned for this computer: plans under this policy will be refused</strong>'
+      : st === 'first_sight' ? ' <span class="mut">— first time this signer sees it: compare with <code>rem0te-agent.exe status</code> on the computer</span>'
+        : st.startsWith('pinned ') ? ` <span class="mut">— pinned ${esc(new Date(st.slice(7)).toUTCString())}</span>` : '';
+    return ` <span class="mut">result key</span> <code>${esc(resultKeyFingerprint(c.resultKey))}</code>${note}`;
+  };
+  const pc = (c: PolicyDoc['rings'][number][number]) => `${esc(c.hostname)} <span class="mut">(RustDesk ID ${esc(c.rustdeskId)})</span>${key(c)}`;
   const rings = d.rings.map((r, i) => `<li><strong>${i === 0 ? 'Ring 0 — canary' : `Ring ${i}`}</strong>: ${r.map(pc).join(', ')}</li>`).join('');
   const days = d.window.days.map((x) => x[0].toUpperCase() + x.slice(1)).join(', ');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -127,11 +138,11 @@ export function renderPolicyApprovalPage(v: PolicyView, nonce: string): string {
 ${d.reboot === 'if_required_in_window'
     ? `<li>Computers restart. After installing, a computer Windows says needs a restart shows a fixed warning and restarts ${UPDATE_RESTART_WARNING_MINUTES} minutes later, closing programs still open without saving. It does not restart while a RustDesk session is open (or when it cannot tell), or after the window ends; then it stays "restart required" until someone restarts it, and the next ring waits for that. ${esc(REBOOT_UNPROVEN)}</li>`
     : '<li>Computers are never restarted. An update that needs a restart is reported as "restart required" until someone restarts it, and the next ring waits for that.</li>'}
-<li>The previous ring's results reach this signer through the portal; agents do not sign them. The signer re-checks them, but a portal that forged a whole canary result could start ring 1 early. It still could not add a computer, an update or an hour.</li>
+<li>Each computer signs its own results with its result key, shown below. Approving binds that key to the computer: the signer opens a later ring only on results that key signed, so a portal cannot forge a canary success. A key shown as "first time" is trusted because you approve it here; to be sure it is the computer's, compare its fingerprint with <code>rem0te-agent.exe status</code> on that computer.</li>
 </ul></div>
 <table>
 ${row('Customer', esc(d.businessName))}
-${row('Computers', `<ul>${rings}</ul><span class="mut">Bound to each computer's enrolled identity. A re-enrolled computer is not covered.</span>`)}
+${row('Computers', `<ul>${rings}</ul><span class="mut">Bound to each computer's enrolled identity and result key. A re-enrolled computer is not covered.</span>`)}
 ${row('Installs', esc(d.allow.classifications.map((c) => CLASS_NAME[c] ?? c).join(', ')) + (d.allow.severities ? ` — severity ${esc(d.allow.severities.join(', '))} only` : '') + '<br><span class="mut">Only updates Windows Update itself offers each computer. Never drivers, feature upgrades, optional updates, or anything needing a licence or someone at the keyboard.</span>')}
 ${row('Never installs', d.allow.excludeKbs ? esc(d.allow.excludeKbs.join(', ')) : '<span class="mut">no KBs excluded</span>')}
 ${row('Window', `${esc(days)}, ${esc(d.window.start)}–${esc(d.window.end)} <strong>${esc(d.window.timezone)}</strong> local time`)}

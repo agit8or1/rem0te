@@ -14,6 +14,8 @@
  *   node dist/approval-signer/main.js pause clear --id <id> --reason '<why>'
  *   node dist/approval-signer/main.js patch-policy list
  *   node dist/approval-signer/main.js patch-policy revoke --id <id> --reason '<why>'
+ *   node dist/approval-signer/main.js device-key list
+ *   node dist/approval-signer/main.js device-key forget --endpoint <id> --reason '<why>'
  *
  * Environment: APPROVAL_SIGNER_DIR, APPROVAL_ORIGIN, APPROVAL_RP_ID,
  * APPROVAL_PUBLIC_PORT (3201), APPROVAL_INTERNAL_PORT (3202).
@@ -26,7 +28,7 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { createPublicKey, generateKeyPairSync } from 'node:crypto';
 import * as path from 'node:path';
-import { approvalsOf, effectivePolicyStatus, fingerprint, keysDocument, loadSigningKey, verifyPolicy, type RosterMember } from './core';
+import { approvalsOf, effectivePolicyStatus, fingerprint, keysDocument, loadSigningKey, resultKeyFingerprint, verifyPolicy, type RosterMember } from './core';
 import { SignerStore } from './store';
 import { startSigner } from './server';
 
@@ -163,6 +165,29 @@ switch (cmd) {
     die('patch-policy list|revoke --id <id> --reason <why>');
     break;
   }
+  case 'device-key': {
+    // v0.34. Pins are made when a policy naming a computer is first approved,
+    // and the serving process never changes one. A computer that really has a
+    // new key (its agent's state was lost, but not its enrolment) needs its
+    // old pin removed here before a policy naming the new key can be signed
+    // under: check the new fingerprint on the computer itself first.
+    if (sub === 'list') {
+      for (const p of store.devicePins().sort((a, b) => a.pinnedAt.localeCompare(b.pinnedAt))) {
+        console.log(`${p.endpointId}  ${p.hostname}  ${resultKeyFingerprint(p.resultKey)}  pinned ${p.pinnedAt} by policy ${p.policyId}`);
+      }
+      break;
+    }
+    if (sub === 'forget') {
+      const ep = arg('endpoint') || die('--endpoint is required');
+      const reason = arg('reason') || die('--reason is required');
+      const mine = store.devicePins().filter((p) => p.endpointId === ep);
+      if (!mine.length) die(`no pinned key for ${ep}`);
+      for (const p of mine) if (store.forgetDevicePin(p.identity)) console.log(`forgot ${p.hostname} ${resultKeyFingerprint(p.resultKey)} (pinned ${p.pinnedAt}): ${reason}`);
+      break;
+    }
+    die('device-key list|forget --endpoint <id> --reason <why>');
+    break;
+  }
   default:
-    die('usage: main.js serve|keygen|keys|roster list|roster add|roster disable|policy set|pause list|set|clear|patch-policy list|revoke');
+    die('usage: main.js serve|keygen|keys|roster list|roster add|roster disable|policy set|pause list|set|clear|patch-policy list|revoke|device-key list|forget');
 }

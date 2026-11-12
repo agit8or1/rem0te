@@ -17,7 +17,8 @@ import {
   MAX_POLICY_DAYS, MAX_POLICY_RINGS, POLICY_SCHEMA, PolicyAllow, PolicyDoc, PolicyWindow,
   allowParams, localTime, nextOccurrence, occurrenceAt, policyAllowsUpdate, policyDigest, validatePolicyDoc,
 } from '../actions/patch-policy';
-import { MANAGER_LABEL, eligibility } from './posture';
+import { resultKeyFingerprint, selfSignedScanKey } from '../actions/device-result';
+import { MANAGER_LABEL, eligibility, type Posture } from './posture';
 import { PatchingService } from './patching.service';
 
 /**
@@ -208,7 +209,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
   /** The canary's offered, installable, policy-allowed updates become this window's deployment. */
   private async startDeployment(r: PatchPolicy, doc: PolicyDoc, actor: ActorContext, windowKey: string, now: Date, rec: (ok: boolean, code: string, message: string, extra?: Partial<LastProposal>, audit?: boolean) => Promise<void>): Promise<PatchDeployment | null> {
     const canary = doc.rings[0][0];
-    const why = await this.notReady(actor, canary);
+    const why = await this.notReady(actor, canary, doc.rings.length > 1);
     if (why) { await rec(false, 'canary_not_ready', `The canary, ${canary.hostname}: ${why}`); return null; }
     const posture = (await this.patching.postures([canary.endpointId])).get(canary.endpointId)!;
     const updates = posture.updates.filter((u) => eligibility(u).ok && policyAllowsUpdate(doc.allow, u).ok).slice(0, MAX_UPDATES_PER_PLAN);
@@ -242,12 +243,12 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     const exclude: { endpointId: string; why: string }[] = [];
     if (ring > 0) {
       for (const c of doc.rings[ring]) {
-        const no = await this.notReady(actor, c);
+        const no = await this.notReady(actor, c, ring < doc.rings.length - 1);
         if (no) exclude.push({ endpointId: c.endpointId, why: no.slice(0, 200) });
       }
       if (exclude.length === doc.rings[ring].length) return rec(false, 'ring_not_ready', `No computer in ring ${ring} is ready: ${exclude.map((x) => x.why).slice(0, 2).join('; ')}`, { deploymentId: d.id, ring });
     } else {
-      const no = await this.notReady(actor, doc.rings[0][0]);
+      const no = await this.notReady(actor, doc.rings[0][0], doc.rings.length > 1);
       if (no) return rec(false, 'canary_not_ready', `The canary, ${doc.rings[0][0].hostname}: ${no}`, { deploymentId: d.id, ring });
     }
     try {
@@ -268,8 +269,13 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** The result key a computer's latest signed scan names, if that scan verifies under it and names this identity. */
+  private resultKeyOf(p: Posture | null, rustdeskId: string, deviceSecretSha256: string): string | null {
+    return p?.signed ? selfSignedScanKey(p.signed, { rustdeskId, deviceSecretSha256 }) : null;
+  }
+
   /** Why this policy computer cannot be in a plan right now, or null. */
-  private async notReady(actor: ActorContext, c: PolicyDoc['rings'][number][number]): Promise<string | null> {
+  private async notReady(actor: ActorContext, c: PolicyDoc['rings'][number][number], gatesNextRing = true): Promise<string | null> {
     const ep = await this.actions.endpointFor(c.endpointId);
     if (!ep || ep.status === 'ARCHIVED') return 'it is no longer enrolled.';
     if (ep.rustdeskNode?.rustdeskId !== c.rustdeskId || ep.rustdeskNode?.agentSecretHash !== c.deviceSecretSha256) return 'it was re-enrolled since the policy was approved, so it is not the computer that was approved.';
@@ -280,6 +286,12 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     const p = (await this.patching.postures([ep.id])).get(ep.id);
     if (!p) return 'it has not reported a signed Windows Update scan.';
     if (p.managers.length) return `its updates are managed by ${p.managers.map((m) => MANAGER_LABEL[m]).join(', ')}.`;
+    if (c.resultKey && gatesNextRing) {
+      // Its results are verified against the approved key: a computer now
+      // signing with another one would only produce results the signer refuses.
+      const now = this.resultKeyOf(p, c.rustdeskId, c.deviceSecretSha256);
+      if (now && now !== c.resultKey) return `it now signs its results with another key (${resultKeyFingerprint(now)}, approved: ${resultKeyFingerprint(c.resultKey)}), so its results would be refused. Its agent's state was reset; approve a new policy.`;
+    }
     const blocking = await this.actions.blocking(ep.id, UPDATE_INSTALL.id);
     if (blocking) return `an earlier install on it is ${blocking.status.toLowerCase().replace(/_/g, ' ')}.`;
     return null;
@@ -318,9 +330,19 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
           const nr = this.actions.readiness(ep, `${UPDATE_INSTALL.id}@${UPDATE_INSTALL.version}`);
           if (nr) throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: `${name} (the canary): ${nr}`, endpointId: id });
         }
+        // v0.34: the key this computer signs results with, as its own signed
+        // scan reports it (and only if that scan names this computer's
+        // enrolled identity). The portal cannot vouch for it — approving the
+        // policy on the signer is what makes it trusted — but a wrong one here
+        // can only stop the policy, never open a ring.
+        const posture = (await this.patching.postures([id])).get(id) ?? null;
+        const resultKey = this.resultKeyOf(posture, ep.rustdeskNode.rustdeskId, ep.rustdeskNode.agentSecretHash);
+        if (!resultKey && dto.rings.length > 1 && i < dto.rings.length - 1) {
+          throw new ConflictException({ code: 'RESULT_KEY_MISSING', message: `${name}${i === 0 ? ' (the canary)' : ''}: no signed scan from a 0.34+ agent, so its results cannot be verified, and they would open ring ${i + 1}. Update its agent and let it scan, or put it in the last ring.`, endpointId: id });
+        }
         businessName = ep.customer.name.slice(0, 120);
         tenantId = ep.tenantId;
-        out.push({ endpointId: id, hostname: name, rustdeskId: ep.rustdeskNode.rustdeskId, deviceSecretSha256: ep.rustdeskNode.agentSecretHash });
+        out.push({ endpointId: id, hostname: name, rustdeskId: ep.rustdeskNode.rustdeskId, deviceSecretSha256: ep.rustdeskNode.agentSecretHash, ...(resultKey ? { resultKey } : {}) });
       }
       rings.push(out);
     }
@@ -392,6 +414,8 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
       approvals: r.approvals ?? [], expiresAt: r.expiresAt, createdAt: r.createdAt, createdById: r.createdById,
       revokedAt: r.revokedAt, revokeReason: r.revokeReason, signerConfirmedRevocation: !!r.signerRevokedAt,
       document: doc,
+      // v0.34: compare these with `rem0te-agent.exe status` on each computer.
+      resultKeys: Object.fromEntries(doc.rings.flat().map((c) => [c.endpointId, c.resultKey ? resultKeyFingerprint(c.resultKey) : null])),
       currentWindow: r.status === 'ACTIVE' ? occurrenceAt(now, doc.window) : null,
       nextWindow: r.status === 'ACTIVE' ? nextOccurrence(now, doc.window, r.expiresAt) : null,
       lastProposal: r.lastProposal,
