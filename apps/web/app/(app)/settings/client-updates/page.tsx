@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CalendarClock, Plus, Trash2 } from 'lucide-react';
-import { businessesApi, clientUpdatesApi } from '@/lib/api-client';
+import { agentAutoUpdateApi, businessesApi, clientUpdatesApi, type AgentAutoUpdateSettings } from '@/lib/api-client';
 import { usePermissions } from '@/lib/auth';
 import {
   browserTimeZone, DAY_NAMES, knownTimeZones, type ComputerRow, type PolicyPayload, type PolicyView, type WindowSpec,
@@ -101,6 +101,7 @@ export default function ClientUpdatesPage() {
         </div>
       )}
       <Notice n={notice} />
+      {isPlatformAdmin && <AgentAutoUpdateCard setNotice={setNotice} />}
       {!businessId && <p className="text-sm text-muted-foreground">Choose a business to see and set its policy.</p>}
       {policy.isError && <Notice n={{ ok: false, text: apiError(policy.error).message }} />}
       {d && (
@@ -240,12 +241,14 @@ function PolicyForm({ businessId, siteId, groupId = null, current, defaultTz, ca
   const [skipActiveSession, setSkipActiveSession] = useState(current?.skipActiveSession ?? true);
   const [skipLoggedOnUser, setSkipLoggedOnUser] = useState(current?.skipLoggedOnUser ?? false);
   const [priority, setPriority] = useState<string>(current?.priority != null ? String(current.priority) : '');
+  const [agentMode, setAgentMode] = useState<string>(current?.agentMode ?? '');
   const zones = useMemo(() => knownTimeZones(), []);
   const listId = `tz-${groupId ?? siteId ?? 'business'}`;
 
   const save = useMutation({
     mutationFn: () => clientUpdatesApi.setPolicy({
       businessId, siteId, enabled, timeZone, windows, skipActiveSession, skipLoggedOnUser,
+      agentMode: agentMode === '' ? null : (agentMode as 'ANY_TIME' | 'WINDOW' | 'OFF'),
       ...(groupId ? { groupId, priority: priority === '' ? null : Number(priority) } : {}),
     }),
     onSuccess: (r) => {
@@ -304,6 +307,20 @@ function PolicyForm({ businessId, siteId, groupId = null, current, defaultTz, ca
         <input type="checkbox" checked={skipLoggedOnUser} disabled={disabled} onChange={(e) => setSkipLoggedOnUser(e.target.checked)} />
         Skip a computer while someone is logged on to it (an agent that does not report who is logged on is skipped too)
       </label>
+      <div className="space-y-1 border-t pt-3 md:w-[32rem]">
+        <Label htmlFor={`${listId}-agent`}>Keep agents up to date automatically</Label>
+        <select id={`${listId}-agent`} data-testid="cu-agent-mode" className="w-full rounded-md border bg-background p-2 text-sm" value={agentMode} disabled={disabled} onChange={(e) => setAgentMode(e.target.value)}>
+          <option value="">{groupId || siteId ? 'Inherit (the next policy that applies)' : 'Default — any time, paced'}</option>
+          <option value="ANY_TIME">Any time, paced</option>
+          <option value="WINDOW">Only inside this policy’s window</option>
+          <option value="OFF">Off — never update agents automatically</option>
+        </select>
+        <p className="text-xs text-muted-foreground">
+          When a computer’s agent is older than this server’s, its next check-in re-runs the installer (a signed agent runs its own verified update instead).
+          Independent of the RustDesk checkbox above. Never during a remote session; at most a few attempts per release; paced across the platform.
+          Turning it on or to the window needs you to confirm it is you; turning it off does not.
+        </p>
+      </div>
       {canEdit && (
         <div className="flex gap-2">
           <Button type="submit" disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Save'}</Button>
@@ -311,6 +328,78 @@ function PolicyForm({ businessId, siteId, groupId = null, current, defaultTz, ca
         </div>
       )}
     </form>
+  );
+}
+
+/**
+ * Settings → Client updates → Keep agents up to date automatically (0.36),
+ * the platform-wide half: Platform Admin only. Each business, site or device
+ * group can opt out (or limit it to its window) in its policy below.
+ */
+function AgentAutoUpdateCard({ setNotice }: { setNotice: (n: { ok: boolean; text: string } | null) => void }) {
+  const qc = useQueryClient();
+  const q = useQuery<AgentAutoUpdateSettings>({
+    queryKey: ['agent-auto-update'],
+    queryFn: () => agentAutoUpdateApi.get().then((r) => r.data.data),
+    refetchInterval: 60_000,
+  });
+  const d = q.data;
+  const [perHour, setPerHour] = useState('');
+  const [maxAttempts, setMaxAttempts] = useState('');
+  const save = useMutation({
+    mutationFn: (body: { enabled?: boolean; perHour?: number; maxAttempts?: number }) => agentAutoUpdateApi.put(body),
+    onSuccess: () => { setNotice({ ok: true, text: 'Saved — automatic agent update settings changed.' }); setPerHour(''); setMaxAttempts(''); qc.invalidateQueries({ queryKey: ['agent-auto-update'] }); },
+    onError: (e) => setNotice({ ok: false, text: apiError(e).message }),
+  });
+  return (
+    <Card data-testid="agent-auto-update-settings">
+      <CardHeader><CardTitle className="text-sm">Keep agents up to date automatically — every business</CardTitle></CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {q.isError && <Notice n={{ ok: false, text: apiError(q.error).message }} />}
+        {d && (
+          <>
+            {!d.processOn && <Notice n={{ ok: false, text: 'Turned off on this server (AGENT_AUTO_UPDATE=off): no computer is asked to update, whatever is set here.' }} />}
+            <label className="flex items-center gap-2 font-medium">
+              <input type="checkbox" checked={d.enabled} disabled={save.isPending} onChange={(e) => save.mutate({ enabled: e.target.checked })} />
+              Update outdated agents automatically (on by default)
+            </label>
+            <p className="text-muted-foreground">
+              Standard Windows agents older than <span className="font-mono">{d.served.version}</span> re-run the installer at a check-in, as Update agent does
+              {d.served.signedSha256 ? <>; signed agents not on the published build run their own verified update</> : <>; no signed agent build is published, so signed agents are not compared</>}.
+              Linux and macOS agents are read-only and are never updated from here. Each attempt downloads the RustDesk client again (about 40 MB).
+            </p>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="aau-per-hour">At most this many starts an hour, across the platform</Label>
+                <Input id="aau-per-hour" type="number" min={1} max={2000} className="w-32" placeholder={String(d.perHour)} value={perHour} onChange={(e) => setPerHour(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="aau-attempts">Attempts per computer per release</Label>
+                <Input id="aau-attempts" type="number" min={1} max={10} className="w-32" placeholder={String(d.maxAttempts)} value={maxAttempts} onChange={(e) => setMaxAttempts(e.target.value)} />
+              </div>
+              <Button type="button" variant="outline" disabled={save.isPending || (perHour === '' && maxAttempts === '')}
+                onClick={() => save.mutate({ ...(perHour !== '' ? { perHour: Number(perHour) } : {}), ...(maxAttempts !== '' ? { maxAttempts: Number(maxAttempts) } : {}) })}>
+                Save limits
+              </Button>
+            </div>
+            <p className="text-muted-foreground">
+              Now: {d.pace.usedLastHour} of {d.pace.perHour} starts used in the last hour. Last 24 hours: {d.lastDay.started} started, {d.lastDay.updated} updated, {d.lastDay.open} still open.
+              Attempts are spaced 2 h and 8 h apart; after the last one a computer is shown as failing and is not asked again until the next release or someone clicks Update agent.
+            </p>
+            {d.failing.count > 0 && (
+              <div className="space-y-1" data-testid="agent-auto-update-failing">
+                <p className="font-medium text-amber-700 dark:text-amber-400">{d.failing.count} computer{d.failing.count === 1 ? '' : 's'} failing to update automatically</p>
+                <ul className="space-y-0.5 text-xs">
+                  {d.failing.computers.map((c) => (
+                    <li key={c.id}><Link href={`/endpoints/${c.id}#agent-card`} className="underline">{c.name}</Link>{c.business ? ` · ${c.business.name}` : ''} · agent {c.agentVersion ?? '—'} · {c.attempts} attempts, last {fmt(c.lastAt)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

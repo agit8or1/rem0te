@@ -54,6 +54,7 @@ import { ScriptRunModule } from './script-run/script-run.module';
 import { SoftwareModule } from './software/software.module';
 import { DeviceViewsModule } from './device-views/device-views.module';
 import { AgentUpgradeModule } from './agent-upgrade/agent-upgrade.module';
+import { AgentAutoUpdateModule } from './agent-auto-update/agent-auto-update.module';
 import { SupportRequestsModule } from './support-requests/support-requests.module';
 import { OffboardingModule } from './offboarding/offboarding.module';
 import { SsoModule } from './sso/sso.module';
@@ -134,6 +135,7 @@ import { IntegrationModule } from './integration/integration.module';
     ScriptRunModule,
     SoftwareModule,
     AgentUpgradeModule,
+    AgentAutoUpdateModule,
     DeviceViewsModule,
     SupportRequestsModule,
     OffboardingModule,

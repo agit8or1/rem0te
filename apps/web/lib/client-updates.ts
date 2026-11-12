@@ -27,6 +27,8 @@ export type PolicyView = {
   windows: WindowSpec[];
   skipActiveSession: boolean;
   skipLoggedOnUser: boolean;
+  /** 0.36: automatic agent updates for the computers this policy governs; null inherits. */
+  agentMode: 'ANY_TIME' | 'WINDOW' | 'OFF' | null;
   description: string | null;
   valid: boolean;
   window: { open: boolean; opensAt: string | null; closesAt: string | null };

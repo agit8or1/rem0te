@@ -186,6 +186,10 @@ enum ActivityAction {
   REPORT_SCHEDULE_FAILED
   // 0.35 automatic snapshots: the platform-wide schedule changed (before/after)
   SNAPSHOT_SCHEDULE_CHANGED
+  // 0.36 agent auto-update: the platform-wide settings changed (before/after).
+  // Per-business opt-outs ride on CLIENT_UPDATE_POLICY_CHANGED. The automatic
+  // requests themselves are AgentAutoUpdateAttempt rows, not audit entries.
+  AGENT_AUTO_UPDATE_SETTINGS_CHANGED
   // 0.33 device groups, shared device views and bulk actions
   DEVICE_GROUP_CREATED
   DEVICE_GROUP_UPDATED
@@ -738,6 +742,8 @@ model Endpoint {
   actionJobs        ActionJob[]
   actionTargets     ActionTarget[]
   agentMigrations   AgentMigration[]
+  /// 0.36: automatic agent updates the server asked this computer for.
+  agentAutoUpdates  AgentAutoUpdateAttempt[]
   chatConversations ChatConversation[]
 
   // Access mode: how the computer's remote-access authorization is scoped.
@@ -981,6 +987,15 @@ model RustdeskNode {
   reinstallRequestedAt  DateTime?
   reinstallRequestedBy  String?
   reinstallDispatchedAt DateTime?
+
+  // Automatic agent update (0.36, agent-auto-update/schedule.ts): the target
+  // being pursued (a platform version, or a signed build's SHA-256), how many
+  // attempts have gone out for it and when the last did. On the node the
+  // heartbeat already loads, so an up-to-date agent costs no query. A new
+  // target starts again from zero; reaching it clears all three.
+  agentAutoTarget   String?
+  agentAutoAttempts Int       @default(0)
+  agentAutoLastAt   DateTime?
 
   // How many incoming RustDesk sessions the endpoint's agent saw on its last
   // authenticated heartbeat (count of `rustdesk.exe --cm` connection-manager
@@ -1671,6 +1686,14 @@ model PlatformSettings {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Automatic agent updates (0.36, agent-auto-update/schedule.ts): the
+  // platform switch, the global pace (attempts started per hour across the
+  // fleet: each is a ~40 MB RustDesk download plus the installer) and how many
+  // attempts one computer gets at one target before it is shown failing.
+  agentAutoUpdateEnabled     Boolean @default(true)
+  agentAutoUpdatePerHour     Int     @default(120)
+  agentAutoUpdateMaxAttempts Int     @default(3)
 }
 
 // ─── Platform Security Config ────────────────────────────────────────────────
@@ -3029,12 +3052,50 @@ model ClientUpdatePolicy {
   windows           Json
   skipActiveSession Boolean  @default(true)
   skipLoggedOnUser  Boolean  @default(false)
+  /// 0.36: automatic agent updates for the computers this policy governs.
+  /// Null inherits from the next policy that applies (the business row's
+  /// null is the platform default: any time, paced). Independent of
+  /// `enabled`, which is the RustDesk client's.
+  agentMode         AgentAutoUpdateMode?
   updatedById       String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   @@index([customerId])
   @@index([enabled])
+}
+
+/// 0.36 (agent-auto-update/schedule.ts): when a computer's outdated agent may
+/// be updated without anyone clicking Update agent.
+enum AgentAutoUpdateMode {
+  ANY_TIME
+  WINDOW
+  OFF
+}
+
+/// 0.36: one automatic agent update the server asked a computer for — the
+/// update history's system-initiated rows (no requester, and no audit entry
+/// per heartbeat). Also the global pacing count: attempts dispatched in the
+/// last hour, across every API process.
+model AgentAutoUpdateAttempt {
+  id            String    @id @default(cuid())
+  endpointId    String
+  endpoint      Endpoint  @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  tenantId      String?
+  customerId    String?
+  /// standard | standard_pre015 (0.13–0.14, asked through updateRustdesk) | signed
+  channel       String
+  fromVersion   String?
+  /// A platform version for a standard agent; the signed build's SHA-256 for a signed one.
+  targetVersion String
+  attempt       Int
+  dispatchedAt  DateTime  @default(now())
+  /// updated | superseded | null while open.
+  outcome       String?
+  resolvedAt    DateTime?
+
+  @@index([dispatchedAt])
+  @@index([endpointId, dispatchedAt])
 }
 
 // ─── Script library (review only; nothing here runs a script) ────────────────

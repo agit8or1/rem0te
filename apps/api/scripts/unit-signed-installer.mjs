@@ -56,9 +56,10 @@ check('signed variant pins the agent version literally', signed.includes("$AGENT
 check('signed variant makes the RustDesk digest mandatory', /\$RD_SHA256\s+= Need 'rustdeskSha256'/.test(signed));
 check('legacy variant still carries its update hook (documented, contained by trust mode)', /irm '\$iu' \| iex/.test(legacy));
 check('legacy heartbeat reports updateChannel=legacy', legacy.includes("$body['updateChannel'] = 'legacy'"));
-// ±120: the signed variant also carries the approved-action hook (0.26) and
-// the patch posture and scan hook (0.27).
-check('both variants share the body (same line count ±120)', Math.abs(legacy.split('\n').length - signed.split('\n').length) < 120);
+// ±140: the signed variant also carries the approved-action hook (0.26),
+// the patch posture and scan hook (0.27) and the periodic self-check (0.36,
+// 14 lines; the legacy variant has a one-line comment in its place).
+check('both variants share the body (same line count ±140)', Math.abs(legacy.split('\n').length - signed.split('\n').length) < 140);
 // Approved actions (0.26): the signed heartbeat hands envelopes to the signed
 // agent and nothing else; the legacy heartbeat never runs one.
 check('signed heartbeat hands envelopes to rem0te-agent.exe action, detached',

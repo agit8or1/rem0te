@@ -665,6 +665,23 @@ const SECTIONS: Section[] = [
           held, not confirmed or done. More in{' '}
           <Link href="/docs/update-signing#moving-existing-agents" className="underline">Update signing</Link>.
         </p>
+        <p className="font-medium text-foreground">Agents keep themselves up to date (0.36)</p>
+        <p>
+          You don&apos;t need to click Update agent after a release. When a Windows computer&apos;s agent is older than
+          this server&apos;s version, its next check-in re-runs the installer by itself (a signed agent runs its own
+          verified update instead). It is paced across the platform, never runs during a remote session, and waits
+          while updates are paused or a rollout owns the computer. A computer gets at most three attempts per
+          release, spaced hours apart. After that its Agent card says <strong>Auto-update failing</strong>, and
+          clicking Update agent tries again. The <strong>Automatic updates</strong> part of the card says which
+          state it&apos;s in: up to date, queued (with the window it waits for), updating, failing, opted out, or{' '}
+          <strong>update manually</strong>. Update manually covers Linux and macOS agents, which act on nothing the
+          server sends, and agents older than 0.13. For those the card gives the exact command. A business, site or
+          device group can opt out, or limit it to its update window, in{' '}
+          <Link href="/settings/client-updates" className="underline">Settings → Client updates</Link>. A Platform
+          Admin sets the platform switch, the hourly pace and the attempts there. The device list&apos;s{' '}
+          <em>Agent outdated</em> filter shows every computer still behind. More in{' '}
+          <Link href="/docs/updates#the-rem0te-agent-automatic-updates-036" className="underline">Updates</Link>.
+        </p>
       </div>
     ),
   },

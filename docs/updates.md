@@ -17,9 +17,11 @@ footer and on the About page, for everyone signed in — "which version are you
 on?" is the first question asked about every problem.
 
 Two more things can be out of date and are **not** on that page. The **Rem0te
-agent** on a managed computer is upgraded from that computer's own Overview tab
-with *Reinstall agent* — staging a client upgrade will not do it, because that
-skips any endpoint already on the latest client, which is usually most of them.
+agent** on a managed computer keeps itself up to date (0.36, on by default — see
+[The Rem0te agent: automatic updates](#the-rem0te-agent-automatic-updates-036)),
+and can still be updated by hand from the computer's Agent card with *Update
+agent* — staging a client upgrade will not do it, because that skips any
+endpoint already on the latest client, which is usually most of them.
 And **Windows updates pending on an endpoint**. Those belong to the machine, not to this
 platform, and Rem0te reports them without installing them — see
 [inventory.md](inventory.md).
@@ -214,6 +216,113 @@ Archived computers are skipped when an update is staged.
 > [troubleshooting.md](troubleshooting.md#a-computer-went-offline-right-after-update-or-reinstall-agent).
 
 ---
+
+## The Rem0te agent: automatic updates (0.36)
+
+**On by default.** When a Windows computer's agent is older than what this
+server serves, the server asks it to update itself at a check-in — paced across
+the platform, inside the business's policy, a bounded number of times. Nobody
+has to click *Update agent*. Code: `apps/api/src/agent-auto-update/`
+(`schedule.ts` holds every decision, unit-tested on its own).
+
+**What "older" means.** A standard agent reports the platform version of the
+installer that wrote it; it is outdated when that is older than this server's
+`version.json` (compared as numbers: 0.9 is older than 0.35). A signed agent is
+outdated when the build it reports is not the one the signed repository
+publishes. Because the standard agent's version is the platform version, **every
+release counts as an agent update**, whether or not the heartbeat script
+changed in it — the price of an exact answer to "is this the agent this server
+would install?". Each attempt downloads the RustDesk client again (≈ 40 MB),
+which is what the pace below is for.
+
+**How it is asked.** The heartbeat response carries the flag that agent already
+acts on — nothing new has to be installed first:
+
+| Agent | Flag | Since | What runs |
+|---|---|---|---|
+| Standard, 0.15.0 and later | `reinstallAgent` | 0.15.0 | the current `windows.ps1`, as *Update agent* does |
+| Standard, 0.13.x–0.14.x (no version reported, but a device secret) | `updateRustdesk` | 0.11.0 | the same installer: those heartbeats re-run it on that flag alone |
+| Signed | `reinstallAgent` | 0.24 | `rem0te-agent.exe update`, which installs only what signed metadata lists |
+| Standard, older than 0.13.0 (no device secret) | — | — | **update manually**: nothing such a computer says is believed and nothing is handed to it; re-run the installer with an enrolment token from *Add device* (the Agent card gives the command) |
+| Linux, macOS | — | — | **update manually**: those agents are read-only by design and act on no flag (invariants §24, §32); the Agent card gives the `curl … \| sudo bash` command |
+
+Production's 0.30.1 and 0.18.25 agents are both in the first row. The table was
+worked out from every tagged `heartbeat.ps1` (`git show <tag>:…`): `reinstallAgent`
+is honoured from v0.15.0, `updateRustdesk` from v0.11.0, and device secrets
+arrived in v0.13.0. Every version since v0.11.0 keeps the same 30-minute floor
+between installer runs.
+
+**Bounded, so a release never becomes a download loop:**
+
+- **One attempt hands the flag out for 20 minutes** — shorter than the agent's
+  own 30-minute floor, so an attempt is at most one installer run.
+- **Then it waits an hour** for the computer to report the new version, and
+  backs off: attempt 2 no sooner than 2 hours after attempt 1, attempt 3 no
+  sooner than 8 hours after attempt 2.
+- **After the last attempt (3 by default, 1–10) it stops** and the computer is
+  shown **Auto-update failing** on its Agent card and in the settings card's
+  failing list. It is not asked again until the next release (a new target
+  starts from zero) or someone clicks *Update agent* (which also resets it).
+- **A global pace**: at most *N* attempts start per hour across the whole
+  platform (default 120, 1–2,000), counted from the history table under a
+  database lock, so it holds across API processes. 5,000 outdated computers
+  take about 42 hours at the default.
+
+**Holds** — nothing goes out, and the Agent card says which: an *updates*
+containment pause (business or global); a staged rollout owning the computer;
+another request that re-runs the installer already queued (a RustDesk client
+update, *Update agent*, a move to the signed agent — each updates the agent
+too); a remote session open (the install restarts RustDesk); outside the
+policy's window when the policy says *only inside the window*; someone logged on
+when that policy also skips computers with a user; and the pace.
+
+**Settings.**
+
+- **Platform:** Settings → Client updates → *Keep agents up to date
+  automatically — every business* (Platform Admin): on/off, starts per hour,
+  attempts per computer per release. `GET`/`PUT /admin/agent-auto-update`.
+  A change needs fresh authentication and is audited as
+  `AGENT_AUTO_UPDATE_SETTINGS_CHANGED` (before and after).
+- **Per business, site or device group:** the client-update policy's *Keep
+  agents up to date automatically*: *Any time, paced* (the default), *Only
+  inside this policy's window*, *Off*, or (site and group) *Inherit*. The most
+  specific policy that sets one decides — group, then site, then business — and
+  one left on *Inherit* passes to the next. It is independent of the RustDesk
+  checkbox. Changing it to anything but *Off* needs fresh authentication;
+  opting out never does. Audited as `CLIENT_UPDATE_POLICY_CHANGED`, with
+  `agentMode` in before and after.
+- **Per process:** `AGENT_AUTO_UPDATE=off` stops it in this API process
+  (`scripts/run-e2e.sh` and the browser suite set it).
+- **Canary first is not built.** The client-update machinery has no canary
+  notion to reuse cheaply; a cautious business can set *Off* on its business
+  policy and *Any time* on a pilot device group's policy, which has the same
+  effect by hand.
+
+**Records.** Each attempt is an `AgentAutoUpdateAttempt` row with no requester —
+the computer's *Automatic update history* on its Agent card — and is **not** an
+audit entry: one per computer per release would bury a log that can never be
+pruned. The settings and the policies that cause them are audited.
+
+**The signed agent's own check.** Before 0.36 a signed agent updated only when
+the portal set a flag. Its heartbeat now also runs `rem0te-agent.exe update`
+by itself about once a day (every 20 hours plus up to 8 hours of jitter), on a
+heartbeat where the portal says it may (`agentSelfCheck`: not opted out, inside
+a *window* policy's window, no updates pause, no rollout, no session). The
+signed pause still stops it inside the agent. This is part of the signed
+`windows/install.ps1`, so **it takes effect only once a signed release built
+from 0.36 is published with the owner's keys**; until then signed agents update
+when the portal asks them to (the `reinstallAgent` row above), which works
+today wherever a signed build is published.
+
+**The device list** has *Agent: Agent outdated* (`agent=outdated`): standard
+Windows agents reporting an older version, and signed agents not on the
+published build. An agent that reports no version is under *No agent report*,
+not here — it cannot be told from a RustDesk-only computer.
+
+**Evidence: I** (`e2e-agent-auto-update.mjs` through the real heartbeat route,
+`unit-agent-auto-update.mjs`, the generated PowerShell parsed and the signed
+self-check run under pwsh against a stub agent). It has not run on a real
+Windows computer.
 
 ## Signed updates (v0.24)
 

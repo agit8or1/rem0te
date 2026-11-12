@@ -34,6 +34,8 @@ import { STALE_AFTER_MS as PATCH_STALE_AFTER_MS } from '../patching/summary';
  * health is refused rather than answered — an ordering is a disclosure.
  */
 
+import { UpdateTrustService } from '../update-trust/update-trust.service';
+import { servedAgentVersion } from '../common/served-version';
 import { versionParts, type ListFilters, type ListQuery, type SortKey } from './list-query';
 import { likeEscape } from '../common/like';
 import { groupsCell } from '../device-views/rules';
@@ -93,6 +95,7 @@ export class EndpointListService {
     private readonly prisma: PrismaService,
     private readonly acl: AccessControlService,
     private readonly audit: AuditService,
+    private readonly updateTrust: UpdateTrustService,
   ) {}
 
   private alertAccess(actor: ActorContext): AlertAccess {
@@ -177,6 +180,17 @@ export class EndpointListService {
     if (f.patches === 'current') out.push(Prisma.sql`d.patch_pending = 0`);
     if (f.patches === 'unknown') out.push(Prisma.sql`d.patch_source IS NULL`);
     if (f.patches === 'stale') out.push(Prisma.sql`d.patch_at < ${new Date(Date.now() - PATCH_STALE_AFTER_MS)}`);
+    // Agent outdated (0.36): what automatic agent updates would act on — a
+    // standard Windows agent reporting a version older than the one this
+    // server's installer reports (compared as integer arrays), or a signed
+    // agent not on the published signed build. An agent that reports no
+    // version is "none", not outdated: it cannot be told from RustDesk alone.
+    if (f.agent === 'outdated') {
+      const v = versionParts(servedAgentVersion());
+      const served = v ? pad4(v) : null;
+      const sha = this.updateTrust.agentTarget()?.sha256 ?? null;
+      out.push(Prisma.sql`((e."updateChannel" IS DISTINCT FROM 'signed' AND e.platform ILIKE 'win%' AND av.parts IS NOT NULL AND ${served}::int[] IS NOT NULL AND av.parts < ${served}::int[]) OR (e."updateChannel" = 'signed' AND ${sha}::text IS NOT NULL AND e."agentSha256" IS DISTINCT FROM ${sha}::text))`);
+    }
     const min = versionParts(f.rustdeskMin), max = versionParts(f.rustdeskMax);
     if (min) out.push(Prisma.sql`rv.parts >= ${pad4(min)}::int[]`);
     if (max) out.push(Prisma.sql`rv.parts <= ${pad4(max)}::int[]`);
@@ -264,7 +278,12 @@ export class EndpointListService {
           SELECT CASE WHEN rn.version ~ '^[0-9]{1,6}([.][0-9]{1,6}){0,3}$'
                       THEN (string_to_array(rn.version || repeat('.0', 3 - (length(rn.version) - length(replace(rn.version, '.', '')))), '.'))::int[]
                  END AS parts
-        ) rv ON TRUE`;
+        ) rv ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT CASE WHEN e."agentVersion" ~ '^[0-9]{1,6}([.][0-9]{1,6}){0,3}$'
+                      THEN (string_to_array(e."agentVersion" || repeat('.0', 3 - (length(e."agentVersion") - length(replace(e."agentVersion", '.', '')))), '.'))::int[]
+                 END AS parts
+        ) av ON TRUE`;
   }
 
   /** Phase two: derive, filter on what was derived, order and page — over the given ids only. */

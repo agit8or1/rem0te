@@ -61,6 +61,11 @@ export SCRIPT_OUTPUT_SWEEP=off
 # suites runs they did not ask for. e2e-auto-snapshots turns it on for its
 # own API.
 export SNAPSHOT_SWEEP=off
+# Automatic agent self-update (0.36) hands reinstallAgent to every outdated
+# Windows heartbeat — in every suite that heartbeats an old agent version,
+# which would hand those suites flags they did not ask for.
+# e2e-agent-auto-update turns it on for its own API.
+export AGENT_AUTO_UPDATE=off
 export ENCRYPTION_KEY="${ENCRYPTION_KEY:-$(openssl rand -hex 32)}"
 export SEED_ADMIN_EMAIL="${SEED_ADMIN_EMAIL:-e2e-admin@example.com}"
 export SEED_ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD:-$(openssl rand -base64 18)}"
@@ -85,7 +90,7 @@ run() { # name, command...
 }
 
 echo "── self-starting suites"
-for t in credentials security-features presets monitoring integration dashboard diagnostics-catalog system-inventory device-list endpoint-visibility device-views dynamic-groups add-device auto-updates group-policies reports script-library linux-agent macos-agent enrol-stepup search metric-history retention presence-cache ai-timeline email chat polish auto-snapshots; do run "$t" node "scripts/e2e-$t.mjs"; done
+for t in credentials security-features presets monitoring integration dashboard diagnostics-catalog system-inventory device-list endpoint-visibility device-views dynamic-groups add-device auto-updates group-policies reports script-library linux-agent macos-agent enrol-stepup search metric-history retention presence-cache ai-timeline email chat polish auto-snapshots agent-auto-update; do run "$t" node "scripts/e2e-$t.mjs"; done
 for t in containment approved-action staged-patching maintenance-actions patch-policies software-deploy signed-updates ticket-workflow agent-upgrade; do
   if [[ -n "${RELEASE_BIN:-}" && -n "${ACTION_SIM:-}" ]]; then run "$t" node "scripts/e2e-$t.mjs"
   else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM not set)\n' "$t"; skipped+=("$t"); fi

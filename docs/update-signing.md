@@ -269,6 +269,35 @@ only). On a signed agent the same button is **Check for update now**: the agent 
 installs only what the signed repository lists. Linux and macOS agents act on nothing the portal sends, so the card
 gives the command to re-run on the computer instead.
 
+## Automatic update checks (0.36)
+
+Until 0.36 a signed agent ran `rem0te-agent.exe update` only when a heartbeat
+response carried `updateRustdesk` or `reinstallAgent` — when someone clicked
+*Check for update now*, or a rollout asked. Nothing checked on a schedule,
+whatever the Agent card's *Portal update mode* said (that is the portal's
+Legacy allowed / Signed only setting: what it hands **standard** agents, not how
+often a signed one checks).
+
+From 0.36 two things ask, both through the same `update` code path, so both
+are refused by the signed pause and install only what signed metadata lists:
+
+- **The portal**, when the build a signed agent reports is not the one the
+  repository publishes: automatic agent updates
+  ([updates.md](updates.md#the-rem0te-agent-automatic-updates-036)) hand it
+  `reinstallAgent`, paced and capped like a standard agent's. This works with
+  signed agents already installed.
+- **The agent itself**, about once a day (20 hours plus up to 8 hours of
+  jitter, so a fleet does not check in the same minute), on a heartbeat where
+  the portal sets `agentSelfCheck` — not opted out, inside a *window* policy's
+  window, no updates pause, no rollout, no session. The schedule lives in
+  `C:\ProgramData\Rem0te\update-check.next`; the first sighting only
+  schedules, and a due time more than two days out (a clock that jumped) is
+  rescheduled rather than acted on. This is in the signed `windows/install.ps1`
+  that writes the heartbeat, so **it reaches a computer only after a signed
+  release built from 0.36 is published with the owner's keys** and installed
+  there. A compromised portal can withhold the permission (no worse than
+  today) or grant it, which runs only signed code.
+
 ## Rotating keys
 
 **Root or another role's key** is rotated with `rotate-root`. It needs a threshold of the current root keys, and

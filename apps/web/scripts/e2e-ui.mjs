@@ -163,6 +163,7 @@ function startApi() {
     // 0.35 automatic snapshots: the fixtures' snapshots are the only ones, and
     // snapshotAutoUpdate() below drives its device by hand.
     SNAPSHOT_SWEEP: 'off',
+    AGENT_AUTO_UPDATE: 'off',
     FRONTEND_URL: WEB, PUBLIC_API_URL: WEB,
     VERSION_FILE: path.join(ROOT, 'version.json'),
     // 0.35: the relay is this suite's SMTP sink on loopback, and the ClientSt0r peer its reference peer.
