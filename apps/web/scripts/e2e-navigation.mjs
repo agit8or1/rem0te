@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * The 0.31 navigation (and 0.32's Reports, 0.34's Automation hub and software
- * compliance report), in a real browser: every sidebar entry and section tab
+ * The 0.31 navigation (and 0.32's Reports, 0.34's Automation hub, software
+ * compliance and scheduled reports, Chat tab, Agent card, Email settings and
+ * Data retention card, and 0.35's Agent migrations tab), in a real browser: every sidebar entry and section tab
  * leads to a page that renders, each persona sees exactly its entries, the
  * Settings group works, nothing overflows sideways, at desktop and tablet
  * widths, in the light and dark themes. It also writes screenshots to OUT_DIR
@@ -41,7 +42,7 @@ const check = (c, m, d = '') => { if (c) { pass++; console.log(`  \x1b[32m✓\x1
 
 const VIEWPORTS = { desktop: { width: 1440, height: 900 }, tablet: { width: 820, height: 1180 } };
 const SETTINGS_ADMIN = ['/settings', '/users', '/offboarding', '/technician-approvals', '/audit', '/businesses', '/admin/technicians', '/admin/access', '/admin/sso',
-  '/admin/rollouts', '/settings/email', '/admin/security', '/admin/status', '/about'];
+  '/settings/client-updates', '/admin/rollouts', '/settings/email', '/admin/security', '/admin/status', '/about'];
 
 async function signIn(context, email, password) {
   const page = await context.newPage();
@@ -175,6 +176,84 @@ async function softwareChecks(page, who) {
   }
 }
 
+/**
+ * 0.35: Agent migrations (/endpoints/agent-migrations), now a Devices tab for
+ * whoever may request a migration. A Business User without computers:edit
+ * has no tab but the page, which needs only computers:view, still renders
+ * from the Agent card's link.
+ */
+async function agentMigrationChecks(page, who) {
+  const h = await visit(page, '/endpoints/agent-migrations');
+  await page.waitForSelector('[data-testid="migration-counts"]', { timeout: 15_000 }).catch(() => {});
+  const info = await page.evaluate(() => ({
+    counts: [...document.querySelectorAll('[data-testid="migration-counts"] > *')].map((e) => e.textContent.trim()),
+    table: !!document.querySelector('[data-testid="migration-table"]'),
+    empty: /No requests in this view/.test(document.querySelector('main')?.innerText ?? ''),
+    failed: /could not be loaded/i.test(document.querySelector('main')?.innerText ?? ''),
+    current: document.querySelector('[data-section-tabs="devices"] a[aria-current="page"]')?.textContent?.trim() ?? null,
+  }));
+  check(h.h1 === 'Agent migrations' && !h.notFound && h.overflow <= 1 && info.counts.length === 7 && (info.table || info.empty) && !info.failed,
+    'Agent migrations renders its seven state counts and the list (or says it is empty), no overflow', JSON.stringify({ h, info }));
+  if (who !== 'user') check(info.current === 'Agent migrations', 'on Agent migrations, its Devices tab is the current one', String(info.current));
+  else check(info.current === null, 'a Business User reaches Agent migrations by link, with no Devices tab bar', String(info.current));
+}
+
+/** 0.34: the Agent card on a device's Overview tab, with its link to Agent migrations. */
+async function agentCardChecks(page, who, endpointId) {
+  await page.waitForSelector('[data-testid="agent-card"]', { timeout: 15_000 }).catch(() => {});
+  await page.waitForFunction(() => !/Loading…/.test(document.querySelector('[data-testid="agent-card"]')?.textContent ?? 'Loading…'), null, { timeout: 15_000 }).catch(() => {});
+  const card = await page.$eval('[data-testid="agent-card"]', (el) => ({
+    text: (el.textContent ?? '').slice(0, 400),
+    link: el.querySelector('a[href="/endpoints/agent-migrations"]') !== null,
+  })).catch(() => null);
+  check(!!card && /Type/.test(card.text) && /Version/.test(card.text) && /Current/.test(card.text) && !/could not be loaded/.test(card.text) && card.link,
+    'the Overview tab has the Agent card (type, version, whether it is current) and its link to Agent migrations', JSON.stringify(card));
+  if (card?.link && who === 'user') {
+    await follow(page, '[data-testid="agent-card"] a[href="/endpoints/agent-migrations"]');
+    const h = await pageHealth(page);
+    check(new URL(page.url()).pathname === '/endpoints/agent-migrations' && h.h1 === 'Agent migrations', 'the Agent card\'s link opens Agent migrations', page.url());
+    await visit(page, `/endpoints/${endpointId}`);
+  }
+}
+
+/** 0.34: Software compliance and Scheduled reports show their own content, not just a heading. */
+async function reportPagesChecks(page, who) {
+  await visit(page, '/reports/software-compliance');
+  await page.waitForFunction(() => !/Loading…/.test(document.querySelector('main')?.innerText ?? ''), null, { timeout: 15_000 }).catch(() => {});
+  const sc = await page.evaluate(() => ({ text: (document.querySelector('main')?.innerText ?? '').slice(0, 1500), table: !!document.querySelector('main table') }));
+  check(!/could not be loaded|not available to you/i.test(sc.text) && (sc.table || /has no entries for this view|No Windows computers in this view/.test(sc.text)) && /Unknown is a coverage gap/.test(sc.text), 'Software compliance shows its table (or says there is nothing to report)', sc.text.slice(0, 300));
+  if (who === 'user') {
+    const h = await visit(page, '/reports/schedules');
+    const txt = await page.evaluate(() => document.querySelector('main')?.innerText ?? '');
+    check(h.h1 === 'Scheduled reports' && /set up by a Business Owner, or by a Platform Admin/.test(txt), 'a Business User opening Scheduled reports is told who sets them up', txt.slice(0, 200));
+    return;
+  }
+  await visit(page, '/reports/schedules');
+  await page.waitForSelector('[data-testid="report-schedules"]', { timeout: 15_000 }).catch(() => {});
+  const rs = await page.evaluate(() => ({ list: !!document.querySelector('[data-testid="report-schedules"]'), form: !!document.querySelector('[data-testid="report-schedule-form"]'), text: (document.querySelector('main')?.innerText ?? '').slice(0, 300) }));
+  check(rs.list && !/could not be loaded/i.test(rs.text), 'Scheduled reports lists the schedules', JSON.stringify(rs));
+}
+
+/** 0.34, Platform Admin: the SMTP settings card on Email, and the Data retention card on System status. */
+async function adminCardsChecks(page) {
+  await visit(page, '/settings/email');
+  await page.waitForSelector('[data-testid="smtp-settings"]', { timeout: 15_000 }).catch(() => {});
+  const em = await page.evaluate(() => ({
+    card: !!document.querySelector('[data-testid="smtp-settings"]'),
+    fields: ['smtp-host', 'smtp-port', 'smtp-tls', 'smtp-from'].every((id) => !!document.getElementById(id)),
+    allowed: /Allowed hosts:/.test(document.querySelector('[data-testid="smtp-settings"]')?.textContent ?? ''),
+  }));
+  check(em.card && em.fields && em.allowed, 'Email shows the SMTP relay form and which relays this server allows', JSON.stringify(em));
+  const h = await visit(page, '/admin/status');
+  await page.waitForSelector('[data-testid^="retention-"]', { timeout: 15_000 }).catch(() => {});
+  const ret = await page.evaluate(() => ({
+    rows: document.querySelectorAll('[data-testid^="retention-"]').length,
+    sweep: /retention sweep/i.test(document.querySelector('main')?.innerText ?? ''),
+    failed: /Could not load retention status/.test(document.querySelector('main')?.innerText ?? ''),
+  }));
+  check(ret.rows > 0 && ret.sweep && !ret.failed && h.overflow <= 1, `System status has the Data retention card: ${ret.rows} tables and the sweep's state`, JSON.stringify(ret));
+}
+
 const created = [];
 try {
   const tenant = await prisma.tenant.findFirst({ where: { isActive: true }, orderBy: { createdAt: 'asc' } });
@@ -197,6 +276,12 @@ try {
     user: { email: await mk('user', {}, { roleId: userRole.id, capabilities: ['computers:view', 'computers:connect'] }), expect: ['dashboard', 'devices', 'automation', 'patching', 'remote', 'reports'] },
   };
   const anyEndpoint = await prisma.endpoint.findFirst({ where: { customerId: biz.id, status: 'ACTIVE' }, select: { id: true } });
+  // 0.35: the Business User is granted that one computer (removed with the user), so their Agent card is checked too.
+  const userEndpoint = anyEndpoint;
+  if (userEndpoint) {
+    const u = await prisma.user.findUnique({ where: { email: personas.user.email } });
+    await prisma.computerAccess.create({ data: { tenantId: tenant.id, endpointId: userEndpoint.id, userId: u.id, grantedBy: 'e2e-navigation' } });
+  }
   // 0.33: the Processes, Services and Network tabs belong to a Windows computer.
   const windowsEndpoint = await prisma.endpoint.findFirst({ where: { customerId: biz.id, status: 'ACTIVE', platform: { contains: 'indows', mode: 'insensitive' } }, select: { id: true } });
 
@@ -248,7 +333,8 @@ try {
           check(h.overflow <= 1, 'the guided flow does not overflow sideways', JSON.stringify(h));
           await visit(page, '/endpoints');
         }
-        const want = who === 'admin' ? ['All devices', 'My devices', 'Add device', 'Unassigned'] : who === 'owner' ? ['All devices', 'My devices', 'Add device'] : ['All devices', 'My devices'];
+        // 0.35: Agent migrations, for whoever may request one (computers:edit).
+        const want = who === 'admin' ? ['All devices', 'My devices', 'Add device', 'Unassigned', 'Agent migrations'] : who === 'owner' ? ['All devices', 'My devices', 'Add device', 'Agent migrations'] : ['All devices', 'My devices'];
         check(JSON.stringify(tabs) === JSON.stringify(want), `Devices tabs: ${want.join(' · ')}`, `got ${tabs.join(' · ')}`);
         for (const t of tabs) {
           await follow(page, `[data-section-tabs="devices"] a:text-is("${t}")`);
@@ -256,9 +342,16 @@ try {
           const current = await page.$eval('[data-section-tabs="devices"] a[aria-current="page"]', (e) => e.textContent.trim()).catch(() => null);
           check(!h.notFound && h.h1 && h.overflow <= 1 && current === t, `Devices → ${t} renders "${h.h1}" and is the current tab`, JSON.stringify(h));
         }
+        await agentMigrationChecks(page, who);
+        if (who === 'user' && userEndpoint) {
+          await visit(page, `/endpoints/${userEndpoint.id}`);
+          await agentCardChecks(page, who, userEndpoint.id);
+        }
         if (anyEndpoint) {
           await visit(page, `/endpoints/${anyEndpoint.id}`);
           check(!(await page.$('[data-section-tabs]')), 'a device\'s own page has no section tabs (it has its own)');
+          // A Business User sees only company-wide computers (and those granted to them): theirs is checked below.
+          if (who !== 'user') await agentCardChecks(page, who, anyEndpoint.id);
           // 0.33: Performance sits right after Overview for any computer whose agent reports.
           const wtabs = await page.$$eval('[data-testid="workspace-tabs"] [role="tab"]', (els) => els.map((e) => e.textContent.trim()));
           if (wtabs.includes('Performance')) {
@@ -308,7 +401,8 @@ try {
             const info = card ? await card.evaluate((el) => ({
               age: el.querySelector('[data-testid="snapshot-age"]')?.textContent ?? '',
               refresh: !!el.querySelector('[data-testid="snapshot-refresh"]'),
-              actions: [...el.querySelectorAll('button')].map((b) => (b.textContent ?? '').trim()).filter((x) => /\b(end|kill|stop|start|restart|disable|enable)\b/i.test(x)),
+              // A sortable column header is a <button> too ("Start mode"): it sorts the table, it does not act on the computer.
+              actions: [...el.querySelectorAll('button')].filter((b) => !b.closest('th')).map((b) => (b.textContent ?? '').trim()).filter((x) => /\b(end|kill|stop|start|restart|disable|enable)\b/i.test(x)),
             })) : null;
             const h = await pageHealth(page);
             check(!!info && /Taken|Never taken/.test(info.age) && info.refresh && info.actions.length === 0 && h.overflow <= 1, `${t} tab: shows when it was taken, a Refresh, no action buttons, no overflow`, JSON.stringify({ info, overflow: h.overflow }));
@@ -348,6 +442,7 @@ try {
           const refused = await page.evaluate(() => /not available to you|could not be loaded/i.test(document.querySelector('main')?.innerText ?? ''));
           check(!h.notFound && h.h1 === t && h.overflow <= 1 && current === t && !refused, `Reports → ${t} renders "${h.h1}", is the current tab, and loads`, JSON.stringify({ ...h, refused }));
         }
+        await reportPagesChecks(page, who);
         if (who === 'user') {
           const h = await visit(page, '/reports/alert-frequency');
           const refused = await page.evaluate(() => /not available to you/i.test(document.querySelector('main')?.innerText ?? ''));
@@ -373,6 +468,8 @@ try {
           check(!h.notFound && h.h1 && h.overflow <= 1 && open > 0 && active, `Settings → ${href} renders "${h.h1}"; group open, entry highlighted`, JSON.stringify(h));
         }
       }
+
+      if (who === 'admin') await adminCardsChecks(page);
 
       // A dashboard tile's link opens the list already filtered.
       if (got.includes('alerts')) {

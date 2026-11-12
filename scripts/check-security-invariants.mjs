@@ -2334,8 +2334,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const before = ui.slice(0, ui.indexOf('// ── The stack'));
   check('e2e-ui.mjs refuses ports 3000, 3001, 443, 4000 and 4001 before it starts anything',
     /const FORBIDDEN_PORTS = \[3000, 3001, 443, 4000, 4001\];/.test(before)
-      && /for \(const p of \[WEB_PORT, API_PORT\]\) \{\s*if \(!Number\.isInteger\(p\) \|\| FORBIDDEN_PORTS\.includes\(p\)\) throw new Error\(`Refusing/.test(before),
-    'production (3000/3001/443) and the docs stack (4000/4001) are refused for both the web and the API port');
+      && /for \(const p of \[WEB_PORT, API_PORT(, SMTP_PORT, PEER_PORT)?\]\) \{\s*if \(!Number\.isInteger\(p\) \|\| FORBIDDEN_PORTS\.includes\(p\)\) throw new Error\(`Refusing/.test(before),
+    'production (3000/3001/443) and the docs stack (4000/4001) are refused for the web and API ports (and, from 0.35, the SMTP sink and reference peer ports)');
   check('e2e-ui.mjs refuses a database whose name lacks test or scratch, before Prisma is loaded',
     /if \(!\/test\|scratch\/\.test\(dbName\)\) throw new Error\(`Refusing/.test(before) && before.indexOf('test|scratch') < before.indexOf('new PrismaClient'),
     'it migrates, seeds and deletes fixtures');
@@ -2530,6 +2530,36 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('a computer’s effective client-update policy is read through assertEndpointInScope and the visibility rule AND-ed with the id',
     /await this\.acl\.assertEndpointInScope\(a, endpointId, CAP\.COMPUTERS_VIEW\);\s*\n\s*const ep = await this\.prisma\.endpoint\.findFirst\(\{\s*\n\s*where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(a\), \{ id: endpointId \}\] \},/.test(body(csvc, 'async endpointPolicy(')),
     'endpointPolicy: assertEndpointInScope(a, endpointId, CAP.COMPUTERS_VIEW), then findFirst AND [visibility, id]');
+}
+
+// 47. UI coverage (0.35). The browser suite now drives the 0.34 screens, and
+//     what it found is held here. The Run panel offers Request a run and
+//     Revoke only when an approval signer is configured: both go through the
+//     signer, and a mirrored ACTIVE entry without one showed both beside
+//     "scripts cannot be run here". Saving Email settings puts the saved
+//     relay into the cache before the form is rebuilt, or the form came back
+//     blank with "Send email" unticked, one Save away from switching it off.
+//     The suite's own servers (the SMTP sink, the reference ClientSt0r peer)
+//     listen on loopback, on ports the same refusal list covers, and the
+//     global SMTP settings it changes are put back.
+{
+  const svc = read('apps/api/src/script-run/script-run.service.ts');
+  check('the Run panel offers a run or a revoke only when an approval signer is configured',
+    /const signerConfigured = this\.signer\.configured\(\);/.test(svc)
+      && /canRevoke: signerConfigured && this\.mayPropose\(/.test(svc)
+      && /canRun: signerConfigured && v\.status === 'APPROVED' && current\?\.status === 'ACTIVE',/.test(svc),
+    'script-run.service.ts readiness(): canRun and canRevoke must both start with signerConfigured');
+  const email = read('apps/web/app/(app)/settings/email/page.tsx');
+  const set = email.indexOf("qc.setQueryData(['smtp-settings'], r);"), clear = email.indexOf('setF(null); qc.invalidateQueries');
+  check('saving Email settings rebuilds the form from what was saved, not from the settings before the save',
+    set > 0 && clear > set,
+    "settings/email/page.tsx: qc.setQueryData(['smtp-settings'], r) before setF(null) in the save's onSuccess");
+  const ui = read('apps/web/scripts/e2e-ui.mjs');
+  check('e2e-ui.mjs: the SMTP sink and the reference peer listen on loopback, on refused-port-checked ports, and the SMTP settings are restored',
+    /for \(const p of \[WEB_PORT, API_PORT, SMTP_PORT, PEER_PORT\]\) \{/.test(ui)
+      && /srv\.listen\(port, '127\.0\.0\.1', r\)/.test(ui)
+      && /smtpBefore\.row = await prisma\.smtpSettings\.findUnique\(/.test(ui) && /await cleanup035\(\);\n\s*await cleanup\(\);/.test(ui),
+    'ports loop over WEB/API/SMTP/PEER; listen on 127.0.0.1; smtpBefore saved in seed035 and restored by cleanup035 in the final clean-up');
 }
 
 if (failures.length > 0) {

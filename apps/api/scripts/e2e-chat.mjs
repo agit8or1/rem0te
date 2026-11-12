@@ -44,6 +44,7 @@ import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { chatDevice } from './lib/chat-device.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(here, '..', 'dist');
@@ -107,11 +108,8 @@ async function login(email) {
 const code = (r) => r.body?.code ?? r.body?.message?.code ?? r.body?.error?.code;
 const msg = (r) => `HTTP ${r.status} ${JSON.stringify(r.body).slice(0, 400)}`;
 
-// The agent's chat host, as internal/chat/client.go speaks.
-const poll = (ep, body = {}, secret = ep.secret) => req('POST', '/enrollment/chat/poll', { body: { rustdeskId: ep.rid, agentSecret: secret, ...body } });
-const reply = (ep, conversationId, text, clientId = randomBytes(12).toString('hex'), secret = ep.secret) =>
-  req('POST', '/enrollment/chat/reply', { body: { rustdeskId: ep.rid, agentSecret: secret, conversationId, clientId, text } });
-const heartbeat = (ep, extra = {}, secret = ep.secret) => req('POST', '/enrollment/heartbeat', { body: { rustdeskId: ep.rid, ...(secret ? { agentSecret: secret } : {}), hostname: ep.hostname, platform: ep.platform, ...extra } });
+// The agent's chat host, as internal/chat/client.go speaks (lib/chat-device.mjs).
+const { poll, reply, heartbeat } = chatDevice(req);
 
 const created = { businesses: [], users: [] };
 

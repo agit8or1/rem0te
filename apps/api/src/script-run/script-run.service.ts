@@ -154,16 +154,21 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
     const all = await this.entries(v.id);
     const current = all.find((e) => LIVE.includes(e.status)) ?? all[0];
     const revoked = all.some((e) => e.status === 'REVOKED');
+    // Running and revoking both go through the approval signer. Without one
+    // configured neither can happen, whatever the mirrored entry last said,
+    // so neither is offered (0.35: the panel said "cannot be run here" and
+    // showed Request a run and Revoke beside it).
+    const signerConfigured = this.signer.configured();
     return {
       version: { id: v.id, scriptId: s.id, name: s.name, scope: s.scope.toLowerCase(), businessId: s.customerId, version: v.version, status: v.status, risk: v.risk, parameters: v.parameters as unknown as ParameterDecl[], contentSha256: v.contentSha256 },
-      signerConfigured: this.signer.configured(),
+      signerConfigured,
       allowlist: this.entryView(current),
       revoked,
       timeouts: TIMEOUT_MINUTES, maxTargets: SCRIPT_RUN.maxTargets, maxOutputBytes: MAX_SCRIPT_OUTPUT_BYTES, retentionDays: SCRIPT_OUTPUT_RETENTION_DAYS,
       you: {
         canPropose: v.status === 'APPROVED' && this.mayPropose(actor, s) && !revoked && !current?.status.match(/^(AWAITING_APPROVAL|ACTIVE)$/),
-        canRevoke: this.mayPropose(actor, s) && !!current && LIVE.includes(current.status),
-        canRun: v.status === 'APPROVED' && current?.status === 'ACTIVE',
+        canRevoke: signerConfigured && this.mayPropose(actor, s) && !!current && LIVE.includes(current.status),
+        canRun: signerConfigured && v.status === 'APPROVED' && current?.status === 'ACTIVE',
       },
       warnings: SCRIPT_RUN.warnings, acknowledge: SCRIPT_RUN.acknowledge,
       // Said plainly wherever a run can be requested.
