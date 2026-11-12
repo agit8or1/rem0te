@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **446** of them across
-**59** controllers.
+integration, under `/api/integration/v1`). There are **447** of them across
+**60** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -257,7 +257,6 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/endpoints/:id/rotate-credential` | signed in | `COMPUTERS_EDIT` |
 | `POST` | `/api/v1/endpoints/:id/tags` | signed in | `COMPUTERS_EDIT` |
 | `DELETE` | `/api/v1/endpoints/:id/tags/:tag` | signed in | `COMPUTERS_EDIT` |
-| `POST` | `/api/v1/endpoints/:id/timeline/generate` | signed in | `COMPUTERS_EDIT` |
 | `GET` | `/api/v1/endpoints/connected` | signed in | `COMPUTERS_VIEW` |
 | `POST` | `/api/v1/endpoints/grants/redeem` | public, throttled | — |
 | `GET` | `/api/v1/endpoints/list` | signed in | `COMPUTERS_VIEW` |
@@ -826,6 +825,15 @@ Admins and Business Owners are not confined by it; see
 | `PATCH` | `/api/v1/tenants/:id/branding` | signed in | — |
 | `PATCH` | `/api/v1/tenants/:id/branding/logo` | signed in | — |
 | `PATCH` | `/api/v1/tenants/:id/settings` | signed in | — |
+
+## Timeline
+
+`apps/api/src/integration/timeline.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/endpoints/:id/timeline` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/endpoints/:id/timeline/generate` | signed in, throttled | `COMPUTERS_EDIT` |
 
 ## Updates
 

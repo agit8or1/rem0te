@@ -123,7 +123,7 @@ export const CAPABILITY_GROUPS: {
   {
     group: 'Integration',
     items: [
-      { key: CAP.TICKET_ANALYSIS, label: 'Ticket analysis (ClientSt0r)', description: 'Submit read-only ticket analysis from ClientSt0r for this business and read the staff-only findings. Grants no remote access and no actions.' },
+      { key: CAP.TICKET_ANALYSIS, label: 'Ticket analysis (ClientSt0r)', description: 'Submit read-only ticket analysis from ClientSt0r for this business and read the staff-only findings, and (with Rename/edit computers) ask ClientSt0r for a computer\'s AI summary from its redacted notes and sessions. Grants no remote access and no actions.' },
     ],
   },
   {

@@ -480,11 +480,4 @@ export class EndpointsController {
     await this.svc.removeAlias(actor, id, aliasId);
     return { success: true };
   }
-
-  @Post(':id/timeline/generate')
-  @RequireCapability(CAP.COMPUTERS_EDIT)
-  @HttpCode(HttpStatus.OK)
-  async generateTimeline(@Actor() actor: ActorContext, @Param('id') id: string) {
-    return { success: true, data: await this.svc.generateTimeline(actor, id) };
-  }
 }

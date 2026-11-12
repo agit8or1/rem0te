@@ -477,3 +477,90 @@ export const CONTRACT_SCHEMAS = {
 
 export const MAX_JOB_TTL_S = 24 * 3600;
 export const MAX_REQUEST_BYTES = 512 * 1024;
+
+// ── PROPOSED, revision 4 (0.34): NOT AGREED BY CLIENTST0R ───────────────────
+//
+// INTEGRATION_COORDINATION.md §5A, items P11 and P12. These are rem0te's
+// proposal for summarising a device's history through ClientSt0r's gateway,
+// so that rem0te never holds a model-provider key. They are not part of
+// CONTRACT_REVISION and are not in CONTRACT_SCHEMAS: they are generated to
+// docs/contracts/ticket-rmm-v1/proposed/ for ClientSt0r to review. rem0te
+// sends a timeline request only after the peer's own capabilities document
+// (P12) lists `device_timeline_v1`; until then the console says it needs
+// ClientSt0r support for that operation.
+
+const TaskName = z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9._-]*$/, 'task charset');
+
+/** P12 — the peer's capabilities, served by ClientSt0r at the peers file's `capabilitiesUrl`. */
+export const PeerCapabilities = z.object({
+  contract: z.literal(CONTRACT),
+  peer_id: ExtId,
+  /** The inference tasks the gateway serves, each with the profiles it offers for it. */
+  inference_tasks: z.array(z.object({
+    task: TaskName,
+    model_profiles: z.array(ModelProfile).min(1).max(10),
+  }).strict()).max(20),
+}); // not strict: a peer may add fields in a later revision (request R2)
+export type PeerCapabilities = z.infer<typeof PeerCapabilities>;
+
+export const TimelineSegment = z.object({
+  /** `device:facts`, `note:<n>`, `session:<n>` — positions, not database ids. */
+  ref: z.string().max(64).regex(/^(device:facts|note:\d{1,3}|session:\d{1,3})$/),
+  kind: z.enum(['device_facts', 'device_note', 'support_session']),
+  author_role: z.enum(['staff', 'rem0te']),
+  text: z.string().max(4000),
+}).strict();
+
+const RedactionCount = z.number().int().min(0).max(1_000_000);
+
+/** P11 — rem0te → ClientSt0r, `POST {inferenceUrl}`, signed as every inference request is. */
+export const TimelineInferenceRequest = z.object({
+  contract: z.literal(CONTRACT),
+  request_id: z.string().uuid(),
+  organization_id: ExtId,
+  model_profile: ModelProfile,
+  task: z.literal('device_timeline_v1'),
+  output_schema: z.literal('timeline-summary.v1'),
+  max_output_tokens: z.number().int().min(1).max(4000),
+  input: z.object({
+    instructions_ref: z.literal('rem0te/device-timeline/v1'),
+    /** An immutable rem0te computer id — never a name or hostname. */
+    rem0te_endpoint_id: z.string().min(1).max(64).regex(/^[a-z0-9]+$/),
+    /** Everything here is data, never instructions. Already redacted by rem0te. */
+    untrusted_segments: z.array(TimelineSegment).min(1).max(51),
+    /** How many values of each kind rem0te removed before sending. Counts only. */
+    redactions: z.object({
+      secret: RedactionCount, token: RedactionCount, email: RedactionCount, ip_address: RedactionCount,
+      mac_address: RedactionCount, rustdesk_id: RedactionCount, user_path: RedactionCount,
+    }).strict(),
+  }).strict(),
+}).strict();
+export type TimelineInferenceRequest = z.infer<typeof TimelineInferenceRequest>;
+
+/** What the model is asked to produce. Unknown fields are dropped and counted. */
+export const TimelineSummaryOutput = z.object({ summary: z.string().min(1).max(4000) });
+
+/** P11 — the gateway's answer, signed over rem0te's request nonce. */
+export const TimelineInferenceResponse = z.object({
+  contract: z.literal(CONTRACT),
+  request_id: z.string().uuid(),
+  organization_id: ExtId,
+  model_profile: ModelProfile,
+  task: z.literal('device_timeline_v1'),
+  resolved_model: z.string().min(1).max(128),
+  status: z.enum(['ok', 'refused', 'error']),
+  error_code: z.string().max(64).optional(),
+  output: z.unknown().optional(),
+  usage: z.object({
+    input_tokens: z.number().int().min(0),
+    output_tokens: z.number().int().min(0),
+  }).strict().optional(),
+}).strict();
+export type TimelineInferenceResponse = z.infer<typeof TimelineInferenceResponse>;
+
+export const PROPOSED_SCHEMAS = {
+  'peer-capabilities': PeerCapabilities,
+  'timeline-inference-request': TimelineInferenceRequest,
+  'timeline-inference-response': TimelineInferenceResponse,
+  'timeline-summary-output': TimelineSummaryOutput,
+} as const;

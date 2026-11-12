@@ -2102,6 +2102,69 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'fetchInstallerManifest must stay bounded and WINGET_MANIFEST_BASE loopback-only');
 }
 
+// 41. AI without a provider key (0.34). The device page's AI summary used to
+//     call a model provider directly with a key in rem0te's environment,
+//     sending the computer's name, hostname, business and every note
+//     verbatim. "Provider keys stay in ClientSt0r" is now true everywhere:
+//     no provider SDK or key variable anywhere in the API, the summary goes
+//     only through the integration client to the peer's gateway, and what it
+//     carries is fixed here.
+{
+  const files = walk('apps/api/src');
+  const PROVIDER = /@anthropic-ai\/|\bopenai\b|@google\/generative-ai|@google-cloud\/vertexai|@mistralai\/|cohere-ai|groq-sdk|\b(ANTHROPIC|OPENAI|AZURE_OPENAI|GEMINI|GOOGLE_AI|MISTRAL|COHERE|GROQ)_[A-Z_]*KEY\b|api\.anthropic\.com|api\.openai\.com|generativelanguage\.googleapis\.com/i;
+  const hits = files.filter((f) => PROVIDER.test(read(f)));
+  check('no model-provider SDK, endpoint or key variable is referenced in apps/api/src', hits.length === 0, hits.join(', '));
+  const pkg = JSON.parse(read('apps/api/package.json'));
+  const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
+  const sdk = deps.filter((d) => /^(@anthropic-ai\/|openai$|@google\/generative-ai|@mistralai\/|cohere-ai$|groq-sdk$|@ai-sdk\/|ai$)/.test(d));
+  check('apps/api/package.json depends on no model-provider SDK', sdk.length === 0, sdk.join(', '));
+
+  const svc = read('apps/api/src/integration/timeline.service.ts');
+  const cli = read('apps/api/src/integration/timeline.client.ts');
+  const signer = read('apps/api/src/integration/signer.ts');
+  const writers = files.filter((f) => [...read(f).matchAll(/aiTimeline:\s*([^,}\s]+)/g)].some((m) => m[1] !== 'true' && m[1] !== 'dto.aiTimeline'));
+  check('the stored AI summary is written from a model only by timeline.service.ts',
+    writers.length === 1 && writers[0].endsWith('integration/timeline.service.ts') && /data: \{ aiTimeline: result\.summary \}/.test(svc),
+    `aiTimeline writers: ${writers.join(', ')} (the PATCH route's dto.aiTimeline is a person's edit and is allowed)`);
+  check('the summary request goes only through the integration client, to the peer\'s inference URL',
+    /from '\.\/timeline\.client'/.test(svc) && /signedPost\(peer, 'inference', JSON\.stringify\(request\)/.test(cli) && !/\bfetch\(/.test(svc + cli),
+    'timeline.service → timeline.client.requestTimeline → signer.signedPost(peer, "inference")');
+  check('the peer\'s capabilities document is fetched only from the peers file\'s capabilitiesUrl, signed, with redirects refused',
+    /export async function signedGetCapabilities\(peer: Peer[^)]*\)[^{]*\{\n\s*const url = peer\.capabilitiesUrl;/.test(signer) && /redirect: 'error'/.test(signer),
+    'signedGetCapabilities must take its URL from peer.capabilitiesUrl');
+  const gate = svc.slice(svc.indexOf('async gate('), svc.indexOf('async status('));
+  check('containment is asked before the peer is contacted at all',
+    gate.indexOf("activePause(this.prisma, 'integration'") > 0 && gate.indexOf("activePause(this.prisma, 'integration'") < gate.indexOf('this.peerCaps('),
+    "gate() must call activePause('integration') before peerCaps()");
+  check('nothing is sent until the peer advertises device_timeline_v1 with a profile the peers file allows',
+    /inference_tasks\.find\(\(t\) => t\.task === TIMELINE_TASK\)/.test(gate) && /peer\.modelProfiles\.includes\(p\)/.test(gate),
+    'gate() must require the task in the peer capabilities and intersect profiles with the peers file');
+  const gen = svc.slice(svc.indexOf('async generate('));
+  check('generate needs computers:edit and integration:ticket_analysis, checked after scope and before the gate',
+    /assertEndpointInScope\(actor, id, CAP\.COMPUTERS_EDIT\)/.test(gen) && /!this\.acl\.can\(actor, CAP\.COMPUTERS_EDIT\) \|\| !this\.acl\.can\(actor, CAP\.TICKET_ANALYSIS\)/.test(gen)
+      && gen.indexOf('!this.acl.can(actor, CAP.TICKET_ANALYSIS)') < gen.indexOf('this.gate('),
+    'scope, then both capabilities, then the gate');
+  check('every request is audited before it leaves, and the audit carries no text',
+    gen.indexOf("action: 'AI_TIMELINE_REQUESTED'") > 0 && /await this\.audit\.logOrFail\(\{\s*\.\.\.base, action: 'AI_TIMELINE_REQUESTED'/.test(gen)
+      && gen.indexOf('logOrFail') < gen.indexOf('requestTimeline(') && !/meta: \{[^}]*(segments|content|text|summary:)/.test(gen),
+    'logOrFail(AI_TIMELINE_REQUESTED) before requestTimeline(); no segments/content/text/summary in audit meta');
+  const snap = svc.slice(svc.indexOf('private async snapshot('), svc.indexOf('private async peerCaps('));
+  const forbidden = ['name:', 'hostname:', 'ipAddress', 'customer', 'site', 'tags', 'author', 'contactName', 'contactEmail', 'notes: true', 'technician', 'rustdesk', 'inventory'];
+  const selected = forbidden.filter((f) => snap.includes(f));
+  check('the summary reads only the fields it sends: no name, hostname, address, business, site, tags, authors, contacts or RustDesk',
+    snap.length > 200 && selected.length === 0 && /noteRels: \{.*select: \{ createdAt: true, content: true, isPinned: true \} \}/.test(snap), `reads: ${selected.join(', ') || '(note select changed)'}`);
+  const tl = read('apps/api/src/integration/timeline.ts');
+  check('every free-text field passes redactForPeer before it is sent',
+    /redactForPeer\(n\.content(\.slice\([^)]*\))?, counts\)/.test(tl) && /redactForPeer\(s\.issueDescription(\.slice\([^)]*\))?, counts\)/.test(tl) && /redactForPeer\(s\.disposition(\.slice\([^)]*\))?, counts\)/.test(tl)
+      && !/\$\{n\.content\}|\$\{s\.issueDescription\}|\$\{s\.disposition\}/.test(tl),
+    'notes, session issue and resolution must go through redactForPeer()');
+  const contract = read('apps/api/src/integration/contract.ts');
+  const agreed = contract.slice(contract.indexOf('export const CONTRACT_SCHEMAS = {'), contract.indexOf('} as const;', contract.indexOf('export const CONTRACT_SCHEMAS = {')));
+  check('the proposed timeline operation is not presented as agreed contract',
+    !/timeline|peer-capabilities/.test(agreed) && /export const CONTRACT_REVISION = 2 as const;/.test(contract) && /PROPOSED, revision 4/.test(contract),
+    'P11/P12 stay in PROPOSED_SCHEMAS until ClientSt0r acknowledges them (INTEGRATION_COORDINATION.md §9)');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

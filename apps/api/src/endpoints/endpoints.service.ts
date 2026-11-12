@@ -7,7 +7,6 @@ import {
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import Anthropic from '@anthropic-ai/sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CANDIDATE_LIVE_MS } from '../enrollment/device-secret';
@@ -1191,96 +1190,8 @@ export class EndpointsService {
     });
   }
 
-  // ── AI timeline ───────────────────────────────────────────────────────────
-
-  async generateTimeline(actor: ActorContext, id: string): Promise<{ text: string }> {
-    await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
-    this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
-
-    const endpoint = await this.prisma.endpoint.findUnique({
-      where: { id },
-      include: {
-        customer: { select: { id: true, name: true } },
-        site: { select: { id: true, name: true } },
-        tags: true,
-        aliases: true,
-        noteRels: {
-          include: { author: { select: { email: true } } },
-          orderBy: { createdAt: 'asc' }, take: 30,
-        },
-        supportSessions: {
-          orderBy: { createdAt: 'asc' }, take: 20,
-          select: {
-            createdAt: true, status: true, issueDescription: true,
-            notes: true, disposition: true, duration: true,
-          },
-        },
-      },
-    });
-    if (!endpoint) throw new NotFoundException('Computer not found');
-
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new InternalServerErrorException('ANTHROPIC_API_KEY is not configured');
-
-    const lines: string[] = [
-      `Device: ${endpoint.name}`,
-      `Hostname: ${endpoint.hostname ?? 'Unknown'}`,
-      `Platform: ${endpoint.platform ?? 'Unknown'}`,
-      `OS: ${endpoint.osVersion ?? 'Unknown'}`,
-      `Status: ${endpoint.status}`,
-      `Currently online: ${endpoint.isOnline ? 'Yes' : 'No'}`,
-      `Last seen: ${endpoint.lastSeenAt ? endpoint.lastSeenAt.toISOString() : 'Never'}`,
-      `Business: ${endpoint.customer?.name ?? 'Unassigned'}`,
-      `Site: ${endpoint.site?.name ?? 'None'}`,
-      `Tags: ${endpoint.tags.map((t) => t.tag).join(', ') || 'None'}`,
-      `Enrolled: ${endpoint.createdAt.toISOString()}`,
-    ];
-
-    if (endpoint.noteRels.length > 0) {
-      lines.push('\nNotes (oldest to newest):');
-      for (const n of endpoint.noteRels) {
-        lines.push(`  [${n.createdAt.toLocaleDateString()}] ${n.content}`);
-      }
-    }
-    if (endpoint.supportSessions.length > 0) {
-      lines.push('\nSupport session history:');
-      for (const s of endpoint.supportSessions) {
-        const parts = [`[${s.createdAt.toLocaleDateString()}] ${s.status}`];
-        if (s.issueDescription) parts.push(`Issue: ${s.issueDescription}`);
-        if (s.disposition) parts.push(`Resolution: ${s.disposition}`);
-        if (s.duration) parts.push(`Duration: ${Math.round(s.duration / 60)}m`);
-        lines.push('  ' + parts.join(' | '));
-      }
-    }
-
-    const anthropic = new Anthropic({ apiKey });
-    // Thinking is always on for this model and counts toward max_tokens, so
-    // the limit leaves room for it as well as the few paragraphs returned.
-    // A safety-classifier decline is retried server-side on the model
-    // Anthropic recommends for that category instead of coming back empty.
-    const message = await anthropic.beta.messages.create({
-      model: 'claude-opus-5-5',
-      max_tokens: 16000,
-      output_config: { effort: 'medium' },
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
-      messages: [{
-        role: 'user',
-        content: `You are a technical support AI assistant. Based on the device information below, write a concise narrative summary (2–4 paragraphs) about this device: its current state, history, notable patterns, and anything a technician should know before working on it. Write in plain, direct prose — no bullet points, no headings, no markdown.\n\n${lines.join('\n')}`,
-      }],
-    });
-
-    // The reply can open with thinking blocks, so find the text by type. A
-    // refusal from the whole fallback chain has none; keep the old summary.
-    const block = message.content.find((b) => b.type === 'text');
-    if (message.stop_reason === 'refusal' || !block) {
-      throw new InternalServerErrorException('The AI summary could not be generated for this device');
-    }
-    const text = block.text;
-
-    await this.prisma.endpoint.update({ where: { id }, data: { aiTimeline: text } });
-    return { text };
-  }
+  // The AI summary moved to integration/timeline.service.ts in 0.34: it is
+  // requested through ClientSt0r's gateway, and rem0te holds no provider key.
 
   // ── Inventory, updates and event logs ─────────────────────────────────────
 

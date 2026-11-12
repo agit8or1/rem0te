@@ -5,7 +5,8 @@
  *
  * Everything that decides whom rem0te believes and where it may send data is
  * here: peer public keys (request signing and delegation are separate keys),
- * the audiences, the only two URLs the worker may ever contact for a peer,
+ * the audiences, the only URLs rem0te may ever contact for a peer (inference,
+ * events, and since 0.34 the optional capabilities document),
  * the allowed model profiles, and rem0te's own Ed25519 signing key. A
  * database compromise therefore cannot add a peer, swap a key, or point the
  * worker at an attacker's URL; a portal administrator cannot either, because
@@ -40,6 +41,12 @@ const PeerFile = z.object({
     delegationKeys: z.array(KeyEntry).min(1).max(4),
     inferenceUrl: z.string().url(),
     eventsUrl: z.string().url(),
+    /**
+     * v0.34, optional: where the peer serves its own capabilities document
+     * (PROPOSED P12). rem0te reads it before asking for a device summary
+     * (task device_timeline_v1); without it that feature stays off.
+     */
+    capabilitiesUrl: z.string().url().optional(),
     modelProfiles: z.array(z.string().regex(/^[a-z0-9][a-z0-9._-]*$/).max(64)).min(1).max(10),
     /** Optional mTLS pin: SHA-256 fingerprints the fronting proxy must report. */
     clientCertSha256: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(4).default([]),
@@ -55,6 +62,7 @@ export interface Peer {
   delegationKeys: PeerKey[];
   inferenceUrl: URL;
   eventsUrl: URL;
+  capabilitiesUrl: URL | null;
   modelProfiles: string[];
   clientCertSha256: string[];
 }
@@ -96,6 +104,7 @@ export function parseTrust(json: unknown, readKey: (path: string) => string): In
       delegationKeys: p.delegationKeys.map((k) => ({ kid: k.kid, key: ed25519PublicKey(k.publicKeyPem) })),
       inferenceUrl: validatePeerUrl(p.inferenceUrl, `${p.id}.inferenceUrl`),
       eventsUrl: validatePeerUrl(p.eventsUrl, `${p.id}.eventsUrl`),
+      capabilitiesUrl: p.capabilitiesUrl ? validatePeerUrl(p.capabilitiesUrl, `${p.id}.capabilitiesUrl`) : null,
       modelProfiles: p.modelProfiles,
       clientCertSha256: p.clientCertSha256,
     });

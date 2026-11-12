@@ -226,6 +226,12 @@ jobs:
       - name: Software deployment tests
         run: node apps/api/scripts/unit-software.mjs
 
+      # AI summary through ClientSt0r (0.34): redaction of every free-text field
+      # before it leaves, the payload's field list, the proposed request and
+      # response schemas, and the peers file's optional capabilitiesUrl.
+      - name: AI summary tests
+        run: node apps/api/scripts/unit-ai-timeline.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.
