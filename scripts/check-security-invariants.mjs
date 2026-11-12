@@ -2349,7 +2349,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /if \(after\.includes\(`\$\{origin\}\/api\/`\) \|\| !after\.includes\(`\$\{API_ORIGIN\}\/api\/`\)\) throw new Error/.test(prep),
     'every patched file must lose the old destination and gain the suite\'s own API');
   check('e2e-ui.mjs runs its API with every background sweep off',
-    /MONITOR_SWEEP: 'off', CLIENT_UPDATE_SWEEP: 'off', PATCH_POLICY_SWEEP: 'off', METRIC_SWEEP: 'off'/.test(ui),
+    /MONITOR_SWEEP: 'off', CLIENT_UPDATE_SWEEP: 'off', PATCH_POLICY_SWEEP: 'off', METRIC_SWEEP: 'off'/.test(ui)
+      // 0.34 integration: and the four sweeps the other 0.34 branches added.
+      && /RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off',/.test(ui),
     'a sweep acts on everything in the database, fixtures included');
 }
 

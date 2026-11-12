@@ -64,7 +64,8 @@ const ORIGIN = `http://127.0.0.1:${SIGNER_PUBLIC}`;
 const prisma = new PrismaClient();
 const sfx = randomBytes(3).toString('hex');
 const PW = 'script-run-e2e-password-123';
-const ACTIONS = ['windows.service.start@1', 'windows.update.install@1', 'windows.service.restart@1', 'windows.reboot.schedule@1', 'windows.reboot.cancel@1', 'windows.logs.collect@1', 'windows.script.run@1'];
+// The 0.34 catalog: the original six, then script run, then software.
+const ACTIONS = ['windows.service.start@1', 'windows.update.install@1', 'windows.service.restart@1', 'windows.reboot.schedule@1', 'windows.reboot.cancel@1', 'windows.logs.collect@1', 'windows.script.run@1', 'windows.software.install@1', 'windows.software.uninstall@1'];
 
 let pass = 0, fail = 0; const failures = [];
 const check = (c, n, d = '') => { if (c) { pass++; console.log(`  \x1b[32m✓\x1b[0m ${n}`); } else { fail++; failures.push(`${n} — ${d}`); console.log(`  \x1b[31m✗\x1b[0m ${n}\n      ${d}`); } };
@@ -264,7 +265,7 @@ async function all() {
     const cat = await req('GET', '/actions/catalog', { s: S.sam, business: acme.id });
     const acts = cat.data?.actions ?? [];
     const sr = acts.find((a) => a.id === 'windows.script.run');
-    check(acts.map((a) => `${a.id}@${a.version}`).join(',') === ACTIONS.join(','), 'GET /actions/catalog lists exactly the seven', acts.map((a) => a.id).join(','));
+    check(acts.map((a) => `${a.id}@${a.version}`).join(',') === ACTIONS.join(','), 'GET /actions/catalog lists exactly the nine, in order (0.34: script run seventh, software after it)', acts.map((a) => a.id).join(','));
     check(sr?.workstationRisk === 'high' && sr?.direct === false, 'windows.script.run: high risk on a workstation, not requested directly', JSON.stringify(sr).slice(0, 300));
     const r = await req('POST', `/endpoints/${fd.id}/actions`, { s: fresh(S.sam), business: acme.id, body: { actionId: 'windows.script.run', version: 1, params: { scriptVersionId: 'ver_00000000', sha256: 'a'.repeat(64), parameters: {}, timeoutMinutes: 5 }, reason: 'try the side door' } });
     check(r.status === 400 && code(r) === 'ACTION_NOT_DIRECT', 'POST /endpoints/:id/actions with windows.script.run → 400 ACTION_NOT_DIRECT', msg(r));

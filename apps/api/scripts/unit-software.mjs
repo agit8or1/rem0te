@@ -53,7 +53,7 @@ check('a display name with markup is refused', !det({ ...SW.detection, name: '<b
 check('a fourth kind of rule is refused', !det({ kind: 'script', script: 'Get-Item' }));
 check('a rule with an extra key is refused', !det({ ...SW.detection, cmd: 'whoami' }));
 const ids = cat.CATALOG.map((a) => `${a.id}@${a.version}`);
-check('the catalog ends with the two software actions', ids.slice(-2).join(',') === 'windows.software.install@1,windows.software.uninstall@1' && ids.length === 8, ids.join(','));
+check('the catalog ends with the two software actions', ids.slice(-2).join(',') === 'windows.software.install@1,windows.software.uninstall@1' && ids.length === 9 && ids[6] === 'windows.script.run@1', ids.join(','));
 for (const a of [cat.SOFTWARE_INSTALL, cat.SOFTWARE_UNINSTALL]) {
   check(`${a.id}: high on a workstation, a server and 25 computers`, ['WORKSTATION', 'SERVER'].every((c) => a.risk([{ deviceClass: c }]) === 'high') && a.risk(Array(25).fill({ deviceClass: 'WORKSTATION' })) === 'high');
   check(`${a.id}: never direct, never offered to ClientSt0r, at most 25`, a.direct === false && a.integration === false && a.maxTargets === 25 && /catalog/.test(a.indirectVia ?? ''));

@@ -48,6 +48,13 @@ export REPORT_SCHEDULE_SWEEP=off
 # Chat (0.34): the retention sweep deletes ended transcripts. e2e-chat turns
 # it on for its own API, with its own fixtures.
 export CHAT_RETENTION_SWEEP=off
+# And the script-output prune (0.34), which deletes every run's output past
+# its age. The monitoring and client-update sweeps are deliberately NOT
+# exported off here: the monitoring and ticket-workflow suites rely on the
+# monitoring sweep's default (on, at MONITOR_SWEEP_SECONDS) for their own API,
+# and every other suite that starts an API turns them off itself. Scratch APIs
+# below get both off explicitly.
+export SCRIPT_OUTPUT_SWEEP=off
 export ENCRYPTION_KEY="${ENCRYPTION_KEY:-$(openssl rand -hex 32)}"
 export SEED_ADMIN_EMAIL="${SEED_ADMIN_EMAIL:-e2e-admin@example.com}"
 export SEED_ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD:-$(openssl rand -base64 18)}"
@@ -88,7 +95,7 @@ export API_BASE="http://127.0.0.1:$PORT/api/v1" FRONTEND_URL="http://scratch.exa
 for t in smoke full business-access offboarding public-api public-address rollouts security-audit session-mutations support-requests sso-passkeys candidate-password secreg; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then echo "port $PORT is busy" >&2; exit 1; fi
   env PORT=$PORT HBBS_PRESENCE_HOST=127.0.0.2 OIDC_ALLOW_INSECURE_LOOPBACK=true PUBLIC_API_URL="http://scratch.example.com:$PORT" \
-    JWT_SECRET="$(openssl rand -hex 32)" LAUNCHER_TOKEN_SECRET="$(openssl rand -hex 32)" MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off METRIC_SWEEP=off RETENTION_SWEEP=off REPORT_SCHEDULE_SWEEP=off CHAT_RETENTION_SWEEP=off \
+    JWT_SECRET="$(openssl rand -hex 32)" LAUNCHER_TOKEN_SECRET="$(openssl rand -hex 32)" MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off METRIC_SWEEP=off RETENTION_SWEEP=off REPORT_SCHEDULE_SWEEP=off CHAT_RETENTION_SWEEP=off SCRIPT_OUTPUT_SWEEP=off \
     VERSION_FILE="$ROOT/version.json" node dist/main.js > "$OUT/api-$t.log" 2>&1 &
   pid=$!
   for _ in $(seq 1 180); do grep -q "listening on" "$OUT/api-$t.log" 2>/dev/null && break; sleep 1; done

@@ -238,8 +238,8 @@ async function all() {
   const olivia = await mkUser('olivia-approver', { platformPermissions: ['technicians:manage'] }), quinn = await mkUser('quinn-approver', { platformPermissions: ['technicians:manage'] });
   await prisma.membership.create({ data: { userId: owen.id, tenantId: tenant.id, customerId: acme.id, roleId: roleOwner.id, capabilities: [] } });
 
-  const mkPc = async (hostname, offered, wuaExtra = {}, channel = 'signed') => {
-    const e = await prisma.endpoint.create({ data: { tenantId: tenant.id, customerId: acme.id, name: hostname, hostname, status: 'ACTIVE', isOnline: true, isManaged: true, accessMode: 'COMPANY_WIDE', lastSeenAt: new Date(), deviceClass: 'WORKSTATION' } });
+  const mkPc = async (hostname, offered, wuaExtra = {}, channel = 'signed', extra = {}) => {
+    const e = await prisma.endpoint.create({ data: { tenantId: tenant.id, customerId: acme.id, name: hostname, hostname, status: 'ACTIVE', isOnline: true, isManaged: true, accessMode: 'COMPANY_WIDE', lastSeenAt: new Date(), deviceClass: 'WORKSTATION', ...extra } });
     const rid = String(100000000 + ((Math.random() * 899999999) | 0));
     const secret = hex(24);
     await prisma.rustdeskNode.create({ data: { tenantId: tenant.id, endpointId: e.id, rustdeskId: rid, agentSecretHash: sha(secret) } });
@@ -255,7 +255,9 @@ async function all() {
   const r1b = await mkPc('PP-R1-B', [CU]);
   const outsider = await mkPc('PP-OUTSIDER', [CU, NET]);
   const manual = await mkPc('PP-MANUAL', [NET]);
-  const std = await mkPc('PP-STANDARD', [CU], {}, 'standard');
+  // A standard-agent Windows computer, as one in the field reports itself (0.34: the
+  // Patches tab's remedy is the Agent card's upgrade, which needs Windows).
+  const std = await mkPc('PP-STANDARD', [CU], {}, 'standard', { platform: 'Windows 11 Pro' });
   check(true, 'six synthetic computers; the canary will need a restart after the CU');
 
   const pk = { owen: syntheticPasskey({ userId: owen.id, name: 'PP owen' }), olivia: syntheticPasskey({ userId: olivia.id, name: 'PP olivia' }), quinn: syntheticPasskey({ userId: quinn.id, name: 'PP quinn' }) };
@@ -302,7 +304,7 @@ async function all() {
   {
     const v = await req('GET', `/endpoints/${std.id}/patches`, { s: S.owen, business: acme.id });
     const i = v.body?.data?.install;
-    check(v.status === 200 && i?.possible === false && /standard agent/.test(i.reason) && /signed channel/.test(i.fix), 'a standard-agent computer: no Install button — it says why (standard agent) and what to do (switch to the signed channel)', msg(v));
+    check(v.status === 200 && i?.possible === false && /standard agent/.test(i.reason) && i.fixAction === 'agent-card' && /Upgrade to signed agent/.test(i.fix), 'a standard-agent computer: no Install button — it says why (standard agent) and what to do (0.34: Upgrade to signed agent, on the Agent card)', msg(v));
     const r0 = await req('POST', `/endpoints/${std.id}/patches/install`, { s: S.owen, business: acme.id, body: { updates: [id(CU)], reboot: 'never', reason: 'try anyway' } });
     check(r0.status === 409 && code(r0) === 'INSTALL_NOT_POSSIBLE', 'and asking anyway is refused with the same reason', msg(r0));
     const m = await req('GET', `/endpoints/${manual.id}/patches`, { s: S.owen, business: acme.id });

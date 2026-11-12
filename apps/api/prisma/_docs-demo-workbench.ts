@@ -93,7 +93,8 @@ async function main() {
   await prisma.endpointDiskSample.deleteMany({});
   await prisma.diagnosticRun.deleteMany({ where: { key: { in: ['process_list', 'service_list', 'network_adapters'] } } });
   await prisma.savedView.deleteMany({});
-  await prisma.endpoint.updateMany({ where: { endpointGroupId: { not: null } }, data: { endpointGroupId: null } });
+  // Membership is its own table from 0.34 (a computer can be in several groups).
+  await prisma.endpointGroupMember.deleteMany({});
   await prisma.endpointGroup.deleteMany({});
   await prisma.scriptVersion.deleteMany({});
   await prisma.script.deleteMany({});
@@ -345,7 +346,8 @@ async function main() {
   for (const [customerId, name, description, members] of groups) {
     const g = await prisma.endpointGroup.create({ data: { tenantId: harbor.tenantId, customerId, name, description, createdById: admin.id } });
     groupIds[name] = g.id;
-    await prisma.endpoint.updateMany({ where: { name: { in: members } }, data: { endpointGroupId: g.id } });
+    const eps = await prisma.endpoint.findMany({ where: { name: { in: members } }, select: { id: true } });
+    await prisma.endpointGroupMember.createMany({ data: eps.map((e) => ({ endpointGroupId: g.id, endpointId: e.id, addedById: admin.id })) });
   }
 
   // ── Shared saved views ──────────────────────────────────────────────────

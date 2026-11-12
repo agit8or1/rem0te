@@ -126,6 +126,7 @@ function startApi() {
     HBBS_PRESENCE_HOST: '127.0.0.2', I_KNOW_THIS_IS_NOT_PRODUCTION: '1',
     // Nothing in the background acts on this database while the browser looks at it.
     MONITOR_SWEEP: 'off', CLIENT_UPDATE_SWEEP: 'off', PATCH_POLICY_SWEEP: 'off', METRIC_SWEEP: 'off', AUDIT_SEALER: 'off',
+    RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off',
     FRONTEND_URL: WEB, PUBLIC_API_URL: WEB,
     VERSION_FILE: path.join(ROOT, 'version.json'),
   };
@@ -712,7 +713,8 @@ async function apiKeys(browser, f, vp, theme, label) {
     await page.getByRole('button', { name: 'Create key' }).click();
     const dlg = stepUpDialog(page);
     await dlg.waitFor({ timeout: 10_000 }).catch(() => {});
-    check(await dlg.isVisible() && /enrol computers/.test(await dlg.innerText()), `${label}: a key with enrollment:write asks to confirm it's you, and says why`, await dlg.innerText().catch(() => ''));
+    // 0.34 (§34): every API key needs a fresh sign-in, not only one with enrollment:write.
+    check(await dlg.isVisible() && /To create an API key, confirm your identity/.test(await dlg.innerText()), `${label}: creating a key (here with enrollment:write) asks to confirm it's you, and says why`, await dlg.innerText().catch(() => ''));
     await dlg.getByRole('button', { name: 'Close' }).click();
     await dlg.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
     await sleep(500);
