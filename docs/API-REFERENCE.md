@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **447** of them across
-**60** controllers.
+integration, under `/api/integration/v1`). There are **460** of them across
+**63** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -224,6 +224,29 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/downloads/rustdesk/configured` | signed in | — |
 | `GET` | `/api/v1/downloads/rustdesk/plain` | signed in | — |
 | `GET` | `/api/v1/downloads/rustdesk/setup.cmd` | signed in | — |
+
+## Email email
+
+`apps/api/src/email/email.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/email/recipients` | signed in | — |
+| `POST` | `/api/v1/email/recipients` | signed in, throttled | — |
+| `DELETE` | `/api/v1/email/recipients/:id` | signed in | — |
+| `POST` | `/api/v1/email/recipients/:id/resend` | signed in, throttled | — |
+| `GET` | `/api/v1/email/status` | signed in | — |
+| `POST` | `/api/v1/email/verify` | public, throttled | — |
+
+## Email emailsettings
+
+`apps/api/src/email/email.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/email/settings` | Platform Admin | — |
+| `PUT` | `/api/v1/email/settings` | Platform Admin, throttled | — |
+| `POST` | `/api/v1/email/settings/test` | Platform Admin, throttled | — |
 
 ## Computers
 
@@ -518,6 +541,17 @@ Admins and Business Owners are not confined by it; see
 |---|---|---|---|
 | `GET` | `/api/v1/public/quick-connect` | public | — |
 | `GET` | `/api/v1/public/quick-connect/download/:os` | public | — |
+
+## Report schedules
+
+`apps/api/src/reports/report-schedules.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/reports/schedules` | signed in | — |
+| `POST` | `/api/v1/reports/schedules` | signed in, throttled | — |
+| `PATCH` | `/api/v1/reports/schedules/:id` | signed in, throttled | — |
+| `DELETE` | `/api/v1/reports/schedules/:id` | signed in | — |
 
 ## Reports
 

@@ -16,7 +16,9 @@ const PUBLIC_PREFIXES = ['/login', '/mfa', '/api/', '/_next/', '/favicon.ico', '
 // `/download` is the public client-download page. Exact, not a prefix: as a
 // prefix it also matched `/downloads`, the signed-in page — the very mistake
 // this list already knew to avoid for `/quick`.
-const PUBLIC_EXACT = ['/quick', '/download'];
+// `/verify-email` (0.34) is where an email recipient confirms their address;
+// they have no account. The page only posts the token the link carries.
+const PUBLIC_EXACT = ['/quick', '/download', '/verify-email'];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;

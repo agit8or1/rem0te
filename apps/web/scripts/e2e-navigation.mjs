@@ -41,7 +41,7 @@ const check = (c, m, d = '') => { if (c) { pass++; console.log(`  \x1b[32m✓\x1
 
 const VIEWPORTS = { desktop: { width: 1440, height: 900 }, tablet: { width: 820, height: 1180 } };
 const SETTINGS_ADMIN = ['/settings', '/users', '/offboarding', '/technician-approvals', '/audit', '/businesses', '/admin/technicians', '/admin/access', '/admin/sso',
-  '/admin/rollouts', '/admin/security', '/admin/status', '/about'];
+  '/admin/rollouts', '/settings/email', '/admin/security', '/admin/status', '/about'];
 
 async function signIn(context, email, password) {
   const page = await context.newPage();
@@ -325,7 +325,8 @@ try {
       if (got.includes('reports')) {
         await follow(page, 'nav[aria-label="Main"] [data-nav="reports"]');
         const tabs = await page.$$eval('[data-section-tabs="reports"] a', (els) => els.map((e) => e.textContent.trim()));
-        const want = who === 'user' ? ['Patch compliance', 'Agent coverage', 'Software compliance'] : ['Patch compliance', 'Agent coverage', 'Alert frequency', 'Offline time', 'Software compliance'];
+        // 0.34: Software compliance; and Scheduled reports, last, for a Business Owner or a Platform Admin.
+        const want = who === 'user' ? ['Patch compliance', 'Agent coverage', 'Software compliance'] : ['Patch compliance', 'Agent coverage', 'Alert frequency', 'Offline time', 'Software compliance', 'Scheduled reports'];
         check(JSON.stringify(tabs) === JSON.stringify(want), `Reports tabs: ${want.join(' · ')}`, `got ${tabs.join(' · ')}`);
         for (const t of tabs) {
           await follow(page, `[data-section-tabs="reports"] a:text-is("${t}")`);
@@ -366,6 +367,24 @@ try {
         await visit(page, '/alerts?state=open&severity=critical');
         const sel = await page.evaluate(() => [document.querySelector('#al-state')?.value, document.querySelector('#al-sev')?.value]);
         check(sel[0] === 'open' && sel[1] === 'critical', '/alerts?state=open&severity=critical opens filtered', JSON.stringify(sel));
+        // 0.34: an alert email links to /alerts?alert=<id>. One that is not visible says so rather than loading forever.
+        await visit(page, '/alerts?alert=doesnotexist0000');
+        const linked = await page.waitForSelector('[data-testid="alerts-linked"]', { timeout: 10_000 }).then(() => true).catch(() => false);
+        await page.waitForFunction(() => /not found, or is not one you can see/.test(document.querySelector('[data-testid="alerts-linked"]')?.textContent ?? ''), null, { timeout: 10_000 }).catch(() => {});
+        const said = await page.evaluate(() => document.querySelector('[data-testid="alerts-linked"]')?.textContent ?? '');
+        check(linked && /not found, or is not one you can see/.test(said), '/alerts?alert=<id> opens that alert, and an unknown one says it is not visible', said.slice(0, 200));
+      }
+
+      // 0.34: the email confirmation page is public and confirms nothing until its button is pressed.
+      if (who === 'admin') {
+        const anon = await browser.newContext({ viewport: VIEWPORTS[vpName] });
+        const p2 = await anon.newPage();
+        await p2.goto(`${WEB}/verify-email?token=${'x'.repeat(43)}`);
+        await p2.waitForSelector('button', { timeout: 15_000 }).catch(() => {});
+        const atPage = new URL(p2.url()).pathname === '/verify-email';
+        const btn = await p2.$('button:has-text("Confirm this address")');
+        check(atPage && !!btn, '/verify-email is public and waits for a click (a mail scanner opening it confirms nothing)', p2.url());
+        await anon.close();
       }
 
       // Help & docs, at the bottom.

@@ -5,6 +5,7 @@ import { PatchingModule } from './patching/patching.module';
 import { ContainmentModule } from './containment/containment.module';
 import { AuditChainModule } from './audit/audit-chain.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
+import { EmailModule } from './email/email.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { RetentionModule } from './retention/retention.module';
 import { ClientUpdatesModule } from './client-updates/client-updates.module';
@@ -98,6 +99,7 @@ import { IntegrationModule } from './integration/integration.module';
     ContainmentModule,
     AuditChainModule,
     MonitoringModule,
+    EmailModule,
     MetricsModule,
     RetentionModule,
     ClientUpdatesModule,

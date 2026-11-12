@@ -140,12 +140,15 @@ with the same scoping and filters as the page.
   rows and with which filters) *before* the file is sent. If the audit log cannot be written, the export is
   refused.
 
+## Scheduled reports
+
+From 0.34 any report can be emailed weekly or monthly to confirmed addresses, with a link and optionally this
+same CSV export (same row cap, same `REPORT_EXPORTED` audit row, naming the schedule). It is computed with the
+schedule owner's access when it is sent, and fails closed if they have lost it. See
+[Email and scheduled reports](email.md).
+
 ## Not done
 
-- **Scheduled or emailed reports.** Rem0te has no outbound mail. Its only outbound channel, alert notification
-  webhooks, exists to deliver alerts to destinations a Business Owner approved with a fresh sign-in; reusing it
-  to send device inventories out on a timer would widen what it carries. Export the CSV and send it yourself
-  until a delivery mechanism is designed for this.
 - **Availability percentage**: see above.
 - **Trends over time** (compliance last month against this month): scans and agent versions are stored as the
   latest value, not as history.
