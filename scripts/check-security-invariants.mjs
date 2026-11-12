@@ -475,8 +475,11 @@ check(
   const upd = read('tools/windows-installer/internal/action/updates.go');
   // 0.32 adds an optional "allow" filter (a patch policy's classes, severities
   // and excluded KBs). It can only narrow: closed keys, fixed values.
-  check('agent update params are closed: exactly updates + reboot "never" (+ optional allow), each {updateId, revision}',
-    /want := 2\s*if hasAllow \{\s*want = 3\s*\}\s*if len\(p\) != want \|\| p\["reboot"\] != "never"/.test(upd) && /!ok \|\| len\(m\) != 2/.test(upd)
+  // 0.34: reboot is one of two fixed strings (§ 37 has the restart's rules).
+  check('agent update params are closed: exactly updates + reboot "never" | "if_required_in_window" (+ optional allow), each {updateId, revision}',
+    /want := 2\s*if hasAllow \{\s*want = 3\s*\}\s*if len\(p\) != want \|\| UpdateReboot\(p\) == ""/.test(upd) && /!ok \|\| len\(m\) != 2/.test(upd)
+      && /func UpdateReboot\(p map\[string\]any\) string \{\s*switch s, _ := p\["reboot"\]\.\(string\); s \{\s*case RebootNever, RebootInWindow:\s*return s\s*\}\s*return ""\s*\}/.test(upd)
+      && /RebootNever = "never"/.test(upd) && /RebootInWindow = "if_required_in_window"/.test(upd)
       && /if k != "classifications" && k != "severities" && k != "excludeKbs" \{\s*return nil, paramErr/.test(upd)
       && /_, ok := patch\.Installable\[s\]; return ok/.test(upd),
     'the update action must not accept any other parameter, and allow may only narrow');
@@ -1004,8 +1007,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('ACTION_NOT_DIRECT still holds for updates',
     /ACTION_NOT_DIRECT/.test(read('apps/api/src/actions/actions.service.ts')) && /direct: false/.test(read('apps/api/src/actions/catalog.ts')),
     'POST /endpoints/:id/actions must refuse windows.update.install');
-  check('a policy can never restart a computer in this release', /reboot: z\.literal\('never'\)/.test(ev) && /reboot: z\.literal\('never'\)/.test(pol),
-    'a reboot rule is a §15 change to the agent\'s closed params');
+  // 0.34: the reboot rule is the closed pair (§ 37); a policy defaults to never.
+  check('a policy\'s restart rule is the closed pair, defaults to never, and is signed into the policy',
+    /reboot: UpdateReboot,/.test(ev) && /reboot: UpdateReboot\.default\('never'\),/.test(pol) && /window: dto\.window, reboot: dto\.reboot,/.test(pol),
+    'PolicyDoc.reboot must be UpdateReboot and CreatePolicyDto must default to never');
 }
 
 // 26. Within-business computer visibility (0.31.2). A Business User sees only
@@ -1046,7 +1051,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //     whatever step-up actions are configured (assertFresh, never the
 //     configurable StepUpService.assert). An API key cannot step up and keeps
 //     the ability, so minting a key needs the same fresh re-authentication
-//     (0.33: keys carrying enrollment:write; 0.34: every key, § 33). Every
+//     (0.33: keys carrying enrollment:write; 0.34: every key, § 34). Every
 //     caller must say which proof it has; nothing else writes a
 //     DeviceClaimToken. Registering by RustDesk ID mints no credential and so
 //     is not gated.
@@ -1082,7 +1087,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const keys = read('apps/api/src/apikeys/apikeys.service.ts');
   const keysCtl = read('apps/api/src/apikeys/apikeys.controller.ts');
   const keyFn = keys.slice(keys.indexOf('async create('), keys.indexOf('async revoke('));
-  check('a key that can mint enrolment tokens needs a fresh re-authentication to create (every key does since 0.34, § 33)',
+  check('a key that can mint enrolment tokens needs a fresh re-authentication to create (every key does since 0.34, § 34)',
     /\n    assertFresh\(freshMethod, \{\s*action: 'apikey\.create',/.test(keyFn)
       && keyFn.indexOf('assertFresh(freshMethod') < keyFn.indexOf('apiKey.create(')
       && /this\.stepUp\.read\(req, u\.sub, u\.iat\)\?\.method \?\? null : null;\s*return \{ success: true, data: await this\.svc\.create\(actor, dto, freshMethod\) \};/.test(keysCtl),
@@ -1231,12 +1236,12 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /const why = manageRefusal\(a, g\.customerId\);/.test(bulkSvc)
       && /const step = membershipStep\(action, t, group, members\.has\(t\.id\), why\);\s*if \(step\.kind === 'refuse'\)/.test(bulkSvc)
       && /if \(refusal\) return \{ kind: 'refuse', code: 'NOT_ALLOWED'/.test(rules) && /if \(t\.customerId !== group\.customerId\) return \{ kind: 'refuse', code: 'OTHER_BUSINESS'/.test(rules),
-    'create/update/remove and bulk membership must check manageRefusal and the business (membershipStep); the 0049 trigger backs the insert (§ 33)');
+    'create/update/remove and bulk membership must check manageRefusal and the business (membershipStep); the 0049 trigger backs the insert (§ 34)');
   check('groups: another business’s group is a 404',
     /if \(!g\.customerId \|\| g\.customerId !== a\.businessId\) throw new NotFoundException\('Group not found'\);/.test(groupSvc), 'findVisible must compare the business');
   const eps = read('apps/api/src/endpoints/endpoints.service.ts');
   const enr = read('apps/api/src/enrollment/enrollment.service.ts');
-  check('a computer gets only its own business’s group: creation, enrolment tokens, claims (moving business: § 33’s trigger)',
+  check('a computer gets only its own business’s group: creation, enrolment tokens, claims (moving business: § 34’s trigger)',
     /if \(dto\.endpointGroupId\) await this\.assertGroupFor\(dto\.endpointGroupId, businessId, business\.tenantId\);/.test(eps)
       && /where: \{ id: groupId, OR: \[\{ customerId: businessId \}, \{ customerId: null, tenantId \}\] \}/.test(eps)
       && /where: \{ id: dto\.endpointGroupId, OR: \[\{ customerId: businessId \}, \{ customerId: null, tenantId: business\.tenantId \}\] \}/.test(enr)
@@ -1732,6 +1737,70 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /async peerRegisteredWithHbbs\(rustdeskId: string\): Promise<boolean \| null> \{\s*\n\s*return this\.hbbsPeers\.has\(rustdeskId\);\s*\n\s*\}/.test(en)
       && /\[`file:\$\{dbPath\}\?mode=ro`, PEER_SNAPSHOT_SQL\]/.test(en),
     'one sqlite3 call in enrollment.service.ts, read-only, running PEER_SNAPSHOT_SQL, and peerRegisteredWithHbbs delegating to it');
+}
+
+// 37. Restarts after Windows updates (0.34). An update plan's restart rule
+//     is one of two fixed strings: never, or if_required_in_window. Under the
+//     second the agent restarts only when Windows reports a restart required
+//     after something was installed, only through windows.reboot.schedule's
+//     own path (shutdown.exe via Maintenance.ScheduleRestart, the fixed
+//     message, the reboot record), after a fixed warning, never while a
+//     RustDesk session is open or when it cannot tell, and never after the
+//     plan's signed window closes — otherwise restart_deferred. wua.ps1 still
+//     never restarts (§ 15). The portal, the signer (a plan may not ask for
+//     more than its policy allows) and the agent each check the closed form,
+//     and every way to ask for an install defaults to never.
+{
+  const upd = read('tools/windows-installer/internal/action/updates.go');
+  const maint = read('tools/windows-installer/internal/action/maintenance.go');
+  const tsCat = read('apps/api/src/actions/catalog.ts');
+  const fn = upd.slice(upd.indexOf('func restartInWindow('), upd.indexOf('\n}\n', upd.indexOf('func restartInWindow(')));
+  const goWarn = Number((upd.match(/UpdateRestartWarningMinutes = (\d+)/) ?? [])[1]);
+  const tsWarn = Number((tsCat.match(/export const UPDATE_RESTART_WARNING_MINUTES = (\d+);/) ?? [])[1]);
+  check('the update restart warning is fixed, the same on both sides, and no shorter than a scheduled restart\'s',
+    goWarn === tsWarn && goWarn >= 5 && /MinRestartDelayMinutes = 5/.test(maint),
+    `agent ${goWarn}, portal ${tsWarn}`);
+  check('an update restart goes through the one scheduling path windows.reboot.schedule uses',
+    /when, err := scheduleWarnedRestart\(p, o, UpdateRestartWarningMinutes\)/.test(fn) && /at, err := scheduleWarnedRestart\(p, o, minutes\)/.test(maint)
+      && (`${upd}\n${maint}`.match(/o\.Maint\.ScheduleRestart\(/g) ?? []).length === 1
+      && /func scheduleWarnedRestart\([^)]*\) \(time\.Time, error\) \{\s*at := o\.now\(\)\.Add\(time\.Duration\(minutes\) \* time\.Minute\)\s*if err := o\.Maint\.ScheduleRestart\(minutes\*60, RestartMessage\(at\.Local\(\), minutes, p\.JobID\)\); err != nil/.test(maint),
+    'one call to Maint.ScheduleRestart, with the fixed RestartMessage, shared by both actions');
+  const iUnc = fn.indexOf('case r.Outcome == "uncertain":'), iPend = fn.indexOf('case !pending:'), iInst = fn.indexOf('case r.Outcome != "restart_required" && r.Outcome != "partial":');
+  const iWin = fn.indexOf('if err != nil || at.After(na) {'), iSess = fn.indexOf('if pr := sessionCheck("the restart")(p, o); pr != nil {'), iSched = fn.indexOf('scheduleWarnedRestart(');
+  check('the agent restarts only after an install Windows says needs one, inside the window, with no session open — else restart_deferred',
+    iUnc > 0 && iPend > iUnc && iInst > iPend && iWin > iInst && iSess > iWin && iSched > iSess
+      && /na, err := time\.Parse\(time\.RFC3339Nano, p\.Window\.NotAfter\)\s*at := o\.now\(\)\.Add\(UpdateRestartWarningMinutes \* time\.Minute\)/.test(fn)
+      && /deferred\("window_closed"/.test(fn) && /deferred\("install_uncertain"/.test(fn) && /State: "restart_deferred"/.test(fn)
+      && /if UpdateReboot\(p\.Params\) == RebootInWindow \{\s*restartInWindow\(p, o, &r\)/.test(upd),
+    'restartInWindow must check outcome, pending, window, then sessions, in that order, before scheduling');
+  check('wua.ps1 still never restarts: the only restart is the agent\'s shutdown.exe path',
+    !/Restart-Computer|shutdown|InitiateSystemShutdown|CommitInstall|\.Reboot\(/i.test(read('tools/windows-installer/internal/patch/wua.ps1').replace(/^\s*#.*$/gm, ''))
+      && /runSystem32\(30\*time\.Second, "shutdown\.exe", "\/r", "\/t", strconv\.Itoa\(seconds\)/.test(read('tools/windows-installer/action_windows.go')),
+    'no restart in the Windows Update script');
+  check('the portal\'s restart rule is the same closed pair, and an install asked for any way defaults to never',
+    /export const UPDATE_REBOOT_RULES = \['never', 'if_required_in_window'\] as const;/.test(tsCat) && /reboot: UpdateReboot,\s*\/\/ 0\.32/.test(tsCat)
+      && (read('apps/api/src/patching/patching.service.ts').match(/reboot: UpdateReboot\.default\('never'\),/g) ?? []).length === 2
+      && /reboot: UpdateReboot\.default\('never'\),/.test(read('apps/api/src/patching/policies.service.ts')),
+    'UPDATE_INSTALL.params.reboot, CreateDeploymentDto, InstallDto and CreatePolicyDto');
+  const ev = read('apps/api/src/actions/patch-policy.ts');
+  check('the signer refuses a plan whose restart rule asks for more than its policy allows',
+    /if \(!rebootWithin\(params\.reboot, doc\.reboot\)\) return no\('reboot_not_allowed'/.test(ev)
+      && /export const rebootWithin = \(plan: unknown, allowed: UpdateRebootRule\) =>\s*UpdateReboot\.safeParse\(plan\)\.success && UPDATE_REBOOT_RULES\.indexOf\(plan as UpdateRebootRule\) <= UPDATE_REBOOT_RULES\.indexOf\(allowed\);/.test(tsCat),
+    'evaluatePolicyPlan must compare the plan\'s rule with the policy\'s');
+  check('the database holds a deployment\'s rule to the pair',
+    /^ALTER TABLE "PatchDeployment" ADD CONSTRAINT "PatchDeployment_reboot_check" CHECK \("reboot" IN \('never', 'if_required_in_window'\)\);$/m.test(read('apps/api/prisma/migrations/0047_patch_reboot/migration.sql')),
+    'PatchDeployment_reboot_check');
+  const asvc = read('apps/api/src/actions/actions.service.ts');
+  check('a restart report is kept only from an update plan whose signed rule allowed a restart',
+    /if \(r\.restart && !\(t\.job\.actionId === UPDATE_INSTALL\.id && planReboot === 'if_required_in_window'\)\) r\.restart = undefined;/.test(asvc),
+    'recordResults must drop restart from any other plan');
+  const UNPROVEN = 'The in-window restart has been tested against a simulated Windows only; it has not yet run on a real Windows computer.';
+  const comp = read('apps/web/components/patching/patch-reboot-choice.tsx');
+  const doc = read('docs/staged-patching.md').replace(/\n>\s*/g, ' ').replace(/\s+/g, ' ');
+  check('the UI, the approval page and the docs say the restart has not run on real Windows',
+    tsCat.includes(`REBOOT_UNPROVEN = '${UNPROVEN}'`) && comp.includes(`REBOOT_UNPROVEN = '${UNPROVEN}'`) && /<strong>\{REBOOT_UNPROVEN\}<\/strong>/.test(comp)
+      && (read('apps/api/src/approval-signer/page.ts').match(/esc\(REBOOT_UNPROVEN\)/g) ?? []).length === 2 && doc.includes(`**Not proven on Windows.** ${UNPROVEN}`),
+    'catalog.ts and patch-reboot-choice.tsx define it, the reboot choice shows it, the signer page and docs/staged-patching.md say it');
 }
 
 if (failures.length > 0) {

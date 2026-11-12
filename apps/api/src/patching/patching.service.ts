@@ -7,7 +7,7 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { AccessPolicyService } from '../security-controls/access-policy.service';
 import { ActionsService } from '../actions/actions.service';
 import { SignerClient } from '../actions/signer.client';
-import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, UPDATE_ID_RE, UPDATE_INSTALL } from '../actions/catalog';
+import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, UPDATE_ID_RE, UPDATE_INSTALL, UpdateReboot, type UpdateRebootRule } from '../actions/catalog';
 import { evaluateRingGate, targetStates, toEvidenceTarget, type Gate, type GateTarget, type RingEvidence } from '../actions/patch-policy';
 import { CLASSIFICATIONS, MANAGER_LABEL, Posture, eligibility, idKey } from './posture';
 import { patchSummaryFor, type PatchSummary } from './summary-db';
@@ -41,6 +41,8 @@ export const CreateDeploymentDto = z.object({
   soakHours: z.number().int().min(0).max(168).default(24),
   failureThreshold: z.number().int().min(0).max(MAX_RING_TARGETS).default(0),
   windowHours: z.number().int().min(1).max(24).default(8),
+  /** 0.34: never (the default), or restart if required inside each ring plan's window. */
+  reboot: UpdateReboot.default('never'),
 }).strict();
 
 export const RequestRingDto = z.object({
@@ -60,8 +62,8 @@ const ReasonDto = z.object({ reason: z.string().trim().min(3).max(300) }).strict
  */
 export const InstallDto = z.object({
   updates: z.array(Ident).min(1).max(MAX_UPDATES_PER_PLAN),
-  /** The only rule this release has: computers are never restarted. */
-  reboot: z.literal('never'),
+  /** 0.34: never (the default), or restart if required inside the plan's window. */
+  reboot: UpdateReboot.default('never'),
   reason: z.string().trim().min(3).max(400),
   windowHours: z.number().int().min(1).max(24).default(8),
   startsInMinutes: z.number().int().min(0).max(24 * 60).default(0),
@@ -76,6 +78,9 @@ export type { Gate };
 export interface PolicyOrigin { policyId: string; windowKey: string; createdById: string }
 /** What a ring request under a policy adds: the policy, the exact window, and the filter the agent applies. */
 export interface UnderPolicy { policyId: string; name: string; digest: string; allow: Record<string, string[]>; window: { notBefore: Date; notAfter: Date } }
+
+/** A deployment's restart rule. Anything the column should never hold (it has a CHECK) reads as never. */
+export const rebootOf = (d: Pick<PatchDeployment, 'reboot'>): UpdateRebootRule => (UpdateReboot.safeParse(d.reboot).success ? d.reboot as UpdateRebootRule : 'never');
 
 @Injectable()
 export class PatchingService {
@@ -245,11 +250,11 @@ export class PatchingService {
       data: {
         tenantId: first.tenantId, customerId: dto.businessId, name: dto.name, updates: updates as unknown as Prisma.InputJsonValue,
         rings: dto.rings.map((r) => ({ endpointIds: r })) as unknown as Prisma.InputJsonValue,
-        soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, windowHours: dto.windowHours, createdById: actor.userId,
+        soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, windowHours: dto.windowHours, reboot: dto.reboot, createdById: actor.userId,
         origin, policyId: policy?.policyId ?? null, windowKey: policy?.windowKey ?? null,
       },
     });
-    await this.audit.log({ tenantId: first.tenantId ?? undefined, customerId: dto.businessId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_DEPLOYMENT_CREATED', resource: 'patch_deployment', resourceId: d.id, meta: { name: dto.name, origin, policyId: policy?.policyId ?? null, windowKey: policy?.windowKey ?? null, updates: updates.map((u) => u.kb ?? u.updateId), rings: dto.rings.map((r) => r.length), soakHours: dto.soakHours, failureThreshold: dto.failureThreshold } });
+    await this.audit.log({ tenantId: first.tenantId ?? undefined, customerId: dto.businessId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_DEPLOYMENT_CREATED', resource: 'patch_deployment', resourceId: d.id, meta: { name: dto.name, origin, policyId: policy?.policyId ?? null, windowKey: policy?.windowKey ?? null, updates: updates.map((u) => u.kb ?? u.updateId), rings: dto.rings.map((r) => r.length), soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, reboot: dto.reboot } });
     return d;
   }
 
@@ -305,7 +310,7 @@ export class PatchingService {
     const host = (ep.hostname ?? ep.name).slice(0, 64);
     const d = await this.build(actor, {
       businessId: ep.customerId!, name: `Install on ${host}`.slice(0, 120), updates: dto.updates, rings: [[endpointId]],
-      soakHours: 0, failureThreshold: 0, windowHours: dto.windowHours,
+      soakHours: 0, failureThreshold: 0, windowHours: dto.windowHours, reboot: dto.reboot,
     }, 'MANUAL', null);
     const out = await this.requestRing(actor, d.id, 0, { reason: dto.reason, startsInMinutes: dto.startsInMinutes });
     await this.audit.log({ tenantId: d.tenantId ?? undefined, customerId: d.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_INSTALL_REQUESTED', resource: 'endpoint', resourceId: endpointId, meta: { deploymentId: d.id, jobId: out.job.id, updates: dto.updates.length, reboot: dto.reboot } });
@@ -403,7 +408,7 @@ export class PatchingService {
     const next = this.nextRing(d, jobs, gates);
     return {
       id: d.id, name: d.name, businessId: d.customerId, origin: d.origin, policyId: d.policyId, windowKey: d.windowKey, status: d.status, pausedReason: d.pausedReason,
-      soakHours: d.soakHours, failureThreshold: d.failureThreshold, windowHours: d.windowHours, createdById: d.createdById, createdAt: d.createdAt,
+      soakHours: d.soakHours, failureThreshold: d.failureThreshold, windowHours: d.windowHours, reboot: rebootOf(d), createdById: d.createdById, createdAt: d.createdAt,
       updates: d.updates,
       next,
       rings: rings.map((r, i) => {
@@ -418,6 +423,8 @@ export class PatchingService {
               endpointId: e, hostname: names.get(e) ?? null, inPlan: !!t, status: t?.status ?? null, statusReason: t?.statusReason ?? null, outcome: t?.outcome ?? null,
               reconciled: t?.reconciledAt ? t.reconcileNote : null,
               rebootPending: p?.reboot.pending ?? null, scannedAt: p?.scannedAt ?? null,
+              // 0.34: what the agent did about a restart, under the in-window rule.
+              restart: (t?.result as { restart?: { state: string; reason?: string; scheduledFor?: string } } | null)?.restart ?? null,
               updates: this.computerStates(d, j, e, p),
             };
           }),
@@ -477,7 +484,7 @@ export class PatchingService {
     const updates = d.updates as unknown as DeploymentUpdate[];
     const job = await this.actions.createPlan(actor, {
       action: UPDATE_INSTALL, endpointIds,
-      params: { updates: updates.map((u) => ({ updateId: u.updateId, revision: u.revision })), reboot: 'never', ...(under ? { allow: under.allow } : {}) },
+      params: { updates: updates.map((u) => ({ updateId: u.updateId, revision: u.revision })), reboot: rebootOf(d), ...(under ? { allow: under.allow } : {}) },
       reason: `${d.name} — ${ring === 0 ? 'canary' : `ring ${ring}`}: ${dto.reason}`.slice(0, 500),
       startsInMinutes: dto.startsInMinutes, windowHours: d.windowHours,
       display: {

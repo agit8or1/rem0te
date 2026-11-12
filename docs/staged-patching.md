@@ -2,7 +2,8 @@
 
 rem0te 0.27 can install **Windows updates** on customer computers in stages. 0.32 adds
 [installing from one computer's Patches tab](#installing-from-one-computers-patches-tab) and
-[patch policies](#patch-policies), which are approved once and then run inside a maintenance window. For production
+[patch policies](#patch-policies), which are approved once and then run inside a maintenance window. 0.34 adds a
+[restart rule](#restarting-after-updates): restart, if Windows requires it, inside the plan's window. For production
 setup, see [Patching setup](patching-setup.md). A **canary** computer goes first, then
 one or more **rings**. Each ring is a single signed plan that two people on the approval roster authorize with a
 passkey. The next ring can't be requested until the canary reports that the updates took effect.
@@ -11,8 +12,9 @@ The plan is approved, delivered and executed exactly like the [approved Print Sp
 the same approval signer, roster, signature and agent checks. This page covers only what is different for updates.
 
 > **Warning.** An installed update may not stay installable *out*. Some can't be uninstalled, and uninstalling is not
-> built here. rem0te never restarts a computer, so an update that needs a restart is reported as **restart required**
-> until someone restarts it.
+> built here. By default rem0te never restarts a computer, so an update that needs a restart is reported as
+> **restart required** until someone restarts it. With the 0.34 rule *restart if required, inside the window*, the
+> computer restarts itself after a fixed warning, unless someone is connected or the window would close first.
 
 ## What can be installed
 
@@ -50,8 +52,9 @@ create ──▶ request canary ──▶ 2 approvals ──▶ canary installs 
    class) or hasn't reported a scan, and refuses an update nobody is offered or that isn't installable.
 2. **Request the canary.** This creates a signed plan **awaiting approval** and opens its approval page. Updates are
    always **high impact**, so they always need **two** approvers, even on a single workstation, and never the requester.
-3. **The canary installs.** It downloads and installs the updates, and never restarts. It reports a state for each
-   update (below).
+3. **The canary installs.** It downloads and installs the updates. Under the default rule it never restarts; under
+   *restart if required, inside the window* it may schedule one ([below](#restarting-after-updates)). It reports a
+   state for each update (below).
 4. **Confirm.** After a restart, if one is needed, the computer's next scan shows whether each update took effect.
 5. **Request ring 1** once the gate passes, and so on. Each ring is a new plan with new approvals.
 
@@ -82,7 +85,7 @@ These are the states shown for each update on each computer on the deployment pa
 |---|---|
 | **awaiting approval** / **scheduled** / **delivered** | The plan isn't approved, is approved but not yet taken, or the computer has it and hasn't answered |
 | **installed** | Windows reported the install succeeded. **Not yet confirmed:** a later scan must show it took effect |
-| **restart required** | Installed. It takes effect after a restart, which rem0te never does |
+| **restart required** | Installed. It takes effect after a restart: one a person makes, or one the in-window rule scheduled |
 | **effective** | A scan taken *after* the result no longer offers the update, Windows' own history records it installed (or the computer said it already was), and no restart is pending |
 | **superseded** | Windows Update replaced it with a newer update before install. Nothing was installed for it |
 | **not offered** | Windows Update didn't offer it to this computer at install time (e.g. it doesn't apply) |
@@ -151,7 +154,8 @@ The agent adds `managed_elsewhere`, `update_agent_busy` (a scan held Windows Upd
 ## Installing from one computer's Patches tab
 
 Since 0.32, a computer's **Patches** tab has an **Install updates** button when the computer can be patched. You
-pick from its installable updates, the restart rule (only *never* exists) and a window, and give a reason.
+pick from its installable updates, the [restart rule](#restarting-after-updates) (*never*, the default, or *restart
+if required, inside the window*) and a window, and give a reason.
 
 - The request becomes a **one-computer deployment**: a single canary ring, marked *one computer* in the list. Its plan
   awaits **two approvals** on the approval signer, like any ring.
@@ -188,7 +192,7 @@ itself**, not the portal, signs each ring plan, but only if the plan falls insid
 | Classes, severities, excluded KBs | Each update shown in the plan. The plan also carries the filter as `params.allow`, and **each computer applies it** to Windows Update's own answer, so a mislabelled update can't slip past |
 | The maintenance window: days, local start and end, IANA time zone | The plan's window must lie inside one occurrence. DST is honoured |
 | Soak and failure threshold | The ring gate, re-run by the signer (below) |
-| Reboot: never | The plan's params |
+| The restart rule: *never*, or *restart if required, inside the window* (0.34) | The plan's `params.reboot`. A plan may ask for no more than the policy: under a *never* policy, a plan asking to restart is refused (`reboot_not_allowed`); under an in-window policy, a plan may ask for either |
 | Expiry, at most 90 days | Every plan, and the plan's window end |
 
 **The canary must be effective.** For every ring after the canary, the portal hands the signer the previous ring's
@@ -231,6 +235,47 @@ Policy refusal codes, from the signer: `policy_revoked`, `policy_expired`, `poli
 `canary_proved_nothing`, `gate_not_passed`, `evidence_mismatch`, `updates_not_proven`, `requester_mismatch`,
 `reboot_not_allowed`, `paused`.
 
+## Restarting after updates
+
+0.34 adds one restart rule to update plans. It is a closed parameter, `reboot`, with two values and nothing beside
+them: no delay, time, message or command can be chosen.
+
+| Rule | What the computer does after installing |
+|---|---|
+| `never` (the default everywhere) | Nothing. A pending restart stays pending until someone restarts the computer |
+| `if_required_in_window` | Only if Windows then reports a restart is required, it schedules one through the same path as [`windows.reboot.schedule`](approved-actions.md#maintenance-actions-032): `shutdown.exe /r /t 900` with the same fixed warning, so the person at the computer has **15 minutes** to save their work. Programs still open then are closed without saving |
+
+You choose the rule on a deployment, on **Install updates** from a Patches tab, and on a patch policy. Every ring plan
+carries it, the approval page shows it, and the approvers sign it.
+
+**When the computer does not restart.** It reports `restart: restart_deferred` with a reason, and leaves the computer
+as it is. Nothing retries later; the update stays *restart required* and the next ring waits.
+
+| Reason | When |
+|---|---|
+| `remote_session_open` | A RustDesk session was open when the install finished |
+| `session_state_unknown` | The agent could not tell whether one was. "Cannot tell" counts as open, as for maintenance actions |
+| `window_closed` | The restart, 15 minutes after the install finished, would fall after the plan's signed window closes |
+| `restart_already_scheduled` | Windows already had a restart or shutdown pending. It is not replaced |
+| `install_uncertain` | The installer did not report every result. Restarting under it could interrupt it |
+| `schedule_failed`, `no_maintenance` | Windows refused the schedule, or the agent can't schedule restarts |
+
+It also reports `not_required` when Windows needs no restart, or when nothing was installed (a restart already
+pending for something else isn't this plan's to make). The checks run in that order: outcome, pending restart,
+window, sessions, then the schedule. The session check is made once, when the restart is scheduled; someone who
+connects in the 15 minutes after sees the Windows warning.
+
+**Proof the update took effect.** A scheduled restart is reported as scheduled, not as done. The portal then asks
+the computer for a patch scan due two minutes after the restart time, and the canary gate opens only when that scan
+shows each update effective and no restart pending. A restart that never happened (canceled with
+[*Cancel a scheduled restart*](approved-actions.md#maintenance-actions-032), or blocked by Windows) leaves the gate shut.
+
+The **Windows Update script still never restarts** (`wua.ps1`, §15); the only restart is the agent's own
+`shutdown.exe` call that `windows.reboot.schedule` uses.
+
+> **Not proven on Windows.** The in-window restart has been tested against a simulated Windows only; it has not yet
+> run on a real Windows computer. Try it on one canary you can watch before giving it to a policy.
+
 ## Setting it up
 
 Staged patching needs [approved actions](approved-actions.md#setting-it-up) to be set up already: the approval signer,
@@ -250,16 +295,18 @@ There are no new server settings.
 |---|---|
 | **Fixture-tested** | Yes. The Go packages `internal/patch` and `internal/action` test eligibility, manager detection, the parsers' refusal of answers for unrequested updates, every per-update state, crash → unknown, the Windows Update lock, replay, and a second process seeing `in_progress`. `wua.ps1` is parsed by PowerShell in the tests and checked for banned cmdlets. `e2e-staged-patching.mjs` (59 checks) runs the portal, the signer and the agent's real decision code against a simulated Windows Update and registry: posture, deployment refusals, the canary, restart → effective, a three-computer ring with a crash and a failure, auto-pause, resume and retry, identity change, a tampered ring plan, and cancel |
 | **Fixture-tested (0.32)** | Yes. `unit-patch-policy.mjs` (114 checks) covers every policy refusal, the window arithmetic across DST in several zones, and the signer's policy records. `e2e-patch-policies.mjs` (75 checks) covers: a one-computer install through two approvals to effective; no button on a standard-agent computer; a policy approved by passkey; the sweep proposing the canary inside the window; the agent installing only the policy's class; ring 1 signed automatically only after the canary was effective; the signer refusing widened rings, a disallowed class, a wider filter, out-of-window plans, a skipped canary, an altered digest, a non-author requester, expired and revoked policies, and a containment pause; and no duplicate after an API restart. Go tests cover the agent's `allow` filter |
+| **Fixture-tested (0.34)** | Yes, for the restart rule. Go tests: the closed rule, the shared scheduling path and fixed warning, never under *never*, and every deferral (session open, cannot tell, window closing first, a restart already pending, an uncertain install, nothing installed). `e2e-staged-patching.mjs` (94 checks) adds: restart in the window, scheduled, the simulated restart (`rem0te-action-sim -fire-restart`) and the post-restart scan to *effective* and a completed deployment; an open session and a closing window each deferring with nothing scheduled. `e2e-patch-policies.mjs` (84 checks) adds a *never* policy's signer refusing a restart plan (`reboot_not_allowed`), and an in-window policy signing one |
 | **Paired lab** (real Windows, real Windows Update, real authenticator) | **Not done.** The script hasn't run against a real Windows Update service. Classification IDs, result codes and pending-restart keys are as Microsoft documents them, not yet as observed |
 | **Production-ready** | **No.** It needs the paired lab first: a canary, a WSUS-managed computer, an update that needs a restart, and one that fails |
 
 ## Known limits
 
 - Windows only, and Microsoft updates only. No third-party patching, drivers or feature upgrades.
-- No restarts, no maintenance-window restarts, no user notification. "Restart required" waits for a person.
+- The in-window restart has not yet run on a real Windows computer. Its warning is Windows' own shutdown dialog; there
+  is no other notice, no postponing by the user, and no retry once deferred.
 - No uninstall or rollback.
 - Rings are chosen by hand, for a deployment and for a policy. There is no automatic grouping by model, site or role.
-- A policy can't restart computers. A restart rule needs a change to the agent's closed parameters.
+- The session check sees RustDesk sessions only, once. Console and Remote Desktop users see the warning.
 - Under a policy, the portal relays ring results to the signer. Agents don't sign results, so a compromised portal can
   start the next ring early by forging them. It can't widen the ring.
 - A computer managed by WSUS or Intune is refused rather than coordinated with.

@@ -2505,6 +2505,9 @@ model PatchDeployment {
   /// Failed computers a ring may have before the deployment pauses itself.
   failureThreshold Int                   @default(0)
   windowHours      Int                   @default(8)
+  /// 0.34: the restart rule every ring plan carries — 'never' or
+  /// 'if_required_in_window' (a CHECK constraint holds it to those two).
+  reboot           String                @default("never")
   status           PatchDeploymentStatus @default(ACTIVE)
   pausedReason     String?
   /// The ring plan a person resumed past after it tripped the failure

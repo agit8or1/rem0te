@@ -15,6 +15,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { ArrowLeft, ExternalLink, Loader2, ShieldCheck } from 'lucide-react';
+import { rebootSummary } from '@/components/patching/patch-reboot-choice';
 import { DEPLOYMENT_STATUS } from '@/lib/patching';
 
 /**
@@ -31,6 +32,7 @@ interface Gate { ok: boolean; reason: string; detail: string; until?: string }
 interface Computer {
   endpointId: string; hostname: string | null; inPlan: boolean; status: string | null; statusReason: string | null; outcome: string | null;
   reconciled: string | null; rebootPending: boolean | null; scannedAt: string | null;
+  restart: { state: string; reason?: string; scheduledFor?: string } | null;
   updates: { key: string; state: string; detail: string | null }[];
 }
 interface Ring {
@@ -40,11 +42,17 @@ interface Ring {
 }
 interface Deployment {
   id: string; name: string; businessId: string; origin: 'DEPLOYMENT' | 'MANUAL' | 'POLICY'; policyId: string | null; status: string; pausedReason: string | null;
-  soakHours: number; failureThreshold: number; windowHours: number; createdAt: string;
+  soakHours: number; failureThreshold: number; windowHours: number; reboot: string; createdAt: string;
   updates: { updateId: string; revision: number; kb: string | null; title: string; className: string | null; severity: string | null }[];
   next: { ring: number | null; canRequest: boolean; why: string };
   rings: Ring[];
 }
+
+const RESTART_DEFERRED: Record<string, string> = {
+  remote_session_open: 'a RustDesk session was open', session_state_unknown: 'could not tell whether a RustDesk session was open',
+  window_closed: 'the window would have closed first', restart_already_scheduled: 'Windows already had a restart pending',
+  schedule_failed: 'Windows refused to schedule it', install_uncertain: 'the install outcome is not known', no_maintenance: 'this agent cannot schedule restarts',
+};
 
 const STATE: Record<string, { label: string; variant: 'success' | 'destructive' | 'warning' | 'outline' | 'secondary' }> = {
   not_planned: { label: 'not in plan', variant: 'outline' }, awaiting_approval: { label: 'awaiting approval', variant: 'outline' },
@@ -103,7 +111,7 @@ export default function DeploymentPage() {
   return (
     <div className="space-y-4">
       <Link href="/patching" className="text-xs text-muted-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3 w-3" />Patching</Link>
-      <PageHeader title={d.name} description={`Created ${formatDate(d.createdAt)} · soak ${d.soakHours} h · ${d.failureThreshold} failure${d.failureThreshold === 1 ? '' : 's'} allowed per ring · ${d.windowHours} h window`}>
+      <PageHeader title={d.name} description={`Created ${formatDate(d.createdAt)} · soak ${d.soakHours} h · ${d.failureThreshold} failure${d.failureThreshold === 1 ? '' : 's'} allowed per ring · ${d.windowHours} h window · ${rebootSummary(d.reboot).toLowerCase()}`}>
         <div className="flex gap-2 items-center">
           <Badge variant={DEPLOYMENT_STATUS[d.status] ?? 'outline'}>{d.status.toLowerCase()}</Badge>
           {d.status === 'ACTIVE' && <Button size="sm" variant="outline" onClick={() => ask('pause')}>Pause</Button>}
@@ -126,7 +134,7 @@ export default function DeploymentPage() {
           {d.next.canRequest && nextRing && d.origin !== 'POLICY' && (
             <>
               <p className="text-xs text-muted-foreground">
-                Requests {nextRing.canary ? 'the canary' : `ring ${nextRing.ring}`} ({nextRing.computers.length} computer{nextRing.computers.length === 1 ? '' : 's'}) as one signed plan. Two people on the approval roster must approve it with a passkey; you cannot approve your own request. Computers are never restarted.
+                Requests {nextRing.canary ? 'the canary' : `ring ${nextRing.ring}`} ({nextRing.computers.length} computer{nextRing.computers.length === 1 ? '' : 's'}) as one signed plan. Two people on the approval roster must approve it with a passkey; you cannot approve your own request. Restart rule: {rebootSummary(d.reboot).toLowerCase()}.
               </p>
               {!nextRing.canary && (
                 <div className="space-y-1">
@@ -193,6 +201,8 @@ function RingCard({ r, d, onChanged }: { r: Ring; d: Deployment; onChanged: () =
                     <Link className="underline" href={`/endpoints/${c.endpointId}`}>{c.hostname ?? c.endpointId}</Link>
                     {c.statusReason && <span className="block text-muted-foreground">{c.statusReason.replace(/_/g, ' ')}</span>}
                     {c.rebootPending && <span className="block text-muted-foreground">restart pending</span>}
+                    {c.restart?.state === 'scheduled' && <span className="block text-muted-foreground" data-testid="restart-scheduled">restart scheduled for {c.restart.scheduledFor ? formatDate(c.restart.scheduledFor) : 'a time the agent did not report'}</span>}
+                    {c.restart?.state === 'restart_deferred' && <span className="block text-muted-foreground" data-testid="restart-deferred">restart deferred: {RESTART_DEFERRED[c.restart.reason ?? ''] ?? c.restart.reason?.replace(/_/g, ' ')}</span>}
                     {c.reconciled && <span className="block text-muted-foreground">reconciled: {c.reconciled}</span>}
                     {r.job && c.status === 'UNKNOWN' && !c.reconciled && <Reconcile jobId={r.job.id} endpointId={c.endpointId} onDone={onChanged} />}
                   </td>

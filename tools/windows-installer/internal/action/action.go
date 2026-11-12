@@ -148,6 +148,8 @@ type Result struct {
 	// Updates and Reboot: windows.update.install only.
 	Updates []patch.Outcome `json:"updates,omitempty"`
 	Reboot  *patch.Reboot   `json:"reboot,omitempty"`
+	// Restart: windows.update.install with reboot if_required_in_window (0.34).
+	Restart *Restart `json:"restart,omitempty"`
 	// Logs: windows.logs.collect only. Bounded and redacted (maintenance.go).
 	Logs []LogSection `json:"logs,omitempty"`
 }

@@ -116,7 +116,8 @@ Then:
      The window follows daylight-saving time.
    - the soak time between rings;
    - the number of failed computers allowed per ring;
-   - the expiry, at most 90 days.
+   - the expiry, at most 90 days;
+   - the restart rule: **Never restart** (the default) or **Restart if required, inside the window** (0.34).
 5. Propose it. Two approvers open the signer's approval page and approve it with their passkeys.
 
 From then on, inside each open window:
@@ -136,8 +137,14 @@ $S patch-policy revoke --id <policyId> --reason 'why'
 $S patch-policy list
 ```
 
-Computers are never restarted in this release. A restart rule needs a change to what the agent accepts (§15 of the
-security invariants), and isn't in 0.32. "Restart required" waits for a person.
+**Restarts.** By default computers are never restarted, and "restart required" waits for a person. From 0.34 a
+policy, a deployment or a Patches-tab install can choose **Restart if required, inside the window**: after
+installing, a computer Windows says needs a restart shows the fixed warning and restarts 15 minutes later, unless a
+RustDesk session is open (or it cannot tell) or the window would close first, in which case it reports the restart
+deferred. See [Staged patching → Restarting after updates](staged-patching.md#restarting-after-updates). It has been
+tested against a simulated Windows only and has not yet run on a real Windows computer: try it with **Install
+updates** on one computer you can watch before choosing it for a policy. Leave enough of the maintenance window after
+the install for the 15-minute warning, or every restart defers.
 
 ## Settings
 

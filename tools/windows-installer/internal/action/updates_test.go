@@ -2,6 +2,7 @@ package action
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -312,5 +313,162 @@ func TestRedeliveryWhileRunningIsInProgress(t *testing.T) {
 	j, _ := readJournal(f.opts(), job)
 	if j.State != "executing" {
 		t.Fatal("the running job's journal was changed")
+	}
+}
+
+// ── The in-window restart rule (0.34) ───────────────────────────────────────
+
+func rebootPlan(rule string, notAfter time.Duration) map[string]any {
+	p := updatePlan()
+	p["params"].(map[string]any)["reboot"] = rule
+	p["window"] = map[string]any{"notBefore": now.Add(-time.Hour).Format(time.RFC3339Nano), "notAfter": now.Add(notAfter).Format(time.RFC3339Nano)}
+	return p
+}
+
+func (f *fixture) runUpdateMaint(env []byte, w patch.WUA, reg patch.Registry, m Maintenance) Result {
+	o := f.opts()
+	o.WUA, o.Registry, o.Maint = w, reg, m
+	r, err := Run(job, env, o)
+	if err != nil {
+		f.t.Fatalf("run: %v", err)
+	}
+	return r
+}
+
+func TestUpdateRebootRuleIsClosed(t *testing.T) {
+	ids := []any{map[string]any{"updateId": cuID, "revision": float64(200)}}
+	if !updateParamsOK(map[string]any{"reboot": "if_required_in_window", "updates": ids}) || !updateParamsOK(map[string]any{"reboot": "never", "updates": ids}) {
+		t.Fatal("the two rules must be accepted")
+	}
+	for _, rb := range []any{"always", "if_required", "IF_REQUIRED_IN_WINDOW", "", nil, true, float64(1), map[string]any{"delayMinutes": 0}} {
+		if updateParamsOK(map[string]any{"reboot": rb, "updates": ids}) {
+			t.Errorf("reboot %v accepted", rb)
+		}
+	}
+	if updateParamsOK(map[string]any{"reboot": "if_required_in_window", "updates": ids, "delayMinutes": float64(5)}) {
+		t.Error("a delay was accepted beside the rule")
+	}
+}
+
+func TestInWindowRestartIsScheduledThroughTheMaintenancePath(t *testing.T) {
+	f := newFixture(t)
+	w, reg := f.withWUA()
+	m := f.withMaint()
+	r := f.runUpdateMaint(f.envelope(rebootPlan(RebootInWindow, time.Hour), nil), w, reg, m)
+	expect(t, r, "restart_required", "")
+	if r.Restart == nil || r.Restart.State != "scheduled" || r.Restart.DelayMinutes != UpdateRestartWarningMinutes {
+		t.Fatalf("restart %+v", r.Restart)
+	}
+	if m.scheduled == nil || m.scheduled.seconds != UpdateRestartWarningMinutes*60 || m.sessCalls != 1 {
+		t.Fatalf("scheduled %+v sessions asked %d", m.scheduled, m.sessCalls)
+	}
+	if !strings.Contains(m.scheduled.msg, "in 15 minutes") || !strings.Contains(m.scheduled.msg, "save your work") || !strings.Contains(m.scheduled.msg, job[:8]) {
+		t.Fatalf("not the fixed warning: %q", m.scheduled.msg)
+	}
+	if want := now.Add(15 * time.Minute).Format(time.RFC3339); r.Restart.ScheduledFor != want || r.Observed["scheduledFor"] != want {
+		t.Fatalf("scheduledFor %q, want %q", r.Restart.ScheduledFor, want)
+	}
+	var rec RebootRecord
+	if b, err := os.ReadFile(rebootRecordPath(f.opts())); err != nil || json.Unmarshal(b, &rec) != nil || rec.JobID != job {
+		t.Fatal("windows.reboot.cancel would not know this restart")
+	}
+	// wua.ps1 was never asked to restart anything: only scan modes ran.
+	for _, c := range w.Calls {
+		if c != "lookup" && c != "install" {
+			t.Fatalf("wua mode %q", c)
+		}
+	}
+	r2 := f.runUpdateMaint(f.envelope(rebootPlan(RebootInWindow, time.Hour), nil), w, reg, m)
+	if m.scheduleN != 1 || r2.Restart == nil || r2.Restart.State != "scheduled" {
+		t.Fatalf("a re-delivered plan scheduled again (%d)", m.scheduleN)
+	}
+}
+
+func TestNeverMeansNever(t *testing.T) {
+	f := newFixture(t)
+	w, reg := f.withWUA()
+	m := f.withMaint()
+	r := f.runUpdateMaint(f.envelope(rebootPlan(RebootNever, time.Hour), nil), w, reg, m)
+	expect(t, r, "restart_required", "")
+	if r.Restart != nil || m.scheduleN != 0 || m.sessCalls != 0 {
+		t.Fatalf("restart %+v scheduled %d", r.Restart, m.scheduleN)
+	}
+}
+
+func TestInWindowRestartIsDeferred(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		notAfter time.Duration
+		setup    func(w *patch.FakeWUA, m *fakeMaint)
+		state    string
+		reason   string
+		sessions int // how often the session check may run
+	}{
+		{"session open", time.Hour, func(_ *patch.FakeWUA, m *fakeMaint) { m.sessions = 1 }, "restart_deferred", "remote_session_open", 1},
+		{"cannot tell", time.Hour, func(_ *patch.FakeWUA, m *fakeMaint) { m.sessErr = errors.New("Access is denied.") }, "restart_deferred", "session_state_unknown", 1},
+		{"window closes first", 14 * time.Minute, nil, "restart_deferred", "window_closed", 0},
+		{"already scheduled", time.Hour, func(_ *patch.FakeWUA, m *fakeMaint) {
+			m.scheduled = &struct {
+				seconds int
+				msg     string
+			}{60, "someone else"}
+		}, "restart_deferred", "restart_already_scheduled", 1},
+		{"installer crashed", time.Hour, func(w *patch.FakeWUA, _ *fakeMaint) { w.Fail = "install_crash"; w.RebootRequired = true }, "restart_deferred", "install_uncertain", 0},
+		{"no restart needed", time.Hour, func(w *patch.FakeWUA, _ *fakeMaint) { w.Results = nil }, "not_required", "no_restart_pending", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			w, reg := f.withWUA()
+			m := f.withMaint()
+			if c.setup != nil {
+				c.setup(w, m)
+			}
+			before := m.scheduleN
+			r := f.runUpdateMaint(f.envelope(rebootPlan(RebootInWindow, c.notAfter), nil), w, reg, m)
+			if r.Restart == nil || r.Restart.State != c.state || r.Restart.Reason != c.reason {
+				t.Fatalf("restart %+v (%s)", r.Restart, r.Detail)
+			}
+			if c.reason != "restart_already_scheduled" && m.scheduleN != before {
+				t.Fatal("scheduled anyway")
+			}
+			if c.reason == "restart_already_scheduled" && m.scheduled.msg != "someone else" {
+				t.Fatal("replaced a pending restart")
+			}
+			if m.sessCalls != c.sessions {
+				t.Fatalf("session checks %d, want %d", m.sessCalls, c.sessions)
+			}
+		})
+	}
+	t.Run("nothing installed, an older restart pending", func(t *testing.T) {
+		f := newFixture(t)
+		w, _ := f.withWUA()
+		w.Offered, w.Installed = nil, []patch.Identity{{UpdateID: cuID, Revision: 200}}
+		reg := &patch.FakeRegistry{Keys: []string{`SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending`}}
+		m := f.withMaint()
+		r := f.runUpdateMaint(f.envelope(rebootPlan(RebootInWindow, time.Hour), nil), w, reg, m)
+		if r.Outcome != "no_change" || r.Restart == nil || r.Restart.Reason != "nothing_installed" || m.scheduleN != 0 {
+			t.Fatalf("%s restart %+v scheduled %d", r.Outcome, r.Restart, m.scheduleN)
+		}
+	})
+	t.Run("no maintenance surface", func(t *testing.T) {
+		f := newFixture(t)
+		w, reg := f.withWUA()
+		r := f.runWith(f.envelope(rebootPlan(RebootInWindow, time.Hour), nil), w, reg)
+		if r.Restart == nil || r.Restart.Reason != "no_maintenance" {
+			t.Fatalf("restart %+v", r.Restart)
+		}
+	})
+}
+
+func TestInterruptedInWindowInstallSaysARestartMayBePending(t *testing.T) {
+	f := newFixture(t)
+	o := f.opts()
+	o.Registry = &patch.FakeRegistry{}
+	os.MkdirAll(o.dir("journal"), 0o700)
+	writeJournal(o, journal{JobID: job, State: "executing", Step: "scheduling_restart", ActionID: "windows.update.install", ActionVersion: 1,
+		Params: map[string]any{"reboot": RebootInWindow, "updates": []any{map[string]any{"updateId": cuID, "revision": float64(200)}}}})
+	r, _ := Run(job, f.envelope(rebootPlan(RebootInWindow, time.Hour), nil), o)
+	if r.Outcome != "uncertain" || !strings.Contains(r.Observed["note"], "restart may have been scheduled") || !strings.Contains(r.Detail, "scheduling_restart") {
+		t.Fatalf("%+v", r)
 	}
 }

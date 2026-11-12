@@ -810,8 +810,9 @@ const SECTIONS: Section[] = [
           <Link href="/patching" className="underline text-foreground">Patching</Link>: one{' '}
           <strong className="text-foreground">canary</strong> computer first, then rings. Each ring is one plan that two
           people on the approval roster approve with a passkey, and the next ring cannot be requested until the canary
-          reports every update <em>effective</em> (installed, no longer offered, no restart pending). Rem0te never
-          restarts a computer, so &ldquo;restart required&rdquo; waits for someone to restart it. Only security,
+          reports every update <em>effective</em> (installed, no longer offered, no restart pending). Unless the plan&apos;s
+          restart rule says otherwise (below), Rem0te never restarts a computer, so &ldquo;restart required&rdquo; waits
+          for someone to restart it. Only security,
           critical, rollup and ordinary Microsoft updates are installed; drivers, feature upgrades, optional updates and
           computers managed by WSUS, Intune or Configuration Manager are refused. Each computer&apos;s{' '}
           <em>Patches</em> tab shows what Windows Update offers it. Every agent reports this; installing through a
@@ -857,10 +858,22 @@ const SECTIONS: Section[] = [
           people on the approval signer, and then run inside their maintenance window: the canary first, the next ring
           only once the canary is confirmed effective. The approval signer, not this portal, signs each ring, and only if
           it stays inside the policy&apos;s computers, update classes, excluded KBs, window and expiry. Revoking one is
-          one-way. Computers are still never restarted. Platform Admins see a pre-flight listing what a production
+          one-way. Platform Admins see a pre-flight listing what a production
           install still lacks. Fixture-tested only so far. More in{' '}
           <Link href="/docs/patching-setup" className="underline text-foreground">Patching setup</Link> and{' '}
           <Link href="/docs/staged-patching" className="underline text-foreground">Staged patching</Link>.
+        </p>
+        <p>
+          From 0.34, a deployment, an <em>Install updates</em> request and a patch policy each have a{' '}
+          <strong className="text-foreground">restart rule</strong>: <em>Never restart</em> (the default) or{' '}
+          <em>Restart if required, inside the window</em>. With the second, a computer that Windows says needs a restart
+          after the install shows the same fixed warning as a scheduled restart and restarts 15 minutes later. It does not
+          restart while a RustDesk session is open (or when it cannot tell), or if the restart would fall after the
+          plan&apos;s window; then the deployment shows the restart as <em>deferred</em>, with why, and the update stays
+          &ldquo;restart required&rdquo;. The approvers see and sign the rule, and a plan under a policy may never ask for
+          more than the policy allows. After the restart a new scan confirms the update effective. The in-window restart
+          has been tested against a simulated Windows only; it has not yet run on a real Windows computer. More in{' '}
+          <Link href="/docs/staged-patching#restarting-after-updates" className="underline text-foreground">Staged patching</Link>.
         </p>
         <p>
           From 0.31 the menu is organised by job: <strong className="text-foreground">Dashboard</strong>,{' '}

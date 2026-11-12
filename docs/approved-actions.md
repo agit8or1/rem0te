@@ -195,7 +195,15 @@ and the agent refuse it too): a restart must not land many hours after the time 
 
 **Canceling** is a second action with its own two approvals. If you may need to cancel, request and approve the
 cancel early; a restart whose delay ends first is not stopped. It cancels whatever is pending on the computer,
-including a restart someone else scheduled there.
+including a restart someone else scheduled there — and, from 0.34, one an update plan scheduled.
+
+**Update restarts use the same path (0.34).** An update plan with the restart rule `if_required_in_window`
+([Staged patching → Restarting after updates](staged-patching.md#restarting-after-updates)) schedules its restart
+through the code `windows.reboot.schedule` runs: the same `shutdown.exe /r` call, the same fixed warning, the same
+reboot record for the cancel, after a fixed 15 minutes. The session rule is the same too, but its result differs: the
+updates are already installed, so an open session (or "cannot tell") does not end the job `not_executed`. The
+install's result stands, and the restart is reported `restart_deferred`. It also defers if the restart would fall
+after the plan's window. It has not yet run on a real Windows computer.
 
 **Open sessions.** Before scheduling a restart, and before restarting the RustDesk service, the agent counts
 incoming RustDesk sessions (the `rustdesk.exe --cm` connection-manager processes, the same signal the heartbeat
@@ -254,6 +262,7 @@ without its own two approvals, so the design keeps the decision on the signer:
   - the ring order, against the signer's own ledger;
   - classes, severities and KBs;
   - the window, the expiry and the requester;
+  - the restart rule: a plan may ask for no more than the policy allows (0.34, `reboot_not_allowed`);
   - the previous ring's gate, including canary-effective.
 
   Only then is the plan signed, carrying the policy's approvers.
@@ -395,7 +404,8 @@ nothing changed), `restart_already_scheduled`, `stop_failed`, `start_failed`, `d
 
 - Six actions, on Windows only. Every action but update install names one computer per plan; an update ring names up to 25.
 - The RustDesk session check is made once, when a restart is scheduled, and sees RustDesk sessions only.
-- A scheduled restart is reported as scheduled. Whether it happened is seen only from the next boot time.
+- A scheduled restart is reported as scheduled. Whether it happened is seen only from the next boot time (and, after
+  an update restart, from the next patch scan).
 - A compromised portal can delay, cancel or withhold delivery. It can't sign or alter a plan.
 - Under a patch policy, the portal relays ring results to the signer. Results aren't signed by the agents yet, so
   forged results could start the next ring early. That ring still holds only what the policy allows.

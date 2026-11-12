@@ -21,6 +21,10 @@
  *   RELEASE_BIN=/tmp/rem0te-release ACTION_SIM=/tmp/rem0te-action-sim \
  *   DATABASE_URL=postgresql://…/reboot_remote_it_scratch node scripts/e2e-staged-patching.mjs
  *
+ * 0.34: the in-window restart rule — scheduled, restarted (rem0te-action-sim
+ * -fire-restart) and rescanned to effective; deferred for an open session and
+ * for a window that would close first.
+ *
  * FIXTURE-TESTED: no Windows, no real Windows Update, no real authenticator.
  */
 import { PrismaClient } from '@prisma/client';
@@ -153,17 +157,20 @@ function resultsOf(pc) {
   return readdirSync(d).filter((f) => /^[0-9a-f]{32}\.json$/.test(f)).map((f) => JSON.parse(readFileSync(path.join(d, f), 'utf8')));
 }
 function clearAcked(pc, acks) { for (const a of acks ?? []) rmSync(path.join(pc.state, 'actions', 'results', `${a}.json`), { force: true }); }
-function runAgent(pc, jobId, envelope) {
+function runAgent(pc, jobId, envelope, extra = []) {
   const envFile = path.join(work, `env-${jobId}-${randomBytes(3).toString('hex')}.json`);
   writeFileSync(envFile, JSON.stringify(envelope));
-  const out = sim(pc, ['-state', pc.state, '-keys', keysFile, '-job', jobId, '-envelope', envFile, '-rustdesk-id', pc.rid, '-secret', pc.secret, '-product-type', '1', '-self-sha', AGENT_SHA]);
+  const out = sim(pc, ['-state', pc.state, '-keys', keysFile, '-job', jobId, '-envelope', envFile, '-rustdesk-id', pc.rid, '-secret', pc.secret, '-product-type', '1', '-self-sha', AGENT_SHA, ...extra]);
   return JSON.parse(out.trim());
 }
-/** One full heartbeat cycle: report posture, take envelopes, run them, report results. */
-async function cycle(pc) {
+/** 0.34: the restart the agent scheduled (if any) happens: its delay ran out. */
+const fireRestart = (pc) => JSON.parse(sim(pc, ['-fire-restart', '-state', pc.state]).trim()).restarted;
+const simRestart = (pc) => (existsSync(path.join(pc.state, 'sim-restart')) ? readFileSync(path.join(pc.state, 'sim-restart'), 'utf8') : null);
+/** One full heartbeat cycle: report posture, take envelopes, run them, report results. `extra`: sim flags (sessions, clock). */
+async function cycle(pc, extra = []) {
   const hb = await heartbeat(pc, { patchPosture: scan(pc) });
   const got = hb.body?.data?.actions ?? [];
-  const outs = got.map((d) => runAgent(pc, d.jobId, d.envelope));
+  const outs = got.map((d) => runAgent(pc, d.jobId, d.envelope, extra));
   const hb2 = await heartbeat(pc, { actionResults: resultsOf(pc), patchPosture: scan(pc) });
   clearAcked(pc, hb2.body?.data?.actionAcks);
   return { delivered: got, outs, hb, hb2 };
@@ -334,7 +341,7 @@ async function all() {
     const out = c.outs[0];
     const st = Object.fromEntries((out?.updates ?? []).map((x) => [x.kb ?? x.updateId, x.state]));
     check(c.delivered.length === 1 && out.outcome === 'restart_required' && st.KB5044284 === 'restart_required' && st.KB5044099 === 'installed', 'the canary installs both: the CU needs a restart, .NET does not', JSON.stringify(out));
-    check(wuaNow(canary).rebootRequired === true, 'the computer was not restarted: its restart is still pending');
+    check(wuaNow(canary).rebootRequired === true && out.restart === undefined && simRestart(canary) === null, 'the computer was not restarted, nor a restart scheduled: the plan\'s rule is "never"', JSON.stringify(out.restart));
     const cs1 = (await req('GET', `/endpoints/${canary.id}/patches`, { s: S.owen, business: acme.id })).body?.data?.summary;
     const cuc1 = cs1?.confirmations.find((x) => x.kb === 'KB5044284');
     check(cs1?.rebootRequired === true && cuc1?.state === 'restart_required' && cuc1.confirmedByLaterScan === false, '0.30 summary, restart required: pending, and the CU is not confirmed', JSON.stringify(cs1?.confirmations));
@@ -439,6 +446,101 @@ async function all() {
     check(c.status === 200 && c.body.data.status === 'CANCELED' && j.status === 'CANCELED', 'canceling the deployment cancels its plan awaiting approval', msg(c));
     const hb = await heartbeat(r1c);
     check(!(hb.body?.data?.actions ?? []).length, 'and nothing is delivered');
+  }
+
+  await restarts({ acme, S, pk, mkPc, good });
+}
+
+async function restarts(ctx) {
+  const { acme, pk, mkPc, good } = ctx;
+  // The earlier sections spent most of Owen's per-address minute (300 requests): continue from another address.
+  const S = { owen: { ...ctx.S.owen, ip: ip() } };
+  const needsRestart = { results: { [key(CU)]: { resultCode: 2, rebootRequired: true, hresult: '0x00000000' } } };
+  section('0.34: restart if required, inside the window — the rule, the plan, the approval page');
+  const inWin = await mkPc(acme, 'RB-INWIN', [CU], needsRestart);
+  const sess = await mkPc(acme, 'RB-SESSION', [CU], needsRestart);
+  const late = await mkPc(acme, 'RB-LATE', [CU], needsRestart);
+  for (const pc of [inWin, sess, late]) await heartbeat(pc, { patchPosture: scan(pc) });
+  const base = { ...good, updates: [id(CU)], soakHours: 0, failureThreshold: 0 };
+  for (const bad of ['always', 'if_required', 'IF_REQUIRED_IN_WINDOW', 15]) {
+    const r = await req('POST', '/patching/deployments', { s: S.owen, business: acme.id, body: { ...base, name: 'bad rule', rings: [[inWin.id]], reboot: bad } });
+    check(r.status === 400, `a deployment restart rule of ${JSON.stringify(bad)} is refused`, msg(r));
+  }
+  const r0 = await req('POST', `/endpoints/${inWin.id}/patches/install`, { s: S.owen, business: acme.id, body: { updates: [id(CU)], reboot: 'now', reason: 'restart now' } });
+  check(r0.status === 400, 'an install from the Patches tab with any other rule is refused', msg(r0));
+  async function requested(pc, windowHours = 8) {
+    const r = await req('POST', '/patching/deployments', { s: S.owen, business: acme.id, body: { ...base, name: `Restart ${pc.hostname}`, rings: [[pc.id]], windowHours, reboot: 'if_required_in_window' } });
+    const d = r.body?.data;
+    const rr = await req('POST', `/patching/deployments/${d?.id}/rings/0/request`, { s: S.owen, business: acme.id, body: { reason: 'Patch Tuesday, restart in window' } });
+    const job = rr.body?.data?.job;
+    return { r, d, job };
+  }
+  const A = await requested(inWin);
+  check(A.r.status === 201 && A.d.reboot === 'if_required_in_window', 'a deployment with the in-window rule is created; its detail says so', msg(A.r));
+  const planA = (await prisma.actionJob.findUnique({ where: { id: A.job.id } })).plan;
+  check(planA.params.reboot === 'if_required_in_window' && Object.keys(planA.params).sort().join() === 'reboot,updates', 'its ring plan carries exactly the closed rule (and nothing like a delay or a message)', JSON.stringify(planA.params));
+  const page = await (await fetch(A.job.approvalUrl)).text();
+  check(page.includes('restarting if Windows requires it') && page.includes('15-minute warning') && page.includes('not yet run on a real Windows computer'), 'the approval page names the restart, the fixed warning, and that it has not run on real Windows', page.slice(0, 200));
+  const dflt = await prisma.patchDeployment.findFirst({ where: { customerId: acme.id, name: 'November security' } });
+  check(dflt?.reboot === 'never', 'a deployment created without a rule is "never" (the default)', dflt?.reboot);
+  await approve(A.job.id, pk.olivia); await approve(A.job.id, pk.quinn);
+
+  section('0.34: restart in the window → scheduled, restarted, rescanned → effective');
+  {
+    const t0 = Date.now();
+    const c = await cycle(inWin);
+    const out = c.outs[0];
+    check(out?.outcome === 'restart_required' && out.restart?.state === 'scheduled' && out.restart.delayMinutes === 15, 'installed, and the agent scheduled the restart (15-minute warning)', JSON.stringify(out));
+    const at = Date.parse(out?.restart?.scheduledFor ?? '');
+    check(Math.abs(at - (t0 + 15 * 60_000)) < 2 * 60_000 && at <= Date.parse(planA.window.notAfter), 'for 15 minutes from now, inside the plan\'s window', JSON.stringify(out?.restart));
+    const pending = simRestart(inWin);
+    check(pending?.startsWith('900\n') && /save your work/.test(pending) && pending.includes(A.job.id.slice(0, 8)), 'through windows.reboot.schedule\'s own path: shutdown /t 900 with the fixed warning and the job reference', pending ?? 'no restart scheduled');
+    check(wuaNow(inWin).rebootRequired === true, 'until the delay runs out the computer has not restarted');
+    const t = await prisma.actionTarget.findUnique({ where: { jobId_endpointId: { jobId: A.job.id, endpointId: inWin.id } } });
+    check(t.result?.restart?.state === 'scheduled' && t.status === 'SUCCEEDED', 'the portal stores the restart report with the result', JSON.stringify(t.result?.restart));
+    const ep = await prisma.endpoint.findUnique({ where: { id: inWin.id }, select: { patchScanRequestedAt: true } });
+    check(ep.patchScanRequestedAt && Math.abs(ep.patchScanRequestedAt.getTime() - (at + 2 * 60_000)) < 1000, 'and asks for a patch scan just after the restart time', String(ep.patchScanRequestedAt?.toISOString()));
+    const early = await heartbeat(inWin);
+    check(early.body?.data?.patchScan === false, 'which is not due yet: a heartbeat before the restart is not asked to scan', msg(early));
+    let d = (await req('GET', `/patching/deployments/${A.d.id}`, { s: S.owen, business: acme.id })).body.data;
+    check(d.rings[0].computers[0].restart?.state === 'scheduled' && d.rings[0].gate.reason === 'canary_not_effective' && d.reboot === 'if_required_in_window', 'the deployment shows the restart scheduled; the gate holds until it is effective', JSON.stringify({ r: d.rings[0].computers[0].restart, g: d.rings[0].gate }));
+    check(fireRestart(inWin) === true && simRestart(inWin) === null && wuaNow(inWin).rebootRequired === false, 'the delay runs out: the simulated computer restarts, and nothing is pending any more');
+    // The 17 minutes pass (moved in the database; nothing else changed): the last scan was before the restart, the request falls due after it.
+    await prisma.endpointInventory.update({ where: { endpointId: inWin.id }, data: { patchScannedAt: new Date(Date.now() - 18 * 60_000) } });
+    await prisma.endpoint.update({ where: { id: inWin.id }, data: { patchScanRequestedAt: new Date(Date.now() - 60_000) } });
+    const due = await heartbeat(inWin);
+    check(due.body?.data?.patchScan === true, 'after the restart time, the first heartbeat is asked for a scan', msg(due));
+    await heartbeat(inWin, { patchPosture: scan(inWin) });
+    d = (await req('GET', `/patching/deployments/${A.d.id}`, { s: S.owen, business: acme.id })).body.data;
+    const st = Object.fromEntries(d.rings[0].computers[0].updates.map((x) => [x.key, x.state]));
+    check(st[key(CU)] === 'effective' && d.rings[0].gate.ok && d.status === 'COMPLETED', 'the post-restart scan confirms the CU effective: the canary gate passes and the deployment completes', JSON.stringify({ st, g: d.rings[0].gate, s: d.status }));
+  }
+
+  section('0.34: a RustDesk session is open → restart_deferred, nothing scheduled');
+  {
+    const B = await requested(sess);
+    await approve(B.job.id, pk.olivia); await approve(B.job.id, pk.quinn);
+    const c = await cycle(sess, ['-sessions', '1']);
+    const out = c.outs[0];
+    check(out?.outcome === 'restart_required' && out.restart?.state === 'restart_deferred' && out.restart.reason === 'remote_session_open' && out.observed?.remoteSessions === '1', 'installed; the restart deferred because a session was open', JSON.stringify(out));
+    check(simRestart(sess) === null && fireRestart(sess) === false && wuaNow(sess).rebootRequired === true, 'no restart was scheduled, so none happens: the computer still needs one');
+    const ep = await prisma.endpoint.findUnique({ where: { id: sess.id }, select: { patchScanRequestedAt: true } });
+    check(!ep.patchScanRequestedAt || ep.patchScanRequestedAt.getTime() <= Date.now(), 'and no post-restart scan is asked for', String(ep.patchScanRequestedAt));
+    const d = (await req('GET', `/patching/deployments/${B.d.id}`, { s: S.owen, business: acme.id })).body.data;
+    check(d.rings[0].computers[0].restart?.reason === 'remote_session_open' && d.rings[0].gate.reason === 'canary_not_effective', 'the deployment shows why; the CU is not effective and the gate holds', JSON.stringify({ r: d.rings[0].computers[0].restart, g: d.rings[0].gate }));
+    const replay = runAgent(sess, B.job.id, c.delivered[0].envelope);
+    check(replay.restart?.state === 'restart_deferred' && simRestart(sess) === null, 'a re-delivered plan is answered from the journal: no second attempt once the session closes', JSON.stringify(replay.restart));
+  }
+
+  section('0.34: the window would close first → restart_deferred');
+  {
+    const C = await requested(late, 1);
+    await approve(C.job.id, pk.olivia); await approve(C.job.id, pk.quinn);
+    // The agent receives the plan 50 minutes into its one-hour window: a 15-minute warning would end after it.
+    const c = await cycle(late, ['-clock-offset', '50m']);
+    const out = c.outs[0];
+    check(out?.outcome === 'restart_required' && out.restart?.state === 'restart_deferred' && out.restart.reason === 'window_closed', 'installed; the restart deferred because it would fall after the window', JSON.stringify(out));
+    check(simRestart(late) === null && wuaNow(late).rebootRequired === true, 'nothing scheduled: the computer is left as it is');
   }
 }
 
