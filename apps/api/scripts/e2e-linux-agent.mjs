@@ -441,7 +441,7 @@ async function all() {
   stub(sbC, 'dnf', 'exit 1', 'min');
   await req('POST', `/endpoints/${C.id}/inventory/refresh`, { s: S.owen });
   await runAgent(agentPath, sbC, { mode: 'minimal' });
-  cc = await cmds(C.id);
+  cc = (await cmds(C.id)).filter((x) => x.type === 'UPDATE_SCAN'); // the refresh's two rows can share a createdAt
   check(/dnf check-update \(from cache\) failed with status 1/.test(cc.at(-1)?.error ?? '') && (await inv(C.id)).pendingUpdateCount === 2, 'a dnf error is a failed scan, not "no updates"; the last good list stays', cc.at(-1)?.error);
   fs.rmSync(sbC.file('min/dnf'));
   stub(sbC, 'zypper', `case "$*" in *list-updates*) printf 'Loading repository data...\\nS | Repository | Name | Current Version | Available Version | Arch\\n--+------------+------+-----------------+-------------------+-------\\nv | repo-oss   | vim  | 9.0-1.1         | 9.1-1.1           | x86_64\\nv | repo-upd   | zlib | 1.2-3           | 1.3-1             | x86_64\\n';; *needs-rebooting*) exit 102;; esac`, 'min');

@@ -22,6 +22,16 @@ change the Windows agent's source, so the agent built from this release differs 
   from `go.mod` and installs 1.27.4.
 - **CI:** `actions/upload-artifact` goes from v4 to v7 (#115). This affects CI only, not production.
 
+### Fixed (tests only)
+- **`e2e-macos-agent` and `e2e-linux-agent` failed intermittently.** This PR's first CI run failed one macOS check,
+  "an unreadable check time is unknown too", with the error `null`.
+  - **Cause:** one inventory refresh stages two commands back to back, `INVENTORY_REFRESH` then `UPDATE_SCAN`, and
+    they often share a `createdAt` millisecond. The tests sorted only by `createdAt` and read the last row as the
+    update scan. On a tie, Postgres could return the inventory refresh last, which succeeded with no error.
+  - **Fix:** the update-check assertions now read only `UPDATE_SCAN` rows: four on macOS and one on Linux, which had
+    the same pattern. No product code changed.
+  - Locally, against a fresh database, each suite passed three runs in a row: macOS 106 and Linux 86.
+
 ### Upgrade notes
 - **The release machine needs Go 1.27 or newer** to build the agent. With an older Go, set `GOTOOLCHAIN=go1.27.4`.
   The bare `go1.27` toolchain name does not exist, so `GOTOOLCHAIN=auto` fails with "toolchain not available".
@@ -38,6 +48,7 @@ change the Windows agent's source, so the agent built from this release differs 
   The same commit then passed on a re-run of the failed job, so the failure was a timing flake on the CI host, not
   the update.
 - `check-versions.mjs` passes.
+- The second CI run failed one `e2e-macos-agent` check. That failure is the test fix above.
 
 ## [0.36.1] — 2026-11-12 · *Beacon*
 

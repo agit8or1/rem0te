@@ -226,6 +226,9 @@ const tmpEmpty = (sb) => fs.readdirSync(path.join(sb.dir, 'tmp')).length === 0;
 const inv = (id) => prisma.endpointInventory.findUnique({ where: { endpointId: id } });
 const ep = (id) => prisma.endpoint.findUnique({ where: { id }, include: { rustdeskNode: true } });
 const cmds = (id) => prisma.endpointCommand.findMany({ where: { endpointId: id }, orderBy: { createdAt: 'asc' } });
+// A refresh stages INVENTORY_REFRESH and UPDATE_SCAN back to back, often in the same millisecond, so ordering by
+// createdAt alone may put either last. The update-check assertions read the update scans only.
+const scans = async (id) => (await cmds(id)).filter((x) => x.type === 'UPDATE_SCAN');
 
 async function all() {
   const tenant = await prisma.tenant.findFirst({ orderBy: { createdAt: 'asc' } });
@@ -542,7 +545,7 @@ async function all() {
   fs.writeFileSync(sbC.file('su/LastSuccessfulDate'), `${plistDate(80 * 3600_000)}\n`);
   await req('POST', `/endpoints/${C.id}/inventory/refresh`, { s: S.owen });
   await runAgent(agentPath, sbC);
-  cc = await cmds(C.id);
+  cc = await scans(C.id);
   check(/unknown: macOS last checked for updates 80 hours ago \(more than 36\)\. Automatic checking is turned off/.test(cc.at(-1)?.error ?? ''), 'a check older than 36 hours is stale: failed with its age, not presented as current', cc.at(-1)?.error);
 
   fs.writeFileSync(sbC.file('su/LastSuccessfulDate'), `${plistDate(30 * 60_000)}\n`);
@@ -550,19 +553,19 @@ async function all() {
   fs.rmSync(sbC.file('su/RecommendedUpdates'));
   await req('POST', `/endpoints/${C.id}/inventory/refresh`, { s: S.owen });
   await runAgent(agentPath, sbC);
-  cc = await cmds(C.id);
+  cc = await scans(C.id);
   check(cc.at(-1)?.status === 'FAILED' && /recorded a check but no list/.test(cc.at(-1)?.error ?? ''), 'a recent check with no list and no count: unknown, not "none"', cc.at(-1)?.error);
   fs.writeFileSync(sbC.file('su/LastRecommendedUpdatesAvailable'), '0\n');
   await req('POST', `/endpoints/${C.id}/inventory/refresh`, { s: S.owen });
   await runAgent(agentPath, sbC);
-  i = await inv(C.id); cc = await cmds(C.id);
+  i = await inv(C.id); cc = await scans(C.id);
   check(cc.at(-1)?.status === 'SUCCEEDED' && i.pendingUpdateCount === 0 && i.updatesCheckedAt, 'a recent check that recorded zero available: 0 pending');
   r = await req('GET', `/endpoints/${C.id}/patches`, { s: S.owen });
   check(r.status === 200 && r.data?.summary?.evidence?.source === 'standard_agent_scan', 'the Patches tab shows it as a standard agent scan (read-only)', JSON.stringify(r.data?.summary?.evidence));
   fs.writeFileSync(sbC.file('su/LastSuccessfulDate'), 'garbage date\n');
   await req('POST', `/endpoints/${C.id}/inventory/refresh`, { s: S.owen });
   await runAgent(agentPath, sbC);
-  cc = await cmds(C.id);
+  cc = await scans(C.id);
   check(/could not read the time of macOS's last update check/.test(cc.at(-1)?.error ?? '') && (await inv(C.id)).pendingUpdateCount === 0, 'an unreadable check time is unknown too; the last good result stays', cc.at(-1)?.error);
   check(!markers(sbC) && !markers(sbB) && !markers(sbA), 'no marker ran on any of the three Macs: softwareupdate was never invoked, in any form', [markers(sbA), markers(sbB), markers(sbC)].join(' | '));
 }
