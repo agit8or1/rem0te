@@ -69,7 +69,7 @@ changing who monitoring notifies, turning on automatic client updates, technicia
 | Action (in the `403`) | When |
 |---|---|
 | `enrollment.create` | Making an install link (*Devices → Add device*, or `POST /enrollment/tokens`), including a re-enrol link for an existing computer. Every role: Platform Admin, Business Owner, technician or Business User with *Add computers* |
-| `apikey.enrollment` | Creating an API key that carries the `enrollment:write` scope. Keys without that scope are unchanged |
+| `apikey.create` | Creating **any** API key (0.34). 0.33 asked only for keys carrying `enrollment:write` (action `apikey.enrollment`, now retired). Revoking a key never asks |
 
 **Why every role, not only Platform Admins.** A token always covers exactly one business and does the same thing
 whoever made it: it lets any machine that runs it join that business and receive its monitoring, update policies and
@@ -80,9 +80,17 @@ business. The cost is one confirmation per ten minutes of adding devices.
 what `POST /pub/v1/enrollment/tokens` is for. The key is itself the second proof: a separate secret, bound to one
 business, carrying an explicit scope, revocable, and recorded on every token it mints (`mintedVia: "api-key"` and its
 id in the `CLAIM_TOKEN_CREATED` audit entry; session mints record `mintedVia: "session"` and the step-up method). What
-closes the gap is that *creating* such a key needs the fresh confirmation, so a stolen session cannot make a key and
+closes the gap is that *creating* a key needs the fresh confirmation, so a stolen session cannot make a key and
 then mint with it. Keys that already had `enrollment:write` before 0.33 keep working; review them under
 *Settings → API keys* if a session may have been stolen.
+
+**From 0.34, every API key.** A key of any scope is Business Owner access to its business, for that scope, that
+keeps working after the session that made it is signed out, revoked or has its password changed. A stolen session
+that could quietly mint a `computers:read` or `audit:read` key would keep reading the business long after the
+session was gone, so creating any key now needs the confirmation. Keys are immutable — no route widens a key's
+scopes or restores a revoked one — so creation is the only way to get a key's access, and revoking (which only
+takes access away) never asks. In the console the prompt appears over the form and the same request is retried;
+if you cancel, nothing is created and what you typed is kept. Keys made before 0.34 keep working.
 
 **Registering a computer by RustDesk ID is not gated.** It mints nothing: no token, no device secret, no password
 (Platform Admin only, unchanged). The node has no device identity, so its heartbeats are not trusted until an installer

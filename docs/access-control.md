@@ -105,6 +105,23 @@ Three rules that are easy to assume the other way round:
   are for a Business Owner, a technician whose assignment grants `computers:edit` over the whole
   business, or the MSP — the same rule as the client-update policy. A saved view never widens
   anything: it is a set of list parameters, run as whoever opens it.
+- **A device group holds only its own business's computers, and that is enforced by the database**
+  (0.34). A computer may be in any number of its business's groups. Adding one to another
+  business's group is refused by the service (`OTHER_BUSINESS`) and, underneath, by a trigger on
+  the membership table, whatever code path writes it. A computer that changes business — moved by
+  a Platform Admin, or re-enrolled with a token of another business — leaves every group of the
+  old business in the same statement (a second trigger); the move's audit entry lists them.
+  Membership grants nothing.
+- **A rule group's members are computed as the reader, never stored** (0.34). Its rule is the
+  device list's own filters, AND-ed with the group's business AND-ed with the reader's own
+  visibility, every time it is read — so a Business User sees only their computers in it, a
+  technician only the ones their grant names, and another business's rule group lists nothing and
+  is a 404 to edit or act on. A rule that selects by alerts is not evaluated for a reader without
+  `monitoring:alerts` (filtering by it is a 403: membership would disclose alert state). A rule's
+  values reach the database only as bound parameters. Nothing adds a computer to a rule group by
+  hand — the service refuses it and a trigger refuses the row — and a group's kind cannot change.
+  Bulk on a rule group resolves its members at request time as the caller, then runs each
+  computer's own checks.
 - **Making a computer company-wide needs `users:manage`**, the capability that grants access to one
   person, because it grants access to everyone in the business at once.
 - **`support:history_view` reads sessions; it never changes them.** Completing, cancelling or
@@ -118,7 +135,9 @@ Three rules that are easy to assume the other way round:
 
 An **API key** acts as a Business Owner of its business, and only while the person who created it
 still is one (or is a Platform Admin). Suspending, demoting or removing that person stops their
-keys working.
+keys working. Creating a key needs `api_keys:write` (Business Owner or Platform Admin) **and a fresh
+re-authentication**, whatever its scopes (0.34; `apikey.create`). Keys cannot be edited or
+un-revoked; revoking needs only `api_keys:write`.
 
 ---
 
@@ -242,7 +261,7 @@ valid session. Access is checked first, then step-up. See
 
 From 0.33, `computers:add` alone no longer makes an enrolment link: making one
 also needs a fresh re-authentication, for every role, and so does creating an
-API key with `enrollment:write`. See
+API key (any key from 0.34). See
 [sign-in.md](sign-in.md#always-on-whatever-is-configured).
 
 ## Access review and offboarding (v0.20)

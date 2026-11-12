@@ -21,9 +21,16 @@
  *     prompt to re-authenticate;
  *   - API keys cannot step up and keep the ability: POST /pub/v1/enrollment/
  *     tokens with an enrollment:write key still mints, bound to the key's
- *     business only. Instead, creating a key that carries enrollment:write
- *     needs the same fresh re-authentication; keys without it are unchanged;
+ *     business only. Instead, creating a key needs the same fresh
+ *     re-authentication — since 0.34 ANY key, whatever its scopes (action
+ *     apikey.create), because every key outlives the session that made it;
  *     a session cookie cannot use the public route at all;
+ *   - (0.34) for API keys too, scope and validation come first (another
+ *     business 403, an unknown one 404, no valid scope 400, a Business User
+ *     403 on the permission), the refusal writes nothing, the audit entry
+ *     records the step-up method, emptying stepUpActions does not lift it,
+ *     revoking never needs it, and there is no route that widens a key's
+ *     scopes or restores a revoked key;
  *   - registering a computer by RustDesk ID (POST /endpoints, Platform Admin
  *     only) mints no credential — no token, no device secret, no password —
  *     and stays without step-up; this suite proves the "mints nothing" half.
@@ -206,19 +213,48 @@ async function all() {
   await prisma.platformSettings.upsert({ where: { id: 'singleton' }, update: { stepUpActions: [] }, create: { id: 'singleton', stepUpActions: [] } });
   r = await req('POST', '/enrollment/tokens', { cookie: ownerA2.cookie, body: { businessId: A.id } });
   check(isStepUp(r), 'with every configurable step-up action switched off, a stale mint is still refused', msg(r));
+  r = await req('POST', '/apikeys', { cookie: ownerA2.cookie, body: { name: `${TAG}-unconfigured`, scopes: ['computers:read'] } });
+  check(isStepUp(r, 'apikey.create'), 'and so is a stale API key creation', msg(r));
   await restoreStepUpActions();
 
   // ── API keys ──────────────────────────────────────────────────────────────
-  section('API keys: cannot step up, keep the ability; minting such a key needs a fresh sign-in');
-  const keyRows = () => prisma.apiKey.count({ where: { customerId: A.id } });
+  section('API keys: cannot step up, keep the ability; creating ANY key needs a fresh sign-in (0.34)');
+  const keyRows = () => prisma.apiKey.count({ where: { customerId: { in: [A.id, B.id] } } });
   let k0 = await keyRows();
   r = await req('POST', '/apikeys', { cookie: S.ownerA.cookie, body: { name: `${TAG}-enrol`, scopes: ['computers:read', 'enrollment:write'] } });
-  check(isStepUp(r, 'apikey.enrollment'), 'owner A, stale, key with enrollment:write: 403 STEP_UP_REQUIRED (apikey.enrollment)', msg(r));
-  check(await keyRows() === k0, 'no key row was written');
+  check(isStepUp(r, 'apikey.create'), 'owner A, stale, key with enrollment:write: 403 STEP_UP_REQUIRED (apikey.create)', msg(r));
   r = await req('POST', '/apikeys', { cookie: S.ownerA.cookie, body: { name: `${TAG}-read`, scopes: ['computers:read'] } });
-  check(r.status === 201 && !r.data?.scopes?.includes('enrollment:write'), 'owner A, stale, key without enrollment:write: created as before', msg(r));
+  check(isStepUp(r, 'apikey.create'), 'owner A, stale, read-only key: also 403 STEP_UP_REQUIRED (0.33 let this through)', msg(r));
+  for (const sc of [['audit:read'], ['companies:write'], ['users:write'], ['sessions:read']]) {
+    r = await req('POST', '/apikeys', { cookie: S.ownerA.cookie, body: { name: `${TAG}-${sc[0]}`, scopes: sc } });
+    check(isStepUp(r, 'apikey.create'), `owner A, stale, key with only ${sc[0]}: refused`, msg(r));
+  }
+  r = await req('POST', '/apikeys', { cookie: S.admin.cookie, body: { name: `${TAG}-admin`, businessId: A.id, scopes: ['computers:read'] } });
+  check(isStepUp(r, 'apikey.create'), 'Platform Admin, stale, key for A: refused too', msg(r));
+  check(await keyRows() === k0, 'none of the refused attempts wrote a key row');
+
+  section('API keys: scope and validation come before the prompt');
+  r = await req('POST', '/apikeys', { cookie: S.ownerA.cookie, body: { name: `${TAG}-other`, businessId: B.id, scopes: ['computers:read'] } });
+  check(r.status === 403 && r.body?.code !== 'STEP_UP_REQUIRED', 'owner A naming B, stale: 403 on scope, not a prompt', msg(r));
+  r = await req('POST', '/apikeys', { cookie: S.ownerA.cookie, stepUp: S.ownerA.stepUp, body: { name: `${TAG}-other`, businessId: B.id, scopes: ['computers:read'] } });
+  check(r.status === 403, 'owner A naming B, fresh: still 403 — a step-up widens nothing', msg(r));
+  r = await req('POST', '/apikeys', { cookie: S.admin.cookie, body: { name: `${TAG}-nobiz`, businessId: 'c' + randomBytes(12).toString('hex'), scopes: ['computers:read'] } });
+  check(r.status === 404, 'Platform Admin, stale, unknown business: 404', msg(r));
+  r = await req('POST', '/apikeys', { cookie: S.ownerA.cookie, body: { name: `${TAG}-junk`, scopes: ['not-a-scope'] } });
+  check(r.status === 400, 'stale, no valid scope: 400, not a prompt', msg(r));
+  r = await req('POST', '/apikeys', { cookie: S.adderA.cookie, stepUp: S.adderA.stepUp, body: { name: `${TAG}-user`, scopes: ['computers:read'] } });
+  check(r.status === 403 && r.body?.code !== 'STEP_UP_REQUIRED', 'a Business User, even fresh, cannot create a key (api_keys:write)', msg(r));
+  check(await keyRows() === k0, 'still no key row');
+
+  section('API keys: a fresh sign-in creates them, and the audit says how');
+  r = await req('POST', '/apikeys', { cookie: S.ownerA.cookie, stepUp: S.ownerA.stepUp, body: { name: `${TAG}-read`, scopes: ['computers:read'] } });
+  const readKey = r.data?.key;
+  check(r.status === 201 && /^rk_[0-9a-f]{48}$/.test(readKey ?? '') && JSON.stringify(r.data?.scopes) === '["computers:read"]', 'owner A, fresh, read-only key: created', msg(r));
+  const readKeyId = r.data?.id;
+  const ka = readKeyId ? await prisma.activityLog.findFirst({ where: { action: 'API_KEY_CREATED', resourceId: readKeyId } }) : null;
+  check(ka?.metadata?.stepUpMethod === 'password' && ka?.actorId === ownerA.id && ka?.customerId === A.id, 'API_KEY_CREATED records the step-up method, the creator and the business', JSON.stringify(ka?.metadata));
   r = await req('POST', '/apikeys', { cookie: S.ownerA.cookie, body: { name: `${TAG}-sneak`, scopes: ['computers:read', 'enrollment:write', 'not-a-scope'] } });
-  check(isStepUp(r, 'apikey.enrollment'), 'enrollment:write hidden among other scopes: still refused', msg(r));
+  check(isStepUp(r, 'apikey.create'), 'enrollment:write hidden among other scopes, stale: refused', msg(r));
   r = await req('POST', '/apikeys', { cookie: S.ownerA.cookie, stepUp: S.ownerA.stepUp, body: { name: `${TAG}-enrol`, scopes: ['computers:read', 'enrollment:write'] } });
   const rawKey = r.data?.key ?? r.data?.rawKey ?? r.data?.token;
   check(r.status === 201 && typeof rawKey === 'string' && rawKey.startsWith('rk_'), 'owner A, fresh, key with enrollment:write: created', msg(r));
@@ -235,6 +271,21 @@ async function all() {
   r = await req('POST', '/pub/v1/enrollment/tokens', { cookie: S.ownerA.cookie, stepUp: S.ownerA.stepUp, body: {} });
   check(r.status === 401, 'a session cookie (even a fresh one) cannot use the public route', msg(r));
   check(await prisma.deviceClaimToken.count({ where: { customerId: B.id } }) === 1, 'business B still holds only its own owner\'s token');
+
+  section('API keys: there is no way to widen or restore a key, and revoking never asks');
+  for (const [m, p, body] of [['PATCH', `/apikeys/${readKeyId}`, { scopes: ['computers:read', 'enrollment:write'] }], ['PUT', `/apikeys/${readKeyId}`, { scopes: ['enrollment:write'] }], ['POST', `/apikeys/${readKeyId}/restore`, {}], ['POST', `/apikeys/${readKeyId}/scopes`, { scopes: ['enrollment:write'] }]]) {
+    r = await req(m, p, { cookie: S.ownerA.cookie, stepUp: S.ownerA.stepUp, body });
+    check(r.status === 404, `${m} ${p.replace(readKeyId, ':id')}: no such route (404), even fresh`, msg(r));
+  }
+  check(JSON.stringify((await prisma.apiKey.findUnique({ where: { id: readKeyId } }))?.scopes) === '["computers:read"]', 'the read-only key still has exactly its one scope');
+  r = await req('DELETE', `/apikeys/${readKeyId}`, { cookie: S.ownerB.cookie });
+  check(r.status === 404, 'owner B revoking A\'s key: 404', msg(r));
+  r = await req('DELETE', `/apikeys/${readKeyId}`, { cookie: ownerA2.cookie });
+  check(r.status === 200 && !!(await prisma.apiKey.findUnique({ where: { id: readKeyId } }))?.revokedAt, 'owner A revokes with a stale session: no step-up needed', msg(r));
+  r = await req('GET', '/pub/v1/whoami', { bearer: readKey });
+  check(r.status === 401, 'the revoked key is refused at once', msg(r));
+  r = await req('DELETE', `/apikeys/${readKeyId}`, { cookie: ownerA2.cookie });
+  check(r.status === 200 && r.data?.alreadyRevoked === true, 'revoking again changes nothing (there is no un-revoke)', msg(r));
 
   // ── Register by RustDesk ID: mints nothing ────────────────────────────────
   section('Register by RustDesk ID mints no credential, and is not gated');

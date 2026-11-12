@@ -53,6 +53,12 @@ enum UpdateRequestSource {
   POLICY
 }
 
+/// A device group's kind (0.34): a hand-kept list, or a rule over the device list's filters.
+enum EndpointGroupKind {
+  STATIC
+  RULE
+}
+
 enum EndpointStatus {
   ACTIVE
   OFFLINE
@@ -617,8 +623,9 @@ model Endpoint {
   customer        Customer?      @relation(fields: [customerId], references: [id])
   siteId          String?
   site            Site?          @relation(fields: [siteId], references: [id])
-  endpointGroupId String?
-  endpointGroup   EndpointGroup? @relation(fields: [endpointGroupId], references: [id])
+  // Device groups (0.34: many, through EndpointGroupMember — 0.33's single
+  // Endpoint.endpointGroupId was migrated into it and dropped).
+  groupMemberships EndpointGroupMember[]
 
   name         String
   description  String?
@@ -711,7 +718,6 @@ model Endpoint {
   @@index([customerId])
   @@index([status])
   @@index([tenantId, status])
-  @@index([endpointGroupId])
 }
 
 // Which users have been granted remote access to which computers.
@@ -749,12 +755,14 @@ enum EndpointAccessMode {
   COMPANY_WIDE
 }
 
-// A static device group (0.33: managed from the device list). A computer is
-// in at most one group (Endpoint.endpointGroupId, which enrolment tokens have
-// set since before 0.33). `customerId` is the business the group belongs to;
-// every member must be in it. Groups made before 0.33 have no business
-// (customerId null): they still filter, and the console offers no way to
-// edit them.
+// A static device group (0.33: managed from the device list). `customerId`
+// is the business the group belongs to; every member must be in it. Groups
+// made before 0.33 have no business (customerId null): they still filter,
+// and the console offers no way to edit them.
+//
+// Membership is EndpointGroupMember (0.34): a computer may be in any number
+// of its own business's groups. An enrolment token's endpointGroupId is the
+// group a new device joins at claim, nothing more.
 model EndpointGroup {
   id          String    @id @default(cuid())
   tenantId    String
@@ -764,8 +772,16 @@ model EndpointGroup {
   name        String
   description String?
   createdById String?
+  // 0.34: STATIC groups hold EndpointGroupMember rows; a RULE group never
+  // does (trigger, migration 0053) — its members are computed on every read
+  // from `rule` AND-ed with the business and the reader's visibility. `rule`
+  // is the device list's own filter parameters, validated by parseRule()
+  // (device-views/group-rule.ts); never SQL or free text. `kind` is fixed at
+  // creation (trigger); `rule` is set exactly when kind = RULE (CHECK).
+  kind        EndpointGroupKind @default(STATIC)
+  rule        Json?
 
-  endpoints Endpoint[]
+  members EndpointGroupMember[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -774,6 +790,25 @@ model EndpointGroup {
   // pre-0.33 groups (no business) are not constrained by it.
   @@unique([customerId, name])
   @@index([tenantId])
+  @@index([customerId, kind])
+}
+
+// One computer in one device group (0.34). Two triggers in migration 0049
+// hold the business rule in the database, whatever code writes here: a row
+// whose computer is not in the group's business (or, for a pre-0.33 group,
+// its tenant) is refused on insert, and a computer that changes business or
+// tenant leaves every group that is not its new business's own.
+model EndpointGroupMember {
+  endpointGroupId String
+  group           EndpointGroup @relation(fields: [endpointGroupId], references: [id], onDelete: Cascade)
+  endpointId      String
+  endpoint        Endpoint      @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  // Who added it; null for a claim (the token's group) or a migrated row.
+  addedById       String?
+  createdAt       DateTime      @default(now())
+
+  @@id([endpointGroupId, endpointId])
+  @@index([endpointId])
 }
 
 model EndpointTag {

@@ -32,12 +32,21 @@ server-side we store only a SHA-256 hash. Keys support:
   `0009` — re-issue them per business.
 - **scopes** — one or more of `companies:read`, `companies:write`, `users:read`,
   `users:write`, `computers:read`, `computers:write`, `sessions:read`,
-  `enrollment:write`, `audit:read`. A key with `enrollment:write` can only be
-  created after a fresh re-authentication (0.33); the API answers
-  `403 STEP_UP_REQUIRED` (`apikey.enrollment`) and the console prompts.
+  `enrollment:write`, `audit:read`. **Creating any key needs a fresh
+  re-authentication** (0.34; 0.33 asked only for `enrollment:write`): the API
+  answers `403 STEP_UP_REQUIRED` (`apikey.create`), the console asks you to
+  confirm it is you and sends the same request again, so the form is kept. A key
+  is long-lived access that keeps working after you sign out, which is why every
+  scope is gated, not only the one that enrols computers. Access is checked first:
+  another business is a 403, an unknown one a 404, no valid scope a 400 — none of
+  them prompts. `API_KEY_CREATED` records the step-up method.
 - **expiresInDays** — optional TTL (1–3650), null = never expires
 
-Revocation is immediate. Rate-limited to 300 req/min per key.
+Revocation is immediate and never needs a step-up. **Keys cannot be edited**: there
+is no route that changes a key's scopes or restores a revoked key, so creating one is
+the only way to get a key's access. To change what a key may do, create a new key
+(which asks you to confirm it is you) and revoke the old one. Rate-limited to 300
+req/min per key.
 
 Every route enforces its declared scope; missing scopes → HTTP 401.
 
@@ -91,8 +100,8 @@ built against v0.6/v0.7.
 ### Managed enrollment (one-command installers)
 
 - `POST /pub/v1/enrollment/tokens` — scope `enrollment:write`. No step-up: an API key
-  cannot do one. Instead, *creating* a key with `enrollment:write` needs a fresh
-  re-authentication in the console (0.33), and every token a key mints is audited with
+  cannot do one. Instead, *creating* the key needs a fresh re-authentication in the
+  console (0.33 for `enrollment:write`, 0.34 for every key), and every token a key mints is audited with
   `mintedVia: "api-key"` and the key's id. See [sign-in.md](sign-in.md#always-on-whatever-is-configured).
   ```json
   {

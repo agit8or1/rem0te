@@ -1,5 +1,5 @@
 import { api } from '@/lib/api-client';
-import type { BulkAction, BulkResponse, DeviceFilters, DeviceGroup, DeviceListResponse, SavedView, SortKey } from './types';
+import { RULE_KEYS, type BulkAction, type BulkResponse, type DeviceFilters, type DeviceGroup, type DeviceListResponse, type DeviceRule, type SavedView, type SortKey } from './types';
 
 /** The largest selection one bulk request may name (the server refuses more). */
 export const BULK_MAX = 200;
@@ -16,6 +16,9 @@ export function toParams(f: DeviceFilters, sort: SortKey, dir: 'asc' | 'desc', p
   if (f.agent) p.agent = f.agent;
   if (f.status !== 'current') p.status = f.status;
   if (f.groupId) p.groupId = f.groupId;
+  for (const k of ['platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays'] as const) {
+    if (f[k].trim()) p[k] = f[k].trim();
+  }
   if (page) p.page = String(page);
   if (pageSize) p.pageSize = String(pageSize);
   return p;
@@ -29,7 +32,45 @@ export function viewFilters(f: SavedView['filters']): DeviceFilters {
     online: (s('online') as DeviceFilters['online']) || '', alerts: (s('alerts') as DeviceFilters['alerts']) || '',
     restartPending: f.restartPending === true, agent: (s('agent') as DeviceFilters['agent']) || '',
     status: (s('status') as DeviceFilters['status']) || 'current',
+    platform: (s('platform') as DeviceFilters['platform']) || '', os: s('os'), tag: s('tag'),
+    patches: (s('patches') as DeviceFilters['patches']) || '',
+    rustdeskMin: s('rustdeskMin'), rustdeskMax: s('rustdeskMax'), notSeenDays: s('notSeenDays'), seenWithinDays: s('seenWithinDays'),
   };
+}
+
+/** The part of the current filters a rule group can hold, and the set filters it cannot (0.34). */
+export function ruleFromFilters(f: DeviceFilters): { rule: DeviceRule; left: string[] } {
+  const stored = storedFilters(f);
+  const rule: DeviceRule = {};
+  const left: string[] = [];
+  for (const [k, v] of Object.entries(stored)) {
+    if ((RULE_KEYS as readonly string[]).includes(k)) rule[k as keyof DeviceRule] = v;
+    else left.push(k);
+  }
+  return { rule, left };
+}
+
+const PLATFORM_LABEL: Record<string, string> = { windows: 'Windows', linux: 'Linux', macos: 'macOS', other: 'other OS' };
+const PATCH_LABEL: Record<string, string> = { pending: 'updates pending', current: 'no updates pending', unknown: 'never scanned for updates', stale: 'update scan stale' };
+
+/** A rule in words, for the groups dialog and the save dialog. Site names come from the caller. */
+export function describeRule(r: DeviceRule, siteName?: (id: string) => string | undefined): string {
+  const out: string[] = [];
+  if (r.online) out.push(r.online === 'online' ? 'online' : 'offline');
+  if (r.platform) out.push(PLATFORM_LABEL[String(r.platform)] ?? String(r.platform));
+  if (r.os) out.push(`OS contains “${r.os}”`);
+  if (r.siteId) out.push(`site ${siteName?.(String(r.siteId)) ?? '(a site)'}`);
+  if (r.tag) out.push(`tagged “${r.tag}”`);
+  if (r.agent) out.push(r.agent === 'signed' ? 'signed agent' : r.agent === 'standard' ? 'standard agent' : 'no agent report');
+  if (r.patches) out.push(PATCH_LABEL[String(r.patches)] ?? String(r.patches));
+  if (r.restartPending) out.push('restart pending');
+  if (r.alerts) out.push(r.alerts === 'critical' ? 'critical alerts open' : 'alerts open');
+  if (r.rustdeskMin && r.rustdeskMax) out.push(`RustDesk ${r.rustdeskMin}–${r.rustdeskMax}`);
+  else if (r.rustdeskMin) out.push(`RustDesk ≥ ${r.rustdeskMin}`);
+  else if (r.rustdeskMax) out.push(`RustDesk ≤ ${r.rustdeskMax}`);
+  if (r.notSeenDays) out.push(`not seen for ${r.notSeenDays}+ day${r.notSeenDays === '1' ? '' : 's'}`);
+  if (r.seenWithinDays) out.push(`seen in the last ${r.seenWithinDays} day${r.seenWithinDays === '1' ? '' : 's'}`);
+  return out.length ? out.join(' · ') : 'no conditions';
 }
 
 /** The current filters as a view stores them: set values only. */
@@ -59,14 +100,17 @@ export const deviceViewsApi = {
 export const deviceGroupsApi = {
   list: (businessId?: string) =>
     api.get('/device-groups', { params: businessId ? { businessId } : {} }).then((r) => r.data?.data as { groups: DeviceGroup[]; may: { manage: boolean; reason: string | null } }),
-  create: (body: { name: string; description?: string; businessId?: string }) => api.post('/device-groups', body).then((r) => r.data?.data),
-  update: (id: string, body: { name?: string; description?: string | null }) => api.patch(`/device-groups/${id}`, body).then((r) => r.data?.data),
+  create: (body: { name: string; description?: string; businessId?: string; kind?: 'static' | 'rule'; rule?: DeviceRule }) => api.post('/device-groups', body).then((r) => r.data?.data),
+  update: (id: string, body: { name?: string; description?: string | null; rule?: DeviceRule }) => api.patch(`/device-groups/${id}`, body).then((r) => r.data?.data),
   remove: (id: string) => api.delete(`/device-groups/${id}`).then((r) => r.data?.data as { membersReleased: number }),
 };
 
 export const bulkApi = {
   run: (action: BulkAction, endpointIds: string[], groupId?: string) =>
     api.post('/endpoints/bulk', { action, endpointIds, ...(groupId ? { groupId } : {}) }).then((r) => r.data?.data as BulkResponse),
+  /** 0.34: act on a group's members, resolved by the server when the request runs (a rule group's rule is evaluated then). */
+  runOnGroup: (action: BulkAction, targetGroupId: string, groupId?: string) =>
+    api.post('/endpoints/bulk', { action, targetGroupId, ...(groupId ? { groupId } : {}) }).then((r) => r.data?.data as BulkResponse),
   /** The selection as CSV, through the audited device-list export. */
   exportCsv: async (endpointIds: string[], sort: SortKey, dir: 'asc' | 'desc') =>
     blobDownload(await api.post('/endpoints/bulk/export.csv', { endpointIds, sort, dir }, { responseType: 'blob' })),

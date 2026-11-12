@@ -12,7 +12,10 @@
 //   - the fleet budget stops at the guard's limits, counts a computer once,
 //     lets an exempt computer through, and records only what it is told;
 //   - a single action's exception becomes a per-computer reason (a 404 never
-//     says more than "Computer not found").
+//     says more than "Computer not found");
+//   - (0.34) group membership: add/remove for one computer depends on the
+//     manage rule, the computer's business and whether it is a member of
+//     THIS group only; the CSV cell lists every group.
 //
 // Build first: pnpm --filter @reboot-remote/api build
 import { join, dirname } from 'node:path';
@@ -112,6 +115,27 @@ section('Fleet budget');
   const c = new R.FleetBudget([], []);
   c.wouldExceed('e1', 'A', L);
   check(c.wouldExceed('e2', 'A', { devices: 1, businesses: 1 }) === null, 'asking records nothing; only admitted() does');
+}
+
+section('Group membership: many groups per computer (0.34)');
+{
+  const A = { customerId: 'A' }, gA = { customerId: 'A' };
+  const S = (action, t, member, why = null) => R.membershipStep(action, t, gA, member, why);
+  check(S('group.add', A, false).kind === 'write', 'add: a computer of the business that is not yet a member is written');
+  check(S('group.add', A, true).kind === 'unchanged', 'add: already a member is unchanged (safe to repeat)');
+  check(S('group.remove', A, true).kind === 'write', 'remove: a member is removed');
+  check(S('group.remove', A, false).kind === 'unchanged', 'remove: not a member is unchanged');
+  const other = S('group.add', { customerId: 'B' }, false);
+  check(other.kind === 'refuse' && other.code === 'OTHER_BUSINESS', 'another business’s computer: OTHER_BUSINESS, whoever asks');
+  check(S('group.add', { customerId: null }, false).code === 'OTHER_BUSINESS', 'an unassigned computer cannot join a business’s group');
+  check(S('group.remove', { customerId: 'B' }, false).code === 'OTHER_BUSINESS', 'nor be removed through it');
+  const no = S('group.add', A, false, 'nope');
+  check(no.kind === 'refuse' && no.code === 'NOT_ALLOWED' && no.reason === 'nope', 'no manage right: NOT_ALLOWED with the manage rule’s reason, decided first');
+  check(S('group.add', { customerId: 'B' }, false, 'nope').code === 'NOT_ALLOWED', 'the manage refusal wins over the business check (nothing about the computer is said)');
+  check(R.membershipStep.length === 5 && !/IN_OTHER_GROUP/.test(R.membershipStep.toString()), 'membership of OTHER groups is not an input: no IN_OTHER_GROUP any more');
+  check(R.groupsCell([{ name: 'Front desk' }, { name: 'Servers' }]) === 'Front desk; Servers', 'the CSV cell lists every group, "; "-separated, in the order given (the list orders by name)');
+  check(R.groupsCell([]) === '' && R.groupsCell(null) === '' && R.groupsCell(undefined) === '', 'no group: an empty cell');
+  check(R.groupsCell([{ name: null }, { name: 'X' }]) === 'X', 'a nameless entry is skipped');
 }
 
 section('A single action’s refusal, per computer');

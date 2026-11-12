@@ -251,8 +251,11 @@ try {
     check(a.status === 403 && a.body?.code === 'STEP_UP_REQUIRED', 'Platform Admin session without a step-up: refused too', `HTTP ${a.status} ${a.body?.code}`);
     const k = await req('POST', '/apikeys', { cookie: cOwnerA, body: { name: `audit-enrol-${sfx}`, scopes: ['enrollment:write'] } });
     check(k.status === 403 && k.body?.code === 'STEP_UP_REQUIRED', 'without a step-up, no API key with enrollment:write either', `HTTP ${k.status} ${k.body?.code}`);
+    // 0.34: nor any other key — a key outlives the session that made it.
+    const kr = await req('POST', '/apikeys', { cookie: cOwnerA, body: { name: `audit-read-${sfx}`, scopes: ['computers:read'] } });
+    check(kr.status === 403 && kr.body?.code === 'STEP_UP_REQUIRED' && kr.body?.action === 'apikey.create', 'without a step-up, no read-only API key (0.34)', `HTTP ${kr.status} ${kr.body?.code}`);
     const after = await prisma.deviceClaimToken.count({ where: { customerId: bizA.id } });
-    const keys = await prisma.apiKey.count({ where: { customerId: bizA.id, name: `audit-enrol-${sfx}` } });
+    const keys = await prisma.apiKey.count({ where: { customerId: bizA.id, name: { in: [`audit-enrol-${sfx}`, `audit-read-${sfx}`] } } });
     check(after === before && keys === 0, 'nothing was written', `tokens ${before}→${after}, keys ${keys}`);
   }
 
@@ -327,7 +330,7 @@ try {
   // ── API keys ────────────────────────────────────────────────────────────
   section('API keys die with their creator\'s standing');
   {
-    const k = await req('POST', '/apikeys', { cookie: cOwnerA, body: { name: `audit-${sfx}`, scopes: ['computers:read'] } });
+    const k = await req('POST', '/apikeys', { cookie: await stepUp(cOwnerA), body: { name: `audit-${sfx}`, scopes: ['computers:read'] } });
     const key = k.body?.data?.key ?? k.body?.data?.rawKey ?? k.body?.data?.token;
     if (!key) {
       bad('API key created', `HTTP ${k.status} ${JSON.stringify(k.body).slice(0, 200)}`);

@@ -98,7 +98,7 @@ export class EnrollmentService {
    * whatever their role and whatever step-up actions are configured. An API
    * key cannot step up; it keeps the ability because the key is itself the
    * second proof — a separate secret, bound to one business, carrying the
-   * explicit `enrollment:write` scope, and minting such a key needs the same
+   * explicit `enrollment:write` scope, and creating any key needs the same
    * fresh re-authentication (ApiKeysService.create). The check runs after
    * every scope and input check, so someone with no business here is refused
    * outright rather than asked to re-authenticate first.
@@ -142,9 +142,11 @@ export class EnrollmentService {
       // same tenant (0.33: a group holds only its own business's computers).
       const group = await this.prisma.endpointGroup.findFirst({
         where: { id: dto.endpointGroupId, OR: [{ customerId: businessId }, { customerId: null, tenantId: business.tenantId }] },
-        select: { id: true },
+        select: { id: true, kind: true },
       });
       if (!group) throw new BadRequestException('Unknown computer group');
+      // 0.34: a claim adds a membership row, which a rule group never has.
+      if (group.kind === 'RULE') throw new BadRequestException({ code: 'RULE_GROUP', message: 'That is a rule group: a new computer is in it when it matches the rule. Pick a static group, or none.' });
     }
 
     // The site, like the business, is fixed now. It must be an active site of
@@ -403,9 +405,14 @@ export class EnrollmentService {
     // The token's device group, the same way (0.33): it must still exist and
     // still be this business's (or a pre-0.33 group of the tenant). A group
     // deleted since the token was made is dropped, not an install failure.
+    // Since 0.34 it is a membership the claim ADDS: a re-enrolled computer
+    // keeps its other groups in the same business.
     const groupId = record.endpointGroupId
       ? (await this.prisma.endpointGroup.findFirst({
-          where: { id: record.endpointGroupId, OR: [{ customerId: record.customerId ?? '__none__' }, { customerId: null, tenantId: record.tenantId }] },
+          // kind STATIC: a token can never name a rule group (refused when it
+          // was made, and a group's kind never changes), but the claim must
+          // not depend on that — the 0053 trigger would fail the install.
+          where: { id: record.endpointGroupId, kind: 'STATIC', OR: [{ customerId: record.customerId ?? '__none__' }, { customerId: null, tenantId: record.tenantId }] },
           select: { id: true },
         }))?.id ?? null
       : null;
@@ -432,21 +439,28 @@ export class EnrollmentService {
           ...(adoptedEndpointId && dto.hostname ? { name: dto.hostname } : {}),
           ...(record.customerId ? { customerId: record.customerId } : {}),
           ...(siteId ? { siteId } : {}),
-          // A computer that changes business leaves its old business's group.
-          ...(groupId ? { endpointGroupId: groupId } : record.customerId && record.customerId !== endpoint.customerId ? { endpointGroupId: null } : {}),
+          // A computer that changes business leaves its old business's
+          // groups: the endpoint_leaves_foreign_groups trigger (0049) does
+          // that in this statement; the token's group is added below.
           accessMode: record.accessMode,
         },
       });
+      // After the update, so the trigger has already cleared any group of a
+      // business the computer just left; the insert trigger refuses a group
+      // of any other business.
+      if (groupId) {
+        await this.prisma.endpointGroupMember.createMany({ data: [{ endpointGroupId: groupId, endpointId: endpoint.id }], skipDuplicates: true });
+      }
     } else {
-      // Create new endpoint from token+claim context. customerId and
-      // endpointGroupId come from the token so the endpoint cannot enroll
-      // itself into a different business.
+      // Create new endpoint from token+claim context. customerId and the
+      // group come from the token so the endpoint cannot enroll itself into
+      // a different business.
       endpoint = await this.prisma.endpoint.create({
         data: {
           tenantId: record.tenantId,
           customerId: record.customerId ?? null,
           siteId,
-          endpointGroupId: groupId,
+          ...(groupId ? { groupMemberships: { create: { endpointGroupId: groupId } } } : {}),
           accessMode: record.accessMode,
           name: dto.hostname ?? dto.rustdeskId,
           hostname: dto.hostname ?? null,
@@ -549,6 +563,7 @@ export class EnrollmentService {
         accessMode: record.accessMode,
         assignedUsers: record.assignedUserIds.length,
         ...(siteId ? { siteId } : {}),
+        ...(groupId ? { groupId } : {}),
         ...(adoptedEndpointId ? { adoptedFromPool: true } : {}),
       },
     });
