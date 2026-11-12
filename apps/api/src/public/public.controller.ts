@@ -247,6 +247,20 @@ export class PublicController {
     res.json({ success: true, data: { schema: 'rem0te-install-params/1', host, key, rustdeskVersion: version, ...(nonce ? { updateNonce: nonce } : {}) } });
   }
 
+  /** GET /public/install/rem0te-tray.exe — the bytes whose SHA-256 the served script pins. Before install/:platform, which would match it. */
+  @Get('install/rem0te-tray.exe')
+  @Public()
+  async trayDownload(@Res() res: Response) {
+    const t = this.trayExe();
+    if (!t) { res.status(404).json({ success: false, message: 'This portal has no tray build.' }); return; }
+    const bytes = await fs.promises.readFile(t.path);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment; filename="rem0te-tray.exe"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-SHA256', t.sha256);
+    res.send(bytes);
+  }
+
   @Get('install/:platform')
   @Public()
   async getInstallScript(
@@ -388,8 +402,32 @@ export class PublicController {
     return buildLegacyWindowsScript({
       version: safeVersion(version), host, key, enrollToken, clientSha256, updateNonce,
       agentVersion: this.agentVersion(), fallbackVersion: RUSTDESK_FALLBACK_VERSION,
+      traySha256: this.trayExe()?.sha256 ?? null,
     });
   }
+
+  /**
+   * The tray (0.36) the standard agent's installer downloads: the signed
+   * release's windows/rem0te-tray.exe when the repository has one (the same
+   * bytes the signed agent verifies), else dist/rem0te-tray.exe. The script
+   * pins the SHA-256 computed here, so what the installer accepts is exactly
+   * what this route serves. Hashed once per file version.
+   */
+  private trayCache: { path: string; mtimeMs: number; size: number; sha256: string } | null = null;
+  private trayExe(): { path: string; sha256: string } | null {
+    const p = this.updateTrust.trayTarget()?.path ?? path.join(this.projectRoot, 'dist', 'rem0te-tray.exe');
+    try {
+      const st = fs.statSync(p);
+      if (!st.isFile() || st.size === 0 || st.size > 64 * 1024 * 1024) return null;
+      if (this.trayCache && this.trayCache.path === p && this.trayCache.mtimeMs === st.mtimeMs && this.trayCache.size === st.size) return this.trayCache;
+      const sha256 = createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+      this.trayCache = { path: p, mtimeMs: st.mtimeMs, size: st.size, sha256 };
+      return this.trayCache;
+    } catch {
+      return null;
+    }
+  }
+
 
   // Which address a migration script tells the agent to use: the configured
   // public address when there is one, otherwise the relay host (which is what

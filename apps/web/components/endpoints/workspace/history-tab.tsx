@@ -16,7 +16,8 @@ import { AccessReviewPanel, type AccessReview } from './access-review-panel';
 /**
  * What has happened on this computer and who can reach it: remote sessions,
  * technicians' notes, the AI-written summary (labelled as such, and editable),
- * and the access review. Before 0.31 these were four separate tabs.
+ * the access review, and (0.36) the tray: its self-help runs and the
+ * support requests it sent. Before 0.31 these were four separate tabs.
  */
 
 export interface SessionRow {
@@ -334,6 +335,88 @@ function AiSummary({ endpointId, stored }: { endpointId: string; stored: string 
   );
 }
 
+// ── The tray (0.36) ─────────────────────────────────────────────────────────
+
+type TrayRun = {
+  id: string; tool: string; localUser: string | null; via: 'signed' | 'tray_key'; status: 'running' | 'succeeded' | 'failed' | 'refused';
+  offline: boolean; summary: string | null; detail: string[] | null; startedAt: string; finishedAt: string | null;
+};
+type TrayInfo = {
+  tray: { kind: 'signed' | 'standard' | 'none' | 'unsupported'; protocol: number | null; pairedAt: string | null; message: string };
+  selfHelp: TrayRun[];
+  requests: { id: string; status: string; createdAt: string; contactName: string | null; _count: { attachments: number } }[] | null;
+};
+
+const TOOL_TITLE: Record<string, string> = {
+  'dns.check': 'Check DNS', 'dns.flush': 'Flush the DNS cache', 'ip.renew': 'Renew IP address',
+  'net.test': 'Test the connection', 'net.details': 'Show network details', 'rustdesk.restart': 'Restart the remote support service',
+};
+const RUN_TONE: Record<TrayRun['status'], string> = {
+  succeeded: 'text-emerald-700 dark:text-emerald-300', failed: 'text-red-700 dark:text-red-300',
+  refused: 'text-amber-700 dark:text-amber-300', running: 'text-muted-foreground',
+};
+
+function TrayHistory({ endpointId }: { endpointId: string }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const { data, isLoading, isError } = useQuery<TrayInfo>({
+    queryKey: ['endpoint-tray', endpointId],
+    queryFn: () => endpointsApi.tray(endpointId).then((r) => r.data?.data),
+    refetchInterval: 60_000,
+  });
+  return (
+    <Section id="history-tray" title="Tray and self-help">
+      {isLoading ? <p className="text-muted-foreground">Loading…</p>
+        : isError || !data ? <p className="text-destructive">The tray history could not be loaded.</p>
+          : (
+            <>
+              <p data-testid="tray-kind" data-kind={data.tray.kind}>{data.tray.message}</p>
+              <p className="text-xs text-muted-foreground">
+                The tray program has been built and unit-tested for Windows but has not been run on a real Windows computer by
+                this release&apos;s tests. Treat its first use on a computer as a trial.
+              </p>
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">Self-help runs (newest 50)</p>
+                {data.selfHelp.length === 0 ? <p className="text-muted-foreground" data-testid="tray-runs-empty">None yet.</p> : (
+                  <ul className="divide-y rounded-md border" data-testid="tray-runs">
+                    {data.selfHelp.map((r) => (
+                      <li key={r.id} className="px-3 py-2" data-testid="tray-run" data-tool={r.tool} data-status={r.status}>
+                        <button type="button" className="flex w-full flex-wrap items-baseline justify-between gap-2 text-left" onClick={() => setOpen(open === r.id ? null : r.id)}>
+                          <span>{TOOL_TITLE[r.tool] ?? r.tool}{r.localUser ? <span className="text-muted-foreground"> · {r.localUser}</span> : null}</span>
+                          <span className="text-xs">
+                            <span className={RUN_TONE[r.status]}>{r.status}</span>
+                            <span className="text-muted-foreground"> · {formatDate(r.startedAt)}{r.offline ? ' · ran while offline, reported later' : ''}</span>
+                          </span>
+                        </button>
+                        {r.summary && <p className="mt-0.5 text-xs text-muted-foreground">{r.summary}</p>}
+                        {open === r.id && r.detail && r.detail.length > 0 && (
+                          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[11px]">{r.detail.join('\n')}</pre>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              {data.requests && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground">Support requests sent from the tray</p>
+                  {data.requests.length === 0 ? <p className="text-muted-foreground">None.</p> : (
+                    <ul className="space-y-1" data-testid="tray-requests">
+                      {data.requests.map((q) => (
+                        <li key={q.id} className="text-xs">
+                          <Link href={`/support-requests?open=${q.id}`} className="underline underline-offset-2">{formatDate(q.createdAt)}</Link>
+                          <span className="text-muted-foreground"> · {q.status.toLowerCase()}{q.contactName ? ` · ${q.contactName}` : ''}{q._count.attachments ? ` · ${q._count.attachments} attachment(s)` : ''}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+    </Section>
+  );
+}
+
 export function DeviceHistoryTab({
   endpointId, sessions, aiTimeline, review,
 }: {
@@ -349,11 +432,13 @@ export function DeviceHistoryTab({
         <a className="hover:text-foreground underline-offset-2 hover:underline" href="#history-sessions">Remote sessions</a>
         <a className="hover:text-foreground underline-offset-2 hover:underline" href="#history-notes">Notes</a>
         <a className="hover:text-foreground underline-offset-2 hover:underline" href="#history-ai-summary">AI summary</a>
+        <a className="hover:text-foreground underline-offset-2 hover:underline" href="#history-tray">Tray</a>
         {review && <a className="hover:text-foreground underline-offset-2 hover:underline" href="#history-access">Who can connect</a>}
       </nav>
       <Sessions sessions={sessions} />
       <Notes endpointId={endpointId} />
       <AiSummary endpointId={endpointId} stored={aiTimeline} />
+      <TrayHistory endpointId={endpointId} />
       {review && <div id="history-access"><AccessReviewPanel review={review} /></div>}
     </div>
   );

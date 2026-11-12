@@ -5,6 +5,11 @@
  * device-authenticated routes (POST /enrollment/chat/poll and /chat/reply,
  * with the device secret, exactly as the signed agent's chat host sends them).
  *
+ * From 0.36 this is the chat protocol 1 path, kept for 0.34/0.35 signed agents
+ * until they update. The tray path (chat protocol 2: /tray/* and the /assist
+ * page), recording on and off, and chats the person starts are proven by
+ * e2e-tray.mjs. Here CHAT_STARTED also carries `recorded`.
+ *
  *   - support states: signed agent with chat protocol 1 (yes); the standard
  *     agent, an old signed agent, Linux, macOS, an unbound or unassigned
  *     computer (no, each saying why); the heartbeat stores agentChat only for
@@ -35,8 +40,8 @@
  *
  * Self-starting: it runs its own API from dist/ on CHAT_API_PORT (3531), with
  * the chat sweep every 2 s, CHAT_MAX_WAITERS=1 and the audit sealer on.
- * INTEGRATION, not Windows: the desktop window has not run here, and the
- * agent's own chat code is tested by `go test ./internal/chat`.
+ * INTEGRATION, not Windows: no window or tray has run here; the agent's own
+ * chat and tray code is tested by `go test ./internal/chat ./internal/tray`.
  */
 import { PrismaClient } from '@prisma/client';
 import argon2 from 'argon2';
@@ -411,7 +416,7 @@ async function all() {
   const audit = await prisma.activityLog.findMany({ where: { action: { in: ['CHAT_STARTED', 'CHAT_ENDED'] }, createdAt: { gte: startedAt } } });
   const started = audit.filter((a) => a.action === 'CHAT_STARTED' && a.customerId === acme.id);
   const ended = audit.filter((a) => a.action === 'CHAT_ENDED' && a.customerId === acme.id);
-  check(started.length === 5 && started.every((a) => a.actorId && Object.keys(a.metadata).every((k) => ['conversationId', 'supportRequestId'].includes(k))), 'five chats started in Acme through the API, each audited with who and the ids only', JSON.stringify(started.map((a) => a.metadata)));
+  check(started.length === 5 && started.every((a) => a.actorId && Object.keys(a.metadata).every((k) => ['conversationId', 'supportRequestId', 'recorded'].includes(k))), 'five chats started in Acme through the API, each audited with who, the ids and whether it is recorded (0.36) only', JSON.stringify(started.map((a) => a.metadata)));
   const reasons = ended.map((a) => a.metadata.reason).sort();
   check(JSON.stringify(reasons) === JSON.stringify(['end_user', 'inactive', 'technician', 'technician', 'technician', 'technician']), 'each end is audited once, with why', JSON.stringify(reasons));
   check(ended.every((a) => Object.keys(a.metadata).sort().join() === 'conversationId,durationSeconds,endUserMessages,reason,technicianMessages'), 'CHAT_ENDED carries ids and counts only');

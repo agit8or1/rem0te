@@ -132,39 +132,48 @@ export const isClientId = (v: unknown): v is string => typeof v === 'string' && 
 // ── Can this computer chat? ──────────────────────────────────────────────────
 
 export type ChatSupport =
-  | { supported: true }
+  | { supported: true; via: 'window' | 'tray' }
   | { supported: false; reason: 'platform' | 'agent' | 'not_bound' | 'archived'; message: string };
 
 /**
- * Whether the portal offers a chat on this computer. Windows with the signed
- * agent that reports chat protocol 1; everything else says why not, in words
- * the panel shows as they are.
+ * Whether the portal offers a chat on this computer, and how it reaches the
+ * person there:
+ *   - `tray` (0.36): the tray icon opens the /assist page. The signed agent
+ *     reports chat protocol 2 (its tray is started by the agent); the standard
+ *     agent reports a tray protocol once its tray is installed and paired.
+ *   - `window` (0.34): a signed agent on chat protocol 1 draws the Win32 chat
+ *     window. Agents of that build are still in the field; their routes stay.
+ * Everything else says why not, in words the panel shows as they are.
  */
-export function chatSupport(ep: { platform?: string | null; updateChannel?: string | null; chatProtocol?: number | null; status?: string | null; agentBound: boolean }): ChatSupport {
+export function chatSupport(ep: {
+  platform?: string | null; updateChannel?: string | null; chatProtocol?: number | null; status?: string | null; agentBound: boolean;
+  trayProtocol?: number | null; trayPaired?: boolean;
+}): ChatSupport {
   const p = String(ep.platform ?? '').toLowerCase();
   if (ep.status === 'ARCHIVED') {
     return { supported: false, reason: 'archived', message: 'This computer is archived.' };
   }
   if (/^(linux|macos|mac|darwin|osx)/.test(p)) {
-    return { supported: false, reason: 'platform', message: `Chat is not available on ${p.startsWith('linux') ? 'Linux' : 'macOS'} yet: only the Windows agent has a chat window.` };
+    return { supported: false, reason: 'platform', message: `Chat is not available on ${p.startsWith('linux') ? 'Linux' : 'macOS'} yet: only the Windows agents have a tray and a chat window.` };
   }
   if (!ep.agentBound) {
     return { supported: false, reason: 'not_bound', message: 'This computer has never authenticated with a device secret. Re-run its installer before chatting.' };
   }
-  if (ep.updateChannel !== 'signed' || !ep.chatProtocol || ep.chatProtocol < 1) {
-    return {
-      supported: false, reason: 'agent',
-      message: ep.updateChannel === 'signed'
-        ? 'This computer\'s signed agent is too old to chat. Update it to 0.34 or later.'
-        : 'This computer runs the standard agent, which cannot chat. Chat needs the signed Windows agent (0.34 or later).',
-    };
+  if (ep.updateChannel === 'signed') {
+    if ((ep.chatProtocol ?? 0) >= 2) return { supported: true, via: 'tray' };
+    if ((ep.chatProtocol ?? 0) >= 1) return { supported: true, via: 'window' };
+    return { supported: false, reason: 'agent', message: 'This computer\'s signed agent is too old to chat. Update it to 0.34 or later.' };
   }
-  return { supported: true };
+  if ((ep.trayProtocol ?? 0) >= 1 && ep.trayPaired) return { supported: true, via: 'tray' };
+  return {
+    supported: false, reason: 'agent',
+    message: 'This computer runs the standard agent, which cannot chat until its tray is installed. Re-run its installer from a 0.36 or later portal: the tray starts at the next sign-in.',
+  };
 }
 
 // ── What the technician sees about the far end ───────────────────────────────
 
-export type PresenceCode = 'waiting_for_checkin' | 'connecting' | 'window_open' | 'no_user' | 'window_failed' | 'user_closed' | 'computer_silent' | 'ended';
+export type PresenceCode = 'waiting_for_checkin' | 'connecting' | 'window_open' | 'no_user' | 'window_failed' | 'user_closed' | 'computer_silent' | 'window_closed' | 'ended';
 
 /**
  * One line about where the conversation stands at the computer, from what the
@@ -173,13 +182,23 @@ export type PresenceCode = 'waiting_for_checkin' | 'connecting' | 'window_open' 
  * for over a minute (it holds a poll for 25 s, so a live agent is never that
  * quiet).
  */
-export function presence(c: { status: string; deviceState: string | null; deviceSeenAt: Date | null; endedReason?: string | null }, now: number): { code: PresenceCode; text: string } {
+export function presence(c: { status: string; deviceState: string | null; deviceSeenAt: Date | null; endedReason?: string | null; startedBy?: string | null }, now: number, via: 'window' | 'tray' = 'window'): { code: PresenceCode; text: string } {
   if (c.status === 'ENDED') {
-    const by = c.endedReason === 'end_user' ? 'The person at the computer closed the chat window.' : c.endedReason === 'inactive' ? 'Ended after two hours without activity.' : 'Ended by the technician.';
+    const by = c.endedReason === 'end_user'
+      ? (via === 'tray' ? 'The person at the computer ended the chat.' : 'The person at the computer closed the chat window.')
+      : c.endedReason === 'inactive' ? 'Ended after two hours without activity.' : 'Ended by the technician.';
     return { code: 'ended', text: by };
   }
   if (!c.deviceState || !c.deviceSeenAt) {
-    return { code: 'waiting_for_checkin', text: 'Waiting for the computer to pick the chat up at its next check-in (normally within 3 minutes).' };
+    return via === 'tray'
+      ? { code: 'waiting_for_checkin', text: 'Waiting for the tray on the computer to open the chat (it learns of a new chat at the next check-in, normally within 3 minutes).' }
+      : { code: 'waiting_for_checkin', text: 'Waiting for the computer to pick the chat up at its next check-in (normally within 3 minutes).' };
+  }
+  // The /assist page (0.36) polls every few seconds while it is open; a page
+  // that has stopped is a closed window, which the person can reopen from the
+  // tray icon. That is what the page last did, not a guess about the person.
+  if (via === 'tray' && now - c.deviceSeenAt.getTime() > 60_000 && c.deviceState === 'window_open') {
+    return { code: 'window_closed', text: 'The chat window on the computer is closed. The person can reopen it from the tray icon; new messages show a badge there.' };
   }
   if (now - c.deviceSeenAt.getTime() > 60_000 && c.deviceState !== 'no_user') {
     return { code: 'computer_silent', text: 'The computer has not been in touch for over a minute. It may have gone offline or to sleep.' };

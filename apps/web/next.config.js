@@ -29,7 +29,10 @@ const nextConfig = {
   async headers() {
     return [
       {
-        source: '/:path*',
+        // Everything but /assist (0.36): the tray's chat page is served by the
+        // API with its own, stricter policy (no inline script at all), and a
+        // second, looser header here would only muddy what applies.
+        source: '/:path((?!assist(?:/|$)).*)',
         headers: [
           // HSTS, nosniff, framing and referrer headers come from Caddy.
           { key: 'Content-Security-Policy', value: csp },
@@ -39,6 +42,13 @@ const nextConfig = {
   },
   async rewrites() {
     return [
+      {
+        // The tray's chat page (0.36), served by the API: /assist/* here is
+        // /api/v1/assist/* there, so its cookie (Path=/assist) is scoped to
+        // the page and never sent to the console or the API's other routes.
+        source: '/assist/:path*',
+        destination: `${process.env.INTERNAL_API_URL ?? 'http://localhost:3001'}/api/v1/assist/:path*`,
+      },
       {
         source: '/api/:path*',
         destination: `${process.env.INTERNAL_API_URL ?? 'http://localhost:3001'}/api/:path*`,

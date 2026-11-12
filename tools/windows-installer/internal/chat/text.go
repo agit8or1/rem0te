@@ -8,6 +8,12 @@ import (
 	"unicode/utf8"
 )
 
+// ProtocolVersion is what agent-status.json reports as `chat`, and what the
+// portal needs before it offers a chat on this computer. 1 was the 0.34 Win32
+// chat window; 2 (0.36) is the tray's /assist page — the window is gone, and
+// the portal reaches this computer's chats through the tray (internal/tray).
+const ProtocolVersion = 2
+
 // MaxMessageChars is the portal's limit (apps/api/src/chat/chat-policy.ts
 // MAX_MESSAGE_CHARS), counted the same way: UTF-16 code units.
 const MaxMessageChars = 2000

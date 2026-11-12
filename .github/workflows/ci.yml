@@ -275,6 +275,14 @@ jobs:
       - name: Chat tests
         run: node apps/api/scripts/unit-chat.mjs
 
+      # The tray (0.36): one-time chat codes and the /assist cookie, the
+      # page's CSP and that its script never builds HTML, tray keys, recorded
+      # or not, the self-help catalog (equal to the agent's and the
+      # migration's), screenshots and usage samples, and which computers can
+      # chat through the tray.
+      - name: Tray tests
+        run: node apps/api/scripts/unit-tray.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.
@@ -426,9 +434,12 @@ jobs:
       # And windows.script.run (0.34): every refusal, and — with the runner's
       # pwsh (PowerShell 7, not Windows PowerShell 5.1) — arguments passed as
       # data, the timeout killing the process tree, and the output cap.
-      # And the chat host (0.34): pipe frames and their size and field limits,
-      # message text, the hello nonce, receipts sent once, history retries,
-      # reconnect after a lost window, and the per-minute reply cap.
+      # And the tray (0.36, replacing the 0.34 chat host and window): pipe
+      # frames and their size and field limits, the hello nonce, the closed
+      # self-help catalog (compared with the portal's and the migration's),
+      # local rate limits, the one-time chat link and the window's navigation
+      # rule, the device secret never reaching the tray, a tray key never
+      # running an elevated tool, offline runs, and the signed tray install.
       - name: Signed update chain and approved-action tests
         working-directory: tools/windows-installer
         run: go test ./...

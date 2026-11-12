@@ -1,5 +1,5 @@
 import {
-  BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException,
+  BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, Logger, NotFoundException,
   OnModuleDestroy, OnModuleInit,
 } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
@@ -10,6 +10,9 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { TechnicianAccessService } from '../rbac/technician-access.service';
 import { CAP, effectiveCapabilities } from '../rbac/capabilities';
 import { PublicUrlService } from '../platform/public-url.service';
+import {
+  SUPPORT_MAX_TEXT, SUPPORT_OPEN_PER_DEVICE, SUPPORT_PER_DEVICE_HOUR, SUPPORT_PER_USER_HOUR, screenshot as checkScreenshot, usageSample,
+} from '../tray/tray-policy';
 
 /**
  * Customer support requests: a waiting queue in front of Connect and Quick
@@ -37,6 +40,12 @@ import { PublicUrlService } from '../platform/public-url.service';
  *                 email, a computer or another request.
  *   retention     WAITING requests expire after 24 hours; closed requests
  *                 lose their contact details and description after 30 days.
+ *   tray (0.36)   AGENT requests come from the tray on a managed computer,
+ *                 for that computer and its business only (the credential
+ *                 proved which); a screenshot or usage sample is an
+ *                 attachment, readable only by someone who can see the
+ *                 request AND the computer, and deleted with the contact
+ *                 details (or after 45 days, whichever is first).
  */
 
 const OPEN: SupportRequestStatus[] = ['WAITING', 'CLAIMED', 'CONNECTING'];
@@ -49,6 +58,8 @@ const PUBLIC_OPEN_CAP = 25;
 const PER_IP_OPEN_CAP = 3;
 /** A form submitted faster than a person could read it is a bot. */
 const MIN_FILL_MS = 2_500;
+/** Attachments never outlive this, whatever the request's state. */
+const ATTACHMENT_MAX_AGE_MS = 45 * 24 * 3600_000;
 
 const CUSTOMER_STATUS: Record<SupportRequestStatus, string> = {
   WAITING: 'Waiting for a technician',
@@ -288,6 +299,84 @@ export class SupportRequestsService implements OnModuleInit, OnModuleDestroy {
     return { id: r.id, statusToken: token };
   }
 
+  // ── The tray on a managed computer (0.36) ────────────────────────────────
+
+  /**
+   * A support request from the tray. The computer and its business come from
+   * the credential the tray (or the signed agent's tray host) proved — never
+   * from the body. Rate-limited per computer and per Windows account, and
+   * capped for open requests per computer. Not stopped by containment: asking
+   * for help is not a write to anything the business has paused.
+   */
+  async agentSubmit(ep: { id: string; tenantId: string | null; customerId: string | null }, dto: {
+    description?: unknown; localUser?: string | null; usage?: unknown; screenshot?: unknown; via: 'signed' | 'tray_key';
+  }, opts: { fromChat?: boolean; fixedDescription?: string } = {}) {
+    if (!ep.customerId || !ep.tenantId) throw new ConflictException({ code: 'NO_BUSINESS', message: 'This computer is not assigned to a business yet.' });
+    const description = opts.fixedDescription ?? clean(dto.description, SUPPORT_MAX_TEXT);
+    if (!description) throw new BadRequestException({ code: 'SUPPORT_EMPTY', message: 'Please describe what you need help with.' });
+    const shot = dto.screenshot !== undefined && dto.screenshot !== null && dto.screenshot !== '' ? checkScreenshot(dto.screenshot) : null;
+    if (shot && !shot.ok) throw new BadRequestException({ code: shot.code, message: 'The screenshot was refused: a JPEG or PNG of at most 700 KB and 4096 pixels a side.' });
+    const usage = dto.usage !== undefined && dto.usage !== null ? usageSample(dto.usage) : null;
+    if (dto.usage !== undefined && dto.usage !== null && !usage) throw new BadRequestException({ code: 'USAGE_INVALID', message: 'The resource-usage sample was not readable.' });
+
+    const hourAgo = new Date(Date.now() - 3600_000);
+    const mine = { endpointId: ep.id, origin: 'AGENT' };
+    const [lastHour, userHour, open] = await Promise.all([
+      this.prisma.supportRequest.count({ where: { ...mine, createdAt: { gt: hourAgo } } }),
+      dto.localUser ? this.prisma.supportRequest.count({ where: { ...mine, contactName: dto.localUser, createdAt: { gt: hourAgo } } }) : 0,
+      this.prisma.supportRequest.count({ where: { ...mine, status: { in: OPEN } } }),
+    ]);
+    if (lastHour >= SUPPORT_PER_DEVICE_HOUR) throw new HttpException({ code: 'SUPPORT_RATE_LIMITED', message: `At most ${SUPPORT_PER_DEVICE_HOUR} requests an hour from one computer.` }, HttpStatus.TOO_MANY_REQUESTS);
+    if (userHour >= SUPPORT_PER_USER_HOUR) throw new HttpException({ code: 'SUPPORT_RATE_LIMITED', message: `At most ${SUPPORT_PER_USER_HOUR} requests an hour from one person.` }, HttpStatus.TOO_MANY_REQUESTS);
+    if (open >= SUPPORT_OPEN_PER_DEVICE) throw new ConflictException({ code: 'SUPPORT_OPEN_CAP', message: 'This computer already has requests waiting. A technician will pick them up.' });
+
+    const token = randomBytes(32).toString('base64url');
+    const attachments: Prisma.SupportRequestAttachmentCreateWithoutRequestInput[] = [];
+    if (shot?.ok) attachments.push({ kind: 'screenshot', contentType: shot.contentType, sizeBytes: shot.bytes.length, width: shot.width, height: shot.height, bytes: shot.bytes });
+    if (usage) attachments.push({ kind: 'usage', contentType: 'application/json', sizeBytes: Buffer.byteLength(JSON.stringify(usage)), data: usage as unknown as Prisma.InputJsonValue });
+    const r = await this.prisma.supportRequest.create({
+      data: {
+        tenantId: ep.tenantId, customerId: ep.customerId, origin: 'AGENT',
+        contactName: dto.localUser ?? null, description, endpointId: ep.id, unmanaged: false,
+        statusTokenHash: sha(token), statusExpiresAt: new Date(Date.now() + STATUS_TTL_MS),
+        events: { create: { event: 'submitted', detail: { origin: 'AGENT', via: dto.via, screenshot: !!shot?.ok, usage: !!usage, ...(opts.fromChat ? { chat: true } : {}) } } },
+        ...(attachments.length ? { attachments: { create: attachments } } : {}),
+      },
+      select: { id: true },
+    });
+    await this.audit.log({
+      tenantId: ep.tenantId, customerId: ep.customerId,
+      action: 'SUPPORT_REQUEST_SUBMITTED', resource: 'support_request', resourceId: r.id,
+      meta: { origin: 'AGENT', endpointId: ep.id, screenshot: !!shot?.ok, usage: !!usage },
+    });
+    return { id: r.id };
+  }
+
+  /**
+   * GET /support-requests/:id/attachments/:aid — the queue's own scope (as
+   * detail()) AND the computer the request is for, through the device-list
+   * visibility rule and the technician grant. A request for a computer the
+   * caller cannot see shows its attachments to nobody, exactly as a missing one.
+   */
+  async attachment(actor: ActorContext, id: string, attachmentId: string) {
+    await this.load(actor, id);
+    const r = await this.prisma.supportRequest.findUniqueOrThrow({ where: { id }, select: { endpointId: true } });
+    if (!r.endpointId || !(await this.computerVisible(actor, r.endpointId))) throw new NotFoundException('Attachment not found');
+    const a = await this.prisma.supportRequestAttachment.findFirst({ where: { id: attachmentId, requestId: id } });
+    if (!a) throw new NotFoundException('Attachment not found');
+    return a;
+  }
+
+  private async computerVisible(actor: ActorContext, endpointId: string): Promise<boolean> {
+    try {
+      await this.acl.assertEndpointInScope(actor, endpointId, CAP.COMPUTERS_VIEW);
+    } catch {
+      return false;
+    }
+    const ep = await this.prisma.endpoint.findFirst({ where: { AND: [this.acl.endpointVisibilityWhere(actor), { id: endpointId }] }, select: { id: true } });
+    return !!ep;
+  }
+
   // ── Queue (support:requests) ─────────────────────────────────────────────
 
   private queueScope(actor: ActorContext, businessId?: string) {
@@ -371,8 +460,18 @@ export class SupportRequestsService implements OnModuleInit, OnModuleDestroy {
     });
     const match = await this.matchComputers(actor, [r]);
     const { statusTokenHash: _h, submitIpHash: _i, ...safe } = r;
+    // Attachments (0.36): listed only when the caller can see the computer.
+    const visible = r.endpointId ? await this.computerVisible(actor, r.endpointId) : false;
+    const atts = visible
+      ? await this.prisma.supportRequestAttachment.findMany({
+        where: { requestId: id }, orderBy: { createdAt: 'asc' },
+        select: { id: true, kind: true, contentType: true, sizeBytes: true, width: true, height: true, data: true, createdAt: true },
+      })
+      : [];
     return {
       ...safe,
+      attachments: atts.map((a) => (a.kind === 'usage' ? a : { ...a, data: undefined })),
+      attachmentsHidden: visible ? 0 : await this.prisma.supportRequestAttachment.count({ where: { requestId: id } }),
       computer: (r.endpointId && match.get(`ep:${r.endpointId}`)) || (r.reportedRustdeskId && match.get(`rd:${r.reportedRustdeskId}`)) || null,
     };
   }
@@ -548,7 +647,12 @@ export class SupportRequestsService implements OnModuleInit, OnModuleDestroy {
         },
       });
       await this.prisma.supportRequestEvent.updateMany({ where: { requestId: o.id }, data: { detail: Prisma.JsonNull } });
+      await this.prisma.supportRequestAttachment.deleteMany({ where: { requestId: o.id } });
     }
+    // Screenshots and usage samples never outlive ATTACHMENT_MAX_AGE_MS (0.36),
+    // even on a request still open.
+    const aged = await this.prisma.supportRequestAttachment.deleteMany({ where: { createdAt: { lt: new Date(now.getTime() - ATTACHMENT_MAX_AGE_MS) } } });
+    if (aged.count) this.logger.log(`Support requests: ${aged.count} attachment(s) past ${ATTACHMENT_MAX_AGE_MS / 86_400_000} days deleted`);
     if (expired.count || old.length) this.logger.log(`Support requests: ${expired.count} expired, ${old.length} anonymized`);
     return { expired: expired.count, anonymized: old.length };
   }

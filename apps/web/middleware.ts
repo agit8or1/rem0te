@@ -5,7 +5,11 @@ import type { NextRequest } from 'next/server';
 // intake form reached by a business's link and a status page reached by a
 // request's own token. With the slash, deliberately: `/support-requests` is the
 // signed-in queue and must not match.
-const PUBLIC_PREFIXES = ['/login', '/mfa', '/api/', '/_next/', '/favicon.ico', '/support/'];
+//
+// `/assist/` (0.36) is the tray's chat page for the person at a managed
+// computer. It holds no portal session and reads none: its only credential
+// is its own /assist cookie, which the API checks.
+const PUBLIC_PREFIXES = ['/login', '/mfa', '/api/', '/_next/', '/favicon.ico', '/support/', '/assist/'];
 
 // `/quick` is the public "I need remote support" page. It must stay reachable
 // without an account — requiring one to receive a support session would defeat

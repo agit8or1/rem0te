@@ -143,6 +143,14 @@ export class HeartbeatDto {
   // agent-status.json. Stored only for a signed agent; it decides whether the
   // portal offers a chat, and the heartbeat says so only when one is open.
   @IsOptional() @IsInt() @Min(1) @Max(99) agentChat?: number;
+
+  // The tray (0.36): the tray protocol this computer runs. Signed: from
+  // agent-status.json. Standard: reported only once the tray is installed,
+  // with the key id it was paired under (trayKeyId); the portal believes a
+  // standard computer's tray only when that id is the one on record, and
+  // otherwise answers `tray.pair` so the heartbeat pairs again.
+  @IsOptional() @IsInt() @Min(1) @Max(99) agentTray?: number;
+  @IsOptional() @IsString() @Matches(/^[a-z0-9]{24}$/) trayKeyId?: string;
 }
 
 /**

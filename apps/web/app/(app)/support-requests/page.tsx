@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { api, endpointsApi, quickConnectApi, supportRequestsApi } from '@/lib/api-client';
@@ -18,6 +18,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { SessionStatusBadge } from '@/components/sessions/session-status-badge';
+import { RequestAttachments, type Attachment } from '@/components/support-requests/request-attachments';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { Inbox, RefreshCw, PlayCircle, Zap, Monitor } from 'lucide-react';
@@ -51,6 +52,8 @@ interface SupportRequestDetail extends SupportRequest {
   claimedById: string | null;
   events: { id: string; event: string; actorId: string | null; detail: Record<string, unknown> | null; createdAt: string }[];
   sessions: { id: string; status: string; createdAt: string; isAdHoc: boolean }[];
+  attachments?: Attachment[];
+  attachmentsHidden?: number;
 }
 
 const STATUS_LABEL: Record<RequestStatus, string> = {
@@ -115,6 +118,11 @@ export default function SupportRequestsPage() {
   const [filter, setFilter] = useState('open');
   const [mine, setMine] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // ?open=<id> (0.36): a computer's tray history links straight to a request.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('open');
+    if (id && /^[a-z0-9]{20,40}$/.test(id)) setSelectedId(id);
+  }, []);
   const allowed = can(CAP.SUPPORT_REQUESTS);
 
   const { data, isLoading, isFetching, refetch } = useQuery<SupportRequest[]>({
@@ -192,7 +200,7 @@ export default function SupportRequestsPage() {
                 >
                   <td className="px-4 py-3 align-top">
                     <p className="font-medium">{r.contactName ?? '—'}</p>
-                    <p className="text-xs text-muted-foreground">{r.origin === 'PUBLIC' ? 'Public form' : 'Signed-in user'}</p>
+                    <p className="text-xs text-muted-foreground">{r.origin === 'PUBLIC' ? 'Public form' : r.origin === 'AGENT' ? 'The tray on the computer' : 'Signed-in user'}</p>
                   </td>
                   {isPlatformAdmin && <td className="px-4 py-3 align-top text-muted-foreground">{r.customer?.name}</td>}
                   <td className="px-4 py-3 align-top max-w-md">
@@ -328,7 +336,7 @@ function RequestDetailDialog({ id, onClose }: { id: string; onClose: () => void 
           <div className="space-y-5 text-sm">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
               <Field label="Name">{r.contactName ?? '—'}</Field>
-              <Field label="From">{r.origin === 'PUBLIC' ? 'Public form' : 'Signed-in user'}</Field>
+              <Field label="From">{r.origin === 'PUBLIC' ? 'Public form' : r.origin === 'AGENT' ? 'The tray on the computer' : 'Signed-in user'}</Field>
               <Field label="Email">{r.contactEmail ? <a className="underline underline-offset-2" href={`mailto:${r.contactEmail}`}>{r.contactEmail}</a> : '—'}</Field>
               <Field label="Phone">{r.contactPhone ? <a className="underline underline-offset-2" href={`tel:${r.contactPhone}`}>{r.contactPhone}</a> : '—'}</Field>
               <Field label="Claimed by">{r.claimedBy ? (claimedByMe ? 'You' : personName(r.claimedBy)) : '—'}</Field>
@@ -356,6 +364,8 @@ function RequestDetailDialog({ id, onClose }: { id: string; onClose: () => void 
             {r.outcome && (
               <Field label="Outcome">{r.outcome}</Field>
             )}
+
+            <RequestAttachments requestId={r.id} attachments={r.attachments ?? []} hidden={r.attachmentsHidden ?? 0} />
 
             {r.sessions.length > 0 && (
               <div className="space-y-2">

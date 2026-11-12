@@ -10,9 +10,16 @@ import { useToast } from '@/hooks/use-toast';
 import { ago } from './device-model';
 
 /**
- * Chat (0.34): the technician side of a chat with the person at this
- * computer. The other side is a small window the signed Windows agent opens
- * on their desktop, headed with the business name and the technician's name.
+ * Chat (0.34; the tray, 0.36): the technician side of a chat with the person
+ * at this computer. The other side is the tray's chat window on Windows (the
+ * portal's /assist page), headed with the business name and the technician's
+ * name; the person can also start a chat from the tray.
+ *
+ * Recorded or not (0.36) is fixed when the chat starts, from the business's
+ * setting. A chat that is not recorded keeps a message on the server only
+ * until both sides have it: this panel keeps its own copy for as long as the
+ * page is open, and acknowledges the person's replies once shown (which is
+ * what lets the server delete them).
  *
  * Everything here is what the server says: whether this computer can chat
  * (and if not, why), whether a containment pause stops it, where the chat
@@ -25,6 +32,7 @@ import { ago } from './device-model';
 type Presence = { code: string; text: string };
 type Conversation = {
   id: string; status: 'OPEN' | 'ENDED'; technicianName: string; businessName: string; supportRequestId: string | null;
+  startedBy: 'technician' | 'end_user'; recorded: boolean;
   deviceUser: string | null; deviceDetail: string | null; createdAt: string; endedAt: string | null; endedReason: string | null;
   technicianMessages: number; endUserMessages: number; presence: Presence;
 };
@@ -33,7 +41,8 @@ type Message = {
   deliveredAt: string | null; shownAt: string | null; readAt: string | null; receipt: 'sent' | 'delivered' | 'shown' | 'read' | null;
 };
 type Overview = {
-  support: { supported: true } | { supported: false; reason: string; message: string };
+  support: { supported: true; via: 'window' | 'tray' } | { supported: false; reason: string; message: string };
+  recordNew: boolean;
   canSend: boolean;
   contained: { pauseId: string; message: string } | null;
   lastSignedInUser: { name: string | null; at: string } | null;
@@ -52,6 +61,7 @@ const RECEIPT: Record<NonNullable<Message['receipt']>, string> = {
 const PRESENCE_TONE: Record<string, string> = {
   window_open: 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200',
   no_user: 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200',
+  window_closed: 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200',
   window_failed: 'border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200',
   computer_silent: 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200',
 };
@@ -65,22 +75,43 @@ function time(at: string) {
   return new Date(at).toLocaleString(undefined, { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' });
 }
 
-function Transcript({ endpointId, conversationId, live }: { endpointId: string; conversationId: string; live: boolean }) {
-  const { data, isLoading, isError } = useQuery<{ conversation: Conversation; messages: Message[]; truncated: boolean }>({
+function Transcript({ endpointId, conversationId, live, canAck }: { endpointId: string; conversationId: string; live: boolean; canAck: boolean }) {
+  const { data, isLoading, isError } = useQuery<{ conversation: Conversation; messages: Message[]; truncated: boolean; recorded: boolean }>({
     queryKey: ['chat-transcript', endpointId, conversationId],
     queryFn: () => endpointsApi.chatTranscript(endpointId, conversationId).then((r) => r.data?.data),
     refetchInterval: live ? 3000 : false,
   });
+  // Not recorded (0.36): the server deletes a message once both sides have it,
+  // so this panel keeps what it has seen, for as long as the page is open.
+  const kept = useRef<Map<string, Message>>(new Map());
+  const acked = useRef<Set<string>>(new Set());
+  const recorded = data?.recorded ?? true;
+  if (data && !recorded) for (const m of data.messages) kept.current.set(m.id, m);
+  const messages = !data ? [] : recorded ? data.messages : Array.from(kept.current.values());
+  const toAck = !data || recorded || !canAck || !live ? [] : data.messages.filter((m) => m.sender === 'END_USER' && !acked.current.has(m.id)).map((m) => m.id);
+  const ackKey = toAck.join(',');
+  useEffect(() => {
+    if (!ackKey) return;
+    const ids = ackKey.split(',');
+    ids.forEach((id) => acked.current.add(id));
+    endpointsApi.chatAck(endpointId, conversationId, ids).catch(() => ids.forEach((id) => acked.current.delete(id)));
+  }, [ackKey, endpointId, conversationId]);
   const end = useRef<HTMLDivElement>(null);
-  const count = data?.messages.length ?? 0;
+  const count = messages.length;
   useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }); }, [count]);
   if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
   if (isError || !data) return <p className="text-sm text-destructive">The transcript could not be loaded.</p>;
   return (
-    <div className="max-h-[420px] overflow-y-auto rounded-md border bg-muted/20 p-3 space-y-3" data-testid="chat-transcript">
+    <div className="max-h-[420px] overflow-y-auto rounded-md border bg-muted/20 p-3 space-y-3" data-testid="chat-transcript" data-recorded={recorded ? 'yes' : 'no'}>
+      {!recorded && (
+        <p className="text-xs text-muted-foreground" data-testid="chat-not-recorded-note">
+          This chat is not recorded. The server deletes each message once both sides have it; what you see here is this page&apos;s own copy and is gone when you leave it.
+          {!canAck && ' Replies are deleted only once the technician in the chat has seen them.'}
+        </p>
+      )}
       {data.truncated && <p className="text-xs text-muted-foreground">Showing the newest 500 messages.</p>}
-      {data.messages.length === 0 && <p className="text-sm text-muted-foreground">No messages yet.</p>}
-      {data.messages.map((m) => {
+      {messages.length === 0 && <p className="text-sm text-muted-foreground">{recorded ? 'No messages yet.' : 'No messages on this page yet.'}</p>}
+      {messages.map((m) => {
         const mine = m.sender === 'TECHNICIAN';
         return (
           <div key={m.id} className={mine ? 'flex flex-col items-end' : 'flex flex-col items-start'} data-testid="chat-message">
@@ -176,7 +207,13 @@ export function DeviceChatTab({ endpointId }: { endpointId: string }) {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            <Transcript endpointId={endpointId} conversationId={open.id} live />
+            <div className="text-xs text-muted-foreground" data-testid="chat-recorded" data-recorded={open.recorded ? 'yes' : 'no'}>
+              {open.recorded
+                ? `This chat is recorded: the transcript is kept for ${data.limits.retentionDays} days after it ends. The person at the computer is told so.`
+                : 'This chat is not recorded: messages are deleted once both sides have them, and everything left when it ends. The person at the computer is told so.'}
+              {open.startedBy === 'end_user' && ' The person at the computer started this chat from the tray.'}
+            </div>
+            <Transcript endpointId={endpointId} conversationId={open.id} live canAck={data.canSend} />
             {mayWrite ? (
               <form
                 className="space-y-2"
@@ -218,9 +255,14 @@ export function DeviceChatTab({ endpointId }: { endpointId: string }) {
         <Card>
           <CardContent className="pt-6 space-y-3 text-sm">
             <p>
-              Starting a chat opens a small window on this computer&apos;s desktop, headed with the business name and your
-              name. The person there can reply or close it. The computer picks the chat up at its next check-in,
-              normally within three minutes.
+              {data.support.via === 'tray'
+                ? <>Starting a chat opens the tray&apos;s chat window on this computer, headed with the business name and your name. The person there can reply, close it and reopen it from the tray icon. The computer learns of the chat at its next check-in, normally within three minutes.</>
+                : <>Starting a chat opens a small window on this computer&apos;s desktop, headed with the business name and your name. The person there can reply or close it. The computer picks the chat up at its next check-in, normally within three minutes.</>}
+            </p>
+            <p className="text-xs text-muted-foreground" data-testid="chat-record-new" data-recorded={data.recordNew ? 'yes' : 'no'}>
+              {data.recordNew
+                ? `A chat started now is recorded: its transcript is kept for ${data.limits.retentionDays} days after it ends.`
+                : 'A chat started now is not recorded: messages are deleted once both sides have them.'}
             </p>
             {data.lastSignedInUser && (
               <p className="text-xs text-muted-foreground">
@@ -243,7 +285,7 @@ export function DeviceChatTab({ endpointId }: { endpointId: string }) {
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">Earlier chats</CardTitle>
           <p className="text-[11px] text-muted-foreground">
-            Transcripts belong to the computer: anyone who can see it can read them. They are deleted {data.limits.retentionDays} days after the chat ends.
+            Transcripts belong to the computer: anyone who can see it can read them. They are deleted {data.limits.retentionDays} days after the chat ends. A chat that was not recorded keeps no transcript.
           </p>
         </CardHeader>
         <CardContent className="space-y-2">
@@ -253,10 +295,10 @@ export function DeviceChatTab({ endpointId }: { endpointId: string }) {
               <button type="button" className="flex w-full flex-wrap items-baseline justify-between gap-2 text-left text-sm" onClick={() => setViewing(viewing === c.id ? null : c.id)}>
                 <span>{time(c.createdAt)} · {c.technicianName}</span>
                 <span className="text-xs text-muted-foreground">
-                  {c.technicianMessages} sent · {c.endUserMessages} received · {c.presence.text}
+                  {c.technicianMessages} sent · {c.endUserMessages} received · {c.recorded ? '' : 'not recorded · '}{c.presence.text}
                 </span>
               </button>
-              {viewing === c.id && <div className="mt-2"><Transcript endpointId={endpointId} conversationId={c.id} live={false} /></div>}
+              {viewing === c.id && <div className="mt-2"><Transcript endpointId={endpointId} conversationId={c.id} live={false} canAck={false} /></div>}
             </div>
           ))}
         </CardContent>

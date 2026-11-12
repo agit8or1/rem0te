@@ -42,6 +42,12 @@
  * to a Business User; and at 375 px the device-list filters sit behind a
  * "Filters (n)" button that opens a sheet, while desktop keeps them inline.
  *
+ * 0.36 adds the tray's chat window, /assist, at the size the tray opens it
+ * and smaller, in the light and dark schemes (UI_COMBOS=assist runs only it):
+ * the one-time code leaving the address bar, the cookie, starting a chat,
+ * a technician's reply drawn as text, receipts, Enter to send, ending, and
+ * the used-link page on going back.
+ *
  * Any console error, uncaught exception, or unexpected failed request on a
  * page fails that page's check. The only failures expected are the 403
  * STEP_UP_REQUIRED answers the step-up flows provoke on purpose.
@@ -157,7 +163,7 @@ function startApi() {
     HBBS_PRESENCE_HOST: '127.0.0.2', I_KNOW_THIS_IS_NOT_PRODUCTION: '1',
     // Nothing in the background acts on this database while the browser looks at it.
     MONITOR_SWEEP: 'off', CLIENT_UPDATE_SWEEP: 'off', PATCH_POLICY_SWEEP: 'off', METRIC_SWEEP: 'off', AUDIT_SEALER: 'off',
-    RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off',
+    RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off', TRAY_SWEEP: 'off',
     // 0.35: the agent-silent fixture is reachable (isOnline) with an old heartbeat; with no hbbs here the stale sweep would take it offline within a minute.
     STALE_SWEEP: 'off',
     // 0.35 automatic snapshots: the fixtures' snapshots are the only ones, and
@@ -1586,6 +1592,109 @@ async function snapshotAutoUpdate(browser, f, vp) {
   }
 }
 
+/**
+ * 0.36: the tray's chat window, /assist, at the size the tray opens it (a
+ * 440 × 640 window: about 420 × 600 of page) and smaller (320 × 480), in the
+ * light and dark schemes the page takes from the system. A simulated signed
+ * tray mints the one-time code over the real device route; the browser opens
+ * /assist/open?c=… through the web server's rewrite exactly as WebView2
+ * would. Proves: the code leaves the address bar, the page loads with its
+ * strict CSP and no console error (a CSP violation is one), the person starts
+ * a chat, a technician's reply appears as text, receipts reach the server,
+ * Enter sends, ending takes two clicks, nothing scrolls sideways, and going
+ * back to the code's URL shows the used-link page, not the chat.
+ */
+async function assistWindow(browser, f) {
+  section('Tray chat window (/assist) at the tray\'s window size');
+  const secret = randomBytes(24).toString('hex');
+  const rid = String(100000000 + ((Math.random() * 899999999) | 0));
+  const name = `${TAG}-TRAY`.toUpperCase();
+  const ep = await prisma.endpoint.create({ data: {
+    tenantId: f.tenant.id, customerId: f.A.id, name, hostname: name, platform: 'Windows', osVersion: 'Windows 11 Pro', status: 'ACTIVE',
+    isOnline: true, isManaged: true, accessMode: 'COMPANY_WIDE', lastSeenAt: new Date(), deviceClass: 'WORKSTATION', agentVersion: '0.36.0',
+    updateChannel: 'signed', chatProtocol: 2, trayProtocol: 1,
+  } });
+  await prisma.rustdeskNode.create({ data: { tenantId: f.tenant.id, endpointId: ep.id, rustdeskId: rid, agentSecretHash: sha256(secret) } });
+  // The technician's side, straight to the API with a session of its own.
+  const techIp = ip();
+  const login = await fetch(`${API_ORIGIN}/api/v1/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': techIp }, body: JSON.stringify({ email: f.admin.email, password: PW }) });
+  const techCookie = (login.headers.get('set-cookie') ?? '').match(/access_token=[^;]+/)?.[0];
+  const tech = async (method, p, body) => {
+    await sleep(60);
+    const r = await fetch(`${API_ORIGIN}/api/v1${p}`, { method, headers: { 'content-type': 'application/json', 'x-forwarded-for': techIp, cookie: techCookie }, body: body ? JSON.stringify(body) : undefined });
+    return r.json().catch(() => ({}));
+  };
+  const sizes = [['tray window', { width: 420, height: 600 }, 'light'], ['small window', { width: 320, height: 480 }, 'dark']];
+  try {
+    for (const [what, viewport, scheme] of sizes) {
+      const label = `assist ${viewport.width}×${viewport.height} ${scheme}`;
+      const code = (await deviceReq('POST', '/tray/chat-code', { body: { rustdeskId: rid, agentSecret: secret, localUser: 'CORP\\frontdesk' } })).data?.code;
+      check(typeof code === 'string' && code.length === 43, `${label}: the simulated tray gets a one-time code`);
+      const ctx = await browser.newContext({ viewport, colorScheme: scheme, extraHTTPHeaders: { 'x-forwarded-for': ip() } });
+      try {
+        const page = await ctx.newPage();
+        instrument(page);
+        await page.goto(`${WEB}/assist/open?c=${encodeURIComponent(code)}`);
+        await page.locator('#start, #log').first().waitFor({ timeout: 15_000 }).catch(() => {});
+        await sleep(300);
+        check(new URL(page.url()).pathname === '/assist/chat' && !page.url().includes(code), `${label} (${what}): the code is gone from the address bar`, page.url());
+        const cookies = await ctx.cookies();
+        const c = cookies.find((k) => k.name === 'rem0te_assist');
+        check(c && c.httpOnly && c.sameSite === 'Strict' && c.path === '/assist' && !cookies.some((k) => k.name === 'access_token'), `${label}: an HttpOnly, SameSite=Strict cookie on /assist and no portal session`, JSON.stringify(cookies.map((k) => k.name)));
+        const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+        check(scheme === 'dark' ? lum(bg) < 0.25 : lum(bg) > 0.8, `${label}: the page follows the ${scheme} scheme`, bg);
+        check(await page.locator('#start').isVisible() && /Acme/.test(await page.locator('#brand').innerText()), `${label}: no chat yet — the start form, under the business's name`);
+        check(/recorded/.test(await page.locator('#recording').innerText()), `${label}: it says whether the chat is recorded`);
+
+        await page.locator('#start-text').fill(`Printer jammed ${what}`);
+        await page.locator('#start-send').click();
+        await page.locator('#compose').waitFor({ timeout: 10_000 }).catch(() => {});
+        check(await page.locator('#compose').isVisible() && /Printer jammed/.test(await page.locator('#log').innerText()), `${label}: starting shows the chat with the first message`);
+        const conv = await prisma.chatConversation.findFirst({ where: { endpointId: ep.id, status: 'OPEN' }, orderBy: { createdAt: 'desc' } });
+        check(conv?.startedBy === 'end_user' && !!conv.supportRequestId, `${label}: a chat started from the tray, with its support request`);
+
+        const reply = `<img src=x onerror=alert(1)> try turning it off and on ${what}`;
+        const sent = await tech('POST', `/endpoints/${ep.id}/chat/conversations/${conv.id}/messages`, { text: reply });
+        const mid = sent?.data?.message?.id;
+        const shown = await page.waitForFunction((t) => document.getElementById('log')?.innerText.includes(t), reply, { timeout: 15_000 }).then(() => true).catch(() => false);
+        check(shown && await page.locator('#log img').count() === 0, `${label}: the technician's reply appears, as text (no element made from it)`);
+        await page.bringToFront();
+        const receipt = await (async () => { for (let i = 0; i < 20; i++) { const m = mid && await prisma.chatMessage.findUnique({ where: { id: mid } }); if (m?.shownAt) return m; await sleep(500); } return null; })();
+        check(!!receipt?.shownAt, `${label}: the page reports the reply shown`);
+
+        await page.locator('#text').fill(`It worked ${what}`);
+        await page.locator('#text').press('Enter');
+        const back = await (async () => { for (let i = 0; i < 20; i++) { const n = await prisma.chatMessage.count({ where: { conversationId: conv.id, sender: 'END_USER', body: `It worked ${what}` } }); if (n) return n; await sleep(300); } return 0; })();
+        check(back === 1, `${label}: Enter sends the reply, stored once`);
+        const ov = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth - document.documentElement.clientWidth, body: document.body.scrollWidth - document.body.clientWidth }));
+        check(ov.doc <= 1 && ov.body <= 1, `${label}: nothing scrolls sideways`, JSON.stringify(ov));
+        const box = await page.locator('#send').boundingBox();
+        check(box && box.x + box.width <= viewport.width && box.y + box.height <= viewport.height, `${label}: Send is on screen without scrolling`, JSON.stringify(box));
+        await shot(page, `assist-${viewport.width}-${scheme}`);
+
+        await page.locator('#end').click();
+        check(/Yes, end it/.test(await page.locator('#end').innerText()), `${label}: End chat asks once more`);
+        await page.locator('#end').click();
+        await page.waitForFunction(() => /ended/.test(document.getElementById('note')?.innerText ?? ''), null, { timeout: 10_000 }).catch(() => {});
+        check(/You ended this chat/.test(await page.locator('#note').innerText()) && await page.locator('#text').isDisabled(), `${label}: ended — the page says so and stops taking text`);
+        check((await prisma.chatConversation.findUnique({ where: { id: conv.id } }))?.status === 'ENDED', `${label}: and the server has it ended`);
+
+        await page.goto(`${WEB}/assist/open?c=${encodeURIComponent(code)}`);
+        check(/already been used or has expired/.test(await page.locator('body').innerText()), `${label}: the code's URL again (history) shows the used-link page`);
+        const probs = takeProblems(page, (p) => p.kind === 'http' && p.status === 410 && /^\/assist\/open/.test(p.url));
+        check(probs.length === 0, `${label}: no console error (a CSP violation would be one), no failed request`, fmtProblems(probs));
+      } finally { await ctx.close(); }
+    }
+  } finally {
+    const convs = await prisma.chatConversation.findMany({ where: { endpointId: ep.id }, select: { supportRequestId: true } }).catch(() => []);
+    await prisma.supportRequest.deleteMany({ where: { id: { in: convs.map((c) => c.supportRequestId).filter(Boolean) } } }).catch(() => {});
+    await prisma.chatConversation.deleteMany({ where: { endpointId: ep.id } }).catch(() => {});
+    await prisma.assistSession.deleteMany({ where: { endpointId: ep.id } }).catch(() => {});
+    await prisma.assistCode.deleteMany({ where: { endpointId: ep.id } }).catch(() => {});
+    await prisma.endpoint.delete({ where: { id: ep.id } }).catch(() => {});
+  }
+}
+
 // ── Run ─────────────────────────────────────────────────────────────────────
 let copyDir = null;
 async function main() {
@@ -1624,6 +1733,7 @@ async function main() {
       await combo(browser, f, vp, theme);
     }
     for (const vp of ['desktop', 'phone']) if (!only.length || only.some((c) => c.startsWith(`${vp}/`))) await snapshotAutoUpdate(browser, f, vp);
+    if (!only.length || only.includes('assist')) await assistWindow(browser, f);
     if (only.length) { fail++; failures.push(`UI_COMBOS=${only.join(',')}: a partial run`); }
   } finally { await browser.close(); }
   await cleanup035(); await cleanup(); created.businesses = []; created.users = [];

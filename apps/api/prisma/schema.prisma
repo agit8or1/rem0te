@@ -168,6 +168,9 @@ enum ActivityAction {
   CHAT_STARTED
   CHAT_ENDED
   CHAT_PRUNED
+  CHAT_RECORDING_CHANGED
+  TRAY_PAIRED
+  TRAY_SELF_HELP
   ENDPOINT_AGENT_REINSTALL_REQUESTED
   ENDPOINT_DEVICE_SECRET_ACCEPTED
   ENDPOINT_RESTORED
@@ -583,8 +586,12 @@ model Customer {
   // Public support intake. The slug is random and unguessable: it is the only
   // thing that ties an anonymous request to a business, so it must not be a
   // name or an id. Regenerating it invalidates the old link.
-  supportIntakeEnabled Boolean @default(false)
-  supportIntakeSlug    String? @unique
+  supportIntakeEnabled Boolean  @default(false)
+  supportIntakeSlug    String?  @unique
+  // Chat recording (0.36): null = the platform default
+  // (PlatformSettings.chatRecordingDefault). Off: messages are relayed and
+  // deleted once both sides have them, and at the end of the chat.
+  chatRecording        Boolean?
 
   technicianAssignments TechnicianAssignment[]
   supportRequests       SupportRequest[]
@@ -593,8 +600,8 @@ model Customer {
   supportSessions SupportSession[]
   apiKeys         ApiKey[]
 
-  createdAt            DateTime             @default(now())
-  updatedAt            DateTime             @updatedAt
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
   actionJobs           ActionJob[]
   patchDeployments     PatchDeployment[]
   containmentPauses    ContainmentPause[]
@@ -651,13 +658,13 @@ model Site {
 // ─── Endpoints ────────────────────────────────────────────────────────────────
 
 model Endpoint {
-  id              String         @id @default(cuid())
-  tenantId        String?
-  tenant          Tenant?        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  customerId      String?
-  customer        Customer?      @relation(fields: [customerId], references: [id])
-  siteId          String?
-  site            Site?          @relation(fields: [siteId], references: [id])
+  id               String                @id @default(cuid())
+  tenantId         String?
+  tenant           Tenant?               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId       String?
+  customer         Customer?             @relation(fields: [customerId], references: [id])
+  siteId           String?
+  site             Site?                 @relation(fields: [siteId], references: [id])
   // Device groups (0.34: many, through EndpointGroupMember — 0.33's single
   // Endpoint.endpointGroupId was migrated into it and dropped).
   groupMemberships EndpointGroupMember[]
@@ -711,6 +718,13 @@ model Endpoint {
   // agent-status.json via an authenticated heartbeat. Null = this agent can't
   // chat. Self-reported: it decides only whether the portal offers a chat.
   chatProtocol         Int?
+  // The tray (0.36): the protocol the tray reports (signed: agent-status.json;
+  // standard: the heartbeat, once paired). A standard computer's tray holds a
+  // per-install key (TrayKey below), issued over the device secret.
+  trayProtocol         Int?
+  trayKeyId            String?   @unique
+  trayKeyHash          String?
+  trayPairedAt         DateTime?
 
   isManaged  Boolean   @default(false)
   isOnline   Boolean   @default(false)
@@ -739,6 +753,9 @@ model Endpoint {
   actionTargets     ActionTarget[]
   agentMigrations   AgentMigration[]
   chatConversations ChatConversation[]
+  assistCodes       AssistCode[]
+  assistSessions    AssistSession[]
+  selfHelpRuns      TraySelfHelpRun[]
 
   // Access mode: how the computer's remote-access authorization is scoped.
   //   ASSIGNED_USERS  → only users listed in ComputerAccess may connect
@@ -811,11 +828,11 @@ enum EndpointAccessMode {
 // of its own business's groups. An enrolment token's endpointGroupId is the
 // group a new device joins at claim, nothing more.
 model EndpointGroup {
-  id          String    @id @default(cuid())
+  id          String            @id @default(cuid())
   tenantId    String
-  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   customerId  String?
-  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer    Customer?         @relation(fields: [customerId], references: [id], onDelete: Cascade)
   name        String
   description String?
   createdById String?
@@ -828,7 +845,7 @@ model EndpointGroup {
   kind        EndpointGroupKind @default(STATIC)
   rule        Json?
 
-  members EndpointGroupMember[]
+  members              EndpointGroupMember[]
   /// 0.35: policies scoped to this group. They keep the group from being deleted.
   monitorRules         MonitorRule[]
   clientUpdatePolicies ClientUpdatePolicy[]
@@ -1295,6 +1312,8 @@ model DiagnosticRun {
   resultBytes Int?
   truncated   Boolean @default(false)
   error       String?
+  // 0.35: at most one open automatic run per key per computer is a partial
+  // unique index in migration 0059 (Prisma cannot express it).
 
   @@index([endpointId, status])
   @@index([endpointId, requestedAt])
@@ -1302,8 +1321,6 @@ model DiagnosticRun {
   @@index([status, expiresAt])
   @@index([endpointId, key, completedAt])
   @@index([requestedAt]) // 0.34 retention cutoff
-  // 0.35: at most one open automatic run per key per computer is a partial
-  // unique index in migration 0059 (Prisma cannot express it).
 }
 
 // ─── Technician Devices & Launcher ───────────────────────────────────────────
@@ -1447,11 +1464,11 @@ model SupportSessionEvent {
   // False when the event was recorded but changed nothing (late, duplicate in
   // effect, or not a legal transition from the current state).
   applied    Boolean   @default(true)
+  // 0.34 retention also has a partial index on ("timestamp") WHERE metadata
+  // IS NOT NULL (migration 0046), which Prisma's schema cannot express.
 
   @@unique([supportSessionId, dedupeKey])
   @@index([supportSessionId])
-  // 0.34 retention also has a partial index on ("timestamp") WHERE metadata
-  // IS NOT NULL (migration 0046), which Prisma's schema cannot express.
 }
 
 // ─── Notes ────────────────────────────────────────────────────────────────────
@@ -1668,6 +1685,11 @@ model PlatformSettings {
   snapshotServiceMinutes Int     @default(360)
   snapshotNetworkMinutes Int     @default(360)
   snapshotWatchMinutes   Int     @default(5)
+
+  // Chat recording (0.36): whether transcripts are kept, for a business that
+  // has not chosen (Customer.chatRecording null). Changing it needs fresh
+  // authentication and is audited (CHAT_RECORDING_CHANGED).
+  chatRecordingDefault Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1886,8 +1908,9 @@ model SupportRequest {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  events   SupportRequestEvent[]
-  sessions SupportSession[]
+  events      SupportRequestEvent[]
+  attachments SupportRequestAttachment[]
+  sessions    SupportSession[]
 
   @@index([customerId, status])
   @@index([status, createdAt])
@@ -2450,56 +2473,56 @@ enum ActionJobStatus {
 
 model ActionJob {
   /// 32 hex — the single-use job id bound into the signed plan.
-  id                String           @id
-  tenantId          String?
-  customerId        String
-  customer          Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  endpointId        String
-  endpoint          Endpoint         @relation(fields: [endpointId], references: [id], onDelete: Cascade)
-  actionId          String
-  actionVersion     Int
-  params            Json
-  reason            String
-  origin            String // technician | ai_suggestion
-  via               String // portal | clientst0r
-  ticketRef         String?
-  requestedById     String
-  status            ActionJobStatus  @default(AWAITING_APPROVAL)
-  statusReason      String?
-  risk              String
-  approvalsRequired Int
-  customerSignoff   Boolean
-  notBefore         DateTime
-  notAfter          DateTime
-  plan              Json
-  digest            String
-  approvalUrl       String
-  envelope          Json?
-  approvers         Json?
-  dispatchedAt      DateTime?
-  deliveries        Int              @default(0)
-  lastDeliveredAt   DateTime?
-  outcome           String?
-  result            Json?
-  resultAt          DateTime?
+  id                   String              @id
+  tenantId             String?
+  customerId           String
+  customer             Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  endpointId           String
+  endpoint             Endpoint            @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  actionId             String
+  actionVersion        Int
+  params               Json
+  reason               String
+  origin               String // technician | ai_suggestion
+  via                  String // portal | clientst0r
+  ticketRef            String?
+  requestedById        String
+  status               ActionJobStatus     @default(AWAITING_APPROVAL)
+  statusReason         String?
+  risk                 String
+  approvalsRequired    Int
+  customerSignoff      Boolean
+  notBefore            DateTime
+  notAfter             DateTime
+  plan                 Json
+  digest               String
+  approvalUrl          String
+  envelope             Json?
+  approvers            Json?
+  dispatchedAt         DateTime?
+  deliveries           Int                 @default(0)
+  lastDeliveredAt      DateTime?
+  outcome              String?
+  result               Json?
+  resultAt             DateTime?
   /// An uncertain outcome blocks any new request for this action on this
   /// computer until a person records what they found (POST /actions/:id/reconcile).
-  reconciledById    String?
-  reconciledAt      DateTime?
-  reconcileNote     String?
-  integrationPeer   String?
-  integrationKey    String?
+  reconciledById       String?
+  reconciledAt         DateTime?
+  reconcileNote        String?
+  integrationPeer      String?
+  integrationKey       String?
   // v0.27: one row per computer the signed plan names. endpointId above is
   // the first of them, kept for the single-computer views.
-  targets           ActionTarget[]
-  deploymentId      String?
-  deployment        PatchDeployment? @relation(fields: [deploymentId], references: [id], onDelete: SetNull)
-  ring              Int?
+  targets              ActionTarget[]
+  deploymentId         String?
+  deployment           PatchDeployment?    @relation(fields: [deploymentId], references: [id], onDelete: SetNull)
+  ring                 Int?
   // 0.34: the software deployment this ring plan belongs to (windows.software.*).
   softwareDeploymentId String?
   softwareDeployment   SoftwareDeployment? @relation(fields: [softwareDeploymentId], references: [id], onDelete: SetNull)
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
 
   @@unique([integrationPeer, integrationKey])
   @@index([deploymentId])
@@ -2547,7 +2570,7 @@ model ActionTarget {
   updatedAt       DateTime           @updatedAt
 
   // windows.script.run (0.34): what the script printed, kept 90 days.
-  scriptOutput    ScriptRunOutput?
+  scriptOutput ScriptRunOutput?
 
   @@unique([jobId, endpointId])
   @@index([endpointId, status])
@@ -2743,14 +2766,14 @@ enum AlertState {
 /// For a computer, the most specific rule with the same `key` wins, and a
 /// disabled one switches the inherited monitor off for that scope.
 model MonitorRule {
-  id          String        @id @default(cuid())
+  id          String         @id @default(cuid())
   scopeKey    String
   customerId  String?
-  customer    Customer?     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer    Customer?      @relation(fields: [customerId], references: [id], onDelete: Cascade)
   siteId      String?
-  site        Site?         @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  site        Site?          @relation(fields: [siteId], references: [id], onDelete: Cascade)
   endpointId  String?
-  endpoint    Endpoint?     @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  endpoint    Endpoint?      @relation(fields: [endpointId], references: [id], onDelete: Cascade)
   /// 0.35: a device-group monitor (scopeKey 'g:<groupId>'). The group must be
   /// this business's (trigger, 0057) and cannot be deleted while this exists.
   groupId     String?
@@ -2762,13 +2785,13 @@ model MonitorRule {
   key         String
   kind        MonitorKind
   name        String
-  enabled     Boolean       @default(true)
-  severity    AlertSeverity @default(WARNING)
+  enabled     Boolean        @default(true)
+  severity    AlertSeverity  @default(WARNING)
   params      Json
   createdById String
   updatedById String?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
   @@unique([scopeKey, key])
   @@index([customerId])
@@ -3011,12 +3034,12 @@ model IntegrationAlertEvent {
 /// the start crosses midnight and belongs to the day it starts on.
 /// A partial unique index (migration 0033) allows one business row per business.
 model ClientUpdatePolicy {
-  id                String   @id @default(cuid())
+  id                String         @id @default(cuid())
   tenantId          String
   customerId        String
-  customer          Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  siteId            String?  @unique
-  site              Site?    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  customer          Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  siteId            String?        @unique
+  site              Site?          @relation(fields: [siteId], references: [id], onDelete: Cascade)
   /// 0.35: a device-group policy. The group must be this business's (trigger,
   /// 0057) and cannot be deleted while this exists. Never both site and group.
   groupId           String?        @unique
@@ -3024,14 +3047,14 @@ model ClientUpdatePolicy {
   /// 0.35: group policies only, 1–999, 1 first; unique per business among
   /// group policies (partial index, 0057).
   priority          Int?
-  enabled           Boolean  @default(false)
+  enabled           Boolean        @default(false)
   timeZone          String
   windows           Json
-  skipActiveSession Boolean  @default(true)
-  skipLoggedOnUser  Boolean  @default(false)
+  skipActiveSession Boolean        @default(true)
+  skipLoggedOnUser  Boolean        @default(false)
   updatedById       String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
 
   @@index([customerId])
   @@index([enabled])
@@ -3425,32 +3448,38 @@ enum ChatSender {
 }
 
 model ChatConversation {
-  id         String   @id @default(cuid())
-  tenantId   String?
+  id               String   @id @default(cuid())
+  tenantId         String?
   // The computer's business when the chat started.
-  customerId String?
-  endpointId String
-  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  customerId       String?
+  endpointId       String
+  endpoint         Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
   // Optional link to a support request in the same business (validated on
   // write; no foreign key, so a deleted request leaves the transcript).
   supportRequestId String?
 
-  status ChatStatus @default(OPEN)
+  status         ChatStatus @default(OPEN)
   // Who started it, and the two names the desktop window shows, frozen at the
   // start so the person at the computer always sees who they are talking to.
-  startedById    String
+  // Null when the person at the computer started it from the tray (0.36).
+  startedById    String?
+  // technician | end_user (CHECK ChatConversation_started_by)
+  startedBy      String     @default("technician")
   technicianName String
   businessName   String
+  // Frozen at the start from the business's (or platform) setting: false means
+  // no transcript is kept (0.36, docs/tray.md).
+  recorded       Boolean    @default(true)
 
   // What the agent last reported: connecting, window_open, no_user,
   // window_failed, user_closed. Null until the computer picks the chat up.
-  deviceState     String?
-  deviceDetail    String?
-  deviceUser      String?
-  deviceStateAt   DateTime?
+  deviceState    String?
+  deviceDetail   String?
+  deviceUser     String?
+  deviceStateAt  DateTime?
   // Last time the computer polled this conversation.
-  deviceSeenAt    DateTime?
-  lastActivityAt  DateTime @default(now())
+  deviceSeenAt   DateTime?
+  lastActivityAt DateTime  @default(now())
 
   endedAt     DateTime?
   endedById   String?
@@ -3470,25 +3499,117 @@ model ChatConversation {
 }
 
 model ChatMessage {
-  id             String           @id @default(cuid())
-  conversationId String
-  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender         ChatSender
+  id               String           @id @default(cuid())
+  conversationId   String
+  conversation     ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender           ChatSender
   // TECHNICIAN: the user who wrote it. END_USER: null.
-  authorId       String?
+  authorId         String?
   // Display name at the time: the technician's name, or the Windows account
   // the agent reported for the person at the computer.
-  authorName     String
+  authorName       String
   // Plain text, at most 2,000 characters (also a CHECK constraint).
-  body           String
+  body             String
   // The agent's dedupe key for a reply it may post twice.
-  clientId       String?
-  createdAt      DateTime         @default(now())
+  clientId         String?
+  createdAt        DateTime         @default(now())
   // Technician messages only, each set only when the agent says so.
-  deliveredAt    DateTime?
-  shownAt        DateTime?
-  readAt         DateTime?
+  deliveredAt      DateTime?
+  shownAt          DateTime?
+  readAt           DateTime?
+  // END_USER messages (0.36): when a technician's panel confirmed it showed it.
+  // In a chat that is not recorded, that is when the message is deleted.
+  technicianSeenAt DateTime?
 
   @@unique([conversationId, clientId])
   @@index([conversationId, createdAt])
+}
+
+// ─── The tray (0.36) ─────────────────────────────────────────────────────────
+
+/// A one-time code the agent side mints (signed agent: the SYSTEM tray host
+/// with the device secret; standard agent: the tray with its tray key) and the
+/// tray opens as https://<portal>/assist/open?c=CODE. Exchanged at most once,
+/// within 60 s, for an AssistSession cookie; only its hash is stored.
+model AssistCode {
+  id             String    @id @default(cuid())
+  codeHash       String    @unique
+  endpointId     String
+  endpoint       Endpoint  @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  conversationId String?
+  localUser      String?
+  // signed | tray_key: which credential minted it
+  via            String
+  expiresAt      DateTime
+  usedAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([endpointId, createdAt])
+  @@index([expiresAt])
+}
+
+/// The /assist page's session: an HttpOnly cookie scoped to /assist, for one
+/// computer and at most one conversation, for at most two hours. Only its
+/// hash is stored.
+model AssistSession {
+  id             String    @id @default(cuid())
+  tokenHash      String    @unique
+  endpointId     String
+  endpoint       Endpoint  @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  conversationId String?
+  localUser      String?
+  via            String
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([endpointId])
+  @@index([expiresAt])
+}
+
+/// What the person at the computer attached to a support request from the
+/// tray: a screenshot (JPEG/PNG bytes, at most 700 KiB) or a resource-usage
+/// sample (JSON). Visible only to someone who can see the request AND the
+/// computer. Deleted with the request's contact details by retention.
+model SupportRequestAttachment {
+  id          String         @id @default(cuid())
+  requestId   String
+  request     SupportRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  // screenshot | usage (CHECK)
+  kind        String
+  contentType String
+  sizeBytes   Int
+  width       Int?
+  height      Int?
+  bytes       Bytes?
+  data        Json?
+  createdAt   DateTime       @default(now())
+
+  @@index([requestId])
+}
+
+/// One self-help tool the person at the computer ran from the tray: which,
+/// when, as which Windows account, and what came of it. The account name is
+/// kept here, never in the audit log.
+model TraySelfHelpRun {
+  id         String    @id @default(cuid())
+  tenantId   String?
+  customerId String?
+  endpointId String
+  endpoint   Endpoint  @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  // the closed catalog (CHECK TraySelfHelpRun_tool; tray-policy.ts SELF_HELP)
+  tool       String
+  localUser  String?
+  via        String
+  // running | succeeded | failed | refused (CHECK)
+  status     String
+  // Ran while the portal could not be reached, and reported afterwards.
+  offline    Boolean   @default(false)
+  summary    String?
+  detail     Json?
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  @@index([endpointId, startedAt])
+  @@index([startedAt])
 }
