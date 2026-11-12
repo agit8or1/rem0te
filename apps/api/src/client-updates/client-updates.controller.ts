@@ -61,4 +61,16 @@ export class ClientUpdatesController {
   async computers(@Actor() a: ActorContext, @Query() q: Record<string, unknown>) {
     return { success: true, data: await this.svc.computers(a, biz(q)) };
   }
+
+  /** 0.35. Removing a group's policy can hand its computers to an enabled one: fresh authentication. */
+  @Delete('policy/groups/:groupId')
+  async deleteGroupPolicy(@Actor() a: ActorContext, @Param('groupId') groupId: string, @Query() q: Record<string, unknown>, @Req() req: Request) {
+    return { success: true, data: await this.fresh(() => this.svc.deleteGroupPolicy(a, biz(q), groupId, this.isFresh(req))) };
+  }
+
+  /** 0.35. The effective policy for one computer and why. Capability: computers:view on that computer (checked in the service). */
+  @Get('computers/:endpointId/policy')
+  async endpointPolicy(@Actor() a: ActorContext, @Param('endpointId') endpointId: string) {
+    return { success: true, data: await this.svc.endpointPolicy(a, endpointId) };
+  }
 }

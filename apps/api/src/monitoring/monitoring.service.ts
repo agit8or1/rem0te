@@ -11,6 +11,7 @@ import { AlertEventsService } from './alert-events.service';
 import { EmailService } from '../email/email.service';
 import { alertMail } from '../email/mail-content';
 import { PublicUrlService } from '../platform/public-url.service';
+import { GroupMembershipService } from '../group-policy/membership.service';
 
 /**
  * Monitoring (v0.29): the evaluator, the sweep and the notifier.
@@ -38,6 +39,8 @@ type Policy = { scopeKey: string; levels: NotifyLevel[]; ticketing: { enabled: b
 
 const LIVE_KINDS = new Set(['DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH']);
 const SWEEP_KINDS = new Set(['OFFLINE', 'REBOOT_PENDING']);
+/** What the agent is asked about and reports on: the heartbeat's monitor block and the monitor report. */
+const AGENT_KINDS: ReadonlySet<string> = new Set(['SERVICE_STOPPED', 'EVENT_MATCH']);
 const RECHECK_MS = 60 * 60_000;
 /** The offline correlation hold. MONITOR_OFFLINE_HOLD_SECONDS overrides it, for tests. */
 const offlineHoldMs = () => { const s = Number(process.env.MONITOR_OFFLINE_HOLD_SECONDS); return Number.isFinite(s) && s >= 1 ? s * 1000 : OUTAGE.holdMs; };
@@ -54,6 +57,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
     private readonly events: AlertEventsService,
     private readonly email: EmailService,
     private readonly urls: PublicUrlService,
+    private readonly groups: GroupMembershipService,
   ) {}
 
   onModuleInit() {
@@ -68,10 +72,34 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
 
   private asRule(r: MonitorRule): RuleLike & MonitorRule { return r as unknown as RuleLike & MonitorRule; }
 
-  async rulesFor(ep: { id: string; customerId: string | null; siteId: string | null }) {
-    const scopes = scopesFor(ep);
-    const rows = await this.prisma.monitorRule.findMany({ where: { scopeKey: { in: scopes } } });
-    return effectiveRules(rows.map((r) => this.asRule(r)), scopes);
+  /**
+   * The effective monitors for one computer — optionally only those of
+   * `kinds`, which is what each heartbeat-time caller needs.
+   *
+   * 0.35: device-group monitors apply by the groups the computer is in NOW
+   * (group-policy/membership.service.ts), and membership is evaluated only
+   * for groups that can change the answer: those carrying a monitor whose
+   * key has a monitor of a wanted kind at some scope. That is exact, not a
+   * shortcut — a key with no monitor of a wanted kind anywhere cannot yield
+   * one, whichever scope wins it — and it keeps the heartbeat from
+   * evaluating fifty rule groups to find that it has no service monitors.
+   */
+  async rulesFor(ep: { id: string; customerId: string | null; siteId: string | null }, kinds?: ReadonlySet<string>) {
+    return (await this.resolveFor(ep, kinds)).rules;
+  }
+
+  /** rulesFor, plus the scope keys that applied (the device page lists them). */
+  async resolveFor(ep: { id: string; customerId: string | null; siteId: string | null }, kinds?: ReadonlySet<string>) {
+    const fixed = scopesFor(ep);
+    const rows = (await this.prisma.monitorRule.findMany({
+      where: { OR: [{ scopeKey: { in: fixed } }, ...(ep.customerId ? [{ customerId: ep.customerId, groupId: { not: null } }] : [])] },
+    })).map((r) => this.asRule(r));
+    const wantedKeys = kinds ? new Set(rows.filter((r) => kinds.has(r.kind)).map((r) => r.key)) : null;
+    const groupIds = [...new Set(rows.filter((r) => r.groupId && (!wantedKeys || wantedKeys.has(r.key))).map((r) => r.groupId!))];
+    const membership = groupIds.length ? await this.groups.snapshot(groupIds, [ep.id]) : null;
+    const scopes = scopesFor(ep, membership?.groupsOf(ep.id) ?? []);
+    const eff = effectiveRules(rows, scopes);
+    return { rules: kinds ? eff.filter((r) => kinds.has(r.kind)) : eff, scopes };
   }
 
   private async endpoint(endpointId: string): Promise<Ep | null> {
@@ -82,7 +110,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   async heartbeatConfig(endpointId: string) {
     const ep = await this.endpoint(endpointId);
     if (!ep) return null;
-    const rules = await this.rulesFor(ep);
+    const rules = await this.rulesFor(ep, AGENT_KINDS);
     const evKeys = rules.filter((r) => r.kind === 'EVENT_MATCH').map((r) => r.key);
     const states = evKeys.length ? await this.prisma.endpointMonitorState.findMany({ where: { endpointId, ruleKey: { in: evKeys } }, select: { ruleKey: true, checkedAt: true } }) : [];
     return agentMonitorConfig(rules, Object.fromEntries(states.map((s) => [s.ruleKey, s.checkedAt])));
@@ -94,7 +122,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   async ingestReport(endpointId: string, raw: unknown, now = new Date()) {
     const ep = await this.endpoint(endpointId);
     if (!ep) return { accepted: false, reason: 'unknown_endpoint' };
-    const rules = await this.rulesFor(ep);
+    const rules = await this.rulesFor(ep, AGENT_KINDS);
     const cfg = agentMonitorConfig(rules, {});
     const report = sanitizeReport(raw, { services: cfg?.services ?? [], eventKeys: (cfg?.events ?? []).map((e) => e.key) });
     await this.prisma.endpointInventory.upsert({
@@ -122,7 +150,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   async onLiveSample(endpointId: string, now = new Date()) {
     const ep = await this.endpoint(endpointId);
     if (!ep) return;
-    const rules = (await this.rulesFor(ep)).filter((r) => LIVE_KINDS.has(r.kind));
+    const rules = await this.rulesFor(ep, LIVE_KINDS);
     if (!rules.length) return;
     const live = await this.live(endpointId, ep.name);
     if (!live) return;
@@ -247,8 +275,11 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
     const sweepKeys = [...new Set(rules.filter((r) => SWEEP_KINDS.has(r.kind) || r.kind === 'EVENT_MATCH').map((r) => r.key))];
     const stateRows = sweepKeys.length ? await this.prisma.endpointMonitorState.findMany({ where: { ruleKey: { in: sweepKeys } } }) : [];
     const states = new Map(stateRows.map((s) => [`${s.endpointId}|${s.ruleKey}`, s as MonitorStateLike]));
+    // Group membership, once for this tick and never kept past it: the
+    // groups that carry a monitor, each evaluated over its whole business.
+    const membership = await this.groups.snapshot(rules.filter((r) => r.groupId).map((r) => r.groupId!));
     for (const ep of eps) {
-      const eff = effectiveRules(rules, scopesFor(ep));
+      const eff = effectiveRules(rules, scopesFor(ep, membership.groupsOf(ep.id)));
       for (const r of eff) {
         const dk = dedupKeyOf(r.key, ep.id);
         valid.add(dk);

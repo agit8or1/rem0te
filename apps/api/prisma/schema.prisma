@@ -827,6 +827,9 @@ model EndpointGroup {
   rule        Json?
 
   members EndpointGroupMember[]
+  /// 0.35: policies scoped to this group. They keep the group from being deleted.
+  monitorRules         MonitorRule[]
+  clientUpdatePolicies ClientUpdatePolicy[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2731,6 +2734,14 @@ model MonitorRule {
   site        Site?         @relation(fields: [siteId], references: [id], onDelete: Cascade)
   endpointId  String?
   endpoint    Endpoint?     @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  /// 0.35: a device-group monitor (scopeKey 'g:<groupId>'). The group must be
+  /// this business's (trigger, 0057) and cannot be deleted while this exists.
+  groupId     String?
+  group       EndpointGroup? @relation(fields: [groupId], references: [id], onDelete: NoAction)
+  /// 0.35: group monitors only, 1–999, 1 first. Unique per business and key
+  /// among group monitors (partial index, 0057), so a computer in two groups
+  /// with the same key is decided by this, never by row order.
+  priority    Int?
   key         String
   kind        MonitorKind
   name        String
@@ -2744,6 +2755,7 @@ model MonitorRule {
 
   @@unique([scopeKey, key])
   @@index([customerId])
+  @@index([groupId])
 }
 
 /// One problem on one computer (or one site, for SITE_OUTAGE). At most one
@@ -2988,6 +3000,13 @@ model ClientUpdatePolicy {
   customer          Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   siteId            String?  @unique
   site              Site?    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  /// 0.35: a device-group policy. The group must be this business's (trigger,
+  /// 0057) and cannot be deleted while this exists. Never both site and group.
+  groupId           String?        @unique
+  group             EndpointGroup? @relation(fields: [groupId], references: [id], onDelete: NoAction)
+  /// 0.35: group policies only, 1–999, 1 first; unique per business among
+  /// group policies (partial index, 0057).
+  priority          Int?
   enabled           Boolean  @default(false)
   timeZone          String
   windows           Json

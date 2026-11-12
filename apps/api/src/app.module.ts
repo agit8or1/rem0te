@@ -10,6 +10,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { RetentionModule } from './retention/retention.module';
 import { ChatModule } from './chat/chat.module';
 import { ClientUpdatesModule } from './client-updates/client-updates.module';
+import { GroupPolicyModule } from './group-policy/group-policy.module';
 import { HealthModule } from './health/health.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
@@ -106,6 +107,7 @@ import { IntegrationModule } from './integration/integration.module';
     RetentionModule,
     ChatModule,
     ClientUpdatesModule,
+    GroupPolicyModule,
     HealthModule,
     AuthModule,
     StepUpModule,

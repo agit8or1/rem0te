@@ -719,7 +719,7 @@ export const securityControlsApi = {
 };
 
 // Monitoring and alerts (0.29).
-export type MonitorScope = 'global' | 'business' | 'site' | 'endpoint';
+export type MonitorScope = 'global' | 'business' | 'site' | 'group' | 'endpoint';
 export type Severity = 'INFO' | 'WARNING' | 'CRITICAL';
 export type MonitorKindId = 'OFFLINE' | 'DISK_FREE' | 'CPU_HIGH' | 'MEMORY_HIGH' | 'SERVICE_STOPPED' | 'EVENT_MATCH' | 'REBOOT_PENDING';
 /** A notification destination: a webhook, or (0.34) a confirmed email recipient of the policy's own scope. */
@@ -736,10 +736,11 @@ export const monitoringApi = {
   acknowledge: (id: string, note?: string) => api.post(`/monitoring/alerts/${id}/acknowledge`, note ? { note } : {}),
   resolve: (id: string, note: string) => api.post(`/monitoring/alerts/${id}/resolve`, { note }),
   rules: (businessId?: string | null) => api.get('/monitoring/rules', bq(businessId)),
-  createRule: (data: { scope: MonitorScope; businessId?: string; siteId?: string; endpointId?: string; key: string; kind: MonitorKindId; name: string; enabled?: boolean; severity: Severity; params: Record<string, unknown> }) =>
+  /** 0.35: scope 'group' names groupId and a priority (1 first). */
+  createRule: (data: { scope: MonitorScope; businessId?: string; siteId?: string; groupId?: string; priority?: number; endpointId?: string; key: string; kind: MonitorKindId; name: string; enabled?: boolean; severity: Severity; params: Record<string, unknown> }) =>
     api.post('/monitoring/rules', data),
   addRecommended: (scope: 'global' | 'business', businessId?: string) => api.post('/monitoring/rules/recommended', businessId ? { scope, businessId } : { scope }),
-  updateRule: (id: string, data: { name?: string; enabled?: boolean; severity?: Severity; params?: Record<string, unknown> }) => api.patch(`/monitoring/rules/${id}`, data),
+  updateRule: (id: string, data: { name?: string; enabled?: boolean; severity?: Severity; params?: Record<string, unknown>; priority?: number }) => api.patch(`/monitoring/rules/${id}`, data),
   deleteRule: (id: string) => api.delete(`/monitoring/rules/${id}`),
   suppressions: (businessId?: string | null) => api.get('/monitoring/suppressions', bq(businessId)),
   createSuppression: (data: { scope: MonitorScope; businessId?: string; siteId?: string; endpointId?: string; ruleKeys: string[]; reason: string; startsAt?: string; endsAt: string }) =>
@@ -782,11 +783,15 @@ export const searchApi = {
 export const clientUpdatesApi = {
   policy: (businessId?: string | null) => api.get('/client-updates/policy', bq(businessId)),
   setPolicy: (data: {
-    businessId: string; siteId?: string | null; enabled: boolean; timeZone: string;
+    businessId: string; siteId?: string | null; groupId?: string | null; priority?: number | null; enabled: boolean; timeZone: string;
     windows: { days: number[]; start: string; end: string }[]; skipActiveSession: boolean; skipLoggedOnUser: boolean;
   }) => api.put('/client-updates/policy', data),
   removeSiteOverride: (businessId: string, siteId: string) => api.delete(`/client-updates/policy/sites/${siteId}`, bq(businessId)),
   computers: (businessId?: string | null) => api.get('/client-updates/computers', bq(businessId)),
+  // 0.35: device-group policies. Removing one needs fresh authentication.
+  removeGroupPolicy: (businessId: string, groupId: string) => api.delete(`/client-updates/policy/groups/${groupId}`, bq(businessId)),
+  /** The effective policy for one computer, and why (the device page). */
+  endpointPolicy: (endpointId: string) => api.get(`/client-updates/computers/${endpointId}/policy`),
 };
 
 // Outbound email (0.34). Saving the relay, and adding, re-sending or removing

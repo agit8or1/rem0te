@@ -8,13 +8,14 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { CAP } from '../rbac/capabilities';
 import { validatePeerUrl } from '../integration/peers';
 import {
-  type Destination, isEmailDestination, LIMITS, NotifyPolicyInput, parseParams, RECOMMENDED, RULE_KEY, RuleInput, RulePatch, scopeKeyOf, scopesFor, SEVERITIES,
+  type Destination, isEmailDestination, LIMITS, NotifyPolicyInput, parseParams, RECOMMENDED, RULE_KEY, RuleInput, RulePatch, scopeKeyOf, scopeOfKey, SEVERITIES,
 } from './engine';
 import { MonitoringService, VIEW_INCLUDE } from './monitoring.service';
 import { EmailService } from '../email/email.service';
 import { maskAddress } from '../email/mail-content';
 import { isMspActor, mayManageNotifications } from './notify-who';
 import { AlertEventsService } from './alert-events.service';
+import { GroupMembershipService } from '../group-policy/membership.service';
 
 const bad = (e: z.ZodError) => new BadRequestException({ code: 'INVALID_REQUEST', message: e.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ') });
 const ID = /^[A-Za-z0-9_-]{8,64}$/;
@@ -52,6 +53,7 @@ export class MonitoringAdminService {
     private readonly mon: MonitoringService,
     private readonly events: AlertEventsService,
     private readonly email: EmailService,
+    private readonly groups: GroupMembershipService,
   ) {}
 
   // ── Who ───────────────────────────────────────────────────────────────────
@@ -191,11 +193,26 @@ export class MonitoringAdminService {
   // ── Monitors ──────────────────────────────────────────────────────────────
 
   /** Resolve a requested scope into a scope key, checking the person may configure it. */
-  private async scopeFor(a: ActorContext, s: { scope: 'global' | 'business' | 'site' | 'endpoint'; businessId?: string; siteId?: string; endpointId?: string }) {
+  private async scopeFor(a: ActorContext, s: { scope: 'global' | 'business' | 'site' | 'group' | 'endpoint'; businessId?: string; siteId?: string; groupId?: string; endpointId?: string }) {
     if (s.scope === 'global') {
-      if (s.businessId || s.siteId || s.endpointId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'A global monitor names no business, site or computer.' });
+      if (s.businessId || s.siteId || s.endpointId || s.groupId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'A global monitor names no business, site, group or computer.' });
       if (!this.isMsp(a)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Global monitors are set by the MSP.' });
-      return { scopeKey: 'global', customerId: null as string | null, siteId: null as string | null, endpointId: null as string | null, tenantId: a.tenantId };
+      return { scopeKey: 'global', customerId: null as string | null, siteId: null as string | null, endpointId: null as string | null, groupId: null as string | null, tenantId: a.tenantId };
+    }
+    if (s.scope === 'group') {
+      // 0.35. The group must be a group of the business the request is about:
+      // the caller's own (or, for the MSP, the one named, else the group's).
+      // Another business's group is the same 404 as a made-up id.
+      if (!s.groupId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'groupId is required.' });
+      if (s.siteId || s.endpointId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'A group monitor names no site or computer.' });
+      let customerId = s.businessId ?? a.businessId ?? null;
+      if (!customerId && this.isMsp(a)) customerId = (await this.prisma.endpointGroup.findUnique({ where: { id: s.groupId }, select: { customerId: true } }).catch(() => null))?.customerId ?? null;
+      if (!customerId) throw new NotFoundException('Group not found');
+      if (!this.isMsp(a) && customerId !== a.businessId) throw new NotFoundException('Group not found');
+      const g = await this.groups.groupForPolicy(customerId, s.groupId);
+      this.assertConfigure(a, g.customerId);
+      const c = await this.prisma.customer.findUnique({ where: { id: g.customerId }, select: { tenantId: true } });
+      return { scopeKey: scopeKeyOf({ scope: 'group', id: g.id }), customerId: g.customerId, siteId: null, endpointId: null, groupId: g.id, tenantId: c?.tenantId ?? null };
     }
     if (s.scope === 'business') {
       const id = s.businessId ?? a.businessId;
@@ -203,24 +220,33 @@ export class MonitoringAdminService {
       const c = await this.prisma.customer.findUnique({ where: { id }, select: { id: true, tenantId: true } });
       if (!c) throw new NotFoundException('Business not found');
       this.assertConfigure(a, c.id);
-      return { scopeKey: scopeKeyOf({ scope: 'business', id: c.id }), customerId: c.id, siteId: null, endpointId: null, tenantId: c.tenantId };
+      return { scopeKey: scopeKeyOf({ scope: 'business', id: c.id }), customerId: c.id, siteId: null, endpointId: null, groupId: null, tenantId: c.tenantId };
     }
     if (s.scope === 'site') {
       if (!s.siteId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'siteId is required.' });
       const site = await this.prisma.site.findUnique({ where: { id: s.siteId }, select: { id: true, customerId: true, tenantId: true } });
       if (!site) throw new NotFoundException('Site not found');
       try { this.assertConfigure(a, site.customerId); } catch (e) { if (e instanceof ForbiddenException && !this.isMsp(a) && a.businessId !== site.customerId) throw new NotFoundException('Site not found'); throw e; }
-      return { scopeKey: scopeKeyOf({ scope: 'site', id: site.id }), customerId: site.customerId, siteId: site.id, endpointId: null, tenantId: site.tenantId };
+      return { scopeKey: scopeKeyOf({ scope: 'site', id: site.id }), customerId: site.customerId, siteId: site.id, endpointId: null, groupId: null, tenantId: site.tenantId };
     }
     if (!s.endpointId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'endpointId is required.' });
     const ep = await this.acl.assertEndpointInScope(a, s.endpointId, CAP.MONITORING_CONFIGURE);
     if (!ep.customerId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'That computer is not in a business yet.' });
     this.assertConfigure(a, ep.customerId);
-    return { scopeKey: scopeKeyOf({ scope: 'endpoint', id: ep.id }), customerId: ep.customerId, siteId: null, endpointId: ep.id, tenantId: ep.tenantId };
+    return { scopeKey: scopeKeyOf({ scope: 'endpoint', id: ep.id }), customerId: ep.customerId, siteId: null, endpointId: ep.id, groupId: null, tenantId: ep.tenantId };
   }
 
-  private ruleView(r: MonitorRule) {
-    return { id: r.id, scopeKey: r.scopeKey, scope: r.scopeKey === 'global' ? 'global' : ({ b: 'business', s: 'site', e: 'endpoint' } as Record<string, string>)[r.scopeKey[0]], businessId: r.customerId, siteId: r.siteId, endpointId: r.endpointId, key: r.key, kind: r.kind, name: r.name, enabled: r.enabled, severity: r.severity, params: r.params, updatedAt: r.updatedAt };
+  private ruleView(r: MonitorRule & { group?: { name: string } | null }) {
+    return {
+      id: r.id, scopeKey: r.scopeKey, scope: scopeOfKey(r.scopeKey), businessId: r.customerId, siteId: r.siteId, endpointId: r.endpointId,
+      groupId: r.groupId, priority: r.priority, group: r.groupId ? { id: r.groupId, name: r.group?.name ?? null } : null,
+      key: r.key, kind: r.kind, name: r.name, enabled: r.enabled, severity: r.severity, params: r.params, updatedAt: r.updatedAt,
+    };
+  }
+
+  /** A group monitor's priority must be free for its key in its business (the partial unique index says the same). */
+  private priorityTaken(key: string, priority: number) {
+    return new ConflictException({ code: 'PRIORITY_TAKEN', message: `Another device-group monitor called "${key}" in this business already has priority ${priority}. Each group monitor with the same key needs its own priority, so a computer in both groups is decided by it.` });
   }
 
   /** Rules at every scope this person can see in a business, plus the global ones (read-only below the MSP). */
@@ -228,7 +254,7 @@ export class MonitoringAdminService {
     const scope = this.configScope(a, businessId);
     const where: Prisma.MonitorRuleWhereInput = scope ? { OR: [{ scopeKey: 'global' }, { customerId: scope }] } : {};
     if (a.technician) where.AND = [{ OR: [{ endpointId: null }, { endpoint: this.acl.endpointRestrictionWhere(a, CAP.COMPUTERS_VIEW) }] }];
-    const rows = await this.prisma.monitorRule.findMany({ where, orderBy: [{ scopeKey: 'asc' }, { key: 'asc' }], take: 1000 });
+    const rows = await this.prisma.monitorRule.findMany({ where, orderBy: [{ scopeKey: 'asc' }, { key: 'asc' }], take: 1000, include: { group: { select: { name: true } } } });
     let mayConfigure = false;
     if (scope) { try { this.assertConfigure(a, scope); mayConfigure = true; } catch { /* read-only */ } }
     return {
@@ -243,18 +269,27 @@ export class MonitoringAdminService {
     const p = parseParams(d.data.kind, d.data.params);
     if (!p.ok) throw new BadRequestException({ code: 'INVALID_PARAMS', message: p.error });
     const s = await this.scopeFor(a, d.data);
+    if (s.groupId && d.data.priority === undefined) throw new BadRequestException({ code: 'PRIORITY_REQUIRED', message: 'A device-group monitor needs a priority (1 first): it decides between two groups a computer is in that both set this key.' });
+    if (!s.groupId && d.data.priority !== undefined) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Only a device-group monitor has a priority; the others are decided by how specific their scope is.' });
+    const priority = s.groupId ? d.data.priority! : null;
+    if (priority !== null && await this.prisma.monitorRule.findFirst({ where: { customerId: s.customerId, key: d.data.key, priority, groupId: { not: null } }, select: { id: true } })) throw this.priorityTaken(d.data.key, priority);
     const n = await this.prisma.monitorRule.count({ where: { scopeKey: s.scopeKey } });
     if (n >= LIMITS.rulesPerScope) throw new BadRequestException({ code: 'TOO_MANY', message: `At most ${LIMITS.rulesPerScope} monitors at one scope.` });
     const dup = () => new ConflictException({ code: 'KEY_EXISTS', message: `A monitor called "${d.data.key}" already exists at this scope. Change that one instead.` });
     if (await this.prisma.monitorRule.findUnique({ where: { scopeKey_key: { scopeKey: s.scopeKey, key: d.data.key } }, select: { id: true } })) throw dup();
     try {
       const r = await this.prisma.monitorRule.create({
-        data: { scopeKey: s.scopeKey, customerId: s.customerId, siteId: s.siteId, endpointId: s.endpointId, key: d.data.key, kind: d.data.kind, name: d.data.name, enabled: d.data.enabled, severity: d.data.severity, params: p.params as Prisma.InputJsonValue, createdById: a.userId },
+        data: { scopeKey: s.scopeKey, customerId: s.customerId, siteId: s.siteId, endpointId: s.endpointId, groupId: s.groupId, priority, key: d.data.key, kind: d.data.kind, name: d.data.name, enabled: d.data.enabled, severity: d.data.severity, params: p.params as Prisma.InputJsonValue, createdById: a.userId },
+        include: { group: { select: { name: true } } },
       });
-      await this.audit.log({ action: 'MONITOR_RULE_CHANGED', tenantId: s.tenantId ?? undefined, customerId: s.customerId ?? undefined, actorId: a.userId, actorIp: a.ip, resource: 'monitor_rule', resourceId: r.id, meta: { op: 'create', scope: s.scopeKey, key: r.key, kind: r.kind, enabled: r.enabled, severity: r.severity, params: p.params } });
+      await this.audit.log({ action: 'MONITOR_RULE_CHANGED', tenantId: s.tenantId ?? undefined, customerId: s.customerId ?? undefined, actorId: a.userId, actorIp: a.ip, resource: 'monitor_rule', resourceId: r.id, meta: { op: 'create', scope: s.scopeKey, key: r.key, kind: r.kind, enabled: r.enabled, severity: r.severity, params: p.params, ...(s.groupId ? { groupId: s.groupId, priority } : {}) } });
       return this.ruleView(r);
     } catch (e) {
-      if ((e as { code?: string }).code === 'P2002') throw dup();
+      if ((e as { code?: string }).code === 'P2002') {
+        if (await this.prisma.monitorRule.findUnique({ where: { scopeKey_key: { scopeKey: s.scopeKey, key: d.data.key } }, select: { id: true } })) throw dup();
+        if (priority !== null) throw this.priorityTaken(d.data.key, priority);
+        throw dup();
+      }
       throw e;
     }
   }
@@ -290,14 +325,25 @@ export class MonitoringAdminService {
     const d = RulePatch.safeParse(raw ?? {});
     if (!d.success) throw bad(d.error);
     const r = await this.ruleFor(a, id);
+    if (d.data.priority !== undefined && !r.groupId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Only a device-group monitor has a priority.' });
+    if (d.data.priority !== undefined && d.data.priority !== r.priority
+      && await this.prisma.monitorRule.findFirst({ where: { customerId: r.customerId, key: r.key, priority: d.data.priority, groupId: { not: null }, id: { not: r.id } }, select: { id: true } })) {
+      throw this.priorityTaken(r.key, d.data.priority);
+    }
     let params: Record<string, unknown> | undefined;
     if (d.data.params) {
       const p = parseParams(r.kind as never, d.data.params);
       if (!p.ok) throw new BadRequestException({ code: 'INVALID_PARAMS', message: p.error });
       params = p.params;
     }
-    const u = await this.prisma.monitorRule.update({ where: { id }, data: { ...(d.data.name ? { name: d.data.name } : {}), ...(d.data.enabled !== undefined ? { enabled: d.data.enabled } : {}), ...(d.data.severity ? { severity: d.data.severity } : {}), ...(params ? { params: params as Prisma.InputJsonValue } : {}), updatedById: a.userId } });
-    await this.audit.log({ action: 'MONITOR_RULE_CHANGED', customerId: r.customerId ?? undefined, actorId: a.userId, actorIp: a.ip, resource: 'monitor_rule', resourceId: id, meta: { op: 'update', scope: r.scopeKey, key: r.key, before: { enabled: r.enabled, severity: r.severity, params: r.params }, after: { enabled: u.enabled, severity: u.severity, params: u.params } } as never });
+    let u;
+    try {
+      u = await this.prisma.monitorRule.update({ where: { id }, include: { group: { select: { name: true } } }, data: { ...(d.data.name ? { name: d.data.name } : {}), ...(d.data.enabled !== undefined ? { enabled: d.data.enabled } : {}), ...(d.data.severity ? { severity: d.data.severity } : {}), ...(params ? { params: params as Prisma.InputJsonValue } : {}), ...(d.data.priority !== undefined ? { priority: d.data.priority } : {}), updatedById: a.userId } });
+    } catch (e) {
+      if ((e as { code?: string }).code === 'P2002' && d.data.priority !== undefined) throw this.priorityTaken(r.key, d.data.priority);
+      throw e;
+    }
+    await this.audit.log({ action: 'MONITOR_RULE_CHANGED', customerId: r.customerId ?? undefined, actorId: a.userId, actorIp: a.ip, resource: 'monitor_rule', resourceId: id, meta: { op: 'update', scope: r.scopeKey, key: r.key, before: { enabled: r.enabled, severity: r.severity, params: r.params, ...(r.groupId ? { priority: r.priority } : {}) }, after: { enabled: u.enabled, severity: u.severity, params: u.params, ...(r.groupId ? { priority: u.priority } : {}) } } as never });
     return this.ruleView(u);
   }
 
@@ -437,8 +483,10 @@ export class MonitoringAdminService {
     const ep = await this.acl.assertEndpointInScope(a, endpointId, CAP.COMPUTERS_VIEW);
     const full = await this.prisma.endpoint.findUnique({ where: { id: ep.id }, select: { id: true, customerId: true, siteId: true, accessMode: true, inventory: { select: { monitorReport: true, monitorReportedAt: true, software: true, softwareCount: true, collectedAt: true } } } });
     if (!full || !(await this.acl.canReachEndpoint(a, full, undefined, CAP.COMPUTERS_VIEW))) throw new NotFoundException('Computer not found');
-    const rules = await this.mon.rulesFor(full);
-    const scopes = scopesFor(full);
+    const { rules, scopes } = await this.mon.resolveFor(full);
+    // Names for the scopes a rule came from or beat, so the page can say
+    // "set for group Kiosks (priority 2), ahead of group Tills (priority 5)".
+    const named = await this.scopeNames(scopes);
     let alerts: ReturnType<MonitoringAdminService['view']>[] | null;
     try {
       const rows = await this.prisma.monitorAlert.findMany({ where: { AND: [this.alertWhere(a, full.customerId), { endpointId: ep.id }] }, include: VIEW_INCLUDE, orderBy: { lastSeenAt: 'desc' }, take: 50 });
@@ -446,16 +494,31 @@ export class MonitoringAdminService {
     } catch { alerts = null; }
     const changes = await this.prisma.endpointChange.findMany({ where: { endpointId: ep.id }, orderBy: { detectedAt: 'desc' }, take: 100 });
     return {
-      scopes, rules: rules.map((r) => ({ key: r.key, kind: r.kind, name: r.name, severity: r.severity, params: r.params, inheritedFrom: r.inheritedFrom, overrides: r.overrides, id: r.id })),
+      scopes, scopeNames: named,
+      rules: rules.map((r) => ({ key: r.key, kind: r.kind, name: r.name, severity: r.severity, params: r.params, inheritedFrom: r.inheritedFrom, priority: r.priority ?? null, overrides: r.overrides, outranked: r.outranked, id: r.id })),
       report: full.inventory?.monitorReport ?? null, reportedAt: full.inventory?.monitorReportedAt ?? null,
       alerts, changes, software: full.inventory?.software ?? null, softwareCount: full.inventory?.softwareCount ?? null, inventoryAt: full.inventory?.collectedAt ?? null,
+    };
+  }
+
+  private async scopeNames(scopes: string[]): Promise<Record<string, string>> {
+    const ids = (p: string) => scopes.filter((k) => k.startsWith(`${p}:`)).map((k) => k.slice(2));
+    const [b, s, g] = await Promise.all([
+      this.prisma.customer.findMany({ where: { id: { in: ids('b') } }, select: { id: true, name: true } }),
+      this.prisma.site.findMany({ where: { id: { in: ids('s') } }, select: { id: true, name: true } }),
+      this.prisma.endpointGroup.findMany({ where: { id: { in: ids('g') } }, select: { id: true, name: true } }),
+    ]);
+    return {
+      global: 'Global', ...Object.fromEntries(b.map((x) => [`b:${x.id}`, `business ${x.name}`])),
+      ...Object.fromEntries(s.map((x) => [`s:${x.id}`, `site ${x.name}`])), ...Object.fromEntries(g.map((x) => [`g:${x.id}`, `group ${x.name}`])),
+      ...Object.fromEntries(scopes.filter((k) => k.startsWith('e:')).map((k) => [k, 'this computer'])),
     };
   }
 
   /** For the preview on the rules page: what one computer would actually run. */
   async effectiveFor(a: ActorContext, endpointId: string) {
     const v = await this.endpointView(a, endpointId);
-    return { scopes: v.scopes, rules: v.rules };
+    return { scopes: v.scopes, scopeNames: v.scopeNames, rules: v.rules };
   }
 }
 

@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { apiError } from '@/components/security-controls/shared';
 import { AlertDetail, type AlertRow, SeverityBadge, StateBadge } from '@/components/monitoring/alerts';
 import { formatDate } from '@/lib/utils';
-import { ago, CHANGE_LABEL, describeMonitor, MONITOR_KIND_LABEL, openAlerts, SCOPE_LABEL } from './device-model';
+import { ago, CHANGE_LABEL, describeMonitor, MONITOR_KIND_LABEL, monitorSource, openAlerts } from './device-model';
 import { useMonitoringView } from './use-device-data';
 
 /**
@@ -83,7 +83,7 @@ export function DeviceMonitoringTab({ endpointId }: { endpointId: string }) {
                   <span className="text-xs text-muted-foreground">{describeMonitor(r.kind, r.params)}</span>
                   <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
                     <span>{r.severity.toLowerCase()}</span>
-                    <span>· set for {SCOPE_LABEL(r.inheritedFrom)}{r.overrides?.length ? `, replacing ${r.overrides.map(SCOPE_LABEL).join(', ')}` : ''}</span>
+                    <span data-testid="mon-source">· {monitorSource(r, data.scopeNames)}</span>
                   </span>
                 </li>
               ))}

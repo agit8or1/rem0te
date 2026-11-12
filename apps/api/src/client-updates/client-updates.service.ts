@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, type ClientUpdatePolicy } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -8,8 +8,9 @@ import { ContainmentService } from '../containment/containment.service';
 import { latestRustdeskVersion } from '../common/rustdesk-release';
 import { openSessionReason } from '../admin/session-evidence';
 import {
-  BLOCKER, blocker, effectivePolicy, HOLD_TEXT, policyHold, PolicyInput, policyWindow, ROLLOUT_OPEN, type HoldReason,
+  BLOCKER, blocker, effectivePolicy, explainPolicy, HOLD_TEXT, policyHold, PolicyInput, policyScope, policyWindow, resolvePolicy, ROLLOUT_OPEN, type HoldReason,
 } from './policy';
+import { GroupMembershipService, type Membership } from '../group-policy/membership.service';
 import { describeWindow, parseUpdateWindow, windowState } from './update-window';
 
 const ID = /^[A-Za-z0-9_-]{8,64}$/;
@@ -50,7 +51,16 @@ export class ClientUpdatesService {
     private readonly audit: AuditService,
     private readonly acl: AccessControlService,
     private readonly containment: ContainmentService,
+    private readonly groups: GroupMembershipService,
   ) {}
+
+  /**
+   * 0.35: device-group membership for this business's group policies, now —
+   * for `within` computers, or the whole business. Never kept between calls.
+   */
+  async membershipFor(policies: Pick<ClientUpdatePolicy, 'groupId'>[], within?: string[]): Promise<Membership> {
+    return this.groups.snapshot(policies.filter((p) => p.groupId).map((p) => p.groupId!), within);
+  }
 
   // ── Who ───────────────────────────────────────────────────────────────────
 
@@ -124,7 +134,7 @@ export class ClientUpdatesService {
     const w = policyWindow(p);
     const st = windowState(w, now);
     return {
-      id: p.id, siteId: p.siteId, enabled: p.enabled, timeZone: p.timeZone, windows: p.windows,
+      id: p.id, siteId: p.siteId, groupId: p.groupId, priority: p.priority, enabled: p.enabled, timeZone: p.timeZone, windows: p.windows,
       skipActiveSession: p.skipActiveSession, skipLoggedOnUser: p.skipLoggedOnUser,
       description: describeWindow(w), valid: !!w,
       window: { open: st.open, opensAt: st.opensAt, closesAt: st.closesAt },
@@ -137,17 +147,33 @@ export class ClientUpdatesService {
     this.assertView(a, customerId);
     const biz = await this.business(customerId);
     const now = new Date();
-    const [policies, sites, paused, target] = await Promise.all([
+    const [policies, sites, groups, paused, target] = await Promise.all([
       this.prisma.clientUpdatePolicy.findMany({ where: { customerId } }),
       this.prisma.site.findMany({ where: { customerId }, select: { id: true, name: true, timezone: true }, orderBy: { name: 'asc' } }),
+      this.prisma.endpointGroup.findMany({ where: { customerId }, select: { id: true, name: true, kind: true }, orderBy: [{ name: 'asc' }, { id: 'asc' }], take: 500 }),
       this.containment.blocking('updates', customerId),
       this.targetVersion(),
     ]);
     const refusal = this.editRefusal(a, customerId);
+    // Members of the groups that carry a policy, among the computers THIS
+    // person can see (never the raw total).
+    const visibleIds = (await this.prisma.endpoint.findMany({ where: { AND: [this.visible(a, customerId), { status: { not: 'ARCHIVED' } }] }, select: { id: true }, take: 10_000 })).map((e) => e.id);
+    const m = await this.membershipFor(policies, visibleIds);
+    const gp = (id: string) => policies.find((p) => p.groupId === id) ?? null;
     return {
       business: { id: biz.id, name: biz.name },
-      policy: this.view(policies.find((p) => p.siteId === null) ?? null, now),
+      policy: this.view(policies.find((p) => p.siteId === null && p.groupId === null) ?? null, now),
       sites: sites.map((s) => ({ ...s, override: this.view(policies.find((p) => p.siteId === s.id) ?? null, now) })),
+      // 0.35: device-group policies, most specific after a computer. Listed
+      // in precedence order (priority, 1 first), then groups without one.
+      groups: groups
+        .map((g) => {
+          const p = gp(g.id);
+          const use = p ? m.groups.get(g.id)?.use ?? 'ok' : null;
+          return { id: g.id, name: g.name, kind: g.kind === 'RULE' ? 'rule' : 'static', policy: this.view(p, now), members: p ? m.count(g.id) : null, use };
+        })
+        .sort((x, y) => (x.policy?.priority ?? Infinity) - (y.policy?.priority ?? Infinity) || (x.name.toLowerCase() < y.name.toLowerCase() ? -1 : x.name.toLowerCase() > y.name.toLowerCase() ? 1 : 0) || (x.id < y.id ? -1 : 1)),
+      precedence: 'A group policy beats a site override, which beats the business policy. A computer in several groups with a policy follows the one with the lowest priority number (1 first); two group policies of a business never share a priority.',
       target,
       containment: paused ? { paused: true, scope: paused.scope.toLowerCase(), reason: paused.reason } : { paused: false },
       may: { edit: refusal === null, reason: refusal },
@@ -189,6 +215,9 @@ export class ClientUpdatesService {
       where: { endpointId: { in: rows.map((r) => r.id) }, status: { in: [...ROLLOUT_OPEN] } },
       select: { endpointId: true },
     })).map((j) => j.endpointId));
+    const membership = await this.membershipFor(policies, rows.map((r) => r.id));
+    const siteName = new Map(rows.filter((r) => r.site).map((r) => [r.site!.id, r.site!.name]));
+    const groupName = (id: string) => membership.groups.get(id)?.name ?? id;
     const byIds = [...new Set(rows.map((r) => r.rustdeskNode?.updateRequestedById).filter((x): x is string => !!x))];
     const users = new Map((await this.prisma.user.findMany({ where: { id: { in: byIds } }, select: { id: true, firstName: true, lastName: true, email: true } }))
       .map((u) => [u.id, { id: u.id, name: [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email }]));
@@ -199,9 +228,15 @@ export class ClientUpdatesService {
       target,
       computers: rows.map((r) => {
         const n = r.rustdeskNode;
-        const p = effectivePolicy(policies, customerId, r.siteId);
+        const res = resolvePolicy(policies, { id: r.id, customerId, siteId: r.siteId, groupIds: membership.groupsOf(r.id) });
+        const p = res.winner;
         const st = (p && states.get(p.id)) || { open: false, opensAt: null, closesAt: null };
-        const policy = p ? { id: p.id, scope: p.siteId ? 'site' : 'business', enabled: p.enabled, window: { open: st.open, opensAt: st.opensAt, closesAt: st.closesAt } } : null;
+        const policy = p ? {
+          id: p.id, scope: policyScope(p), enabled: p.enabled, window: { open: st.open, opensAt: st.opensAt, closesAt: st.closesAt },
+          group: p.groupId ? { id: p.groupId, name: groupName(p.groupId), priority: p.priority } : null,
+          why: explainPolicy(res, { group: groupName, site: (id) => siteName.get(id) ?? id }),
+          alsoIn: res.ranked.slice(1).filter((x) => x.scope === 'group').map((x) => ({ id: x.groupId!, name: groupName(x.groupId!), priority: x.priority })),
+        } : null;
         const base = {
           id: r.id, name: r.name, site: r.site, platform: r.platform, isOnline: r.isOnline, lastSeenAt: r.lastSeenAt,
           version: n?.version ?? null, policy,
@@ -242,7 +277,11 @@ export class ClientUpdatesService {
   }
 
   private snapshot(p: ClientUpdatePolicy | null) {
-    return p ? { enabled: p.enabled, timeZone: p.timeZone, windows: p.windows, skipActiveSession: p.skipActiveSession, skipLoggedOnUser: p.skipLoggedOnUser } : null;
+    return p ? { enabled: p.enabled, timeZone: p.timeZone, windows: p.windows, skipActiveSession: p.skipActiveSession, skipLoggedOnUser: p.skipLoggedOnUser, ...(p.groupId ? { priority: p.priority } : {}) } : null;
+  }
+
+  private priorityTaken(priority: number) {
+    return new ConflictException({ code: 'PRIORITY_TAKEN', message: `Another device-group policy in this business already has priority ${priority}. Each needs its own, so a computer in both groups is decided by it.` });
   }
 
   async putPolicy(a: ActorContext, raw: unknown, fresh: boolean) {
@@ -258,25 +297,40 @@ export class ClientUpdatesService {
       throw new BadRequestException({ code: 'INVALID_WINDOW', message: (e as Error).message });
     }
     const siteId = input.siteId ?? null;
+    const groupId = input.groupId ?? null;
+    if (siteId && groupId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'A policy is for a site or for a device group, not both.' });
     if (siteId) await this.siteOf(customerId, siteId);
+    // 0.35: another business's group is the same 404 as a made-up id.
+    const group = groupId ? await this.groups.groupForPolicy(customerId, groupId) : null;
+    const priority = input.priority ?? null;
+    if (group && priority === null) throw new BadRequestException({ code: 'PRIORITY_REQUIRED', message: 'A device-group policy needs a priority (1 first): it decides between two groups a computer is in.' });
+    if (!group && priority !== null) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Only a device-group policy has a priority.' });
+    if (group && await this.prisma.clientUpdatePolicy.findFirst({ where: { customerId, priority, groupId: { not: null, notIn: [group.id] } }, select: { id: true } })) throw this.priorityTaken(priority!);
     if (input.enabled && !fresh) throw new FreshAuthNeeded();
     const biz = await this.business(customerId);
 
     const data = {
       enabled: input.enabled, timeZone: window.timeZone, windows: window.windows as unknown as Prisma.InputJsonValue,
       skipActiveSession: input.skipActiveSession, skipLoggedOnUser: input.skipLoggedOnUser, updatedById: a.userId,
+      ...(group ? { priority } : {}),
     };
-    const before = await this.prisma.clientUpdatePolicy.findFirst({ where: { customerId, siteId } });
-    const after = before
-      ? await this.prisma.clientUpdatePolicy.update({ where: { id: before.id }, data })
-      : await this.prisma.clientUpdatePolicy.create({ data: { ...data, tenantId: biz.tenantId, customerId, siteId } });
+    const before = await this.prisma.clientUpdatePolicy.findFirst({ where: group ? { customerId, groupId: group.id } : { customerId, siteId, groupId: null } });
+    let after: ClientUpdatePolicy;
+    try {
+      after = before
+        ? await this.prisma.clientUpdatePolicy.update({ where: { id: before.id }, data })
+        : await this.prisma.clientUpdatePolicy.create({ data: { ...data, tenantId: biz.tenantId, customerId, siteId, groupId: group?.id ?? null } });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002' && group) throw this.priorityTaken(priority!);
+      throw e;
+    }
     const cleared = await this.clearUnwanted(customerId);
 
     await this.audit.log({
       tenantId: biz.tenantId, customerId, actorId: a.userId, actorIp: a.ip,
       action: 'CLIENT_UPDATE_POLICY_CHANGED', resource: 'client_update_policy', resourceId: after.id,
       meta: {
-        scope: siteId ? 'site' : 'business', siteId, before: this.snapshot(before), after: this.snapshot(after),
+        scope: policyScope(after), siteId, ...(group ? { groupId: group.id, groupName: group.name } : {}), before: this.snapshot(before), after: this.snapshot(after),
         window: describeWindow(window), clearedQueued: cleared,
         ...(a.technician ? { viaTechnicianAssignment: true } : {}),
       },
@@ -305,6 +359,58 @@ export class ClientUpdatesService {
   }
 
   /**
+   * 0.35: remove a device group's policy. Its computers fall back to their
+   * site's or the business's policy, which may be on — so, like removing a
+   * site override, this needs fresh authentication.
+   */
+  async deleteGroupPolicy(a: ActorContext, requested: string | null | undefined, groupId: string, fresh: boolean) {
+    if (!ID.test(groupId)) throw new NotFoundException('Group not found');
+    const customerId = this.scope(a, requested);
+    this.assertEdit(a, customerId);
+    const before = await this.prisma.clientUpdatePolicy.findFirst({ where: { customerId, groupId } });
+    // Another business's group, a made-up id and a group with no policy here are one answer.
+    if (!before) throw new NotFoundException('This group has no policy');
+    if (!fresh) throw new FreshAuthNeeded();
+    const biz = await this.business(customerId);
+    await this.prisma.clientUpdatePolicy.delete({ where: { id: before.id } });
+    const cleared = await this.clearUnwanted(customerId);
+    await this.audit.log({
+      tenantId: biz.tenantId, customerId, actorId: a.userId, actorIp: a.ip,
+      action: 'CLIENT_UPDATE_POLICY_CHANGED', resource: 'client_update_policy', resourceId: before.id,
+      meta: { scope: 'group', groupId, before: this.snapshot(before), after: null, removedGroupPolicy: true, clearedQueued: cleared, ...(a.technician ? { viaTechnicianAssignment: true } : {}) },
+    });
+    return { removed: true, clearedQueued: cleared };
+  }
+
+  /**
+   * The effective policy for one computer, and why (0.35) — for the device
+   * page. Needs computers:view on that computer: assertEndpointInScope, then
+   * the visibility rule AND-ed with the id; anything else is a 404.
+   */
+  async endpointPolicy(a: ActorContext, endpointId: string) {
+    if (!ID.test(endpointId)) throw new NotFoundException('Computer not found');
+    await this.acl.assertEndpointInScope(a, endpointId, CAP.COMPUTERS_VIEW);
+    const ep = await this.prisma.endpoint.findFirst({
+      where: { AND: [this.acl.endpointVisibilityWhere(a), { id: endpointId }] },
+      select: { id: true, customerId: true, siteId: true, site: { select: { id: true, name: true } } },
+    });
+    if (!ep) throw new NotFoundException('Computer not found');
+    if (!ep.customerId) return { policy: null, considered: [], text: 'This computer is not in a business, so no update policy applies.' };
+    const policies = await this.prisma.clientUpdatePolicy.findMany({ where: { customerId: ep.customerId } });
+    const m = await this.membershipFor(policies, [ep.id]);
+    const res = resolvePolicy(policies, { id: ep.id, customerId: ep.customerId, siteId: ep.siteId, groupIds: m.groupsOf(ep.id) });
+    const now = new Date();
+    const names = { group: (id: string) => m.groups.get(id)?.name ?? id, site: (id: string) => (ep.site?.id === id ? ep.site.name : id) };
+    const label = (p: { scope: string; groupId?: string | null; siteId: string | null }) =>
+      p.scope === 'group' ? { scope: 'group', group: { id: p.groupId!, name: names.group(p.groupId!) } } : p.scope === 'site' ? { scope: 'site', site: ep.site } : { scope: 'business' };
+    return {
+      policy: res.winner ? { ...this.view(res.winner, now), ...label(res.winner) } : null,
+      considered: res.ranked.map((p) => ({ id: p.id, ...label(p), priority: p.priority ?? null, enabled: p.enabled, outcome: p.outcome.reason })),
+      text: res.winner ? explainPolicy(res, names) : 'No update policy applies: it updates only when someone clicks Update.',
+    };
+  }
+
+  /**
    * POLICY requests in this business whose computer is no longer governed by
    * an enabled policy are withdrawn: turning a policy off must stop what it
    * queued, not leave it waiting for a window that is no longer meant to
@@ -314,9 +420,11 @@ export class ClientUpdatesService {
     const policies = await this.prisma.clientUpdatePolicy.findMany({ where: { customerId } });
     const queued = await this.prisma.rustdeskNode.findMany({
       where: { updateRequestSource: 'POLICY', updateRequestedAt: { not: null }, endpoint: { customerId } },
-      select: { id: true, endpoint: { select: { siteId: true } } },
+      select: { id: true, endpointId: true, endpoint: { select: { siteId: true } } },
     });
-    const drop = queued.filter((n) => !effectivePolicy(policies, customerId, n.endpoint.siteId)?.enabled).map((n) => n.id);
+    if (!queued.length) return 0;
+    const m = await this.membershipFor(policies, queued.map((n) => n.endpointId));
+    const drop = queued.filter((n) => !effectivePolicy(policies, customerId, n.endpoint.siteId, m.groupsOf(n.endpointId))?.enabled).map((n) => n.id);
     if (!drop.length) return 0;
     const r = await this.prisma.rustdeskNode.updateMany({
       where: { id: { in: drop }, updateRequestSource: 'POLICY' },
@@ -340,7 +448,8 @@ export class ClientUpdatesService {
   ): Promise<HoldReason | null> {
     const ep = await this.prisma.endpoint.findUnique({ where: { id: node.endpointId }, select: { customerId: true, siteId: true } });
     const policies = ep?.customerId ? await this.prisma.clientUpdatePolicy.findMany({ where: { customerId: ep.customerId } }) : [];
-    const p = effectivePolicy(policies, ep?.customerId ?? null, ep?.siteId ?? null);
+    const m = await this.membershipFor(policies, [node.endpointId]);
+    const p = effectivePolicy(policies, ep?.customerId ?? null, ep?.siteId ?? null, m.groupsOf(node.endpointId));
     // Session evidence is only gathered when it can matter.
     const sessionOpen = !!(p?.enabled && p.skipActiveSession &&
       await openSessionReason(this.prisma, node.endpointId, facts.rustdeskSessions, now, true));
