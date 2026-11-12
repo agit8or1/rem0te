@@ -104,14 +104,16 @@ with their current member counts; the **Policy** column of the Computers table
 and the computer's own page say which policy governs each computer and why.
 See [Device-group policies](group-policies.md).
 
-![Settings → Client updates for one business: its policy, a site's override and each computer's state](screenshots/guide/client-updates.png)
+![Settings → Client updates for one business: its policy, a site's override, a device-group policy and each computer's state](screenshots/guide/client-updates.png)
 
 1. **Business** — the policy is per business.
 2. **The sweep notice** — shown when this server has `CLIENT_UPDATE_SWEEP=off`: policies are saved, nothing is queued.
 3. **The business policy** — on or off, the windows and their zone, the two skip rules.
 4. **A site override** — replaces the business policy for that site's computers.
-5. **Auto, waiting** — a computer the policy will update in its next window, with the reason it is held if one applies.
-6. **Not automatic** — a computer no policy covers, or one whose policy is off.
+5. **A device-group policy** (0.35) — here Harbor's *Remote depots*, priority 10, updating nightly; it beats the site
+   override and the business policy for its members (see [group-policies.md](group-policies.md)).
+6. **Auto, waiting** — a computer the policy will update in its next window, with the reason it is held if one applies.
+7. **Not automatic** — a computer no policy covers, or one whose policy is off.
 
 **The window.** Same rules as every other weekly window in Rem0te
 (`rbac/schedule.ts`): days are 0 = Sunday … 6 = Saturday, times are wall-clock

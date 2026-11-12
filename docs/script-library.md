@@ -25,10 +25,10 @@ exact hash to the approval signer's own allowlist, and two approvers approving e
 It doesn't schedule a script, run one on Linux or macOS, run one outside a plan, or collect more than 64 KB of output
 per stream.
 
-![The script library: the not-yet notice, the scope filter, a script and New script](screenshots/guide/script-library.png)
+![The script library: how a script runs, the scope filter, a script and New script](screenshots/guide/script-library.png)
 
-1. **The notice** — captured on 0.33, when it said running scripts was not available yet. From 0.34 the same
-   notice says how an approved version runs, and that it has not run on a real Windows computer.
+1. **How a script runs** — only an approved version runs, as a signed action approved twice on the signer; what is
+   proven, and that it has not yet run on a real Windows computer.
 2. **Scope** — global scripts, or one business's.
 3. **A script** — its latest version and review state.
 4. **New script** — writes version 1 as a draft.

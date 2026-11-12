@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Download, Fingerprint, KeyRound, Shield } from 'lucide-react';
+import { inkOn } from '@/lib/contrast';
 
 // The shared client turns every 401 into a reload of /login, which on this
 // page would wipe the reason a passkey was refused ("not registered here").
@@ -200,6 +201,12 @@ export default function LoginPage() {
 
   const title = branding?.portalTitle || 'Rem0te';
   const accentColor = branding?.accentColor || null;
+  // The header band is drawn on the accent (or the default blue when only a
+  // logo is set). Its text is black or white by luminance (0.36, the helper
+  // the sidebar header uses since 0.35): white vanished on a pale accent. An
+  // accent that is not a hex colour falls back to the default band.
+  const band = inkOn(accentColor) ? accentColor! : '#3B82F6';
+  const bandInk = inkOn(band)!;
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-muted/40 px-4">
@@ -210,7 +217,8 @@ export default function LoginPage() {
             {(branding?.logoUrl || accentColor) ? (
               <div
                 className="rounded-md px-4 py-3 flex items-center gap-3 -mx-1"
-                style={{ backgroundColor: accentColor ?? '#3B82F6' }}
+                style={{ backgroundColor: band, color: bandInk }}
+                data-accent-band
               >
                 {branding?.logoUrl ? (
                   <img
@@ -220,9 +228,9 @@ export default function LoginPage() {
                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                   />
                 ) : (
-                  <Shield className="h-6 w-6 text-white" />
+                  <Shield className="h-6 w-6" />
                 )}
-                <span className="text-white font-semibold">{title}</span>
+                <span className="font-semibold">{title}</span>
               </div>
             ) : (
               <div className="flex items-center gap-2">

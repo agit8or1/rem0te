@@ -312,3 +312,18 @@ rem0te 0.30.0.
 
 The schemas, fixtures and examples are in the [contract](contracts/ticket-rmm-v1/README.md).
 
+## Revision status
+
+| Revision | State |
+|---|---|
+| 2 | **Current.** What `/capabilities.contract_revision` reports |
+| 3 (P1–P10: capabilities list and diagnostic catalog, diagnostic requests and events, fix referrals and events, remote launch, handoff notes, `Idempotency-Key`, device health summary) | **Acknowledged by ClientSt0r on 2026-11-11, as proposed. Not built.** ClientSt0r confirmed that a handoff is a staff note in the computer's History with the ticket ref and nothing else (P7), and asked for two additions rem0te has not agreed to yet: signed remote-session started/ended events (P6, its R6) and per-field-group agent version and `observed_at` in the device summary (P10). `contract_revision` moves to 3 only when rem0te ships these items |
+| 4 (P11–P12: the device page's AI summary through ClientSt0r) | **Proposed, not agreed.** ClientSt0r's 2026-11-11 response does not address it |
+
+ClientSt0r also sent fourteen requests (R2–R16): how a peer handles fields from a newer revision, a
+technician-mapping probe, no pause reason in `CONTAINED` bodies, proposal-status events, more ticket-proposable
+actions, ticket state back, longer retry of a restarting gateway, structured alert metrics, diagnostics without
+AI, maintenance windows, account and software reads. None is agreed or built. The full record, with what ClientSt0r
+reports of its unreleased development branch and its own cross-peer test (99 passed, 3 failed, not reproduced
+here), is [INTEGRATION_COORDINATION.md](../INTEGRATION_COORDINATION.md) §6, §8, §9 and §9A.
+

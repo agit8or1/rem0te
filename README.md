@@ -242,9 +242,9 @@ dot.
 </tr>
 </table>
 
-**[→ See all 56 screenshots](docs/screenshots.md)** — the dashboard, search, the device list and
+**[→ See all 59 screenshots](docs/screenshots.md)** — the dashboard, search, the device list and
 every device tab, reports, the script library, patching, administration and configuration, in light
-and dark and at phone width. Captured from v0.33.
+and dark and at phone width. Captured from v0.36.
 
 ---
 

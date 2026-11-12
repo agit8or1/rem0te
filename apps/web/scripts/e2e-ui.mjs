@@ -42,6 +42,16 @@
  * to a Business User; and at 375 px the device-list filters sit behind a
  * "Filters (n)" button that opens a sheet, while desktop keeps them inline.
  *
+ * 0.36 adds: the login page's brand band and the public Quick Connect page's
+ * step numbers and download buttons reach 4.5:1 on a pale, a dark and the
+ * default accent; with a containment banner showing, the dashboard still fits
+ * 1440 × 900 without scrolling; and the dashboard map draws an agent-silent
+ * computer's marker amber, beside a green (online) and a grey (offline) one,
+ * with a Business Owner seeing only their own business's markers. The map
+ * resolves addresses through the API's own GeoipService against a fixture
+ * database this suite writes (apps/api/scripts/lib/mmdb-fixture.mjs) holding
+ * only RFC 5737 documentation networks — never the production GeoIP file.
+ *
  * Any console error, uncaught exception, or unexpected failed request on a
  * page fails that page's check. The only failures expected are the 403
  * STEP_UP_REQUIRED answers the step-up flows provoke on purpose.
@@ -103,6 +113,19 @@ const OUT_DIR = process.env.OUT_DIR ?? await mkdtemp(path.join(tmpdir(), 'rem0te
 const { createSmtpSink } = await import(path.join(API_DIR, 'scripts/lib/smtp-sink.mjs'));
 const { chatDevice } = await import(path.join(API_DIR, 'scripts/lib/chat-device.mjs'));
 const prisma = new PrismaClient();
+
+// 0.36: a GeoIP database of three documentation networks, one per connectivity
+// state, written here and handed to the API as GEOIP_DB_PATH. Without it the
+// API would read whatever is at the default path — on this host, production's.
+const { writeCityMmdb } = await import(path.join(API_DIR, 'scripts/lib/mmdb-fixture.mjs'));
+const GEO_DIR = mkdtempSync(path.join(tmpdir(), 'rem0te-ui-geo-'));
+const GEO = {
+  online: { cidr: '192.0.2.0/24', ip: '192.0.2.10', city: 'Online Town', lat: 47.6, lon: -122.3 },
+  silent: { cidr: '198.51.100.0/24', ip: '198.51.100.7', city: 'Silent Town', lat: 45.5, lon: -117.0 },
+  offline: { cidr: '203.0.113.0/24', ip: '203.0.113.7', city: 'Offline Town', lat: 43.6, lon: -110.2 },
+};
+const GEOIP_FILE = writeCityMmdb(path.join(GEO_DIR, 'fixture-city.mmdb'),
+  Object.values(GEO).map((g) => ({ ...g, region: 'Fixture', regionCode: 'FX', country: 'US', countryName: 'United States' })));
 
 let pass = 0, fail = 0; const failures = [];
 const check = (c, m, d = '') => { if (c) { pass++; console.log(`  \x1b[32m✓\x1b[0m ${m}`); } else { fail++; failures.push(`${m}${d ? ` — ${String(d).slice(0, 400)}` : ''}`); console.log(`  \x1b[31m✗\x1b[0m ${m}${d ? `\n      ${String(d).slice(0, 1500)}` : ''}`); } };
@@ -167,6 +190,8 @@ function startApi() {
     VERSION_FILE: path.join(ROOT, 'version.json'),
     // 0.35: the relay is this suite's SMTP sink on loopback, and the ClientSt0r peer its reference peer.
     SMTP_ALLOW_LOCAL_RELAY: 'loopback', INTEGRATION_PEERS_FILE: peer.file, INTEGRATION_CAPABILITIES_TTL_MS: '0',
+    // 0.36: the map's fixture GeoIP database (documentation networks only).
+    GEOIP_DB_PATH: GEOIP_FILE,
   };
   return start('api', process.execPath, [path.join(API_DIR, 'dist', 'main.js')], { cwd: API_DIR, env });
 }
@@ -255,9 +280,10 @@ async function seed() {
   // widest thing a real list holds.
   const main = await ep(A, `${TAG}-WS-01`, { siteId: site.id, description: 'Front desk workstation with a deliberately long description that must wrap rather than widen the page' });
   const others = [];
-  for (let i = 2; i <= 5; i++) others.push(await ep(A, `${TAG}-WS-0${i}`, { siteId: i % 2 ? site.id : null, isOnline: i !== 4, lastSeenAt: new Date(now - (i === 4 ? 3 * 86400_000 : 120_000)) }));
+  // 0.36: the offline one is the map's grey marker (Offline Town, in A).
+  for (let i = 2; i <= 5; i++) others.push(await ep(A, `${TAG}-WS-0${i}`, { siteId: i % 2 ? site.id : null, isOnline: i !== 4, lastSeenAt: new Date(now - (i === 4 ? 3 * 86400_000 : 120_000)), ...(i === 4 ? { ipAddress: GEO.offline.ip } : {}) }));
   const linux = await ep(A, `${TAG}-LNX-01`, { platform: 'Linux', osVersion: 'Ubuntu 24.04', agentVersion: '0.33.0' });
-  const birch = await ep(B, `${TAG}-BIRCH-ONLY`);
+  const birch = await ep(B, `${TAG}-BIRCH-ONLY`, { ipAddress: GEO.online.ip }); // 0.36: the map's green marker (Online Town, in B)
   // 0.35: the Linux computer reports, from its package manager, a pending restart (fresh scan).
   await prisma.endpointInventory.create({ data: { endpointId: linux.id, osCaption: 'Ubuntu 24.04 LTS', updatesCheckedAt: new Date(now - 3600_000), pendingUpdates: [], pendingUpdateCount: 0, rebootRequired: true } });
   // 0.35: a static group holding the main device, and a rule group (online computers) in A; B has a same-named rule group.
@@ -266,7 +292,8 @@ async function seed() {
   await prisma.endpointGroup.create({ data: { tenantId: tenant.id, customerId: B.id, name: `${TAG} Online`, kind: 'RULE', rule: { online: 'online' } } });
   void birch;
   // 0.35 (item 7): reachable through RustDesk (isOnline) with an agent silent for twelve days — in B, so A's counts are untouched.
-  const silent = await ep(B, `${TAG}-BIRCH-SILENT`, { lastSeenAt: new Date(now - 12 * 86400_000 - 3600_000) });
+  // 0.36: alone at Silent Town on the map, so that marker must be amber.
+  const silent = await ep(B, `${TAG}-BIRCH-SILENT`, { lastSeenAt: new Date(now - 12 * 86400_000 - 3600_000), ipAddress: GEO.silent.ip });
   // 0.35: a draft library script of A, so the script page itself is swept for its padding.
   const body = 'Get-Date';
   const script = await prisma.script.create({ data: { scope: 'BUSINESS', tenantId: tenant.id, customerId: A.id, name: `${TAG} Clock`, createdById: admin.id,
@@ -942,6 +969,130 @@ async function agentSilentUi(page, f, label) {
   await cleanCheck(page, `${label} agent silent`);
 }
 
+// ── 0.36 ────────────────────────────────────────────────────────────────────
+
+const FILL = { online: 'rgb(16, 185, 129)', agent_silent: 'rgb(245, 158, 11)', offline: 'rgb(100, 116, 139)' }; // emerald-500, amber-500, slate-500
+/** The marker drawn for a fixture place, or null: its state, its computed fill, and whether it is on screen. */
+async function marker(page, city) {
+  const m = page.locator(`[data-testid="dashboard-map"] circle[data-place="${city}"]`);
+  if (!(await m.count())) return null;
+  return m.first().evaluate((el) => { const r = el.getBoundingClientRect(); return { state: el.getAttribute('data-connectivity'), fill: getComputedStyle(el).fill, w: r.width, x: r.x, y: r.y }; });
+}
+
+/**
+ * The dashboard map's markers, resolved through the API's GeoipService from
+ * the fixture database: an agent-silent computer alone at a place is amber,
+ * never green; the online and offline ones beside it are green and grey; the
+ * tooltip says "agent silent". Then a Business Owner of A sees A's marker and
+ * none of B's.
+ */
+async function mapMarkers(page, label) {
+  await go(page, '/dashboard');
+  await page.locator('[data-testid="dashboard-map"]').waitFor({ timeout: 20_000 });
+  await page.locator(`[data-testid="dashboard-map"] circle[data-place="${GEO.silent.city}"]`).waitFor({ timeout: 20_000 }).catch(() => {});
+  const [s, o, x] = [await marker(page, GEO.silent.city), await marker(page, GEO.online.city), await marker(page, GEO.offline.city)];
+  check(s?.state === 'agent_silent' && s.fill === FILL.agent_silent && s.w > 0,
+    `${label}: the map draws the agent-silent computer's marker (${GEO.silent.city}) amber, not green`, JSON.stringify(s));
+  check(o?.state === 'online' && o.fill === FILL.online && x?.state === 'offline' && x.fill === FILL.offline,
+    `${label}: beside it the online computer's marker is green and the offline one's grey`, JSON.stringify({ o, x }));
+  // The tooltip, from hovering the amber marker itself.
+  await page.locator(`[data-testid="dashboard-map"] circle[data-place="${GEO.silent.city}"]`).hover({ force: true }).catch(() => {});
+  const tip = page.locator('[data-testid="dashboard-map"] .bg-popover');
+  await tip.waitFor({ timeout: 5_000 }).catch(() => {});
+  const tipText = (await tip.innerText().catch(() => '')).replace(/\s+/g, ' ');
+  check(tipText.includes(GEO.silent.city) && /1 computer · 0 online · 1 agent silent/.test(tipText),
+    `${label}: hovering it says "1 computer · 0 online · 1 agent silent"`, tipText);
+  await cleanCheck(page, `${label} map markers`);
+}
+async function mapMarkersOwner(page, label) {
+  await go(page, '/dashboard');
+  await page.locator('[data-testid="dashboard-map"]').waitFor({ timeout: 20_000 });
+  await page.locator(`[data-testid="dashboard-map"] circle[data-place="${GEO.offline.city}"]`).waitFor({ timeout: 20_000 }).catch(() => {});
+  const [s, o, x] = [await marker(page, GEO.silent.city), await marker(page, GEO.online.city), await marker(page, GEO.offline.city)];
+  check(x?.state === 'offline' && s === null && o === null,
+    `${label}: a Business Owner of A sees A's marker (${GEO.offline.city}) and neither of B's`, JSON.stringify({ s, o, x }));
+}
+
+/**
+ * With a containment banner showing, the dashboard still fits 1440 × 900:
+ * it is sized to the viewport less the top bar AND the banner
+ * (--containment-banner-h), so neither the document nor <main> scrolls and
+ * every panel stays inside the window. The pause is on business B and lives
+ * only for this check.
+ */
+async function dashboardBanner(browser, f, theme, label) {
+  const pause = await prisma.containmentPause.create({ data: {
+    scope: 'BUSINESS', customerId: f.B.id, kinds: ['updates'], reason: `UI suite ${TAG}: dashboard layout under a banner`, setById: f.admin.id, setBy: 'msp',
+  } });
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, extraHTTPHeaders: { 'x-forwarded-for': ip() } });
+  await ctx.addInitScript((t) => { try { localStorage.setItem('theme', t); localStorage.removeItem('dashboard.map'); } catch { /* */ } }, theme);
+  try {
+    const tag = `${label} 1440×900 with a containment banner`;
+    const page = await signIn(ctx, f.admin.email, tag, theme);
+    await go(page, '/dashboard');
+    const banner = page.locator('[data-testid="containment-banner"]');
+    await banner.waitFor({ timeout: 20_000 });
+    await page.locator('[data-testid="dashboard-grid"]').waitFor({ timeout: 20_000 });
+    await page.locator('[data-testid="dashboard-map"]').waitFor({ timeout: 10_000 });
+    await settled(page);
+    const m = await page.evaluate(() => {
+      const main = document.querySelector('main');
+      const b = document.querySelector('[data-testid="containment-banner"]').getBoundingClientRect();
+      const panels = [...document.querySelectorAll('[data-testid="dashboard-grid"] > *')].map((el) => { const r = el.getBoundingClientRect(); return { id: el.getAttribute('data-testid'), bottom: Math.round(r.bottom) }; });
+      return { doc: document.documentElement.scrollHeight, vh: innerHeight, mainScroll: main.scrollHeight, mainClient: main.clientHeight, banner: Math.round(b.height),
+        varH: getComputedStyle(document.documentElement).getPropertyValue('--containment-banner-h').trim(), panels };
+    });
+    check(m.banner > 0 && Math.abs(parseFloat(m.varH) - m.banner) <= 1, `${tag}: the banner (${m.banner} px) publishes its height as --containment-banner-h (${m.varH})`, JSON.stringify(m));
+    check(m.doc <= m.vh && m.mainScroll <= m.mainClient + 1, `${tag}: the dashboard still fits — the document (${m.doc} ≤ ${m.vh}) and the page (${m.mainScroll} ≤ ${m.mainClient}) do not scroll`, JSON.stringify(m));
+    check(m.panels.length >= 7 && m.panels.every((p) => p.bottom <= m.vh + 1), `${tag}: all ${m.panels.length} panels are inside the viewport`, JSON.stringify(m.panels));
+    await page.screenshot({ path: path.join(OUT_DIR, `dashboard-banner-1440x900-${theme}.png`) });
+    await cleanCheck(page, `${tag} dashboard`);
+  } finally {
+    await ctx.close();
+    await prisma.containmentPause.delete({ where: { id: pause.id } }).catch(() => {});
+  }
+}
+
+/**
+ * The signed-out pages drawn on the branding accent — the login page's brand
+ * band and the public Quick Connect page's step numbers (and download
+ * buttons, when a client is configured) — pick black or white by luminance:
+ * 4.5:1 on a pale, a dark and the default accent. Quick Connect is switched
+ * on for the check and put back.
+ */
+async function accentPages(browser, f, theme, label) {
+  const qc = await prisma.platformSettings.findUnique({ where: { id: 'singleton' }, select: { quickConnectEnabled: true } });
+  await prisma.platformSettings.upsert({ where: { id: 'singleton' }, create: { id: 'singleton', quickConnectEnabled: true }, update: { quickConnectEnabled: true } });
+  const ctx = await newContext(browser, 'desktop', theme);
+  const page = await ctx.newPage();
+  instrument(page);
+  try {
+    for (const accent of ['#FDE68A', '#1E3A8A', '#3B82F6']) {
+      await setAccent(f.tenant.id, accent);
+      const want = `rgb(${parseInt(accent.slice(1, 3), 16)}, ${parseInt(accent.slice(3, 5), 16)}, ${parseInt(accent.slice(5, 7), 16)})`;
+      await go(page, '/login');
+      const band = page.locator('[data-accent-band]');
+      await band.waitFor({ timeout: 15_000 }).catch(() => {});
+      const b = await band.evaluate((el) => ({ bg: getComputedStyle(el).backgroundColor, title: getComputedStyle(el.querySelector('.font-semibold') ?? el).color, icon: getComputedStyle(el.querySelector('svg') ?? el).color })).catch(() => null);
+      const rt = b ? contrast(b.title, b.bg) : 0, ri = b ? contrast(b.icon, b.bg) : 0;
+      check(b?.bg === want && rt >= 4.5 && ri >= 4.5, `${label}: on accent ${accent} the login page's brand band title is ${rt.toFixed(2)}:1 and its mark ${ri.toFixed(2)}:1 (WCAG AA is 4.5:1)`, JSON.stringify(b));
+      await go(page, '/quick');
+      const inks = page.locator('[data-accent-ink]');
+      await inks.first().waitFor({ timeout: 15_000 }).catch(() => {});
+      const q = await inks.evaluateAll((els) => els.map((el) => ({ bg: getComputedStyle(el).backgroundColor, ink: getComputedStyle(el).color, text: el.textContent.trim().slice(0, 30) })));
+      const worst = q.length ? Math.min(...q.map((x) => contrast(x.ink, x.bg))) : 0;
+      check(q.length >= 4 && q.every((x) => x.bg === want) && worst >= 4.5,
+        `${label}: on accent ${accent} Quick Connect's ${q.length} step numbers and buttons are at least ${worst.toFixed(2)}:1`, JSON.stringify(q));
+      if (accent === '#FDE68A') await shot(page, `${label}-quick-pale-accent`);
+    }
+    await cleanCheck(page, `${label} login and Quick Connect on branding accents`);
+  } finally {
+    await ctx.close();
+    await restoreBranding();
+    await prisma.platformSettings.update({ where: { id: 'singleton' }, data: { quickConnectEnabled: qc?.quickConnectEnabled ?? false } }).catch(() => {});
+  }
+}
+
 /** At 375 px the filters are behind "Filters (n)" in a sheet; on desktop they stay inline. */
 async function filtersSheet(page, vp, label) {
   await go(page, '/endpoints');
@@ -1076,6 +1227,7 @@ async function apiKeys(browser, f, vp, theme, label) {
     await go(page, '/dashboard');
     const dash = await page.locator('main').innerText();
     check(/Linux is waiting for a restart/.test(dash) && !/Windows is waiting for a restart/.test(dash), `${label}: the dashboard says "Linux is waiting for a restart" for the Linux computer`, dash.match(/.{0,80}waiting for a restart.{0,40}/)?.[0] ?? '(no restart line)');
+    if (vp === 'desktop') await mapMarkersOwner(page, label);
     await go(page, '/reports/patch-compliance');
     check(await page.locator('[data-testid="schedule-report"]').isVisible(), `${label}: a Business Owner is offered "Schedule this report"`);
     await cleanCheck(page, `${label} owner dashboard and report`);
@@ -1097,6 +1249,7 @@ async function combo(browser, f, vp, theme) {
     await devicePageGroups(page, f, vp, label);
     await filtersSheet(page, vp, label);
     await agentSilentUi(page, f, label);
+    if (vp === 'desktop') await mapMarkers(page, label);
     await savedViewAndBulk(page, f, vp, label);
     await palette(page, f, vp, label);
     await addDevice(page, f, vp, label);
@@ -1109,6 +1262,10 @@ async function combo(browser, f, vp, theme) {
   await apiKeys(browser, f, vp, theme, label);
   if (theme === 'light') await memberChecks(browser, f, vp, theme, label);
   await dashboardFit(browser, f, vp, theme, label);
+  if (vp === 'desktop') {
+    await dashboardBanner(browser, f, theme, label);
+    await accentPages(browser, f, theme, label);
+  }
 }
 
 // ── 0.35: the 0.34 screens, driven ──────────────────────────────────────────
@@ -1649,6 +1806,7 @@ main()
     if (fail) for (const p of procs) console.log(`\n── ${p.label} log (tail)\n${p.log.slice(-4000)}`);
     if (copyDir) rmSync(copyDir, { recursive: true, force: true });
     smtp.server.close(); peer.server.close(); rmSync(peer.dir, { recursive: true, force: true });
+    rmSync(GEO_DIR, { recursive: true, force: true });
     console.log(`\nScreenshots: ${OUT_DIR}`);
     console.log(`${fail ? '\x1b[31m' : '\x1b[32m'}${pass} passed, ${fail} failed\x1b[0m`);
     if (failures.length) { for (const x of failures) console.log(`  - ${x}`); process.exit(1); }
