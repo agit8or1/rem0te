@@ -451,6 +451,11 @@ async function shellChecks(page, vp, label) {
   // A tap outside closes it.
   await trigger.click();
   await drawer.waitFor({ state: 'visible' });
+  // Radix's DismissableLayer attaches its outside-pointerdown listener in a
+  // setTimeout(0) after the dialog mounts, so a tap sent the instant the
+  // drawer is visible can land before anything is listening — which is what
+  // failed on a CI runner. Let a few tasks and two frames pass first.
+  await page.evaluate(() => new Promise((r) => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(r)), 50)));
   await page.mouse.click(360, 600);
   await drawer.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
   check(!(await drawer.isVisible()), `${label}: a tap outside closes it`);
