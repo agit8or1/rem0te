@@ -238,6 +238,21 @@ device page's "last seen" stays the agent's own check-in so a dead agent is
 still visible. If hbbs cannot be asked, liveness falls back to heartbeat only.
 `deploy/scripts/hbbs-probe.py` still exists to test the full punch-hole path.
 
+A second, different question — *has hbbs ever accepted a registration from
+this ID?* — is answered from hbbs's peer table (`db_v2.sqlite3`, read-only;
+`RUSTDESK_DB_PATH` overrides the path). It is the `rustdeskRegistered` field of
+an authenticated heartbeat response, which the Windows installer polls before
+it will report success, and the "has registered before" line in a computer's
+diagnostics. Until 0.34 every heartbeat started a `sqlite3` process for it.
+Since 0.34 one `sqlite3` reads every digits-only peer ID at most once per
+`HBBS_PEER_CACHE_SECONDS` (default 10, clamped to 1–30) and heartbeats in that
+window answer from memory. The window is the only staleness: a newly
+registered or deleted peer is reflected within it, a snapshot is never used
+after it, and a failed read answers *unknown* (`null`) for everyone rather than
+falling back to an older snapshot — so an unreadable or missing database
+behaves as before, and is not re-read on every heartbeat to learn the same
+thing.
+
 ---
 
 ## Paths

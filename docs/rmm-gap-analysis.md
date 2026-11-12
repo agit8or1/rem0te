@@ -77,7 +77,10 @@ bundled into `/docs`. Integration work is tracked separately in
   monitoring or client-update policies to a group.
 - ~~Server sizing guidance by endpoint count~~ — done in 0.33: [server-sizing.md](server-sizing.md), from measured
   heartbeat cost and row sizes (I). It found that one API process is near its measured limit at 5,000 computers,
-  mostly because every heartbeat starts a `sqlite3` process for the hbbs presence lookup.
+  mostly because every heartbeat starts a `sqlite3` process for the hbbs presence lookup. ~~That lookup~~ — fixed in
+  0.34: one shared read of hbbs's peer table per 10 s window (`hbbs-peer-snapshot.ts`, invariant §36,
+  `e2e-presence-cache.mjs`), which roughly halves API CPU per heartbeat and leaves 5,000 computers with headroom on one
+  process (measured on a synthetic fleet, not a real one). Still not implemented: running more than one API process.
 - ~~Data retention ("nothing that grows is ever pruned", server-sizing 0.33)~~ — done in 0.34:
   [data-retention.md](data-retention.md) (U, I). Not implemented: archiving rows before they are deleted,
   per-business windows, pruning the ClientSt0r job and alert-event outboxes (needs the peer to agree a horizon),

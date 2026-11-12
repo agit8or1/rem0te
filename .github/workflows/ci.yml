@@ -202,6 +202,12 @@ jobs:
       # report coverage, and the table inventory (the audit chain is evidence).
       - name: Data retention tests
         run: node apps/api/scripts/unit-retention.mjs
+      # The shared hbbs peer snapshot (0.34): never used past its window,
+      # measured from the start of its read; a failed read answers null and
+      # never an older snapshot; the window clamp; the digits-only query
+      # against a real scratch sqlite database (sqlite3 is on the runner).
+      - name: hbbs peer snapshot tests
+        run: node apps/api/scripts/unit-hbbs-peer-snapshot.mjs
 
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it

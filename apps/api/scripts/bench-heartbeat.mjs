@@ -143,7 +143,9 @@ async function main() {
       }
     }, { timeout: 120_000 });
   }
-  execFileSync('sqlite3', [hbbsDb, `CREATE TABLE peer(id TEXT PRIMARY KEY); ${devs.map((d) => `INSERT INTO peer VALUES('${d.rid}');`).join('')}`]);
+  // On stdin: one argument holding 5,000 INSERTs is over Linux's 128 KB
+  // per-argument limit (E2BIG), which capped the 0.33 runs below 3,500.
+  execFileSync('sqlite3', [hbbsDb], { input: `CREATE TABLE peer(id TEXT PRIMARY KEY);\nBEGIN;\n${devs.map((d) => `INSERT INTO peer VALUES('${d.rid}');`).join('\n')}\nCOMMIT;\n` });
 
   api = spawn(process.execPath, [path.join(dist, 'main.js')], {
     env: {

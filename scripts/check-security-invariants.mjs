@@ -1691,6 +1691,49 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'run-e2e.sh must run dynamic-groups; ci.yml unit-dynamic-groups');
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 36. The shared hbbs peer snapshot (0.34). Whether hbbs has ever registered a
+//     RustDesk ID decides whether the Windows installer may report success
+//     (`rustdeskRegistered`), and it used to be one sqlite3 process per
+//     heartbeat. It is now one read shared for a short window, and the window
+//     is the only staleness allowed: a snapshot is never consulted after it
+//     (age measured from when its read started, and a clock that went
+//     backwards is stale), the window is clamped to 30 s whatever is
+//     configured, a failed read answers null and discards the older snapshot
+//     rather than falling back to it, the query keeps digit IDs only (so a
+//     peer ID with a newline cannot add a second "ID" to the output), and
+//     nothing else on the heartbeat path spawns sqlite3.
+{
+  const snap = read('apps/api/src/enrollment/hbbs-peer-snapshot.ts');
+  const en = read('apps/api/src/enrollment/enrollment.service.ts');
+  const maxW = /export const MAX_WINDOW_MS = ([0-9_]+);/.exec(snap);
+  check('the peer snapshot window is clamped to at most 30 s',
+    !!maxW && Number(maxW[1].replace(/_/g, '')) <= 30_000
+      && /return Math\.min\(MAX_WINDOW_MS, Math\.max\(MIN_WINDOW_MS, Math\.round\(n\)\)\);/.test(snap)
+      && /this\.windowMs = clampWindowMs\(windowMs\);/.test(snap),
+    'MAX_WINDOW_MS ≤ 30000 and the constructor must clamp the configured window');
+  check('a peer snapshot is used only inside its window, measured from the start of its read',
+    /const age = this\.now\(\) - s\.startedAt;\s*\n(?:\s*\/\/[^\n]*\n)*\s*return age >= 0 && age < this\.windowMs;/.test(snap)
+      && /const startedAt = this\.now\(\);\s*\n\s*this\.loads\+\+;\s*\n\s*this\.inflight = this\.load\(\)/.test(snap),
+    'fresh() must be age >= 0 && age < windowMs, with startedAt taken before load() is called');
+  check('an expired or unreadable peer snapshot never answers from an older copy',
+    /if \(this\.fresh\(this\.snap\)\) return this\.snap;\s*\n(?:\s*\/\/[^\n]*\n)*\s*this\.snap = null;/.test(snap)
+      && /\.then\(\(ids\) => \(\{ startedAt, ids \}\), \(\) => \(\{ startedAt, ids: null \}\)\)/.test(snap)
+      && /return s\.ids === null \? null : s\.ids\.has\(rustdeskId\);/.test(snap),
+    'drop the expired snapshot before re-reading; a rejected read is ids: null, answered as null');
+  check('the peer snapshot query and parser keep 6–15 digit IDs only',
+    /PEER_SNAPSHOT_SQL =\s*\n?\s*"SELECT id FROM peer WHERE length\(id\) BETWEEN 6 AND 15 AND id NOT GLOB '\*\[\^0-9\]\*';"/.test(snap)
+      && /export const PEER_ID_RE = \/\^\[0-9\]\{6,15\}\$\/;/.test(snap)
+      && /if \(PEER_ID_RE\.test\(id\)\) ids\.add\(id\);/.test(snap)
+      && /if \(!PEER_ID_RE\.test\(rustdeskId\)\) return null;/.test(snap),
+    'the SQL must refuse non-digit IDs and both the parser and the lookup must apply PEER_ID_RE');
+  check('the heartbeat asks hbbs registration only through the shared snapshot',
+    (en.match(/'sqlite3'/g) ?? []).length === 1
+      && /async peerRegisteredWithHbbs\(rustdeskId: string\): Promise<boolean \| null> \{\s*\n\s*return this\.hbbsPeers\.has\(rustdeskId\);\s*\n\s*\}/.test(en)
+      && /\[`file:\$\{dbPath\}\?mode=ro`, PEER_SNAPSHOT_SQL\]/.test(en),
+    'one sqlite3 call in enrollment.service.ts, read-only, running PEER_SNAPSHOT_SQL, and peerRegisteredWithHbbs delegating to it');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);
