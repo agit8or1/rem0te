@@ -209,12 +209,22 @@ jobs:
       # report coverage, and the table inventory (the audit chain is evidence).
       - name: Data retention tests
         run: node apps/api/scripts/unit-retention.mjs
+
       # The shared hbbs peer snapshot (0.34): never used past its window,
       # measured from the start of its read; a failed read answers null and
       # never an older snapshot; the window clamp; the digits-only query
       # against a real scratch sqlite database (sqlite3 is on the runner).
       - name: hbbs peer snapshot tests
         run: node apps/api/scripts/unit-hbbs-peer-snapshot.mjs
+
+      # Software deployment (0.34): the closed install/uninstall params and
+      # their charsets (package id, version, hash, the three detection forms),
+      # version comparison as the agent does it, compliance from evidence with
+      # the 14-day staleness rule, the winget-pkgs manifest reader and
+      # installer choice, the ring gate, and that WINGET_MANIFEST_BASE is
+      # honoured only for a loopback http URL.
+      - name: Software deployment tests
+        run: node apps/api/scripts/unit-software.mjs
 
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it

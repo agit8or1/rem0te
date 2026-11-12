@@ -17,11 +17,16 @@
  * scripts. It cannot run them yet, and its page says so. Reports joined in 0.32; each report
  * shows only for the capability of the data it summarises (computers:view or
  * monitoring:alerts), the same rule the API applies.
+ *
+ * 0.34 made Automation a hub: the script library and the software catalog
+ * (allowlisted winget packages, deployed ring by ring, each ring approved on
+ * the approval signer). Reports gained software compliance. Both show for
+ * computers:view, the capability the software routes require.
  */
 import type { LucideIcon } from 'lucide-react';
 import {
   Activity, BarChart3, BellRing, Building2, Cpu, WifiOff, Download, FileCode2, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
-  Monitor, MonitorCheck, MonitorX, PackageCheck, PlayCircle, RefreshCw, Settings, Shield, ShieldCheck, Siren,
+  Monitor, MonitorCheck, MonitorX, Package, PackageCheck, PlayCircle, RefreshCw, Settings, Shield, ShieldCheck, Siren,
   UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock,
 } from 'lucide-react';
 import { CAP, type Capability } from '@/lib/auth';
@@ -83,11 +88,14 @@ export const NAV: NavSection[] = [
     items: [{ href: '/alerts', label: 'Alerts', icon: Siren, show: (c) => c.can(CAP.ALERTS_VIEW) }],
   },
   {
-    id: 'automation', label: 'Automation', icon: FileCode2, kind: 'link',
-    items: [{
-      href: '/automation/scripts', label: 'Script library', icon: FileCode2,
-      show: (c) => c.can(CAP.SCRIPTS_AUTHOR) || c.can(CAP.SCRIPTS_REVIEW) || c.isIndependentReviewer,
-    }],
+    id: 'automation', label: 'Automation', icon: FileCode2, kind: 'hub',
+    items: [
+      {
+        href: '/automation/scripts', label: 'Script library', icon: FileCode2,
+        show: (c) => c.can(CAP.SCRIPTS_AUTHOR) || c.can(CAP.SCRIPTS_REVIEW) || c.isIndependentReviewer,
+      },
+      { href: '/automation/software', label: 'Software catalog', icon: Package, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
+    ],
   },
   {
     id: 'patching', label: 'Patching', icon: ShieldCheck, kind: 'link',
@@ -110,6 +118,7 @@ export const NAV: NavSection[] = [
       { href: '/reports/agent-coverage', label: 'Agent coverage', icon: Cpu, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
       { href: '/reports/alert-frequency', label: 'Alert frequency', icon: BellRing, show: (c) => c.can(CAP.ALERTS_VIEW) },
       { href: '/reports/offline-time', label: 'Offline time', icon: WifiOff, show: (c) => c.can(CAP.ALERTS_VIEW) },
+      { href: '/reports/software-compliance', label: 'Software compliance', icon: Package, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
     ],
     also: ['/reports'],
   },

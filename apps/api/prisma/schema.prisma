@@ -274,6 +274,13 @@ enum ActivityAction {
   SECURITY_ALERT_RAISED
   // 0.34 data retention: one entry per sweep pass that deleted or trimmed anything
   RETENTION_PRUNED
+  // 0.34 software deployment (winget allowlist).
+  SOFTWARE_CATALOG_CREATED
+  SOFTWARE_CATALOG_UPDATED
+  SOFTWARE_CATALOG_ARCHIVED
+  SOFTWARE_DEPLOYMENT_CREATED
+  SOFTWARE_DEPLOYMENT_UPDATED
+  SOFTWARE_RING_REQUESTED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -574,6 +581,8 @@ model Customer {
   monitorSuppressions  MonitorSuppression[]
   clientUpdatePolicies ClientUpdatePolicy[]
   scripts              Script[]
+  softwareEntries      SoftwareCatalogEntry[]
+  softwareDeployments  SoftwareDeployment[]
   patchPolicies        PatchPolicy[]
   endpointGroups       EndpointGroup[]
   savedViews           SavedView[]
@@ -2432,11 +2441,15 @@ model ActionJob {
   deploymentId      String?
   deployment        PatchDeployment? @relation(fields: [deploymentId], references: [id], onDelete: SetNull)
   ring              Int?
+  // 0.34: the software deployment this ring plan belongs to (windows.software.*).
+  softwareDeploymentId String?
+  softwareDeployment   SoftwareDeployment? @relation(fields: [softwareDeploymentId], references: [id], onDelete: SetNull)
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
   @@unique([integrationPeer, integrationKey])
   @@index([deploymentId])
+  @@index([softwareDeploymentId])
   @@index([endpointId, status])
   @@index([customerId, createdAt])
   @@index([status])
@@ -3087,4 +3100,103 @@ model ScriptRunOutput {
 
   @@index([createdAt])
   @@index([endpointId, createdAt])
+}
+
+// ─── Software deployment (0.34) ─────────────────────────────────────────────
+// A catalog of allowlisted winget packages, each pinned to one version and
+// one installer SHA-256, and deployments of one entry ring by ring. Nothing
+// is uploaded: the computer downloads from winget's own source, hashes the
+// installer itself and refuses a mismatch (docs/software-deployment.md).
+
+enum SoftwareCatalogScope {
+  GLOBAL
+  BUSINESS
+}
+
+/// Where the pinned installer hash came from.
+enum SoftwareHashSource {
+  /// Read from the public winget-pkgs manifest at entry time (bounded GET, no credentials).
+  WINGET_PKGS
+  /// Typed in by the person who made the entry.
+  ADMIN_PASTED
+}
+
+model SoftwareCatalogEntry {
+  id              String               @id @default(cuid())
+  scope           SoftwareCatalogScope
+  tenantId        String?
+  // Null exactly when scope is GLOBAL (CHECK in 0051).
+  customerId      String?
+  customer        Customer?            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// The winget package identifier, charset-checked (actions/catalog.ts PACKAGE_ID_RE).
+  packageId       String
+  /// What people see; never sent to a computer.
+  name            String
+  publisher       String?
+  /// The one version a plan may name.
+  version         String
+  /// Lower-case hex SHA-256 of the installer winget downloads.
+  installerSha256 String
+  hashSource      SoftwareHashSource
+  /// The manifest the hash was read from, and the SHA-256 of its bytes (WINGET_PKGS only).
+  manifestUrl     String?
+  manifestSha256  String?
+  /// The installer the manifest names, for people (never fetched by rem0te).
+  installerUrl    String?
+  architecture    String?
+  /// The closed detection rule (actions/catalog.ts Detection).
+  detection       Json
+  notes           String?
+  /// Bumped on every change: a deployment records the revision it signed.
+  revision        Int                  @default(1)
+  archivedAt      DateTime?
+  // Not relations: the record outlives the people in it.
+  createdById     String
+  updatedById     String
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  deployments SoftwareDeployment[]
+
+  // One live entry per package per business, and per package globally:
+  // partial unique indexes in 0051.
+  @@index([customerId, packageId])
+  @@index([scope])
+}
+
+/// One catalog entry installed (or uninstalled) ring by ring. Each ring is
+/// one signed plan (an ActionJob) approved on the approval signer; ring 0 is
+/// the canary. A one-computer request is a deployment with one ring.
+model SoftwareDeployment {
+  id               String                @id @default(cuid())
+  tenantId         String?
+  customerId       String
+  customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  entryId          String?
+  entry            SoftwareCatalogEntry? @relation(fields: [entryId], references: [id], onDelete: SetNull)
+  /// The entry revision whose params every ring signs.
+  entryRevision    Int
+  operation        String // install | uninstall
+  /// Exactly the params each ring's plan signs (windows.software.*@1).
+  params           Json
+  /// What approvers and people see: name, publisher, hash source.
+  display          Json
+  name             String
+  /// [{ endpointIds: string[] }] — ring 0 is the canary, exactly one computer.
+  rings            Json
+  soakHours        Int                   @default(24)
+  failureThreshold Int                   @default(0)
+  windowHours      Int                   @default(8)
+  status           PatchDeploymentStatus @default(ACTIVE)
+  pausedReason     String?
+  resumedOverJobId String?
+  /// Requested from one computer's Software tab.
+  single           Boolean               @default(false)
+  createdById      String
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  jobs             ActionJob[]
+
+  @@index([customerId, createdAt])
+  @@index([entryId])
 }

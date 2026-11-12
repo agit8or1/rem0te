@@ -32,6 +32,15 @@ export function renderApprovalPage(v: View, nonce: string): string {
   const restarts = (p.params as { reboot?: unknown }).reboot === 'if_required_in_window'
     ? `<strong>restarting if Windows requires it</strong>, after a fixed ${UPDATE_RESTART_WARNING_MINUTES}-minute warning, only inside the window below and never while a RustDesk session is open. <span class="mut">${esc(REBOOT_UNPROVEN)}</span>`
     : 'never restarting';
+  // 0.34: what a software plan installs. The params are what the computer
+  // acts on; the name and publisher are the catalog's labels for them.
+  const software = (pl: typeof p) => {
+    const sw = pl.display!.software!;
+    const pr = pl.params as { packageId?: string; version?: string; installerSha256?: string; detection?: unknown };
+    return `<strong>${esc(sw.name)}</strong>${sw.publisher ? ` <span class="mut">(${esc(sw.publisher)})</span>` : ''}<br>winget package <code>${esc(pr.packageId ?? '')}</code> version <code>${esc(pr.version ?? '')}</code>, machine-wide`
+      + `<br>Installer SHA-256 <code>${esc(pr.installerSha256 ?? '')}</code> — ${sw.hashSource === 'winget_pkgs' ? `read from the winget-pkgs manifest (manifest SHA-256 <code>${esc((sw.manifestSha256 ?? '').slice(0, 16))}…</code>)` : '<strong>typed in by the catalog\'s editor</strong>, not read from a manifest'}`
+      + `<br><span class="mut">Each computer hashes the installer winget downloads and installs nothing unless it is exactly this hash. Detection rule: <code>${esc(JSON.stringify(pr.detection ?? null))}</code></span>`;
+  };
   const needs = [`${p.policy.approvalsRequired} approver${p.policy.approvalsRequired > 1 ? 's' : ''} (${p.policy.risk} impact)`]
     .concat(p.policy.customerSignoff ? ['customer sign-off from this business'] : []).join(' + ');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -48,6 +57,7 @@ ${dep ? row('Deployment', `${esc(dep.name)} — <strong>${dep.ring === 0 ? 'cana
 ${row(p.targets.length === 1 ? 'Computer' : 'Computers', computers)}
 ${p.script ? scriptRows(p, v.scriptContent ?? null, row) : ''}
 ${row('Action', p.script ? `<code>${esc(p.action.id)}@${esc(p.action.version)}</code>` : updates || p.action.id === 'windows.update.install' ? `<code>${esc(p.action.id)}@${esc(p.action.version)}</code>, ${restarts}${updates || `<br><code>${esc(JSON.stringify(p.params))}</code>`}` : `<code>${esc(p.action.id)}@${esc(p.action.version)}</code> with <code>${esc(JSON.stringify(p.params))}</code>`)}
+${p.display?.software ? row('Software', software(p)) : ''}
 ${p.display?.policy ? row('Signed under', `patch policy <strong>${esc(p.display.policy.name)}</strong> <span class="mut">(${esc(p.display.policy.digest.slice(0, 16))}…)</span>, approved once by the people listed below; this signer checked the plan is inside it`) : ''}
 ${row('Requested by', `${esc(p.requestedBy.name)} <span class="mut">via ${esc(p.requestedBy.via)}</span>`)}
 ${row('Origin', p.origin.kind === 'ai_suggestion' ? `<strong>AI suggestion</strong>${p.origin.ticketRef ? ` from ticket ${esc(p.origin.ticketRef)}` : ''} — nothing runs without your explicit approval` : 'Technician')}

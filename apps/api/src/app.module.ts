@@ -48,6 +48,7 @@ import { DiagnosticsModule } from './diagnostics/diagnostics.module';
 import { DiagnosticsCatalogModule } from './diagnostics-catalog/diagnostics-catalog.module';
 import { ScriptLibraryModule } from './script-library/script-library.module';
 import { ScriptRunModule } from './script-run/script-run.module';
+import { SoftwareModule } from './software/software.module';
 import { DeviceViewsModule } from './device-views/device-views.module';
 import { SupportRequestsModule } from './support-requests/support-requests.module';
 import { OffboardingModule } from './offboarding/offboarding.module';
@@ -124,6 +125,7 @@ import { IntegrationModule } from './integration/integration.module';
     DiagnosticsCatalogModule,
     ScriptLibraryModule,
     ScriptRunModule,
+    SoftwareModule,
     DeviceViewsModule,
     SupportRequestsModule,
     OffboardingModule,

@@ -84,4 +84,18 @@ export class ReportsController {
   async offlineTimeCsv(@Actor() actor: ActorContext, @Query() q: Record<string, unknown>, @Res() res: Response) {
     await this.send(res, actor, 'offline-time', q);
   }
+
+  /** Per software catalog entry: computers compliant, outdated, missing or unknown, from stored detection evidence (0.34). */
+  @Get('software-compliance')
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  async softwareCompliance(@Actor() actor: ActorContext, @Query() q: Record<string, unknown>) {
+    return { success: true, data: await this.reports.softwareCompliance(actor, parseReportQuery(q)) };
+  }
+
+  @Get('software-compliance/export.csv')
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  @RateLimit(10)
+  async softwareComplianceCsv(@Actor() actor: ActorContext, @Query() q: Record<string, unknown>, @Res() res: Response) {
+    await this.send(res, actor, 'software-compliance', q);
+  }
 }

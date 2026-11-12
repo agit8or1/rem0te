@@ -970,6 +970,64 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'software-deployment',
+    title: 'Software deployment',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          From 0.34, <Link href="/automation/software" className="underline text-foreground">Automation → Software catalog</Link>{' '}
+          holds the software Rem0te may install on Windows computers: winget packages, each pinned to one exact version,
+          one installer SHA-256 and a <strong className="text-foreground">detection rule</strong> that says how a computer
+          tells whether it is installed. A business&apos;s Business Owner keeps its own entries; a Platform Admin keeps the
+          global ones. Every change needs a fresh sign-in and is recorded in the audit log with the hash and rule before and
+          after. The hash comes from the package&apos;s installer manifest in the public winget-pkgs repository, which the
+          server reads when you save, or is pasted by you and recorded as pasted.
+        </p>
+        <p>
+          <strong className="text-foreground">The hash check.</strong> Nothing is uploaded to Rem0te and the portal serves no
+          installer. Each computer downloads the installer with winget from winget&apos;s own source, hashes the downloaded
+          file itself and refuses it — installing nothing — unless it matches the pinned SHA-256 and the hash in the manifest
+          winget downloaded beside it. winget&apos;s own hash check then applies when it installs.{' '}
+          <strong className="text-foreground">The gap that remains:</strong> the install step downloads the installer again,
+          so the bytes actually installed are verified by winget against the source manifest, not hashed again by the agent.
+        </p>
+        <p>
+          <strong className="text-foreground">Approval, canary and rings.</strong> Installing and uninstalling are always high
+          risk: every plan needs two approvers on the approval signer with a passkey, you cannot approve your own request,
+          and nothing in this portal can approve. Software plans are not offered to ClientSt0r. A deployment starts with one{' '}
+          <em>canary</em> computer and then up to four rings of 25. The next ring can be requested only once the one before
+          it has passed: the canary&apos;s detection rule must confirm the change (a canary that already had it proves
+          nothing), failures must stay within the threshold you set, and the soak time must have passed. A deployment
+          keeps the entry as it was; if the entry is changed or archived, no further ring is requested. Computers are never
+          restarted. On one computer, the <em>Software</em> tab&apos;s <strong className="text-foreground">Managed software</strong>{' '}
+          offers Install and Uninstall when the server allows them — a one-computer deployment, approved the same way — and
+          otherwise says why not and what to do.
+        </p>
+        <p>
+          <strong className="text-foreground">Detection rules and compliance.</strong> A rule is one of three kinds: a
+          Programs and Features display name (exact or starting with), an uninstall registry key, or the version of a file
+          under Program Files — each with a version that must be <em>at least</em> or <em>exactly</em> a value. The{' '}
+          <Link href="/reports/software-compliance" className="underline text-foreground">Software compliance</Link> report
+          counts each entry on each Windows computer it applies to as compliant, outdated, missing or unknown, from the
+          newest evidence: the inventory&apos;s installed-software list (display-name rules only) or what the computer
+          reported when a software plan ran there. Evidence older than the report&apos;s limit is unknown, never compliant.
+        </p>
+        <p>
+          <strong className="text-foreground">When a computer refuses.</strong> A computer whose software is managed by
+          Configuration Manager or Intune refuses software plans (<em>managed elsewhere</em>), and the portal stops offering
+          them there. A computer without a usable winget — App Installer missing, or older than 1.7 — reports{' '}
+          <em>winget unavailable</em> or <em>winget too old</em> and runs nothing; its Software tab then warns before the
+          next request. Software plans need the signed agent and the approval signer.
+        </p>
+        <p>
+          <strong className="text-foreground">None of this has run on real Windows yet.</strong> It has been tested against
+          a simulated winget and simulated computers only. More in{' '}
+          <Link href="/docs/software-deployment" className="underline text-foreground">Software deployment</Link>.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'sign-in-and-offboarding',
     title: 'Sign-in, Step-up and Offboarding',
     content: (

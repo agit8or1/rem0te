@@ -34,7 +34,8 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[metric-history.md](metric-history.md)** — CPU, memory and disk over 24 hours to 90 days on a computer's
   Performance tab: what is recorded, gaps, roll-up and retention settings, storage per 1,000 computers (0.33).
 - **[reports.md](reports.md)** — patch compliance, agent coverage, alert frequency and offline time per
-  business and site, what each is computed from and what it cannot tell you, and the audited CSV export (0.32).
+  business and site, what each is computed from and what it cannot tell you, and the audited CSV export (0.32);
+  software version compliance per catalog entry (0.34).
 - **[tactical-rmm.md](tactical-rmm.md)** — connecting and querying from inside
   Tactical RMM: URL Actions, agent matching, and the Collector Task.
 - **[integration-clientst0r.md](integration-clientst0r.md)** — ClientSt0r ticket
@@ -58,6 +59,9 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[staged-patching.md](staged-patching.md)** — Windows updates in stages (0.27): a canary, then rings, each a
   signed plan two approvers authorize; what is installed and refused, the promotion gate, what *effective* means,
   and what is and is not proven.
+- **[software-deployment.md](software-deployment.md)** — software deployment (0.34): a catalog of allowlisted winget
+  packages pinned by version and installer SHA-256, installed or uninstalled on one computer or by canary and rings
+  as signed two-approver actions; detection rules, version compliance, who verifies what, and what is not proven.
 - **[script-library.md](script-library.md)**: the script library. PowerShell scripts with immutable, hashed
   versions, static-check warnings, and review by someone other than the author. From 0.34 an approved version
   runs on Windows as the signed action `windows.script.run@1`, only once its hash is on the approval signer's own

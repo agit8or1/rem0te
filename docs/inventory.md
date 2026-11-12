@@ -410,6 +410,10 @@ numbers.
 
 ## Software and change history (0.29)
 
+> From 0.34 the same list is one source of evidence for [software version compliance](software-deployment.md#version-compliance)
+> (display-name rules only), and the computer's Software tab also shows **Managed software**: the catalog entries,
+> with Install / Uninstall through the software catalog's signed, two-approver plans.
+
 From 0.29 the inventory includes **installed software**: what Windows lists under Programs and Features, from
 the 64- and 32-bit uninstall registry keys, skipping system components and updates, up to 500 entries. It is
 shown on the computer's **Software** tab (0.31; before that, the Monitoring tab) with a filter, the age of the
