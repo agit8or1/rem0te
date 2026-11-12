@@ -12,7 +12,8 @@ permission, payload or authentication mechanism that touches the other without r
 
 Last updated: 2026-11-11, rem0te 0.30.1, against ClientSt0r 3.17.660 (`3d0ded39`). Section 5A (revision 4 proposal,
 P11–P12) added with rem0te 0.34. ClientSt0r's acknowledgement of revision 3 (dated 2026-11-11) recorded with rem0te
-0.36: sections 5, 6, 8, 9, 9A and 11.
+0.36: sections 5, 6, 8, 9, 9A and 11. Section 5B (revision 5 proposal, P13–P15) added with rem0te 0.36.1
+(2026-11-12).
 
 ---
 
@@ -187,6 +188,59 @@ advertises the task. **ClientSt0r's 2026-11-11 response does not mention revisio
 (a)–(c) above are unanswered, and remain not agreed. (Its request R2, section 9A, touches the same ground as P12's
 "unknown top-level fields allowed".)
 
+## 5B. Proposal: revision 5 — agent-silent alerts and tray support requests (NOT AGREED — needs ClientSt0r's acknowledgement)
+
+**Nothing in this section is implemented, on either side. rem0te sends neither event today**, to any peer: 0.36's
+`AlertEventsService.emit` drops every alert whose kind is not in the contract's `Alert.kind` before signing
+(invariant §51), and no support request is sent to ClientSt0r from any origin (`docs/support-requests.md`). This
+section records what rem0te proposes, decided by the owner on 2026-11-12 (rem0te 0.36.1: *propose, don't send*).
+It needs ClientSt0r's acknowledgement in section 9 before either side builds it.
+
+**Why.** rem0te 0.36 added two things a ticketing system would want and the contract cannot carry:
+
+- the **agent-silent monitor** (`AGENT_SILENT`): RustDesk still reaches the computer, but its agent has not checked
+  in for the monitor's threshold (60 minutes by default, 30 minutes to 7 days), so monitoring, patching and
+  inventory are going stale. Remote control should still work. It resolves when the agent checks in;
+- **support requests from the tray** (`docs/tray.md`): the person at the computer asks for help, optionally
+  attaching their resource usage and a screenshot (both unticked by default).
+
+**The rule both items follow (ClientSt0r's R2).** A peer whose generated schemas reject unknown fields and enum
+values cannot be sent anything from a newer revision: that is what broke pairing and every alert when rem0te 0.30.0
+shipped. So rem0te proposes to send revision-5 events **only to a peer that has declared it implements revision 5**,
+and never to an older peer — not as an extra enum value, not as an extra field, not as a new event type on the
+existing feed:
+
+- **The declaration.** The peer's signed capabilities document (P12, section 5A) gains
+  `contract_revision: integer`, the highest revision the peer implements. A peer with no capabilities document, an
+  unsigned or unreadable one, or one that declares less than 5 is treated as revision 4 or older. P12 is itself
+  unagreed; if ClientSt0r prefers a different declaration (R2 offers per-revision schemas), this item follows that
+  answer. A peers-file setting chosen by rem0te's operator is **not** proposed: the peer is the only party that knows
+  what its validator accepts.
+- **On rem0te's side**, `/capabilities.features` gains two booleans, `agent_silent_alerts` and
+  `support_requests`, advertised only when the calling peer has declared revision 5 (so an older peer's strict
+  `features` parser never sees them), and `contract_revision` is reported as 5 only once both are built with
+  schemas, signed examples and e2e.
+- **Gap fill and reads follow the same rule.** For an older peer, `GET /alerts/events` skips revision-5 events
+  (their sequence numbers come from a separate counter, so an older peer sees no gap), and `GET /alerts/{id}` for an
+  `AGENT_SILENT` alert is the same 404 as an unknown id.
+
+| ID | Item | Shape (proposed) | Notes |
+|---|---|---|---|
+| P13 | `AGENT_SILENT` in alert events | `Alert.kind` gains `AGENT_SILENT` (the contract's kinds are upper-case enum values; *agent_silent* in prose). `alert.raised` / `alert.updated` / `alert.resolved`, signed `rem0te-alert-event-v1` exactly as today, built by the same `toContractAlert`. `monitor` is the rule key (`agent-silent` unless renamed); `title` is rem0te's (e.g. *"<computer>: agent silent for 3 h — remote control should still work"*), display text only. New optional field on `Alert`, set only for this kind: `agent_silent: {last_heartbeat_at, silent_minutes, threshold_minutes, rustdesk_reachable: true}`; `null` for every other kind | Sent only to a revision-5 peer (above). Everything else is unchanged from today's alert path: one open alert per problem, held by maintenance windows, an alert grouped under a site outage is not sent on its own, containment does not stop alert events (they report; they change nothing). An `AGENT_SILENT` alert that is held while the computer is also unreachable stays open and sends nothing new. ClientSt0r should treat it as *the agent needs updating or reinstalling*, not *the computer is down* |
+| P14 | Signed `support_request.created` event | rem0te → `POST {eventsUrl}`, signed as data with a new prefix `rem0te-support-event-v1\n{canonical event}` and its own per-(peer, organization) `sequence` from 1, no gaps; gap fill at `GET /api/integration/v1/support-requests/events?organization_id=&after=`. Body `support-request-event`: `{contract, event_id, sequence, type: "support_request.created", occurred_at, peer_id, organization_id, support_request: {support_request_id, origin: "tray"\|"portal"\|"public", rem0te_endpoint_id (null for a public request), computer_name (device-reported, display as text), business_id, subject, attachments: {resource_usage: boolean, screenshot: boolean}, created_at}}` | **Ids, the computer, the business, a subject and two booleans — nothing else.** `subject` is the first line of what the person typed, at most 120 characters, control characters dropped and passed through rem0te's `redactForPeer` (credentials, tokens, keys, e-mail and IP addresses, MAC addresses, RustDesk IDs, user paths). It is **untrusted text written by the person at the computer**: ClientSt0r displays it as text and **never gives it to a model as instructions**; if it is ever summarised, it goes in as a data segment, as P11's `untrusted_segments` do. The Windows account that sent it, the contact details and the full description are not in the event |
+| P15 | Attachments by a separate authenticated read | `GET /api/integration/v1/support-requests/{support_request_id}?organization_id=` (the full description, redacted as above, and the attachment list: `{attachment_id, kind: usage\|screenshot, content_type, size_bytes}`) and `GET /api/integration/v1/support-requests/{id}/attachments/{attachment_id}?organization_id=`, both signed requests with a delegation for a mapped technician, new delegated scope `support:read`. The technician must be able to see **both** the request and the computer in rem0te, the same rule the portal applies; otherwise 404, as for another business | **Attachments are never inlined** in an event or in the request read. A screenshot is served exactly as the portal serves it (`image/jpeg` or `image/png`, `nosniff`, `default-src 'none'; sandbox`, `no-store`). Attachments are deleted 45 days after they were sent (rem0te's rule, unchanged), so the read can be a 404 later; ClientSt0r should copy what it needs into the ticket when a technician opens it. Every read is audited in rem0te with ids only |
+
+**What revision 5 does not include.** No support-request status in either direction (accepting, claiming or
+closing a request from ClientSt0r, or ticket state back to rem0te: that is R9's question); no chat; no
+`support_request.updated` or `.closed`; no attachment for a request from the public intake form (it has none); no
+event for self-help tool runs. Containment: the support-request event follows the alert events' rule (it reports and
+changes nothing), and an `integration` pause continues to stop only jobs.
+
+**Questions for ClientSt0r.** (a) Is `contract_revision` in the P12 capabilities document the declaration you want
+(this also answers R2 for every later revision), or per-revision schemas? (b) Should a support request open a ticket
+by itself, or only be offered to a technician, as alerts are with ticketing on? (c) Is the 120-character redacted
+subject useful, or would you rather have no free text in the event at all and fetch the description through P15?
+
 ## 6. Changes required in ClientSt0r (owned by the ClientSt0r session)
 
 | ID | Change | Needed for | Status |
@@ -200,6 +254,7 @@ advertises the task. **ClientSt0r's 2026-11-11 response does not mention revisio
 | CS-7 | Event names as in P8 | G4 | Reported done on ClientSt0r's unreleased branch (2026-11-11); not verified by rem0te |
 | CS-8 | Acknowledge or counter section 5 (P1–P10) in section 9 | Revision 3 | **Done** 2026-11-11: acknowledged as proposed (section 9) |
 | CS-9 | Acknowledge or counter section 5A (P11–P12); if agreed, serve `device_timeline_v1` at the inference gateway and a signed capabilities document listing it | Revision 4 (device summary) | Outstanding — not addressed in the 2026-11-11 response |
+| CS-10 | Acknowledge or counter section 5B (P13–P15) and its questions (a)–(c); if agreed, declare `contract_revision` in the capabilities document only once `AGENT_SILENT`, the `support_request.created` event and the P15 reads are handled | Revision 5 (agent-silent alerts, tray support requests) | Outstanding — proposed 2026-11-12 |
 
 ## 7. Limitations both sides must represent honestly
 
@@ -233,11 +288,13 @@ both running applications pass `e2e-ticket-workflow`'s scenarios with ClientSt0r
 |---|---|---|
 | 2026-11-10 | Owner (user) | rem0te's Ed25519 protocol is canonical; ClientSt0r adopts it |
 | 2026-11-10 | rem0te | Binding is `(peer, organization_id) → business`, one to one; shown in `/capabilities.organizations` (revision 2) |
-| 2026-11-11 | rem0te | Revision 3 proposed (section 5). **Awaiting ClientSt0r** |
+| 2026-11-11 | rem0te | Revision 3 proposed (section 5). Acknowledged by ClientSt0r the same day (row below) |
 | 2026-11-11 | rem0te | Revision 4 proposed (section 5A, P11–P12): the device summary through the gateway. rem0te 0.34 ships its side gated on P12, so nothing is sent until ClientSt0r advertises it. **Awaiting ClientSt0r** |
 | 2026-11-11 | ClientSt0r | Revision 3 P1–P10 acknowledged as proposed, with the notes in ClientSt0r's response (P6 session events, P7 = staff note, P10 freshness) |
 | 2026-11-11 | rem0te (recorded in 0.36) | Recorded from ClientSt0r's response file (`INTEGRATION_COORDINATION.clientst0r-response.md`, kept outside the repository). What it says, item by item, is below. **`contract_revision` stays 2**: revision 3 is agreed but not built. P11–P12 (revision 4) were not addressed and stay **awaiting ClientSt0r** |
+| 2026-11-12 | Owner (user), recorded in rem0te 0.36.1 | Agent-silent alerts and tray support requests: **propose, don't send.** Revision 5 proposed (section 5B, P13–P15), sent only to a peer that declares revision 5. Nothing implemented; rem0te sends neither. **Awaiting ClientSt0r** |
 | | ClientSt0r | *(acknowledge / counter P11–P12 here)* |
+| | ClientSt0r | *(acknowledge / counter P13–P15 and section 5B's questions (a)–(c) here)* |
 
 **What ClientSt0r acknowledged (revision 3), in its words where they matter.** It *"acknowledges P1–P10 as
 proposed"*, and *"none of [its notes] changes rem0te's authentication"*. Nothing was declined.
@@ -285,6 +342,9 @@ reference peer once it is pushed"* (section 11).
 
 - Revision 1 → 2: none (additive).
 - Revision 3 (proposed): none planned. HMAC was never accepted by rem0te, so not accepting it is not a break.
+- Revision 5 (proposed): none, **provided** it is sent only to a peer that declares revision 5 (section 5B). A new
+  `Alert.kind` value or event type sent to an older peer would be a break for any peer with strict generated schemas;
+  that is why the proposal never does.
 - ClientSt0r side: replacing HMAC with Ed25519 breaks ClientSt0r's own pairing records (`integration_outbound_secret`,
   `integration_inbound_secret`). That is ClientSt0r's migration to plan. ClientSt0r reports (2026-11-11) that its
   development branch keeps revision-1 peers and the generic HMAC "any RMM" path for other providers, and moves
@@ -301,6 +361,7 @@ reference peer once it is pushed"* (section 11).
 - [x] rem0te holds no provider key anywhere: the device summary's direct model call and SDK removed (rem0te 0.34);
       its replacement is proposed as P11–P12 and gated on ClientSt0r advertising it
 - [x] ClientSt0r acknowledgement of revision 3 (section 9, 2026-11-11: P1–P10 as proposed)
+- [x] Revision 5 proposed (section 5B, rem0te 0.36.1); rem0te sends neither event, to any peer
 
 **Outstanding**
 - [ ] ClientSt0r CS-1 … CS-7 released (reported done on the unreleased, unpushed `dev/program-2026-11`; rem0te has
@@ -310,6 +371,11 @@ reference peer once it is pushed"* (section 11).
       per-field-group `observed_at` and agent version
 - [ ] ClientSt0r acknowledgement of revision 4, P11–P12 (section 5A); then run `e2e-ai-timeline`'s scenarios with ClientSt0r
       in place of the reference peer
+- [ ] ClientSt0r acknowledgement of revision 5, P13–P15 (section 5B) and its questions (a)–(c) (CS-10)
+- [ ] Only after that: rem0te implements P13–P15 — `AGENT_SILENT` in `Alert.kind`, the `support_request.created`
+      event and its sequence, the P15 reads and `support:read`, gated on the peer's declared revision; schemas,
+      signed examples, an e2e proving an older peer receives none of it, and §51's "not a contract kind" check
+      changed in the same commit
 - [ ] rem0te implements the acknowledged items of revision 3, with schemas, examples and e2e
 - [ ] Both running applications pass the ticket workflow end to end (pair → diagnose → result in ticket → refer
       fix → approvals → execution → re-check → evidence in ticket → close)

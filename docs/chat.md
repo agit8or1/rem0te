@@ -32,7 +32,7 @@ The Chat tab is on every computer you can see. On a computer that cannot chat, i
 
 | The computer | What the tab says |
 |---|---|
-| Linux or macOS | Chat is not available on Linux / macOS yet: only the Windows agents have a tray |
+| Linux or macOS | Chat is not available on Linux / macOS: only the Windows agents have a tray. Deferred by decision (0.36.1): those agents are read-only by design, and there is no Linux or macOS test machine to prove a chat window on |
 | Windows, standard agent without a tray | The standard agent cannot chat until its tray is installed. Re-run its installer from a 0.36 or later portal |
 | Windows, signed agent older than 0.34 | The agent is too old to chat; it gains chat with its next update |
 | No device secret bound | The computer has not been bound to a device secret; re-run the installer |

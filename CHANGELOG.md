@@ -5,6 +5,128 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.36.1] — 2026-11-12 · *Beacon*
+
+A patch release that records six decisions the owner made on questions 0.36 left open. Two of them change
+something: the agent-silent monitor joins *Add recommended*, and contract revision 5 is proposed to ClientSt0r
+(nothing is sent). The other four are "no change", recorded here and in the docs so that they stop reading as open
+questions. No migration, no production dependency, no route added or removed.
+
+### Changed
+- **The agent-silent monitor is one of the recommended monitors.** In 0.36 it was opt-in twice over: never on by
+  default, and left out of *Add recommended* (`engine.ts` kept it in a separate `OPTIONAL` list, and §51 enforced
+  that), because whether it should come with the starter set had not been decided. The symptom of that choice was the
+  case the monitor was built for: an MSP that set up monitoring with *Add recommended* still heard nothing about a
+  computer like DESKTOP-4SADDCN, whose agent had been dead for twelve days while RustDesk still reached it, unless
+  someone knew to add a seventh monitor by hand.
+  - `RECOMMENDED` now ends with `{ key: 'agent-silent', kind: 'AGENT_SILENT', severity: 'WARNING', params: { minutes:
+    AGENT_SILENT_BOUNDS.def } }` (60 minutes). Its name, bounds (30 minutes to 7 days), behaviour and alert text are
+    unchanged.
+  - **It is still never on by default.** *Add recommended* creates it like the other six: only when a person presses
+    the button, only at that scope, only if that scope has no `agent-silent` rule yet, through `createRule`, as an
+    ordinary audited rule (`MONITOR_RULE_CHANGED`).
+  - **`OPTIONAL` is removed**, and with it `optional` in `GET /admin/monitoring/rules` (added in 0.36). Its only
+    entry is now in `recommended`. The one thing the Monitoring page used it for, prefilling *New monitor → Agent
+    silent* with the key `agent-silent`, Warning and 60 minutes, now reads the same starter from `recommended`, for
+    that kind only, so picking another kind under *New monitor* fills in nothing new.
+  - The page's empty-state line and the *Agent silent* hint say *Add recommended* includes it; `docs/monitoring.md`,
+    `docs/architecture.md`, `docs/troubleshooting.md` and `/help` no longer call it opt-in.
+- **§51 now asserts the opposite of what it did, and something stronger.** It used to check that `AGENT_SILENT` was
+  kept *out* of `RECOMMENDED`. Putting it in makes *Add recommended* the bulk path that creates it, so the check is
+  now that the bulk path stays a click:
+  - `RECOMMENDED` holds the agent-silent entry with `severity: 'WARNING'` and `AGENT_SILENT_BOUNDS.def`;
+  - `addRecommended` loops `RECOMMENDED` into `this.createRule(a, …)` and touches Prisma only to read which keys
+    exist;
+  - `createRule`'s `monitorRule.create` is the **only** `monitorRule.create` / `createMany` / `upsert` in
+    `apps/api/src`;
+  - only `engine.ts` and `monitoring-admin.service.ts` name `RECOMMENDED` (the latter exactly three times: the import,
+    the rules view and the loop), so nothing reads it to install monitors at startup;
+  - only the controller calls `addRecommended`;
+  - no migration inserts a `MonitorRule`, and `prisma/seed.ts` names neither `monitorRule` nor `RECOMMENDED`.
+
+  Proven to fail with each guard removed, then restored: the entry deleted from `RECOMMENDED`; an `onModuleInit` in
+  `monitoring.service.ts` doing `monitorRule.createMany` over `RECOMMENDED`; `addRecommended` writing with
+  `prisma.monitorRule.create` instead of `createRule`. All three were caught.
+
+### Proposed (not implemented)
+- **Contract revision 5 for ClientSt0r: agent-silent alerts and tray support requests** (`INTEGRATION_COORDINATION.md`
+  §5B, P13–P15). The owner's decision is *propose, don't send*: rem0te sends neither today, to any peer, and nothing
+  of it is built.
+  - P13 adds `AGENT_SILENT` to `Alert.kind`, with an `agent_silent` detail block (`last_heartbeat_at`,
+    `silent_minutes`, `threshold_minutes`).
+  - P14 is a signed `support_request.created` event: ids, the computer, the business, a 120-character redacted subject
+    (untrusted user text: never instructions to a model) and two booleans for resource usage and screenshot.
+  - P15 is a separate delegated read for the description and the attachments (`support:read`). Attachments are never
+    inlined.
+  - All three are advertised in `/capabilities.features` and sent **only to a peer that declares revision 5** in its
+    signed capabilities document. An older peer's generated schemas reject unknown fields and enum values (ClientSt0r's
+    R2), which is what broke pairing and every alert when 0.30.0 shipped.
+  - Section 9 records the decision and leaves a row for ClientSt0r's answer; CS-10 and the task list track it;
+    `docs/integration-clientst0r.md`, `docs/support-requests.md` and the contract's `CLIENTST0R.md` point to it. §51's
+    "agent-silent alerts are never signed or sent to ClientSt0r" check is unchanged and still holds.
+- **ClientSt0r's acknowledgement of revision 3** was already in section 9, in the row ClientSt0r suggested
+  (recorded with 0.36). No second row was added. The *Revision 3 proposed* row no longer says *Awaiting ClientSt0r*.
+
+### Decided (for the owner)
+- **Agent-silent monitor:** one of *Add recommended*'s starters, never on by default (above).
+- **Agent-silent alerts and tray support requests reach ClientSt0r only through revision 5**, once ClientSt0r
+  acknowledges it (above).
+- **The containment `notifications` pause does not stop alert webhooks.** The 0.34 design stands (the comment on
+  `KINDS` in `containment/pause.ts` gives the reason): webhook destinations are the MSP's or the business's own
+  systems, and an incident is when they matter most. An unwanted webhook destination is removed from its
+  notification policy. `docs/containment.md` now states this as a decision.
+- **The *Agent migrations* menu entry stays visible to `computers:edit` only**, the people who may request a
+  migration. The page's API read stays `computers:view`, so the link from every Agent card still works for a
+  viewer. No change.
+- **The winget installer-hash residual gap is accepted as documented**, and `LocalManifestFiles` stays off. Turning it
+  on would replace a seconds-long window, which needs a change to the winget community repository, with a standing,
+  machine-wide way for any local administrator to install from an arbitrary manifest. `docs/software-deployment.md`
+  says so.
+- **Chat on Linux and macOS is deferred.** Those agents are read-only by design, and there is no test machine here.
+  `docs/chat.md` says so.
+
+`docs/rmm-gap-analysis.md` gains a *Decided (0.36.1)* table with all six, and its rows no longer call any of them
+undecided.
+
+### Upgrade notes
+- **Existing monitor rules are untouched.** The change affects only what a *future* *Add recommended* click adds.
+  A business, or the global layer, where someone pressed it before 0.36.1 keeps its six monitors and gets no
+  agent-silent monitor until someone presses *Add recommended* again (which adds only the missing one) or adds it
+  under *New monitor*. Upgrading raises no alert and sends no notification.
+- **`GET /admin/monitoring/rules` no longer returns `optional`.** The agent-silent starter is in `recommended`. Only
+  0.36's own Monitoring page read `optional`, and it is rebuilt in the same release. Deploy the API and the web
+  together.
+- **The docs demo** (`prisma/_docs-demo-monitoring.ts`, which loops `RECOMMENDED` and refuses any database but
+  `reboot_remote_docs`) now gets a global agent-silent monitor too. The documentation images were not recaptured for
+  this release.
+- No schema change, no migration, no dependency change. Rebuild the API and the web, rsync as usual, copy
+  `version.json` and `CHANGELOG.md`, and restart both units. `docs/API-REFERENCE.md` is unchanged (501 routes).
+
+### Verification
+- `check-security-invariants.mjs` — **440 checks, all holding**. §51's rewritten first check was proven to fail with
+  each of three guards removed (above), then restored.
+- `unit-agent-health.mjs` — **53 passed, 0 failed** (52 in 0.36). The *opt-in* section is now *recommended, but off
+  until someone adds it*: exactly one `AGENT_SILENT` starter (key, Warning, `AGENT_SILENT_BOUNDS.def`), seven
+  starters with distinct keys, and no `OPTIONAL` export.
+- `e2e-agent-health.mjs` (ports 3801/3802, scratch database) — **72 passed, 0 failed** (69 in 0.36). The rules page
+  lists the starter under `recommended` and returns no `optional`, and being recommended created no rule in Acme.
+  *Add recommended* is pressed on a third business, Cedar, which has **no computers**: on Acme, the agent-silent rule
+  it now adds would raise against the silent fixtures within one 2-second sweep and leave an alert behind for the
+  rest of the run. That click adds seven starters, the agent-silent one among them (60 minutes, Warning), with seven
+  `MONITOR_RULE_CHANGED` audit rows, and a second click adds nothing. Run with `run-e2e.sh`'s switches exported
+  (`AGENT_AUTO_UPDATE=off` and the rest). Without them, three client-update checks fail, because automatic agent
+  update hands the fixtures an update. That is the suite's environment, not this change.
+- `e2e-monitoring.mjs` (ports 3803–3805) — **108 passed, 0 failed**. `unit-monitoring.mjs` — **91 passed, 0 failed**
+  (pwsh not available: the agent's monitor block was not executed; it is unchanged).
+- `e2e-ui.mjs` (CI's ports 3501–3504, scratch database) — **915 passed, 0 failed**, including the Monitoring page at
+  desktop and phone width in both themes.
+- `pnpm -r lint`, `tsc --noEmit` in both apps, `nest build`, `next build`, `check-versions.mjs` (with the README badge moved to 0.36.1) pass. The docs bundle
+  was regenerated (40 pages). `gen-api-reference.mjs` reproduces `docs/API-REFERENCE.md` unchanged (501 routes).
+- **Not run:** the rest of `run-e2e.sh` (no other suite reads `RECOMMENDED`, `optional` or *Add recommended*); the
+  ClientSt0r interop harnesses (nothing in the contract changed); anything on real Windows.
+
+---
+
 ## [0.36.0] — 2026-11-12 · *Beacon*
 
 The sixth increment of the RMM overhaul. Its theme is agents that keep themselves alive, up to date and reachable,

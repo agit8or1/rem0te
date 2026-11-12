@@ -306,7 +306,7 @@ const SECTIONS: Section[] = [
           agent</strong> on its Agent card. Grey is offline. The Online filter has all three, the dashboard counts
           agent-silent computers apart from online ones, and the CSV has a Connectivity column. On a phone the
           filters sit behind a <strong className="text-foreground">Filters (n)</strong> button. To be alerted
-          when an agent goes silent, add the opt-in <em>Agent silent</em> monitor (0.36) in Settings → Monitoring.
+          when an agent goes silent, add the <em>Agent silent</em> monitor in Settings → Monitoring (<em>Add recommended</em> includes it).
         </p>
         <p>
           <strong className="text-foreground">Health</strong> is the worst open monitoring alert;{' '}
@@ -754,12 +754,12 @@ const SECTIONS: Section[] = [
           global, then business, then site, then device group, then computer; a monitor with the same key lower down replaces
           the one above it, and a disabled one switches it off there.
         </p>
-        <p className="font-medium text-foreground">Agent silent (0.36, opt-in)</p>
+        <p className="font-medium text-foreground">Agent silent (0.36)</p>
         <p>
           The Offline monitor does not fire for a computer RustDesk can still reach, even when its agent has
           stopped checking in. The <em>Agent silent</em> monitor does: under <em>New monitor</em>, pick
           <em> Agent silent (RustDesk still reachable)</em> — 60 minutes by default, anything from 30 minutes to
-          7 days. <em>Add recommended</em> never adds it; it is on only where someone creates it. Its alert says
+          7 days — or press <em>Add recommended</em>, which includes it from 0.36.1. It is on only where someone adds it. Its alert says
           remote control should still work and suggests <strong className="text-foreground">Update agent</strong>{' '}
           or re-running the installer, it clears when the agent checks in again, and the computer&apos;s page
           and Agent card link to it. It is not offered to ClientSt0r for a ticket.

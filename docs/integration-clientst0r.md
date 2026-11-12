@@ -215,6 +215,9 @@ which business is which organization.
   outside it is not signed or sent at all. The 0.36 *agent silent* monitor (`AGENT_SILENT`) is such a kind:
   with ticketing on it is notified as usual but never offered to ClientSt0r. Carrying it means adding it to the
   enum — a contract revision ClientSt0r must accept first, since a strict validator would refuse the event.
+  That revision is **proposed, not agreed** (revision 5, `INTEGRATION_COORDINATION.md` §5B, 0.36.1): `AGENT_SILENT`
+  alerts and a signed `support_request.created` event for tray requests, sent only to a peer that declares it
+  implements revision 5. Nothing of it is built, and rem0te sends neither today.
 
 - **Patch summary (0.30).** A *restart pending* alert carries `patch_summary`, a redacted summary of the
   computer's Patches tab: evidence source and age, freshness, last boot, who manages patching, restart pending,

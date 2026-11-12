@@ -264,8 +264,8 @@ The computer is amber, *Reachable (RustDesk) · agent silent*: RustDesk is
 running and reachable, the Rem0te agent is not checking in. Connect still
 works; monitoring, patching, inventory and actions are stale. Use **Update
 agent** on its Agent card, or re-run the installer on the machine. To be told
-when this happens, add the opt-in *Agent silent* monitor (0.36,
-[monitoring.md](monitoring.md#agent-silent-036)) — the Offline monitor never
+when this happens, add the *Agent silent* monitor (0.36; *Add recommended*
+adds it from 0.36.1, [monitoring.md](monitoring.md#agent-silent-036)) — the Offline monitor never
 fires for it, because the computer is still reachable.
 
 ---

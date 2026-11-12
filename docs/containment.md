@@ -26,6 +26,12 @@ started an action, and it doesn't hide anything. It also doesn't touch **monitor
 notified during a pause, because that is when you most want them — except by email when the pause covers outbound
 email (0.34).
 
+**Alert webhooks are not paused, by decision.** The *notifications* pause stops email and nothing else. Webhook
+destinations are systems the MSP or the business configured as its own (an on-call tool, a chat channel), and an
+incident is when they matter most. This was reconsidered and kept in 0.36.1. If a webhook destination itself is the
+problem — it should not receive alerts any more — **remove it from its notification policy** (Settings → Monitoring →
+Notifications, which needs a fresh sign-in); a pause is not the tool for that.
+
 The reverse holds too. A **maintenance window** ([monitoring](monitoring.md#maintenance-windows)) only holds
 *notifications* — who is told about an alert. It never pauses writes and never stops anything reaching a computer.
 The two are separate on purpose: one is planned quiet, the other is an incident brake, and neither can be used as
