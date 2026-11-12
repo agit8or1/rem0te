@@ -30,6 +30,7 @@ import { queryHbbsOnline } from './hbbs-presence';
 import { compareVersions } from '../common/agent-contract';
 import { assertFresh } from '../security-controls/review';
 import { MetricsService } from '../metrics/metrics.service';
+import { ChatService } from '../chat/chat.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -63,6 +64,7 @@ export class EnrollmentService {
     private readonly diagnostics: DiagnosticsCatalogService,
     private readonly clientUpdates: ClientUpdatesService,
     private readonly metrics: MetricsService,
+    private readonly chat: ChatService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -566,7 +568,7 @@ export class EnrollmentService {
     rustdeskSessions?: number; updateNonce?: string;
     updateChannel?: 'signed' | 'legacy'; trustRootVersion?: number; targetsVersion?: number;
     agentActions?: string[]; agentSha256?: string; actionResults?: unknown[];
-    patchPosture?: Record<string, unknown>;
+    patchPosture?: Record<string, unknown>; agentChat?: number;
   }, remoteIp?: string) {
     // Names and versions as text, never control codes (0.32) — see device-text.ts.
     dto = withDeviceText(dto);
@@ -728,6 +730,8 @@ export class EnrollmentService {
         // a legacy agent's claim is discarded rather than stored.
         agentActions: dto.updateChannel === 'signed' ? dto.agentActions ?? [] : [],
         agentSha256: dto.updateChannel === 'signed' ? dto.agentSha256 ?? null : null,
+        // Chat (0.34): only the signed agent has a chat host.
+        chatProtocol: dto.updateChannel === 'signed' ? dto.agentChat ?? null : null,
       }),
     };
 
@@ -934,6 +938,20 @@ export class EnrollmentService {
       }
     }
 
+    // Chat (0.34): whether a conversation is open, so the signed agent starts
+    // its chat host. A flag only — no names, no text: the host fetches those
+    // over /enrollment/chat/poll with the device secret. Asked only of an
+    // authenticated signed agent that reports a chat protocol, so the rest of
+    // the fleet's heartbeats cost no query.
+    let chat: { open: boolean } | null = null;
+    if (authenticated && dto.updateChannel === 'signed' && (dto.agentChat ?? 0) >= 1) {
+      try {
+        chat = await this.chat.forHeartbeat(node.endpointId);
+      } catch (e) {
+        this.logger.warn(`Chat step failed for endpoint ${node.endpointId}: ${String(e)}`);
+      }
+    }
+
     // An unauthenticated caller gets the liveness ack and nothing that would
     // tell it which record a RustDesk ID belongs to.
     if (!authenticated) {
@@ -957,8 +975,34 @@ export class EnrollmentService {
       patchScan,
       monitor,
       diagnostics,
+      chat,
       rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
     };
+  }
+
+  /**
+   * The device secret check every device-side route makes (0.34: the chat
+   * routes), in one place: the node for this RustDesk ID must hold a secret
+   * and the one offered must match it. A failure is audited exactly as the
+   * other device routes audit theirs, and is the same 401.
+   */
+  async authenticateDevice(rustdeskId: string, agentSecret: string | undefined, reason: string) {
+    const node = await this.prisma.rustdeskNode.findUnique({
+      where: { rustdeskId },
+      select: { id: true, tenantId: true, endpointId: true, agentSecretHash: true },
+    });
+    if (!node?.agentSecretHash || !agentSecret || !this.secretMatches(node.agentSecretHash, agentSecret)) {
+      await this.audit.log({
+        tenantId: node?.tenantId ?? undefined,
+        action: 'ENDPOINT_HEARTBEAT_REJECTED',
+        resource: 'endpoint', resourceId: node?.endpointId,
+        meta: { rustdeskId, reason },
+      });
+      throw new UnauthorizedException('This device is not recognised');
+    }
+    // A node not (or no longer) attached to a computer has no chat to serve.
+    if (!node.endpointId) throw new NotFoundException('This device is not attached to a computer');
+    return { endpointId: node.endpointId, tenantId: node.tenantId };
   }
 
   /**

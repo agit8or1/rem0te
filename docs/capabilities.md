@@ -32,6 +32,7 @@ far each part has been tested. "Tested" here means one of three things, and they
 | **Deploying updates** (canary, rings, two approvals) | **No** | Yes, when approvals are configured | **No** | **No** | No | No |
 | Approved actions (start the Print Spooler) | No | Yes, when approvals are configured | No | No | No | No |
 | Maintenance actions (restart an allowlisted service, schedule or cancel a restart, collect logs) | No | Yes (0.32+ agent), when approvals are configured | No | No | No | No |
+| Chat with the person at the computer (0.34; [chat.md](chat.md)) | No | Yes (0.34+ agent; **not yet run on real Windows**) | No | No | No | No |
 | Password rotation, reinstall, RustDesk client update from the console | Yes | Yes | **No** — the console refuses them; re-run the installer on the computer | **No** — the console refuses them; re-run the installer on the computer | No | No |
 | Containment honoured on the device | Server side only | Server side, and the agent checks the signed pause | Server side only (it acts on nothing anyway) | Server side only (it acts on nothing anyway) | Server side only | Server side only |
 

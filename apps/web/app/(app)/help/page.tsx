@@ -358,6 +358,47 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'chat',
+    title: 'Chatting with the Person at a Computer',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          Open a computer and choose the <strong className="text-foreground">Chat</strong> tab. <strong className="text-foreground">Start chat</strong>{' '}
+          opens a small window on that computer&apos;s desktop, titled with the business name and headed with your name,
+          saying the business will never ask for a password and that links are never opened. The computer picks the
+          chat up at its next check-in, normally within three minutes; after that, messages arrive within seconds.
+        </p>
+        <ul className="list-disc pl-5 space-y-1">
+          <li>
+            <strong className="text-foreground">Windows with the signed agent only.</strong> Linux, macOS and the
+            standard Windows agent cannot chat yet, and the tab says so for those computers. The desktop window has not
+            yet been run on real Windows.
+          </li>
+          <li>
+            Each message shows <em>Sent</em>, <em>Delivered</em>, <em>Shown</em> or <em>Read</em>, and only what the computer
+            has confirmed. The panel also says what the computer last reported: window open, nobody signed in, the window
+            could not be opened, or the computer has gone quiet.
+          </li>
+          <li>
+            The person can reply or close the window. Closing it ends the chat, and so do <em>End chat</em> and two hours
+            with no message.
+          </li>
+          <li>
+            Up to 2,000 characters a message and 20 messages a minute. Text is shown as plain text on both sides.
+          </li>
+          <li>
+            Starting and writing need the <em>Chat with the person at a computer</em> permission. Anyone who can see the
+            computer can read its transcripts, which are deleted 400 days after the chat ends. A <em>remote connections</em>{' '}
+            containment pause stops new chats and messages. The audit log records each start and end, never the text.
+          </li>
+        </ul>
+        <p>
+          See <Link href="/docs/chat" className="underline text-foreground">Chat</Link> for the details.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'tactical-rmm',
     title: 'Connecting from Tactical RMM',
     content: (
@@ -894,7 +935,7 @@ const SECTIONS: Section[] = [
         <p>
           <strong className="text-foreground">What Connect does and does not control.</strong> Rem0te decides who may
           launch a session to which computer and records it; RustDesk carries the session. Once connected, clipboard,
-          file transfer and chat are RustDesk&apos;s own defaults, a computer installed by Rem0te accepts its password
+          file transfer and RustDesk&apos;s in-session chat are RustDesk&apos;s own defaults (the Chat tab is separate), a computer installed by Rem0te accepts its password
           without asking the person at it, and nothing ends a session from the portal. <em>Client opened</em> is not a
           connection; <em>Connection confirmed</em> comes from the computer&apos;s agent or from you. Platform Admins,
           technician managers and Business Owners can see every control and its effective state under Settings →

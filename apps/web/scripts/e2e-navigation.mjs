@@ -238,6 +238,18 @@ try {
             const h = await pageHealth(page);
             check(!!info && /Taken|Never taken/.test(info.age) && info.refresh && info.actions.length === 0 && h.overflow <= 1, `${t} tab: shows when it was taken, a Refresh, no action buttons, no overflow`, JSON.stringify({ info, overflow: h.overflow }));
           }
+          // 0.34: the Chat tab is on every computer the viewer can see. On one
+          // whose agent cannot chat it says so (and why) and offers no Start.
+          check(wsTabs.includes('Chat') && wsTabs.indexOf('Chat') === wsTabs.length - 2, 'the device workspace has a Chat tab, just before History', wsTabs.join(' · '));
+          await page.click('[data-testid="tab-chat"]');
+          await page.waitForSelector('[data-testid="chat-tab"]', { timeout: 15_000 }).catch(() => {});
+          const chat = await page.evaluate(() => ({
+            tab: !!document.querySelector('[data-testid="chat-tab"]'),
+            unsupported: document.querySelector('[data-testid="chat-unsupported"]')?.textContent ?? null,
+            start: !!document.querySelector('[data-testid="chat-start"]'),
+          }));
+          const ch = await pageHealth(page);
+          check(chat.tab && ch.overflow <= 1 && (chat.unsupported ? !chat.start && /not available/.test(chat.unsupported) : true), `Chat tab renders${chat.unsupported ? ' and says why this computer cannot chat' : ''}, no overflow`, JSON.stringify({ chat, overflow: ch.overflow }));
         }
       }
       if (got.includes('remote')) {

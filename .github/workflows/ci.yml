@@ -190,6 +190,12 @@ jobs:
       - name: Metric history tests
         run: node apps/api/scripts/unit-metric-history.mjs
 
+      # Chat (0.34): message text and the controls it drops, reported names,
+      # which computers can chat and why not, presence and receipts, device
+      # ids, and the retention window and its bounds.
+      - name: Chat tests
+        run: node apps/api/scripts/unit-chat.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.
@@ -303,6 +309,9 @@ jobs:
       # stolen timestamp key, root rotation, downgrade, relay repointing.
       # And the approved-action verifier (0.26): every refusal, replay after
       # restart, interruption mid-action, and the at-most-once journal.
+      # And the chat host (0.34): pipe frames and their size and field limits,
+      # message text, the hello nonce, receipts sent once, history retries,
+      # reconnect after a lost window, and the per-minute reply cap.
       - name: Signed update chain and approved-action tests
         working-directory: tools/windows-installer
         run: go test ./...

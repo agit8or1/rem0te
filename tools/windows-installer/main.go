@@ -23,6 +23,8 @@
 //	rem0te-agent.exe status                              trust state as JSON
 //	rem0te-agent.exe action --job ID --envelope FILE     approved catalog action (heartbeat, v0.26)
 //	rem0te-agent.exe patch-scan                          read-only Windows Update posture (heartbeat, v0.27)
+//	rem0te-agent.exe chat                                chat host while a chat is open (heartbeat, v0.34)
+//	rem0te-agent.exe chat-window --down P --up P --nonce N  the chat window, in the user's session (started by `chat`)
 package main
 
 import (
@@ -137,6 +139,11 @@ func main() {
 	if len(args) > 0 && args[0] == "status" {
 		os.Exit(cmdStatus())
 	}
+	// The chat window (0.34) runs as the signed-in user, unelevated, by
+	// design: it must never ask to elevate.
+	if len(args) > 0 && args[0] == "chat-window" {
+		os.Exit(cmdChatWindow(args[1:]))
+	}
 	if !isElevated() {
 		fmt.Println("  Requesting administrator privileges...")
 		selfElevate(args)
@@ -204,6 +211,9 @@ func subcommand(args []string) int {
 	}
 	if args[0] == "patch-scan" {
 		return cmdPatchScan(args[1:])
+	}
+	if args[0] == "chat" {
+		return cmdChat(args[1:])
 	}
 	mode := agent.Mode(args[0])
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)

@@ -9,7 +9,7 @@
 import type { AlertRow } from '@/components/monitoring/alerts';
 
 export type WorkspaceTab =
-  | 'overview' | 'performance' | 'monitoring' | 'software' | 'processes' | 'services' | 'network' | 'patches' | 'events' | 'diagnostics' | 'actions' | 'history';
+  | 'overview' | 'performance' | 'monitoring' | 'software' | 'processes' | 'services' | 'network' | 'patches' | 'events' | 'diagnostics' | 'actions' | 'chat' | 'history';
 
 export const TAB_LABEL: Record<WorkspaceTab, string> = {
   overview: 'Overview',
@@ -23,6 +23,7 @@ export const TAB_LABEL: Record<WorkspaceTab, string> = {
   events: 'Event logs',
   diagnostics: 'Diagnostics',
   actions: 'Actions',
+  chat: 'Chat',
   history: 'History',
 };
 

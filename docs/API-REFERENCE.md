@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **424** of them across
-**56** controllers.
+integration, under `/api/integration/v1`). There are **431** of them across
+**57** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -124,6 +124,18 @@ Admins and Business Owners are not confined by it; see
 | `PATCH` | `/api/v1/customers/:id/users/:userId/capabilities` | signed in | `USERS_MANAGE` |
 | `POST` | `/api/v1/customers/:id/users/:userId/reset-access` | signed in | `USERS_MANAGE` |
 | `GET` | `/api/v1/customers/capability-catalog` | signed in | — |
+
+## Chat
+
+`apps/api/src/chat/chat.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/endpoints/:id/chat` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/endpoints/:id/chat/conversations` | signed in, throttled | `CHAT_SEND` |
+| `GET` | `/api/v1/endpoints/:id/chat/conversations/:cid` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/endpoints/:id/chat/conversations/:cid/end` | signed in | `CHAT_SEND` |
+| `POST` | `/api/v1/endpoints/:id/chat/conversations/:cid/messages` | signed in, throttled | `CHAT_SEND` |
 
 ## Client updates
 
@@ -272,6 +284,8 @@ Admins and Business Owners are not confined by it; see
 
 | Method | Path | Access | Capability |
 |---|---|---|---|
+| `POST` | `/api/v1/enrollment/chat/poll` | public, throttled | — |
+| `POST` | `/api/v1/enrollment/chat/reply` | public, throttled | — |
 | `POST` | `/api/v1/enrollment/claim` | public, throttled | — |
 | `POST` | `/api/v1/enrollment/command-result` | public, throttled | — |
 | `POST` | `/api/v1/enrollment/confirm-rotation` | public, throttled | — |

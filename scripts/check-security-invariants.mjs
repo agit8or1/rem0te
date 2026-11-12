@@ -1443,6 +1443,95 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'readOnlyAgentOs must return macOS for a Mac, with its own refusal code');
 }
 
+// 33. Chat (0.34). A technician and the person at a computer. Every portal
+//     route names its capability and reaches the computer through the
+//     device-list visibility rule AND-ed with the id, so another business's
+//     computer is a 404; starting and writing consult the `remote`
+//     containment pause. The two device routes need the device secret
+//     (secretMatches, never a RustDesk ID alone), and the heartbeat hands
+//     chat only to an authenticated signed agent. Audit rows carry ids and
+//     counts, never message text, and chat never updates or deletes an
+//     ActivityLog row (pruning deletes transcripts, not audit). The 2,000
+//     character cap is the same in the API, the database and the agent; the
+//     400-day retention sweep has its off switch set in run-e2e.sh. On the
+//     agent, the window process holds no secret and speaks no HTTP: it talks
+//     only over two first-instance, local-only pipes whose DACL names SYSTEM
+//     and the session user, checked against the launched PID; and it draws
+//     text with plain read-only EDIT controls (no RichEdit or SysLink, which
+//     turn text into links). The portal renders transcripts as React text.
+{
+  const ctl = read('apps/api/src/chat/chat.controller.ts');
+  const svc = read('apps/api/src/chat/chat.service.ts');
+  const pol = read('apps/api/src/chat/chat-policy.ts');
+  const routes = [...ctl.matchAll(/@(Get|Post)\(([^)]*)\)\s*\n((?:\s*@[A-Za-z]+\([^)]*\)\s*\n)*)\s*async (\w+)/g)];
+  const capOf = Object.fromEntries(routes.map((m) => [m[4], (m[3].match(/@RequireCapability\(CAP\.(\w+)\)/) ?? [])[1]]));
+  check('every chat route names its capability: viewing needs COMPUTERS_VIEW, starting, writing and ending need CHAT_SEND',
+    routes.length === 5 && /@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)/.test(ctl) && !/@Public\(\)/.test(ctl)
+      && capOf.overview === 'COMPUTERS_VIEW' && capOf.transcript === 'COMPUTERS_VIEW'
+      && capOf.start === 'CHAT_SEND' && capOf.send === 'CHAT_SEND' && capOf.end === 'CHAT_SEND',
+    `routes: ${JSON.stringify(capOf)}`);
+  const methods = ['overview', 'transcript', 'start', 'send', 'end'];
+  const body = (name) => { const i = svc.indexOf(`  async ${name}(`); const j = svc.indexOf('\n  }\n', i); return i < 0 ? '' : svc.slice(i, j); };
+  check('chat reaches a computer only through visibleEndpoint: assertEndpointInScope, then the visibility rule AND-ed with the id',
+    /await this\.acl\.assertEndpointInScope\(actor, endpointId, capability\);\s*\n\s*const ep = await this\.prisma\.endpoint\.findFirst\(\{\s*\n\s*where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(actor\), \{ id: endpointId \}\] \},/.test(svc)
+      && methods.every((m) => /await this\.visibleEndpoint\(actor, endpointId/.test(body(m)))
+      && ['start', 'send', 'end'].every((m) => /this\.visibleEndpoint\(actor, endpointId, CAP\.CHAT_SEND\)/.test(body(m))),
+    'each technician method must begin with this.visibleEndpoint(actor, endpointId[, CAP.CHAT_SEND]); a spread visibility clause beside an OR widens it');
+  check('starting a chat and sending in one both consult the remote containment pause',
+    ['start', 'send'].every((m) => /await this\.containment\.assertOpen\('remote', ep\.customerId\)/.test(body(m))),
+    "start() and send() must call this.containment.assertOpen('remote', ep.customerId)");
+  const ec = read('apps/api/src/enrollment/enrollment.controller.ts');
+  const es = read('apps/api/src/enrollment/enrollment.service.ts');
+  const auth = es.slice(es.indexOf('async authenticateDevice('), es.indexOf('async authenticateDevice(') + 1200);
+  check('the device chat routes need the device secret, and the heartbeat offers chat only to an authenticated signed agent',
+    (ec.match(/await this\.enrollment\.authenticateDevice\(dto\.rustdeskId, dto\.agentSecret, 'chat_(poll|reply)_unauthenticated'\);/g) ?? []).length === 2
+      && /if \(!node\?\.agentSecretHash \|\| !agentSecret \|\| !this\.secretMatches\(node\.agentSecretHash, agentSecret\)\)/.test(auth)
+      && /throw new UnauthorizedException/.test(auth)
+      && /if \(authenticated && dto\.updateChannel === 'signed' && \(dto\.agentChat \?\? 0\) >= 1\)/.test(es)
+      && /chatProtocol: dto\.updateChannel === 'signed' \? dto\.agentChat \?\? null : null/.test(es),
+    'chat/poll and chat/reply call authenticateDevice (secretMatches); the heartbeat gate is authenticated && signed');
+  const metas = [...svc.matchAll(/meta: \{([^}]*)\}/g)].map((m) => m[1]);
+  check('chat audit rows carry ids and counts only, and chat never changes or deletes an ActivityLog row',
+    metas.length === 3 && metas.every((m) => !/\b(body|text|authorName|deviceUser|deviceDetail)\b/.test(m))
+      && !/activityLog\.(update|updateMany|delete|deleteMany|upsert)/.test(svc) && !/\$executeRaw/.test(svc),
+    `audit meta must hold no message text or names; no activityLog update/delete in chat.service.ts. meta: ${JSON.stringify(metas)}`);
+  const sql = read('apps/api/prisma/migrations/0056_chat/migration.sql');
+  const txt = read('tools/windows-installer/internal/chat/text.go');
+  check('the message cap is 2,000 characters in the API, the database and the agent',
+    /export const MAX_MESSAGE_CHARS = 2000;/.test(pol) && /char_length\("body"\) BETWEEN 1 AND 2000\)/.test(sql)
+      && /const MaxMessageChars = 2000\n/.test(txt) && /if utf16Len\(s\) > MaxMessageChars \{/.test(txt),
+    'MAX_MESSAGE_CHARS, ChatMessage_body_bounded and MaxMessageChars must agree');
+  const e2e = read('scripts/run-e2e.sh');
+  check('transcripts are kept 400 days by default, and the e2e runner turns the sweep off for scratch APIs',
+    /export const RETENTION_DEFAULT_DAYS = 400;/.test(pol) && /enabled: env\.CHAT_RETENTION_SWEEP !== 'off',/.test(pol)
+      && /export CHAT_RETENTION_SWEEP=off/.test(e2e),
+    "RETENTION_DEFAULT_DAYS = 400; CHAT_RETENTION_SWEEP=off exported in scripts/run-e2e.sh");
+  const ui = read('tools/windows-installer/chatui_windows.go');
+  const host = read('tools/windows-installer/chat_windows.go');
+  const pipe = read('tools/windows-installer/internal/chat/pipe.go');
+  check('the chat window holds no secret and speaks no HTTP, and draws text in plain read-only EDIT controls',
+    !/net\/http|heartbeat\.dat|AgentSecret|agentSecret|chat\.Client|os\/exec/.test(ui)
+      && /w\.child\("EDIT", esMultiline\|esReadOnly\|/.test(ui)
+      && !/RichEdit|RICHEDIT|MSFTEDIT|SysLink|ShellExecute|shell32/i.test(ui),
+    'chatui_windows.go: no net/http, heartbeat.dat, secret, chat.Client or os/exec; transcript EDIT is ES_READONLY; no RichEdit/SysLink/ShellExecute');
+  check('the chat pipes are first-instance, local-only, ACL\'d to SYSTEM and the session user, and checked against the launched PID',
+    /return "D:P\(A;;GA;;;SY\)\(A;;GRGW;;;" \+ userSID \+ "\)", nil/.test(pipe)
+      && /windows\.PIPE_REJECT_REMOTE_CLIENTS/.test(host) && /access\|windows\.FILE_FLAG_FIRST_PIPE_INSTANCE/.test(host)
+      && /sddl, err := chat\.PipeSDDL\(u\.User\.Sid\.String\(\)\)/.test(host)
+      && /windows\.GetNamedPipeClientProcessId\(h, &pid\); err == nil && pid != pi\.ProcessId \{/.test(host)
+      && (host.match(/exec\.Command/g) ?? []).length === 1 && /exec\.CommandContext\(ctx, rd, "--get-id"\)/.test(host),
+    'PipeSDDL protected DACL (SY + user GRGW); FIRST_PIPE_INSTANCE and REJECT_REMOTE_CLIENTS; client PID == launched PID; one exec (rustdesk --get-id)');
+  const tab = read('apps/web/components/endpoints/workspace/chat-tab.tsx');
+  check('the portal renders chat as text: no HTML injection, no links made from messages',
+    !/dangerouslySetInnerHTML|<a\s|href=|linkify|marked|markdown/i.test(tab) && /\{m\.body\}/.test(tab),
+    'chat-tab.tsx renders {m.body} as React text, with no dangerouslySetInnerHTML or anchors');
+  const ws = read('apps/api/src/public/windows-script.ts');
+  check('only the signed agent starts the chat host, and the remote pause says it covers chat',
+    (ws.match(/ArgumentList @\('chat'\)/g) ?? []).length === 1 && ws.indexOf("ArgumentList @('chat')") > ws.indexOf('export function buildSignedWindowsScript(')
+      && /remote: 'remote connections and chat'/.test(read('apps/api/src/containment/pause.ts')),
+    "one Start-Process ... @('chat'), in the signed variant's hook; pause label 'remote connections and chat'");
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

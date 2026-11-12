@@ -31,6 +31,12 @@ export const CAP = {
   HISTORY_VIEW: 'support:history_view',
   // Seeing and working the support-request queue (claim, hand off, close).
   SUPPORT_REQUESTS: 'support:requests',
+  // Chat (0.34): starting a chat with the person at a computer, writing in it
+  // and ending it. Reading a transcript needs only `computers:view` — it
+  // belongs to the computer. Separate from `computers:connect` because a
+  // message on someone's desktop under the business's name is a different
+  // thing from a remote session, and not on by default for a Business User.
+  CHAT_SEND: 'support:chat',
 
   // Users
   USERS_VIEW: 'users:view',
@@ -105,6 +111,7 @@ export const CAPABILITY_GROUPS: {
       { key: CAP.SESSIONS_VIEW, label: 'View active sessions', description: 'See sessions currently in progress.' },
       { key: CAP.HISTORY_VIEW, label: 'View session history', description: 'See past sessions for this business.' },
       { key: CAP.SUPPORT_REQUESTS, label: 'Handle support requests', description: 'See the support request queue, claim requests, hand them off and close them.' },
+      { key: CAP.CHAT_SEND, label: 'Chat with the person at a computer', description: "Open a chat window on a Windows computer they can see, write in it and end it. The window shows the business name and their own name. Anyone who can see the computer can read its transcripts." },
     ],
   },
   {

@@ -79,6 +79,20 @@ CPU together (**measured**), and the inventory upload took 55–115 ms. The inve
 (**measured** for 150 applications). Enrolling a few hundred computers in an hour is not a sizing concern; a mass
 re-install across 5,000 computers is, for the same reason as above.
 
+
+### Chat (0.34)
+
+Chat adds almost nothing per computer. A heartbeat from a signed agent that can chat makes one more indexed lookup:
+is a chat open here? It uses the partial unique index on open conversations. Other computers do no extra work.
+
+An **open** chat adds a long-poll: one request every 25 s or less while the window is up, each a few indexed
+queries. While the poll is held the API keeps a timer and re-reads the database every 10 s; it holds no database
+connection. Fifty chats open at once come to about two requests a second, small next to 27.8 heartbeats a second at
+5,000 computers. `CHAT_MAX_WAITERS` (default 500) caps how many polls are held at once; past it, polls are answered at
+once and the agent backs off. The held polls live in the API process, which is one more reason it runs as a single
+process. These are **estimates** from the code path; chat has not been load-tested
+([chat.md](chat.md#capacity)).
+
 ## Database growth
 
 Measured on-disk cost per row, **heap plus every index**, from 20,000 synthetic rows per table shaped like what the
@@ -133,6 +147,7 @@ FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC LIMIT 15;
 | Scheduled client updates | one `CLIENT_UPDATE_AUTO_QUEUED` audit entry per computer each time a policy queues an update | ≈ 0.76 KB × computers per client release |
 | Report exports | one `REPORT_EXPORTED` audit entry per CSV; the CSV itself is streamed and not stored | ≈ 0.76 KB per export |
 | Metric history | **does not exist.** CPU, memory and disk are latest values on the computer's row, overwritten each heartbeat | none |
+| Chat (0.34) | `ChatConversation` + `ChatMessage`; two audit rows per chat (start, end) and one per prune pass that deleted anything | ≈ 0.3 KB per message plus the text; deleted 400 days after the chat ends |
 
 ## PostgreSQL
 

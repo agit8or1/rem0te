@@ -30,6 +30,7 @@ bundled into `/docs`. Integration work is tracked separately in
 | Audit | Sealed hash chain, insert-only entries, signed checkpoints, off-host export, verification CLI | U (35), I |
 | Containment | Pause actions, remote, updates or integration, per business or globally; three enforcement layers | I (70) |
 | Global search (0.33) | Ctrl+K palette and `GET /search`: devices (name, hostname, RustDesk ID, serial, signed-in user, IP, adapter IPv4, alias), businesses, sites, people and open alerts, eight per group. Each group reuses its list route's where builder and capability; another business's objects are not found even by exact hostname or RustDesk ID; throttled, not audited, query not logged | U (37), I (search 98; business-access 83 after /admin/search was removed); browser 24 (`e2e-search-palette.mjs`, scratch stack: light, dark, phone width) |
+| Chat (0.34) | Technician ↔ person at the computer: Chat tab on the device workspace, a window on the user's desktop from the signed agent (business and technician named), receipts only from the agent, long-poll fast path with a held-poll cap, containment (`remote`), rate and length caps, audited start/end with counts only, 400-day retention sweep (`CHAT_RETENTION_SWEEP=off`). [chat.md](chat.md) | I (e2e-chat), U (unit-chat, Go host tests), Windows build/vet; **window never run on real Windows**; signed agent only, so not available on production's standard channel |
 | Device sync to ClientSt0r | ClientSt0r's provider syncs computers by API key, scoped to one business | Code-level interop with ClientSt0r 3.17.660 (`INTEGRATION_COORDINATION.md` §8) |
 
 ## Partially working
@@ -67,8 +68,9 @@ bundled into `/docs`. Integration work is tracked separately in
   implemented: network throughput, per-process history, fleet-wide or per-business charts, exporting history, and
   alerting on a trend (the threshold monitors still judge each reading alone). Non-system volumes are sampled only
   every inventory pass (≈ 6 h), because the heartbeat carries the system volume only.
-- **Remote-session controls:** file-transfer authorization, chat, recording, clipboard policy, multi-monitor
-  selection. RustDesk doesn't report enforcement, so none of these can be offered as restrictions (see Security).
+- **Remote-session controls:** file-transfer authorization, recording, clipboard policy, multi-monitor
+  selection. (Chat with the person at the computer is built in 0.34, outside RustDesk — see Working today. Not
+  implemented: chat on the standard agent, Linux or macOS; attachments; chat inside a RustDesk session.) RustDesk doesn't report enforcement, so none of these can be offered as restrictions (see Security).
 - **Browser-based remote desktop.**
 - *(Global search — built in 0.33, see Working today. Not included: saved searches, searching inside notes, software lists or event logs, and a search index; the fleet is scanned per query.)*
 - ~~Saved device views, device groups in the UI, bulk actions~~ — built in 0.33 (see *Device list* above).

@@ -269,6 +269,7 @@ what it does.
 | Event logs | A page of one Windows event log, on request (Windows agents only) |
 | Diagnostics | Test connection: server, computer and your own RustDesk |
 | Actions | Request an approved action and see past requests |
+| Chat | Chat with the person at the computer, receipts and earlier transcripts (signed Windows agent; elsewhere it says why not — [chat.md](chat.md)) |
 | History | Remote sessions, technician notes, the AI-written summary (labelled as such) and who can connect |
 
 Processes, Services and Network are snapshots, not live views: each says when it

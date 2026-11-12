@@ -119,6 +119,11 @@ Tenant  ─┬─ Customer (a BUSINESS — the security boundary)
   the queue that asks it: the console stages a row, the endpoint's next
   heartbeat carries it out. There is no push channel and no command type that
   runs arbitrary code. See [inventory.md](inventory.md).
+- **`ChatConversation` / `ChatMessage`** (0.34) are chats with the person at a
+  computer. They are the one exception to "the next heartbeat": while a chat is
+  open, the signed agent long-polls `/enrollment/chat/poll` with the device
+  secret, and the API holds each poll up to 25 s in memory. The poll carries
+  chat text and receipts only, never commands. See [chat.md](chat.md).
 
 Full model in [access-control.md](access-control.md).
 

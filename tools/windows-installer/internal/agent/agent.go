@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/agit8or1/rem0te/windows-installer/internal/action"
+	"github.com/agit8or1/rem0te/windows-installer/internal/chat"
 	"github.com/agit8or1/rem0te/windows-installer/internal/trust"
 )
 
@@ -259,6 +260,9 @@ type Status struct {
 	// Actions this build can execute (v0.26), as "id@version". The heartbeat
 	// reports them; the portal offers nothing an agent does not list.
 	Actions []string `json:"actions,omitempty"`
+	// The chat protocol this build speaks (v0.34). The heartbeat reports it as
+	// agentChat; the portal offers a chat only to an agent that does.
+	Chat int `json:"chat,omitempty"`
 }
 
 func stage2(o Options, p Platform, c *trust.Client) (int, error) {
@@ -438,6 +442,7 @@ func writeStatus(o Options, s Status) {
 	s.LastCheck = o.now().UTC()
 	if s.AgentSHA256 != "" {
 		s.Actions = action.Supported()
+		s.Chat = chat.ProtocolVersion
 	}
 	raw, _ := json.Marshal(s)
 	_ = os.WriteFile(o.Paths.StatusFile(), raw, 0o600)

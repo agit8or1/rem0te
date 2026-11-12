@@ -157,6 +157,9 @@ enum ActivityAction {
   SCRIPT_VERSION_APPROVED
   SCRIPT_VERSION_REJECTED
   SCRIPT_REVIEW_REFUSED
+  CHAT_STARTED
+  CHAT_ENDED
+  CHAT_PRUNED
   ENDPOINT_AGENT_REINSTALL_REQUESTED
   ENDPOINT_DEVICE_SECRET_ACCEPTED
   ENDPOINT_RESTORED
@@ -657,6 +660,10 @@ model Endpoint {
   // scan. The heartbeat asks the agent to scan until a posture newer than
   // this arrives.
   patchScanRequestedAt DateTime?
+  // Chat (0.34): the chat protocol the signed agent says it speaks (1), from
+  // agent-status.json via an authenticated heartbeat. Null = this agent can't
+  // chat. Self-reported: it decides only whether the portal offers a chat.
+  chatProtocol         Int?
 
   isManaged  Boolean   @default(false)
   isOnline   Boolean   @default(false)
@@ -683,6 +690,7 @@ model Endpoint {
   connectionGrants  ConnectionGrant[]
   actionJobs        ActionJob[]
   actionTargets     ActionTarget[]
+  chatConversations ChatConversation[]
 
   // Access mode: how the computer's remote-access authorization is scoped.
   //   ASSIGNED_USERS  → only users listed in ComputerAccess may connect
@@ -2973,4 +2981,92 @@ model ScriptVersion {
 
   @@unique([scriptId, version])
   @@index([scriptId, status])
+}
+
+// ─── Chat with the person at the computer (0.34) ────────────────────────────
+//
+// A conversation belongs to one computer. The technician side writes from the
+// device workspace; the computer side is the signed Windows agent, which
+// fetches and posts over device-secret routes. Message text lives here and
+// nowhere else: the audit log records start and end with ids and counts only.
+// Ended conversations are deleted 400 days after they end (ChatService sweep,
+// CHAT_RETENTION_SWEEP=off stops it); messages go with them.
+
+enum ChatStatus {
+  OPEN
+  ENDED
+}
+
+enum ChatSender {
+  TECHNICIAN
+  END_USER
+}
+
+model ChatConversation {
+  id         String   @id @default(cuid())
+  tenantId   String?
+  // The computer's business when the chat started.
+  customerId String?
+  endpointId String
+  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  // Optional link to a support request in the same business (validated on
+  // write; no foreign key, so a deleted request leaves the transcript).
+  supportRequestId String?
+
+  status ChatStatus @default(OPEN)
+  // Who started it, and the two names the desktop window shows, frozen at the
+  // start so the person at the computer always sees who they are talking to.
+  startedById    String
+  technicianName String
+  businessName   String
+
+  // What the agent last reported: connecting, window_open, no_user,
+  // window_failed, user_closed. Null until the computer picks the chat up.
+  deviceState     String?
+  deviceDetail    String?
+  deviceUser      String?
+  deviceStateAt   DateTime?
+  // Last time the computer polled this conversation.
+  deviceSeenAt    DateTime?
+  lastActivityAt  DateTime @default(now())
+
+  endedAt     DateTime?
+  endedById   String?
+  // technician | end_user | inactive (CHECK ChatConversation_ended_reason)
+  endedReason String?
+
+  technicianMessages Int @default(0)
+  endUserMessages    Int @default(0)
+
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  messages  ChatMessage[]
+
+  @@index([endpointId, createdAt])
+  @@index([status, lastActivityAt])
+  @@index([endedAt])
+}
+
+model ChatMessage {
+  id             String           @id @default(cuid())
+  conversationId String
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         ChatSender
+  // TECHNICIAN: the user who wrote it. END_USER: null.
+  authorId       String?
+  // Display name at the time: the technician's name, or the Windows account
+  // the agent reported for the person at the computer.
+  authorName     String
+  // Plain text, at most 2,000 characters (also a CHECK constraint).
+  body           String
+  // The agent's dedupe key for a reply it may post twice.
+  clientId       String?
+  createdAt      DateTime         @default(now())
+  // Technician messages only, each set only when the agent says so.
+  deliveredAt    DateTime?
+  shownAt        DateTime?
+  readAt         DateTime?
+
+  @@unique([conversationId, clientId])
+  @@index([conversationId, createdAt])
 }
