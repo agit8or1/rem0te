@@ -27,6 +27,14 @@ Filters: **Business** (a Platform Admin, or anyone who works in several), **Site
 days). The filters stay in the address bar, so a report can be bookmarked; whoever opens the link sees it with
 their own permissions.
 
+![Reports, on Patch compliance](screenshots/guide/reports.png)
+
+1. **The reports** — one tab each.
+2. **Offline time** — the one the next screenshot opens.
+3. **Business** — then Site; the filters stay in the address bar.
+4. **Export CSV** — the report as on screen, with the same visibility.
+5. **The totals** — each a count of devices, with *No data* where there is no scan to count from.
+
 ## Patch compliance
 
 The definition is the dashboard's, from the same code (`apps/api/src/patching/compliance.ts`), so the two
@@ -126,6 +134,13 @@ over that business's computers, global entries over every computer you can see),
 Unknown is never folded into compliant or missing. A rule nothing has evidence for is honestly all unknown. The page
 shows the totals, each entry's counts, how many visible computers are not Windows (and so not counted), and the
 computers needing attention (outdated, then missing, then unknown). The export has one row per entry and computer.
+
+![Offline time over 30 days](screenshots/guide/reports-offline.png)
+
+1. **The filters** — business, site and period.
+2. **By site** — computers, episodes and time offline; *By computer* below it lists each computer, its longest
+   episode and when it last went offline.
+3. **Export CSV** — the report as on screen.
 
 ## Exporting
 

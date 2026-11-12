@@ -49,6 +49,13 @@ assignment's business and computers, a Platform Admin sees every business. A
 section you have no permission for is not shown at all — it is never shown as a
 zero.
 
+![The dashboard: a site-outage strip, the tiles, Work on next and Customers affected](screenshots/guide/dashboard.png)
+
+1. **Site outage** — several devices at one site stopped reporting together; *Open alerts* goes to them.
+2. **The tiles** — each is a count with what it is counted from underneath; each one links to where you act on it.
+3. **Work on next** — the ranked list, every item with the reason it is there.
+4. **Customers affected** — the businesses with an outage, an alert, an offline device or a failed action.
+
 | Part | What it is built from |
 |---|---|
 | **Site outage** strip | An open site-outage alert: several devices at one site stopped reporting together |
@@ -81,6 +88,12 @@ relay) is not on the dashboard: Platform Admins find it under **Settings →
 System status**. The device map is at the bottom; *Hide device
 locations* folds it away, and this browser remembers the choice.
 
+![The device map at the foot of the dashboard, with clustered markers per city](screenshots/guide/dashboard-map.png)
+
+1. **Client locations** — devices placed from the address they last checked in from, clustered by city with a count.
+   The map is drawn from a bundled outline; no tile server is asked where your customers are.
+2. **Hide device locations** — folds the map away; this browser remembers the choice.
+
 ---
 
 ## 2. Find a computer
@@ -99,10 +112,6 @@ company-wide; for a technician, only the machines your assignment names.
    click any column heading to sort by it instead (click again to reverse).
 4. **Add device** — enrol a new machine (§5). Until 0.32 there were two buttons
    here, *Enroll Client* and *Generate Enrollment Link*; both became this one.
-5. *(Removed in 0.32 — see 4.)*
-
-*(The screenshot predates 0.31's columns and 0.32's single Add device button; the
-numbered parts are where they were.)*
 
 ### What the columns mean
 
@@ -219,6 +228,21 @@ at the bottom.
   *computers:view*, contains exactly what you can see, and **each export is
   recorded in the audit log** with its filters and row count. *Export selection*
   is the same export limited to the ticked devices.
+![Three devices ticked: the filters, Views, Columns and the bulk-action bar](screenshots/guide/device-list.png)
+
+1. **Search** — the device list's own search, across every page.
+2. **Group** — one of the filters; the others are business, site, online, alerts, agent, *Restart pending* and archived.
+3. **Views** — saved filters, sort, columns and density, personal or shared (below).
+4. **Columns** — which columns show; *Comfortable / Compact* beside it sets the row height.
+5. **The row's box** — ticks the device; the header box ticks the page.
+6. **The bulk bar** — appears while anything is ticked: group membership, *Refresh inventory*, *Queue client update*, *Export selection*.
+
+![The Views menu: personal views, views shared in a business, Save current view and Device groups](screenshots/guide/device-views.png)
+
+1. **Views** — shows the active view's name once one is open.
+2. **A shared view** — with the business it belongs to. Opening it still shows only the devices you can see.
+3. **Save current view…** — the filters, sort, columns and density, under a name; *Device groups…* below it manages groups.
+
 - **Connect** on a row works exactly as it does on the device page. **⋯** opens the
   device, or its Patches, Monitoring or Test connection tab, or copies its hostname.
 
@@ -236,6 +260,12 @@ from anywhere, searches devices, businesses, sites, people and open alerts in
 one go. Type at least two characters (at most 100); results appear when you
 pause. **↑ / ↓** move through them, **Enter** opens the highlighted one, **Esc**
 closes the box. Ctrl/⌘-click opens a result in a new tab.
+
+![Ctrl+K with "harb" typed: eight devices, then a business](screenshots/guide/search.png)
+
+1. **The search box** — at least two characters; the matched part is highlighted in each result.
+2. **Devices** — at most eight, online first among equals, with a link to the device list's own search for the rest.
+3. **Businesses** — then sites, people and open alerts, each group only if you have its list page's permission.
 
 | Group | Matches on | Opens | Needs |
 |---|---|---|---|
@@ -309,6 +339,14 @@ Patches) and **More**: view-only connect (technicians), the diagnostics report,
 *Reinstall agent* and *Archive computer*, each behind a confirmation that says
 what it does.
 
+![A device's page: status, actions, the attention strip and the tabs, on Overview](screenshots/guide/device-overview.png)
+
+1. **Status** — *Online*, *Offline since …*, or *Online (RustDesk only)* when the agent has gone quiet.
+2. **Actions** — with the reason underneath when one is unavailable (here: no approval signer on this server).
+3. **Attention strip** — open alerts, pending updates with the scan's age, and which agent it runs; each a link to its tab.
+4. **The tabs** — below.
+5. **Patch status** — the Overview's summary of the Patches tab: what the evidence is and how old.
+
 **The tabs**, each linkable with `?tab=`:
 
 | Tab | What is on it |
@@ -354,6 +392,18 @@ They have no buttons that change the computer — restarting a service is a sign
 maintenance action on Actions, and ending a process is not offered
 ([diagnostics.md](diagnostics.md#the-processes-services-and-network-tabs)). Old links
 (`?tab=notes`, `?tab=timeline`, `?tab=access-review`) open History.
+
+The Performance tab is described in [metric-history.md](metric-history.md), with its
+screenshot; Processes, Services and Network in
+[diagnostics.md](diagnostics.md#the-processes-services-and-network-tabs).
+
+![The Patches tab: patch status, Install updates, Windows Update and the updates offered](screenshots/guide/device-patches.png)
+
+1. **Patches** — the tab.
+2. **Patch status** — the evidence (which agent's scan, how old), restart pending, and who manages patching where the signed agent can tell.
+3. **Install updates** — deploying from Rem0te; here it says why it is not available on this computer.
+4. **Scan now** — asks the computer for a new Windows Update scan on its next check-in.
+5. **Offered** — the updates the last scan listed, with KB, severity and size.
 
 ---
 
@@ -408,6 +458,28 @@ Rem0te does not store the Quick Connect password and never displays it again.
 
 **Devices → Add device** (the button on the Devices page, or the *Add device* tab)
 walks through it in six steps on one page:
+
+![Add device, step 1: business, site and who may connect](screenshots/guide/add-device-1.png)
+
+1. **Business** — only the businesses you manage are offered.
+2. **Site** — or *No site*; only that business's sites.
+3. **Who may connect** — specific people, or everyone in the business.
+4. **Continue** — the three choices are fixed into the link when it is made.
+5. **Wait for the device** — like every later step, greyed until it is its turn; it is where this page watches the
+   new device arrive (step 4, below).
+
+![Add device, step 2: the operating system](screenshots/guide/add-device-2.png)
+
+1. **Step 1, done** — what was chosen.
+2. **Operating system** — Windows, Linux or macOS, each saying which agent it installs.
+3. **The step-up note** — making the link asks you to confirm it is you.
+4. **Make the install command** — makes the single-use link.
+
+![Add device, step 3: the install command, and step 4 waiting for the device](screenshots/guide/add-device-3.png)
+
+1. **Run the installer** — the PowerShell one-liner and the one-click installer link, shown once. (The token is replaced with a placeholder in this screenshot.)
+2. **Wait for the device** — checks every few seconds; *Revoke this link* cancels an unused one.
+3. **First health** — fills in from what the server actually receives once the device checks in.
 
 1. **Business and site.** Pick the business, then a site or *No site*, and who
    may connect — specific people, or everyone in the business. All three are

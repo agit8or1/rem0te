@@ -799,8 +799,10 @@ check(
     /this\.acl\.assertCapability\(actor, CAP\.COMPUTERS_VIEW\);/.test(dw) && /\[this\.acl\.endpointVisibilityWhere\(actor, q\.businessId\), \{ status: 'ACTIVE' \}\]/.test(dw) && /return \{ AND: and \};/.test(dw),
     'devicesWhere must assert computers:view and AND the visibility fragment');
   check('reports: alerts start from MonitoringAdminService.alertWhere, AND-ed with device visibility',
-    /this\.monitoring\.alertWhere\(actor, q\.businessId\)/.test(aw) && /\{ OR: \[\{ endpointId: null \}, \{ endpoint: this\.acl\.endpointVisibilityWhere\(actor, q\.businessId\) \}\] \}/.test(aw) && /return \{ AND: and \};/.test(aw),
-    'alertsWhere must call alertWhere and AND the visibility rule');
+    /this\.monitoring\.alertWhere\(actor, q\.businessId\)/.test(aw) && /\{ OR: \[\{ endpointId: null \}, \{ endpoint: \{ is: this\.acl\.endpointVisibilityWhere\(actor, q\.businessId\) \} \}\] \}/.test(aw) && /return \{ AND: and \};/.test(aw),
+    // `is:` (0.34): a bare `{ endpoint: {} }` inside an OR matches nothing in
+    // Prisma 5, which emptied a Platform Admin's alert reports.
+    'alertsWhere must call alertWhere and AND the visibility rule, as `endpoint: { is: … }`');
   const epQueries = [...rsvc.matchAll(/this\.prisma\.endpoint\.(findMany|groupBy|count|aggregate)\(\{[\s\S]{0,160}/g)].map((m) => m[0]);
   const alQueries = [...rsvc.matchAll(/this\.prisma\.monitorAlert\.(findMany|groupBy|count|aggregate)\(\{[\s\S]{0,160}/g)].map((m) => m[0]);
   check('reports: every endpoint query is scoped by devicesWhere and every alert query by alertsWhere',

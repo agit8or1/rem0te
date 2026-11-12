@@ -25,6 +25,24 @@ exact hash to the approval signer's own allowlist, and two approvers approving e
 It doesn't schedule a script, run one on Linux or macOS, run one outside a plan, or collect more than 64 KB of output
 per stream.
 
+![The script library: the not-yet notice, the scope filter, a script and New script](screenshots/guide/script-library.png)
+
+1. **The notice** — captured on 0.33, when it said running scripts was not available yet. From 0.34 the same
+   notice says how an approved version runs, and that it has not run on a real Windows computer.
+2. **Scope** — global scripts, or one business's.
+3. **A script** — its latest version and review state.
+4. **New script** — writes version 1 as a draft.
+
+![A version in review: its card, its hash, the static checks, the content and Approve](screenshots/guide/script-review.png)
+
+1. **Version 2** — in review, written by someone other than the reviewer, edited from v1. *Compare* below it shows
+   any two versions line by line.
+2. **Content SHA-256** — the hash an approval records. (Shown as a placeholder here: the capture masks every long
+   hex string. The Review box repeats it in short form.)
+3. **Static checks** — warnings for the reviewer; they flag, never block.
+4. **The content** — exactly the bytes the hash is of.
+5. **Approve** — offered only to someone who did not write the content, and it asks for a fresh sign-in.
+
 ## How a script runs
 
 Only one way: as the catalog action `windows.script.run@1`, through the same chain that starts the Print Spooler,
