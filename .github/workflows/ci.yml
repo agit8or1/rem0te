@@ -389,7 +389,7 @@ jobs:
         run: node apps/web/scripts/e2e-ui.mjs
       - name: Logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-logs
           path: |

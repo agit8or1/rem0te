@@ -5,6 +5,51 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.36.2] — 2026-11-12 · *Beacon*
+
+This release combines three Dependabot updates (#106, #107 and #115). It changes no portal code. Two of the updates
+change the Windows agent's source, so the agent built from this release differs from 0.36.1's.
+
+### Changed
+- **Windows agent dependencies (`tools/windows-installer`):**
+  - `github.com/sigstore/sigstore` goes from 1.10.6 to 1.11.3 (#107). It uses sigstore only to verify signed update
+    metadata.
+  - `golang.org/x/sys` goes from 0.49.0 to 0.50.0 (#106).
+  - The indirect modules move with them: `golang.org/x/crypto` 0.55.0, `x/term` 0.45.0, `go-containerregistry`
+    0.22.1, `go-securesystemslib` 0.11.1, `protobuf-specs` 0.5.2, `protobuf` 1.36.12, plus a new indirect module,
+    `github.com/youmark/pkcs8`.
+- **`go.mod` now names `go 1.27`, up from 1.26.10,** because sigstore 1.11.3 requires it. CI's `setup-go` reads it
+  from `go.mod` and installs 1.27.4.
+- **CI:** `actions/upload-artifact` goes from v4 to v7 (#115). This affects CI only, not production.
+
+### Fixed (tests only)
+- **`e2e-macos-agent` and `e2e-linux-agent` failed intermittently.** This PR's first CI run failed one macOS check,
+  "an unreadable check time is unknown too", with the error `null`.
+  - **Cause:** one inventory refresh stages two commands back to back, `INVENTORY_REFRESH` then `UPDATE_SCAN`, and
+    they often share a `createdAt` millisecond. The tests sorted only by `createdAt` and read the last row as the
+    update scan. On a tie, Postgres could return the inventory refresh last, which succeeded with no error.
+  - **Fix:** the update-check assertions now read only `UPDATE_SCAN` rows: four on macOS and one on Linux, which had
+    the same pattern. No product code changed.
+  - Locally, against a fresh database, each suite passed three runs in a row: macOS 106 and Linux 86.
+
+### Upgrade notes
+- **The release machine needs Go 1.27 or newer** to build the agent. With an older Go, set `GOTOOLCHAIN=go1.27.4`.
+  The bare `go1.27` toolchain name does not exist, so `GOTOOLCHAIN=auto` fails with "toolchain not available".
+- **Nothing changes on the portal:** no migration and no npm dependency change. The deploy is `dist` and the web
+  build only, because the version string moved.
+- Computers keep running their current agent until a signed release built from this source is published.
+
+### Verification
+- **Merge:** #106 and #107 conflicted only in `go.sum`. I resolved it with `go mod tidy` under Go 1.27.4, and
+  `go mod verify` reports all modules verified.
+- **Go:** `go vet` passes, as do `GOOS=windows go vet` and `GOOS=windows go build ./...`. `go test ./...` passes in
+  every package.
+- **#107's first CI run failed** 6 of the 81 `e2e-script-run` checks: a script that should exit 0 hit its time limit.
+  The same commit then passed on a re-run of the failed job, so the failure was a timing flake on the CI host, not
+  the update.
+- `check-versions.mjs` passes.
+- The second CI run failed one `e2e-macos-agent` check. That failure is the test fix above.
+
 ## [0.36.1] — 2026-11-12 · *Beacon*
 
 A patch release that records six decisions the owner made on questions 0.36 left open. Two of them change
