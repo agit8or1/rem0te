@@ -54,7 +54,7 @@ const ORDER = [
   ['staged-patching.md', 'Staged patching', 'Computers and monitoring', 'Windows updates in rings — canary, approvals, halt on failure.'],
   ['patching-setup.md', 'Patching setup', 'Computers and monitoring', 'Turning on signed patching in production, in order, with a live pre-flight.'],
   ['approved-actions.md', 'Approved actions', 'Computers and monitoring', 'Actions on a computer approved by passkey on a separate signer.'],
-  ['script-library.md', 'Script library', 'Computers and monitoring', 'Write, version and review PowerShell scripts, and why they cannot run yet.'],
+  ['script-library.md', 'Script library', 'Computers and monitoring', 'Write, version and review PowerShell scripts, and run approved ones through the signed approval chain.'],
   ['technicians.md', 'MSP technicians', 'People and access', 'Per-business, time-limited and scheduled technician access.'],
   ['technician-access.md', 'Technician access and abuse prevention', 'People and access', 'L1/L2/L3 presets, policy, independent review and temporary access.'],
   ['access-control.md', 'Access control', 'People and access', 'Roles, capabilities and what each permission allows.'],

@@ -10,9 +10,10 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
 /**
- * Shared pieces of the script library pages. There is deliberately no run
- * control in here or anywhere else: the portal cannot run a script
- * (docs/script-library.md), so offering one would be a fake button.
+ * Shared pieces of the script library pages. A script runs only as the
+ * signed action windows.script.run@1 (0.34, docs/script-library.md): the Run
+ * panel on an approved version requests one, and the approval signer's page
+ * is where it is approved. Nothing here runs anything.
  */
 
 export const selectClass = 'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm';
@@ -26,17 +27,23 @@ export function apiMessage(e: unknown, fallback: string) {
   return m?.message ?? fallback;
 }
 
-/** Said plainly on every library page: what is missing and why. */
-export function NotRunnableNotice() {
+/** Said plainly on every library page: how a script runs, and what has and has not been proven. */
+export function ScriptRunNotice() {
   return (
-    <div role="note" className="mb-4 flex gap-3 rounded-md border border-blue-300 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-100" data-not-runnable>
+    <div role="note" className="mb-4 flex gap-3 rounded-md border border-blue-300 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-100" data-script-run-notice>
       <Info className="h-4 w-4 shrink-0 mt-0.5" />
-      <div>
-        <p className="font-medium">Running scripts isn&apos;t available yet.</p>
-        <p className="mt-0.5">
-          You can write, version and review scripts here, but you can&apos;t run them. A script will only ever run on the signed
-          agent, as an approved action signed by people on the approval roster, and the agent will check the script&apos;s exact
-          SHA-256 before it runs. That path hasn&apos;t been validated on real Windows yet, so nothing here sends a script to a computer.
+      <div className="space-y-1">
+        <p className="font-medium">How a script runs</p>
+        <p>
+          Only an approved version runs, and only as a signed action. A reviewer proposes it to the approval signer, two approvers
+          who did not write it add its exact SHA-256 to the signer&apos;s own allowlist, and each run is approved there again by two
+          approvers. The agent checks the signature and the hash before it runs anything, as SYSTEM in Windows PowerShell, with a
+          timeout and the first 64 KB of its output kept, redacted.
+        </p>
+        <p>
+          <strong>What is proven:</strong> the agent&apos;s own decision code, running scripts in PowerShell 7 on Linux (arguments passed as data,
+          the timeout stopping the whole process tree, the output limits). <strong>Not yet run on a real Windows computer</strong>: the job object,
+          the SYSTEM context and Windows PowerShell 5.1 are unproven.
         </p>
       </div>
     </div>

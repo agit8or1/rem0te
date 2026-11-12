@@ -131,10 +131,14 @@ type Plan struct {
 	} `json:"window"`
 	// Display: what the approver was shown (update KBs and titles). Signed,
 	// and deliberately never read here: decisions come from Windows Update.
-	Display   json.RawMessage `json:"display,omitempty"`
-	CreatedAt string          `json:"createdAt"`
-	Approvers []Approver      `json:"approvers"`
-	SignedAt  *string         `json:"signedAt"`
+	Display json.RawMessage `json:"display,omitempty"`
+	// Script: windows.script.run only (v0.34). The approval signer's
+	// allowlist entry for the version, signed with everything else; the
+	// declared parameters and contributors are taken from here.
+	Script    *ScriptDef `json:"script,omitempty"`
+	CreatedAt string     `json:"createdAt"`
+	Approvers []Approver `json:"approvers"`
+	SignedAt  *string    `json:"signedAt"`
 }
 
 // Result is what the heartbeat reports. Observations only.
@@ -157,6 +161,8 @@ type Result struct {
 	// patch policy's ring gate reads (resultsig.go). The portal relays it;
 	// only the approval signer verifies it.
 	Signed *devsig.Signed `json:"signed,omitempty"`
+	// Script: windows.script.run only (v0.34). Bounded and redacted (script.go).
+	Script *ScriptResult `json:"script,omitempty"`
 }
 
 type journal struct {
@@ -197,6 +203,13 @@ type Options struct {
 	// (or created) from StateDir. If it cannot be had, results go unsigned,
 	// and a patch policy's gate counts them as missing.
 	ResultKey ed25519.PrivateKey
+	// Script runs (v0.34): the content delivered beside the envelope (nil
+	// when none was), and what runs PowerShell; nil where not available.
+	ScriptContent []byte
+	Scripts       ScriptHost
+	// ScriptMinute: how long one minute of a plan's timeout lasts; a minute
+	// by default. The tests and the simulator shorten it.
+	ScriptMinute time.Duration
 }
 
 var jobRE = regexp.MustCompile(`^[a-f0-9]{32}$`)

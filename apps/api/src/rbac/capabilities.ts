@@ -142,8 +142,8 @@ export const CAPABILITY_GROUPS: {
   {
     group: 'Automation',
     items: [
-      { key: CAP.SCRIPTS_AUTHOR, label: 'Write scripts', description: "Add scripts to this business's library, edit them (each edit is a new version) and submit versions for review. Scripts cannot be run yet." },
-      { key: CAP.SCRIPTS_REVIEW, label: 'Review scripts', description: "Approve or reject someone else's script version. Never one they wrote or edited. Approving needs a fresh sign-in, and runs nothing." },
+      { key: CAP.SCRIPTS_AUTHOR, label: 'Write scripts', description: "Add scripts to this business's library, edit them (each edit is a new version) and submit versions for review. Never approves a run." },
+      { key: CAP.SCRIPTS_REVIEW, label: 'Review scripts', description: "Approve or reject someone else's script version. Never one they wrote or edited. Approving needs a fresh sign-in, and runs nothing; with this permission they can also propose an approved version to the approval signer's allowlist, which its own approvers decide." },
     ],
   },
 ];

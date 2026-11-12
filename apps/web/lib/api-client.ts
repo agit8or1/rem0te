@@ -766,3 +766,15 @@ export const scriptsApi = {
   review: (id: string, version: number, data: { decision: 'approve' | 'reject'; expectedSha256: string; note: string }) =>
     api.post(`/scripts/${id}/versions/${version}/review`, data),
 };
+
+// Running an approved library version (0.34). The portal proposes a version to
+// the approval signer's own allowlist and requests runs; it cannot add to the
+// allowlist or approve a run — both happen on the approval signer's page.
+export type ScriptArgument = string | number | boolean;
+export const scriptRunsApi = {
+  readiness: (versionId: string) => api.get(`/script-runs/versions/${versionId}`),
+  propose: (versionId: string) => api.post(`/script-runs/versions/${versionId}/allowlist`),
+  revoke: (versionId: string, reason: string) => api.post(`/script-runs/versions/${versionId}/allowlist/revoke`, { reason }),
+  run: (data: { scriptVersionId: string; endpointIds: string[]; parameters: Record<string, ScriptArgument>; timeoutMinutes: number; reason: string; windowHours?: number }) =>
+    api.post('/script-runs', data),
+};

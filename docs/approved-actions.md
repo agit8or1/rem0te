@@ -9,11 +9,17 @@ staged deployment of a canary and rings. See [Staged patching](staged-patching.m
 
 From 0.32 it has four **maintenance actions**, each on one computer: restart one service from a fixed list, schedule
 a warned restart, cancel a pending restart, and collect a fixed set of logs. See
-[Maintenance actions (0.32)](#maintenance-actions-032). The rest of this page describes the Print Spooler action, and
-the machinery every action shares.
+[Maintenance actions (0.32)](#maintenance-actions-032).
 
-Those six are the whole catalog. You can't request a command, a script, a path, a URL, a service off the list, a
-restart message of your own, a log file or time range of your own, or a change to any service's startup type. Credential extraction, removing backups, disabling defenses, granting admin rights and wiping
+From 0.34 it has a seventh, **running an approved script-library version** (`windows.script.run@1`) on up to 25
+computers. It runs only bytes whose SHA-256 two approvers have added to the signer's own allowlist, and each run is
+approved again by two approvers who did not write the script. See [Script runs (0.34)](#script-runs-034) and
+[Script library](script-library.md). The rest of this page describes the Print Spooler action, and the machinery
+every action shares.
+
+Those seven are the whole catalog. You can't request a command, a script that isn't an allowlisted library version,
+a path, a URL, a service off the list, a restart message of your own, a log file or time range of your own, or a
+change to any service's startup type. Credential extraction, removing backups, disabling defenses, granting admin rights and wiping
 disks aren't in the catalog and never will be. They aren't switched off; nothing exists to request them.
 
 > **Warning.** Documents already waiting in the print queue may print as soon as the spooler starts. They can't be
@@ -246,6 +252,40 @@ state now; reconcile it as for the spooler (`running`, `stopped`, `restart_sched
 signed agent build. Production has no signer installed, so the Actions tab says "no approval signer is configured"
 and requests nothing; a computer whose agent does not report an action shows that action as not available on it.
 
+## Script runs (0.34)
+
+`windows.script.run@1` runs one approved [script-library](script-library.md) version as SYSTEM in Windows
+PowerShell, with typed arguments and a timeout. It uses everything above unchanged — the separate signer, passkey
+approvals, the agent's checks, the journal, the dispatch rechecks, containment, the audit trail — and adds:
+
+- **An allowlist on the signer.** The signer keeps its own list of approved script hashes in its state directory
+  (`scripts/`, `script-revocations/`). An entry is added only by two passkey approvals on the signer's page, after
+  the approvers read the content the signer holds and the hash it computed. The portal can propose an entry and
+  revoke one; it can't add, activate or edit one. Revocation is by content SHA-256 and permanent.
+- **Closed parameters.** `{"scriptVersionId", "sha256", "parameters", "timeoutMinutes"}`: a version id, its content
+  hash, arguments checked against the version's declared parameters (by the portal, the signer and the agent), and a
+  timeout of 1, 5, 10, 15 or 30 minutes. The plan carries a `script` block that must be exactly the signer's entry.
+- **Always high risk.** Two different approvers on any computer. Neither may be the requester or anyone who wrote or
+  edited the script (`contributor_cannot_approve` at the signer, `contributor_approved` at the agent).
+- **Up to 25 computers** of one business per plan, each with its own result.
+- **Requested from the script library**, not the Actions tab: `POST /endpoints/:id/actions` with this action is
+  `ACTION_NOT_DIRECT`. Results appear on each computer's Actions tab.
+- **The content travels beside the envelope**, on the heartbeat. The agent refuses it unless it is exactly the signed
+  length and SHA-256.
+- **Bounded execution.** A fresh temporary folder, a constant command line
+  (`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File run.ps1`), arguments read from a JSON
+  file and splatted, a job object with a 1 GiB memory limit that is terminated at the timeout, and the first 64 KB of
+  stdout and stderr kept, redacted on the computer and again by the portal. Output is kept 90 days.
+- **Not offered to ClientSt0r.**
+
+Results: `succeeded` (exit code 0), `failed` with `exit_code`, `timed_out` (stopped with everything it started; it may
+have done part of its work), `failed` with `start_failed` or `workdir_failed`. Refusals before anything runs:
+`script_missing`, `script_mismatch`, `bad_declarations`, `arguments_not_allowed`, `contributor_approved`,
+`no_content`, `content_mismatch`, and `no_script_host` from an agent built without the runner.
+
+**Not yet run on a real Windows computer.** The decision code and real PowerShell 7 on Linux are tested end to end
+(`e2e-script-run.mjs`); Windows PowerShell 5.1, the SYSTEM context and the job object are not.
+
 ## Patch policies: approved once, signed by the signer
 
 From 0.32, a person can approve a bounded **patch policy** instead of each update ring
@@ -389,7 +429,9 @@ a passkey. A rejection is final.
 | `WINDOW_TOO_LONG` | 0.32: the requested window is longer than the action allows (a restart schedule: 2 hours) |
 | `ACTION_PENDING` | An earlier request for this action on this computer is still unresolved |
 | `ACTION_UNRECONCILED` | An earlier outcome is uncertain. Reconcile it first |
-| `APPROVAL_SIGNER_ERROR`, `APPROVAL_SIGNER_REFUSED`, `APPROVAL_SIGNER_UNREACHABLE` | The signer didn't answer, or refused the plan (e.g. `policy_mismatch` after a policy change, or `paused` while the signer holds a pause) |
+| `ACTION_NOT_DIRECT` | Updates are requested through a patch deployment, and (0.34) script runs from the script library |
+| `NOT_APPROVED`, `SCRIPT_NOT_ALLOWLISTED`, `SCRIPT_REVOKED`, `SCRIPT_WRONG_BUSINESS` | 0.34 script runs: see [Script library](script-library.md#refusals) |
+| `APPROVAL_SIGNER_ERROR`, `APPROVAL_SIGNER_REFUSED`, `APPROVAL_SIGNER_UNREACHABLE` | The signer didn't answer, or refused the plan (e.g. `policy_mismatch` after a policy change, `paused` while the signer holds a pause, or for a script run `script_not_allowlisted`) |
 | `CONTAINED` | Actions are paused for this business, or globally ([Containment](containment.md)). An approved plan is held, not canceled, and is delivered when the pause is lifted |
 
 Agent refusal reasons: `bad_signature`, `unknown_key`, `bad_plan`, `job_mismatch`, `not_signed`, `unknown_action`,
@@ -408,12 +450,14 @@ nothing changed), `restart_already_scheduled`, `stop_failed`, `start_failed`, `d
 |---|---|
 | **Fixture-tested** | Yes. `internal/action` Go tests cover every refusal, replay, crash and verification path. `unit-approval-signer.mjs` (99 checks from 0.34; 79 in 0.32) covers synthetic passkeys through the real WebAuthn verification: forged origin and RP ID, missing user verification, reused and cross-decision challenges, counter regression, the requester approving, quorum, customer sign-off and restart. `e2e-approved-action.mjs` (76 checks) runs the portal, the signer and the agent's real decision code against a simulated Windows, including the compromised-database envelopes |
 | **Fixture-tested, 0.32** | `internal/action` Go tests for the maintenance actions (allowlist, charset, delay bounds, session check, journal steps, interruption, redaction and size caps); `unit-approval-signer.mjs` adds the maintenance admission and two-approver cases; `e2e-maintenance-actions.mjs` runs all four through the portal, the signer and the agent's real decision code against a simulated Windows (service manager, `shutdown.exe`, `wevtutil` and the session count are simulated) |
-| **Paired lab** (real Windows workstation, real authenticator, real ClientSt0r) | **Not done.** The Windows calls (service control manager, registry product type, `rustdesk --get-id`, and from 0.32 `shutdown.exe`, `wevtutil.exe` and the RustDesk process count) are compiled and vetted for Windows but haven't run on a lab machine |
+| **Fixture-tested, 0.34** | `internal/action` Go tests for script runs (every refusal, at-most-once, interruption, exit code, timeout, output cap), including runs under real **PowerShell 7 on Linux**; `unit-approval-signer.mjs` adds the script allowlist and script-run cases; `e2e-script-run.mjs` runs the whole path through the portal, the signer and the agent's real decision code with PowerShell 7 |
+| **Paired lab** (real Windows workstation, real authenticator, real ClientSt0r) | **Not done.** (0.34: nor Windows PowerShell 5.1, the SYSTEM context or the job object for script runs.) The Windows calls (service control manager, registry product type, `rustdesk --get-id`, and from 0.32 `shutdown.exe`, `wevtutil.exe` and the RustDesk process count) are compiled and vetted for Windows but haven't run on a lab machine |
 | **Production-ready** | **No.** It needs the paired lab first, and an operator who has done the key and roster ceremonies |
 
 ## Known limits
 
-- Six actions, on Windows only. Every action but update install names one computer per plan; an update ring names up to 25.
+- Seven actions, on Windows only. Every action but update install and script run names one computer per plan; an
+  update ring or a script run names up to 25.
 - The RustDesk session check is made once, when a restart is scheduled, and sees RustDesk sessions only.
 - A scheduled restart is reported as scheduled. Whether it happened is seen only from the next boot time (and, after
   an update restart, from the next patch scan).

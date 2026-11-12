@@ -56,7 +56,7 @@ export const ResultStatement = z.object({
   planSha256: z.union([Hex64, z.literal('')]),
   rustdeskId: z.string().max(32),
   deviceSecretSha256: z.union([Hex64, z.literal('')]),
-  outcome: z.enum(['succeeded', 'already_running', 'failed', 'refused', 'not_executed', 'uncertain', 'restart_required', 'partial', 'no_change']),
+  outcome: z.enum(['succeeded', 'already_running', 'failed', 'refused', 'not_executed', 'uncertain', 'restart_required', 'partial', 'no_change', 'timed_out']),
   reason: z.string().max(200).optional(),
   completedAt: Iso,
   updates: z.array(z.object({
@@ -83,6 +83,8 @@ export type ScanStatement = z.infer<typeof ScanStatement>;
 export const RESULT_STATUS = {
   succeeded: 'SUCCEEDED', already_running: 'SUCCEEDED', restart_required: 'SUCCEEDED', no_change: 'SUCCEEDED',
   failed: 'FAILED', partial: 'FAILED', refused: 'REFUSED_BY_ENDPOINT', not_executed: 'NOT_EXECUTED', uncertain: 'UNKNOWN',
+  // windows.script.run (0.34): the script was killed at its timeout.
+  timed_out: 'FAILED',
 } as const satisfies Record<ResultStatement['outcome'], string>;
 
 /** What a person compares with `rem0te-agent.exe status` on the computer: the first 16 hex of sha256(key), in fours. */

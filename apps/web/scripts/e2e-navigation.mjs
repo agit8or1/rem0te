@@ -92,9 +92,14 @@ async function visit(page, href) {
   return pageHealth(page);
 }
 
-/** No control anywhere on a library page that could read as running a script. */
+/**
+ * Controls on a library page that read as running a script, outside the Run
+ * panel (0.34). The panel is the one place a run is requested, and it only
+ * requests one: approval happens on the approval signer's page.
+ */
 async function noRunControl(page) {
   return page.evaluate(() => [...document.querySelectorAll('main button, main a, main [role=button]')]
+    .filter((e) => !e.closest('[data-script-run-panel]'))
     .map((e) => (e.textContent ?? '').trim()).filter((t) => /\b(run|execute|deploy|dispatch|send to)\b/i.test(t)));
 }
 
@@ -102,8 +107,8 @@ async function automationChecks(page) {
   await follow(page, 'nav[aria-label="Main"] [data-nav="automation"]');
   const h = await pageHealth(page);
   check(new URL(page.url()).pathname === '/automation/scripts' && h.h1 === 'Script library', 'Automation opens the Script library', JSON.stringify(h));
-  const notice = await page.$eval('[data-not-runnable]', (e) => e.textContent).catch(() => '');
-  check(/isn.t available yet/i.test(notice) && /signed agent/i.test(notice) && /real Windows/i.test(notice), 'it says plainly that running scripts is not available yet, and why', notice.slice(0, 200));
+  const notice = await page.$eval('[data-script-run-notice]', (e) => e.textContent).catch(() => '');
+  check(/signed action/i.test(notice) && /allowlist/i.test(notice) && /Not yet run on a real Windows computer/i.test(notice), 'it says how a script runs (signed, allowlisted) and that it has not run on real Windows', notice.slice(0, 200));
   const runs = await noRunControl(page);
   check(runs.length === 0, 'the library page has no Run button', runs.join(' | '));
   const row = await page.$('[data-script-row]');
@@ -112,7 +117,7 @@ async function automationChecks(page) {
     await page.waitForSelector('[data-script-content]', { timeout: 15_000 }).catch(() => {});
     const d = await pageHealth(page);
     const runs2 = await noRunControl(page);
-    check(!!(await page.$('[data-not-runnable]')) && !!(await page.$('[data-static-checks]')) && runs2.length === 0 && d.overflow <= 1, 'a script\'s page shows the notice and the static checks, has no Run button, no overflow', `${runs2.join(' | ')} ${JSON.stringify(d)}`);
+    check(!!(await page.$('[data-script-run-notice]')) && !!(await page.$('[data-static-checks]')) && runs2.length === 0 && d.overflow <= 1, 'a script\'s page shows the notice and the static checks, no run control outside the Run panel, no overflow', `${runs2.join(' | ')} ${JSON.stringify(d)}`);
   }
 }
 
@@ -161,7 +166,7 @@ try {
         check(!h.notFound && h.h1 && h.overflow <= 1 && active, `${id} → ${new URL(page.url()).pathname} renders "${h.h1}", highlighted, no overflow`, JSON.stringify(h));
       }
 
-      // Automation: the script library, which says it cannot run scripts and offers nothing that would.
+      // Automation: the script library, which says how a script runs and offers no run control outside an approved version's Run panel.
       if (got.includes('automation')) await automationChecks(page);
       else {
         const h = await visit(page, '/automation/scripts');

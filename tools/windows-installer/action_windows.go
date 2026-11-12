@@ -10,6 +10,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -36,12 +37,16 @@ import (
 
 const maxEnvelopeBytes = 64 << 10
 
+// maxScriptFileBytes: a 64 KiB script, base64 (v0.34).
+const maxScriptFileBytes = 100000
+
 func cmdAction(args []string) int {
 	fs := flag.NewFlagSet("action", flag.ContinueOnError)
 	job := fs.String("job", "", "job id (32 hex)")
 	envPath := fs.String("envelope", "", "envelope file")
+	scriptPath := fs.String("script", "", "script content, base64 (windows.script.run only)")
 	if err := fs.Parse(args); err != nil || *job == "" || *envPath == "" {
-		fmt.Fprintln(os.Stderr, "usage: rem0te-agent.exe action --job <id> --envelope <file>")
+		fmt.Fprintln(os.Stderr, "usage: rem0te-agent.exe action --job <id> --envelope <file> [--script <file>]")
 		return 2
 	}
 	if !trust.HasRoot(embeddedRoot) {
@@ -63,6 +68,22 @@ func cmdAction(args []string) int {
 		fmt.Fprintf(out, "  action %s: envelope unreadable: %v\n", *job, err)
 		return 4
 	}
+	// v0.34: a script run's content, delivered beside the envelope. Data
+	// only: internal/action refuses it unless it hashes to the signed SHA-256.
+	var script []byte
+	if *scriptPath != "" {
+		raw, err := readSmall(*scriptPath, maxScriptFileBytes)
+		if filepath.Dir(filepath.Clean(*scriptPath)) == filepath.Join(paths.StateDir, "actions", "inbox") {
+			_ = os.Remove(*scriptPath)
+		}
+		if err == nil {
+			script, err = base64.StdEncoding.DecodeString(strings.TrimSpace(string(raw)))
+		}
+		if err != nil {
+			script = nil
+			fmt.Fprintf(out, "  action %s: script unreadable: %v\n", *job, err)
+		}
+	}
 	wp := &winPlatform{paths: paths, log: logf}
 	// Keys first, and from the signed chain only. If they cannot be had the
 	// job is not consumed: nothing is journaled or reported, the portal marks
@@ -73,8 +94,13 @@ func cmdAction(args []string) int {
 		return 4
 	}
 	wa := &winActions{paths: paths}
-	r, err := action.Run(*job, raw, action.Options{StateDir: paths.StateDir, Keys: keys, Platform: wa, Now: time.Now,
-		WUA: winWUA{paths: paths}, Registry: winRegistry{}, Pause: pause, Maint: wa})
+	o := action.Options{StateDir: paths.StateDir, Keys: keys, Platform: wa, Now: time.Now,
+		WUA: winWUA{paths: paths}, Registry: winRegistry{}, Pause: pause, Maint: wa, ScriptContent: script}
+	// Windows PowerShell 5.1 from System32, by absolute path (v0.34).
+	if d, err := windows.GetSystemDirectory(); err == nil {
+		o.Scripts = action.ExecHost{PowerShell: filepath.Join(d, "WindowsPowerShell", "v1.0", "powershell.exe")}
+	}
+	r, err := action.Run(*job, raw, o)
 	if err != nil {
 		fmt.Fprintf(out, "  action %s: %v\n", *job, err)
 		return 5

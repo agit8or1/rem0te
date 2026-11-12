@@ -13,6 +13,8 @@ interface View {
   jobId: string; status: string; digest: string; plan: Plan;
   action: { title: string; description: string; warnings: string[]; verification: string; doesNotProve: string[] };
   decisions: { name: string; role: string; decision: string; at: string }[];
+  /** windows.script.run (0.34): the content from this signer's allowlist; null when the entry is gone. */
+  scriptContent?: string | null;
 }
 
 export function renderApprovalPage(v: View, nonce: string): string {
@@ -44,7 +46,8 @@ export function renderApprovalPage(v: View, nonce: string): string {
 ${row('Customer', esc(t.businessName))}
 ${dep ? row('Deployment', `${esc(dep.name)} — <strong>${dep.ring === 0 ? 'canary (ring 0)' : `ring ${esc(dep.ring)}`}</strong> of ${esc(dep.rings)}`) : ''}
 ${row(p.targets.length === 1 ? 'Computer' : 'Computers', computers)}
-${row('Action', updates || p.action.id === 'windows.update.install' ? `<code>${esc(p.action.id)}@${esc(p.action.version)}</code>, ${restarts}${updates || `<br><code>${esc(JSON.stringify(p.params))}</code>`}` : `<code>${esc(p.action.id)}@${esc(p.action.version)}</code> with <code>${esc(JSON.stringify(p.params))}</code>`)}
+${p.script ? scriptRows(p, v.scriptContent ?? null, row) : ''}
+${row('Action', p.script ? `<code>${esc(p.action.id)}@${esc(p.action.version)}</code>` : updates || p.action.id === 'windows.update.install' ? `<code>${esc(p.action.id)}@${esc(p.action.version)}</code>, ${restarts}${updates || `<br><code>${esc(JSON.stringify(p.params))}</code>`}` : `<code>${esc(p.action.id)}@${esc(p.action.version)}</code> with <code>${esc(JSON.stringify(p.params))}</code>`)}
 ${p.display?.policy ? row('Signed under', `patch policy <strong>${esc(p.display.policy.name)}</strong> <span class="mut">(${esc(p.display.policy.digest.slice(0, 16))}…)</span>, approved once by the people listed below; this signer checked the plan is inside it`) : ''}
 ${row('Requested by', `${esc(p.requestedBy.name)} <span class="mut">via ${esc(p.requestedBy.via)}</span>`)}
 ${row('Origin', p.origin.kind === 'ai_suggestion' ? `<strong>AI suggestion</strong>${p.origin.ticketRef ? ` from ticket ${esc(p.origin.ticketRef)}` : ''} — nothing runs without your explicit approval` : 'Technician')}
@@ -63,6 +66,23 @@ ${v.status === 'AWAITING_APPROVAL' ? `
 <p><button class="primary" id="approve">Approve with passkey</button><button id="reject">Reject</button></p>` : ''}
 <div id="msg" role="status"></div>
 ${decideScript(nonce, `/approve/${v.jobId}`, 'plan')}</body></html>`;
+}
+
+/** What a script-run plan names: the allowlisted version, its hash, the arguments, the timeout and the content. */
+function scriptRows(p: Plan, content: string | null, row: (k: string, v: string) => string): string {
+  const s = p.script!;
+  const params = p.params as { parameters?: Record<string, unknown>; timeoutMinutes?: number };
+  const args = Object.entries(params.parameters ?? {});
+  const lines = content === null ? '' : content.split(/\r?\n/).map((l, i) => `<span class="mut">${String(i + 1).padStart(4, ' ')}</span>  ${esc(l)}`).join('\n');
+  return [
+    row('Script', `<strong>${esc(s.name)}</strong> v${esc(s.version)} <span class="mut">(${s.businessId ? 'this business\'s script' : 'global script'}, declared ${esc(s.risk)} risk)</span>`),
+    row('Content SHA-256', `<code>${esc(s.contentSha256)}</code><br><span class="mut">On this signer's allowlist (entry ${esc(s.allowlistId)}). Each computer refuses bytes that do not hash to it.</span>`),
+    row('Arguments', args.length ? `<ul>${args.map(([k, v]) => `<li><code>-${esc(k)}</code> = <code>${esc(JSON.stringify(v))}</code></li>`).join('')}</ul><span class="mut">Checked against the declared parameters here and on each computer; passed as data, never as command text.</span>` : '<span class="mut">none</span>'),
+    row('Timeout', `${esc(params.timeoutMinutes)} minute${params.timeoutMinutes === 1 ? '' : 's'}, then everything the script started is stopped`),
+    row('Wrote the script', `${s.contributors.length} person(s) <span class="mut">— none of them can approve this run</span>`),
+    content === null ? row('The script', '<strong>This signer no longer holds this script\'s content.</strong> Do not approve.')
+      : `<tr><td colspan="2"><details open><summary>The script (${esc(s.contentBytes)} bytes)</summary><pre data-script>${lines}</pre></details></td></tr>`,
+  ].join('\n');
 }
 
 /** The passkey decision script, shared by the plan and policy pages. `base` is built from a validated hex id. */
@@ -99,6 +119,7 @@ th,td{text-align:left;vertical-align:top;padding:6px 8px;border-top:1px solid va
 .warn{background:var(--warnbg);color:var(--warn);border-radius:6px;padding:10px 12px;margin:12px 0} .warn li{margin:4px 0}
 code{font-size:12px;word-break:break-all} ul{margin:4px 0;padding-left:20px} button{font:inherit;padding:8px 14px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--fg);cursor:pointer;margin-right:8px}
 button.primary{background:var(--fg);color:var(--bg)} #msg{margin-top:12px} .ok{color:var(--ok)} select{font:inherit;padding:6px}
+pre{overflow:auto;font-size:12px;line-height:1.45;white-space:pre}
 `;
 
 
@@ -163,4 +184,62 @@ ${v.status === 'AWAITING_APPROVAL' ? `
 <p><button class="primary" id="approve">Approve with passkey</button><button id="reject">Reject</button></p>` : ''}
 <div id="msg" role="status"></div>
 ${decideScript(nonce, `/approve/policy/${v.policyId}`, 'policy')}</body></html>`;
+}
+
+interface ScriptView {
+  id: string; status: string; contentSha256: string; definitionSha256: string;
+  proposal: {
+    name: string; version: number; description: string; businessId: string | null; businessName: string | null; risk: string; content?: string;
+    parameters: { name: string; type: string; required: boolean; description?: string; charset?: string; maxLength?: number; min?: number; max?: number; choices?: string[] }[];
+    contributors: { userId: string; name: string }[]; reviewedBy: { name: string; at: string }; proposedBy: { name: string };
+  };
+  decisions: { name: string; role: string; decision: string; at: string }[];
+  revokedAt: string | null; revokeReason: string | null;
+}
+
+/**
+ * The approval page for adding a script to this signer's allowlist (0.34).
+ * It shows the content itself, as this process holds it, and the SHA-256
+ * this process computed from it — not anything the portal said about it.
+ */
+export function renderScriptApprovalPage(v: ScriptView, nonce: string): string {
+  const p = v.proposal;
+  const row = (k: string, val: string) => `<tr><th>${esc(k)}</th><td>${val}</td></tr>`;
+  const fmt = (iso: string) => `${esc(new Date(iso).toUTCString())}`;
+  const param = (x: ScriptView['proposal']['parameters'][number]) => `<li><code>-${esc(x.name)}</code> ${esc(x.type)}${x.type === 'string' ? `, ${esc(x.charset)} up to ${esc(x.maxLength)}` : x.type === 'integer' ? `, ${esc(x.min)} to ${esc(x.max)}` : x.type === 'choice' ? `: ${esc((x.choices ?? []).join(', '))}` : ''}${x.required ? ', required' : ''}${x.description ? ` — ${esc(x.description)}` : ''}</li>`;
+  const lines = (p.content ?? '').split(/\r?\n/).map((l, i) => `<span class="ln">${i + 1}</span>${esc(l) || ' '}`).join('\n');
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Allow script: ${esc(p.name)} v${esc(p.version)}</title>
+<style nonce="${nonce}">${STYLE}pre{border:1px solid var(--bd);border-radius:6px;padding:8px;max-height:70vh}
+.ln{display:inline-block;width:3em;color:var(--mut);user-select:none}</style></head><body>
+<p class="mut">Rem0te approval — this page is served by the approval signer, not the portal.</p>
+<h1>Allow script: ${esc(p.name)} <span class="mut">v${esc(p.version)}</span></h1>
+<p>Approving adds this exact content to the approval signer's allowlist. Only then can anyone ask to run it, and every run still needs its own two approvals here. Nothing runs when you approve this.</p>
+<div class="warn"><strong>Before you approve</strong><ul>
+<li>Read the script below. It runs as SYSTEM with full PowerShell on any computer a run names: it can do anything an administrator can. The library review and its static checks are pattern matches and another person's opinion; they do not make it safe.</li>
+<li>The SHA-256 below was computed by this signer from the content shown. The agent refuses any bytes that do not hash to it.</li>
+<li>Once added it stays until it is revoked, and revocation is permanent: this content can never be added again.</li>
+</ul></div>
+<table>
+${row('Business', p.businessId ? esc(p.businessName ?? p.businessId) : '<strong>Global</strong> — any business\'s computers')}
+${row('Description', esc(p.description))}
+${row('Declared risk', esc(p.risk))}
+${row('Parameters', p.parameters.length ? `<ul>${p.parameters.map(param).join('')}</ul><span class="mut">Arguments are checked against these on the portal, here and on the computer, and passed as data, never as command text.</span>` : '<span class="mut">none</span>')}
+${row('Written by', `${p.contributors.map((c) => esc(c.name)).join(', ')} <span class="mut">(none of them can approve this, or a run of it)</span>`)}
+${row('Library review', `approved by ${esc(p.reviewedBy.name)}, ${fmt(p.reviewedBy.at)}`)}
+${row('Proposed by', `${esc(p.proposedBy.name)} <span class="mut">(cannot approve it)</span>`)}
+${row('Content SHA-256', `<code>${esc(v.contentSha256)}</code>`)}
+${row('Definition SHA-256', `<code>${esc(v.definitionSha256)}</code>`)}
+${row('Needs', '2 approvers for this business (or for every business, for a global script), other than whoever wrote or proposed it')}
+${row('Status', `<strong id="status">${esc(v.status.replace(/_/g, ' ').toLowerCase())}</strong>${v.revokedAt ? ` — revoked ${fmt(v.revokedAt)}: ${esc(v.revokeReason ?? '')}` : ''}`)}
+${row('Decisions', v.decisions.length ? v.decisions.map((x) => `${esc(x.name)} — ${esc(x.decision)}, ${fmt(x.at)}`).join('<br>') : '<span class="mut">none yet</span>')}
+</table>
+<h2>The script</h2>
+<pre data-script>${lines}</pre>
+${v.status === 'AWAITING_APPROVAL' ? `
+<p>Deciding asks for your passkey. Your decision is bound to the definition hash above, which binds the content hash.</p>
+<input type="hidden" id="role" value="approver">
+<p><button class="primary" id="approve">Approve with passkey</button><button id="reject">Reject</button></p>` : ''}
+<div id="msg" role="status"></div>
+${decideScript(nonce, `/approve/script/${v.id}`, 'script')}</body></html>`;
 }

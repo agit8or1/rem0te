@@ -152,6 +152,13 @@ jobs:
       - name: Script library tests
         run: node apps/api/scripts/unit-script-library.mjs
 
+      # Running approved scripts (0.34): the typed argument rule (the same
+      # table as the agent's Go test), the plan rule the portal and the signer
+      # share, the catalog entry, and the portal's second redaction and cap
+      # of reported output. No database, no signer.
+      - name: Script run tests
+        run: node apps/api/scripts/unit-script-run.mjs
+
       # Patch status (0.30): the Patches tab summary and the redacted ticket
       # summary for restart required/completed, failed, offline/stale, WSUS and
       # Intune, the standard agent and no evidence, against the contract schema.
@@ -322,6 +329,9 @@ jobs:
       # stolen timestamp key, root rotation, downgrade, relay repointing.
       # And the approved-action verifier (0.26): every refusal, replay after
       # restart, interruption mid-action, and the at-most-once journal.
+      # And windows.script.run (0.34): every refusal, and — with the runner's
+      # pwsh (PowerShell 7, not Windows PowerShell 5.1) — arguments passed as
+      # data, the timeout killing the process tree, and the output cap.
       - name: Signed update chain and approved-action tests
         working-directory: tools/windows-installer
         run: go test ./...

@@ -163,6 +163,8 @@ enum ActivityAction {
   SCRIPT_VERSION_APPROVED
   SCRIPT_VERSION_REJECTED
   SCRIPT_REVIEW_REFUSED
+  SCRIPT_ALLOWLIST_PROPOSED
+  SCRIPT_ALLOWLIST_REVOKED
   ENDPOINT_AGENT_REINSTALL_REQUESTED
   ENDPOINT_DEVICE_SECRET_ACCEPTED
   ENDPOINT_RESTORED
@@ -2477,6 +2479,9 @@ model ActionTarget {
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
 
+  // windows.script.run (0.34): what the script printed, kept 90 days.
+  scriptOutput    ScriptRunOutput?
+
   @@unique([jobId, endpointId])
   @@index([endpointId, status])
 }
@@ -3021,6 +3026,65 @@ model ScriptVersion {
   // The content hash the approver's page showed. Equal to contentSha256 (CHECK).
   approvedSha256 String?
 
+  // 0.34: the approval signer's allowlist entry for this version, as last
+  // mirrored. The signer's own copy is the one that decides.
+  allowlistEntries ScriptAllowlistEntry[]
+
   @@unique([scriptId, version])
   @@index([scriptId, status])
+}
+
+// ── Running approved scripts (0.34) ─────────────────────────────────────────
+
+// The portal's mirror of one entry on the approval signer's script allowlist.
+// The signer holds the entry itself, on its own disk, and decides from that;
+// this row only records that the portal proposed it, and what the signer last
+// said. Nothing here can make an entry active: that is two passkey approvals
+// on the signer's origin.
+model ScriptAllowlistEntry {
+  // The signer's entry id (32 hex), chosen by the portal when proposing.
+  id              String        @id
+  scriptVersionId String
+  scriptVersion   ScriptVersion @relation(fields: [scriptVersionId], references: [id], onDelete: Cascade)
+  // Null for a global script.
+  customerId      String?
+  contentSha256   String
+  // AWAITING_APPROVAL | ACTIVE | REJECTED | REVOKED, as the signer last answered.
+  status          String
+  approvalUrl     String
+  proposedById    String
+  revokedAt       DateTime?
+  revokeReason    String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([scriptVersionId])
+}
+
+// What one computer reported for one script run: exit code, timing, and the
+// first 64 KB of stdout and stderr, redacted by the agent and again by the
+// portal. Pruned after 90 days by the script-output sweep; the run's
+// ActionTarget keeps only the summary.
+model ScriptRunOutput {
+  id              String       @id @default(cuid())
+  targetId        String       @unique
+  target          ActionTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  jobId           String
+  endpointId      String
+  customerId      String
+  scriptVersionId String
+  contentSha256   String
+  exitCode        Int?
+  timedOut        Boolean
+  durationMs      Int?
+  stdout          String
+  stderr          String
+  stdoutBytes     Int
+  stderrBytes     Int
+  stdoutTruncated Boolean
+  stderrTruncated Boolean
+  createdAt       DateTime     @default(now())
+
+  @@index([createdAt])
+  @@index([endpointId, createdAt])
 }

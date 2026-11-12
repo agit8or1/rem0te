@@ -236,8 +236,13 @@ try {
 $ACT_RESULTS = 'C:\\ProgramData\\Rem0te\\actions\\results'
 try {
     $ars = @()
+    $arBytes = 0
     foreach ($rf in @(Get-ChildItem -LiteralPath $ACT_RESULTS -Filter '*.json' -File -ErrorAction Stop | Select-Object -First 10)) {
         if ($rf.BaseName -cnotmatch '^[0-9a-f]{32}$') { continue }
+        # A script run's result carries up to ~180 KB of output (0.34): keep
+        # the heartbeat under the portal's 1 MB body limit; the rest go next time.
+        if ($ars.Count -gt 0 -and ($arBytes + $rf.Length) -gt 600000) { break }
+        $arBytes += $rf.Length
         try { $ars += (Get-Content -Raw -LiteralPath $rf.FullName -ErrorAction Stop | ConvertFrom-Json) } catch {}
     }
     if ($ars.Count -gt 0) { $body['actionResults'] = $ars }
@@ -280,10 +285,20 @@ try {
         # ASCII: every envelope field is base64 or an identifier, and Windows
         # PowerShell 5 would otherwise prefix a BOM.
         ($aj.envelope | ConvertTo-Json -Compress -Depth 4) | Set-Content -LiteralPath $ef -Encoding ASCII
+        $aargs = @('action', '--job', $jid, '--envelope', $ef)
+        # A script run (0.34) comes with the script, base64. The agent hashes
+        # the decoded bytes and refuses them unless they are the signed SHA-256.
+        $sc = ''
+        if ($aj.PSObject.Properties['script'] -and $aj.script -and $aj.script.PSObject.Properties['content']) { $sc = [string]$aj.script.content }
+        if ($sc -and $sc.Length -le 100000 -and $sc -cmatch '^[A-Za-z0-9+/]+={0,2}$') {
+            $sf = Join-Path $inbox "$jid.script"
+            Set-Content -LiteralPath $sf -Value $sc -Encoding ASCII -NoNewline
+            $aargs += @('--script', $sf)
+        }
         # Detached (0.27): an update install outlives many heartbeats. The
         # agent reads the envelope, removes it from the inbox, and holds a lock
         # for the job while it runs; a re-delivery finds the lock and leaves.
-        try { Start-Process -FilePath $agentExe -ArgumentList @('action', '--job', $jid, '--envelope', $ef) -WindowStyle Hidden } catch {}
+        try { Start-Process -FilePath $agentExe -ArgumentList $aargs -WindowStyle Hidden } catch {}
     }
 } catch {}
 try {

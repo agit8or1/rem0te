@@ -16,6 +16,8 @@
  *   node dist/approval-signer/main.js patch-policy revoke --id <id> --reason '<why>'
  *   node dist/approval-signer/main.js device-key list
  *   node dist/approval-signer/main.js device-key forget --endpoint <id> --reason '<why>'
+ *   node dist/approval-signer/main.js script list
+ *   node dist/approval-signer/main.js script revoke --id <id> --reason '<why>'
  *
  * Environment: APPROVAL_SIGNER_DIR, APPROVAL_ORIGIN, APPROVAL_RP_ID,
  * APPROVAL_PUBLIC_PORT (3201), APPROVAL_INTERNAL_PORT (3202).
@@ -28,7 +30,7 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { createPublicKey, generateKeyPairSync } from 'node:crypto';
 import * as path from 'node:path';
-import { approvalsOf, effectivePolicyStatus, fingerprint, keysDocument, loadSigningKey, resultKeyFingerprint, verifyPolicy, type RosterMember } from './core';
+import { approvalsOf, effectivePolicyStatus, effectiveScriptStatus, fingerprint, keysDocument, loadSigningKey, resultKeyFingerprint, verifyPolicy, type RosterMember } from './core';
 import { SignerStore } from './store';
 import { startSigner } from './server';
 
@@ -188,6 +190,30 @@ switch (cmd) {
     die('device-key list|forget --endpoint <id> --reason <why>');
     break;
   }
+  case 'script': {
+    // v0.34. The script allowlist: the portal proposes and may revoke;
+    // approvers add an entry on the public page with passkeys. The operator
+    // can list and revoke. Nothing — here or over HTTP — adds, edits or
+    // un-revokes one: a revoked content hash is refused for good.
+    if (sub === 'list') {
+      for (const id of store.scriptEntries()) {
+        const r = store.scriptEntry(id)!;
+        console.log(`${r.id}  ${effectiveScriptStatus(r)}  ${r.contentSha256}  "${r.proposal.name}" v${r.proposal.version}  ${r.proposal.businessId ?? 'global'}  approvals=${r.decisions.filter((d) => d.decision === 'approve').map((d) => d.name).join(',') || '-'}${r.revokedAt ? `  revoked ${r.revokedAt} by ${r.revokedBy}: ${r.revokeReason}` : ''}`);
+      }
+      break;
+    }
+    if (sub === 'revoke') {
+      const id = arg('id') || die('--id is required');
+      const reason = arg('reason') || die('--reason is required');
+      const r = store.scriptEntry(id) || die(`no script entry ${id}`);
+      if (r.revokedAt) die(`${r.contentSha256} was already revoked at ${r.revokedAt}`);
+      if (!store.revokeScript(r.contentSha256, { at: new Date().toISOString(), by: 'operator', reason })) die(`${r.contentSha256} was revoked a moment ago`);
+      console.log(`revoked ${r.contentSha256}`);
+      break;
+    }
+    die('script list|revoke --id <id> --reason <why>');
+    break;
+  }
   default:
-    die('usage: main.js serve|keygen|keys|roster list|roster add|roster disable|policy set|pause list|set|clear|patch-policy list|revoke|device-key list|forget');
+    die('usage: main.js serve|keygen|keys|roster list|roster add|roster disable|policy set|pause list|set|clear|patch-policy list|revoke|device-key list|forget|script list|revoke');
 }

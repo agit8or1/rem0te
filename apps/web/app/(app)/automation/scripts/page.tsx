@@ -15,13 +15,13 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { NotRunnableNotice, RiskBadge, StatusBadge, VersionEditor, apiMessage, selectClass } from '@/components/scripts/script-ui';
+import { ScriptRunNotice, RiskBadge, StatusBadge, VersionEditor, apiMessage, selectClass } from '@/components/scripts/script-ui';
 
 /**
  * The script library (docs/script-library.md): scripts for this business and
  * the global ones, with their latest version and review state. Writing,
- * editing and reviewing only. There is no Run button: the portal cannot run
- * a script, and the notice at the top says why.
+ * editing and reviewing here. A run is requested from an approved version's
+ * page (0.34) and approved on the approval signer; the notice says how.
  */
 
 interface Row {
@@ -53,7 +53,7 @@ export default function ScriptLibraryPage() {
       <PageHeader title="Script library" description="PowerShell scripts, versioned and reviewed by someone other than their author.">
         {canCreate && !creating && <Button size="sm" onClick={() => setCreating(true)}><Plus className="h-4 w-4 mr-1" />New script</Button>}
       </PageHeader>
-      <NotRunnableNotice />
+      <ScriptRunNotice />
 
       {isPlatformAdmin && (
         <div className="mb-4 max-w-sm">

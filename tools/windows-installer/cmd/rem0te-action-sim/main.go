@@ -9,6 +9,7 @@
 //	    [-service stopped|running|disabled] [-stops-after N] \
 //	    [-wua wua.json] [-registry registry.json]
 //	    [-sessions N] [-stop-fails] [-events-dir DIR] [-rustdesk-logs DIR]
+//	    [-script FILE -pwsh PATH]
 //
 //	rem0te-action-sim -scan -wua wua.json [-registry registry.json]     posture, as patch-scan writes it
 //	    [-state DIR -rustdesk-id ID -secret S]                          ...signed with DIR's device key (v0.34)
@@ -36,18 +37,27 @@
 // changes. It prints {"restarted": true|false}. -clock-offset moves the
 // agent's clock (e.g. 7h50m), to run a plan near the end of its window.
 //
+// Script runs (v0.34): -script is the content as the heartbeat delivers it
+// (base64), and -pwsh the PowerShell that runs it — on Linux, PowerShell 7
+// (pwsh). The decision code, the wrapper, the timeout kill (a process group
+// here, a job object on Windows), the output caps and the redaction are the
+// agent's own; only the PowerShell edition and the process-tree mechanism
+// differ from Windows. Without -pwsh the agent reports it cannot run scripts.
+//
 // It prints the Result as JSON. The state directory carries the journal, so
 // running it twice with the same job is a replay, as on a real machine.
 package main
 
 import (
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/agit8or1/rem0te/windows-installer/internal/action"
@@ -158,6 +168,9 @@ func main() {
 	stopFails := flag.Bool("stop-fails", false, "stopping a service fails (running dependents)")
 	eventsDir := flag.String("events-dir", "", "directory with System.txt and Application.txt (wevtutil text)")
 	rdLogs := flag.String("rustdesk-logs", "", "a RustDesk service log directory")
+	scriptPath := flag.String("script", "", "script content, base64, as the heartbeat delivers it (windows.script.run)")
+	pwsh := flag.String("pwsh", "", "PowerShell to run scripts with (pwsh on Linux)")
+	scriptMinute := flag.Duration("script-minute", time.Minute, "how long one minute of a script timeout lasts (shortened by the e2e)")
 	scan := flag.Bool("scan", false, "print this computer's patch posture and exit")
 	restart := flag.Bool("restart", false, "simulate a restart (clears pending restarts) and exit")
 	fire := flag.Bool("fire-restart", false, "if a restart is scheduled in -state, it happens; then exit")
@@ -289,6 +302,19 @@ func main() {
 	}
 	if wua != nil {
 		o.WUA, o.Registry = wua, reg
+	}
+	if *scriptPath != "" {
+		raw, err := os.ReadFile(*scriptPath)
+		if err != nil {
+			fail(err)
+		}
+		if o.ScriptContent, err = base64.StdEncoding.DecodeString(strings.TrimSpace(string(raw))); err != nil {
+			fail(err)
+		}
+	}
+	if *pwsh != "" {
+		o.Scripts = action.ExecHost{PowerShell: *pwsh}
+		o.ScriptMinute = *scriptMinute
 	}
 	r, err := action.Run(*job, env, o)
 	if err != nil {
