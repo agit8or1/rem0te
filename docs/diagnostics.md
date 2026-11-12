@@ -102,7 +102,9 @@ not — reads as missing (404). Before 0.33 only business scope was checked here
 a computer they could not see (it then failed at delivery) and read that computer's run history.
 
 **Audit.** `ENDPOINT_DIAGNOSTIC_REQUESTED` (who, which key, the run) and `ENDPOINT_DIAGNOSTIC_COMPLETED` (outcome
-completed, failed or expired, size, whether truncated) — never result content. A result posted with the wrong device
+completed, failed or expired, size, whether truncated) — never result content. **Automatic snapshots (0.35) are not
+audited run by run** (see [below](#automatic-snapshots)): the run itself, with no requester, is their record, and
+changing the schedule is audited (`SNAPSHOT_SCHEDULE_CHANGED`, before and after). A result posted with the wrong device
 secret is `ENDPOINT_HEARTBEAT_REJECTED`, reason `diagnostic_result_unauthenticated`.
 
 ## Routes
@@ -113,7 +115,8 @@ secret is `ENDPOINT_HEARTBEAT_REJECTED`, reason `diagnostic_result_unauthenticat
 | `POST /endpoints/:id/diagnostics/runs` `{ "key": "disk_space" }` | View computers, plus the entry's permission |
 | `GET /endpoints/:id/diagnostics/runs` | View computers; results withheld where you lack the entry's permission |
 | `GET /endpoints/:id/diagnostics/runs/:runId` | As above |
-| `GET /endpoints/:id/diagnostics/snapshots/:key` (0.33) | View computers; `key` is `process_list`, `service_list` or `network_adapters` (anything else: 400 `UNKNOWN_SNAPSHOT`). The newest completed result, `takenAt`, an open refresh (`pending`) and a newer failure (`lastFailure`) |
+| `GET /endpoints/:id/diagnostics/snapshots/:key` (0.33) | View computers; `key` is `process_list`, `service_list` or `network_adapters` (anything else: 400 `UNKNOWN_SNAPSHOT`). The newest completed result, `takenAt`, an open refresh (`pending`) and a newer failure (`lastFailure`); from 0.35 also `automatic` (`state`, `reason`, `nextAt`, `intervalMinutes`, `basis`), `agentSilent` and `agentVersion`. Reading it marks the tab as open (see below) |
+| `GET /admin/snapshot-schedule`, `PUT /admin/snapshot-schedule` (0.35) | Platform Admin. The automatic snapshot schedule; `PUT` takes any of `enabled`, `minutes` (per key) and `watchMinutes` |
 | `POST /enrollment/diagnostic-result` | The computer, with its device secret |
 
 ## The Processes, Services and Network tabs
@@ -124,6 +127,11 @@ tab — the request carries the key and nothing else, and the computer answers o
 three minutes). While a refresh is on its way the old snapshot stays on screen with the refresh beside it; if the
 refresh fails or expires, the reason is shown and the last good snapshot stays. A snapshot more than a day old is
 flagged. These are pictures of a moment, not live views.
+
+From 0.35 the server also takes them **automatically** ([Automatic snapshots](#automatic-snapshots)), and the tab
+**updates itself**: it re-reads every 4 seconds while a refresh is on its way and every 30 seconds while it is open
+(not while the browser tab is hidden), so a new snapshot appears without a reload. Under the age it says how often the
+snapshot is refreshed and roughly when the next automatic one is due.
 
 | Tab | What it lists | Bounds |
 |---|---|---|
@@ -154,6 +162,64 @@ flagged. These are pictures of a moment, not live views.
 **There is nothing to click that acts on the computer** — no end task, stop, start or restart. Restarting a service
 is a signed maintenance action on the Actions tab (signed agent, allowlisted services, approvals); ending a process
 is not offered at all. When a result had to be cut to fit, the tab says so.
+
+## Automatic snapshots
+
+*Added in 0.35.* Before 0.35 a snapshot existed only once someone pressed Refresh, so a computer nobody had looked at
+showed *Never taken on this computer*. Now the server asks for each one itself.
+
+**How.** On the heartbeat — not a sweep over the fleet. When a computer checks in and one of its snapshots is older
+than its interval, that heartbeat's response asks for it, as an ordinary diagnostics run with **no requester**. It is
+delivered, sanitised, capped (128 KB) and stored exactly like one a person asked for, and the tab shows it as taken
+*automatically*. A computer that is not checking in is never asked, so nothing piles up for it. A Refresh while an
+automatic run is open returns that run, so the computer collects once.
+
+**When** (defaults; Settings → Monitoring & API → *Automatic snapshots*, Platform Admin, audited):
+
+| | Default | Range |
+|---|---|---|
+| Processes, Services, Network adapters | every **6 hours** each | off, or 1 hour – 7 days |
+| While the snapshot's tab is open | every **5 minutes** | off, or 3 – 60 minutes |
+| Switch | on | — |
+
+The 6 hours is the inventory pass's cadence. A process list is out of date within minutes, so polling it hourly across a
+fleet buys little: the 5-minute interval while the tab is open is what keeps it current when someone is looking. "Open"
+means the snapshot was read in the last 90 seconds (the tab re-reads every 30 s), by someone who can see the computer;
+a refused read does not count. The sizes behind the numbers are in [server-sizing.md](server-sizing.md#automatic-snapshots-035).
+
+After a failed or expired automatic run the next one waits an hour (or the interval, if shorter) rather than going
+out on the next heartbeat. At most `SNAPSHOT_MAX_PER_MINUTE` (default 120) scheduled runs start per minute across the
+server, so the first round after an upgrade or an outage is spread over a couple of hours; a key held back stays due.
+Watched runs are not held back.
+
+**Who is asked.** A computer that is active, on Windows, bound to a device secret, running an agent from **0.33 or
+later** (older agents do not know the snapshot keys: 0.31–0.32 refuse them and anything earlier never starts them),
+and checking in (a heartbeat in the last 10 minutes). When one of these fails, the tab says which instead of offering a
+Refresh that would expire:
+
+| The tab says | Why |
+|---|---|
+| Its agent has not checked in since … (it is still reachable through RustDesk) | `agent_silent`: no heartbeat for 10 minutes. `isOnline` can still be true through RustDesk (0.34); nothing can be collected until the agent checks in |
+| This computer's agent (0.32.0) predates 0.33 … | `agent_too_old`; reinstall the agent |
+| … has never reported its version … | `agent_unknown` |
+| Collected by the Windows agents only … | `unsupported_platform`: the Linux and macOS agents run nothing the console asks for |
+| Automatic snapshots are turned off on this server | `disabled` in Settings |
+| … not on an automatic schedule | `key_off`: this key's interval (and the open-tab one) is off |
+| … switched off where this server runs (SNAPSHOT_SWEEP=off) | `process_off` |
+
+No snapshot is ever made up: a tab with nothing taken says *Never taken* and why.
+
+**What is kept.** Only the newest completed automatic run of each key per computer: an older one is deleted when a
+newer one completes, and a failed one when the next is asked for. People's runs are left to the
+[retention sweep](data-retention.md), which also covers automatic ones. The database refuses an automatic run of any
+key but the three snapshot keys, and a second open automatic run of a key (migration 0059).
+
+**Containment does not apply.** No pause kind covers reading: a pause stops writes, and viewing keeps working during
+one ([containment.md](containment.md)) — the same as the automatic inventory pass and a manual Refresh.
+
+**Off switch.** `SNAPSHOT_SWEEP=off` in the API's environment stops all automatic requests in that process (Refresh
+still works); Settings then says so. The e2e runner and the browser suite set it for every suite but
+`e2e-auto-snapshots.mjs`. `check-security-invariants.mjs` §46 checks the rules above.
 
 **MAC addresses** are shown in full, as on the Specs tab: no masking policy applies to them today. (RustDesk IDs
 are masked in the device list; that is a different identifier.)

@@ -728,7 +728,9 @@ check(
   const dr = enr.slice(enr.indexOf('async diagnosticResult('), enr.indexOf('async diagnosticResult(') + 1000);
   check('a diagnostic result needs the device secret', /secretMatches\(node\.agentSecretHash, dto\.agentSecret\)/.test(dr) && /UnauthorizedException/.test(dr), 'diagnostic-result must authenticate like command-result');
   check('only an authenticated heartbeat is handed diagnostic runs', /if \(authenticated\) \{\s*try \{\s*diagnostics = await this\.diagnostics\.forHeartbeat\(node\.endpointId\);/.test(enr), 'forHeartbeat must be gated on authenticated');
-  check('a run is re-authorized against its requester at delivery', /const why = !entry \? 'unknown_key' : !ep \? 'endpoint_missing' : await this\.requesterStillAllowed\(r, entry, ep\);/.test(dsvc), 'forHeartbeat must check the requester before DELIVERED');
+  // 0.35: a run with no requester (an automatic snapshot, §46) has nobody to
+  // re-check; every run that has one still is.
+  check('a run is re-authorized against its requester at delivery', /const why = !entry \? 'unknown_key' : !ep \? 'endpoint_missing' : r\.requestedById === null \? \(isSnapshotKey\(r\.key\) \? null : 'not_a_snapshot'\) : await this\.requesterStillAllowed\(r, entry, ep\);/.test(dsvc), 'forHeartbeat must check the requester before DELIVERED');
 }
 
 // 21. Scheduled client updates (0.32). A business's update policy makes the
@@ -2442,6 +2444,72 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     (ws.match(/ArgumentList @\('chat'\)/g) ?? []).length === 1 && ws.indexOf("ArgumentList @('chat')") > ws.indexOf('export function buildSignedWindowsScript(')
       && /remote: 'remote connections and chat'/.test(read('apps/api/src/containment/pause.ts')),
     "one Start-Process ... @('chat'), in the signed variant's hook; pause label 'remote connections and chat'");
+}
+
+// 46. Automatic snapshots (0.35). The server asks a checking-in computer for
+//     its process list, service list and network adapters on its own. What
+//     must hold: only the three snapshot keys can ever be asked for without
+//     a requester (the database CHECK, and the scheduler iterating
+//     SNAPSHOT_KEYS); the scheduler runs only inside forHeartbeat, which only
+//     an authenticated heartbeat reaches; a requester-less run skips the
+//     requester re-check only for a snapshot key; reading a snapshot marks
+//     the tab "watched" (which shortens the interval) only after the
+//     visibility and capability checks, so nobody can make a computer they
+//     cannot see collect anything; automatic runs are not audited one by one
+//     but the schedule change is, Platform Admin only; pruning deletes only
+//     finished automatic runs and never touches ActivityLog; and the off
+//     switch is exact and set for the e2e runner and the browser suite.
+{
+  const svc = read('apps/api/src/diagnostics-catalog/diagnostics-catalog.service.ts');
+  const sch = read('apps/api/src/diagnostics-catalog/snapshot-schedule.ts');
+  const sql = read('apps/api/prisma/migrations/0059_auto_snapshots/migration.sql');
+  const ctl = read('apps/api/src/diagnostics-catalog/diagnostics-catalog.controller.ts');
+  const body = (name) => { const i = svc.indexOf(`  ${name}(`); const j = svc.indexOf('\n  }\n', i); return i < 0 ? '' : svc.slice(i, j); };
+  const asyncBody = (name) => body(`async ${name}`) || body(`private async ${name}`);
+  check('automatic runs are snapshot keys only: the database refuses any other key without a requester',
+    /ADD CONSTRAINT "DiagnosticRun_automatic_snapshot_only" CHECK \(\s*"requestedById" IS NOT NULL OR "key" IN \('process_list', 'service_list', 'network_adapters'\)\s*\);/.test(sql)
+      && /CREATE UNIQUE INDEX "DiagnosticRun_one_open_automatic" ON "DiagnosticRun"\("endpointId", "key"\)\s*WHERE "requestedById" IS NULL AND "status" IN \('REQUESTED', 'DELIVERED', 'RUNNING'\);/.test(sql),
+    'migration 0059: DiagnosticRun_automatic_snapshot_only and the one-open-automatic partial unique index');
+  const sched = asyncBody('scheduleAutomatic');
+  check('the scheduler stages only what dueKeys returns, and dueKeys walks SNAPSHOT_KEYS',
+    /for \(const key of SNAPSHOT_KEYS\) \{/.test(sch.slice(sch.indexOf('export function dueKeys('), sch.indexOf('export function automaticState(')))
+      && /const due = dueKeys\(schedule, now,/.test(sched) && /for \(const d of due\) \{/.test(sched) && /key: d\.key,\s*requestedById: null, expiresAt:/.test(sched)
+      && (svc.match(/requestedById: null, expiresAt:/g) ?? []).length === 1 && !/diagnosticRun\.(create|createMany|upsert)\(/.test(svc.replace(sched, '').replace(asyncBody('request'), '')),
+    'one requester-less create in the service, inside scheduleAutomatic, keyed by dueKeys');
+  check('the scheduler runs only from forHeartbeat, and only for an eligible computer with the switches on',
+    (svc.match(/this\.scheduleAutomatic\(/g) ?? []).length === 1 && /await this\.scheduleAutomatic\(endpointId\);/.test(asyncBody('forHeartbeat'))
+      && /if \(!this\.autoEnabled\) return;/.test(sched) && /if \(!schedule\.enabled\) return;/.test(sched)
+      && /if \(!ep \|\| ineligible\(\{ \.\.\.ep, agentBound: !!node\?\.agentSecretHash \}, now\)\) return;/.test(sched)
+      && /if \(authenticated\) \{\s*try \{\s*diagnostics = await this\.diagnostics\.forHeartbeat\(node\.endpointId\);/.test(read('apps/api/src/enrollment/enrollment.service.ts')),
+    'scheduleAutomatic called once, from forHeartbeat; forHeartbeat called only under `if (authenticated)`');
+  check('a requester-less run skips the requester re-check only for a snapshot key',
+    /r\.requestedById === null \? \(isSnapshotKey\(r\.key\) \? null : 'not_a_snapshot'\) : await this\.requesterStillAllowed\(r, entry, ep\)/.test(asyncBody('forHeartbeat'))
+      && /if \(!r\.requestedById\) return 'no_requester';/.test(svc),
+    "forHeartbeat: requestedById === null ? (isSnapshotKey ? null : 'not_a_snapshot') : requesterStillAllowed");
+  const snap = asyncBody('snapshot');
+  check('reading a snapshot marks it watched only after visibility and the capability are checked',
+    snap.indexOf('this.markWatched(endpointId, key)') > snap.indexOf('await this.assertVisible(actor, endpointId, cap);')
+      && snap.indexOf('this.markWatched(endpointId, key)') > snap.indexOf('this.acl.assertCapability(actor, cap);')
+      && snap.indexOf('await this.assertVisible(') > 0 && (svc.match(/this\.markWatched\(/g) ?? []).length === 1,
+    'snapshot(): assertVisible, assertCapability, then markWatched — and nowhere else');
+  check('automatic runs are not audited one by one; a schedule change is, by a Platform Admin',
+    /private async auditDone\([^)]*\) \{\s*(\/\/[^\n]*\n\s*)*if \(r\.requestedById === null\) return;/.test(svc)
+      && /this\.acl\.assertPlatformAdmin\(actor\);\s*const parsed = parseScheduleUpdate\(body\);/.test(svc)
+      && /action: 'SNAPSHOT_SCHEDULE_CHANGED', resource: 'platform_settings', resourceId: 'singleton',\s*meta: \{ before, after \},/.test(svc)
+      && /@Controller\('admin\/snapshot-schedule'\)\s*@UseGuards\(PlatformAdminGuard\)/.test(ctl)
+      && (ctl.match(/@(Get|Put|Post|Delete|Patch)\(/g) ?? []).length === 7,
+    'auditDone returns for requestedById null; updateSchedule: assertPlatformAdmin then audit before/after; controller PlatformAdminGuard; GET + PUT only');
+  const prune = asyncBody('pruneAutomatic');
+  check('pruning deletes only finished automatic runs, and nothing here touches the audit log',
+    /deleteMany\(\{\s*where: \{ endpointId, key, requestedById: null, status: \{ in: \[\.\.\.DONE\] \}/.test(prune)
+      && /const DONE = \['COMPLETED', 'FAILED', 'EXPIRED'\] as const;/.test(svc)
+      && !/activityLog\.(update|delete|upsert)|"ActivityLog"/.test(svc + sch),
+    'pruneAutomatic: requestedById null and a finished status; no ActivityLog write in the diagnostics service or the schedule');
+  check('SNAPSHOT_SWEEP=off is exact, and set for run-e2e.sh and the browser suite',
+    /export const sweepEnabled = \(env: Record<string, string \| undefined>\) => env\.SNAPSHOT_SWEEP !== 'off';/.test(sch)
+      && /\nexport SNAPSHOT_SWEEP=off\n/.test(read('scripts/run-e2e.sh'))
+      && /SNAPSHOT_SWEEP: 'off',/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    "sweepEnabled: env.SNAPSHOT_SWEEP !== 'off'; run-e2e.sh exports it; e2e-ui's API env sets it");
 }
 
 if (failures.length > 0) {

@@ -138,6 +138,13 @@ jobs:
       - name: System inventory tests
         run: node apps/api/scripts/unit-system-inventory.mjs
 
+      # Automatic snapshots (0.35): who can be asked, when a key is due (the
+      # schedule, the watched interval, the failure back-off), what the tab is
+      # told, the Settings validation, the fleet-wide pacer, and the stored
+      # size of a typical snapshot from the real sanitiser.
+      - name: Automatic snapshot tests
+        run: node apps/api/scripts/unit-snapshot-schedule.mjs
+
       # Scheduled client updates (0.32): the update window's validation, time
       # zones (+5:30, +5:45, a 30-minute DST zone), windows across midnight,
       # both DST transitions, next opening/closing against a minute-by-minute

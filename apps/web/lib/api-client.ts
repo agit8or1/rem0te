@@ -421,6 +421,25 @@ export const publicAddressApi = {
     api.put<{ data: PublicAddressInfo & { check: PublicAddressCheck | null } }>('/admin/public-address', { url, saveUnverified }),
 };
 
+// ─── Automatic snapshots (0.35) ───────────────────────────────────────────────
+export type SnapshotScheduleKey = 'process_list' | 'service_list' | 'network_adapters';
+export interface SnapshotSchedule {
+  enabled: boolean;
+  /** Minutes between automatic snapshots per key; 0 = not on a schedule. */
+  minutes: Record<SnapshotScheduleKey, number>;
+  /** Minutes between snapshots while the key's tab is open; 0 = off. */
+  watchMinutes: number;
+  /** False when this server runs with SNAPSHOT_SWEEP=off: nothing is asked for automatically whatever is saved. */
+  processEnabled: boolean;
+  /** Scheduled snapshots started per minute at most (SNAPSHOT_MAX_PER_MINUTE). */
+  perMinute: number;
+}
+export const snapshotScheduleApi = {
+  get: () => api.get<{ data: SnapshotSchedule }>('/admin/snapshot-schedule'),
+  set: (body: Partial<Pick<SnapshotSchedule, 'enabled' | 'watchMinutes'>> & { minutes?: Partial<Record<SnapshotScheduleKey, number>> }) =>
+    api.put<{ data: SnapshotSchedule }>('/admin/snapshot-schedule', body),
+};
+
 // ─── Update ───────────────────────────────────────────────────────────────────
 // ─── Technician client downloads ──────────────────────────────────────────
 // Authenticated, unlike the Quick Connect downloads: these are for the people

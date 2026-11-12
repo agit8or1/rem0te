@@ -15,11 +15,21 @@ import { MonitoringService } from '../monitoring/monitoring.service';
 import {
   CATALOG, MAX_AGENT_RESULT_CHARS, MAX_RUNS_PER_DEVICE, MAX_RUNS_PER_USER, PICKUP_TTL_MINUTES,
   RATE_WINDOW_MINUTES, RUNS_PER_HEARTBEAT, RUN_TTL_MINUTES, START_TTL_MINUTES,
-  capResult, catalogEntry, isCatalogKey, isSnapshotKey, publicCatalog, resultCapFor, sanitizeResult, type CatalogEntry,
+  SNAPSHOT_KEYS, capResult, catalogEntry, isCatalogKey, isSnapshotKey, publicCatalog, resultCapFor, sanitizeResult,
+  type CatalogEntry, type SnapshotKey,
 } from './catalog';
+import {
+  Pacer, WATCH_WINDOW_MS, automaticState, dueKeys, ineligible, isWindows, parseScheduleUpdate, perMinuteFrom,
+  scheduleFrom, sweepEnabled, type KeyHistory, type SnapshotSchedule,
+} from './snapshot-schedule';
 
 const OPEN = ['REQUESTED', 'DELIVERED', 'RUNNING'] as const;
+const DONE = ['COMPLETED', 'FAILED', 'EXPIRED'] as const;
 const minutes = (n: number) => n * 60_000;
+const SCHEDULE_CACHE_MS = 30_000;
+const SCHEDULE_SELECT = {
+  snapshotAutoEnabled: true, snapshotProcessMinutes: true, snapshotServiceMinutes: true, snapshotNetworkMinutes: true, snapshotWatchMinutes: true,
+} as const;
 
 /**
  * One-click read-only diagnostics: request, deliver on the authenticated
@@ -32,6 +42,17 @@ const minutes = (n: number) => n * 60_000;
 @Injectable()
 export class DiagnosticsCatalogService {
   private readonly logger = new Logger(DiagnosticsCatalogService.name);
+  /** SNAPSHOT_SWEEP=off: this process asks for nothing automatically (Refresh still works). */
+  private readonly autoEnabled = sweepEnabled(process.env);
+  private readonly pacer = new Pacer(perMinuteFrom(process.env));
+  private scheduleCache: { at: number; value: SnapshotSchedule } | null = null;
+  /**
+   * `${endpointId}:${key}` → when someone last read that snapshot. A read
+   * within WATCH_WINDOW_MS means the tab is open, and the key gets the
+   * watched cadence. In memory, because the API runs as one process
+   * (docs/server-sizing.md); a restart only forgets who was looking.
+   */
+  private readonly watched = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -115,7 +136,8 @@ export class DiagnosticsCatalogService {
 
     const since = new Date(Date.now() - minutes(RATE_WINDOW_MINUTES));
     const [perDevice, perUser] = await Promise.all([
-      this.prisma.diagnosticRun.count({ where: { endpointId, requestedAt: { gte: since } } }),
+      // People's requests only: automatic snapshots (0.35) must not use up a technician's Refresh.
+      this.prisma.diagnosticRun.count({ where: { endpointId, requestedById: { not: null }, requestedAt: { gte: since } } }),
       this.prisma.diagnosticRun.count({ where: { requestedById: actor.userId, requestedAt: { gte: since } } }),
     ]);
     if (perDevice >= MAX_RUNS_PER_DEVICE || perUser >= MAX_RUNS_PER_USER) {
@@ -178,12 +200,21 @@ export class DiagnosticsCatalogService {
     await this.assertVisible(actor, endpointId, cap);
     this.acl.assertCapability(actor, cap);
     await this.expire({ endpointId });
-    const [ep, node, latest, newest] = await Promise.all([
-      this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { platform: true, isOnline: true, lastSeenAt: true } }),
+    // Reading the tab is what "watched" means (0.35): only after the
+    // visibility and capability checks above, so nobody can make a computer
+    // they cannot see collect anything.
+    this.markWatched(endpointId, key);
+    const [ep, node, latest, newest, schedule, history] = await Promise.all([
+      this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { platform: true, isOnline: true, lastSeenAt: true, status: true, agentVersion: true } }),
       this.prisma.rustdeskNode.findUnique({ where: { endpointId }, select: { agentSecretHash: true } }),
       this.prisma.diagnosticRun.findFirst({ where: { endpointId, key, status: 'COMPLETED' }, orderBy: { completedAt: 'desc' } }),
       this.prisma.diagnosticRun.findFirst({ where: { endpointId, key }, orderBy: { requestedAt: 'desc' } }),
+      this.schedule(),
+      this.keyHistory(endpointId),
     ]);
+    const now = Date.now();
+    const computer = { status: ep?.status, platform: ep?.platform, agentBound: !!node?.agentSecretHash, agentVersion: ep?.agentVersion, lastSeenAt: ep?.lastSeenAt };
+    const automatic = automaticState({ schedule, processEnabled: this.autoEnabled, key, computer, history: history[key], watched: this.isWatched(endpointId, key, now), now });
     const since = newest && (!latest || newest.id !== latest.id) && newest.requestedAt > (latest?.requestedAt ?? new Date(0)) ? newest : null;
     const [shownLatest, shownSince] = await Promise.all([
       latest ? this.present(actor, latest) : null,
@@ -193,6 +224,11 @@ export class DiagnosticsCatalogService {
       key, label: entry.label, tab: entry.tab,
       supported: isWindows(ep?.platform), agentBound: !!node?.agentSecretHash,
       isOnline: !!ep?.isOnline, lastSeenAt: ep?.lastSeenAt ?? null,
+      agentVersion: ep?.agentVersion ?? null,
+      // 0.35: whether the agent itself is checking in. isOnline can be true
+      // through RustDesk alone (0.34), and then nothing will be collected.
+      agentSilent: ineligible(computer, now) === 'agent_silent',
+      automatic,
       // takenAt is when the computer reported it, which is when it was read.
       takenAt: latest?.completedAt ?? null,
       latest: shownLatest,
@@ -211,20 +247,22 @@ export class DiagnosticsCatalogService {
   }
 
   private async presentMany(actor: ActorContext, rows: DiagnosticRun[]) {
-    const ids = [...new Set(rows.map((r) => r.requestedById))];
+    const ids = [...new Set(rows.map((r) => r.requestedById).filter((x): x is string => !!x))];
     const users = ids.length ? await this.prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, firstName: true, lastName: true, email: true } }) : [];
     const byId = new Map(users.map((u) => [u.id, u]));
-    return rows.map((r) => this.shape(actor, r, byId.get(r.requestedById)));
+    return rows.map((r) => this.shape(actor, r, r.requestedById ? byId.get(r.requestedById) : undefined));
   }
   private async present(actor: ActorContext, row: DiagnosticRun) {
     return (await this.presentMany(actor, [row]))[0];
   }
   private shape(actor: ActorContext, r: DiagnosticRun, u?: { firstName: string | null; lastName: string | null; email: string }) {
+    // A run with no requester is an automatic snapshot (0.35): the server asked.
     const entry = catalogEntry(r.key);
     const readable = !!entry && this.can(actor, entry.capability as Capability);
     return {
       id: r.id, key: r.key, label: entry?.label ?? r.key, status: r.status,
       requestedAt: r.requestedAt, deliveredAt: r.deliveredAt, startedAt: r.startedAt, completedAt: r.completedAt, expiresAt: r.expiresAt,
+      automatic: r.requestedById === null,
       requestedBy: { id: r.requestedById, name: u ? ([u.firstName, u.lastName].filter(Boolean).join(' ') || u.email) : null },
       error: r.error, truncated: r.truncated, resultBytes: r.resultBytes,
       // A recent_system_errors result is event-log text: someone who can see
@@ -260,11 +298,136 @@ export class DiagnosticsCatalogService {
   }
 
   private async auditDone(r: DiagnosticRun, outcome: 'completed' | 'failed' | 'expired', extra: Record<string, unknown> = {}) {
+    // An automatic snapshot (0.35) is not audited run by run: at 5,000
+    // computers that would be tens of thousands of audit entries a day for
+    // housekeeping nobody asked for, in a log that can never be pruned. Its
+    // record is the run itself (requestedById null, shown as "Automatic"),
+    // and the schedule that caused it is audited when it changes.
+    if (r.requestedById === null) return;
     await this.audit.log({
       tenantId: r.tenantId ?? undefined, customerId: r.customerId ?? undefined,
       action: 'ENDPOINT_DIAGNOSTIC_COMPLETED', resource: 'endpoint', resourceId: r.endpointId,
       meta: { runId: r.id, key: r.key, outcome, requestedById: r.requestedById, ...extra },
     });
+  }
+
+  // ── Automatic snapshots (0.35) ────────────────────────────────────────────
+
+  /** The platform-wide schedule, cached for 30 s (it is read on every heartbeat). */
+  async schedule(fresh = false): Promise<SnapshotSchedule> {
+    if (!fresh && this.scheduleCache && Date.now() - this.scheduleCache.at < SCHEDULE_CACHE_MS) return this.scheduleCache.value;
+    const row = await this.prisma.platformSettings.findUnique({ where: { id: 'singleton' }, select: SCHEDULE_SELECT });
+    const value = scheduleFrom(row);
+    this.scheduleCache = { at: Date.now(), value };
+    return value;
+  }
+
+  private markWatched(endpointId: string, key: SnapshotKey) {
+    const now = Date.now();
+    this.watched.set(`${endpointId}:${key}`, now);
+    // Bounded: forget anyone who stopped looking, once the map grows.
+    if (this.watched.size > 5_000) for (const [k, at] of this.watched) if (now - at > WATCH_WINDOW_MS) this.watched.delete(k);
+  }
+  private isWatched(endpointId: string, key: SnapshotKey, now = Date.now()) {
+    const at = this.watched.get(`${endpointId}:${key}`);
+    return at !== undefined && now - at <= WATCH_WINDOW_MS;
+  }
+
+  /** Per snapshot key on one computer: the newest completion, the newest automatic attempt, and whether one is open. One query. */
+  private async keyHistory(endpointId: string): Promise<Record<SnapshotKey, KeyHistory>> {
+    const rows = await this.prisma.$queryRaw<{ key: string; last_ok: Date | null; last_auto: Date | null; last_auto_status: string | null; open: boolean }[]>`
+      SELECT r."key",
+        max(r."completedAt") FILTER (WHERE r."status" = 'COMPLETED') AS last_ok,
+        max(r."requestedAt") FILTER (WHERE r."requestedById" IS NULL) AS last_auto,
+        (array_agg(r."status"::text ORDER BY r."requestedAt" DESC) FILTER (WHERE r."requestedById" IS NULL))[1] AS last_auto_status,
+        bool_or(r."status" IN ('REQUESTED', 'DELIVERED', 'RUNNING')) AS open
+      FROM "DiagnosticRun" r
+      WHERE r."endpointId" = ${endpointId} AND r."key" IN ('process_list', 'service_list', 'network_adapters')
+      GROUP BY r."key"`;
+    const out = {} as Record<SnapshotKey, KeyHistory>;
+    for (const k of SNAPSHOT_KEYS) {
+      const r = rows.find((x) => x.key === k);
+      out[k] = {
+        lastCompletedAt: r?.last_ok ?? null, lastAutoRequestedAt: r?.last_auto ?? null,
+        lastAutoFailed: r?.last_auto_status === 'FAILED' || r?.last_auto_status === 'EXPIRED', open: !!r?.open,
+      };
+    }
+    return out;
+  }
+
+  /**
+   * Stage the snapshot keys this computer is due for, on the heartbeat that
+   * found them stale. Called only from forHeartbeat, which only an
+   * authenticated heartbeat reaches. Writes no audit entry (see auditDone).
+   */
+  private async scheduleAutomatic(endpointId: string) {
+    if (!this.autoEnabled) return;
+    const schedule = await this.schedule();
+    if (!schedule.enabled) return;
+    const [ep, node] = await Promise.all([
+      this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { status: true, platform: true, agentVersion: true, lastSeenAt: true, tenantId: true, customerId: true } }),
+      this.prisma.rustdeskNode.findUnique({ where: { endpointId }, select: { agentSecretHash: true } }),
+    ]);
+    const now = Date.now();
+    if (!ep || ineligible({ ...ep, agentBound: !!node?.agentSecretHash }, now)) return;
+    const due = dueKeys(schedule, now, await this.keyHistory(endpointId), (k) => this.isWatched(endpointId, k, now));
+    for (const d of due) {
+      // Someone is looking: not held back. Otherwise the fleet-wide pacer decides.
+      if (d.basis !== 'watch' && !this.pacer.take(now)) continue;
+      await this.pruneAutomatic(endpointId, d.key, null);
+      try {
+        await this.prisma.diagnosticRun.create({
+          data: {
+            endpointId, tenantId: ep.tenantId, customerId: ep.customerId, key: d.key,
+            requestedById: null, expiresAt: new Date(now + minutes(PICKUP_TTL_MINUTES)),
+          },
+        });
+      } catch (e) {
+        // The partial unique index: another heartbeat staged it first.
+        if ((e as { code?: string })?.code !== 'P2002') throw e;
+      }
+    }
+  }
+
+  /**
+   * Automatic runs are housekeeping: only the newest completed one of a key
+   * is worth keeping (older ones would pile up at 5,000 computers × 4 a day
+   * of up to 128 KB). Removes this computer's finished automatic runs of
+   * `key` other than the newest completed one (or `keep`). People's runs are
+   * never touched here; they age out under the retention sweep (0.34), which
+   * covers automatic runs too.
+   */
+  private async pruneAutomatic(endpointId: string, key: SnapshotKey, keep: string | null) {
+    const newest = keep ?? (await this.prisma.diagnosticRun.findFirst({
+      where: { endpointId, key, requestedById: null, status: 'COMPLETED' }, orderBy: { completedAt: 'desc' }, select: { id: true },
+    }))?.id;
+    await this.prisma.diagnosticRun.deleteMany({
+      where: { endpointId, key, requestedById: null, status: { in: [...DONE] }, ...(newest ? { id: { not: newest } } : {}) },
+    });
+  }
+
+  /** Settings → Monitoring & API → Automatic snapshots. Platform Admin only (the schedule is platform-wide). */
+  async getSchedule(actor: ActorContext) {
+    this.acl.assertPlatformAdmin(actor);
+    return { ...(await this.schedule(true)), processEnabled: this.autoEnabled, perMinute: perMinuteFrom(process.env) };
+  }
+
+  async updateSchedule(actor: ActorContext, body: unknown) {
+    this.acl.assertPlatformAdmin(actor);
+    const parsed = parseScheduleUpdate(body);
+    if (!parsed.ok) throw new BadRequestException({ code: 'INVALID_SNAPSHOT_SCHEDULE', message: parsed.error });
+    const before = await this.schedule(true);
+    await this.prisma.platformSettings.upsert({ where: { id: 'singleton' }, create: { id: 'singleton', ...parsed.data }, update: parsed.data });
+    this.scheduleCache = null;
+    const after = await this.schedule(true);
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      await this.audit.log({
+        actorId: actor.userId, actorIp: actor.ip,
+        action: 'SNAPSHOT_SCHEDULE_CHANGED', resource: 'platform_settings', resourceId: 'singleton',
+        meta: { before, after },
+      });
+    }
+    return { ...after, processEnabled: this.autoEnabled, perMinute: perMinuteFrom(process.env) };
   }
 
   // ── Agent side ────────────────────────────────────────────────────────────
@@ -276,15 +439,27 @@ export class DiagnosticsCatalogService {
    */
   async forHeartbeat(endpointId: string): Promise<{ id: string; key: string }[]> {
     await this.expire({ endpointId });
+    try {
+      await this.scheduleAutomatic(endpointId);
+    } catch (e) {
+      // Never cost the computer the runs a person asked for.
+      this.logger.warn(`Automatic snapshots for ${endpointId}: ${String(e)}`);
+    }
     const due = await this.prisma.diagnosticRun.findMany({
-      where: { endpointId, status: 'REQUESTED' }, orderBy: { requestedAt: 'asc' }, take: RUNS_PER_HEARTBEAT,
+      where: { endpointId, status: 'REQUESTED' },
+      // A person's request before an automatic snapshot (requestedById null
+      // last — Postgres sorts NULLs first on DESC, hence `nulls`), oldest
+      // first within each, so neither starves.
+      orderBy: [{ requestedById: { sort: 'desc', nulls: 'last' } }, { requestedAt: 'asc' }], take: RUNS_PER_HEARTBEAT,
     });
     if (!due.length) return [];
     const ep = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { id: true, customerId: true, accessMode: true, tenantId: true } });
     const out: { id: string; key: string }[] = [];
     for (const r of due) {
       const entry = catalogEntry(r.key);
-      const why = !entry ? 'unknown_key' : !ep ? 'endpoint_missing' : await this.requesterStillAllowed(r, entry, ep);
+      // An automatic run has no requester to re-check; it was decided on this
+      // heartbeat, from this computer's own state, for a snapshot key only.
+      const why = !entry ? 'unknown_key' : !ep ? 'endpoint_missing' : r.requestedById === null ? (isSnapshotKey(r.key) ? null : 'not_a_snapshot') : await this.requesterStillAllowed(r, entry, ep);
       if (why) {
         const n = await this.prisma.diagnosticRun.updateMany({ where: { id: r.id, status: 'REQUESTED' }, data: { status: 'FAILED', error: `Not delivered: the person who requested this is no longer allowed to (${why}).`, completedAt: new Date() } });
         if (n.count) await this.auditDone(r, 'failed', { reason: why });
@@ -298,6 +473,7 @@ export class DiagnosticsCatalogService {
 
   /** A run can wait up to its pickup window; the requester may have lost access since. */
   private async requesterStillAllowed(r: DiagnosticRun, entry: CatalogEntry, ep: { id: string; customerId: string | null; accessMode: string; tenantId: string | null }): Promise<string | null> {
+    if (!r.requestedById) return 'no_requester';
     if (await this.abuse.isPaused(`user:${r.requestedById}`)) return 'requester_paused';
     const tenantId = r.tenantId ?? ep.tenantId;
     if (!tenantId) return 'no_tenant';
@@ -352,6 +528,7 @@ export class DiagnosticsCatalogService {
       },
     });
     if (n.count) await this.auditDone(run, 'completed', { resultBytes: capped.bytes, truncated: capped.truncated, duration: entry.duration });
+    if (n.count && run.requestedById === null && isSnapshotKey(run.key)) await this.pruneAutomatic(endpointId, run.key, run.id);
     return { accepted: !!n.count };
   }
 
@@ -390,8 +567,4 @@ export class DiagnosticsCatalogService {
     }
     return out;
   }
-}
-
-function isWindows(platform: string | null | undefined) {
-  return !!platform && /windows/i.test(platform);
 }

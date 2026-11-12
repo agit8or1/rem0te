@@ -159,6 +159,8 @@ if (checkIdx !== -1) {
 
 // ── Emit ────────────────────────────────────────────────────────────────────
 const TITLES = {
+  // 0.35: two controllers in diagnostics-catalog.controller.ts.
+  'diagnostics-catalog-endpointsiddiagnostics': 'Diagnostics catalog', 'diagnostics-catalog-adminsnapshotschedule': 'Automatic snapshot schedule',
   auth: 'Authentication', mfa: 'Multi-factor authentication', users: 'Users',
   businesses: 'Businesses', sites: 'Sites', endpoints: 'Computers',
   sessions: 'Support sessions', launcher: 'Launcher', enrollment: 'Endpoint enrolment',

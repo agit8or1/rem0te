@@ -47,7 +47,9 @@ interface CatalogResponse { supported: boolean; agentBound: boolean; isOnline: b
 interface Run {
   id: string; key: string; label: string; status: RunStatus;
   requestedAt: string; deliveredAt: string | null; startedAt: string | null; completedAt: string | null; expiresAt: string;
-  requestedBy: { id: string; name: string | null };
+  requestedBy: { id: string | null; name: string | null };
+  /** 0.35: an automatic snapshot — the server asked, nobody did. */
+  automatic?: boolean;
   error: string | null; truncated: boolean; resultBytes: number | null;
   result: Record<string, unknown> | null; resultWithheld: boolean;
   /** A snapshot run (0.33): its result is on the workspace tab, not in the history. */
@@ -227,7 +229,7 @@ function RunDetail({ run, now }: { run: Run; now: number }) {
           <StatusPill status={run.status} />
         </div>
         <span className="text-xs text-muted-foreground">
-          Asked by {run.requestedBy.name ?? 'a former user'} {ago(run.requestedAt, now)}
+          {run.automatic ? 'Asked for automatically' : `Asked by ${run.requestedBy.name ?? 'a former user'}`} {ago(run.requestedAt, now)}
           {run.completedAt && run.status === 'COMPLETED' ? ` · result ${ago(run.completedAt, now)}` : ''}
         </span>
       </div>
@@ -350,7 +352,7 @@ export function EndpointDiagnosticsCatalog({ endpointId }: { endpointId: string 
             : (
               <Table head={['Requested', 'Diagnostic', 'By', 'Status', '']} rows={history.map((r) => [
                 <span key="t" title={formatDate(r.requestedAt)}>{ago(r.requestedAt, now)}</span>,
-                r.label, r.requestedBy.name ?? '—', <StatusPill key="s" status={r.status} />,
+                r.label, r.automatic ? 'Automatic' : r.requestedBy.name ?? '—', <StatusPill key="s" status={r.status} />,
                 <button key="v" type="button" className="text-xs text-primary hover:underline" onClick={() => setSelected(r.id)}>{selected === r.id ? 'Shown above' : 'View'}</button>,
               ])} />
             )}

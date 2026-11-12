@@ -15,7 +15,9 @@
  * workspace tab; saving and reopening a view; bulk selection; the search
  * palette (Ctrl+K); Add Device through the step-up dialog, cancelled and then
  * confirmed; API keys create through step-up, cancelled and then confirmed;
- * the Reports pages; and the System status cards. At 375 px no page may
+ * the Reports pages; the System status cards; and (0.35, snapshotAutoUpdate)
+ * a Processes tab that updates itself, without a reload, when a simulated
+ * device completes a run — after Refresh, and on its periodic re-read. At 375 px no page may
  * scroll sideways: a wide table scrolls inside its own container.
  *
  * Any console error, uncaught exception, or unexpected failed request on a
@@ -127,6 +129,9 @@ function startApi() {
     // Nothing in the background acts on this database while the browser looks at it.
     MONITOR_SWEEP: 'off', CLIENT_UPDATE_SWEEP: 'off', PATCH_POLICY_SWEEP: 'off', METRIC_SWEEP: 'off', AUDIT_SEALER: 'off',
     RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off',
+    // 0.35 automatic snapshots: the fixtures' snapshots are the only ones, and
+    // snapshotAutoUpdate() below drives its device by hand.
+    SNAPSHOT_SWEEP: 'off',
     FRONTEND_URL: WEB, PUBLIC_API_URL: WEB,
     VERSION_FILE: path.join(ROOT, 'version.json'),
   };
@@ -764,6 +769,87 @@ async function combo(browser, f, vp, theme) {
   await apiKeys(browser, f, vp, theme, label);
 }
 
+/**
+ * 0.35: the Processes tab updates itself. A computer of its own, with a device
+ * secret, so this suite can play the agent: heartbeat to the suite's API and
+ * post the result the way heartbeat.ps1 does. Proves, at one viewport, with no
+ * reload in between (a marker set on `window` must survive):
+ *   - the honest state before anything is taken (SNAPSHOT_SWEEP=off here, so
+ *     `process_off`, not "Refresh asks for one");
+ *   - Refresh → pending → the device completes → the new list appears (the
+ *     4 s poll while pending);
+ *   - a run the page did not ask for (another person's Refresh, written
+ *     straight to the database) completes → the new list appears on the
+ *     30 s re-read while the tab is open.
+ */
+async function snapshotAutoUpdate(browser, f, vp) {
+  const label = `${vp} snapshots`;
+  section(`Snapshot tab updates itself (${vp === 'desktop' ? '1440 × 900' : '375 × 812'})`);
+  const secret = randomBytes(24).toString('hex');
+  const rid = String(100000000 + ((Math.random() * 899999999) | 0));
+  const name = `${TAG}-SNAP-${vp}`.toUpperCase();
+  const ep = await prisma.endpoint.create({ data: {
+    tenantId: f.tenant.id, customerId: f.A.id, name, hostname: name, platform: 'Windows', osVersion: 'Windows 11 Pro', status: 'ACTIVE',
+    isOnline: true, isManaged: true, accessMode: 'COMPANY_WIDE', lastSeenAt: new Date(), deviceClass: 'WORKSTATION', agentVersion: '0.35.0',
+  } });
+  const { createHash } = await import('crypto');
+  await prisma.rustdeskNode.create({ data: { tenantId: f.tenant.id, endpointId: ep.id, rustdeskId: rid, agentSecretHash: createHash('sha256').update(secret).digest('hex') } });
+  const device = async (pathname, body) => {
+    const r = await fetch(`${API_ORIGIN}/api/v1/enrollment/${pathname}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': ip() }, body: JSON.stringify({ rustdeskId: rid, agentSecret: secret, ...body }) });
+    return r.json().catch(() => ({}));
+  };
+  /** One check-in, answering every process_list run handed out with a list holding `proc`. */
+  const checkIn = async (proc) => {
+    const hb = await device('heartbeat', { hostname: name, platform: 'Windows', agentVersion: '0.35.0' });
+    const runs = (hb?.data?.diagnostics ?? []).filter((d) => d.key === 'process_list');
+    for (const d of runs) {
+      await device('diagnostic-result', { runId: d.id, key: d.key, state: 'running' });
+      await device('diagnostic-result', { runId: d.id, key: d.key, state: 'completed', result: { processCount: 1, userNamesRead: true, processes: [{ name: proc, pid: 4321, cpuSeconds: 1.5, workingSetBytes: 5e7, user: 'CORP\\frontdesk', startedAt: new Date().toISOString() }] } });
+    }
+    return runs.length;
+  };
+  const ctx = await newContext(browser, vp, 'light');
+  try {
+    const page = await signIn(ctx, f.admin.email, label, 'light');
+    await go(page, `/endpoints/${ep.id}?tab=processes`);
+    const card = page.locator('[data-testid="snapshot-process_list"]');
+    await card.waitFor({ timeout: 20_000 });
+    await page.evaluate(() => { window.__noReload = 'still-here'; });
+    const blocked = page.locator('[data-testid="snapshot-blocked"]');
+    check(await blocked.getAttribute('data-reason').catch(() => null) === 'process_off' && /SNAPSHOT_SWEEP=off/.test(await blocked.innerText().catch(() => '')),
+      `${label}: before anything is taken, the tab says why nothing arrives on its own (process_off), not "Refresh asks for one"`, await card.innerText().catch(() => ''));
+    check(!/Refresh asks for one/.test(await card.innerText()), `${label}: the old dead-end wording is gone`);
+
+    // 1. Refresh, then the device answers: the 4 s poll picks it up.
+    await page.locator('[data-testid="snapshot-refresh"]').click();
+    await page.locator('[data-testid="snapshot-pending"]').waitFor({ timeout: 10_000 });
+    check(true, `${label}: Refresh shows the request pending`);
+    const first = `autosnap-first-${vp}`;
+    check((await checkIn(first)) === 1, `${label}: the simulated device is handed the run and completes it`);
+    const t0 = Date.now();
+    const shown1 = await page.waitForFunction((n) => document.querySelector('[data-testid="snapshot-process_list"]')?.innerText.includes(n), first, { timeout: 15_000 }).then(() => true).catch(() => false);
+    check(shown1, `${label}: the new list appears without a reload (${Math.round((Date.now() - t0) / 1000)} s)`);
+    check(await page.locator('[data-testid="snapshot-pending"]').count() === 0 && /Taken just now/.test(await page.locator('[data-testid="snapshot-age"]').innerText()), `${label}: no longer pending; "Taken just now"`);
+
+    // 2. A run the page did not ask for: only the periodic re-read can show it.
+    await prisma.diagnosticRun.create({ data: { endpointId: ep.id, tenantId: f.tenant.id, customerId: f.A.id, key: 'process_list', requestedById: f.owner.id, expiresAt: new Date(Date.now() + 15 * 60_000) } });
+    const second = `autosnap-second-${vp}`;
+    check((await checkIn(second)) === 1, `${label}: a run someone else asked for is completed by the device`);
+    const t1 = Date.now();
+    const shown2 = await page.waitForFunction((n) => document.querySelector('[data-testid="snapshot-process_list"]')?.innerText.includes(n), second, { timeout: 45_000 }).then(() => true).catch(() => false);
+    check(shown2, `${label}: it appears on the tab's periodic re-read, without a reload (${Math.round((Date.now() - t1) / 1000)} s)`);
+    check(await page.evaluate(() => window.__noReload) === 'still-here', `${label}: the page was never reloaded`);
+    if (vp === 'phone') await noSideScroll(page, `${label} processes tab`);
+    await shot(page, `${label}-processes-auto`);
+    await cleanCheck(page, `${label} processes tab`);
+  } finally {
+    await ctx.close();
+    await prisma.diagnosticRun.deleteMany({ where: { endpointId: ep.id } }).catch(() => {});
+    await prisma.endpointCommand.deleteMany({ where: { endpointId: ep.id } }).catch(() => {});
+    await prisma.endpoint.delete({ where: { id: ep.id } }).catch(() => {});
+  }
+}
+
 // ── Run ─────────────────────────────────────────────────────────────────────
 let copyDir = null;
 async function main() {
@@ -791,6 +877,7 @@ async function main() {
   const browser = await chromium.launch();
   try {
     for (const vp of ['desktop', 'phone']) for (const theme of ['light', 'dark']) await combo(browser, f, vp, theme);
+    for (const vp of ['desktop', 'phone']) await snapshotAutoUpdate(browser, f, vp);
   } finally { await browser.close(); }
   await cleanup(); created.businesses = []; created.users = [];
 
