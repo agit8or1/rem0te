@@ -2927,6 +2927,103 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     "dispatchBlock's first line: revokedSinceSigning → 'revoked' (script entry REVOKED; software entry archived or gone)");
 }
 
+// 53. Automatic agent self-update (0.36). When a computer's agent is older
+//     than what this server serves, the heartbeat asks it to re-run its
+//     update path by itself. What must hold: it runs only for an authenticated
+//     heartbeat outside an updates pause, never replaces a flag another step
+//     set and comes before the containment override; it sends only the two
+//     flags agents already act on, with no nonce; nothing goes out under a
+//     pause, a rollout, another queued install or an open session, an
+//     attempt hands the flag out for less than the agent's 30-minute floor,
+//     the attempt cap is checked first and the global pace is counted under
+//     a lock; Linux and macOS are never asked; attempts are history rows, not
+//     audit entries, while the settings change is Platform Admin, fresh and
+//     audited, and opting a policy back in needs fresh authentication; the
+//     signed heartbeat's periodic check runs only `rem0te-agent.exe update`;
+//     and the off switch is exact and set for every other suite.
+{
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const sch = read('apps/api/src/agent-auto-update/schedule.ts');
+  const svc = read('apps/api/src/agent-auto-update/agent-auto-update.service.ts');
+  const ctl = read('apps/api/src/agent-auto-update/agent-auto-update.controller.ts');
+  const cus = read('apps/api/src/client-updates/client-updates.service.ts');
+  const up = read('apps/api/src/agent-upgrade/agent-upgrade.service.ts');
+  const ws = read('apps/api/src/public/windows-script.ts');
+  const hbStep = enr.slice(enr.indexOf('let agentSelfCheck = false;'), enr.indexOf('// v0.28: updates paused everywhere or for this business.'));
+  check('the heartbeat step runs only when authenticated and not paused, adds a flag only when none is going out, and precedes the containment override',
+    hbStep.length > 200 && /if \(authenticated && !updatesHeld\) \{\s*try \{\s*const auto = await this\.agentAuto\.forHeartbeat\(\{/.test(hbStep)
+      && /if \(auto\.flag && !updateRustdesk && !reinstallAgent\) \{/.test(hbStep)
+      && /flagGoingOut: !!\(updateRustdesk \|\| reinstallAgent\)/.test(hbStep)
+      && enr.indexOf('let agentSelfCheck = false;') > enr.indexOf('const mig = await this.agentMigration.forHeartbeat(')
+      && /if \(updatesHeld\) \{\s*updateRustdesk = null;\s*reinstallAgent = null;/.test(enr.slice(enr.indexOf('let agentSelfCheck = false;')))
+      && (enr.match(/this\.agentAuto\.forHeartbeat\(/g) ?? []).length === 1,
+    'enrollment.service: `if (authenticated && !updatesHeld)`, `if (auto.flag && !updateRustdesk && !reinstallAgent)`, after the migration step, before `if (updatesHeld)`');
+  check('it sends only reinstallAgent or updateRustdesk, with this server\'s version and no nonce',
+    /if \(auto\.flag === 'updateRustdesk'\) updateRustdesk = \{ targetVersion: this\.platformVersion\(\) \};\s*else reinstallAgent = \{ targetVersion: this\.platformVersion\(\) \};/.test(hbStep)
+      && !/nonce/.test(hbStep.replace(/\/\/[^\n]*/g, ''))
+      && /return channel === 'standard_pre015' \? 'updateRustdesk' : 'reinstallAgent';/.test(sch),
+    'the step\'s two assignments; flagFor returns one of the two flags');
+  const dec = sch.slice(sch.indexOf('export function decide('), sch.indexOf('export function selfCheckAllowed('));
+  const at = (t) => dec.indexOf(t);
+  check('nothing is dispatched under a pause, a rollout, another queued install, a closed window or an open session; the cap is checked before any dispatch',
+    at("if (i.paused) return out('queued', 'paused', t);") > 0 && at("if (i.rollout) return out('queued', 'rollout', t);") > 0
+      && at("if (i.pendingRequest) return out('queued', 'pending_request', t);") > 0 && at("if (i.sessionOpen) return out('queued', 'session_open', t);") > 0
+      && at("if (i.mode === 'WINDOW' && !i.windowOpen) return out('queued', 'outside_window', t);") > 0
+      && [ "if (i.paused)", "if (i.rollout)", "if (i.pendingRequest)", "if (i.sessionOpen)", 'if (i.attempts >= i.settings.maxAttempts && !inAttempt)' ].every((x) => at(x) > 0 && at(x) < at("dispatch: 'resend'") && at(x) < at("dispatch: 'new'"))
+      && at("if (i.mode === 'OFF') return out('opted_out', 'policy_off', t);") < at("dispatch: 'resend'")
+      && (dec.match(/dispatch: '(resend|new)'/g) ?? []).length === 2,
+    'decide(): every hold and the attempt cap return before the only two dispatching returns');
+  check('one attempt hands the flag out for less than the agent\'s 30-minute floor, and attempts back off',
+    /export const ATTEMPT_WINDOW_MS = 20 \* MIN;/.test(sch) && /export const BACKOFF_MS = \[0, 2 \* H, 8 \* H, 24 \* H\] as const;/.test(sch)
+      && /TotalMinutes -ge 30\)/.test(ws),
+    'ATTEMPT_WINDOW_MS = 20 * MIN; BACKOFF_MS [0, 2h, 8h, 24h]; the heartbeat keeps its 30-minute floor');
+  const start = svc.slice(svc.indexOf('private async startAttempt('), svc.indexOf('private async complete('));
+  check('the global pace is counted under an advisory lock, and the node moves only from the state this heartbeat read',
+    /await tx\.\$executeRawUnsafe\(`SELECT pg_advisory_xact_lock\(hashtext\('rem0te\.agent-auto-update\.pace'\)\)`\);\s*const used = await tx\.agentAutoUpdateAttempt\.count\(/.test(start)
+      && /if \(used >= settings\.perHour\) return 'pacing' as const;/.test(start)
+      && /where: \{ id: node\.id, agentAutoTarget: node\.agentAutoTarget, agentAutoAttempts: node\.agentAutoAttempts, agentAutoLastAt: node\.agentAutoLastAt \},/.test(start)
+      && /if \(moved\.count !== 1\) return 'raced' as const;/.test(start)
+      && (svc.match(/agentAutoUpdateAttempt\.create\(/g) ?? []).length === 1 && start.includes('agentAutoUpdateAttempt.create('),
+    'startAttempt: lock, count vs perHour, conditional updateMany, the only create');
+  check('Linux and macOS agents and computers without a device secret are never asked',
+    /if \(readOnlyAgentOs\(f\.platform\)\) return \{ none: 'read_only_agent' \};/.test(sch) && /if \(!f\.hasSecret\) return \{ none: 'no_device_secret' \};/.test(sch)
+      && /const ch = agentChannel\(facts\);\s*if \(!\('channel' in ch\)\) return \{ flag: null, selfCheck: false \};/.test(svc),
+    'agentChannel: read-only OS first, then the device secret; forHeartbeat returns nothing without a channel');
+  const put = svc.slice(svc.indexOf('async putSettings('));
+  check('attempts are not audit entries; the settings change is Platform Admin, fresh and audited before/after',
+    (svc.match(/this\.audit\.log\(/g) ?? []).length === 1 && put.includes('this.audit.log(')
+      && /this\.acl\.assertPlatformAdmin\(actor\);[\s\S]{0,300}assertFresh\(freshMethod, \{ action: 'agent\.autoupdate'/.test(put)
+      && /action: 'AGENT_AUTO_UPDATE_SETTINGS_CHANGED', resource: 'platform_settings', resourceId: 'singleton',\s*meta: \{ before: shape\(before\), after: shape\(after\) \},/.test(put)
+      && /async getSettings\(actor: ActorContext\) \{\s*this\.acl\.assertPlatformAdmin\(actor\);/.test(svc)
+      && /@Controller\('admin\/agent-auto-update'\)\s*@UseGuards\(PlatformAdminGuard\)/.test(ctl) && (ctl.match(/@(Get|Put|Post|Delete|Patch)\(/g) ?? []).length === 2
+      && !/activityLog\.(create|update|delete|upsert)/.test(svc + sch),
+    'one audit.log in the service, in putSettings after assertPlatformAdmin and assertFresh; PlatformAdminGuard; GET + PUT only');
+  check('opting a policy back in (any agent mode but OFF) needs fresh authentication; opting out does not',
+    /if \(input\.agentMode !== undefined && input\.agentMode !== 'OFF' && \(input\.agentMode \?\? null\) !== \(before\?\.agentMode \?\? null\) && !fresh\) throw new FreshAuthNeeded\(\);/.test(cus)
+      && cus.indexOf('throw new FreshAuthNeeded();\n    const biz') > cus.indexOf("input.agentMode !== 'OFF'") - 400,
+    'client-updates.service putPolicy: the agentMode fresh check');
+  check('the card\'s automatic-update state is read only after the computer\'s scope check',
+    (() => {
+      const cardFn = up.slice(up.indexOf('  async card(actor: ActorContext, id: string) {'), up.indexOf('  async updateAgent('));
+      const scope = cardFn.indexOf('await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_VIEW);');
+      return (up.match(/this\.auto\.card\(/g) ?? []).length === 1 && scope > 0 && cardFn.indexOf('this.auto.card(') > scope;
+    })(),
+    'agent-upgrade.service card(): assertEndpointInScope before this.auto.card');
+  const signedSc = ws.slice(ws.indexOf('selfCheckHook: `try {'), ws.indexOf('} catch {}`,', ws.indexOf('selfCheckHook: `try {')));
+  check('the signed periodic self-check runs only `rem0te-agent.exe update`, only when the portal allows it, and the legacy channel has none',
+    signedSc.length > 200 && /if \(\$resp\.data\.agentSelfCheck -eq \$true -and \(Test-Path -LiteralPath \$agentExe\)\) \{/.test(signedSc)
+      && (signedSc.match(/& \$agentExe/g) ?? []).length === 1 && signedSc.includes("& $agentExe @('update') *>$null")
+      && !/iex|Invoke-Expression|Invoke-WebRequest|Invoke-RestMethod|DownloadFile|Start-Process|irm /i.test(signedSc)
+      && /selfCheckHook: '# Periodic self-check: signed channel only\.',/.test(ws) && (ws.match(/selfCheckHook: ['`]/g) ?? []).length === 2
+      && /agentSelfCheck: true/.test(enr),
+    'windows-script.ts: one signed selfCheckHook calling only update; the legacy one is a comment');
+  check('AGENT_AUTO_UPDATE=off is exact, and set for run-e2e.sh and the browser suite',
+    /processOn: env\.AGENT_AUTO_UPDATE !== 'off',/.test(sch)
+      && /\nexport AGENT_AUTO_UPDATE=off\n/.test(read('scripts/run-e2e.sh'))
+      && /AGENT_AUTO_UPDATE: 'off',/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    "settingsFrom: env.AGENT_AUTO_UPDATE !== 'off'; run-e2e.sh exports it; e2e-ui's API env sets it");
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

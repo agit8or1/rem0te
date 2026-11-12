@@ -42,6 +42,8 @@ interface Variant {
   constants: string;
   download: string;
   updateHook: string;
+  /** 0.36: the signed agent's own periodic update check; nothing on the legacy channel. */
+  selfCheckHook: string;
   channelReport: string;
   actionHook: string;
 }
@@ -172,6 +174,9 @@ try {
     Invoke-WebRequest -Uri $dlUrl -OutFile $INSTALLER -UseBasicParsing
 } catch { Fail "ERROR: Download failed: $($_.Exception.Message)" 10 }`,
     updateHook: `try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm '\$iu' | iex" *>\$null } catch {}`,
+    // A standard agent is kept current by the server asking (reinstallAgent);
+    // it has nothing of its own to check against.
+    selfCheckHook: '# Periodic self-check: signed channel only.',
     channelReport: "$body['updateChannel'] = 'legacy'",
     // Approved actions need the signed agent; a legacy machine is never sent one.
     actionHook: '# Approved actions: not on the legacy channel.',
@@ -221,6 +226,30 @@ try {
             $aargs = @('update')
             if ($upd.nonce -and ([string]$upd.nonce -match '^[A-Za-z0-9_-]{16,64}$')) { $aargs += @('--nonce', [string]$upd.nonce) }
             if (Test-Path -LiteralPath $agentExe) { try { & $agentExe @aargs *>$null } catch {} }`,
+    // 0.36: about once a day (20 h plus up to 8 h of jitter, so a fleet does
+    // not check at the same minute), and only on a heartbeat where the portal
+    // says this computer may (agentSelfCheck: not opted out, inside its
+    // policy's window, no updates pause, no rollout, no session). What runs is
+    // the same \`rem0te-agent.exe update\`, which refuses under the signed
+    // pause and installs only what the signed repository lists. The first
+    // sighting only schedules; a due time more than two days out (a clock
+    // that jumped) is rescheduled, never acted on. It takes effect once a
+    // signed release built from this template is published.
+    selfCheckHook: `try {
+    $agentExe = Join-Path $env:ProgramFiles 'Rem0te\\rem0te-agent.exe'
+    if ($resp.data.agentSelfCheck -eq $true -and (Test-Path -LiteralPath $agentExe)) {
+        $scFile = 'C:\\ProgramData\\Rem0te\\update-check.next'
+        $nowU = (Get-Date).ToUniversalTime()
+        $due = $null
+        try { $due = ([DateTime]::Parse(([string](Get-Content -Raw -LiteralPath $scFile -ErrorAction Stop)).Trim())).ToUniversalTime() } catch {}
+        if (-not $due -or $nowU -ge $due -or $due -gt $nowU.AddDays(2)) {
+            $next = $nowU.AddMinutes(1200 + (Get-Random -Minimum 0 -Maximum 480))
+            Set-Content -LiteralPath $scFile -Value $next.ToString('o') -Encoding ASCII
+            # Not twice in one check-in: a flag above may already have run it.
+            if ($due -and $nowU -ge $due -and -not ($upd -and $upd.targetVersion)) { try { & $agentExe @('update') *>$null } catch {} }
+        }
+    }
+} catch {}`,
     channelReport: `$body['updateChannel'] = 'signed'
 try {
     $ast = Get-Content -Raw 'C:\\ProgramData\\Rem0te\\agent-status.json' -ErrorAction Stop | ConvertFrom-Json
@@ -1663,6 +1692,7 @@ try {
         }
     }
 } catch {}
+${v.selfCheckHook}
 ${v.actionHook}
 '@
 Set-Content -Path $hbScript -Value $hbBody -Encoding UTF8

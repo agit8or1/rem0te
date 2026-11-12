@@ -34,6 +34,7 @@ import { compareVersions } from '../common/agent-contract';
 import { assertFresh } from '../security-controls/review';
 import { MetricsService } from '../metrics/metrics.service';
 import { ChatService } from '../chat/chat.service';
+import { AgentAutoUpdateService } from '../agent-auto-update/agent-auto-update.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -69,6 +70,7 @@ export class EnrollmentService {
     private readonly metrics: MetricsService,
     private readonly agentMigration: AgentMigrationService,
     private readonly chat: ChatService,
+    private readonly agentAuto: AgentAutoUpdateService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -890,6 +892,32 @@ export class EnrollmentService {
       }
     }
 
+    // Automatic agent self-update (0.36). Last of the update steps on
+    // purpose: it only ever ADDS a flag when nothing above is going out, and
+    // never replaces one; the containment check below still has the final
+    // word. It holds itself while a rollout owns the computer, a RustDesk
+    // update or Reinstall is queued, a session is open, or the policy's
+    // window is closed, and paces and caps its own attempts
+    // (agent-auto-update/schedule.ts). A signed agent may also be told it may
+    // run its own periodic update check (`agentSelfCheck`).
+    let agentSelfCheck = false;
+    if (authenticated && !updatesHeld) {
+      try {
+        const auto = await this.agentAuto.forHeartbeat({
+          node,
+          dto: { ...dto, platform: dto.platform ?? node.platform ?? undefined },
+          updatesHeld, rolloutManaged, flagGoingOut: !!(updateRustdesk || reinstallAgent),
+        });
+        if (auto.flag && !updateRustdesk && !reinstallAgent) {
+          if (auto.flag === 'updateRustdesk') updateRustdesk = { targetVersion: this.platformVersion() };
+          else reinstallAgent = { targetVersion: this.platformVersion() };
+        }
+        agentSelfCheck = auto.selfCheck;
+      } catch (e) {
+        this.logger.warn(`Agent auto-update step failed for endpoint ${node.endpointId}: ${String(e)}`);
+      }
+    }
+
     // v0.28: updates paused everywhere or for this business. Nothing is
     // started; a staged rollout simply does not advance on this computer.
     if (updatesHeld) {
@@ -1020,6 +1048,7 @@ export class EnrollmentService {
       rotate,
       updateRustdesk,
       reinstallAgent,
+      ...(agentSelfCheck ? { agentSelfCheck: true } : {}),
       commands,
       actions,
       actionAcks,

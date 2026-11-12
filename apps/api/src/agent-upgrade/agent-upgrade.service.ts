@@ -17,6 +17,7 @@ import { assertFresh } from '../security-controls/review';
 import { readOnlyAgentOs } from '../common/platform';
 import { agentMeetsContract, AGENT_CONTRACT_VERSION } from '../common/agent-contract';
 import { refusalOf, type BulkResult } from '../device-views/rules';
+import { AgentAutoUpdateService } from '../agent-auto-update/agent-auto-update.service';
 
 export type AgentKind = 'standard' | 'signed' | 'linux' | 'macos' | 'rustdesk-only' | 'unknown';
 
@@ -60,6 +61,7 @@ export class AgentUpgradeService {
     private readonly urls: PublicUrlService,
     private readonly controls: ControlsStore,
     private readonly policy: AccessPolicyService,
+    private readonly auto: AgentAutoUpdateService,
   ) {}
 
   private platformVersion(): string {
@@ -83,6 +85,17 @@ export class AgentUpgradeService {
     if (ep.updateChannel === 'signed') return 'signed';
     if (ep.agentVersion) return 'standard';
     return isWindows(ep.platform) ? 'standard' : 'unknown';
+  }
+
+  /**
+   * 0.36: a Windows computer that has no device secret (an agent older than
+   * 0.13.0) can only be re-bound by a claim, so the installer has to be run
+   * with an enrolment token from Add device. The token is a placeholder here:
+   * the card never mints one.
+   */
+  windowsTokenCommand(): string {
+    const base = this.urls.api().replace(/\/+$/, '');
+    return `irm '${base}/api/v1/public/install/windows.ps1?token=<token from Add device>' | iex`;
   }
 
   // ── The Agent card ───────────────────────────────────────────────────────
@@ -161,6 +174,10 @@ export class AgentUpgradeService {
       };
     }
 
+    // 0.36: automatic updates — what the server will do about this agent by itself.
+    const autoUpdate = await this.auto.card(id, os ? this.installerCommand(os) : !hasSecret && isWindows(ep.platform) ? this.windowsTokenCommand() : null)
+      .catch((e) => { this.logger.warn(`agent auto-update state for ${id}: ${String(e)}`); return null; });
+
     return {
       kind,
       platform: ep.platform,
@@ -179,6 +196,7 @@ export class AgentUpgradeService {
       reinstall,
       update,
       migration,
+      autoUpdate,
     };
   }
 
@@ -210,6 +228,9 @@ export class AgentUpgradeService {
       }
     }
     const r = await this.endpoints.requestAgentReinstall(actor, id);
+    // 0.36: a person asking is the retry for a computer whose automatic
+    // attempts ran out; afterwards automatic attempts start from zero.
+    await this.auto.resetFor(id).catch((e) => this.logger.warn(`agent auto-update reset for ${id}: ${String(e)}`));
     return { ...r, kind, what: kind === 'signed' ? 'check' : 'reinstall' };
   }
 

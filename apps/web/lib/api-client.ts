@@ -804,6 +804,8 @@ export const clientUpdatesApi = {
   setPolicy: (data: {
     businessId: string; siteId?: string | null; groupId?: string | null; priority?: number | null; enabled: boolean; timeZone: string;
     windows: { days: number[]; start: string; end: string }[]; skipActiveSession: boolean; skipLoggedOnUser: boolean;
+    /** 0.36: automatic agent updates here; null inherits, omitted leaves it as it is. */
+    agentMode?: 'ANY_TIME' | 'WINDOW' | 'OFF' | null;
   }) => api.put('/client-updates/policy', data),
   removeSiteOverride: (businessId: string, siteId: string) => api.delete(`/client-updates/policy/sites/${siteId}`, bq(businessId)),
   computers: (businessId?: string | null) => api.get('/client-updates/computers', bq(businessId)),
@@ -811,6 +813,20 @@ export const clientUpdatesApi = {
   removeGroupPolicy: (businessId: string, groupId: string) => api.delete(`/client-updates/policy/groups/${groupId}`, bq(businessId)),
   /** The effective policy for one computer, and why (the device page). */
   endpointPolicy: (endpointId: string) => api.get(`/client-updates/computers/${endpointId}/policy`),
+};
+
+// Automatic agent self-update (0.36): the platform-wide settings, Platform
+// Admin only; a change needs fresh authentication (the step-up dialog).
+export type AgentAutoUpdateSettings = {
+  enabled: boolean; perHour: number; maxAttempts: number; processOn: boolean;
+  served: { version: string; signedSha256: string | null };
+  pace: { usedLastHour: number; perHour: number };
+  lastDay: { started: number; updated: number; open: number; superseded: number };
+  failing: { count: number; computers: { id: string; name: string; business: { id: string; name: string } | null; agentVersion: string | null; attempts: number; lastAt: string | null }[] };
+};
+export const agentAutoUpdateApi = {
+  get: () => api.get<{ data: AgentAutoUpdateSettings }>('/admin/agent-auto-update'),
+  put: (body: { enabled?: boolean; perHour?: number; maxAttempts?: number }) => api.put('/admin/agent-auto-update', body),
 };
 
 // Outbound email (0.34). Saving the relay, and adding, re-sending or removing

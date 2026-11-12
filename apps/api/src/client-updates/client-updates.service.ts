@@ -137,6 +137,7 @@ export class ClientUpdatesService {
     return {
       id: p.id, siteId: p.siteId, groupId: p.groupId, priority: p.priority, enabled: p.enabled, timeZone: p.timeZone, windows: p.windows,
       skipActiveSession: p.skipActiveSession, skipLoggedOnUser: p.skipLoggedOnUser,
+      agentMode: p.agentMode ?? null,
       description: describeWindow(w), valid: !!w,
       window: { open: st.open, opensAt: st.opensAt, closesAt: st.closesAt },
       updatedAt: p.updatedAt, updatedById: p.updatedById,
@@ -278,7 +279,7 @@ export class ClientUpdatesService {
   }
 
   private snapshot(p: ClientUpdatePolicy | null) {
-    return p ? { enabled: p.enabled, timeZone: p.timeZone, windows: p.windows, skipActiveSession: p.skipActiveSession, skipLoggedOnUser: p.skipLoggedOnUser, ...(p.groupId ? { priority: p.priority } : {}) } : null;
+    return p ? { enabled: p.enabled, timeZone: p.timeZone, windows: p.windows, skipActiveSession: p.skipActiveSession, skipLoggedOnUser: p.skipLoggedOnUser, agentMode: p.agentMode ?? null, ...(p.groupId ? { priority: p.priority } : {}) } : null;
   }
 
   private priorityTaken(priority: number) {
@@ -308,14 +309,19 @@ export class ClientUpdatesService {
     if (!group && priority !== null) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Only a device-group policy has a priority.' });
     if (group && await this.prisma.clientUpdatePolicy.findFirst({ where: { customerId, priority, groupId: { not: null, notIn: [group.id] } }, select: { id: true } })) throw this.priorityTaken(priority!);
     if (input.enabled && !fresh) throw new FreshAuthNeeded();
+    const before = await this.prisma.clientUpdatePolicy.findFirst({ where: group ? { customerId, groupId: group.id } : { customerId, siteId, groupId: null } });
+    // 0.36: a change of agent mode to anything but OFF can start installer
+    // runs nobody clicked for, so it needs fresh authentication too; opting
+    // out (OFF) never does.
+    if (input.agentMode !== undefined && input.agentMode !== 'OFF' && (input.agentMode ?? null) !== (before?.agentMode ?? null) && !fresh) throw new FreshAuthNeeded();
     const biz = await this.business(customerId);
 
     const data = {
       enabled: input.enabled, timeZone: window.timeZone, windows: window.windows as unknown as Prisma.InputJsonValue,
       skipActiveSession: input.skipActiveSession, skipLoggedOnUser: input.skipLoggedOnUser, updatedById: a.userId,
       ...(group ? { priority } : {}),
+      ...(input.agentMode !== undefined ? { agentMode: input.agentMode } : {}),
     };
-    const before = await this.prisma.clientUpdatePolicy.findFirst({ where: group ? { customerId, groupId: group.id } : { customerId, siteId, groupId: null } });
     let after: ClientUpdatePolicy;
     try {
       after = before

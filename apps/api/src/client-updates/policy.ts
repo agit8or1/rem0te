@@ -27,6 +27,12 @@ export const PolicyInput = z.object({
   }).strict()).min(1).max(7),
   skipActiveSession: z.boolean().default(true),
   skipLoggedOnUser: z.boolean().default(false),
+  /**
+   * 0.36: automatic agent updates for the computers this policy governs —
+   * ANY_TIME (paced), WINDOW (only inside this policy's window) or OFF; null
+   * inherits. Omitted: left as it is (agent-auto-update/schedule.ts).
+   */
+  agentMode: z.enum(['ANY_TIME', 'WINDOW', 'OFF']).nullable().optional(),
 }).strict();
 export type PolicyInput = z.infer<typeof PolicyInput>;
 

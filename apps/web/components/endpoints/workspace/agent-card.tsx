@@ -36,6 +36,85 @@ export interface AgentCardData {
     possible: boolean; code: string | null; reason: string | null; fix: string | null; link: { href: string; label: string } | null;
     request: null | { id: string; state: string; text: string; requestedAt: string; dispatchedAt: string | null; fetchedAt: string | null; completedAt: string | null; cancelledAt: string | null; reason: string };
   };
+  /** 0.36: what the server will do about this agent by itself. Null if it could not be worked out. */
+  autoUpdate: null | AutoUpdateState;
+}
+
+export interface AutoUpdateState {
+  state: 'up_to_date' | 'queued' | 'updating' | 'failing' | 'opted_out' | 'manual' | 'unknown';
+  reason: string;
+  text: string;
+  channel: 'standard' | 'standard_pre015' | 'signed' | null;
+  target: string | null;
+  mode: 'ANY_TIME' | 'WINDOW' | 'OFF';
+  policy: { id: string; scope: 'business' | 'site' | 'group'; name: string; window: string | null } | null;
+  window: { open: boolean; opensAt: string | null; closesAt: string | null } | null;
+  attempts: { made: number; max: number; lastAt: string | null };
+  nextAt: string | null;
+  waitingForCheckIn: boolean;
+  manual: { command: string | null } | null;
+  history: { id: string; channel: string; fromVersion: string | null; targetVersion: string; attempt: number; dispatchedAt: string; outcome: string | null; resolvedAt: string | null; automatic: true }[];
+}
+
+const AUTO_LABEL: Record<AutoUpdateState['state'], string> = {
+  up_to_date: 'Up to date',
+  queued: 'Update queued',
+  updating: 'Updating',
+  failing: 'Auto-update failing',
+  opted_out: 'Opted out',
+  manual: 'Update manually',
+  unknown: 'Unknown',
+};
+
+const MODE_LABEL: Record<AutoUpdateState['mode'], string> = { ANY_TIME: 'any time, paced', WINDOW: 'inside the update window', OFF: 'off' };
+
+const short = (v: string | null) => (v && /^[0-9a-f]{64}$/.test(v) ? `build ${v.slice(0, 12)}…` : v ?? '—');
+
+/** The Agent card's "Automatic updates" block (0.36). Everything it says comes from the API. */
+function AutoUpdateBlock({ u, onCopy }: { u: AutoUpdateState; onCopy: (t: string) => void }) {
+  const warn = u.state === 'failing' || u.state === 'manual';
+  return (
+    <div className="border-t pt-3 space-y-1.5 text-xs" data-testid="agent-auto-update" data-state={u.state} data-reason={u.reason}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium text-sm">Automatic updates</span>
+        <Badge variant={u.state === 'up_to_date' ? 'secondary' : 'outline'} className={warn ? 'border-amber-500 text-amber-700 dark:text-amber-400' : ''}>
+          {AUTO_LABEL[u.state]}{u.state === 'failing' ? ` (${u.attempts.made} attempts)` : ''}
+        </Badge>
+      </div>
+      <p className="text-muted-foreground">{u.text}</p>
+      {u.state === 'queued' && u.window && !u.window.open && u.window.opensAt && (
+        <p className="text-muted-foreground">Window opens {formatDate(u.window.opensAt)}{u.policy?.window ? ` (${u.policy.window})` : ''}.</p>
+      )}
+      {(u.state === 'queued' || u.state === 'updating') && u.nextAt && <p className="text-muted-foreground">Next change around {formatDate(u.nextAt)}.</p>}
+      {u.waitingForCheckIn && <p className="text-muted-foreground">The agent has not checked in for a while; it is asked at its next check-in.</p>}
+      {(u.state === 'updating' || u.state === 'failing' || u.attempts.made > 0) && (
+        <p className="text-muted-foreground">Attempt {u.attempts.made} of {u.attempts.max}{u.attempts.lastAt ? `, last ${ago(u.attempts.lastAt)}` : ''}{u.target ? ` · to ${short(u.target)}` : ''}.</p>
+      )}
+      {u.state !== 'manual' && u.state !== 'unknown' && (
+        <p className="text-muted-foreground">Policy: {MODE_LABEL[u.mode]}{u.policy ? `, from the ${u.policy.name}` : ' (the platform default)'}.</p>
+      )}
+      {u.manual?.command && (
+        <div className="flex items-start gap-2">
+          <code className="block min-w-0 flex-1 break-all rounded bg-muted px-2 py-1.5">{u.manual.command}</code>
+          <Button size="sm" variant="ghost" className="h-7 px-2" aria-label="Copy the manual update command" onClick={() => onCopy(u.manual!.command!)}>
+            <Copy className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      )}
+      {u.history.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-muted-foreground">Automatic update history ({u.history.length})</summary>
+          <ul className="mt-1 space-y-0.5">
+            {u.history.map((h) => (
+              <li key={h.id} title={formatDate(h.dispatchedAt)}>
+                Automatic · attempt {h.attempt} · {short(h.fromVersion)} → {short(h.targetVersion)} · {ago(h.dispatchedAt)} · {h.outcome === 'updated' ? 'updated' : h.outcome === 'superseded' ? 'did not update' : 'open'}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
 }
 
 const KIND_LABEL: Record<AgentCardData['kind'], string> = {
@@ -140,6 +219,10 @@ export function AgentCard({ endpointId, canEdit, alerts }: { endpointId: string;
             )}
             {a.reinstall.pending && <Row label="Queued">{a.reinstall.dispatched ? 'Handed to the computer; waiting for it to report back' : 'Waiting for the next check-in'}</Row>}
             {a.updatesPaused && <p className="rounded-md border border-amber-500/40 bg-amber-500/5 p-2 text-xs">{a.updatesPaused}</p>}
+
+            {a.autoUpdate && (
+              <AutoUpdateBlock u={a.autoUpdate} onCopy={(t) => { navigator.clipboard?.writeText(t).then(() => toast({ title: 'Copied' })).catch(() => undefined); }} />
+            )}
 
             {/* Update agent / Check now / re-run the installer */}
             <div className="border-t pt-3 space-y-2">
