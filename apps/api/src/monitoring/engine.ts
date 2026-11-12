@@ -9,8 +9,9 @@
  */
 import { z } from 'zod';
 import { comparePrecedence, PRIORITY_MAX, PRIORITY_MIN, type PolicyScope } from '../group-policy/precedence';
+import { HEARTBEAT_STALE_MS } from '../common/connectivity';
 
-export const MONITOR_KINDS = ['OFFLINE', 'DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH', 'SERVICE_STOPPED', 'EVENT_MATCH', 'REBOOT_PENDING'] as const;
+export const MONITOR_KINDS = ['OFFLINE', 'DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH', 'SERVICE_STOPPED', 'EVENT_MATCH', 'REBOOT_PENDING', 'AGENT_SILENT'] as const;
 export type MonitorKind = (typeof MONITOR_KINDS)[number];
 export const SEVERITIES = ['INFO', 'WARNING', 'CRITICAL'] as const;
 export type Severity = (typeof SEVERITIES)[number];
@@ -40,6 +41,12 @@ export const LIMITS = {
 
 const ints = (min: number, max: number) => z.number().int().min(min).max(max);
 
+/**
+ * The agent-silent monitor's threshold, in minutes (0.36). Default 60; never
+ * below the console's agent-silent window, never above a week.
+ */
+export const AGENT_SILENT_BOUNDS = { min: HEARTBEAT_STALE_MS / 60_000, max: 7 * 24 * 60, def: 60 } as const;
+
 export const PARAMS: Record<MonitorKind, z.ZodTypeAny> = {
   OFFLINE: z.object({ minutes: ints(5, 1440).default(15) }).strict(),
   DISK_FREE: z.object({ minFreePercent: ints(1, 90).default(10), minFreeMb: ints(100, 10_000_000).optional() }).strict(),
@@ -59,6 +66,10 @@ export const PARAMS: Record<MonitorKind, z.ZodTypeAny> = {
     clearAfterMinutes: ints(15, 10080).default(60),
   }).strict().refine((p) => p.ids.length > 0 || p.levels.length > 0 || !!p.provider, { message: 'name at least one of ids, levels or provider — a monitor on every event in a log is a flood, not a monitor' }),
   REBOOT_PENDING: z.object({ hours: ints(1, 720).default(72) }).strict(),
+  // 0.36. The floor is the console's own "agent silent" window
+  // (HEARTBEAT_STALE_MS, 30 min): below it the computer still shows Online,
+  // and an alert would contradict the page it links to. The ceiling is a week.
+  AGENT_SILENT: z.object({ minutes: ints(AGENT_SILENT_BOUNDS.min, AGENT_SILENT_BOUNDS.max).default(AGENT_SILENT_BOUNDS.def) }).strict(),
 };
 
 export const RULE_KEY = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -101,6 +112,16 @@ export const RECOMMENDED: { key: string; kind: MonitorKind; name: string; severi
   { key: 'memory-high', kind: 'MEMORY_HIGH', name: 'Memory exhausted', severity: 'WARNING', params: { percent: 95, samples: 5 } },
   { key: 'reboot-pending', kind: 'REBOOT_PENDING', name: 'Restart pending for 3 days', severity: 'INFO', params: { hours: 72 } },
   { key: 'disk-errors', kind: 'EVENT_MATCH', name: 'Disk errors in the System log', severity: 'CRITICAL', params: { log: 'System', ids: [7, 11, 51, 153], levels: [], threshold: 1, clearAfterMinutes: 1440 } },
+];
+
+/**
+ * Offered on the Monitoring page one at a time, and never by "Add
+ * recommended" (0.36). The agent-silent monitor is opt-in: whether it should
+ * be on by default has not been decided, so it exists only where someone
+ * created it. §51 of the security invariants keeps it out of RECOMMENDED.
+ */
+export const OPTIONAL: typeof RECOMMENDED = [
+  { key: 'agent-silent', kind: 'AGENT_SILENT', name: 'Agent silent, RustDesk still reachable', severity: 'WARNING', params: { minutes: AGENT_SILENT_BOUNDS.def } },
 ];
 
 // ── Scope and inheritance ───────────────────────────────────────────────────
@@ -317,6 +338,23 @@ export function evaluateLive(rule: RuleLike, live: Live, st: MonitorStateLike, n
       const used = Math.round((100 * (live.memoryTotalMb - live.memoryFreeMb)) / live.memoryTotalMb);
       return counted(st, used >= P.percent, now, P.samples, `${live.name}: memory ${used}% used`, { usedPercent: used, threshold: P.percent, freeMb: live.memoryFreeMb });
     }
+    case 'AGENT_SILENT': {
+      // 0.36: reachable (isOnline — RustDesk keeps it true, connectivity.ts)
+      // but the agent has not checked in for P.minutes. Silence only grows
+      // until the agent checks in, so "not breaching" means it has: that
+      // clears at once, whatever the reachability.
+      // A computer whose agent has never checked in (RustDesk only, or an
+      // install that never completed) has no agent that went silent; the
+      // device page already says "never reported". Not this monitor's case.
+      if (!live.lastSeenAt) return { verdict: 'skip', reason: 'the agent has never checked in' };
+      const silentMin = (now.getTime() - live.lastSeenAt.getTime()) / 60_000;
+      if (silentMin < P.minutes) return { verdict: 'ok', state: { ...st, breachCount: 0, okCount: st.okCount + 1, breachSince: null }, clear: true };
+      // Silent, and no longer reachable either: that is the Offline
+      // monitor's problem. An open agent-silent alert stays open (a hbbs
+      // restart must not resolve and re-raise it) and none is raised.
+      if (!live.isOnline) return { verdict: 'pending', state: st };
+      return { verdict: 'breach', title: agentSilentTitle(live.name, silentMin), detail: agentSilentDetail(live.lastSeenAt, silentMin, P.minutes), state: { ...st, breachCount: 1, okCount: 0, breachSince: st.breachSince ?? now } };
+    }
     case 'REBOOT_PENDING': {
       if (live.rebootRequired === null || !live.updatesCheckedAt) return { verdict: 'skip', reason: 'restart state not reported' };
       if (!live.rebootRequired) return { verdict: 'ok', state: { ...st, breachCount: 0, okCount: st.okCount + 1, breachSince: null }, clear: true };
@@ -331,6 +369,32 @@ export function evaluateLive(rule: RuleLike, live: Live, st: MonitorStateLike, n
     default:
       return { verdict: 'skip', reason: 'not a live rule' };
   }
+}
+
+/**
+ * "40 min", "3 h", "12 d". Coarse on purpose: an open alert's title is
+ * rewritten only when this changes (tens of minutes, then hours, then days),
+ * not on every sweep.
+ */
+export function silentFor(minutes: number): string {
+  if (minutes < 60) return `${Math.floor(minutes / 10) * 10} min`;
+  if (minutes < 48 * 60) return `${Math.floor(minutes / 60)} h`;
+  return `${Math.floor(minutes / 1440)} d`;
+}
+
+/** What the agent-silent alert says. Remote control should still work; the agent needs updating or reinstalling. */
+export const AGENT_SILENT_ADVICE = 'Remote control should still work: RustDesk is reachable. Use Update agent on the computer’s Agent card, or re-run the installer on the machine.';
+export function agentSilentTitle(name: string, silentMin: number): string {
+  return `${name}: agent silent for ${silentFor(silentMin)} — remote control should still work`;
+}
+export function agentSilentDetail(lastSeenAt: Date, silentMin: number, threshold: number): Record<string, unknown> {
+  return {
+    lastHeartbeatAt: lastSeenAt.toISOString(),
+    silentMinutes: Math.floor(silentMin),
+    thresholdMinutes: threshold,
+    remoteControl: 'should still work (RustDesk reachable)',
+    whatToDo: AGENT_SILENT_ADVICE,
+  };
 }
 
 /** A service rule, from a monitor report. */

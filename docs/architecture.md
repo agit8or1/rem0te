@@ -256,6 +256,10 @@ list send it. The list's `online` filter takes `online`, `silent` or
 is unchanged — `isOnline` stays true for a silent agent, because Connect still
 works. The web copy of the window (`apps/web/lib/connectivity.ts`) must equal
 the API's; §49 of the security invariants checks it.
+An opt-in **agent-silent monitor** (0.36, `AGENT_SILENT`,
+[monitoring.md](monitoring.md#agent-silent-036)) alerts on the same state, from a
+threshold no shorter than this window; the Offline monitor still keys on
+`isOnline` alone.
 `STALE_SWEEP=off` stops the sweep in that process — for a test stack whose
 fixtures must keep `isOnline` with no hbbs to keep them reachable; never in
 production, where machines would then never go offline.

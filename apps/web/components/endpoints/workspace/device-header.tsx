@@ -8,7 +8,7 @@ import { cn, formatDate } from '@/lib/utils';
 import type { InventoryPayload } from '@/components/endpoints/endpoint-specs';
 import type { Patches } from '@/components/endpoints/endpoint-patches';
 import {
-  ago, agentType, deviceStatus, HEARTBEAT_STALE_MS, isStale, openAlerts, STATUS_DOT, worstSeverity,
+  agentSilentAlert, ago, agentType, alertHref, deviceStatus, HEARTBEAT_STALE_MS, isStale, openAlerts, STATUS_DOT, worstSeverity,
   type WorkspaceTab,
 } from './device-model';
 import type { MonitoringView } from './use-device-data';
@@ -87,6 +87,14 @@ function attentionItems(
     }
   } else if (mon.isError) {
     items.push({ key: 'alerts', tone: 'muted', icon: Bell, label: 'Alerts unavailable', tab: 'monitoring' });
+  }
+  // 0.36: an open agent-silent alert links straight to itself.
+  const silent = agentSilentAlert(mon.data?.alerts);
+  if (silent) {
+    items.push({
+      key: 'agent-silent-alert', tone: 'warning', icon: BellRing, label: 'Agent silent alert', detail: `since ${ago(silent.firstSeenAt)}`,
+      href: alertHref(silent), title: `${silent.title}. Use Update agent on the Agent card, or re-run the installer on the machine.`,
+    });
   }
 
   // Patch status, from the same summary the Patches tab leads with.

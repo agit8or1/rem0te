@@ -815,7 +815,7 @@ export class UpdateService {
       where: { id: { in: targets.map((t) => t.id) } },
       data: {
         updateRequestedAt: new Date(), updateTargetVersion: latest,
-        updateRequestSource: 'MANUAL', updateRequestedById: actor.userId ?? null, updateHoldReason: null, updateHoldAt: null,
+        updateRequestSource: 'MANUAL', updateRequestedById: actor.userId ?? null, updateHoldReason: null, updateHoldAt: null, updatePolicyId: null,
       },
     });
 
@@ -835,7 +835,7 @@ export class UpdateService {
   async cancelRustdeskUpdate(endpointId: string) {
     const r = await this.prisma.rustdeskNode.updateMany({
       where: { endpointId },
-      data: { updateRequestedAt: null, updateTargetVersion: null, updateRequestSource: null, updateRequestedById: null, updateHoldReason: null, updateHoldAt: null },
+      data: { updateRequestedAt: null, updateTargetVersion: null, updateRequestSource: null, updateRequestedById: null, updateHoldReason: null, updateHoldAt: null, updatePolicyId: null },
     });
     return { cancelled: r.count };
   }

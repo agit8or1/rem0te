@@ -251,6 +251,23 @@ endpoint to report the target version.
 Re-run the installer on those machines by hand. They need it anyway for the
 service-config fix.
 
+An *automatic* update that was queued under a device group's policy and then
+disappeared after the computer left the group was withdrawn on purpose (0.36):
+the audit log has `CLIENT_UPDATE_AUTO_WITHDRAWN` with the reason. See
+[updates.md](updates.md).
+
+---
+
+## Remote control works but nothing else updates ("agent silent")
+
+The computer is amber, *Reachable (RustDesk) · agent silent*: RustDesk is
+running and reachable, the Rem0te agent is not checking in. Connect still
+works; monitoring, patching, inventory and actions are stale. Use **Update
+agent** on its Agent card, or re-run the installer on the machine. To be told
+when this happens, add the opt-in *Agent silent* monitor (0.36,
+[monitoring.md](monitoring.md#agent-silent-036)) — the Offline monitor never
+fires for it, because the computer is still reachable.
+
 ---
 
 ## A computer went offline right after Update or Reinstall agent

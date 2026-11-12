@@ -211,6 +211,10 @@ which business is which organization.
   never sent on its own (the outage is), and a **maintenance window holds it until the window ends** — and then
   only if the alert is still open. Planned work does not open tickets.
 - **Containment does not stop alert events.** They report; they change nothing on a computer.
+- **Only the kinds the contract names (0.36).** `alert.kind` is an enum in the contract; an alert of a kind
+  outside it is not signed or sent at all. The 0.36 *agent silent* monitor (`AGENT_SILENT`) is such a kind:
+  with ticketing on it is notified as usual but never offered to ClientSt0r. Carrying it means adding it to the
+  enum — a contract revision ClientSt0r must accept first, since a strict validator would refuse the event.
 
 - **Patch summary (0.30).** A *restart pending* alert carries `patch_summary`, a redacted summary of the
   computer's Patches tab: evidence source and age, freshness, last boot, who manages patching, restart pending,

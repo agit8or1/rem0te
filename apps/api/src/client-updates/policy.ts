@@ -161,3 +161,52 @@ export function blocker(e: EligibilityFacts, target: string | null): Blocker | n
   if (!e.isOnline) return 'offline';
   return null;
 }
+
+/**
+ * What to do with an automatic (POLICY) request already queued, now (0.36).
+ *
+ * The request was queued under one policy; the computer may since have left
+ * the device group that policy belongs to, moved site, or had the policy
+ * removed or switched off. Before 0.36 only saving a policy re-checked
+ * queued requests, so a computer that left a group kept its request queued —
+ * and the heartbeat held it as `policy_off` — until someone next saved the
+ * business's policy. The sweep now asks this every tick:
+ *
+ *   keep      the policy that queued it still governs the computer, enabled
+ *   adopt     queued before 0.36 (no policy recorded) and an enabled policy
+ *             governs it: record that policy, nothing else changes
+ *   replan    a different enabled policy governs it now: the request stays,
+ *             under that policy's window and conditions
+ *   withdraw  no enabled policy governs it: the request is removed
+ *
+ * `reason` says why the queuing policy no longer counts:
+ *   policy_removed     it was deleted
+ *   policy_off         it was switched off
+ *   no_longer_applies  it is still there and on, but no longer governs this
+ *                      computer (it left the group or site, or a policy
+ *                      that outranks it now applies)
+ *   no_policy_recorded queued before 0.36
+ */
+export type QueuedAction = 'keep' | 'adopt' | 'replan' | 'withdraw';
+export type QueuedReason = 'policy_removed' | 'policy_off' | 'no_longer_applies' | 'no_policy_recorded';
+export interface QueuedDecision { action: QueuedAction; reason: QueuedReason | null; from: string | null; to: string | null }
+
+export const QUEUED_REASON_TEXT: Record<QueuedReason, string> = {
+  policy_removed: 'the update policy that queued it was removed',
+  policy_off: 'the update policy that queued it was switched off',
+  no_longer_applies: 'the update policy that queued it no longer applies to this computer (it left that device group or site, or another policy now outranks it)',
+  no_policy_recorded: 'it was queued before 0.36, which did not record the policy',
+};
+
+export function reconcileQueued<P extends Pick<PolicyLike, 'id' | 'enabled'>>(queuedPolicyId: string | null, effective: P | null, policies: P[]): QueuedDecision {
+  const to = effective && effective.enabled ? effective.id : null;
+  if (to && queuedPolicyId === to) return { action: 'keep', reason: null, from: queuedPolicyId, to };
+  let reason: QueuedReason;
+  if (!queuedPolicyId) reason = 'no_policy_recorded';
+  else {
+    const was = policies.find((p) => p.id === queuedPolicyId);
+    reason = !was ? 'policy_removed' : !was.enabled ? 'policy_off' : 'no_longer_applies';
+  }
+  if (!to) return { action: 'withdraw', reason, from: queuedPolicyId, to: null };
+  return { action: queuedPolicyId ? 'replan' : 'adopt', reason, from: queuedPolicyId, to };
+}
