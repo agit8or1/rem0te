@@ -188,6 +188,10 @@ enum ActivityAction {
   DEVICE_GROUP_MEMBERS_CHANGED
   DEVICE_VIEW_SHARED_CHANGED
   DEVICE_BULK_ACTION
+  // 0.34 agent upgrade: one computer moved from the standard to the signed agent
+  AGENT_MIGRATION_REQUESTED
+  AGENT_MIGRATION_CANCELLED
+  AGENT_MIGRATION_COMPLETED
   CONNECTION_GRANT_CREATED
   CONNECTION_GRANT_REDEEMED
   CONNECTION_GRANT_DENIED
@@ -692,6 +696,12 @@ model Endpoint {
   // scan. The heartbeat asks the agent to scan until a posture newer than
   // this arrives.
   patchScanRequestedAt DateTime?
+  // Agent upgrade (v0.34): what the agent last wrote to agent-status.json —
+  // when the signed agent (or a migrate run on a standard machine) last
+  // checked the signed repository, and the result line. Self-reported on an
+  // authenticated heartbeat, made inert, and only ever shown.
+  agentUpdateCheckedAt DateTime?
+  agentUpdateResult    String?
 
   isManaged  Boolean   @default(false)
   isOnline   Boolean   @default(false)
@@ -718,6 +728,7 @@ model Endpoint {
   connectionGrants  ConnectionGrant[]
   actionJobs        ActionJob[]
   actionTargets     ActionTarget[]
+  agentMigrations   AgentMigration[]
 
   // Access mode: how the computer's remote-access authorization is scoped.
   //   ASSIGNED_USERS  → only users listed in ComputerAccess may connect
@@ -3310,4 +3321,42 @@ model ReportDelivery {
 
   @@unique([scheduleId, periodKey])
   @@index([scheduleId, createdAt])
+}
+
+// v0.34: one computer asked to move from the standard agent to the signed
+// agent through the portal. The heartbeat hands that computer — and no other —
+// the reinstall flag with `nonce`, and windows.ps1 fetched with that nonce
+// serves the same migration script the "Signed only + portal migration" mode
+// serves, pinning the signed agent's digest from the served repository at the
+// moment it is fetched. Complete when the computer reports the signed channel.
+// At most one open request per computer (a partial unique index, 0055).
+model AgentMigration {
+  id         String   @id @default(cuid())
+  endpointId String
+  endpoint   Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  tenantId   String?
+  customerId String?
+
+  // mig_ + 40 base64url characters: a name for this request in the
+  // windows.ps1 URL, not a secret (the script it names is harmless to read).
+  nonce            String    @unique
+  reason           String
+  // Not a relation, like DiagnosticRun.requestedById.
+  requestedById    String?
+  requestedAt      DateTime  @default(now())
+  // First and latest heartbeat that handed the flag out.
+  dispatchedAt     DateTime?
+  lastDispatchedAt DateTime?
+  dispatchCount    Int       @default(0)
+  // windows.ps1 was fetched with this nonce (the script was downloaded).
+  fetchedAt        DateTime?
+  // Why the latest heartbeat did not hand it out (contained, signed_only, rollout, no_release).
+  holdReason       String?
+  holdAt           DateTime?
+  completedAt      DateTime?
+  cancelledAt      DateTime?
+  cancelledById    String?
+
+  @@index([endpointId, requestedAt])
+  @@index([customerId, requestedAt])
 }

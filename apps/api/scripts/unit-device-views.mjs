@@ -8,7 +8,8 @@
 //   - an update applies no defaults (a PATCH never resets what it did not name);
 //   - who may manage a business's groups and shared views;
 //   - the bulk selection: de-duplicated, capped at 200 with BULK_TOO_LARGE,
-//     ids only, four actions only, groupId exactly where it belongs;
+//     ids only, six actions only (0.34: agent.update, agent.migrate with a
+//     reason), groupId exactly where it belongs;
 //   - the fleet budget stops at the guard's limits, counts a computer once,
 //     lets an exempt computer through, and records only what it is told;
 //   - a single action's exception becomes a per-computer reason (a 404 never
@@ -90,7 +91,12 @@ section('Bulk selection and actions');
   check(refusal(() => R.parseSelection([])) && refusal(() => R.parseSelection('x')) && refusal(() => R.parseSelection(['../etc'])), 'empty, non-list and non-id selections are refused');
   // The cap counts what was SENT: 250 copies of one id are still over it.
   check(refusal(() => R.parseSelection(Array(250).fill(ID1)))?.code === 'BULK_TOO_LARGE', 'the cap counts what was sent, before de-duplication');
-  check(JSON.stringify(R.BULK_ACTIONS) === JSON.stringify(['group.add', 'group.remove', 'inventory.refresh', 'client.update']), 'exactly four actions');
+  // 0.34 added the Agent card's two actions.
+  check(JSON.stringify(R.BULK_ACTIONS) === JSON.stringify(['group.add', 'group.remove', 'inventory.refresh', 'client.update', 'agent.update', 'agent.migrate']), 'exactly six actions');
+  check(refusal(() => R.parseBulk({ action: 'agent.migrate', endpointIds: [ID1] }))?.code === 'REASON_REQUIRED', 'agent.migrate needs a reason');
+  check(R.parseBulk({ action: 'agent.migrate', endpointIds: [ID1], reason: '  pilot  ' }).reason === 'pilot', 'its reason is trimmed');
+  check(refusal(() => R.parseBulk({ action: 'agent.update', endpointIds: [ID1], reason: 'abc' })) !== null, 'a reason on any other action is refused');
+  check(refusal(() => R.parseBulk({ action: 'agent.migrate', endpointIds: [ID1], reason: 'x'.repeat(401) })) !== null, 'a reason over 400 characters is refused');
   for (const action of ['connect', 'archive', 'delete', 'restore', 'action.request', 'scripts.run', 'reboot']) {
     check(refusal(() => R.parseBulk({ action, endpointIds: [ID1] })) !== null, `no "${action}"`);
   }

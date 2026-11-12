@@ -201,6 +201,11 @@ export default function UpdateSigningPage() {
                 Migrate legacy agents with <code>rem0te-agent.exe migrate --portal &lt;host&gt;</code> from an official release, through GPO, Intune or locally. It keeps enrolment, the device secret and RustDesk settings. See{' '}
                 <Link className="underline" href="/docs/update-signing">Update signing</Link>.
               </p>
+              <p className="text-xs text-muted-foreground">
+                Or one computer at a time from the console (0.34): <strong>Upgrade to signed agent</strong> on a computer’s Agent card, or for a
+                selection on All devices. It needs a fresh sign-in and a reason, is refused in <em>Signed only</em> without portal migration, and is
+                followed on <Link className="underline" href="/endpoints/agent-migrations">Agent migrations</Link>.
+              </p>
             </CardContent>
           </Card>
         </>

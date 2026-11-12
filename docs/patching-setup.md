@@ -52,7 +52,10 @@ Pre-flight checks: **Computers are on the signed channel, on the published build
 reported a Windows Update scan.**
 
 Follow [Update signing → Moving existing agents](update-signing.md#moving-existing-agents). GPO or Intune is the
-method that doesn't trust the portal. Each computer then:
+method that doesn't trust the portal. From 0.34 you can also move one computer, or a selection, from the console:
+**Upgrade to signed agent** on the computer's **Overview → Agent** card (or **Upgrade to signed…** for selected devices
+on **All devices**), with a reason and a fresh sign-in, and follow it on **Devices → Agent migrations**. That run trusts
+the portal once, as every standard-agent update already does; it is refused in *Signed only* mode. Each computer then:
 
 - reports `windows.update.install@1` in its heartbeat;
 - updates itself to the published build;
@@ -60,7 +63,9 @@ method that doesn't trust the portal. Each computer then:
   **Patches** tab.
 
 A computer still on the standard agent shows its updates read-only. Its Patches tab has no **Install updates** button
-and says why: *switch this computer to the signed channel*.
+and says why. When the computer can be moved from the console it says so and offers **Open the Agent card**; when it
+can't, it names exactly what is missing — for example *No signed release is published. Publishing one needs the
+offline signing keys only you hold*, with a link to [Update signing → Roles and keys](update-signing.md#roles-and-keys).
 
 ## 3. Install the approval signer on a separate host or user
 

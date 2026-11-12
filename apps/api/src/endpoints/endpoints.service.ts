@@ -756,7 +756,8 @@ export class EndpointsService {
    * read-only collection (inventory, event logs). Same counter as launches, so
    * forty small jobs across forty computers trip the same cap one big job would.
    */
-  private async admitWrite(actor: ActorContext, endpointId: string, kind: 'WRITE' | 'EVIDENCE' = 'WRITE') {
+  /** The fleet-abuse admission every console write passes (public for the 0.34 agent-upgrade routes). */
+  async admitWrite(actor: ActorContext, endpointId: string, kind: 'WRITE' | 'EVIDENCE' = 'WRITE') {
     const ep = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { customerId: true } });
     const customerId = ep?.customerId ?? null;
     const r = await this.abuse.admit({

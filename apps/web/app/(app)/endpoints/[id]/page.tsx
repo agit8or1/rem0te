@@ -20,6 +20,7 @@ import { DeviceSoftwareTab } from '@/components/endpoints/workspace/software-tab
 import { DeviceNetworkTab, DeviceProcessesTab, DeviceServicesTab } from '@/components/endpoints/workspace/snapshot-tabs';
 import { DeviceHistoryTab, type SessionRow } from '@/components/endpoints/workspace/history-tab';
 import { DiagnosticsPanel } from '@/components/endpoints/workspace/diagnostics-panel';
+import { AgentCard } from '@/components/endpoints/workspace/agent-card';
 import type { AccessReview } from '@/components/endpoints/workspace/access-review-panel';
 import { acceptsQueuedWork, agentType, parseTab, reportsInventory, reportsWindowsDetail, TAB_LABEL, type WorkspaceTab } from '@/components/endpoints/workspace/device-model';
 import {
@@ -229,6 +230,7 @@ export default function EndpointDetailPage() {
             sessions={sessions}
             onOpenTab={setTab}
             showAlertsAndPatches={canView}
+            agentCard={canView ? <AgentCard endpointId={id} canEdit={can(CAP.COMPUTERS_EDIT)} /> : undefined}
             // Staged-update history (Platform Admin only, like rollouts).
             adminExtras={isPlatformAdmin ? <EndpointUpdateHistory endpointId={id} /> : undefined}
           />
@@ -272,7 +274,16 @@ export default function EndpointDetailPage() {
 
         {tabs.includes('patches') && (
           <TabsContent value="patches" className="mt-4">
-            {active === 'patches' && <EndpointPatches endpointId={id} />}
+            {active === 'patches' && (
+              <EndpointPatches
+                endpointId={id}
+                onOpenAgentCard={() => {
+                  setTab('overview');
+                  // After the Overview has rendered.
+                  setTimeout(() => document.getElementById('agent-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+                }}
+              />
+            )}
           </TabsContent>
         )}
 

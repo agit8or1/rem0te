@@ -27,6 +27,8 @@ const ACTION_LABEL: Record<string, string> = {
   'enrollment.create': 'make an install link',
   // 0.34: every API key (0.33 asked only for keys that can enrol computers).
   'apikey.create': 'create an API key',
+  // 0.34: a per-computer move to the signed agent runs a portal-served script once.
+  'agent.migrate': 'upgrade computers to the signed agent',
 };
 
 /**

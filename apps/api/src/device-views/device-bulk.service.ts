@@ -14,6 +14,7 @@ import { AccessPolicyService } from '../security-controls/access-policy.service'
 import { latestRustdeskVersion } from '../common/rustdesk-release';
 import { BLOCKER, blocker, ROLLOUT_OPEN } from '../client-updates/policy';
 import { DeviceGroupsService } from './device-groups.service';
+import { AgentUpgradeService } from '../agent-upgrade/agent-upgrade.service';
 import { ruleFilters } from './group-rule';
 import { BULK_MAX, FleetBudget, manageRefusal, membershipStep, parseBulk, parseSelection, refusalOf, type BulkAction, type BulkResult } from './rules';
 
@@ -70,6 +71,7 @@ export class DeviceBulkService {
     private readonly controls: ControlsStore,
     private readonly policy: AccessPolicyService,
     private readonly groups: DeviceGroupsService,
+    private readonly agentUpgrade: AgentUpgradeService,
   ) {}
 
   /** The selected computers this caller can see. Everything else is NOT_FOUND. */
@@ -110,7 +112,7 @@ export class DeviceBulkService {
     return { ids, group: { id: g.id, name: g.name, kind: g.kind === 'RULE' ? 'rule' : 'static' } };
   }
 
-  async run(a: ActorContext, raw: unknown) {
+  async run(a: ActorContext, raw: unknown, freshMethod: string | null = null) {
     const parsed = parseBulk(raw);
     const target = parsed.targetGroupId ? await this.resolveTarget(a, parsed.targetGroupId) : null;
     const input = { ...parsed, endpointIds: target ? target.ids : parsed.endpointIds! };
@@ -126,6 +128,9 @@ export class DeviceBulkService {
       group = await this.groupAction(a, input.action, input.groupId!, targets, results);
     } else if (input.action === 'inventory.refresh') {
       await this.refresh(a, targets, results);
+    } else if (input.action === 'agent.update' || input.action === 'agent.migrate') {
+      // 0.34: through the Agent card's own methods (AgentUpgradeService.bulk).
+      await this.agentUpgrade.bulk(a, input.action, targets, results, { reason: input.reason, freshMethod });
     } else {
       await this.clientUpdate(a, targets, results);
     }

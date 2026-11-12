@@ -1,5 +1,6 @@
 import { ActionsService } from '../actions/actions.service';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
+import { AgentMigrationService } from '../update-trust/agent-migration.service';
 import {
   Injectable,
   NotFoundException,
@@ -25,7 +26,7 @@ import { ContainmentService } from '../containment/containment.service';
 import { ClientUpdatesService } from '../client-updates/client-updates.service';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
 import { CANDIDATE_LIVE_MS, CANDIDATE_SETTLE_MS } from './device-secret';
-import { withDeviceText } from './device-text';
+import { deviceText, withDeviceText } from './device-text';
 import { queryHbbsOnline } from './hbbs-presence';
 import { HbbsPeerSnapshot, PEER_SNAPSHOT_SQL, parsePeerIds } from './hbbs-peer-snapshot';
 import { compareVersions } from '../common/agent-contract';
@@ -64,6 +65,7 @@ export class EnrollmentService {
     private readonly diagnostics: DiagnosticsCatalogService,
     private readonly clientUpdates: ClientUpdatesService,
     private readonly metrics: MetricsService,
+    private readonly agentMigration: AgentMigrationService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -583,6 +585,7 @@ export class EnrollmentService {
     updateChannel?: 'signed' | 'legacy'; trustRootVersion?: number; targetsVersion?: number;
     agentActions?: string[]; agentSha256?: string; actionResults?: unknown[];
     patchPosture?: Record<string, unknown>;
+    agentUpdateCheckedAt?: string; agentUpdateResult?: string;
   }, remoteIp?: string) {
     // Names and versions as text, never control codes (0.32) — see device-text.ts.
     dto = withDeviceText(dto);
@@ -712,7 +715,7 @@ export class EnrollmentService {
         ...(authenticated &&
         node.reinstallRequestedAt &&
         node.reinstallDispatchedAt &&
-        dto.agentVersion === this.platformVersion()
+        (dto.agentVersion === this.platformVersion() || signedCheckedSince(dto, node.reinstallDispatchedAt))
           ? { reinstallRequestedAt: null, reinstallRequestedBy: null, reinstallDispatchedAt: null }
           : {}),
       },
@@ -744,6 +747,14 @@ export class EnrollmentService {
         // a legacy agent's claim is discarded rather than stored.
         agentActions: dto.updateChannel === 'signed' ? dto.agentActions ?? [] : [],
         agentSha256: dto.updateChannel === 'signed' ? dto.agentSha256 ?? null : null,
+      }),
+      // Agent upgrade (0.34): the agent's own last update check, from
+      // agent-status.json — the signed agent's, or a migrate run's on a
+      // standard machine. Shown, never acted on; made inert like every other
+      // device-reported string.
+      ...(authenticated && plausibleCheck(dto.agentUpdateCheckedAt) && {
+        agentUpdateCheckedAt: new Date(dto.agentUpdateCheckedAt as string),
+        agentUpdateResult: deviceText(dto.agentUpdateResult, 200) ?? null,
       }),
     };
 
@@ -818,6 +829,7 @@ export class EnrollmentService {
     // A staged rollout owns this computer's updates while it has a job here:
     // exact version, batch, window, backoff and evidence all come from it,
     // and the legacy one-click staging above must not also fire.
+    let rolloutManaged = false;
     if (authenticated) {
       try {
         const managed = await this.rollouts.onHeartbeat({
@@ -826,6 +838,7 @@ export class EnrollmentService {
           reportedPassword: !!dto.password, rdSessionsActive: dto.rustdeskSessions, contained: updatesHeld,
         });
         if (managed.managed) {
+          rolloutManaged = true;
           updateRustdesk = managed.updateRustdesk ?? null;
           reinstallAgent = managed.reinstallAgent ?? null;
         }
@@ -847,6 +860,28 @@ export class EnrollmentService {
       } else if (gate === 'migrate') {
         updateRustdesk = null;
         reinstallAgent = { targetVersion: this.platformVersion() };
+      }
+    }
+
+    // Per-computer migration to the signed agent (0.34). Only this computer's
+    // own open request is read; the nonce goes out with the reinstall flag,
+    // and windows.ps1 serves the migration script for that nonce alone. The
+    // request is held — not handed out — under an updates pause, in Signed
+    // only without portal migration (the gate above said withhold), or while
+    // a rollout owns this computer. A signed heartbeat completes it.
+    if (authenticated) {
+      try {
+        const mig = await this.agentMigration.forHeartbeat({
+          endpointId: node.endpointId, channel: dto.updateChannel === 'signed' ? 'signed' : 'legacy',
+          updatesHeld, rolloutManaged,
+          gate: dto.updateChannel === 'signed' ? 'pass' : await this.updateTrust.gateForHeartbeat('legacy'),
+        });
+        if (mig) {
+          updateRustdesk = null;
+          reinstallAgent = { targetVersion: this.platformVersion(), nonce: mig.nonce };
+        }
+      } catch (e) {
+        this.logger.warn(`Agent migration step failed for endpoint ${node.endpointId}: ${String(e)}`);
       }
     }
 
@@ -1323,4 +1358,23 @@ export class EnrollmentService {
     });
     return { revoked: true };
   }
+}
+
+/**
+ * A signed agent asked to "check now" (the reinstall flag, which it answers
+ * with `rem0te-agent.exe update`) has done so once it reports an update check
+ * newer than the dispatch. Without this the request stayed set until the
+ * signed release's version equalled the portal's, which it need not ever do,
+ * and the agent re-ran update every 30 minutes.
+ */
+function signedCheckedSince(dto: { updateChannel?: string; agentUpdateCheckedAt?: string }, dispatchedAt: Date): boolean {
+  if (dto.updateChannel !== 'signed' || !dto.agentUpdateCheckedAt || !plausibleCheck(dto.agentUpdateCheckedAt)) return false;
+  return new Date(dto.agentUpdateCheckedAt).getTime() > dispatchedAt.getTime();
+}
+
+/** A reported check time worth storing: not Go's zero time, not from the future. */
+function plausibleCheck(v: string | undefined): boolean {
+  if (!v) return false;
+  const t = new Date(v).getTime();
+  return Number.isFinite(t) && t > Date.UTC(2024, 0, 1) && t < Date.now() + 24 * 3600_000;
 }

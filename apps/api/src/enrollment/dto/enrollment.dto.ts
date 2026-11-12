@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsIP, IsISO8601, IsObject, IsOptional, IsString, Length, Matches, Max, Min, ArrayMaxSize } from 'class-validator';
+import { IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsIP, IsISO8601, IsObject, IsOptional, IsString, Length, Matches, Max, MaxLength, Min, ArrayMaxSize } from 'class-validator';
 
 export enum EndpointAccessMode {
   ASSIGNED_USERS = 'ASSIGNED_USERS',
@@ -134,6 +134,11 @@ export class HeartbeatDto {
   // Staged patching (0.27): the signed agent's patch-scan posture, validated
   // field by field in EndpointInventoryService.recordPatchPosture.
   @IsOptional() @IsObject() @Type(() => Object) patchPosture?: Record<string, unknown>;
+  // Agent upgrade (0.34): lastCheck and lastResult from agent-status.json,
+  // which the signed agent writes after every update (and a migrate run
+  // writes on a standard machine). Display only; made inert server side.
+  @IsOptional() @IsISO8601() agentUpdateCheckedAt?: string;
+  @IsOptional() @IsString() @MaxLength(400) agentUpdateResult?: string;
 }
 
 /**

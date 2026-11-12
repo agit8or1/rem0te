@@ -47,7 +47,7 @@ function SummaryCard({ title, aside, children, testId }: { title: string; aside?
 type Activity = { at: string; kind: string; text: string; detail?: string };
 
 export function DeviceOverviewTab({
-  endpointId, ep, mon, patches, sessions, onOpenTab, showAlertsAndPatches, adminExtras,
+  endpointId, ep, mon, patches, sessions, onOpenTab, showAlertsAndPatches, adminExtras, agentCard,
 }: {
   endpointId: string;
   ep: Record<string, unknown>;
@@ -57,6 +57,8 @@ export function DeviceOverviewTab({
   onOpenTab: (t: WorkspaceTab) => void;
   showAlertsAndPatches: boolean;
   adminExtras?: React.ReactNode;
+  /** The Agent card (0.34): type, version, update and upgrade. */
+  agentCard?: React.ReactNode;
 }) {
   const customer = ep.customer as { id: string; name: string } | null;
   const site = ep.site as { id: string; name: string } | null;
@@ -128,6 +130,8 @@ export function DeviceOverviewTab({
             <div className="flex justify-end"><OpenTab tab="patches" label="Updates offered and history on Patches" onOpen={onOpenTab} /></div>
           </div>
         )}
+
+        {agentCard}
 
         <SummaryCard title="Recent activity" testId="overview-activity" aside={<OpenTab tab="history" label="History" onOpen={onOpenTab} />}>
           {activity.length === 0 ? (

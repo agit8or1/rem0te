@@ -949,6 +949,20 @@ if (\$state.agentSecret) { \$body['agentSecret'] = \$state.agentSecret }
 # upgraded reports the new version without this line changing.
 if (\$state.agentVersion) { \$body['agentVersion'] = [string]\$state.agentVersion }
 ${v.channelReport}
+# The agent's own last update check (0.34), from agent-status.json: written by
+# the signed agent after every update, and by a migrate run on a standard
+# machine - so a migration that failed says why. Read and reported, never acted on.
+try {
+    \$aus = Get-Content -Raw 'C:\\ProgramData\\Rem0te\\agent-status.json' -ErrorAction Stop | ConvertFrom-Json
+    \$auAt = \$aus.lastCheck
+    if (\$auAt -is [DateTime]) { \$auAt = \$auAt.ToUniversalTime().ToString('o') }
+    if ([string]\$auAt -match '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]{8,20}(Z|[+-][0-9]{2}:[0-9]{2})\$') {
+        \$body['agentUpdateCheckedAt'] = [string]\$auAt
+        \$auR = ([string]\$aus.lastResult) -replace '[^ -~]', ' '
+        if (\$auR.Length -gt 300) { \$auR = \$auR.Substring(0, 300) }
+        \$body['agentUpdateResult'] = \$auR
+    }
+} catch {}
 # Installed RustDesk version, read from the binary rather than by spawning it.
 # Normalised to three segments: FileVersion reports 1.4.9.0 while the server
 # compares against the GitHub release tag 1.4.9.

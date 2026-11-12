@@ -240,6 +240,13 @@ jobs:
       - name: Email tests
         run: node apps/api/scripts/unit-email.mjs
 
+      # Agent upgrade (0.34): each precondition for moving a computer to the
+      # signed agent and its order, the Signed-only boundary, request states,
+      # the migration script's digest pin and staging directory, and (pwsh is
+      # on the runner) the heartbeat's agent-status block run against fixtures.
+      - name: Agent migration tests
+        run: node apps/api/scripts/unit-agent-migration.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.

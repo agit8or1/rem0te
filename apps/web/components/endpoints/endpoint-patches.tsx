@@ -50,7 +50,11 @@ export interface Patches {
   updates: PatchUpdate[]; history: History[];
   basic: { checkedAt: string | null; rebootRequired: boolean | null; updates: { title: string; kb: string | null; severity: string | null; sizeBytes: number | null }[] } | null;
   /** 0.32: whether Install updates is offered here, and if not, why and what to do. */
-  install: { possible: boolean; reason: string | null; fix: string | null; installable: number };
+  install: {
+    possible: boolean; reason: string | null; fix: string | null; installable: number;
+    // 0.34: the fix is the Agent card's button, or a page to read.
+    fixAction?: 'agent-card'; fixLink?: { href: string; label: string } | null;
+  };
 }
 
 const REBOOT_SOURCE: Record<string, string> = {
@@ -115,7 +119,7 @@ function apiMessage(e: unknown, fallback: string) {
  * deployment; its plan awaits two approvals on the approval signer. When it
  * is not possible: the reason and the next step, never a disabled button.
  */
-function InstallUpdates({ endpointId, p }: { endpointId: string; p: Patches }) {
+function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string; p: Patches; onOpenAgentCard?: () => void }) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -150,7 +154,14 @@ function InstallUpdates({ endpointId, p }: { endpointId: string; p: Patches }) {
         <CardContent className="space-y-1 text-xs">
           <p><strong>Not available on this computer.</strong> {p.install.reason}</p>
           {p.install.fix && (
-            <p className="text-muted-foreground">What to do: {p.install.fix}{/Patching setup/.test(p.install.fix) && <> See <Link className="underline" href="/docs/patching-setup">Patching setup</Link>.</>}</p>
+            <p className="text-muted-foreground">
+              What to do: {p.install.fix}
+              {p.install.fixLink && <> See <Link className="underline" href={p.install.fixLink.href}>{p.install.fixLink.label}</Link>.</>}
+              {!p.install.fixLink && /Patching setup/.test(p.install.fix) && <> See <Link className="underline" href="/docs/patching-setup">Patching setup</Link>.</>}
+            </p>
+          )}
+          {p.install.fixAction === 'agent-card' && onOpenAgentCard && (
+            <Button size="sm" variant="outline" className="mt-1 h-7 text-xs" onClick={onOpenAgentCard} data-testid="open-agent-card">Open the Agent card</Button>
           )}
           {requested}
         </CardContent>
@@ -208,7 +219,7 @@ function InstallUpdates({ endpointId, p }: { endpointId: string; p: Patches }) {
   );
 }
 
-export function EndpointPatches({ endpointId }: { endpointId: string }) {
+export function EndpointPatches({ endpointId, onOpenAgentCard }: { endpointId: string; onOpenAgentCard?: () => void }) {
   const { toast } = useToast();
   const qc = useQueryClient();
   // A basic scan has no request marker on the server, so poll for a while after Scan now.
@@ -233,7 +244,7 @@ export function EndpointPatches({ endpointId }: { endpointId: string }) {
     return (
       <div className="space-y-4">
         <PatchSummaryCard s={p.summary} />
-        <InstallUpdates endpointId={endpointId} p={p} />
+        <InstallUpdates endpointId={endpointId} p={p} onOpenAgentCard={onOpenAgentCard} />
         <Card>
           <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Windows Update</CardTitle>
@@ -277,7 +288,7 @@ export function EndpointPatches({ endpointId }: { endpointId: string }) {
   return (
     <div className="space-y-4">
       <PatchSummaryCard s={p.summary} />
-      <InstallUpdates endpointId={endpointId} p={p} />
+      <InstallUpdates endpointId={endpointId} p={p} onOpenAgentCard={onOpenAgentCard} />
       <Card>
         <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Windows Update</CardTitle>
