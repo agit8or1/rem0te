@@ -103,6 +103,25 @@ once and the agent backs off. The held polls live in the API process, which is o
 process. These are **estimates** from the code path; chat has not been load-tested
 ([chat.md](chat.md#capacity)).
 
+### Automatic snapshots (0.35)
+
+From 0.35 the server asks each current Windows computer for its process list, service list and network adapters on
+its own ([diagnostics.md](diagnostics.md#automatic-snapshots)): every 6 hours per key by default, and every 5 minutes
+for a key whose tab someone has open. The request rides on the heartbeat the computer already sends; there is no
+sweep over the fleet.
+
+| What | Figure |
+|---|---|
+| Stored size of one snapshot (**computed** by `unit-snapshot-schedule.mjs` from the real sanitiser, rows shaped like a desktop's) | processes (250) ≈ 35 KB, services (280) ≈ 41 KB, adapters (4) ≈ 2 KB; each capped at 128 KB |
+| Uploads at 5,000 computers, every 6 h (**estimated**) | 3 × 4 × 5,000 = 60,000 a day: **0.7 a second**, beside the 27.8 heartbeats a second |
+| Data uploaded and written (**estimated**) | ≈ 1.6 GB a day |
+| Kept (**estimated**) | one completed automatic run per key per computer: ≈ 78 KB × 5,000 ≈ **400 MB**, flat |
+| Extra work per heartbeat when nothing is due (**estimated** from the code path, not benchmarked) | a cached settings read, one endpoint and one node lookup by key, and one grouped query over that computer's snapshot runs (a handful of rows) — roughly 1–2 ms beside the ≈ 35–50 ms measured above |
+| After an upgrade or an outage | every computer is due at once; `SNAPSHOT_MAX_PER_MINUTE` (default 120) spreads 15,000 runs at 5,000 computers over ≈ 2 hours (2 uploads a second) |
+
+Processes every hour instead would be 120,000 uploads and ≈ 4 GB a day for a list that is out of date within minutes
+of being taken; that is why it has the open-tab interval instead. `bench-heartbeat.mjs` was not re-run for 0.35.
+
 ## Database growth
 
 Measured on-disk cost per row, **heap plus every index**, from 20,000 synthetic rows per table shaped like what the

@@ -602,6 +602,15 @@ const SECTIONS: Section[] = [
           with the standard agent only; the Linux agent does not collect them. More in{' '}
           <Link href="/docs/diagnostics#the-processes-services-and-network-tabs" className="underline text-foreground">One-click diagnostics</Link>.
         </p>
+        <p>
+          Since 0.35 the server also takes them on its own: every 6 hours, and every 5 minutes
+          while you have the tab open, on the computer&apos;s own check-in. The tab updates itself —
+          no reload — and says when the next automatic refresh is due. When nothing can arrive it
+          says why: the agent has not checked in (even if RustDesk can still reach the computer),
+          the agent is older than 0.33, the computer is not Windows, or automatic snapshots are
+          off. A Platform Admin sets the intervals in Settings → Monitoring &amp; API. See{' '}
+          <Link href="/docs/diagnostics#automatic-snapshots" className="underline text-foreground">Automatic snapshots</Link>.
+        </p>
         <p className="font-medium text-foreground">The AI-written summary</p>
         <p>
           <em>History</em> ends with an <strong className="text-foreground">AI-written summary</strong> of the
