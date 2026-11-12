@@ -1086,7 +1086,8 @@ const SECTIONS: Section[] = [
           The <Link href="/dashboard" className="underline text-foreground">Dashboard</Link> (0.31) says what is broken,
           which businesses it affects, which devices need attention, what is already being worked on, and what to
           do next — only for what you can see. From 0.35 it fits the window on a desktop screen: figures first, then
-          the lists and the map, each long list scrolling inside its own card. <strong className="text-foreground">Work on next</strong> is a ranked
+          the lists and the map, each long list scrolling inside its own card — and from 0.36 it still fits with a
+          containment strip at the top. <strong className="text-foreground">Work on next</strong> is a ranked
           list and each item says why it is there: site outages, then critical alerts, actions whose outcome is
           unknown, failed actions, warnings, approval requests, restarts pending and info alerts, oldest first.
           Acknowledged alerts and alerts in a maintenance window are left out. <em>Patch compliance</em> counts only

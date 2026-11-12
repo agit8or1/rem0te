@@ -21,6 +21,10 @@
  *     business script in review and a draft. Hashes come from definition.ts.
  *   - a client-update policy for Harbor with a site override, and two
  *     policy-queued RustDesk updates being held (one by an open session).
+ *   - (0.35) a device-group client-update policy and a group offline monitor
+ *     on Harbor's Remote depots group, so the group-policy cards have a winner.
+ *   - (0.36) no metric history or snapshots after NWD-BILLING-RMT's agent went
+ *     silent; _docs-demo-refresh.ts keeps it reachable with an old heartbeat.
  *   - two patch policies: one awaiting its second approval, one active. The
  *     docs stack has no approval signer, so the pages say so — that is the
  *     truth about this stack, and the pre-flight lists it as unmet.
@@ -93,12 +97,15 @@ async function main() {
   await prisma.endpointDiskSample.deleteMany({});
   await prisma.diagnosticRun.deleteMany({ where: { key: { in: ['process_list', 'service_list', 'network_adapters'] } } });
   await prisma.savedView.deleteMany({});
+  // Group policies first (0.35): a group carrying a policy cannot be deleted
+  // (NO ACTION foreign keys), so these go before the groups.
+  await prisma.clientUpdatePolicy.deleteMany({});
+  await prisma.monitorRule.deleteMany({ where: { groupId: { not: null } } });
   // Membership is its own table from 0.34 (a computer can be in several groups).
   await prisma.endpointGroupMember.deleteMany({});
   await prisma.endpointGroup.deleteMany({});
   await prisma.scriptVersion.deleteMany({});
   await prisma.script.deleteMany({});
-  await prisma.clientUpdatePolicy.deleteMany({});
   await prisma.patchPolicy.deleteMany({});
   await prisma.monitorAlert.deleteMany({ where: { id: { startsWith: 'demohist' } } });
   await prisma.rustdeskNode.updateMany({
@@ -143,9 +150,15 @@ async function main() {
     select: { id: true, name: true, inventory: { select: { memoryTotalMb: true, memoryFreeMb: true, systemDiskTotalMb: true, systemDiskFreeMb: true, disks: true } } },
     orderBy: { name: 'asc' },
   });
+  // 0.36: the agent-silent computer (_docs-demo-refresh.ts): reachable
+  // through RustDesk, agent quiet for three days, so its history stops there
+  // and it has no recent snapshots. Keep in step with the refresh.
+  const AGENT_SILENT = new Set(['NWD-BILLING-RMT']);
+  const SILENT_FOR = 3 * DAY + 2 * HOUR;
   let rawRows = 0, hourRows = 0, diskRows = 0;
   for (const [i, e] of withInv.entries()) {
     if (OFFLINE.has(e.name)) continue;
+    const end = AGENT_SILENT.has(e.name) ? NOW - SILENT_FOR : NOW - MIN;
     const inv = e.inventory!;
     const rand = rng(1000 + i * 7919);
     const cpuBase = 4 + (i * 7) % 14;
@@ -159,7 +172,7 @@ async function main() {
 
     const samples: { at: number; cpu: number | null; memory: number | null; disk: number | null }[] = [];
     let spike = 0;
-    for (let t = NOW - 30 * DAY; t <= NOW - MIN; t += 3 * MIN) {
+    for (let t = NOW - 30 * DAY; t <= end; t += 3 * MIN) {
       if (gap && t >= gap[0] && t < gap[1]) continue;
       const w = workLoad(t);
       if (spike <= 0 && rand() < 0.002) spike = 6 + Math.floor(rand() * 10); // a scan, an update, a big export
@@ -187,7 +200,7 @@ async function main() {
     // Per-volume passes, every six hours, from the inventory's own volumes.
     const disks = (Array.isArray(inv.disks) ? inv.disks : []) as { drive?: string; totalBytes?: number; freeBytes?: number }[];
     const passes: Prisma.EndpointDiskSampleCreateManyInput[] = [];
-    for (let t = NOW - 30 * DAY + 2 * HOUR; t <= NOW; t += 6 * HOUR) {
+    for (let t = NOW - 30 * DAY + 2 * HOUR; t <= end; t += 6 * HOUR) {
       if (gap && t >= gap[0] && t < gap[1]) continue;
       for (const d of disks) {
         if (!d.drive || !d.totalBytes || d.freeBytes === undefined) continue;
@@ -201,7 +214,7 @@ async function main() {
 
   // ── Processes, services and network snapshots ───────────────────────────
   const windowsOnline = await prisma.endpoint.findMany({
-    where: { platform: 'Windows', customerId: { not: null }, name: { notIn: [...OFFLINE] }, inventory: { isNot: null } },
+    where: { platform: 'Windows', customerId: { not: null }, name: { notIn: [...OFFLINE, ...AGENT_SILENT] }, inventory: { isNot: null } },
     include: { inventory: true, customer: true },
   });
   const store = async (e: (typeof windowsOnline)[number], key: 'process_list' | 'service_list' | 'network_adapters', raw: unknown, mins: number, by: string) => {
@@ -459,6 +472,22 @@ async function main() {
       tenantId: harbor.tenantId, customerId: harbor.id, siteId: site.id, enabled: true, timeZone: 'America/Los_Angeles',
       windows: [{ days: [0], start: '02:00', end: '05:00' }],
       skipActiveSession: true, skipLoggedOnUser: true, updatedById: admin.id,
+    },
+  });
+  // 0.35 group policies: the Remote depots group updates overnight every day
+  // (the depot VPN is quiet then), and has its own offline monitor, because
+  // the VPN drops for half an hour most days. Each beats the business's own
+  // setting for the two depot PCs, which the pages show as the winner.
+  await prisma.clientUpdatePolicy.create({
+    data: {
+      tenantId: harbor.tenantId, customerId: harbor.id, groupId: groupIds['Remote depots'], priority: 10, enabled: true, timeZone: 'America/Los_Angeles',
+      windows: [{ days: [0, 1, 2, 3, 4, 5, 6], start: '01:00', end: '04:00' }], skipActiveSession: true, skipLoggedOnUser: false, updatedById: admin.id,
+    },
+  });
+  await prisma.monitorRule.create({
+    data: {
+      scopeKey: `g:${groupIds['Remote depots']}`, customerId: harbor.id, groupId: groupIds['Remote depots'], priority: 10,
+      key: 'offline', kind: 'OFFLINE', name: 'Depot offline (60 min: the depot VPN drops)', severity: 'WARNING', params: { minutes: 60 }, createdById: admin.id,
     },
   });
   await prisma.clientUpdatePolicy.create({

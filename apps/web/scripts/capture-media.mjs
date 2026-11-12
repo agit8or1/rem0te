@@ -57,6 +57,8 @@ export const SHOTS = [
   { name: 'dashboard-light', path: '/dashboard', theme: 'light', wait: 'text=Work on next', settle: 3000 },
   { name: 'dashboard-dark', path: '/dashboard', theme: 'dark', wait: 'text=Work on next', settle: 3000 },
   { name: 'dashboard-narrow-light', path: '/dashboard', theme: 'light', viewport: 'narrow', wait: 'text=Work on next', settle: 3000 },
+  // 0.36: the phone dashboard in dark too, now that it has its own layout (0.34–0.35).
+  { name: 'dashboard-narrow-dark', path: '/dashboard', theme: 'dark', viewport: 'narrow', wait: 'text=Work on next', settle: 3000 },
   { name: 'search-dark', path: '/dashboard', theme: 'dark', wait: 'text=Work on next', settle: 800,
     before: async (p) => {
       await p.keyboard.press('Control+k');
@@ -104,6 +106,10 @@ export const SHOTS = [
   { name: 'device-patches-light', path: '@endpoint?tab=patches', theme: 'light', settle: 3000 },
   { name: 'device-event-log-dark', maxHeight: 1000, path: '@endpoint?tab=events', theme: 'dark', settle: 3000 },
   { name: 'device-linux-dark', path: '@endpoint:CASC-FILESRV', theme: 'dark', settle: 3500 },
+  // 0.36: the 0.35 states. Reachable through RustDesk with the agent silent for three days (amber), and a
+  // computer whose offline monitor comes from its device group (Remote depots), not from its business.
+  { name: 'device-agent-silent-light', maxHeight: 900, path: '@endpoint:NWD-BILLING-RMT', theme: 'light', wait: '[data-testid="device-status"]', settle: 3000 },
+  { name: 'device-group-monitor-dark', maxHeight: 1100, path: '@endpoint:HARB-DEPOT-BOI?tab=monitoring', theme: 'dark', wait: '[data-testid="endpoint-monitoring"]', settle: 2500 },
   { name: 'my-computers-dark', path: '/my-computers', theme: 'dark', settle: 3000 },
   { name: 'unassigned-light', maxHeight: 620, path: '/admin/unassigned', theme: 'light', settle: 2500 },
 

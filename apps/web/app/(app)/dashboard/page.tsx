@@ -117,14 +117,16 @@ export default function DashboardPage() {
     : null;
 
   // 0.35 layout. From `lg` up the page is exactly the space under the top bar
-  // (h-12): a fixed header, the figures, then a 12-column grid whose rows
+  // (h-12) and, while one is showing, the containment banner (0.36: its
+  // height is --containment-banner-h, set by ContainmentBanner): a fixed
+  // header, the figures, then a 12-column grid whose rows
   // share what is left (minmax(0, …fr), so a long list scrolls inside its own
   // card instead of growing the page). Below `lg` everything stacks and the
   // page scrolls, as it should on a phone. Placement is explicit so the DOM
   // order is also the reading order when stacked: what to do, which devices,
   // who is affected, what is in hand, patches, then the map and history.
   return (
-    <div className="flex flex-col gap-3 p-4 md:p-6 lg:h-[calc(100dvh-3rem)] lg:min-h-[600px] lg:py-4" data-testid="dashboard">
+    <div className="flex flex-col gap-3 p-4 md:p-6 lg:h-[calc(100dvh-3rem-var(--containment-banner-h,0px))] lg:min-h-[600px] lg:py-4" data-testid="dashboard">
       <div className="flex shrink-0 flex-wrap items-baseline gap-x-4 gap-y-1">
         <h1 className="text-xl font-semibold">Dashboard</h1>
         <p className="text-xs text-muted-foreground">
@@ -144,9 +146,11 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* What is broken, at the scale of a whole site: first, and loud. */}
+      {/* What is broken, at the scale of a whole site: first, and loud. Capped
+          only on the fitted desktop layout (0.36): on a phone the page scrolls,
+          and a capped strip cut the sentence and hid "Open alerts". */}
       {liveOutages.length > 0 && (
-        <div className="max-h-24 shrink-0 overflow-y-auto rounded-lg border border-red-300 bg-red-50 p-3 text-sm dark:border-red-900 dark:bg-red-950/40" role="alert" data-testid="dashboard-outages">
+        <div className="shrink-0 rounded-lg border border-red-300 lg:max-h-24 lg:overflow-y-auto bg-red-50 p-3 text-sm dark:border-red-900 dark:bg-red-950/40" role="alert" data-testid="dashboard-outages">
           {liveOutages.map((o) => (
             <div key={o.id} className="flex flex-wrap items-center gap-x-2">
               <AlertOctagon className="h-4 w-4 text-red-600 dark:text-red-400" />

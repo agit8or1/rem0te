@@ -142,7 +142,8 @@ snapshot is refreshed and roughly when the next automatic one is due.
 ![The Processes tab: the read-only notice, the snapshot's age, Refresh, the filter and the sortable columns](screenshots/guide/device-processes.png)
 
 1. **Read-only snapshot** — what the tab is, and that nothing on it acts on the computer.
-2. **When it was taken** — and how old it is; flagged after a day.
+2. **When it was taken** — how old it is (flagged after a day) and who asked, or *automatically*. The amber line
+   under it is the docs server's own: it runs with `SNAPSHOT_SWEEP=off`, so it never asks for one itself, and the tab says so.
 3. **Refresh** — asks for a new one on the computer's next check-in.
 4. **Filter** — by name, PID or user.
 5. **The columns** — click one to sort.

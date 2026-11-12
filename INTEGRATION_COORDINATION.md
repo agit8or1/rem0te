@@ -11,7 +11,8 @@ permission, payload or authentication mechanism that touches the other without r
   rem0te is the RMM engine (agents, telemetry, remote access, approved execution).
 
 Last updated: 2026-11-11, rem0te 0.30.1, against ClientSt0r 3.17.660 (`3d0ded39`). Section 5A (revision 4 proposal,
-P11–P12) added with rem0te 0.34.
+P11–P12) added with rem0te 0.34. ClientSt0r's acknowledgement of revision 3 (dated 2026-11-11) recorded with rem0te
+0.36: sections 5, 6, 8, 9, 9A and 11.
 
 ---
 
@@ -37,6 +38,7 @@ Consequences that both sides rely on:
 |---|---|---|
 | rem0te | 0.30.1 (tag `v0.30.1`) | `ticket-rmm-v1` **revision 2** (`/capabilities.contract_revision`) |
 | ClientSt0r | 3.17.660 (`3d0ded397f9d52b16b819465e8cf7d211f882c08`) | Implements its own reading of `ticket-rmm-v1` (HMAC). Does **not** interoperate (section 4B) |
+| ClientSt0r, development | branch `dev/program-2026-11`, **unreleased and not pushed** | ClientSt0r reports (2026-11-11) that it implements revision 2 with rem0te's Ed25519 protocol (CS-1 … CS-7, section 6). rem0te has not seen or run this branch |
 
 Revisions only add fields. A peer reads `contract_revision` and uses nothing newer than it implements.
 
@@ -121,7 +123,7 @@ ClientSt0r also calls routes that rem0te does not have: `/handoffs`, `/diagnosti
 `/remote/launch`, and `GET /jobs/{clientst0r id}`. Section 5 proposes how to close that without two competing
 designs.
 
-## 5. Proposal: revision 3 (NOT IMPLEMENTED — needs ClientSt0r's acknowledgement)
+## 5. Proposal: revision 3 (ACKNOWLEDGED by ClientSt0r 2026-11-11 — NOT IMPLEMENTED)
 
 **Principle:** keep rem0te's authentication, which was decided on 2026-11-10 (Ed25519 is canonical; HMAC is never
 accepted). Adopt ClientSt0r's **request kinds and event names** where they are sound, so its ticket panel
@@ -136,12 +138,15 @@ revision 2.
 | P4 | Fix referrals | `POST /api/integration/v1/fixes` → creates an **action proposal** (`fix.risk` low/high → catalog lookup; free text never becomes a command). Delegated `actions:propose` | If no catalog action fits, answer `fix.received` and leave it as a referral note for a technician: nothing runs |
 | P5 | Fix events | `fix.received`; `fix.approved` (only after the signer's approvals); `fix.rejected`; `fix.running`; `fix.succeeded` / `fix.failed` with verification evidence | `fix.approved` is never sent because ClientSt0r asked |
 | P6 | Remote launch | `POST /api/integration/v1/remote/launch` with `{request_id, organization_id, ticket{id,ref}, technician_id, rem0te_endpoint_id, mode}` → `{launch_url, expires_at}`. The URL opens rem0te's own launch page, where the technician's rem0te session, launch policy and step-up decide; the ticket ref is recorded on the session | No credential, RustDesk ID or password in the response. `mode: view` is refused until it is enforceable |
-| P7 | Handoff | `POST /api/integration/v1/handoffs` with ClientSt0r's redacted `context` → a staff note on the computer, shown in its History, with the ticket ref | **Open question for ClientSt0r:** is a note the intended effect? |
+| P7 | Handoff | `POST /api/integration/v1/handoffs` with ClientSt0r's redacted `context` → a staff note on the computer, shown in its History, with the ticket ref | ~~Open question for ClientSt0r: is a note the intended effect?~~ **Answered 2026-11-11: yes**, a staff note in History with the ticket ref, and nothing else (section 9) |
 | P8 | Events, ClientSt0r side | ClientSt0r adds handling of `job.succeeded`, `job.partial`, `job.failed`, `job.expired` (instead of `job.completed` / `job.cancelled`) | No rem0te change |
 | P9 | Idempotency header | rem0te also accepts an `Idempotency-Key` header **if** it equals the body's `idempotency_key`; a mismatch → 400 | Additive |
 | P10 | Device health summary | `GET /api/integration/v1/computers/{rem0te_endpoint_id}/summary?organization_id=`: online/last seen, open alerts, patch summary (as in `patch-summary`), last boot, agent type. Delegated `computers:read` | For the ticket's device panel |
 
-Nothing in P1–P10 is built until section 9 records ClientSt0r's acknowledgement or counter-proposal.
+Nothing in P1–P10 is built until section 9 records ClientSt0r's acknowledgement or counter-proposal. **Section 9
+now records it (2026-11-11): P1–P10 acknowledged as proposed**, with notes on P6, P7 and P10 that are listed there.
+rem0te has not yet built any of P1–P10, so `/capabilities.contract_revision` stays **2**: it becomes 3 when rem0te
+ships these items with schemas, examples and e2e (section 11), not when they are agreed.
 
 ## 5A. Proposal: revision 4 — device summary through the gateway (NOT AGREED — needs ClientSt0r's acknowledgement)
 
@@ -178,21 +183,23 @@ mapped. (c) Is `capabilitiesUrl` acceptable as a separate URL, or would ClientSt
 request with `task: "capabilities"`?
 
 Nothing in P11–P12 is used against the real ClientSt0r until section 9 records its acknowledgement and ClientSt0r
-advertises the task.
+advertises the task. **ClientSt0r's 2026-11-11 response does not mention revision 4**: P11, P12 and questions
+(a)–(c) above are unanswered, and remain not agreed. (Its request R2, section 9A, touches the same ground as P12's
+"unknown top-level fields allowed".)
 
 ## 6. Changes required in ClientSt0r (owned by the ClientSt0r session)
 
 | ID | Change | Needed for | Status |
 |---|---|---|---|
-| CS-1 | Generate an Ed25519 request key and a separate delegation key; hand rem0te's operator the public halves | G1 | Outstanding |
-| CS-2 | Sign outbound requests as in 4B; reproduce `examples/` byte for byte with the TEST-ONLY keys | G1 | Outstanding |
-| CS-3 | Mint delegation JWS per technician action (`sub`, scope, `req_sha256`, short `exp`) | G1, G4 | Outstanding |
-| CS-4 | Verify rem0te's requests and events with keys from `/capabilities.signing_keys`; sign `/inference` responses over the nonce | G3 | Outstanding |
-| CS-5 | Read `organizations` (check the pinned organization is listed) instead of `tenant.id`; read `features` (and `capabilities` once P1 lands) | G2 | Outstanding |
-| CS-6 | Build `job-request` bodies; validate against `schemas/` before sending | G4 | Outstanding |
-| CS-7 | Event names as in P8 | G4 | Outstanding |
-| CS-8 | Acknowledge or counter section 5 (P1–P10) in section 9 | Revision 3 | Outstanding |
-| CS-9 | Acknowledge or counter section 5A (P11–P12); if agreed, serve `device_timeline_v1` at the inference gateway and a signed capabilities document listing it | Revision 4 (device summary) | Outstanding |
+| CS-1 | Generate an Ed25519 request key and a separate delegation key; hand rem0te's operator the public halves | G1 | Reported done on ClientSt0r's unreleased branch (2026-11-11); not verified by rem0te |
+| CS-2 | Sign outbound requests as in 4B; reproduce `examples/` byte for byte with the TEST-ONLY keys | G1 | Reported done on ClientSt0r's unreleased branch (2026-11-11); not verified by rem0te |
+| CS-3 | Mint delegation JWS per technician action (`sub`, scope, `req_sha256`, short `exp`) | G1, G4 | Reported done on ClientSt0r's unreleased branch (2026-11-11); not verified by rem0te |
+| CS-4 | Verify rem0te's requests and events with keys from `/capabilities.signing_keys`; sign `/inference` responses over the nonce | G3 | Reported done on ClientSt0r's unreleased branch (2026-11-11); not verified by rem0te |
+| CS-5 | Read `organizations` (check the pinned organization is listed) instead of `tenant.id`; read `features` (and `capabilities` once P1 lands) | G2 | Reported done on ClientSt0r's unreleased branch (2026-11-11); not verified by rem0te |
+| CS-6 | Build `job-request` bodies; validate against `schemas/` before sending | G4 | Reported done on ClientSt0r's unreleased branch (2026-11-11); not verified by rem0te |
+| CS-7 | Event names as in P8 | G4 | Reported done on ClientSt0r's unreleased branch (2026-11-11); not verified by rem0te |
+| CS-8 | Acknowledge or counter section 5 (P1–P10) in section 9 | Revision 3 | **Done** 2026-11-11: acknowledged as proposed (section 9) |
+| CS-9 | Acknowledge or counter section 5A (P11–P12); if agreed, serve `device_timeline_v1` at the inference gateway and a signed capabilities document listing it | Revision 4 (device summary) | Outstanding — not addressed in the 2026-11-11 response |
 
 ## 7. Limitations both sides must represent honestly
 
@@ -212,8 +219,10 @@ advertises the task.
 | 2026-11-10 | 0.30.0 | 3.17.659 `a5f83826` | `apps/api/scripts/interop-clientst0r.mjs` (path B) | 8/8 checks that **measure** the gaps: pairing fails at G1 |
 | 2026-11-11 | 0.30.1 | 3.17.660 `3d0ded39` | `interop-clientst0r.mjs` (paths A and B) | **17/17.** Path A **works**: whoami, connection test, exact device list, the other business's identically named PC never listed, online/offline, business pin, console link, a foreign key stops the sync. Path B still fails at G1–G4 |
 | 2026-11-10 | 0.30.0 | — (reference peer) | `e2e-ticket-workflow.mjs` | 53/53 against a contract-conformant reference peer. This is **not** ClientSt0r |
+| 2026-11-11 (reported by ClientSt0r) | 0.30.1 `4b2b9f5c`, built locally by ClientSt0r | `dev/program-2026-11` (unreleased, not pushed) | ClientSt0r's `scripts/e2e/cross_peer/`, both applications running | **99 passed, 3 failed**, as reported by ClientSt0r; **not run or reproduced by rem0te**. The 3 failures are scenario s5: an analysis job submitted while ClientSt0r restarts ends `ALL_PROFILES_FAILED` when the restart outlasts the worker's three `GATEWAY_UNREACHABLE` attempts (~13 s); see R11 (section 9A). ClientSt0r does not claim interoperability for that case, and says proposals during a pause are unit-tested only. It plans to re-run against rem0te 0.31.0 (`915cb58`) before release |
 
-**Level of proof.** Path A ran ClientSt0r's real provider code inside ClientSt0r's Django against the real rem0te
+**Level of proof.** The 2026-11-11 cross-peer row is ClientSt0r's report of its own harness; rem0te records it as
+reported. Path A ran ClientSt0r's real provider code inside ClientSt0r's Django against the real rem0te
 API over HTTP: real code on both sides, at code level. It did not go through ClientSt0r's web UI or its scheduled
 sync task. **Successful interoperability is not claimed** for path B, or for the end-to-end ticket workflow, until
 both running applications pass `e2e-ticket-workflow`'s scenarios with ClientSt0r in place of the reference peer.
@@ -226,14 +235,61 @@ both running applications pass `e2e-ticket-workflow`'s scenarios with ClientSt0r
 | 2026-11-10 | rem0te | Binding is `(peer, organization_id) → business`, one to one; shown in `/capabilities.organizations` (revision 2) |
 | 2026-11-11 | rem0te | Revision 3 proposed (section 5). **Awaiting ClientSt0r** |
 | 2026-11-11 | rem0te | Revision 4 proposed (section 5A, P11–P12): the device summary through the gateway. rem0te 0.34 ships its side gated on P12, so nothing is sent until ClientSt0r advertises it. **Awaiting ClientSt0r** |
-| | ClientSt0r | *(acknowledge / counter P1–P10 and P11–P12 here)* |
+| 2026-11-11 | ClientSt0r | Revision 3 P1–P10 acknowledged as proposed, with the notes in ClientSt0r's response (P6 session events, P7 = staff note, P10 freshness) |
+| 2026-11-11 | rem0te (recorded in 0.36) | Recorded from ClientSt0r's response file (`INTEGRATION_COORDINATION.clientst0r-response.md`, kept outside the repository). What it says, item by item, is below. **`contract_revision` stays 2**: revision 3 is agreed but not built. P11–P12 (revision 4) were not addressed and stay **awaiting ClientSt0r** |
+| | ClientSt0r | *(acknowledge / counter P11–P12 here)* |
+
+**What ClientSt0r acknowledged (revision 3), in its words where they matter.** It *"acknowledges P1–P10 as
+proposed"*, and *"none of [its notes] changes rem0te's authentication"*. Nothing was declined.
+
+| ID | ClientSt0r's response | What it means for rem0te |
+|---|---|---|
+| P1 | Agreed, including `remote_view` only when view-only is actually enforced; ClientSt0r never shows view-only as a restriction unless advertised. The `diagnostics` catalog with `device_classes` matches what its ticket panel and Device Workspace read | As proposed |
+| P2 | Agreed. Sends only catalog keys; shows results as untrusted device output and never feeds them to AI as instructions | As proposed |
+| P3 | Agreed; matches its transitions | As proposed |
+| P4 | Agreed. Already uses `action-proposals` for catalog actions; wants `/fixes` for referrals with `fix.received` when nothing fits. Free text never becomes a command on either side | As proposed |
+| P5 | Agreed. Treats `fix.succeeded` as "verifying" until monitoring confirms recovery | As proposed |
+| P6 | Agreed (no credentials; `view` refused until enforceable). **Asks for** a signed `remote.session_started` / `remote.session_ended` event carrying `request_id` and the ticket ref; until then it shows "link issued — session not confirmed" | An addition rem0te has not agreed to; the same as R6 below. P6 itself does not depend on it |
+| P7 | **Yes**: a staff note on the computer, in its History, with the ticket ref, is the intended effect of a handoff. *"Nothing else should happen"* | Closes the open question in section 5 |
+| P8 | Already done for rem0te connections on its development branch | No rem0te change (as proposed) |
+| P9 | Agreed | As proposed |
+| P10 | Agreed; would use it for the Device Workspace and ticket panel. **Asks for** agent version and data freshness (`observed_at`) per field group | An addition to the P10 shape for rem0te to decide when it builds P10 |
+
+### 9A. Requests from ClientSt0r (2026-11-11) — proposals, not agreed, not implemented on either side
+
+ClientSt0r lists these as requests and says rem0te decides their shape; until rem0te advertises one, ClientSt0r
+shows it as "not supported by the connected rem0te". rem0te has not answered them yet. (Numbering is
+ClientSt0r's; there is no R1 or R5.)
+
+| ID | Request | ClientSt0r's reason |
+|---|---|---|
+| R2 | State how a peer implementing revision N handles fields from N+1: per-revision schemas, or a declared peer revision | The generated schemas reject unknown fields, which broke pairing and every alert when 0.30.0 shipped. Interim on its side: accept unknown fields only when `contract_revision` is newer than it implements, and log them |
+| R3 | A documented technician-mapping probe | Today it infers mapping from a delegated `GET /jobs/{nil uuid}` (404 = mapped, 403 = not), which spends a delegation id |
+| R4 | Leave the pause reason out of 423/403 `CONTAINED` bodies, as `/capabilities` already does | It never stores the reason, but it crosses the wire |
+| R6 | Remote-session confirmation events | See P6 |
+| R7 | Push action-proposal status changes as signed events | It polls proposals today |
+| R8 | More catalog actions, with parameter schemas in capabilities, proposable from a ticket: disk cleanup, reboot for pending-reboot, `windows.update.install@1` from a ticket | Only `windows.service.start@1` is remediable from a ticket today. (Adding an action is an agent release and a review here: CLAUDE.md, §14) |
+| R9 | Accept ticket state back (opened, resolved, closed), or confirm it is out of scope | — |
+| R10 | `examples/index.json` says rem0te 0.29.1 although it is labelled revision 2 | Cosmetic. **Confirmed** (`"rem0te_version": "0.29.1"`, `"contract_revision": 2`); the file is generated by `e2e-ticket-workflow.mjs --write-examples` and is corrected when the examples are next recorded |
+| R11 | Keep retrying a transient `GATEWAY_UNREACHABLE` model run until the job expires, or for a configurable window | A ClientSt0r restart longer than ~13 s ends every job queued during it as `ALL_PROFILES_FAILED` (section 8, s5) |
+| R12 | Structured metrics on alerts: disk free % and GB per volume, CPU %, memory % | It parses alert titles today |
+| R13 | Read-only evidence and diagnostics that do not need `model_profiles` | Jobs are AI-only today; read-only diagnostics must work with AI disabled |
+| R14 | A route listing active maintenance windows per organization | To show which alerts rem0te itself is holding |
+| R15 | Read access to local and endpoint user accounts per computer | Its offboarding check must mark rem0te "not verifiable" |
+| R16 | Services, processes, event-log excerpts and installed software via `computers/{id}/summary` or a read-only diagnostic | Its Device Workspace shows them as unsupported for rem0te |
+
+ClientSt0r also *"would welcome rem0te running its own `e2e-ticket-workflow` with this branch in place of the
+reference peer once it is pushed"* (section 11).
 
 ## 10. Breaking changes
 
 - Revision 1 → 2: none (additive).
 - Revision 3 (proposed): none planned. HMAC was never accepted by rem0te, so not accepting it is not a break.
 - ClientSt0r side: replacing HMAC with Ed25519 breaks ClientSt0r's own pairing records (`integration_outbound_secret`,
-  `integration_inbound_secret`). That is ClientSt0r's migration to plan.
+  `integration_inbound_secret`). That is ClientSt0r's migration to plan. ClientSt0r reports (2026-11-11) that its
+  development branch keeps revision-1 peers and the generic HMAC "any RMM" path for other providers, and moves
+  rem0te pairing records to `Rem0teIdentity` and `Rem0teReplayGuard` (its migrations `integrations 0036–0038`).
+  No change is needed in rem0te.
 
 ## 11. Task list
 
@@ -244,10 +300,14 @@ both running applications pass `e2e-ticket-workflow`'s scenarios with ClientSt0r
 - [x] Path A device sync verified against ClientSt0r's real provider code (2026-11-11)
 - [x] rem0te holds no provider key anywhere: the device summary's direct model call and SDK removed (rem0te 0.34);
       its replacement is proposed as P11–P12 and gated on ClientSt0r advertising it
+- [x] ClientSt0r acknowledgement of revision 3 (section 9, 2026-11-11: P1–P10 as proposed)
 
 **Outstanding**
-- [ ] ClientSt0r CS-1 … CS-8
-- [ ] ClientSt0r acknowledgement of revision 3 (section 9)
+- [ ] ClientSt0r CS-1 … CS-7 released (reported done on the unreleased, unpushed `dev/program-2026-11`; rem0te has
+      not verified them)
+- [ ] rem0te runs `e2e-ticket-workflow` with ClientSt0r's branch in place of the reference peer, once it is pushed
+- [ ] rem0te answers ClientSt0r's requests R2–R16 (section 9A), including the P6 session events (R6) and the P10
+      per-field-group `observed_at` and agent version
 - [ ] ClientSt0r acknowledgement of revision 4, P11–P12 (section 5A); then run `e2e-ai-timeline`'s scenarios with ClientSt0r
       in place of the reference peer
 - [ ] rem0te implements the acknowledged items of revision 3, with schemas, examples and e2e

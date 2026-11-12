@@ -417,6 +417,7 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
                         cx={x} cy={y} r={r}
                         className={off ? 'fill-slate-500' : silent ? 'fill-amber-500' : 'fill-emerald-500'}
                         data-connectivity={off ? 'offline' : silent ? 'agent_silent' : 'online'}
+                        data-place={placeLabel(p)}
                         stroke={isSel ? '#0f172a' : '#ffffff'}
                         strokeWidth={isSel ? 3 : 2}
                         vectorEffect="non-scaling-stroke"

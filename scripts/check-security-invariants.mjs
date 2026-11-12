@@ -3024,6 +3024,44 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     "settingsFrom: env.AGENT_AUTO_UPDATE !== 'off'; run-e2e.sh exports it; e2e-ui's API env sets it");
 }
 
+// 54. Test stacks and the GeoIP database (0.36). The dashboard map resolves
+//     addresses with GeoipService, which falls back to the production path
+//     (/opt/reboot-remote/data/geoip/…) when GEOIP_DB_PATH is unset. On the
+//     production host that made the browser suite read production's file
+//     without saying so. The suite now writes its own database of RFC 5737
+//     documentation networks; the writer is test tooling, never server code;
+//     and the screens reachable signed out that draw text on the operator's
+//     accent choose their ink by luminance rather than hard-coding white.
+{
+  const ui = read('apps/web/scripts/e2e-ui.mjs');
+  const fixture = read('apps/api/scripts/lib/mmdb-fixture.mjs');
+  check('the browser suite hands its API a fixture GeoIP database, never the default path',
+    /GEOIP_DB_PATH: GEOIP_FILE,/.test(ui)
+      && /const GEOIP_FILE = writeCityMmdb\(path\.join\(GEO_DIR, 'fixture-city\.mmdb'\)/.test(ui)
+      && /const GEO_DIR = mkdtempSync\(path\.join\(tmpdir\(\), 'rem0te-ui-geo-'\)\);/.test(ui)
+      && !/reboot-remote\/data\/geoip|dbip-city-lite/.test(ui),
+    'e2e-ui.mjs: GEOIP_DB_PATH: GEOIP_FILE in startApi(), written with writeCityMmdb into a mkdtemp directory; no production GeoIP path');
+  const cidrs = [...ui.matchAll(/cidr: '([0-9./]+)'/g)].map((m) => m[1]);
+  const docRange = (c) => /^(192\.0\.2|198\.51\.100|203\.0\.113)\.\d+\/(2[4-9]|3[0-2])$/.test(c);
+  check('the fixture GeoIP networks are RFC 5737 documentation ranges only',
+    cidrs.length >= 3 && cidrs.every(docRange),
+    `cidrs in e2e-ui.mjs: ${JSON.stringify(cidrs)}`);
+  const srcImports = walk('apps/api/src').filter((f) => /mmdb-fixture/.test(read(f)));
+  check('the mmdb writer is test tooling: nothing under apps/api/src imports it, and it writes IPv4 only',
+    srcImports.length === 0 && /ip_version: \{ \$uint16: 4 \}/.test(fixture),
+    `imported by: ${srcImports.join(', ') || '(none)'}`);
+  const login = read('apps/web/app/(auth)/login/page.tsx');
+  const quick = read('apps/web/app/quick/page.tsx');
+  const onAccent = (src) => [...src.matchAll(/className="[^"]*"\s*style=\{\{ backgroundColor: [^}]*\}\}/g)].map((m) => m[0]);
+  check('the login band and Quick Connect draw text on the accent with inkOn(), never a fixed white',
+    /import \{ inkOn \} from '@\/lib\/contrast';/.test(login) && /import \{ inkOn \} from '@\/lib\/contrast';/.test(quick)
+      && /style=\{\{ backgroundColor: band, color: bandInk \}\}/.test(login) && /const bandInk = inkOn\(band\)!;/.test(login)
+      && (quick.match(/style=\{\{ backgroundColor: accent, color: ink \}\}/g) ?? []).length === 2 && /const ink = inkOn\(accent\)!;/.test(quick)
+      && ![...onAccent(login), ...onAccent(quick)].some((t) => /text-white/.test(t))
+      && !/text-white/.test(login.slice(login.indexOf('data-accent-band'), login.indexOf('data-accent-band') + 800)),
+    'login: backgroundColor band, color bandInk = inkOn(band); quick: two accent elements with color ink = inkOn(accent); no text-white on either');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

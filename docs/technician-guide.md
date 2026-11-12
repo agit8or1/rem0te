@@ -53,6 +53,7 @@ zero.
 
 1. **Site outage** — several devices at one site stopped reporting together; *Open alerts* goes to them.
 2. **The tiles** — each is a count with what it is counted from underneath; each one links to where you act on it.
+   *Devices* splits the fleet three ways: online, agent silent and offline (here 23 · 1 · 10).
 3. **Work on next** — the ranked list, every item with the reason it is there.
 4. **Customers affected** — the businesses with an outage, an alert, an offline device or a failed action.
 
@@ -90,14 +91,18 @@ fits the window on a desktop screen (1366 × 768 and up): the figures across
 the top, then *Work on next*, *Devices needing attention* and *Customers
 affected*, then the map with *Being worked on*, *Patch status*, *Recent
 activity* and *Your recent devices* beside it. A long list scrolls inside its
-own card instead of lengthening the page. On a phone the cards stack in that
-order. *Hide device locations* (top right) folds the map away — *Work on next*
-then takes its column — and this browser remembers the choice.
+own card instead of lengthening the page — also while a red containment strip
+is showing at the top (0.36: the dashboard takes the strip's height off its
+own). On a phone the cards stack in that order. *Hide device locations* (top
+right) folds the map away — *Work on next* then takes its column — and this
+browser remembers the choice.
 
 ![The device map on the dashboard, with clustered markers per city](screenshots/guide/dashboard-map.png)
 
 1. **Client locations** — devices placed from the address they last checked in from, clustered by city with a count.
-   The map is drawn from a bundled outline; no tile server is asked where your customers are.
+   Green while an agent there is checking in, amber when the only computers there are reachable through RustDesk
+   with their agent silent (the marker south of Portland), grey when they are all offline. The map is drawn from a
+   bundled outline; no tile server is asked where your customers are.
 2. **Hide device locations** — folds the map away; this browser remembers the choice.
 
 ---
@@ -244,13 +249,13 @@ at the bottom.
 3. **Views** — saved filters, sort, columns and density, personal or shared (below).
 4. **Columns** — which columns show; *Comfortable / Compact* beside it sets the row height.
 5. **The row's box** — ticks the device; the header box ticks the page.
-6. **The bulk bar** — appears while anything is ticked: group membership, *Refresh inventory*, *Queue client update*, *Export selection*.
+6. **The bulk bar** — appears while anything is ticked: group membership, *Refresh inventory*, *Queue client update*, *Update agent*, *Upgrade to signed…*, *Export selection*.
 
 ![The Views menu: personal views, views shared in a business, Save current view and Device groups](screenshots/guide/device-views.png)
 
 1. **Views** — shows the active view's name once one is open.
 2. **A shared view** — with the business it belongs to. Opening it still shows only the devices you can see.
-3. **Save current view…** — the filters, sort, columns and density, under a name; *Device groups…* below it manages groups.
+3. **Save current view…** — the filters, sort, columns and density, under a name; *Save filters as a rule group…* and *Device groups…* below it make and manage groups.
 
 - **Connect** on a row works exactly as it does on the device page. **⋯** opens the
   device, or its Patches, Monitoring or Test connection tab, or copies its hostname.

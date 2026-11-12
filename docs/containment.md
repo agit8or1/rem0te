@@ -5,7 +5,8 @@ rem0te 0.28 can **stop writes** while an incident is looked at, for every busine
 log keep working during a pause.
 
 Settings → Security → **Containment** is where pauses are set and lifted. While one applies to you, a red strip at
-the top of every page says what is stopped and why.
+the top of every page says what is stopped and why. (The dashboard, which is sized to fit the window, takes the
+strip's height off its own from 0.36, so the strip never makes it scroll.)
 
 ## What a pause stops
 
