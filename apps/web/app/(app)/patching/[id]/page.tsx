@@ -105,11 +105,11 @@ export default function DeploymentPage() {
     if (why && why.trim().length >= 3) setStatus.mutate({ to, why: why.trim() });
   };
 
-  if (isLoading || !d) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (isLoading || !d) return <p className="p-4 md:p-6 text-sm text-muted-foreground">Loading…</p>;
   const nextRing = d.next.ring !== null ? d.rings[d.next.ring] : null;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 p-4 md:p-6">
       <Link href="/patching" className="text-xs text-muted-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3 w-3" />Patching</Link>
       <PageHeader title={d.name} description={`Created ${formatDate(d.createdAt)} · soak ${d.soakHours} h · ${d.failureThreshold} failure${d.failureThreshold === 1 ? '' : 's'} allowed per ring · ${d.windowHours} h window · ${rebootSummary(d.reboot).toLowerCase()}`}>
         <div className="flex gap-2 items-center">

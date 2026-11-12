@@ -49,7 +49,7 @@ export default function ScriptLibraryPage() {
   const canCreate = !!data && (data.you.canCreateBusiness || data.you.canCreateGlobal);
 
   return (
-    <div>
+    <div className="p-4 md:p-6">
       <PageHeader title="Script library" description="PowerShell scripts, versioned and reviewed by someone other than their author.">
         {canCreate && !creating && <Button size="sm" onClick={() => setCreating(true)}><Plus className="h-4 w-4 mr-1" />New script</Button>}
       </PageHeader>

@@ -162,6 +162,14 @@ same CSV export (same row cap, same `REPORT_EXPORTED` audit row, naming the sche
 schedule owner's access when it is sent, and fails closed if they have lost it. See
 [Email and scheduled reports](email.md).
 
+From 0.35 each schedulable report (patch compliance, agent coverage, alert frequency, offline time) has
+**Schedule this report** beside *Export CSV*. It opens *Reports → Scheduled reports* with the form prefilled:
+the report, its business (a site implies its business), its site, and *silent days* for agent coverage. A
+schedule covers the last 7 days (weekly) or 30 days (monthly), so a report open on another period says so and
+picks the nearer. The link is shown only to those who may own a schedule — a Platform Admin, or a Business
+Owner in their own right — the same rule the API applies; software compliance cannot be scheduled and has no
+link.
+
 ## Not done
 
 - **Availability percentage**: see above.

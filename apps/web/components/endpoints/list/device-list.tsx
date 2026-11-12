@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowDown, ArrowUp, ArrowUpDown, Bookmark, Check, ChevronLeft, ChevronRight, Columns3, Download, FolderTree,
-  Loader2, MoreHorizontal, Rows3, Search, Trash2, Users, X,
+  Loader2, MoreHorizontal, Rows3, Search, SlidersHorizontal, Trash2, Users, X,
 } from 'lucide-react';
 import { endpointsApi } from '@/lib/api-client';
 import { usePermissions, CAP } from '@/lib/auth';
@@ -33,12 +33,15 @@ function readUrl(): { filters: DeviceFilters; sort: SortKey; dir: 'asc' | 'desc'
   try {
     const q = new URLSearchParams(window.location.search);
     if (![...q.keys()].length) return null;
-    const pick = <T extends string>(k: string, ok: readonly T[], d: T): T => (ok as readonly string[]).includes(q.get(k) ?? '') ? (q.get(k) as T) : d;
+    // An absent key is '' — never null. (Before 0.35 an absent key whose
+    // allowed values include '' came back as null, and toParams threw on its
+    // .trim(): any /endpoints?… link without a platform crashed the list.)
+    const pick = <T extends string>(k: string, ok: readonly T[], d: T): T => { const v = q.get(k) ?? ''; return (ok as readonly string[]).includes(v) ? (v as T) : d; };
     const sort = pick<SortKey>('sort', ['online', 'name', 'business', 'site', 'os', 'lastSeen', 'agent', 'user', 'cpu', 'memory', 'disk', 'patches', 'alerts', 'health'], 'online');
     return {
       filters: {
         search: q.get('search') ?? '', businessId: q.get('businessId') ?? '', siteId: q.get('siteId') ?? '',
-        online: pick('online', ['', 'online', 'offline'] as const, ''),
+        online: pick('online', ['', 'online', 'silent', 'offline'] as const, ''),
         alerts: pick('alerts', ['', 'any', 'critical'] as const, ''),
         restartPending: q.get('restartPending') === 'true',
         agent: pick('agent', ['', 'signed', 'standard', 'none'] as const, ''),
@@ -82,6 +85,8 @@ export function DeviceList() {
   const [groupsOpen, setGroupsOpen] = React.useState(false);
   // 0.34: the less common filters (also what a rule group is made of), edited as a draft and applied together.
   const [moreOpen, setMoreOpen] = React.useState(false);
+  // 0.35: the filter sheet at phone width.
+  const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [moreDraft, setMoreDraft] = React.useState<DeviceFilters>(EMPTY_FILTERS);
   const [ruleOpen, setRuleOpen] = React.useState(false);
   const [ruleName, setRuleName] = React.useState('');
@@ -352,6 +357,8 @@ export function DeviceList() {
   const pageRows = data?.rows ?? [];
   const pageAllSelected = pageRows.length > 0 && pageRows.every((r) => selected.has(r.id));
   const active = Object.entries(filters).filter(([k, v]) => k !== 'status' ? !!v : v !== 'current').length;
+  // On the phone's Filters button: what the sheet holds (the search box stays outside it).
+  const filterCount = active - (filters.search ? 1 : 0);
   const refused = (error as { response?: { status?: number } } | null)?.response?.status;
   const from = data && data.total ? (data.page - 1) * data.pageSize + 1 : 0;
   const to = data ? Math.min(data.total, data.page * data.pageSize) : 0;
@@ -366,6 +373,39 @@ export function DeviceList() {
     </Select>
   );
 
+  /**
+   * The filter controls (0.35): inline beside the search from `sm` up, as
+   * before; below it — a 375 px phone, where they stacked many rows deep
+   * above the table — behind a "Filters (n)" button, in a sheet. The same
+   * controls and the same state either way: the inline copy is display:none
+   * at phone width, and the sheet's content is mounted only while it is open.
+   */
+  const filterControls = (sheet: boolean) => {
+    const w = (desktop: string) => (sheet ? 'w-full' : desktop);
+    return (
+      <>
+        {(isPlatformAdmin || businesses.length > 1) && sel(filters.businessId, (v) => setFilter('businessId', v), 'Business', businesses.map((b) => [b.id, `${b.name} (${b.count})`]), w('w-[180px]'))}
+        {sites.length > 0 && sel(filters.siteId, (v) => setFilter('siteId', v), 'Site', sites.map((s) => [s.id, `${s.name} (${s.count})`]), w('w-[150px]'))}
+        {groupOptions.length > 0 && sel(filters.groupId, (v) => setFilter('groupId', v), 'Group', groupOptions, w('w-[160px]'))}
+        {sel(filters.online, (v) => setFilter('online', v as DeviceFilters['online']), 'Online', [['online', 'Online (agent checking in)'], ['silent', 'Reachable, agent silent'], ['offline', 'Offline']], w('w-[130px]'))}
+        {alertsVisible && sel(filters.alerts, (v) => setFilter('alerts', v as DeviceFilters['alerts']), 'Alerts', [['any', 'Has open alerts'], ['critical', 'Has critical alerts']], w('w-[150px]'))}
+        {sel(filters.agent, (v) => setFilter('agent', v as DeviceFilters['agent']), 'Agent', [['signed', 'Signed agent'], ['standard', 'Standard agent'], ['none', 'No agent report']], w('w-[150px]'))}
+        <Button variant={filters.restartPending ? 'default' : 'outline'} size="sm" className="h-9" onClick={() => setFilter('restartPending', !filters.restartPending)} aria-pressed={filters.restartPending}>
+          Restart pending
+        </Button>
+        <Button variant={moreActive ? 'default' : 'outline'} size="sm" className="h-9" onClick={() => { setMoreDraft(filters); setFiltersOpen(false); setMoreOpen(true); }}>
+          More filters{moreActive ? ` (${moreActive})` : ''}
+        </Button>
+        {sel(filters.status === 'current' ? '' : filters.status, (v) => setFilter('status', (v || 'current') as DeviceFilters['status']), 'Archived', [['archived', 'Archived only'], ['all', 'Include archived']], w('w-[150px]'))}
+        {active > 0 && (
+          <Button variant="ghost" size="sm" className="h-9" onClick={() => { setFilters(EMPTY_FILTERS); setSearchInput(''); setPage(1); }}>
+            <X className="h-4 w-4 mr-1" />Clear ({active})
+          </Button>
+        )}
+      </>
+    );
+  };
+
   return (
     <div className="space-y-3">
       {/* Toolbar: search and filters on the left, view controls on the right. */}
@@ -375,24 +415,11 @@ export function DeviceList() {
           <Input placeholder="Search name, host, IP, user, business…" className="pl-9 h-9" value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)} aria-label="Search devices" />
         </div>
-        {(isPlatformAdmin || businesses.length > 1) && sel(filters.businessId, (v) => setFilter('businessId', v), 'Business', businesses.map((b) => [b.id, `${b.name} (${b.count})`]), 'w-[180px]')}
-        {sites.length > 0 && sel(filters.siteId, (v) => setFilter('siteId', v), 'Site', sites.map((s) => [s.id, `${s.name} (${s.count})`]))}
-        {groupOptions.length > 0 && sel(filters.groupId, (v) => setFilter('groupId', v), 'Group', groupOptions, 'w-[160px]')}
-        {sel(filters.online, (v) => setFilter('online', v as DeviceFilters['online']), 'Online', [['online', 'Online'], ['offline', 'Offline']], 'w-[130px]')}
-        {alertsVisible && sel(filters.alerts, (v) => setFilter('alerts', v as DeviceFilters['alerts']), 'Alerts', [['any', 'Has open alerts'], ['critical', 'Has critical alerts']])}
-        {sel(filters.agent, (v) => setFilter('agent', v as DeviceFilters['agent']), 'Agent', [['signed', 'Signed agent'], ['standard', 'Standard agent'], ['none', 'No agent report']])}
-        <Button variant={filters.restartPending ? 'default' : 'outline'} size="sm" className="h-9" onClick={() => setFilter('restartPending', !filters.restartPending)} aria-pressed={filters.restartPending}>
-          Restart pending
+        <div className="hidden sm:contents">{filterControls(false)}</div>
+        <Button variant={filterCount ? 'default' : 'outline'} size="sm" className="h-9 sm:hidden" onClick={() => setFiltersOpen(true)}
+          aria-haspopup="dialog" data-testid="filters-sheet-trigger">
+          <SlidersHorizontal className="h-4 w-4 mr-1.5" />Filters{filterCount ? ` (${filterCount})` : ''}
         </Button>
-        <Button variant={moreActive ? 'default' : 'outline'} size="sm" className="h-9" onClick={() => { setMoreDraft(filters); setMoreOpen(true); }}>
-          More filters{moreActive ? ` (${moreActive})` : ''}
-        </Button>
-        {sel(filters.status === 'current' ? '' : filters.status, (v) => setFilter('status', (v || 'current') as DeviceFilters['status']), 'Archived', [['archived', 'Archived only'], ['all', 'Include archived']], 'w-[150px]')}
-        {active > 0 && (
-          <Button variant="ghost" size="sm" className="h-9" onClick={() => { setFilters(EMPTY_FILTERS); setSearchInput(''); setPage(1); }}>
-            <X className="h-4 w-4 mr-1" />Clear ({active})
-          </Button>
-        )}
 
         <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
           <DropdownMenu>
@@ -602,6 +629,23 @@ export function DeviceList() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setSaveOpen(false)}>Cancel</Button>
             <Button onClick={saveView} disabled={!viewName.trim()}>{shareView ? 'Share' : 'Save'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Phone width only (the trigger is sm:hidden): a bottom sheet. Filters apply as they change, as inline. */}
+      <Dialog open={filtersOpen} onOpenChange={setFiltersOpen}>
+        <DialogContent data-testid="filters-sheet"
+          className="top-auto bottom-0 left-0 max-h-[85vh] max-w-none translate-x-0 translate-y-0 overflow-y-auto rounded-t-lg p-4 data-[state=open]:slide-in-from-left-0 data-[state=open]:slide-in-from-bottom-1/2 data-[state=closed]:slide-out-to-left-0 data-[state=closed]:slide-out-to-bottom-1/2 data-[state=open]:zoom-in-100 data-[state=closed]:zoom-out-100">
+          <DialogHeader className="text-left">
+            <DialogTitle>Filters</DialogTitle>
+            <DialogDescription>They apply as you choose them. The search box stays above the list.</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">{filterControls(true)}</div>
+          <DialogFooter>
+            <Button className="w-full" onClick={() => setFiltersOpen(false)} data-testid="filters-sheet-done">
+              {data ? `Show ${data.total} device${data.total === 1 ? '' : 's'}` : 'Done'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

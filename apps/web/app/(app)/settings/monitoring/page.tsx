@@ -63,7 +63,7 @@ const KIND: Record<MonitorKindId, { label: string; hint: string; fields: { k: st
       { k: 'threshold', label: 'Events before alerting', type: 'int', def: 1 }, { k: 'clearAfterMinutes', label: 'Clear after minutes quiet', type: 'int', def: 60 },
     ],
   },
-  REBOOT_PENDING: { label: 'Restart pending', hint: 'Windows has wanted a restart for this long.', fields: [{ k: 'hours', label: 'Hours', type: 'int', def: 72 }] },
+  REBOOT_PENDING: { label: 'Restart pending', hint: 'The computer has reported a pending restart (Windows, or a Linux package manager) for this long.', fields: [{ k: 'hours', label: 'Hours', type: 'int', def: 72 }] },
 };
 
 const fmt = (d: string | null | undefined) => (d ? new Date(d).toLocaleString() : '—');

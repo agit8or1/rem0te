@@ -11,9 +11,10 @@
  */
 import * as React from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { Download, Info, Loader2 } from 'lucide-react';
+import Link from 'next/link';
+import { CalendarClock, Download, Info, Loader2 } from 'lucide-react';
 import { api } from '@/lib/api-client';
-import { usePermissions } from '@/lib/auth';
+import { usePermissions, CAP } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { refusalMessage } from '@/components/endpoints/list/api';
@@ -26,6 +27,59 @@ export const EMPTY_FILTERS: ReportFilters = { businessId: '', siteId: '', days: 
 
 export const PERIODS: [string, string][] = [['1', 'Last 24 hours'], ['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days'], ['365', 'Last 365 days']];
 export const SILENT: [string, string][] = [['1', '1 day'], ['3', '3 days'], ['7', '7 days'], ['14', '14 days'], ['30', '30 days'], ['90', '90 days']];
+
+/**
+ * Scheduled reports (0.34, linked from each report from 0.35). The four the
+ * API schedules (report-schedules.service.ts SCHEDULABLE_REPORTS) and the
+ * capability each needs (REPORT_CAPABILITY). Software compliance is not one.
+ */
+export const SCHEDULABLE: Record<string, typeof CAP[keyof typeof CAP]> = {
+  'patch-compliance': CAP.COMPUTERS_VIEW, 'agent-coverage': CAP.COMPUTERS_VIEW,
+  'alert-frequency': CAP.ALERTS_VIEW, 'offline-time': CAP.ALERTS_VIEW,
+};
+
+/**
+ * Who may own a schedule, as the API decides it (mayOwn): a Platform Admin,
+ * or a Business Owner of their business in their own right — never through a
+ * technician assignment. The Scheduled reports page and the "Schedule this
+ * report" link both ask this, so the link is never offered to someone the
+ * page would turn away.
+ */
+export function useMayOwnSchedules(): boolean {
+  const { user, isPlatformAdmin, isBusinessOwner, technician } = usePermissions();
+  return !!user && (isPlatformAdmin || (isBusinessOwner && !technician));
+}
+
+/**
+ * Reports → Scheduled reports, prefilled with this report and its filters.
+ * A site implies its business (a Platform Admin may pick a site with "All
+ * businesses" chosen); the period goes along so the schedule page can say
+ * which frequency matches it.
+ */
+export function scheduleHref(report: string, filters: ReportFilters, facets: Facets | undefined): string {
+  const q = new URLSearchParams({ report });
+  const site = filters.siteId ? facets?.sites.find((x) => x.id === filters.siteId) : undefined;
+  const businessId = filters.businessId || site?.businessId || '';
+  if (businessId) q.set('businessId', businessId);
+  if (filters.siteId && (!site || !businessId || site.businessId === businessId)) q.set('siteId', filters.siteId);
+  if (report === 'agent-coverage' && filters.silentDays) q.set('silentDays', filters.silentDays);
+  if ((report === 'alert-frequency' || report === 'offline-time') && filters.days) q.set('days', filters.days);
+  return `/reports/schedules?${q}`;
+}
+
+export function ScheduleLink({ report, filters, facets }: { report: string; filters: ReportFilters; facets: Facets | undefined }) {
+  const { can } = usePermissions();
+  const may = useMayOwnSchedules();
+  const cap = SCHEDULABLE[report];
+  if (!cap || !may || !can(cap)) return null;
+  return (
+    <Button asChild variant="outline" size="sm" className="h-9">
+      <Link href={scheduleHref(report, filters, facets)} data-testid="schedule-report" title="Email this report every week or month, with these filters. Opens Reports → Scheduled reports.">
+        <CalendarClock className="h-4 w-4 mr-1.5" />Schedule this report
+      </Link>
+    </Button>
+  );
+}
 
 /** The filters, kept in the address bar so a report can be bookmarked or shared (the server scopes it for whoever opens it). */
 export function useReportFilters(keys: (keyof ReportFilters)[]) {
@@ -124,7 +178,8 @@ export function FilterBar({ facets, filters, set, period, silent, report, params
           </select>
         </label>
       )}
-      <div className="sm:ml-auto">
+      <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+        <ScheduleLink report={report} filters={filters} facets={facets} />
         <ExportButton report={report} params={params} disabled={disabled} />
       </div>
     </div>

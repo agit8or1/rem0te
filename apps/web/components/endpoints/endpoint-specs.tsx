@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
+import { updateSourceLabel, updateSourcePhrase } from '@/lib/platform-wording';
 import { MeterGauge } from '@/components/common/gauge';
 import {
   Cpu, HardDrive, MemoryStick, Network, PackageCheck, RefreshCw,
@@ -180,7 +181,7 @@ function SectionCard({
   );
 }
 
-function UpdatesCard({ data, onOpenPatches }: { data: InventoryPayload; onOpenPatches?: () => void }) {
+function UpdatesCard({ data, platform, onOpenPatches }: { data: InventoryPayload; platform: unknown; onOpenPatches?: () => void }) {
   const [open, setOpen] = useState(false);
   const inv = data.inventory;
   const count = inv?.pendingUpdateCount ?? null;
@@ -198,7 +199,7 @@ function UpdatesCard({ data, onOpenPatches }: { data: InventoryPayload; onOpenPa
         ) : null
       }
     >
-      <Row label="Windows Update">
+      <Row label={updateSourceLabel(platform)}>
         {count === null ? (
           <span className="text-muted-foreground">Not checked yet</span>
         ) : count === 0 ? (
@@ -380,7 +381,7 @@ export function EndpointSpecs({
       toast({
         title: 'Queued',
         description:
-          'This computer collects its specs and checks Windows Update on its next heartbeat — up to about three minutes.',
+          `This computer collects its specs and checks ${updateSourcePhrase(endpoint.platform)} on its next heartbeat — up to about three minutes.`,
       });
       qc.invalidateQueries({ queryKey: ['endpoint-inventory', endpointId] });
     },
@@ -721,7 +722,7 @@ export function EndpointSpecs({
           )}
         </SectionCard>
 
-        {data && <UpdatesCard data={data} onOpenPatches={onOpenPatches} />}
+        {data && <UpdatesCard data={data} platform={endpoint.platform} onOpenPatches={onOpenPatches} />}
       </div>
     </div>
   );

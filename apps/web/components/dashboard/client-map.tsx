@@ -1,18 +1,20 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { CONNECTIVITY_DOT, connectivityHint } from '@/lib/connectivity';
 import { useQuery } from '@tanstack/react-query';
 import { dashboardApi } from '@/lib/api-client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Globe, Plus, Minus, Locate, Info } from 'lucide-react';
 
-type Endpoint = { id: string; name: string; isOnline: boolean; businessName: string | null };
+type Endpoint = { id: string; name: string; isOnline: boolean; connectivity?: 'online' | 'agent_silent' | 'offline'; businessName: string | null };
 type Point = {
   key: string; lat: number; lon: number;
   city: string | null; region: string | null; country: string; countryName: string | null;
   accuracy: 'city' | 'country';
-  total: number; online: number; endpoints: Endpoint[];
+  /** online: agents checking in; agentSilent: reachable through RustDesk, agent silent (0.35). */
+  total: number; online: number; agentSilent?: number; endpoints: Endpoint[];
 };
 type MapData = {
   points: Point[]; located: number; unlocatable: number; total: number; approximate: number;
@@ -142,7 +144,7 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
 
   // min-h keeps an embedded map usable inside a short container; without it a
   // squeezed flex row can collapse the projection to a few pixels.
-  const mapH = embedded ? 'h-full min-h-[200px]' : 'h-[300px]';
+  const mapH = embedded ? 'flex-1 min-h-[160px]' : 'h-[300px]';
 
   // Where the fleet is, in world units. A handful of machines in one city on a
   // whole-world projection is three invisible pixels, so this is the default
@@ -321,9 +323,9 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
   const rOf = (n: number) => (4.5 + (Math.sqrt(n) / Math.sqrt(maxTotal)) * 4) * scale;
 
   return (
-    <Card className={embedded ? 'h-full flex flex-col' : undefined}>
-      <CardHeader className={embedded ? 'pb-2 shrink-0' : 'pb-2'}>
-        <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
+    <Card className={embedded ? 'h-full flex flex-col overflow-hidden' : undefined}>
+      <CardHeader className={embedded ? 'shrink-0 space-y-0 px-4 py-2.5' : 'pb-2'}>
+        <CardTitle className={`text-sm flex items-center gap-2 flex-wrap${embedded ? ' font-semibold' : ''}`}>
           <Globe className="h-4 w-4" />
           Client Locations
           <span className="ml-auto flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
@@ -341,7 +343,7 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
           </span>
         </CardTitle>
       </CardHeader>
-      <CardContent className={embedded ? 'pt-0 flex-1 min-h-0' : 'pt-0'}>
+      <CardContent className={embedded ? 'flex min-h-0 flex-1 flex-col px-4 pb-3 pt-0' : 'pt-0'}>
         {isLoading ? (
           <div className={`${mapH} flex items-center justify-center text-sm text-muted-foreground`}>
             Loading map…
@@ -397,7 +399,9 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
                 {points.map((p) => {
                   const x = projX(p.lon), y = projY(p.lat);
                   const r = rOf(p.total);
-                  const off = p.online === 0;
+                  // Green when an agent here is checking in; amber when only RustDesk reaches them (0.35); grey otherwise.
+                  const off = p.online === 0 && !p.agentSilent;
+                  const silent = p.online === 0 && !!p.agentSilent;
                   const isSel = selected?.key === p.key;
                   return (
                     <g key={p.key}
@@ -408,10 +412,11 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
                        onClick={() => setSelected(isSel ? null : p)}
                        className="cursor-pointer">
                       <circle cx={x} cy={y} r={r * 2.6}
-                              className={off ? 'fill-slate-500/15' : 'fill-emerald-500/25'} />
+                              className={off ? 'fill-slate-500/15' : silent ? 'fill-amber-500/25' : 'fill-emerald-500/25'} />
                       <circle
                         cx={x} cy={y} r={r}
-                        className={off ? 'fill-slate-500' : 'fill-emerald-500'}
+                        className={off ? 'fill-slate-500' : silent ? 'fill-amber-500' : 'fill-emerald-500'}
+                        data-connectivity={off ? 'offline' : silent ? 'agent_silent' : 'online'}
                         stroke={isSel ? '#0f172a' : '#ffffff'}
                         strokeWidth={isSel ? 3 : 2}
                         vectorEffect="non-scaling-stroke"
@@ -495,7 +500,7 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
                 >
                   <div className="font-medium">{placeLabel(hover.p)}</div>
                   <div className="text-muted-foreground">
-                    {hover.p.total} computer{hover.p.total === 1 ? '' : 's'} · {hover.p.online} online
+                    {hover.p.total} computer{hover.p.total === 1 ? '' : 's'} · {hover.p.online} online{hover.p.agentSilent ? ` · ${hover.p.agentSilent} agent silent` : ''}
                   </div>
                   {hover.p.accuracy === 'country' && (
                     <div className="text-amber-600 dark:text-amber-500">Country-level estimate</div>
@@ -504,10 +509,13 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
               )}
             </div>
 
-            <div className="mt-1.5 flex items-center justify-between gap-3 flex-wrap text-[10px] text-muted-foreground">
+            <div className="mt-1.5 flex shrink-0 items-center justify-between gap-3 flex-wrap text-[10px] text-muted-foreground">
               <span className="flex items-center gap-2.5">
                 <span className="flex items-center gap-1">
                   <span className="h-2 w-2 rounded-full bg-emerald-500" /> online
+                </span>
+                <span className="flex items-center gap-1" title={connectivityHint('agent_silent')}>
+                  <span className="h-2 w-2 rounded-full bg-amber-500" /> reachable, agent silent
                 </span>
                 <span className="flex items-center gap-1">
                   <span className="h-2 w-2 rounded-full bg-slate-500" /> offline
@@ -522,7 +530,7 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
             </div>
 
             {(data?.approximate ?? 0) > 0 && (
-              <p className="mt-1 flex items-start gap-1 text-[10px] text-muted-foreground">
+              <p className="mt-1 flex shrink-0 items-start gap-1 text-[10px] text-muted-foreground">
                 <Info className="h-3 w-3 mt-px shrink-0" />
                 <span>
                   {data!.approximate} dashed marker{data!.approximate === 1 ? '' : 's'} — country-level
@@ -532,12 +540,12 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
             )}
 
             {selected && (
-              <div className="mt-2 rounded-md border p-2.5">
+              <div className={`mt-2 rounded-md border p-2.5${embedded ? ' max-h-[45%] shrink-0 overflow-y-auto' : ''}`}>
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <div className="text-sm font-medium">{placeLabel(selected)}</div>
                     <div className="text-[11px] text-muted-foreground">
-                      {selected.total} computer{selected.total === 1 ? '' : 's'} · {selected.online} online
+                      {selected.total} computer{selected.total === 1 ? '' : 's'} · {selected.online} online{selected.agentSilent ? ` · ${selected.agentSilent} agent silent` : ''}
                     </div>
                   </div>
                   <button onClick={() => setSelected(null)}
@@ -547,7 +555,7 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
                   {selected.endpoints.map((e) => (
                     <a key={e.id} href={`/endpoints/${e.id}`}
                        className="flex items-center gap-1.5 text-xs rounded px-1.5 py-0.5 hover:bg-muted">
-                      <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${e.isOnline ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                      <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${CONNECTIVITY_DOT[e.connectivity ?? (e.isOnline ? 'online' : 'offline')]}`} title={connectivityHint(e.connectivity ?? (e.isOnline ? 'online' : 'offline'))} />
                       <span className="font-medium truncate">{e.name}</span>
                       {e.businessName && <span className="text-muted-foreground truncate">· {e.businessName}</span>}
                     </a>

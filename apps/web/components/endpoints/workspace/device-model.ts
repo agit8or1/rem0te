@@ -7,6 +7,7 @@
  */
 
 import type { AlertRow } from '@/components/monitoring/alerts';
+import { connectivityFrom, connectivityHint, connectivityLabel, HEARTBEAT_STALE_MS } from '@/lib/connectivity';
 
 export type WorkspaceTab =
   | 'overview' | 'performance' | 'monitoring' | 'software' | 'processes' | 'services' | 'network' | 'patches' | 'events' | 'diagnostics' | 'actions' | 'chat' | 'history';
@@ -48,11 +49,11 @@ export function parseTab(raw: string | null | undefined): WorkspaceTab | null {
 
 /**
  * How long without a heartbeat before the server sweeps a computer offline
- * (markStaleEndpointsOffline, 10 minutes). The agent checks in about every
- * three minutes, so a last-seen older than this is a missed check-in, not a
- * slow one.
+ * (markStaleEndpointsOffline). One constant since 0.35, in lib/connectivity.ts,
+ * mirroring the API's: it is 30 minutes, the window the sweep has always run
+ * with — this used to say 10, the method's unused default.
  */
-export const HEARTBEAT_STALE_MS = 10 * 60_000;
+export { HEARTBEAT_STALE_MS };
 
 /** "4m ago", "3h ago", "12d ago" — for values whose age is the point. */
 export function ago(at: string | Date | null | undefined): string {
@@ -168,12 +169,14 @@ export function deviceStatus(ep: Record<string, unknown>): DeviceStatus {
   const lastSeen = (ep.lastSeenAt as string | null) ?? null;
   if (ep.status === 'ARCHIVED') return { tone: 'inactive', label: 'Archived', detail: 'Nobody can connect until it is restored.' };
   if (ep.status === 'PENDING_ENROLLMENT') return { tone: 'inactive', label: 'Not enrolled yet', detail: 'Its installer has not checked in.' };
-  if (ep.isOnline) {
-    if (lastSeen && isStale(lastSeen, HEARTBEAT_STALE_MS)) {
-      return { tone: 'degraded', label: 'Online (RustDesk only)', detail: `Reachable through RustDesk, but its agent has not checked in since ${ago(lastSeen)}.` };
-    }
-    return { tone: 'online', label: 'Online', detail: null };
+  // 0.35: the three states of lib/connectivity.ts. Reachable through RustDesk
+  // with a silent agent is amber, never "Online" — and a computer that never
+  // sent a heartbeat but is reachable is that too, not green.
+  const c = connectivityFrom(ep);
+  if (c === 'agent_silent') {
+    return { tone: 'degraded', label: connectivityLabel(c, lastSeen), detail: connectivityHint(c) };
   }
+  if (c === 'online') return { tone: 'online', label: 'Online', detail: null };
   return { tone: 'offline', label: lastSeen ? `Offline since ${ago(lastSeen)}` : 'Offline', detail: lastSeen ? null : 'Never checked in.' };
 }
 
@@ -237,5 +240,5 @@ export const SCOPE_LABEL = (k: string) =>
   k === 'global' ? 'all computers' : ({ b: 'this business', s: 'this site', e: 'this computer' } as Record<string, string>)[k[0]] ?? k;
 
 export const CHANGE_LABEL: Record<string, string> = {
-  hardware: 'Hardware', os: 'Windows', disk: 'Disk', network: 'Network', software: 'Software',
+  hardware: 'Hardware', os: 'Operating system', disk: 'Disk', network: 'Network', software: 'Software',
 };

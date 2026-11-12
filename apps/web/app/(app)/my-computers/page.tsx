@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { Monitor, Loader2, LifeBuoy } from 'lucide-react';
+import { ConnectivityIndicator } from '@/components/common/connectivity-indicator';
 
 type Computer = {
   id: string;
@@ -119,9 +120,7 @@ export default function MyComputersPage() {
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center justify-between text-base">
                   <span>{c.name}</span>
-                  <span className={`text-xs font-normal ${c.isOnline ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                    {c.isOnline ? 'Online' : 'Offline'}
-                  </span>
+                  <ConnectivityIndicator x={c} short className="text-xs font-normal" />
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">

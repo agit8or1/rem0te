@@ -42,11 +42,11 @@ export default function SoftwareEntryPage() {
   });
   const refresh = () => qc.invalidateQueries({ queryKey: ['software-entry', id] });
 
-  if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (error || !e) return <p className="text-sm text-muted-foreground">{refusalText(error, 'This catalog entry could not be loaded.')}</p>;
+  if (isLoading) return <p className="p-4 md:p-6 text-sm text-muted-foreground">Loading…</p>;
+  if (error || !e) return <p className="p-4 md:p-6 text-sm text-muted-foreground">{refusalText(error, 'This catalog entry could not be loaded.')}</p>;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 p-4 md:p-6">
       <Link href="/automation/software" className="text-xs text-muted-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3 w-3" />Software catalog</Link>
       <PageHeader title={`${e.name} ${e.version}`} description={`${e.packageId} · ${e.scope === 'global' ? 'global catalog' : e.businessName ?? 'business catalog'} · revision ${e.revision}`}>
         <div className="flex gap-2">

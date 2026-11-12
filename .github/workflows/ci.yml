@@ -199,6 +199,14 @@ jobs:
       - name: Dynamic group tests
         run: node apps/api/scripts/unit-dynamic-groups.mjs
 
+      # Polish (0.35): connectivity's three states — online inside the
+      # heartbeat window, agent_silent when reachable through RustDesk without
+      # one, offline — with the API and web copies agreeing; restart and update
+      # wording by platform; black-or-white ink on any branding accent at
+      # 4.5:1 or better across 4096 colours.
+      - name: Polish tests
+        run: node apps/api/scripts/unit-polish.mjs
+
       # Metric history (0.33): samples from heartbeat values, the hourly
       # roll-up, which hours a pass rolls, retention caps and gap detection.
       - name: Metric history tests

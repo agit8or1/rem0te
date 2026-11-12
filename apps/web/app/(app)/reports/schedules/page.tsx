@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiError } from '@/components/security-controls/shared';
 import { EmailOffNotice } from '@/components/email/recipients-card';
+import { useMayOwnSchedules } from '@/components/reports/report-kit';
 
 /**
  * Scheduled reports (0.34): a report emailed weekly or monthly to confirmed
@@ -37,17 +38,57 @@ type Schedule = {
 };
 type ListData = { schedules: Schedule[]; recipients: { id: string; address: string; label: string | null }[]; email: { enabled: boolean }; may: { create: boolean } };
 
+/**
+ * "Schedule this report" on a report page (0.35) opens this page with the
+ * report and its filters in the address bar. Read once, after mount; nothing
+ * here is trusted — the server validates the schedule as it would any other.
+ * A schedule covers 7 days (weekly) or 30 (monthly), so a report open on
+ * another period is prefilled weekly and the page says so.
+ */
+type Prefill = { businessId: string | null; form: Partial<ReportScheduleInput>; label: string; periodNote: string | null };
+function readPrefill(): Prefill | null {
+  try {
+    const q = new URLSearchParams(window.location.search);
+    const r = REPORTS.find((x) => x.id === q.get('report'));
+    if (!r) return null;
+    const id = (k: string) => (/^[A-Za-z0-9_-]{8,64}$/.test(q.get(k) ?? '') ? q.get(k)! : null);
+    const silent = Number(q.get('silentDays'));
+    const days = q.get('days');
+    const monthly = days === '30';
+    return {
+      businessId: id('businessId'),
+      label: r.label,
+      form: {
+        report: r.id, siteId: id('siteId'),
+        ...(r.id === 'agent-coverage' && [1, 3, 7, 14, 30, 90].includes(silent) ? { silentDays: silent } : {}),
+        ...(monthly ? { frequency: 'monthly' as const, dayOfMonth: 1, dayOfWeek: null } : {}),
+      },
+      periodNote: days && days !== '7' && days !== '30'
+        ? `The report was open on the last ${days === '1' ? '24 hours' : `${days} days`}. A schedule covers the last 7 days (weekly) or 30 days (monthly), so check Every below.`
+        : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 const browserZone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; } };
 const blank = (): ReportScheduleInput => ({ report: 'patch-compliance', frequency: 'weekly', dayOfWeek: 1, dayOfMonth: null, time: '08:00', timeZone: browserZone(), attachCsv: false, recipientIds: [], enabled: true });
 
 export default function ReportSchedulesPage() {
-  const { user, isPlatformAdmin, isBusinessOwner, technician, businessId: ownBusiness } = usePermissions();
+  const { user, isPlatformAdmin, businessId: ownBusiness } = usePermissions();
   const qc = useQueryClient();
   const [picked, setPicked] = useState('');
   const businessId = isPlatformAdmin ? (picked || null) : ownBusiness;
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const fail = (e: unknown) => setNotice({ ok: false, text: apiError(e).message });
-  const allowed = isPlatformAdmin || (isBusinessOwner && !technician);
+  // The same rule as the "Schedule this report" link (report-kit.tsx), mirroring the API's mayOwn.
+  const allowed = useMayOwnSchedules();
+  // undefined until the address bar has been read (after mount).
+  const [prefill, setPrefill] = useState<Prefill | null | undefined>(undefined);
+  useEffect(() => { setPrefill(readPrefill()); }, []);
+  // A Platform Admin arrives on the report's business; anyone else always works in their own.
+  useEffect(() => { if (prefill?.businessId && isPlatformAdmin) setPicked(prefill.businessId); }, [prefill, isPlatformAdmin]);
 
   const { data, error } = useQuery<ListData>({ queryKey: ['report-schedules', businessId], queryFn: () => reportSchedulesApi.list(businessId).then((r) => r.data.data), enabled: allowed, retry: false });
   const { data: businesses } = useQuery<{ id: string; name: string }[]>({
@@ -62,7 +103,11 @@ export default function ReportSchedulesPage() {
   // A schedule keeps its business; an edit names the one it already has.
   const [editingBiz, setEditingBiz] = useState<string | null>(null);
   const [form, setForm] = useState<ReportScheduleInput>(blank());
-  useEffect(() => { setEditing(null); setForm(blank()); }, [businessId]);
+  const prefillApplies = !!prefill && (isPlatformAdmin ? prefill.businessId === businessId : !!businessId);
+  useEffect(() => {
+    setEditing(null);
+    setForm(prefill && prefillApplies ? { ...blank(), ...prefill.form } : blank());
+  }, [businessId, prefill, prefillApplies]);
   const refresh = () => qc.invalidateQueries({ queryKey: ['report-schedules'] });
   const save = useMutation({
     mutationFn: () => {
@@ -73,7 +118,12 @@ export default function ReportSchedulesPage() {
       };
       return (editing ? reportSchedulesApi.update(editing, { ...body, businessId: editingBiz }) : reportSchedulesApi.create(body)).then(() => undefined);
     },
-    onSuccess: () => { setNotice({ ok: true, text: editing ? 'Schedule saved. You are now its owner: it is evaluated with your access.' : 'Schedule created.' }); setEditing(null); setForm(blank()); refresh(); },
+    onSuccess: () => {
+      setNotice({ ok: true, text: editing ? 'Schedule saved. You are now its owner: it is evaluated with your access.' : 'Schedule created.' });
+      setEditing(null); setForm(blank()); refresh();
+      // Used: a reload must not prefill it again.
+      if (prefill) { setPrefill(null); try { window.history.replaceState(null, '', window.location.pathname); } catch { /* no history */ } }
+    },
     onError: fail,
   });
   const toggle = useMutation({ mutationFn: (s: Schedule) => reportSchedulesApi.update(s.id, { enabled: !s.enabled }), onSuccess: () => refresh(), onError: fail });
@@ -140,6 +190,12 @@ export default function ReportSchedulesPage() {
             <Card data-testid="report-schedule-form">
               <CardHeader><CardTitle className="text-sm">{editing ? 'Edit schedule' : 'New schedule'}</CardTitle></CardHeader>
               <CardContent className="space-y-3 text-sm">
+                {!editing && prefill && prefillApplies && (
+                  <div className="rounded-md border bg-muted/40 p-3 text-xs" data-testid="schedule-prefill">
+                    Prefilled from the {prefill.label} report with its filters. Choose when it is sent and who receives it.
+                    {prefill.periodNote ? <> {prefill.periodNote}</> : null}
+                  </div>
+                )}
                 <div className="grid gap-3 md:grid-cols-3">
                   <div className="space-y-1"><Label htmlFor="sf-report">Report</Label>
                     <select id="sf-report" className="w-full rounded-md border bg-background p-2" value={form.report} onChange={(e) => set({ report: e.target.value as ScheduledReportKey })}>{REPORTS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}</select>

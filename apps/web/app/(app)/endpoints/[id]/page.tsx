@@ -281,6 +281,7 @@ export default function EndpointDetailPage() {
             {active === 'patches' && (
               <EndpointPatches
                 endpointId={id}
+                platform={ep.platform}
                 onOpenAgentCard={() => {
                   setTab('overview');
                   // After the Overview has rendered.

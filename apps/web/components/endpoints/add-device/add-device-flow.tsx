@@ -13,6 +13,7 @@ import { apiError } from '@/components/security-controls/shared';
 import { agentType, ago, describeMonitor } from '@/components/endpoints/workspace/device-model';
 import { useMonitoringView } from '@/components/endpoints/workspace/use-device-data';
 import { formatDate } from '@/lib/utils';
+import { connectivityLabel, connectivityOf } from '@/lib/connectivity';
 
 /**
  * Add device (0.32): one guided flow instead of three entry points.
@@ -436,8 +437,8 @@ export function AddDeviceFlow() {
           <ul className="space-y-2 text-sm" data-testid="health-list">
             <HealthRow testId="health-place" ok={!!device.customer} label="Business and site"
               detail={`${device.customer?.name ?? 'none'} · ${device.site?.name ?? 'no site'}`} />
-            <HealthRow testId="health-online" ok={device.isOnline} waiting={!device.isOnline}
-              label={device.isOnline ? 'Online' : 'Offline'} detail={`last check-in ${ago(device.lastSeenAt)}`} />
+            <HealthRow testId="health-online" ok={connectivityOf(device.isOnline, device.lastSeenAt) === 'online'} waiting={connectivityOf(device.isOnline, device.lastSeenAt) !== 'online'}
+              label={connectivityLabel(connectivityOf(device.isOnline, device.lastSeenAt), device.lastSeenAt)} detail={`last check-in ${ago(device.lastSeenAt)}`} />
             {heartbeats ? (
               <>
                 <HealthRow testId="health-agent" ok={device.agentType !== 'none'} waiting={device.agentType === 'none'}

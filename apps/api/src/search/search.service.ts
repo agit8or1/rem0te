@@ -1,4 +1,5 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
+import { connectivityOf } from '../common/connectivity';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
@@ -187,7 +188,7 @@ export class SearchService {
 
   private computerView(r: ComputerRow) {
     return {
-      id: r.id, name: r.name, hostname: r.hostname, isOnline: r.isOnline, lastSeenAt: r.lastSeenAt, platform: r.platform,
+      id: r.id, name: r.name, hostname: r.hostname, isOnline: r.isOnline, connectivity: connectivityOf(r.isOnline, r.lastSeenAt), lastSeenAt: r.lastSeenAt, platform: r.platform,
       business: r.customerId ? { id: r.customerId, name: r.customerName } : null,
       site: r.siteId ? { id: r.siteId, name: r.siteName } : null,
       // The name is already on the row; any other field says what matched.

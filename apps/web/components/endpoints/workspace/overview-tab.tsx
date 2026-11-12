@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight } from 'lucide-react';
 import { notesApi } from '@/lib/api-client';
@@ -64,6 +65,9 @@ export function DeviceOverviewTab({
   const site = ep.site as { id: string; name: string } | null;
   const aliases = (ep.aliases as { id: string; alias: string }[]) ?? [];
   const tags = (ep.tags as { id: string; tag: string }[]) ?? [];
+  // Static and rule groups (0.35), as the server evaluated them for this viewer.
+  const groups = (ep.groups as { id: string; name: string; kind?: 'static' | 'rule' }[] | undefined) ?? [];
+  const groupHref = (id: string) => `/endpoints?${new URLSearchParams({ ...(customer?.id ? { businessId: customer.id } : {}), groupId: id })}`;
 
   // Same key as the History tab's notes, so it is one request for both.
   const { data: notes } = useQuery({
@@ -86,6 +90,16 @@ export function DeviceOverviewTab({
         <SummaryCard title="Assignment">
           <Row label="Business">{customer?.name ?? '—'}</Row>
           <Row label="Site">{site?.name ?? '—'}</Row>
+          <Row label="Groups">
+            <div className="flex flex-wrap gap-1 justify-end" data-testid="device-groups">
+              {groups.length ? groups.map((g) => (
+                <Link key={g.id} href={groupHref(g.id)} data-group-kind={g.kind ?? 'static'} className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  title={g.kind === 'rule' ? `Rule group: this computer matches its rule now. Opens the device list filtered by ${g.name}.` : `Opens the device list filtered by ${g.name}.`}>
+                  <Badge variant={g.kind === 'rule' ? 'outline' : 'secondary'} className="text-xs hover:underline">{g.name}{g.kind === 'rule' ? ' · rule' : ''}</Badge>
+                </Link>
+              )) : '—'}
+            </div>
+          </Row>
           <Row label="Platform">{ep.platform ? <Badge variant="secondary">{ep.platform as string}</Badge> : '—'}</Row>
           <Row label="Tags">
             <div className="flex flex-wrap gap-1 justify-end">
@@ -124,7 +138,7 @@ export function DeviceOverviewTab({
 
         {showAlertsAndPatches && (
           <div className="space-y-2" data-testid="overview-patches">
-            {patches ? <PatchSummaryCard s={patches.summary} /> : (
+            {patches ? <PatchSummaryCard s={patches.summary} platform={ep.platform} /> : (
               <SummaryCard title="Patch status"><p className="text-muted-foreground">Loading…</p></SummaryCard>
             )}
             <div className="flex justify-end"><OpenTab tab="patches" label="Updates offered and history on Patches" onOpen={onOpenTab} /></div>

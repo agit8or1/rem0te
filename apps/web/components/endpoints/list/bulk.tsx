@@ -121,7 +121,7 @@ export function BulkBar({
         </>
       )}
       <Button size="sm" variant="outline" className="h-8" disabled={!!busy} onClick={() => run('inventory.refresh')}
-        title="Asks each computer to re-collect its inventory and re-check Windows Update on its next heartbeat (up to three minutes). Counts toward your limit on distinct computers.">
+        title="Asks each computer to re-collect its inventory and re-check its pending updates (Windows Update, or the Linux or macOS package list) on its next heartbeat (up to three minutes). Counts toward your limit on distinct computers.">
         {spin('inventory.refresh') ?? <RefreshCw className="h-4 w-4 mr-1.5" />}Refresh inventory
       </Button>
       {isPlatformAdmin && (

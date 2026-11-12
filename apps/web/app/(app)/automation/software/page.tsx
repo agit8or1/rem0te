@@ -56,7 +56,7 @@ export default function SoftwareCatalogPage() {
   const canCreate = !!data && (data.you.canCreateBusiness || data.you.canCreateGlobal);
 
   return (
-    <div>
+    <div className="p-4 md:p-6">
       <PageHeader title="Software catalog" description="Allowlisted winget packages, each pinned to one version and one installer SHA-256, deployed a canary first and then in rings.">
         {canCreate && !creating && <Button size="sm" onClick={() => setCreating(true)}><Plus className="h-4 w-4 mr-1" />Add software</Button>}
       </PageHeader>

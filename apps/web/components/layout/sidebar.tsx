@@ -17,7 +17,8 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import { authApi, platformApi, updateApi } from '@/lib/api-client';
+import { authApi, updateApi } from '@/lib/api-client';
+import { useBrandAccent } from './brand-accent';
 import { useQuery } from '@tanstack/react-query';
 import { useTheme } from '@/lib/theme-provider';
 import { usePermissions } from '@/lib/auth';
@@ -41,21 +42,12 @@ export function Sidebar({ className }: { className?: string } = {}) {
   const router = useRouter();
   const { resolvedTheme, setTheme } = useTheme();
   const {
-    user, can, isPlatformAdmin, isBusinessOwner, accessLevel, technician, assignedBusinesses, canManageTechnicians, isIndependentReviewer,
+    can, isPlatformAdmin, isBusinessOwner, accessLevel, technician, assignedBusinesses, canManageTechnicians, isIndependentReviewer,
   } = usePermissions();
 
-  // Branding lives on the platform record and is readable only by the
-  // operator; everyone else just gets the default mark.
-  const { data: platform } = useQuery({
-    queryKey: ['platform', user?.tenantId],
-    queryFn: () => platformApi.get(user!.tenantId!).then((r) => r.data?.data),
-    enabled: !!user?.tenantId && isPlatformAdmin,
-  });
-
-  const branding = (platform as Record<string, unknown> | undefined)?.branding as Record<string, unknown> | null | undefined;
-  const portalTitle = (branding?.portalTitle as string | null) || 'Rem0te';
-  const logoUrl = branding?.logoUrl as string | null | undefined;
-  const accentColor = branding?.accentColor as string | null | undefined;
+  // Branding, and the ink readable on its accent (0.35: black or white by
+  // luminance, so a pale accent no longer gets white text).
+  const { portalTitle, logoUrl, accentColor, ink } = useBrandAccent();
 
   async function handleLogout() {
     try {
@@ -222,7 +214,8 @@ export function Sidebar({ className }: { className?: string } = {}) {
       {/* Logo / branding */}
       <div
         className="flex h-14 items-center gap-2 border-b px-4"
-        style={accentColor ? { backgroundColor: accentColor } : undefined}
+        style={accentColor && ink ? { backgroundColor: accentColor, color: ink } : undefined}
+        data-testid="brand-header"
       >
         {logoUrl ? (
           <img
@@ -232,14 +225,14 @@ export function Sidebar({ className }: { className?: string } = {}) {
             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
           />
         ) : (
-          <Shield className={`h-5 w-5 ${accentColor ? 'text-white' : 'text-primary'}`} />
+          <Shield className={`h-5 w-5 ${accentColor ? '' : 'text-primary'}`} />
         )}
         <div className="min-w-0 leading-tight">
-          <div className={`font-semibold text-sm truncate ${accentColor ? 'text-white' : ''}`}>
+          <div className="font-semibold text-sm truncate">
             {portalTitle}
           </div>
           {accessLevel && (
-            <div className={`text-[10px] uppercase tracking-wider truncate ${accentColor ? 'text-white/70' : 'text-muted-foreground/70'}`}>
+            <div className={`text-[10px] uppercase tracking-wider truncate ${accentColor ? '' : 'text-muted-foreground/70'}`}>
               {accessLevel}
             </div>
           )}

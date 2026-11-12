@@ -2444,6 +2444,80 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     "one Start-Process ... @('chat'), in the signed variant's hook; pause label 'remote connections and chat'");
 }
 
+// 46. Groups on the device page (0.35). GET /endpoints/:id (and the public
+//     API's copy of it) lists the rule groups a computer is in, so it must
+//     answer exactly what the device list would, for the same reader: rule
+//     groups only of that computer's own business, evaluated by the list's
+//     evaluateRuleGroups AS the caller (their visibility and alert access),
+//     over that one computer. A group whose rule reads alerts evaluates to
+//     null for a reader without monitoring:alerts and must be dropped, not
+//     shown — membership of "computers with critical alerts" would tell them
+//     the alert state the list refuses them. findOne still checks scope
+//     before anything is read, so another business's computer is a 404 and
+//     its groups are never computed.
+{
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const es = strip(read('apps/api/src/endpoints/endpoints.service.ts'));
+  const ls = strip(read('apps/api/src/endpoints/endpoint-list.service.ts'));
+  const findOne = es.slice(es.indexOf('async findOne('), es.indexOf('async findOne(') + 2400);
+  check('the device page’s groups come from the device list’s own evaluation, after the scope check',
+    /^\s*async findOne\(actor: ActorContext, id: string\) \{\s*await this\.acl\.assertEndpointInScope\(actor, id\);/m.test(findOne)
+      && /const groups = await this\.deviceList\.groupsOfComputer\(actor, \{ id: endpoint\.id, customerId: endpoint\.customerId \}, groupMemberships\.map\(\(m\) => m\.group\)\);/.test(findOne)
+      && !/endpointGroup\.findMany|kind: 'RULE'/.test(findOne),
+    'findOne: assertEndpointInScope first; groups = this.deviceList.groupsOfComputer(actor, {id, customerId}, static); no RULE-group query of its own');
+  const fn = ls.slice(ls.indexOf('async groupsOfComputer('), ls.indexOf('private rowView('));
+  check('a rule group is evaluated as the caller, only in the computer’s own business, and dropped when the caller may not evaluate it',
+    /const groups = e\.customerId \? await this\.ruleGroupsOf\(\[e\.customerId\]\) : \[\];/.test(fn)
+      && /await this\.evaluateRuleGroups\(actor, groups, \{ status: 'all', within: \[e\.id\] \}\)/.test(fn)
+      && /groups\.filter\(\(g\) => members\.get\(g\.id\)\?\.includes\(e\.id\)\)/.test(fn)
+      && /if \(ruleNeedsAlerts\(g\.rule\) && !alerts\.visible\) return null;/.test(ls),
+    'groupsOfComputer: ruleGroupsOf([e.customerId]); evaluateRuleGroups(actor, …, { within: [e.id] }); keep only members.get(id)?.includes(e.id); evaluateRuleGroups returns null for an alert rule without alert access');
+}
+
+// 47. Reachable is not reporting (0.35). `isOnline` is true while the agent
+//     heartbeats AND while hbbs can reach the computer with its agent silent
+//     — the stale sweep keeps it so on purpose. Drawn as "Online", a computer
+//     whose agent had been dead for twelve days looked healthy while its
+//     monitoring, patching and actions were twelve days stale. Not an access
+//     rule, but a console that says a machine is reporting when it is not is
+//     the same kind of silent failure this file exists for. So: one window
+//     (the API's HEARTBEAT_STALE_MS, which the sweep itself uses, and the web
+//     copy of it must agree); the list's "online" filter needs a heartbeat
+//     inside it and "silent" is the rest of isOnline; and the dashboard
+//     counts online from connectivityOf, never from isOnline.
+{
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const windowOf = (file) => {
+    const m = /^export const HEARTBEAT_STALE_MS = ([0-9_ *]+);$/m.exec(read(file));
+    return m ? Function(`return (${m[1].replace(/_/g, '')});`)() : NaN;
+  };
+  const apiMs = windowOf('apps/api/src/common/connectivity.ts');
+  const webMs = windowOf('apps/web/lib/connectivity.ts');
+  const en = strip(read('apps/api/src/enrollment/enrollment.service.ts'));
+  const ec = strip(read('apps/api/src/enrollment/enrollment.controller.ts'));
+  const dm = strip(read('apps/web/components/endpoints/workspace/device-model.ts'));
+  check('one heartbeat window: the sweep, the API and the console agree',
+    Number.isFinite(apiMs) && apiMs > 0 && apiMs === webMs
+      && /async markStaleEndpointsOffline\(thresholdMinutes = HEARTBEAT_STALE_MS \/ 60_000\)/.test(en)
+      && /this\.enrollment\.markStaleEndpointsOffline\(\)/.test(ec) && !/markStaleEndpointsOffline\(\s*\d/.test(ec)
+      && /import \{[^}]*\bHEARTBEAT_STALE_MS\b[^}]*\} from '@\/lib\/connectivity';/.test(dm) && /^export \{ HEARTBEAT_STALE_MS \};$/m.test(dm) && !/HEARTBEAT_STALE_MS\s*=/.test(dm),
+    `API ${apiMs} ms, web ${webMs} ms; markStaleEndpointsOffline(thresholdMinutes = HEARTBEAT_STALE_MS / 60_000) called with no argument; device-model re-exports the web constant`);
+  const ls = strip(read('apps/api/src/endpoints/endpoint-list.service.ts'));
+  check('the device list’s “online” needs a heartbeat inside the window; “silent” is reachable without one',
+    /if \(f\.online === 'online'\) and\.push\(\{ isOnline: true, lastSeenAt: \{ gte: heartbeatCutoff\(\) \} \}\);/.test(ls)
+      && /if \(f\.online === 'silent'\) and\.push\(\{ isOnline: true, OR: \[\{ lastSeenAt: null \}, \{ lastSeenAt: \{ lt: heartbeatCutoff\(\) \} \}\] \}\);/.test(ls)
+      && /connectivity: connectivityOf\(r\.isOnline, r\.lastSeenAt, now\)/.test(ls),
+    "filterConds: online → { isOnline: true, lastSeenAt: { gte: heartbeatCutoff() } }; silent → isOnline and (null or older); rows carry connectivityOf");
+  const ov = strip(read('apps/api/src/dashboard/overview.service.ts'));
+  const ds = strip(read('apps/api/src/dashboard/dashboard.service.ts'));
+  check('the dashboard counts online from connectivityOf and agent-silent apart',
+    /const c = connectivityOf\(e\.isOnline, e\.lastSeenAt, now\.getTime\(\)\);\s*if \(c === 'online'\) online\+\+;/.test(ov)
+      && !/if \(e\.isOnline\) online\+\+/.test(ov)
+      && /isOnline: true, lastSeenAt: \{ gte: heartbeatCutoff\(\) \}, status: 'ACTIVE'/.test(ds)
+      && /if \(c === 'online'\) p\.online \+= 1;/.test(ds) && !/if \(r\.isOnline\) p\.online/.test(ds),
+    "overview: online++ only when connectivityOf is 'online'; GET /dashboard and the map count online with the heartbeat cutoff");
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

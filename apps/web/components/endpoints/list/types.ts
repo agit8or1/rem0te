@@ -11,7 +11,8 @@ export interface DeviceFilters {
   search: string;
   businessId: string;
   siteId: string;
-  online: '' | 'online' | 'offline';
+  /** 0.35: online = agent checking in; silent = reachable (RustDesk), agent silent; offline. */
+  online: '' | 'online' | 'silent' | 'offline';
   alerts: '' | 'any' | 'critical';
   restartPending: boolean;
   agent: '' | 'signed' | 'standard' | 'none';
@@ -53,6 +54,8 @@ export interface DeviceRow {
   os: string | null;
   status: string;
   isOnline: boolean;
+  /** 0.35, from the server: isOnline alone is "reachable" (lib/connectivity.ts). */
+  connectivity?: 'online' | 'agent_silent' | 'offline';
   lastSeenAt: string | null;
   deviceClass: string;
   accessMode: string;
