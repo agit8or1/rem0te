@@ -56,6 +56,11 @@ export default function EmailSettingsPage() {
     }).then((r) => r.data.data as SmtpSettingsView),
     onSuccess: (r) => {
       ok(r.passwordChange === 'cleared_relay_changed' ? 'Saved. The relay changed, so the saved password was cleared — enter it again if the relay needs one.' : 'Email settings saved.');
+      // The form is rebuilt from the cached settings as soon as it is cleared:
+      // put what was saved there first, or it is rebuilt from the values
+      // before the save (0.35: a configured relay reappeared as a blank form
+      // with "Send email" unticked, one click from being switched off).
+      qc.setQueryData(['smtp-settings'], r);
       setF(null); qc.invalidateQueries({ queryKey: ['smtp-settings'] }); qc.invalidateQueries({ queryKey: ['email-status'] });
     },
     onError: fail,
@@ -121,9 +126,10 @@ export default function EmailSettingsPage() {
           <CardHeader><CardTitle className="text-sm">Send a test email</CardTitle></CardHeader>
           <CardContent className="space-y-3 text-sm">
             <div className="flex flex-wrap items-end gap-2">
-              <div className="space-y-1">
+              {/* min-w-0 / max-w-full: a long account address must not widen the page at phone width (0.35). */}
+              <div className="min-w-0 max-w-full space-y-1">
                 <Label htmlFor="smtp-test-to">To</Label>
-                <select id="smtp-test-to" className="rounded-md border bg-background p-2" value={testTo} onChange={(e) => setTestTo(e.target.value)}>
+                <select id="smtp-test-to" className="max-w-full rounded-md border bg-background p-2" value={testTo} onChange={(e) => setTestTo(e.target.value)}>
                   <option value="">Your account address ({user.email})</option>
                   {(globals?.recipients ?? []).filter((r) => r.verified).map((r) => <option key={r.id} value={r.id}>{r.address}</option>)}
                 </select>

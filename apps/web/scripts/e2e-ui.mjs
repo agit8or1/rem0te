@@ -18,6 +18,17 @@
  * the Reports pages; and the System status cards. At 375 px no page may
  * scroll sideways: a wide table scrolls inside its own container.
  *
+ * 0.35 drives the 0.34 screens that had only been built: the Chat tab (start
+ * a chat, send, and watch sent → delivered → shown → read as a simulated
+ * computer acknowledges over the real device routes, apps/api/scripts/lib/
+ * chat-device.mjs); the Run panel on approved versions with no approval
+ * signer; adding a software catalog entry through step-up and the software
+ * compliance report; Email settings saved through step-up and a test email to
+ * a loopback SMTP sink (lib/smtp-sink.mjs, UI_SMTP_PORT 3503); creating a
+ * scheduled report; the Agent card and Agent migrations; the History tab's AI
+ * summary against a reference ClientSt0r peer that does not advertise
+ * device_timeline_v1 (UI_PEER_PORT 3504); and the Data retention card.
+ *
  * Any console error, uncaught exception, or unexpected failed request on a
  * page fails that page's check. The only failures expected are the 403
  * STEP_UP_REQUIRED answers the step-up flows provoke on purpose.
@@ -38,7 +49,8 @@
 import { chromium } from 'playwright';
 import { createRequire } from 'module';
 import { spawn, spawnSync } from 'child_process';
-import { randomBytes } from 'crypto';
+import { createHash, generateKeyPairSync, randomBytes } from 'crypto';
+import { createServer } from 'http';
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
 import { mkdtemp } from 'fs/promises';
 import { tmpdir } from 'os';
@@ -54,7 +66,10 @@ const API_DIR = path.join(ROOT, 'apps/api');
 const FORBIDDEN_PORTS = [3000, 3001, 443, 4000, 4001];
 const WEB_PORT = Number(process.env.UI_WEB_PORT ?? 3501);
 const API_PORT = Number(process.env.UI_API_PORT ?? 3502);
-for (const p of [WEB_PORT, API_PORT]) {
+// 0.35: a loopback SMTP sink (Email settings) and a reference ClientSt0r peer (the AI summary's state).
+const SMTP_PORT = Number(process.env.UI_SMTP_PORT ?? 3503);
+const PEER_PORT = Number(process.env.UI_PEER_PORT ?? 3504);
+for (const p of [WEB_PORT, API_PORT, SMTP_PORT, PEER_PORT]) {
   if (!Number.isInteger(p) || FORBIDDEN_PORTS.includes(p)) throw new Error(`Refusing port ${p}: 3000/3001/443 are production and 4000/4001 the docs stack`);
 }
 const WEB = `http://127.0.0.1:${WEB_PORT}`;
@@ -71,6 +86,9 @@ const { PrismaClient } = apiRequire('@prisma/client');
 const argon2 = apiRequire('argon2');
 
 const OUT_DIR = process.env.OUT_DIR ?? await mkdtemp(path.join(tmpdir(), 'rem0te-ui-'));
+// 0.35: the loopback SMTP sink and the device side of chat, shared with the API suites.
+const { createSmtpSink } = await import(path.join(API_DIR, 'scripts/lib/smtp-sink.mjs'));
+const { chatDevice } = await import(path.join(API_DIR, 'scripts/lib/chat-device.mjs'));
 const prisma = new PrismaClient();
 
 let pass = 0, fail = 0; const failures = [];
@@ -129,6 +147,8 @@ function startApi() {
     RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off',
     FRONTEND_URL: WEB, PUBLIC_API_URL: WEB,
     VERSION_FILE: path.join(ROOT, 'version.json'),
+    // 0.35: the relay is this suite's SMTP sink on loopback, and the ClientSt0r peer its reference peer.
+    SMTP_ALLOW_LOCAL_RELAY: 'loopback', INTEGRATION_PEERS_FILE: peer.file, INTEGRATION_CAPABILITIES_TTL_MS: '0',
   };
   return start('api', process.execPath, [path.join(API_DIR, 'dist', 'main.js')], { cwd: API_DIR, env });
 }
@@ -754,9 +774,404 @@ async function combo(browser, f, vp, theme) {
     await addDevice(page, f, vp, label);
     await reports(page, label, vp);
     await systemStatus(page, label, vp);
+    await coverage035(page, f, vp, label);
     if (theme === 'light') await mainPagesSweep(page, vp, label);
   } finally { await ctx.close(); }
   await apiKeys(browser, f, vp, theme, label);
+}
+
+// ── 0.35: the 0.34 screens, driven ──────────────────────────────────────────
+// Everything in this section was typechecked and built in 0.34 but never
+// driven in a browser. Each screen gets its own function; seed035() adds
+// their fixtures and cleanup035() removes what it added outside the two
+// businesses (which cascade).
+
+const sha256 = (b) => createHash('sha256').update(b).digest('hex');
+
+/** The loopback SMTP sink the Email settings page is pointed at. */
+const smtp = createSmtpSink();
+
+/**
+ * A reference ClientSt0r peer that serves only its signed capabilities
+ * document, advertising ticket triage and NOT device_timeline_v1: the state
+ * the History tab's AI summary has to describe until ClientSt0r ships it.
+ * The request and response signatures are the integration's own
+ * (dist/integration/crypto.js); everything else answers 404.
+ */
+const peer = (() => {
+  const C = apiRequire(path.join(API_DIR, 'dist/integration/crypto.js'));
+  const dir = mkdtempSync(path.join(tmpdir(), 'rem0te-ui-peer-'));
+  const self = generateKeyPairSync('ed25519'), req = generateKeyPairSync('ed25519'), del = generateKeyPairSync('ed25519');
+  const ID = 'clientst0r-ui', AUD = 'clientst0r:ui', ORIGIN = `http://127.0.0.1:${PEER_PORT}`;
+  const pem = (k) => k.export({ type: 'spki', format: 'pem' }).toString();
+  writeFileSync(path.join(dir, 'self.pem'), self.privateKey.export({ type: 'pkcs8', format: 'pem' }));
+  const file = path.join(dir, 'peers.json');
+  writeFileSync(file, JSON.stringify({
+    self: { keyId: 'rem0te-ui-1', privateKeyFile: path.join(dir, 'self.pem') },
+    peers: [{
+      id: ID, audience: 'rem0te:ui', peerAudience: AUD,
+      requestKeys: [{ kid: 'req-1', publicKeyPem: pem(req.publicKey) }], delegationKeys: [{ kid: 'del-1', publicKeyPem: pem(del.publicKey) }],
+      inferenceUrl: `${ORIGIN}/api/integration/v1/inference`, eventsUrl: `${ORIGIN}/api/integration/v1/events`,
+      capabilitiesUrl: `${ORIGIN}/api/integration/v1/capabilities`, modelProfiles: ['triage-fast', 'summary-fast'],
+    }],
+  }));
+  const state = { capsRequests: 0, badSignatures: 0, other: 0 };
+  const server = createServer((rq, res) => {
+    const chunks = []; rq.on('data', (d) => chunks.push(d));
+    rq.on('end', () => {
+      const body = Buffer.concat(chunks);
+      const signed = rq.headers['rem0te-key-id'] === 'rem0te/rem0te-ui-1' && C.verifyEd25519(self.publicKey, C.requestSigningString({
+        audience: AUD, method: rq.method, pathWithQuery: rq.url, timestamp: rq.headers['rem0te-timestamp'], nonce: rq.headers['rem0te-nonce'], bodySha256: C.sha256Hex(body),
+      }), rq.headers['rem0te-signature']);
+      if (!signed) { state.badSignatures++; res.writeHead(401).end(); return; }
+      if (rq.method !== 'GET' || rq.url !== '/api/integration/v1/capabilities') { state.other++; res.writeHead(404).end(); return; }
+      state.capsRequests++;
+      const text = JSON.stringify({ contract: 'ticket-rmm-v1', peer_id: ID, inference_tasks: [{ task: 'ticket_triage_v1', model_profiles: ['triage-fast'] }], clientst0r_version: 'reference' });
+      const sig = C.signEd25519(req.privateKey, C.responseSigningString(rq.headers['rem0te-nonce'], C.sha256Hex(Buffer.from(text))));
+      res.writeHead(200, { 'content-type': 'application/json', 'rem0te-key-id': `${ID}/req-1`, 'rem0te-response-signature': sig }).end(text);
+    });
+  });
+  return { ID, dir, file, server, state };
+})();
+
+/** Requests from the simulated computer straight to the suite's API, paced under the burst throttler. */
+async function deviceReq(method, p, { body } = {}) {
+  await sleep(60);
+  const r = await fetch(`${API_ORIGIN}/api/v1${p}`, { method, headers: { 'content-type': 'application/json', 'x-forwarded-for': ip() }, body: body ? JSON.stringify(body) : undefined });
+  const text = await r.text(); let j; try { j = JSON.parse(text); } catch { j = text; }
+  return { status: r.status, body: j, data: j?.data };
+}
+const device = chatDevice(deviceReq);
+
+const smtpBefore = { row: undefined };
+async function seed035(f) {
+  const { tenant, A, admin, owner, main } = f;
+  // A signed Windows agent that speaks chat protocol 1, bound to a device secret.
+  const chat = await prisma.endpoint.create({ data: {
+    tenantId: tenant.id, customerId: A.id, name: `${TAG}-CHAT`, hostname: `${TAG.toLowerCase()}-chat.corp.example.com`, platform: 'Windows', osVersion: 'Windows 11 Pro',
+    status: 'ACTIVE', isOnline: true, isManaged: true, accessMode: 'COMPANY_WIDE', lastSeenAt: new Date(), deviceClass: 'WORKSTATION',
+    updateChannel: 'signed', chatProtocol: 1, agentVersion: '0.34.0',
+  } });
+  const rid = String(100000000 + ((Math.random() * 899999999) | 0));
+  const secret = randomBytes(24).toString('hex');
+  await prisma.rustdeskNode.create({ data: { tenantId: tenant.id, endpointId: chat.id, rustdeskId: rid, agentSecretHash: sha256(secret) } });
+
+  // Two approved scripts in Acme's library: one never proposed, one whose
+  // allowlist entry the portal last mirrored as ACTIVE. The suite runs no
+  // approval signer, so the Run panel has to say so for both.
+  const { hashVersion } = apiRequire(path.join(API_DIR, 'dist/script-library/definition.js'));
+  const mkScript = async (name, content) => {
+    const sc = await prisma.script.create({ data: { scope: 'BUSINESS', tenantId: tenant.id, customerId: A.id, name, createdById: owner.id } });
+    const def = { language: 'powershell', targetOs: 'windows', risk: 'low', parameters: [], content };
+    let v = await prisma.scriptVersion.create({ data: { scriptId: sc.id, version: 1, description: `${name}: a read-only report for the UI suite.`, ...def, ...hashVersion(def), authorId: owner.id, contributorIds: [owner.id] } });
+    v = await prisma.scriptVersion.update({ where: { id: v.id }, data: { status: 'IN_REVIEW', submittedAt: new Date() } });
+    v = await prisma.scriptVersion.update({ where: { id: v.id }, data: { status: 'APPROVED', decidedById: admin.id, decidedAt: new Date(), decisionNote: 'Reads only.', approvedSha256: v.contentSha256 } });
+    return { script: sc, version: v };
+  };
+  const unproposed = await mkScript(`${TAG} Spooler status`, "Get-Service -Name 'Spooler' | Select-Object Name, Status\n");
+  const listed = await mkScript(`${TAG} Disk report`, "Get-PSDrive -PSProvider FileSystem | Select-Object Name, Used, Free\n");
+  const entryId = randomBytes(16).toString('hex');
+  await prisma.scriptAllowlistEntry.create({ data: { id: entryId, scriptVersionId: listed.version.id, customerId: A.id, contentSha256: listed.version.contentSha256, status: 'ACTIVE', approvalUrl: `${WEB}/approve/script/${entryId}`, proposedById: admin.id } });
+
+  // A confirmed address in Acme, for a scheduled report to go to.
+  const recipient = await prisma.emailRecipient.create({ data: { scopeKey: `b:${A.id}`, customerId: A.id, address: `ui-reports-${sfx}@test.invalid`, label: 'UI suite', verifiedAt: new Date(), addedById: owner.id } });
+  // Acme is mapped to the reference ClientSt0r peer.
+  await prisma.integrationOrgMapping.create({ data: { peerId: peer.ID, externalOrgId: `org-ui-${sfx}`, customerId: A.id, tenantId: tenant.id, createdById: 'e2e-ui' } });
+  // A migration to the signed agent requested for the main computer, so the status page has a row.
+  await prisma.agentMigration.create({ data: { endpointId: main.id, tenantId: tenant.id, customerId: A.id, nonce: `mig_${randomBytes(30).toString('base64url')}`, reason: `${TAG} pilot machine`, requestedById: admin.id } });
+  // The outbound-email singleton is global: remember it to put it back.
+  smtpBefore.row = await prisma.smtpSettings.findUnique({ where: { id: 'singleton' } });
+  return { chat: { id: chat.id, rid, secret, hostname: chat.hostname, platform: 'Windows' }, unproposed, listed, recipient };
+}
+
+async function cleanup035() {
+  const ids = created.businesses;
+  const steps = [
+    ['integration mappings', () => prisma.integrationOrgMapping.deleteMany({ where: { customerId: { in: ids } } })],
+    ['report schedules', () => prisma.reportSchedule.deleteMany({ where: { customerId: { in: ids } } })],
+    ['smtp settings', async () => {
+      if (smtpBefore.row === undefined) return;
+      if (smtpBefore.row === null) await prisma.smtpSettings.deleteMany({ where: { id: 'singleton' } });
+      else { const { id, updatedAt, ...rest } = smtpBefore.row; await prisma.smtpSettings.update({ where: { id }, data: rest }); }
+      smtpBefore.row = undefined;
+    }],
+  ];
+  for (const [what, fn] of steps) {
+    try { await fn(); } catch (e) { console.error(`  cleanup (${what}): ${e.message.split('\n').filter(Boolean).pop()}`); }
+  }
+}
+
+/**
+ * A step-up lasts ten minutes (the step_up cookie), so an earlier flow in the
+ * same session would let a later one through unasked. Each flow that must be
+ * asked forgets it first.
+ */
+async function forgetStepUp(page) {
+  await page.context().clearCookies({ name: 'step_up' });
+}
+/** The step-up dialog must appear; fill it with the password and confirm. */
+async function confirmStepUp(page, label, what) {
+  const dlg = stepUpDialog(page);
+  await dlg.waitFor({ timeout: 10_000 }).catch(() => {});
+  check(await dlg.isVisible(), `${label}: ${what} asks to confirm it's you`);
+  await dlg.locator('#stepup-value').fill(PW);
+  await dlg.getByRole('button', { name: 'Confirm' }).click();
+  await dlg.waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {});
+}
+
+/**
+ * Chat (0.34): start one, send a message, and watch its receipt move only as
+ * the simulated computer acknowledges it over the real device routes; the
+ * person's reply appears; ending it files it under Earlier chats.
+ */
+async function chatTab(page, f, vp, label) {
+  const ep = f.c.chat;
+  await go(page, `/endpoints/${ep.id}?tab=chat`);
+  if (!(await page.locator('[data-testid="chat-tab"]').isVisible().catch(() => false))) {
+    await page.locator('[data-testid="tab-chat"]').click();
+    await page.locator('[data-testid="chat-tab"]').waitFor({ timeout: 15_000 });
+  }
+  await settled(page);
+  check(!(await page.locator('[data-testid="chat-unsupported"]').isVisible()) && await page.locator('[data-testid="chat-start"]').isVisible(), `${label}: a signed agent with chat offers Start chat`);
+  await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
+  await page.locator('[data-testid="chat-start"]').click();
+  const presence = page.locator('[data-testid="chat-presence"]');
+  await presence.waitFor({ timeout: 15_000 }).catch(() => {});
+  check(await presence.getAttribute('data-presence').catch(() => null) === 'waiting_for_checkin', `${label}: a new chat waits for the computer's check-in, and says so`, await presence.innerText().catch(() => ''));
+  const conv = await prisma.chatConversation.findFirst({ where: { endpointId: ep.id, status: 'OPEN' } });
+  const text = `${TAG} ${label}: is the printer on?`;
+  await page.locator('[data-testid="chat-input"]').fill(text);
+  await page.locator('[data-testid="chat-send"]').click();
+  const receipt = page.locator('[data-testid="chat-message"]').filter({ hasText: text }).locator('[data-testid="chat-receipt"]');
+  await receipt.waitFor({ timeout: 15_000 }).catch(() => {});
+  check(await receipt.getAttribute('data-receipt').catch(() => null) === 'sent' && /not yet confirmed/.test(await receipt.innerText().catch(() => '')), `${label}: sent, and "not yet confirmed by the computer" until it is`, await receipt.innerText().catch(() => ''));
+  if (vp === 'phone') await noSideScroll(page, `${label} chat`);
+
+  // The computer: picks it up, opens the window, shows it, reads it.
+  let r = await device.poll(ep, { state: 'connecting', noWait: true });
+  const mine = r.data?.messages?.find((m) => m.text === text);
+  check(r.status === 200 && r.data?.conversation?.id === conv?.id && !!mine, `${label}: the simulated computer's poll is handed the conversation and the message`, `HTTP ${r.status} ${JSON.stringify(r.data).slice(0, 300)}`);
+  const want = async (state, presenceCode) => {
+    await page.waitForFunction(([t, s]) => [...document.querySelectorAll('[data-testid="chat-message"]')].some((m) => m.textContent.includes(t) && m.querySelector(`[data-receipt="${s}"]`)), [text, state], { timeout: 15_000 }).catch(() => {});
+    if (presenceCode) await page.waitForFunction((c) => document.querySelector('[data-testid="chat-presence"]')?.getAttribute('data-presence') === c, presenceCode, { timeout: 15_000 }).catch(() => {});
+    return { receipt: await receipt.getAttribute('data-receipt').catch(() => null), presence: await presence.getAttribute('data-presence').catch(() => null) };
+  };
+  await device.poll(ep, { state: 'no_user', delivered: [mine?.id], noWait: true });
+  let s1 = await want('delivered', 'no_user');
+  check(s1.receipt === 'delivered' && s1.presence === 'no_user', `${label}: acknowledged by the computer → "Delivered to the agent"; nobody signed in is said as such`, JSON.stringify(s1));
+  await device.poll(ep, { state: 'window_open', userName: 'ACME\\frontdesk', shown: [mine?.id], noWait: true });
+  s1 = await want('shown', 'window_open');
+  const ptxt = await presence.innerText().catch(() => '');
+  check(s1.receipt === 'shown' && s1.presence === 'window_open' && ptxt.includes('ACME\\frontdesk'), `${label}: the window opened for ACME\\frontdesk and drew it → "Shown on screen"`, `${JSON.stringify(s1)} ${ptxt}`);
+  await device.poll(ep, { read: [mine?.id], noWait: true });
+  s1 = await want('read');
+  check(s1.receipt === 'read', `${label}: in front of the person → "Read"`, JSON.stringify(s1));
+  const answer = `${TAG} yes, it is on <b>now</b>`;
+  r = await device.reply(ep, conv?.id, answer);
+  const reply = page.locator('[data-testid="chat-message"]').filter({ hasText: answer });
+  await reply.waitFor({ timeout: 15_000 }).catch(() => {});
+  check(r.status === 200 && await reply.isVisible() && /\(at the computer\)/.test(await reply.innerText().catch(() => '')) && await reply.locator('b').count() === 0,
+    `${label}: the person's reply appears, signed from the computer, as text (no HTML)`, `HTTP ${r.status} ${await reply.innerText().catch(() => '')}`);
+  await shot(page, `${label}-chat`);
+  await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
+  await page.locator('[data-testid="chat-end"]').click();
+  await page.locator('[data-testid="chat-start"]').waitFor({ timeout: 15_000 }).catch(() => {});
+  const ended = await prisma.chatConversation.findUnique({ where: { id: conv?.id ?? '' } });
+  check(ended?.status === 'ENDED' && await page.locator('[data-testid="chat-past"]').count() >= 1, `${label}: End chat ends it and files it under Earlier chats`, ended?.status);
+  await cleanCheck(page, `${label} Chat tab`);
+}
+
+/**
+ * The Run panel on an approved version (0.34). This suite runs no approval
+ * signer, so whatever the allowlist says, the panel must say a script cannot
+ * be run here and offer no control that pretends otherwise.
+ */
+async function scriptRunPanel(page, f, vp, label) {
+  for (const [which, sc] of [['never proposed', f.c.unproposed], ['mirrored as on the allowlist', f.c.listed]]) {
+    await go(page, `/automation/scripts/${sc.script.id}`);
+    const panel = page.locator('[data-script-run-panel]');
+    await panel.waitFor({ timeout: 15_000 }).catch(() => {});
+    const t = await panel.innerText().catch(() => '');
+    const buttons = await panel.locator('button').evaluateAll((els) => els.map((e) => (e.textContent ?? '').trim()));
+    check(/No approval signer is configured on this server, so scripts cannot be run here/.test(t) && /Not yet run on a real Windows computer/.test(t),
+      `${label}: Run panel (${which}) says no approval signer is configured and that it has not run on real Windows`, t.slice(0, 300));
+    if (sc === f.c.unproposed) {
+      check(/Not proposed yet/.test(t) && !buttons.some((b) => /Propose|Request a run/.test(b)), `${label}: never proposed: "Not proposed yet", and no Propose or Request a run without a signer`, buttons.join(' | '));
+    } else {
+      check(/On the signer's allowlist/.test(t) && !buttons.some((b) => /Request a run|Revoke/.test(b)), `${label}: on the allowlist but no signer: the entry is shown, and neither Request a run nor Revoke is offered`, buttons.join(' | '));
+    }
+    if (vp === 'phone') await noSideScroll(page, `${label} script page`);
+    await cleanCheck(page, `${label} Run panel (${which})`);
+  }
+  await shot(page, `${label}-script-run`);
+}
+
+let swSeq = 0;
+/** Software catalog (0.34): add an entry through step-up, then find it in the compliance report. */
+async function softwareCatalog(page, f, vp, label) {
+  await go(page, '/automation/software');
+  await page.getByRole('button', { name: 'Add software' }).click();
+  const n = ++swSeq;
+  const pkg = `UiE2e.Tool${sfx}${n}`, name = `${TAG} Tool ${n}`;
+  await page.locator('#se-pkg').fill(pkg);
+  await page.locator('#se-version').fill('1.2.3');
+  await page.locator('#se-name').fill(name);
+  if (await page.locator('#se-scope').count()) await page.locator('#se-scope').selectOption('business');
+  if (await page.locator('#se-biz').count()) await page.locator('#se-biz').selectOption(f.A.id);
+  await page.getByRole('radio', { name: 'Paste it myself' }).check();
+  await page.locator('#se-sha').fill(sha256(`${pkg}-installer`));
+  await page.locator('#det-version').fill('1.2.3');
+  await page.locator('#det-name').fill('UI Tool');
+  if (vp === 'phone') await noSideScroll(page, `${label} Add software`);
+  await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
+  await forgetStepUp(page);
+  await page.getByRole('button', { name: 'Add to the catalog' }).click();
+  await confirmStepUp(page, label, 'adding to the software catalog');
+  await page.waitForURL((u) => /^\/automation\/software\/[^/]+$/.test(u.pathname) && !u.pathname.endsWith('/deployments'), { timeout: 15_000 }).catch(() => {});
+  await settled(page);
+  await page.locator('main').getByText(name).first().waitFor({ timeout: 15_000 }).catch(() => {});
+  const row = await prisma.softwareCatalogEntry.findFirst({ where: { customerId: f.A.id, packageId: pkg } });
+  check(!!row && row.hashSource === 'ADMIN_PASTED' && new URL(page.url()).pathname === `/automation/software/${row.id}` && (await page.locator('main').innerText()).includes(name),
+    `${label}: confirming adds the entry, pinned to the pasted hash, and opens it`, `${page.url()} row=${JSON.stringify(row && { id: row.id, src: row.hashSource })} main="${(await page.locator('main').innerText()).slice(0, 200)}"`);
+  if (vp === 'phone') await noSideScroll(page, `${label} catalog entry`);
+  await cleanCheck(page, `${label} Software catalog`, stepUp403);
+
+  await go(page, `/reports/software-compliance?businessId=${f.A.id}`);
+  await page.locator('main table').first().waitFor({ timeout: 15_000 }).catch(() => {});
+  const txt = await page.locator('main').innerText();
+  check(txt.includes(name) && /Unknown is a coverage gap/.test(txt) && !/could not be loaded|not available to you/i.test(txt), `${label}: the software compliance report lists the new entry`, txt.slice(0, 300));
+  if (vp === 'phone') await noSideScroll(page, `${label} software compliance`);
+  await shot(page, `${label}-software-compliance`);
+  await cleanCheck(page, `${label} Software compliance report`);
+}
+
+/** Email settings (0.34): save a loopback relay through step-up, and send a test email that the sink receives. */
+async function emailSettings(page, f, vp, label) {
+  await go(page, '/settings/email');
+  await page.locator('[data-testid="smtp-settings"]').waitFor({ timeout: 15_000 });
+  const allowed = await page.locator('[data-testid="smtp-settings"]').innerText();
+  check(/a relay on this server \(SMTP_ALLOW_LOCAL_RELAY=loopback\)/.test(allowed), `${label}: Email says which relays this server allows (loopback here)`, allowed.slice(0, 200));
+  const enabled = page.locator('[data-testid="smtp-settings"] label').filter({ hasText: 'Send email' }).locator('input[type=checkbox]');
+  if (!(await enabled.isChecked())) await enabled.check();
+  await page.locator('#smtp-host').fill('127.0.0.1');
+  await page.locator('#smtp-port').fill(String(SMTP_PORT));
+  await page.locator('#smtp-tls').selectOption('none');
+  await page.locator('#smtp-from').fill(`ui-${sfx}@test.invalid`);
+  await page.locator('#smtp-from-name').fill(`${TAG} rem0te`);
+  if (vp === 'phone') await noSideScroll(page, `${label} Email`);
+  await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
+  await forgetStepUp(page);
+  await page.getByRole('button', { name: 'Save (re-authenticate)' }).click();
+  await confirmStepUp(page, label, 'saving the relay');
+  await page.getByText('Email settings saved.').waitFor({ timeout: 15_000 }).catch(() => {});
+  const row = await prisma.smtpSettings.findUnique({ where: { id: 'singleton' } });
+  check(row?.enabled === true && row.host === '127.0.0.1' && row.port === SMTP_PORT && row.tlsMode === 'none' && await page.getByText('Email settings saved.').isVisible(),
+    `${label}: saving through step-up stores the relay and says so`, JSON.stringify(row && { enabled: row.enabled, host: row.host, port: row.port, tls: row.tlsMode }));
+  const shown = { host: await page.locator('#smtp-host').inputValue(), port: await page.locator('#smtp-port').inputValue(), tls: await page.locator('#smtp-tls').inputValue(), on: await enabled.isChecked() };
+  check(shown.host === '127.0.0.1' && shown.port === String(SMTP_PORT) && shown.tls === 'none' && shown.on, `${label}: after saving, the form shows the relay that was saved`, JSON.stringify(shown));
+  const before = smtp.sink.messages.length;
+  await page.locator('[data-testid="smtp-test"]').waitFor({ timeout: 10_000 });
+  await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
+  await page.getByRole('button', { name: 'Send test email' }).click();
+  // The page names the address masked (u…@test.invalid); the sink proves which one.
+  const sent = page.getByText(/^Test email sent to .+@test\.invalid\.$/);
+  await sent.waitFor({ timeout: 20_000 }).catch(() => {});
+  const mail = await smtp.waitMail((m) => smtp.sink.messages.indexOf(m) >= before && m.to.includes(f.admin.email), 10_000);
+  check(await sent.isVisible() && !!mail && mail.from === `ui-${sfx}@test.invalid`, `${label}: Send test email reaches the loopback relay, and the page says it was sent`, `${mail ? `${mail.from} → ${mail.to} "${mail.subject}"` : `no mail (${smtp.sink.messages.length} in the sink)`} page: ${(await page.locator('main').innerText()).split('\n').filter((l) => /test email/i.test(l)).join(' / ')}`);
+  await shot(page, `${label}-email`);
+  await cleanCheck(page, `${label} Email settings`, stepUp403);
+}
+
+/** Scheduled reports (0.34): create one for Acme, to its confirmed address, through step-up. */
+async function scheduledReports(page, f, vp, label) {
+  await go(page, '/reports/schedules');
+  await page.locator('#sched-business').selectOption(f.A.id);
+  const form = page.locator('[data-testid="report-schedule-form"]');
+  await form.waitFor({ timeout: 15_000 });
+  await form.locator('label').filter({ hasText: f.c.recipient.address }).locator('input[type=checkbox]').check();
+  await form.locator('#sf-time').fill('07:30');
+  await form.locator('#sf-tz').fill('Europe/London');
+  if (vp === 'phone') await noSideScroll(page, `${label} Scheduled reports`);
+  const before = await prisma.reportSchedule.count({ where: { customerId: f.A.id } });
+  await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
+  await forgetStepUp(page);
+  await form.getByRole('button', { name: 'Create (re-authenticate)' }).click();
+  await confirmStepUp(page, label, 'creating a scheduled report');
+  await page.getByText('Schedule created.').waitFor({ timeout: 15_000 }).catch(() => {});
+  const rows = await prisma.reportSchedule.findMany({ where: { customerId: f.A.id }, orderBy: { createdAt: 'desc' } });
+  const s = rows[0];
+  check(rows.length === before + 1 && s.time === '07:30' && s.timeZone === 'Europe/London' && s.recipientIds.includes(f.c.recipient.id) && s.ownerId === f.admin.id && !!s.nextRunAt,
+    `${label}: creating stores one schedule to the confirmed address, with its next run`, JSON.stringify(s && { time: s.time, tz: s.timeZone, next: s.nextRunAt }));
+  await page.locator('[data-testid="report-schedules"]').getByText(/07:30/).first().waitFor({ timeout: 10_000 }).catch(() => {});
+  check(await page.getByText('Schedule created.').isVisible() && (await page.locator('[data-testid="report-schedules"]').innerText()).includes('07:30'), `${label}: the page says so and lists it`);
+  await shot(page, `${label}-schedules`);
+  await cleanCheck(page, `${label} Scheduled reports`, stepUp403);
+}
+
+/** The Agent card on Overview (0.34) and Agent migrations, reached from its link and from the Devices tab (0.35). */
+async function agentCardAndMigrations(page, f, vp, label) {
+  await go(page, `/endpoints/${f.main.id}`);
+  const card = page.locator('[data-testid="agent-card"]');
+  await card.waitFor({ timeout: 15_000 });
+  await page.waitForFunction(() => !/Loading…/.test(document.querySelector('[data-testid="agent-card"]')?.textContent ?? 'Loading…'), null, { timeout: 15_000 }).catch(() => {});
+  const t = await card.innerText();
+  check(/Standard \(Windows\)/.test(t) && t.includes('0.33.0') && /pilot machine/.test(t) && !/could not be loaded/.test(t), `${label}: the Agent card shows the agent, its version and the open migration request`, t.slice(0, 400));
+  check(await card.getByTestId('agent-migration').isVisible(), `${label}: and the move to the signed agent: offered, or why not`);
+  if (vp === 'phone') await noSideScroll(page, `${label} Agent card`);
+  await card.getByRole('link', { name: 'Agent migrations' }).click();
+  await page.waitForURL((u) => u.pathname === '/endpoints/agent-migrations', { timeout: 15_000 });
+  await hydrated(page); await settled(page);
+  const table = page.locator('[data-testid="migration-table"]');
+  await table.waitFor({ timeout: 15_000 }).catch(() => {});
+  const row = table.locator('tr').filter({ hasText: `${TAG}-WS-01` });
+  const counts = await page.locator('[data-testid="migration-counts"]').innerText().catch(() => '');
+  check(await row.count() === 1 && /Pending/.test(await row.innerText()) && /Pending: [1-9]/.test(counts), `${label}: Agent migrations lists the request as Pending, and counts it`, counts);
+  const current = await page.locator('[data-section-tabs="devices"] a[aria-current="page"]').innerText().catch(() => null);
+  check(current === 'Agent migrations', `${label}: Agent migrations is the current Devices tab`, String(current));
+  if (vp === 'phone') await noSideScroll(page, `${label} Agent migrations`);
+  await shot(page, `${label}-agent-migrations`);
+  await cleanCheck(page, `${label} Agent card and migrations`);
+}
+
+/** History tab (0.34): the AI summary says ClientSt0r does not offer it yet, and Generate stays off. */
+async function aiHistoryPanel(page, f, vp, label) {
+  const caps = peer.state.capsRequests;
+  await go(page, `/endpoints/${f.main.id}`);
+  await page.locator('[data-testid="tab-history"]').click();
+  const why = page.locator('[data-testid="ai-summary-unavailable"]');
+  await page.waitForFunction(() => /Needs ClientSt0r/.test(document.querySelector('[data-testid="ai-summary-unavailable"]')?.textContent ?? ''), null, { timeout: 15_000 }).catch(() => {});
+  const t = await why.innerText().catch(() => '');
+  check(/Needs ClientSt0r support for device_timeline_v1/.test(t) && /capabilities do not list it yet/.test(t) && await page.locator('[data-testid="ai-summary-generate"]').isDisabled(),
+    `${label}: the AI summary says "Needs ClientSt0r support for device_timeline_v1" and Generate is off`, t);
+  check(peer.state.capsRequests > caps && peer.state.badSignatures === 0, `${label}: …because the peer's signed capabilities document was read and does not list it`, JSON.stringify(peer.state));
+  if (vp === 'phone') await noSideScroll(page, `${label} History tab`);
+  await shot(page, `${label}-history`);
+  await cleanCheck(page, `${label} History AI summary`);
+}
+
+/** System status (0.34): the Data retention card, strictly — every table with a class and a window, and the sweep's state. */
+async function retentionCard(page, label, vp) {
+  await go(page, '/admin/status');
+  const rows = page.locator('[data-testid^="retention-"]');
+  await rows.first().waitFor({ timeout: 15_000 }).catch(() => {});
+  const n = await rows.count();
+  const text = await page.locator('main').innerText();
+  const first = n ? await rows.first().innerText() : '';
+  check(n >= 5 && /Data retention/.test(text) && /The retention sweep is off in this API process \(RETENTION_SWEEP=off\)/.test(text) && /(Evidence|History|Transient)/.test(first) && !/Could not load retention status/.test(text),
+    `${label}: the Data retention card lists ${n} tables with their class, and says the sweep is off here`, first);
+  if (vp === 'phone') await noSideScroll(page, `${label} Data retention`);
+  await cleanCheck(page, `${label} Data retention card`);
+}
+
+async function coverage035(page, f, vp, label) {
+  await chatTab(page, f, vp, label);
+  await scriptRunPanel(page, f, vp, label);
+  await softwareCatalog(page, f, vp, label);
+  await emailSettings(page, f, vp, label);
+  await scheduledReports(page, f, vp, label);
+  await agentCardAndMigrations(page, f, vp, label);
+  await aiHistoryPanel(page, f, vp, label);
+  await retentionCard(page, label, vp);
 }
 
 // ── Run ─────────────────────────────────────────────────────────────────────
@@ -764,6 +1179,10 @@ let copyDir = null;
 async function main() {
   section('Stack');
   await ensureSeeded();
+  for (const [what, srv, port] of [['SMTP sink', smtp.server, SMTP_PORT], ['reference ClientSt0r peer', peer.server, PEER_PORT]]) {
+    await new Promise((r, j) => { srv.once('error', j); srv.listen(port, '127.0.0.1', r); });
+    check(true, `${what} on 127.0.0.1:${port}`);
+  }
   const api = startApi();
   await waitHttp(`${API_ORIGIN}/api/v1/health`, api);
   check(true, `API from dist on ${API_ORIGIN} against ${dbName}`);
@@ -774,6 +1193,7 @@ async function main() {
   const h = await fetch(`${WEB}/api/v1/health`, { headers: { 'x-forwarded-for': ip() } });
   check(h.status < 500, `web on ${WEB}, its /api rewrite reaching the suite's API`, `HTTP ${h.status}`);
   const f = await seed();
+  f.c = await seed035(f);
   if (process.env.UI_HOLD === '1') {
     // Debugging only: leave the stack and fixtures up until interrupted.
     console.log(`  holding: ${WEB}  admin ${f.admin.email} / owner ${f.owner.email}  password in UI_HOLD_PW_FILE`);
@@ -782,12 +1202,18 @@ async function main() {
     fail++; failures.push('UI_HOLD=1: a debugging run, no browser checks were made');
     return;
   }
-  check(true, `fixtures: two businesses, a Platform Admin and a Business Owner, seven devices (tag ${TAG})`);
+  check(true, `fixtures: two businesses, a Platform Admin and a Business Owner, eight devices (one that can chat), two approved scripts, a confirmed address, a ClientSt0r mapping, a migration request (tag ${TAG})`);
   const browser = await chromium.launch();
   try {
-    for (const vp of ['desktop', 'phone']) for (const theme of ['light', 'dark']) await combo(browser, f, vp, theme);
+    // UI_COMBOS=desktop/light,phone/dark narrows a debugging run; a run that skips any combination fails.
+    const only = (process.env.UI_COMBOS ?? '').split(',').filter(Boolean);
+    for (const vp of ['desktop', 'phone']) for (const theme of ['light', 'dark']) {
+      if (only.length && !only.includes(`${vp}/${theme}`)) continue;
+      await combo(browser, f, vp, theme);
+    }
+    if (only.length) { fail++; failures.push(`UI_COMBOS=${only.join(',')}: a partial run`); }
   } finally { await browser.close(); }
-  await cleanup(); created.businesses = []; created.users = [];
+  await cleanup035(); await cleanup(); created.businesses = []; created.users = [];
 
   if (process.env.UI_SKIP_PALETTE !== '1') {
     section('Search palette suite (scripts/e2e-search-palette.mjs) against this stack');
@@ -803,11 +1229,13 @@ async function main() {
 main()
   .catch((e) => { fail++; failures.push(`fatal: ${e.stack ?? e.message}`); console.error(e); })
   .finally(async () => {
+    await cleanup035();
     await cleanup();
     await prisma.$disconnect();
     await stopAll();
     if (fail) for (const p of procs) console.log(`\n── ${p.label} log (tail)\n${p.log.slice(-4000)}`);
     if (copyDir) rmSync(copyDir, { recursive: true, force: true });
+    smtp.server.close(); peer.server.close(); rmSync(peer.dir, { recursive: true, force: true });
     console.log(`\nScreenshots: ${OUT_DIR}`);
     console.log(`${fail ? '\x1b[31m' : '\x1b[32m'}${pass} passed, ${fail} failed\x1b[0m`);
     if (failures.length) { for (const x of failures) console.log(`  - ${x}`); process.exit(1); }

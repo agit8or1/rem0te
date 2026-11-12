@@ -68,6 +68,12 @@ second path. The portal holds no key the agent accepts.
 5. **Plan.** `windows.script.run@1` with closed parameters `{scriptVersionId, sha256, parameters, timeoutMinutes}`,
    and a `script` block the signer checks is **exactly** its allowlist entry (ids, hashes, declared parameters,
    contributors, reviewer). The content isn't in the plan; its SHA-256 is.
+
+**Without an approval signer** (`APPROVAL_SIGNER_INTERNAL_URL` unset) the Run panel on an approved version says
+scripts cannot be run on this server and offers no **Propose**, **Request a run** or **Revoke**: all three go through
+the signer. That holds even when the portal's mirror last recorded the entry as ACTIVE — the panel still shows the
+entry's state, but before 0.35 it also offered Request a run and Revoke beside the "cannot be run here" notice, and
+both failed when used.
 6. **Run approval, on the signer.** Always high risk: two different approvers, never the requester and **never a
    contributor** to the script (`contributor_cannot_approve`). The signer refuses the plan unless its allowlist entry
    is ACTIVE (`script_not_allowlisted`), not revoked (`script_revoked`), matches the plan's block (`script_mismatch`)

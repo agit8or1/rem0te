@@ -640,7 +640,8 @@ const SECTIONS: Section[] = [
           what is missing, such as a signed release that has not been published yet. It is refused while the portal is
           in <em>Signed only</em> mode and held while updates are paused for the business. Several computers can be
           moved at once from the device list, and{' '}
-          <Link href="/endpoints/agent-migrations" className="underline">Agent migrations</Link> lists what is pending,
+          <Link href="/endpoints/agent-migrations" className="underline">Agent migrations</Link> (a Devices tab for
+          whoever may request one) lists what is pending,
           held, not confirmed or done. More in{' '}
           <Link href="/docs/update-signing#moving-existing-agents" className="underline">Update signing</Link>.
         </p>
@@ -999,6 +1000,7 @@ const SECTIONS: Section[] = [
           computers, with typed arguments and a timeout of 1 to 30 minutes; two more approvers approve each run on the
           signer&apos;s page. The signed agent checks the hash before it runs anything, as SYSTEM, and each computer&apos;s
           Actions tab shows the exit code and the first 64 KB of output, redacted, for 90 days. Revoking is permanent.
+          On a server with no approval signer the panel says so and offers nothing to propose, request or revoke.
           It has been tested with PowerShell 7 on Linux, <strong className="text-foreground">not yet on a real Windows
           computer</strong>. Writing needs <em>Write scripts</em>; reviewing, proposing and revoking need <em>Review
           scripts</em>; requesting a run also needs <em>Request approved actions</em>. More in{' '}

@@ -22,10 +22,13 @@
  * (allowlisted winget packages, deployed ring by ring, each ring approved on
  * the approval signer). Reports gained software compliance. Both show for
  * computers:view, the capability the software routes require.
+ *
+ * 0.35: Devices gained Agent migrations, the status page for moves from the
+ * standard agent to the signed one.
  */
 import type { LucideIcon } from 'lucide-react';
 import {
-  Activity, BarChart3, BellRing, Building2, Cpu, WifiOff, Download, FileCode2, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
+  Activity, ArrowRightLeft, BarChart3, BellRing, Building2, Cpu, WifiOff, Download, FileCode2, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
   Monitor, MonitorCheck, MonitorX, Package, PackageCheck, PlayCircle, RefreshCw, Settings, Shield, ShieldCheck, Siren,
   UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail,
 } from 'lucide-react';
@@ -80,6 +83,10 @@ export const NAV: NavSection[] = [
       { href: '/technician', label: 'All assigned', icon: LayoutGrid, show: (c) => c.hasAssignments },
       { href: '/endpoints/enroll', label: 'Add device', icon: Download, show: (c) => c.can(CAP.COMPUTERS_ADD) },
       { href: '/admin/unassigned', label: 'Unassigned', icon: MonitorX, show: (c) => c.isPlatformAdmin },
+      // 0.35: the fleet view of moves to the signed agent, which until now was
+      // reachable only from an Agent card's link. Shown to whoever may request
+      // one (computers:edit); the page and its API need only computers:view.
+      { href: '/endpoints/agent-migrations', label: 'Agent migrations', icon: ArrowRightLeft, show: (c) => c.can(CAP.COMPUTERS_EDIT) },
     ],
     also: ['/endpoints/new', '/trmm', '/quickstart'],
   },

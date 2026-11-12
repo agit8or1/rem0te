@@ -381,7 +381,9 @@ agent — the result of its last update check. Its buttons:
   check-in, keeping its enrolment and RustDesk ID. When it can't be offered, the
   card says exactly why — no signed release published, no device secret, the
   portal in *Signed only* mode, updates paused, a rollout running. A request can
-  be cancelled until it completes. **Devices → Agent migrations** lists pending,
+  be cancelled until it completes. **Devices → Agent migrations** (a tab for
+  anyone who may request one, from 0.35; the page itself needs only View
+  computers and is linked from every Agent card) lists pending,
   held, not confirmed and completed requests. To move several computers, select
   them on **All devices** and use **Upgrade to signed…** (at most 200; each one is
   refused with its own reason). See
