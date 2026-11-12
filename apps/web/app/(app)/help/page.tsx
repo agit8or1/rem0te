@@ -107,6 +107,16 @@ const SECTIONS: Section[] = [
           and 2–4 GB up to a few hundred computers, 4 vCPU and 8 GB for 1,000. At 5,000 a single API process is near its
           measured limit; read the page before planning that size.
         </p>
+        <p>
+          From 0.34 old history ages out of the database on its own: finished agent commands and diagnostics after 90
+          days, inventory changes and resolved alerts after 400, unused launch tokens 30 days after they expire. Remote
+          sessions are kept, and the audit log is never pruned. Each window is a <code>RETENTION_*_DAYS</code> setting in
+          the server&apos;s environment, with a floor and a ceiling; <code>RETENTION_SWEEP=off</code> stops the sweep.
+          What each table holds now is on{' '}
+          <Link href="/admin/status" className="underline text-foreground">Settings → System status</Link> (Platform
+          Admins), and the details are in{' '}
+          <Link href="/docs/data-retention" className="underline text-foreground">Data retention</Link>.
+        </p>
       </div>
     ),
   },

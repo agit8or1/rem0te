@@ -28,6 +28,7 @@ bundled into `/docs`. Integration work is tracked separately in
 | Metric history (0.33) | CPU, memory and system-disk use per authenticated heartbeat (≤ 1/min), each volume per inventory pass; hourly min/mean/max roll-up; 48 h raw / 90 d hourly retention, configurable with caps; bounded, idempotent sweep (`METRIC_SWEEP=off`); gaps returned as gaps; Performance tab with 24 h–90 d ([metric-history.md](metric-history.md)) | U (42), I (59) — not R; storage measured on synthetic data (≈ 0.8 MB per computer) |
 | Monitoring | Global → business → site → computer rules; offline, disk, CPU, memory, services, event patterns, restart pending; dedup (one open alert per problem), hysteresis, cooldowns, site-outage correlation, maintenance windows, 4-level escalation, webhooks, alerts → ClientSt0r tickets | U (91), I (108) — **not R**: the monitor block has never run on real Windows |
 | Audit | Sealed hash chain, insert-only entries, signed checkpoints, off-host export, verification CLI | U (35), I |
+| Data retention (0.34) | One bounded, idempotent sweep (`RETENTION_SWEEP=off`) ages out finished commands and diagnostics (90 d, the newest of each type kept), inventory changes and resolved alerts (400 d), session event detail (400 d; sessions kept), unused expired tokens and grants, the abuse-guard window; every window an env setting with floor and ceiling; the audit chain never touched, one `RETENTION_PRUNED` entry per removing pass; Settings → System status shows each table's rows, oldest row and window; alert reports state the window they cover ([data-retention.md](data-retention.md)) | U (47), I (43), invariant §33 — not P; sweep cost measured on synthetic rows only |
 | Containment | Pause actions, remote, updates or integration, per business or globally; three enforcement layers | I (70) |
 | Global search (0.33) | Ctrl+K palette and `GET /search`: devices (name, hostname, RustDesk ID, serial, signed-in user, IP, adapter IPv4, alias), businesses, sites, people and open alerts, eight per group. Each group reuses its list route's where builder and capability; another business's objects are not found even by exact hostname or RustDesk ID; throttled, not audited, query not logged | U (37), I (search 98; business-access 83 after /admin/search was removed); browser 24 (`e2e-search-palette.mjs`, scratch stack: light, dark, phone width) |
 | Device sync to ClientSt0r | ClientSt0r's provider syncs computers by API key, scoped to one business | Code-level interop with ClientSt0r 3.17.660 (`INTEGRATION_COORDINATION.md` §8) |
@@ -76,6 +77,10 @@ bundled into `/docs`. Integration work is tracked separately in
 - ~~Server sizing guidance by endpoint count~~ — done in 0.33: [server-sizing.md](server-sizing.md), from measured
   heartbeat cost and row sizes (I). It found that one API process is near its measured limit at 5,000 computers,
   mostly because every heartbeat starts a `sqlite3` process for the hbbs presence lookup.
+- ~~Data retention ("nothing that grows is ever pruned", server-sizing 0.33)~~ — done in 0.34:
+  [data-retention.md](data-retention.md) (U, I). Not implemented: archiving rows before they are deleted,
+  per-business windows, pruning the ClientSt0r job and alert-event outboxes (needs the peer to agree a horizon),
+  and any way to shorten the audit log (deliberately: it is evidence).
 
 ## Security limitations (current, honest)
 

@@ -190,6 +190,12 @@ jobs:
       - name: Metric history tests
         run: node apps/api/scripts/unit-metric-history.mjs
 
+      # Data retention (0.34): defaults, floors and ceilings of every
+      # RETENTION_* variable, the cutoffs, the per-pass cap and batch loop,
+      # report coverage, and the table inventory (the audit chain is evidence).
+      - name: Data retention tests
+        run: node apps/api/scripts/unit-retention.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.

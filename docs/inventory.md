@@ -421,6 +421,9 @@ software that were added, removed or changed are recorded as a change history on
 older agent does not report (software, before 0.29) is not compared, so upgrading an agent does not log every
 program as newly installed.
 
+From 0.34 changes are kept for `RETENTION_CHANGE_DAYS` (default 400 days) and then deleted; see
+[data-retention.md](data-retention.md).
+
 Monitors — offline, disk, CPU, memory, services, event-log matches, pending restart — and alerts are described in
 [monitoring.md](monitoring.md).
 

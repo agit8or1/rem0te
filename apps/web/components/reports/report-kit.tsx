@@ -254,3 +254,24 @@ export function ago(iso: string | null | undefined): string {
 export function Generated({ at }: { at: string | undefined }) {
   return at ? <span>Computed {new Date(at).toLocaleString()} from stored data</span> : null;
 }
+
+/**
+ * What data retention (0.34) leaves an alert report able to see. Resolved
+ * alerts are deleted RETENTION_ALERT_DAYS after they were resolved, so every
+ * alert first raised inside that many days is still stored, and a longer
+ * period is incomplete. Said on the page, never left for the reader to guess.
+ */
+export interface RetentionCoverage { alertDays: number; periodDays: number; complete: boolean; coversDays: number }
+export function RetentionNote({ r }: { r?: RetentionCoverage }) {
+  if (!r) return null;
+  return (
+    <div className={`flex gap-2 rounded-md border p-3 text-xs ${r.complete ? 'bg-muted/40 text-muted-foreground' : 'border-yellow-500/50 bg-yellow-500/10'}`} data-testid="retention-note">
+      <Info className="h-4 w-4 shrink-0 mt-0.5" />
+      <p>
+        {r.complete
+          ? <>Resolved alerts are kept for {r.alertDays} days after they are resolved (data retention), so this report can cover the last {r.alertDays} days and this {r.periodDays}-day period is complete.</>
+          : <>Resolved alerts are deleted {r.alertDays} days after they are resolved (data retention). This report can cover only the last {r.coversDays} days: for the rest of this {r.periodDays}-day period, alerts that were resolved are no longer stored and are not counted.</>}
+      </p>
+    </div>
+  );
+}

@@ -99,10 +99,12 @@ services write (5,000 for diagnostics), inserted and rolled back in one transact
 | `SupportSessionEvent` | one session state change | 209 |
 | `DiagnosticRun` | one diagnostic with a 4 KB result (results are capped at 32 KB) | 4,491 |
 
-**Nothing in these tables is pruned.** Commands, inventory changes, sessions, alerts and diagnostics accumulate. The
-audit log *cannot* be pruned in place: rows are sealed into a hash chain and a trigger refuses changes (see
-[containment.md](containment.md)); deleting rows is detected as tampering. Plan disk for history, not for a
-steady state.
+**From 0.34 these tables are pruned** by the retention sweep ([data-retention.md](data-retention.md)): finished
+commands and diagnostics after 90 days, inventory changes and resolved alerts after 400, unused tokens after 30 days
+past expiry; session rows are kept and only their events' detail is trimmed after 400 days. Before 0.34 nothing here
+was pruned. The audit log *cannot* be pruned in place: rows are sealed into a hash chain and a trigger refuses
+changes (see [containment.md](containment.md)); deleting rows is detected as tampering. It is the one table that
+keeps growing.
 
 ### What grows, and how fast (estimated)
 
@@ -116,7 +118,11 @@ steady state.
 | **Total** | | **≈ 1.3 MB per computer per year** |
 
 So roughly: 50 computers ≈ 70 MB a year, 250 ≈ 330 MB, 1,000 ≈ 1.3 GB, 5,000 ≈ 6.5 GB, plus the fixed ≈ 6 KB per
-computer. Your rates will differ: a fleet with heavy software churn, frequent diagnostics or many sessions grows
+computer. That is the rate *without* retention (every release before 0.34). With the 0.34 defaults the
+history levels off (**estimated** from the rates above and the windows): commands at 90 days' worth (≈ 0.25 MB per
+computer), changes at 400 days' (≈ 0.16 MB), alerts and diagnostics at a few tens of KB, so a computer's pruned
+history settles at about **0.45 MB** after its first year. Remote sessions and their audit entries (≈ 0.11 MB a
+year) are kept, and grow, as does every other audit entry. See [data-retention.md](data-retention.md) for the windows and how to change them. Your rates will differ: a fleet with heavy software churn, frequent diagnostics or many sessions grows
 faster. Measure your own with:
 
 ```sql

@@ -50,7 +50,7 @@ export default function PatchCompliancePage() {
           {data && (
             <Definition>
               <p>{data.definition}</p>
-              <p>Devices with a scan older than {data.staleAfterHours} hours, or none, are coverage gaps: they are not counted as compliant or as non-compliant. <Generated at={data.generatedAt} />.</p>
+              <p>Devices with a scan older than {data.staleAfterHours} hours, or none, are coverage gaps: they are not counted as compliant or as non-compliant. Read from each device&apos;s latest scan, which data retention never removes, so there is no window. <Generated at={data.generatedAt} />.</p>
             </Definition>
           )}
           {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}

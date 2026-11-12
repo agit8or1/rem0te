@@ -264,6 +264,8 @@ enum ActivityAction {
   ALERT_SUPPRESSION_CHANGED
   DEVICE_CLASS_CHANGED
   SECURITY_ALERT_RAISED
+  // 0.34 data retention: one entry per sweep pass that deleted or trimmed anything
+  RETENTION_PRUNED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -1143,6 +1145,9 @@ model EndpointCommand {
 
   @@index([endpointId, status])
   @@index([status, expiresAt])
+  // 0.34 retention: the age cutoff, and "is there a newer one of this type".
+  @@index([createdAt])
+  @@index([endpointId, type, createdAt])
 }
 
 enum EndpointCommandType {
@@ -1208,6 +1213,7 @@ model DiagnosticRun {
   @@index([requestedById, requestedAt])
   @@index([status, expiresAt])
   @@index([endpointId, key, completedAt])
+  @@index([requestedAt]) // 0.34 retention cutoff
 }
 
 // ─── Technician Devices & Launcher ───────────────────────────────────────────
@@ -1257,6 +1263,7 @@ model LauncherToken {
 
   @@index([token])
   @@index([userId])
+  @@index([expiresAt]) // 0.34 retention: unused tokens past expiry
 }
 
 // ─── Support Sessions ─────────────────────────────────────────────────────────
@@ -1353,6 +1360,8 @@ model SupportSessionEvent {
 
   @@unique([supportSessionId, dedupeKey])
   @@index([supportSessionId])
+  // 0.34 retention also has a partial index on ("timestamp") WHERE metadata
+  // IS NOT NULL (migration 0046), which Prisma's schema cannot express.
 }
 
 // ─── Notes ────────────────────────────────────────────────────────────────────
@@ -2234,6 +2243,7 @@ model PrivilegedActivity {
   at         DateTime @default(now())
 
   @@index([identity, at])
+  @@index([at]) // 0.34 retention cutoff
 }
 
 /// New privileged work for this identity is refused until someone else clears it.
@@ -2696,6 +2706,7 @@ model MonitorAlert {
   @@index([siteId, kind, state])
   @@index([state, nextCheckAt])
   @@index([dedupKey])
+  @@index([state, resolvedAt]) // 0.34 retention: resolved alerts past the window
 }
 
 /// What happened to an alert: raised, repeated (counted, not logged),
@@ -2785,6 +2796,7 @@ model EndpointChange {
 
   @@index([endpointId, detectedAt])
   @@index([customerId, detectedAt])
+  @@index([detectedAt]) // 0.34 retention cutoff
 }
 
 /// Metric history (0.33): one row per computer per authenticated heartbeat,

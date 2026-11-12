@@ -330,6 +330,11 @@ openssl rand -hex 32   # for JWT_SECRET, LAUNCHER_TOKEN_SECRET
 openssl rand -hex 32   # for ENCRYPTION_KEY (must be exactly 64 hex chars)
 ```
 
+**Data retention (0.34).** Finished commands and diagnostics are deleted after 90 days, inventory changes and
+resolved alerts after 400, by a sweep inside the API (`RETENTION_SWEEP=off` stops it). The audit log is never
+pruned. Every window is a `RETENTION_*_DAYS` variable with a floor and a ceiling; see
+[data-retention.md](data-retention.md), and Settings → System status for what each table holds now.
+
 ---
 
 ## Public address

@@ -75,6 +75,7 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   review of trust changes, and what this build can and cannot enforce.
 - **[setup.md](setup.md)** — installation, configuration, ports, operations.
 - **[server-sizing.md](server-sizing.md)** — how big a server for 50 to 5,000 computers, from measured heartbeat cost and row sizes.
+- **[data-retention.md](data-retention.md)** — what ages out of the database and when, what never does (the audit log), and the `RETENTION_*` settings.
 - **[updates.md](updates.md)** — the three things that can be out of date
   (Rem0te, the RustDesk clients, hbbs/hbbr) and how each is updated.
 - **[architecture.md](architecture.md)** — what runs where, the data model, and
