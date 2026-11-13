@@ -27,6 +27,7 @@ import {
 import { usePermissions, CAP } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate, formatDuration } from '@/lib/utils';
+import { deviceStatus, STATUS_DOT, ago } from '@/components/endpoints/workspace/device-model';
 import { PlayCircle, X, Monitor, Wifi, RefreshCw, Zap, CheckCircle, Info } from 'lucide-react';
 
 type Row = Record<string, unknown>;
@@ -138,6 +139,10 @@ export default function SessionsPage() {
   const activeSessions = sessions.filter((s) => !isTerminalSessionStatus(s.status as string));
   const connected: Row[] = Array.isArray(connectedData) ? connectedData : [];
   const connectedCount = activeSessions.length + connected.length;
+  // 0.37.2: the list is every computer with isOnline set, which includes one
+  // RustDesk can reach while its agent is silent. Each card says which.
+  const reportingCount = connected.filter((ep) => deviceStatus(ep).tone === 'online').length;
+  const silentCount = connected.length - reportingCount;
 
   return (
     <div className="p-6 space-y-6">
@@ -267,8 +272,15 @@ export default function SessionsPage() {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
-                  Online Enrolled Clients ({connected.length})
+                  Reachable Enrolled Clients ({connected.length})
+                  <span className="normal-case font-normal tracking-normal flex items-center gap-1.5" data-testid="reachable-counts">
+                    <span className="w-2 h-2 rounded-full bg-green-500 inline-block" /> {reportingCount} online
+                    {silentCount > 0 && (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-amber-500 inline-block ml-2" /> {silentCount} agent silent
+                      </>
+                    )}
+                  </span>
                 </h2>
                 <Button
                   variant="ghost"
@@ -287,7 +299,7 @@ export default function SessionsPage() {
               ) : connected.length === 0 ? (
                 <div className="rounded-md border border-dashed py-8 text-center text-sm text-muted-foreground space-y-1">
                   <Monitor className="h-6 w-6 mx-auto opacity-30" />
-                  <p>No enrolled clients online.</p>
+                  <p>No enrolled clients reachable.</p>
                   <p className="text-xs">Clients appear here when the agent sends a heartbeat.</p>
                 </div>
               ) : (
@@ -296,9 +308,13 @@ export default function SessionsPage() {
                     const epId = ep.id as string;
                     const node = ep.rustdeskNode as { rustdeskId?: string; lastSeenAt?: string } | null;
                     const customer = ep.customer as { name: string } | null;
-                    const lastSeen = node?.lastSeenAt ?? ep.lastSeenAt as string | null;
+                    const lastSeen = ep.lastSeenAt as string | null;
+                    const st = deviceStatus(ep);
+                    const border = st.tone === 'online'
+                      ? 'border-green-200 dark:border-green-900'
+                      : st.tone === 'degraded' ? 'border-amber-200 dark:border-amber-900' : '';
                     return (
-                      <Card key={epId} className="flex flex-col border-green-200 dark:border-green-900">
+                      <Card key={epId} className={`flex flex-col ${border}`} data-status={st.tone}>
                         <CardHeader className="pb-2 pt-3 px-4">
                           <CardTitle className="text-sm flex items-center justify-between gap-2">
                             <span className="truncate">
@@ -306,7 +322,7 @@ export default function SessionsPage() {
                                 {ep.name as string}
                               </Link>
                             </span>
-                            <span className="flex-none w-2 h-2 rounded-full bg-green-500" title="Online" />
+                            <span className={`flex-none w-2 h-2 rounded-full ${STATUS_DOT[st.tone]}`} title={st.label} />
                           </CardTitle>
                         </CardHeader>
                         <CardContent className="px-4 pb-3 pt-0 flex flex-col gap-2">
@@ -316,9 +332,12 @@ export default function SessionsPage() {
                           {customer && (
                             <p className="text-xs text-muted-foreground truncate">{customer.name}</p>
                           )}
-                          {lastSeen && (
-                            <p className="text-[10px] text-muted-foreground">Last seen {formatDate(lastSeen)}</p>
+                          {st.tone !== 'online' && (
+                            <p className="text-xs text-amber-700 dark:text-amber-400" title={st.detail ?? undefined}>{st.label}</p>
                           )}
+                          <p className="text-[10px] text-muted-foreground" title={lastSeen ? formatDate(lastSeen) : undefined}>
+                            Agent last checked in {ago(lastSeen)}
+                          </p>
                           {canConnect && node?.rustdeskId && (
                             <Button
                               size="sm"

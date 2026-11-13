@@ -5,6 +5,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.37.2] — 2026-11-13 · *Keystone*
+
+### Fixed
+
+- **Remote Support drew every listed computer as green "Online".** The
+  *Online Enrolled Clients* section on `/sessions` lists `GET
+  /endpoints/connected`, which is every active computer with `isOnline` set,
+  and `isOnline` is also true when the RustDesk server can reach a machine
+  whose agent has stopped checking in (0.35's "reachable is not reporting").
+  The page hard-coded a green dot, a green border and the title "Online" on
+  every card, so a computer whose agent had been silent for two weeks looked
+  exactly like a healthy one. Its "Last seen" line made it worse, because it
+  preferred the RustDesk node's timestamp to the agent's check-in. The cards now
+  take their status from `deviceStatus()`, the same function the device list,
+  the device page and the map use: green for *Online*, amber with
+  "Reachable (RustDesk) · agent silent …" for a silent agent. The line under
+  each card is now "Agent last checked in …", from the agent's own heartbeat.
+  The heading is *Reachable Enrolled Clients*, with separate online and
+  agent-silent counts. Connect is unchanged: a reachable computer can still be
+  remote-controlled, which is why these computers stay on the list.
+
+### Verification
+
+- `e2e-ui.mjs` checks that Remote Support draws the twelve-day-silent fixture
+  with an amber dot (`data-status="degraded"`), "agent silent 12 d" and "Agent
+  last checked in 12d ago", and counts it apart from online computers.
+
 ## [0.37.1] — 2026-11-13 · *Keystone*
 
 This release fixes three bugs that only appeared the first time `rem0te-signed-setup.sh` ran for real as root, on the
