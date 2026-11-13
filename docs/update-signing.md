@@ -409,6 +409,71 @@ only). On a signed agent the same button is **Check for update now**: the agent 
 installs only what the signed repository lists. Linux and macOS agents act on nothing the portal sends, so the card
 gives the command to re-run on the computer instead.
 
+## Moving computers automatically (0.37)
+
+From 0.37 the portal moves standard Windows agents to the signed agent by itself, once a signed agent is published.
+**Devices → Full agent** (`/endpoints/full-agent`) shows the whole process as four steps, each with its live state and,
+when it is not done, the command that does it:
+
+1. **Signing set up on this server** — done when the portal has a signed repository (`UPDATE_REPO_DIR`). Otherwise:
+   `sudo ./deploy/release/rem0te-signed-setup.sh`, once, from the source checkout.
+2. **A signed agent is published** — the published agent's version and commit (from the signed target) against this
+   portal's version. When it is behind: `sudo rem0te-signed-publish`.
+3. **Timestamp kept fresh** — when the timestamp the portal serves expires, with a warning under 48 hours. The timer
+   `rem0te-timestamp-refresh.timer` re-signs it daily, but the portal can't see that timer: the step reads only the
+   expiry of what it serves, and says so. `sudo rem0te-signed-status` shows the timer itself.
+4. **Computers moved** — how many of the computers you can see are standard, moving, signed, held (and why), or not
+   eligible (Linux, macOS), the automatic migration's state, and a list with a link to each.
+
+The page is under **Devices**, for anyone with **View computers**. Each computer's **Agent** card and **Settings →
+Security → Update signing** link to it. Its counts come only from computers you can see; the repository, the mode and
+the rollout's state are platform-wide. The canary is named only to people who can see it, and the fleet-wide progress
+only to Platform Admins.
+
+**How it moves them: canary first.** The automatic migration runs one rollout per published build:
+
+- **One canary.** It picks one eligible computer that is checking in now, the most recently heard from, and makes an
+  ordinary per-computer migration request for it. This is the same row, nonce, `windows.ps1?updateNonce=` script and
+  heartbeat hand-out as **Upgrade to signed agent** (see *Moving existing agents* above), made by the system with no
+  requester.
+- **Confirmed only on the published build.** The canary must report the signed channel *and* the published build's
+  digest within 2 hours of being asked. A failed update result (`installer exit` other than 0, `installer failed`,
+  `metadata-refused`), the request cancelled by a person, or no confirmation within 2 hours **halts** the rollout.
+  The reason is kept and shown, and the canary's automatic request is stopped so a failing migration isn't re-run
+  every 30 minutes.
+- **A soak.** After confirmation the canary must keep reporting that build for the soak (default 60 minutes, 15–1440)
+  with no failed update result, and check in once more after the soak ends. Anything else halts the rollout. Nothing
+  else moves during the soak.
+- **Then the rest, paced.** At most the automatic-update pace (Settings → Client updates, *per hour*, default 120)
+  automatic requests start in any hour, counting the canary, and at most 50 in one pass. A computer is skipped while
+  an `updates` containment pause applies, while a staged rollout owns it, while its update policy opts it out of
+  automatic agent updates (agent mode *Off* on the business, site or device-group policy; in *Window* mode, outside
+  the window), while it is not checking in, if a person cancelled a move for it, or for any reason **Upgrade to signed
+  agent** would refuse it. That last check is the same precondition function, run again when the request is written.
+- **A new build** starts a new rollout with a new canary for the computers still on the standard agent. Computers
+  already on the signed agent are never migrated again: they update themselves (0.36).
+- **Halted** stays halted. A Platform Admin can **Resume**, which asks the same canary again with its clocks from now,
+  or **Restart with another canary**. The old canary isn't picked again for that build. Neither skips the canary.
+
+**Refused exactly as per-computer migration is.** In **Signed only**, with or without portal migration, the automatic
+migration does nothing. Without portal migration, the portal hands standard agents nothing to run, which is what a
+per-computer migration is refused for. With it, every standard agent is already handed the migration at each check-in.
+Containment holds it at the request and again at the heartbeat. Nothing new runs on a computer, and nothing writes the
+update-trust mode.
+
+**Settings.** On the Full agent page, a Platform Admin can set the mode (`canary_then_all`, the default, or `off`) and the soak.
+Turning it on, or shortening the soak, needs a fresh sign-in. Turning it off, or lengthening the soak, doesn't: stopping
+must always be easy. Every change is audited with before and after (`AGENT_AUTO_MIGRATION_SETTINGS_CHANGED`). So are
+the rollout's steps, as the system: `AGENT_AUTO_MIGRATION_CANARY_CHOSEN`, `…_CANARY_CONFIRMED`, `…_ROLLING`,
+`…_HALTED`, and `…_RESUMED` / `…_RESTARTED` with the admin. The per-computer requests aren't audit entries. They are
+`AgentMigration` rows marked automatic, shown on the Agent card, on **Agent migrations** and on the Full agent page,
+like 0.36's automatic-update attempts. `AUTO_MIGRATION_SWEEP=off` stops the sweep in one API process, and every test
+stack sets it. `AUTO_MIGRATION_SWEEP_SECONDS` (default 60) sets how often it runs.
+
+**What has not been proven.** The signed agent and the tray have not run on real Windows. The first computer the
+automatic migration moves is the first time, which is why the rest wait for it. Watch the canary's **Agent** card. If
+the rollout halts, run `rem0te-agent.exe status` on the canary before resuming.
+
 ## Automatic update checks (0.36)
 
 Until 0.36 a signed agent ran `rem0te-agent.exe update` only when a heartbeat

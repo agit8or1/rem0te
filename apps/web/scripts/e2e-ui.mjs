@@ -27,7 +27,8 @@
  * signer; adding a software catalog entry through step-up and the software
  * compliance report; Email settings saved through step-up and a test email to
  * a loopback SMTP sink (lib/smtp-sink.mjs, UI_SMTP_PORT 3503); creating a
- * scheduled report; the Agent card and Agent migrations; the History tab's AI
+ * scheduled report; the Agent card and Agent migrations (and, 0.37, the
+ * Full agent page it links to); the History tab's AI
  * summary against a reference ClientSt0r peer that does not advertise
  * device_timeline_v1 (UI_PEER_PORT 3504); and the Data retention card.
  *
@@ -186,7 +187,7 @@ function startApi() {
     HBBS_PRESENCE_HOST: '127.0.0.2', I_KNOW_THIS_IS_NOT_PRODUCTION: '1',
     // Nothing in the background acts on this database while the browser looks at it.
     MONITOR_SWEEP: 'off', CLIENT_UPDATE_SWEEP: 'off', PATCH_POLICY_SWEEP: 'off', METRIC_SWEEP: 'off', AUDIT_SEALER: 'off',
-    RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off', TRAY_SWEEP: 'off',
+    RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off', TRAY_SWEEP: 'off', AUTO_MIGRATION_SWEEP: 'off',
     // 0.35: the agent-silent fixture is reachable (isOnline) with an old heartbeat; with no hbbs here the stale sweep would take it offline within a minute.
     STALE_SWEEP: 'off',
     // 0.35 automatic snapshots: the fixtures' snapshots are the only ones, and
@@ -1264,6 +1265,7 @@ async function combo(browser, f, vp, theme) {
     await scheduleLinks(page, f, label);
     await systemStatus(page, label, vp);
     await coverage035(page, f, vp, label);
+    await fullAgentPage(page, f, vp, theme, label);
     if (theme === 'light') await mainPagesSweep(page, f, vp, label);
   } finally { await ctx.close(); }
   await apiKeys(browser, f, vp, theme, label);
@@ -1626,6 +1628,43 @@ async function agentCardAndMigrations(page, f, vp, label) {
   if (vp === 'phone') await noSideScroll(page, `${label} Agent migrations`);
   await shot(page, `${label}-agent-migrations`);
   await cleanCheck(page, `${label} Agent card and migrations`);
+}
+
+/**
+ * Devices → Full agent (0.37), as the Platform Admin, at both widths and in
+ * both themes: reached from the Agent card's link; four steps with their
+ * live state — this suite's API has no signed repository, so step 1 is not
+ * done and shows the setup command verbatim; step 3 says the portal cannot
+ * see the timer; the automatic migration says this API's sweep is off
+ * (AUTO_MIGRATION_SWEEP=off) and offers its controls; the honest note; the
+ * Devices tab is current; and no sideways scroll at 375 px.
+ */
+async function fullAgentPage(page, f, vp, theme, label) {
+  await go(page, `/endpoints/${f.main.id}`);
+  const card = page.locator('[data-testid="agent-card"]');
+  await card.waitFor({ timeout: 15_000 });
+  await card.getByTestId('agent-card-full-agent').click();
+  await page.waitForURL((u) => u.pathname === '/endpoints/full-agent', { timeout: 15_000 });
+  await hydrated(page); await settled(page);
+  await page.locator('[data-testid="full-agent-steps"]').waitFor({ timeout: 15_000 }).catch(() => {});
+  const h1 = await page.locator('main h1').first().innerText().catch(() => '');
+  const states = await page.locator('[data-testid^="full-agent-step-"]').evaluateAll((els) => els.map((e) => e.getAttribute('data-state')));
+  check(h1 === 'Full agent' && states.length === 4 && states[0] === 'todo', `${label}: Full agent opens from the Agent card with four steps; step 1 not done here`, JSON.stringify({ h1, states }));
+  const s1 = await page.getByTestId('full-agent-step-1').innerText().catch(() => '');
+  check(s1.includes('sudo ./deploy/release/rem0te-signed-setup.sh') && /The easy way/.test(s1), `${label}: step 1 shows the setup command verbatim and links "The easy way"`, s1.slice(0, 300));
+  const s3 = await page.getByTestId('full-agent-step-3').innerText().catch(() => '');
+  check(s3.includes('rem0te-timestamp-refresh.timer') && s3.includes('sudo rem0te-signed-status') && /cannot see that timer/.test(s3), `${label}: step 3 names the timer and the status command and says the portal cannot see the timer`, s3.slice(0, 300));
+  const auto = page.getByTestId('full-agent-auto');
+  const at = await auto.innerText().catch(() => '');
+  check(await auto.getAttribute('data-gate') === 'process_off' && /AUTO_MIGRATION_SWEEP=off/.test(at) && await page.getByTestId('full-agent-turn-off').isVisible(),
+    `${label}: the automatic migration says this API's sweep is off, and the Platform Admin can turn it off`, at.slice(0, 300));
+  check(/have not yet run on real Windows/.test(await page.getByTestId('full-agent-honest').innerText().catch(() => '')), `${label}: the honest note: nothing has run on real Windows yet`);
+  const current = await page.locator('[data-section-tabs="devices"] a[aria-current="page"]').innerText().catch(() => null);
+  check(current === 'Full agent', `${label}: Full agent is the current Devices tab`, String(current));
+  await themeCheck(page, theme, `${label} Full agent`);
+  if (vp === 'phone') await noSideScroll(page, `${label} Full agent`);
+  await shot(page, `${label}-full-agent`);
+  await cleanCheck(page, `${label} Full agent`);
 }
 
 /** History tab (0.34): the AI summary says ClientSt0r does not offer it yet, and Generate stays off. */

@@ -131,6 +131,13 @@ export interface MigrationBlock {
 }
 
 export const ROLES_AND_KEYS = { href: '/docs/update-signing#roles-and-keys', label: 'Update signing → Roles and keys' };
+/** 0.37: the page that shows the whole process, step by step, with the command for each. */
+export const FULL_AGENT = { href: '/endpoints/full-agent', label: 'Devices → Full agent' };
+/** The command strings the Full agent page shows (deploy/release, built by the release half of 0.37). */
+export const SETUP_COMMAND = 'sudo ./deploy/release/rem0te-signed-setup.sh';
+export const PUBLISH_COMMAND = 'sudo rem0te-signed-publish';
+export const STATUS_COMMAND = 'sudo rem0te-signed-status';
+export const TIMESTAMP_TIMER = 'rem0te-timestamp-refresh.timer';
 const MOVING = { href: '/docs/update-signing#moving-existing-agents', label: 'Update signing → Moving existing agents' };
 
 export const isWindows = (p: string | null | undefined) => !!p && /^windows/i.test(p.trim());
@@ -156,15 +163,15 @@ export function migrationBlock(f: MigrationFacts): MigrationBlock | null {
   if (!f.repoConfigured) {
     return {
       code: 'NO_SIGNED_RELEASE',
-      reason: 'No signed release is published: this portal has no signed update repository (UPDATE_REPO_DIR is not set). Publishing one needs the offline signing keys only you hold.',
-      fix: 'Create the repository and publish a release on your release machine, then set UPDATE_REPO_DIR.', link: ROLES_AND_KEYS,
+      reason: 'No signed release is published: this portal has no signed update repository (UPDATE_REPO_DIR is not set).',
+      fix: `Set signing up once on this server, from the source checkout: ${SETUP_COMMAND} (it creates the keys under a separate user, the repository, and the first release). The Full agent page shows each step.`, link: FULL_AGENT,
     };
   }
   if (!f.signedAgentPublished) {
     return {
       code: 'NO_SIGNED_RELEASE',
-      reason: 'No signed release is published: the signed repository has no windows/rem0te-agent.exe. Publishing one needs the offline signing keys only you hold.',
-      fix: 'Sign and publish a release with the agent on your release machine.', link: ROLES_AND_KEYS,
+      reason: 'No signed release is published: the signed repository has no windows/rem0te-agent.exe.',
+      fix: `Publish one on this server: ${PUBLISH_COMMAND}. The Full agent page shows each step.`, link: FULL_AGENT,
     };
   }
   if (!f.portalHost) {
@@ -189,6 +196,8 @@ export function migrationBlock(f: MigrationFacts): MigrationBlock | null {
 export interface MigrationRow {
   requestedAt: Date; dispatchedAt: Date | null; lastDispatchedAt: Date | null; fetchedAt: Date | null;
   holdReason: string | null; holdAt: Date | null; completedAt: Date | null; cancelledAt: Date | null;
+  /** 0.37: made by the automatic migration, and who cancelled it (null: the automatic migration itself). */
+  automatic?: boolean; cancelledById?: string | null;
 }
 
 export type MigrationState = 'pending' | 'held' | 'dispatched' | 'downloaded' | 'not_confirmed' | 'completed' | 'cancelled';
@@ -205,7 +214,9 @@ export const HOLD_TEXT: Record<string, string> = {
 
 export function migrationState(r: MigrationRow, now = Date.now()): { state: MigrationState; text: string } {
   if (r.completedAt) return { state: 'completed', text: 'Completed: the computer reports the signed agent.' };
-  if (r.cancelledAt) return { state: 'cancelled', text: 'Cancelled.' };
+  if (r.cancelledAt) {
+    return { state: 'cancelled', text: r.automatic && !r.cancelledById ? 'Stopped by the automatic migration: its rollout halted.' : 'Cancelled.' };
+  }
   const last = r.fetchedAt ?? r.lastDispatchedAt ?? r.dispatchedAt;
   if (last && now - last.getTime() > NOT_CONFIRMED_AFTER_MS) {
     return { state: 'not_confirmed', text: 'Not confirmed: handed out over 2 hours ago and the computer still reports the standard agent. The migration failed or did not run; the standard agent does not report the script\'s exit code, so check its last update result or run rem0te-agent.exe status on the computer.' };

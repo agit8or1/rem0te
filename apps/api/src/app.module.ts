@@ -55,6 +55,7 @@ import { SoftwareModule } from './software/software.module';
 import { DeviceViewsModule } from './device-views/device-views.module';
 import { AgentUpgradeModule } from './agent-upgrade/agent-upgrade.module';
 import { AgentAutoUpdateModule } from './agent-auto-update/agent-auto-update.module';
+import { AgentAutoMigrationModule } from './agent-auto-migration/agent-auto-migration.module';
 import { SupportRequestsModule } from './support-requests/support-requests.module';
 import { OffboardingModule } from './offboarding/offboarding.module';
 import { SsoModule } from './sso/sso.module';
@@ -138,6 +139,7 @@ import { TrayModule } from './tray/tray.module';
     SoftwareModule,
     AgentUpgradeModule,
     AgentAutoUpdateModule,
+    AgentAutoMigrationModule,
     DeviceViewsModule,
     SupportRequestsModule,
     OffboardingModule,

@@ -657,7 +657,9 @@ unit: `unit-tray.mjs` and the Go `internal/tray` tests.
 keys live on the portal host under the `rem0te-release` system user, in
 `/var/lib/rem0te-release` (0700), and the portal (`reboot`) must never be able
 to read them. So: nothing in `apps/api/src` names that directory, a key file or
-the `rem0te-signed-*` commands, or spawns `rem0te-release`;
+the `rem0te-signed-*` commands, or spawns `rem0te-release` — the one exception
+is the three exported `*_COMMAND` strings in `agent-migration.ts` that the Full
+agent page shows (§57), matched exactly;
 `UPDATE_REPO_DIR` is read only by `UpdateTrustService`, which writes nothing.
 Keys are generated only into `$KEY_DIR`, by the release user under umask 077.
 Every other `.pem` path is under `$KEY_DIR`, except export-root's off-host copy,
@@ -674,6 +676,32 @@ access to `/etc/reboot-remote`. Nothing under `.github` names these scripts.
 Behavioural proof: `apps/api/scripts/e2e-signed-release.mjs` (ports 3901–3902,
 needs Go; runs setup with `--prefix --no-user --no-systemd` in a temp dir);
 unit: `unit-signed-release.mjs`.
+
+§57 (0.37) is automatic migration to the signed agent. Its only effect on a
+computer is an `AgentMigration` row written by
+`AgentMigrationService.requestAutomatic`. That runs `block()` (the 0.34
+`migrationBlock`: Signed only, an `updates` pause, a staged rollout…) before
+it writes, records no requester and no audit entry, and the heartbeat hands
+the row out and holds it exactly as it does a person's. The service writes no
+migration, flag or command itself, never writes the update-trust mode, and
+writes `PlatformSettings` once, with only its own two columns. In Signed only,
+with or without portal migration, it does nothing (`gate()`, then `tick()`
+returns). The rest move only after the canary was confirmed on the published
+build's digest and soaked: `nextStep` has one `start_rolling`, after the soak
+and a later check-in. There is one conditional write to `rolling`, from
+`soaking`, and 0064's CHECK refuses `rolling` without `canaryConfirmedAt`.
+Rolling is paced by `budget(perHour, usedLastHour)` over automatic requests,
+at most 50 a pass, and takes only computers checking in. A halt stops only
+automatic requests. Settings, resume and restart are Platform Admin.
+`isWidening` (on, or a shorter soak) and resume/restart need `assertFresh`;
+off never does. The Full agent page's `GET /agent-signing/overview` is
+`computers:view`, reads computers only through `endpointVisibilityWhere`,
+names the canary through the same where, and gives fleet progress only to
+Platform Admins. Its commands are the four strings in `agent-migration.ts`, and
+neither the page nor the API claims the timestamp timer runs.
+`AUTO_MIGRATION_SWEEP=off` is exact and set by `run-e2e.sh` and `e2e-ui.mjs`.
+Behavioural proof: `e2e-auto-migration.mjs` (ports 3911–3912, `RELEASE_BIN`);
+unit: `unit-auto-migration.mjs`.
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 

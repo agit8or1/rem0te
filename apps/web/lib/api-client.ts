@@ -842,6 +842,18 @@ export const agentAutoUpdateApi = {
   put: (body: { enabled?: boolean; perHour?: number; maxAttempts?: number }) => api.put('/admin/agent-auto-update', body),
 };
 
+// Devices → Full agent (0.37): the move to the signed agent, step by step,
+// read live (computers:view; counts only of visible computers), and the
+// automatic migration's controls (Platform Admin). Turning it on, shortening
+// the soak, resuming and restarting need fresh authentication (the
+// interceptor prompts and retries); turning it off does not.
+export const agentSigningApi = {
+  overview: (businessId?: string) => api.get('/agent-signing/overview', { params: businessId ? { businessId } : undefined }),
+  putAuto: (body: { mode?: 'off' | 'canary_then_all'; soakMinutes?: number }) => api.put('/admin/agent-auto-migration', body),
+  resume: () => api.post('/admin/agent-auto-migration/resume'),
+  restart: () => api.post('/admin/agent-auto-migration/restart'),
+};
+
 // Outbound email (0.34). Saving the relay, and adding, re-sending or removing
 // a recipient, need fresh authentication (the interceptor prompts and retries).
 export type TlsMode = 'implicit' | 'starttls' | 'none';
