@@ -68,7 +68,7 @@ export const dashboardApi = {
 // on the approval signer's own origin, with a passkey on its roster — or, in
 // direct mode (0.40, the signer operator's setting), not at all.
 export const actionsApi = {
-  catalog: (endpointId?: string) => api.get('/actions/catalog', { params: endpointId ? { endpointId } : {} }),
+  catalog: (endpointId?: string, businessId?: string) => api.get('/actions/catalog', { params: endpointId ? { endpointId } : businessId ? { businessId } : {} }),
   list: (endpointId: string) => api.get(`/endpoints/${endpointId}/actions`),
   request: (endpointId: string, body: { actionId: string; version: number; params: Record<string, unknown>; reason: string; windowHours?: number }) =>
     api.post(`/endpoints/${endpointId}/actions`, body),

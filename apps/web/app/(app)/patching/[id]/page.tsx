@@ -15,6 +15,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { DIRECT_TOAST } from '@/lib/direct-mode';
+import { useApprovalMode } from '@/hooks/use-approval-mode';
 import { ArrowLeft, ExternalLink, Loader2, ShieldCheck } from 'lucide-react';
 import { rebootSummary } from '@/components/patching/patch-reboot-choice';
 import { DEPLOYMENT_STATUS } from '@/lib/patching';
@@ -79,6 +80,7 @@ export default function DeploymentPage() {
     refetchInterval: (q) => ((q.state.data as Deployment | undefined)?.status === 'ACTIVE' ? 20_000 : false),
   });
   const refresh = () => qc.invalidateQueries({ queryKey: ['patch-deployment', id] });
+  const direct = useApprovalMode({ businessId: d?.businessId }) === 'direct';
   const [reason, setReason] = useState('');
   const [exclude, setExclude] = useState<Record<string, string>>({});
   const [startsIn, setStartsIn] = useState(0);
@@ -133,11 +135,11 @@ export default function DeploymentPage() {
               This deployment belongs to <Link className="underline" href={`/patching/policies/${d.policyId}`}>a patch policy</Link>: its rings are requested by the policy inside its maintenance window and signed by the approval signer only if they fall inside it. Pause or cancel it here, or revoke the policy.
             </p>
           )}
-          {d.origin === 'MANUAL' && <p className="text-xs text-muted-foreground">Requested from one computer&apos;s Patches tab: a single canary ring, approved like any other.</p>}
+          {d.origin === 'MANUAL' && <p className="text-xs text-muted-foreground">Requested from one computer&apos;s Patches tab: a single canary ring{direct ? ', signed at once in direct mode' : ', approved like any other'}.</p>}
           {d.next.canRequest && nextRing && d.origin !== 'POLICY' && (
             <>
               <p className="text-xs text-muted-foreground">
-                Requests {nextRing.canary ? 'the canary' : `ring ${nextRing.ring}`} ({nextRing.computers.length} computer{nextRing.computers.length === 1 ? '' : 's'}) as one signed plan. Two people on the approval roster must approve it with a passkey; you cannot approve your own request. (In direct mode, set on the approval signer, it is signed as soon as you request it, after you confirm it is you.) Restart rule: {rebootSummary(d.reboot).toLowerCase()}.
+                Requests {nextRing.canary ? 'the canary' : `ring ${nextRing.ring}`} ({nextRing.computers.length} computer{nextRing.computers.length === 1 ? '' : 's'}) as one signed plan. {direct ? 'Direct mode is on: it is signed as soon as you confirm it is you.' : 'Two people on the approval roster must approve it with a passkey; you cannot approve your own request.'} Restart rule: {rebootSummary(d.reboot).toLowerCase()}.
               </p>
               {!nextRing.canary && (
                 <div className="space-y-1">
@@ -152,7 +154,7 @@ export default function DeploymentPage() {
               )}
               <div className="grid gap-3 sm:grid-cols-[1fr_200px]">
                 <div className="space-y-1">
-                  <Label htmlFor="ring-reason" className="text-xs">Why (shown to the approvers)</Label>
+                  <Label htmlFor="ring-reason" className="text-xs">{direct ? 'Why (recorded in the audit log)' : 'Why (shown to the approvers)'}</Label>
                   <Textarea id="ring-reason" rows={2} maxLength={400} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Patch Tuesday; canary confirmed" />
                 </div>
                 <div className="space-y-1">

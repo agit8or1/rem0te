@@ -82,7 +82,7 @@ export function PoliciesCard({ businessId }: { businessId: string }) {
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
           <p className="text-xs text-muted-foreground">
-            Approved once, by two people on the approval signer. Inside its maintenance window the signer then signs the canary, and each later ring after the one before it is confirmed — never anything outside the policy. Fixture-tested only: proven against a simulated Windows Update and synthetic passkeys.
+            Approved once on the approval signer: by two people on its roster, or at once in direct mode. Inside its maintenance window the signer then signs the canary, and each later ring after the one before it is confirmed — never anything outside the policy. Fixture-tested only: proven against a simulated Windows Update and synthetic passkeys.
           </p>
           {isLoading ? <p className="text-muted-foreground">Loading…</p>
             : rows.length === 0 ? <p className="text-muted-foreground">No policies.</p>

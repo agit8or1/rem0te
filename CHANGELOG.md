@@ -5,6 +5,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.40.1] — 2026-11-13 · *Straightedge*
+
+**In direct mode, the Patches tab is an install button, not a request for approval.**
+
+#### Fixed
+- **The computer's Install updates card still described strict mode under direct mode.** With direct mode on, the card said
+  "Two people on the approval roster approve it on the approval signer — not you, and not from here", asked for a reason
+  "shown to the approvers", offered **Request approval**, and toasted "It awaits two approvals". None of that was true: in
+  direct mode the signer signs the plan as soon as the request arrives, after the fresh sign-in. The card now reads the
+  business's mode (the same read-only `GET /actions/catalog?endpointId=` the Actions tab uses) and says so. The button is
+  **Install N selected**, with a **Select all** toggle, and the note is optional and goes to the audit log. A blank note
+  is sent as "Installed from the computer's Patches tab", because the API still requires at least 3 characters. After an
+  install it says *Approved automatically (direct mode)* and links the deployment instead of an approval page. Strict mode
+  is worded exactly as before.
+- **The patch deployment page, the Patching page header and the patch policy card said "two people" unconditionally.**
+  The deployment page's ring request also had a parenthetical about direct mode. They now name the mode the business
+  is in, or both modes where no business is known.
+
+#### Changed
+- `GET /actions/catalog` also takes `businessId` (scope-checked with `assertBusinessInScope`) and answers that
+  business's approval mode, for pages that are about a deployment and not one computer. It is still a read of the
+  signer's policy, and no route was added. The web hook is `hooks/use-approval-mode.ts`.
+
+The mode is only used for wording. Whether a request is signed at once is still the signer's decision, and the response's
+`job.direct` is what the toast reports.
+
 ## [0.40.0] — 2026-11-13 · *Straightedge*
 
 **Direct mode: approved actions for a single operator.**

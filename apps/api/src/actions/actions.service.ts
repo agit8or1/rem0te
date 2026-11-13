@@ -258,6 +258,14 @@ export class ActionsService {
     return p?.status === 200 ? (p.body.approval === DIRECT ? DIRECT : 'signed') : null;
   }
 
+  /** 0.40.1: the same read, for a business the caller can see (patching and software deployment pages). */
+  async approvalModeForBusiness(actor: ActorContext, businessId: string): Promise<'direct' | 'signed' | null> {
+    await this.acl.assertBusinessInScope(actor, businessId);
+    if (!this.signer.configured()) return null;
+    const p = await this.signer.policy(businessId).catch(() => null);
+    return p?.status === 200 ? (p.body.approval === DIRECT ? DIRECT : 'signed') : null;
+  }
+
   /** One computer, from its Actions tab (or ClientSt0r): the 0.26 path. */
   async request(actor: ActorContext, endpointId: string, raw: unknown, origin: PlanRequest['origin'] = { kind: 'technician', ticketRef: null, via: 'portal' }, integration?: { peer: string; key: string }, freshMethod?: string | null) {
     const parsed = RequestDto.safeParse(raw);

@@ -63,7 +63,7 @@ export default function PatchingPage() {
 
   return (
     <div className="p-4 md:p-6">
-      <PageHeader title="Patching" description="Windows updates, a canary first, then rings — each ring approved by two people on the approval roster.">
+      <PageHeader title="Patching" description="Windows updates, a canary first, then rings. Each ring is approved on the approval signer: by two people on its roster, or at once after you confirm it is you in direct mode.">
         {businessId && !creating && <Button size="sm" onClick={() => setCreating(true)}><Plus className="h-4 w-4 mr-1" />New deployment</Button>}
       </PageHeader>
 
