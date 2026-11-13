@@ -5,6 +5,79 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.37.3] — 2026-11-13 · *Keystone*
+
+### Fixed
+
+- **Every migration to the signed agent failed at step 1 and left the
+  computer silent.** On real Windows, DS-HOME1 (the 0.37.1 canary) and
+  DEWEY-WKS2022 (a manual *Upgrade to full agent*) both fetched their
+  migration, and the signed agent downloaded and verified `install.ps1`,
+  RustDesk and the tray. Then neither sent another heartbeat, while RustDesk
+  still reached them (*agent silent*). DEWEY's `install.log` ended:
+
+  ```
+  [1/6] Preparing installer...
+  Using the RustDesk build rem0te-agent verified against signed metadata: C:\ProgramData\Rem0te\setup\signed\rustdesk-1.5.3-x86_64.exe
+  ERROR: The verified RustDesk build is missing: Cannot find path '...' because it does not exist.
+  ```
+
+  The agent stages its verified files in `C:\ProgramData\Rem0te\setup\signed`.
+  The installer's start-up cleanup, which dates from 0.24 when nothing else
+  lived there, ran `Remove-Item -Recurse` on `heartbeat.ps1` and on the whole
+  of `setup`. It deleted the build it was about to install, and then failed
+  before it rewrote `heartbeat.ps1`. The `Rem0teHeartbeat` task went on
+  running a file that no longer existed, so the computer never reported again
+  and the server had nothing to show why. 0.37.0 never got this far, because
+  its script did not parse under PowerShell 5.1 (fixed in 0.37.1). The unit
+  tests passed a staging path but never ran the cleanup against one.
+
+  The cleanup now clears `setup`'s children except `signed`, and leaves
+  `heartbeat.ps1` alone: it is overwritten later in the run, and until then it
+  is what keeps the computer reporting. A link or foreign-owned item anywhere
+  in the state directory is still removed first by the `$planted` sweep, so
+  keeping `signed` keeps only what SYSTEM or Administrators wrote. This
+  applies to both installer variants.
+
+- **The signed agent could wait forever on a RustDesk process.**
+  `winPlatform.RunInstaller` tees the installer's output to the agent log
+  through `io.MultiWriter`, so `cmd.Run()` returns only once every holder of
+  the pipe has exited. `install.ps1` runs `rustdesk.exe` directly, and a
+  RustDesk process that stays up inherits the pipe. This was reproduced on
+  Linux with a backgrounded grandchild; it was not what stopped these two
+  machines. `agent.RunInstallerCmd` now sets `cmd.WaitDelay` (15 s) and keeps
+  the script's own exit code on `exec.ErrWaitDelay`. The script runner
+  (`action/scriptexec.go`) already had this guard.
+
+### Upgrade notes
+
+- Deploy, then publish so the fixed `install.ps1` and agent are signed:
+  `sudo rem0te-signed-publish`.
+- A computer that already failed has no heartbeat script, and the portal
+  cannot reach it. After publishing, run the migration once on it, in an
+  elevated PowerShell. The signed agent it downloaded is still there:
+  `& (Get-ChildItem C:\ProgramData\Rem0te-migrate-*\rem0te-agent.exe | Select -First 1).FullName migrate --portal <portal host>`.
+  It verifies and runs the newly published agent and installer, which keep the
+  computer's identity (`heartbeat.dat` survives) and install the signed
+  heartbeat. For the automatic migration's halted canary, **Resume** it on
+  Devices → Full agent once it reports the signed agent.
+  `docs/troubleshooting.md` has this.
+
+### Verification
+
+- `unit-signed-installer.mjs` (63 checks): both variants' cleanup removes
+  neither `heartbeat.ps1` nor `setup` as a whole. The cleanup block, executed
+  under pwsh against a state directory laid out as the agent leaves it, keeps
+  `setup/signed` with its build and script, removes the other items under
+  `setup`, and leaves `heartbeat.ps1`. Against 0.37.2's script, 5 of these fail.
+- `go test ./internal/agent -run RunInstaller`: a descendant holding the pipe
+  for 120 s no longer holds the agent; exit 7 is kept with and without one;
+  a missing binary is exit 1 with an error. `go vet` is clean for linux and
+  windows, and `go test ./...` passes.
+- `check-security-invariants.mjs` §57: two new checks (the cleanup, and the
+  bounded installer wait), each shown to fail with its guard removed.
+- Not yet proven on real Windows: that is the next migration after publishing.
+
 ## [0.37.2] — 2026-11-13 · *Keystone*
 
 ### Fixed

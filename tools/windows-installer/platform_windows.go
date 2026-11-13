@@ -113,7 +113,8 @@ func (w *winPlatform) RunInstaller(script, params string) (int, error) {
 	cmd := exec.Command(powershell(), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
 		"-File", script, "-ParamsFile", params)
 	cmd.Stdout, cmd.Stderr = w.out(), w.out()
-	return exitCode(cmd.Run())
+	// 0.37.3: never wait on a RustDesk process that inherited the output pipe.
+	return agent.RunInstallerCmd(cmd)
 }
 
 func powershell() string {
