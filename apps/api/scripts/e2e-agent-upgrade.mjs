@@ -332,6 +332,29 @@ async function main() {
     await prisma.endpoint.update({ where: { id: w1.id }, data: { lastSeenAt: seenBefore } });
     await setMode('legacy_allowed', false);
 
+    // 0.39: Add device's one-liner installs the full agent on a new computer.
+    {
+      const tok = randomBytes(32).toString('hex');
+      const ct = await prisma.deviceClaimToken.create({ data: { tenantId: tenant.id, token: createHash('sha256').update(tok).digest('hex'), expiresAt: new Date(Date.now() + 3600_000) } });
+      const viaPath = await req('GET', `/public/install/win/${tok}`);
+      const viaQuery = await req('GET', `/public/install/windows.ps1?token=${tok}`);
+      for (const [label, r] of [['/install/win/<token>', viaPath], ['windows.ps1?token=', viaQuery]]) {
+        const t = r.text;
+        check(r.status === 200 && t.includes(`/public/updates/targets/windows/${sha2}.rem0te-agent.exe`) && t.includes(`-ne '${sha2}'`)
+          && t.includes(`& $e install --portal '${relay}' --token '${tok}'`) && t.indexOf('Get-FileHash') < t.indexOf('& $e install'),
+          `0.39 ${label}: a valid token installs the full agent, pinned to the published digest, hash checked before it runs`, t.slice(0, 300));
+        check(!/\$UPDATE_CHANNEL|irm |iex|^\s*exit\b/m.test(t), `0.39 ${label}: nothing of the standard installer, and no exit`);
+      }
+      const noTok = await req('GET', '/public/install/windows.ps1');
+      check(/\$UPDATE_CHANNEL = 'legacy'/.test(noTok.text) && !noTok.text.includes('--token'), '0.39: without a token (an existing agent\'s reinstall) it is still the standard installer');
+      const bogus = await req('GET', `/public/install/win/${'f'.repeat(64)}`);
+      check(!bogus.text.includes('rem0te-agent.exe install'), '0.39: an unknown token does not get the full agent bootstrap');
+      await prisma.deviceClaimToken.update({ where: { id: ct.id }, data: { claimedAt: new Date() } });
+      const used = await req('GET', `/public/install/win/${tok}`);
+      check(!used.text.includes('rem0te-agent.exe install'), '0.39: a claimed token does not get it either');
+      await prisma.deviceClaimToken.delete({ where: { id: ct.id } });
+    }
+
     // The machine migrated: its next heartbeat says signed.
     const done = await hb(w1, { updateChannel: 'signed', trustRootVersion: 1, targetsVersion: 3, agentSha256: sha2, agentUpdateCheckedAt: new Date().toISOString(), agentUpdateResult: 'installer exit 0' });
     const fin = await prisma.agentMigration.findUnique({ where: { id: row.id } });

@@ -343,6 +343,23 @@ Notes on these settings:
 - The **Windows agents** table on the same page lists every legacy agent, and every signed agent still behind the
   current root. The channel is self-reported, and it only ever reduces what the portal hands an agent.
 
+## New computers get the full agent (0.39)
+
+Once a signed agent is published, **Add device** installs it directly, with nothing to upgrade later. Both ways of
+installing from that page do:
+
+- **The PowerShell line** (`irm https://<portal>/api/v1/public/install/win/<token> | iex`). For a valid, unclaimed,
+  unexpired enrolment token, that route serves a short script instead of the standard installer. The script
+  downloads `windows/rem0te-agent.exe` by its published digest into a fresh directory locked to SYSTEM and
+  Administrators, checks the SHA-256, and only then runs `rem0te-agent.exe install --portal <portal> --token <token>`.
+  The agent verifies the installer, RustDesk and the tray against signed metadata and claims the computer with the
+  token. The script never calls `exit`, so the window stays open with its output.
+- **The download link** (`windows.exe?token=…`), which has served the signed agent binary itself since 0.24.
+
+Without a token the route is unchanged, because an existing standard agent's reinstall carries none. Moving those
+computers is the migration's job, canary first. An unknown, expired or claimed token gets the standard installer
+script, which then can't claim anything.
+
 ## Moving existing agents
 
 Each method below keeps the machine's enrollment, its device secret (`heartbeat.dat`), the RustDesk configuration

@@ -34,7 +34,7 @@ import {
 } from './macos-agent';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { AgentMigrationService } from '../update-trust/agent-migration.service';
-import { buildMigrationScript, validPortalHost } from '../update-trust/agent-migration';
+import { buildMigrationScript, buildSignedInstallScript, validPortalHost } from '../update-trust/agent-migration';
 
 const INSTALLER_MAGIC = Buffer.from('REM0TE_INST_URL:');
 const INSTALLER_SLOT_SIZE = 256;
@@ -315,6 +315,22 @@ export class PublicController {
           res.setHeader('Content-Disposition', 'inline; filename="install-rustdesk.ps1"');
           res.setHeader('Cache-Control', 'no-store');
           res.send(mig);
+          return;
+        }
+      }
+      // A new computer from Add device (0.39): a valid, unclaimed enrolment
+      // token and a published signed agent install the full agent directly.
+      // Only with a token: the heartbeat's reinstall of an existing standard
+      // agent carries none, and moving those is the migration's job (canary
+      // first), not this route's.
+      if (validatedToken && !jobNonce) {
+        const agentT = this.updateTrust.agentTarget();
+        const portalHost = this.portalHostFor(req, host);
+        if (agentT && portalHost) {
+          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+          res.setHeader('Content-Disposition', 'inline; filename="install-rem0te.ps1"');
+          res.setHeader('Cache-Control', 'no-store');
+          res.send(buildSignedInstallScript(portalHost, agentT.sha256, validatedToken));
           return;
         }
       }

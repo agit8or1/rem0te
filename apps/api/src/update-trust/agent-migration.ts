@@ -257,3 +257,42 @@ export function buildLocalMigrationCommand(portalHost: string, agentSha256: stri
     `if ((Get-FileHash -Algorithm SHA256 -LiteralPath $e).Hash.ToLower() -ne '${agentSha256}') { Remove-Item -LiteralPath $e -Force; Write-Output 'The download does not match the published digest. Nothing was run.' } else { & $e migrate --portal '${portalHost}' }`,
   ].join('; ');
 }
+
+/**
+ * What Add device's PowerShell one-liner runs for a new computer once a signed
+ * agent is published (0.39): the full agent, straight away, instead of the
+ * standard agent and a migration later. It downloads the signed agent by its
+ * digest into a fresh directory locked to SYSTEM and Administrators, and runs
+ * `install --portal <host> --token <claim token>` only if the SHA-256 matches;
+ * the agent verifies the installer, RustDesk and the tray against signed
+ * metadata and claims the computer with the token, as the .exe download does.
+ * It is piped into the person's elevated PowerShell (`irm … | iex`), so it
+ * never calls `exit`, which would close their window and its output.
+ */
+export function buildSignedInstallScript(portalHost: string, agentSha256: string, claimToken: string): string {
+  if (!validPortalHost(portalHost) || !/^[0-9a-f]{64}$/.test(agentSha256) || !/^[A-Fa-f0-9]{16,128}$/.test(claimToken)) {
+    throw new BadRequestException('Cannot build a signed install script from these values');
+  }
+  return `# Rem0te: install the full (signed) agent on this computer.
+$ProgressPreference = 'SilentlyContinue'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host 'Run this in PowerShell as administrator.' -ForegroundColor Red
+} else {
+    $d = Join-Path $env:ProgramData ('Rem0te-install-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $d | Out-Null
+    icacls $d /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' *>$null
+    $e = Join-Path $d 'rem0te-agent.exe'
+    Write-Host 'Downloading the Rem0te agent...'
+    Invoke-WebRequest -UseBasicParsing -Uri 'https://${portalHost}/api/v1/public/updates/targets/windows/${agentSha256}.rem0te-agent.exe' -OutFile $e
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $e).Hash.ToLower() -ne '${agentSha256}') {
+        Remove-Item -LiteralPath $e -Force
+        Write-Host 'The download does not match the published digest. Nothing was installed.' -ForegroundColor Red
+    } else {
+        & $e install --portal '${portalHost}' --token '${claimToken}'
+        if ($LASTEXITCODE -eq 0) { Write-Host 'Installed. The computer appears in Rem0te within a minute.' -ForegroundColor Green }
+        else { Write-Host "The installer exited with $LASTEXITCODE. C:\\ProgramData\\Rem0te\\Logs\\install.log says why." -ForegroundColor Red }
+    }
+}
+`;
+}
