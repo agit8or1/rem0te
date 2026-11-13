@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
+import { DIRECT_TOAST, directApproved } from '@/lib/direct-mode';
 import { DEPLOYMENT_STATUS } from '@/lib/patching';
 import { describeDetection, plural, refusalText } from '@/components/software/software-ui';
 
@@ -36,7 +37,7 @@ interface Computer {
 }
 interface Ring {
   ring: number; canary: boolean; gate: Gate;
-  job: { id: string; status: string; statusReason: string | null; approvalUrl: string; outcome: string | null; window: { notBefore: string; notAfter: string }; digest: string } | null;
+  job: { id: string; status: string; statusReason: string | null; approvalUrl: string; outcome: string | null; window: { notBefore: string; notAfter: string }; digest: string; direct?: boolean; createdAt?: string } | null;
   computers: Computer[];
 }
 interface Deployment {
@@ -74,6 +75,7 @@ export default function SoftwareDeploymentPage() {
   const [exclude, setExclude] = useState<Record<string, string>>({});
   const [startsIn, setStartsIn] = useState(0);
   const [requested, setRequested] = useState<string | null>(null);
+  const [directDone, setDirectDone] = useState<string | null>(null);
   const [changing, setChanging] = useState<'pause' | 'resume' | 'cancel' | null>(null);
   const [why, setWhy] = useState('');
 
@@ -84,8 +86,15 @@ export default function SoftwareDeploymentPage() {
     }),
     onSuccess: (r) => {
       setReason(''); setExclude({}); refresh();
-      setRequested((r.data.data.job?.approvalUrl as string | undefined) ?? null);
-      toast({ title: 'Requested', description: 'Nothing runs until two approvers authorize this plan on the approval page.' });
+      const job = r.data.data.job as { approvalUrl?: string; direct?: boolean; requestedByName?: string | null; createdAt?: string } | undefined;
+      if (job?.direct) {
+        // 0.39, direct mode: signed at the request; there is no approval page to open.
+        setRequested(null); setDirectDone(directApproved(job.requestedByName, job.createdAt ?? new Date()));
+        toast({ title: 'Approved automatically', description: DIRECT_TOAST });
+      } else {
+        setDirectDone(null); setRequested(job?.approvalUrl ?? null);
+        toast({ title: 'Requested', description: 'Nothing runs until two approvers authorize this plan on the approval page.' });
+      }
     },
     onError: (e) => toast({ title: 'Not requested', description: refusalText(e, 'The request was refused.'), variant: 'destructive' }),
   });
@@ -163,6 +172,7 @@ export default function SoftwareDeploymentPage() {
         <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Next</CardTitle></CardHeader>
         <CardContent className="space-y-3 text-sm">
           <p data-next-why>{d.next.why}</p>
+          {directDone && <p className="text-xs" data-testid="direct-approved">{directDone}. It runs when the computers next check in.</p>}
           {requested && (
             <p className="text-xs">
               Requested. <a className="underline inline-flex items-center gap-1" href={requested} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3 w-3" />Open the approval page</a> — two people on the approval roster approve it there with a passkey; you cannot approve your own request.
@@ -217,9 +227,10 @@ function RingCard({ r, single, onChanged }: { r: Ring; single: boolean; onChange
         <div className="flex items-center gap-2 text-xs">
           {r.job && <Badge variant="outline">{words(r.job.status)}</Badge>}
           <Badge variant={r.gate.ok ? 'success' : r.gate.reason === 'not_requested' ? 'outline' : 'warning'}>{r.gate.ok ? 'passed' : words(r.gate.reason)}</Badge>
-          {r.job?.status === 'AWAITING_APPROVAL' && (
+          {r.job?.status === 'AWAITING_APPROVAL' && !r.job.direct && (
             <Button size="sm" variant="outline" asChild><a href={r.job.approvalUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5 mr-1" />Approval page</a></Button>
           )}
+          {r.job?.direct && <Badge variant="outline" title="Signed at the request: the business is in direct mode on the approval signer">direct mode</Badge>}
         </div>
       </CardHeader>
       <CardContent className="space-y-2 text-xs">

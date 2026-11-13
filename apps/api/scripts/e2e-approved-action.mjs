@@ -26,6 +26,9 @@
  *   RELEASE_BIN=/tmp/rem0te-release ACTION_SIM=/tmp/rem0te-action-sim \
  *   DATABASE_URL=postgresql://…/reboot_remote_it_scratch node scripts/e2e-approved-action.mjs
  *
+ * Optional: OLD_ACTION_SIM, a rem0te-action-sim built from a release before
+ * 0.39, proves that an older agent refuses a direct-mode plan (bad_plan).
+ *
  * What it proves is FIXTURE-TESTED behaviour: the portal, the signer and the
  * agent's decision code, with Windows, RustDesk and the person at the
  * authenticator simulated. It is not a paired lab and not production.
@@ -54,7 +57,7 @@ if (!/scratch|test/.test(dbName)) {
   console.error(`Refusing to run against database "${dbName}": name must contain "scratch" or "test".`);
   process.exit(2);
 }
-const BIN = process.env.RELEASE_BIN, SIM = process.env.ACTION_SIM;
+const BIN = process.env.RELEASE_BIN, SIM = process.env.ACTION_SIM, OLD_SIM = process.env.OLD_ACTION_SIM;
 if (!BIN || !SIM) { console.error('RELEASE_BIN (rem0te-release) and ACTION_SIM (rem0te-action-sim) are required'); process.exit(2); }
 const PORT = Number(process.env.ACTIONS_API_PORT ?? 3161);
 const SIGNER_PUBLIC = Number(process.env.ACTIONS_SIGNER_PUBLIC_PORT ?? 3263);
@@ -137,7 +140,7 @@ async function waitUp(url, name) {
 // ── HTTP helpers ────────────────────────────────────────────────────────────
 async function req(method, p, { s, body, business } = {}) {
   const h = { 'content-type': 'application/json', 'x-forwarded-for': s?.ip ?? ip() };
-  if (s) h.cookie = s.cookie;
+  if (s) h.cookie = s.cookie + (s.stepUp ? `; step_up=${s.stepUp}` : '');
   if (business) h['x-rem0te-business'] = business;
   const r = await fetch(`${API}${p}`, { method, headers: h, body: body ? JSON.stringify(body) : undefined });
   const text = await r.text(); let j; try { j = JSON.parse(text); } catch { j = text; }
@@ -150,6 +153,13 @@ async function login(email) {
   if (r.status !== 200 || !m) throw new Error(`login ${email}: ${r.status} ${await r.text()}`);
   s.cookie = `access_token=${m[1]}`;
   return s;
+}
+// 0.39: a fresh sign-in (direct mode needs one for every request).
+async function stepUp(s) {
+  const r = await fetch(`${API}/auth/step-up`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': s.ip, cookie: s.cookie }, body: JSON.stringify({ password: PW }) });
+  const m = (r.headers.get('set-cookie') ?? '').match(/step_up=([^;]+)/);
+  if (r.status !== 200 || !m) throw new Error(`step-up: ${r.status} ${await r.text()}`);
+  s.stepUp = m[1];
 }
 const code = (r) => r.body?.code ?? r.body?.message?.code ?? r.body?.error?.code;
 const msg = (r) => `HTTP ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`;
@@ -184,14 +194,14 @@ async function fetchKeysViaMirror() {
   const buf = Buffer.from(await r.arrayBuffer());
   return { ok: tr.status === 200 && r.status === 200 && sha(buf) === t.hashes.sha256 && buf.length === t.length, buf };
 }
-function runAgent(ep, jobId, envelope, { productType = ep.productType, rid = ep.rid, secret = ep.secret, self = AGENT_SHA, state = ep.state, service } = {}) {
+function runAgent(ep, jobId, envelope, { productType = ep.productType, rid = ep.rid, secret = ep.secret, self = AGENT_SHA, state = ep.state, service, sim = SIM } = {}) {
   const envFile = path.join(work, `env-${jobId}-${randomBytes(3).toString('hex')}.json`);
   writeFileSync(envFile, JSON.stringify(envelope));
   const args = ['-state', state, '-keys', keysFile, '-job', jobId, '-envelope', envFile, '-rustdesk-id', rid, '-secret', secret, '-product-type', String(productType), '-self-sha', self];
   if (service) args.push('-service', service);
   // 0.36: the agent fetches the signer's revocation statement from the portal's relay before each job.
   args.push('-portal', `127.0.0.1:${PORT}`);
-  const out = execFileSync(SIM, args, { encoding: 'utf8' });
+  const out = execFileSync(sim, args, { encoding: 'utf8' });
   return JSON.parse(out.trim());
 }
 const simService = (ep, v) => writeFileSync(path.join(ep.state, 'sim-service'), v);
@@ -570,6 +580,82 @@ async function all() {
     check(g.status === 200 && g.body.status === 'approved', 'ClientSt0r polls: approved — by the roster, not by ClientSt0r', JSON.stringify(g.body).slice(0, 200));
     const wrongScope = await call('GET', `/api/integration/v1/action-proposals/${p.job_id}`, { delegation: token({ sub: 'cs-tech-a', org: ORG_A, scope: 'ticket_analysis:read' }) });
     check(wrongScope.status === 401, 'reading needs the actions:read scope');
+  }
+  section('Direct mode (0.39): set on the signer, signed at the request, run with no approval step');
+  {
+    // Earlier sections leave approved plans undelivered on these computers.
+    const settle = () => prisma.actionJob.updateMany({ where: { endpointId: { in: [srv.id, fdA.id, fdB.id] }, status: { in: ['AWAITING_APPROVAL', 'APPROVED', 'DISPATCHED'] } }, data: { status: 'CANCELED', statusReason: 'test cleanup' } });
+    await settle();
+    const set = signerCli(['policy', 'set', '--business', acme.id, '--approval', 'direct']);
+    check(set.status === 0 && /Direct mode is now ON/.test(set.stderr), 'the signer\'s operator sets Acme to direct mode (CLI only)', set.stderr);
+    const log = readFileSync(path.join(signerDir, 'policy-changes.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    check(log.at(-1).business === acme.id && log.at(-1).after.approval === 'direct', 'the change is in the signer\'s own policy-changes.log');
+    const bad = signerCli(['policy', 'set', '--business', birch.id, '--approval', 'direct']);
+    check(bad.status === 2 && /requires customer sign-off/.test(bad.stderr), 'Birch requires customer sign-off, so the signer refuses direct mode for it and says why', bad.stderr);
+
+    // A request needs a fresh sign-in, and is refused before anything is written without one.
+    const n0 = await prisma.actionJob.count({ where: { endpointId: srv.id } });
+    let r = await req('POST', `/endpoints/${srv.id}/actions`, { s: S.admin, business: acme.id, body: body() });
+    check(r.status === 403 && code(r) === 'STEP_UP_REQUIRED' && await prisma.actionJob.count({ where: { endpointId: srv.id } }) === n0, 'in direct mode a request without a fresh sign-in → 403 STEP_UP_REQUIRED, nothing written', msg(r));
+    await stepUp(S.admin);
+
+    // A server, the admin alone: request → signed → delivered → run.
+    simService(srv, 'stopped');
+    r = await req('POST', `/endpoints/${srv.id}/actions`, { s: S.admin, business: acme.id, body: body() });
+    const j = r.body?.data;
+    check(r.status === 201 && j.status === 'APPROVED' && j.direct === true && j.approvalsRequired === 0 && j.risk === 'high' && (j.approvers ?? []).length === 0, 'with a fresh sign-in the admin\'s request on APPSRV (high risk) is signed at once: APPROVED, direct, no approvers', msg(r));
+    const row = await prisma.actionJob.findUnique({ where: { id: j?.id } });
+    const signedPlan = row?.envelope ? JSON.parse(Buffer.from(row.envelope.plan, 'base64').toString('utf8')) : null;
+    check(signedPlan?.policy?.approval === 'direct' && signedPlan.requestedBy.userId === admin.id && signedPlan.approvers.length === 0, 'the stored signed plan says direct and who requested it');
+    const audit = await prisma.activityLog.findFirst({ where: { resourceId: j?.id, action: 'ACTION_REQUESTED' } });
+    check(audit?.actorId === admin.id && audit?.metadata?.approval === 'direct', 'the request is audited as direct, with who asked', JSON.stringify(audit?.metadata));
+    let hb = await heartbeat(srv);
+    const env = (hb.body?.data?.actions ?? []).find((d) => d.jobId === j?.id)?.envelope;
+    check(!!env, 'the next heartbeat delivers it', msg(hb));
+    if (OLD_SIM) {
+      const o = runAgent(srv, j.id, env, { sim: OLD_SIM, state: path.join(work, 'old-agent') });
+      check(o.outcome === 'refused' && o.reason === 'bad_plan', 'an agent from before 0.39 refuses the direct plan (bad_plan) — it fails closed', JSON.stringify(o));
+    }
+    const res = runAgent(srv, j.id, env);
+    check(res.outcome === 'succeeded' && simServiceNow(srv) === 'running', 'APPSRV (product type: server) runs the direct plan and starts the spooler', JSON.stringify(res));
+    hb = await heartbeat(srv, { actionResults: resultsOf(srv) });
+    clearAcked(srv, hb.body?.data?.actionAcks);
+    check((await prisma.actionJob.findUnique({ where: { id: j.id } })).status === 'SUCCEEDED', 'reported and recorded SUCCEEDED');
+
+    // A forged "direct" in the database still needs the signer's signature.
+    {
+      const real = JSON.parse(Buffer.from(env.plan, 'base64').toString('utf8'));
+      const other = { ...real, jobId: randomBytes(16).toString('hex') };
+      const forgedEnv = { ...env, plan: Buffer.from(canonicalJson(other)).toString('base64') };
+      simService(fdA, 'stopped');
+      const o = runAgent(srv, other.jobId, forgedEnv, { state: path.join(work, 'forged-direct') });
+      check(o.outcome === 'refused' && o.reason === 'bad_signature', 'a direct plan the signer did not sign is refused (bad_signature)', JSON.stringify(o));
+    }
+
+    // ClientSt0r cannot have something run with nobody signed in behind it.
+    {
+      const pb = { contract: 'ticket-rmm-v1', idempotency_key: `cs-${randomBytes(6).toString('hex')}`, organization_id: ORG_A, technician_id: 'cs-tech-a', rem0te_endpoint_id: fdA.id, action: { id: 'windows.service.start', version: 1 }, params: { service: 'Spooler' }, reason: 'Ticket 43: AI triage suggests the spooler is stopped', origin: 'ai_suggestion', ticket_ref: 'ticket-43' };
+      const p = await propose(pb);
+      check(p.status === 403 && p.body?.error?.code === 'DIRECT_MODE_PORTAL_ONLY', 'in direct mode a ClientSt0r proposal is refused (DIRECT_MODE_PORTAL_ONLY), never signed', JSON.stringify(p.body));
+    }
+
+    // Birch is unaffected: signed mode, customer sign-off.
+    r = await req('POST', `/endpoints/${fdB.id}/actions`, { s: S.admin, business: birch.id, body: body() });
+    check(r.status === 201 && r.body.data.status === 'AWAITING_APPROVAL' && !r.body.data.direct && r.body.data.customerSignoff === true, 'Birch\'s plans still wait for approval and customer sign-off (the mode is per business)', msg(r));
+    await settle();
+
+    // A signer pause still refuses a direct request.
+    const ps = signerCli(['pause', 'set', '--business', acme.id, '--reason', 'incident 12']);
+    r = await req('POST', `/endpoints/${fdA.id}/actions`, { s: S.admin, business: acme.id, body: body() });
+    check(r.status === 409 && code(r) === 'APPROVAL_SIGNER_REFUSED' && /signer is paused/.test(r.body?.message ?? ''), 'a pause on the signer still refuses a direct request', msg(r));
+    const pid = (ps.stdout.match(/paused (\S+)/) ?? [])[1];
+    signerCli(['pause', 'clear', '--id', pid, '--reason', 'incident 12 over']);
+
+    // Back to signed: a server needs two approvals again.
+    signerCli(['policy', 'set', '--business', acme.id, '--approval', 'signed']);
+    r = await req('POST', `/endpoints/${srv.id}/actions`, { s: S.admin, business: acme.id, body: body() });
+    check(r.status === 201 && r.body.data.status === 'AWAITING_APPROVAL' && r.body.data.approvalsRequired === 2 && !r.body.data.direct, 'set back to signed: a new request on a server waits for two approvals', msg(r));
+    await settle();
   }
 }
 

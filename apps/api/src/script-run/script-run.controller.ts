@@ -1,4 +1,6 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Req, UseGuards } from '@nestjs/common';
+import type { Request } from 'express';
+import { StepUpService } from '../auth/step-up.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { Actor } from '../common/decorators/actor.decorator';
 import { RateLimit } from '../common/throttling';
@@ -19,7 +21,13 @@ import { ScriptRunService } from './script-run.service';
 @Controller('script-runs')
 @UseGuards(JwtAuthGuard)
 export class ScriptRunController {
-  constructor(private readonly svc: ScriptRunService) {}
+  constructor(private readonly svc: ScriptRunService, private readonly stepUp: StepUpService) {}
+
+  /** 0.39: in direct mode a proposal is added at once and a run runs at once: both need a fresh sign-in. */
+  private fresh(req: Request): string | null {
+    const u = req.user as { sub?: string; iat?: number } | undefined;
+    return u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null;
+  }
 
   @Get('versions/:versionId')
   async readiness(@Actor() actor: ActorContext, @Param('versionId') versionId: string) {
@@ -28,8 +36,8 @@ export class ScriptRunController {
 
   @Post('versions/:versionId/allowlist')
   @RateLimit(10)
-  async propose(@Actor() actor: ActorContext, @Param('versionId') versionId: string) {
-    return { success: true, data: await this.svc.propose(actor, versionId) };
+  async propose(@Actor() actor: ActorContext, @Param('versionId') versionId: string, @Req() req: Request) {
+    return { success: true, data: await this.svc.propose(actor, versionId, this.fresh(req)) };
   }
 
   @Post('versions/:versionId/allowlist/revoke')
@@ -41,7 +49,7 @@ export class ScriptRunController {
 
   @Post()
   @RateLimit(10)
-  async run(@Actor() actor: ActorContext, @Body() body: unknown) {
-    return { success: true, data: await this.svc.requestRun(actor, body) };
+  async run(@Actor() actor: ActorContext, @Body() body: unknown, @Req() req: Request) {
+    return { success: true, data: await this.svc.requestRun(actor, body, this.fresh(req)) };
   }
 }

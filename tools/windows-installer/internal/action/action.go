@@ -18,7 +18,11 @@
 //  7. The approvals: enough distinct approvers for the risk THIS machine
 //     computes from its own product type (a server is always high impact,
 //     whatever the plan says), none of them the requester, plus a customer
-//     sign-off when the plan's policy says so.
+//     sign-off when the plan's policy says so. (0.39) A plan the signer
+//     signed in direct mode (policy.approval "direct", which only the
+//     signer's own operator can turn on for a business) needs no approvers
+//     and no requester or contributor rule; it can never also ask for
+//     customer sign-off. Everything else here still applies to it.
 //  8. (v0.36) The signed pause, then the signed revocation statement: a
 //     statement at least as new as the plan's signature, and nothing the
 //     plan runs revoked in it (revocation.go).
@@ -127,6 +131,10 @@ type Plan struct {
 		Risk              string `json:"risk"`
 		ApprovalsRequired int    `json:"approvalsRequired"`
 		CustomerSignoff   bool   `json:"customerSignoff"`
+		// Approval (0.39): "direct" when the approval signer signed the plan
+		// at admission, under its operator's per-business direct mode; absent
+		// otherwise. Agents before 0.39 refuse a plan carrying it (bad_plan).
+		Approval string `json:"approval,omitempty"`
 	} `json:"policy"`
 	Window struct {
 		NotBefore string `json:"notBefore"`
@@ -449,13 +457,20 @@ func verify(jobID string, raw []byte, o Options) (*Plan, *Result) {
 	if local == "high" && p.Policy.Risk != "high" {
 		return nil, refuse("risk_understated", "this is a high-impact action here, so the plan needed high-impact approval")
 	}
+	direct, bad := isDirect(&p)
+	if bad != nil {
+		return nil, bad
+	}
 	need := MinApprovals[local]
 	if p.Policy.ApprovalsRequired > need {
 		need = p.Policy.ApprovalsRequired
 	}
+	if direct {
+		need = 0
+	}
 	approvers, customers := map[string]bool{}, map[string]bool{}
 	for _, ap := range p.Approvers {
-		if ap.UserID == p.RequestedBy.UserID {
+		if ap.UserID == p.RequestedBy.UserID && !direct {
 			return nil, refuse("requester_approved", "the requester is among the approvers")
 		}
 		switch ap.Role {
@@ -480,6 +495,23 @@ func verify(jobID string, raw []byte, o Options) (*Plan, *Result) {
 		}
 	}
 	return &p, nil
+}
+
+// isDirect: whether the SIGNED plan says the signer signed it in direct mode
+// (0.39). Only "direct" or nothing is a value, and a direct plan never asks
+// for customer sign-off — the signer refuses both combinations, and so does
+// this.
+func isDirect(p *Plan) (bool, *Result) {
+	switch p.Policy.Approval {
+	case "":
+		return false, nil
+	case "direct":
+		if p.Policy.CustomerSignoff {
+			return false, refuse("bad_plan", "a direct plan cannot also require customer sign-off")
+		}
+		return true, nil
+	}
+	return false, refuse("bad_plan", "unknown approval mode in the signed plan")
 }
 
 func startSpooler(p *Plan, o Options) Result {

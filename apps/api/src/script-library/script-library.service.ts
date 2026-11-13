@@ -7,6 +7,7 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { CAP, type Capability } from '../rbac/capabilities';
 import { PLATFORM_PERM } from '../rbac/platform-permissions';
 import { assertFresh } from '../security-controls/review';
+import { ApprovalModeProbe } from '../actions/approval-mode';
 import { VersionFields, contentProblem, contributorsOf, hashVersion, lineDiff, type ParameterDecl } from './definition';
 import { staticCheck } from './static-checks';
 
@@ -55,6 +56,7 @@ export class ScriptLibraryService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly acl: AccessControlService,
+    private readonly approvalMode: ApprovalModeProbe,
   ) {}
 
   // ── Who may do what ────────────────────────────────────────────────────────
@@ -218,6 +220,8 @@ export class ScriptLibraryService {
     const checks = staticCheck(v.content, v.risk);
     const contributor = v.contributorIds.includes(actor.userId);
     const reviewer = view === 'full' && this.canReview(actor, s);
+    // 0.39: asked only when it matters (a contributor looking at a version in review).
+    const solo = contributor && reviewer && v.status === 'IN_REVIEW' ? await this.approvalMode.allowlistDirect() : false;
     const author = view === 'full' && this.canAuthor(actor, s) && v.authorId === actor.userId;
     return {
       script: { id: s.id, name: s.name, scope: s.scope.toLowerCase(), businessId: s.customerId, businessName: s.customer?.name ?? null },
@@ -228,14 +232,16 @@ export class ScriptLibraryService {
       content: v.content, contentBytes: v.contentBytes, contentSha256: v.contentSha256, definitionSha256: v.definitionSha256,
       author: ppl.get(v.authorId) ?? null, createdAt: v.createdAt, submittedAt: v.submittedAt,
       contributors: view === 'full' ? v.contributorIds.map((id) => ppl.get(id) ?? { id, name: 'a removed user' }) : undefined,
-      decision: v.decidedById ? { by: ppl.get(v.decidedById) ?? null, at: v.decidedAt, note: v.decisionNote, approvedSha256: v.approvedSha256 } : null,
+      decision: v.decidedById ? { by: ppl.get(v.decidedById) ?? null, at: v.decidedAt, note: v.decisionNote, approvedSha256: v.approvedSha256, selfReviewed: v.selfReviewed } : null,
       staticChecks: { ...checks, disclaimer: 'Pattern matches only. A script with no findings is not thereby safe; read it.' },
       you: {
         canSubmit: author && v.status === 'DRAFT',
         canWithdraw: author && v.status === 'IN_REVIEW',
-        canReview: reviewer && v.status === 'IN_REVIEW' && !contributor,
+        canReview: reviewer && v.status === 'IN_REVIEW' && (!contributor || solo),
+        // 0.39: said plainly when the author may review their own version.
+        selfReview: solo,
         cannotReviewBecause: !reviewer ? 'You do not have the review permission for this script.'
-          : contributor ? 'You wrote or edited this content, so someone else must review it.'
+          : contributor && !solo ? 'You wrote or edited this content, so someone else must review it.'
           : v.status !== 'IN_REVIEW' ? 'Only a version in review can be approved or rejected.' : null,
         canEdit: view === 'full' && this.canAuthor(actor, s),
       },
@@ -377,8 +383,12 @@ export class ScriptLibraryService {
     const refuse = async (reason: string) => this.audit.log({ ...this.auditBase(actor, s), action: 'SCRIPT_REVIEW_REFUSED', resource: 'script_version', resourceId: v.id, meta: { ...this.versionMeta(s, v), decision: d.decision, reason, expectedSha256: d.expectedSha256 } });
     // SAME_PERSON: by user id, so no context switch, role or assignment makes
     // the author someone else. Contributors include whoever wrote the
-    // unapproved versions this one was edited from.
-    if (v.authorId === actor.userId || v.contributorIds.includes(actor.userId)) {
+    // unapproved versions this one was edited from. 0.39: unless the approval
+    // signer's default policy is in direct mode, where nobody else exists to
+    // review it; the approval is then recorded as self-reviewed (0065).
+    const self = v.authorId === actor.userId || v.contributorIds.includes(actor.userId);
+    const selfReviewed = self && await this.approvalMode.allowlistDirect();
+    if (self && !selfReviewed) {
       await refuse('same_person');
       throw new ForbiddenException({ code: 'SAME_PERSON', message: 'You wrote or edited this content. Someone else must review it.' });
     }
@@ -392,12 +402,12 @@ export class ScriptLibraryService {
     const done = await this.prisma.$transaction(async (tx) => {
       const r = await tx.scriptVersion.updateMany({
         where: { id: v.id, status: 'IN_REVIEW', contentSha256: d.expectedSha256 },
-        data: { status: approve ? 'APPROVED' : 'REJECTED', decidedById: actor.userId, decidedAt: new Date(), decisionNote: d.note, approvedSha256: approve ? d.expectedSha256 : null },
+        data: { status: approve ? 'APPROVED' : 'REJECTED', decidedById: actor.userId, decidedAt: new Date(), decisionNote: d.note, approvedSha256: approve ? d.expectedSha256 : null, selfReviewed: approve && selfReviewed },
       });
       if (r.count !== 1) return false;
       await tx.activityLog.create({ data: this.audit.entry({
         ...this.auditBase(actor, s), action: approve ? 'SCRIPT_VERSION_APPROVED' : 'SCRIPT_VERSION_REJECTED', resource: 'script_version', resourceId: v.id,
-        meta: { ...this.versionMeta(s, v), note: d.note, approvedSha256: approve ? d.expectedSha256 : undefined, authorId: v.authorId, freshAuth: approve ? freshMethod : undefined },
+        meta: { ...this.versionMeta(s, v), note: d.note, approvedSha256: approve ? d.expectedSha256 : undefined, authorId: v.authorId, freshAuth: approve ? freshMethod : undefined, selfReviewed: selfReviewed || undefined },
       }) });
       return true;
     });

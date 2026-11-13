@@ -30,6 +30,65 @@ your own, installer switches, or a per-user install. They aren't switched off; n
 > **Warning.** Documents already waiting in the print queue may print as soon as the spooler starts. They can't be
 > recalled once they reach the printer. The requester confirms this, and the approval page shows it.
 
+## Direct mode (the default for a single operator)
+
+If you run the portal alone, there is nobody to be the second person this page is built around. From 0.39 the
+approval signer's operator can turn approvals off, per business or for every business, with one command on the
+signer:
+
+```bash
+$S policy set --business default --approval direct      # every business without its own entry, and the script allowlist
+$S policy set --business <businessId> --approval direct  # one business
+$S policy set --business <businessId> --approval signed  # back to approvals
+$S policy show
+```
+
+(`$S` is the signer CLI from [Setting it up](#setting-it-up), step 2.) Nothing else sets it: no route on the portal or
+the signer writes the policy, and every change is appended to `policy-changes.log` in the signer's directory. Without
+an entry a business is in **signed** mode, the rest of this page.
+
+**What happens in direct mode.** A request goes through every check it always has — your permissions, the catalog and
+its parameters, the computer's readiness, containment pauses, the signer's own pauses, the script allowlist,
+software and script revocations — and then the signer signs it at once, with no approvers. The plan says so in a
+signed field (`policy.approval: "direct"`) and names who asked. The portal never shows an approval page: the job goes
+straight to *Approved*, labelled **Approved automatically (direct mode) by *you*, *time***, and runs when the computer
+next checks in. Patch policies and software rings work the same way: a patch policy is active as soon as it is
+proposed, and its rings are signed inside its window as before. Each request asks you to confirm it is you (a fresh
+sign-in) first.
+
+**What it gives up: a second person.** In signed mode a compromised portal can propose a plan but cannot make it
+run. In direct mode it can: anyone who fully takes over the portal (its code or its sign-ins) can run catalog actions
+on that business's computers — what an RMM's own agent normally allows, and what the standard agent already allows
+through remote sessions. Turn it on only where that is the trade you want.
+
+**What still protects:**
+
+- A **fresh sign-in** for every request, and the permission for the action (`actions:request`, and the action's
+  own capability where it has one).
+- The **catalog**: still nine actions with closed parameters. Direct mode makes nothing new requestable.
+- The **audit log**: every request, with who asked; the signer logs each plan it signed in direct mode.
+- **Containment pauses**, in the portal and on the signer, and **revocations** of scripts and software.
+- The agent's own checks: **maintenance windows** and **session rules**, its own risk computation, the window, the
+  target, the agent build, and the **signer's signature**. The portal still holds no key a computer accepts.
+
+**What it cannot be combined with.** Customer sign-off needs a customer to approve before signing, so the signer
+refuses `--approval direct` for a business that requires it, and refuses turning sign-off on while a business is
+direct; each says why. **ClientSt0r proposals are refused** in direct mode (`DIRECT_MODE_PORTAL_ONLY`): there is
+nobody signed in behind them, and a proposal would otherwise run unseen.
+
+**Scripts follow the signer's `default` setting.** The script allowlist is the signer's own, for every business, so
+whether a proposed version is added at once is decided by `--business default`. In that mode the library also lets
+the author review their own version, recorded as *self-reviewed*. A run of an allowlisted script follows its
+business's setting, like any plan.
+
+**Turning it off.** Set `--approval signed`. A new request then waits for approvals again. A plan signed in direct
+mode before that stays signed until its window closes; cancel it on the Actions tab if it must not run. A patch policy
+activated in direct mode carries no approvals, so the signer signs nothing more under it once the business is signed
+again (`policy_not_approved`): approve a new one.
+
+**Computers need the 0.39 agent.** An older agent cannot read the signed direct field and refuses the plan
+(`bad_plan`); the Actions tab says so. Nothing runs on it, and nothing else changes: update it, then request again.
+
 ## Who does what
 
 | Step | Who | Where | What it can and cannot do |
@@ -408,6 +467,14 @@ $S policy set --business <businessId> --customer-signoff required
 $S policy set --business default --customer-signoff not_required
 ```
 
+**4a. Or, for a single operator, direct mode** (0.39, [above](#direct-mode-the-default-for-a-single-operator)):
+
+```bash
+$S policy set --business default --approval direct
+```
+
+Steps 3 and 4 are then not needed for the businesses it covers.
+
 **5. Point the portal at it.** In `/etc/reboot-remote/api.env`, set
 `APPROVAL_SIGNER_INTERNAL_URL=http://127.0.0.1:3202`, then restart the API. The portal accepts only a loopback URL
 here.
@@ -442,13 +509,21 @@ a passkey. A rejection is final.
 | `ACTION_NOT_DIRECT` | Updates are requested through a patch deployment, and (0.34) script runs from the script library |
 | `NOT_APPROVED`, `SCRIPT_NOT_ALLOWLISTED`, `SCRIPT_REVOKED`, `SCRIPT_WRONG_BUSINESS` | 0.34 script runs: see [Script library](script-library.md#refusals) |
 | `APPROVAL_SIGNER_ERROR`, `APPROVAL_SIGNER_REFUSED`, `APPROVAL_SIGNER_UNREACHABLE` | The signer didn't answer, or refused the plan (e.g. `policy_mismatch` after a policy change, `paused` while the signer holds a pause, or for a script run `script_not_allowlisted`) |
+| `STEP_UP_REQUIRED` | 0.39 direct mode: confirm it is you (a fresh sign-in) before a request that is signed at once |
+| `DIRECT_MODE_PORTAL_ONLY` | 0.39: a ClientSt0r proposal for a business in direct mode. Only a person signed in to the portal can request one |
 | `CONTAINED` | Actions are paused for this business, or globally ([Containment](containment.md)). An approved plan is held, not canceled, and is delivered when the pause is lifted |
 
 Agent refusal reasons: `bad_signature`, `unknown_key`, `bad_plan`, `job_mismatch`, `not_signed`, `unknown_action`,
 `params_not_allowed`, `bad_targets`, `wrong_target`, `not_yet_valid`, `expired`, `artifact_mismatch`,
 `risk_understated`, `too_few_approvals`, `requester_approved`, `no_customer_signoff`, `paused` (0.28: a signed
 `control/pause.json` covers this business or computer. Like every refusal it is final: lifting the pause doesn't revive
-the job; request it again), `bad_window` (from 0.32 also a restart plan whose window is over 2 hours).
+the job; request it again), `bad_window` (from 0.32 also a restart plan whose window is over 2 hours). From 0.39
+`bad_plan` is also what an agent older than 0.39 answers to a direct-mode plan, and what a 0.39 agent answers to a
+direct plan that asks for customer sign-off.
+
+Signer codes added in 0.39: `policy_mismatch` (a plan that says direct for a business in signed mode, or the other
+way), `direct_with_customer_signoff`, and `policy_not_approved` for a ring under a patch policy that was activated in
+direct mode after the business left it.
 
 0.32 maintenance results that are not refusals: `remote_session_open` and `session_state_unknown` (not executed,
 nothing changed), `restart_already_scheduled`, `stop_failed`, `start_failed`, `did_not_remain_running`,
@@ -465,6 +540,7 @@ nothing changed), `restart_already_scheduled`, `stop_failed`, `start_failed`, `d
 | Level | State |
 |---|---|
 | **Fixture-tested** | Yes. `internal/action` Go tests cover every refusal, replay, crash and verification path. `unit-approval-signer.mjs` (99 checks from 0.34; 79 in 0.32) covers synthetic passkeys through the real WebAuthn verification: forged origin and RP ID, missing user verification, reused and cross-decision challenges, counter regression, the requester approving, quorum, customer sign-off and restart. `e2e-approved-action.mjs` (76 checks) runs the portal, the signer and the agent's real decision code against a simulated Windows, including the compromised-database envelopes |
+| **Fixture-tested, 0.39** | Direct mode: `internal/action` Go tests (`direct_test.go`: no approvers accepted only under the signed field, still refused under a signed pause, for a revoked script, for understated risk, with customer sign-off or an unknown mode, and when the field is added after signing). `unit-approval-signer.mjs` (252 checks) adds the CLI, the read-only policy route, admission, signing at admission, patch-policy and allowlist activation, and the customer sign-off exclusion. `e2e-approved-action.mjs` (92 checks) requests on a server in direct mode, runs it on the agent's real decision code with no approval step, and checks the fresh sign-in, ClientSt0r refusal, the pause, Birch's isolation, the return to signed mode and an agent from 0.38 refusing (`bad_plan`) |
 | **Fixture-tested, 0.32** | `internal/action` Go tests for the maintenance actions (allowlist, charset, delay bounds, session check, journal steps, interruption, redaction and size caps); `unit-approval-signer.mjs` adds the maintenance admission and two-approver cases; `e2e-maintenance-actions.mjs` runs all four through the portal, the signer and the agent's real decision code against a simulated Windows (service manager, `shutdown.exe`, `wevtutil` and the session count are simulated) |
 | **Fixture-tested, 0.34** | `internal/action` Go tests for script runs (every refusal, at-most-once, interruption, exit code, timeout, output cap), including runs under real **PowerShell 7 on Linux**; `unit-approval-signer.mjs` adds the script allowlist and script-run cases; `e2e-script-run.mjs` runs the whole path through the portal, the signer and the agent's real decision code with PowerShell 7 |
 | **Fixture-tested, 0.34** | `internal/action` Go tests for the software actions against a stub winget run through the agent's real exec path (success, already installed, hash and manifest mismatch, winget missing or too old, managed elsewhere, timeout, not effective, restart required, argument injection in every field); `unit-approval-signer.mjs` adds the software admission, two-approver and 25-computer cases; `e2e-software-deploy.mjs` runs the catalog, single installs and uninstalls, rings, compliance and isolation through the portal, the signer and the agent's real decision code. winget, App Installer under SYSTEM, the uninstall registry and file versions are simulated |

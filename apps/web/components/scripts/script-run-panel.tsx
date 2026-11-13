@@ -7,6 +7,7 @@ import { AlertTriangle, ExternalLink, Loader2, Play, ShieldCheck, ShieldOff } fr
 import { endpointsApi, scriptRunsApi, type ScriptArgument, type ScriptParameter } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
 import { cn, formatDate } from '@/lib/utils';
+import { DIRECT_TOAST, directApproved } from '@/lib/direct-mode';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -23,6 +24,9 @@ import { ConnectivityIndicator } from '@/components/common/connectivity-indicato
  *   1. propose the version to the approval signer's own allowlist (a reviewer);
  *   2. two approvers who did not write it add it, on the signer's page;
  *   3. request a run on up to 25 computers, which two approvers then approve,
+ *      (0.39: in direct mode, set by the signer's operator, steps 2 and 3
+ *      happen at the request, after a fresh sign-in — there is nothing to
+ *      approve)
  *      again on the signer's page.
  *
  * The portal cannot add to the allowlist or approve a run, so there is no
@@ -34,6 +38,8 @@ import { ConnectivityIndicator } from '@/components/common/connectivity-indicato
 interface Readiness {
   version: { id: string; name: string; scope: 'global' | 'business'; businessId: string | null; version: number; status: string; parameters: ScriptParameter[]; contentSha256: string };
   signerConfigured: boolean;
+  /** 0.39: the signer's default policy is in direct mode, so a proposal is added at once. */
+  allowlistDirect?: boolean;
   allowlist: { id: string; status: string; approvalUrl: string; contentSha256: string; createdAt: string; revokedAt: string | null; revokeReason: string | null } | null;
   revoked: boolean;
   timeouts: number[]; maxTargets: number; maxOutputBytes: number; retentionDays: number;
@@ -92,7 +98,11 @@ export function ScriptRunPanel({ versionId }: { versionId: string }) {
   const fail = (title: string) => (e: unknown) => toast({ title, description: apiMessage(e, 'Refused.'), variant: 'destructive' });
   const propose = useMutation({
     mutationFn: () => scriptRunsApi.propose(versionId),
-    onSuccess: () => { toast({ title: 'Proposed to the approval signer', description: 'Two approvers who did not write it must add it there.' }); refresh(); },
+    onSuccess: (x) => {
+      const active = (x.data?.data as { status?: string } | undefined)?.status === 'ACTIVE';
+      toast(active ? { title: 'Added to the allowlist', description: 'Approved automatically (direct mode). It can be run now.' } : { title: 'Proposed to the approval signer', description: 'Two approvers who did not write it must add it there.' });
+      refresh();
+    },
     onError: fail('Not proposed'),
   });
   const revoke = useMutation({
@@ -115,10 +125,12 @@ export function ScriptRunPanel({ versionId }: { versionId: string }) {
 
         <div className="space-y-1">
           <p className="text-xs font-medium flex items-center gap-2">Approval signer allowlist {st && <Badge variant={st.variant}>{st.label}</Badge>}</p>
-          {!e && !r.revoked && <p className="text-xs text-muted-foreground">Not proposed yet. A reviewer proposes it; two approvers on the approval roster who did not write it then read it on the signer&apos;s page and add its SHA-256.</p>}
+          {!e && !r.revoked && <p className="text-xs text-muted-foreground">{r.allowlistDirect
+            ? 'Not proposed yet. The approval signer is in direct mode: proposing it adds its SHA-256 to the signer\u2019s allowlist at once, after you confirm it is you.'
+            : <>Not proposed yet. A reviewer proposes it; two approvers on the approval roster who did not write it then read it on the signer&apos;s page and add its SHA-256.</>}</p>}
           {e && <p className="text-xs text-muted-foreground">Entry for content <code className="font-mono">{shortHash(e.contentSha256)}</code>, proposed {formatDate(e.createdAt)}.{e.revokedAt ? ` Revoked ${formatDate(e.revokedAt)}${e.revokeReason ? `: ${e.revokeReason}` : ''}.` : ''}</p>}
           {r.revoked && <p className="text-xs">This content was revoked. Revocation is permanent: the approval signer will never allow these exact bytes again. Edit it into a new version and have that reviewed.</p>}
-          {e?.status === 'AWAITING_APPROVAL' && (
+          {e?.status === 'AWAITING_APPROVAL' && !r.allowlistDirect && (
             <Button size="sm" variant="outline" asChild>
               <a href={e.approvalUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5 mr-1" />Open the approval signer&apos;s page</a>
             </Button>
@@ -154,7 +166,7 @@ function RunForm({ r }: { r: Readiness }) {
   const [reason, setReason] = useState('');
   const [ack, setAck] = useState(false);
   const [q, setQ] = useState('');
-  const [requested, setRequested] = useState<{ id: string; approvalUrl: string; endpointIds: string[] } | null>(null);
+  const [requested, setRequested] = useState<{ id: string; approvalUrl: string; endpointIds: string[]; direct?: string } | null>(null);
   const { data: eps, isLoading } = useQuery<EndpointLite[]>({
     queryKey: ['script-run', 'endpoints', r.version.businessId ?? 'current'],
     queryFn: () => endpointsApi.list({ ...(r.version.businessId ? { businessId: r.version.businessId } : {}), limit: '200' }).then((x) => x.data?.data?.endpoints ?? []),
@@ -164,10 +176,10 @@ function RunForm({ r }: { r: Readiness }) {
   const run = useMutation({
     mutationFn: () => scriptRunsApi.run({ scriptVersionId: r.version.id, endpointIds: ids, parameters: args, timeoutMinutes: timeout, reason: reason.trim() }),
     onSuccess: (x) => {
-      const j = x.data.data as { id: string; approvalUrl: string };
-      setRequested({ id: j.id, approvalUrl: j.approvalUrl, endpointIds: ids });
+      const j = x.data.data as { id: string; approvalUrl: string; direct?: boolean; requestedByName?: string | null; createdAt: string };
+      setRequested({ id: j.id, approvalUrl: j.approvalUrl, endpointIds: ids, ...(j.direct ? { direct: directApproved(j.requestedByName, j.createdAt) } : {}) });
       setAck(false);
-      toast({ title: 'Run requested', description: 'Nothing runs until two approvers approve it on the approval signer\'s page.' });
+      toast(j.direct ? { title: 'Approved automatically', description: DIRECT_TOAST } : { title: 'Run requested', description: 'Nothing runs until two approvers approve it on the approval signer\'s page.' });
     },
     onError: (e) => toast({ title: 'Not requested', description: apiMessage(e, 'The request was refused.'), variant: 'destructive' }),
   });
@@ -248,12 +260,12 @@ function RunForm({ r }: { r: Readiness }) {
       <Button size="sm" disabled={!ack || ids.length === 0 || !!problem || reason.trim().length < 3 || run.isPending} onClick={() => run.mutate()}>
         {run.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Request a run
       </Button>
-      <p className="text-xs text-muted-foreground flex gap-2"><ShieldCheck className="h-3.5 w-3.5 shrink-0 mt-0.5" />Requesting runs nothing. Two approvers on the approval roster, neither of whom wrote this script, approve the exact plan with a passkey on the approval signer&apos;s page. You cannot approve your own request.</p>
+      <p className="text-xs text-muted-foreground flex gap-2"><ShieldCheck className="h-3.5 w-3.5 shrink-0 mt-0.5" />Requesting runs nothing. Two approvers on the approval roster, neither of whom wrote this script, approve the exact plan with a passkey on the approval signer&apos;s page. You cannot approve your own request. (In direct mode, set on the approval signer for this business, the run is signed as soon as you request it, after you confirm it is you.)</p>
       {requested && (
         <div className="rounded-md border p-2 space-y-1 text-xs" data-script-run-requested>
-          <p>Requested. Waiting for approval.</p>
+          <p>{requested.direct ? `${requested.direct}. It runs when each computer next checks in.` : 'Requested. Waiting for approval.'}</p>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" asChild><a href={requested.approvalUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5 mr-1" />Open the approval page</a></Button>
+            {!requested.direct && <Button size="sm" variant="outline" asChild><a href={requested.approvalUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5 mr-1" />Open the approval page</a></Button>}
             {requested.endpointIds.slice(0, 5).map((id) => {
               const e = (eps ?? []).find((x) => x.id === id);
               return <Button key={id} size="sm" variant="ghost" asChild><Link href={`/endpoints/${id}?tab=actions`}>{e?.name ?? 'Computer'}: results</Link></Button>;

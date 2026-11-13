@@ -65,9 +65,10 @@ export const dashboardApi = {
 
 // ─── Approved actions (v0.26) ───────────────────────────────────────────────
 // Request, read, cancel, reconcile. There is no approve call: approval happens
-// on the approval signer's own origin, with a passkey on its roster.
+// on the approval signer's own origin, with a passkey on its roster — or, in
+// direct mode (0.39, the signer operator's setting), not at all.
 export const actionsApi = {
-  catalog: () => api.get('/actions/catalog'),
+  catalog: (endpointId?: string) => api.get('/actions/catalog', { params: endpointId ? { endpointId } : {} }),
   list: (endpointId: string) => api.get(`/endpoints/${endpointId}/actions`),
   request: (endpointId: string, body: { actionId: string; version: number; params: Record<string, unknown>; reason: string; windowHours?: number }) =>
     api.post(`/endpoints/${endpointId}/actions`, body),

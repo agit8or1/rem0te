@@ -3,7 +3,9 @@
  *
  *   internal  (127.0.0.1 only; the portal):  POST /internal/v1/plans,
  *             GET /internal/v1/plans/:id, POST /internal/v1/plans/:id/cancel,
- *             GET /internal/v1/policy/:businessId, GET /internal/v1/keys,
+ *             GET /internal/v1/policy/:businessId|default (read only: the
+ *             approval mode and customer sign-off are set by the CLI alone),
+ *             GET /internal/v1/keys,
  *             GET/POST /internal/v1/pauses (v0.28: the portal may ADD a
  *             pause; nothing over HTTP clears one — that is the operator CLI),
  *             POST /internal/v1/scripts, GET /internal/v1/scripts/:id,
@@ -31,7 +33,7 @@ import {
   admitPlan, credentialSha256, webauthnChallenge, loadSigningKey, policyFor, recordDecision, Refused, rolesFor, signJob, keysDocument,
   admitPolicy, approvalsOf, effectivePolicyStatus, policyRolesFor, recordPolicyDecision, signPolicy, signUnderPolicy,
   deviceIdentity, deviceKeyChangedMessage, newPins, pinConflicts,
-  admitScriptProposal, assertScriptAllowed, effectiveScriptStatus, recordScriptDecision, scriptRolesFor,
+  allowlistDirect, admitScriptProposal, assertScriptAllowed, effectiveScriptStatus, recordScriptDecision, scriptRolesFor,
   assertSoftwareAllowed, mergeRevocations, revocationStatement, signRevocations, SOFTWARE_ENTRY_ID,
   type Challenge, type JobRecord, type PolicyRecord, type Role, type ScriptAllowRecord,
 } from './core';
@@ -268,7 +270,8 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
       const b = await body(req, MAX_SCRIPT_BODY) as { proposal?: unknown };
       const out = await store.exclusive(() => {
-        const r = admitScriptProposal(b.proposal, now());
+        const direct = allowlistDirect(store.policy());
+        const r = admitScriptProposal(b.proposal, now(), direct);
         assertNotPaused(r.proposal.businessId ?? '-');
         if (store.scriptRevocation(r.contentSha256)) throw new Refused('script_revoked', 'this script content was revoked; it can never be allowlisted again');
         const existing = store.scriptEntry(r.id);
@@ -278,13 +281,14 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
           return existing;
         }
         store.saveScriptEntry(r);
+        if (r.direct) console.log(`[approval-signer] script ${r.contentSha256} added to the allowlist in direct mode (proposed by ${r.proposal.proposedBy.userId})`);
         return r;
       });
-      return send(res, 201, { id: out.id, status: effectiveScriptStatus(out), contentSha256: out.contentSha256, definitionSha256: out.definitionSha256, approvalUrl: `${cfg.origin}/approve/script/${out.id}` });
+      return send(res, 201, { id: out.id, status: effectiveScriptStatus(out), direct: out.direct === true, contentSha256: out.contentSha256, definitionSha256: out.definitionSha256, approvalUrl: `${cfg.origin}/approve/script/${out.id}` });
     }
     const r0 = store.scriptEntry(id);
     if (!r0) return send(res, 404, { error: 'not_found' });
-    if (req.method === 'GET' && !sub) return send(res, 200, { ...scriptView(r0, false), approvalUrl: `${cfg.origin}/approve/script/${r0.id}` });
+    if (req.method === 'GET' && !sub) return send(res, 200, { ...scriptView(r0, false), direct: r0.direct === true, approvalUrl: `${cfg.origin}/approve/script/${r0.id}` });
     if (req.method !== 'POST' || sub !== 'revoke') return send(res, 405, { error: 'method_not_allowed' });
     const b = await body(req) as { reason?: unknown };
     if (typeof b.reason !== 'string' || b.reason.trim().length < 3) throw new Refused('bad_request', 'a reason is required');
@@ -319,16 +323,25 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
           policyId: doc.policyId, status: 'AWAITING_APPROVAL', doc, digest, decisions: [], signature: null, kid: null,
           revokedAt: null, revokedBy: null, revokeReason: null, ledger: [], refusals: [], createdAt: now().toISOString(), updatedAt: now().toISOString(),
         };
+        // 0.39: in direct mode the policy is active at admission, with no
+        // approvals; its signature covers that, and it stops counting if the
+        // business leaves direct mode (policyQuorum).
+        if (policyFor(store.policy(), doc.businessId).approval === 'direct') {
+          r.direct = true;
+          signPolicy(r, k, now());
+          for (const p of newPins(r, pins, now())) store.pinDeviceKey(p);
+          console.log(`[approval-signer] policy ${r.policyId} active in direct mode (proposed by ${doc.createdBy.userId})`);
+        }
         store.savePatchPolicy(r);
         return r;
       });
-      return send(res, 201, { policyId: out.policyId, digest: out.digest, status: effectivePolicyStatus(out, now()), approvalUrl: `${cfg.origin}/approve/policy/${out.policyId}` });
+      return send(res, 201, { policyId: out.policyId, digest: out.digest, status: effectivePolicyStatus(out, now()), direct: out.direct === true, approvalUrl: `${cfg.origin}/approve/policy/${out.policyId}` });
     }
     const r0 = store.patchPolicy(id);
     if (!r0) return send(res, 404, { error: 'not_found' });
     if (req.method === 'GET' && !sub) {
       const v = policyView(r0, now());
-      return send(res, 200, { ...v, approvals: approvalsOf(r0).map((a) => ({ name: a.name, role: a.role, at: a.at })), refusals: r0.refusals.slice(-10) });
+      return send(res, 200, { ...v, direct: r0.direct === true, approvals: approvalsOf(r0).map((a) => ({ name: a.name, role: a.role, at: a.at })), refusals: r0.refusals.slice(-10) });
     }
     if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
     if (sub === 'revoke') {
@@ -390,8 +403,9 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
         });
         return send(res, 200, { entryId: sw[1], status: 'REVOKED', revokedAt: rev.at });
       }
-      const pm = url.pathname.match(/^\/internal\/v1\/policy\/([A-Za-z0-9_-]{8,64})$/);
-      if (req.method === 'GET' && pm) return send(res, 200, policyFor(store.policy(), pm[1]));
+      // Read only: no route on either listener writes the policy (§ 58).
+      const pm = url.pathname.match(/^\/internal\/v1\/policy\/(default|[A-Za-z0-9_-]{8,64})$/);
+      if (req.method === 'GET' && pm) return send(res, 200, pm[1] === 'default' ? policyFor({ default: store.policy().default, businesses: {} }, '-') : policyFor(store.policy(), pm[1]));
       if (url.pathname === '/internal/v1/pauses') {
         if (req.method === 'GET') return send(res, 200, { pauses: store.pauses().filter((p) => !p.clearedAt) });
         if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
@@ -409,7 +423,9 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       // a count only, for the portal's pre-flight check. Who they are stays here.
       if (req.method === 'GET' && url.pathname === '/internal/v1/capabilities') {
         const people = new Set(store.roster().members.filter((x) => !x.disabled && x.approve.length).map((x) => x.userId));
-        return send(res, 200, { patchPolicies: 1, scripts: 1, revocations: 1, kid: k.kid, roster: { approvers: people.size } });
+        const pol = store.policy();
+        const directBusinesses = Object.keys(pol.businesses).filter((b) => policyFor(pol, b).approval === 'direct').length;
+        return send(res, 200, { patchPolicies: 1, scripts: 1, revocations: 1, direct: 1, kid: k.kid, roster: { approvers: people.size }, approval: { default: policyFor({ default: pol.default, businesses: {} }, '-').approval, directBusinesses } });
       }
       const pol = policyRoute(url.pathname);
       if (pol) return await internalPolicy(req, res, pol);
@@ -428,10 +444,18 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
             return existing;
           }
           const j: JobRecord = { jobId: plan.jobId, status: 'AWAITING_APPROVAL', plan, digest, decisions: [], envelope: null, createdAt: now().toISOString(), updatedAt: now().toISOString() };
+          // 0.39, direct mode: admitPlan has already checked everything it
+          // checks for any plan, the pause is checked above, and the plan
+          // says direct only because this business's policy here does. It is
+          // signed now, with no approvers; requestedBy is who asked.
+          if (plan.policy.approval === 'direct') {
+            signJob(j, k, now());
+            console.log(`[approval-signer] signed ${j.jobId} in direct mode (${plan.action.id}@${plan.action.version}, requested by ${plan.requestedBy.userId}, ${plan.targets.length} computer(s))`);
+          }
           store.saveJob(j);
           return j;
         });
-        return send(res, 201, { jobId: out.jobId, digest: out.digest, status: out.status, approvalUrl: `${cfg.origin}/approve/${out.jobId}` });
+        return send(res, 201, { jobId: out.jobId, digest: out.digest, status: out.status, direct: out.plan.policy.approval === 'direct', approvalUrl: `${cfg.origin}/approve/${out.jobId}` });
       }
       const j = m[1] ? store.job(m[1]) : null;
       if (!j) return send(res, 404, { error: 'not_found' });

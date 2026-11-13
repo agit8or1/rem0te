@@ -11,6 +11,7 @@ import { ActionsService } from '../actions/actions.service';
 import { SignerClient } from '../actions/signer.client';
 import { RevocationRelay } from '../actions/revocations.controller';
 import { MAX_RING_TARGETS, MAX_WINDOW_HOURS, SCRIPT_RUN } from '../actions/catalog';
+import { assertFresh } from '../security-controls/review';
 import {
   MAX_SCRIPT_OUTPUT_BYTES, SCRIPT_OUTPUT_RETENTION_DAYS, TIMEOUT_MINUTES, ScriptRunParams, argumentsProblem, type ParameterDecl, type ScriptBlock, type ScriptProposal,
 } from '../actions/script-run';
@@ -125,6 +126,11 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
     return actor.isPlatformAdmin || (s.customerId === actor.businessId && this.hasBusinessCap(actor, CAP.SCRIPTS_REVIEW));
   }
 
+  /** 0.39: is the signer's default policy (which governs its allowlist) in direct mode? Any failure is no. */
+  private async allowlistDirect(): Promise<boolean> {
+    try { const r = await this.signer.policy('default'); return r.status === 200 && r.body.approval === 'direct'; } catch { return false; }
+  }
+
   /** The signer's word on an entry, mirrored. Never the other way: the row cannot make the entry active. */
   private async refresh(e: ScriptAllowlistEntry): Promise<ScriptAllowlistEntry> {
     if (!LIVE.includes(e.status) || !this.signer.configured()) return e;
@@ -164,6 +170,8 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
     return {
       version: { id: v.id, scriptId: s.id, name: s.name, scope: s.scope.toLowerCase(), businessId: s.customerId, version: v.version, status: v.status, risk: v.risk, parameters: v.parameters as unknown as ParameterDecl[], contentSha256: v.contentSha256 },
       signerConfigured,
+      // 0.39: the signer's default mode, read only. Direct: a proposal is added to its allowlist at once.
+      allowlistDirect: signerConfigured ? await this.allowlistDirect() : false,
       allowlist: this.entryView(current),
       revoked,
       timeouts: TIMEOUT_MINUTES, maxTargets: SCRIPT_RUN.maxTargets, maxOutputBytes: MAX_SCRIPT_OUTPUT_BYTES, retentionDays: SCRIPT_OUTPUT_RETENTION_DAYS,
@@ -180,7 +188,7 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
 
   // ── The signer's allowlist ─────────────────────────────────────────────────
 
-  async propose(actor: ActorContext, versionId: string) {
+  async propose(actor: ActorContext, versionId: string, freshMethod?: string | null) {
     const v = await this.load(actor, versionId);
     const s = v.script;
     if (!this.mayPropose(actor, s)) throw new ForbiddenException({ code: 'NOT_A_REVIEWER', message: s.scope === 'GLOBAL' ? 'Proposing a global script needs a Platform Admin or an independent reviewer.' : 'Proposing a script to the approval signer needs the Review scripts permission for this business.' });
@@ -189,6 +197,10 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
     if (all.some((e) => e.status === 'REVOKED')) throw new ConflictException({ code: 'SCRIPT_REVOKED', message: 'This version was removed from the approval signer\'s allowlist. Revocation is permanent: edit it into a new version and have that reviewed.' });
     const live = all.find((e) => LIVE.includes(e.status));
     if (live) return this.entryView(live);
+    // 0.39: in direct mode (the signer's default policy) the signer adds the
+    // entry at once, so proposing it is the decision.
+    const direct = await this.allowlistDirect();
+    if (direct) assertFresh(freshMethod ?? null, { action: 'scripts.direct', message: 'Direct mode: the approval signer adds this script to its allowlist as soon as you propose it. Confirm it is you.' });
     const ppl = new Map((await this.prisma.user.findMany({ where: { id: { in: [...v.contributorIds, v.decidedById, actor.userId] } }, select: { id: true, email: true, firstName: true, lastName: true } }))
       .map((u) => [u.id, ([u.firstName, u.lastName].filter(Boolean).join(' ') || u.email).slice(0, 120)]));
     const name = (id: string) => ppl.get(id) ?? 'a removed user';
@@ -210,7 +222,7 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
     await this.audit.log({
       tenantId: s.tenantId ?? actor.tenantId ?? undefined, customerId: s.customerId ?? undefined, actorId: actor.userId, actorIp: actor.ip,
       action: 'SCRIPT_ALLOWLIST_PROPOSED', resource: 'script_version', resourceId: v.id,
-      meta: { scriptId: s.id, version: v.version, allowlistId: e.id, contentSha256: v.contentSha256, definitionSha256: v.definitionSha256 },
+      meta: { scriptId: s.id, version: v.version, allowlistId: e.id, contentSha256: v.contentSha256, definitionSha256: v.definitionSha256, direct: r.body.direct === true },
     });
     return this.entryView(e);
   }
@@ -237,7 +249,7 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
 
   // ── Requesting a run ──────────────────────────────────────────────────────
 
-  async requestRun(actor: ActorContext, raw: unknown) {
+  async requestRun(actor: ActorContext, raw: unknown, freshMethod?: string | null) {
     const p = RunDto.safeParse(raw);
     if (!p.success) throw bad(p.error);
     const d = p.data;
@@ -245,7 +257,7 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
     const s = v.script;
     if (v.status !== 'APPROVED' || !v.decidedById) throw new ConflictException({ code: 'NOT_APPROVED', message: 'Only a version approved in the library can be run.' });
     const entry = (await this.entries(v.id)).find((e) => e.status === 'ACTIVE');
-    if (!entry) throw new ConflictException({ code: 'SCRIPT_NOT_ALLOWLISTED', message: 'This version is not on the approval signer\'s allowlist yet. Propose it, and have two approvers add it on the approval signer\'s page.' });
+    if (!entry) throw new ConflictException({ code: 'SCRIPT_NOT_ALLOWLISTED', message: 'This version is not on the approval signer\'s allowlist yet. Propose it: in direct mode the signer adds it at once; otherwise two approvers add it on the approval signer\'s page.' });
     const params = { scriptVersionId: v.id, sha256: v.contentSha256, parameters: d.parameters, timeoutMinutes: d.timeoutMinutes };
     const decls = v.parameters as unknown as ParameterDecl[];
     const why = argumentsProblem(decls, d.parameters);
@@ -267,7 +279,7 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
       contentSha256: v.contentSha256, contentBytes: v.contentBytes, definitionSha256: v.definitionSha256, contributors: v.contributorIds, reviewedBy: v.decidedById,
     };
     const job = await this.actions.createPlan(actor, {
-      action: SCRIPT_RUN, endpointIds: d.endpointIds, params, reason: d.reason, startsInMinutes: d.startsInMinutes, windowHours: d.windowHours, script: block,
+      action: SCRIPT_RUN, endpointIds: d.endpointIds, params, reason: d.reason, startsInMinutes: d.startsInMinutes, windowHours: d.windowHours, script: block, freshMethod,
     });
     return this.actions.view(job, actor);
   }

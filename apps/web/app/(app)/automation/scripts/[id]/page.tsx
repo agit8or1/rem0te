@@ -36,9 +36,9 @@ interface VersionData {
   id: string; version: number; status: string; basedOn: number | null; description: string; language: string; targetOs: string; risk: ScriptRisk; parameters: ScriptParameter[];
   content: string; contentBytes: number; contentSha256: string; definitionSha256: string; author: Person; createdAt: string; submittedAt: string | null;
   contributors?: Person[];
-  decision: { by: Person; at: string; note: string; approvedSha256: string | null } | null;
+  decision: { by: Person; at: string; note: string; approvedSha256: string | null; selfReviewed?: boolean } | null;
   staticChecks: { checkerVersion: number; findings: Finding[]; truncated: boolean; disclaimer: string };
-  you: { canSubmit: boolean; canWithdraw: boolean; canReview: boolean; cannotReviewBecause: string | null; canEdit: boolean };
+  you: { canSubmit: boolean; canWithdraw: boolean; canReview: boolean; cannotReviewBecause: string | null; canEdit: boolean; selfReview?: boolean };
 }
 interface DiffData { changed: string[]; added: number; removed: number; tooLarge: boolean; lines: { op: ' ' | '+' | '-'; text: string; a?: number; b?: number }[] }
 
@@ -195,7 +195,7 @@ function VersionView({ id, v, onChanged }: { id: string; v: VersionData; onChang
             <dt className="text-muted-foreground">Size</dt><dd>{v.contentBytes.toLocaleString()} bytes</dd>
             {v.submittedAt && (<><dt className="text-muted-foreground">Submitted</dt><dd>{formatDate(v.submittedAt)}</dd></>)}
             {v.decision && (<><dt className="text-muted-foreground">{v.status === 'APPROVED' ? 'Approved' : 'Rejected'}</dt>
-              <dd>by {v.decision.by?.name ?? 'unknown'}, {formatDate(v.decision.at)}: &ldquo;{v.decision.note}&rdquo;{v.decision.approvedSha256 ? ` · over ${shortHash(v.decision.approvedSha256)}` : ''}</dd></>)}
+              <dd>by {v.decision.by?.name ?? 'unknown'}, {formatDate(v.decision.at)}: &ldquo;{v.decision.note}&rdquo;{v.decision.approvedSha256 ? ` · over ${shortHash(v.decision.approvedSha256)}` : ''}{v.decision.selfReviewed ? ' · self-reviewed (direct mode)' : ''}</dd></>)}
           </dl>
           <div>
             <p className="text-xs font-medium mb-1">Parameters</p>
@@ -255,6 +255,7 @@ function VersionView({ id, v, onChanged }: { id: string; v: VersionData; onChang
             {v.status === 'IN_REVIEW' && !v.you.canReview && v.you.canWithdraw && <p className="text-xs text-muted-foreground">You wrote this version, so someone else must review it.</p>}
             {v.you.canReview && (
               <div className="space-y-2" data-review>
+                {v.you.selfReview && <p className="text-xs" data-self-review>The approval signer is in direct mode (its default policy), so you may review a version you wrote. It is recorded as a self-review, not an independent one.</p>}
                 <p className="text-xs">You are reviewing content <code className="font-mono">{shortHash(v.contentSha256)}</code>. An approval records that exact hash; any later edit is a new version that needs its own review. Approving asks you to confirm it is you, and runs nothing.</p>
                 <div className="space-y-1">
                   <Label htmlFor="rv-note" className="text-xs">Note (what you checked, or why not)</Label>

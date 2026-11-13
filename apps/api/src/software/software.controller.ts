@@ -106,9 +106,9 @@ export class SoftwareController {
   @HttpCode(HttpStatus.CREATED)
   @RequireCapability(CAP.COMPUTERS_VIEW)
   @RateLimit(10)
-  async requestRing(@Actor() actor: ActorContext, @Param('id') id: string, @Param('ring') ring: string, @Body() body: unknown) {
+  async requestRing(@Actor() actor: ActorContext, @Param('id') id: string, @Param('ring') ring: string, @Body() body: unknown, @Req() req: Request) {
     if (!/^[0-9]$/.test(ring)) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'ring is 0 to 9' });
-    return { success: true, data: await this.svc.requestRing(actor, id, Number(ring), body) };
+    return { success: true, data: await this.svc.requestRing(actor, id, Number(ring), body, this.fresh(req)) };
   }
 
   @Post('software/deployments/:id/pause')
@@ -144,7 +144,7 @@ export class SoftwareController {
   @HttpCode(HttpStatus.CREATED)
   @RequireCapability(CAP.COMPUTERS_VIEW)
   @RateLimit(10)
-  async single(@Actor() actor: ActorContext, @Param('id') id: string, @Param('entryId') entryId: string, @Param('operation') operation: string, @Body() body: unknown) {
-    return { success: true, data: await this.svc.single(actor, id, entryId, operation, body) };
+  async single(@Actor() actor: ActorContext, @Param('id') id: string, @Param('entryId') entryId: string, @Param('operation') operation: string, @Body() body: unknown, @Req() req: Request) {
+    return { success: true, data: await this.svc.single(actor, id, entryId, operation, body, this.fresh(req)) };
   }
 }

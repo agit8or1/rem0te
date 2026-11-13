@@ -9,7 +9,7 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { AccessPolicyService } from '../security-controls/access-policy.service';
 import { ActionsService } from '../actions/actions.service';
 import { SignerClient } from '../actions/signer.client';
-import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, UPDATE_ID_RE, UPDATE_INSTALL, UpdateReboot, type UpdateRebootRule } from '../actions/catalog';
+import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, UPDATE_ID_RE, UPDATE_INSTALL, UpdateReboot, planDirect, type UpdateRebootRule } from '../actions/catalog';
 import { evaluateRingGate, targetStates, toEvidenceTarget, type Gate, type GateTarget, type RingEvidence } from '../actions/patch-policy';
 import { CLASSIFICATIONS, MANAGER_LABEL, Posture, eligibility, idKey } from './posture';
 import { patchSummaryFor, type PatchSummary } from './summary-db';
@@ -314,7 +314,7 @@ export class PatchingService {
   }
 
   /** "Install updates": one computer, one ring, the usual two approvals. Returns the deployment and its plan. */
-  async installOnEndpoint(actor: ActorContext, endpointId: string, raw: unknown) {
+  async installOnEndpoint(actor: ActorContext, endpointId: string, raw: unknown, freshMethod?: string | null) {
     const parsed = InstallDto.safeParse(raw);
     if (!parsed.success) this.bad('INVALID_REQUEST', parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
     const dto = parsed.data;
@@ -322,12 +322,13 @@ export class PatchingService {
     const st = await this.installState(actor, endpointId);
     if (!st.possible) throw new ConflictException({ code: 'INSTALL_NOT_POSSIBLE', message: st.reason, fix: st.fix });
     const ep = (await this.actions.endpointFor(endpointId))!;
+    await this.actions.assertDirectFresh(ep.customerId!, freshMethod);
     const host = (ep.hostname ?? ep.name).slice(0, 64);
     const d = await this.build(actor, {
       businessId: ep.customerId!, name: `Install on ${host}`.slice(0, 120), updates: dto.updates, rings: [[endpointId]],
       soakHours: 0, failureThreshold: 0, windowHours: dto.windowHours, reboot: dto.reboot,
     }, 'MANUAL', null);
-    const out = await this.requestRing(actor, d.id, 0, { reason: dto.reason, startsInMinutes: dto.startsInMinutes });
+    const out = await this.requestRing(actor, d.id, 0, { reason: dto.reason, startsInMinutes: dto.startsInMinutes }, undefined, freshMethod);
     await this.audit.log({ tenantId: d.tenantId ?? undefined, customerId: d.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_INSTALL_REQUESTED', resource: 'endpoint', resourceId: endpointId, meta: { deploymentId: d.id, jobId: out.job.id, updates: dto.updates.length, reboot: dto.reboot } });
     return out;
   }
@@ -430,7 +431,7 @@ export class PatchingService {
         const j = jobs.get(i);
         return {
           ring: i, canary: i === 0, gate: gates[i],
-          job: j ? { id: j.id, status: j.status, statusReason: j.statusReason, approvalUrl: j.approvalUrl, outcome: j.outcome, window: { notBefore: j.notBefore, notAfter: j.notAfter }, digest: j.digest } : null,
+          job: j ? { id: j.id, status: j.status, statusReason: j.statusReason, approvalUrl: j.approvalUrl, outcome: j.outcome, window: { notBefore: j.notBefore, notAfter: j.notAfter }, digest: j.digest, direct: planDirect(j.plan), createdAt: j.createdAt } : null,
           computers: r.endpointIds.map((e) => {
             const t = j?.targets.find((x) => x.endpointId === e);
             const p = postures.get(e) ?? null;
@@ -477,7 +478,7 @@ export class PatchingService {
    * exact window, filter and the previous ring's evidence; the signer signs
    * it at once or refuses it. Otherwise it awaits two approvals.
    */
-  async requestRing(actor: ActorContext, id: string, ring: number, raw: unknown, under?: UnderPolicy) {
+  async requestRing(actor: ActorContext, id: string, ring: number, raw: unknown, under?: UnderPolicy, freshMethod?: string | null) {
     const parsed = RequestRingDto.safeParse(raw);
     if (!parsed.success) this.bad('INVALID_REQUEST', parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
     const dto = parsed.data;
@@ -508,6 +509,7 @@ export class PatchingService {
       },
       deployment: { id: d.id, ring },
       ...(under ? { window: under.window, underPolicy: { policyId: under.policyId, digest: under.digest, evidence: ring === 0 ? null : await this.ringEvidence(d, ring - 1) } } : {}),
+      freshMethod,
     });
     await this.audit.log({ tenantId: d.tenantId ?? undefined, customerId: d.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_RING_REQUESTED', resource: 'patch_deployment', resourceId: d.id, meta: { ring, jobId: job.id, computers: endpointIds.length, excluded: Object.fromEntries(excluded), underPolicy: under?.policyId ?? null } });
     return { job: await this.actions.view(job), deployment: await this.detail(actor, id) };
