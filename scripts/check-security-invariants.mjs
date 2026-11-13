@@ -3456,6 +3456,18 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /\nexport AUTO_MIGRATION_SWEEP=off\n/.test(read('scripts/run-e2e.sh'))
       && /AUTO_MIGRATION_SWEEP: 'off',/.test(read('apps/web/scripts/e2e-ui.mjs')),
     "onModuleInit: AUTO_MIGRATION_SWEEP === 'off' → no timer; settingsFrom; run-e2e.sh exports it; e2e-ui's API env sets it");
+  // 0.37.3: the installer's output is teed through a pipe, and a RustDesk
+  // process install.ps1 leaves running inherits it. Without a WaitDelay the
+  // agent waited for that process forever: the migration hung on real
+  // Windows after a successful install and the heartbeat task never ran again.
+  const ri = read('tools/windows-installer/internal/agent/runinstaller.go');
+  const pw = read('tools/windows-installer/platform_windows.go');
+  check('the agent never waits on a descendant of install.ps1 that holds its output pipe',
+    /cmd\.WaitDelay = InstallerWaitDelay/.test(ri) && /const InstallerWaitDelay = \d+ \* time\.Second/.test(ri)
+      && /errors\.Is\(err, exec\.ErrWaitDelay\) && cmd\.ProcessState != nil \{\s*return cmd\.ProcessState\.ExitCode\(\), nil/.test(ri)
+      && /func \(w \*winPlatform\) RunInstaller\([^)]*\) \(int, error\) \{[^}]*return agent\.RunInstallerCmd\(cmd\)\s*\}/.test(pw)
+      && /TestRunInstallerCmdDoesNotWaitForDescendants/.test(read('tools/windows-installer/internal/agent/runinstaller_test.go')),
+    'RunInstallerCmd sets WaitDelay and keeps the exit code on ErrWaitDelay; winPlatform.RunInstaller goes through it; the Go test exists');
 }
 
 if (failures.length > 0) {

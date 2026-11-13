@@ -402,6 +402,22 @@ moving:
 Resume and restart need a Platform Admin and a fresh sign-in. Neither skips the canary. See
 [update-signing.md](update-signing.md#moving-computers-automatically-037).
 
+### A computer went silent right after fetching its migration (0.37.0 – 0.37.2)
+
+The device page shows the migration *fetched*, then nothing: no heartbeat, no result, while RustDesk still reaches
+the machine. Until 0.37.3 the signed agent waited on the installer's output pipe, which a RustDesk process the
+installer left running had inherited, so it never returned. The install itself had usually finished. The legacy
+heartbeat that launched it never ended either, and the heartbeat task does not start a second copy while one runs.
+
+After 0.37.3 is published (`sudo rem0te-signed-publish`), unstick each such computer once, from an elevated
+PowerShell on it, or by restarting it:
+
+```powershell
+Get-Process rem0te-agent -ErrorAction SilentlyContinue | Stop-Process -Force
+```
+
+Its next heartbeat runs within three minutes. If the halted canary was one of these computers, **Resume** it.
+
 ## Services
 
 ```bash

@@ -5,6 +5,58 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.37.3] — 2026-11-13 · *Keystone*
+
+### Fixed
+
+- **The migration to the signed agent hung after installing, and the computer
+  went silent.** On real Windows, DS-HOME1 (the 0.37.1 canary) and
+  DEWEY-WKS2022 (a manual Upgrade to full agent) both fetched their migration,
+  downloaded the signed agent, `install.ps1`, RustDesk and the tray, and then
+  sent no further heartbeat. RustDesk still reached them, so they showed
+  *agent silent*. The cause is in `winPlatform.RunInstaller`. It tees the
+  installer's output to the agent log through `io.MultiWriter`, so `os/exec`
+  copies it through a pipe, and `cmd.Run()` returns only once every holder of
+  that pipe's write end has exited. `install.ps1` runs `rustdesk.exe` directly
+  (`--config`, `--password`, `--get-id`), and a RustDesk process that stays up
+  inherits the handle, so the agent waited on it forever. The agent was
+  launched by the legacy heartbeat's update hook, so that heartbeat never ended
+  either, and the scheduled task (IgnoreNew) started no other. Reproduced on
+  Linux with a backgrounded grandchild: `Run()` returned only when it exited.
+  The legacy path never hit this, because it runs the installer in-process with
+  nothing piped. The script runner (`action/scriptexec.go`) already had this
+  guard; the installer runner did not.
+
+  The fix is `agent.RunInstallerCmd`, which sets `cmd.WaitDelay` (15 s). Once
+  `install.ps1` itself exits, the agent waits at most that long for the pipe,
+  and keeps the script's own exit code (`ProcessState.ExitCode()` on
+  `exec.ErrWaitDelay`), so a failed install is still reported as failed. The
+  same runner is used by the signed agent's `update`.
+
+### Upgrade notes
+
+- Publish the fixed agent: `sudo rem0te-signed-publish`. New migrations then
+  run the fixed stage 2.
+- A computer already stuck is still running the old agent and has to be
+  unstuck once, by restarting it or with
+  `Get-Process rem0te-agent | Stop-Process -Force` in an elevated PowerShell.
+  Its install had usually completed, so its next heartbeat is on the signed
+  channel. If it was the automatic migration's canary and the rollout halted,
+  **Resume** it on Devices → Full agent. `docs/troubleshooting.md` has a
+  section for this.
+
+### Verification
+
+- `go test ./internal/agent -run RunInstaller`: a descendant holding the pipe
+  for 120 s no longer holds the agent; exit code 7 is kept with and without a
+  lingering descendant; a missing binary is exit 1 with an error. `go vet` is
+  clean for linux and windows, and `go test ./...` passes.
+- `check-security-invariants.mjs` §57 has a new check: `RunInstallerCmd` sets
+  `WaitDelay`, keeps the exit code on `ErrWaitDelay`, and is what
+  `winPlatform.RunInstaller` calls. Removing the `WaitDelay`, or calling
+  `cmd.Run()` directly again, fails it.
+- Not proven on real Windows until a computer migrates with this build.
+
 ## [0.37.2] — 2026-11-13 · *Keystone*
 
 ### Fixed
