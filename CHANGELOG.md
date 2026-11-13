@@ -5,6 +5,69 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.39.0] — 2026-11-13 · *Threshold*
+
+### Added
+
+- **Add device installs the full agent.** A new Windows computer used to get
+  the standard agent and needed *Upgrade to full agent* afterwards. DEWEY-WKS2022
+  was added at 05:01 and came up standard, even though a signed agent was
+  published. The `.exe` link already served the signed agent (since 0.24), but
+  the PowerShell line most people use (`irm …/install/win/<token> | iex`, a
+  93 KB download in the log) always served the standard installer script.
+
+  Now, for a valid, unclaimed, unexpired enrolment token and a published
+  signed agent, that route serves `buildSignedInstallScript`. The script
+  checks it is elevated, downloads `windows/rem0te-agent.exe` by its digest
+  into a fresh directory locked to SYSTEM and Administrators, and checks the
+  SHA-256. Only then does it run `rem0te-agent.exe install --portal <host>
+  --token <token>`, which verifies everything else against signed metadata and
+  claims the computer. It never calls `exit`, so the person's window keeps the
+  output. Without a token nothing changes, because the heartbeat's reinstall of
+  an existing standard agent carries none, and moving those is the
+  migration's job, canary first. The Add device page's Windows text says what
+  it installs.
+
+- **`rem0te-signed-publish --approval-keys FILE`** signs the approval signer's
+  public key list into the release as `approval/keys.json`. That is how agents
+  learn to trust approved actions, and the 0.37 single-host commands had no way
+  to do it. The list is kept in the release user's state directory only after
+  the release carrying it is published, and later publishes sign it again. A
+  file that isn't JSON, is over 64 KiB, or holds anything that looks like key
+  material is refused before any build. `rem0te-signed-status` shows the
+  published approval keys, or *none*.
+
+### Fixed
+
+- **The approval signer's systemd unit could not start under Node 22.** Its
+  seccomp filter (`SystemCallFilter=@system-service`) doesn't include
+  `pkey_alloc`, which Node 22's V8 calls at start-up for its JIT. Installed on
+  this host for the first time, it died with `status=31/SYS` (kernel audit:
+  `syscall=330`) and restarted in a loop. The unit now also allows
+  `pkey_alloc pkey_free pkey_mprotect`. On an installed signer, copy the unit
+  again and run `systemctl daemon-reload`.
+
+### Upgrade notes
+
+- No schema change. Deploy, then `sudo rem0te-signed-publish`.
+- Approved actions still need the signer configured. Direct mode, so that a
+  single operator needs no approver, is the next release.
+
+### Verification
+
+- `e2e-agent-upgrade.mjs` (107 checks, 7 new). Both the path and the query
+  form with a valid token serve the full-agent script, pinned to the published
+  digest and hash-checked before `install`, with nothing of the standard
+  installer and no `exit`. Without a token it is still the standard installer.
+  An unknown token and a claimed token don't get the script.
+- `e2e-signed-release.mjs` (70 checks, 6 new). A file holding a private key is
+  refused and nothing is published. `approval/keys.json` becomes a signed
+  target with the file's digest, and the list is kept. `verify -mirror` accepts
+  the release. Status shows it, and a later `--republish` signs it again.
+- `check-security-invariants.mjs`: two new checks, the install script and its
+  token gate (§43) and `--approval-keys` (§56). Each fails with its guard
+  removed. The script parses under pwsh and refuses a bad host, digest or token.
+
 ## [0.38.0] — 2026-11-13 · *Doorstep*
 
 ### Added
