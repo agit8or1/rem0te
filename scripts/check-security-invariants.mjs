@@ -3341,8 +3341,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('the daily refresh runs as the release user, with no access to the portal\'s configuration',
     /^User=@RELEASE_USER@$/m.test(unit) && /^ExecStart=@BIN_DIR@\/rem0te-signed-refresh --conf @CONF@$/m.test(unit)
       && /^InaccessiblePaths=-\/etc\/reboot-remote -\/opt\/reboot-remote$/m.test(unit) && /^IPAddressDeny=any$/m.test(unit)
+      && /^PrivateTmp=false$/m.test(unit) && /^ReadWritePaths=@STATE_DIR@ @PUB_DIR@ @BUILD_ROOT@$/m.test(unit)
+      && /\nchmod 0755 "\$\(dirname "\$CONF_PATH"\)" "\$LIB_DIR"\n/.test(read('deploy/release/rem0te-signed-setup.sh'))
       && /^TOOL=\$LIB_DIR\/rem0te-release$/m.test(refresh) && /tool refresh -repo "\$BUILD\/repo" "\$\{K\[@\]\}"/.test(refresh),
-    'rem0te-timestamp-refresh.service: User=@RELEASE_USER@, InaccessiblePaths the portal config, no outbound network');
+    'rem0te-timestamp-refresh.service: User=@RELEASE_USER@, InaccessiblePaths the portal config, no outbound network, no PrivateTmp (BUILD_ROOT is in /var/tmp); setup makes the config and tool directories 0755');
   const gh = [];
   const walkAll = (d) => { for (const n of readdirSync(join(ROOT, d))) { const r = `${d}/${n}`; if (statSync(join(ROOT, r)).isDirectory()) walkAll(r); else gh.push(r); } };
   walkAll('.github');

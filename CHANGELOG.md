@@ -5,6 +5,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.37.1] — 2026-11-13 · *Keystone*
+
+This release fixes two bugs that only appeared the first time `rem0te-signed-setup.sh` ran for real as root, on the
+production host. Every test had run setup under `--prefix --no-user --no-systemd` as one ordinary user, where
+neither bug can happen.
+
+### Fixed
+- **Setup died at the first key with `env: '/usr/local/lib/rem0te-release/rem0te-release': Permission denied`.**
+  - **Cause:** `lib.sh` sets `umask 027`. So the directories root creates for the configuration
+    (`/etc/rem0te-release`) and the installed tool (`/usr/local/lib/rem0te-release`) came out `0750 root:root`. The
+    release user then could not reach the tool to run `keygen`. Setup stopped before any key was written, so a re-run
+    was safe.
+  - **Fix:** setup now makes both directories `0755`. Neither holds a secret; the keys stay under `KEY_DIR` (`0700`,
+    the release user's).
+- **The daily timestamp refresh could never run:** `rem0te-timestamp-refresh.service` failed with `226/NAMESPACE`,
+  "Failed to set up mount namespacing: /var/tmp/rem0te-release-build: No such file or directory".
+  - **Cause:** `PrivateTmp=true` gives the unit an empty `/var/tmp`, so the `ReadWritePaths=` entry for the build
+    root under `/var/tmp` has nothing to mount.
+  - **Symptom:** the timer would have failed every day. After 7 days the timestamp expires and every signed agent
+    refuses updates.
+  - **Fix:** the unit now sets `PrivateTmp=false`. `ProtectSystem=strict` still leaves only the release user's own
+    directories writable.
+- §56 now checks both fixes: `PrivateTmp=false` and the `ReadWritePaths` line in the unit, and the `chmod 0755` in
+  setup.
+
+### Upgrade notes
+- **Hosts already set up with 0.37.0,** where a hand fix let setup finish: the next
+  `sudo ./deploy/release/rem0te-signed-setup.sh` reinstalls the unit and changes no key. On this host the installed
+  unit was fixed by hand on 2026-11-13, and `systemctl start rem0te-timestamp-refresh.service` succeeded.
+- No portal code changed: no migration and no dependency change.
+
+### Verification
+- On production, setup completed after the directory fix: six keys, the repository, the timer, `UPDATE_REPO_DIR`,
+  and the first publish of 0.37.0.
+- `rem0te-release verify -mirror http://127.0.0.1:3001/api/v1/public/updates` verified the portal-served
+  repository: 4 targets, root v1, targets v2.
+- With the unit fixed, the refresh service ran once and exited `success`, publishing timestamp v3.
+- §56 holds with the new checks. `check-versions.mjs` passes.
+
 ## [0.37.0] — 2026-11-13 · *Keystone*
 
 The seventh increment of the RMM overhaul. Its theme is the owner's request: an **easy** way to put agents on the
