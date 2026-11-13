@@ -35,7 +35,7 @@ export class AgentSigningController {
  * so Platform Admin only — the guard before anything is read, and the service
  * checks again. Turning it on, shortening the soak, resuming and restarting
  * need fresh authentication; turning it off does not. All audited. There is
- * no route that migrates a computer: that stays Upgrade to signed agent,
+ * no route that migrates a computer: that stays Upgrade to full agent,
  * POST /endpoints/:id/agent/migrate, under the person's own access.
  */
 @Controller('admin/agent-auto-migration')

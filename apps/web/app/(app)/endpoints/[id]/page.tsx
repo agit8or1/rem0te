@@ -22,6 +22,7 @@ import { DeviceHistoryTab, type SessionRow } from '@/components/endpoints/worksp
 import { DeviceChatTab } from '@/components/endpoints/workspace/chat-tab';
 import { DiagnosticsPanel } from '@/components/endpoints/workspace/diagnostics-panel';
 import { AgentCard } from '@/components/endpoints/workspace/agent-card';
+import { UPGRADE_LABEL, upgradeView, useAgentActions } from '@/components/endpoints/workspace/agent-actions';
 import type { AccessReview } from '@/components/endpoints/workspace/access-review-panel';
 import { acceptsQueuedWork, agentType, parseTab, reportsInventory, reportsWindowsDetail, TAB_LABEL, type WorkspaceTab } from '@/components/endpoints/workspace/device-model';
 import {
@@ -78,6 +79,10 @@ export default function EndpointDetailPage() {
   const patches = usePatchStatus(id, canView);
   const inventory = useInventory(id, canView);
   const catalog = useActionCatalog(canView);
+  // 0.37: the agent's actions in the header, for computers:edit — the same
+  // read (and key) as the Agent card, so both update together.
+  const canEdit = can(CAP.COMPUTERS_EDIT);
+  const agentActions = useAgentActions(id, canView && canEdit);
 
   // Access review lists people, so it needs users:view as well. A 403 (or any
   // error) leaves it out of History rather than showing an error there.
@@ -183,6 +188,20 @@ export default function EndpointDetailPage() {
   ];
   const active: WorkspaceTab = tabs.includes(tab) ? tab : 'overview';
 
+  // "Agent out of date" opens what the header offers: the upgrade to the full
+  // agent when the server offers it, otherwise Update agent; with neither it
+  // opens the Overview tab at the Agent card, which says why.
+  const headerAgent = canView && canEdit ? agentActions : undefined;
+  const up = headerAgent ? upgradeView(headerAgent.a, canEdit) : null;
+  const openAgentCard = () => {
+    setTab('overview');
+    // After the Overview has rendered.
+    setTimeout(() => document.getElementById('agent-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  };
+  const agentChip = up?.state === 'enabled' ? { run: agentActions.askMigrate, title: `${UPGRADE_LABEL}: moves this computer to the signed agent at its next check-in.` }
+    : headerAgent?.a?.update.possible && !headerAgent.a.update.command ? { run: agentActions.askUpdate, title: `${headerAgent.a.update.label}: queued for the computer’s next check-in.` }
+      : { run: openAgentCard, title: 'See the Agent card on the Overview tab: it says what can be done about it.' };
+
   return (
     <div className="p-4 sm:p-6 space-y-5">
       <DeviceHeader
@@ -191,6 +210,7 @@ export default function EndpointDetailPage() {
         patches={{ data: patches.data, isError: patches.isError }}
         inventory={inventory.data}
         onOpenTab={setTab}
+        agentAction={agentChip}
         actions={
           <DeviceActions
             endpointId={id}
@@ -199,9 +219,10 @@ export default function EndpointDetailPage() {
             onViewOnly={() => launchMutation.mutate('view_only')}
             connecting={launchMutation.isPending}
             onOpenTab={setTab}
-            perms={{ view: canView, edit: can(CAP.COMPUTERS_EDIT), remove: can(CAP.COMPUTERS_REMOVE), technician: !!technician }}
+            perms={{ view: canView, edit: canEdit, remove: can(CAP.COMPUTERS_REMOVE), technician: !!technician }}
             actionReason={actionReason}
             reportsInventory={acceptsQueuedWork(agent)}
+            agent={headerAgent}
           />
         }
       />
@@ -234,7 +255,7 @@ export default function EndpointDetailPage() {
             sessions={sessions}
             onOpenTab={setTab}
             showAlertsAndPatches={canView}
-            agentCard={canView ? <AgentCard endpointId={id} canEdit={can(CAP.COMPUTERS_EDIT)} alerts={mon.data?.alerts} /> : undefined}
+            agentCard={canView ? <AgentCard endpointId={id} canEdit={canEdit} alerts={mon.data?.alerts} /> : undefined}
             // Staged-update history (Platform Admin only, like rollouts).
             adminExtras={isPlatformAdmin ? <EndpointUpdateHistory endpointId={id} /> : undefined}
           />
@@ -282,11 +303,7 @@ export default function EndpointDetailPage() {
               <EndpointPatches
                 endpointId={id}
                 platform={ep.platform}
-                onOpenAgentCard={() => {
-                  setTab('overview');
-                  // After the Overview has rendered.
-                  setTimeout(() => document.getElementById('agent-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
-                }}
+                onOpenAgentCard={openAgentCard}
               />
             )}
           </TabsContent>

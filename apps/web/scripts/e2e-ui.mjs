@@ -53,6 +53,21 @@
  * database this suite writes (apps/api/scripts/lib/mmdb-fixture.mjs) holding
  * only RFC 5737 documentation networks — never the production GeoIP file.
  *
+ * 0.37 adds the agent's buttons in the computer page's header, beside
+ * Connect, at both widths and in both themes: "Upgrade to full agent" on a
+ * standard Windows agent is a real <button disabled> with its reason, the fix
+ * and a Devices → Full agent link beside it while no signed release is
+ * published, and enabled once one is; it opens the same dialog as the Agent
+ * card (and so does the "Agent out of date" chip); a request goes through
+ * step-up and both the header ("Upgrade requested — waiting for check-in")
+ * and the card follow it; a signed agent shows "Full agent" and no upgrade;
+ * Linux shows the command to copy; a Business User (computers:view only) is
+ * offered none of it. The published release is a real signed repository made
+ * with the offline release tool (RELEASE_BIN, which CI's e2e job builds),
+ * served to this suite's API through UPDATE_REPO_DIR and switched on only for
+ * those checks — otherwise its timestamp is moved aside, which the API reads
+ * as "no signed release" (the Full agent page's step 1 stays "not done").
+ *
  * 0.36 also adds the tray's chat window, /assist, at the size the tray opens it
  * and smaller, in the light and dark schemes (UI_COMBOS=assist runs only it):
  * the one-time code leaving the address bar, the cookie, starting a chat,
@@ -78,10 +93,10 @@
  */
 import { chromium } from 'playwright';
 import { createRequire } from 'module';
-import { spawn, spawnSync } from 'child_process';
 import { createHash, generateKeyPairSync, randomBytes } from 'crypto';
 import { createServer } from 'http';
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
+import { execFileSync, spawn, spawnSync } from 'child_process';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { mkdtemp } from 'fs/promises';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
@@ -133,6 +148,37 @@ const GEO = {
 };
 const GEOIP_FILE = writeCityMmdb(path.join(GEO_DIR, 'fixture-city.mmdb'),
   Object.values(GEO).map((g) => ({ ...g, region: 'Fixture', regionCode: 'FX', country: 'US', countryName: 'United States' })));
+
+// 0.37: a signed update repository with a signed agent in it, made with the
+// offline release tool, for "Upgrade to full agent" to be offered. Its
+// timestamp is kept aside (`.off`) except while signedRelease(true) — then the
+// API, which reads the repository from disk on every request, sees a release.
+const SIGNED = (() => {
+  const bin = process.env.RELEASE_BIN;
+  if (!bin) return null;
+  const work = mkdtempSync(path.join(tmpdir(), 'rem0te-ui-signed-'));
+  const keys = path.join(work, 'keys'); const repo = path.join(work, 'repo'); const files = path.join(work, 'files');
+  mkdirSync(keys); mkdirSync(files);
+  const rel = (...a) => execFileSync(bin, a, { encoding: 'utf8' });
+  for (const k of ['r1', 'r2', 'r3', 'targets', 'snapshot', 'timestamp']) rel('keygen', '-out', path.join(keys, `${k}.pem`));
+  rel('init', '-repo', repo, '-root-key', path.join(keys, 'r1.pem'), '-root-key', path.join(keys, 'r2.pem'), '-root-key', path.join(keys, 'r3.pem'),
+    '-root-threshold', '2', '-targets-key', path.join(keys, 'targets.pem'), '-snapshot-key', path.join(keys, 'snapshot.pem'), '-timestamp-key', path.join(keys, 'timestamp.pem'));
+  execFileSync(process.execPath, [path.join(API_DIR, 'scripts/build-signed-installer.mjs'), '--out', path.join(files, 'install.ps1')]);
+  const agent = Buffer.concat([Buffer.from('MZ fake signed agent for the UI suite '), randomBytes(64), Buffer.from('REM0TE_INST_URL:'), Buffer.alloc(240)]);
+  writeFileSync(path.join(files, 'rem0te-agent.exe'), agent);
+  rel('release', '-repo', repo, '-targets-key', path.join(keys, 'targets.pem'), '-snapshot-key', path.join(keys, 'snapshot.pem'), '-timestamp-key', path.join(keys, 'timestamp.pem'),
+    '-add', `windows/install.ps1=${path.join(files, 'install.ps1')}`, '-add', `windows/rem0te-agent.exe=${path.join(files, 'rem0te-agent.exe')}`);
+  const ts = path.join(repo, 'metadata', 'timestamp.json');
+  renameSync(ts, `${ts}.off`);
+  return { work, repo, ts };
+})();
+function signedRelease(on) {
+  if (!SIGNED) return false;
+  const { ts } = SIGNED;
+  if (on && existsSync(`${ts}.off`)) renameSync(`${ts}.off`, ts);
+  if (!on && existsSync(ts)) renameSync(ts, `${ts}.off`);
+  return true;
+}
 
 let pass = 0, fail = 0; const failures = [];
 const check = (c, m, d = '') => { if (c) { pass++; console.log(`  \x1b[32m✓\x1b[0m ${m}`); } else { fail++; failures.push(`${m}${d ? ` — ${String(d).slice(0, 400)}` : ''}`); console.log(`  \x1b[31m✗\x1b[0m ${m}${d ? `\n      ${String(d).slice(0, 1500)}` : ''}`); } };
@@ -200,6 +246,8 @@ function startApi() {
     SMTP_ALLOW_LOCAL_RELAY: 'loopback', INTEGRATION_PEERS_FILE: peer.file, INTEGRATION_CAPABILITIES_TTL_MS: '0',
     // 0.36: the map's fixture GeoIP database (documentation networks only).
     GEOIP_DB_PATH: GEOIP_FILE,
+    // 0.37: the suite's own signed repository (see SIGNED), never a real one.
+    ...(SIGNED ? { UPDATE_REPO_DIR: SIGNED.repo } : { UPDATE_REPO_DIR: '' }),
   };
   return start('api', process.execPath, [path.join(API_DIR, 'dist', 'main.js')], { cwd: API_DIR, env });
 }
@@ -1191,6 +1239,15 @@ async function memberChecks(browser, f, vp, theme, label) {
     const r = await page.request.get(`${WEB}/api/v1/reports/schedules`, { headers: { 'x-forwarded-for': ip() } });
     check(r.status() === 403, `${label}: and the API refuses them a schedule list (HTTP ${r.status()}), as the link's rule says`);
     await cleanCheck(page, `${label} Business User report`);
+    // 0.37: computers:view only — the header offers no agent buttons; the card's upgrade is not offered to them either.
+    await go(page, `/endpoints/${f.main.id}`);
+    await page.locator('[data-testid="agent-card"] [data-testid="agent-migrate"]').waitFor({ timeout: 15_000 }).catch(() => {});
+    const hdr = page.locator('[data-testid="device-actions"]');
+    const offered = await hdr.locator('[data-testid="header-upgrade-full-agent"], [data-testid="header-update-agent"], [data-testid="header-agent-command"], [data-testid="header-full-agent"]').count();
+    const cardBtn = page.locator('[data-testid="agent-card"] [data-testid="agent-migrate"]');
+    check(await hdr.isVisible() && offered === 0 && await cardBtn.count() === 1 && await cardBtn.isDisabled(),
+      `${label}: a Business User (computers:view) gets no agent buttons in the header, and the card's Upgrade to full agent is disabled`, `header buttons ${offered}, card button ${await cardBtn.count()}`);
+    await cleanCheck(page, `${label} Business User device header`);
   } finally { await ctx.close(); }
 }
 
@@ -1266,6 +1323,7 @@ async function combo(browser, f, vp, theme) {
     await systemStatus(page, label, vp);
     await coverage035(page, f, vp, label);
     await fullAgentPage(page, f, vp, theme, label);
+    await headerAgentUpgrade(page, f, vp, theme, label);
     if (theme === 'light') await mainPagesSweep(page, f, vp, label);
   } finally { await ctx.close(); }
   await apiKeys(browser, f, vp, theme, label);
@@ -1341,6 +1399,7 @@ async function deviceReq(method, p, { body } = {}) {
 const device = chatDevice(deviceReq);
 
 const smtpBefore = { row: undefined };
+const relayBefore = { row: undefined };
 async function seed035(f) {
   const { tenant, A, admin, owner, main } = f;
   // A signed Windows agent that speaks chat protocol 1, bound to a device secret.
@@ -1376,9 +1435,21 @@ async function seed035(f) {
   await prisma.integrationOrgMapping.create({ data: { peerId: peer.ID, externalOrgId: `org-ui-${sfx}`, customerId: A.id, tenantId: tenant.id, createdById: 'e2e-ui' } });
   // A migration to the signed agent requested for the main computer, so the status page has a row.
   await prisma.agentMigration.create({ data: { endpointId: main.id, tenantId: tenant.id, customerId: A.id, nonce: `mig_${randomBytes(30).toString('base64url')}`, reason: `${TAG} pilot machine`, requestedById: admin.id } });
+  // 0.37: a standard Windows agent in Birch with a device secret and an old
+  // agent (so "Agent out of date"), for the header's Upgrade to full agent.
+  // In B so that A's rule-group members and counts are unchanged.
+  const upg = await prisma.endpoint.create({ data: {
+    tenantId: tenant.id, customerId: f.B.id, name: `${TAG}-UPGRADE`, hostname: `${TAG.toLowerCase()}-upgrade.corp.example.com`, platform: 'Windows', osVersion: 'Windows 11 Pro',
+    status: 'ACTIVE', isOnline: true, isManaged: true, accessMode: 'COMPANY_WIDE', lastSeenAt: new Date(), deviceClass: 'WORKSTATION', agentVersion: '0.19.0', ipAddress: '10.20.0.9',
+  } });
+  await prisma.rustdeskNode.create({ data: { tenantId: tenant.id, endpointId: upg.id, rustdeskId: String(100000000 + ((Math.random() * 899999999) | 0)), agentSecretHash: sha256(randomBytes(24).toString('hex')) } });
+  // The migration script needs an address to name: with no https public
+  // address here (PUBLIC_API_URL is this suite's http web), the relay host.
+  const tset = await prisma.tenantSettings.findFirst({ orderBy: { createdAt: 'asc' } });
+  if (tset && !tset.rustdeskRelayHost) { relayBefore.row = { id: tset.id, value: tset.rustdeskRelayHost }; await prisma.tenantSettings.update({ where: { id: tset.id }, data: { rustdeskRelayHost: 'relay.example.com' } }); }
   // The outbound-email singleton is global: remember it to put it back.
   smtpBefore.row = await prisma.smtpSettings.findUnique({ where: { id: 'singleton' } });
-  return { chat: { id: chat.id, rid, secret, hostname: chat.hostname, platform: 'Windows' }, unproposed, listed, recipient };
+  return { chat: { id: chat.id, rid, secret, hostname: chat.hostname, platform: 'Windows' }, unproposed, listed, recipient, upg };
 }
 
 async function cleanup035() {
@@ -1386,6 +1457,11 @@ async function cleanup035() {
   const steps = [
     ['integration mappings', () => prisma.integrationOrgMapping.deleteMany({ where: { customerId: { in: ids } } })],
     ['report schedules', () => prisma.reportSchedule.deleteMany({ where: { customerId: { in: ids } } })],
+    ['relay host', async () => {
+      if (!relayBefore.row) return;
+      await prisma.tenantSettings.update({ where: { id: relayBefore.row.id }, data: { rustdeskRelayHost: relayBefore.row.value } });
+      relayBefore.row = undefined;
+    }],
     ['smtp settings', async () => {
       if (smtpBefore.row === undefined) return;
       if (smtpBefore.row === null) await prisma.smtpSettings.deleteMany({ where: { id: 'singleton' } });
@@ -1667,6 +1743,126 @@ async function fullAgentPage(page, f, vp, theme, label) {
   await cleanCheck(page, `${label} Full agent`);
 }
 
+/**
+ * The agent's buttons in the computer page's header (0.37), as the Platform
+ * Admin. Upgrade to full agent: a real disabled button with its reason, fix
+ * and Full agent link while no signed release is published; enabled once one
+ * is, opening the same dialog as the Agent card and the "Agent out of date"
+ * chip; on desktop/light a request goes through step-up and both the header
+ * and the card follow it, then the card cancels it. Then a signed agent
+ * ("Full agent", no upgrade), Linux (the command), and the main computer's
+ * open request ("Upgrade requested — waiting for check-in").
+ */
+async function headerAgentUpgrade(page, f, vp, theme, label) {
+  const upg = f.c.upg;
+  const hdr = page.locator('[data-testid="device-actions"]');
+  const btn = hdr.getByTestId('header-upgrade-full-agent');
+  const loaded = () => page.waitForFunction(() => !!document.querySelector('[data-testid="header-upgrade-full-agent"]') && !/Loading…/.test(document.querySelector('[data-testid="agent-card"]')?.textContent ?? 'Loading…'), null, { timeout: 15_000 }).catch(() => {});
+  const fits = async (what) => {
+    if (vp !== 'phone') return;
+    const boxes = await hdr.locator('button, [data-testid="header-full-agent"]').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { r: Math.round(r.right), t: (e.textContent ?? '').trim().slice(0, 30) }; }));
+    check(boxes.length > 0 && boxes.every((b) => b.r <= 375), `${label}: ${what}: every header button wraps inside 375 px`, JSON.stringify(boxes));
+    await noSideScroll(page, `${label} ${what}`);
+  };
+
+  signedRelease(false);
+  await go(page, `/endpoints/${upg.id}`);
+  await loaded();
+  const tag = await btn.evaluate((e) => e.tagName).catch(() => null);
+  const reason = hdr.getByTestId('header-upgrade-reason');
+  const rt = await reason.innerText().catch(() => '');
+  const tip = await btn.locator('xpath=..').getAttribute('title').catch(() => null);
+  check(tag === 'BUTTON' && await btn.isDisabled() && await btn.getAttribute('data-state') === 'blocked' && /Upgrade to full agent/.test(await btn.innerText()),
+    `${label}: with no signed release, the header's "Upgrade to full agent" is a real <button disabled>`, `${tag} ${await btn.getAttribute('data-state').catch(() => null)}`);
+  check(await reason.isVisible() && /Upgrade to full agent unavailable: No signed release is published/.test(rt) && /What to do:/.test(rt)
+      && await reason.locator('a[href="/endpoints/full-agent"]').count() === 1 && /No signed release is published/.test(tip ?? ''),
+    `${label}: …with the reason beside it (and as its tooltip), what to do, and a link to Devices → Full agent`, `${rt.slice(0, 300)} | title=${tip}`);
+  const upd = hdr.getByTestId('header-update-agent');
+  check(await upd.isVisible() && await upd.innerText() === 'Update agent' && !(await upd.isDisabled()), `${label}: Update agent sits beside it, a separate button`);
+  const card = page.locator('[data-testid="agent-card"]');
+  const cardBtn = card.getByTestId('agent-migrate');
+  check(await cardBtn.evaluate((e) => e.tagName).catch(() => null) === 'BUTTON' && await cardBtn.isDisabled() && /No signed release is published/.test(await card.getByTestId('agent-migration-blocked').innerText().catch(() => '')),
+    `${label}: the Agent card shows the same disabled button and reason`);
+  await themeCheck(page, theme, `${label} header agent buttons`);
+  await fits('no signed release');
+  await shot(page, `${label}-header-upgrade-disabled`);
+  await cleanCheck(page, `${label} header upgrade (no release)`);
+
+  if (!signedRelease(true)) {
+    check(false, `${label}: the enabled state needs a signed release: set RELEASE_BIN to the rem0te-release tool (CI's e2e job builds it)`);
+  } else {
+    try {
+      await go(page, `/endpoints/${upg.id}`);
+      await page.waitForFunction(() => document.querySelector('[data-testid="header-upgrade-full-agent"]')?.getAttribute('data-state') === 'enabled', null, { timeout: 15_000 }).catch(() => {});
+      check(await btn.getAttribute('data-state') === 'enabled' && !(await btn.isDisabled()) && !(await hdr.getByTestId('header-upgrade-reason').count()),
+        `${label}: with a signed release published, the header's Upgrade to full agent is enabled, with no reason beside it`, String(await btn.getAttribute('data-state')));
+      check(!(await card.getByTestId('agent-migrate').isDisabled()), `${label}: and so is the Agent card's`);
+      const dlg = page.getByTestId('agent-migrate-dialog');
+      const chip = page.getByTestId('attention-agent-outdated');
+      check(await chip.isVisible(), `${label}: the old agent shows "Agent out of date"`);
+      await chip.click();
+      await dlg.waitFor({ timeout: 5_000 }).catch(() => {});
+      check(await dlg.isVisible() && /Upgrade to full agent\?/.test(await dlg.innerText()) && /The full agent is the signed agent/.test(await dlg.innerText()), `${label}: the "Agent out of date" chip opens the Upgrade to full agent dialog`, await dlg.innerText().catch(() => ''));
+      await dlg.getByRole('button', { name: 'Cancel' }).click();
+      await dlg.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
+      await btn.click();
+      await dlg.waitFor({ timeout: 5_000 }).catch(() => {});
+      check(await dlg.isVisible() && await dlg.locator('#agent-migrate-reason').isVisible() && await dlg.getByRole('button', { name: 'Request upgrade' }).isDisabled(),
+        `${label}: the header's button opens the same dialog, asking for a reason before it can be sent`);
+      await fits('upgrade dialog');
+      await shot(page, `${label}-header-upgrade-dialog`);
+      if (vp === 'desktop' && theme === 'light') {
+        const before = await prisma.agentMigration.count({ where: { endpointId: upg.id } });
+        await dlg.locator('#agent-migrate-reason').fill(`${TAG} header upgrade`);
+        await forgetStepUp(page);
+        await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
+        await dlg.getByRole('button', { name: 'Request upgrade' }).click();
+        await confirmStepUp(page, label, 'Upgrade to full agent from the header');
+        await page.waitForFunction(() => document.querySelector('[data-testid="header-upgrade-full-agent"]')?.getAttribute('data-state') === 'pending', null, { timeout: 15_000 }).catch(() => {});
+        const rows = await prisma.agentMigration.findMany({ where: { endpointId: upg.id }, orderBy: { requestedAt: 'desc' } });
+        const audit = rows[0] ? await prisma.activityLog.count({ where: { action: 'AGENT_MIGRATION_REQUESTED', resourceId: upg.id } }) : 0;
+        check(rows.length === before + 1 && rows[0].reason === `${TAG} header upgrade` && rows[0].requestedById === f.admin.id && audit >= 1,
+          `${label}: requesting it through step-up records one request with the reason, and its audit entry`, JSON.stringify({ rows: rows.length, before, audit }));
+        check(await btn.isDisabled() && (await btn.innerText()).includes('Upgrade requested — waiting for check-in') && await hdr.getByTestId('header-upgrade-pending').isVisible(),
+          `${label}: the header then says "Upgrade requested — waiting for check-in" instead of offering it again`, await btn.innerText().catch(() => ''));
+        check(/header upgrade/.test(await card.getByTestId('agent-migration').innerText().catch(() => '')) && await card.getByTestId('agent-migrate').isDisabled(),
+          `${label}: and the Agent card follows it without a reload (the same query)`);
+        await card.getByTestId('agent-migrate-cancel').click();
+        await page.waitForFunction(() => document.querySelector('[data-testid="header-upgrade-full-agent"]')?.getAttribute('data-state') === 'enabled', null, { timeout: 15_000 }).catch(() => {});
+        const open = await prisma.agentMigration.count({ where: { endpointId: upg.id, completedAt: null, cancelledAt: null } });
+        check(open === 0 && await btn.getAttribute('data-state') === 'enabled', `${label}: cancelling it on the card offers the header's button again`, `open ${open}`);
+        await cleanCheck(page, `${label} header upgrade requested`, stepUp403);
+      } else {
+        await dlg.getByRole('button', { name: 'Cancel' }).click();
+        await dlg.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
+        await cleanCheck(page, `${label} header upgrade (release published)`);
+      }
+    } finally { signedRelease(false); }
+  }
+
+  // A signed agent: "Full agent", no upgrade.
+  await go(page, `/endpoints/${f.c.chat.id}`);
+  await hdr.getByTestId('header-full-agent').waitFor({ timeout: 15_000 }).catch(() => {});
+  check(await hdr.getByTestId('header-full-agent').isVisible() && await hdr.getByTestId('header-upgrade-full-agent').count() === 0 && /Check for update now/.test(await hdr.getByTestId('header-update-agent').innerText().catch(() => '')),
+    `${label}: a signed agent shows "Full agent" and Check for update now, and no upgrade button`);
+  await fits('signed agent');
+  await cleanCheck(page, `${label} header signed agent`);
+  // Linux: the command, no upgrade.
+  await go(page, `/endpoints/${f.linux.id}`);
+  await hdr.getByTestId('header-agent-command').waitFor({ timeout: 15_000 }).catch(() => {});
+  check(await hdr.getByTestId('header-agent-command').isVisible() && await hdr.getByTestId('header-upgrade-full-agent').count() === 0 && /install/i.test(await hdr.getByTestId('header-agent-command-text').innerText().catch(() => '')),
+    `${label}: Linux shows the command to re-run (with a copy button), and no upgrade button`, await hdr.getByTestId('header-agent-command-text').innerText().catch(() => ''));
+  await fits('Linux agent');
+  await cleanCheck(page, `${label} header Linux agent`);
+  // The main computer's open request (seeded): shown, not offered again.
+  await go(page, `/endpoints/${f.main.id}`);
+  await loaded();
+  check(await btn.isDisabled() && await btn.getAttribute('data-state') === 'pending' && /Upgrade requested — waiting for check-in/.test(await btn.innerText()),
+    `${label}: with a request open, the header shows "Upgrade requested — waiting for check-in", disabled`);
+  await fits('open request');
+  await cleanCheck(page, `${label} header open request`);
+}
+
 /** History tab (0.34): the AI summary says ClientSt0r does not offer it yet, and Generate stays off. */
 async function aiHistoryPanel(page, f, vp, label) {
   const caps = peer.state.capsRequests;
@@ -1920,7 +2116,7 @@ async function main() {
     fail++; failures.push('UI_HOLD=1: a debugging run, no browser checks were made');
     return;
   }
-  check(true, `fixtures: two businesses, a Platform Admin, a Business Owner and a Business User, nine devices (one that can chat), three groups, three scripts (two approved), a confirmed address, a ClientSt0r mapping, a migration request (tag ${TAG})`);
+  check(true, `fixtures: two businesses, a Platform Admin, a Business Owner and a Business User, ten devices (one that can chat, one to upgrade), three groups, three scripts (two approved), a confirmed address, a ClientSt0r mapping, a migration request (tag ${TAG})`);
   const browser = await chromium.launch();
   try {
     // UI_COMBOS=desktop/light,phone/dark narrows a debugging run; a run that skips any combination fails.
@@ -1957,6 +2153,7 @@ main()
     if (copyDir) rmSync(copyDir, { recursive: true, force: true });
     smtp.server.close(); peer.server.close(); rmSync(peer.dir, { recursive: true, force: true });
     rmSync(GEO_DIR, { recursive: true, force: true });
+    if (SIGNED) rmSync(SIGNED.work, { recursive: true, force: true });
     console.log(`\nScreenshots: ${OUT_DIR}`);
     console.log(`${fail ? '\x1b[31m' : '\x1b[32m'}${pass} passed, ${fail} failed\x1b[0m`);
     if (failures.length) { for (const x of failures) console.log(`  - ${x}`); process.exit(1); }

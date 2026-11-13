@@ -699,9 +699,14 @@ const SECTIONS: Section[] = [
           <strong>Update agent</strong> re-runs the current installer on a standard agent (the same as Reinstall
           agent); on a signed agent it is <strong>Check for update now</strong>, which installs only what the signed
           repository lists. Linux and macOS agents act on nothing the console sends, so the card gives the command to
-          re-run on the computer. <strong>Upgrade to signed agent</strong> moves one Windows computer to the signed
-          agent at its next check-in, after a reason and a fresh sign-in; when it can&apos;t, the card says exactly
-          what is missing, such as a signed release that has not been published yet. It is refused while the portal is
+          re-run on the computer. <strong>Upgrade to full agent</strong> moves one Windows computer to the full
+          agent (the signed agent) at its next check-in, after a reason and a fresh sign-in. From 0.37 the same
+          buttons sit at the top of the computer&apos;s page for anyone with computers:edit, beside Connect, and the
+          <strong> Agent out of date</strong> chip opens them. On every standard Windows agent Upgrade to full agent is
+          always a button: when it can&apos;t be used it is greyed out with the reason beside it, such as a signed release
+          that has not been published yet, what to do, and a link to Devices → Full agent. While a request is open it
+          reads <strong>Upgrade requested — waiting for check-in</strong>. A signed agent shows <strong>Full agent</strong>
+          instead, and Linux and macOS show the command to re-run on the computer. It is refused while the portal is
           in <em>Signed only</em> mode and held while updates are paused for the business. Several computers can be
           moved at once from the device list, and{' '}
           <Link href="/endpoints/agent-migrations" className="underline">Agent migrations</Link> (a Devices tab for

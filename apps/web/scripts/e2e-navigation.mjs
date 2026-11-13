@@ -233,6 +233,21 @@ async function agentCardChecks(page, who, endpointId) {
     fullAgent: el.querySelector('a[href="/endpoints/full-agent"]') !== null,
   })).catch(() => null);
   check(!!card?.fullAgent, 'the Agent card links to Full agent (0.37)', JSON.stringify(card));
+  // 0.37: the header's agent buttons. For the admin (computers:edit) one of
+  // them is there; a disabled Upgrade to full agent always has its reason.
+  const hdr = await page.$eval('[data-testid="device-actions"]', (el) => {
+    const up = el.querySelector('[data-testid="header-upgrade-full-agent"]');
+    return {
+      any: !!el.querySelector('[data-testid="header-upgrade-full-agent"], [data-testid="header-update-agent"], [data-testid="header-agent-command"], [data-testid="header-full-agent"]'),
+      up: up ? { tag: up.tagName, disabled: up.disabled, state: up.getAttribute('data-state') } : null,
+      reason: !!el.querySelector('[data-testid="header-upgrade-reason"] a[href="/endpoints/full-agent"]'),
+    };
+  }).catch(() => null);
+  if (who === 'admin') check(!!hdr?.any, 'the device header offers the agent buttons to a Platform Admin (0.37)', JSON.stringify(hdr));
+  if (hdr?.up) {
+    check(hdr.up.tag === 'BUTTON' && (hdr.up.state !== 'blocked' || (hdr.up.disabled && hdr.reason)),
+      'the header\'s Upgrade to full agent is a button; disabled, it says why and links to Full agent (0.37)', JSON.stringify(hdr));
+  }
   check(!!card && /Type/.test(card.text) && /Version/.test(card.text) && /Current/.test(card.text) && !/could not be loaded/.test(card.text) && card.link,
     'the Overview tab has the Agent card (type, version, whether it is current) and its link to Agent migrations', JSON.stringify(card));
   if (card?.link && who === 'user') {

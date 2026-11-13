@@ -206,7 +206,7 @@ export default function UpdateSigningPage() {
                 <Link className="underline" href="/docs/update-signing">Update signing</Link>.
               </p>
               <p className="text-xs text-muted-foreground">
-                Or one computer at a time from the console (0.34): <strong>Upgrade to signed agent</strong> on a computer’s Agent card, or for a
+                Or one computer at a time from the console (0.34): <strong>Upgrade to full agent</strong> at the top of a computer’s page or on its Agent card, or for a
                 selection on All devices. It needs a fresh sign-in and a reason, is refused in <em>Signed only</em> without portal migration, and is
                 followed on <Link className="underline" href="/endpoints/agent-migrations">Agent migrations</Link>. From 0.37 the portal also moves them
                 by itself, one canary first: see <Link className="underline" href="/endpoints/full-agent">Full agent</Link>.

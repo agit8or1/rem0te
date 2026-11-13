@@ -153,7 +153,7 @@ export function gate(i: GateInput): GateReason | null {
 }
 
 export const GATE_TEXT: Record<GateReason, string> = {
-  mode_off: 'Automatic migration is off. Computers move only when someone presses Upgrade to signed agent.',
+  mode_off: 'Automatic migration is off. Computers move only when someone presses Upgrade to full agent.',
   process_off: 'Automatic migration is turned off on this server (AUTO_MIGRATION_SWEEP=off).',
   no_repository: 'Waiting for step 1: this server has no signed update repository.',
   no_release: 'Waiting for step 2: no signed agent is published.',

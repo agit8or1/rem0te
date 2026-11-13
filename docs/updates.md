@@ -346,7 +346,7 @@ Windows computer.
 ## The Rem0te agent: moving to the signed agent automatically (0.37)
 
 **On by default** once a signed agent is published: standard Windows agents are
-moved to the signed agent without anyone pressing *Upgrade to signed agent* —
+moved to the signed agent without anyone pressing *Upgrade to full agent* —
 one computer first (the canary), the rest only after it has reported the
 published build for a soak (default 60 minutes) with no failed update, paced by
 the same per-hour number as automatic updates above. The same opt-out applies:

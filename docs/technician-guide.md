@@ -249,7 +249,7 @@ at the bottom.
 3. **Views** — saved filters, sort, columns and density, personal or shared (below).
 4. **Columns** — which columns show; *Comfortable / Compact* beside it sets the row height.
 5. **The row's box** — ticks the device; the header box ticks the page.
-6. **The bulk bar** — appears while anything is ticked: group membership, *Refresh inventory*, *Queue client update*, *Update agent*, *Upgrade to signed…*, *Export selection*.
+6. **The bulk bar** — appears while anything is ticked: group membership, *Refresh inventory*, *Queue client update*, *Update agent*, *Upgrade to full agent…*, *Export selection*.
 
 ![The Views menu: personal views, views shared in a business, Save current view and Device groups](screenshots/guide/device-views.png)
 
@@ -394,16 +394,18 @@ agent — the result of its last update check. Its buttons:
   at the next check-in. It installs only what the signed repository lists.
 - On Linux and macOS the card prints the exact command to re-run on the computer;
   those agents act on nothing the portal sends.
-- **Upgrade to signed agent** (standard Windows agent): asks for a reason and a
-  fresh sign-in, then moves this computer to the signed agent at its next
-  check-in, keeping its enrolment and RustDesk ID. When it can't be offered, the
-  card says exactly why — no signed release published, no device secret, the
+- **Upgrade to full agent** (standard Windows agent): asks for a reason and a
+  fresh sign-in, then moves this computer to the full (signed) agent at its next
+  check-in, keeping its enrolment and RustDesk ID. From 0.37 it is also at the top
+  of the computer's page, beside Connect, with Update agent, and the *Agent out of
+  date* chip opens it. It is always a button: when it can't be used it is
+  disabled and says exactly why — no signed release published, no device secret, the
   portal in *Signed only* mode, updates paused, a rollout running. A request can
   be cancelled until it completes. **Devices → Agent migrations** (a tab for
   anyone who may request one, from 0.35; the page itself needs only View
   computers and is linked from every Agent card) lists pending,
   held, not confirmed and completed requests. To move several computers, select
-  them on **All devices** and use **Upgrade to signed…** (at most 200; each one is
+  them on **All devices** and use **Upgrade to full agent…** (at most 200; each one is
   refused with its own reason). See
   [Update signing → Moving existing agents](update-signing.md#moving-existing-agents).
 

@@ -270,7 +270,7 @@ steps before that (keys, a repository, a published build, a fresh timestamp) wer
   pre-flight all show it.
 - **The Patches tab's "Upgrade it" now links to Full agent too**, besides *Open the Agent card*. The patch-policy
   pre-flight's fixes name `sudo rem0te-signed-publish` and the automatic migration.
-- **The Agent card** links to Full agent in its header. Where *Upgrade to signed agent* is offered, it says the
+- **The Agent card** links to Full agent in its header. Where *Upgrade to full agent* is offered, it says the
   automatic migration can move the computer instead.
 - `AgentAutoUpdateService.modeFor` is now `modesFor` for many computers at once: one policy read and one membership
   snapshot per business. `modeFor` calls it, so the 0.36 behaviour is unchanged.
@@ -345,6 +345,71 @@ steps before that (keys, a repository, a published build, a fresh timestamp) wer
   honest note, the current Devices tab, no sideways scroll, and no console errors. `e2e-navigation.mjs` gains the
   Devices tab for each persona, the page's four steps, and who is offered the controls. It needs the docs stack on
   port 4000 and was not run here (`node --check` only).
+
+### Upgrade to full agent, at the top of the computer's page
+
+The owner, after trying it: "there should be an upgrade client button/feature when you click on the client", and then
+"I see update agent, but no UPGRADE agent". Until now the agent's actions lived only on the Overview tab's Agent card,
+and with no signed release published that card showed **no button at all** for the upgrade, only a line of text
+("Upgrade to signed agent is not available: …"). On this host, where nothing is published yet, nobody would ever see
+an upgrade control.
+
+#### Added
+- **The agent's buttons in the computer page's header**, beside Connect, for anyone with *computers:edit*. On a
+  standard Windows agent, **Upgrade to full agent** is its own button, separate from **Update agent**, and it is
+  **always shown**: enabled when the server offers the move, otherwise a real disabled button with the reason beside
+  it (and as its tooltip), what to do, and a link to **Devices → Full agent**. While a request is open it reads
+  *Upgrade requested — waiting for check-in* and cannot be pressed again. A signed agent shows **Full agent** (and
+  *Check for update now*) and no upgrade; Linux and macOS show *Copy update command* and the command itself. A Business
+  User with only *computers:view* is offered none of it in the header.
+- **The Agent card's upgrade is always a button too**: the same disabled-with-reason state, or for someone without
+  *computers:edit* a disabled button that says so. A signed agent's card has a *Full agent* row.
+- **"Agent out of date" opens it.** The attention chip opens the Upgrade to full agent dialog when that is offered,
+  otherwise Update agent's confirmation, otherwise the Overview tab at the Agent card.
+
+#### Changed
+- **One set of mutations and dialogs.** `components/endpoints/workspace/agent-actions.tsx` holds the read
+  (`['endpoint-agent', id]`), the three mutations (update, migrate, cancel), the confirmation and reason dialogs and
+  the disabled-state logic (`upgradeView`); the card and the header each use it. The step-up (the api-client's
+  `STEP_UP_REQUIRED` interceptor), the reason, the audit entry, the toasts and the refusals are therefore identical
+  wherever the button is pressed, and because both read and invalidate the same keys, a request made in the header
+  shows on the card at once and the other way round.
+- **"Upgrade to full agent" everywhere** a person reads it: the header, the card, the dialog (*Upgrade to full
+  agent?*, whose body says the full agent is the signed agent), the bulk bar on All devices (*Upgrade to full
+  agent…*) and its result dialog, the Full agent page, Update signing, `/help`, and the API's own fix texts (the
+  Patches tab's "press Upgrade to full agent", the automatic migration's *mode off* reason). The docs that named the
+  button (`update-signing.md` *Moving existing agents*, `technician-guide.md`, `patching-setup.md`, `capabilities.md`,
+  `updates.md`, `rmm-gap-analysis.md`) say the same and mention the header. Test ids are unchanged (`agent-migrate`,
+  `agent-migration-blocked`); the header's are `header-upgrade-full-agent`, `header-update-agent`,
+  `header-upgrade-reason`, `header-full-agent`, `header-agent-command`.
+
+#### Decided
+- **Two buttons, not one menu.** The owner asked for an *upgrade* control he can see; folding it into an "Upgrade
+  agent" menu with Update agent would hide it again behind a click.
+- **Disabled, never hidden, on a standard Windows agent.** A missing button reads as "not a feature"; a disabled one
+  with "No signed release is published" and the command to fix it reads as "one step away".
+- **No new invariant.** Nothing in `check-security-invariants.mjs` read `agent-card.tsx` or the old label; every
+  protection is still server-side (`computers:edit`, `assertFresh`, the precondition function, the audit entry), and
+  the header adds no route.
+
+#### Verification
+- **Browser (`apps/web/scripts/e2e-ui.mjs`, CI's ports 3501–3504, a fresh scratch database, `RELEASE_BIN` set):
+  1050 passed, 0 failed** (88 of them new). At 1440 and 375 px, light and dark: with no signed release the header's
+  Upgrade to full agent is a `<button disabled>` with the reason, the fix and the Full agent link beside it and as its
+  tooltip, and the card says the same; with a release published (a real repository made by `rem0te-release`, whose
+  timestamp the suite moves in and out of place) it is enabled, and it and the "Agent out of date" chip open the same
+  dialog; on desktop/light a request through step-up writes one row and its audit entry, the header turns to
+  *Upgrade requested — waiting for check-in* and the card follows without a reload, and cancelling on the card offers
+  the header's button again; a signed agent shows *Full agent*, Linux the command; every header button stays inside
+  375 px; a Business User gets no agent buttons. The first run caught the pending label widening a 375 px screen by
+  13 px (the button was `whitespace-nowrap`); it wraps now.
+- `e2e-navigation.mjs` asserts the header's buttons for the admin and the disabled state's reason (syntax-checked:
+  it needs the docs stack on port 4000).
+- `check-security-invariants.mjs` (466 checks) and `check-versions.mjs` pass; `pnpm -r lint`, `tsc --noEmit` in both
+  apps, `nest build` and `next build` are clean. The API suites whose assertions named the old label
+  were updated to the new text: `e2e-agent-upgrade.mjs` (94 passed, 0 failed) and `e2e-patch-policies.mjs` (98
+  passed, 0 failed) were run on fresh scratch databases; `e2e-signed-release.mjs`, where only a check's description
+  changed, was syntax-checked.
 
 ### Integration notes
 

@@ -305,7 +305,7 @@ async function all() {
   {
     const v = await req('GET', `/endpoints/${std.id}/patches`, { s: S.owen, business: acme.id });
     const i = v.body?.data?.install;
-    check(v.status === 200 && i?.possible === false && /standard agent/.test(i.reason) && i.fixAction === 'agent-card' && /Upgrade to signed agent/.test(i.fix), 'a standard-agent computer: no Install button — it says why (standard agent) and what to do (0.34: Upgrade to signed agent, on the Agent card)', msg(v));
+    check(v.status === 200 && i?.possible === false && /standard agent/.test(i.reason) && i.fixAction === 'agent-card' && /Upgrade to full agent/.test(i.fix), 'a standard-agent computer: no Install button — it says why (standard agent) and what to do (Upgrade to full agent, on the Agent card)', msg(v));
     const r0 = await req('POST', `/endpoints/${std.id}/patches/install`, { s: S.owen, business: acme.id, body: { updates: [id(CU)], reboot: 'never', reason: 'try anyway' } });
     check(r0.status === 409 && code(r0) === 'INSTALL_NOT_POSSIBLE', 'and asking anyway is refused with the same reason', msg(r0));
     const m = await req('GET', `/endpoints/${manual.id}/patches`, { s: S.owen, business: acme.id });

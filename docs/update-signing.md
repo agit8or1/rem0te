@@ -360,10 +360,17 @@ the file's own SHA-256 is its name.
 - That one run trusts the portal, exactly as every legacy run already does.
 - Use it when GPO or Intune isn't available, and only while you trust the portal.
 
-**Through the portal, one computer from the console (0.34).** On the computer's **Overview → Agent** card, press
-**Upgrade to signed agent**, give a reason, and confirm it is you. For several at once, select them on **Devices → All
-devices** and use **Upgrade to signed…** (at most 200 per request; each computer is decided on its own and refused
-with its reason). Follow them on **Devices → Agent migrations** (`/endpoints/agent-migrations`).
+**Through the portal, one computer from the console (0.34).** Open the computer and press **Upgrade to full agent**
+(the full agent is the signed agent), give a reason, and confirm it is you. From 0.37 the button sits at the top of
+the computer's page, beside Connect, for anyone with *computers:edit*, as well as on the **Overview → Agent** card; the
+**Agent out of date** chip opens it too. Both places use the same request, dialog, fresh sign-in and audit entry. On a
+standard Windows agent it is always shown: when the server will not offer it (no signed release published, no device
+secret, *Signed only*, updates paused, a rollout running) it is disabled, with the reason beside it, what to do, and a
+link to **Devices → Full agent**. While a request is open it reads *Upgrade requested — waiting for check-in*. A signed
+agent shows **Full agent** instead; Linux and macOS show the installer command to re-run on the computer. For several at
+once, select them on **Devices → All devices** and use **Upgrade to full agent…** (at most 200 per request; each
+computer is decided on its own and refused with its reason). Follow them on **Devices → Agent migrations**
+(`/endpoints/agent-migrations`).
 
 What happens:
 - The request names that computer. Its next authenticated heartbeat — and no other computer's — is handed the
@@ -440,7 +447,7 @@ only to Platform Admins.
 
 - **One canary.** It picks one eligible computer that is checking in now, the most recently heard from, and makes an
   ordinary per-computer migration request for it. This is the same row, nonce, `windows.ps1?updateNonce=` script and
-  heartbeat hand-out as **Upgrade to signed agent** (see *Moving existing agents* above), made by the system with no
+  heartbeat hand-out as **Upgrade to full agent** (see *Moving existing agents* above), made by the system with no
   requester.
 - **Confirmed only on the published build.** The canary must report the signed channel *and* the published build's
   digest within 2 hours of being asked. A failed update result (`installer exit` other than 0, `installer failed`,
@@ -454,7 +461,7 @@ only to Platform Admins.
   automatic requests start in any hour, counting the canary, and at most 50 in one pass. A computer is skipped while
   an `updates` containment pause applies, while a staged rollout owns it, while its update policy opts it out of
   automatic agent updates (agent mode *Off* on the business, site or device-group policy; in *Window* mode, outside
-  the window), while it is not checking in, if a person cancelled a move for it, or for any reason **Upgrade to signed
+  the window), while it is not checking in, if a person cancelled a move for it, or for any reason **Upgrade to full
   agent** would refuse it. That last check is the same precondition function, run again when the request is written.
 - **A new build** starts a new rollout with a new canary for the computers still on the standard agent. Computers
   already on the signed agent are never migrated again: they update themselves (0.36).

@@ -38,6 +38,8 @@ interface Item {
   tab?: WorkspaceTab;
   href?: string;
   title?: string;
+  /** 0.37: an action instead of a tab (Agent out of date opens the agent's upgrade). */
+  onClick?: () => void;
 }
 
 function Chip({ item, onOpen }: { item: Item; onOpen: (t: WorkspaceTab) => void }) {
@@ -50,6 +52,7 @@ function Chip({ item, onOpen }: { item: Item; onOpen: (t: WorkspaceTab) => void 
       {item.detail && <span className="font-normal opacity-80">· {item.detail}</span>}
     </>
   );
+  if (item.onClick) return <button type="button" className={cls} title={item.title} onClick={item.onClick} data-testid={`attention-${item.key}`}>{body}</button>;
   if (item.href) return <Link href={item.href} className={cls} title={item.title} data-testid={`attention-${item.key}`}>{body}</Link>;
   if (item.tab) {
     const tab = item.tab;
@@ -63,6 +66,7 @@ function attentionItems(
   mon: { data?: MonitoringView; isError: boolean },
   patches: { data?: Patches; isError: boolean },
   inv: InventoryPayload | undefined,
+  agentAction: AgentChipAction | undefined,
 ): Item[] {
   const items: Item[] = [];
   const agent = agentType(ep);
@@ -93,7 +97,7 @@ function attentionItems(
   if (silent) {
     items.push({
       key: 'agent-silent-alert', tone: 'warning', icon: BellRing, label: 'Agent silent alert', detail: `since ${ago(silent.firstSeenAt)}`,
-      href: alertHref(silent), title: `${silent.title}. Use Update agent on the Agent card, or re-run the installer on the machine.`,
+      href: alertHref(silent), title: `${silent.title}. Use Update agent at the top of this page or on the Agent card, or re-run the installer on the machine.`,
     });
   }
 
@@ -122,7 +126,11 @@ function attentionItems(
     if (!inv.agentBound) {
       items.push({ key: 'agent-unbound', tone: 'warning', icon: AlertTriangle, label: 'Cannot report specs', detail: 'enrolled before device secrets', tab: 'overview' });
     } else if (inv.agent.outdated) {
-      items.push({ key: 'agent-outdated', tone: 'warning', icon: AlertTriangle, label: 'Agent out of date', detail: `needs v${inv.agent.required}`, tab: 'overview' });
+      // 0.37: opens the same action as the header's button, or points to the Agent card when there is none.
+      items.push({
+        key: 'agent-outdated', tone: 'warning', icon: AlertTriangle, label: 'Agent out of date', detail: `needs v${inv.agent.required}`, tab: 'overview',
+        ...(agentAction ? { onClick: agentAction.run, title: agentAction.title } : { title: 'See the Agent card on the Overview tab.' }),
+      });
     }
   }
   const version = typeof ep.agentVersion === 'string' && ep.agentVersion ? `v${ep.agentVersion}` : undefined;
@@ -133,8 +141,11 @@ function attentionItems(
   return items;
 }
 
+/** What the "Agent out of date" chip does (0.37): the header's upgrade or update, through its own dialog. */
+export interface AgentChipAction { run: () => void; title: string }
+
 export function DeviceHeader({
-  ep, mon, patches, inventory, onOpenTab, actions,
+  ep, mon, patches, inventory, onOpenTab, actions, agentAction,
 }: {
   ep: Record<string, unknown>;
   mon: { data?: MonitoringView; isError: boolean };
@@ -142,13 +153,14 @@ export function DeviceHeader({
   inventory: InventoryPayload | undefined;
   onOpenTab: (t: WorkspaceTab) => void;
   actions: React.ReactNode;
+  agentAction?: AgentChipAction;
 }) {
   const status = deviceStatus(ep);
   const customer = ep.customer as { id: string; name: string } | null;
   const site = ep.site as { id: string; name: string } | null;
   const lastSeen = (ep.lastSeenAt as string | null) ?? null;
   const lastSeenStale = !!lastSeen && isStale(lastSeen, HEARTBEAT_STALE_MS);
-  const items = attentionItems(ep, mon, patches, inventory);
+  const items = attentionItems(ep, mon, patches, inventory, agentAction);
 
   return (
     <div className="space-y-3" data-testid="device-header">

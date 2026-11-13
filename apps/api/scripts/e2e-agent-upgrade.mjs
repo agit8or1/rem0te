@@ -9,7 +9,7 @@
  *   - the Agent card: agent type, version, whether it is current, channel and
  *     the portal's update mode, for standard, signed, Linux and macOS agents;
  *     another business's computer is a 404;
- *   - "Upgrade to signed agent" refuses, each with its own code: no fresh
+ *   - "Upgrade to full agent" refuses, each with its own code: no fresh
  *     sign-in, no reason, no computers:edit, another business, no repository,
  *     a repository with no signed agent, Linux, macOS, no device secret,
  *     already signed, an updates containment pause, and Signed only;
@@ -201,7 +201,7 @@ async function main() {
     check(d.current.state === 'current' && d.portal.mode === 'legacy_allowed' && d.portal.modeLabel === 'Legacy allowed', 'current against this portal; mode Legacy allowed', JSON.stringify({ c: d.current, p: d.portal }));
     check(d.update.possible && d.update.label === 'Update agent', 'Update agent offered');
     check(d.migration && !d.migration.possible && d.migration.code === 'NO_SIGNED_RELEASE' && /No signed release is published/.test(d.migration.reason) && d.migration.link?.href === '/endpoints/full-agent',
-      'Upgrade to signed agent: refused with "No signed release is published" and the Full agent link', JSON.stringify(d.migration));
+      'Upgrade to full agent: refused with "No signed release is published" and the Full agent link', JSON.stringify(d.migration));
     const old = (await card(S.ownerA, w3)).data;
     check(old.current.state === 'behind' && /older than 0\.20\.0/.test(old.current.text), 'an agent below the contract is "behind" and says why', JSON.stringify(old.current));
     const sg = (await card(S.ownerA, wSigned)).data;
@@ -219,7 +219,7 @@ async function main() {
   }
 
   // ── Preconditions and refusals ─────────────────────────────────────────────
-  section('Upgrade to signed agent: each precondition refuses with its own reason');
+  section('Upgrade to full agent: each precondition refuses with its own reason');
   {
     let r = await migrate(S.ownerA, w1);
     check(r.status === 403 && code(r) === 'STEP_UP_REQUIRED', 'no fresh sign-in: 403 STEP_UP_REQUIRED', msg(r));
@@ -436,7 +436,7 @@ async function main() {
   {
     let r = await req('GET', `/endpoints/${w2.id}/patches`, { s: S.ownerA });
     const i = r.data?.install;
-    check(r.status === 200 && i && !i.possible && /Upgrade to signed agent/.test(i.fix) && i.fixAction === 'agent-card', 'preconditions met: names the Agent card’s button', JSON.stringify(i));
+    check(r.status === 200 && i && !i.possible && /Upgrade to full agent/.test(i.fix) && i.fixAction === 'agent-card', 'preconditions met: names the Agent card’s button', JSON.stringify(i));
     r = await req('GET', `/endpoints/${w3.id}/patches`, { s: S.ownerA });
     check(/already requested/.test(r.data?.install?.fix ?? '') && r.data.install.fixAction === 'agent-card', 'a request open: says so', JSON.stringify(r.data?.install));
     r = await withoutRepo(() => req('GET', `/endpoints/${w2.id}/patches`, { s: S.ownerA }));

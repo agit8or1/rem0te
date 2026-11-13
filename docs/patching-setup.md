@@ -70,7 +70,7 @@ reported a Windows Update scan.**
 
 Follow [Update signing → Moving existing agents](update-signing.md#moving-existing-agents). GPO or Intune is the
 method that doesn't trust the portal. From 0.34 you can also move one computer, or a selection, from the console:
-**Upgrade to signed agent** on the computer's **Overview → Agent** card (or **Upgrade to signed…** for selected devices
+**Upgrade to full agent** at the top of the computer's page or on its **Overview → Agent** card (or **Upgrade to full agent…** for selected devices
 on **All devices**), with a reason and a fresh sign-in, and follow it on **Devices → Agent migrations**. That run trusts
 the portal once, as every standard-agent update already does; it is refused in *Signed only* mode. Each computer then:
 

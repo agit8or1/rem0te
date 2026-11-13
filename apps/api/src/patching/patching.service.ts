@@ -287,7 +287,7 @@ export class PatchingService {
         return { ...no(standard, `An upgrade to the signed agent is already requested. ${st.text} Follow it on the Agent card (Overview tab).`), fixAction: 'agent-card', fixLink: FULL_AGENT };
       }
       const b = await this.migration.block(endpointId);
-      if (!b) return { ...no(standard, 'Upgrade it: press "Upgrade to signed agent" on the Agent card (Overview tab). It keeps the enrolment, device secret and RustDesk configuration. Or let the automatic migration move it (Devices → Full agent).'), fixAction: 'agent-card', fixLink: FULL_AGENT };
+      if (!b) return { ...no(standard, 'Upgrade it: press "Upgrade to full agent" at the top of the computer’s page or on its Agent card (Overview tab). It keeps the enrolment, device secret and RustDesk configuration. Or let the automatic migration move it (Devices → Full agent).'), fixAction: 'agent-card', fixLink: FULL_AGENT };
       return { ...no(standard, `${b.reason}${b.fix ? ` ${b.fix}` : ''}`), fixLink: b.link ?? null };
     }
     const notReady = this.actions.readiness(ep, `${UPDATE_INSTALL.id}@${UPDATE_INSTALL.version}`);

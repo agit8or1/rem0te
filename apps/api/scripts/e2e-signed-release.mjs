@@ -260,7 +260,7 @@ async function main() {
   section('Before the first publish: the portal sees no signed release');
   {
     const c = await req('GET', `/endpoints/${e.id}/agent`, { s: S.ownerA });
-    check(c.status === 200 && c.data?.migration?.possible === false && c.data?.migration?.code === 'NO_SIGNED_RELEASE', 'Agent card: Upgrade to signed agent refused, NO_SIGNED_RELEASE', JSON.stringify(c.data?.migration));
+    check(c.status === 200 && c.data?.migration?.possible === false && c.data?.migration?.code === 'NO_SIGNED_RELEASE', 'Agent card: Upgrade to full agent refused, NO_SIGNED_RELEASE', JSON.stringify(c.data?.migration));
     const m = await req('GET', '/public/updates/metadata/timestamp.json');
     check(m.status === 404, 'the mirror serves nothing', msg(m));
   }
@@ -314,7 +314,7 @@ async function main() {
     const bin = await req('GET', `/public/updates/targets/windows/${agentSha}.rem0te-agent.exe`);
     check(bin.status === 200 && sha(bin.buf) === agentSha && bin.buf.indexOf(root1) >= 0, 'the served rem0te-agent.exe has the signed digest and embeds the owner\'s root', `HTTP ${bin.status}`);
     const c = await req('GET', `/endpoints/${e.id}/agent`, { s: S.ownerA });
-    check(c.status === 200 && c.data?.migration?.possible === true, 'Agent card: Upgrade to signed agent is now offered', JSON.stringify(c.data?.migration));
+    check(c.status === 200 && c.data?.migration?.possible === true, 'Agent card: Upgrade to full agent is now offered', JSON.stringify(c.data?.migration));
     const other = await req('GET', `/endpoints/${e.id}/agent`, { s: S.ownerB });
     check(other.status === 404, 'another business\'s computer is still a 404', msg(other));
   }

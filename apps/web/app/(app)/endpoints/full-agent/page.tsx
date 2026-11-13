@@ -177,8 +177,8 @@ function AutoMigration({ a, admin }: { a: Overview['steps']['computers']['auto']
         <p className="text-xs text-muted-foreground">A Platform Admin changes this.</p>
       )}
       <p className="text-xs text-muted-foreground">
-        To move particular computers now, select them on <Link className="underline" href="/endpoints">All devices</Link> and use <strong>Upgrade to signed…</strong>,
-        or press <strong>Upgrade to signed agent</strong> on a computer&apos;s Agent card. Follow every request on <Link className="underline" href="/endpoints/agent-migrations">Agent migrations</Link>.
+        To move particular computers now, select them on <Link className="underline" href="/endpoints">All devices</Link> and use <strong>Upgrade to full agent…</strong>,
+        or press <strong>Upgrade to full agent</strong> at the top of a computer&apos;s page or on its Agent card. Follow every request on <Link className="underline" href="/endpoints/agent-migrations">Agent migrations</Link>.
       </p>
       {confirm && (
         <ConfirmDialog
