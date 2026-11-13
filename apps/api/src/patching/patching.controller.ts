@@ -25,8 +25,12 @@ export class PatchingController {
   constructor(private readonly patching: PatchingService, private readonly policies: PatchPolicyService, private readonly stepUp: StepUpService) {}
 
   private fresh(req: Request) {
+    assertFresh(this.freshMethod(req));
+  }
+
+  private freshMethod(req: Request): string | null {
     const u = req.user as { sub?: string; iat?: number } | undefined;
-    assertFresh(u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null);
+    return u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null;
   }
 
   @Get('endpoints/:id/patches')
@@ -38,8 +42,8 @@ export class PatchingController {
   @Post('endpoints/:id/patches/install')
   @HttpCode(HttpStatus.CREATED)
   @RateLimit(10)
-  async install(@Actor() actor: ActorContext, @Param('id') id: string, @Body() body: unknown) {
-    return { success: true, data: await this.patching.installOnEndpoint(actor, id, body) };
+  async install(@Actor() actor: ActorContext, @Param('id') id: string, @Body() body: unknown, @Req() req: Request) {
+    return { success: true, data: await this.patching.installOnEndpoint(actor, id, body, this.freshMethod(req)) };
   }
 
   @Get('patching/preflight')
@@ -95,9 +99,9 @@ export class PatchingController {
   @Post('patching/deployments/:id/rings/:ring/request')
   @HttpCode(HttpStatus.CREATED)
   @RateLimit(10)
-  async requestRing(@Actor() actor: ActorContext, @Param('id') id: string, @Param('ring') ring: string, @Body() body: unknown) {
+  async requestRing(@Actor() actor: ActorContext, @Param('id') id: string, @Param('ring') ring: string, @Body() body: unknown, @Req() req: Request) {
     if (!/^[0-9]$/.test(ring)) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'ring is 0 to 9' });
-    return { success: true, data: await this.patching.requestRing(actor, id, Number(ring), body) };
+    return { success: true, data: await this.patching.requestRing(actor, id, Number(ring), body, undefined, this.freshMethod(req)) };
   }
 
   @Post('patching/deployments/:id/pause')

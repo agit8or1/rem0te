@@ -60,6 +60,13 @@ second path. The portal holds no key the agent accepts.
    the signer computed, the arguments it accepts and who wrote it. Each approves with a passkey. Neither may be the
    person who proposed it, nor anyone who wrote or edited the content. After the second approval the entry is
    **ACTIVE**. The entry lives on the signer's disk, not in the portal's database.
+
+   **Direct mode (0.39).** If the signer's operator set the signer's **default** policy to direct mode
+   (`policy set --business default --approval direct`), proposing a version adds it to the allowlist at once, after a
+   fresh sign-in, with no approvals; the library then also lets the author review their own version, recorded as
+   *self-reviewed*. The allowlist follows `default` because it is the signer's own, for every business. A run follows
+   its business's setting, like any plan. See
+   [Approved actions → Direct mode](approved-actions.md#direct-mode-the-default-for-a-single-operator).
 4. **Run request.** A technician with `actions:request` on every computer named, who can also see the script in the
    library, picks up to 25 computers of one business, fills in the arguments, picks a timeout (1, 5, 10, 15 or 30
    minutes), gives a reason and confirms. The portal checks the version is approved, the entry is ACTIVE, the
@@ -221,10 +228,10 @@ for 90 days. Write scripts that print what the technician needs, not everything 
 |---|---|---|
 | **See** | `scripts:author` or `scripts:review` in that business, a Business Owner, a Platform Admin | Platform Admins and independent reviewers (`approvals:review`) see every version; a business's authors and reviewers see approved versions only |
 | **Write, edit, submit, withdraw** | `scripts:author` (a Business Owner holds it) | A Platform Admin |
-| **Approve, reject** | `scripts:review`, and not a contributor | A Platform Admin or an independent reviewer, not a contributor |
+| **Approve, reject** | `scripts:review`, and not a contributor (0.39: may be, when the signer's default policy is direct) | A Platform Admin or an independent reviewer, not a contributor (likewise) |
 | **Propose to the signer, revoke** | `scripts:review` | A Platform Admin or an independent reviewer |
 | **Request a run** | Library visibility **and** `actions:request` (higher risk) on every computer named, of that business | Library visibility and `actions:request` on every computer named, of one business |
-| **Add to the allowlist, approve a run** | Two people on the approval signer's roster for that business, not the proposer or requester, not a contributor | Two roster approvers for every business (`*`) |
+| **Add to the allowlist, approve a run** | Two people on the approval signer's roster for that business, not the proposer or requester, not a contributor. 0.39 direct mode: nobody — the proposal (signer's `default` direct) or the request (the business direct) is the decision, after a fresh sign-in | Two roster approvers for every business (`*`); likewise |
 
 A technician working in a business through an assignment needs the capability on a grant that covers the **whole
 business**. A grant for named computers doesn't confer library rights, because a script isn't scoped to a computer.

@@ -727,6 +727,195 @@ check('keygen refuses to overwrite a signing key', out.status !== 0 && /refusing
   r = await propose(swapped);
   check('after the operator forgets the pin, a policy naming the new key may be proposed (and needs two approvals again)', r.status === 201 && r.body.status === 'AWAITING_APPROVAL', JSON.stringify(r.body));
   await s3.close();
+
+  // ── 0.39: direct mode ───────────────────────────────────────────────────
+  // Its own signer and directory, so the policy can be changed under it.
+  {
+    const sr = require(join(dist, 'actions', 'script-run.js'));
+    const d4 = mkdtempSync(join(tmpdir(), 'rem0te-signer-direct-'));
+    writeFileSync(join(d4, 'signer.key'), generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
+    writeFileSync(join(d4, 'roster.json'), JSON.stringify({ members: [member(people.requester, ['*']), member(people.olivia, ['*']), member(people.quinn, ['*'])] }));
+    const cli4 = (args) => spawnSync(process.execPath, [join(dist, 'approval-signer', 'main.js'), ...args], { encoding: 'utf8', env: { ...process.env, APPROVAL_SIGNER_DIR: d4 } });
+    const pol4 = () => JSON.parse(readFileSync(join(d4, 'policy.json'), 'utf8'));
+    const log4 = () => (existsSync(join(d4, 'policy-changes.log')) ? readFileSync(join(d4, 'policy-changes.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []);
+
+    // The CLI is the only writer; absent means signed.
+    let o = cli4(['policy', 'show']);
+    check('direct: a fresh signer has no approval mode set (absent is signed)', o.status === 0 && JSON.parse(o.stdout).default.approval === undefined && core.policyFor(JSON.parse(o.stdout), BIZ_A).approval === 'signed', o.stderr);
+    o = cli4(['policy', 'set', '--business', BIZ_A, '--approval', 'yes']);
+    check('direct: policy set refuses an approval value other than direct / signed', o.status === 2 && !existsSync(join(d4, 'policy.json')), o.stderr);
+    o = cli4(['policy', 'set', '--business', 'short', '--approval', 'direct']);
+    check('direct: policy set refuses something that is not a business id or default', o.status === 2, o.stderr);
+    cli4(['policy', 'set', '--business', BIZ_B, '--customer-signoff', 'required']);
+    o = cli4(['policy', 'set', '--business', BIZ_B, '--approval', 'direct']);
+    check('direct: refused for a business that requires customer sign-off, saying why', o.status === 2 && /requires customer sign-off/.test(o.stderr) && /nobody could sign off first/.test(o.stderr) && pol4().businesses[BIZ_B].approval === undefined, o.stderr);
+    o = cli4(['policy', 'set', '--business', BIZ_A, '--approval', 'direct']);
+    check('direct: policy set --approval direct is written for that business only, with a warning of what it gives up', o.status === 0 && pol4().businesses[BIZ_A].approval === 'direct' && pol4().default.approval === undefined && /Anyone who fully controls the portal/.test(o.stderr), o.stderr);
+    o = cli4(['policy', 'set', '--business', BIZ_A, '--customer-signoff', 'required']);
+    check('direct: turning customer sign-off on while direct is refused, saying why', o.status === 2 && /is in direct mode/.test(o.stderr) && pol4().businesses[BIZ_A].customerSignoff === false, o.stderr);
+    const lg = log4();
+    check('direct: every accepted policy change is appended to policy-changes.log, refusals are not', lg.length === 2 && lg[1].business === BIZ_A && lg[1].before === null && lg[1].after.approval === 'direct' && lg[0].after.customerSignoff === true, JSON.stringify(lg));
+    check('direct: policyFor treats a hand-edited direct + customer sign-off as signed (the stricter)', core.policyFor({ default: { customerSignoff: true, approval: 'direct' }, businesses: {} }, BIZ_A).approval === 'signed'
+      && core.policyFor({ default: { customerSignoff: false, approval: 'Direct' }, businesses: {} }, BIZ_A).approval === 'signed');
+
+    const s4 = startSigner({ dir: d4, origin: ORIGIN, rpId: '127.0.0.1', publicPort: 0, internalPort: 0 });
+    await Promise.all([s4.internal, s4.pub].map((x) => new Promise((rr) => (x.listening ? rr() : x.once('listening', rr)))));
+    const IN4 = `http://127.0.0.1:${s4.internal.address().port}`, PUB4 = `http://127.0.0.1:${s4.pub.address().port}`;
+    const post4 = (p, body) => j(`${IN4}${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const keys4 = (await j(`${IN4}/internal/v1/keys`)).body;
+    const open4 = (env) => {
+      const k = keys4.keys.find((x) => x.kid === env?.kid);
+      if (!k) return null;
+      const pub = createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(k.ed25519, 'base64')]), format: 'der', type: 'spki' });
+      const bytes = Buffer.from(env.plan, 'base64');
+      return verify(null, Buffer.concat([Buffer.from('rem0te-action-plan-v1\n'), bytes]), pub, Buffer.from(env.sig, 'base64')) ? JSON.parse(bytes.toString('utf8')) : null;
+    };
+    const directPlan = (o2 = {}) => { const p = plan({ ...o2 }); p.policy = { risk: p.policy.risk, approvalsRequired: 0, customerSignoff: false, approval: 'direct' }; return p; };
+
+    // Read only over HTTP.
+    let r = await j(`${IN4}/internal/v1/policy/${BIZ_A}`);
+    check('direct: the portal reads a business\'s approval mode from the signer', r.status === 200 && r.body.approval === 'direct' && r.body.customerSignoff === false, JSON.stringify(r.body));
+    r = await j(`${IN4}/internal/v1/policy/default`);
+    check('direct: the default policy (which governs the allowlist) reads as signed', r.status === 200 && r.body.approval === 'signed', JSON.stringify(r.body));
+    const before = readFileSync(join(d4, 'policy.json'), 'utf8');
+    const writes = await Promise.all(['POST', 'PUT', 'PATCH', 'DELETE'].map((method) => j(`${IN4}/internal/v1/policy/${BIZ_B}`, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ approval: 'direct' }) })));
+    const pubW = await j(`${PUB4}/internal/v1/policy/${BIZ_B}`, { method: 'POST', headers: { 'content-type': 'application/json', origin: ORIGIN }, body: JSON.stringify({ approval: 'direct' }) });
+    check('direct: no method on either listener changes the policy', writes.every((w) => w.status === 404 || w.status === 405) && pubW.status === 404 && readFileSync(join(d4, 'policy.json'), 'utf8') === before, writes.map((w) => w.status).join(','));
+    r = await j(`${IN4}/internal/v1/capabilities`);
+    check('direct: capabilities report the default mode and a count of direct businesses', r.body?.direct === 1 && r.body?.approval?.default === 'signed' && r.body.approval.directBusinesses === 1, JSON.stringify(r.body?.approval));
+
+    // Admission: the plan says direct exactly when the policy does.
+    for (const [name, p, code] of [
+      ['a plan for a direct business that does not say so', plan({ biz: BIZ_A }), 'policy_mismatch'],
+      ['a direct plan for a business in signed mode', directPlan({ biz: 'biz_other_0001' }), 'policy_mismatch'],
+      ['a direct plan asking for approvals', (() => { const p = directPlan(); p.policy.approvalsRequired = 1; return p; })(), 'policy_mismatch'],
+      ['a direct plan asking for customer sign-off', (() => { const p = directPlan(); p.policy.customerSignoff = true; return p; })(), 'direct_with_customer_signoff'],
+      ['approval: "signed" (only "direct" is a value)', (() => { const p = plan({ biz: 'biz_other_0001' }); p.policy.approval = 'signed'; return p; })(), 'invalid_plan'],
+      ['a plan carrying approvers', (() => { const p = directPlan(); p.approvers = [{ userId: people.olivia.userId, name: 'O', role: 'approver', credentialSha256: 'c'.repeat(64), at: new Date().toISOString() }]; return p; })(), 'invalid_plan'],
+      ['zero approvals without direct', (() => { const p = plan({ biz: 'biz_other_0001' }); p.policy.approvalsRequired = 0; return p; })(), 'too_few_approvals_required'],
+    ]) {
+      const x = await post4('/internal/v1/plans', { plan: p });
+      check(`direct: admission refuses ${name}`, x.status === 409 && x.body?.error === code, JSON.stringify(x.body));
+    }
+
+    // Signed at admission, workstation and server, with no approvers.
+    for (const [what, p] of [['a workstation (low)', directPlan()], ['a server (high)', directPlan({ deviceClass: 'SERVER' })]]) {
+      const a = await post4('/internal/v1/plans', { plan: p });
+      const env = (await j(`${IN4}/internal/v1/plans/${p.jobId}`)).body?.envelope;
+      const signed = open4(env);
+      check(`direct: ${what} plan is signed at admission, carrying the signed direct field and no approvers`,
+        a.status === 201 && a.body.status === 'SIGNED' && a.body.direct === true && signed?.policy?.approval === 'direct' && signed.approvers.length === 0 && signed.requestedBy.userId === people.requester.userId && !!signed.signedAt, JSON.stringify(a.body));
+      const again = await post4('/internal/v1/plans', { plan: p });
+      check(`direct: the same ${what} plan again is the same signed job`, again.status === 201 && again.body.status === 'SIGNED' && JSON.stringify((await j(`${IN4}/internal/v1/plans/${p.jobId}`)).body.envelope) === JSON.stringify(env));
+    }
+    // A direct job has no decision to take.
+    {
+      const p = directPlan();
+      await post4('/internal/v1/plans', { plan: p });
+      const c = await j(`${PUB4}/approve/${p.jobId}/challenge`, { method: 'POST', headers: { 'content-type': 'application/json', origin: ORIGIN }, body: JSON.stringify({ decision: 'reject', role: 'approver' }) });
+      check('direct: a signed direct job cannot be decided on the approval page', c.status === 409 && c.body?.error === 'not_awaiting', JSON.stringify(c.body));
+    }
+    // Every other check still applies first.
+    {
+      const ps = cli4(['pause', 'set', '--business', BIZ_A, '--reason', 'incident 12']);
+      const p = directPlan();
+      const x = await post4('/internal/v1/plans', { plan: p });
+      check('direct: a pause still refuses the plan — nothing is signed', x.status === 409 && x.body?.error === 'paused' && !(await j(`${IN4}/internal/v1/plans/${p.jobId}`)).body?.envelope, JSON.stringify(x.body));
+      const pid = (ps.stdout.match(/[A-Za-z0-9_-]{8,}/) ?? [''])[0];
+      const cl = cli4(['pause', 'clear', '--id', pid, '--reason', 'incident 12 over']);
+      if (cl.status !== 0) throw new Error(`pause clear: ${ps.stdout} ${cl.stderr}`);
+      const off = directPlan({ params: { service: 'WinDefend' } });
+      const y = await post4('/internal/v1/plans', { plan: off });
+      check('direct: parameters outside the catalog are still refused', y.status === 409 && y.body?.error === 'params_not_allowed', JSON.stringify(y.body));
+    }
+    // Signed mode is untouched beside it.
+    {
+      const p = plan({ biz: 'biz_other_0001' });
+      const x = await post4('/internal/v1/plans', { plan: p });
+      check('direct: a business in signed mode still waits for approval', x.status === 201 && x.body.status === 'AWAITING_APPROVAL' && x.body.direct === false, JSON.stringify(x.body));
+    }
+
+    // Patch policies: active at admission in direct mode; ring plans carry the flag.
+    {
+      const dk = deviceKey();
+      const C = { endpointId: 'ep_directcanary', hostname: 'DCANARY', rustdeskId: '210000009', deviceSecretSha256: sha('dcanary'), resultKey: dk.key };
+      const doc = mkDoc([[C]]);
+      r = await post4('/internal/v1/policies', { policy: doc });
+      check('direct: a patch policy is ACTIVE at admission, recorded as direct, with no approvals', r.status === 201 && r.body.status === 'ACTIVE' && r.body.direct === true, JSON.stringify(r.body));
+      const st = await j(`${IN4}/internal/v1/policies/${doc.policyId}`);
+      check('direct: its status says direct and lists no approvals; the computer\'s key is pinned', st.body.direct === true && st.body.approvals.length === 0 && existsSync(join(d4, 'device-keys', `${core.deviceIdentity(C)}.json`)), JSON.stringify(st.body).slice(0, 200));
+      const dep = `dep_${randomBytes(4).toString('hex')}`;
+      const rp = ringPlan(doc, r.body.digest, 0, [C], dep);
+      const signedRp = await post4(`/internal/v1/policies/${doc.policyId}/plans`, { plan: rp, policyDigest: r.body.digest, evidence: null });
+      check('direct: a ring plan that does not say direct is refused under a direct business', signedRp.status === 409 && signedRp.body?.error === 'policy_mismatch', JSON.stringify(signedRp.body));
+      const rp2 = ringPlan(doc, r.body.digest, 0, [C], dep);
+      rp2.policy = { risk: 'high', approvalsRequired: 0, customerSignoff: false, approval: 'direct' };
+      const ok = await post4(`/internal/v1/policies/${doc.policyId}/plans`, { plan: rp2, policyDigest: r.body.digest, evidence: null });
+      const env = open4((await j(`${IN4}/internal/v1/plans/${rp2.jobId}`)).body?.envelope);
+      check('direct: the canary ring is signed under the direct policy and carries the direct field', ok.status === 201 && env?.policy?.approval === 'direct' && env.approvers.length === 0, JSON.stringify(ok.body));
+      // The business leaves direct mode: a policy activated with no approvals stops counting.
+      cli4(['policy', 'set', '--business', BIZ_A, '--approval', 'signed']);
+      const rp3 = ringPlan(doc, r.body.digest, 0, [C], `dep_${randomBytes(4).toString('hex')}`);
+      const no = await post4(`/internal/v1/policies/${doc.policyId}/plans`, { plan: rp3, policyDigest: r.body.digest, evidence: null });
+      check('direct: once the business is back to signed, a direct-activated policy signs nothing (policy_not_approved)', no.status === 409 && no.body?.error === 'policy_not_approved', JSON.stringify(no.body));
+      const doc2 = mkDoc([[{ ...C }]]);
+      r = await post4('/internal/v1/policies', { policy: doc2 });
+      check('direct: in signed mode a new policy waits for approvals, as before', r.status === 201 && r.body.status === 'AWAITING_APPROVAL' && r.body.direct === false, JSON.stringify(r.body));
+      cli4(['policy', 'set', '--business', BIZ_A, '--approval', 'direct']);
+    }
+
+    // The allowlist follows the default mode.
+    {
+      const AUTH = { userId: people.requester.userId, name: people.requester.name };
+      const content = 'param([string]$Name)\nWrite-Output "hi $Name"\n';
+      const prop = () => ({
+        allowlistId: randomBytes(16).toString('hex'), scriptId: 'scr_direct00001', versionId: 'ver_' + randomBytes(6).toString('hex'), name: 'Hi', version: 1, description: 'Greets',
+        businessId: BIZ_A, businessName: 'Acme', language: 'powershell', targetOs: 'windows', risk: 'medium',
+        parameters: [{ name: 'Name', type: 'string', required: true, charset: 'identifier', maxLength: 32 }], contentSha256: sr.sha256Hex(content), content,
+        contributors: [AUTH], reviewedBy: { ...AUTH, at: new Date().toISOString() }, proposedBy: AUTH,
+      });
+      r = await post4('/internal/v1/scripts', { proposal: prop() });
+      check('direct: with the default policy signed, an entry reviewed by its own author is refused, even for a direct business', r.status === 409 && r.body?.error === 'invalid_script', JSON.stringify(r.body));
+      const reviewed = { ...prop(), reviewedBy: { userId: 'user_review01', name: 'Rob', at: new Date().toISOString() } };
+      r = await post4('/internal/v1/scripts', { proposal: reviewed });
+      check('direct: with the default policy signed, an entry waits for two approvals, even for a direct business', r.status === 201 && r.body.status === 'AWAITING_APPROVAL' && r.body.direct === false, JSON.stringify(r.body));
+      cli4(['policy', 'set', '--business', 'default', '--approval', 'direct']);
+      const p1 = prop();
+      r = await post4('/internal/v1/scripts', { proposal: p1 });
+      check('direct: with the default policy direct, the author\'s self-reviewed entry is ACTIVE at admission, recorded as direct', r.status === 201 && r.body.status === 'ACTIVE' && r.body.direct === true, JSON.stringify(r.body));
+      const g = await j(`${IN4}/internal/v1/scripts/${p1.allowlistId}`);
+      check('direct: its status says direct and lists no decisions', g.body.direct === true && g.body.decisions.length === 0 && g.body.status === 'ACTIVE');
+      const rp = directPlan({ deviceClass: 'WORKSTATION', action: { id: 'windows.script.run', version: 1 }, params: { scriptVersionId: p1.versionId, sha256: p1.contentSha256, parameters: { Name: 'x' }, timeoutMinutes: 5 }, script: sr.scriptBlockOf(p1) });
+      rp.policy.risk = 'high';
+      r = await post4('/internal/v1/plans', { plan: rp });
+      check('direct: a run of the direct entry, requested by its author, is signed at admission', r.status === 201 && r.body.status === 'SIGNED', JSON.stringify(r.body));
+      // Revoked: never signed again, direct or not.
+      await post4(`/internal/v1/scripts/${p1.allowlistId}/revoke`, { reason: 'withdrawn in test' });
+      const rp2 = { ...rp, jobId: randomBytes(16).toString('hex') };
+      r = await post4('/internal/v1/plans', { plan: rp2 });
+      check('direct: a revoked script is refused at admission (script_revoked), direct or not', r.status === 409 && r.body?.error === 'script_revoked', JSON.stringify(r.body));
+      r = await post4('/internal/v1/scripts', { proposal: { ...prop(), allowlistId: randomBytes(16).toString('hex') } });
+      check('direct: and its content can never be proposed again', r.status === 409 && r.body?.error === 'script_revoked', JSON.stringify(r.body));
+      cli4(['policy', 'set', '--business', 'default', '--approval', 'signed']);
+    }
+
+    // Pure: the same rules without HTTP.
+    {
+      const now = new Date();
+      const direct = { default: { customerSignoff: false }, businesses: { [BIZ_A]: { customerSignoff: false, approval: 'direct' } } };
+      const signed = { default: { customerSignoff: false }, businesses: {} };
+      const code = (f) => { try { f(); return null; } catch (e) { return e.code; } };
+      check('pure: admitPlan accepts a direct plan only under a direct policy', code(() => core.admitPlan(directPlan(), direct, now)) === null && code(() => core.admitPlan(directPlan(), signed, now)) === 'policy_mismatch');
+      check('pure: admitPlan refuses an undirected plan under a direct policy', code(() => core.admitPlan(plan(), direct, now)) === 'policy_mismatch');
+      const doc = { createdBy: { userId: people.requester.userId } };
+      check('pure: policyQuorum — no approvals count only under direct, never with customer sign-off', P.policyQuorum(doc, [], false, true) === true && P.policyQuorum(doc, [], false, false) === false && P.policyQuorum(doc, [], true, true) === false);
+      check('pure: allowlistDirect reads only the default policy', core.allowlistDirect(direct) === false && core.allowlistDirect({ default: { customerSignoff: false, approval: 'direct' }, businesses: {} }) === true);
+      const raw = { allowlistId: randomBytes(16).toString('hex'), scriptId: 'scr_x00000001', versionId: 'ver_x00000001', name: 'x', version: 1, description: 'x', businessId: BIZ_A, businessName: 'Acme', language: 'powershell', targetOs: 'windows', risk: 'medium', parameters: [], content: 'Write-Output 1\n', contentSha256: sr.sha256Hex('Write-Output 1\n'), contributors: [{ userId: 'user_a0000001', name: 'A' }], reviewedBy: { userId: 'user_a0000001', name: 'A', at: now.toISOString() }, proposedBy: { userId: 'user_a0000001', name: 'A' } };
+      check('pure: admitScriptProposal — a self-reviewed entry only in direct, and then ACTIVE', code(() => core.admitScriptProposal(raw, now)) === 'invalid_script' && core.admitScriptProposal(raw, now, true).status === 'ACTIVE');
+    }
+    await s4.close();
+    rmSync(d4, { recursive: true, force: true });
+  }
 }
 
 // ── the boundary itself: the signer loads nothing of the portal's ─────────

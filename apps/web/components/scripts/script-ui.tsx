@@ -38,7 +38,9 @@ export function ScriptRunNotice() {
           Only an approved version runs, and only as a signed action. A reviewer proposes it to the approval signer, two approvers
           who did not write it add its exact SHA-256 to the signer&apos;s own allowlist, and each run is approved there again by two
           approvers. The agent checks the signature and the hash before it runs anything, as SYSTEM in Windows PowerShell, with a
-          timeout and the first 64 KB of its output kept, redacted.
+          timeout and the first 64 KB of its output kept, redacted. In direct mode, which only the approval signer&apos;s operator
+          can turn on, proposing adds it to the allowlist and requesting a run signs it, each after a fresh sign-in, with no
+          approval step.
         </p>
         <p>
           <strong>What is proven:</strong> the agent&apos;s own decision code, running scripts in PowerShell 7 on Linux (arguments passed as data,

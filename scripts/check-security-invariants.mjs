@@ -845,7 +845,7 @@ check(
   const code = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
   // 0.34: the pure parameter/hash rules live in actions/script-run (zod and
   // node:crypto only, also loaded by the signer); the library takes them from there.
-  const ALLOWED = /^(node:crypto|zod|express|@nestjs\/common|@prisma\/client|\.\/(definition|static-checks|script-library\.(service|controller))|\.\.\/(prisma\/prisma\.service|audit\/audit\.(service|module)|rbac\/(access-control\.service|capabilities|platform-permissions)|security-controls\/review|common\/guards\/jwt-auth\.guard|common\/decorators\/actor\.decorator|common\/throttling|auth\/step-up\.service|actions\/script-run))$/;
+  const ALLOWED = /^(node:crypto|zod|express|@nestjs\/common|@prisma\/client|\.\/(definition|static-checks|script-library\.(service|controller))|\.\.\/(prisma\/prisma\.service|audit\/audit\.(service|module)|rbac\/(access-control\.service|capabilities|platform-permissions)|security-controls\/review|common\/guards\/jwt-auth\.guard|common\/decorators\/actor\.decorator|common\/throttling|auth\/step-up\.service|actions\/script-run|actions\/approval-mode))$/;
   const importsOf = (s) => [...s.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s*['"]([^'"]+)['"]|\b(?:require|import)\(\s*['"]([^'"]+)['"]/gm)].map((m) => m[1] ?? m[2]);
   const badImports = files.flatMap((f) => importsOf(src[f]).filter((i) => !ALLOWED.test(i)).map((i) => `${f} imports ${i}`));
   const touches = files.flatMap((f) => [...code(src[f]).matchAll(/\b(actionJob|actionTarget|ActionsService|SignerClient|createPlan|endpointCommand|diagnosticRun|rustdeskNode|EnrollmentService|DiagnosticsCatalogService|PatchingService|heartbeat|forHeartbeat|envelope)\b|\.endpoint\./gi)].map((m) => `${f}: ${m[0]}`));
@@ -872,7 +872,8 @@ check(
 
   const svc = code(src[`${dir}/script-library.service.ts`] ?? '');
   const rev = svc.slice(svc.indexOf('async review('));
-  const iSame = rev.search(/if \(v\.authorId === actor\.userId \|\| v\.contributorIds\.includes\(actor\.userId\)\) \{\s*await refuse\('same_person'\);\s*throw new ForbiddenException\(\{ code: 'SAME_PERSON'/);
+  // 0.39: the one exception is direct mode on the signer's default policy (§ 58), recorded as selfReviewed.
+  const iSame = rev.search(/const self = v\.authorId === actor\.userId \|\| v\.contributorIds\.includes\(actor\.userId\);\s*const selfReviewed = self && await this\.approvalMode\.allowlistDirect\(\);\s*if \(self && !selfReviewed\) \{\s*await refuse\('same_person'\);\s*throw new ForbiddenException\(\{ code: 'SAME_PERSON'/);
   const iHash = rev.search(/if \(d\.expectedSha256 !== v\.contentSha256\) \{/);
   const iFresh = rev.search(/if \(d\.decision === 'approve'\) assertFresh\(freshMethod\);/);
   const iWrite = rev.search(/tx\.scriptVersion\.updateMany\(\{\s*where: \{ id: v\.id, status: 'IN_REVIEW', contentSha256: d\.expectedSha256 \}/);
@@ -881,8 +882,10 @@ check(
     iSame >= 0 && iHash > iSame && iFresh > iHash && iWrite > iFresh
       && /const contributorIds = contributorsOf\(actor\.userId, base\);/.test(svc)
       && /if \(base && base\.status !== 'APPROVED'\) for \(const c of base\.contributorIds\) out\.add\(c\);/.test(read(`${dir}/definition.ts`))
-      && /"decidedById" <> "authorId"\s*AND NOT \("decidedById" = ANY \("contributorIds"\)\)\s*AND "approvedSha256" IS NOT NULL\s*AND "approvedSha256" = "contentSha256"/.test(mig),
-    'review() must check SAME_PERSON, then the hash, then assertFresh, then write; new versions inherit unapproved contributors; 0035 keeps the CHECK');
+      && /"decidedById" <> "authorId"\s*AND NOT \("decidedById" = ANY \("contributorIds"\)\)\s*AND "approvedSha256" IS NOT NULL\s*AND "approvedSha256" = "contentSha256"/.test(mig)
+      && /\("selfReviewed" OR \("decidedById" <> "authorId" AND NOT \("decidedById" = ANY \("contributorIds"\)\)\)\)\s*AND "approvedSha256" IS NOT NULL\s*AND "approvedSha256" = "contentSha256"/.test(read('apps/api/prisma/migrations/0065_direct_mode_self_review/migration.sql'))
+      && /selfReviewed: approve && selfReviewed \}/.test(rev),
+    'review() must check SAME_PERSON (relaxed only by the direct-mode probe, recorded), then the hash, then assertFresh, then write; new versions inherit unapproved contributors; 0035/0065 keep the CHECK');
 
   const guard = mig.slice(mig.indexOf('CREATE OR REPLACE FUNCTION rem0te_script_version_guard()'));
   const IMMUTABLE = ['content', 'contentSha256', 'definitionSha256', 'contentBytes', 'parameters', 'risk', 'language', 'targetOs', 'description', 'authorId', 'contributorIds', 'scriptId', 'version', 'basedOnId'];
@@ -1028,11 +1031,11 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'scripts/run-e2e.sh and the docs stack (docs/screenshots.md) must set PATCH_POLICY_SWEEP=off');
   const ins = at(psvc, 'async installOnEndpoint(', 1800);
   check('a manual install is a one-computer deployment whose canary still awaits two approvals',
-    /rings: \[\[endpointId\]\]/.test(ins) && /'MANUAL', null\)/.test(ins) && /this\.requestRing\(actor, d\.id, 0, \{ reason: dto\.reason, startsInMinutes: dto\.startsInMinutes \}\);/.test(ins) && !/underPolicy|UnderPolicy/.test(ins),
+    /rings: \[\[endpointId\]\]/.test(ins) && /'MANUAL', null\)/.test(ins) && /this\.requestRing\(actor, d\.id, 0, \{ reason: dto\.reason, startsInMinutes: dto\.startsInMinutes \}, undefined, freshMethod\);/.test(ins) && !/underPolicy|UnderPolicy/.test(ins),
     'installOnEndpoint must not pass a policy (which would sign without approvals)');
   check('only the sweep requests a ring under a policy, and a person cannot request one beside it',
     /if \(!under && d\.origin === 'POLICY'\) throw new ConflictException/.test(psvc) && (pctl.match(/requestRing\(/g) ?? []).length === 2
-      && /this\.patching\.requestRing\(actor, id, Number\(ring\), body\) \}/.test(pctl),
+      && /this\.patching\.requestRing\(actor, id, Number\(ring\), body, undefined, this\.freshMethod\(req\)\) \}/.test(pctl),
     'the controller must never pass an UnderPolicy');
   check('ACTION_NOT_DIRECT still holds for updates',
     /ACTION_NOT_DIRECT/.test(read('apps/api/src/actions/actions.service.ts')) && /direct: false/.test(read('apps/api/src/actions/catalog.ts')),
@@ -1941,9 +1944,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const scriptCore = core.slice(core.indexOf('export function admitScriptProposal('), core.indexOf('export function recordScriptDecision(') + decide.slice(1).search(/\nexport |$/) + 1);
   check('the portal cannot write the signer\'s allowlist: propose, read and revoke only; ACTIVE only from two passkey approvals; revocation is write-once by content hash',
     /if \(req\.method !== 'POST' \|\| sub !== 'revoke'\) return send\(res, 405/.test(internal)
-      && /const r = admitScriptProposal\(b\.proposal, now\(\)\);/.test(internal) && /if \(store\.scriptRevocation\(r\.contentSha256\)\) throw new Refused\('script_revoked'/.test(internal)
+      && /const direct = allowlistDirect\(store\.policy\(\)\);\s*const r = admitScriptProposal\(b\.proposal, now\(\), direct\);/.test(internal) && /if \(store\.scriptRevocation\(r\.contentSha256\)\) throw new Refused\('script_revoked'/.test(internal)
       && /throw new Refused\('script_id_reused'/.test(internal)
-      && /id: p\.allowlistId, status: 'AWAITING_APPROVAL'/.test(core) && /if \(sha !== p\.contentSha256\) throw new Refused\('hash_mismatch'/.test(core)
+      && /id: p\.allowlistId, status: direct \? 'ACTIVE' : 'AWAITING_APPROVAL'/.test(core) && /if \(sha !== p\.contentSha256\) throw new Refused\('hash_mismatch'/.test(core)
       && (scriptCore.match(/status = 'ACTIVE'|status: 'ACTIVE'/g) ?? []).length === 1 && /\.size >= SCRIPT_ALLOWLIST_APPROVALS\) r\.status = 'ACTIVE';/.test(decide)
       && /export const SCRIPT_ALLOWLIST_APPROVALS = 2;/.test(read('apps/api/src/actions/script-run.ts'))
       && (server.match(/recordScriptDecision\(/g) ?? []).length === 1 && /const member = await verifiedMember\(c, b\.assertion\);[\s\S]{0,200}recordScriptDecision\(cur, member,/.test(server)
@@ -2092,7 +2095,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const method = (name) => svc.slice(svc.indexOf(`  async ${name}(`), svc.indexOf('\n  }\n', svc.indexOf(`  async ${name}(`)));
   const fresh = ['create', 'update', 'archive'].map((n) => { const b = method(n); const a = b.indexOf("assertFresh(freshMethod, { action: 'software.catalog' });"); const w = b.search(/this\.prisma\.softwareCatalogEntry\.(create|updateMany)\(/); const au = b.indexOf("action: 'SOFTWARE_CATALOG_"); return [n, a > 0 && w > a && au > w]; });
   check('software: adding, changing or archiving a catalog entry needs a fresh sign-in before the write, and is audited after it',
-    fresh.every(([, ok]) => ok) && (ctl.match(/this\.fresh\(req\)/g) ?? []).length === 3 && /this\.stepUp\.read\(req, u\.sub, u\.iat\)/.test(ctl),
+    // 0.39: the two request routes also pass this.fresh(req) on, for direct mode (§ 58).
+    fresh.every(([, ok]) => ok) && (ctl.match(/this\.fresh\(req\)/g) ?? []).length === 5 && /requestRing\(actor, id, Number\(ring\), body, this\.fresh\(req\)\)/.test(ctl) && /single\(actor, id, entryId, operation, body, this\.fresh\(req\)\)/.test(ctl) && /this\.stepUp\.read\(req, u\.sub, u\.iat\)/.test(ctl),
     `per method: ${fresh.map(([n, ok]) => `${n}=${ok}`).join(', ')}`);
   check('software: only a business\'s own owner (not a technician) or a Platform Admin changes its entries; only an admin the global ones',
     /private canEdit\(actor: ActorContext, e: [^)]*\): boolean \{\s*if \(actor\.isPlatformAdmin\) return true;\s*if \(e\.scope === 'GLOBAL'\) return false;[\s\S]{0,120}return !actor\.technician && actor\.businessId === e\.customerId && this\.acl\.isBusinessOwner\(actor\);/.test(svc),
@@ -3506,6 +3510,136 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && !/'heartbeat\.ps1', 'setup'/.test(preStart) && !/Remove-Item[^\n]*heartbeat\.ps1/.test(preStart)
       && /pwsh: the cleanup keeps setup\/signed/.test(read('apps/api/scripts/unit-signed-installer.mjs')),
     "cleanup: setup's children except 'signed'; no removal of heartbeat.ps1 before the run starts; the unit test executes it");
+}
+
+// 58. Direct mode (0.39). For a single operator, the approval signer's
+//     operator may set a business (or `default`) to sign plans at admission,
+//     with no approvers. It gives up the second person and keeps everything
+//     else, so: the mode is written only by the signer CLI into its own
+//     policy store (no HTTP route on the signer or the portal writes it, and
+//     each change is logged); the signer signs at admission only when its
+//     own policyFor(...) says direct and the plan says so too, after every
+//     other admission check and the pause; patch policies and allowlist
+//     entries activate at admission only under the same reading (the
+//     allowlist under `default`), and a direct-activated policy stops
+//     counting outside direct mode; the agent relaxes its approval checks
+//     only on the signed `policy.approval: "direct"`; a portal request in
+//     direct mode needs a fresh sign-in, and ClientSt0r cannot make one; and
+//     direct mode and customer sign-off never hold together.
+{
+  const core = read('apps/api/src/approval-signer/core.ts');
+  const server = read('apps/api/src/approval-signer/server.ts');
+  const main = read('apps/api/src/approval-signer/main.ts');
+  const store = read('apps/api/src/approval-signer/store.ts');
+  const client = read('apps/api/src/actions/signer.client.ts');
+  const cat = read('apps/api/src/actions/catalog.ts');
+  const pp = read('apps/api/src/actions/patch-policy.ts');
+  const asvc = read('apps/api/src/actions/actions.service.ts');
+  const goA = read('tools/windows-installer/internal/action/action.go');
+  const goS = read('tools/windows-installer/internal/action/script.go');
+  const strip = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const fn = (src, head, n = 2400) => { const i = src.indexOf(head); return i < 0 ? '' : src.slice(i, i + n); };
+
+  // 1. Only the CLI writes the policy, and logs every change.
+  const savers = walk('apps/api/src').filter((f) => /\bsavePolicy\(/.test(strip(read(f))) && f !== 'apps/api/src/approval-signer/store.ts');
+  const pcase = fn(main, "case 'policy': {", 4000);
+  check('direct: the policy is written only by the signer CLI, and every change is appended to policy-changes.log',
+    JSON.stringify(savers) === JSON.stringify(['apps/api/src/approval-signer/main.ts'])
+      && /store\.savePolicy\(p\);\s*store\.appendPolicyChange\(\{ at: new Date\(\)\.toISOString\(\), business: b, before, after: next,/.test(pcase)
+      && /appendFileSync\(path\.join\(this\.dir, 'policy-changes\.log'\)[^;]*flag: 'a'/.test(store)
+      && /if \(ap !== undefined && ap !== 'direct' && ap !== 'signed'\) die\(/.test(pcase),
+    `savePolicy callers: ${savers.join(', ')}`);
+  check('direct: no HTTP route writes the policy — the signer\'s policy route is GET only, and the portal only reads it',
+    /if \(req\.method === 'GET' && pm\) return send\(res, 200, pm\[1\] === 'default' \?/.test(server) && (strip(server).match(/\/internal\\\/v1\\\/policy\\\//g) ?? []).length === 1
+      && !/savePolicy|policy\.json/.test(strip(server))
+      && /policy\(businessId: string\) \{ return this\.call<[^>]*>\('GET', `\/internal\/v1\/policy\//.test(client) && !/'(POST|PUT|PATCH|DELETE)', `\/internal\/v1\/policy\//.test(client)
+      && !walk('apps/api/src').some((f) => /controller\.ts$/.test(f) && /@(Post|Put|Patch|Delete)\('[^']*(approval-mode|direct)/i.test(read(f))),
+    'GET /internal/v1/policy/:id|default only; SignerClient.policy is a GET');
+
+  // 2. The reading: exactly 'direct', and never with customer sign-off.
+  check('direct: policyFor reads direct only from the exact value and never with customer sign-off; the CLI refuses the pair',
+    /return \{ customerSignoff, approval: p\.approval === DIRECT && !customerSignoff \? DIRECT : 'signed' \};/.test(core)
+      && /const customerSignoff = p\.customerSignoff === true;/.test(core)
+      && /if \(next\.customerSignoff && next\.approval === 'direct'\) \{\s*die\(/.test(pcase)
+      && /if \(p\.policy\.approval === DIRECT\) \{\s*if \(p\.policy\.customerSignoff\) return \{ ok: false, reason: 'direct_with_customer_signoff' \};\s*if \(p\.policy\.approvalsRequired !== 0\) return \{ ok: false, reason: 'policy_mismatch' \};\s*\} else if \(p\.policy\.approvalsRequired < APPROVALS_REQUIRED\[risk\]\)/.test(cat)
+      && /approval: z\.literal\(DIRECT\)\.optional\(\)/.test(cat)
+      && /policy\(\): Policy \{ return this\.read<Policy>\(path\.join\(this\.dir, 'policy\.json'\)\) \?\? \{ default: \{ customerSignoff: false \}, businesses: \{\} \}; \}/.test(store),
+    'policyFor, the CLI, validatePlanAction and the store default');
+
+  // 3. Signing at admission, only under the policy, after every check.
+  const adm = fn(core, 'export function admitPlan(', 2400);
+  const post = fn(server, "if (req.method === 'POST' && !m[1]) {", 2600);
+  const iAdmit = post.indexOf('admitPlan(b.plan, store.policy(), now(), (id) => store.scriptEntry(id), softwareRevoked)');
+  const iPause = post.indexOf('store.activePause(plan.targets[0]?.businessId ?? null)');
+  const iSign = post.search(/if \(plan\.policy\.approval === 'direct'\) \{\s*signJob\(j, k, now\(\)\);/);
+  check('direct: the signer signs at admission only when the plan says direct, which admitPlan allows only when its own policy does — after admission and the pause',
+    /const biz = policyFor\(policy, p\.targets\[0\]\.businessId\);/.test(adm)
+      && /const direct = biz\.approval === DIRECT;\s*if \(\(p\.policy\.approval === DIRECT\) !== direct\) throw new Refused\('policy_mismatch'/.test(adm)
+      && /if \(p\.policy\.approvalsRequired !== \(direct \? 0 : APPROVALS_REQUIRED\[p\.policy\.risk\]\)\) throw new Refused\('policy_mismatch'/.test(adm)
+      && /if \(p\.approvers\.length \|\| p\.signedAt\) throw new Refused\('invalid_plan'/.test(adm)
+      && adm.indexOf("const v = validatePlanAction(p);") > 0 && adm.indexOf('assertScriptAllowed(p, scripts)') > adm.indexOf('policy_mismatch') && adm.indexOf('assertSoftwareAllowed(p, softwareRevoked)') > 0
+      && iAdmit > 0 && iPause > iAdmit && iSign > iPause
+      && (strip(server).match(/\bsignJob\(/g) ?? []).length === 2,
+    `admitPlan ${iAdmit}, pause ${iPause}, sign ${iSign}; signJob calls ${(strip(server).match(/\bsignJob\(/g) ?? []).length}`);
+
+  // 4. Patch policies and the allowlist.
+  const pprop = fn(server, 'async function internalPolicy(', 2600);
+  check('direct: a patch policy activates at admission only under policyFor(...) direct, after admission, the pause and the pin check; it counts only while direct',
+    /if \(policyFor\(store\.policy\(\), doc\.businessId\)\.approval === 'direct'\) \{\s*r\.direct = true;\s*signPolicy\(r, k, now\(\)\);/.test(pprop)
+      && pprop.indexOf("approval === 'direct'") > pprop.indexOf('pinConflicts(doc.rings.flat(), pins)') && pprop.indexOf('pinConflicts(') > pprop.indexOf('assertNotPaused(doc.businessId)')
+      && (strip(server).match(/\bsignPolicy\(/g) ?? []).length === 2
+      && /export function policyQuorum\(doc: PolicyDoc, approvals: PolicyApproval\[\], customerSignoff: boolean, direct = false\): boolean \{\s*if \(direct\) return !customerSignoff;/.test(pp)
+      && /policyQuorum\(doc, s\.approvals, false, opts\.direct === true\)/.test(pp) && /policyQuorum\(doc, s\.approvals, opts\.customerSignoff, opts\.direct === true\)/.test(pp)
+      && /\}, req, \{ now, customerSignoff: biz\.customerSignoff, direct: biz\.approval === DIRECT \}\);/.test(core),
+    'internalPolicy, policyQuorum, signUnderPolicy');
+  check('direct: an allowlist entry activates at admission only under the signer\'s default policy',
+    /export function allowlistDirect\(policy: Policy\): boolean \{\s*return policyFor\(\{ default: policy\.default, businesses: \{\} \}, '-'\)\.approval === DIRECT;/.test(core)
+      && /export function admitScriptProposal\(raw: unknown, now: Date, direct = false\): ScriptAllowRecord \{/.test(core)
+      && /if \(!direct && p\.contributors\.some\(\(c\) => c\.userId === p\.reviewedBy\.userId\)\) throw new Refused\('invalid_script'/.test(core)
+      && (strip(server).match(/admitScriptProposal\(/g) ?? []).length === 1 && /const direct = allowlistDirect\(store\.policy\(\)\);\s*const r = admitScriptProposal\(b\.proposal, now\(\), direct\);/.test(server)
+      && /const approvalMode = /.test(read('apps/api/src/actions/approval-mode.ts')) === false
+      && (strip(read('apps/api/src/actions/approval-mode.ts')).match(/this\.signer\.\w+\(/g) ?? []).join() === 'this.signer.configured(,this.signer.policy('
+      && /const r = await this\.signer\.policy\('default'\);\s*return r\.status === 200 && r\.body\.approval === 'direct';/.test(read('apps/api/src/actions/approval-mode.ts')),
+    'allowlistDirect, admitScriptProposal and the library\'s one-question probe');
+
+  // 5. The agent relaxes only on the signed field.
+  const ver = fn(goA, 'local := a.Risk(pt, len(p.Targets))', 1600);
+  const isD = fn(goA, 'func isDirect(p *Plan) (bool, *Result) {', 600);
+  check('direct: the agent relaxes the count and the requester rule only on the signed "direct", never with customer sign-off; its own risk check comes first',
+    /Approval string `json:"approval,omitempty"`/.test(goA)
+      && /switch p\.Policy\.Approval \{\s*case "":\s*return false, nil\s*case "direct":\s*if p\.Policy\.CustomerSignoff \{\s*return false, refuse\("bad_plan"/.test(isD) && /return false, refuse\("bad_plan", "unknown approval mode/.test(isD)
+      && ver.indexOf('risk_understated') > 0 && ver.indexOf('isDirect(&p)') > ver.indexOf('risk_understated')
+      && /if direct \{\s*need = 0\s*\}/.test(ver) && /if ap\.UserID == p\.RequestedBy\.UserID && !direct \{/.test(ver)
+      && (strip(goA).replace(/"[^"\n]*"|`[^`]*`/g, '""').match(/\bdirect\b/g) ?? []).length === 3
+      && /if p\.Policy\.Approval != "direct" \{\s*for _, ap := range p\.Approvers \{\s*for _, c := range s\.Contributors \{/.test(goS),
+    'action.go verify/isDirect and script.go SAME_PERSON');
+
+  // 6. The portal: a direct request needs a fresh sign-in, and is a person's.
+  const cp = fn(asvc, 'async createPlan(actor: ActorContext, r: PlanRequest)', 9000);
+  const iDir = cp.search(/const direct = signerPolicy\.body\.approval === DIRECT;\s*if \(direct && !r\.underPolicy\) assertDirectRequest\(origin\.via, r\.freshMethod\);/);
+  const adr = fn(asvc, 'function assertDirectRequest(', 900);
+  const callers = [
+    ['actions', fn(asvc, 'async request(actor: ActorContext, endpointId: string, raw: unknown', 1600)],
+    ['patching', fn(read('apps/api/src/patching/patching.service.ts'), 'async requestRing(actor: ActorContext, id: string, ring: number, raw: unknown, under?: UnderPolicy, freshMethod', 4000)],
+    ['software', fn(read('apps/api/src/software/software.service.ts'), 'async requestRing(actor: ActorContext, id: string, ring: number, raw: unknown, freshMethod', 4000)],
+    ['script-run', fn(read('apps/api/src/script-run/script-run.service.ts'), 'async requestRun(actor: ActorContext, raw: unknown, freshMethod', 4000)],
+  ].map(([n, b]) => [n, /this\.(actions\.)?createPlan\(actor, \{[\s\S]*?freshMethod,?\s*\}\)/.test(b)]);
+  const ctls = [
+    ['actions', /this\.actions\.request\(actor, id, body, undefined, undefined, this\.freshMethod\(req\)\)/.test(read('apps/api/src/actions/actions.controller.ts'))],
+    ['patching install', /this\.patching\.installOnEndpoint\(actor, id, body, this\.freshMethod\(req\)\)/.test(read('apps/api/src/patching/patching.controller.ts'))],
+    ['script-run run', /this\.svc\.requestRun\(actor, body, this\.fresh\(req\)\)/.test(read('apps/api/src/script-run/script-run.controller.ts'))],
+    ['script-run propose', /this\.svc\.propose\(actor, versionId, this\.fresh\(req\)\)/.test(read('apps/api/src/script-run/script-run.controller.ts'))],
+  ];
+  const prop = fn(read('apps/api/src/script-run/script-run.service.ts'), 'async propose(actor: ActorContext, versionId: string, freshMethod', 3000);
+  check('direct: a portal request in direct mode needs a fresh sign-in before it is submitted, ClientSt0r is refused, and every request path passes the sign-in on',
+    iDir > 0 && iDir < cp.indexOf('this.signer.submit(plan)') && iDir < cp.indexOf('const plan: Plan = {')
+      && /if \(via === 'clientst0r'\) throw new ForbiddenException\(\{ code: 'DIRECT_MODE_PORTAL_ONLY'/.test(adr) && /assertFresh\(freshMethod \?\? null, \{ action: 'actions\.direct'/.test(adr)
+      && /customerSignoff: direct \? false : !!signerPolicy\.body\.customerSignoff, \.\.\.\(direct \? \{ approval: DIRECT \} : \{\}\)/.test(cp)
+      && callers.every(([, ok]) => ok) && ctls.every(([, ok]) => ok)
+      && /const direct = await this\.allowlistDirect\(\);\s*if \(direct\) assertFresh\(freshMethod \?\? null/.test(prop) && prop.indexOf('assertFresh(') < prop.indexOf('this.signer.proposeScript(')
+      && /await this\.actions\.assertDirectFresh\(ep\.customerId!, freshMethod\);\s*const host/.test(read('apps/api/src/patching/patching.service.ts'))
+      && /await this\.actions\.assertDirectFresh\(ep\.customerId, freshMethod\);\s*const d = await this\.build/.test(read('apps/api/src/software/software.service.ts')),
+    `createPlan ${iDir}; createPlan callers ${callers.map(([n, ok]) => `${n}=${ok}`).join(', ')}; controllers ${ctls.map(([n, ok]) => `${n}=${ok}`).join(', ')}`);
 }
 
 if (failures.length > 0) {

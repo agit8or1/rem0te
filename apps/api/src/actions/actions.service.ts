@@ -11,7 +11,7 @@ import { AccessPolicyService } from '../security-controls/access-policy.service'
 import { AbuseGuardService } from '../security-controls/abuse-guard.service';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import {
-  APPROVALS_REQUIRED, CATALOG, Envelope, LOG_SOURCES, MAX_WINDOW_HOURS, PLAN_SCHEMA, Plan, catalogEntry, planDigest, SOFTWARE_INSTALL, UPDATE_INSTALL, type CatalogAction,
+  DIRECT, approvalsRequiredFor, planDirect, CATALOG, Envelope, LOG_SOURCES, MAX_WINDOW_HOURS, PLAN_SCHEMA, Plan, catalogEntry, planDigest, SOFTWARE_INSTALL, UPDATE_INSTALL, type CatalogAction,
 } from './catalog';
 import { sanitizeLogs } from './logs';
 import { DeviceSigned, RESULT_STATUS } from './device-result';
@@ -20,6 +20,7 @@ import { ScriptAgentResult, sanitizeScriptOutput, scriptSummary } from './script
 import { SignerClient } from './signer.client';
 import { RevocationRelay } from './revocations.controller';
 import { ContainmentService } from '../containment/containment.service';
+import { assertFresh } from '../security-controls/review';
 
 /**
  * Approved actions, portal side (v0.26; one plan, many computers since
@@ -131,6 +132,21 @@ export interface PlanRequest {
   underPolicy?: { policyId: string; digest: string; evidence: unknown };
   /** 0.34, windows.script.run: the signer's allowlist entry for the version (script-run.ts ScriptBlock). */
   script?: ScriptBlock;
+  /**
+   * 0.39: how the requester last re-authenticated (StepUpService), from the
+   * controller. In direct mode a plan runs as soon as it is requested, so a
+   * person's request needs a fresh sign-in (§ 58).
+   */
+  freshMethod?: string | null;
+}
+
+/**
+ * Direct mode (0.39): the request is the decision, so it must be a person's,
+ * freshly signed in. ClientSt0r proposals have nobody signed in behind them.
+ */
+function assertDirectRequest(via: 'portal' | 'clientst0r', freshMethod: string | null | undefined) {
+  if (via === 'clientst0r') throw new ForbiddenException({ code: 'DIRECT_MODE_PORTAL_ONLY', message: 'This business is in direct mode on the approval signer: an action runs as soon as it is requested, so only a person signed in to the portal can request one. ClientSt0r proposals are refused in direct mode.' });
+  assertFresh(freshMethod ?? null, { action: 'actions.direct', message: 'Direct mode: this runs as soon as you request it, with no approval step. Confirm it is you.' });
 }
 
 @Injectable()
@@ -218,8 +234,32 @@ export class ActionsService {
     });
   }
 
+  /**
+   * 0.39: for a workflow that writes something before its plan (a one-computer
+   * deployment), the same direct-mode check createPlan makes, made first so a
+   * refused request leaves nothing behind. createPlan still makes it.
+   */
+  async assertDirectFresh(businessId: string, freshMethod: string | null | undefined) {
+    if (!this.signer.configured()) return;
+    const p = await this.signer.policy(businessId).catch(() => null);
+    if (p?.status === 200 && p.body.approval === DIRECT) assertDirectRequest('portal', freshMethod);
+  }
+
+  /**
+   * 0.39: the approval mode a computer's business is in on the signer, as the
+   * signer answers it — 'direct', 'signed', or null when there is no signer
+   * or it does not answer. Only for a computer the reader can see.
+   */
+  async approvalModeFor(actor: ActorContext, endpointId: string): Promise<'direct' | 'signed' | null> {
+    await this.acl.assertEndpointInScope(actor, endpointId);
+    const ep = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { customerId: true } });
+    if (!ep?.customerId || !this.signer.configured()) return null;
+    const p = await this.signer.policy(ep.customerId).catch(() => null);
+    return p?.status === 200 ? (p.body.approval === DIRECT ? DIRECT : 'signed') : null;
+  }
+
   /** One computer, from its Actions tab (or ClientSt0r): the 0.26 path. */
-  async request(actor: ActorContext, endpointId: string, raw: unknown, origin: PlanRequest['origin'] = { kind: 'technician', ticketRef: null, via: 'portal' }, integration?: { peer: string; key: string }) {
+  async request(actor: ActorContext, endpointId: string, raw: unknown, origin: PlanRequest['origin'] = { kind: 'technician', ticketRef: null, via: 'portal' }, integration?: { peer: string; key: string }, freshMethod?: string | null) {
     const parsed = RequestDto.safeParse(raw);
     if (!parsed.success) throw new BadRequestException({ code: 'INVALID_REQUEST', message: parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') });
     const dto = parsed.data;
@@ -234,7 +274,7 @@ export class ActionsService {
       throw new BadRequestException({ code: 'ACTION_NOT_DIRECT', message: action.indirectVia ?? 'This action is requested through its own workflow, not from the Actions tab.' });
     }
     const job = await this.createPlan(actor, {
-      action, endpointIds: [endpointId], params: dto.params, reason: dto.reason, startsInMinutes: dto.startsInMinutes, windowHours: dto.windowHours, origin, integration,
+      action, endpointIds: [endpointId], params: dto.params, reason: dto.reason, startsInMinutes: dto.startsInMinutes, windowHours: dto.windowHours, origin, integration, freshMethod,
     });
     return this.view(job, actor);
   }
@@ -296,6 +336,13 @@ export class ActionsService {
 
     const signerPolicy = await this.signer.policy(first.customerId!);
     if (signerPolicy.status !== 200) throw new ConflictException({ code: 'APPROVAL_SIGNER_ERROR', message: 'The approval signer did not return this business\'s policy.' });
+    // 0.39, direct mode (the signer's operator's setting, mirrored read-only):
+    // the signer signs at admission, so the request itself is the decision.
+    // A person must have signed in freshly; a ClientSt0r proposal, which has
+    // nobody signed in behind it, is refused rather than run unseen. A ring
+    // signed under a patch policy was decided when the policy was made.
+    const direct = signerPolicy.body.approval === DIRECT;
+    if (direct && !r.underPolicy) assertDirectRequest(origin.via, r.freshMethod);
     const now = new Date();
     const notBefore = r.window?.notBefore ?? new Date(now.getTime() + r.startsInMinutes * 60_000);
     const notAfter = r.window?.notAfter ?? new Date(notBefore.getTime() + r.windowHours * 3600_000);
@@ -310,7 +357,7 @@ export class ActionsService {
       requestedBy: { userId: actor.userId, name: ([user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.email || actor.userId).slice(0, 120), via: origin.via },
       origin: { kind: origin.kind, ticketRef: origin.ticketRef },
       reason: r.reason,
-      policy: { risk, approvalsRequired: APPROVALS_REQUIRED[risk], customerSignoff: !!signerPolicy.body.customerSignoff },
+      policy: { risk, approvalsRequired: approvalsRequiredFor(risk, direct), customerSignoff: direct ? false : !!signerPolicy.body.customerSignoff, ...(direct ? { approval: DIRECT } : {}) },
       window: { notBefore: notBefore.toISOString(), notAfter: notAfter.toISOString() },
       ...(r.display ? { display: r.display } : {}),
       ...(r.script ? { script: r.script } : {}),
@@ -346,10 +393,11 @@ export class ActionsService {
     await this.audit.log({
       tenantId: first.tenantId ?? undefined, customerId: first.customerId ?? undefined, actorId: actor.userId, actorIp: actor.ip,
       action: 'ACTION_REQUESTED', resource: 'action_job', resourceId: job.id,
-      meta: { endpointIds: eps.map((e) => e.id), action: `${action.id}@${action.version}`, params: r.params, risk, approvalsRequired: plan.policy.approvalsRequired, customerSignoff: plan.policy.customerSignoff, origin: origin.kind, via: origin.via, ticketRef: origin.ticketRef, digest: job.digest, deployment: r.deployment ?? null, softwareDeployment: r.softwareDeployment ?? null, underPolicy: r.underPolicy?.policyId ?? null },
+      meta: { endpointIds: eps.map((e) => e.id), action: `${action.id}@${action.version}`, params: r.params, risk, approvalsRequired: plan.policy.approvalsRequired, customerSignoff: plan.policy.customerSignoff, approval: direct ? DIRECT : 'signed', origin: origin.kind, via: origin.via, ticketRef: origin.ticketRef, digest: job.digest, deployment: r.deployment ?? null, softwareDeployment: r.softwareDeployment ?? null, underPolicy: r.underPolicy?.policyId ?? null },
     });
-    // Signed already, by the signer's own decision: pull the envelope now.
-    if (r.underPolicy) { await this.refresh(job); return (await this.prisma.actionJob.findUnique({ where: { id: job.id }, include: { targets: true } }))!; }
+    // Signed already, by the signer's own decision (under a policy, or in
+    // direct mode at admission): pull the envelope now.
+    if (r.underPolicy || direct) { await this.refresh(job); return (await this.prisma.actionJob.findUnique({ where: { id: job.id }, include: { targets: true } }))!; }
     return job;
   }
 
@@ -378,6 +426,8 @@ export class ActionsService {
       action: { id: j.actionId, version: j.actionVersion, title: a?.title ?? j.actionId, warnings: a?.warnings ?? [] },
       params: j.params, reason: j.reason, origin: j.origin, via: j.via, ticketRef: j.ticketRef, requestedById: j.requestedById,
       risk: j.risk, approvalsRequired: j.approvalsRequired, customerSignoff: j.customerSignoff,
+      // 0.39: signed at the request in direct mode; the signed plan names who asked.
+      direct: planDirect(j.plan), requestedByName: (j.plan as unknown as Plan | null)?.requestedBy?.name ?? null,
       window: { notBefore: j.notBefore, notAfter: j.notAfter }, digest: j.digest, approvalUrl: j.approvalUrl,
       approvers: j.approvers, dispatchedAt: j.dispatchedAt, deliveries: j.deliveries, outcome: j.outcome, result: shown(j.result), resultAt: j.resultAt,
       reconciled: j.reconciledAt ? { at: j.reconciledAt, byId: j.reconciledById, note: j.reconcileNote } : null,

@@ -143,7 +143,12 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
       allow: { classifications: [...classes], ...(severities.size ? { severities: [...severities] } : {}), ...(kbs.length ? { excludeKbs: [...new Set(kbs)] } : {}) },
       window: { days: WEEKDAYS.filter((d) => days.has(d.id)).map((d) => d.id), start, end, timezone },
     }),
-    onSuccess: (r) => { toast({ title: 'Policy proposed', description: 'Two approvers now approve it on the approval signer.' }); onDone(); router.push(`/patching/policies/${r.data.data.id}`); },
+    onSuccess: (r) => {
+      // 0.39: in direct mode the signer makes it active at once.
+      const active = r.data.data.direct === true && r.data.data.status === 'ACTIVE';
+      toast(active ? { title: 'Policy active', description: 'Approved automatically (direct mode). Its rings are requested inside its window.' } : { title: 'Policy proposed', description: 'Two approvers now approve it on the approval signer.' });
+      onDone(); router.push(`/patching/policies/${r.data.data.id}`);
+    },
     onError: (e) => toast({ title: 'Not proposed', description: apiMessage(e, 'The policy was refused.'), variant: 'destructive' }),
   });
 

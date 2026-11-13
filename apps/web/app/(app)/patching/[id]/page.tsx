@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
+import { DIRECT_TOAST } from '@/lib/direct-mode';
 import { ArrowLeft, ExternalLink, Loader2, ShieldCheck } from 'lucide-react';
 import { rebootSummary } from '@/components/patching/patch-reboot-choice';
 import { DEPLOYMENT_STATUS } from '@/lib/patching';
@@ -37,7 +38,7 @@ interface Computer {
 }
 interface Ring {
   ring: number; canary: boolean; gate: Gate;
-  job: { id: string; status: string; statusReason: string | null; approvalUrl: string; outcome: string | null; window: { notBefore: string; notAfter: string }; digest: string } | null;
+  job: { id: string; status: string; statusReason: string | null; approvalUrl: string; outcome: string | null; window: { notBefore: string; notAfter: string }; digest: string; direct?: boolean; createdAt?: string } | null;
   computers: Computer[];
 }
 interface Deployment {
@@ -89,6 +90,8 @@ export default function DeploymentPage() {
     }),
     onSuccess: (r) => {
       setReason(''); setExclude({}); refresh();
+      // 0.39, direct mode: signed at the request; there is no approval page to open.
+      if (r.data.data.job?.direct) { toast({ title: 'Approved automatically', description: DIRECT_TOAST }); return; }
       const url = r.data.data.job?.approvalUrl;
       toast({ title: 'Requested', description: 'Nothing installs until two approvers authorize this ring on the approval page.' });
       if (url) window.open(url, '_blank', 'noopener,noreferrer');
@@ -134,7 +137,7 @@ export default function DeploymentPage() {
           {d.next.canRequest && nextRing && d.origin !== 'POLICY' && (
             <>
               <p className="text-xs text-muted-foreground">
-                Requests {nextRing.canary ? 'the canary' : `ring ${nextRing.ring}`} ({nextRing.computers.length} computer{nextRing.computers.length === 1 ? '' : 's'}) as one signed plan. Two people on the approval roster must approve it with a passkey; you cannot approve your own request. Restart rule: {rebootSummary(d.reboot).toLowerCase()}.
+                Requests {nextRing.canary ? 'the canary' : `ring ${nextRing.ring}`} ({nextRing.computers.length} computer{nextRing.computers.length === 1 ? '' : 's'}) as one signed plan. Two people on the approval roster must approve it with a passkey; you cannot approve your own request. (In direct mode, set on the approval signer, it is signed as soon as you request it, after you confirm it is you.) Restart rule: {rebootSummary(d.reboot).toLowerCase()}.
               </p>
               {!nextRing.canary && (
                 <div className="space-y-1">
@@ -178,9 +181,10 @@ function RingCard({ r, d, onChanged }: { r: Ring; d: Deployment; onChanged: () =
         <div className="flex items-center gap-2 text-xs">
           {r.job && <Badge variant="outline">{r.job.status.toLowerCase().replace(/_/g, ' ')}</Badge>}
           <Badge variant={r.gate.ok ? 'success' : r.gate.reason === 'not_requested' ? 'outline' : 'warning'}>{r.gate.ok ? 'passed' : r.gate.reason.replace(/_/g, ' ')}</Badge>
-          {r.job?.status === 'AWAITING_APPROVAL' && (
+          {r.job?.status === 'AWAITING_APPROVAL' && !r.job.direct && (
             <Button size="sm" variant="outline" asChild><a href={r.job.approvalUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5 mr-1" />Approval page</a></Button>
           )}
+          {r.job?.direct && <Badge variant="outline" title="Signed at the request: the business is in direct mode on the approval signer">direct mode</Badge>}
         </div>
       </CardHeader>
       <CardContent className="space-y-2 text-xs">
