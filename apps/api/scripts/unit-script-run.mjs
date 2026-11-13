@@ -106,8 +106,8 @@ function plan({ args = { Name: 'world' }, b = block(), biz = 'biz_acme_0001', ac
   check('it is always high risk, workstation or server', a.risk([{ deviceClass: 'WORKSTATION' }]) === 'high' && a.risk([{ deviceClass: 'SERVER' }]) === 'high');
   check('at most 25 targets', a.maxTargets === 25);
   check('not requested directly from the Actions tab, and not offered to ClientSt0r', a.direct === false && a.integration === false);
-  // 0.34 integrated: the six through 0.32, the script run, then software install/uninstall — exact and ordered (§ 14).
-  check('the catalog is exactly the nine actions, in order', cat.CATALOG.map((x) => x.id).join() === ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect', 'windows.script.run', 'windows.software.install', 'windows.software.uninstall'].join());
+  // 0.34 integrated: the six through 0.32, the script run, then software install/uninstall, then 0.41's program removal — exact and ordered (§ 14).
+  check('the catalog is exactly the ten actions, in order', cat.CATALOG.map((x) => x.id).join() === ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect', 'windows.script.run', 'windows.software.install', 'windows.software.uninstall', 'windows.software.remove'].join());
   check('its timeouts are the closed list 1, 5, 10, 15, 30', sr.TIMEOUT_MINUTES.join() === '1,5,10,15,30');
 }
 

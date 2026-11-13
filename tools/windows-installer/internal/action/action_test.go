@@ -336,7 +336,7 @@ func TestParseKeys(t *testing.T) {
 	if _, err := ParseKeys([]byte(`{"schema":"other","keys":[]}`)); err == nil {
 		t.Fatal("accepted a foreign document")
 	}
-	if got := Supported(); len(got) != 9 || got[0] != "windows.service.start@1" || got[1] != "windows.update.install@1" { // the rest: TestCatalogIsExactlyTheNineActions
+	if got := Supported(); len(got) != 10 || got[0] != "windows.service.start@1" || got[1] != "windows.update.install@1" { // the rest: TestCatalogIsExactlyTheTenActions
 		t.Fatalf("supported %v", got)
 	}
 }

@@ -65,7 +65,7 @@ through remote sessions. Turn it on only where that is the trade you want.
 
 - A **fresh sign-in** for every request, and the permission for the action (`actions:request`, and the action's
   own capability where it has one).
-- The **catalog**: still nine actions with closed parameters. Direct mode makes nothing new requestable.
+- The **catalog**: still closed parameters (ten actions from 0.41, with `windows.software.remove`). Direct mode makes nothing new requestable.
 - The **audit log**: every request, with who asked; the signer logs each plan it signed in direct mode.
 - **Containment pauses**, in the portal and on the signer, and **revocations** of scripts and software.
 - The agent's own checks: **maintenance windows** and **session rules**, its own risk computation, the window, the

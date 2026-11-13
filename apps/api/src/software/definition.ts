@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  Detection, MAX_RING_TARGETS, PACKAGE_ID_MAX, PACKAGE_ID_RE, SHA256_RE, SOFTWARE_VERSION_RE, SoftwareParams,
+  DISPLAY_NAME_RE, Detection, MAX_RING_TARGETS, PACKAGE_ID_MAX, PACKAGE_ID_RE, PROGRAM_KEY_RE, SHA256_RE, SOFTWARE_VERSION_RE, SoftwareParams, UNINSTALL_KEY_RE, programNameOk,
 } from '../actions/catalog';
 
 /**
@@ -98,6 +98,49 @@ export function programsOf(sw: unknown): InventoryProgram[] | null {
   return Array.isArray(sw) ? (sw as { name?: unknown; version?: unknown }[]).filter((p) => p && typeof p.name === 'string').map((p) => ({ name: p.name as string, version: typeof p.version === 'string' ? p.version : null })) : null;
 }
 
+// ── Installed programs and what removes them (0.41) ─────────────────────────
+
+export interface InstalledProgram {
+  name: string; version: string | null; publisher: string | null;
+  key: string | null; view: '64' | '32' | null; quiet: boolean | null; msi: boolean | null;
+}
+export function installedOf(sw: unknown): InstalledProgram[] {
+  if (!Array.isArray(sw)) return [];
+  return (sw as Record<string, unknown>[]).filter((p) => p && typeof p.name === 'string').map((p) => ({
+    name: p.name as string, version: typeof p.version === 'string' ? p.version : null, publisher: typeof p.publisher === 'string' ? p.publisher : null,
+    key: typeof p.key === 'string' && PROGRAM_KEY_RE.test(p.key) ? p.key : null, view: p.view === '64' || p.view === '32' ? p.view : null,
+    quiet: typeof p.quiet === 'boolean' ? p.quiet : null, msi: typeof p.msi === 'boolean' ? p.msi : null,
+  }));
+}
+
+/** The catalog entry whose detection rule names this program (a display-name or uninstall-key rule), if any. */
+export function entryFor<E extends { id: string; detection: unknown }>(p: InstalledProgram, entries: E[]): E | null {
+  for (const e of entries) {
+    const r = Detection.safeParse(e.detection);
+    if (!r.success) continue;
+    const d = r.data;
+    if (d.kind === 'uninstall_key' && p.key && d.key.toLowerCase() === p.key.toLowerCase()) return e;
+    if (d.kind === 'display_name') {
+      const n = p.name.toLowerCase(), w = d.name.toLowerCase();
+      if (d.match === 'exact' ? n === w : n.startsWith(w)) return e;
+    }
+  }
+  return null;
+}
+
+/**
+ * How the console can remove a program that no catalog entry describes, or
+ * why it cannot. Only a hint: the computer reads the key again and decides.
+ */
+export function removalHint(p: InstalledProgram): { possible: boolean; method: 'msi' | 'quiet' | null; reason: string | null } {
+  if (!p.key || !p.view) return { possible: false, method: null, reason: 'The inventory did not report this program\'s uninstall key (agents before 0.41 do not, and some key names have characters the agent refuses). It updates with the next full inventory.' };
+  if (!programNameOk(p.name)) return { possible: false, method: null, reason: 'Its display name has characters the agent refuses to match.' };
+  if (p.msi && /^\{[0-9A-Fa-f-]{36}\}$/.test(p.key)) return { possible: true, method: 'msi', reason: null };
+  if (p.quiet) return { possible: true, method: 'quiet', reason: null };
+  if (p.quiet === false) return { possible: false, method: null, reason: 'It registers only an interactive uninstaller, which would wait for someone at the computer to click through it.' };
+  return { possible: false, method: null, reason: 'The inventory did not say how it uninstalls. It updates with the next full inventory.' };
+}
+
 /**
  * Everything that says whether one entry is on one computer: the inventory
  * (display_name rules only) and each software job's own detection — which
@@ -144,7 +187,13 @@ export function manifestPath(packageId: string, version: string): string {
   return `${packageId[0].toLowerCase()}/${packageId.split('.').join('/')}/${version}/${packageId}.installer.yaml`;
 }
 
-export interface ManifestInstaller { architecture: string | null; scope: string | null; installerType: string | null; installerUrl: string | null; installerSha256: string | null; locale: string | null }
+/** One AppsAndFeaturesEntries item: what the installer registers in Programs and Features (0.41). */
+export interface AppsAndFeaturesEntry { displayName: string | null; displayVersion: string | null; productCode: string | null }
+export interface ManifestInstaller {
+  architecture: string | null; scope: string | null; installerType: string | null; installerUrl: string | null; installerSha256: string | null; locale: string | null;
+  /** 0.41: the uninstall key the installer creates (ProductCode), its nested type, and its AppsAndFeaturesEntries (the installer's own or the root's). */
+  productCode: string | null; nestedInstallerType: string | null; appsAndFeatures: AppsAndFeaturesEntry[];
+}
 export interface InstallerManifest { packageIdentifier: string | null; packageVersion: string | null; manifestType: string | null; installers: ManifestInstaller[] }
 
 const unq = (v: string) => {
@@ -152,28 +201,54 @@ const unq = (v: string) => {
   return (t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'")) ? t.slice(1, -1) : t;
 };
 
+const afeOf = (items: Record<string, string>[]): AppsAndFeaturesEntry[] =>
+  items.slice(0, 8).map((a) => ({ displayName: a.DisplayName || null, displayVersion: a.DisplayVersion || null, productCode: a.ProductCode || null }));
+
 /**
  * Read the few fields an installer manifest needs: the root identity and,
  * per installer, architecture, scope, type, URL and SHA-256 (root-level
- * defaults apply to every installer). A deliberately small line reader for
- * the winget-pkgs layout, not a YAML parser: anything it does not recognise
- * is ignored, and a manifest it cannot read yields no installers, which the
- * caller refuses.
+ * defaults apply to every installer); from 0.41 also its ProductCode and
+ * AppsAndFeaturesEntries, from which a detection rule is derived. A
+ * deliberately small line reader for the winget-pkgs layout, not a YAML
+ * parser: anything it does not recognise is ignored, and a manifest it
+ * cannot read yields no installers, which the caller refuses.
  */
 export function parseInstallerManifest(text: string): InstallerManifest {
   const out: InstallerManifest = { packageIdentifier: null, packageVersion: null, manifestType: null, installers: [] };
   const root: Record<string, string> = {};
   let inInstallers = false, cur: Record<string, string> | null = null, keyIndent = -1;
   const items: Record<string, string>[] = [];
+  // AppsAndFeaturesEntries: a list of maps, at the root or inside an installer.
+  const rootAfe: Record<string, string>[] = [];
+  const itemAfe = new Map<Record<string, string>, Record<string, string>[]>();
+  let afe: { list: Record<string, string>[]; dashIndent: number; fieldIndent: number; entry: Record<string, string> | null } | null = null;
   for (const raw of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
     if (/^\s*(#|$)/.test(raw)) continue;
     let m = raw.match(/^([A-Za-z][A-Za-z0-9]*):\s*(.*)$/);
-    if (m) { inInstallers = m[1] === 'Installers'; cur = null; keyIndent = -1; if (!inInstallers) root[m[1]] = unq(m[2]); continue; }
+    if (m) {
+      inInstallers = m[1] === 'Installers'; cur = null; keyIndent = -1; afe = null;
+      if (m[1] === 'AppsAndFeaturesEntries' && !m[2].trim()) afe = { list: rootAfe, dashIndent: 0, fieldIndent: -1, entry: null };
+      else if (!inInstallers) root[m[1]] = unq(m[2]);
+      continue;
+    }
+    if (afe) {
+      const d = raw.match(/^(\s*)-\s+([A-Za-z][A-Za-z0-9]*):\s*(.*)$/);
+      if (d && d[1].length === afe.dashIndent) { afe.entry = { [d[2]]: unq(d[3]) }; afe.list.push(afe.entry); afe.fieldIndent = d[1].length + 2; continue; }
+      const f = raw.match(/^(\s+)([A-Za-z][A-Za-z0-9]*):\s*(.*)$/);
+      if (f && afe.entry && f[1].length === afe.fieldIndent) { afe.entry[f[2]] = unq(f[3]); continue; }
+      afe = null;
+    }
     if (!inInstallers) continue;
     m = raw.match(/^(\s*)-\s+([A-Za-z][A-Za-z0-9]*):\s*(.*)$/);
     if (m && (keyIndent < 0 || m[1].length + 2 === keyIndent)) { cur = { [m[2]]: unq(m[3]) }; items.push(cur); keyIndent = m[1].length + 2; continue; }
     m = raw.match(/^(\s+)([A-Za-z][A-Za-z0-9]*):\s*(.*)$/);
-    if (m && cur && m[1].length === keyIndent) cur[m[2]] = unq(m[3]);
+    if (m && cur && m[1].length === keyIndent) {
+      if (m[2] === 'AppsAndFeaturesEntries' && !m[3].trim()) {
+        const list: Record<string, string>[] = [];
+        itemAfe.set(cur, list);
+        afe = { list, dashIndent: keyIndent, fieldIndent: -1, entry: null };
+      } else cur[m[2]] = unq(m[3]);
+    }
   }
   out.packageIdentifier = root.PackageIdentifier ?? null;
   out.packageVersion = root.PackageVersion ?? null;
@@ -181,12 +256,90 @@ export function parseInstallerManifest(text: string): InstallerManifest {
   for (const it of items) {
     const get = (k: string) => (it[k] ?? root[k] ?? null) || null;
     const sha = get('InstallerSha256');
+    const own = itemAfe.get(it);
     out.installers.push({
       architecture: get('Architecture')?.toLowerCase() ?? null, scope: get('Scope')?.toLowerCase() ?? null, installerType: get('InstallerType')?.toLowerCase() ?? null,
       installerUrl: get('InstallerUrl'), installerSha256: sha && /^[0-9A-Fa-f]{64}$/.test(sha) ? sha.toLowerCase() : null, locale: get('InstallerLocale'),
+      productCode: get('ProductCode'), nestedInstallerType: get('NestedInstallerType')?.toLowerCase() ?? null,
+      appsAndFeatures: afeOf(own && own.length ? own : rootAfe),
     });
   }
   return out;
+}
+
+// \u2500\u2500 One-click: choosing the installer and the detection rule (0.41) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+export type Arch = 'x64' | 'x86' | 'arm64';
+/** The computer's architecture from its inventory (Win32_OperatingSystem.OSArchitecture); x64 when unknown. */
+export function archOf(osArch: string | null | undefined): Arch {
+  const a = (osArch ?? '').toLowerCase();
+  if (/arm/.test(a)) return 'arm64';
+  if (/64/.test(a)) return 'x64';
+  if (/32|x86/.test(a)) return 'x86';
+  return 'x64';
+}
+/** Which installer architectures run on a computer, best first (what winget may choose among). */
+const ARCH_TIERS: Record<Arch, string[]> = { x64: ['x64', 'neutral', 'x86'], arm64: ['arm64', 'neutral', 'x64', 'x86'], x86: ['x86', 'neutral'] };
+
+/**
+ * The installer a one-click install pins, chosen the way winget chooses for
+ * `--scope machine` on this architecture: the best architecture tier that
+ * has one; an explicit machine scope over an unstated one; en-US, then an
+ * unstated locale, over others; and among what is left, the first listed in
+ * the manifest (winget keeps the earlier installer when two are equally
+ * good). Portable packages are never chosen. If winget picks another one on
+ * the computer anyway, its hash is not the pinned one and the agent refuses
+ * the install before anything runs (hash_mismatch).
+ */
+export function autoSelectInstaller(m: InstallerManifest, arch: Arch):
+  { ok: true; installer: ManifestInstaller; alternatives: number } | { ok: false; code: string; message: string; candidates: ManifestInstaller[] } {
+  const usable = m.installers.filter((i) => i.installerSha256 && (i.scope === null || i.scope === 'machine') && i.installerType !== 'portable' && i.nestedInstallerType !== 'portable' && i.installerType !== 'msstore');
+  for (const a of ARCH_TIERS[arch]) {
+    let tier = usable.filter((i) => i.architecture === a);
+    if (!tier.length) continue;
+    if (tier.some((i) => i.scope === 'machine')) tier = tier.filter((i) => i.scope === 'machine');
+    const en = tier.filter((i) => i.locale?.toLowerCase() === 'en-us'), none = tier.filter((i) => !i.locale);
+    if (en.length) tier = en; else if (none.length) tier = none;
+    const distinct = new Set(tier.map((i) => i.installerSha256));
+    return { ok: true, installer: tier[0], alternatives: distinct.size - 1 };
+  }
+  return { ok: false, code: 'NO_MACHINE_INSTALLER', message: `The manifest has no machine-scope installer that runs on ${arch} (portable packages and per-user installers cannot be installed from here).`, candidates: m.installers };
+}
+
+const GUID_RE = /^\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}$/;
+
+/**
+ * A detection rule for the chosen installer, from what the manifest says it
+ * registers, or null (the caller refuses: someone writes the rule by hand).
+ *
+ *   ProductCode (the installer's AppsAndFeaturesEntries first, then its own,
+ *   then the root's) \u2192 uninstall_key, version at least the entry's
+ *   DisplayVersion, else the package version; for an MSI product code with
+ *   no DisplayVersion, presence alone (version 0) \u2014 an MSI's product code
+ *   changes with its version, and its registered DisplayVersion is often not
+ *   the package's (Chrome's is not).
+ *   No product code, but a DisplayName \u2192 display_name, exact.
+ */
+export function deriveDetection(i: ManifestInstaller, packageVersion: string): Detection | null {
+  const e = i.appsAndFeatures.find((x) => x.productCode || x.displayName) ?? null;
+  const dv = e?.displayVersion && SOFTWARE_VERSION_RE.test(e.displayVersion) ? e.displayVersion : null;
+  const key = e?.productCode ?? i.productCode;
+  if (key && UNINSTALL_KEY_RE.test(key)) {
+    const r = Detection.safeParse({ kind: 'uninstall_key', key, compare: 'gte', version: dv ?? (GUID_RE.test(key) ? '0' : packageVersion) });
+    if (r.success) return r.data;
+  }
+  if (e?.displayName && DISPLAY_NAME_RE.test(e.displayName)) {
+    const r = Detection.safeParse({ kind: 'display_name', name: e.displayName, match: 'exact', compare: 'gte', version: dv ?? packageVersion });
+    if (r.success) return r.data;
+  }
+  return null;
+}
+
+/** Text from the index fit for a catalog entry's name (no control characters or angle brackets, 120 at most). */
+export function entryName(name: string | null | undefined, fallback: string): string {
+  // eslint-disable-next-line no-control-regex -- stripping control characters is the point
+  const s = (name ?? '').replace(/[\u0000-\u001f\u007f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120).trim();
+  return s || fallback.slice(0, 120);
 }
 
 /**
@@ -239,6 +392,34 @@ export const ArchiveEntryDto = z.object({ reason: Text(300), expectedRevision: z
 export const ManifestPreviewDto = z.object({
   packageId: z.string().max(PACKAGE_ID_MAX).regex(PACKAGE_ID_RE, 'a winget package id such as 7zip.7zip'),
   version: z.string().regex(SOFTWARE_VERSION_RE),
+}).strict();
+
+// 0.41: the searchable winget catalog, one-click install, removing a program.
+const PackageId = z.string().max(PACKAGE_ID_MAX).regex(PACKAGE_ID_RE, 'a winget package id such as 7zip.7zip');
+const Reason = z.string().trim().min(3).max(400);
+/** Add a package from the winget search to a catalog: the installer and the detection rule are chosen from its manifest. */
+export const FromWingetDto = z.object({
+  scope: z.enum(['global', 'business']),
+  businessId: Id.optional(),
+  packageId: PackageId,
+  /** Default: the index's latest version. */
+  version: z.string().regex(SOFTWARE_VERSION_RE).optional(),
+  architecture: z.enum(['x64', 'x86', 'arm64']).default('x64'),
+}).strict();
+/** One click on a computer's Software tab: catalog entry (made or reused) and the install request, in one. */
+export const QuickInstallDto = z.object({
+  packageId: PackageId,
+  version: z.string().regex(SOFTWARE_VERSION_RE).optional(),
+  reason: Reason.optional(),
+  windowHours: z.number().int().min(1).max(24).default(8),
+}).strict();
+/** Uninstall a program from the inventory that no catalog entry describes. */
+export const RemoveProgramDto = z.object({
+  key: z.string().regex(PROGRAM_KEY_RE, 'the uninstall key name as the inventory reported it'),
+  view: z.enum(['64', '32']),
+  displayName: z.string().refine(programNameOk, 'the display name as the inventory reported it'),
+  reason: Reason.optional(),
+  windowHours: z.number().int().min(1).max(24).default(8),
 }).strict();
 
 export const CreateDeploymentDto = z.object({

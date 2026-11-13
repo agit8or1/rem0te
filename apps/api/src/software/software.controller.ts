@@ -139,6 +139,50 @@ export class SoftwareController {
     return { success: true, data: await this.svc.endpointSoftware(actor, id) };
   }
 
+  // ── 0.41: the searchable winget catalog, one-click install, removing a program ──
+
+  /** Search the server's copy of the winget community index (refreshed at most daily): ?q=name, publisher or id. */
+  @Get('software/winget/packages')
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  async wingetSearch(@Actor() actor: ActorContext, @Query('q') q?: string) {
+    return { success: true, data: await this.svc.wingetSearch(actor, typeof q === 'string' ? q : undefined) };
+  }
+
+  /** Read the index now (Platform Admin; refused within an hour of the last read). */
+  @Post('software/winget/refresh')
+  @HttpCode(HttpStatus.OK)
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  @RateLimit(3)
+  async wingetRefresh(@Actor() actor: ActorContext) {
+    return { success: true, data: await this.svc.wingetRefresh(actor) };
+  }
+
+  /** Add a package from the search to a catalog: installer and detection rule from its manifest; fresh sign-in, audited. */
+  @Post('software/winget/catalog')
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  @RateLimit(10)
+  async wingetAdd(@Actor() actor: ActorContext, @Body() body: unknown, @Req() req: Request) {
+    return { success: true, data: await this.svc.addFromWinget(actor, body, this.fresh(req)) };
+  }
+
+  /** One click: the package's catalog entry (reused or made) and a one-computer install, in one request. */
+  @Post('endpoints/:id/software/winget-install')
+  @HttpCode(HttpStatus.CREATED)
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  @RateLimit(10)
+  async quickInstall(@Actor() actor: ActorContext, @Param('id') id: string, @Body() body: unknown, @Req() req: Request) {
+    return { success: true, data: await this.svc.quickInstall(actor, id, body, this.fresh(req)) };
+  }
+
+  /** Uninstall a program from the installed-software inventory: windows.software.remove@1, high risk. */
+  @Post('endpoints/:id/software/remove-program')
+  @HttpCode(HttpStatus.CREATED)
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  @RateLimit(10)
+  async removeProgram(@Actor() actor: ActorContext, @Param('id') id: string, @Body() body: unknown, @Req() req: Request) {
+    return { success: true, data: await this.svc.removeProgram(actor, id, body, this.fresh(req)) };
+  }
+
   /** One computer: a one-ring deployment whose plan awaits two approvals on the signer. */
   @Post('endpoints/:id/software/:entryId/:operation')
   @HttpCode(HttpStatus.CREATED)

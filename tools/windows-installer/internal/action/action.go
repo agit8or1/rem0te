@@ -229,6 +229,10 @@ type Options struct {
 	Winget          Winget
 	Software        SoftwareProbe
 	SoftwareTimeout time.Duration
+	// Removing an installed program (0.41, remove.go): reads one uninstall
+	// key and runs its removal; nil where not available. SoftwareTimeout
+	// replaces its timeout too.
+	Programs ProgramRegistry
 	// Revocations (v0.36): the approval signer's signed revocation
 	// statement as delivered for this run, unverified (nil when none was).
 	// revocation.go verifies it, keeps the newest, and refuses a plan

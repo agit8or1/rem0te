@@ -10,15 +10,17 @@ import { assertFresh } from '../security-controls/review';
 import { ActionsService } from '../actions/actions.service';
 import { SignerClient } from '../actions/signer.client';
 import { RevocationRelay } from '../actions/revocations.controller';
-import { SOFTWARE_INSTALL, SOFTWARE_UNINSTALL, SoftwareParams, planDirect, type CatalogAction } from '../actions/catalog';
+import { SOFTWARE_INSTALL, SOFTWARE_REMOVE, SOFTWARE_UNINSTALL, SOFTWARE_VERSION_RE, SoftwareParams, planDirect, type CatalogAction } from '../actions/catalog';
 import { Posture, MANAGER_LABEL } from '../patching/posture';
 import { readOnlyAgentRefusal } from '../common/platform';
 import {
-  ArchiveEntryDto, CreateDeploymentDto, CreateEntryDto, ManifestPreviewDto, ReasonDto, RequestRingDto, SingleDto, UpdateEntryDto,
-  complianceOf, detectFromInventory, evaluateSoftwareGate, evidenceFor, nextRing, paramsOf, programsOf, selectInstaller,
-  type SwGate, type SwGateTarget,
+  ArchiveEntryDto, CreateDeploymentDto, CreateEntryDto, FromWingetDto, ManifestPreviewDto, QuickInstallDto, ReasonDto, RemoveProgramDto, RequestRingDto, SingleDto, UpdateEntryDto,
+  archOf, autoSelectInstaller, complianceOf, deriveDetection, detectFromInventory, entryFor, entryName, evaluateSoftwareGate, evidenceFor, installedOf, nextRing, paramsOf, programsOf, removalHint, selectInstaller,
+  type Arch, type SwGate, type SwGateTarget,
 } from './definition';
 import { fetchInstallerManifest } from './manifest';
+import { WingetIndexService } from './winget-index.service';
+import { SEARCH_LIMIT, SEARCH_RE } from './winget-index';
 
 /**
  * Software deployment (0.34): a catalog of allowlisted winget packages, each
@@ -45,7 +47,7 @@ import { fetchInstallerManifest } from './manifest';
  */
 
 const ACTIONS: Record<'install' | 'uninstall', CatalogAction> = { install: SOFTWARE_INSTALL, uninstall: SOFTWARE_UNINSTALL };
-export const SOFTWARE_ACTION_IDS = [SOFTWARE_INSTALL.id, SOFTWARE_UNINSTALL.id];
+export const SOFTWARE_ACTION_IDS = [SOFTWARE_INSTALL.id, SOFTWARE_UNINSTALL.id, SOFTWARE_REMOVE.id];
 const key = (a: CatalogAction) => `${a.id}@${a.version}`;
 const Id = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/);
 
@@ -68,6 +70,7 @@ export class SoftwareService {
     private readonly actions: ActionsService,
     private readonly signer: SignerClient,
     private readonly relay: RevocationRelay,
+    private readonly index: WingetIndexService,
   ) {}
 
   // ── Who may see and change an entry ───────────────────────────────────────
@@ -288,7 +291,7 @@ export class SoftwareService {
     const d = await this.policy.evaluateAction(actor, ep, 'high');
     if (!d.ok) return no(d.message, d.reason === 'action_not_granted' ? 'Ask someone whose access includes higher-risk requests.' : null);
     const blocking = await this.actions.blocking(ep.id, action.id);
-    if (blocking) return no(blocking.status === 'UNKNOWN' ? 'An earlier run on this computer has an uncertain outcome.' : `A ${action.id === SOFTWARE_INSTALL.id ? 'software install' : 'software uninstall'} on this computer is already ${blocking.status.toLowerCase().replace(/_/g, ' ')}.`, blocking.status === 'UNKNOWN' ? 'Reconcile it on its deployment page first.' : 'Wait for it to finish, or cancel it.');
+    if (blocking) return no(blocking.status === 'UNKNOWN' ? 'An earlier run on this computer has an uncertain outcome.' : `A ${action.id === SOFTWARE_INSTALL.id ? 'software install' : action.id === SOFTWARE_REMOVE.id ? 'program removal' : 'software uninstall'} on this computer is already ${blocking.status.toLowerCase().replace(/_/g, ' ')}.`, blocking.status === 'UNKNOWN' ? 'Reconcile it on its deployment page first.' : 'Wait for it to finish, or cancel it.');
     const warning = last && (last.statusReason === 'winget_unavailable' || last.statusReason === 'winget_too_old')
       ? `When it last ran a software plan (${last.resultAt!.toISOString().slice(0, 10)}), this computer reported winget ${last.statusReason === 'winget_too_old' ? 'too old (App Installer before 1.7)' : 'not available'}. Update App Installer first, or the plan will not run.`
       : null;
@@ -304,18 +307,36 @@ export class SoftwareService {
     const now = new Date();
     const [entries, inv, targets] = await Promise.all([
       this.prisma.softwareCatalogEntry.findMany({ where: { archivedAt: null, OR: [{ scope: 'GLOBAL' }, { customerId: ep.customerId }] }, orderBy: [{ name: 'asc' }, { id: 'asc' }], take: 500 }),
-      this.prisma.endpointInventory.findUnique({ where: { endpointId }, select: { software: true, collectedAt: true } }),
+      this.prisma.endpointInventory.findUnique({ where: { endpointId }, select: { software: true, collectedAt: true, osArch: true } }),
       this.prisma.actionTarget.findMany({
         where: { endpointId, job: { actionId: { in: SOFTWARE_ACTION_IDS } } }, orderBy: { createdAt: 'desc' }, take: 100,
         select: { status: true, statusReason: true, outcome: true, result: true, resultAt: true, createdAt: true, jobId: true, job: { select: { actionId: true, params: true, status: true, softwareDeploymentId: true } } },
       }),
     ]);
     const programs = programsOf(inv?.software);
-    const avail = { install: await this.availability(actor, ep, SOFTWARE_INSTALL), uninstall: await this.availability(actor, ep, SOFTWARE_UNINSTALL) };
+    const avail = { install: await this.availability(actor, ep, SOFTWARE_INSTALL), uninstall: await this.availability(actor, ep, SOFTWARE_UNINSTALL), remove: await this.availability(actor, ep, SOFTWARE_REMOVE) };
+    const readable = entries.filter((e) => this.canRead(actor, e));
+    // 0.41: every installed program, with what would remove it: its catalog
+    // entry's uninstall when an entry describes it, else windows.software.remove
+    // when the inventory says it can be removed silently.
+    const removals = targets.filter((t) => t.job.actionId === SOFTWARE_REMOVE.id);
+    const installed = installedOf(inv?.software).slice(0, 500).map((p) => {
+      const e = entryFor(p, readable);
+      const last = p.key ? removals.find((t) => { const q = t.job.params as { key?: string; view?: string } | null; return q?.key === p.key && q?.view === p.view; }) : undefined;
+      return {
+        name: p.name, version: p.version, publisher: p.publisher, key: p.key, view: p.view,
+        entryId: e?.id ?? null, removal: e ? { possible: true, method: 'catalog' as const, reason: null } : removalHint(p),
+        last: last ? { jobId: last.jobId, status: last.status, outcome: last.outcome, reason: last.statusReason, at: last.resultAt ?? last.createdAt } : null,
+      };
+    });
     return {
       inventoryAt: inv?.collectedAt ?? null,
-      install: avail.install, uninstall: avail.uninstall,
-      entries: entries.filter((e) => this.canRead(actor, e)).map((e) => {
+      install: avail.install, uninstall: avail.uninstall, remove: avail.remove,
+      // 0.40: how this business's requests are approved on the signer ('direct', 'signed', or null with no signer).
+      approval: await this.actions.approvalModeFor(actor, endpointId),
+      architecture: archOf(inv?.osArch),
+      installed,
+      entries: readable.map((e) => {
         const mine = targets.filter((t) => (t.job.params as { packageId?: string } | null)?.packageId === e.packageId);
         const c = complianceOf(evidenceFor(e, inv?.collectedAt ?? null, programs, mine), now);
         const last = mine[0];
@@ -342,6 +363,196 @@ export class SoftwareService {
     await this.actions.assertDirectFresh(ep.customerId, freshMethod);
     const d = await this.build(actor, { entryId: e.id, operation, rings: [[endpointId]], soakHours: 0, failureThreshold: 0, windowHours: p.data.windowHours, name: `${operation === 'install' ? 'Install' : 'Uninstall'} ${e.name} on ${(ep.hostname ?? ep.name).slice(0, 60)}`.slice(0, 120) }, true);
     return this.requestRing(actor, d.id, 0, { reason: p.data.reason, startsInMinutes: p.data.startsInMinutes }, freshMethod);
+  }
+
+  // ── The winget catalog: search, add, one-click install (0.41) ──────────────
+
+  /** Search the copy of the winget community index. Reading it needs what reading the catalog needs. */
+  async wingetSearch(actor: ActorContext, q: string | undefined) {
+    if (!actor.isPlatformAdmin && !this.acl.can(actor, CAP.COMPUTERS_VIEW)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'The software catalog needs the View computers permission.' });
+    const s = (q ?? '').trim();
+    const index = await this.index.status();
+    if (s.length < 2) return { query: s, results: [], index };
+    if (!SEARCH_RE.test(s)) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Search with letters, digits, spaces and . + _ - (2 to 64 characters).' });
+    return { query: s, results: await this.index.search(s, SEARCH_LIMIT), index };
+  }
+
+  /** A Platform Admin reads the index now, instead of waiting for the daily sweep. */
+  async wingetRefresh(actor: ActorContext, now = new Date()) {
+    if (!actor.isPlatformAdmin) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only a Platform Admin reads the winget index on demand.' });
+    const st = await this.index.status();
+    if (st.refreshing) throw new ConflictException({ code: 'INDEX_REFRESHING', message: 'The index is being read now.' });
+    if (st.refreshedAt && now.getTime() - st.refreshedAt.getTime() < 3_600_000) throw new ConflictException({ code: 'INDEX_FRESH', message: 'The index was read less than an hour ago.' });
+    await this.audit.log({ tenantId: actor.tenantId ?? undefined, actorId: actor.userId, actorIp: actor.ip, actorAgent: actor.userAgent, action: 'WINGET_INDEX_REFRESH_REQUESTED', resource: 'winget_index', resourceId: 'winget', meta: { previous: st.refreshedAt, packages: st.packages } });
+    try { await this.index.refresh(now); } catch (e) {
+      throw new ConflictException({ code: 'INDEX_NOT_READ', message: `The index was not read: ${((e as Error).message ?? '').slice(0, 300)}. The previous copy is still searched.` });
+    }
+    return this.index.status();
+  }
+
+  /**
+   * What a catalog entry for this package would pin, from the index and the
+   * version's winget-pkgs manifest: the machine-scope installer winget would
+   * choose on this architecture, its SHA-256, and a detection rule from what
+   * the manifest says the installer registers. Refused, with a code, when
+   * any of those cannot be decided; never guessed.
+   */
+  private async resolveWinget(packageId: string, version: string | undefined, arch: Arch) {
+    const row = await this.index.lookup(packageId);
+    if (!row && !version) throw new NotFoundException({ code: 'PACKAGE_NOT_IN_INDEX', message: `${packageId} is not in the winget index this server holds. Check the id, or name a version.` });
+    const id = row?.packageId ?? packageId;
+    const v = version ?? row!.latestVersion;
+    if (!SOFTWARE_VERSION_RE.test(v)) throw new ConflictException({ code: 'VERSION_NOT_INSTALLABLE', message: `${id}'s version "${v.slice(0, 64)}" has characters the agent refuses; it cannot be pinned.` });
+    const f = await fetchInstallerManifest(id, v);
+    const sel = autoSelectInstaller(f.manifest, arch);
+    if (!sel.ok) throw new ConflictException({ code: sel.code, message: sel.message, candidates: sel.candidates });
+    const detection = deriveDetection(sel.installer, v);
+    if (!detection) throw new ConflictException({ code: 'NO_DETECTION', message: `${id} ${v}'s manifest does not say what the installer registers in Programs and Features, so no detection rule can be derived. Add it on Automation → Software catalog with a rule written by hand.` });
+    return {
+      packageId: id, version: v, name: entryName(row?.name, id), detection,
+      pinned: {
+        installerSha256: sel.installer.installerSha256!, hashSource: 'WINGET_PKGS' as const, manifestUrl: f.url.slice(0, 500), manifestSha256: f.sha256,
+        installerUrl: sel.installer.installerUrl?.slice(0, 500) ?? null, architecture: sel.installer.architecture,
+      },
+      installer: { architecture: sel.installer.architecture, scope: sel.installer.scope, installerType: sel.installer.installerType, locale: sel.installer.locale, alternatives: sel.alternatives },
+    };
+  }
+
+  /**
+   * The live entry an install of this package uses in this business: one
+   * already pinned to exactly this version and installer (global or the
+   * business's own), else the business's own entry, created or moved to it.
+   * Writing needs whoever may change the business's catalog and a fresh
+   * sign-in, and is audited like any catalog change.
+   */
+  private async wingetEntry(actor: ActorContext, customerId: string | null, r: Awaited<ReturnType<SoftwareService['resolveWinget']>>, freshMethod: string | null, via: string) {
+    const live = await this.prisma.softwareCatalogEntry.findMany({
+      where: { archivedAt: null, packageId: { equals: r.packageId, mode: 'insensitive' }, ...(customerId ? { OR: [{ scope: 'GLOBAL' as const }, { customerId }] } : { scope: 'GLOBAL' as const }) },
+      include: { customer: { select: { name: true } } },
+    });
+    const same = live.find((e) => e.version === r.version && e.installerSha256 === r.pinned.installerSha256);
+    if (same) return { entry: same, change: 'reused' as const };
+    const scope = customerId ? { scope: 'BUSINESS' as const, customerId } : { scope: 'GLOBAL' as const, customerId: null };
+    if (!this.canEdit(actor, scope)) {
+      throw new ForbiddenException({ code: 'NOT_ALLOWED', message: customerId ? `${r.packageId} ${r.version} is not in this business's catalog, and adding it is for its Business Owner or a Platform Admin.` : 'Only a Platform Admin adds to the global catalog.' });
+    }
+    assertFresh(freshMethod, { action: 'software.catalog' });
+    paramsOf({ packageId: r.packageId, version: r.version, installerSha256: r.pinned.installerSha256, detection: r.detection });
+    const own = live.find((e) => (customerId ? e.customerId === customerId : e.scope === 'GLOBAL'));
+    // One live entry per package per catalog: moving it to another version is
+    // what an upgrade is, but repinning the same version to another installer
+    // (another architecture, or over a pasted hash) would silently change what
+    // every other computer of the business is told to install.
+    if (own && own.version === r.version) {
+      throw new ConflictException({ code: 'ENTRY_PINS_ANOTHER_INSTALLER', message: `This catalog's ${own.packageId} ${own.version} entry pins ${own.architecture ? `the ${own.architecture} installer` : 'a pasted hash'}, not the ${r.pinned.architecture ?? 'chosen'} one this computer needs. Change the entry on Automation → Software catalog, or deploy it from there.` });
+    }
+    if (own) {
+      const u = await this.prisma.softwareCatalogEntry.updateMany({
+        where: { id: own.id, revision: own.revision, archivedAt: null },
+        data: { version: r.version, ...r.pinned, detection: r.detection as Prisma.InputJsonValue, updatedById: actor.userId, revision: { increment: 1 } },
+      });
+      if (!u.count) throw new ConflictException({ code: 'ENTRY_CHANGED', message: 'This package\'s catalog entry changed while it was being updated. Try again.' });
+      const after = (await this.prisma.softwareCatalogEntry.findUnique({ where: { id: own.id }, include: { customer: { select: { name: true } } } }))!;
+      await this.audit.log({
+        tenantId: own.tenantId ?? actor.tenantId ?? undefined, customerId: own.customerId ?? undefined, actorId: actor.userId, actorIp: actor.ip, actorAgent: actor.userAgent,
+        action: 'SOFTWARE_CATALOG_UPDATED', resource: 'software_catalog_entry', resourceId: own.id,
+        meta: {
+          packageId: own.packageId, revision: after.revision, via,
+          before: { version: own.version, installerSha256: own.installerSha256, hashSource: own.hashSource, manifestSha256: own.manifestSha256, detection: own.detection },
+          after: { version: after.version, installerSha256: after.installerSha256, hashSource: after.hashSource, manifestSha256: after.manifestSha256, detection: after.detection },
+        },
+      });
+      return { entry: after, change: 'updated' as const };
+    }
+    let e: SoftwareCatalogEntry;
+    try {
+      e = await this.prisma.softwareCatalogEntry.create({
+        data: { ...scope, tenantId: actor.tenantId ?? null, packageId: r.packageId, name: r.name, publisher: null, version: r.version, ...r.pinned, detection: r.detection as Prisma.InputJsonValue, notes: null, createdById: actor.userId, updatedById: actor.userId },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') throw new ConflictException({ code: 'ENTRY_EXISTS', message: `${r.packageId} was just added to this catalog. Try again.` });
+      throw err;
+    }
+    await this.audit.log({
+      tenantId: actor.tenantId ?? undefined, customerId: customerId ?? undefined, actorId: actor.userId, actorIp: actor.ip, actorAgent: actor.userAgent,
+      action: 'SOFTWARE_CATALOG_CREATED', resource: 'software_catalog_entry', resourceId: e.id,
+      meta: { scope: customerId ? 'business' : 'global', packageId: e.packageId, version: e.version, installerSha256: e.installerSha256, hashSource: e.hashSource, manifestUrl: e.manifestUrl, manifestSha256: e.manifestSha256, detection: r.detection, revision: e.revision, via },
+    });
+    return { entry: { ...e, customer: null }, change: 'created' as const };
+  }
+
+  /** "Add to catalog" from the winget search (Automation → Software catalog). */
+  async addFromWinget(actor: ActorContext, raw: unknown, freshMethod: string | null) {
+    const p = FromWingetDto.safeParse(raw);
+    if (!p.success) bad(p.error);
+    const d = p.data;
+    let customerId: string | null = null;
+    if (d.scope === 'global') {
+      if (!actor.isPlatformAdmin) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only a Platform Admin adds to the global catalog.' });
+    } else {
+      customerId = this.acl.requireScope(actor, d.businessId);
+      if (!this.canEdit(actor, { scope: 'BUSINESS', customerId })) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only this business\'s Business Owner or a Platform Admin changes its software catalog.' });
+      const biz = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { isArchived: true } });
+      if (!biz || biz.isArchived) throw new NotFoundException('Business not found');
+    }
+    assertFresh(freshMethod, { action: 'software.catalog' });
+    const r = await this.resolveWinget(d.packageId, d.version, d.architecture);
+    const w = await this.wingetEntry(actor, customerId, r, freshMethod, 'winget_search');
+    return { entry: this.view(actor, w.entry), change: w.change, installer: r.installer };
+  }
+
+  /**
+   * One click on a computer's Software tab: the package's catalog entry for
+   * this computer's architecture (reused, or made from its manifest), then
+   * the same one-computer install as Install on an entry. Every check the
+   * install makes is made before anything is written.
+   */
+  async quickInstall(actor: ActorContext, endpointId: string, raw: unknown, freshMethod: string | null) {
+    const p = QuickInstallDto.safeParse(raw);
+    if (!p.success) bad(p.error);
+    const d = p.data;
+    await this.acl.assertEndpointInScope(actor, endpointId);
+    const ep = await this.actions.endpointFor(endpointId);
+    if (!ep?.customerId) throw new NotFoundException('Computer not found');
+    const st = await this.availability(actor, ep, SOFTWARE_INSTALL);
+    if (!st.possible) throw new ConflictException({ code: 'SOFTWARE_NOT_POSSIBLE', message: st.reason, fix: st.fix });
+    await this.actions.assertDirectFresh(ep.customerId, freshMethod);
+    const inv = await this.prisma.endpointInventory.findUnique({ where: { endpointId }, select: { osArch: true } });
+    const r = await this.resolveWinget(d.packageId, d.version, archOf(inv?.osArch));
+    const w = await this.wingetEntry(actor, ep.customerId, r, freshMethod, 'one_click');
+    const out = await this.single(actor, endpointId, w.entry.id, 'install', { reason: d.reason ?? `Install ${r.name} ${r.version} (one click from the winget catalog)`.slice(0, 400), windowHours: d.windowHours }, freshMethod);
+    return { ...out, entry: { id: w.entry.id, change: w.change, packageId: r.packageId, version: r.version, name: r.name }, installer: r.installer };
+  }
+
+  // ── Removing an installed program (0.41) ──────────────────────────────────
+
+  /**
+   * Uninstall a program from this computer's installed-software inventory
+   * that no catalog entry describes: windows.software.remove@1, naming the
+   * uninstall key, its registry view and the DisplayName the inventory saw.
+   * The computer reads the key again and refuses if it names anything else;
+   * it runs only msiexec /x for an MSI product or the key's own silent
+   * uninstall command, and never an interactive one.
+   */
+  async removeProgram(actor: ActorContext, endpointId: string, raw: unknown, freshMethod: string | null) {
+    const p = RemoveProgramDto.safeParse(raw);
+    if (!p.success) bad(p.error);
+    const d = p.data;
+    await this.acl.assertEndpointInScope(actor, endpointId);
+    const ep = await this.actions.endpointFor(endpointId);
+    if (!ep?.customerId) throw new NotFoundException('Computer not found');
+    const st = await this.availability(actor, ep, SOFTWARE_REMOVE);
+    if (!st.possible) throw new ConflictException({ code: 'SOFTWARE_NOT_POSSIBLE', message: st.reason, fix: st.fix });
+    const inv = await this.prisma.endpointInventory.findUnique({ where: { endpointId }, select: { software: true } });
+    const prog = installedOf(inv?.software).find((x) => x.key === d.key && x.view === d.view && x.name === d.displayName);
+    if (!prog) throw new NotFoundException({ code: 'PROGRAM_NOT_IN_INVENTORY', message: 'This computer\'s last inventory does not list that program under that key.' });
+    const hint = removalHint(prog);
+    if (!hint.possible) throw new ConflictException({ code: 'NO_SILENT_UNINSTALL', message: hint.reason });
+    const job = await this.actions.createPlan(actor, {
+      action: SOFTWARE_REMOVE, endpointIds: [endpointId], params: { key: d.key, view: d.view, displayName: d.displayName },
+      reason: (d.reason ?? `Uninstall ${d.displayName}`).slice(0, 500), startsInMinutes: 0, windowHours: d.windowHours, freshMethod,
+    });
+    return { job: await this.actions.view(job, actor), method: hint.method };
   }
 
   // ── Deployments ───────────────────────────────────────────────────────────

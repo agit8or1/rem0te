@@ -10,6 +10,7 @@
 import { z } from 'zod';
 import { comparePrecedence, PRIORITY_MAX, PRIORITY_MIN, type PolicyScope } from '../group-policy/precedence';
 import { HEARTBEAT_STALE_MS } from '../common/connectivity';
+import { PROGRAM_KEY_RE } from '../actions/catalog';
 
 export const MONITOR_KINDS = ['OFFLINE', 'DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH', 'SERVICE_STOPPED', 'EVENT_MATCH', 'REBOOT_PENDING', 'AGENT_SILENT'] as const;
 export type MonitorKind = (typeof MONITOR_KINDS)[number];
@@ -583,10 +584,23 @@ export function diffInventory(before: InvSnapshot | null, after: InvSnapshot): C
   return out.slice(0, LIMITS.changesPerPass);
 }
 
+/**
+ * One installed program. 0.41 adds, from agents that send them, its uninstall
+ * key's name and registry view (kept only in the charset windows.software.remove
+ * accepts) and two hints for the console: whether it registers a silent
+ * uninstall, and whether it is a Windows Installer product. The computer
+ * reads the key again before removing anything; these only decide what the
+ * console offers.
+ */
+export interface InventorySoftware {
+  name: string; version: string | null; publisher: string | null; installedOn: string | null;
+  key?: string; view?: '64' | '32'; quiet?: boolean; msi?: boolean;
+}
+
 /** The software list from the inventory pass, clamped. Duplicates (same name and publisher) keep the first. */
-export function sanitizeSoftware(v: unknown): { name: string; version: string | null; publisher: string | null; installedOn: string | null }[] | undefined {
+export function sanitizeSoftware(v: unknown): InventorySoftware[] | undefined {
   if (!Array.isArray(v)) return undefined;
-  const out: { name: string; version: string | null; publisher: string | null; installedOn: string | null }[] = [];
+  const out: InventorySoftware[] = [];
   const seen = new Set<string>();
   for (const x of v.slice(0, LIMITS.software * 2)) {
     const o = (x ?? {}) as Record<string, unknown>;
@@ -598,7 +612,13 @@ export function sanitizeSoftware(v: unknown): { name: string; version: string | 
     seen.add(k);
     // Windows stores InstallDate as yyyyMMdd; keep it only in that shape.
     const inst = typeof o.installedOn === 'string' && /^\d{8}$/.test(o.installedOn) ? `${o.installedOn.slice(0, 4)}-${o.installedOn.slice(4, 6)}-${o.installedOn.slice(6, 8)}` : null;
-    out.push({ name, version: cleanStr(o.version, 64), publisher, installedOn: inst });
+    const item: InventorySoftware = { name, version: cleanStr(o.version, 64), publisher, installedOn: inst };
+    if (typeof o.key === 'string' && PROGRAM_KEY_RE.test(o.key) && (o.view === '64' || o.view === '32')) {
+      item.key = o.key; item.view = o.view;
+      if (typeof o.quiet === 'boolean') item.quiet = o.quiet;
+      if (typeof o.msi === 'boolean') item.msi = o.msi;
+    }
+    out.push(item);
     if (out.length >= LIMITS.software) break;
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));

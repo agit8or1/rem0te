@@ -139,6 +139,14 @@ export const softwareApi = {
   // One computer: a one-ring deployment; the returned job carries the approval link.
   single: (endpointId: string, entryId: string, operation: 'install' | 'uninstall', body: { reason: string; windowHours: number; startsInMinutes?: number }) =>
     api.post(`/endpoints/${endpointId}/software/${entryId}/${operation}`, body),
+  // 0.41: the searchable winget catalog, one-click install, removing an installed program.
+  wingetSearch: (q: string) => api.get('/software/winget/packages', { params: { q } }),
+  wingetRefresh: () => api.post('/software/winget/refresh', {}),
+  wingetAdd: (body: { scope: 'global' | 'business'; businessId?: string; packageId: string; version?: string; architecture?: 'x64' | 'x86' | 'arm64' }) => api.post('/software/winget/catalog', body),
+  quickInstall: (endpointId: string, body: { packageId: string; version?: string; reason?: string; windowHours?: number }) =>
+    api.post(`/endpoints/${endpointId}/software/winget-install`, body),
+  removeProgram: (endpointId: string, body: { key: string; view: '64' | '32'; displayName: string; reason?: string; windowHours?: number }) =>
+    api.post(`/endpoints/${endpointId}/software/remove-program`, body),
   // The report (report-kit's useReport/ExportButton call the same two routes).
   compliance: (params: Record<string, string>) => api.get('/reports/software-compliance', { params }),
   complianceCsv: (params: Record<string, string>) => api.get('/reports/software-compliance/export.csv', { params, responseType: 'blob' }),

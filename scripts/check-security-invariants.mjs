@@ -401,8 +401,9 @@ check(
   // actions; 0.34 windows.script.run (§ 39), then software install and
   // uninstall (§ 40). The list is exact and ordered: anything further is a
   // review.
-  const CATALOG_IDS = ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect', 'windows.script.run', 'windows.software.install', 'windows.software.uninstall'];
-  check('agent catalog is exactly the Spooler start, update install, service restart, restart schedule/cancel, log collection, approved-script run and software install/uninstall',
+  // 0.41 adds windows.software.remove (§ 59).
+  const CATALOG_IDS = ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect', 'windows.script.run', 'windows.software.install', 'windows.software.uninstall', 'windows.software.remove'];
+  check('agent catalog is exactly the Spooler start, update install, service restart, restart schedule/cancel, log collection, approved-script run, software install/uninstall and program removal',
     goIds.join(',') === CATALOG_IDS.join(',') && /const ServiceName = "Spooler"/.test(goCat) && /s == ServiceName/.test(goCat),
     `agent catalog ids: ${goIds.join(', ')}`);
   const tsCat = read('apps/api/src/actions/catalog.ts');
@@ -421,7 +422,9 @@ check(
     /ParamsOK:\s+updateParamsOK,/, /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return RestartService\(p\) != "" \},/,
     /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return RestartDelay\(p\) != 0 \},/, /ParamsOK:\s+func\(p map\[string\]any\) bool \{ return len\(p\) == 0 \},/, /ParamsOK:\s+scriptParamsOK,/,
     // 0.34: the five closed software keys, checked in § 40.
-    /ParamsOK:\s+softwareParamsOK,/];
+    /ParamsOK:\s+softwareParamsOK,/,
+    // 0.41: the key, its view and the expected DisplayName, checked in § 59.
+    /ParamsOK:\s+removeParamsOK,/];
   const openParams = entries.filter((e) => !CLOSED.some((re) => re.test(e))).map((e) => (e.match(/ID: "([^"]+)"/) ?? [])[1] ?? '?');
   check('every agent catalog entry has closed parameters', entries.length === CATALOG_IDS.length && openParams.length === 0, `not closed: ${openParams.join(', ')}`);
   const maint = read('tools/windows-installer/internal/action/maintenance.go');
@@ -444,12 +447,12 @@ check(
       && /if err != nil \{\s*return &Result\{Outcome: "not_executed", Reason: "session_state_unknown"/.test(maint),
     'maintenance risk must be "high" and "cannot tell" must count as a session');
   check('the agent\'s action package runs no process; the Windows side runs only shutdown.exe and wevtutil.exe from System32',
-    !/"os\/exec"|exec\.Command/.test(maint + read('tools/windows-installer/internal/action/action.go') + goCat + read('tools/windows-installer/internal/action/software.go'))
+    !/"os\/exec"|exec\.Command/.test(maint + read('tools/windows-installer/internal/action/action.go') + goCat + read('tools/windows-installer/internal/action/software.go') + read('tools/windows-installer/internal/action/remove.go'))
       && [...read('tools/windows-installer/action_windows.go').matchAll(/runSystem32\([^,]+, "([^"]+)"/g)].map((m) => m[1]).every((x) => x === 'shutdown.exe' || x === 'wevtutil.exe')
       && (read('tools/windows-installer/action_windows.go').match(/exec\.Command(?:Context)?\(/g) ?? []).length === 2,
     'maintenance must not grow a way to run something else');
-  // Four maintenance actions (0.32), the script run and the two software actions (0.34).
-  check('the maintenance actions, the script run and the software actions are not offered to ClientSt0r', (tsCat.match(/integration: false,/g) ?? []).length === 7 && /export const SCRIPT_RUN: CatalogAction = \{[\s\S]{0,2000}?\bintegration: false,/.test(tsCat) && /proposable\(\): string\[\] \{[^}]{0,200}CATALOG\.filter\(\(a\) => a\.integration\)\.map/.test(read('apps/api/src/integration/action-proposals.service.ts'))
+  // Four maintenance actions (0.32), the script run and the two software actions (0.34), program removal (0.41).
+  check('the maintenance actions, the script run and the software actions are not offered to ClientSt0r', (tsCat.match(/integration: false,/g) ?? []).length === 8 && /export const SCRIPT_RUN: CatalogAction = \{[\s\S]{0,2000}?\bintegration: false,/.test(tsCat) && /proposable\(\): string\[\] \{[^}]{0,200}CATALOG\.filter\(\(a\) => a\.integration\)\.map/.test(read('apps/api/src/integration/action-proposals.service.ts'))
       && /if \(!catalogEntry\(body\.action\.id, body\.action\.version\)\?\.integration\)/.test(read('apps/api/src/integration/action-proposals.service.ts')),
     'advertising them changes the ticket-rmm contract');
   // 0.34: the plan's one `script:` field is the signed ScriptBlock — hashes,
@@ -2044,7 +2047,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /export const SoftwareParams = z\.object\(\{\s*packageId: z\.string\(\)\.max\(PACKAGE_ID_MAX\)\.regex\(PACKAGE_ID_RE\),\s*version: SwVersion,\s*installerSha256: z\.string\(\)\.regex\(SHA256_RE\),\s*scope: z\.literal\('machine'\),\s*detection: Detection,\s*\}\)\.strict\(\);/.test(tsCat)
       && (tsCat.match(/\}\)\.strict\(\),?\n/g) ?? []).length >= 3 && /z\.discriminatedUnion\('kind', \[\s*z\.object\(\{ kind: z\.literal\('display_name'\)[\s\S]{0,200}\.strict\(\),\s*z\.object\(\{ kind: z\.literal\('uninstall_key'\)[\s\S]{0,200}\.strict\(\),\s*z\.object\(\{ kind: z\.literal\('file_version'\)[\s\S]{0,300}\.strict\(\),\s*\]\)/.test(tsCat),
     'SoftwareParams (Go and zod) must stay exactly packageId, version, installerSha256, scope "machine" and one of three strict detection forms');
-  const swEntries = read('tools/windows-installer/internal/action/catalog.go').split(/\n\t\{\n/).filter((e) => /ID: "windows\.software\./.test(e));
+  const swEntries = read('tools/windows-installer/internal/action/catalog.go').split(/\n\t\{\n/).filter((e) => /ID: "windows\.software\.(install|uninstall)"/.test(e));
   const tsSw = [...tsCat.matchAll(/export const SOFTWARE_(INSTALL|UNINSTALL): CatalogAction = \{([\s\S]*?)\n\};/g)].map((m) => m[2]);
   check('software: install and uninstall are high impact on any computer, never direct, never offered to ClientSt0r, at most one ring',
     swEntries.length === 2 && swEntries.every((e) => /Risk:\s+func\(int, int\) string \{ return "high" \},/.test(e) && /MaxTargets:\s+MaxRingTargets,/.test(e) && /ParamsOK:\s+softwareParamsOK,/.test(e))
@@ -2081,13 +2084,13 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const ctl = read('apps/api/src/software/software.controller.ts');
   const swDir = readdirSync(join(ROOT, 'apps/api/src/software')).filter((f) => f.endsWith('.ts')).map((f) => read(`apps/api/src/software/${f}`)).join('\n');
   check('software: a plan is made only by ActionsService.createPlan; nothing here writes jobs or talks to the signer itself',
-    (svc.match(/this\.actions\.createPlan\(/g) ?? []).length === 1 && !/actionJob\.(create|update|upsert)|actionTarget\.(create|update|upsert)|signer\.submit|\/internal\/v1\/plans/.test(swDir),
+    (svc.match(/this\.actions\.createPlan\(/g) ?? []).length === 2 && /async removeProgram\([\s\S]{0,2000}?this\.actions\.createPlan\(actor, \{\s*action: SOFTWARE_REMOVE,/.test(svc) && !/actionJob\.(create|update|upsert)|actionTarget\.(create|update|upsert)|signer\.submit|\/internal\/v1\/plans/.test(swDir),
     'requestRing must go through createPlan, which re-checks access, readiness and containment and submits to the signer');
   const routeList = [...ctl.matchAll(/@(Get|Post|Put|Patch|Delete)\('([^']*)'\)\s*(?:@HttpCode\([^)]*\)\s*)?@RequireCapability\(CAP\.([A-Z_]+)\)/g)].map((m) => [m[1], m[2], m[3]]);
   const allRoutes = [...ctl.matchAll(/@(?:Get|Post|Put|Patch|Delete)\('([^']*)'\)/g)].map((m) => m[1]);
   check('software: every route names its capability; there is no approve, sign or upload route',
-    allRoutes.length === 15 && routeList.length === allRoutes.length && !allRoutes.some((r) => /approv|sign|upload|installer|file|blob|binary/i.test(r))
-      && routeList.filter(([m, r]) => m === 'Post' && /^software\/(catalog|manifest-preview)/.test(r)).every(([, , c]) => c === 'COMPUTERS_EDIT'),
+    allRoutes.length === 20 && routeList.length === allRoutes.length && !allRoutes.some((r) => /approv|sign|upload|installer|file|blob|binary/i.test(r))
+      && routeList.filter(([m, r]) => m === 'Post' && /^software\/(catalog|manifest-preview|winget\/(catalog|refresh))/.test(r)).every(([, , c]) => c === 'COMPUTERS_EDIT'),
     `routes: ${allRoutes.join(', ')}`);
   check('software: nothing in the software module accepts a file',
     !/FileInterceptor|FilesInterceptor|UploadedFile|multer|multipart|@Req\(\) req: Request\)[^{]*\{[^}]*req\.pipe|express\.raw/.test(swDir),
@@ -2096,7 +2099,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const fresh = ['create', 'update', 'archive'].map((n) => { const b = method(n); const a = b.indexOf("assertFresh(freshMethod, { action: 'software.catalog' });"); const w = b.search(/this\.prisma\.softwareCatalogEntry\.(create|updateMany)\(/); const au = b.indexOf("action: 'SOFTWARE_CATALOG_"); return [n, a > 0 && w > a && au > w]; });
   check('software: adding, changing or archiving a catalog entry needs a fresh sign-in before the write, and is audited after it',
     // 0.40: the two request routes also pass this.fresh(req) on, for direct mode (§ 58).
-    fresh.every(([, ok]) => ok) && (ctl.match(/this\.fresh\(req\)/g) ?? []).length === 5 && /requestRing\(actor, id, Number\(ring\), body, this\.fresh\(req\)\)/.test(ctl) && /single\(actor, id, entryId, operation, body, this\.fresh\(req\)\)/.test(ctl) && /this\.stepUp\.read\(req, u\.sub, u\.iat\)/.test(ctl),
+    fresh.every(([, ok]) => ok) && (ctl.match(/this\.fresh\(req\)/g) ?? []).length === 8 && /requestRing\(actor, id, Number\(ring\), body, this\.fresh\(req\)\)/.test(ctl) && /single\(actor, id, entryId, operation, body, this\.fresh\(req\)\)/.test(ctl) && /this\.stepUp\.read\(req, u\.sub, u\.iat\)/.test(ctl),
     `per method: ${fresh.map(([n, ok]) => `${n}=${ok}`).join(', ')}`);
   check('software: only a business\'s own owner (not a technician) or a Platform Admin changes its entries; only an admin the global ones',
     /private canEdit\(actor: ActorContext, e: [^)]*\): boolean \{\s*if \(actor\.isPlatformAdmin\) return true;\s*if \(e\.scope === 'GLOBAL'\) return false;[\s\S]{0,120}return !actor\.technician && actor\.businessId === e\.customerId && this\.acl\.isBusinessOwner\(actor\);/.test(svc),
@@ -3640,6 +3643,117 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /await this\.actions\.assertDirectFresh\(ep\.customerId!, freshMethod\);\s*const host/.test(read('apps/api/src/patching/patching.service.ts'))
       && /await this\.actions\.assertDirectFresh\(ep\.customerId, freshMethod\);\s*const d = await this\.build/.test(read('apps/api/src/software/software.service.ts')),
     `createPlan ${iDir}; createPlan callers ${callers.map(([n, ok]) => `${n}=${ok}`).join(', ')}; controllers ${ctls.map(([n, ok]) => `${n}=${ok}`).join(', ')}`);
+}
+
+// 59. The winget catalog and removing installed programs (0.41). Search reads
+//     a copy of the public winget index fetched from one fixed URL, bounded,
+//     with no credentials and no redirects, and parsed by fixed read-only
+//     queries; nothing a computer sends reaches it. One-click install goes
+//     through the same catalog entry, fresh sign-in and createPlan as any
+//     install, with a hash from winget-pkgs. windows.software.remove@1 names
+//     an uninstall key, its view and the expected DisplayName, never a
+//     command: the agent reads the key itself, refuses one that names another
+//     program, and runs only System32 msiexec /x {GUID} /qn /norestart or the
+//     key's own QuietUninstallString, through one exec site with no shell.
+{
+  const goRm = read('tools/windows-installer/internal/action/remove.go');
+  const goRmWin = read('tools/windows-installer/software_remove_windows.go');
+  const goCat = read('tools/windows-installer/internal/action/catalog.go');
+  const tsCat = read('apps/api/src/actions/catalog.ts');
+  const goRe = (name) => (goRm.match(new RegExp(`${name}\\s*= regexp\\.MustCompile\\(\`([^\`]+)\`\\)`)) ?? [])[1] ?? null;
+  const tsRe = (name) => (tsCat.match(new RegExp(`export const ${name} = /(.+)/;`)) ?? [])[1] ?? null;
+  const keyRe = goRe('ProgramKeyRE'), nameRe = goRe('ProgramNameRE');
+  check('remove: the key and display-name charsets are the same regular expression on the agent and the portal',
+    !!keyRe && keyRe === tsRe('PROGRAM_KEY_RE') && !!nameRe && nameRe === tsRe('PROGRAM_NAME_RE'),
+    `agent ${keyRe} / ${nameRe}; portal ${tsRe('PROGRAM_KEY_RE')} / ${tsRe('PROGRAM_NAME_RE')}`);
+  const HOSTILE_KEYS = ['..', '..\\Run', 'a\\b', 'a/b', 'HKLM:\\x', '-x', ' x', 'a"b', 'a;b', 'a|b', 'a%TEMP%', 'a`b', 'a$b', 'a\nb', 'a'.repeat(129)];
+  const letKeys = keyRe ? HOSTILE_KEYS.filter((k) => new RegExp(keyRe).test(k)) : ['(regex not found)'];
+  check('remove: a key can never be a path, an option or carry a shell character', letKeys.length === 0, `accepted: ${letKeys.map((x) => JSON.stringify(x)).join(', ')}`);
+  check('remove: the parameters are exactly key, view ("64" or "32") and displayName, on both sides',
+    /if !exactKeys\(p, "key", "view", "displayName"\) \{/.test(goRm) && /s\.View != "64" && s\.View != "32"/.test(goRm)
+      && /func removeParamsOK\(p map\[string\]any\) bool \{\s*_, err := RemoveParams\(p\)\s*return err == nil\s*\}/.test(goRm)
+      && /export const RemoveParams = z\.object\(\{\s*key: z\.string\(\)\.regex\(PROGRAM_KEY_RE\),\s*view: z\.enum\(\['64', '32'\]\),\s*displayName: z\.string\(\)\.refine\(programNameOk, [^)]*\),\s*\}\)\.strict\(\);/.test(tsCat),
+    'RemoveParams (Go and zod) must stay exactly the three closed keys');
+  const rmEntry = goCat.split(/\n\t\{\n/).find((e) => /ID: "windows\.software\.remove"/.test(e)) ?? '';
+  const tsRm = (tsCat.match(/export const SOFTWARE_REMOVE: CatalogAction = \{([\s\S]*?)\n\};/) ?? [])[1] ?? '';
+  check('remove: high impact on any computer, one computer per plan, never direct, never offered to ClientSt0r',
+    /MaxTargets: 1,/.test(rmEntry) && /ParamsOK:\s+removeParamsOK,/.test(rmEntry) && /Risk:\s+func\(int, int\) string \{ return "high" \},/.test(rmEntry) && /Precheck:\s+removePrecheck,/.test(rmEntry)
+      && /risk: \(\) => 'high',/.test(tsRm) && /maxTargets: 1,/.test(tsRm) && /direct: false,/.test(tsRm) && /integration: false,/.test(tsRm) && /params: RemoveParams,/.test(tsRm),
+    'the agent entry and SOFTWARE_REMOVE must agree');
+  const iRead = goRm.indexOf('pr, found, bad := readProgram(o, s, r.Observed)'), iFor = goRm.indexOf('c, refused := removalFor(s.Key, pr)'), iJ = goRm.indexOf('journalStep(o, p, "removing")'), iRun = goRm.indexOf('o.Programs.Remove(c, ');
+  check('remove: the agent reads the key itself, refuses a key that names another program, and decides the command before running it',
+    iRead > 0 && iFor > iRead && iJ > iFor && iRun > iJ
+      && /if found && strings\.TrimSpace\(pr\.DisplayName\) != s\.DisplayName \{[\s\S]{0,200}Reason: "program_changed"/.test(goRm)
+      && /func removePrecheck\(p \*Plan, o Options\) \*Result \{[\s\S]*?AppManagers\(\)[\s\S]*?readProgram\(o, s, obs\)[\s\S]*?removalFor\(s\.Key, pr\)/.test(goRm),
+    'removeProgram: readProgram, then removalFor, then the journal step, then Remove; Precheck checks managers, the key and the command first');
+  check('remove: only msiexec /x {GUID} /qn /norestart or the key\'s own QuietUninstallString; an interactive-only key is refused',
+    /func MsiArgs\(productCode string\) \[\]string \{\s*return \[\]string\{"\/x", productCode, "\/qn", "\/norestart"\}\s*\}/.test(goRm)
+      && /if strings\.TrimSpace\(pr\.QuietUninstallString\) == "" \{[\s\S]{0,400}Reason: "no_silent_uninstall"/.test(goRm)
+      && /c, err := ParseQuietUninstall\(pr\.QuietUninstallString\)/.test(goRm) && !/ParseQuietUninstall\(pr\.UninstallString\)|Exe: pr\.UninstallString/.test(goRm)
+      && /if c\.Kind == "msi" && !strings\.EqualFold\(c\.ProductCode, key\)/.test(goRm)
+      && /strings\.ContainsAny\(s, "%&\|<>\^`\\n"\)/.test(goRm) && /return RemovalCommand\{\}, errors\.New\("an msiexec command other than \/x of one product code"\)/.test(goRm),
+    'removalFor / ParseQuietUninstall must keep the two closed forms');
+  const never = ((goRm.match(/var NeverRun = \[\]string\{([\s\S]*?)\}/) ?? [])[1] ?? '').split(',').map((x) => x.trim().replace(/"/g, '')).filter(Boolean);
+  const MUST = ['cmd.exe', 'powershell.exe', 'pwsh.exe', 'wscript.exe', 'cscript.exe', 'mshta.exe', 'rundll32.exe', 'regsvr32.exe', 'msiexec.exe', 'bash.exe', 'wsl.exe'];
+  check('remove: a QuietUninstallString naming an interpreter, script host or system tool is never run',
+    MUST.every((n) => never.includes(n)) && /for _, n := range NeverRun \{\s*if base == n \{/.test(goRm), `NeverRun: ${never.join(', ')}`);
+  const winCode = goRmWin.replace(/^\s*\/\/.*$/gm, '');
+  check('remove: the Windows side starts one process from one place, msiexec from System32 only, with no shell',
+    (goRmWin.match(/exec\.Command(?:Context)?\(/g) ?? []).length === 1 && /cmd := exec\.CommandContext\(ctx, path, args\.\.\.\)/.test(goRmWin)
+      && /path, args = filepath\.Join\(d, "msiexec\.exe"\), action\.MsiArgs\(c\.ProductCode\)/.test(goRmWin) && /d, err := windows\.GetSystemDirectory\(\)/.test(goRmWin)
+      && /if _, err := action\.ParseQuietUninstall\(`"` \+ c\.Exe \+ `"`\); err != nil \{/.test(goRmWin)
+      && !/cmd\.exe|powershell|pwsh|ShellExecute|\/bin\/sh|"cmd"/i.test(winCode) && !/"os\/exec"|exec\.Command/.test(goRm),
+    'software_remove_windows.go: one exec.CommandContext, System32 msiexec with MsiArgs, the quiet program re-checked; remove.go starts nothing');
+  check('remove: succeeded only when the key is gone afterwards',
+    /case present == "false":\s*r\.Outcome, r\.Detail = "succeeded"/.test(goRm) && (goRm.replace(/^\s*\/\/.*$/gm, "").match(/"succeeded"/g) ?? []).length === 1,
+    'the uninstaller\'s exit code alone never makes it a success');
+
+  // The portal: removing, and one-click install.
+  const svc = read('apps/api/src/software/software.service.ts');
+  const def = read('apps/api/src/software/definition.ts');
+  const m = (name) => { const i = svc.indexOf(`  async ${name}(`); return i < 0 ? '' : svc.slice(i, svc.indexOf('\n  }\n', i)); };
+  const pm = (name) => { const i = svc.indexOf(`  private async ${name}(`); return i < 0 ? '' : svc.slice(i, svc.indexOf('\n  }\n', i)); };
+  const rm = m('removeProgram');
+  check('remove: the portal names only a program its inventory of that computer lists, and plans it only through createPlan with the three parameters',
+    /const p = RemoveProgramDto\.safeParse\(raw\);/.test(rm) && rm.indexOf('assertEndpointInScope') > 0 && rm.indexOf('assertEndpointInScope') < rm.indexOf('createPlan(')
+      && /installedOf\(inv\?\.software\)\.find\(\(x\) => x\.key === d\.key && x\.view === d\.view && x\.name === d\.displayName\)/.test(rm)
+      && /params: \{ key: d\.key, view: d\.view, displayName: d\.displayName \}/.test(rm) && /freshMethod,\s*\}\);/.test(rm)
+      && /export const RemoveProgramDto = z\.object\(\{[\s\S]{0,600}?\}\)\.strict\(\);/.test(def),
+    'removeProgram must scope, match the inventory and go through createPlan');
+  const we = pm('wingetEntry'), qi = m('quickInstall'), rw = pm('resolveWinget');
+  const iEdit = we.indexOf('if (!this.canEdit(actor, scope))'), iFr = we.indexOf("assertFresh(freshMethod, { action: 'software.catalog' });"), iW = we.search(/this\.prisma\.softwareCatalogEntry\.(create|updateMany)\(/), iAu = we.indexOf("action: 'SOFTWARE_CATALOG_");
+  check('one-click: a catalog entry is written only by whoever may change the catalog, after a fresh sign-in, audited, with the hash from winget-pkgs',
+    iEdit > 0 && iFr > iEdit && iW > iFr && iAu > iW && /hashSource: 'WINGET_PKGS' as const/.test(rw) && /autoSelectInstaller\(f\.manifest, arch\)/.test(rw) && /deriveDetection\(sel\.installer, v\)/.test(rw)
+      && qi.indexOf('this.availability(actor, ep, SOFTWARE_INSTALL)') > 0 && qi.indexOf('assertDirectFresh(') > qi.indexOf('this.availability(') && qi.indexOf('this.wingetEntry(') > qi.indexOf('assertDirectFresh(')
+      && /this\.single\(actor, endpointId, w\.entry\.id, 'install',/.test(qi),
+    'quickInstall: availability, the direct-mode check, then the entry, then the ordinary one-computer install');
+  // The index.
+  const ix = read('apps/api/src/software/winget-index.ts');
+  const ixs = read('apps/api/src/software/winget-index.service.ts');
+  check('index: one fixed URL, a loopback-only test override, one bounded GET with no credentials and no redirects',
+    /export const WINGET_INDEX_URL = 'https:\/\/cdn\.winget\.microsoft\.com\/cache\/source2\.msix';/.test(ix)
+      && /if \(o && \/\^http:\\\/\\\/127\\\.0\\\.0\\\.1:\[0-9\]\{2,5\}\(\\\/\[A-Za-z0-9\._\/-\]\*\)\?\$\/\.test\(o\)\) return o;\s*return WINGET_INDEX_URL;/.test(ix)
+      && (ixs.match(/\bfetch\(/g) ?? []).length === 1 && /fetch\(indexUrl\(\), \{ method: 'GET', redirect: 'error', credentials: 'omit',[^}]*\}, signal: AbortSignal\.timeout\(INDEX_FETCH_TIMEOUT_MS\) \}\)/.test(ixs)
+      && /if \(n > INDEX_MAX_MSIX_BYTES\)/.test(ixs) && /export const INDEX_MAX_MSIX_BYTES = 32 \* 1024 \* 1024;/.test(ix) && /inflateRawSync\(raw, \{ maxOutputLength: maxOut \}\)/.test(ix),
+    'WingetIndexService.fetchMsix must stay one bounded GET of WINGET_INDEX_URL');
+  check('index: read by the sqlite3 tool, read-only, an argument array, only the two fixed queries',
+    /execFileAsync\('sqlite3', \['-readonly', '-json', `file:\$\{file\}\?mode=ro`, sql\]/.test(ixs) && !/\bexec\(|spawn\(|shell: true|execSync|spawnSync/.test(ixs)
+      && [...ixs.matchAll(/this\.query\(file, ([A-Z_]+)\)/g)].map((x) => x[1]).sort().join() === 'INDEX_ROWS_SQL,INDEX_SCHEMA_SQL' && (ixs.match(/this\.query\(/g) ?? []).length === 2,
+    'only INDEX_SCHEMA_SQL and INDEX_ROWS_SQL, through execFile');
+  check('index: an id that could not be a plan\'s packageId is never stored',
+    /!PACKAGE_ID_RE\.test\(id\)/.test(ix) && /CONSTRAINT "WingetPackage_id_form" CHECK/.test(read('apps/api/prisma/migrations/0066_winget_index/migration.sql')),
+    'normalizeIndexRows and 0066\'s CHECK');
+  const importers = walk('apps/api/src').filter((f) => /from '\.\/winget-index(\.service)?'|from '\.\.\/software\/winget-index/.test(read(f)));
+  check('index: nothing outside the software module imports it, so nothing a computer sends reaches it',
+    importers.every((f) => f.startsWith('apps/api/src/software/')) && importers.length >= 2, `importers: ${importers.join(', ')}`);
+  check('index: WINGET_INDEX_SWEEP=off is exact and exported by run-e2e.sh',
+    /export const indexSweepEnabled = \(env: Record<string, string \| undefined> = process\.env\) => env\.WINGET_INDEX_SWEEP !== 'off';/.test(ix)
+      && /^export WINGET_INDEX_SWEEP=off$/m.test(read('scripts/run-e2e.sh')) && /if \(!indexSweepEnabled\(\)\) return;/.test(ixs),
+    'a test stack must never fetch the public index');
+  check('inventory: an uninstall key is kept only in the charset the remove action accepts, with its view',
+    /if \(typeof o\.key === 'string' && PROGRAM_KEY_RE\.test\(o\.key\) && \(o\.view === '64' \|\| o\.view === '32'\)\) \{/.test(read('apps/api/src/monitoring/engine.ts'))
+      && /key: typeof p\.key === 'string' && PROGRAM_KEY_RE\.test\(p\.key\) \? p\.key : null/.test(def),
+    'sanitizeSoftware and installedOf');
 }
 
 if (failures.length > 0) {

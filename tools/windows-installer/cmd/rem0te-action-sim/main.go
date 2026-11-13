@@ -54,6 +54,14 @@
 // -winget-timeout replaces every winget timeout (e.g. 300ms, to prove the
 // timeout path); 0 keeps the agent's defaults.
 //
+// Removing a program (0.41, windows.software.remove): the same state's
+// "programs" are the computer's HKLM uninstall keys (view, key, displayName,
+// uninstallString, quietUninstallString, windowsInstaller, and what removing
+// it does: removeExitCode, noEffect, hang). The agent's decision code reads
+// them; the removal it decides on is recorded in "removals" and applied to
+// the state. No process is started for it: the Windows registry read and
+// process start (software_remove_windows.go) are not exercised here.
+//
 // Revocation (v0.36): -portal HOST:PORT fetches the approval signer's signed
 // revocation statement from that portal's relay with the agent's own code
 // (internal/agent.FetchRevocations, over http); -revocations FILE delivers
@@ -93,6 +101,19 @@ func (p swProbe) UninstallEntries() ([]action.UninstallEntry, error) {
 		out = append(out, action.UninstallEntry{Key: e.Key, DisplayName: e.DisplayName, DisplayVersion: e.DisplayVersion})
 	}
 	return out, err
+}
+
+// programs adapts the stub's uninstall registry (0.41, windows.software.remove).
+type programs struct{ r stub.Registry }
+
+func (p programs) Program(view, key string) (action.Program, bool, error) {
+	sp, ok, err := p.r.Program(view, key)
+	return action.Program{DisplayName: sp.DisplayName, DisplayVersion: sp.DisplayVersion, UninstallString: sp.UninstallString,
+		QuietUninstallString: sp.QuietUninstallString, WindowsInstaller: sp.WindowsInstaller}, ok, err
+}
+
+func (p programs) Remove(c action.RemovalCommand, timeout time.Duration) (int, []byte, error) {
+	return p.r.Remove(stub.Removal{Kind: c.Kind, ProductCode: c.ProductCode, Exe: c.Exe, Args: c.Args}, timeout)
 }
 
 type sim struct {
@@ -365,6 +386,7 @@ func main() {
 		}
 		o.Winget = stub.New(self, abs)
 		o.Software = swProbe{stub.Probe{State: abs}}
+		o.Programs = programs{stub.Registry{State: abs}}
 		o.SoftwareTimeout = *wingetTimeout
 	}
 	// v0.36: the revocation statement, either fetched through the agent's own

@@ -56,7 +56,7 @@ const ORIGIN = `http://127.0.0.1:${SIGNER_PUBLIC}`;
 const prisma = new PrismaClient();
 const sfx = randomBytes(3).toString('hex');
 const PW = 'revocation-e2e-password-123';
-const ACTIONS = ['windows.service.start@1', 'windows.update.install@1', 'windows.service.restart@1', 'windows.reboot.schedule@1', 'windows.reboot.cancel@1', 'windows.logs.collect@1', 'windows.script.run@1', 'windows.software.install@1', 'windows.software.uninstall@1'];
+const ACTIONS = ['windows.service.start@1', 'windows.update.install@1', 'windows.service.restart@1', 'windows.reboot.schedule@1', 'windows.reboot.cancel@1', 'windows.logs.collect@1', 'windows.script.run@1', 'windows.software.install@1', 'windows.software.uninstall@1', 'windows.software.remove@1'];
 const WINGET = 'v1.9.25200';
 
 let pass = 0, fail = 0; const failures = [];

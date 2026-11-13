@@ -321,6 +321,8 @@ enum ActivityAction {
   SOFTWARE_DEPLOYMENT_CREATED
   SOFTWARE_DEPLOYMENT_UPDATED
   SOFTWARE_RING_REQUESTED
+  // 0.41: a Platform Admin asked for the winget index to be read now.
+  WINGET_INDEX_REFRESH_REQUESTED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -3733,4 +3735,34 @@ model TraySelfHelpRun {
 
   @@index([endpointId, startedAt])
   @@index([startedAt])
+}
+
+/// The public winget community source, as last read (0.41): one row per
+/// package, its latest version, for searching from the software catalog and
+/// a computer's Software tab. A read-only copy of
+/// cdn.winget.microsoft.com/cache/source2.msix (Public/index.db), replaced
+/// whole at most daily by WingetIndexService. Nothing here is installed or
+/// trusted: an install still pins the installer SHA-256 from that version's
+/// winget-pkgs manifest, and each computer still hashes what it downloads.
+model WingetPackage {
+  /// Charset-checked (actions/catalog.ts PACKAGE_ID_RE, and a CHECK); other ids are skipped.
+  packageId     String  @id
+  name          String
+  /// The index's normalised publisher (lower case, no punctuation).
+  publisher     String?
+  moniker       String?
+  latestVersion String
+}
+
+/// The one row (id 1) saying when the winget index was last read, and why not.
+model WingetIndexState {
+  id              Int       @id @default(1)
+  refreshedAt     DateTime?
+  attemptedAt     DateTime?
+  packages        Int       @default(0)
+  skipped         Int       @default(0)
+  /// SHA-256 of the source2.msix that was read, and the index's own write time.
+  sourceSha256    String?
+  sourceWrittenAt DateTime?
+  lastError       String?
 }
