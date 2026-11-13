@@ -104,7 +104,7 @@ func cmdAction(args []string) int {
 	wa := &winActions{paths: paths}
 	o := action.Options{StateDir: paths.StateDir, Keys: keys, Platform: wa, Now: time.Now,
 		WUA: winWUA{paths: paths}, Registry: winRegistry{}, Pause: pause, Maint: wa, ScriptContent: script,
-		Winget: winLocatedWinget{}, Software: winSoftware{}, Revocations: revs}
+		Winget: winLocatedWinget{}, Software: winSoftware{}, Programs: winPrograms{}, Revocations: revs}
 	// Windows PowerShell 5.1 from System32, by absolute path (v0.34).
 	if d, err := windows.GetSystemDirectory(); err == nil {
 		o.Scripts = action.ExecHost{PowerShell: filepath.Join(d, "WindowsPowerShell", "v1.0", "powershell.exe")}

@@ -1247,12 +1247,16 @@ function Get-Rem0teInventory {
     # Installed software (0.29), from the uninstall keys - the list Settings
     # and Programs and Features show. Read-only registry reads; system
     # components and update entries are skipped, and the server keeps 500.
+    # 0.41: with each entry's key name and registry view, and whether it
+    # registers a silent uninstall or is a Windows Installer product, so the
+    # console can offer Uninstall (windows.software.remove reads the key
+    # again on the computer and decides there; nothing here runs).
     \$sw = @()
-    foreach (\$rk in @('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*', 'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*')) {
-        foreach (\$ue in @(Get-ItemProperty -Path \$rk -ErrorAction SilentlyContinue)) {
+    foreach (\$rk in @(@{ p = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'; v = '64' }, @{ p = 'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'; v = '32' })) {
+        foreach (\$ue in @(Get-ItemProperty -Path \$rk.p -ErrorAction SilentlyContinue)) {
             if (-not \$ue.DisplayName) { continue }
             if (\$ue.SystemComponent -eq 1 -or \$ue.ParentKeyName -or \$ue.ReleaseType) { continue }
-            \$sw += @{ name = [string]\$ue.DisplayName; version = [string]\$ue.DisplayVersion; publisher = [string]\$ue.Publisher; installedOn = [string]\$ue.InstallDate }
+            \$sw += @{ name = [string]\$ue.DisplayName; version = [string]\$ue.DisplayVersion; publisher = [string]\$ue.Publisher; installedOn = [string]\$ue.InstallDate; key = [string]\$ue.PSChildName; view = \$rk.v; quiet = [bool]\$ue.QuietUninstallString; msi = (\$ue.WindowsInstaller -eq 1) }
             if (\$sw.Count -ge 600) { break }
         }
     }

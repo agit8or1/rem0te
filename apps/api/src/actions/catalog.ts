@@ -9,14 +9,16 @@ import { MAX_SCRIPT_OUTPUT_BYTES, ScriptBlock, ScriptRunParams, TIMEOUT_MINUTES,
  * the Windows agent (tools/windows-installer/internal/action/catalog.go),
  * which is the copy that decides what actually runs.
  *
- * Nine actions. Starting the Print Spooler on one computer (0.26); installing
+ * Ten actions. Starting the Print Spooler on one computer (0.26); installing
  * named Windows updates on a ring of computers (0.27); four maintenance
  * actions (0.32): restarting one service from a fixed allowlist, scheduling a
  * warned restart, canceling it, and collecting a fixed set of logs; (0.34)
  * running one approved script-library version whose exact SHA-256 is on
  * the approval signer's own allowlist; and (0.34) installing or
  * uninstalling one allowlisted winget package, pinned by version and
- * installer SHA-256. Nothing here can carry a
+ * installer SHA-256; and (0.41) removing one installed program named by its
+ * uninstall registry key, whose own registered uninstaller the agent runs.
+ * Nothing here can carry a
  * command line, a path or a URL, and the script action names a hash, not
  * text — parameters are closed enums, bounded integers, update identities or
  * typed script arguments checked against a reviewed schema — so an AI
@@ -415,7 +417,52 @@ export const SOFTWARE_UNINSTALL: CatalogAction = {
   acknowledge: 'I understand that this removes the program for everyone on the computers.',
 };
 
-export const CATALOG: CatalogAction[] = [SERVICE_START, UPDATE_INSTALL, SERVICE_RESTART, REBOOT_SCHEDULE, REBOOT_CANCEL, LOGS_COLLECT, SCRIPT_RUN, SOFTWARE_INSTALL, SOFTWARE_UNINSTALL];
+// Remove one installed program by its uninstall key (0.41). Keep in step with
+// tools/windows-installer/internal/action/remove.go: the plan names the key,
+// its registry view and the DisplayName expected there — never a command —
+// and the agent reads the key itself, refuses if it names another program,
+// and runs only msiexec /x for an MSI product or the key's own
+// QuietUninstallString (docs/software-deployment.md).
+
+/** An uninstall subkey name, as Programs and Features lists it (no backslash: one key, never a path). */
+export const PROGRAM_KEY_RE = /^[A-Za-z0-9{}][A-Za-z0-9{}()._+ ,&'!-]{0,127}$/;
+/** The DisplayName the plan expects to find there. Compared on the computer, never run. */
+// eslint-disable-next-line no-control-regex -- refusing control characters is the point
+export const PROGRAM_NAME_RE = /^[^\x00-\x1f\x7f"<>\\]{1,200}$/;
+export const programNameOk = (s: string) => PROGRAM_NAME_RE.test(s) && s.trim() === s;
+/** The closed parameters windows.software.remove signs. */
+export const RemoveParams = z.object({
+  key: z.string().regex(PROGRAM_KEY_RE),
+  view: z.enum(['64', '32']),
+  displayName: z.string().refine(programNameOk, 'a display name without control characters, quotes, angle brackets or backslashes'),
+}).strict();
+export type RemoveParams = z.infer<typeof RemoveParams>;
+
+export const SOFTWARE_REMOVE: CatalogAction = {
+  id: 'windows.software.remove',
+  version: 1,
+  title: 'Remove an installed program',
+  description: 'Removes one program Programs and Features lists, by its uninstall registry key. The computer reads the key itself and runs only Windows Installer (msiexec /x, for an MSI product) or the program\'s own registered silent uninstall command.',
+  params: RemoveParams,
+  warnings: [
+    'Uninstalling removes the program for everyone on the computer. Its settings and data may be removed with it.',
+    'Running copies of the program may be closed without saving.',
+    'For a program that is not a Windows Installer product, what runs is the uninstaller the program registered (its QuietUninstallString). rem0te did not write it and cannot vouch for what it does. A program that registered only an interactive uninstaller is refused rather than left waiting for a click.',
+    'This plan never restarts the computer.',
+  ],
+  verification: 'The computer checks that the uninstall key names the program this plan was made for before running anything, and reports whether the key is gone afterwards.',
+  doesNotProve: ['that every file and setting was removed', 'that nothing depended on the program'],
+  risk: () => 'high',
+  // A key is one computer's.
+  maxTargets: 1,
+  resultDeadlineMinutes: 60,
+  direct: false,
+  indirectVia: 'An installed program is removed from the computer\'s Software tab (Installed software, Uninstall).',
+  integration: false,
+  acknowledge: 'I understand that this removes the program for everyone on the computer, by running its own uninstaller.',
+};
+
+export const CATALOG: CatalogAction[] = [SERVICE_START, UPDATE_INSTALL, SERVICE_RESTART, REBOOT_SCHEDULE, REBOOT_CANCEL, LOGS_COLLECT, SCRIPT_RUN, SOFTWARE_INSTALL, SOFTWARE_UNINSTALL, SOFTWARE_REMOVE];
 
 /** The log sources windows.logs.collect returns, in order; the agent sends the same. */
 export const LOG_SOURCES = ['system_errors', 'application_errors', 'agent_journal', 'agent_log', 'rustdesk_log'] as const;

@@ -1303,9 +1303,30 @@ const SECTIONS: Section[] = [
           so a computer on the 0.36 signed agent refuses an install from it even if that install was approved before the
           archive. Uninstalls still run. If the signer doesn&apos;t confirm, nothing is archived.
         </p>
+        <p data-help="winget-catalog">
+          <strong className="text-foreground">Search and one-click install (0.41).</strong> The server keeps a copy of
+          the winget community catalog&apos;s package index, read at most daily from winget&apos;s own source (no
+          credentials, no redirects, size-capped). Search it on a computer&apos;s Software tab or on the catalog page and
+          click <em>Install</em>: the server reads that version&apos;s manifest, picks the machine-wide installer winget
+          would choose for the computer&apos;s architecture, pins its hash, derives the detection rule from what the
+          installer registers, adds the package to the business&apos;s catalog if it is not there (Business Owner or
+          Platform Admin, fresh sign-in, audited) and requests the install. Anything it cannot decide is refused with the
+          reason rather than guessed. A Platform Admin can read the index now from the catalog page.
+        </p>
+        <p data-help="remove-program">
+          <strong className="text-foreground">Uninstall anything installed (0.41).</strong> Each program in a
+          computer&apos;s <em>Installed software</em> list has <em>Uninstall</em> when it can be removed with no one at the
+          computer. A program a catalog entry describes is uninstalled through that entry; any other is removed by its
+          uninstall key: the computer reads the key itself, refuses if it now names another program, and runs only
+          Windows Installer (<code className="text-foreground">msiexec /x</code>) for an MSI product or the silent
+          uninstall command the program registered — never an interactive one, a shell or a script host. It succeeds only
+          if the key is gone afterwards. It is high risk, one computer at a time, approved like any software plan (or
+          signed at once in direct mode). Programs reported by agents older than 0.41 show why they cannot be removed
+          until the next full inventory.
+        </p>
         <p>
           <strong className="text-foreground">None of this has run on real Windows yet.</strong> It has been tested against
-          a simulated winget and simulated computers only. More in{' '}
+          a simulated winget, a simulated uninstall registry and simulated computers only. More in{' '}
           <Link href="/docs/software-deployment" className="underline text-foreground">Software deployment</Link>.
         </p>
       </div>

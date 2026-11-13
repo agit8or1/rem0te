@@ -440,11 +440,12 @@ is bounded, with a loopback-only `WINGET_MANIFEST_BASE`. Behavioural proof:
 the sim takes `-winget STATE.json` and `-winget-timeout`); unit:
 `unit-software.mjs`.
 
-With §39 and §40, §14's exact, ordered catalog list is nine actions: the six
-through 0.32, then `windows.script.run`, `windows.software.install` and
-`windows.software.uninstall`. It is the same on the agent and in the portal,
-with `scriptParamsOK` and `softwareParamsOK` among the closed forms and seven
-`integration: false` entries.
+With §39, §40 and §59, §14's exact, ordered catalog list is ten actions: the
+six through 0.32, then `windows.script.run`, `windows.software.install`,
+`windows.software.uninstall` and (0.41) `windows.software.remove`. It is the
+same on the agent and in the portal, with `scriptParamsOK`, `softwareParamsOK`
+and `removeParamsOK` among the closed forms and eight `integration: false`
+entries.
 
 §41 is AI without a provider key. There is no model-provider SDK, endpoint or
 key variable anywhere in `apps/api/src` or `apps/api/package.json`
@@ -724,6 +725,31 @@ admission only when `default` is direct (author self-review is
 `ScriptVersion.selfReviewed`, migration 0065). Behavioural proof:
 `e2e-approved-action.mjs` (its direct section); unit: `unit-approval-signer.mjs`
 and the Go `internal/action` direct tests.
+
+§59 (0.41) is the winget catalog and removing installed programs.
+`windows.software.remove@1` names an uninstall key, its view (`64`/`32`) and
+the expected DisplayName, never a command; the key and name charsets are the
+same regular expression on the agent and the portal. It is high risk, one
+computer per plan, never direct and `integration: false`. The agent reads the
+key itself, refuses one whose DisplayName changed (`program_changed`), decides
+the command, journals, and only then runs it: System32 `msiexec /x {GUID} /qn
+/norestart` for that key's own product, or the key's `QuietUninstallString` as
+an absolute `.exe` with no shell characters and nothing on `NeverRun`, through
+one exec site with no shell; an interactive-only key is `no_silent_uninstall`.
+It is succeeded only when the key is gone afterwards. The portal plans only a
+program its inventory of that computer lists, through `createPlan`, and keeps
+inventory keys only in the remove charset. One-click install writes a catalog
+entry only for the Business Owner or a Platform Admin, after `assertFresh`,
+audited, with hash source winget-pkgs, then requests through the ordinary
+install path. The index comes from one fixed URL (a loopback-only test
+override), by one bounded GET with no credentials and no redirects, read by
+`sqlite3 -readonly` with an argument array and two fixed queries; ids that
+could not be a `packageId` are skipped, and nothing outside the software module
+imports it. `WINGET_INDEX_SWEEP=off` is exact, exported by `run-e2e.sh` and set
+by `e2e-ui.mjs`. The host needs `sqlite3`. **The remove action has never run on
+real Windows.** Behavioural proof: `e2e-software-catalog.mjs` (ports 3661–3665,
+`RELEASE_BIN` / `ACTION_SIM`, `sqlite3`); unit: `unit-software.mjs` and the Go
+`internal/action` remove tests.
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 

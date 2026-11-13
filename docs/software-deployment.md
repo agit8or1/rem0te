@@ -3,15 +3,20 @@
 From 0.34 rem0te can install and uninstall software on Windows computers, from a **software catalog** of
 allowlisted [winget](https://learn.microsoft.com/windows/package-manager/) packages. Each catalog entry pins one
 package id, one exact version and one installer SHA-256. Installing or uninstalling it is a signed
-[approved action](approved-actions.md) that two people approve with a passkey on the approval signer. Each
-computer downloads the installer itself with winget, hashes it, and installs only if the hash is the pinned one.
+[approved action](approved-actions.md) that two people approve with a passkey on the approval signer, or, in
+[direct mode](approved-actions.md) (0.40), that the signer signs as soon as it is asked. Each computer downloads
+the installer itself with winget, hashes it, and installs only if the hash is the pinned one.
+
+From 0.41 you don't have to build the catalog by hand: [search the winget catalog](#searching-the-winget-catalog-041)
+and click **Install**, and [uninstall anything](#uninstalling-any-installed-program-041) the computer lists in
+Programs and Features.
 
 Nothing is uploaded to the portal. It never holds an installer, so it can't hand a computer one.
 
 > **Not run on real Windows.** Everything on this page is fixture-tested. The agent's real decision code runs
 > against a stub winget, a simulated uninstall registry and simulated file versions. winget itself, App Installer
-> under the SYSTEM account, and the Windows registry and file-version calls have **not** run on a Windows computer
-> under test. Treat it as unproven on Windows until the paired lab in
+> under the SYSTEM account, the Windows registry and file-version calls, and (0.41) msiexec and the uninstallers
+> programs register have **not** run on a Windows computer under test. Treat it as unproven on Windows until the paired lab in
 > [Approved actions](approved-actions.md#what-has-been-proven-and-what-hasnt) is done.
 
 ## What is in the catalog
@@ -102,6 +107,7 @@ one-computer deployment and requests it at once.
 
 - The dialog shows the action's warnings, the reason you give, and an approval window of 1 to 24 hours (8 by default).
 - The plan is **high impact**, so **two different approvers** must approve it on the signer, whatever the computer.
+  In direct mode it is signed when you ask (after a fresh sign-in) and the dialog says so instead.
 - The **Approve** link opens the signer's page. There is no approve button in the portal.
 
 When a button is missing, the tab says why:
@@ -168,6 +174,90 @@ $S software revoke --entry <entry id> --reason "why"  # one-way
 ```
 
 (`$S` as in [Script library → Revocation](script-library.md#revocation).)
+
+## Searching the winget catalog (0.41)
+
+The server keeps a read-only copy of the winget community source's own package index, the file winget itself
+downloads: `https://cdn.winget.microsoft.com/cache/source2.msix`, an MSIX (a zip) of about 4 MB whose
+`Public/index.db` is a SQLite database with one row per package and its latest version.
+
+- It is read **at most once a day** (a failed read is retried after an hour), by one bounded GET of that fixed URL:
+  no credentials or cookies, **no redirects followed**, 60 seconds, at most 32 MB downloaded and 128 MB unpacked,
+  the database's CRC checked. The database is written to a private temporary directory, read with the `sqlite3`
+  tool (read-only, two fixed queries, an argument array) and deleted. The server needs `sqlite3` installed
+  (`apt install sqlite3`); without it the read fails and says so.
+- The rows replace the stored copy in one transaction, so a failed read leaves the previous copy searchable, with
+  the reason on the catalog page. Package ids that could not be a plan's `packageId` are skipped and counted; a
+  version the agent would refuse is listed but **not installable from here**.
+- Nothing in the index is installed or trusted. It is only what you search.
+- A Platform Admin can read it now with **Read the index now** on Automation → Software catalog (refused within an
+  hour of the last read, `INDEX_FRESH`, and audited). `WINGET_INDEX_SWEEP=off` stops the daily read in that
+  process; the test suites set it, so a test stack never fetches the public index.
+
+Search is on the computer's Software tab (**Managed software**) and on Automation → Software catalog. It needs
+View computers, and takes letters, digits, spaces and `. + _ -`.
+
+### One click: Install
+
+**Install** on a search result does, in one request:
+
+1. **Reads the version's installer manifest** from winget-pkgs, as [Pinning](#pinning-the-hash-from-winget-pkgs) does.
+2. **Chooses the installer winget would choose** for `--scope machine` on this computer's architecture (from its
+   inventory; x64 when unknown): the best architecture that has one (x64, then neutral, then x86; arm64 computers
+   also take x64), an explicit machine scope over an unstated one, en-US over another locale, and then **the first in
+   the manifest**, which is what winget picks when two are equally good. Per-user, portable and Store installers are
+   never chosen (`NO_MACHINE_INSTALLER`). If winget on the computer picks a different one anyway, its hash is not the
+   pinned one and the agent refuses before installing (`hash_mismatch`).
+3. **Derives the detection rule** from what the manifest says the installer registers: its `ProductCode` (from
+   `AppsAndFeaturesEntries`, the installer, or the manifest root) as an uninstall-key rule at the entry's
+   `DisplayVersion` or the package version; for an MSI product code with no `DisplayVersion`, presence alone (an MSI's
+   product code changes with its version). With no product code, an exact display-name rule. With neither, it is
+   refused (`NO_DETECTION`): add it by hand with a rule you write.
+4. **Uses or makes the catalog entry.** An entry already pinned to exactly that version and installer (global or the
+   business's own) is used as it is. Otherwise the business's own entry is created, or moved to that version, with
+   the hash source **winget-pkgs**. That is a catalog change: only the business's Business Owner or a Platform Admin,
+   with a fresh sign-in, audited as `SOFTWARE_CATALOG_CREATED` / `_UPDATED` with `via: one_click`. A technician can
+   one-click a package the catalog already has, not add one. The business's entry for the **same version** is never
+   repinned to another installer (another architecture, or over a pasted hash): `ENTRY_PINS_ANOTHER_INSTALLER`.
+5. **Requests the install** exactly as **Install** on the entry does: a one-computer deployment, high risk, approved
+   on the signer (or signed at once in direct mode, after a fresh sign-in).
+
+The agent's side is unchanged: it downloads with winget, hashes the installer itself and refuses a mismatch.
+
+**Add to catalog** on Automation → Software catalog does steps 1 to 4 for the x64 installer, without installing.
+
+## Uninstalling any installed program (0.41)
+
+The **Installed software** list on a computer's Software tab (what Programs and Features shows) has **Uninstall** on
+each program that can be removed without someone at the computer:
+
+- A program a **catalog entry describes** (its detection rule names the program's display name or uninstall key) is
+  uninstalled through that entry: `windows.software.uninstall@1`, winget.
+- Anything else is removed with **`windows.software.remove@1`**. The plan names three things and never a command: the
+  uninstall key's name, its registry view (`64` or `32`) and the DisplayName the inventory showed. On the computer
+  the agent reads that key itself, after the signed pause and before it journals *executing*, and decides:
+
+| What the key says | What runs |
+|---|---|
+| It is gone | Nothing: `no_change` |
+| Its DisplayName is not the one in the plan | Nothing: refused, `program_changed` (the key now names another program) |
+| A Windows Installer product (`{GUID}` key, `WindowsInstaller = 1`) | `System32\msiexec.exe /x {GUID} /qn /norestart` |
+| A `QuietUninstallString` | That program with the arguments the installer registered, as one process with no shell. It must be an absolute path to an `.exe`, with no environment variables or shell characters, and not an interpreter or system tool (`cmd`, PowerShell, `mshta`, `rundll32`, `msiexec` other than `/x` of this key's own product…): otherwise refused, `uninstall_command_refused` |
+| Only an interactive `UninstallString` | Nothing: refused, `no_silent_uninstall`. It would wait for someone to click |
+
+  The result is **succeeded only if the key is gone afterwards** (an NSIS uninstaller returns at once, so the agent
+  waits up to two minutes for the key to go). msiexec's 3010 / 1641 is `restart_required`; the computer is not
+  restarted. A key that stays is `not_effective`, a non-zero exit with the key still there `uninstall_failed`, and an
+  uninstaller still running after 30 minutes is stopped and reported `uncertain` (`timeout`).
+- It is **high impact**, one computer per plan, never from the Actions tab (`ACTION_NOT_DIRECT`) and never offered to
+  ClientSt0r. Two approvers, or direct mode, as for any software plan. Computers whose applications ConfigMgr or Intune
+  manage refuse it (`managed_elsewhere`).
+- What the program's own uninstaller does is the program's. rem0te did not write it and cannot vouch for it; the
+  dialog says so. It may remove settings and data for every user.
+
+The inventory reports each program's key, view, and whether it registers a silent uninstall or is an MSI from agents
+built from 0.41. Until a computer sends its next full inventory (about every six hours), programs show *cannot
+uninstall from here* with the reason. The console only offers; the computer reads the key again and decides.
 
 ## What the computer does
 
@@ -281,6 +371,12 @@ The computer's Software tab shows the same state per entry, with its evidence an
 | `RING_GATE` | Ring request | Not this ring now: the previous one hasn't passed, is soaking, or the deployment is paused |
 | `ACTION_NOT_DIRECT` | `POST /endpoints/:id/actions` | Software is deployed from the catalog only |
 | `APPROVAL_SIGNER_REFUSED` | Archive | The approval signer didn't revoke the entry, so it wasn't archived (0.36) |
+| `INDEX_NOT_READ`, `INDEX_FRESH`, `INDEX_REFRESHING` | Reading the winget index (0.41) | The read failed (the reason is shown; the previous copy stays), was done less than an hour ago, or is running |
+| `PACKAGE_NOT_IN_INDEX`, `VERSION_NOT_INSTALLABLE` | One-click install (0.41) | The id is not in the index (name a version to use it anyway), or its latest version has characters the agent refuses |
+| `NO_DETECTION` | One-click install (0.41) | The manifest doesn't say what the installer registers; add the entry by hand |
+| `ENTRY_PINS_ANOTHER_INSTALLER` | One-click install (0.41) | The business's entry for that version pins another installer (architecture or pasted hash) |
+| `NOT_ALLOWED` | One-click install (0.41) | The package isn't in the catalog, and adding it is the Business Owner's or a Platform Admin's |
+| `PROGRAM_NOT_IN_INVENTORY`, `NO_SILENT_UNINSTALL` | Uninstall a program (0.41) | The last inventory doesn't list that key, or it registers only an interactive uninstaller |
 
 Agent outcomes:
 
@@ -299,6 +395,12 @@ Agent outcomes:
 | uncertain | `timeout` | Killed at the timeout. Check and reconcile |
 | succeeded | — | Installed (or removed) and confirmed by the rule |
 
+`windows.software.remove@1` (0.41) outcomes: `no_change` (the key was not there), refused `program_changed`,
+`no_silent_uninstall`, `uninstall_command_refused` or `managed_elsewhere`, not executed `registry_unreadable`,
+failed `uninstall_failed` or `not_effective`, `restart_required`, uncertain `timeout`, and succeeded (the key is
+gone). Its observed fields: `key`, `view`, `presentBefore`, `versionBefore`, `method` (`msi` or `quiet`),
+`program` (the uninstaller's file name), `exitCode`, `presentAfter`, `effective`, `rebootRequired`, `displayNameNow`.
+
 Observed fields (strings): `wingetVersion`, `detectedBefore`, `versionBefore`, `detectedAfter`, `versionAfter`,
 `detectedNow`, `versionNow`, `installerSha256`, `exitCode`, `effective`, `rebootRequired`, `managers`, `packageId`.
 
@@ -313,6 +415,10 @@ Observed fields (strings): `wingetVersion`, `detectedBefore`, `versionBefore`, `
   request through rings and approvals.
 - **Updating an entry in place on the computers.** A new version is a changed entry and a new deployment.
 - **ClientSt0r** is not offered the software actions. Offering them is a change to the ticket-rmm contract.
+- **Other sources** (Chocolatey, the `msstore` source, a private winget source): the search is the community source only.
+- **Removing per-user programs** (HKCU uninstall keys) and programs without a silent uninstall: not offered.
+- **A mixed-architecture business from one entry**: an entry pins one installer. One-click refuses to repin it for a
+  computer of another architecture rather than change what the others are told to install.
 
 ## API
 
@@ -325,6 +431,11 @@ All under `/api/v1`, all with a session:
 | `GET software/deployments`, `GET software/deployments/:id`, `POST software/deployments` | View computers, then the high-risk action check per computer |
 | `POST software/deployments/:id/rings/:ring/request`, `…/pause`, `…/resume`, `…/cancel` | View computers, then as above; pausing, resuming and canceling need the deployment's creator, the Business Owner or a Platform Admin |
 | `GET endpoints/:id/software/catalog`, `POST endpoints/:id/software/:entryId/install\|uninstall` | View computers, then as above |
+| `GET software/winget/packages?q=` (0.41) | View computers |
+| `POST software/winget/refresh` (0.41) | Edit computers, then Platform Admin |
+| `POST software/winget/catalog` (0.41) | Edit computers, then Business Owner / Platform Admin and a fresh sign-in |
+| `POST endpoints/:id/software/winget-install` (0.41) | View computers, then the high-risk action check; a catalog write needs Business Owner / Platform Admin and a fresh sign-in |
+| `POST endpoints/:id/software/remove-program` (0.41) | View computers, then the high-risk action check |
 | `GET reports/software-compliance`, `…/export.csv` | View computers |
 
 See the [API reference](API-REFERENCE.md).

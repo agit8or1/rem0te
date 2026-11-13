@@ -41,6 +41,12 @@ type State struct {
 	Managers []string `json:"managers,omitempty"`
 	// Calls: every argv the stub received, in order.
 	Calls [][]string `json:"calls,omitempty"`
+	// Programs (0.41): the uninstall keys windows.software.remove reads;
+	// Removals: every removal it ran, in order. RegistryUnreadable makes
+	// reading a key fail (programs.go).
+	Programs           []Program `json:"programs,omitempty"`
+	Removals           []Removal `json:"removals,omitempty"`
+	RegistryUnreadable bool      `json:"registryUnreadable,omitempty"`
 }
 
 // Package is one package version the simulated source offers.

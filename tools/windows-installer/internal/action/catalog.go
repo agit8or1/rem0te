@@ -159,6 +159,20 @@ var catalog = []Action{
 		Execute:     uninstallSoftware,
 		Interrupted: softwareInterrupted,
 	},
+	{
+		// Remove one program Programs and Features lists, by its uninstall
+		// key (0.41). The parameters name the key, its registry view and the
+		// DisplayName expected there; the agent reads the key itself and runs
+		// only msiexec /x for an MSI product or the key's own
+		// QuietUninstallString (remove.go). One computer per plan: a key is
+		// one computer's. High impact on any computer: two approvers, always.
+		ID: "windows.software.remove", Version: 1, MaxTargets: 1,
+		ParamsOK:    removeParamsOK,
+		Risk:        func(int, int) string { return "high" },
+		Precheck:    removePrecheck,
+		Execute:     removeProgram,
+		Interrupted: removeInterrupted,
+	},
 }
 
 func needMaint(_ *Plan, o Options) *Result {

@@ -5,6 +5,139 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.41.0] — 2026-11-13 · *Pantry*
+
+**Search the winget catalog, install in one click, and uninstall anything a computer lists.**
+
+Through 0.40 every package had to be added by hand before it could go to a computer: package id, exact version,
+installer SHA-256 and a detection rule. Programs were only removable if a catalog entry described them. So someone
+who wanted Notepad++ on one computer, or an old toolbar off another, had to know winget-pkgs' layout and write a
+detection rule first. 0.41 keeps the same signed plans and the same agent checks, and moves the typing to the server.
+
+### Added
+- **A searchable copy of the winget index.** The server reads the community source's own index, the file winget
+  itself downloads (`https://cdn.winget.microsoft.com/cache/source2.msix`, an MSIX whose `Public/index.db` is SQLite),
+  **at most once a day**. A failed read is retried after an hour. It is one bounded GET of that fixed URL: no
+  credentials or cookies, **no redirects followed**, 60 s, at most 32 MB downloaded and 128 MB unpacked, with the
+  zip entry's CRC checked. The database goes to a private temporary directory, is read by the `sqlite3` tool
+  (`-readonly`, two fixed queries, an argument array), and is deleted. The rows replace `WingetPackage` in one
+  transaction, so a failed read leaves the previous copy searchable, and `WingetIndexState` keeps the reason for
+  the catalog page. Ids that could not be a plan's `packageId` are skipped and counted. A version the agent would
+  refuse is listed but not installable. `WINGET_INDEX_SWEEP=off` stops the read. A Platform Admin can read it now
+  (*Read the index now*): refused within an hour (`INDEX_FRESH`) or while a read is running (`INDEX_REFRESHING`),
+  audited `WINGET_INDEX_REFRESH_REQUESTED` before the read starts.
+- **One-click Install** from search on the computer's Software tab (*Managed software*). It reads the version's
+  manifest from winget-pkgs and chooses the installer winget would choose for `--scope machine` on that computer's
+  architecture. It derives the detection rule from what the manifest says the installer registers (`ProductCode` /
+  `DisplayVersion`, else an exact display name, else `NO_DETECTION`). It reuses an entry pinned to exactly that
+  version and installer, or creates or moves the business's own entry with hash source **winget-pkgs**. Then it
+  requests the install through the same `single()` path, so it is high risk, approved on the signer or signed at
+  once in direct mode. Writing an entry is a catalog change: Business Owner or Platform Admin, `assertFresh`,
+  audited `SOFTWARE_CATALOG_CREATED` / `_UPDATED` with `via: one_click`. *Add to catalog* on Automation → Software
+  catalog does the same without installing.
+- **Uninstall anything in Installed software.** A program a catalog entry describes is uninstalled through that
+  entry (winget). Anything else goes through a new closed action, **`windows.software.remove@1`** (new agent
+  release). The plan names the uninstall key, its view (`64`/`32`) and the DisplayName the inventory showed, and
+  never a command. After the signed pause and before *executing*, the agent reads the key itself and decides what
+  runs:
+  - an MSI product: System32 `msiexec /x {GUID} /qn /norestart`;
+  - otherwise only the key's `QuietUninstallString`, as one process with no shell. It must be an absolute `.exe`
+    path with no environment variables or shell characters, and not an interpreter or system tool (`NeverRun`);
+  - otherwise nothing.
+
+  Refusals are `program_changed` (the key now names another program), `no_silent_uninstall` and
+  `uninstall_command_refused`. It is **succeeded only if the key is gone afterwards**. It is high risk, one computer
+  per plan, never from the Actions tab (`ACTION_NOT_DIRECT`), never offered to ClientSt0r, and refused where
+  ConfigMgr or Intune manage applications.
+- **The inventory** now reports each program's uninstall key, view, and whether it has a quiet uninstall or is an
+  MSI (from agents built from 0.41). Keys outside the remove action's charset are dropped. Until the next full
+  inventory, programs show *cannot uninstall from here* with the reason.
+- **Direct-mode-aware text.** The request dialogs on the Software tab read the business's mode from
+  `GET /actions/catalog?endpointId=` and say *signed now (direct mode)* instead of "awaiting two approvals". The
+  endpoint software response carries `approval`.
+- Routes: `GET software/winget/packages`, `POST software/winget/refresh`, `POST software/winget/catalog`,
+  `POST endpoints/:id/software/winget-install`, `POST endpoints/:id/software/remove-program` (511 routes in all).
+
+### Why
+The catalog's safety never came from someone typing the hash. It comes from the agent hashing what winget downloaded
+and refusing a mismatch, and from the signed plan. Reading the hash and the rule from the same manifest a person would
+have copied removes the typing, not the check. Removal is different, because the uninstaller is the program's own and
+nothing pins it. So the plan names only *which* program, and the computer decides at run time from its own registry,
+with two closed forms and no shell. A key that has changed hands since the inventory is refused rather than removed.
+
+### Decided
+- **When two installers are equally good, the first in the manifest is chosen**, which is winget's own tie-break.
+  It is not refused as ambiguous. If winget on the computer picks a different one anyway, the agent's `hash_mismatch`
+  refuses before installing. The response lists the alternatives.
+- **One-click never repins a same-version entry** to another architecture or over a pasted hash
+  (`ENTRY_PINS_ANOTHER_INSTALLER`), because that would change what every other computer is told to install. A
+  different version moves the entry, audited.
+- A technician can one-click a package the catalog already has, but not add one (`NOT_ALLOWED`).
+- The search route is `software/winget/packages`, not `.../search`: §28 allows one search route.
+- The index is stored in Postgres, not kept as the downloaded SQLite file. Production runs Node 20, which has no
+  `node:sqlite`, so the `sqlite3` CLI reads it once and the file is deleted.
+- Per-user (HKCU) programs and programs with only an interactive uninstaller are not offered.
+
+### Upgrade notes
+- **New agent release** (`windows.software.remove@1`, the inventory's key fields). Publish it
+  (`sudo rem0te-signed-publish`) before relying on Uninstall. Older agents refuse the unknown action.
+- **Migration 0066** (`WingetPackage`, `WingetIndexState`, `ActivityAction.WINGET_INDEX_REFRESH_REQUESTED`). Run the
+  schema-change steps, including `prisma generate` at the target. Deploy the approval signer's `dist` as well, because
+  its catalog grew to ten actions.
+- **`sqlite3` must be installed on the portal host** (`apt install sqlite3`). Without it the index read fails with
+  the reason shown, and search stays empty.
+- The first read happens shortly after start, and then daily. It is an outbound HTTPS GET to
+  `cdn.winget.microsoft.com`.
+- CLAUDE.md: §14's list is ten actions, and there is a new §59 paragraph.
+
+### Security invariants
+§59 is new, with 17 checks:
+- the key and display-name charsets are identical on agent and portal, and refuse paths, options and shell
+  characters;
+- the parameters are exactly key, view and displayName;
+- the remove action is high risk, one target, not direct, and `integration: false`;
+- the agent reads the key, compares DisplayName, decides, journals, then runs;
+- there are only the two closed command forms, and `NeverRun` covers interpreters and system tools;
+- there is one Windows exec site, msiexec from System32, and no shell;
+- the action is succeeded only when the key is gone;
+- the portal plans only a program its inventory lists, through `createPlan`;
+- a one-click catalog write needs the role, `assertFresh` and an audit entry, with hash source winget-pkgs;
+- the index URL is fixed, its test override is loopback-only, and the GET is bounded with no credentials and no
+  redirects;
+- `sqlite3` runs read-only with an argument array and two fixed queries;
+- unusable ids are skipped;
+- the index is imported nowhere outside the software module;
+- `WINGET_INDEX_SWEEP=off` is exact and exported by `run-e2e.sh`;
+- inventory keys are kept only in the remove charset.
+
+§14's catalog is ten actions (`removeParamsOK` closed, `remove.go` runs no process, eight `integration: false`).
+§40 counts 20 routes, two `createPlan` sites and eight fresh-auth sites. 34 mutations, each removing or weakening one
+§59 or changed §14 / §40 check, were each caught, and the file was restored.
+
+### Verification
+- `unit-software.mjs`: 214 checks (68 new). Covered: the zip reader, index rows and ranking, the URL override, the
+  sweep switch and refresh rule, installer selection on 7-Zip / Chrome / Notepad++ / user-only / locale / neutral
+  fixtures, detection derivation, `RemoveParams`, `sanitizeSoftware`, `installedOf`, `removalHint`, `entryFor` and
+  the DTOs.
+- `e2e-software-catalog.mjs` (new, ports 3661–3665, `RELEASE_BIN` / `ACTION_SIM`, `sqlite3`): 73 checks. It uses a
+  loopback index server (redirect, 500, garbage, oversized and good modes) and a loopback manifest server. Acme is
+  direct via the signer CLI and Globex is signed with two passkeys. It covers search, refresh rules, one-click create
+  and reuse, the step-up, `NOT_ALLOWED`, `ENTRY_PINS_ANOTHER_INSTALLER`, remove end to end through the sim
+  (succeeded, `program_changed`, `no_silent_uninstall`, `uninstall_command_refused`), and `ACTION_NOT_DIRECT`. The
+  inventory is inserted through Prisma. `sanitizeSoftware` is unit-tested only.
+- Go: every package passes. `internal/action` has 104 tests with subtests, including new remove tests.
+  `GOOS=windows go vet` and `go build` pass.
+- Re-run, unchanged except the ten-action lists: e2e-software-deploy 156, e2e-approved-action 91 (with its direct
+  section), e2e-maintenance-actions 64, e2e-script-run 81, e2e-revocation 44, unit-script-run 136,
+  unit-approval-signer 252, unit-monitoring 91. All passed, 0 failed.
+- The generated inventory PowerShell (legacy and signed) parses with 0 errors under pwsh's parser.
+- Checks: security invariants, check-versions, `pnpm -r lint`, tsc in both apps, `nest build` and `next build` pass.
+  `docs/API-REFERENCE.md` was regenerated, and `--check` matches the runtime table: 511 routes.
+- **Not run on real Windows:** msiexec, any program's QuietUninstallString, the registry reads in
+  `software_remove_windows.go`, and the inventory's new fields. No test fetched the real
+  `cdn.winget.microsoft.com`. The schema was taken from the real file once, by hand. The browser suite
+  (`e2e-ui.mjs`) was not re-run.
+
 ## [0.40.1] — 2026-11-13 · *Straightedge*
 
 **In direct mode, the Patches tab is an install button, not a request for approval.**

@@ -3,11 +3,12 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { apiError } from '@/components/security-controls/shared';
 import { formatDate } from '@/lib/utils';
 import { ago } from './device-model';
 import { useMonitoringView } from './use-device-data';
-import { ManagedSoftware } from './managed-software';
+import { ManagedSoftware, RemoveProgramDialog, useEndpointSoftware, type InstalledProgram } from './managed-software';
 
 /**
  * Installed software (0.29): what Windows lists under Programs and Features,
@@ -16,10 +17,17 @@ import { ManagedSoftware } from './managed-software';
  *
  * 0.34 added Managed software above it: the software catalog as this
  * computer sees it, with Install / Uninstall when the server allows them.
+ *
+ * 0.41: Uninstall on any program here. A program a catalog entry describes is
+ * uninstalled through that entry; any other one through windows.software.remove,
+ * when the inventory says it registers a silent uninstall or is a Windows
+ * Installer product. Otherwise the reason is shown instead of a button.
  */
 export function DeviceSoftwareTab({ endpointId }: { endpointId: string }) {
   const [filter, setFilter] = useState('');
+  const [removing, setRemoving] = useState<InstalledProgram | null>(null);
   const { data, error } = useMonitoringView(endpointId);
+  const { data: sw } = useEndpointSoftware(endpointId);
   if (error || !data) {
     return (
       <div className="space-y-4">
@@ -32,6 +40,9 @@ export function DeviceSoftwareTab({ endpointId }: { endpointId: string }) {
   const q = filter.trim().toLowerCase();
   const rows = (data.software ?? []).filter((s) => !q || `${s.name} ${s.publisher ?? ''} ${s.version ?? ''}`.toLowerCase().includes(q));
   const changes = data.changes.filter((c) => c.category === 'software').slice(0, 10);
+  // The server's view of the same list carries each program's key and how it would be removed.
+  const programOf = (s: { name: string; version: string | null }) => sw?.installed.find((p) => p.name === s.name && p.version === s.version) ?? null;
+  const canRemove = !!sw && (sw.remove.possible || sw.uninstall.possible);
 
   return (
     <div className="space-y-4">
@@ -54,22 +65,29 @@ export function DeviceSoftwareTab({ endpointId }: { endpointId: string }) {
             <div className="max-h-[32rem] overflow-auto rounded-md border">
               <table className="w-full text-left text-xs">
                 <thead className="sticky top-0 bg-card text-muted-foreground">
-                  <tr><th className="px-3 py-1.5 font-medium">Name</th><th className="px-3 font-medium">Version</th><th className="px-3 font-medium">Publisher</th><th className="px-3 font-medium">Installed</th></tr>
+                  <tr><th className="px-3 py-1.5 font-medium">Name</th><th className="px-3 font-medium">Version</th><th className="px-3 font-medium">Publisher</th><th className="px-3 font-medium">Installed</th><th className="px-3 font-medium" /></tr>
                 </thead>
                 <tbody>
                   {rows.map((s, i) => (
                     <tr key={`${s.name}-${i}`} className="border-t">
                       <td className="px-3 py-1">{s.name}</td><td className="px-3 font-mono">{s.version ?? ''}</td>
                       <td className="px-3">{s.publisher ?? ''}</td><td className="px-3 whitespace-nowrap">{s.installedOn ? new Date(s.installedOn).toLocaleDateString() : ''}</td>
+                      <td className="px-3 py-1 text-right whitespace-nowrap">
+                        <UninstallCell p={programOf(s)} canRemove={canRemove} remove={sw?.remove.possible ?? false} uninstall={sw?.uninstall.possible ?? false} onClick={setRemoving} />
+                      </td>
                     </tr>
                   ))}
-                  {rows.length === 0 && <tr><td colSpan={4} className="px-3 py-3 text-muted-foreground">Nothing matches “{filter}”.</td></tr>}
+                  {rows.length === 0 && <tr><td colSpan={5} className="px-3 py-3 text-muted-foreground">Nothing matches “{filter}”.</td></tr>}
                 </tbody>
               </table>
             </div>
           )}
+          {sw && !canRemove && sw.remove.reason && (
+            <p className="mt-2 text-xs text-muted-foreground" data-not-possible="Uninstall">Uninstall is not possible: {sw.remove.reason}{sw.remove.fix ? ` ${sw.remove.fix}` : ''}</p>
+          )}
         </CardContent>
       </Card>
+      {removing && sw && <RemoveProgramDialog endpointId={endpointId} program={removing} data={sw} onClose={() => setRemoving(null)} />}
 
       {changes.length > 0 && (
         <Card>
@@ -87,4 +105,20 @@ export function DeviceSoftwareTab({ endpointId }: { endpointId: string }) {
       )}
     </div>
   );
+}
+
+function UninstallCell({ p, canRemove, remove, uninstall, onClick }: {
+  p: InstalledProgram | null; canRemove: boolean; remove: boolean; uninstall: boolean; onClick: (p: InstalledProgram) => void;
+}) {
+  if (!p || !canRemove) return null;
+  const last = p.last ? (
+    <span className="block text-[10px] text-muted-foreground" title={formatDate(p.last.at)}>
+      {(p.last.outcome ?? p.last.status).toLowerCase().replace(/_/g, ' ')}{p.last.reason ? ` (${p.last.reason.replace(/_/g, ' ')})` : ''} {ago(p.last.at)}
+    </span>
+  ) : null;
+  const allowed = p.removal.method === 'catalog' ? uninstall : remove;
+  if (p.removal.possible && allowed) {
+    return <><Button size="sm" variant="ghost" className="h-6 text-xs" data-uninstall={p.key ?? p.name} onClick={() => onClick(p)}>Uninstall</Button>{last}</>;
+  }
+  return <span className="text-[10px] text-muted-foreground" title={p.removal.reason ?? undefined} data-no-uninstall>{p.removal.possible ? '' : (p.removal.reason?.startsWith('It registers only') ? 'interactive uninstaller only' : 'cannot uninstall from here')}{last}</span>;
 }

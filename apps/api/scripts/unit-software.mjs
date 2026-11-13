@@ -9,7 +9,11 @@
  *   - compliance from evidence, with the 14-day staleness rule;
  *   - the winget-pkgs manifest reader, installer choice and path layout;
  *   - the ring gate and which ring may be requested next;
- *   - that WINGET_MANIFEST_BASE is honoured only for a loopback http URL.
+ *   - that WINGET_MANIFEST_BASE is honoured only for a loopback http URL;
+ *   - 0.41: reading the winget index out of its MSIX, which rows are kept,
+ *     search ranking and the refresh rule; choosing the installer and the
+ *     detection rule for a one-click install; the closed parameters of
+ *     windows.software.remove and what the console offers to remove.
  *
  *   cd apps/api && npx nest build && node scripts/unit-software.mjs
  */
@@ -53,7 +57,7 @@ check('a display name with markup is refused', !det({ ...SW.detection, name: '<b
 check('a fourth kind of rule is refused', !det({ kind: 'script', script: 'Get-Item' }));
 check('a rule with an extra key is refused', !det({ ...SW.detection, cmd: 'whoami' }));
 const ids = cat.CATALOG.map((a) => `${a.id}@${a.version}`);
-check('the catalog ends with the two software actions', ids.slice(-2).join(',') === 'windows.software.install@1,windows.software.uninstall@1' && ids.length === 9 && ids[6] === 'windows.script.run@1', ids.join(','));
+check('the catalog ends with the three software actions', ids.slice(-3).join(',') === 'windows.software.install@1,windows.software.uninstall@1,windows.software.remove@1' && ids.length === 10 && ids[6] === 'windows.script.run@1', ids.join(','));
 for (const a of [cat.SOFTWARE_INSTALL, cat.SOFTWARE_UNINSTALL]) {
   check(`${a.id}: high on a workstation, a server and 25 computers`, ['WORKSTATION', 'SERVER'].every((c) => a.risk([{ deviceClass: c }]) === 'high') && a.risk(Array(25).fill({ deviceClass: 'WORKSTATION' })) === 'high');
   check(`${a.id}: never direct, never offered to ClientSt0r, at most 25`, a.direct === false && a.integration === false && a.maxTargets === 25 && /catalog/.test(a.indirectVia ?? ''));
@@ -157,6 +161,143 @@ check('next: after the canary passes, ring 1', (() => { const n = D.nextRing('AC
 check('next: a failed ring is retried, never promoted past', (() => { const n = D.nextRing('ACTIVE', null, new Map([[0, { status: 'FAILED' }]]), [{ ok: false, reason: 'too_many_failures', detail: 'x' }, { ok: false, reason: 'not_requested' }], 2); return n.ring === 0 && n.canRequest; })());
 check('next: a soaking canary does not let ring 1 through', (() => { const n = D.nextRing('ACTIVE', null, new Map([[0, { status: 'SUCCEEDED' }]]), [{ ok: false, reason: 'soaking', detail: 'soak' }, { ok: false, reason: 'not_requested' }], 2); return n.ring === 1 && !n.canRequest; })());
 check('next: paused → nothing', D.nextRing('PAUSED', 'canary failed', new Map(), [], 2).ring === null);
+
+// ── 0.41: the winget index, one-click install, removing a program ──────────
+{
+  const W = require(path.join(dist, 'software/winget-index.js'));
+  const E = require(path.join(dist, 'monitoring/engine.js'));
+  const zlib = require('node:zlib');
+  // A zip written the way an MSIX is: optional data descriptors (local sizes 0), central directory last.
+  const makeZip = (entries) => {
+    const locals = [], cds = [];
+    let off = 0;
+    for (const e of entries) {
+      const data = Buffer.from(e.data);
+      const comp = e.method === 8 ? zlib.deflateRawSync(data) : data;
+      const crc = e.badCrc ? (W.crc32(data) ^ 1) >>> 0 : W.crc32(data);
+      const name = Buffer.from(e.name);
+      const dd = e.descriptor ? 8 : 0;
+      const lh = Buffer.alloc(30);
+      lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(dd, 6); lh.writeUInt16LE(e.method, 8);
+      lh.writeUInt32LE(dd ? 0 : crc, 14); lh.writeUInt32LE(dd ? 0 : comp.length, 18); lh.writeUInt32LE(dd ? 0 : data.length, 22); lh.writeUInt16LE(name.length, 26);
+      const desc = dd ? Buffer.alloc(16) : Buffer.alloc(0);
+      if (dd) { desc.writeUInt32LE(0x08074b50, 0); desc.writeUInt32LE(crc, 4); desc.writeUInt32LE(comp.length, 8); desc.writeUInt32LE(data.length, 12); }
+      const cd = Buffer.alloc(46);
+      cd.writeUInt32LE(0x02014b50, 0); cd.writeUInt16LE(20, 4); cd.writeUInt16LE(20, 6); cd.writeUInt16LE(dd | (e.encrypted ? 1 : 0), 8); cd.writeUInt16LE(e.method, 10);
+      cd.writeUInt32LE(crc, 16); cd.writeUInt32LE(comp.length, 20); cd.writeUInt32LE(e.claimSize ?? data.length, 24); cd.writeUInt16LE(name.length, 28); cd.writeUInt32LE(off, 42);
+      locals.push(lh, name, comp, desc); cds.push(cd, name);
+      off += 30 + name.length + comp.length + desc.length;
+    }
+    const cdBuf = Buffer.concat(cds);
+    const eocd = Buffer.alloc(22);
+    eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(entries.length, 8); eocd.writeUInt16LE(entries.length, 10); eocd.writeUInt32LE(cdBuf.length, 12); eocd.writeUInt32LE(off, 16);
+    return Buffer.concat([...locals, cdBuf, eocd]);
+  };
+  const DB = Buffer.from('SQLite format 3\u0000' + 'x'.repeat(5000));
+  const zipOk = makeZip([{ name: 'AppxManifest.xml', data: '<x/>', method: 8 }, { name: 'Public/index.db', data: DB, method: 8, descriptor: true }]);
+  check('index: the database is read out of an MSIX-shaped zip (deflate, data descriptor)', W.readZipEntry(zipOk, 'Public/index.db', 1 << 20).equals(DB));
+  check('index: a stored entry is read too', W.readZipEntry(makeZip([{ name: 'Public/index.db', data: 'abc', method: 0 }]), 'Public/index.db', 100).toString() === 'abc');
+  const throws = (f, re) => { try { f(); return false; } catch (e) { return e instanceof W.ZipError && re.test(e.message); } };
+  check('index: a CRC mismatch is refused', throws(() => W.readZipEntry(makeZip([{ name: 'Public/index.db', data: DB, method: 8, badCrc: true }]), 'Public/index.db', 1 << 20), /CRC/));
+  check('index: an entry over the cap is refused before inflating', throws(() => W.readZipEntry(zipOk, 'Public/index.db', 100), /larger than/));
+  check('index: an entry that inflates past what it claims is refused', throws(() => W.readZipEntry(makeZip([{ name: 'Public/index.db', data: DB, method: 8, claimSize: 10 }]), 'Public/index.db', 20), /inflate|expected|larger/));
+  check('index: a missing entry is refused', throws(() => W.readZipEntry(zipOk, 'Public/other.db', 1 << 20), /not in the archive/));
+  check('index: an encrypted entry is refused', throws(() => W.readZipEntry(makeZip([{ name: 'Public/index.db', data: 'abc', method: 0, encrypted: true }]), 'Public/index.db', 100), /encrypted/));
+  check('index: another compression method is refused', throws(() => W.readZipEntry(makeZip([{ name: 'Public/index.db', data: 'abc', method: 12 }]), 'Public/index.db', 100), /method 12/));
+  check('index: something that is not a zip is refused', throws(() => W.readZipEntry(Buffer.from('<html>not found</html>'.repeat(4)), 'Public/index.db', 100), /not a zip/));
+  check('index: crc32 is the standard one', W.crc32(Buffer.from('123456789')) === 0xcbf43926);
+
+  const rows = W.normalizeIndexRows([
+    { id: '7zip.7zip', name: '7-Zip', moniker: '7zip', version: '24.09', publisher: 'igorpavlov' },
+    { id: 'Notepad++.Notepad++', name: 'Notepad++', moniker: 'notepad++', version: '8.7.4', publisher: 'notepadplusplusteam' },
+    { id: 'Google.Chrome', name: 'Google Chrome', moniker: 'chrome', version: '131.0.6778.86', publisher: 'google' },
+    { id: '-x.y', name: 'bad', version: '1' }, { id: 'a b.c', name: 'bad', version: '1' }, { id: 'nodot', name: 'bad', version: '1' },
+    { id: '7ZIP.7ZIP', name: 'duplicate', version: '1' }, { id: 'Some.Thing', name: 'No version' },
+    { id: 'Odd.Version', name: 'Odd <b>name</b>\u0007', version: 'latest build', publisher: null },
+  ]);
+  check('index: rows outside the plan charset, duplicates and versionless rows are skipped and counted', rows.rows.length === 4 && rows.skipped === 5, JSON.stringify(rows));
+  const odd = rows.rows.find((r) => r.packageId === 'Odd.Version');
+  check('index: text is made inert and bounded; a version the agent refuses is kept but not installable', odd && !['<', '>', '\u0007'].some((c) => odd.name.includes(c)) && !W.installable(odd) && W.installable(rows.rows[0]));
+  let big = false; try { W.normalizeIndexRows(Array.from({ length: W.INDEX_MAX_ROWS + 1 }, (_, i) => ({ id: `a.b${i}`, name: 'x', version: '1' }))); } catch { big = true; }
+  check('index: more rows than the cap is refused', big);
+  check('index: schema 2 only', (() => { try { W.checkIndexSchema([{ name: 'majorVersion', value: '1' }]); return false; } catch { return true; } })() && W.checkIndexSchema([{ name: 'majorVersion', value: '2' }, { name: 'lastwritetime', value: '1731456000' }]).writtenAt?.toISOString() === '2024-11-13T00:00:00.000Z');
+  const rank = W.rankSearch('7zip', rows.rows).map((r) => r.packageId);
+  check('index: an exact id or moniker ranks first', rank[0] === '7zip.7zip', rank.join());
+  check('index: every term must match', W.rankSearch('google chrome', rows.rows).map((r) => r.packageId).join() === 'Google.Chrome' && W.rankSearch('google firefox', rows.rows).length === 0);
+  check('index: the search charset refuses shell and SQL characters', W.SEARCH_RE.test('notepad++') && W.SEARCH_RE.test('7-zip') && !["a'b", 'a;b', 'a%b', 'a"b', 'x', '<b>'].some((s) => W.SEARCH_RE.test(s)));
+  check('index: WINGET_INDEX_URL is honoured only for loopback http', W.indexUrl({ WINGET_INDEX_URL: 'http://127.0.0.1:3473/source2.msix' }) === 'http://127.0.0.1:3473/source2.msix'
+    && ['https://evil.example/source2.msix', 'http://127.0.0.1.evil.example:80/x', 'http://localhost:3473/x', 'file:///etc/passwd', 'http://127.0.0.1:3473/../x?y'].every((u) => W.indexUrl({ WINGET_INDEX_URL: u }) === W.WINGET_INDEX_URL)
+    && W.WINGET_INDEX_URL === 'https://cdn.winget.microsoft.com/cache/source2.msix');
+  check('index: WINGET_INDEX_SWEEP=off and nothing else stops the sweep', !W.indexSweepEnabled({ WINGET_INDEX_SWEEP: 'off' }) && W.indexSweepEnabled({ WINGET_INDEX_SWEEP: 'OFF' }) && W.indexSweepEnabled({}));
+  const T0 = new Date('2026-11-13T12:00:00Z'), hrs = (h) => new Date(T0.getTime() - h * 3600_000);
+  check('index: due when never read, daily after a success, an hour after a failure',
+    W.refreshDue(null, T0) && !W.refreshDue({ refreshedAt: hrs(23), attemptedAt: hrs(23) }, T0) && W.refreshDue({ refreshedAt: hrs(25), attemptedAt: hrs(25) }, T0)
+      && !W.refreshDue({ refreshedAt: null, attemptedAt: hrs(0.5) }, T0) && W.refreshDue({ refreshedAt: null, attemptedAt: hrs(1.5) }, T0) && !W.refreshDue({ refreshedAt: hrs(30), attemptedAt: hrs(0.2) }, T0));
+
+  // Installer choice and detection, on manifests shaped like the real ones.
+  const SEVENZIP = `PackageIdentifier: 7zip.7zip\nPackageVersion: "24.09"\nInstallerLocale: en-US\nMinimumOSVersion: 10.0.0.0\nScope: machine\nInstallers:\n- Architecture: x86\n  InstallerType: exe\n  InstallerUrl: https://www.7-zip.org/a/7z2409.exe\n  InstallerSha256: ${H('1')}\n  ProductCode: 7-Zip\n- Architecture: x64\n  InstallerType: exe\n  InstallerUrl: https://www.7-zip.org/a/7z2409-x64.exe\n  InstallerSha256: ${H('2')}\n  ProductCode: 7-Zip\n- Architecture: arm64\n  InstallerType: exe\n  InstallerUrl: https://www.7-zip.org/a/7z2409-arm64.exe\n  InstallerSha256: ${H('3')}\n  ProductCode: 7-Zip\n- Architecture: x64\n  InstallerType: wix\n  InstallerUrl: https://www.7-zip.org/a/7z2409-x64.msi\n  InstallerSha256: ${H('4')}\n  ProductCode: '{23170F69-40C1-2702-2409-000001000000}'\n  AppsAndFeaturesEntries:\n  - DisplayName: 7-Zip 24.09 (x64 edition)\n    ProductCode: '{23170F69-40C1-2702-2409-000001000000}'\n    UpgradeCode: '{23170F69-40C1-2702-0000-000004000000}'\nManifestType: installer\nManifestVersion: 1.9.0\n`;
+  const sz = D.parseInstallerManifest(SEVENZIP);
+  const sx = D.autoSelectInstaller(sz, 'x64');
+  check('one-click: 7-Zip x64 picks the first x64 machine installer in manifest order, and says another one exists', sx.ok && sx.installer.installerSha256 === H('2') && sx.alternatives === 1, JSON.stringify(sx).slice(0, 200));
+  check('one-click: an arm64 computer gets the arm64 installer; an x86 one the x86', D.autoSelectInstaller(sz, 'arm64').installer.installerSha256 === H('3') && D.autoSelectInstaller(sz, 'x86').installer.installerSha256 === H('1'));
+  const d7 = D.deriveDetection(sx.installer, '24.09');
+  check('one-click: 7-Zip\'s ARP key name becomes an uninstall_key rule at the package version', d7?.kind === 'uninstall_key' && d7.key === '7-Zip' && d7.version === '24.09' && d7.compare === 'gte');
+  const d7m = D.deriveDetection(sz.installers[3], '24.09');
+  check('one-click: the MSI\'s AppsAndFeaturesEntries product code is the rule; with no DisplayVersion it is presence', d7m?.kind === 'uninstall_key' && d7m.key === '{23170F69-40C1-2702-2409-000001000000}' && d7m.version === '0');
+  check('one-click: an AppsAndFeaturesEntries list is read per installer', sz.installers[3].appsAndFeatures.length === 1 && sz.installers[1].appsAndFeatures.length === 0);
+  const CHROME = `PackageIdentifier: Google.Chrome\nPackageVersion: 131.0.6778.86\nInstallerType: wix\nScope: machine\nUpgradeBehavior: install\nAppsAndFeaturesEntries:\n- DisplayName: Google Chrome\n  Publisher: Google LLC\n  DisplayVersion: 131.0.6778.86\n  ProductCode: '{D4A9D1E5-5D04-3B53-BAB2-0E7B54B9C8E1}'\nInstallers:\n- Architecture: x86\n  InstallerUrl: https://dl.google.com/x86.msi\n  InstallerSha256: ${H('5')}\n- Architecture: x64\n  InstallerUrl: https://dl.google.com/x64.msi\n  InstallerSha256: ${H('6')}\nManifestType: installer\nManifestVersion: 1.9.0\n`;
+  const ch = D.parseInstallerManifest(CHROME);
+  const cs = D.autoSelectInstaller(ch, 'x64');
+  const dc = cs.ok ? D.deriveDetection(cs.installer, '131.0.6778.86') : null;
+  check('one-click: root AppsAndFeaturesEntries apply to every installer; Chrome x64 → its GUID at DisplayVersion', cs.ok && cs.installer.installerSha256 === H('6') && dc?.key === '{D4A9D1E5-5D04-3B53-BAB2-0E7B54B9C8E1}' && dc.version === '131.0.6778.86', JSON.stringify(dc));
+  const NPP = `PackageIdentifier: Notepad++.Notepad++\nPackageVersion: 8.7.4\nInstallerType: nullsoft\nInstallers:\n- Architecture: x86\n  Scope: user\n  InstallerUrl: https://x/npp.x86.exe\n  InstallerSha256: ${H('7')}\n- Architecture: x64\n  InstallerUrl: https://x/npp.x64.exe\n  InstallerSha256: ${H('8')}\n  ProductCode: Notepad++\n- Architecture: x64\n  Scope: machine\n  InstallerUrl: https://x/npp.x64.exe\n  InstallerSha256: ${H('9')}\n  ProductCode: Notepad++\n  AppsAndFeaturesEntries:\n  - DisplayName: Notepad++ (64-bit x64)\n    DisplayVersion: 8.7.4\nManifestType: installer\n`;
+  const np = D.autoSelectInstaller(D.parseInstallerManifest(NPP), 'x64');
+  check('one-click: an explicit machine scope beats an unstated one', np.ok && np.installer.installerSha256 === H('9'));
+  const dn = D.deriveDetection(np.installer, '8.7.4');
+  check('one-click: an AppsAndFeaturesEntries entry with no product code falls back to the installer\'s own', dn?.kind === 'uninstall_key' && dn.key === 'Notepad++' && dn.version === '8.7.4', JSON.stringify(dn));
+  const ONLYUSER = `PackageIdentifier: A.B\nPackageVersion: 1\nInstallers:\n- Architecture: x64\n  Scope: user\n  InstallerSha256: ${H('a')}\n- Architecture: x64\n  InstallerType: portable\n  InstallerSha256: ${H('b')}\n- Architecture: arm64\n  InstallerSha256: ${H('c')}\n`;
+  const nu = D.autoSelectInstaller(D.parseInstallerManifest(ONLYUSER), 'x64');
+  check('one-click: per-user, portable and wrong-architecture installers are never chosen → NO_MACHINE_INSTALLER', !nu.ok && nu.code === 'NO_MACHINE_INSTALLER');
+  const LOC = `PackageIdentifier: A.B\nPackageVersion: 1\nInstallers:\n- Architecture: x64\n  InstallerLocale: de-DE\n  InstallerSha256: ${H('d')}\n- Architecture: x64\n  InstallerLocale: en-US\n  InstallerSha256: ${H('e')}\n`;
+  check('one-click: en-US is preferred over another locale', D.autoSelectInstaller(D.parseInstallerManifest(LOC), 'x64').installer.installerSha256 === H('e'));
+  const NEUT = `PackageIdentifier: A.B\nPackageVersion: 1\nInstallers:\n- Architecture: neutral\n  InstallerSha256: ${H('f')}\n`;
+  check('one-click: a neutral installer serves x64', D.autoSelectInstaller(D.parseInstallerManifest(NEUT), 'x64').installer?.installerSha256 === H('f'));
+  check('one-click: no product code and no display name → no rule (refused, not guessed)', D.deriveDetection(D.parseInstallerManifest(NEUT).installers[0], '1') === null);
+  const nameOnly = D.parseInstallerManifest(`PackageIdentifier: A.B\nPackageVersion: 2.0\nInstallers:\n- Architecture: x64\n  InstallerSha256: ${H('0')}\n  AppsAndFeaturesEntries:\n  - DisplayName: Some App\n`).installers[0];
+  const dno = D.deriveDetection(nameOnly, '2.0');
+  check('one-click: a display name alone → an exact display_name rule', dno?.kind === 'display_name' && dno.match === 'exact' && dno.name === 'Some App' && dno.version === '2.0');
+  const evilKey = D.parseInstallerManifest(`PackageIdentifier: A.B\nPackageVersion: 2.0\nInstallers:\n- Architecture: x64\n  InstallerSha256: ${H('0')}\n  ProductCode: ..\\\\Run\n`).installers[0];
+  check('one-click: a product code outside the key charset is not used', D.deriveDetection(evilKey, '2.0') === null);
+  check('one-click: the architecture comes from the OS', D.archOf('64-bit') === 'x64' && D.archOf('ARM 64-bit Processor') === 'arm64' && D.archOf('32-bit') === 'x86' && D.archOf(null) === 'x64');
+  check('one-click: an entry name from the index is inert and bounded', D.entryName('A\u0000<b>' + 'x'.repeat(300), 'A.B').length <= 120 && !['<', '>', '\u0000'].some((c) => D.entryName('A\u0000<b>', 'A.B').includes(c)) && D.entryName('', 'A.B') === 'A.B');
+  check('one-click: the request is closed', D.QuickInstallDto.safeParse({ packageId: '7zip.7zip' }).success && !D.QuickInstallDto.safeParse({ packageId: '7zip.7zip', installerSha256: H('1') }).success && !D.QuickInstallDto.safeParse({ packageId: '-h.x' }).success);
+  check('one-click: adding from the search never takes a pasted hash', !D.FromWingetDto.safeParse({ scope: 'global', packageId: '7zip.7zip', hash: { source: 'admin_pasted', installerSha256: H('1') } }).success);
+
+  // Removing a program.
+  const RP = (p) => cat.RemoveParams.safeParse(p).success;
+  check('remove: the reference params parse', RP({ key: '{23170F69-40C1-2702-2409-000001000000}', view: '64', displayName: '7-Zip 24.09 (x64 edition)' }) && RP({ key: 'Mozilla Firefox 132.0 (x64 en-US)', view: '64', displayName: 'Mozilla Firefox (x64 en-US)' }) && RP({ key: 'Notepad++', view: '32', displayName: 'Notepad++ (32-bit x86)' }));
+  for (const k of ['..\\Run', 'a\\b', 'a/b', '-x', ' x', 'a"b', 'a;b', 'a|b', '%TEMP%', 'a`b', 'a$b', '', 'x'.repeat(129)]) check(`remove: key ${JSON.stringify(k).slice(0, 20)} is refused`, !RP({ key: k, view: '64', displayName: 'X' }));
+  for (const n of ['', ' X', 'X ', 'a"b', 'a<b', 'a\\b', 'a\u0000b', 'a\nb', 'x'.repeat(201)]) check(`remove: display name ${JSON.stringify(n).slice(0, 20)} is refused`, !RP({ key: 'X', view: '64', displayName: n }));
+  check('remove: the view is 64 or 32 only, and nothing else is accepted', !RP({ key: 'X', view: '128', displayName: 'X' }) && !RP({ key: 'X', view: '64', displayName: 'X', command: 'cmd /c calc' }) && !RP({ key: 'X', view: '64' }));
+  check('remove: the action is high impact, one computer, not direct and not offered to ClientSt0r', cat.SOFTWARE_REMOVE.risk([]) === 'high' && cat.SOFTWARE_REMOVE.maxTargets === 1 && cat.SOFTWARE_REMOVE.direct === false && cat.SOFTWARE_REMOVE.integration === false);
+  const inv = E.sanitizeSoftware([
+    { name: '7-Zip 24.09 (x64)', version: '24.09', publisher: 'Igor Pavlov', key: '7-Zip', view: '64', quiet: true, msi: false },
+    { name: 'Chrome', version: '131', key: '{D4A9D1E5-5D04-3B53-BAB2-0E7B54B9C8E1}', view: '32', quiet: false, msi: true },
+    { name: 'Evil', version: '1', key: '..\\Run', view: '64', quiet: true },
+    { name: 'NoView', version: '1', key: 'NoView', view: 'x', quiet: true },
+    { name: 'Interactive', version: '1', key: 'Interactive', view: '64', quiet: false, msi: false },
+    { name: 'Old agent', version: '1' },
+  ]);
+  const by = Object.fromEntries(inv.map((p) => [p.name, p]));
+  check('inventory: a key outside the charset, or without a view, is dropped (the program is kept)', by.Evil && by.Evil.key === undefined && by.NoView.key === undefined && by['7-Zip 24.09 (x64)'].key === '7-Zip' && by.Chrome.view === '32');
+  const progs = D.installedOf(inv);
+  const P = Object.fromEntries(progs.map((p) => [p.name, p]));
+  check('remove: an MSI product key → msiexec; a silent uninstall → quiet', D.removalHint(P.Chrome).method === 'msi' && D.removalHint(P['7-Zip 24.09 (x64)']).method === 'quiet');
+  check('remove: interactive only, or no key reported, → not offered, with the reason', !D.removalHint(P.Interactive).possible && /interactive/.test(D.removalHint(P.Interactive).reason) && !D.removalHint(P['Old agent']).possible && /0\.41/.test(D.removalHint(P['Old agent']).reason) && !D.removalHint(P.Evil).possible);
+  const entries = [{ id: 'e1', detection: { kind: 'uninstall_key', key: '7-zip', compare: 'gte', version: '24' } }, { id: 'e2', detection: { kind: 'display_name', name: 'Chr', match: 'prefix', compare: 'gte', version: '1' } }, { id: 'e3', detection: { kind: 'file_version', base: 'ProgramFiles', file: 'x.exe', compare: 'gte', version: '1' } }];
+  check('remove: a program a catalog entry describes is uninstalled through that entry', D.entryFor(P['7-Zip 24.09 (x64)'], entries)?.id === 'e1' && D.entryFor(P.Chrome, entries)?.id === 'e2' && D.entryFor(P.Interactive, entries) === null);
+  check('remove: the request is closed and names the inventory\'s key', D.RemoveProgramDto.safeParse({ key: '7-Zip', view: '64', displayName: '7-Zip 24.09 (x64)' }).success && !D.RemoveProgramDto.safeParse({ key: '7-Zip', view: '64', displayName: 'x', quietUninstallString: 'calc.exe' }).success);
+}
 
 if (failures.length) {
   console.error(`✗ ${failures.length} failed, ${passed} passed`);
