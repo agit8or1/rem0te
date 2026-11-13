@@ -3341,8 +3341,16 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('the daily refresh runs as the release user, with no access to the portal\'s configuration',
     /^User=@RELEASE_USER@$/m.test(unit) && /^ExecStart=@BIN_DIR@\/rem0te-signed-refresh --conf @CONF@$/m.test(unit)
       && /^InaccessiblePaths=-\/etc\/reboot-remote -\/opt\/reboot-remote$/m.test(unit) && /^IPAddressDeny=any$/m.test(unit)
+      && /^PrivateTmp=false$/m.test(unit) && /^ReadWritePaths=@STATE_DIR@ @PUB_DIR@ @BUILD_ROOT@$/m.test(unit)
+      && /\nchmod 0755 "\$\(dirname "\$CONF_PATH"\)" "\$LIB_DIR"\n/.test(read('deploy/release/rem0te-signed-setup.sh'))
       && /^TOOL=\$LIB_DIR\/rem0te-release$/m.test(refresh) && /tool refresh -repo "\$BUILD\/repo" "\$\{K\[@\]\}"/.test(refresh),
-    'rem0te-timestamp-refresh.service: User=@RELEASE_USER@, InaccessiblePaths the portal config, no outbound network');
+    'rem0te-timestamp-refresh.service: User=@RELEASE_USER@, InaccessiblePaths the portal config, no outbound network, no PrivateTmp (BUILD_ROOT is in /var/tmp); setup makes the config and tool directories 0755');
+  check('the signed install.ps1 and every approved script reach Windows PowerShell 5.1 with a UTF-8 BOM',
+    /const script = Buffer\.concat\(\[Buffer\.from\(\[0xef, 0xbb, 0xbf\]\), Buffer\.from\(buildSignedWindowsScript\(version\), 'utf8'\)\]\);/.test(read('apps/api/scripts/build-signed-installer.mjs'))
+      && /if !bytes\.HasPrefix\(content, utf8BOM\) \{\s*\n\s*content = append\(append\(\[\]byte\{\}, utf8BOM\.\.\.\), content\.\.\.\)/.test(read('tools/windows-installer/internal/action/script.go'))
+      && /"script\.ps1": content,/.test(read('tools/windows-installer/internal/action/script.go'))
+      && /check\('install\.ps1 parses as Windows PowerShell 5\.1 reads it/.test(read('apps/api/scripts/unit-signed-installer.mjs')),
+    'build-signed-installer.mjs prefixes EF BB BF; script.go writes script.ps1 with the BOM; unit-signed-installer parses it as 5.1 does (0.37.1: the first real migration exited 1 on a mis-decoded em dash)');
   const gh = [];
   const walkAll = (d) => { for (const n of readdirSync(join(ROOT, d))) { const r = `${d}/${n}`; if (statSync(join(ROOT, r)).isDirectory()) walkAll(r); else gh.push(r); } };
   walkAll('.github');

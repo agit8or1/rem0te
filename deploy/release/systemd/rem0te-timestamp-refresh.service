@@ -19,7 +19,12 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=@STATE_DIR@ @PUB_DIR@ @BUILD_ROOT@
 ProtectHome=true
-PrivateTmp=true
+# Not PrivateTmp: it would give the unit an empty /var/tmp, where
+# ReadWritePaths' BUILD_ROOT (/var/tmp/rem0te-release-build) cannot be mounted,
+# and the unit fails with 226/NAMESPACE before it starts. BUILD_ROOT is the
+# release user's own directory; ProtectSystem=strict keeps everything else
+# read-only.
+PrivateTmp=false
 PrivateDevices=true
 ProtectKernelTunables=true
 ProtectKernelModules=true

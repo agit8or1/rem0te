@@ -5,6 +5,70 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.37.1] — 2026-11-13 · *Keystone*
+
+This release fixes three bugs that only appeared the first time `rem0te-signed-setup.sh` ran for real as root, on the
+production host. Every test had run setup under `--prefix --no-user --no-systemd` as one ordinary user, where
+none of them can happen.
+
+### Fixed
+- **Setup died at the first key with `env: '/usr/local/lib/rem0te-release/rem0te-release': Permission denied`.**
+  - **Cause:** `lib.sh` sets `umask 027`. So the directories root creates for the configuration
+    (`/etc/rem0te-release`) and the installed tool (`/usr/local/lib/rem0te-release`) came out `0750 root:root`. The
+    release user then could not reach the tool to run `keygen`. Setup stopped before any key was written, so a re-run
+    was safe.
+  - **Fix:** setup now makes both directories `0755`. Neither holds a secret; the keys stay under `KEY_DIR` (`0700`,
+    the release user's).
+- **The daily timestamp refresh could never run:** `rem0te-timestamp-refresh.service` failed with `226/NAMESPACE`,
+  "Failed to set up mount namespacing: /var/tmp/rem0te-release-build: No such file or directory".
+  - **Cause:** `PrivateTmp=true` gives the unit an empty `/var/tmp`, so the `ReadWritePaths=` entry for the build
+    root under `/var/tmp` has nothing to mount.
+  - **Symptom:** the timer would have failed every day. After 7 days the timestamp expires and every signed agent
+    refuses updates.
+  - **Fix:** the unit now sets `PrivateTmp=false`. `ProtectSystem=strict` still leaves only the release user's own
+    directories writable.
+- **The signed installer could never run on Windows.** The first real migration, on DS-HOME1 at 03:24 UTC, reported
+  `installer exit 1` about 11 seconds after it downloaded the migration script. Nothing on the computer had changed:
+  it stayed on its working standard agent.
+  - **Cause:** the agent runs `install.ps1` with `powershell.exe -File`. Windows PowerShell 5.1 reads a script without
+    a byte-order mark as the ANSI code page (Windows-1252), not UTF-8. The installer's em dashes are `E2 80 94`, and
+    the last byte, 0x94, decodes as `”` (U+201D), which PowerShell treats as a closing quote. Read that way the file
+    has five parse errors, so PowerShell exits 1 before running a line.
+  - **Why nothing caught it:** every test parsed and ran the script with PowerShell 7, which reads UTF-8 with or
+    without a BOM. The legacy path (`irm … | iex`) never had the problem, because it decodes the HTTP response as
+    text.
+  - **Fix:** `build-signed-installer.mjs` writes a UTF-8 BOM first. The BOM is part of the signed bytes and of the
+    digest in the targets metadata. The agent likewise writes an approved library script's `script.ps1` with a BOM,
+    after its hash has been checked on the approved bytes. Those scripts may hold non-ASCII text and run through the
+    same `-File` path. The wrapper, `wua.ps1` and the heartbeat already reached PowerShell safely: they are ASCII, or
+    are written by Windows PowerShell's `Set-Content -Encoding UTF8`, which adds a BOM.
+  - **Test:** `unit-signed-installer.mjs` builds `install.ps1` and parses it the way 5.1 reads it: UTF-8 after a BOM,
+    Windows-1252 without one. It also checks that the same file with its BOM removed fails, so the test can fail.
+- §56 now checks all three fixes: `PrivateTmp=false` and the `ReadWritePaths` line in the unit, the `chmod 0755` in
+  setup, and the BOM in the installer build and in `script.go`, plus the 5.1 parse test. Removing any of them makes
+  a check fail.
+
+### Upgrade notes
+- **Hosts already set up with 0.37.0,** where a hand fix let setup finish: the next
+  `sudo ./deploy/release/rem0te-signed-setup.sh` reinstalls the unit and changes no key. On this host the installed
+  unit was fixed by hand on 2026-11-13, and `systemctl start rem0te-timestamp-refresh.service` succeeded.
+- **After deploying, run `sudo rem0te-signed-publish`.** This publishes 0.37.1, the first signed installer that
+  Windows PowerShell 5.1 can parse. The 0.37.0 rollout's canary can't succeed: its installer exits 1. A new published
+  build starts a new rollout.
+- No migration and no npm dependency change.
+
+### Verification
+- On production, setup completed after the directory fix: six keys, the repository, the timer, `UPDATE_REPO_DIR`,
+  and the first publish of 0.37.0.
+- `rem0te-release verify -mirror http://127.0.0.1:3001/api/v1/public/updates` verified the portal-served
+  repository: 4 targets, root v1, targets v2.
+- With the unit fixed, the refresh service ran once and exited `success`, publishing timestamp v3.
+- Reproduced with PowerShell's own parser on the published 0.37.0 `install.ps1`: 0 errors read as UTF-8, 5 read as
+  Windows-1252 (the first at line 1269).
+- `unit-signed-installer` passes 56 checks (4 new). `go test ./...` passes, with `script_test` updated for the BOM,
+  and `GOOS=windows go vet` passes.
+- §56 holds with the new checks. `check-versions.mjs` passes.
+
 ## [0.37.0] — 2026-11-13 · *Keystone*
 
 The seventh increment of the RMM overhaul. Its theme is the owner's request: an **easy** way to put agents on the

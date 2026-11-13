@@ -52,7 +52,13 @@ const { buildSignedWindowsScript } = argv.includes('--from-source')
   ? fromSource()
   : require(join(here, '..', 'dist', 'public', 'windows-script.js'));
 const { version } = JSON.parse(readFileSync(join(here, '..', '..', '..', 'version.json'), 'utf8'));
-const script = buildSignedWindowsScript(version);
+// A UTF-8 byte-order mark first (0.37.1). The agent runs this file with
+// `powershell.exe -File`, and Windows PowerShell 5.1 reads a BOM-less script
+// as the ANSI code page: an em dash's last byte (0x94) becomes U+201D, which
+// PowerShell takes for a closing quote, so the script fails to parse and exits
+// 1 before running a line. PowerShell 7 (the tests) reads UTF-8 either way.
+// The BOM is part of the signed bytes.
+const script = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(buildSignedWindowsScript(version), 'utf8')]);
 const summary = `agent version ${version}\nsha256 ${createHash('sha256').update(script).digest('hex')}`;
 if (out === '-') {
   process.stdout.write(script);

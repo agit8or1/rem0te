@@ -174,6 +174,10 @@ mk 0700 "$KEY_DIR"
 mk 0755 "$BUILD_ROOT"
 mk 2750 "$PUB_DIR" "$PUB_GROUP"
 mkdir -p "$(dirname "$CONF_PATH")" "$BIN_DIR" "$LIB_DIR"
+# lib.sh's umask 027 makes these 0750 root:root, and the release user (the
+# daily refresh, publish's signing steps) must reach the configuration and the
+# installed tool. Neither holds a secret: the keys are under KEY_DIR (0700).
+chmod 0755 "$(dirname "$CONF_PATH")" "$LIB_DIR"
 for f in "$LOG_FILE" "$STATE_DIR/publish.lock"; do
   as_release 027 touch "$f"
 done
