@@ -703,6 +703,28 @@ neither the page nor the API claims the timestamp timer runs.
 Behavioural proof: `e2e-auto-migration.mjs` (ports 3911–3912, `RELEASE_BIN`);
 unit: `unit-auto-migration.mjs`.
 
+§58 (0.40) is direct mode, approved actions for a single operator. The
+setting lives only in the approval signer's policy store, per business with a
+`default`, and only the signer CLI writes it (`policy set --business <id|default>
+--approval direct|signed`; absent means signed), logging each change to
+`policy-changes.log`. No HTTP route on the signer or the portal writes it; the
+portal mirrors it read-only. Direct and customer sign-off are mutually
+exclusive in the CLI and in `policyFor`. Under direct the signer signs a plan at
+admission, after every admission check and the signed-pause check, with no
+approvers; the plan carries `policy.approval: "direct"` and `approvalsRequired:
+0`, and a flag that disagrees with the signer's policy is `policy_mismatch`.
+The agent relaxes its approver count and same-person rules only on that signed
+field, and refuses any other value (`bad_plan`); older agents refuse direct
+plans, so publish the agent before turning it on. Every portal request path
+needs `assertFresh` under direct (rings under an already-approved policy
+excepted), and ClientSt0r cannot make a direct request
+(`DIRECT_MODE_PORTAL_ONLY`). Patch policies go ACTIVE at admission and count
+only while their business stays direct; the script allowlist goes ACTIVE at
+admission only when `default` is direct (author self-review is
+`ScriptVersion.selfReviewed`, migration 0065). Behavioural proof:
+`e2e-approved-action.mjs` (its direct section); unit: `unit-approval-signer.mjs`
+and the Go `internal/action` direct tests.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

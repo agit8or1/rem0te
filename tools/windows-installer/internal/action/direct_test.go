@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Direct mode (0.39). The approval signer signs a plan at admission, with no
+// Direct mode (0.40). The approval signer signs a plan at admission, with no
 // approvers, when its own operator set the business to direct; the signed
 // plan says so (policy.approval "direct"). The agent then needs no approvers
 // and applies no requester or contributor rule. Everything else is the same:

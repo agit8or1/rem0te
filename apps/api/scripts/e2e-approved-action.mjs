@@ -27,7 +27,7 @@
  *   DATABASE_URL=postgresql://…/reboot_remote_it_scratch node scripts/e2e-approved-action.mjs
  *
  * Optional: OLD_ACTION_SIM, a rem0te-action-sim built from a release before
- * 0.39, proves that an older agent refuses a direct-mode plan (bad_plan).
+ * 0.40, proves that an older agent refuses a direct-mode plan (bad_plan).
  *
  * What it proves is FIXTURE-TESTED behaviour: the portal, the signer and the
  * agent's decision code, with Windows, RustDesk and the person at the
@@ -154,7 +154,7 @@ async function login(email) {
   s.cookie = `access_token=${m[1]}`;
   return s;
 }
-// 0.39: a fresh sign-in (direct mode needs one for every request).
+// 0.40: a fresh sign-in (direct mode needs one for every request).
 async function stepUp(s) {
   const r = await fetch(`${API}/auth/step-up`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': s.ip, cookie: s.cookie }, body: JSON.stringify({ password: PW }) });
   const m = (r.headers.get('set-cookie') ?? '').match(/step_up=([^;]+)/);
@@ -581,7 +581,7 @@ async function all() {
     const wrongScope = await call('GET', `/api/integration/v1/action-proposals/${p.job_id}`, { delegation: token({ sub: 'cs-tech-a', org: ORG_A, scope: 'ticket_analysis:read' }) });
     check(wrongScope.status === 401, 'reading needs the actions:read scope');
   }
-  section('Direct mode (0.39): set on the signer, signed at the request, run with no approval step');
+  section('Direct mode (0.40): set on the signer, signed at the request, run with no approval step');
   {
     // Earlier sections leave approved plans undelivered on these computers.
     const settle = () => prisma.actionJob.updateMany({ where: { endpointId: { in: [srv.id, fdA.id, fdB.id] }, status: { in: ['AWAITING_APPROVAL', 'APPROVED', 'DISPATCHED'] } }, data: { status: 'CANCELED', statusReason: 'test cleanup' } });
@@ -614,7 +614,7 @@ async function all() {
     check(!!env, 'the next heartbeat delivers it', msg(hb));
     if (OLD_SIM) {
       const o = runAgent(srv, j.id, env, { sim: OLD_SIM, state: path.join(work, 'old-agent') });
-      check(o.outcome === 'refused' && o.reason === 'bad_plan', 'an agent from before 0.39 refuses the direct plan (bad_plan) — it fails closed', JSON.stringify(o));
+      check(o.outcome === 'refused' && o.reason === 'bad_plan', 'an agent from before 0.40 refuses the direct plan (bad_plan) — it fails closed', JSON.stringify(o));
     }
     const res = runAgent(srv, j.id, env);
     check(res.outcome === 'succeeded' && simServiceNow(srv) === 'running', 'APPSRV (product type: server) runs the direct plan and starts the spooler', JSON.stringify(res));

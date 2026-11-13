@@ -90,7 +90,7 @@ export default function DeploymentPage() {
     }),
     onSuccess: (r) => {
       setReason(''); setExclude({}); refresh();
-      // 0.39, direct mode: signed at the request; there is no approval page to open.
+      // 0.40, direct mode: signed at the request; there is no approval page to open.
       if (r.data.data.job?.direct) { toast({ title: 'Approved automatically', description: DIRECT_TOAST }); return; }
       const url = r.data.data.job?.approvalUrl;
       toast({ title: 'Requested', description: 'Nothing installs until two approvers authorize this ring on the approval page.' });

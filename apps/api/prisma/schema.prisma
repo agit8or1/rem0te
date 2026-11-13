@@ -3216,7 +3216,7 @@ model ScriptVersion {
   decisionNote   String?
   // The content hash the approver's page showed. Equal to contentSha256 (CHECK).
   approvedSha256 String?
-  /// 0.39: approved by its author or a contributor, which only direct mode
+  /// 0.40: approved by its author or a contributor, which only direct mode
   /// on the approval signer's default policy allows (0065 CHECKs and trigger).
   selfReviewed   Boolean             @default(false)
 

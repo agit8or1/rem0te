@@ -126,7 +126,7 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
     return actor.isPlatformAdmin || (s.customerId === actor.businessId && this.hasBusinessCap(actor, CAP.SCRIPTS_REVIEW));
   }
 
-  /** 0.39: is the signer's default policy (which governs its allowlist) in direct mode? Any failure is no. */
+  /** 0.40: is the signer's default policy (which governs its allowlist) in direct mode? Any failure is no. */
   private async allowlistDirect(): Promise<boolean> {
     try { const r = await this.signer.policy('default'); return r.status === 200 && r.body.approval === 'direct'; } catch { return false; }
   }
@@ -170,7 +170,7 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
     return {
       version: { id: v.id, scriptId: s.id, name: s.name, scope: s.scope.toLowerCase(), businessId: s.customerId, version: v.version, status: v.status, risk: v.risk, parameters: v.parameters as unknown as ParameterDecl[], contentSha256: v.contentSha256 },
       signerConfigured,
-      // 0.39: the signer's default mode, read only. Direct: a proposal is added to its allowlist at once.
+      // 0.40: the signer's default mode, read only. Direct: a proposal is added to its allowlist at once.
       allowlistDirect: signerConfigured ? await this.allowlistDirect() : false,
       allowlist: this.entryView(current),
       revoked,
@@ -197,7 +197,7 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
     if (all.some((e) => e.status === 'REVOKED')) throw new ConflictException({ code: 'SCRIPT_REVOKED', message: 'This version was removed from the approval signer\'s allowlist. Revocation is permanent: edit it into a new version and have that reviewed.' });
     const live = all.find((e) => LIVE.includes(e.status));
     if (live) return this.entryView(live);
-    // 0.39: in direct mode (the signer's default policy) the signer adds the
+    // 0.40: in direct mode (the signer's default policy) the signer adds the
     // entry at once, so proposing it is the decision.
     const direct = await this.allowlistDirect();
     if (direct) assertFresh(freshMethod ?? null, { action: 'scripts.direct', message: 'Direct mode: the approval signer adds this script to its allowlist as soon as you propose it. Confirm it is you.' });

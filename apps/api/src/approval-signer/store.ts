@@ -5,9 +5,9 @@
  *
  *   <dir>/signer.key        Ed25519 PKCS#8 PEM, 0600
  *   <dir>/roster.json       approvers and their passkeys (operator ceremony)
- *   <dir>/policy.json       per-business customer sign-off and (0.39) approval mode
+ *   <dir>/policy.json       per-business customer sign-off and (0.40) approval mode
  *   <dir>/policy-changes.log  every change to policy.json, one JSON line each, appended by
- *                           the operator CLI (0.39); nothing rewrites or truncates it
+ *                           the operator CLI (0.40); nothing rewrites or truncates it
  *   <dir>/jobs/<id>.json    one per plan; decisions and the envelope
  *   <dir>/challenges/<id>.json  single-use WebAuthn challenges
  *   <dir>/counters/<sha>.json   each passkey's signature counter
@@ -71,7 +71,7 @@ export class SignerStore {
   saveRoster(r: Roster) { this.write(path.join(this.dir, 'roster.json'), r); }
   policy(): Policy { return this.read<Policy>(path.join(this.dir, 'policy.json')) ?? { default: { customerSignoff: false }, businesses: {} }; }
   savePolicy(p: Policy) { this.write(path.join(this.dir, 'policy.json'), p); }
-  /** 0.39: the operator CLI's record of a policy change. Append only. */
+  /** 0.40: the operator CLI's record of a policy change. Append only. */
   appendPolicyChange(entry: { at: string; business: string; before: unknown; after: unknown; by: string }) {
     appendFileSync(path.join(this.dir, 'policy-changes.log'), `${JSON.stringify(entry)}\n`, { mode: 0o600, flag: 'a' });
   }

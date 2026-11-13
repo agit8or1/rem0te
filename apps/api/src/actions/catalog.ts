@@ -426,7 +426,7 @@ export const catalogEntry = (id: string, version: number) => CATALOG.find((a) =>
 /** Approvals required by risk. The agent enforces the same minimums. */
 export const APPROVALS_REQUIRED: Record<Risk, number> = { low: 1, high: 2 };
 /**
- * Direct mode (0.39). A business the approval signer's operator set to
+ * Direct mode (0.40). A business the approval signer's operator set to
  * `--approval direct` has its plans signed at admission, with no approvers:
  * the plan says `policy.approval: 'direct'`, asks for 0 approvals and never
  * for customer sign-off. The agent relaxes its approval rules only on that
@@ -484,7 +484,7 @@ export const Plan = z.object({
     /** 0 only in direct mode (validatePlanAction). */
     approvalsRequired: z.number().int().min(0).max(5),
     customerSignoff: z.boolean(),
-    /** 0.39: present only when the signer's operator set the business to direct mode. */
+    /** 0.40: present only when the signer's operator set the business to direct mode. */
     approval: z.literal(DIRECT).optional(),
   }).strict(),
   window: z.object({ notBefore: Iso, notAfter: Iso }).strict(),

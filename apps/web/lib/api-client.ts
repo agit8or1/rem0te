@@ -66,7 +66,7 @@ export const dashboardApi = {
 // ─── Approved actions (v0.26) ───────────────────────────────────────────────
 // Request, read, cancel, reconcile. There is no approve call: approval happens
 // on the approval signer's own origin, with a passkey on its roster — or, in
-// direct mode (0.39, the signer operator's setting), not at all.
+// direct mode (0.40, the signer operator's setting), not at all.
 export const actionsApi = {
   catalog: (endpointId?: string) => api.get('/actions/catalog', { params: endpointId ? { endpointId } : {} }),
   list: (endpointId: string) => api.get(`/endpoints/${endpointId}/actions`),

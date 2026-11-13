@@ -23,7 +23,7 @@ import { ScriptRunService } from './script-run.service';
 export class ScriptRunController {
   constructor(private readonly svc: ScriptRunService, private readonly stepUp: StepUpService) {}
 
-  /** 0.39: in direct mode a proposal is added at once and a run runs at once: both need a fresh sign-in. */
+  /** 0.40: in direct mode a proposal is added at once and a run runs at once: both need a fresh sign-in. */
   private fresh(req: Request): string | null {
     const u = req.user as { sub?: string; iat?: number } | undefined;
     return u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null;

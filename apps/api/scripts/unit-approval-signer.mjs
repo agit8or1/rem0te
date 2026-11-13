@@ -728,7 +728,7 @@ check('keygen refuses to overwrite a signing key', out.status !== 0 && /refusing
   check('after the operator forgets the pin, a policy naming the new key may be proposed (and needs two approvals again)', r.status === 201 && r.body.status === 'AWAITING_APPROVAL', JSON.stringify(r.body));
   await s3.close();
 
-  // ── 0.39: direct mode ───────────────────────────────────────────────────
+  // ── 0.40: direct mode ───────────────────────────────────────────────────
   // Its own signer and directory, so the policy can be changed under it.
   {
     const sr = require(join(dist, 'actions', 'script-run.js'));

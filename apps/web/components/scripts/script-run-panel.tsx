@@ -24,7 +24,7 @@ import { ConnectivityIndicator } from '@/components/common/connectivity-indicato
  *   1. propose the version to the approval signer's own allowlist (a reviewer);
  *   2. two approvers who did not write it add it, on the signer's page;
  *   3. request a run on up to 25 computers, which two approvers then approve,
- *      (0.39: in direct mode, set by the signer's operator, steps 2 and 3
+ *      (0.40: in direct mode, set by the signer's operator, steps 2 and 3
  *      happen at the request, after a fresh sign-in — there is nothing to
  *      approve)
  *      again on the signer's page.
@@ -38,7 +38,7 @@ import { ConnectivityIndicator } from '@/components/common/connectivity-indicato
 interface Readiness {
   version: { id: string; name: string; scope: 'global' | 'business'; businessId: string | null; version: number; status: string; parameters: ScriptParameter[]; contentSha256: string };
   signerConfigured: boolean;
-  /** 0.39: the signer's default policy is in direct mode, so a proposal is added at once. */
+  /** 0.40: the signer's default policy is in direct mode, so a proposal is added at once. */
   allowlistDirect?: boolean;
   allowlist: { id: string; status: string; approvalUrl: string; contentSha256: string; createdAt: string; revokedAt: string | null; revokeReason: string | null } | null;
   revoked: boolean;

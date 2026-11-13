@@ -18,7 +18,7 @@
 //  7. The approvals: enough distinct approvers for the risk THIS machine
 //     computes from its own product type (a server is always high impact,
 //     whatever the plan says), none of them the requester, plus a customer
-//     sign-off when the plan's policy says so. (0.39) A plan the signer
+//     sign-off when the plan's policy says so. (0.40) A plan the signer
 //     signed in direct mode (policy.approval "direct", which only the
 //     signer's own operator can turn on for a business) needs no approvers
 //     and no requester or contributor rule; it can never also ask for
@@ -131,9 +131,9 @@ type Plan struct {
 		Risk              string `json:"risk"`
 		ApprovalsRequired int    `json:"approvalsRequired"`
 		CustomerSignoff   bool   `json:"customerSignoff"`
-		// Approval (0.39): "direct" when the approval signer signed the plan
+		// Approval (0.40): "direct" when the approval signer signed the plan
 		// at admission, under its operator's per-business direct mode; absent
-		// otherwise. Agents before 0.39 refuse a plan carrying it (bad_plan).
+		// otherwise. Agents before 0.40 refuse a plan carrying it (bad_plan).
 		Approval string `json:"approval,omitempty"`
 	} `json:"policy"`
 	Window struct {
@@ -498,7 +498,7 @@ func verify(jobID string, raw []byte, o Options) (*Plan, *Result) {
 }
 
 // isDirect: whether the SIGNED plan says the signer signed it in direct mode
-// (0.39). Only "direct" or nothing is a value, and a direct plan never asks
+// (0.40). Only "direct" or nothing is a value, and a direct plan never asks
 // for customer sign-off — the signer refuses both combinations, and so does
 // this.
 func isDirect(p *Plan) (bool, *Result) {

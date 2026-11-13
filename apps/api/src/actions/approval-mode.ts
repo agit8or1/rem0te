@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { SignerClient } from './signer.client';
 
 /**
- * One read-only question for the script library (0.39): is the approval
+ * One read-only question for the script library (0.40): is the approval
  * signer's DEFAULT policy in direct mode?
  *
  * The library may let a version's author review it only then — the same

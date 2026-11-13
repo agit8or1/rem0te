@@ -368,7 +368,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     const row = await this.prisma.patchPolicy.create({
       data: {
         id: doc.policyId, tenantId, customerId: dto.businessId, name: dto.name, document: doc as unknown as Prisma.InputJsonValue, digest,
-        // 0.39: in direct mode the signer makes it active at admission; the mirror follows its word.
+        // 0.40: in direct mode the signer makes it active at admission; the mirror follows its word.
         status: sub.body.direct === true && sub.body.status === 'ACTIVE' ? 'ACTIVE' : 'AWAITING_APPROVAL', approvalUrl: sub.body.approvalUrl, expiresAt, createdById: actor.userId,
       },
     });
@@ -421,7 +421,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
       currentWindow: r.status === 'ACTIVE' ? occurrenceAt(now, doc.window) : null,
       nextWindow: r.status === 'ACTIVE' ? nextOccurrence(now, doc.window, r.expiresAt) : null,
       lastProposal: r.lastProposal,
-      // 0.39: activated in direct mode, with no approvals (the signer's word).
+      // 0.40: activated in direct mode, with no approvals (the signer's word).
       direct: signer?.status === 200 && signer.body.direct === true,
       signer: signer?.status === 200 ? { reachable: true, status: signer.body.status ?? null, signedPlans: signer.body.signedPlans ?? 0, refusals: signer.body.refusals ?? [] } : { reachable: false, status: null, signedPlans: null, refusals: [] },
       deployments,
@@ -514,7 +514,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     add({ id: 'signer_key_published', step: 3, ok: kidOk, title: 'Agents trust the signer\'s key',
       detail: !kf ? 'approval/keys.json is not in the signed repository, so agents trust no approval key.' : !caps?.kid ? `approval/keys.json lists ${trustedKids.length} key(s); the signer's key id is unknown.` : kidOk ? `approval/keys.json lists the signer's key ${caps.kid}.` : `approval/keys.json does not list the signer's key ${caps.kid}; agents would refuse every plan it signs.`,
       fix: kidOk ? null : 'Print the signer\'s keys.json (approval-signer keys) and publish it as approval/keys.json with rem0te-release.' });
-    // 0.39: direct mode (the signer operator's default) needs no approvers at all.
+    // 0.40: direct mode (the signer operator's default) needs no approvers at all.
     const approvers = caps?.roster?.approvers ?? 0;
     const direct = caps?.approval?.default === 'direct';
     const others = caps?.approval?.directBusinesses ?? 0;

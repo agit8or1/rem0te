@@ -88,7 +88,7 @@ export default function SoftwareDeploymentPage() {
       setReason(''); setExclude({}); refresh();
       const job = r.data.data.job as { approvalUrl?: string; direct?: boolean; requestedByName?: string | null; createdAt?: string } | undefined;
       if (job?.direct) {
-        // 0.39, direct mode: signed at the request; there is no approval page to open.
+        // 0.40, direct mode: signed at the request; there is no approval page to open.
         setRequested(null); setDirectDone(directApproved(job.requestedByName, job.createdAt ?? new Date()));
         toast({ title: 'Approved automatically', description: DIRECT_TOAST });
       } else {

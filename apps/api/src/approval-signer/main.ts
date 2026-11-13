@@ -111,7 +111,7 @@ switch (cmd) {
   }
   case 'policy': {
     // The only writer of policy.json: no HTTP route on this process or the
-    // portal changes it (§ 58). 0.39 adds the approval mode; every change is
+    // portal changes it (§ 58). 0.40 adds the approval mode; every change is
     // appended to policy-changes.log, which nothing rewrites.
     const usage = 'policy show | policy set --business <id>|default [--customer-signoff required|not_required] [--approval direct|signed]';
     if (sub === 'show') { console.log(JSON.stringify(store.policy(), null, 2)); break; }
@@ -141,7 +141,7 @@ switch (cmd) {
     store.savePolicy(p);
     store.appendPolicyChange({ at: new Date().toISOString(), business: b, before, after: next, by: process.env.SUDO_USER || process.env.USER || 'unknown' });
     if (ap === 'direct') {
-      console.error(`Direct mode is now ON for ${b === 'default' ? 'the default policy (every business without its own entry, and the script allowlist)' : `business ${b}`}: plans the portal requests are signed at once, with no approval. Anyone who fully controls the portal can then run catalog actions on these computers. Agents older than 0.39 refuse direct plans (bad_plan).`);
+      console.error(`Direct mode is now ON for ${b === 'default' ? 'the default policy (every business without its own entry, and the script allowlist)' : `business ${b}`}: plans the portal requests are signed at once, with no approval. Anyone who fully controls the portal can then run catalog actions on these computers. Agents older than 0.40 refuse direct plans (bad_plan).`);
     }
     console.log(JSON.stringify(p, null, 2));
     break;

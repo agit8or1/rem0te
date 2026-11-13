@@ -133,7 +133,7 @@ export interface PlanRequest {
   /** 0.34, windows.script.run: the signer's allowlist entry for the version (script-run.ts ScriptBlock). */
   script?: ScriptBlock;
   /**
-   * 0.39: how the requester last re-authenticated (StepUpService), from the
+   * 0.40: how the requester last re-authenticated (StepUpService), from the
    * controller. In direct mode a plan runs as soon as it is requested, so a
    * person's request needs a fresh sign-in (§ 58).
    */
@@ -141,7 +141,7 @@ export interface PlanRequest {
 }
 
 /**
- * Direct mode (0.39): the request is the decision, so it must be a person's,
+ * Direct mode (0.40): the request is the decision, so it must be a person's,
  * freshly signed in. ClientSt0r proposals have nobody signed in behind them.
  */
 function assertDirectRequest(via: 'portal' | 'clientst0r', freshMethod: string | null | undefined) {
@@ -235,7 +235,7 @@ export class ActionsService {
   }
 
   /**
-   * 0.39: for a workflow that writes something before its plan (a one-computer
+   * 0.40: for a workflow that writes something before its plan (a one-computer
    * deployment), the same direct-mode check createPlan makes, made first so a
    * refused request leaves nothing behind. createPlan still makes it.
    */
@@ -246,7 +246,7 @@ export class ActionsService {
   }
 
   /**
-   * 0.39: the approval mode a computer's business is in on the signer, as the
+   * 0.40: the approval mode a computer's business is in on the signer, as the
    * signer answers it — 'direct', 'signed', or null when there is no signer
    * or it does not answer. Only for a computer the reader can see.
    */
@@ -336,7 +336,7 @@ export class ActionsService {
 
     const signerPolicy = await this.signer.policy(first.customerId!);
     if (signerPolicy.status !== 200) throw new ConflictException({ code: 'APPROVAL_SIGNER_ERROR', message: 'The approval signer did not return this business\'s policy.' });
-    // 0.39, direct mode (the signer's operator's setting, mirrored read-only):
+    // 0.40, direct mode (the signer's operator's setting, mirrored read-only):
     // the signer signs at admission, so the request itself is the decision.
     // A person must have signed in freshly; a ClientSt0r proposal, which has
     // nobody signed in behind it, is refused rather than run unseen. A ring
@@ -426,7 +426,7 @@ export class ActionsService {
       action: { id: j.actionId, version: j.actionVersion, title: a?.title ?? j.actionId, warnings: a?.warnings ?? [] },
       params: j.params, reason: j.reason, origin: j.origin, via: j.via, ticketRef: j.ticketRef, requestedById: j.requestedById,
       risk: j.risk, approvalsRequired: j.approvalsRequired, customerSignoff: j.customerSignoff,
-      // 0.39: signed at the request in direct mode; the signed plan names who asked.
+      // 0.40: signed at the request in direct mode; the signed plan names who asked.
       direct: planDirect(j.plan), requestedByName: (j.plan as unknown as Plan | null)?.requestedBy?.name ?? null,
       window: { notBefore: j.notBefore, notAfter: j.notAfter }, digest: j.digest, approvalUrl: j.approvalUrl,
       approvers: j.approvers, dispatchedAt: j.dispatchedAt, deliveries: j.deliveries, outcome: j.outcome, result: shown(j.result), resultAt: j.resultAt,

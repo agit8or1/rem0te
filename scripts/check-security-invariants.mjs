@@ -872,7 +872,7 @@ check(
 
   const svc = code(src[`${dir}/script-library.service.ts`] ?? '');
   const rev = svc.slice(svc.indexOf('async review('));
-  // 0.39: the one exception is direct mode on the signer's default policy (§ 58), recorded as selfReviewed.
+  // 0.40: the one exception is direct mode on the signer's default policy (§ 58), recorded as selfReviewed.
   const iSame = rev.search(/const self = v\.authorId === actor\.userId \|\| v\.contributorIds\.includes\(actor\.userId\);\s*const selfReviewed = self && await this\.approvalMode\.allowlistDirect\(\);\s*if \(self && !selfReviewed\) \{\s*await refuse\('same_person'\);\s*throw new ForbiddenException\(\{ code: 'SAME_PERSON'/);
   const iHash = rev.search(/if \(d\.expectedSha256 !== v\.contentSha256\) \{/);
   const iFresh = rev.search(/if \(d\.decision === 'approve'\) assertFresh\(freshMethod\);/);
@@ -2095,7 +2095,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const method = (name) => svc.slice(svc.indexOf(`  async ${name}(`), svc.indexOf('\n  }\n', svc.indexOf(`  async ${name}(`)));
   const fresh = ['create', 'update', 'archive'].map((n) => { const b = method(n); const a = b.indexOf("assertFresh(freshMethod, { action: 'software.catalog' });"); const w = b.search(/this\.prisma\.softwareCatalogEntry\.(create|updateMany)\(/); const au = b.indexOf("action: 'SOFTWARE_CATALOG_"); return [n, a > 0 && w > a && au > w]; });
   check('software: adding, changing or archiving a catalog entry needs a fresh sign-in before the write, and is audited after it',
-    // 0.39: the two request routes also pass this.fresh(req) on, for direct mode (§ 58).
+    // 0.40: the two request routes also pass this.fresh(req) on, for direct mode (§ 58).
     fresh.every(([, ok]) => ok) && (ctl.match(/this\.fresh\(req\)/g) ?? []).length === 5 && /requestRing\(actor, id, Number\(ring\), body, this\.fresh\(req\)\)/.test(ctl) && /single\(actor, id, entryId, operation, body, this\.fresh\(req\)\)/.test(ctl) && /this\.stepUp\.read\(req, u\.sub, u\.iat\)/.test(ctl),
     `per method: ${fresh.map(([n, ok]) => `${n}=${ok}`).join(', ')}`);
   check('software: only a business\'s own owner (not a technician) or a Platform Admin changes its entries; only an admin the global ones',
@@ -3512,7 +3512,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     "cleanup: setup's children except 'signed'; no removal of heartbeat.ps1 before the run starts; the unit test executes it");
 }
 
-// 58. Direct mode (0.39). For a single operator, the approval signer's
+// 58. Direct mode (0.40). For a single operator, the approval signer's
 //     operator may set a business (or `default`) to sign plans at admission,
 //     with no approvers. It gives up the second person and keeps everything
 //     else, so: the mode is written only by the signer CLI into its own

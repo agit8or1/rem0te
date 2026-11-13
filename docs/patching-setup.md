@@ -16,7 +16,7 @@ it is a checkbox someone ticked. Run it again after each step.
 
 ## Direct mode (the default for a single operator)
 
-If you run the portal alone, set the approval signer to **direct mode** (0.39) at step 5 instead of enrolling
+If you run the portal alone, set the approval signer to **direct mode** (0.40) at step 5 instead of enrolling
 approvers:
 
 ```bash
@@ -28,7 +28,7 @@ approval page: a policy is active as soon as it is proposed. What it gives up is
 takes over the portal can then install updates on those computers. What still protects: the fresh sign-in, your
 permissions, the audit log, containment pauses, the policy's own filter, window and restart rule, the canary gate, and
 each computer verifying the signer's signature. Direct mode cannot be combined with customer sign-off, and computers
-need the 0.39 agent. The full account is in
+need the 0.40 agent. The full account is in
 [Approved actions → Direct mode](approved-actions.md#direct-mode-the-default-for-a-single-operator); the signed
 mode below remains the alternative.
 

@@ -429,7 +429,7 @@ const no = (code: string, message: string): PolicyDecision => ({ ok: false, code
 /**
  * The quorum a policy needs: two distinct approvers who are not its author,
  * and a customer sign-off when the business requires one. In direct mode
- * (0.39, the signer's operator's setting for the business, which never
+ * (0.40, the signer's operator's setting for the business, which never
  * coexists with customer sign-off) it needs none: the signer activates it at
  * admission. A policy activated that way carries no approvals, so it stops
  * meeting the quorum the moment the business leaves direct mode.

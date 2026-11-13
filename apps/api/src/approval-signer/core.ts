@@ -9,7 +9,7 @@
  *   - the roster: who may approve, for which businesses, identified by their
  *     passkey's public key — enrolled by an operator ceremony, never read
  *     from the portal at decision time;
- *   - the policy: which businesses require customer sign-off, and (0.39)
+ *   - the policy: which businesses require customer sign-off, and (0.40)
  *     which are in direct mode.
  *
  * So a compromised portal or database can propose a plan, but cannot make it
@@ -18,7 +18,7 @@
  * people who are not the requester, in the number the catalog and this
  * process's own policy require.
  *
- * Direct mode (0.39) is the exception its operator chooses, per business,
+ * Direct mode (0.40) is the exception its operator chooses, per business,
  * with this process's CLI and nothing else: a plan for such a business is
  * signed at admission, after every other check here, with no approvers.
  * There a compromised portal CAN have plans signed — what an RMM's own agent
@@ -56,7 +56,7 @@ export interface RosterMember {
   disabled?: boolean;
 }
 export interface Roster { members: RosterMember[] }
-/** One business's rules. `approval` (0.39) is 'direct' or 'signed'; absent is 'signed'. */
+/** One business's rules. `approval` (0.40) is 'direct' or 'signed'; absent is 'signed'. */
 export interface BusinessPolicy { customerSignoff: boolean; approval?: 'direct' | 'signed' }
 export interface Policy { default: BusinessPolicy; businesses: Record<string, BusinessPolicy> }
 export type ApprovalMode = 'direct' | 'signed';
@@ -252,7 +252,7 @@ export interface PolicyRecord {
   revokedAt: string | null;
   revokedBy: 'portal' | 'operator' | null;
   revokeReason: string | null;
-  /** 0.39: activated at admission because the business was in direct mode; it carries no approvals. */
+  /** 0.40: activated at admission because the business was in direct mode; it carries no approvals. */
   direct?: true;
   /** Every plan signed under it: the ring order is decided from this, not from the portal. */
   ledger: LedgerEntry[];
@@ -319,7 +319,7 @@ export function verifyPolicy(r: PolicyRecord, publicKey: KeyObject): boolean {
  * Decide a plan the portal proposes under a policy. On success the plan is
  * signed with the policy's approvers as its approvers — the agent then
  * checks them as it checks any plan's: two, distinct, not the requester —
- * and the ledger records it. In direct mode (0.39) the plan says so, and a
+ * and the ledger records it. In direct mode (0.40) the plan says so, and a
  * policy activated in direct mode has no approvers to carry. Everything the portal says about the policy,
  * the risk and the approvals is re-derived here.
  */
@@ -423,14 +423,14 @@ export interface ScriptAllowRecord {
   revokedAt: string | null;
   revokedBy: 'portal' | 'operator' | null;
   revokeReason: string | null;
-  /** 0.39: made ACTIVE at admission because the signer's default mode was direct. */
+  /** 0.40: made ACTIVE at admission because the signer's default mode was direct. */
   direct?: true;
   createdAt: string;
   updatedAt: string;
 }
 
 /**
- * Accept a proposed allowlist entry. In direct mode (0.39: the signer's
+ * Accept a proposed allowlist entry. In direct mode (0.40: the signer's
  * `default` policy) it is ACTIVE at once, and a library review by the
  * script's own author is accepted — the portal allows that only in the same
  * mode. Everything about the content is checked the same way. The content is hashed here and must match what the portal claims. */

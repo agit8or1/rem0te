@@ -144,7 +144,7 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
       window: { days: WEEKDAYS.filter((d) => days.has(d.id)).map((d) => d.id), start, end, timezone },
     }),
     onSuccess: (r) => {
-      // 0.39: in direct mode the signer makes it active at once.
+      // 0.40: in direct mode the signer makes it active at once.
       const active = r.data.data.direct === true && r.data.data.status === 'ACTIVE';
       toast(active ? { title: 'Policy active', description: 'Approved automatically (direct mode). Its rings are requested inside its window.' } : { title: 'Policy proposed', description: 'Two approvers now approve it on the approval signer.' });
       onDone(); router.push(`/patching/policies/${r.data.data.id}`);

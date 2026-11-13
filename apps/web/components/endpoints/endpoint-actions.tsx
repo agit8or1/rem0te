@@ -49,7 +49,7 @@ interface Job {
   params?: { service?: unknown; delayMinutes?: unknown } | null;
   reason: string; origin: string; via: string; ticketRef: string | null; requestedById: string;
   risk: 'low' | 'high'; approvalsRequired: number; customerSignoff: boolean;
-  /** 0.39: signed at the request, in direct mode. */
+  /** 0.40: signed at the request, in direct mode. */
   direct?: boolean; requestedByName?: string | null;
   window: { notBefore: string; notAfter: string }; digest: string; approvalUrl: string;
   approvers: { name: string; role: string; at: string }[] | null;
@@ -165,7 +165,7 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
     queryKey: ['actions-catalog', endpointId],
     queryFn: () => actionsApi.catalog(endpointId).then((r) => r.data.data as { configured: boolean; actions: CatalogAction[]; approval: 'direct' | 'signed' | null }),
   });
-  // 0.39: the business's approval mode on the signer, read only.
+  // 0.40: the business's approval mode on the signer, read only.
   const directMode = catalog?.approval === 'direct';
   const { data: jobs = [], isLoading } = useQuery({
     queryKey: ['endpoint-actions', endpointId],

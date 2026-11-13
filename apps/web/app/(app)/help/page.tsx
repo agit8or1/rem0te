@@ -1039,7 +1039,7 @@ const SECTIONS: Section[] = [
           More in <Link href="/docs/approved-actions" className="underline text-foreground">Approved actions</Link>.
         </p>
         <p data-help="direct-mode">
-          <strong className="text-foreground">Direct mode (0.39), for a single operator.</strong> If you run this portal
+          <strong className="text-foreground">Direct mode (0.40), for a single operator.</strong> If you run this portal
           alone, the approval signer&apos;s operator can turn approvals off for a business, or for every business, with
           one command on the signer:{' '}
           <code className="text-foreground">policy set --business default --approval direct</code>. A request is then
@@ -1049,7 +1049,7 @@ const SECTIONS: Section[] = [
           catalog actions on those computers, as with most RMMs. What still holds: the fresh sign-in, permissions, the
           audit log, containment pauses, revocations, maintenance windows and session rules, and the computer checking
           the signer&apos;s signature. Direct mode cannot be combined with customer sign-off, ClientSt0r proposals are
-          refused under it, and computers need the 0.39 agent (an older one refuses direct plans). More in{' '}
+          refused under it, and computers need the 0.40 agent (an older one refuses direct plans). More in{' '}
           <Link href="/docs/approved-actions#direct-mode-the-default-for-a-single-operator" className="underline text-foreground">Approved actions → Direct mode</Link>.
         </p>
         <p>

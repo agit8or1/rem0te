@@ -323,7 +323,7 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
           policyId: doc.policyId, status: 'AWAITING_APPROVAL', doc, digest, decisions: [], signature: null, kid: null,
           revokedAt: null, revokedBy: null, revokeReason: null, ledger: [], refusals: [], createdAt: now().toISOString(), updatedAt: now().toISOString(),
         };
-        // 0.39: in direct mode the policy is active at admission, with no
+        // 0.40: in direct mode the policy is active at admission, with no
         // approvals; its signature covers that, and it stops counting if the
         // business leaves direct mode (policyQuorum).
         if (policyFor(store.policy(), doc.businessId).approval === 'direct') {
@@ -444,7 +444,7 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
             return existing;
           }
           const j: JobRecord = { jobId: plan.jobId, status: 'AWAITING_APPROVAL', plan, digest, decisions: [], envelope: null, createdAt: now().toISOString(), updatedAt: now().toISOString() };
-          // 0.39, direct mode: admitPlan has already checked everything it
+          // 0.40, direct mode: admitPlan has already checked everything it
           // checks for any plan, the pause is checked above, and the plan
           // says direct only because this business's policy here does. It is
           // signed now, with no approvers; requestedBy is who asked.

@@ -14,7 +14,7 @@ package action
 //   - the arguments match the block's declared parameters — the same closed
 //     rules as apps/api/src/actions/script-run.ts argumentsProblem;
 //   - no approver is among the script's contributors (SAME_PERSON), unless
-//     the signer signed the plan in direct mode (0.39), where there are no
+//     the signer signed the plan in direct mode (0.40), where there are no
 //     approvers to compare.
 //
 // Then the agent writes the script, the arguments (as JSON data) and a fixed
@@ -311,7 +311,7 @@ func scriptPrecheck(p *Plan, o Options) *Result {
 		return refuse("arguments_not_allowed", why)
 	}
 	// SAME_PERSON: whoever wrote the content approves no run of it. A
-	// direct plan (0.39) has no approval to give.
+	// direct plan (0.40) has no approval to give.
 	if p.Policy.Approval != "direct" {
 		for _, ap := range p.Approvers {
 			for _, c := range s.Contributors {

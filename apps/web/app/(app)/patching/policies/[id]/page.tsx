@@ -38,7 +38,7 @@ interface Policy {
   signer: { reachable: boolean; status: string | null; signedPlans: number | null; refusals: { at: string; jobId: string; code: string; message: string }[] };
   deployments: { id: string; name: string; status: string; windowKey: string | null; pausedReason: string | null; createdAt: string }[];
   sweep: { enabled: boolean; everySeconds: number };
-  /** 0.39: activated at admission in direct mode, with no approvals (the signer's word). */
+  /** 0.40: activated at admission in direct mode, with no approvals (the signer's word). */
   direct?: boolean;
   createdById?: string;
   /** 0.34: each computer's result-key fingerprint as this portal holds it (null: none, a pre-0.34 agent). */

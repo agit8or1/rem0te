@@ -1,4 +1,4 @@
--- 0.39 direct mode: a script-library review by the person who wrote the
+-- 0.40 direct mode: a script-library review by the person who wrote the
 -- version, allowed only when the approval signer's operator has set the
 -- signer's DEFAULT policy to direct mode (the policy that also governs the
 -- signer's script allowlist) — a single operator has nobody else to review

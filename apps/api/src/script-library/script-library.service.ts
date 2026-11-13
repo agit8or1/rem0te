@@ -220,7 +220,7 @@ export class ScriptLibraryService {
     const checks = staticCheck(v.content, v.risk);
     const contributor = v.contributorIds.includes(actor.userId);
     const reviewer = view === 'full' && this.canReview(actor, s);
-    // 0.39: asked only when it matters (a contributor looking at a version in review).
+    // 0.40: asked only when it matters (a contributor looking at a version in review).
     const solo = contributor && reviewer && v.status === 'IN_REVIEW' ? await this.approvalMode.allowlistDirect() : false;
     const author = view === 'full' && this.canAuthor(actor, s) && v.authorId === actor.userId;
     return {
@@ -238,7 +238,7 @@ export class ScriptLibraryService {
         canSubmit: author && v.status === 'DRAFT',
         canWithdraw: author && v.status === 'IN_REVIEW',
         canReview: reviewer && v.status === 'IN_REVIEW' && (!contributor || solo),
-        // 0.39: said plainly when the author may review their own version.
+        // 0.40: said plainly when the author may review their own version.
         selfReview: solo,
         cannotReviewBecause: !reviewer ? 'You do not have the review permission for this script.'
           : contributor && !solo ? 'You wrote or edited this content, so someone else must review it.'
@@ -383,7 +383,7 @@ export class ScriptLibraryService {
     const refuse = async (reason: string) => this.audit.log({ ...this.auditBase(actor, s), action: 'SCRIPT_REVIEW_REFUSED', resource: 'script_version', resourceId: v.id, meta: { ...this.versionMeta(s, v), decision: d.decision, reason, expectedSha256: d.expectedSha256 } });
     // SAME_PERSON: by user id, so no context switch, role or assignment makes
     // the author someone else. Contributors include whoever wrote the
-    // unapproved versions this one was edited from. 0.39: unless the approval
+    // unapproved versions this one was edited from. 0.40: unless the approval
     // signer's default policy is in direct mode, where nobody else exists to
     // review it; the approval is then recorded as self-reviewed (0065).
     const self = v.authorId === actor.userId || v.contributorIds.includes(actor.userId);

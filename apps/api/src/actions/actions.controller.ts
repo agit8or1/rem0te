@@ -18,7 +18,7 @@ import { ActionsService } from './actions.service';
 export class ActionsController {
   constructor(private readonly actions: ActionsService, private readonly stepUp: StepUpService) {}
 
-  /** 0.39: direct mode needs a fresh sign-in for a request (ActionsService.createPlan). */
+  /** 0.40: direct mode needs a fresh sign-in for a request (ActionsService.createPlan). */
   private freshMethod(req: Request): string | null {
     const u = req.user as { sub?: string; iat?: number } | undefined;
     return u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null;
@@ -26,7 +26,7 @@ export class ActionsController {
 
   @Get('actions/catalog')
   async catalog(@Actor() actor: ActorContext, @Query('endpointId') endpointId?: string) {
-    // 0.39: with endpointId, also the approval mode its business is in on the signer (read only).
+    // 0.40: with endpointId, also the approval mode its business is in on the signer (read only).
     return { success: true, data: { ...this.actions.catalog(), approval: endpointId ? await this.actions.approvalModeFor(actor, endpointId) : null } };
   }
 

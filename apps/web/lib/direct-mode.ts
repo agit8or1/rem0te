@@ -1,7 +1,7 @@
 import { formatDate } from '@/lib/utils';
 
 /**
- * Direct mode (0.39), said the same way wherever an action, a patch ring, a
+ * Direct mode (0.40), said the same way wherever an action, a patch ring, a
  * software ring or a script run is requested or shown. Whether it applies is
  * the approval signer's decision, set by its operator with its CLI; the
  * portal only reports what the signer answered (`approval` / `direct`).
@@ -17,10 +17,10 @@ export function directApproved(by: string | null | undefined, at: string | Date)
 }
 
 /**
- * An agent from before 0.39 answers a direct plan with bad_plan: it cannot
+ * An agent from before 0.40 answers a direct plan with bad_plan: it cannot
  * parse the signed approval field, and refuses rather than run it.
  */
 export function oldAgentRefusal(direct: boolean | undefined, reason: string | null | undefined): string | null {
   if (!direct || reason !== 'bad_plan') return null;
-  return 'This computer refused a direct-mode plan: its agent is older than 0.39 and accepts only plans approved on the approval page. Update the agent on this computer, then request it again.';
+  return 'This computer refused a direct-mode plan: its agent is older than 0.40 and accepts only plans approved on the approval page. Update the agent on this computer, then request it again.';
 }
