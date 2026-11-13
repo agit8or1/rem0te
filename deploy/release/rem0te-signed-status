@@ -1,0 +1,84 @@
+#!/bin/bash
+# rem0te-signed-status — one screen: keys, where the root keys are, what is
+# published, when the timestamp expires, whether the daily timer runs, and
+# whether the portal is pointed at the repository (0.37).
+#
+#   sudo rem0te-signed-status [--conf FILE]
+#
+# Read-only. Prints no key material: only which key files exist.
+set -euo pipefail
+LIB=@LIB_DIR@
+[[ $LIB == @*@ ]] && LIB=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+CONF=@CONF@
+[[ $CONF == @*@ ]] && CONF=/etc/rem0te-release/release.conf
+# shellcheck source=lib.sh
+source "$LIB/lib.sh"
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --conf) CONF=$2; shift 2 ;;
+    *) die "unknown argument $1" ;;
+  esac
+done
+load_conf "$CONF"
+if [[ -n $RELEASE_USER && $EUID -ne 0 && $(id -un) != "$RELEASE_USER" ]]; then die "run with sudo"; fi
+
+human() { local h=$1; if [[ -z $h ]]; then echo '?'; elif (( h < 0 )); then echo "EXPIRED $(( -h ))h ago"; elif (( h < 48 )); then echo "${h}h left"; else echo "$(( h / 24 ))d left"; fi; }
+warn=0
+line() { printf '  %-16s %s\n' "$1" "$2"; }
+
+echo "rem0te signed releases — $(hostname 2>/dev/null || echo host)"
+line "Configuration" "$CONF_FILE"
+line "Release user" "${RELEASE_USER:-(none: test install as $(id -un))}"
+km=$(as_release 077 stat -c %a "$KEY_DIR" 2>/dev/null || echo missing)
+line "Key directory" "$KEY_DIR (mode $km)"
+roles=''
+for k in $ROLE_KEYS; do if key_present "$k"; then roles+="$k ✓  "; else roles+="$k MISSING  "; warn=1; fi; done
+line "Signing keys" "$roles"
+n=0; for k in $ROOT_KEYS; do if key_present "$k"; then n=$((n + 1)); fi; done
+if as_release 077 test -f "$KEY_DIR/ROOT_EXPORTED"; then
+  line "Root keys" "$n of 3 on this host; exported $(as_release 077 cat "$KEY_DIR/ROOT_EXPORTED")"
+elif (( n == 3 )); then
+  line "Root keys" "3 of 3 ON THIS HOST — move them off it: sudo rem0te-signed-export-root <dir>"
+else
+  line "Root keys" "$n of 3 on this host, not recorded as exported"; warn=1
+fi
+
+declare -A P=()
+while IFS='=' read -r k v; do P[$k]=$v; done < <(repo_info "$PUB_DIR" summary)
+if [[ ${P[CONFIGURED]} == 1 ]]; then
+  agent=${P[AGENT_VERSION]:-none}; [[ -n ${P[AGENT_COMMIT]} ]] && agent+=" (commit ${P[AGENT_COMMIT]:0:12})"
+  line "Published" "$PUB_DIR"
+  line "  agent" "$agent"
+  if [[ -n ${P[AGENT_SHA256]} ]]; then line "  agent file" "targets/windows/${P[AGENT_SHA256]}.rem0te-agent.exe"; fi
+  line "  tray" "${P[TRAY_VERSION]:-none}"
+  line "  installer" "${P[INSTALLER_SHA256]:+install.ps1 ${P[INSTALLER_SHA256]:0:12}}"
+  line "  RustDesk" "${P[RUSTDESK_VERSIONS]:-none}"
+  for r in TIMESTAMP SNAPSHOT TARGETS ROOT; do
+    h=${P[${r}_LEFT_H]}
+    line "  ${r,,}" "v${P[${r}_VERSION]} expires ${P[${r}_EXPIRES]} ($(human "$h"))"
+    if [[ -n $h && $h -lt 48 ]]; then warn=1; fi
+  done
+else
+  line "Published" "nothing yet at $PUB_DIR — run: sudo rem0te-signed-publish"; warn=1
+fi
+if as_release 027 test -f "$STATE_DIR/last-publish"; then
+  line "Last publish" "$(as_release 027 cat "$STATE_DIR/last-publish")"
+else
+  line "Last publish" "never"
+fi
+if [[ ${SYSTEMD:-0} == 1 ]]; then
+  t=$(systemctl is-active rem0te-timestamp-refresh.timer 2>/dev/null || true)
+  nx=$(systemctl show -p NextElapseUSecRealtime --value rem0te-timestamp-refresh.timer 2>/dev/null || true)
+  line "Timer" "rem0te-timestamp-refresh.timer ${t:-unknown}${nx:+, next $nx}"
+  [[ $t == active ]] || warn=1
+else
+  line "Timer" "not installed (--no-systemd): run rem0te-signed-refresh daily yourself"
+fi
+if [[ -n ${PORTAL_ENV:-} && -r $PORTAL_ENV ]]; then
+  if grep -qx "UPDATE_REPO_DIR=$PUB_DIR" "$PORTAL_ENV"; then line "Portal" "UPDATE_REPO_DIR=$PUB_DIR in $PORTAL_ENV ✓"
+  else line "Portal" "UPDATE_REPO_DIR=$PUB_DIR is NOT in $PORTAL_ENV"; warn=1; fi
+else
+  line "Portal" "cannot read ${PORTAL_ENV:-the portal env file}; it needs UPDATE_REPO_DIR=$PUB_DIR"
+fi
+line "Log" "$LOG_FILE"
+exit $warn

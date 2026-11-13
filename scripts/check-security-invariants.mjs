@@ -3229,6 +3229,127 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     "onModuleInit: TRAY_SWEEP === 'off' → no timer; run-e2e.sh exports it; e2e-ui's API env sets it");
 }
 
+// 56. Signed releases on one host (0.37). deploy/release/ sets up, builds,
+//     signs and publishes the signed update repository on the portal's own
+//     host, as a dedicated rem0te-release user the portal (`reboot`) cannot
+//     read. The protection is that separation and the git boundary, so each
+//     is checked: the API never reaches the key store, the release tool or
+//     the published directory's write side; keys are written only into the
+//     0700 key directory under umask 077; a build is a `git archive` of HEAD
+//     with the owner's root written only into that copy, and the checked-in
+//     root stays the `{}` placeholder; the checkout's JavaScript runs as the
+//     checkout's owner, never as the key holder; the published repository is
+//     group-readable and never group-writable; the RustDesk build needs
+//     GitHub's published digest; and nothing in CI runs these scripts.
+{
+  const rel = (f) => read(`deploy/release/${f}`);
+  const lib = rel('lib.sh');
+  const setup = rel('rem0te-signed-setup.sh');
+  const pub = rel('rem0te-signed-publish');
+  const refresh = rel('rem0te-signed-refresh');
+  const exportRoot = rel('rem0te-signed-export-root');
+  const promote = rel('promote-stage.sh');
+  const asset = rel('rustdesk-asset.mjs');
+  const unit = rel('systemd/rem0te-timestamp-refresh.service');
+  const scripts = ['lib.sh', 'rem0te-signed-setup.sh', 'rem0te-signed-publish', 'rem0te-signed-refresh', 'rem0te-signed-status', 'rem0te-signed-export-root', 'promote-stage.sh']
+    .map((f) => [f, rel(f)]);
+  const code = (s) => s.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+
+  const apiFiles = walk('apps/api/src');
+  const reaching = apiFiles.filter((f) => /\/var\/lib\/rem0te-release|rem0te-signed-|\b(?:root[123]|targets|snapshot|timestamp)\.pem\b|KEY_DIR|REM0TE_SIGNED/.test(read(f)));
+  const spawning = apiFiles.filter((f) => /child_process/.test(read(f)) && /rem0te-release/.test(read(f)));
+  check('the API never names the release key store, a key file or the rem0te-signed commands, and never spawns rem0te-release',
+    reaching.length === 0 && spawning.length === 0,
+    `references: ${reaching.join(', ') || '(none)'}; spawns: ${spawning.join(', ') || '(none)'}`);
+  const envReaders = apiFiles.filter((f) => /process\.env\.UPDATE_REPO_DIR/.test(read(f)));
+  const svc = read('apps/api/src/update-trust/update-trust.service.ts');
+  const writes = /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|rename|renameSync|mkdir|mkdirSync|unlink|unlinkSync|rmSync|rmdir|copyFile|copyFileSync|createWriteStream|symlink|symlinkSync|chmod|chmodSync|truncate)\s*\(/;
+  const outsiders = apiFiles.filter((f) => f !== 'apps/api/src/update-trust/update-trust.service.ts' && /\.(?:repoDir|metadataPath|targetPath)\(/.test(read(f)) && writes.test(read(f)));
+  check('UPDATE_REPO_DIR is read only by UpdateTrustService, which writes nothing, and no file that resolves repository paths writes files',
+    JSON.stringify(envReaders) === JSON.stringify(['apps/api/src/update-trust/update-trust.service.ts']) && !writes.test(svc) && outsiders.length === 0,
+    `readers: ${envReaders.join(', ')}; service writes: ${writes.test(svc)}; writers resolving repo paths: ${outsiders.join(', ') || '(none)'}`);
+
+  const keygens = scripts.flatMap(([f, s]) => code(s).split('\n').filter((l) => /\bkeygen\b/.test(l)).map((l) => `${f}: ${l.trim()}`));
+  check('keys are generated only into the key directory, by the release user under umask 077',
+    keygens.length === 1 && /^rem0te-signed-setup\.sh: tool keygen -out "\$KEY_DIR\/\$k\.pem" \|/.test(keygens[0])
+      && /^tool\(\) \{\n  as_release 077 env -i /m.test(lib)
+      && /^KEY_DIR=\$STATE_DIR\/keys$/m.test(setup) && /^mk 0700 "\$STATE_DIR"\nmk 0700 "\$KEY_DIR"$/m.test(setup)
+      && /\( umask "\$m"; exec "\$@" \)/.test(lib) && /runuser -u "\$RELEASE_USER" -- \/bin\/sh -c 'umask "\$0"; exec "\$@"' "\$m" "\$@"/.test(lib),
+    `keygen lines: ${JSON.stringify(keygens)}; tool() must be as_release 077; KEY_DIR=$STATE_DIR/keys created 0700`);
+  const pemLines = scripts.flatMap(([f, s]) => code(s).split('\n').filter((l) => /\.pem\b/.test(l) && !/"\$KEY_DIR\/[^"]*\.pem"/.test(l) && !/die "|echo "/.test(l)).map((l) => `${f}: ${l.trim()}`));
+  check('every key path the scripts open is under $KEY_DIR, except export-root\'s off-host copy (written 0600 under umask 077)',
+    pemLines.length === 2 && pemLines.every((l) => /^rem0te-signed-export-root: {2}?dest=\$\{abs\[.*\]\}\/rem0te-\$k\.pem$/.test(l.replace(/: +/, ':  ')))
+      && /\( umask 077; as_release 077 cat "\$KEY_DIR\/\$k\.pem" > "\$dest\.part" \)/.test(exportRoot) && /chmod 0600 "\$dest"/.test(exportRoot),
+    `other .pem paths: ${JSON.stringify(pemLines)}`);
+  check('export-root refuses a destination inside the checkout, a git tree, the state directory or the published repository, and deletes only after "yes"',
+    /for bad in "\$SOURCE_DIR" "\$STATE_DIR" "\$PUB_DIR" "\$BUILD_ROOT"; do/.test(exportRoot) && /git -C "\$a" rev-parse --is-inside-work-tree/.test(exportRoot)
+      && /if \[\[ \$ans != yes \]\]; then\n\s+echo "Root keys kept on this host\."\n\s+exit 0/.test(exportRoot)
+      && exportRoot.indexOf('cmp -s - "$dest.part"') < exportRoot.indexOf('shred -u'),
+    'rem0te-signed-export-root: refusal loop over SOURCE_DIR/STATE_DIR/PUB_DIR/BUILD_ROOT, git work-tree check, cmp before delete, delete only on "yes"');
+
+  check('a build is `git archive` of HEAD unpacked by the release user, never a copy of the working tree',
+    /^extract_head\(\) \{\n  as_owner git -C "\$SOURCE_DIR" archive --format=tar HEAD \| as_release 022 tar -x -C "\$1" -f -$/m.test(lib)
+      && /^extract_head "\$BUILD\/src"$/m.test(pub) && /^extract_head "\$BUILD\/src"$/m.test(setup)
+      && !scripts.some(([, s]) => /(?:cp|rsync|tar)\b[^\n]*"\$SOURCE_DIR(?:\/[^"]*)?"[^\n]*(?:"\$BUILD|\$BUILD)/.test(code(s)) || /(?:^|\s)(?:cp|rsync)\b[^\n]*\$SOURCE_DIR/m.test(code(s))),
+    'lib.sh extract_head: as_owner git -C "$SOURCE_DIR" archive --format=tar HEAD | as_release 022 tar -x; publish and setup call it; no cp/rsync of $SOURCE_DIR');
+  const rootWrites = scripts.flatMap(([f, s]) => code(s).split('\n').filter((l) => /\$TRUSTROOT|trustroot\/root\.json/.test(l) && (/^\s*(?:as_\w+ \d* ?)?(?:cp|mv|install|tee|dd)\b/.test(l) || /[^2<]>>?\s*"[^"]*(?:\$TRUSTROOT|trustroot\/root\.json)/.test(l)) && !/die "/.test(l)).map((l) => `${f}: ${l.trim()}`));
+  check('the owner\'s root is written only into the build copy, and the checkout\'s placeholder is checked before and after',
+    JSON.stringify(rootWrites) === JSON.stringify(['rem0te-signed-publish: as_release 022 cp "$WORK_REPO/metadata/1.root.json" "$BUILD/src/$TRUSTROOT"'])
+      && /^TRUSTROOT=tools\/windows-installer\/trustroot\/root\.json$/m.test(lib)
+      && /\[\[ \$wt == '\{\}' \]\] \|\| die/.test(lib) && /\[\[ \$head == '\{\}' \]\] \|\| die/.test(lib)
+      && pub.indexOf('check_trustroot_clean') < pub.indexOf('new_build_dir') && /cp "\$WORK_REPO\/metadata\/1\.root\.json" "\$BUILD\/src\/\$TRUSTROOT"\ncheck_trustroot_clean/.test(pub)
+      && /^check_trustroot_clean$/m.test(setup)
+      && /"\$BUILD\/out\/rem0te-agent\.exe" "\$WORK_REPO\/metadata\/1\.root\.json" \|\| die "the built agent does not embed/.test(pub),
+    `writes naming the trust root: ${JSON.stringify(rootWrites)}`);
+  check('the checked-in tools/windows-installer/trustroot/root.json is the {} placeholder',
+    read('tools/windows-installer/trustroot/root.json').trim() === '{}',
+    `it is ${read('tools/windows-installer/trustroot/root.json').length} bytes: never commit the owner's root (rem0te-signed-publish writes it into the build copy only)`);
+  check('the checkout\'s JavaScript runs as the checkout\'s owner, never as the key holder',
+    /^as_owner env -i PATH="\$SAFE_PATH" "\$NODE" "\$BUILD\/src\/apps\/api\/scripts\/build-signed-installer\.mjs" \\$/m.test(pub)
+      && !scripts.some(([, s]) => code(s).split('\n').some((l) => /\$BUILD\/src\/apps/.test(l) && !/^\s*as_owner /.test(l) && !/^\s*--from-source/.test(l)))
+      && /^gobuild\(\) \{[^\n]*\n  as_release 022 env -i [\s\S]{0,300}?CGO_ENABLED=0 /m.test(lib),
+    'publish: the install.ps1 step is as_owner; no other line runs anything from $BUILD/src/apps; Go builds use CGO_ENABLED=0');
+
+  const loosened = scripts.filter(([, s]) => /\b(?:0?[267]7[0-7]|0?66[0-7]|0?664|g\+w|chmod -R g\+|a\+w|o\+w)\b/.test(code(s))).map(([f]) => f);
+  check('the published repository is group-readable and never group-writable: 2750 directories, 0640 files, umask 027',
+    /^mk 2750 "\$PUB_DIR" "\$PUB_GROUP"$/m.test(setup) && /as_release 027 chmod -R u=rwX,g=rX,o= "\$stage"/.test(lib)
+      && /^umask 027$/m.test(promote) && /mv -T "\$stage\/metadata\/timestamp\.json" "\$pub\/metadata\/timestamp\.json"\nrm -rf "\$stage"/.test(promote)
+      && promote.indexOf('mv -T "$stage/metadata/root.json"') < promote.indexOf('mv -T "$stage/metadata/timestamp.json"')
+      && /cmp -s "\$stage\/\$f" "\$pub\/\$f" \|\|/.test(promote) && loosened.length === 0,
+    `setup mk 2750; publish_repo chmod u=rwX,g=rX,o=; promote-stage umask 027, timestamp.json moved last; loosened modes in: ${loosened.join(', ') || '(none)'}`);
+  check('a staged copy is verified with the agents\' client before anything is moved, and a failed one is removed',
+    /if ! tool verify -repo "\$stage" -trusted-root "\$WORK_REPO\/metadata\/1\.root\.json" >> "\$LOG_FILE" 2>&1; then\n\s+as_release 027 rm -rf "\$stage"\n\s+die /.test(lib)
+      && lib.indexOf('tool verify -repo "$stage"') < lib.indexOf('"$LIB/promote-stage.sh"')
+      && /if \[\[ \$EUID -ne 0 && \$\{REM0TE_SIGNED_TEST_CORRUPT_STAGING:-\} == 1 \]\]; then/.test(lib),
+    'publish_repo: verify the stage, rm it and die on failure, then promote-stage.sh; the corruption test hook never runs as root');
+  check('publish refuses a downgrade and the same version from another commit',
+    /if ver_lt "\$VERSION" "\$pv"; then\n\s+die "refusing to publish \$VERSION: \$pv is already published \(a downgrade\)/.test(pub)
+      && /if \[\[ \$VERSION == "\$pv" && \$COMMIT != "\$\{PUBL\[AGENT_COMMIT\]:-\}" \]\]; then\n\s+die /.test(pub)
+      && pub.indexOf('ver_lt "$VERSION" "$pv"') < pub.indexOf('gobuild '),
+    'rem0te-signed-publish: ver_lt → die before any build; same version + other commit → die');
+  check('the RustDesk build needs GitHub\'s published SHA-256 and comes only from RustDesk\'s GitHub release (or the loopback test server)',
+    /if \(!sha\) fail\(`GitHub publishes no SHA-256 digest/.test(asset)
+      && /: url === `https:\/\/github\.com\/rustdesk\/rustdesk\/releases\/download\/\$\{version\}\/\$\{name\}`;/.test(asset)
+      && /if \[\[ \$got != "\$\{A\[SHA256\]\}" \]\]; then/.test(pub) && /curl_opts\+=\(--proto '=https' --proto-redir '=https'\)/.test(pub)
+      && /\|\| die "RUSTDESK_API must be GitHub's or a loopback test server"/.test(pub),
+    'rustdesk-asset.mjs refuses a missing digest and any other download URL; publish compares the download with it; https only against GitHub');
+  check('the daily refresh runs as the release user, with no access to the portal\'s configuration',
+    /^User=@RELEASE_USER@$/m.test(unit) && /^ExecStart=@BIN_DIR@\/rem0te-signed-refresh --conf @CONF@$/m.test(unit)
+      && /^InaccessiblePaths=-\/etc\/reboot-remote -\/opt\/reboot-remote$/m.test(unit) && /^IPAddressDeny=any$/m.test(unit)
+      && /^TOOL=\$LIB_DIR\/rem0te-release$/m.test(refresh) && /tool refresh -repo "\$BUILD\/repo" "\$\{K\[@\]\}"/.test(refresh),
+    'rem0te-timestamp-refresh.service: User=@RELEASE_USER@, InaccessiblePaths the portal config, no outbound network');
+  const gh = [];
+  const walkAll = (d) => { for (const n of readdirSync(join(ROOT, d))) { const r = `${d}/${n}`; if (statSync(join(ROOT, r)).isDirectory()) walkAll(r); else gh.push(r); } };
+  walkAll('.github');
+  const ghRefs = gh.filter((f) => /rem0te-signed-|deploy\/release|rem0te-timestamp-refresh|\/var\/lib\/rem0te-release/.test(read(f)));
+  check('nothing under .github references the signed-release scripts (no CI builds, signs or publishes)',
+    ghRefs.length === 0, `referenced in: ${ghRefs.join(', ')}`);
+  const gi = read('.gitignore');
+  check('.gitignore keeps in-tree release artefacts out of git',
+    /^\/tools\/windows-installer\/rem0te-release$/m.test(gi) && /^\/tools\/windows-installer\/\*\*\/\*\.pem$/m.test(gi) && /^\/deploy\/\*\*\/\*\.pem$/m.test(gi) && /^rem0te-repo\/$/m.test(gi),
+    '.gitignore: /tools/windows-installer/rem0te-release, /tools/windows-installer/**/*.pem, /deploy/**/*.pem, rem0te-repo/');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

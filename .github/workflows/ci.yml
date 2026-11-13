@@ -278,6 +278,14 @@ jobs:
       - name: Agent migration tests
         run: node apps/api/scripts/unit-agent-migration.mjs
 
+      # Signed releases on one host (0.37): the helpers behind the single-host
+      # release tooling — a RustDesk build needs GitHub's published digest and
+      # URL, unverified metadata is charset-checked before a shell sees it, and
+      # pruning keeps the newest two targets versions. (The tooling itself is
+      # never run by CI against anything real; its e2e suite runs in a temp dir.)
+      - name: Signed release helper tests
+        run: node apps/api/scripts/unit-signed-release.mjs
+
       # Chat (0.34): message text and the controls it drops, reported names,
       # which computers can chat and why not, presence and receipts, device
       # ids, and the retention window and its bounds.

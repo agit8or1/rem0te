@@ -134,6 +134,18 @@ cd /opt/reboot-remote/api && sudo npx prisma generate       # regenerate the cli
 sudo chown -R reboot:reboot /opt/reboot-remote/api/prisma /opt/reboot-remote/api/node_modules/.prisma
 ```
 
+**Once signed releases are set up on the host** (`deploy/release/rem0te-signed-setup.sh`,
+0.37), the last step of every deploy is:
+
+```bash
+sudo rem0te-signed-publish     # builds HEAD via git archive, signs, verifies, publishes
+```
+
+It builds the agent from the checkout's **committed** HEAD, so commit (and
+bump the version) before deploying. The same version and commit again is a
+no-op; an older version is refused. `sudo rem0te-signed-status` shows what is
+published and when the timestamp expires.
+
 Client chunks are **added, never deleted** — that is what the `--exclude` and the
 second rsync are for. Next.js requests chunks by content hash, and deleting the
 previous build's files 404s every browser that already had the app open.
@@ -176,6 +188,11 @@ previous build's files 404s every browser that already had the app open.
   because nothing compares the two. Generating it is what stops that.
 - **Never `pkill -f 'node dist/main.js'`** — it matches the production API.
   Use PIDs.
+- **Never commit `tools/windows-installer/trustroot/root.json`.** The tracked
+  file is the `{}` placeholder. The owner's root of trust is written only into
+  the `git archive` copy `rem0te-signed-publish` builds from. The command
+  refuses to run if the checkout's copy, or HEAD's, is anything else, and §56
+  fails CI on it. A committed root goes to GitHub with the next push.
 - **Every capture script seeds demo businesses and computers.** Point them at a
   scratch database, never a live one — see *Capturing media* below. `output:
   'standalone'` bakes the Next rewrite destination in at build time, so
@@ -635,6 +652,28 @@ rows hold ids, tools and outcomes only; screenshots and usage are served,
 inert, only to someone who can see the computer; and `TRAY_SWEEP=off` is exact
 and set by `run-e2e.sh` and `e2e-ui.mjs`. Behavioural proof: `e2e-tray.mjs` (port 3632);
 unit: `unit-tray.mjs` and the Go `internal/tray` tests.
+
+0.37 added §56 for signed releases on one host (`deploy/release/`). The
+keys live on the portal host under the `rem0te-release` system user, in
+`/var/lib/rem0te-release` (0700), and the portal (`reboot`) must never be able
+to read them. So: nothing in `apps/api/src` names that directory, a key file or
+the `rem0te-signed-*` commands, or spawns `rem0te-release`;
+`UPDATE_REPO_DIR` is read only by `UpdateTrustService`, which writes nothing.
+Keys are generated only into `$KEY_DIR`, by the release user under umask 077.
+Every other `.pem` path is under `$KEY_DIR`, except export-root's off-host copy,
+and export-root deletes only after `yes`. A build is `git archive HEAD`
+unpacked by the release user, never the working tree. The owner's root is
+written only into `$BUILD/src/…/trustroot/root.json`, and the checkout's (and
+HEAD's) copy must be `{}`; the tracked file is checked to be `{}`. The
+checkout's JavaScript (the install.ps1 step) runs as the checkout's owner,
+never as the key holder. The published repository is 2750/0640, staged,
+verified and moved in by renames with `timestamp.json` last. Publish refuses a
+downgrade or the same version from another commit. A RustDesk build needs
+GitHub's published SHA-256. The refresh unit runs as `rem0te-release` with no
+access to `/etc/reboot-remote`. Nothing under `.github` names these scripts.
+Behavioural proof: `apps/api/scripts/e2e-signed-release.mjs` (ports 3901–3902,
+needs Go; runs setup with `--prefix --no-user --no-systemd` in a temp dir);
+unit: `unit-signed-release.mjs`.
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 

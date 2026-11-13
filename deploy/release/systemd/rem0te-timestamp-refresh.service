@@ -1,0 +1,40 @@
+[Unit]
+Description=rem0te: re-sign and publish the signed update timestamp (0.37)
+Documentation=https://github.com/agit8or1/rem0te/blob/main/docs/update-signing.md
+# Installed by deploy/release/rem0te-signed-setup.sh, which fills in the paths.
+
+[Service]
+Type=oneshot
+# The release user: it owns the keys and the published repository. Never
+# `reboot`, which runs the portal and must not be able to read the keys.
+User=@RELEASE_USER@
+Group=@RELEASE_USER@
+ExecStart=@BIN_DIR@/rem0te-signed-refresh --conf @CONF@
+UMask=0027
+
+# It needs its own state, the published repository and a loopback listener
+# (`rem0te-release verify` serves the staged copy to the agents' client on
+# 127.0.0.1). No database, no outbound network.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=@STATE_DIR@ @PUB_DIR@ @BUILD_ROOT@
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=false
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+InaccessiblePaths=-/etc/reboot-remote -/opt/reboot-remote
