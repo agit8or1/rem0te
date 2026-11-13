@@ -1,0 +1,165 @@
+#!/bin/bash
+# rem0te-signed-publish — build, sign, verify and publish one signed release (0.37).
+#
+#   sudo rem0te-signed-publish [--source DIR] [--rustdesk-version X.Y.Z] [--republish] [--conf FILE]
+#
+# From the source checkout recorded at setup (or --source):
+#   1. `git archive HEAD` into a fresh build directory owned by the release
+#      user — never the working tree — and write the owner's root of trust
+#      into that copy's trustroot/root.json (never into the checkout);
+#   2. build rem0te-agent.exe and rem0te-tray.exe (windows/amd64, -trimpath)
+#      and the release tool, and check the agent embeds the root;
+#   3. build windows/install.ps1 with apps/api/scripts/build-signed-installer.mjs;
+#   4. fetch the RustDesk build the portal pins (else the latest), checked
+#      against the SHA-256 GitHub publishes, cached;
+#   5. sign a copy of the signing repository with rem0te-release, adding
+#      {"version","commit"} to the agent and tray targets, and verify it with
+#      the agents' own client;
+#   6. publish it: a staging directory beside the published repository,
+#      verified again, moved in by renames with timestamp.json last.
+#
+# Refuses a version older than the one published. The same version and commit
+# again is a no-op unless --republish (e.g. to add a newly pinned RustDesk).
+# Everything is logged to LOG_FILE (under the release user's state directory).
+set -euo pipefail
+LIB=@LIB_DIR@
+[[ $LIB == @*@ ]] && LIB=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+CONF=@CONF@
+[[ $CONF == @*@ ]] && CONF=/etc/rem0te-release/release.conf
+# shellcheck source=lib.sh
+source "$LIB/lib.sh"
+
+src_override='' rd_override='' republish=0
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --conf) CONF=$2; shift 2 ;;
+    --source) src_override=$2; shift 2 ;;
+    --rustdesk-version) rd_override=$2; shift 2 ;;
+    --republish) republish=1; shift ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    *) die "unknown argument $1" ;;
+  esac
+done
+load_conf "$CONF"
+[[ -n $src_override ]] && SOURCE_DIR=$(cd "$src_override" && pwd)
+[[ -z $rd_override || $rd_override =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "--rustdesk-version wants x.y.z"
+if [[ -n $RELEASE_USER && $EUID -ne 0 && $(id -un) != "$RELEASE_USER" ]]; then die "run with sudo"; fi
+
+lock_or_die
+start_log "publish from $SOURCE_DIR"
+recover_work
+trap cleanup_build EXIT
+
+# ── Preflight ───────────────────────────────────────────────────────────────
+[[ -f $WORK_REPO/metadata/root.json && -f $WORK_REPO/metadata/1.root.json ]] || die "no signing repository at $WORK_REPO — run rem0te-signed-setup.sh"
+for k in $ROLE_KEYS; do key_present "$k" || die "the $k key is missing from $KEY_DIR"; done
+as_owner git -C "$SOURCE_DIR" rev-parse --git-dir > /dev/null 2>&1 || die "$SOURCE_DIR is not a git checkout"
+check_trustroot_clean
+COMMIT=$(head_commit)
+[[ $COMMIT =~ ^[0-9a-f]{40}$ ]] || die "could not read HEAD's commit"
+
+declare -A PUBL=()
+while IFS='=' read -r k v; do PUBL[$k]=$v; done < <(repo_info "$PUB_DIR" summary)
+
+new_build_dir
+extract_head "$BUILD/src"
+VERSION=$(json_version "$BUILD/src/version.json") || die "HEAD's version.json has no x.y.z version"
+say "building $VERSION from commit $COMMIT"
+pv=${PUBL[AGENT_VERSION]:-}
+if [[ -n $pv ]]; then
+  if ver_lt "$VERSION" "$pv"; then
+    die "refusing to publish $VERSION: $pv is already published (a downgrade). Agents would refuse it anyway; check out the release you meant."
+  fi
+  if [[ $VERSION == "$pv" && $COMMIT == "${PUBL[AGENT_COMMIT]:-}" && $republish -eq 0 ]]; then
+    say "$VERSION ($COMMIT) is already published; nothing to do. (--republish signs it again, e.g. to add a newly pinned RustDesk build.)"
+    exit 0
+  fi
+  if [[ $VERSION == "$pv" && $COMMIT != "${PUBL[AGENT_COMMIT]:-}" ]]; then
+    die "refusing to publish $COMMIT as $VERSION: $VERSION is already published from ${PUBL[AGENT_COMMIT]:-another commit}. Every change bumps the version (CLAUDE.md)."
+  fi
+fi
+
+# ── The root of trust goes into the build copy, and only there ─────────────
+as_release 022 cp "$WORK_REPO/metadata/1.root.json" "$BUILD/src/$TRUSTROOT"
+check_trustroot_clean   # and the checkout still has the placeholder
+
+# ── Build ───────────────────────────────────────────────────────────────────
+W=$BUILD/src/tools/windows-installer
+say "building rem0te-release (linux/amd64)"
+gobuild "$W" "$BUILD/out/rem0te-release" linux "-s -w" ./cmd/rem0te-release
+say "building rem0te-agent.exe (windows/amd64)"
+gobuild "$W" "$BUILD/out/rem0te-agent.exe" windows "-s -w" .
+say "building rem0te-tray.exe (windows/amd64, GUI subsystem)"
+gobuild "$W" "$BUILD/out/rem0te-tray.exe" windows "-H=windowsgui -s -w" ./cmd/rem0te-tray
+"$NODE" -e 'const fs=require("fs");const exe=fs.readFileSync(process.argv[1]);const root=fs.readFileSync(process.argv[2]);process.exit(exe.indexOf(root)>=0?0:1)' \
+  "$BUILD/out/rem0te-agent.exe" "$WORK_REPO/metadata/1.root.json" || die "the built agent does not embed the owner's root of trust"
+TOOL=$BUILD/out/rem0te-release
+
+say "building install.ps1 (as $(stat -c %U "$SOURCE_DIR"), from the archive)"
+as_owner env -i PATH="$SAFE_PATH" "$NODE" "$BUILD/src/apps/api/scripts/build-signed-installer.mjs" \
+    --from-source --typescript "$TYPESCRIPT_DIR" --out - \
+  | as_release 022 /bin/sh -c 'cat > "$0"' "$BUILD/out/install.ps1"
+[[ -s $BUILD/out/install.ps1 ]] || die "install.ps1 was not built"
+grep -Fq "\$AGENT_VERSION = '$VERSION'" "$BUILD/out/install.ps1" || die "install.ps1 does not carry agent version $VERSION"
+
+# ── RustDesk ────────────────────────────────────────────────────────────────
+RD=${rd_override:-${RUSTDESK_VERSION:-}}
+if [[ -z $RD && -n ${PORTAL_ENV:-} && -r $PORTAL_ENV ]]; then
+  RD=$("$NODE" "$LIB/portal-pin.mjs" "$PORTAL_ENV" || true)
+  if [[ -n $RD ]]; then say "RustDesk $RD: the version the portal pins"; fi
+fi
+api=${RUSTDESK_API:-$DEFAULT_RUSTDESK_API}
+curl_opts=(-fsSL --max-time 120 -A rem0te-signed-publish -H 'Accept: application/vnd.github+json')
+[[ $api == "$DEFAULT_RUSTDESK_API" ]] && curl_opts+=(--proto '=https' --proto-redir '=https')
+[[ $api == "$DEFAULT_RUSTDESK_API" || $api =~ ^http://127\.0\.0\.1:[0-9]+/ ]] || die "RUSTDESK_API must be GitHub's or a loopback test server"
+if [[ -z $RD ]]; then
+  as_release 022 curl "${curl_opts[@]}" -o "$BUILD/tmp/latest.json" "$api/latest" || die "could not ask GitHub for the latest RustDesk release"
+  RD=$("$NODE" "$LIB/rustdesk-asset.mjs" tag "$BUILD/tmp/latest.json" | sed -n 's/^VERSION=//p')
+  [[ -n $RD ]] || die "could not read the latest RustDesk release"
+  say "RustDesk $RD: the latest release (the portal pins none)"
+fi
+rd_name="rustdesk-$RD-x86_64.exe"
+as_release 022 curl "${curl_opts[@]}" -o "$BUILD/tmp/rd.json" "$api/tags/$RD" || die "could not read RustDesk release $RD"
+declare -A A=()
+while IFS='=' read -r k v; do A[$k]=$v; done < <("$NODE" "$LIB/rustdesk-asset.mjs" asset "$BUILD/tmp/rd.json" "$RD" "$api" || true)
+[[ ${A[SHA256]:-} =~ ^[0-9a-f]{64}$ ]] || die "no usable SHA-256 for $rd_name (see above)"
+cache=$STATE_DIR/cache/rustdesk
+as_release 027 mkdir -p "$cache"
+sum_of() { as_release 027 sha256sum "$1" | cut -d' ' -f1; }
+if [[ ! -f $cache/$rd_name ]] || [[ $(sum_of "$cache/$rd_name") != "${A[SHA256]}" ]]; then
+  say "downloading $rd_name"
+  as_release 027 curl "${curl_opts[@]}" -o "$cache/$rd_name.part" "${A[URL]}" || die "could not download $rd_name"
+  got=$(sum_of "$cache/$rd_name.part")
+  if [[ $got != "${A[SHA256]}" ]]; then
+    as_release 027 rm -f "$cache/$rd_name.part"
+    die "$rd_name does not match the digest GitHub publishes (got $got, expected ${A[SHA256]}); nothing was signed"
+  fi
+  as_release 027 mv -f "$cache/$rd_name.part" "$cache/$rd_name"
+fi
+say "RustDesk $RD: sha256 ${A[SHA256]} (matches GitHub's published digest)"
+
+# ── Sign a copy, verify it ──────────────────────────────────────────────────
+as_release 022 cp -a "$WORK_REPO" "$BUILD/repo"
+custom="{\"version\":\"$VERSION\",\"commit\":\"$COMMIT\"}"
+args=(release -repo "$BUILD/repo"
+  -targets-key "$KEY_DIR/targets.pem" -snapshot-key "$KEY_DIR/snapshot.pem" -timestamp-key "$KEY_DIR/timestamp.pem"
+  -add "windows/rem0te-agent.exe=$BUILD/out/rem0te-agent.exe" -custom "windows/rem0te-agent.exe=$custom"
+  -add "windows/rem0te-tray.exe=$BUILD/out/rem0te-tray.exe" -custom "windows/rem0te-tray.exe=$custom"
+  -add "windows/install.ps1=$BUILD/out/install.ps1")
+if [[ $(repo_info "$WORK_REPO" target "windows/rustdesk/$rd_name") != "${A[SHA256]}" ]]; then
+  args+=(-add "windows/rustdesk/$rd_name=$cache/$rd_name" -custom "windows/rustdesk/$rd_name={\"version\":\"$RD\"}")
+fi
+say "signing"
+tool "${args[@]}"
+say "verifying with the agents' client"
+tool verify -repo "$BUILD/repo" -trusted-root "$WORK_REPO/metadata/1.root.json" | tail -1
+
+# ── Publish ─────────────────────────────────────────────────────────────────
+promote_work "$BUILD/repo"
+publish_repo "$WORK_REPO"
+if [[ -w $LIB_DIR ]]; then install -m 0755 "$TOOL" "$LIB_DIR/rem0te-release"; fi
+as_release 027 /bin/sh -c 'printf "%s %s %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" > "$0"' "$STATE_DIR/last-publish" "$VERSION" "$COMMIT"
+log "published $VERSION $COMMIT"
+say ""
+say "Published $VERSION ($COMMIT) to $PUB_DIR."
+say "The portal serves it at /api/v1/public/updates (UPDATE_REPO_DIR=$PUB_DIR)."

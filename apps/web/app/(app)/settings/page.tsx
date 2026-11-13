@@ -413,9 +413,15 @@ export default function SettingsPage() {
                 The offline-signed update repository this portal mirrors, which agents verify what they install, and
                 whether legacy agents may still run portal-served installers.
               </p>
-              <Button variant="outline" onClick={() => router.push('/settings/security/update-signing')}>
-                <ShieldCheck className="mr-2 h-4 w-4" />Open Update Signing
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => router.push('/settings/security/update-signing')}>
+                  <ShieldCheck className="mr-2 h-4 w-4" />Open Update Signing
+                </Button>
+                {/* 0.37: the whole move to the signed agent, step by step. */}
+                <Button variant="outline" onClick={() => router.push('/endpoints/full-agent')} data-testid="settings-full-agent">
+                  Full agent: set up and move computers
+                </Button>
+              </div>
             </CardContent>
           </Card>
           <Card>

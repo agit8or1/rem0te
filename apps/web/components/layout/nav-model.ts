@@ -25,6 +25,11 @@
  *
  * 0.35: Devices gained Agent migrations, the status page for moves from the
  * standard agent to the signed one.
+ *
+ * 0.37: Devices gained Full agent, the whole move to the signed agent as four
+ * live steps (signing set up, a signed agent published, timestamp fresh,
+ * computers moved — automatically, canary first). Shown for computers:view,
+ * the capability its API needs.
  */
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -86,6 +91,7 @@ export const NAV: NavSection[] = [
       // 0.35: the fleet view of moves to the signed agent, which until now was
       // reachable only from an Agent card's link. Shown to whoever may request
       // one (computers:edit); the page and its API need only computers:view.
+      { href: '/endpoints/full-agent', label: 'Full agent', icon: ShieldCheck, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
       { href: '/endpoints/agent-migrations', label: 'Agent migrations', icon: ArrowRightLeft, show: (c) => c.can(CAP.COMPUTERS_EDIT) },
     ],
     also: ['/endpoints/new', '/trmm', '/quickstart'],

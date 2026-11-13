@@ -1,0 +1,61 @@
+#!/bin/bash
+# rem0te-signed-refresh — the daily job (rem0te-timestamp-refresh.timer, 0.37).
+#
+#   rem0te-signed-refresh [--conf FILE]       (as the release user, or with sudo)
+#
+# Re-signs the timestamp so agents keep accepting the repository (it lasts 7
+# days; this runs daily), and publishes it with the same staged, verified,
+# rename-only path as a release. Nothing else changes, so the only new file
+# the published repository receives is timestamp.json. Two exceptions, both
+# re-signing unchanged content with keys already on this host:
+#   - the snapshot (30 days) is re-signed too once it has under 10 days left;
+#   - targets (90 days) are re-signed with no change once they have under 14
+#     days left — normally a release does that long before.
+# The root (365 days) needs two root keys and is never re-signed here; status
+# warns 30 days ahead.
+set -euo pipefail
+LIB=@LIB_DIR@
+[[ $LIB == @*@ ]] && LIB=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+CONF=@CONF@
+[[ $CONF == @*@ ]] && CONF=/etc/rem0te-release/release.conf
+# shellcheck source=lib.sh
+source "$LIB/lib.sh"
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --conf) CONF=$2; shift 2 ;;
+    *) die "unknown argument $1" ;;
+  esac
+done
+load_conf "$CONF"
+if [[ -n $RELEASE_USER && $EUID -ne 0 && $(id -un) != "$RELEASE_USER" ]]; then die "run as $RELEASE_USER or with sudo"; fi
+TOOL=$LIB_DIR/rem0te-release
+[[ -x $TOOL ]] || die "$TOOL is missing — re-run rem0te-signed-setup.sh"
+
+lock_or_die
+start_log "refresh"
+recover_work
+trap cleanup_build EXIT
+[[ -f $WORK_REPO/metadata/timestamp.json ]] || die "nothing to refresh: no repository at $WORK_REPO"
+key_present timestamp || die "the timestamp key is missing from $KEY_DIR"
+
+declare -A W=()
+while IFS='=' read -r k v; do W[$k]=$v; done < <(repo_info "$WORK_REPO" summary)
+new_build_dir
+as_release 022 cp -a "$WORK_REPO" "$BUILD/repo"
+K=(-timestamp-key "$KEY_DIR/timestamp.pem")
+if [[ -n ${W[TARGETS_LEFT_H]} && ${W[TARGETS_LEFT_H]} -lt $((14 * 24)) ]]; then
+  say "targets expire in ${W[TARGETS_LEFT_H]}h: re-signing targets, snapshot and timestamp (no content change)"
+  tool release -repo "$BUILD/repo" -targets-key "$KEY_DIR/targets.pem" -snapshot-key "$KEY_DIR/snapshot.pem" "${K[@]}"
+elif [[ -n ${W[SNAPSHOT_LEFT_H]} && ${W[SNAPSHOT_LEFT_H]} -lt $((10 * 24)) ]]; then
+  say "snapshot expires in ${W[SNAPSHOT_LEFT_H]}h: re-signing snapshot and timestamp"
+  tool refresh -repo "$BUILD/repo" -snapshot-key "$KEY_DIR/snapshot.pem" "${K[@]}"
+else
+  tool refresh -repo "$BUILD/repo" "${K[@]}"
+fi
+tool verify -repo "$BUILD/repo" -trusted-root "$WORK_REPO/metadata/1.root.json" | tail -1
+promote_work "$BUILD/repo"
+publish_repo "$WORK_REPO"
+if [[ -n ${W[ROOT_LEFT_H]} && ${W[ROOT_LEFT_H]} -lt $((30 * 24)) ]]; then
+  say "WARNING: root metadata expires in ${W[ROOT_LEFT_H]}h. Re-sign it with two root keys (docs/update-signing.md → Rotating keys)."
+fi
+log "refreshed timestamp"

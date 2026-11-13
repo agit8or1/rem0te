@@ -386,6 +386,22 @@ The failures follow the TUF spec and fail closed:
 A **legacy** agent whose *Update* or *Reinstall agent* never happens while the platform is *signed only* is being
 contained on purpose. Migrate it. See [update-signing.md](update-signing.md#moving-existing-agents).
 
+## The automatic migration halted, or never starts (0.37)
+
+**Devices → Full agent** says which step is missing and gives its command. The fourth step says why nothing is
+moving:
+
+| It says | Meaning | Fix |
+|---|---|---|
+| *Waiting for step 1 / step 2* | No signed repository, or no `windows/rem0te-agent.exe` in it | `sudo ./deploy/release/rem0te-signed-setup.sh` once, then `sudo rem0te-signed-publish` |
+| *The portal is in Signed only* | Nothing is migrated from the portal in that mode, by design | Migrate locally or through GPO/Intune, or switch to Legacy allowed (reviewed) |
+| *Choosing a canary* for a long time | No eligible standard Windows computer is checking in (paused, in a rollout, opted out, offline) | The held counts say which; the canary must be checking in now |
+| *Halted: the canary did not report the signed agent within 2 hours* | The migration script did not run or failed. The standard agent doesn't report its exit code | Run `rem0te-agent.exe status` on the canary, then **Resume** (the same computer) or **Restart with another canary** |
+| *Halted: the canary reported a failed update* | Its `agent-status.json` result was a failure (shown) | Fix the cause on that computer, then resume, or restart with another |
+
+Resume and restart need a Platform Admin and a fresh sign-in. Neither skips the canary. See
+[update-signing.md](update-signing.md#moving-computers-automatically-037).
+
 ## Services
 
 ```bash

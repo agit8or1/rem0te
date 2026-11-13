@@ -79,6 +79,10 @@ export default function UpdateSigningPage() {
         <ArrowLeft className="mr-1 h-4 w-4" />Settings
       </Link>
       <PageHeader title="Update Signing" description="What agents verify before they run anything, and how legacy agents are contained." />
+      <p className="text-sm" data-testid="update-signing-full-agent">
+        Setting signing up, publishing, and moving computers to the signed agent (automatically, canary first) are shown step by step on{' '}
+        <Link className="underline" href="/endpoints/full-agent">Devices → Full agent</Link>.
+      </p>
       {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
       {error && <p className="text-sm text-destructive">{apiError(error).message}</p>}
       {notice && (
@@ -202,9 +206,10 @@ export default function UpdateSigningPage() {
                 <Link className="underline" href="/docs/update-signing">Update signing</Link>.
               </p>
               <p className="text-xs text-muted-foreground">
-                Or one computer at a time from the console (0.34): <strong>Upgrade to signed agent</strong> on a computer’s Agent card, or for a
+                Or one computer at a time from the console (0.34): <strong>Upgrade to full agent</strong> at the top of a computer’s page or on its Agent card, or for a
                 selection on All devices. It needs a fresh sign-in and a reason, is refused in <em>Signed only</em> without portal migration, and is
-                followed on <Link className="underline" href="/endpoints/agent-migrations">Agent migrations</Link>.
+                followed on <Link className="underline" href="/endpoints/agent-migrations">Agent migrations</Link>. From 0.37 the portal also moves them
+                by itself, one canary first: see <Link className="underline" href="/endpoints/full-agent">Full agent</Link>.
               </p>
             </CardContent>
           </Card>

@@ -154,6 +154,13 @@ jobs:
       - name: Agent auto-update tests
         run: node apps/api/scripts/unit-agent-auto-update.mjs
 
+      # Automatic migration to the signed agent (0.37): settings and what
+      # widens, the gate, the canary/soak state machine (confirmed only on the
+      # published build; halted on a failure, a cancel, a missing computer or
+      # a timeout), canary ordering, the pace budget and the hold mapping.
+      - name: Automatic migration tests
+        run: node apps/api/scripts/unit-auto-migration.mjs
+
       # Scheduled client updates (0.32): the update window's validation, time
       # zones (+5:30, +5:45, a 30-minute DST zone), windows across midnight,
       # both DST transitions, next opening/closing against a minute-by-minute
@@ -277,6 +284,14 @@ jobs:
       # on the runner) the heartbeat's agent-status block run against fixtures.
       - name: Agent migration tests
         run: node apps/api/scripts/unit-agent-migration.mjs
+
+      # Signed releases on one host (0.37): the helpers behind the single-host
+      # release tooling — a RustDesk build needs GitHub's published digest and
+      # URL, unverified metadata is charset-checked before a shell sees it, and
+      # pruning keeps the newest two targets versions. (The tooling itself is
+      # never run by CI against anything real; its e2e suite runs in a temp dir.)
+      - name: Signed release helper tests
+        run: node apps/api/scripts/unit-signed-release.mjs
 
       # Chat (0.34): message text and the controls it drops, reported names,
       # which computers can chat and why not, presence and receipts, device

@@ -1,0 +1,89 @@
+#!/bin/bash
+# rem0te-signed-export-root — move the three root keys off this host (0.37).
+#
+#   sudo rem0te-signed-export-root DIR            all three keys into DIR
+#   sudo rem0te-signed-export-root DIR1 DIR2 DIR3 one key into each (better:
+#                                                 three sticks, three places)
+#
+# Copies root1.pem … root3.pem (mode 0600) into the directory or directories
+# given — a USB stick, say — checks each copy byte for byte, then asks you to
+# type `yes` before it deletes them from this host. Anything else keeps them.
+#
+# Publishing and the daily timestamp need only the targets, snapshot and
+# timestamp keys, which stay. The root keys are needed again only to rotate a
+# key or to re-sign the root before it expires (365 days): bring two of them
+# back for that (docs/update-signing.md → Rotating keys).
+#
+# Refuses a directory inside the source checkout, any git work tree, the
+# release user's state directory or the published repository: a root key in
+# any of those is one `git add` or one web request from leaking.
+set -euo pipefail
+LIB=@LIB_DIR@
+[[ $LIB == @*@ ]] && LIB=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+CONF=@CONF@
+[[ $CONF == @*@ ]] && CONF=/etc/rem0te-release/release.conf
+# shellcheck source=lib.sh
+source "$LIB/lib.sh"
+dirs=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --conf) CONF=$2; shift 2 ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    *) dirs+=("$1"); shift ;;
+  esac
+done
+[[ ${#dirs[@]} == 1 || ${#dirs[@]} == 3 ]] || die "usage: rem0te-signed-export-root DIR  (or DIR1 DIR2 DIR3)"
+load_conf "$CONF"
+if [[ -n $RELEASE_USER && $EUID -ne 0 ]]; then die "run with sudo"; fi
+
+inside() { [[ $1 == "$2" || $1 == "$2"/* ]]; }
+abs=()
+for d in "${dirs[@]}"; do
+  [[ -d $d ]] || die "$d is not a directory"
+  a=$(cd "$d" && pwd -P)
+  for bad in "$SOURCE_DIR" "$STATE_DIR" "$PUB_DIR" "$BUILD_ROOT"; do
+    b=$(cd "$bad" 2>/dev/null && pwd -P || echo "$bad")
+    if inside "$a" "$b"; then die "refusing $a: it is inside $bad"; fi
+  done
+  if git -C "$a" rev-parse --is-inside-work-tree > /dev/null 2>&1; then die "refusing $a: it is inside a git work tree"; fi
+  abs+=("$a")
+done
+
+for k in $ROOT_KEYS; do key_present "$k" || die "$k.pem is not on this host (already exported?)"; done
+i=0
+for k in $ROOT_KEYS; do
+  dest=${abs[$(( ${#abs[@]} == 3 ? i : 0 ))]}/rem0te-$k.pem
+  [[ ! -e $dest ]] || die "$dest already exists; not overwriting it"
+  i=$((i + 1))
+done
+
+i=0
+copied=()
+for k in $ROOT_KEYS; do
+  dest=${abs[$(( ${#abs[@]} == 3 ? i : 0 ))]}/rem0te-$k.pem
+  ( umask 077; as_release 077 cat "$KEY_DIR/$k.pem" > "$dest.part" )
+  sync "$dest.part" 2>/dev/null || sync
+  if ! as_release 077 cat "$KEY_DIR/$k.pem" | cmp -s - "$dest.part"; then rm -f "$dest.part"; die "the copy of $k.pem at $dest does not match; nothing was deleted"; fi
+  mv -T "$dest.part" "$dest"
+  chmod 0600 "$dest"
+  copied+=("$dest")
+  i=$((i + 1))
+done
+echo "Copied and checked:"
+printf '  %s\n' "${copied[@]}"
+if [[ ${#abs[@]} == 1 ]]; then
+  echo "All three are in one place. Two of them are enough to re-key the whole chain, so keep that medium"
+  echo "as safe as the host itself — better, move two of the files to separate media, kept apart."
+fi
+printf 'Type yes to delete the three root keys from this host: '
+read -r ans || ans=''
+if [[ $ans != yes ]]; then
+  echo "Root keys kept on this host."
+  exit 0
+fi
+for k in $ROOT_KEYS; do
+  if command -v shred > /dev/null; then as_release 077 shred -u "$KEY_DIR/$k.pem"; else as_release 077 rm -f "$KEY_DIR/$k.pem"; fi
+done
+as_release 077 /bin/sh -c 'printf "%s to %s\n" "$(date -u +%Y-%m-%d)" "$1" > "$0"' "$KEY_DIR/ROOT_EXPORTED" "${abs[*]}"
+echo "Deleted root1.pem, root2.pem and root3.pem from $KEY_DIR."
+echo "Publishing and the daily timestamp keep working. To rotate a key or re-sign the root, bring two back."

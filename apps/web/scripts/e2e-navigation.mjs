@@ -2,7 +2,7 @@
 /**
  * The 0.31 navigation (and 0.32's Reports, 0.34's Automation hub, software
  * compliance and scheduled reports, Chat tab, Agent card, Email settings and
- * Data retention card, and 0.35's Agent migrations tab), in a real browser: every sidebar entry and section tab
+ * Data retention card, 0.35's Agent migrations tab and 0.37's Full agent tab), in a real browser: every sidebar entry and section tab
  * leads to a page that renders, each persona sees exactly its entries, the
  * Settings group works, nothing overflows sideways, at desktop and tablet
  * widths, in the light and dark themes. It also writes screenshots to OUT_DIR
@@ -198,6 +198,31 @@ async function agentMigrationChecks(page, who) {
   else check(info.current === null, 'a Business User reaches Agent migrations by link, with no Devices tab bar', String(info.current));
 }
 
+/**
+ * 0.37: Full agent (/endpoints/full-agent), a Devices tab for computers:view.
+ * Four steps with their live state, the honest note, the automatic
+ * migration block — whose controls only a Platform Admin is offered — and
+ * no sideways overflow.
+ */
+async function fullAgentChecks(page, who) {
+  const h = await visit(page, '/endpoints/full-agent');
+  await page.waitForSelector('[data-testid="full-agent-steps"]', { timeout: 15_000 }).catch(() => {});
+  const info = await page.evaluate(() => ({
+    steps: [...document.querySelectorAll('[data-testid^="full-agent-step-"]')].map((e) => e.getAttribute('data-state')),
+    honest: /have not yet run on real Windows/.test(document.querySelector('[data-testid="full-agent-honest"]')?.textContent ?? ''),
+    auto: !!document.querySelector('[data-testid="full-agent-auto"]'),
+    controls: !!document.querySelector('[data-testid="full-agent-turn-on"], [data-testid="full-agent-turn-off"]'),
+    adminNote: /A Platform Admin changes this/.test(document.querySelector('[data-testid="full-agent-auto"]')?.textContent ?? ''),
+    failed: /could not be loaded/i.test(document.querySelector('main')?.innerText ?? ''),
+    current: document.querySelector('[data-section-tabs="devices"] a[aria-current="page"]')?.textContent?.trim() ?? null,
+  }));
+  check(h.h1 === 'Full agent' && !h.notFound && h.overflow <= 1 && info.steps.length === 4 && info.steps.every((x) => ['done', 'todo', 'warn'].includes(x)) && info.honest && info.auto && !info.failed,
+    'Full agent renders its four steps with their state, the honest note and the automatic migration, no overflow', JSON.stringify({ h, info }));
+  check(who === 'admin' ? info.controls && !info.adminNote : !info.controls && info.adminNote,
+    who === 'admin' ? 'a Platform Admin is offered the automatic migration\'s controls' : 'anyone else is told a Platform Admin changes it, with no controls', JSON.stringify(info));
+  check(info.current === 'Full agent', 'on Full agent, its Devices tab is the current one', String(info.current));
+}
+
 /** 0.34: the Agent card on a device's Overview tab, with its link to Agent migrations. */
 async function agentCardChecks(page, who, endpointId) {
   await page.waitForSelector('[data-testid="agent-card"]', { timeout: 15_000 }).catch(() => {});
@@ -205,7 +230,24 @@ async function agentCardChecks(page, who, endpointId) {
   const card = await page.$eval('[data-testid="agent-card"]', (el) => ({
     text: (el.textContent ?? '').slice(0, 400),
     link: el.querySelector('a[href="/endpoints/agent-migrations"]') !== null,
+    fullAgent: el.querySelector('a[href="/endpoints/full-agent"]') !== null,
   })).catch(() => null);
+  check(!!card?.fullAgent, 'the Agent card links to Full agent (0.37)', JSON.stringify(card));
+  // 0.37: the header's agent buttons. For the admin (computers:edit) one of
+  // them is there; a disabled Upgrade to full agent always has its reason.
+  const hdr = await page.$eval('[data-testid="device-actions"]', (el) => {
+    const up = el.querySelector('[data-testid="header-upgrade-full-agent"]');
+    return {
+      any: !!el.querySelector('[data-testid="header-upgrade-full-agent"], [data-testid="header-update-agent"], [data-testid="header-agent-command"], [data-testid="header-full-agent"]'),
+      up: up ? { tag: up.tagName, disabled: up.disabled, state: up.getAttribute('data-state') } : null,
+      reason: !!el.querySelector('[data-testid="header-upgrade-reason"] a[href="/endpoints/full-agent"]'),
+    };
+  }).catch(() => null);
+  if (who === 'admin') check(!!hdr?.any, 'the device header offers the agent buttons to a Platform Admin (0.37)', JSON.stringify(hdr));
+  if (hdr?.up) {
+    check(hdr.up.tag === 'BUTTON' && (hdr.up.state !== 'blocked' || (hdr.up.disabled && hdr.reason)),
+      'the header\'s Upgrade to full agent is a button; disabled, it says why and links to Full agent (0.37)', JSON.stringify(hdr));
+  }
   check(!!card && /Type/.test(card.text) && /Version/.test(card.text) && /Current/.test(card.text) && !/could not be loaded/.test(card.text) && card.link,
     'the Overview tab has the Agent card (type, version, whether it is current) and its link to Agent migrations', JSON.stringify(card));
   if (card?.link && who === 'user') {
@@ -334,7 +376,8 @@ try {
           await visit(page, '/endpoints');
         }
         // 0.35: Agent migrations, for whoever may request one (computers:edit).
-        const want = who === 'admin' ? ['All devices', 'My devices', 'Add device', 'Unassigned', 'Agent migrations'] : who === 'owner' ? ['All devices', 'My devices', 'Add device', 'Agent migrations'] : ['All devices', 'My devices'];
+        // 0.37: Full agent, for computers:view.
+        const want = who === 'admin' ? ['All devices', 'My devices', 'Add device', 'Unassigned', 'Full agent', 'Agent migrations'] : who === 'owner' ? ['All devices', 'My devices', 'Add device', 'Full agent', 'Agent migrations'] : ['All devices', 'My devices', 'Full agent'];
         check(JSON.stringify(tabs) === JSON.stringify(want), `Devices tabs: ${want.join(' · ')}`, `got ${tabs.join(' · ')}`);
         for (const t of tabs) {
           await follow(page, `[data-section-tabs="devices"] a:text-is("${t}")`);
@@ -343,6 +386,7 @@ try {
           check(!h.notFound && h.h1 && h.overflow <= 1 && current === t, `Devices → ${t} renders "${h.h1}" and is the current tab`, JSON.stringify(h));
         }
         await agentMigrationChecks(page, who);
+        await fullAgentChecks(page, who);
         if (who === 'user' && userEndpoint) {
           await visit(page, `/endpoints/${userEndpoint.id}`);
           await agentCardChecks(page, who, userEndpoint.id);

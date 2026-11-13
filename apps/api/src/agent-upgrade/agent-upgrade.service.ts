@@ -39,7 +39,7 @@ type BulkTarget = { id: string; name: string; customerId: string | null };
  *     repository lists. Nothing the portal sends is code.
  *   Linux / macOS: nothing to queue — those agents act on nothing the server
  *     sends — so the card gives the exact command to re-run on the computer.
- *   Upgrade to signed agent: AgentMigrationService, with a fresh sign-in and a
+ *   Upgrade to full agent (the signed agent): AgentMigrationService, with a fresh sign-in and a
  *     reason. Why that is enough, and where it is refused, is in
  *     update-trust/agent-migration.ts.
  *
@@ -155,7 +155,7 @@ export class AgentUpgradeService {
       update = { possible: !why, label, reason: why };
     }
 
-    // Upgrade to signed agent: only where it means something.
+    // Upgrade to full agent: only where it means something.
     const latest = await this.migration.latestFor(id);
     let migration: null | {
       possible: boolean; code: string | null; reason: string | null; fix: string | null; link: { href: string; label: string } | null;
@@ -234,7 +234,7 @@ export class AgentUpgradeService {
     return { ...r, kind, what: kind === 'signed' ? 'check' : 'reinstall' };
   }
 
-  // ── Upgrade to signed agent ──────────────────────────────────────────────
+  // ── Upgrade to full agent ──────────────────────────────────────────────
 
   async migrate(actor: ActorContext, id: string, reason: unknown, freshMethod: string | null, via: 'single' | 'bulk' = 'single') {
     await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);

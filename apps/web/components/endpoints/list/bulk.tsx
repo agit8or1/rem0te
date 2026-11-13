@@ -17,7 +17,7 @@ const ACTION_LABEL: Record<BulkAction, string> = {
   'inventory.refresh': 'Refresh inventory',
   'client.update': 'Queue RustDesk client update',
   'agent.update': 'Update agent',
-  'agent.migrate': 'Upgrade to signed agent',
+  'agent.migrate': 'Upgrade to full agent',
 };
 
 /**
@@ -137,17 +137,17 @@ export function BulkBar({
             {spin('agent.update') ?? <Wrench className="h-4 w-4 mr-1.5" />}Update agent
           </Button>
           <Button size="sm" variant="outline" className="h-8" disabled={!!busy} onClick={() => setMigrateOpen(true)}
-            title="Moves each standard Windows computer to the signed agent. Needs a fresh sign-in and a reason; each computer is checked on its own.">
-            <ShieldCheck className="h-4 w-4 mr-1.5" />Upgrade to signed…
+            title="Moves each standard Windows computer to the full (signed) agent. Needs a fresh sign-in and a reason; each computer is checked on its own.">
+            <ShieldCheck className="h-4 w-4 mr-1.5" />Upgrade to full agent…
           </Button>
         </>
       )}
       <Dialog open={migrateOpen} onOpenChange={(o) => { if (!o && busy !== 'agent.migrate') setMigrateOpen(false); }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>{target ? `Upgrade the devices in ${target.name} to the signed agent?` : `Upgrade ${selected.size} device${selected.size === 1 ? '' : 's'} to the signed agent?`}</DialogTitle>
+            <DialogTitle>{target ? `Upgrade the devices in ${target.name} to full agent?` : `Upgrade ${selected.size} device${selected.size === 1 ? '' : 's'} to full agent?`}</DialogTitle>
             <DialogDescription>
-              Each standard Windows computer is handed, once, the portal’s migration script. It downloads the signed agent,
+              The full agent is the signed agent. Each standard Windows computer is handed, once, the portal’s migration script. It downloads the signed agent,
               checks it against the digest the signed repository publishes, and runs <code>migrate</code>, which keeps the
               enrolment, device secret and RustDesk configuration. After that the computer runs only signed code. Computers
               that cannot be moved are refused one by one with the reason. You will be asked to confirm it is you.

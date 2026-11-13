@@ -1,5 +1,5 @@
 import { AgentMigrationService } from '../update-trust/agent-migration.service';
-import { migrationState } from '../update-trust/agent-migration';
+import { FULL_AGENT, migrationState } from '../update-trust/agent-migration';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, type ActionJob, type ActionTarget, type PatchDeployment } from '@prisma/client';
 import { z } from 'zod';
@@ -284,10 +284,10 @@ export class PatchingService {
       const open = await this.migration.openFor(endpointId);
       if (open) {
         const st = migrationState(open);
-        return { ...no(standard, `An upgrade to the signed agent is already requested. ${st.text} Follow it on the Agent card (Overview tab).`), fixAction: 'agent-card' };
+        return { ...no(standard, `An upgrade to the signed agent is already requested. ${st.text} Follow it on the Agent card (Overview tab).`), fixAction: 'agent-card', fixLink: FULL_AGENT };
       }
       const b = await this.migration.block(endpointId);
-      if (!b) return { ...no(standard, 'Upgrade it: press "Upgrade to signed agent" on the Agent card (Overview tab). It keeps the enrolment, device secret and RustDesk configuration.'), fixAction: 'agent-card' };
+      if (!b) return { ...no(standard, 'Upgrade it: press "Upgrade to full agent" at the top of the computer’s page or on its Agent card (Overview tab). It keeps the enrolment, device secret and RustDesk configuration. Or let the automatic migration move it (Devices → Full agent).'), fixAction: 'agent-card', fixLink: FULL_AGENT };
       return { ...no(standard, `${b.reason}${b.fix ? ` ${b.fix}` : ''}`), fixLink: b.link ?? null };
     }
     const notReady = this.actions.readiness(ep, `${UPDATE_INSTALL.id}@${UPDATE_INSTALL.version}`);

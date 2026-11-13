@@ -1,60 +1,20 @@
 'use client';
 
-import * as React from 'react';
 import Link from 'next/link';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Copy, Loader2, ShieldCheck, Wrench } from 'lucide-react';
-import { endpointsApi } from '@/lib/api-client';
+import { Copy, Loader2, Wrench } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { Row } from '@/components/endpoints/endpoint-specs';
-import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { agentSilentAlert, ago, alertHref } from './device-model';
 import type { AlertRow } from '@/components/monitoring/alerts';
+import {
+  AgentActionDialogs, OPEN_MIGRATION_STATES, UPGRADE_LABEL, UpgradeButton, UpgradeReason, upgradeView, useAgentActions,
+  type AgentCardData, type AutoUpdateState,
+} from './agent-actions';
 
-/** GET /endpoints/:id/agent (0.34). */
-export interface AgentCardData {
-  kind: 'standard' | 'signed' | 'linux' | 'macos' | 'rustdesk-only' | 'unknown';
-  platform: string | null;
-  version: string | null;
-  server: string;
-  current: { state: 'current' | 'behind' | 'unknown'; text: string };
-  channel: 'signed' | 'standard' | null;
-  signed: { trustRootVersion: number | null; targetsVersion: number | null; reportedAt: string | null; sha256: string | null } | null;
-  lastUpdate: { checkedAt: string; result: string | null } | null;
-  portal: { mode: string; legacyPortalMigration: boolean; modeLabel: string; repository: boolean; signedAgentSha256: string | null };
-  updatesPaused: string | null;
-  reinstall: { pending: boolean; dispatched: boolean };
-  update: { possible: boolean; label: string; reason: string | null; command?: string };
-  migration: null | {
-    possible: boolean; code: string | null; reason: string | null; fix: string | null; link: { href: string; label: string } | null;
-    request: null | { id: string; state: string; text: string; requestedAt: string; dispatchedAt: string | null; fetchedAt: string | null; completedAt: string | null; cancelledAt: string | null; reason: string };
-  };
-  /** 0.36: what the server will do about this agent by itself. Null if it could not be worked out. */
-  autoUpdate: null | AutoUpdateState;
-}
-
-export interface AutoUpdateState {
-  state: 'up_to_date' | 'queued' | 'updating' | 'failing' | 'opted_out' | 'manual' | 'unknown';
-  reason: string;
-  text: string;
-  channel: 'standard' | 'standard_pre015' | 'signed' | null;
-  target: string | null;
-  mode: 'ANY_TIME' | 'WINDOW' | 'OFF';
-  policy: { id: string; scope: 'business' | 'site' | 'group'; name: string; window: string | null } | null;
-  window: { open: boolean; opensAt: string | null; closesAt: string | null } | null;
-  attempts: { made: number; max: number; lastAt: string | null };
-  nextAt: string | null;
-  waitingForCheckIn: boolean;
-  manual: { command: string | null } | null;
-  history: { id: string; channel: string; fromVersion: string | null; targetVersion: string; attempt: number; dispatchedAt: string; outcome: string | null; resolvedAt: string | null; automatic: true }[];
-}
+export type { AgentCardData, AutoUpdateState } from './agent-actions';
 
 const AUTO_LABEL: Record<AutoUpdateState['state'], string> = {
   up_to_date: 'Up to date',
@@ -126,67 +86,31 @@ const KIND_LABEL: Record<AgentCardData['kind'], string> = {
   unknown: 'Unknown',
 };
 
-const OPEN_STATES = new Set(['pending', 'held', 'dispatched', 'downloaded', 'not_confirmed']);
-
-function apiMessage(e: unknown, fallback: string) {
-  return (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message?.toString() ?? fallback;
-}
-
 /**
  * The Agent card (0.34): which agent this computer runs, whether it is
- * current, and the buttons that update it or move it to the signed agent.
- * Every button is re-checked by the server, which also says why when it
- * refuses; a button that cannot work is replaced by its reason.
+ * current, and the buttons that update it or move it to the full (signed)
+ * agent. Every button is re-checked by the server, which also says why when
+ * it refuses. From 0.37 the actions and their dialogs are shared with the
+ * page header (agent-actions.tsx), and Upgrade to full agent is always a
+ * button on a standard Windows agent: disabled, with its reason, when the
+ * server does not offer it.
  */
 export function AgentCard({ endpointId, canEdit, alerts }: { endpointId: string; canEdit: boolean; alerts?: AlertRow[] | null }) {
   // 0.36: an open agent-silent alert, from the Monitoring view the page already reads (null without monitoring:alerts).
   const silent = agentSilentAlert(alerts);
-  const { toast } = useToast();
-  const qc = useQueryClient();
-  const [confirmUpdate, setConfirmUpdate] = React.useState(false);
-  const [migrateOpen, setMigrateOpen] = React.useState(false);
-  const [reason, setReason] = React.useState('');
-
-  const { data: a, isLoading, isError } = useQuery<AgentCardData>({
-    queryKey: ['endpoint-agent', endpointId],
-    queryFn: () => endpointsApi.agent(endpointId).then((r) => r.data?.data),
-    retry: false,
-  });
-  const refresh = () => {
-    qc.invalidateQueries({ queryKey: ['endpoint-agent', endpointId] });
-    qc.invalidateQueries({ queryKey: ['endpoint-patches', endpointId] });
-  };
-
-  const update = useMutation({
-    mutationFn: () => endpointsApi.updateAgent(endpointId),
-    onSuccess: (r) => {
-      setConfirmUpdate(false);
-      refresh();
-      const check = r.data?.data?.what === 'check';
-      toast({ title: check ? 'Update check queued' : 'Agent update queued', description: check ? 'The signed agent checks the signed repository at its next check-in and installs only what it lists.' : 'The current installer re-runs at the computer’s next check-in. It keeps the enrolment, device secret and RustDesk settings.' });
-    },
-    onError: (e) => { setConfirmUpdate(false); toast({ title: 'Not queued', description: apiMessage(e, 'The request failed.'), variant: 'destructive' }); },
-  });
-  const migrate = useMutation({
-    mutationFn: () => endpointsApi.migrateAgent(endpointId, reason.trim()),
-    onSuccess: () => {
-      setMigrateOpen(false); setReason(''); refresh();
-      toast({ title: 'Upgrade requested', description: 'The computer is handed the migration at its next check-in. This card and Devices → Agent migrations follow it.' });
-    },
-    onError: (e) => toast({ title: 'Not requested', description: apiMessage(e, 'The request failed.'), variant: 'destructive' }),
-  });
-  const cancel = useMutation({
-    mutationFn: () => endpointsApi.cancelAgentMigration(endpointId),
-    onSuccess: () => { refresh(); toast({ title: 'Upgrade request cancelled' }); },
-    onError: (e) => toast({ title: 'Not cancelled', description: apiMessage(e, 'The request failed.'), variant: 'destructive' }),
-  });
+  const actions = useAgentActions(endpointId);
+  const { a, isLoading, isError, update, cancel, copy } = actions;
+  const up = upgradeView(a, canEdit);
 
   return (
     <Card id="agent-card" data-testid="agent-card" className="scroll-mt-4">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-sm">Agent</CardTitle>
-          <Link href="/endpoints/agent-migrations" className="text-xs text-muted-foreground underline-offset-2 hover:underline">Agent migrations</Link>
+          <span className="flex items-center gap-3">
+            <Link href="/endpoints/full-agent" className="text-xs text-muted-foreground underline-offset-2 hover:underline" data-testid="agent-card-full-agent">Full agent</Link>
+            <Link href="/endpoints/agent-migrations" className="text-xs text-muted-foreground underline-offset-2 hover:underline">Agent migrations</Link>
+          </span>
         </div>
       </CardHeader>
       <CardContent className="space-y-2.5 text-sm">
@@ -221,7 +145,11 @@ export function AgentCard({ endpointId, canEdit, alerts }: { endpointId: string;
             {a.updatesPaused && <p className="rounded-md border border-amber-500/40 bg-amber-500/5 p-2 text-xs">{a.updatesPaused}</p>}
 
             {a.autoUpdate && (
-              <AutoUpdateBlock u={a.autoUpdate} onCopy={(t) => { navigator.clipboard?.writeText(t).then(() => toast({ title: 'Copied' })).catch(() => undefined); }} />
+              <AutoUpdateBlock u={a.autoUpdate} onCopy={copy} />
+            )}
+
+            {a.kind === 'signed' && (
+              <Row label="Full agent"><span className="inline-flex items-center gap-1 text-xs" data-testid="agent-card-full-agent-status">Yes: it runs the signed agent</span></Row>
             )}
 
             {/* Update agent / Check now / re-run the installer */}
@@ -231,14 +159,13 @@ export function AgentCard({ endpointId, canEdit, alerts }: { endpointId: string;
                   <p className="text-xs text-muted-foreground">{a.update.reason}</p>
                   <div className="flex items-start gap-2">
                     <code className="block min-w-0 flex-1 break-all rounded bg-muted px-2 py-1.5 text-xs">{a.update.command}</code>
-                    <Button size="sm" variant="ghost" className="h-7 px-2" aria-label="Copy the command"
-                      onClick={() => { navigator.clipboard?.writeText(a.update.command!).then(() => toast({ title: 'Copied' })).catch(() => undefined); }}>
+                    <Button size="sm" variant="ghost" className="h-7 px-2" aria-label="Copy the command" onClick={() => copy(a.update.command!)}>
                       <Copy className="h-3.5 w-3.5" />
                     </Button>
                   </div>
                 </div>
               ) : a.update.possible && canEdit ? (
-                <Button size="sm" variant="outline" onClick={() => setConfirmUpdate(true)} disabled={update.isPending}>
+                <Button size="sm" variant="outline" onClick={actions.askUpdate} disabled={update.isPending}>
                   {update.isPending ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Wrench className="h-4 w-4 mr-1.5" />}{a.update.label}
                 </Button>
               ) : a.update.reason ? (
@@ -246,74 +173,34 @@ export function AgentCard({ endpointId, canEdit, alerts }: { endpointId: string;
               ) : !canEdit ? <p className="text-xs text-muted-foreground">Updating the agent needs the computers:edit permission.</p> : null}
             </div>
 
-            {/* Upgrade to signed agent */}
-            {a.migration && (
+            {/* Upgrade to full agent: always a button on a standard Windows agent. */}
+            {(up || a.migration?.request) && (
               <div className="border-t pt-3 space-y-2" data-testid="agent-migration">
-                {a.migration.request && (
+                {a.migration?.request && (
                   <div className="text-xs space-y-0.5">
-                    <p><span className="font-medium">Upgrade to signed agent:</span> {a.migration.request.text}</p>
+                    <p><span className="font-medium">{UPGRADE_LABEL}:</span> {a.migration.request.text}</p>
                     <p className="text-muted-foreground">Requested {ago(a.migration.request.requestedAt)} · “{a.migration.request.reason}”</p>
-                    {canEdit && OPEN_STATES.has(a.migration.request.state) && (
-                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={cancel.isPending} onClick={() => cancel.mutate()}>Cancel the request</Button>
+                    {canEdit && OPEN_MIGRATION_STATES.has(a.migration.request.state) && (
+                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={cancel.isPending} onClick={() => cancel.mutate()} data-testid="agent-migrate-cancel">Cancel the request</Button>
                     )}
                   </div>
                 )}
-                {a.migration.possible && canEdit ? (
-                  <Button size="sm" onClick={() => setMigrateOpen(true)} data-testid="agent-migrate">
-                    <ShieldCheck className="h-4 w-4 mr-1.5" />Upgrade to signed agent
-                  </Button>
-                ) : a.migration.possible ? (
-                  <p className="text-xs text-muted-foreground">Upgrading to the signed agent needs the computers:edit permission.</p>
-                ) : a.migration.reason ? (
-                  <div className="text-xs space-y-1" data-testid="agent-migration-blocked">
-                    <p><span className="font-medium">Upgrade to signed agent is not available:</span> {a.migration.reason}</p>
-                    {a.migration.fix && <p className="text-muted-foreground">What to do: {a.migration.fix}{a.migration.link && <> See <Link className="underline" href={a.migration.link.href}>{a.migration.link.label}</Link>.</>}</p>}
+                {up && (
+                  <div className="space-y-1">
+                    <UpgradeButton view={up} onClick={actions.askMigrate} testId="agent-migrate" />
+                    <UpgradeReason view={up} testId="agent-migration-blocked" />
+                    {up.state === 'enabled' && (
+                      <p className="text-xs text-muted-foreground">Or let the automatic migration move it: <Link className="underline" href="/endpoints/full-agent">Full agent</Link> shows every step and where this computer is.</p>
+                    )}
                   </div>
-                ) : null}
+                )}
               </div>
             )}
           </>
         )}
       </CardContent>
 
-      {confirmUpdate && a && (
-        <ConfirmDialog
-          open
-          onOpenChange={(o) => { if (!o && !update.isPending) setConfirmUpdate(false); }}
-          title={a.kind === 'signed' ? 'Check for an agent update now?' : 'Update the agent?'}
-          description={a.kind === 'signed'
-            ? 'The signed agent runs rem0te-agent.exe update at its next check-in. It installs only what the signed repository lists, verified against the root compiled into it.'
-            : 'The current standard installer re-runs at the computer’s next check-in, as Reinstall agent does. It keeps the enrolment, device secret and RustDesk configuration and password, and downloads the RustDesk client again.'}
-          confirmLabel="Queue it"
-          loading={update.isPending}
-          onConfirm={() => update.mutate()}
-        />
-      )}
-
-      <Dialog open={migrateOpen} onOpenChange={(o) => { if (!o && !migrate.isPending) setMigrateOpen(false); }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Upgrade this computer to the signed agent?</DialogTitle>
-            <DialogDescription>
-              At its next check-in the computer is handed, once, the portal’s migration script. It downloads the signed
-              agent, checks it against the digest the signed repository publishes, and runs <code>migrate</code>, which
-              keeps the enrolment, device secret and RustDesk configuration. That one run trusts the portal, as every
-              standard-agent update already does; afterwards the computer runs only code signed offline. You will be asked
-              to confirm it is you.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-1.5">
-            <Label htmlFor="agent-migrate-reason" className="text-xs">Reason (recorded in the audit log)</Label>
-            <Input id="agent-migrate-reason" maxLength={400} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. pilot machine for signed patching" />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setMigrateOpen(false)} disabled={migrate.isPending}>Cancel</Button>
-            <Button onClick={() => migrate.mutate()} disabled={reason.trim().length < 3 || migrate.isPending}>
-              {migrate.isPending && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}Request upgrade
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AgentActionDialogs actions={actions} />
     </Card>
   );
 }

@@ -47,3 +47,14 @@ __pycache__/
 
 # scripts/run-e2e.sh output
 /.e2e-logs/
+
+# ── Signed releases (0.37) ───────────────────────────────────────────────
+# The release tool built in-tree by the offline method, and anything that
+# looks like a key or a signing repository. The owner's root of trust is NOT
+# listed here because trustroot/root.json is tracked (as the `{}`
+# placeholder): rem0te-signed-publish writes the real one only into a
+# `git archive` copy, and refuses to run if the checkout's copy is not `{}`.
+/tools/windows-installer/rem0te-release
+/tools/windows-installer/**/*.pem
+/deploy/**/*.pem
+rem0te-repo/

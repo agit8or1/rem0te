@@ -69,8 +69,11 @@ HTTP goes to the two URLs in the root-owned peers file, with redirects refused.
 
 ### The portal mirrors updates; it does not sign them (0.24)
 
-Agent code reaches Windows endpoints through a TUF repository signed **offline** with `rem0te-release`
-(`tools/windows-installer`). The API only serves the copy under `UPDATE_REPO_DIR`:
+Agent code reaches Windows endpoints through a TUF repository signed with `rem0te-release`
+(`tools/windows-installer`). The signing happens offline on a release machine, or, from 0.37, on the portal host under
+a separate `rem0te-release` user the API can't read (`deploy/release/`,
+[update-signing.md](update-signing.md#the-easy-way-single-host-037)). Either way the API only serves the copy under
+`UPDATE_REPO_DIR`:
 - the metadata and targets come from `update-trust/update-trust.service.ts`;
 - the parameters route, `/public/install/windows-params.json`, carries data only.
 

@@ -3,8 +3,9 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import Link from 'next/link';
 import {
-  Archive, ArchiveRestore, ChevronDown, Download, Eye, MoreHorizontal, PackageCheck, PlayCircle, Stethoscope, Wrench, FileDown,
+  Archive, ArchiveRestore, ChevronDown, Copy, Download, Eye, Loader2, MoreHorizontal, PackageCheck, PlayCircle, ShieldCheck, Stethoscope, Wrench, FileDown,
 } from 'lucide-react';
 import { endpointsApi, diagnosticsApi } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
@@ -14,6 +15,7 @@ import {
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { useToast } from '@/hooks/use-toast';
 import type { WorkspaceTab } from './device-model';
+import { AgentActionDialogs, UPGRADE_LABEL, UpgradeButton, upgradeView, type AgentActions } from './agent-actions';
 
 /**
  * CONNECT · DIAGNOSE · RUN ACTION · PATCH · MORE.
@@ -23,6 +25,14 @@ import type { WorkspaceTab } from './device-model';
  * shows. Archive and the other rare or destructive things live in MORE, each
  * behind a confirmation that names what it does; nothing destructive sits
  * next to Connect. None of this is a control: every route re-checks.
+ *
+ * 0.37: with computers:edit, the agent's own buttons sit here too, from the
+ * same read, mutations and dialogs as the Agent card (agent-actions.tsx):
+ * Upgrade to full agent on a standard Windows agent (always a button —
+ * disabled with its reason, the fix and Devices → Full agent when the server
+ * does not offer it; "Upgrade requested — waiting for check-in" while a
+ * request is open), Update agent / Check for update now, "Full agent" on a
+ * signed agent, and the manual command on Linux and macOS.
  */
 
 type Confirm = 'archive' | 'restore' | 'reinstall' | null;
@@ -47,7 +57,7 @@ function apiMessage(e: unknown, fallback: string) {
 }
 
 export function DeviceActions({
-  endpointId, ep, onConnect, onViewOnly, connecting, onOpenTab, perms, actionReason, reportsInventory,
+  endpointId, ep, onConnect, onViewOnly, connecting, onOpenTab, perms, actionReason, reportsInventory, agent,
 }: {
   endpointId: string;
   ep: Record<string, unknown>;
@@ -59,6 +69,8 @@ export function DeviceActions({
   /** Why RUN ACTION cannot work here, or null. */
   actionReason: string | null;
   reportsInventory: boolean;
+  /** The agent's actions (0.37), shared with the Agent card; given only to someone with computers:edit. */
+  agent?: AgentActions;
 }) {
   const { toast } = useToast();
   const router = useRouter();
@@ -103,9 +115,21 @@ export function DeviceActions({
   });
   const busy = archive.isPending || restore.isPending || reinstall.isPending;
 
-  const reasons: { label: string; why: string }[] = [];
+  const reasons: { label: string; why: string; extra?: React.ReactNode; testId?: string }[] = [];
   if (connectReason) reasons.push({ label: 'Connect', why: connectReason });
   if (perms.view && actionReason && actionReason !== 'Checking…') reasons.push({ label: 'Run action', why: actionReason });
+
+  // The agent's buttons (0.37), from GET /endpoints/:id/agent.
+  const a = agent?.a;
+  const up = agent ? upgradeView(a, perms.edit) : null;
+  if (a && up?.state === 'blocked') {
+    const extra = up.link && up.link.href !== '/endpoints/full-agent' ? up.link : null;
+    reasons.push({
+      label: UPGRADE_LABEL, why: up.reason, testId: 'header-upgrade-reason',
+      extra: <> {up.fix && <>What to do: {up.fix} </>}{extra && <>See <Link className="underline" href={extra.href}>{extra.label}</Link>. </>}<Link className="underline" href="/endpoints/full-agent" data-testid="header-upgrade-full-agent-link">Devices → Full agent</Link>.</>,
+    });
+  }
+  if (a && !a.update.command && !a.update.possible && a.update.reason) reasons.push({ label: a.update.label, why: a.update.reason, testId: 'header-update-reason' });
 
   return (
     <div className="space-y-1.5 max-w-full" data-testid="device-actions">
@@ -128,6 +152,24 @@ export function DeviceActions({
             <PackageCheck className="h-4 w-4 mr-1.5" />Patch
           </Button>
         )}
+        {a && up && <UpgradeButton view={up} onClick={agent!.askMigrate} testId="header-upgrade-full-agent" />}
+        {a && a.kind === 'signed' && (
+          <span className="inline-flex h-9 items-center gap-1.5 rounded-md border border-green-200 bg-green-50 px-3 text-sm font-medium text-green-900 dark:border-green-900 dark:bg-green-950/50 dark:text-green-100"
+            title="This computer runs the full (signed) agent: it installs only what the signed repository lists." data-testid="header-full-agent">
+            <ShieldCheck className="h-4 w-4" aria-hidden="true" />Full agent
+          </span>
+        )}
+        {a && (a.update.command ? (
+          <Button size="sm" variant="outline" onClick={() => agent!.copy(a.update.command!)} title={a.update.command} data-testid="header-agent-command">
+            <Copy className="h-4 w-4 mr-1.5" />Copy update command
+          </Button>
+        ) : a.kind !== 'unknown' && (
+          <span title={a.update.possible ? undefined : a.update.reason ?? undefined} className="inline-flex max-w-full">
+            <Button size="sm" variant="outline" onClick={agent!.askUpdate} disabled={!a.update.possible || agent!.update.isPending} data-testid="header-update-agent">
+              {agent!.update.isPending ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Wrench className="h-4 w-4 mr-1.5" />}{a.update.label}
+            </Button>
+          </span>
+        ))}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button size="sm" variant="outline" aria-label="More actions" data-testid="action-more">
@@ -175,9 +217,20 @@ export function DeviceActions({
       </div>
       {reasons.length > 0 && (
         <ul className="text-xs text-muted-foreground space-y-0.5" data-testid="action-reasons">
-          {reasons.map((r) => <li key={r.label}><span className="font-medium text-foreground">{r.label}</span> unavailable: {r.why}</li>)}
+          {reasons.map((r) => <li key={r.label} data-testid={r.testId}><span className="font-medium text-foreground">{r.label}</span> unavailable: {r.why}{r.extra}</li>)}
         </ul>
       )}
+      {a && up?.state === 'pending' && (
+        <p className="text-xs text-muted-foreground" data-testid="header-upgrade-pending">
+          <span className="font-medium text-foreground">{UPGRADE_LABEL}:</span> {up.text} Follow it on the Agent card or <Link className="underline" href="/endpoints/agent-migrations">Agent migrations</Link>.
+        </p>
+      )}
+      {a?.update.command && (
+        <p className="text-xs text-muted-foreground break-all" data-testid="header-agent-command-text">
+          <span className="font-medium text-foreground">{a.update.label}</span> on the computer: <code className="rounded bg-muted px-1">{a.update.command}</code>
+        </p>
+      )}
+      {agent && <AgentActionDialogs actions={agent} />}
 
       {confirm && (
         <ConfirmDialog

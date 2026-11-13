@@ -1,0 +1,13 @@
+[Unit]
+Description=rem0te: daily re-signing of the signed update timestamp (0.37)
+Documentation=https://github.com/agit8or1/rem0te/blob/main/docs/update-signing.md
+
+[Timer]
+# The timestamp lasts 7 days; daily leaves six missed runs before any agent
+# refuses the repository. Persistent catches up after downtime.
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

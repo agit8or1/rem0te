@@ -699,15 +699,34 @@ const SECTIONS: Section[] = [
           <strong>Update agent</strong> re-runs the current installer on a standard agent (the same as Reinstall
           agent); on a signed agent it is <strong>Check for update now</strong>, which installs only what the signed
           repository lists. Linux and macOS agents act on nothing the console sends, so the card gives the command to
-          re-run on the computer. <strong>Upgrade to signed agent</strong> moves one Windows computer to the signed
-          agent at its next check-in, after a reason and a fresh sign-in; when it can&apos;t, the card says exactly
-          what is missing, such as a signed release that has not been published yet. It is refused while the portal is
+          re-run on the computer. <strong>Upgrade to full agent</strong> moves one Windows computer to the full
+          agent (the signed agent) at its next check-in, after a reason and a fresh sign-in. From 0.37 the same
+          buttons sit at the top of the computer&apos;s page for anyone with computers:edit, beside Connect, and the
+          <strong> Agent out of date</strong> chip opens them. On every standard Windows agent Upgrade to full agent is
+          always a button: when it can&apos;t be used it is greyed out with the reason beside it, such as a signed release
+          that has not been published yet, what to do, and a link to Devices → Full agent. While a request is open it
+          reads <strong>Upgrade requested — waiting for check-in</strong>. A signed agent shows <strong>Full agent</strong>
+          instead, and Linux and macOS show the command to re-run on the computer. It is refused while the portal is
           in <em>Signed only</em> mode and held while updates are paused for the business. Several computers can be
           moved at once from the device list, and{' '}
           <Link href="/endpoints/agent-migrations" className="underline">Agent migrations</Link> (a Devices tab for
           whoever may request one) lists what is pending,
           held, not confirmed or done. More in{' '}
           <Link href="/docs/update-signing#moving-existing-agents" className="underline">Update signing</Link>.
+        </p>
+        <p className="font-medium text-foreground">Moving to the signed agent, automatically (0.37)</p>
+        <p>
+          <Link href="/endpoints/full-agent" className="underline">Devices → Full agent</Link> shows the whole move to the
+          signed agent as four steps — signing set up on this server, a signed agent published, the timestamp kept
+          fresh, computers moved — each with its live state and, when it is not done, the command to run
+          (<code>sudo ./deploy/release/rem0te-signed-setup.sh</code> once, then <code>sudo rem0te-signed-publish</code>{' '}
+          with each release). Once a signed agent is published, the portal moves standard Windows computers by itself:
+          one computer first, the canary, and the rest only after it has reported the published build for an hour with
+          no failed update, paced like automatic updates. A failure halts it, with the reason on the page, until a
+          Platform Admin resumes it or picks another canary. Computers whose update policy opts out, that are paused,
+          in a staged rollout or not checking in are skipped, and nothing moves in <em>Signed only</em>. The signed
+          agent has not run on real Windows yet: the canary is the first time. More in{' '}
+          <Link href="/docs/update-signing#moving-computers-automatically-037" className="underline">Update signing</Link>.
         </p>
         <p className="font-medium text-foreground">Agents keep themselves up to date (0.36)</p>
         <p>
@@ -984,11 +1003,26 @@ const SECTIONS: Section[] = [
         </p>
         <p>
           From 0.24, Windows agents can update through a <strong className="text-foreground">signed update chain</strong>:
-          they run only files signed offline by your release signer, so this portal cannot make them install anything
+          they run only files signed with your release keys, so this portal cannot make them install anything
           else. Platform Admins see which computers are still on the older update path, and can stop the portal handing
           those anything to run, under{' '}
           <Link href="/settings/security/update-signing" className="underline text-foreground">Settings → Security → Update Signing</Link>.
           More in <Link href="/docs/update-signing" className="underline text-foreground">Update signing</Link>.
+        </p>
+        <p>
+          From 0.37 the keys can live on this server, the easy way, under a separate <code>rem0te-release</code> user that
+          the portal itself cannot read. On the server, from the source checkout, once:{' '}
+          <code>sudo ./deploy/release/rem0te-signed-setup.sh --apply-env</code>, then{' '}
+          <code>sudo systemctl restart reboot-remote-api</code>. Setup creates the keys and the repository, installs a daily{' '}
+          <code>rem0te-timestamp-refresh.timer</code> and publishes the first signed release; the restart lets the portal
+          see it. Then move the root keys off the server: <code>sudo rem0te-signed-export-root &lt;dir&gt;</code> (for
+          example a USB stick; they are deleted from the server only after you type <em>yes</em>). After every deploy run{' '}
+          <code>sudo rem0te-signed-publish</code>, which builds and signs what is committed; <code>sudo rem0te-signed-status</code>{' '}
+          shows the keys, the published build and when the timestamp expires. Nothing is sent to GitHub. The trade-off:
+          root on this server can sign a release, so export the root keys.{' '}
+          <Link href="/endpoints/full-agent" className="underline text-foreground">Devices → Full agent</Link> shows each
+          step live. More in{' '}
+          <Link href="/docs/update-signing#the-easy-way-single-host-037" className="underline text-foreground">Update signing → The easy way</Link>.
         </p>
         <p>
           From 0.26, one change can be made on a Windows computer without a remote session:{' '}
