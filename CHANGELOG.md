@@ -40,8 +40,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - A computer already stuck is still running the old agent and has to be
   unstuck once, by restarting it or with
   `Get-Process rem0te-agent | Stop-Process -Force` in an elevated PowerShell.
-  Its install had usually completed, so its next heartbeat is on the signed
-  channel. If it was the automatic migration's canary and the rollout halted,
+  Neither computer registered (the installer's step 6, its first request)
+  before going quiet, so whether `install.ps1` itself finished is not known
+  yet; with this fix the agent returns and `agent-status.json` records the
+  installer's exit code. If it was the automatic migration's canary and the
+  rollout halted,
   **Resume** it on Devices → Full agent. `docs/troubleshooting.md` has a
   section for this.
 
