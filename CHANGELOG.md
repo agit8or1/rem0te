@@ -5,6 +5,76 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.38.0] — 2026-11-13 · *Doorstep*
+
+### Added
+
+- **Upgrade on the computer itself, from the computer's page.** The Agent
+  card on a standard Windows agent has a new block: one line to paste into
+  PowerShell run as administrator on that computer, with a copy button. It
+  upgrades the computer to the full agent without the console having to reach
+  it. Until now the only ways were *Upgrade to full agent* (delivered at the
+  next check-in, which needs a working heartbeat), the automatic migration (the
+  same), or the `rem0te-agent.exe migrate` command in `docs/update-signing.md`,
+  which needs the agent file to hand. 0.37.1–0.37.2 showed why that was not
+  enough. Their installer left every migrated computer with no heartbeat
+  script, so nothing from the console could reach it, and recovering one meant
+  finding a PowerShell line in a chat.
+
+  The command is built by `buildLocalMigrationCommand(host, sha256)` from the
+  signed agent the repository publishes now. It creates a fresh,
+  randomly named directory locked to SYSTEM and Administrators, downloads the
+  agent by its digest, and runs `migrate --portal <host>` only if the SHA-256
+  matches. A mismatch is deleted and nothing runs. The agent then verifies the
+  installer, RustDesk and the tray against signed metadata, as every migration
+  does. It is `buildMigrationScript`'s check in one line, without that script's
+  `exit`, which would close the person's PowerShell window and the output with
+  it.
+
+  The block opens by itself, with an amber note, when the computer fetched a
+  migration and has not checked in since. That is the case the console cannot
+  help with. Otherwise it is collapsed under *Upgrade on the computer itself*.
+  It is offered in every portal mode, Signed only included, because nothing is
+  served to the computer: a person runs it there. That is what Signed only
+  already told people to do. It needs a published signed agent and a portal
+  address. It is readable by anyone who can see the computer (`GET
+  /endpoints/:id/agent`, `computers:view`), because it holds no secret: the
+  host and a public digest.
+
+### Fixed
+
+- **The automatic migration's 0.37.3 canary was picked mid-upgrade.**
+  DS-HOME1 was being upgraded by hand with `migrate` while still reporting the
+  standard agent. The rollout picked it as the canary at 17:33:37, and the card
+  briefly said *Waiting for the computer's next check-in*. Its next heartbeat
+  (17:35:04, signed 0.37.3, `installer exit 0`) completed the request, and the
+  canary was confirmed at 17:35:37, so nothing was wrong. The rollout counts a
+  computer that finished the upgrade by any route. Recorded here because the
+  card's wording looked like a failure for those two minutes.
+
+### Upgrade notes
+
+- No schema change. Deploy as usual and run `sudo rem0te-signed-publish`.
+
+### Verification
+
+- `unit-agent-migration.mjs` (65 checks, 8 new): the local command is one line
+  with no `exit`, downloads by digest and checks it before `migrate`, deletes a
+  mismatch, locks its directory before the download, and pins the portal. It
+  refuses a host with a quote, an upper-case digest and a short digest, and
+  parses under pwsh.
+- `e2e-agent-upgrade.mjs` (100 checks, 6 new): no command without a published
+  release; one pinned to the newly published digest, with no `exit`; still
+  offered in Signed only; `stuck` false after a check-in that follows the
+  fetch and true once the last check-in is before it; another business's owner
+  gets a 404 and never the command.
+- `check-security-invariants.mjs` §43: a new check that the local command
+  validates host and digest and checks the hash before `migrate`, and that the
+  card builds it from the served target. Removing the mismatch deletion fails it.
+  The existing *MIGRATION_UNAVAILABLE runs nothing* check caught the function
+  when it was first placed inside the slice it reads, and the function was
+  moved.
+
 ## [0.37.3] — 2026-11-13 · *Keystone*
 
 ### Fixed

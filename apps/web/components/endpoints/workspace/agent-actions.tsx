@@ -43,6 +43,8 @@ export interface AgentCardData {
   migration: null | {
     possible: boolean; code: string | null; reason: string | null; fix: string | null; link: { href: string; label: string } | null;
     request: null | { id: string; state: string; text: string; requestedAt: string; dispatchedAt: string | null; fetchedAt: string | null; completedAt: string | null; cancelledAt: string | null; reason: string };
+    /** 0.38: the upgrade as one line to run on the computer itself; stuck = it fetched a migration and went quiet. */
+    local: null | { command: string; stuck: boolean };
   };
   /** 0.36: what the server will do about this agent by itself. Null if it could not be worked out. */
   autoUpdate: null | AutoUpdateState;

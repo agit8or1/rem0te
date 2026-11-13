@@ -30,6 +30,39 @@ const MODE_LABEL: Record<AutoUpdateState['mode'], string> = { ANY_TIME: 'any tim
 
 const short = (v: string | null) => (v && /^[0-9a-f]{64}$/.test(v) ? `build ${v.slice(0, 12)}…` : v ?? '—');
 
+/**
+ * 0.38: Upgrade to full agent, run on the computer itself. Open by default
+ * when the computer fetched a migration and has not checked in since: the
+ * console cannot reach it, so this is the way back.
+ */
+function LocalUpgrade({ local, onCopy }: { local: { command: string; stuck: boolean }; onCopy: (t: string) => void }) {
+  return (
+    <details open={local.stuck} className={`border-t pt-3 text-xs ${local.stuck ? '' : 'text-muted-foreground'}`} data-testid="agent-local-upgrade" data-stuck={local.stuck ? 'true' : 'false'}>
+      <summary className="cursor-pointer font-medium text-foreground">{local.stuck ? 'Stopped checking in after its upgrade: fix it on the computer' : 'Upgrade on the computer itself'}</summary>
+      <div className="mt-2 space-y-1.5">
+        {local.stuck && (
+          <p className="rounded-md border border-amber-500/40 bg-amber-500/5 p-2" data-testid="agent-local-upgrade-stuck">
+            It downloaded the upgrade to the full agent and has not checked in since, so nothing sent from here reaches it.
+            Run this once on the computer to finish the upgrade. It keeps the computer’s enrolment.
+          </p>
+        )}
+        <p>In PowerShell <span className="font-medium">as administrator</span> on the computer, paste and run:</p>
+        <div className="flex items-start gap-2">
+          <code className="block min-w-0 flex-1 break-all rounded bg-muted px-2 py-1.5 font-mono text-[11px] leading-snug" data-testid="agent-local-upgrade-command">{local.command}</code>
+          <Button size="sm" variant="ghost" className="h-7 px-2" aria-label="Copy the upgrade command" onClick={() => onCopy(local.command)}>
+            <Copy className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+        <p className="text-muted-foreground">
+          It downloads the signed agent this portal publishes, runs it only if it matches the published digest, and the agent
+          verifies everything else it installs. It takes about a minute; the computer reports the full agent within three.
+          If it does not, <code>C:\ProgramData\Rem0te\Logs\install.log</code> says why.
+        </p>
+      </div>
+    </details>
+  );
+}
+
 /** The Agent card's "Automatic updates" block (0.36). Everything it says comes from the API. */
 function AutoUpdateBlock({ u, onCopy }: { u: AutoUpdateState; onCopy: (t: string) => void }) {
   const warn = u.state === 'failing' || u.state === 'manual';
@@ -174,6 +207,8 @@ export function AgentCard({ endpointId, canEdit, alerts }: { endpointId: string;
             </div>
 
             {/* Upgrade to full agent: always a button on a standard Windows agent. */}
+            {a.migration?.local && <LocalUpgrade local={a.migration.local} onCopy={copy} />}
+
             {(up || a.migration?.request) && (
               <div className="border-t pt-3 space-y-2" data-testid="agent-migration">
                 {a.migration?.request && (

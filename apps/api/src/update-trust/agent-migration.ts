@@ -230,3 +230,30 @@ export function migrationState(r: MigrationRow, now = Date.now()): { state: Migr
 }
 
 export const MIGRATION_STATES: MigrationState[] = ['pending', 'held', 'dispatched', 'downloaded', 'not_confirmed', 'completed', 'cancelled'];
+
+/**
+ * The same migration as buildMigrationScript, as one line for a person to
+ * paste into an elevated PowerShell on the computer itself (0.38). The Agent
+ * card shows it, for a computer that cannot be reached from the console, such
+ * as one that went silent after a failed migration (0.37.1-0.37.2), or for
+ * someone sitting at the machine. It downloads the signed agent the
+ * repository publishes, by its digest, into a fresh directory locked to
+ * SYSTEM and Administrators, and runs `migrate` only if the digest matches.
+ * The signed agent then verifies everything else against signed metadata.
+ * Unlike the served script it never calls `exit`, which would close the
+ * person's PowerShell window and its output with it.
+ */
+export function buildLocalMigrationCommand(portalHost: string, agentSha256: string): string {
+  if (!validPortalHost(portalHost) || !/^[0-9a-f]{64}$/.test(agentSha256)) {
+    throw new BadRequestException('Cannot build a migration command from these values');
+  }
+  return [
+    `$d = Join-Path $env:ProgramData ('Rem0te-migrate-' + [guid]::NewGuid().ToString('N'))`,
+    `New-Item -ItemType Directory -Path $d | Out-Null`,
+    `icacls $d /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' *>$null`,
+    `$e = Join-Path $d 'rem0te-agent.exe'`,
+    `[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12`,
+    `Invoke-WebRequest -UseBasicParsing -Uri 'https://${portalHost}/api/v1/public/updates/targets/windows/${agentSha256}.rem0te-agent.exe' -OutFile $e`,
+    `if ((Get-FileHash -Algorithm SHA256 -LiteralPath $e).Hash.ToLower() -ne '${agentSha256}') { Remove-Item -LiteralPath $e -Force; Write-Output 'The download does not match the published digest. Nothing was run.' } else { & $e migrate --portal '${portalHost}' }`,
+  ].join('; ');
+}
