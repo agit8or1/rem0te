@@ -107,6 +107,34 @@ exit $bad`);
   check('legacy, signed and both heartbeats parse', pr.status === 0, pr.stdout + pr.stderr);
   check('heartbeat bodies were found', hb(legacy).length > 1000 && hb(signed).length > 1000);
 
+  // Windows PowerShell 5.1 (what the agent runs, by -File) reads a BOM-less
+  // script as the ANSI code page, not UTF-8. On 2026-11-13 the first real
+  // migration exited 1 before running a line: an em dash's 0x94 byte became
+  // U+201D, a closing quote to PowerShell. PowerShell 7 reads UTF-8 whatever
+  // the BOM, so the parse above could never see it. Read the built file as
+  // 5.1 would: UTF-8 after a BOM, Windows-1252 without one.
+  const built = join(dir, 'install.ps1');
+  const b = spawnSync(process.execPath, [join(here, 'build-signed-installer.mjs'), '--out', built], { encoding: 'utf8', cwd: join(here, '..') });
+  check('build-signed-installer.mjs writes install.ps1', b.status === 0, b.stdout + b.stderr);
+  const raw = readFileSync(built);
+  check('the signed install.ps1 starts with a UTF-8 byte-order mark', raw[0] === 0xef && raw[1] === 0xbb && raw[2] === 0xbf);
+  const ps51 = join(dir, 'ps51.ps1');
+  writeFileSync(ps51, `param([string]$Path, [switch]$StripBom)
+[System.Text.Encoding]::RegisterProvider([System.Text.CodePagesEncodingProvider]::Instance)
+$bytes = [IO.File]::ReadAllBytes($Path)
+if ($StripBom -and $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { $bytes = $bytes[3..($bytes.Length - 1)] }
+$hasBom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
+$text = if ($hasBom) { [Text.UTF8Encoding]::new($false).GetString($bytes, 3, $bytes.Length - 3) } else { [Text.Encoding]::GetEncoding(1252).GetString($bytes) }
+$t = $null; $e = $null
+[System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$t, [ref]$e) | Out-Null
+Write-Output ("ERRORS " + $e.Count)
+if ($e.Count) { Write-Output ($e[0].Message + " @" + $e[0].Extent.StartLineNumber) }
+`);
+  const p51 = spawnSync(pwsh, ['-NoProfile', '-NonInteractive', '-File', ps51, '-Path', built], { encoding: 'utf8' });
+  check('install.ps1 parses as Windows PowerShell 5.1 reads it (UTF-8 after the BOM)', /^ERRORS 0$/m.test(p51.stdout), p51.stdout + p51.stderr);
+  const noBom = spawnSync(pwsh, ['-NoProfile', '-NonInteractive', '-File', ps51, '-Path', built, '-StripBom'], { encoding: 'utf8' });
+  check('without the BOM it would not parse under 5.1 (so this check can fail)', /^ERRORS [1-9]/m.test(noBom.stdout), noBom.stdout + noBom.stderr);
+
   // Harness: the signed script up to the end of its parameter block, then
   // print what it accepted. Nothing after the block runs.
   const end = signed.indexOf("$UPDATE_CHANNEL = 'signed'") + "$UPDATE_CHANNEL = 'signed'".length;

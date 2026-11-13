@@ -98,7 +98,7 @@ func TestScriptRunWritesFilesRunsAndCleansUp(t *testing.T) {
 	h := &fakeHost{t: t, f: f, run: ScriptRun{ExitCode: 0, Stdout: []byte("hello web x5 loud=True\npassword=hunter2 C:\\Users\\alice\\x.txt\n"), StdoutTotal: 60, Duration: 1500 * time.Millisecond}}
 	r := f.runScript(scriptPlan(content, map[string]any{"Name": "web", "Count": float64(5), "Loud": true}, 5), content, h)
 	expect(t, r, "succeeded", "")
-	if h.calls != 1 || h.sawFile["script.ps1"] != testScript || h.sawFile["run.ps1"] != scriptWrapper || h.timeout != 5*time.Minute {
+	if h.calls != 1 || h.sawFile["script.ps1"] != "\ufeff"+testScript || h.sawFile["run.ps1"] != scriptWrapper || h.timeout != 5*time.Minute {
 		t.Fatalf("host saw %+v timeout %v", h.sawFile, h.timeout)
 	}
 	var pj map[string]any
