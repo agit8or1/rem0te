@@ -529,7 +529,7 @@ export class AgentAutoMigrationService implements OnModuleInit, OnModuleDestroy 
           done: status.configured,
           reason: status.configured ? null : status.reason ?? null,
           command: SETUP_COMMAND,
-          docs: '/docs/update-signing#the-easy-way',
+          docs: '/docs/update-signing#the-easy-way-single-host-037',
         },
         published: {
           done: !!pub.agent,

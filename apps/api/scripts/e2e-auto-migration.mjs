@@ -241,7 +241,7 @@ async function main() {
     for (const k of ['a1', 'a2', 'a3', 'b1', 'b2']) await reportNow(k);
     const noRepo = await withoutRepo(() => overview(S.ownerA));
     const s1 = noRepo.data?.steps?.signing;
-    check(noRepo.status === 200 && s1?.done === false && s1.command === 'sudo ./deploy/release/rem0te-signed-setup.sh' && s1.docs === '/docs/update-signing#the-easy-way',
+    check(noRepo.status === 200 && s1?.done === false && s1.command === 'sudo ./deploy/release/rem0te-signed-setup.sh' && s1.docs === '/docs/update-signing#the-easy-way-single-host-037',
       'no repository: step 1 not done, with the setup command and the docs link', msg(noRepo));
     check(noRepo.data?.steps?.computers?.auto?.gate === 'no_repository', 'and the automatic migration waits for step 1', JSON.stringify(noRepo.data?.steps?.computers?.auto));
     const r = await overview(S.ownerA);

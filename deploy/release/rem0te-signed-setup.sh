@@ -122,7 +122,10 @@ TYPESCRIPT_DIR=$(cd "$TYPESCRIPT_DIR" && pwd -P)
 GOMODCACHE=$(abspath "${o_gomod:-$STATE_DIR/go/mod}" --gomodcache)
 GOCACHE=$(abspath "${o_gocache:-$STATE_DIR/go/cache}" --gocache)
 want=$(sed -n 's/^go \([0-9.]*\)$/\1/p' "$SOURCE_DIR/tools/windows-installer/go.mod")
-have=$("$GO" env GOVERSION 2>/dev/null | sed 's/^go//')
+# The binary's own version: with the caller's GOTOOLCHAIN inherited, `go env
+# GOVERSION` reports the toolchain it would switch to, and the builds below run
+# under `env -i` without that switch.
+have=$(GOTOOLCHAIN=local "$GO" env GOVERSION 2>/dev/null | sed 's/^go//')
 if [[ -n $o_gotc ]]; then GOTOOLCHAIN_SET=$o_gotc
 elif [[ -n $have && -n $want ]] && ! ver_lt "$have" "$want"; then GOTOOLCHAIN_SET=local
 elif [[ $DEFAULT_GOTOOLCHAIN == go$want.* ]]; then GOTOOLCHAIN_SET=$DEFAULT_GOTOOLCHAIN

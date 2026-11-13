@@ -998,11 +998,26 @@ const SECTIONS: Section[] = [
         </p>
         <p>
           From 0.24, Windows agents can update through a <strong className="text-foreground">signed update chain</strong>:
-          they run only files signed offline by your release signer, so this portal cannot make them install anything
+          they run only files signed with your release keys, so this portal cannot make them install anything
           else. Platform Admins see which computers are still on the older update path, and can stop the portal handing
           those anything to run, under{' '}
           <Link href="/settings/security/update-signing" className="underline text-foreground">Settings → Security → Update Signing</Link>.
           More in <Link href="/docs/update-signing" className="underline text-foreground">Update signing</Link>.
+        </p>
+        <p>
+          From 0.37 the keys can live on this server, the easy way, under a separate <code>rem0te-release</code> user that
+          the portal itself cannot read. On the server, from the source checkout, once:{' '}
+          <code>sudo ./deploy/release/rem0te-signed-setup.sh --apply-env</code>, then{' '}
+          <code>sudo systemctl restart reboot-remote-api</code>. Setup creates the keys and the repository, installs a daily{' '}
+          <code>rem0te-timestamp-refresh.timer</code> and publishes the first signed release; the restart lets the portal
+          see it. Then move the root keys off the server: <code>sudo rem0te-signed-export-root &lt;dir&gt;</code> (for
+          example a USB stick; they are deleted from the server only after you type <em>yes</em>). After every deploy run{' '}
+          <code>sudo rem0te-signed-publish</code>, which builds and signs what is committed; <code>sudo rem0te-signed-status</code>{' '}
+          shows the keys, the published build and when the timestamp expires. Nothing is sent to GitHub. The trade-off:
+          root on this server can sign a release, so export the root keys.{' '}
+          <Link href="/endpoints/full-agent" className="underline text-foreground">Devices → Full agent</Link> shows each
+          step live. More in{' '}
+          <Link href="/docs/update-signing#the-easy-way-single-host-037" className="underline text-foreground">Update signing → The easy way</Link>.
         </p>
         <p>
           From 0.26, one change can be made on a Windows computer without a remote session:{' '}

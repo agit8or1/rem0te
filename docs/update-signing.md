@@ -29,7 +29,12 @@ sudo rem0te-signed-publish                                   # every release: th
 sudo rem0te-signed-status                                    # any time
 ```
 
-Then move computers onto the signed agent: [Moving existing agents](#moving-existing-agents).
+Setup runs the first publish itself, but the portal doesn't see the repository until the API restarts with
+`UPDATE_REPO_DIR` set (`--apply-env` adds it to `/etc/reboot-remote/api.env`; without it, setup prints the line to
+add). **Within a minute of that restart the automatic migration asks its first computer, the canary**, because it is
+on by default ([Moving computers automatically](#moving-computers-automatically-037)). To hold it, turn it off on
+**Devices → Full agent** before the restart, or put `AUTO_MIGRATION_SWEEP=off` in `api.env`. To move computers by
+hand instead, see [Moving existing agents](#moving-existing-agents).
 
 ### What each command does
 
@@ -416,7 +421,8 @@ From 0.37 the portal moves standard Windows agents to the signed agent by itself
 when it is not done, the command that does it:
 
 1. **Signing set up on this server** — done when the portal has a signed repository (`UPDATE_REPO_DIR`). Otherwise:
-   `sudo ./deploy/release/rem0te-signed-setup.sh`, once, from the source checkout.
+   `sudo ./deploy/release/rem0te-signed-setup.sh`, once, from the source checkout (with `--apply-env` to add
+   `UPDATE_REPO_DIR` to `api.env`), then restart the API. The step stays *not yet* until that restart.
 2. **A signed agent is published** — the published agent's version and commit (from the signed target) against this
    portal's version. When it is behind: `sudo rem0te-signed-publish`.
 3. **Timestamp kept fresh** — when the timestamp the portal serves expires, with a warning under 48 hours. The timer

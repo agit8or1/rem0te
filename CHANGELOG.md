@@ -5,6 +5,577 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.37.0] — 2026-11-13 · *Keystone*
+
+The seventh increment of the RMM overhaul. Its theme is the owner's request: an **easy** way to put agents on the
+fully managed (signed) agent, set up on this host, shown in the console, with nothing going to GitHub, and with moving
+the computers automated. Until now every signed feature since 0.24 was inert in production, because nobody had done
+the four manual stages on an offline machine that `docs/update-signing.md` described. Two parts were built separately
+from 0.36.2 and integrated here:
+
+- **Signed releases on one host** (`deploy/release/`). `sudo ./deploy/release/rem0te-signed-setup.sh` once creates a
+  `rem0te-release` user that holds the keys where the portal can't read them, the repository and a daily timestamp
+  timer, and publishes the first release. `sudo rem0te-signed-publish` after every deploy builds the agent, tray and
+  installer from a `git archive` of committed HEAD, signs, verifies and publishes atomically. The owner's root is
+  written only into the build copy and never committed. **Trade-off, stated plainly: root on this host can sign**;
+  export the root keys with `sudo rem0te-signed-export-root <dir>`.
+- **Automatic migration and Devices → Full agent.** Once a signed agent is published, the portal moves standard
+  Windows agents to it by itself, one canary first, the rest only after the canary reported the published build
+  through a soak, paced and held exactly like a person's per-computer migration. **On by default.** The Full agent
+  page shows the four steps live, with the command for each one that isn't done.
+
+One migration (`0064_auto_migration`). No production dependency changed. **Nothing in this release has run on real
+Windows**, and the setup script's real root path (`useradd`, `runuser`, ownership, systemd) has not been run: the
+tests ran it under `--prefix` as a normal user. See *Upgrade notes (all of 0.37)*.
+
+### Signed releases on one host
+
+The owner asked for an easy way to put agents on the fully managed (signed) agent, set up on this host, with nothing
+going to GitHub. Until now the docs described four manual stages on an offline release machine: generate six keys,
+initialise a repository, copy `1.root.json` into `trustroot/root.json` and **commit it**, build three files, download
+and check a RustDesk build, sign, verify and rsync. They also said to keep the timestamp fresh every three days by
+hand. Nobody had done it, so production has no signed repository, and every signed feature since 0.24 is inert there.
+The committing step was also a problem in itself: the owner's root would have reached GitHub on the next push.
+
+#### Added
+- **`sudo ./deploy/release/rem0te-signed-setup.sh`**, run once from the source checkout. It:
+  - creates the system user `rem0te-release` (no login shell), `/var/lib/rem0te-release` (0700: `keys/`, the signing
+    repository, a RustDesk cache, `publish.log`) and the published repository `/var/lib/rem0te-updates` (owner
+    `rem0te-release`, group `reboot`, 2750/0640, setgid so new files take the portal's group);
+  - builds `rem0te-release` from `git archive HEAD` and installs the commands below;
+  - as `rem0te-release` under umask 077, generates three root keys (threshold 2) and the targets, snapshot and
+    timestamp keys, and runs `init`. It prints key ids only;
+  - checks that the `reboot` user can't read a key;
+  - installs `rem0te-timestamp-refresh.timer`;
+  - prints the `UPDATE_REPO_DIR=/var/lib/rem0te-updates` line, or adds it to `/etc/reboot-remote/api.env` with
+    `--apply-env`;
+  - runs the first publish.
+
+  Running it again changes no key and doesn't re-initialise. A half-present key set, or a repository with no keys,
+  is refused. A configuration that names a different state or published directory is refused. Every path can be
+  overridden (`--prefix`, `--no-user`, `--no-systemd`, `--no-publish` and one flag per directory), which is how the
+  test runs it as an ordinary user in a temp directory.
+- **`sudo rem0te-signed-publish`**, for each release and as the last step of every deploy:
+  - unpacks `git archive HEAD` into a new build directory owned by `rem0te-release`. It never uses the working tree;
+  - writes the owner's root into **that copy's** `trustroot/root.json`;
+  - builds `rem0te-agent.exe` and `rem0te-tray.exe` (windows/amd64, `-trimpath`, `CGO_ENABLED=0`, tray
+    `-H=windowsgui`) and the release tool, and checks that the agent embeds the root;
+  - builds `install.ps1`;
+  - fetches the RustDesk build the portal pins (`PlatformSettings.rustdeskPinnedVersion`, read with one SELECT
+    through `psql` from the portal's env file), or the latest release when none is pinned. It checks the build
+    against GitHub's published SHA-256 and caches it;
+  - signs a copy of the repository with `{"version","commit"}` on the agent and tray targets, which is what the portal
+    half of 0.37 reads, and verifies it with the agents' client;
+  - publishes.
+
+  Every step is logged to `/var/lib/rem0te-release/publish.log`.
+- **Atomic publishing.** The repository goes to a staging directory beside the published one and is verified there
+  with `rem0te-release verify`. It is then moved in by renames only: new targets and versioned metadata first, then
+  `root.json`, then `timestamp.json`, the commit point. Consistent snapshots mean nothing the current timestamp points
+  at is touched, so an agent sees the previous release whole until that last rename, and the new one whole after it.
+  - A staging copy that fails verification is deleted, and the published repository is byte-identical afterwards.
+  - A versioned file that already exists with different bytes stops the move before anything is moved.
+  - Target files that the two newest targets versions no longer list are then removed.
+- **Refusals.** `rem0te-signed-publish` refuses:
+  - a version older than the published one;
+  - the same version from a different commit;
+  - a RustDesk build with no published digest, or one that doesn't match it;
+  - a checkout whose `trustroot/root.json`, in the working tree or in HEAD, is not `{}`.
+
+  The same version and commit again is a no-op unless `--republish`, which adds a newly pinned RustDesk build without
+  a version bump.
+- **`sudo rem0te-signed-status`**: one screen showing:
+  - which keys are present, and whether the root keys are on the host or exported;
+  - the published agent (version and commit), tray, installer and RustDesk builds;
+  - every role's expiry;
+  - the last publish, the timer, and whether `api.env` has `UPDATE_REPO_DIR`.
+
+  It exits 1 when something needs attention.
+- **`sudo rem0te-signed-export-root DIR`** (or `DIR1 DIR2 DIR3`, one key each). It copies the three root keys off the
+  host, checks each copy byte for byte, and deletes them from the host only after you type `yes`. It refuses a
+  destination inside the checkout, any git work tree, the state directory or the published repository.
+- **`rem0te-timestamp-refresh.timer`**, daily, runs `rem0te-signed-refresh` as `rem0te-release` with no outbound
+  network and `/etc/reboot-remote` inaccessible. It re-signs the timestamp and publishes it through the same staged
+  path, so `timestamp.json` is the only file that changes. It also re-signs the snapshot when it has under 10 days
+  left, and unchanged targets when they have under 14 days left.
+- **`build-signed-installer.mjs --from-source --typescript DIR --out FILE|-`.** It transpiles
+  `src/public/windows-script.ts` on its own, so a `git archive` copy with no `node_modules` and no `dist` can build
+  `install.ps1`. It refuses if that file ever imports a module. The output is byte-identical to the `dist` build;
+  the e2e suite compares the two.
+- **Docs.** `docs/update-signing.md` opens with *The easy way (single host, 0.37)*, covering:
+  - the commands and what each does;
+  - the trade-off, stated plainly;
+  - the export recommendation.
+
+  The offline-machine method is kept as *The stricter way*, and its step 3 now says to put the root in the build copy
+  only, never commit it. `docs/patching-setup.md` step 1, the key table, `architecture.md`, `security-model.md`,
+  `rmm-gap-analysis.md` and CLAUDE.md (§56, the deploy step, a bite-list line) are updated to match. A `.gitignore`
+  block covers in-tree release artefacts.
+
+#### Decided
+- **The keys live on the portal host, under a user the portal can't read.** This is the same compromise the docs
+  already accept for the approval signer as a separate local user.
+  - A compromise of the portal *application* can't sign: its code (as `reboot`), its database or its sessions.
+  - **Root on the host can sign.** The docs say so in those words, and recommend `rem0te-signed-export-root` right
+    after setup. With the root keys off the host, root can still sign releases but can't rewrite the root, so the
+    owner can rotate the targets, snapshot and timestamp keys away afterwards without reinstalling every agent.
+- **The checkout's JavaScript runs as the checkout's owner, never as the key holder.** The `install.ps1` step uses
+  TypeScript from the checkout's `node_modules`. Running it as `rem0te-release` would hand those packages the keys,
+  and the owner of the checkout already controls the source being signed, so running it as them gives nothing away.
+  The Go builds run as `rem0te-release`. They execute no repository code: `CGO_ENABLED=0`, `-mod=readonly`, and
+  modules checked against `go.sum`.
+- **Root of trust in the build: `1.root.json`, as before.** Agents walk forward through any rotation from the root
+  they ship with.
+- **The RustDesk build follows the portal's own rule**, the pin or else the latest release, so the signed build is
+  the one the portal offers. Builds already signed stay listed.
+- **No change to the Go release tool.** Its existing flags were enough, and every command stays compatible.
+- **The published path stays `/var/lib/rem0te-updates`, swapped file by file**, not through a `current` symlink.
+  The interface fixes `UPDATE_REPO_DIR=/var/lib/rem0te-updates`, and TUF's consistent snapshots make the timestamp
+  rename the atomic point.
+
+#### Upgrade notes
+- Nothing changes until you run `sudo ./deploy/release/rem0te-signed-setup.sh --apply-env` on the host and restart
+  the API. Then `sudo rem0te-signed-export-root /media/<stick>`, and from then on `sudo rem0te-signed-publish` after
+  every deploy. Publish builds **committed** HEAD, so commit and bump before deploying.
+- Setup needs Go: `/usr/local/go/bin/go` is enough. When it is older than `go.mod` asks for, setup uses
+  `GOTOOLCHAIN=go1.27.4`, downloaded once into `/var/lib/rem0te-release/go`. It also needs `pnpm install` in the
+  checkout (for TypeScript), plus `git`, `curl`, `flock` and, for the pin, `psql`.
+- After pulling a new rem0te, run setup again to update the installed commands. It changes no key.
+- Don't commit `tools/windows-installer/trustroot/root.json`. §56 fails CI if you do.
+- **Not run as root on a real host.** The `useradd`, `runuser`, `chown`, `chgrp reboot` and systemd paths have not
+  been exercised; the suite runs everything as the current user (`--no-user --no-systemd`). Run setup on the host
+  for the first time with someone watching, and check `sudo rem0te-signed-status` afterwards.
+
+#### Verification
+- `apps/api/scripts/e2e-signed-release.mjs`: **64 checks**, passing. It runs setup, publish, refresh, status and
+  export-root in a temp prefix as the current user, with a scratch API on 3901 and a loopback stand-in for GitHub's
+  RustDesk releases on 3902. It covers:
+  - key and directory modes, the env line, and no key material printed;
+  - a second setup changing nothing, and a half key set refused;
+  - the Agent card refusing NO_SIGNED_RELEASE before the first publish and offering the upgrade after it, with
+    another business still a 404;
+  - `verify -mirror` accepting what the API serves, `/admin/update-trust` listing `{version, commit}`, and the
+    served agent embedding the root while the git tree stays clean;
+  - the pinned RustDesk build read from the database, and the latest release when unpinned;
+  - `install.ps1` from the archive equal to the one from `dist`;
+  - eight refusals, each leaving the published tree byte-identical: no-op, downgrade, same version from another
+    commit, dirty working-tree root, committed root, bad digest, no digest and corrupted staging;
+  - refresh changing only `timestamp.json`;
+  - export-root: refused inside the checkout, "no" keeping the keys, "yes" making byte-identical 0600 copies and
+    removing the keys, status reporting the export, setup after export, and publishing without root keys.
+
+  Added to `scripts/run-e2e.sh`, skipped without Go.
+- `apps/api/scripts/unit-signed-release.mjs`: **22 checks**, in CI. It covers RustDesk URL and digest rules,
+  charset-checked metadata, prune-list, portal-pin and `ver_lt`.
+- `scripts/check-security-invariants.mjs` **§56**: 16 checks. **23 mutations** were applied, one guard removed at a
+  time, and each was caught by the check it targets.
+
+### Moving computers to the signed agent automatically, and the Full agent page
+
+The owner asked for an easy way to move agents to the fully managed (signed) agent, one that is shown in the UI, and
+for step 4 (moving the computers) to be automated. Until now each computer moved only when someone pressed **Upgrade
+to signed agent** on it, or selected a batch on All devices: one request each, with a reason and a fresh sign-in. The
+steps before that (keys, a repository, a published build, a fresh timestamp) were described only in
+`docs/update-signing.md`. Nothing in the console said which of them were done.
+
+#### Added
+- **Automatic migration, canary first.** Once a signed agent is published (the signed repository lists
+  `windows/rem0te-agent.exe`) and the portal is not in Signed only, a sweep moves standard Windows agents to it.
+  There is one rollout per published build (`AgentAutoMigration`, keyed by the build's digest):
+  - **One canary.** The sweep picks one eligible computer that is checking in now, the most recently heard from. It
+    makes an ordinary 0.34 per-computer request for it (`AgentMigrationService.requestAutomatic`): the same
+    `AgentMigration` row, nonce, `windows.ps1?updateNonce=` script and heartbeat hand-out. The row is marked
+    `automatic`, has no requester, and names its rollout.
+  - **Confirmed only on the published build.** The canary must report the signed channel *and* the published digest
+    within **2 hours** of being asked (the same limit as a request's *Not confirmed*). The rollout **halts**, with
+    the reason kept, on any of these:
+    - a failed update result (`installer exit` other than 0, `installer failed:`, `metadata-refused:`; a signed pause
+      doesn't count);
+    - a person cancelling the canary's request;
+    - the canary being archived or removed;
+    - no confirmation within the 2 hours.
+
+    The halt stops the canary's automatic request, so a failing migration isn't re-run every 30 minutes.
+  - **A soak.** The canary must keep reporting that build for the soak (default **60 minutes**, 15–1440) with no
+    failed update result, and check in once more after the soak ends. Otherwise the rollout halts: it left the build,
+    it failed, or it was silent for 2 hours after the soak. Nothing else moves during the soak.
+  - **Then the rest, paced.** The pace is 0.36's automatic-update number (`agentAutoUpdatePerHour`, default 120)
+    counted over automatic requests in the last hour, the canary included, and at most 50 in one pass. Each computer
+    goes through the same precondition function as a person's request (`migrationBlock`), run again at the moment of
+    writing. It is skipped:
+    - under an `updates` pause;
+    - while a staged rollout owns it;
+    - while its update policy's agent mode is *Off* (business, site or device group; in *Window* mode, outside the
+      window): 0.36's opt-out, reused;
+    - while it isn't checking in;
+    - if a person ever cancelled a move for it.
+  - **A new build** starts a new rollout and canary for the computers still on the standard agent. Signed agents are
+    never migrated again: they update themselves (0.36).
+  - **Halted stays halted** until a Platform Admin acts, with a fresh sign-in:
+    - **Resume** asks the same canary again, with its clocks from now. If it already reports the build, it soaks again.
+    - **Restart with another canary** picks another computer and never picks the old one again for that build.
+
+    Neither skips the canary.
+- **A platform setting**, `off` / `canary_then_all` (default `canary_then_all`), and the soak. Platform Admin only.
+  Turning it on or shortening the soak needs a fresh sign-in; turning it off or lengthening the soak doesn't. Changes
+  are audited with before and after (`AGENT_AUTO_MIGRATION_SETTINGS_CHANGED`). The rollout's steps are audited as the
+  system:
+  - `AGENT_AUTO_MIGRATION_CANARY_CHOSEN`
+  - `…_CANARY_CONFIRMED`
+  - `…_ROLLING`
+  - `…_HALTED`
+  - `…_RESUMED` and `…_RESTARTED`, which carry the admin.
+
+  The per-computer requests are history rows, not audit entries, like 0.36's attempts. `AUTO_MIGRATION_SWEEP=off`
+  stops the sweep in one API process; `AUTO_MIGRATION_SWEEP_SECONDS` (default 60) sets how often it runs.
+- **Devices → Full agent** (`/endpoints/full-agent`, for anyone with View computers). The whole process as a vertical
+  step tracker read live from the server, each step with what to do when it isn't done:
+  1. **Signing set up on this server.** Done when a repository is configured. Otherwise the page shows
+     `sudo ./deploy/release/rem0te-signed-setup.sh`, one line on what it does, and a link to *The easy way*.
+  2. **A signed agent is published.** The published agent's version and commit (the signed target's custom fields)
+     against this portal's version. When it is behind: `sudo rem0te-signed-publish`.
+  3. **Timestamp kept fresh.** The served timestamp's expiry, with a warning under 48 hours, `sudo
+     rem0te-signed-status`, and the timer's name, `rem0te-timestamp-refresh.timer`. The page says the portal can't
+     see the timer and infers only from the expiry.
+  4. **Computers moved.** How many of the computers you can see are:
+     - standard, moving or signed (and how many are on the published build);
+     - held, with reasons: paused, rollout, opted out, outside window, not checking in, no device secret, archived,
+       cancelled by a person;
+     - not eligible (Linux, macOS).
+
+     Then the automatic migration's mode and state: which computer is the canary, when the soak ends, the halt reason,
+     and fleet progress for Platform Admins. Platform Admins also get *Turn on/off*, the soak, *Resume* and *Restart
+     with another canary*. A link leads to the existing bulk **Upgrade to signed…**, and a list links to each computer.
+
+  The page also says plainly that the signed agent and the tray haven't run on real Windows, and that the canary is
+  the first time. It is mobile-friendly: lists, not tables. Linked from each computer's Agent card, from Settings →
+  Security → Update Signing, and from the Settings page.
+- **API.** `GET /agent-signing/overview` needs `computers:view`. Its counts and list come only from
+  `acl.endpointVisibilityWhere`; the canary is named only to someone who can see it, and fleet progress goes only to
+  Platform Admins. `GET`/`PUT /admin/agent-auto-migration` and `POST …/resume` and `POST …/restart` are Platform
+  Admin (`PlatformAdminGuard`, then the service checks again).
+- **Migration `0064_auto_migration`:**
+  - `PlatformSettings.agentAutoMigrationMode` / `agentAutoMigrationSoakMinutes`, with a CHECK on the mode and 15–1440;
+  - `AgentMigration.automatic` / `rolloutId`, with a CHECK: an automatic row has no requester and a rollout, a
+    person's has no rollout;
+  - the `AgentAutoMigration` table, with CHECKs: a 64-hex digest, five states, `rolling` only with
+    `canaryConfirmedAt`, and `halted` only with a reason;
+  - seven `ActivityAction` values.
+
+#### Changed
+- **"No signed release is published …" now points to the page and the command**, not to the offline-keys text. The
+  reason no longer says "needs the offline signing keys only you hold". The fix gives the setup command, or `sudo
+  rem0te-signed-publish` when the repository exists but has no agent, and the link is **Devices → Full agent**
+  (`FULL_AGENT`), not *Roles and keys*. The Agent card, bulk Upgrade, the Patches tab pre-flight and patch-policy
+  pre-flight all show it.
+- **The Patches tab's "Upgrade it" now links to Full agent too**, besides *Open the Agent card*. The patch-policy
+  pre-flight's fixes name `sudo rem0te-signed-publish` and the automatic migration.
+- **The Agent card** links to Full agent in its header. Where *Upgrade to signed agent* is offered, it says the
+  automatic migration can move the computer instead.
+- `AgentAutoUpdateService.modeFor` is now `modesFor` for many computers at once: one policy read and one membership
+  snapshot per business. `modeFor` calls it, so the 0.36 behaviour is unchanged.
+- `migrationState` says *Stopped by the automatic migration: its rollout halted.* for an automatic request the
+  system stopped.
+
+#### Decided (for the owner)
+- **Opt-out reuses 0.36's agent mode, with no new column.** A policy with agent mode *Off* opts its computers out of
+  automatic updates *and* automatic migration. *Window* holds both to the window. The alternative was a separate
+  switch per policy. One switch means "the portal changes nothing on these computers by itself", which is what a
+  business that opts out wants. A person can still press *Upgrade*.
+- **Resume never skips the canary.** It asks the same computer again with fresh clocks. There is no "move the rest
+  without a confirmed canary" button: nothing has run on real Windows, and the canary is the only evidence.
+- **The canary must be checking in.** Picking one that isn't would only run out the 2-hour clock and halt.
+- **The pace shares 0.36's number but not its count.** Automatic migrations are counted against
+  `agentAutoUpdatePerHour` separately from automatic update attempts, so at worst twice that many installer runs
+  start in an hour. Combining the two counts would have meant changing 0.36's locked counter (§53).
+- **A person's cancel is final for automation.** A computer whose move someone cancelled is never asked
+  automatically. Pressing *Upgrade* still works.
+- **One rollout per build**, so every new published build gets a new canary for the computers still standard.
+
+#### Upgrade notes
+- **On by default.** As soon as the portal sees a published signed agent (not in Signed only), the canary is asked
+  within a minute. With the 0.37 setup that is a minute after the API restart that follows setup, because setup
+  publishes before the API has `UPDATE_REPO_DIR`. To prevent that, turn it off on Devices → Full agent *before* that
+  restart (no fresh sign-in needed), or set `AUTO_MIGRATION_SWEEP=off` in `/etc/reboot-remote/api.env`.
+- Migration 0064 (schema change): `prisma migrate deploy`, then rsync `prisma/` and run `prisma generate` at the
+  target, as CLAUDE.md says.
+- No production dependency changed.
+
+#### Verification
+- `unit-auto-migration.mjs` (new, in CI): **80 passed, 0 failed**. It covers:
+  - settings, bounds and the exact off switch;
+  - what widens;
+  - which update results are failures;
+  - every gate reason;
+  - the state machine: confirm only on the exact build; halts on failure, cancel, missing computer and timeout (strictly
+    over 2 h); the soak and the check-in after it; a soak never moves on early; canary and soaking only ever wait,
+    confirm, start rolling or halt;
+  - canary order, the pace budget and the hold mapping;
+  - the new precondition messages and links;
+  - the automatic-stopped state text.
+- `e2e-auto-migration.mjs` (new; ports 3911/3912; a throwaway repository built with `rem0te-release`, with
+  version/commit custom fields; its own API from `dist` sweeping every second): **73 passed, 0 failed**. It covers:
+  - steps 1–3 with the commands verbatim, and the timestamp step claiming nothing about the timer;
+  - nothing happens before a publish, in Signed only (with and without portal migration) or with the mode off;
+  - settings: owner refused; off without step-up; on and a shorter soak need it; a soak under 15 refused; three
+    changes audited before/after;
+  - the canary: the newest eligible computer, never a contained, business-opted-out, group-opted-out,
+    rollout-owned, person-cancelled, unbound or offline one. It gets one automatic request with no requester, one
+    `CANARY_CHOSEN` audit row and no `AGENT_MIGRATION_REQUESTED`. Only its heartbeat gets the nonce, which serves the
+    script pinned to the published digest, and the trust mode is untouched;
+  - the soak gate: another build doesn't confirm; nobody moves during the soak; after it, the canary must check in
+    first;
+  - pacing at 3 an hour, mode off mid-rollout, and resuming;
+  - A/B isolation of the overview (11 vs 2 computers, the canary hidden from B, progress only for the admin);
+  - a new build: a new canary, signed agents untouched;
+  - halts on a failed result and on a timeout; resume and restart refused without step-up and for an owner; restart
+    picks another canary;
+  - `AUTO_MIGRATION_SWEEP=off` on a second API does nothing and the page says so.
+
+  The database is refused if any other standard Windows computer is checking in.
+- Existing suites run again: `e2e-agent-upgrade.mjs` 94 passed (two assertions now expect the Full agent link),
+  `e2e-agent-auto-update.mjs` 96 passed (the `modesFor` refactor), `unit-agent-migration.mjs` 44 passed (two
+  assertions updated), `unit-agent-auto-update.mjs` 78 passed.
+- `check-security-invariants.mjs` §57 (new, 10 checks). Each was proved to fail when its guard is removed (17
+  mutations, all caught), then restored. All invariants hold.
+- `gen-api-reference.mjs --check` against the runtime route table: 506 routes, matching. `nest build`, `next build`,
+  `tsc --noEmit` in both apps and `pnpm -r lint` are clean, and `check-versions.mjs` passes.
+- Browser: `e2e-ui.mjs` (948 passed, 0 failed, palette skipped) gains the Full agent page at 1440 and 375 px in light and dark, reached from the Agent card's
+  link. It checks the four steps, the setup command, the timer honesty, *sweep off* with the admin's controls, the
+  honest note, the current Devices tab, no sideways scroll, and no console errors. `e2e-navigation.mjs` gains the
+  Devices tab for each persona, the page's four steps, and who is offered the controls. It needs the docs stack on
+  port 4000 and was not run here (`node --check` only).
+
+### Integration notes
+
+The parts were merged into `feat/v0.37.0` in this order: signed releases, then automatic migration. Both started at
+3770740 (0.36.2) and were given their section numbers in advance:
+
+| § | Part | Checks |
+|---|---|---|
+| 56 | Signed releases on one host | 16 |
+| 57 | Automatic migration and the Full agent page | 10 |
+
+Check and test counts inside each part's section are that branch's own; the integrated counts are under
+*Verification (integrated)*. Where the branches met:
+
+- **Textual conflicts, all kept from both sides:** the end of `check-security-invariants.mjs` (§56, then §57) and
+  `CLAUDE.md` (the §56 paragraph, then §57's). `run-e2e.sh` (`AUTO_MIGRATION_SWEEP=off` exported, `auto-migration`
+  in the `RELEASE_BIN` group, `signed-release` with its own Go gate), `ci.yml` (`unit-signed-release`,
+  `unit-auto-migration`), `docs/update-signing.md` (*The easy way* at the top, *Moving computers automatically* after
+  *Moving existing agents*) and `docs/rmm-gap-analysis.md` merged without conflict. `docs/API-REFERENCE.md` and the
+  docs bundle were regenerated, not merged.
+- **§56 and §57 disagreed, and only the merged tree showed it.** §56 refused any `rem0te-signed-` text in
+  `apps/api/src`, so the portal can't be made to name or run the signing commands. §57 requires the Full agent page's
+  commands to be constants in `agent-migration.ts`, and the patch-policy pre-flight repeated one of them as a literal.
+  Each branch passed its own invariants; the merge failed §56. §56 now exempts exactly the three exported
+  `SETUP_COMMAND` / `PUBLISH_COMMAND` / `STATUS_COMMAND = 'sudo …'` lines, matched whole. A fourth constant (the
+  export command), a key-store path, a constant with anything appended, or any other mention still fails it (four
+  mutations, all caught). The pre-flight's fix text now uses `PUBLISH_COMMAND`, so the string lives in one place.
+- **A broken link.** The portal half linked step 1 to `/docs/update-signing#the-easy-way`, guessing the anchor the
+  release half would write. The heading is *The easy way (single host, 0.37)*, whose anchor is
+  `#the-easy-way-single-host-037`. The overview's `docs` field and `e2e-auto-migration.mjs` now use that.
+- **What the owner is told about setup, made to agree.** Setup runs the first publish itself, but the portal sees the
+  repository only after the API restarts with `UPDATE_REPO_DIR`. So step 1 of the Full agent page stays *Not yet*
+  until that restart, and the automatic migration's canary is asked within a minute of the **restart**, not of the
+  publish. Step 1 now says so: `--apply-env` (or the printed line), `sudo systemctl restart reboot-remote-api`, that
+  the canary follows within a minute (turn the migration off first to wait), and the export-root command.
+  *The easy way* in `docs/update-signing.md` and its *Moving computers automatically* step 1 say the same.
+- **The in-app `/help`** had only the portal half's paragraph. It now also has the easy way: setup with
+  `--apply-env`, the restart, the timer, `rem0te-signed-export-root`, `rem0te-signed-publish` after every deploy,
+  `rem0te-signed-status`, nothing going to GitHub and the trade-off. Its 0.24 paragraph no longer says the files
+  are "signed offline".
+- **The command strings agree everywhere.** The page and API show `sudo ./deploy/release/rem0te-signed-setup.sh`,
+  `sudo rem0te-signed-publish`, `sudo rem0te-signed-status` and `rem0te-timestamp-refresh.timer`. These are the
+  files `rem0te-signed-setup.sh` installs (`/usr/local/sbin/rem0te-signed-{publish,status,export-root,refresh}`,
+  the `rem0te-timestamp-refresh.{service,timer}` units). `CLAUDE.md`'s deploy section ends with
+  `sudo rem0te-signed-publish` once set up.
+- **Fixed: setup chose the wrong Go toolchain when the caller had `GOTOOLCHAIN` set.** The integrated `run-e2e.sh`
+  failed `signed-release` 4 passed, 5 failed: *go.mod requires go >= 1.27 (running go 1.22.2; GOTOOLCHAIN=local)*.
+  Setup decides whether `/usr/local/go/bin/go` is new enough by running `go env GOVERSION`, which inherited the
+  caller's `GOTOOLCHAIN=go1.27.4` and so reported 1.27.4. Setup then recorded `GOTOOLCHAIN=local`, and the build,
+  which runs under `env -i`, ran the real 1.22 and stopped. The release branch's own run had no `GOTOOLCHAIN` in
+  its environment, and CI's `setup-go` installs 1.27.4 directly, so neither saw it. On the owner's host it would
+  have struck anyone with `GOTOOLCHAIN` in the environment `sudo` keeps. The probe now runs with
+  `GOTOOLCHAIN=local`, so it reports the binary's own version. The suite then passed 64 of 64 in that same
+  environment.
+
+### Verification (integrated)
+
+Run on the final tree, with both parts merged and the release bookkeeping in place. The database was
+`rem0te_integrate37_test`, created empty; `E2E_OUT` was a new directory.
+
+- **Static:**
+  - `scripts/check-security-invariants.mjs`: **465 checks hold**, including §56 (16) and §57 (10). Before 0.37
+    there were 439. The narrowed §56 check was mutated four ways (an export-command constant, a key-store path, a
+    second publish constant, an altered `PUBLISH_COMMAND`), and each was caught.
+  - `check-versions.mjs` passes, and so does `gen-integration-contracts --check`.
+  - `pnpm -r lint` exits 0, and `tsc --noEmit` exits 0 in both apps.
+  - `prisma generate`, `nest build` and `next build` succeed.
+- **Prisma:** all 56 migrations, 0000–0064, apply to the empty database (0048, 0058 and 0061 are unused). `prisma
+  migrate diff` from the migrated database to `schema.prisma` reports *No difference detected*.
+- **Production manifest:** no npm dependency changed. `pnpm deploy:manifest` gives 0.37.0 with 30 dependencies and
+  no devDependencies, and `npm install --omit=dev --package-lock-only` exits 0 with 0 vulnerabilities. No Go module
+  changed.
+- **Routes:** `docs/API-REFERENCE.md` was regenerated: 506 routes across 75 controllers (501 in 0.36, plus
+  `GET /agent-signing/overview` and four `/admin/agent-auto-migration` routes). `--check` against the RouterExplorer
+  log of `run-e2e.sh`'s scratch API matches exactly (506 / 506). The docs bundle is 40 pages.
+- **Go (`tools/windows-installer`, Go 1.27.4):** `go test -count=1 ./...` with PowerShell 7.4.6 on `PATH`: 163
+  top-level tests, 258 with subtests, all pass, none skipped. `go vet ./...` passes for Linux and Windows, and
+  `GOOS=windows GOARCH=amd64 go build ./...` succeeds. The `rem0te-release` and `rem0te-action-sim` builds succeed.
+- **Unit scripts, every one in `ci.yml` (35, the same set as `apps/api/scripts/unit-*.mjs`), all exit 0, with pwsh
+  on `PATH`:**
+
+  | Script | Passed |
+  |---|---|
+  | `agent-auto-update` | 89 |
+  | `agent-health` | 53 |
+  | `agent-migration` | 57 |
+  | `ai-timeline` | 24 |
+  | `approval-signer` | 207 |
+  | `audit-chain` | 35 |
+  | `auto-migration` (new) | 80 |
+  | `chat` | 52 |
+  | `device-views` | 77 |
+  | `diagnostics-catalog` | 110 |
+  | `dynamic-groups` | 68 |
+  | `email` | 122 |
+  | `group-policy` | 38 |
+  | `hbbs-peer-snapshot` | 29 |
+  | `integration` | 35 |
+  | `macos-agent` | 27 |
+  | `metric-history` | 42 |
+  | `monitoring` | 100 |
+  | `patch-policy` | 163 |
+  | `patch-summary` | 27 |
+  | `polish` | 25 |
+  | `presets` | 26 |
+  | `retention` | 47 |
+  | `script-library` | 125 |
+  | `script-run` | 136 |
+  | `search` | 37 |
+  | `session-mutations` | 30 |
+  | `signed-installer` | 52 |
+  | `signed-release` (new) | 22 |
+  | `snapshot-schedule` | 85 |
+  | `software` | 146 |
+  | `system-inventory` | 92 |
+  | `tray` | 67 |
+  | `update-signing` | 16 |
+  | `update-window` | 85 |
+
+  `build-approval-signer --list` also exits 0.
+- **`scripts/run-e2e.sh`:** run in full on the fresh database, with `RELEASE_BIN` / `ACTION_SIM` built from this tree,
+  `PWSH` (PowerShell 7.4.6) set and Go available. **57 suites; none skipped.** 56 passed on that run.
+  `signed-release` failed on the Go toolchain bug above. After the fix it was run again, alone, in the same
+  environment and against the same database: 64 passed, 0 failed. The full run was not repeated after that
+  one-line fix, which touches only `rem0te-signed-setup.sh`, used only by that suite. Passed counts:
+
+  | Suite | Passed |
+  |---|---|
+  | `credentials` | 44 |
+  | `security-features` | 42 |
+  | `presets` | 114 |
+  | `monitoring` | 108 |
+  | `integration` | 77 |
+  | `dashboard` | 53 |
+  | `diagnostics-catalog` | 70 |
+  | `system-inventory` | 68 |
+  | `device-list` | 115 |
+  | `endpoint-visibility` | 114 |
+  | `device-views` | 142 |
+  | `dynamic-groups` | 98 |
+  | `add-device` | 62 |
+  | `auto-updates` | 73 |
+  | `group-policies` | 77 |
+  | `reports` | 104 |
+  | `script-library` | 138 |
+  | `linux-agent` | 86 |
+  | `macos-agent` | 106 |
+  | `enrol-stepup` | 67 |
+  | `search` | 113 |
+  | `metric-history` | 59 |
+  | `retention` | 43 |
+  | `presence-cache` | 18 |
+  | `ai-timeline` | 61 |
+  | `email` | 92 |
+  | `chat` | 89 |
+  | `tray` | 142 |
+  | `polish` | 49 |
+  | `auto-snapshots` | 79 |
+  | `agent-health` | 72 |
+  | `agent-auto-update` | 96 |
+  | `containment` | 70 |
+  | `approved-action` | 76 |
+  | `staged-patching` | 94 |
+  | `maintenance-actions` | 64 |
+  | `patch-policies` | 98 |
+  | `software-deploy` | 156 |
+  | `signed-updates` | 46 |
+  | `ticket-workflow` | 53 |
+  | `agent-upgrade` | 94 |
+  | `auto-migration` (new) | 73 |
+  | `script-run` | 81 |
+  | `revocation` | 44 |
+  | `signed-release` (new) | 64 (re-run after the fix; 4 / 5 failed before it) |
+  | `smoke` | end-to-end proof passed |
+  | `full` | FULL END-TO-END PROOF PASSED |
+  | `business-access` | 83 |
+  | `offboarding` | 63 |
+  | `public-api` | PUBLIC API END-TO-END PROOF PASSED |
+  | `public-address` | 43 |
+  | `rollouts` | 46 |
+  | `security-audit` | 57 |
+  | `session-mutations` | 43 |
+  | `support-requests` | 47 |
+  | `sso-passkeys` | 70 |
+  | `candidate-password` | ALL PASSED |
+  | `secreg` | All security regression checks passed |
+
+- **`e2e-ui.mjs`, as CI runs it** (ports 3501–3504, against the database of the `run-e2e.sh` run, after it):
+  **949 passed, 0 failed** (search palette 24), including the Full agent page at 1440 and 375 px in both themes.
+- **Not run:**
+  - `e2e-navigation.mjs`: it needs the docs stack on port 4000, which this integration doesn't start (`node --check`
+    only).
+  - **Nothing ran on real Windows**: not the signed agent, the tray, the migration script, or the automatic
+    migration's canary.
+  - **The real root path of setup is untested.** `useradd`, `runuser`, `chown` / `chgrp reboot`, the systemd units and
+    `--apply-env` against the real `/etc/reboot-remote/api.env` have never run. Every test ran setup under `--prefix
+    --no-user --no-systemd` as a normal user in a temp directory.
+
+### Upgrade notes (all of 0.37)
+
+Deploy in this order. Take a `pg_dump` first.
+
+1. **Deploy the portal**, as `CLAUDE.md` describes, with the schema steps. **Migration 0064**: run `prisma migrate
+   deploy`, rsync `apps/api/prisma/` to the target, then run `npx prisma generate` there. Without the last two the
+   API throws `Unknown field` (`agentAutoMigrationMode`, `automatic`, `rolloutId`). No production dependency changed,
+   so the target manifest needs no regeneration. Nothing changes for computers yet: no repository is configured.
+2. **Decide about the automatic migration before step 4.** It is **on by default**. To hold it, turn it off on
+   **Devices → Full agent** now (no fresh sign-in needed to turn it off).
+3. **Run setup once**, as root, from the source checkout, with someone watching (its root path is untested):
+   `sudo ./deploy/release/rem0te-signed-setup.sh --apply-env`. It creates the `rem0te-release` user, the
+   `/var/lib/rem0te-release` state with the keys, the published repository `/var/lib/rem0te-updates`, the commands
+   and `rem0te-timestamp-refresh.timer`. It adds `UPDATE_REPO_DIR=/var/lib/rem0te-updates` to
+   `/etc/reboot-remote/api.env` and runs the first publish. It needs Go (`/usr/local/go/bin/go` will do; it
+   downloads 1.27.4 if that one is older), `pnpm install` in the checkout, `git`, `curl`, `flock` and `psql`.
+   Publishing builds **committed** HEAD, so deploy from a clean, committed checkout. Then check
+   `sudo rem0te-signed-status`.
+4. **Restart the API** (`sudo systemctl restart reboot-remote-api`) so it reads `UPDATE_REPO_DIR`. The Full agent
+   page's steps 1–3 should now be done. **Within a minute of that restart the automatic migration asks one canary**,
+   unless you turned it off in step 2. The rest wait for the canary to report the published build and soak (60
+   minutes by default). Watch the canary's Agent card. This is the first time the signed agent runs on real Windows.
+5. **Export the root keys**: `sudo rem0te-signed-export-root /media/<usb-stick>` (or three directories), then type
+   `yes`.
+6. **From then on, end every deploy with `sudo rem0te-signed-publish`.** After pulling a new rem0te, run setup again
+   (without anything else changing, it only updates the installed commands; it changes no key).
+
+- Don't commit `tools/windows-installer/trustroot/root.json`. §56 fails CI if you do.
+- New environment switches: `AUTO_MIGRATION_SWEEP=off` (stops the automatic migration in one API process; a test
+  switch, but also the way to hold it from the env file) and `AUTO_MIGRATION_SWEEP_SECONDS` (default 60).
+- API consumers: new routes `GET /agent-signing/overview` and `GET`/`PUT /admin/agent-auto-migration` with `POST
+  …/resume` and `…/restart`; `AgentMigration` rows may be `automatic` with no requester. 506 routes in all.
+
 ## [0.36.2] — 2026-11-12 · *Beacon*
 
 This release combines three Dependabot updates (#106, #107 and #115). It changes no portal code. Two of the updates

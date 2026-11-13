@@ -238,6 +238,13 @@ export default function FullAgentPage() {
                           read them), the repository, the commands below and the daily timestamp timer, and publishes the first release.
                         </p>
                         <Command text={s.signing.command} label="the setup command" />
+                        <p className="text-muted-foreground">
+                          Add <code>--apply-env</code> to have it put <code>UPDATE_REPO_DIR=/var/lib/rem0te-updates</code> in{' '}
+                          <code>/etc/reboot-remote/api.env</code> (without it, it prints the line to add), then restart the API
+                          (<code>sudo systemctl restart reboot-remote-api</code>). This step stays &ldquo;not yet&rdquo; until that restart.
+                          The automatic migration below is on by default and asks its canary within a minute of it; turn it off first if
+                          you want to wait. Afterwards, move the root keys off this server: <code>sudo rem0te-signed-export-root &lt;dir&gt;</code>.
+                        </p>
                         <p><Link className="underline" href={s.signing.docs}>Update signing → The easy way</Link></p>
                       </>
                     )}
