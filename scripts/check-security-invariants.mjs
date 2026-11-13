@@ -3468,6 +3468,16 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /func \(w \*winPlatform\) RunInstaller\([^)]*\) \(int, error\) \{[^}]*return agent\.RunInstallerCmd\(cmd\)\s*\}/.test(pw)
       && /TestRunInstallerCmdDoesNotWaitForDescendants/.test(read('tools/windows-installer/internal/agent/runinstaller_test.go')),
     'RunInstallerCmd sets WaitDelay and keeps the exit code on ErrWaitDelay; winPlatform.RunInstaller goes through it; the Go test exists');
+  // 0.37.3: the installer's start-up cleanup removed setup (the agent's
+  // staging, setup\\signed) and heartbeat.ps1, so every migration failed at
+  // step 1 and the computer went silent.
+  const wsrc = read('apps/api/src/public/windows-script.ts');
+  const preStart = wsrc.slice(0, wsrc.indexOf('Log "Rem0te installer starting.'));
+  check('the installer cleanup keeps the signed agent\'s staging directory and heartbeat.ps1',
+    /Get-ChildItem -LiteralPath \$SETUP_DIR -Force -ErrorAction SilentlyContinue \|\s*Where-Object \{ \$_\.Name -ne 'signed' \} \|\s*Remove-Item -Recurse/.test(preStart)
+      && !/'heartbeat\.ps1', 'setup'/.test(preStart) && !/Remove-Item[^\n]*heartbeat\.ps1/.test(preStart)
+      && /pwsh: the cleanup keeps setup\/signed/.test(read('apps/api/scripts/unit-signed-installer.mjs')),
+    "cleanup: setup's children except 'signed'; no removal of heartbeat.ps1 before the run starts; the unit test executes it");
 }
 
 if (failures.length > 0) {

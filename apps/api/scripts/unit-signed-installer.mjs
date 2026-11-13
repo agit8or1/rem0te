@@ -35,6 +35,26 @@ const legacy = buildLegacyWindowsScript({
 });
 const signed = buildSignedWindowsScript('0.24.0');
 
+// ── 0.37.3: the start-up cleanup keeps the agent's staging and heartbeat.ps1 ─
+// The signed agent stages install.ps1, params.json and the verified RustDesk
+// build in $STATEDIR\setup\signed. The cleanup used to remove all of setup
+// (and heartbeat.ps1), so every migration failed at step 1 with the build gone
+// and left the heartbeat task running a missing file.
+const CLEAN_START = "# setup\\signed is rem0te-agent's locked staging directory";
+const cleanupOf = (script) => {
+  const i = script.indexOf(CLEAN_START);
+  if (i < 0) return '';
+  const j = script.indexOf('\n\n', i);
+  return script.slice(i, j < 0 ? undefined : j);
+};
+for (const [label, script] of [['legacy', legacy], ['signed', signed]]) {
+  const head = script.slice(0, script.indexOf('Rem0te installer starting'));
+  check(`${label}: the start-up cleanup never removes heartbeat.ps1 or the whole setup directory`,
+    !/Remove-Item[^\n]*heartbeat\.ps1/.test(head) && !/@\('heartbeat\.ps1', 'setup'\)/.test(head) && !/Remove-Item -LiteralPath \$SETUP_DIR/.test(head));
+  check(`${label}: the cleanup clears setup's children except signed`,
+    /Get-ChildItem -LiteralPath \$SETUP_DIR -Force -ErrorAction SilentlyContinue \|\s*Where-Object \{ \$_\.Name -ne 'signed' \} \|\s*Remove-Item -Recurse/.test(cleanupOf(script)));
+}
+
 // ── static: what the signed variant must never contain ─────────────────────
 for (const [re, what] of [
   [/\biex\b/i, 'iex'],
@@ -174,6 +194,26 @@ if ($e.Count) { Write-Output ($e[0].Message + " @" + $e[0].Extent.StartLineNumbe
   }
   const notJson = run('this is not json');
   check('refused: parameters file is not JSON', notJson.status === 64, `exit ${notJson.status}`);
+
+  // Execute the cleanup block itself against a state directory laid out the
+  // way the signed agent leaves it.
+  const st = mkdtempSync(join(tmpdir(), 'rem0te-cleanup-'));
+  const setup = join(st, 'setup');
+  execFileSync('mkdir', ['-p', join(setup, 'signed'), join(setup, 'old-dir')]);
+  writeFileSync(join(setup, 'signed', 'rustdesk-1.5.3-x86_64.exe'), 'verified');
+  writeFileSync(join(setup, 'signed', 'install.ps1'), 'script');
+  writeFileSync(join(setup, 'rustdesk-1.4.6.exe'), 'stale');
+  writeFileSync(join(setup, 'old-dir', 'x'), 'stale');
+  writeFileSync(join(st, 'heartbeat.ps1'), 'old heartbeat');
+  const block = cleanupOf(signed);
+  const cl = join(dir, 'cleanup.ps1');
+  writeFileSync(cl, `$STATEDIR = '${st}'\n$SETUP_DIR = '${setup}'\n${block}\n`);
+  const cr = spawnSync(pwsh, ['-NoProfile', '-NonInteractive', '-File', cl], { encoding: 'utf8' });
+  const exists = (f) => spawnSync('test', ['-e', f]).status === 0;
+  check('pwsh: the cleanup keeps setup/signed and the verified RustDesk build in it',
+    cr.status === 0 && exists(join(setup, 'signed', 'rustdesk-1.5.3-x86_64.exe')) && exists(join(setup, 'signed', 'install.ps1')), `exit ${cr.status} ${cr.stderr}`);
+  check('pwsh: the cleanup removes everything else under setup', !exists(join(setup, 'rustdesk-1.4.6.exe')) && !exists(join(setup, 'old-dir')));
+  check('pwsh: the cleanup leaves heartbeat.ps1 for the rewrite to replace', exists(join(st, 'heartbeat.ps1')));
 }
 
 if (failures.length) {

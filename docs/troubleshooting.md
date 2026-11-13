@@ -402,22 +402,22 @@ moving:
 Resume and restart need a Platform Admin and a fresh sign-in. Neither skips the canary. See
 [update-signing.md](update-signing.md#moving-computers-automatically-037).
 
-### A computer went silent right after fetching its migration (0.37.0 – 0.37.2)
+### A computer went silent right after fetching its migration (0.37.1 – 0.37.2)
 
-The device page shows the migration *fetched*, then nothing: no heartbeat, no result, while RustDesk still reaches
-the machine. Until 0.37.3 the signed agent waited on the installer's output pipe, which a RustDesk process the
-installer left running had inherited, so it never returned, and nothing recorded how the installer ended. The legacy
-heartbeat that launched it never ended either, and the heartbeat task does not start a second copy while one runs.
+The device page shows the migration *fetched*, then nothing: no heartbeat and no result, while RustDesk still reaches
+the machine. `C:\ProgramData\Rem0te\Logs\install.log` ends with *The verified RustDesk build is missing*. Before
+0.37.3 the installer's start-up cleanup deleted the agent's staging directory (`setup\signed`) along with
+`heartbeat.ps1`, then failed at step 1, so the heartbeat task runs a file that is no longer there.
 
-After 0.37.3 is published (`sudo rem0te-signed-publish`), unstick each such computer once, from an elevated
-PowerShell on it, or by restarting it:
+After 0.37.3 is deployed and published (`sudo rem0te-signed-publish`), run the migration once on that computer, in an
+elevated PowerShell. The signed agent it downloaded is still on disk:
 
 ```powershell
-Get-Process rem0te-agent -ErrorAction SilentlyContinue | Stop-Process -Force
+& (Get-ChildItem C:\ProgramData\Rem0te-migrate-*\rem0te-agent.exe | Select -First 1).FullName migrate --portal <portal host>
 ```
 
-Its next heartbeat runs within three minutes. `C:\ProgramData\Rem0te\Logs\install.log` shows how far the installer
-got. If the halted canary was one of these computers, **Resume** it.
+It verifies and runs the published agent and installer, keeps the computer's identity and installs the signed
+heartbeat. If it was the automatic migration's halted canary, **Resume** it once it reports the signed agent.
 
 ## Services
 

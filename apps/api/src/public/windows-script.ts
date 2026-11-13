@@ -612,9 +612,19 @@ if ($planted -contains '*') {
 } else {
     foreach ($p in $planted) { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue }
 }
-foreach ($f in @('heartbeat.ps1', 'setup')) {
-    Remove-Item -LiteralPath (Join-Path $STATEDIR $f) -Recurse -Force -ErrorAction SilentlyContinue
-}
+# setup\\signed is rem0te-agent's locked staging directory: it holds this
+# script, its parameters and the RustDesk build the agent has just verified,
+# so it is never cleared here. Until 0.37.3 the whole of setup went, the
+# verified build with it, and every migration to the signed agent failed at
+# step 1 ("The verified RustDesk build is missing"). A link or foreign-owned
+# item there is in $planted and has already gone.
+# heartbeat.ps1 is left too: it is rewritten below, and until then it is what
+# keeps this machine reporting. Deleting it first meant a run that stopped
+# before the rewrite left the heartbeat task running a missing file - silent
+# for good, with nothing on the server to say why.
+Get-ChildItem -LiteralPath $SETUP_DIR -Force -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -ne 'signed' } |
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
 Log "Rem0te installer starting. server=$REM0TE_HOST version=$VERSION claim=$($CLAIM_TOKEN.Length -gt 0)"
 
