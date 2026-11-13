@@ -15,12 +15,15 @@ import { AlertTriangle, Download, Loader2, RefreshCw, ShieldCheck } from 'lucide
 import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
 import { osName, updateSourceLabel } from '@/lib/platform-wording';
 import { connectivityLabel, connectivityOf } from '@/lib/connectivity';
+import { useApprovalMode } from '@/hooks/use-approval-mode';
+import { DIRECT_TOAST } from '@/lib/direct-mode';
 
 /**
  * Windows Update posture of one computer (v0.27), as its signed agent's
  * `patch-scan` last reported it. Since 0.32 "Install updates" here builds a
  * one-computer deployment whose single (canary) ring is a signed plan that
- * two people on the approval roster approve — nothing installs from this tab
+ * two people on the approval roster approve (or, in direct mode, a fresh
+ * sign-in) — nothing installs from this tab
  * without them. When the computer cannot be patched there is no button, only
  * why and what to do instead.
  *
@@ -121,7 +124,8 @@ function apiMessage(e: unknown, fallback: string) {
 
 /**
  * Install updates on this one computer (0.32). Becomes a one-computer
- * deployment; its plan awaits two approvals on the approval signer. When it
+ * deployment; its plan awaits two approvals on the approval signer, or in
+ * direct mode (0.40) is signed at once after a fresh sign-in. When it
  * is not possible: the reason and the next step, never a disabled button.
  */
 function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string; p: Patches; onOpenAgentCard?: () => void }) {
@@ -132,24 +136,29 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
   const [reason, setReason] = useState('');
   const [windowHours, setWindowHours] = useState(8);
   const [reboot, setReboot] = useState<RebootRule>('never');
-  const [done, setDone] = useState<{ approvalUrl: string; deploymentId: string } | null>(null);
+  const [done, setDone] = useState<{ approvalUrl: string; deploymentId: string; direct: boolean } | null>(null);
   const installable = p.updates.filter((u) => u.installable);
+  const key = (u: { updateId: string; revision: number }) => `${u.updateId}@${u.revision}`;
+  // 0.40.1: in direct mode this is an install button, not a request for approval.
+  const direct = useApprovalMode({ endpointId }) === 'direct';
   const go = useMutation({
     mutationFn: () => patchingApi.install(endpointId, {
-      updates: installable.filter((u) => picked.has(`${u.updateId}@${u.revision}`)).map((u) => ({ updateId: u.updateId, revision: u.revision })),
-      reboot, reason: reason.trim(), windowHours,
+      updates: installable.filter((u) => picked.has(key(u))).map((u) => ({ updateId: u.updateId, revision: u.revision })),
+      reboot, reason: reason.trim() || (direct ? 'Installed from the computer’s Patches tab' : ''), windowHours,
     }),
     onSuccess: (r) => {
-      const d = r.data.data as { job: { approvalUrl: string }; deployment: { id: string } };
-      setDone({ approvalUrl: d.job.approvalUrl, deploymentId: d.deployment.id });
+      const d = r.data.data as { job: { approvalUrl: string; direct?: boolean }; deployment: { id: string } };
+      setDone({ approvalUrl: d.job.approvalUrl, deploymentId: d.deployment.id, direct: !!d.job.direct });
       setOpen(false); setPicked(new Set()); setReason(''); setReboot('never');
       qc.invalidateQueries({ queryKey: ['endpoint-patches', endpointId] });
-      toast({ title: 'Install requested', description: 'It awaits two approvals on the approval signer.' });
+      toast(d.job.direct ? { title: 'Installing', description: DIRECT_TOAST } : { title: 'Install requested', description: 'It awaits two approvals on the approval signer.' });
     },
     onError: (e) => toast({ title: 'Not requested', description: apiMessage(e, 'The request was refused.'), variant: 'destructive' }),
   });
   const requested = done && (
-    <p>Requested: <a className="underline" href={done.approvalUrl} target="_blank" rel="noreferrer">its approval page</a> · <Link className="underline" href={`/patching/${done.deploymentId}`}>its deployment</Link></p>
+    done.direct
+      ? <p>Approved automatically (direct mode). It installs when the computer next checks in · <Link className="underline" href={`/patching/${done.deploymentId}`}>follow it</Link></p>
+      : <p>Requested: <a className="underline" href={done.approvalUrl} target="_blank" rel="noreferrer">its approval page</a> · <Link className="underline" href={`/patching/${done.deploymentId}`}>its deployment</Link></p>
   );
 
   if (!p.install.possible) {
@@ -180,17 +189,24 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
         {!open && <Button size="sm" onClick={() => setOpen(true)}>Install updates…</Button>}
       </CardHeader>
       <CardContent className="space-y-3 text-xs">
-        <p className="text-muted-foreground">
-          Installs on this computer only, as a one-computer deployment. Two people on the approval roster approve it on the approval signer — not you, and not from here.
-          It runs inside the window you give and is never promoted to other computers.
+        <p className="text-muted-foreground" data-testid="patch-install-mode">
+          {direct
+            ? 'Pick the updates and install them. Direct mode is on: it is signed as soon as you confirm it is you, and installs on this computer when it next checks in.'
+            : 'Installs on this computer only. Two people on the approval roster approve it on the approval signer — not you, and not from here. It runs inside the window you give.'}
         </p>
         {requested}
         {open && (
           <div className="space-y-3">
             <div className="space-y-1">
-              <p className="font-medium">Updates ({installable.length} installable)</p>
+              <div className="flex items-center justify-between">
+                <p className="font-medium">Updates ({installable.length} installable)</p>
+                <Button size="sm" variant="ghost" className="h-6 text-xs" data-testid="patch-select-all"
+                  onClick={() => setPicked(picked.size === installable.length ? new Set() : new Set(installable.map(key)))}>
+                  {picked.size === installable.length ? 'Select none' : 'Select all'}
+                </Button>
+              </div>
               {installable.map((u) => {
-                const k = `${u.updateId}@${u.revision}`;
+                const k = key(u);
                 return (
                   <label key={k} className="flex items-start gap-2 rounded-md border p-2">
                     <input type="checkbox" className="mt-0.5" checked={picked.has(k)} onChange={(e) => setPicked((s) => { const n = new Set(s); if (e.target.checked) n.add(k); else n.delete(k); return n; })} />
@@ -207,12 +223,12 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
               </div>
             </div>
             <div className="space-y-1 max-w-xl">
-              <Label htmlFor="inst-reason" className="text-xs">Reason (shown to the approvers)</Label>
+              <Label htmlFor="inst-reason" className="text-xs">{direct ? 'Note (optional, recorded in the audit log)' : 'Reason (shown to the approvers)'}</Label>
               <Input id="inst-reason" maxLength={400} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. the user reports the November CU is missing" />
             </div>
             <div className="flex gap-2">
-              <Button size="sm" disabled={picked.size === 0 || reason.trim().length < 3 || go.isPending} onClick={() => go.mutate()}>
-                {go.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Request approval
+              <Button size="sm" data-testid="patch-install-go" disabled={picked.size === 0 || (!direct && reason.trim().length < 3) || (reason.trim().length > 0 && reason.trim().length < 3) || go.isPending} onClick={() => go.mutate()}>
+                {go.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}{direct ? (picked.size ? `Install ${picked.size} selected` : 'Install selected') : 'Request approval'}
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
             </div>

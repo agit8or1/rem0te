@@ -25,9 +25,12 @@ export class ActionsController {
   }
 
   @Get('actions/catalog')
-  async catalog(@Actor() actor: ActorContext, @Query('endpointId') endpointId?: string) {
+  async catalog(@Actor() actor: ActorContext, @Query('endpointId') endpointId?: string, @Query('businessId') businessId?: string) {
     // 0.40: with endpointId, also the approval mode its business is in on the signer (read only).
-    return { success: true, data: { ...this.actions.catalog(), approval: endpointId ? await this.actions.approvalModeFor(actor, endpointId) : null } };
+    // 0.40.1: or with businessId, for the patching and software deployment pages.
+    const approval = endpointId ? await this.actions.approvalModeFor(actor, endpointId)
+      : businessId ? await this.actions.approvalModeForBusiness(actor, businessId) : null;
+    return { success: true, data: { ...this.actions.catalog(), approval } };
   }
 
   @Get('endpoints/:id/actions')
