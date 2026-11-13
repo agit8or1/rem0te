@@ -8,6 +8,8 @@
 # (`pnpm --filter @reboot-remote/api build`). It migrates and seeds the
 # database itself, so a fresh empty database is the intended input.
 #
+# signed-release (0.37) needs Go itself and is skipped the same way without it.
+#
 # RELEASE_BIN and ACTION_SIM (built from tools/windows-installer) enable the
 # suites that drive the Windows agent's decision code; without them those
 # suites are reported as SKIPPED and the run fails — set E2E_ALLOW_SKIP=1 to
@@ -106,6 +108,12 @@ else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM / pwsh not available)\n' sc
 # Signed revocation (0.36) runs scripts under the agent too, so it needs the same three.
 if [[ -n "${RELEASE_BIN:-}" && -n "${ACTION_SIM:-}" ]] && { [[ -n "${PWSH:-}" ]] || command -v pwsh >/dev/null; }; then run revocation node scripts/e2e-revocation.mjs
 else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM / pwsh not available)\n' revocation; skipped+=(revocation); fi
+
+# Signed releases on one host (0.37) run deploy/release/ in a temporary prefix
+# and build the agent with Go themselves: they need Go (GO, go on PATH, or
+# /usr/local/go/bin/go), not RELEASE_BIN.
+if [[ -n "${GO:-}" && -x "${GO:-}" ]] || command -v go >/dev/null || [[ -x /usr/local/go/bin/go ]]; then run signed-release node scripts/e2e-signed-release.mjs
+else printf '%-22s SKIPPED (Go not available)\n' signed-release; skipped+=(signed-release); fi
 
 echo "── suites against a scratch API (one API per suite: the login throttle is per process)"
 PORT="${E2E_API_PORT:-3101}"

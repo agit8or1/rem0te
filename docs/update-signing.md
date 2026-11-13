@@ -1,18 +1,134 @@
 # Update signing
 
-From 0.24, a Windows agent runs only code that was signed **offline**, by keys this portal never holds. The portal
+From 0.24, a Windows agent runs only code signed by keys the portal application never holds. The portal
 becomes a mirror: it serves the signed files, and each agent checks them against a root of trust compiled into
 the agent itself. If someone takes over the portal or its database, they can delay updates. They can't make an
 agent install a replacement, roll it back to an older build, or point it at a different relay.
 
 This page covers what that does and doesn't protect, how to set it up, how to ship a release, how to move existing
-agents onto it, and what to do when something goes wrong.
+agents onto it, and what to do when something goes wrong. There are two ways to hold the keys:
+- **The easy way (0.37):** on the portal host itself, under a separate system user that the portal can't read. It
+  takes one setup command and one publish command per release.
+- **The stricter way:** an offline release machine.
 
 > **Status.** The chain is **fixture-tested**: Go tests drive the real release tool and the real
 > [go-tuf](https://github.com/theupdateframework/go-tuf) client through each attack, and an end-to-end suite runs the
 > portal's mirror and containment against a scratch API. The signed installer script is checked with real
 > PowerShell, but only for parsing and for its parameter block. **It hasn't been run end to end on Windows, in a lab
 > or in production.** Treat the first rollout as a pilot: one lab machine, then a canary group.
+
+## The easy way (single host, 0.37)
+
+Four commands on the portal host. Run the first from the source checkout you deploy from:
+
+```bash
+sudo ./deploy/release/rem0te-signed-setup.sh --apply-env    # once
+sudo systemctl restart reboot-remote-api                     # once, to pick up UPDATE_REPO_DIR
+sudo rem0te-signed-export-root /media/usb-stick              # once, right after setup
+sudo rem0te-signed-publish                                   # every release: the last step of every deploy
+sudo rem0te-signed-status                                    # any time
+```
+
+Then move computers onto the signed agent: [Moving existing agents](#moving-existing-agents).
+
+### What each command does
+
+**`rem0te-signed-setup.sh`** (once; safe to run again):
+- creates the system user `rem0te-release` (no login shell) and its state directory `/var/lib/rem0te-release`, mode
+  0700. That holds `keys/`, the signing repository, a RustDesk download cache and `publish.log`;
+- creates the published repository `/var/lib/rem0te-updates`, owned by `rem0te-release` with group `reboot`.
+  Directories are 2750 and files 0640: the portal can read it and can't write to it;
+- builds `rem0te-release` from `git archive HEAD` and installs it, with the commands below, under `/usr/local`;
+- as `rem0te-release`, with umask 077, generates three root keys (threshold 2 of 3) and the targets, snapshot and
+  timestamp keys, then creates the repository. It prints key ids, never keys. It never overwrites a key: on a second
+  run it sees the keys and generates none, and it refuses to go on if only some of them are there;
+- checks that the `reboot` user can't read any key;
+- installs `rem0te-timestamp-refresh.timer` (daily);
+- prints the `UPDATE_REPO_DIR=/var/lib/rem0te-updates` line for `/etc/reboot-remote/api.env`. With `--apply-env` it
+  adds the line itself;
+- runs the first publish.
+
+**`rem0te-signed-publish`** (each release):
+1. Unpacks `git archive HEAD` of the checkout into a new build directory owned by `rem0te-release`. It never copies
+   the working tree, so uncommitted edits are never signed.
+2. Writes the owner's root (`metadata/1.root.json`) into **that copy's** `trustroot/root.json`. The checkout keeps its
+   `{}` placeholder, and the command refuses to run if the checkout's copy, or the one in `HEAD`, is anything else.
+3. Builds `rem0te-agent.exe` and `rem0te-tray.exe` (windows/amd64, `-trimpath`, the tray with `-H=windowsgui`) and
+   checks that the agent embeds the root.
+4. Builds `windows/install.ps1` with `apps/api/scripts/build-signed-installer.mjs --from-source`, from the archive,
+   as the checkout's owner. It produces the same bytes as a build from `dist`.
+5. Fetches the RustDesk build the portal pins (Updates page), or the latest release when nothing is pinned. It checks
+   the build against the SHA-256 GitHub publishes for it and caches it. A build without a published digest, or one
+   that doesn't match, is refused. `--rustdesk-version X.Y.Z` picks one explicitly.
+6. Signs a copy of the signing repository. The agent and tray targets carry `{"version","commit"}`: the version from
+   `version.json` and the 40-character commit. It then verifies the copy with `rem0te-release verify`, the client the
+   agents run.
+7. Publishes. The repository is copied to a staging directory beside `/var/lib/rem0te-updates` and verified again
+   there, then moved in by renames only, `timestamp.json` last. Until that last rename an agent sees the previous
+   release, complete; after it, the new one. A staging copy that fails verification is deleted and nothing is
+   replaced. Target files that the two newest targets versions no longer list are removed afterwards.
+
+It refuses to publish:
+- a version older than the one published;
+- a different commit under the same version (every change bumps the version);
+- the same version and commit again, which is a no-op unless you pass `--republish`. Use that, for example, to add a
+  newly pinned RustDesk build without a new release.
+
+Everything it prints also goes to `/var/lib/rem0te-release/publish.log`.
+
+**`rem0te-signed-status`**: one screen showing:
+- which keys are present, and whether the root keys are still on the host or were exported;
+- the published agent version and commit, the tray, the installer and the RustDesk builds;
+- when each role expires, with a warning under 48 hours;
+- the last publish, whether the timer is active, and whether `api.env` has `UPDATE_REPO_DIR`.
+
+It exits 1 when something needs attention.
+
+**`rem0te-signed-export-root <dir>`** copies `root1.pem` … `root3.pem` to the directory, for example a USB stick, and
+checks each copy byte for byte. It deletes them from the host only after you type `yes`. Better: give it three
+directories (`DIR1 DIR2 DIR3`) to put one key on each of three sticks, and keep them apart. It refuses a directory
+inside the checkout, any git work tree, the state directory or the published repository. Publishing and the daily
+timestamp don't need the root keys. You bring two back only to rotate a key, or to re-sign the root before it expires
+(365 days; *status* warns 30 days ahead).
+
+**The timer**, `rem0te-timestamp-refresh.timer`, runs `rem0te-signed-refresh` daily as `rem0te-release`, with no
+network access and no access to the portal's configuration. It re-signs the timestamp, which lasts 7 days, and
+publishes it through the same staged, verified path, so `timestamp.json` is the only file that changes. It also
+re-signs the snapshot when it has under 10 days left, and re-signs unchanged targets when they have under 14 days
+left. A release normally does that long before.
+
+**After pulling a new version of rem0te**, run `sudo ./deploy/release/rem0te-signed-setup.sh` again to update the
+installed commands. It changes no key. `rem0te-signed-publish` always builds the release tool it signs with from the
+same commit it publishes.
+
+### The trade-off, stated plainly
+
+This mode keeps the keys **on the portal host**, under a separate user. That is the same compromise these docs already
+accept for the [approval signer](approved-actions.md) as a separate local user.
+
+- **What it still protects.** The portal runs as `reboot` and can't read `/var/lib/rem0te-release`. Nothing in the API
+  references that directory, loads a key or runs `rem0te-release` (`scripts/check-security-invariants.mjs` §56). So a
+  compromise of the portal *application* can't sign anything: its code, its database, its web sessions. Agents still
+  run only code signed by the owner's keys, exactly as in *What it protects* above.
+- **What it gives up.** **Root on this host can sign.** Anyone who gets root on the portal host, or anyone you let
+  `sudo`, can publish a release every signed agent will install. With an offline release machine, root on the portal
+  host can only withhold updates.
+- **Export the root keys.** Do it right after setup. Root on the host can then still sign releases with the targets
+  key, but it can't rewrite the root of trust. After an incident you bring two root keys back, rotate the targets,
+  snapshot and timestamp keys away from the host, and agents follow the rotation. If the root keys stayed on the
+  host, a compromise could replace the root itself, and the only way back is to reinstall every agent.
+- **What gets signed is what is committed.** `publish` builds `HEAD` of the checkout. Whoever can commit to that
+  checkout, or to the branch you pull into it, chooses what the agents run. Review what you deploy.
+- **Nothing goes to GitHub.** The owner's `root.json` is never committed. The tracked file stays `{}`, and `publish`
+  refuses to run otherwise. No CI job builds, signs or publishes anything (§56 checks that nothing under `.github`
+  names these scripts). Keys, metadata and builds stay on this host and in the directory you export to.
+
+For the stronger arrangement, move the whole thing to a machine that isn't the portal. That is the stricter way below.
+
+> **Not yet proven on Windows.** The single-host tooling is tested end to end in a temporary directory against a
+> scratch API (`apps/api/scripts/e2e-signed-release.mjs`): setup, publish, the refusals, refresh and export. The
+> portal then serves what the agents' own client accepts. The agent it builds has still never run on a real Windows
+> machine; see *Status* above.
 
 ## The short version
 
@@ -64,12 +180,24 @@ The chain is a standard [TUF](https://theupdateframework.io) repository with con
 
 Every role must have its own key, and the tool refuses a key reused across roles.
 
+That table is the stricter way. With the easy way (0.37), every key starts in `/var/lib/rem0te-release/keys` on the
+portal host, readable only by `rem0te-release`. The root keys then move to offline media with
+`rem0te-signed-export-root`. The targets, snapshot and timestamp keys stay on the host so publishing and the daily
+timestamp can run.
+
 **Signing that approves a job,** such as a fix that changes something on an endpoint, is a different key hierarchy. It
 belongs to a later milestone and never appears in this repository. **Portal administration,** meaning sessions and
 passkeys, can't sign anything at all.
 
-## Setting up (once)
+## The stricter way: an offline release machine
 
+This is the arrangement the chain was designed for, and the one the rest of this page describes. The root keys sit
+on separate offline media held by separate people. The targets and snapshot keys live on a release machine that isn't
+the portal. The timestamp key lives on a small signer host. The portal only ever receives `metadata/` and `targets/`.
+
+### Setting up (once)
+
+The same steps `rem0te-signed-setup.sh` and `rem0te-signed-publish` automate, done by hand on a separate machine.
 Build the release tool on the release machine:
 
 ```bash
@@ -98,13 +226,14 @@ go build -trimpath -o rem0te-release ./cmd/rem0te-release
      -snapshot-key ~/keys/snapshot.pem -timestamp-key ~/keys/timestamp.pem
    ```
 
-3. **Pin the root in the agent.** Copy `~/rem0te-repo/metadata/1.root.json` to
-   `tools/windows-installer/trustroot/root.json` and commit it.
-   - That file is the root of trust: every agent built from then on trusts only this chain.
-   - The placeholder `{}` in the repository marks a CI or development build. Those keep today's legacy behaviour and
-     say so when they run.
+3. **Pin the root in the agent build.** Copy `~/rem0te-repo/metadata/1.root.json` to
+   `tools/windows-installer/trustroot/root.json` **in the release machine's build copy only**.
+   - That file is the root of trust: every agent built with it trusts only this chain.
+   - **Never commit it.** The tracked file is the `{}` placeholder, which marks a CI or development build. Those keep
+     today's legacy behaviour and say so when they run. `rem0te-signed-publish` refuses to run while the checkout's
+     copy is anything else, and §56 of the invariant checks fails CI on a committed root.
 
-## Shipping a release
+### Shipping a release
 
 Run these on the release machine, from the release tag.
 
@@ -155,7 +284,7 @@ Run these on the release machine, from the release tag.
    `verify` runs the same client the agents run. The `-mirror` form checks what the portal actually serves.
 
 **Keep the timestamp fresh.** It expires after 7 days. Run `rem0te-release refresh -repo … -timestamp-key …` at least
-every 3 days on the signer host, then sync. If it lapses, every agent refuses updates, which is the intended failure
+every 3 days on the signer host, then sync. The easy way does this daily with `rem0te-timestamp-refresh.timer`. If it lapses, every agent refuses updates, which is the intended failure
 mode. Settings → Security → Update Signing warns 48 hours before any role expires.
 
 ## Portal configuration
@@ -174,7 +303,9 @@ The portal then:
 - answers `/api/v1/public/install/windows-params.json`, which is data only and offers only RustDesk builds the
   release signer published.
 
-It never signs anything; there is no key on the host for it to use.
+It never signs anything, and nothing in the API can read a key. With the stricter way there is no key on the host at
+all. With the easy way the keys are on the host but owned by `rem0te-release` in a 0700 directory, and the portal runs
+as `reboot` (see *The trade-off* above).
 
 ## Containment of the legacy path
 
@@ -205,7 +336,10 @@ and password, and the scheduled tasks. Migration re-runs the same installer body
 runs. The difference is that this copy is signed and receives its values as a parameters file.
 
 **GPO or Intune (independent of the portal).** Distribute the official `rem0te-agent.exe` from the GitHub release,
-after checking its SHA-256 against the release notes, and run it elevated:
+after checking its SHA-256 against the release notes, and run it elevated. With the easy way (0.37) nothing is
+published to GitHub. The file is in the published repository under its digest:
+`/var/lib/rem0te-updates/targets/windows/<sha256>.rem0te-agent.exe`. `sudo rem0te-signed-status` prints that path, and
+the file's own SHA-256 is its name.
 
 ```powershell
 & "\\fileserver\rem0te\rem0te-agent.exe" migrate --portal remote.example.com
