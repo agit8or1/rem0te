@@ -356,6 +356,19 @@ the file's own SHA-256 is its name.
 
 **Locally:** run the same command from an elevated prompt.
 
+**Locally, from the computer's page (0.38).** On a standard Windows agent, **Overview → Agent** has *Upgrade on the
+computer itself*: one line to paste into PowerShell run as administrator on that computer, with a copy button. It is
+built from the signed agent the repository publishes now. It downloads that build by its digest into a fresh
+directory locked to SYSTEM and Administrators, runs `migrate --portal <this portal>` only if the SHA-256 matches, and
+the agent verifies everything else against signed metadata. It is the same check as the portal-served migration
+script, without that script's `exit`, which would close the window and its output. It is offered in every portal
+mode, including *Signed only*, because nothing is served to the computer: a person runs it. It needs a published
+signed agent and a portal address, and anyone who can see the computer can see it (it holds no secret).
+
+When a computer fetched a migration and has not checked in since, the block opens by itself and says so: the console
+cannot reach it, so this is the way back. That was every migration under 0.37.1–0.37.2 (see
+[troubleshooting](troubleshooting.md)).
+
 **Through the portal, every legacy agent:** use *Signed only + portal migration*.
 - That one run trusts the portal, exactly as every legacy run already does.
 - Use it when GPO or Intune isn't available, and only while you trust the portal.

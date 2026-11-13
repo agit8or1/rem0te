@@ -151,6 +151,29 @@ if ($e.Count) { Write-Output ($e[0].Message + " @" + $e[0].Extent.StartLineNumbe
   }
 }
 
+// ── 0.38: the same migration as one line, run on the computer itself ──────
+{
+  const SHA = 'b'.repeat(64);
+  const c = M.buildLocalMigrationCommand('remote.example.com', SHA);
+  check(!c.includes('\n') && !/\bexit\b/.test(c), 'local command: one line, and never exit (it would close the person\'s window)', c);
+  check(c.includes(`targets/windows/${SHA}.rem0te-agent.exe`) && c.indexOf('Get-FileHash') < c.indexOf('& $e migrate') && /-ne '[0-9a-f]{64}'\) \{ Remove-Item -LiteralPath \$e -Force;/.test(c),
+    'local command: downloads by digest and checks it before running migrate; a mismatch is deleted and not run', c);
+  check(/icacls \$d \/inheritance:r \/grant:r '\*S-1-5-18:\(OI\)\(CI\)F' '\*S-1-5-32-544:\(OI\)\(CI\)F'/.test(c) && c.indexOf('icacls') < c.indexOf('Invoke-WebRequest'),
+    'local command: a fresh directory locked to SYSTEM and Administrators before the download', c);
+  check(c.endsWith("migrate --portal 'remote.example.com' }"), 'local command: runs migrate against the pinned portal', c);
+  for (const [h, sha, what] of [["remote.example.com'; calc", SHA, 'a host with a quote'], ['remote.example.com', 'B'.repeat(64), 'an upper-case digest'], ['remote.example.com', 'b'.repeat(63), 'a short digest']]) {
+    let threw = false; try { M.buildLocalMigrationCommand(h, sha); } catch { threw = true; }
+    check(threw, `local command: refuses ${what}`);
+  }
+  if (pwsh) {
+    const d = mkdtempSync(join(tmpdir(), 'rem0te-lmc-'));
+    const f = join(d, 'cmd.ps1');
+    writeFileSync(f, c);
+    const r = spawnSync(pwsh, ['-NoProfile', '-NonInteractive', '-Command', `$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('${f}',[ref]$t,[ref]$e);$e.Count`], { encoding: 'utf8' });
+    check(r.stdout.trim() === '0', 'pwsh: the local command parses', r.stdout + r.stderr);
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) { console.log(failures.map((f) => `  - ${f}`).join('\n')); process.exit(1); }
 console.log(`✓ ${pass} agent-migration checks passed`);

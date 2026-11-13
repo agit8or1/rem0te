@@ -7,7 +7,7 @@ import { CAP } from '../rbac/capabilities';
 import { EndpointsService } from '../endpoints/endpoints.service';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { AgentMigrationService } from '../update-trust/agent-migration.service';
-import { isWindows, migrationState, MIGRATION_STATES, type MigrationState } from '../update-trust/agent-migration';
+import { buildLocalMigrationCommand, isWindows, migrationState, MIGRATION_STATES, type MigrationState } from '../update-trust/agent-migration';
 import { ContainmentService } from '../containment/containment.service';
 import { pauseMessage } from '../containment/pause';
 import { PublicUrlService } from '../platform/public-url.service';
@@ -107,7 +107,7 @@ export class AgentUpgradeService {
       where: { id },
       select: {
         platform: true, agentVersion: true, updateChannel: true, trustRootVersion: true, targetsVersion: true, trustReportedAt: true,
-        agentSha256: true, agentUpdateCheckedAt: true, agentUpdateResult: true, status: true, customerId: true,
+        agentSha256: true, agentUpdateCheckedAt: true, agentUpdateResult: true, status: true, customerId: true, lastSeenAt: true,
         rustdeskNode: { select: { agentSecretHash: true, reinstallRequestedAt: true, reinstallDispatchedAt: true } },
       },
     }))!;
@@ -160,6 +160,7 @@ export class AgentUpgradeService {
     let migration: null | {
       possible: boolean; code: string | null; reason: string | null; fix: string | null; link: { href: string; label: string } | null;
       request: null | { id: string; state: MigrationState; text: string; requestedAt: Date; dispatchedAt: Date | null; fetchedAt: Date | null; completedAt: Date | null; cancelledAt: Date | null; reason: string };
+      local: null | { command: string; stuck: boolean };
     } = null;
     if (isWindows(ep.platform) && (kind !== 'signed' || latest)) {
       const b = kind === 'signed' ? null : await this.migration.block(id);
@@ -171,7 +172,18 @@ export class AgentUpgradeService {
           id: latest.id, state: st.state, text: st.text, requestedAt: latest.requestedAt, dispatchedAt: latest.dispatchedAt,
           fetchedAt: latest.fetchedAt, completedAt: latest.completedAt, cancelledAt: latest.cancelledAt, reason: latest.reason,
         } : null,
+        local: null,
       };
+      // 0.38: the same upgrade, run on the computer itself. Allowed in every
+      // portal mode (Signed only says to migrate locally), and offered only
+      // when a signed agent is published and the portal has an address to pin.
+      // "stuck": it fetched a migration and has not checked in since, which is
+      // what 0.37.1-0.37.2's installer left behind; the console cannot reach it.
+      const host = kind !== 'signed' && served ? await this.migration.portalHost() : null;
+      if (host && served) {
+        const stuck = !!latest?.fetchedAt && !latest.completedAt && (!ep.lastSeenAt || ep.lastSeenAt <= latest.fetchedAt);
+        migration.local = { command: buildLocalMigrationCommand(host, served.sha256), stuck };
+      }
     }
 
     // 0.36: automatic updates — what the server will do about this agent by itself.

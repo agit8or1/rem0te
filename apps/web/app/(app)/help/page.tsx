@@ -705,7 +705,11 @@ const SECTIONS: Section[] = [
           <strong> Agent out of date</strong> chip opens them. On every standard Windows agent Upgrade to full agent is
           always a button: when it can&apos;t be used it is greyed out with the reason beside it, such as a signed release
           that has not been published yet, what to do, and a link to Devices → Full agent. While a request is open it
-          reads <strong>Upgrade requested — waiting for check-in</strong>. A signed agent shows <strong>Full agent</strong>
+          reads <strong>Upgrade requested — waiting for check-in</strong>. From 0.38 the Agent card also has{' '}
+          <strong>Upgrade on the computer itself</strong>: one line to paste into PowerShell as administrator on the
+          computer, which downloads the published full agent, checks its digest and upgrades. It opens by itself when a
+          computer downloaded its upgrade and stopped checking in, because then nothing sent from the console reaches
+          it. A signed agent shows <strong>Full agent</strong>
           instead, and Linux and macOS show the command to re-run on the computer. It is refused while the portal is
           in <em>Signed only</em> mode and held while updates are paused for the business. Several computers can be
           moved at once from the device list, and{' '}

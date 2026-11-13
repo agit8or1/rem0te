@@ -409,15 +409,17 @@ the machine. `C:\ProgramData\Rem0te\Logs\install.log` ends with *The verified Ru
 0.37.3 the installer's start-up cleanup deleted the agent's staging directory (`setup\signed`) along with
 `heartbeat.ps1`, then failed at step 1, so the heartbeat task runs a file that is no longer there.
 
-After 0.37.3 is deployed and published (`sudo rem0te-signed-publish`), run the migration once on that computer, in an
-elevated PowerShell. The signed agent it downloaded is still on disk:
+After 0.37.3 is deployed and published (`sudo rem0te-signed-publish`), open the computer's page. From 0.38 its
+**Agent** card opens *Stopped checking in after its upgrade* with a one-line command and a copy button: run it once in
+PowerShell as administrator on that computer. It downloads the published signed agent, checks its digest, and runs
+the migration, which keeps the computer's identity and installs the signed heartbeat. Before 0.38 the same thing by
+hand:
 
 ```powershell
 & (Get-ChildItem C:\ProgramData\Rem0te-migrate-*\rem0te-agent.exe | Select -First 1).FullName migrate --portal <portal host>
 ```
 
-It verifies and runs the published agent and installer, keeps the computer's identity and installs the signed
-heartbeat. If it was the automatic migration's halted canary, **Resume** it once it reports the signed agent.
+If it was the automatic migration's halted canary, **Resume** it once it reports the signed agent.
 
 ## Services
 

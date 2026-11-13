@@ -2289,6 +2289,15 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /\(Get-FileHash -Algorithm SHA256 -LiteralPath \$exe\)\.Hash\.ToLower\(\) -ne '\$\{agentSha256\}'\) \{ Remove-Item -LiteralPath \$exe -Force; exit 12 \}/.test(build)
       && build.indexOf('Get-FileHash') < build.indexOf('& $exe migrate'),
     'buildMigrationScript must validate the digest, download by it, and refuse a mismatch before running migrate');
+  // 0.38: the Agent card's run-it-yourself command is the same check, in one line.
+  const local = mig.slice(mig.indexOf('export function buildLocalMigrationCommand('));
+  check('the local migration command pins and checks the signed agent digest',
+    /!\/\^\[0-9a-f\]\{64\}\$\/\.test\(agentSha256\)/.test(local) && /!validPortalHost\(portalHost\)/.test(local)
+      && /targets\/windows\/\$\{agentSha256\}\.rem0te-agent\.exe/.test(local)
+      && /\(Get-FileHash -Algorithm SHA256 -LiteralPath \$e\)\.Hash\.ToLower\(\) -ne '\$\{agentSha256\}'\) \{ Remove-Item -LiteralPath \$e -Force;/.test(local)
+      && local.indexOf('Get-FileHash') < local.indexOf('& $e migrate')
+      && /migration\.local = \{ command: buildLocalMigrationCommand\(host, served\.sha256\), stuck \}/.test(usvc),
+    'buildLocalMigrationCommand validates host and digest, downloads by it and refuses a mismatch before migrate; the card builds it from the served target');
   const sfn = msvc.slice(msvc.indexOf('async scriptForNonce('));
   check('the served script takes its digest from the signed repository, at the moment it is fetched',
     /const agent = this\.updateTrust\.agentTarget\(\);/.test(sfn) && /return buildMigrationScript\(host, agent\.sha256\);/.test(sfn) && !/sha256\s*:/.test(read('apps/api/prisma/migrations/0055_agent_migration/migration.sql')),

@@ -202,6 +202,7 @@ async function main() {
     check(d.update.possible && d.update.label === 'Update agent', 'Update agent offered');
     check(d.migration && !d.migration.possible && d.migration.code === 'NO_SIGNED_RELEASE' && /No signed release is published/.test(d.migration.reason) && d.migration.link?.href === '/endpoints/full-agent',
       'Upgrade to full agent: refused with "No signed release is published" and the Full agent link', JSON.stringify(d.migration));
+    check(d.migration.local === null, '0.38: no signed release published, so no command to run on the computer', JSON.stringify(d.migration.local));
     const old = (await card(S.ownerA, w3)).data;
     check(old.current.state === 'behind' && /older than 0\.20\.0/.test(old.current.text), 'an agent below the contract is "behind" and says why', JSON.stringify(old.current));
     const sg = (await card(S.ownerA, wSigned)).data;
@@ -309,11 +310,26 @@ async function main() {
     const ps3 = await req('GET', `/public/install/windows.ps1?updateNonce=${nonce}`);
     check(!h2?.reinstallAgent && held2.holdReason === 'signed_only', 'tightened to Signed only after the request: held', JSON.stringify({ r: h2?.reinstallAgent, h: held2.holdReason }));
     check(/Migration unavailable/.test(ps3.text) && !/Invoke-WebRequest|migrate --portal/.test(ps3.text), 'and windows.ps1 serves a script that runs nothing, even for the nonce', ps3.text.slice(0, 200));
+    const so = (await card(S.ownerA, w1)).data;
+    check(so.migration.local?.command.includes(`targets/windows/${sha2}.rem0te-agent.exe`) && so.migration.local.command.includes(`migrate --portal '${relay}'`),
+      '0.38: Signed only still offers the run-it-on-the-computer command (nothing is served; a person runs it)', JSON.stringify(so.migration.local));
     await setMode('signed_only', true);
     const h3 = await hb(w1);
     check(h3?.reinstallAgent?.nonce === nonce, 'Signed only + portal migration: handed out again', JSON.stringify(h3?.reinstallAgent));
     const c = (await card(S.ownerA, w1)).data;
     check(c.portal.modeLabel === 'Signed only + portal migration' && c.migration.request?.state === 'downloaded', 'card shows the mode and the request state', JSON.stringify({ m: c.portal.modeLabel, r: c.migration?.request?.state }));
+    // 0.38: the command to run on the computer, pinned to what is published now.
+    const lc = c.migration.local;
+    check(lc && lc.command.includes(`targets/windows/${sha2}.rem0te-agent.exe`) && lc.command.includes(`-ne '${sha2}'`) && !lc.command.includes(sha1) && !/\bexit\b/.test(lc.command),
+      '0.38: the card carries the local upgrade command, pinned to the published digest, with no exit', JSON.stringify(lc));
+    check(lc && lc.stuck === false, '0.38: not "stuck": the computer has checked in since it fetched the migration', JSON.stringify(lc));
+    const seenBefore = (await prisma.endpoint.findUnique({ where: { id: w1.id }, select: { lastSeenAt: true } })).lastSeenAt;
+    await prisma.endpoint.update({ where: { id: w1.id }, data: { lastSeenAt: new Date(fetched.fetchedAt.getTime() - 60_000) } });
+    const stuck = (await card(S.ownerA, w1)).data.migration.local;
+    check(stuck?.stuck === true, '0.38: "stuck" once its last check-in is before the fetch (the console cannot reach it)', JSON.stringify(stuck));
+    const otherBiz = await card(S.ownerB, w1);
+    check(otherBiz.status === 404 && !JSON.stringify(otherBiz).includes(sha2), "another business's owner gets a 404, not the command", String(otherBiz.status));
+    await prisma.endpoint.update({ where: { id: w1.id }, data: { lastSeenAt: seenBefore } });
     await setMode('legacy_allowed', false);
 
     // The machine migrated: its next heartbeat says signed.
