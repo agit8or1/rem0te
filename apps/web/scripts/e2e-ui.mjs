@@ -1018,6 +1018,17 @@ async function agentSilentUi(page, f, label) {
   const dotCls = await st.locator('span[aria-hidden="true"]').getAttribute('class');
   check(stText.includes('Reachable (RustDesk) · agent silent 12 d') && /bg-amber-500/.test(dotCls ?? '') && /remote control should work/.test(hint ?? '') && /Update agent/.test(hint ?? ''),
     `${label}: its device page header says "Reachable (RustDesk) · agent silent 12 d" in amber, with a tooltip naming what still works and Update agent`, `${stText} | ${dotCls} | ${hint}`);
+  // 0.37.2: Remote Support lists every reachable computer; a silent agent's card is amber, never the green "Online" it used to hard-code.
+  await go(page, '/sessions');
+  await settled(page);
+  const card = page.locator('[data-status]', { hasText: `${TAG}-BIRCH-SILENT` }).first();
+  await card.waitFor({ timeout: 20_000 }).catch(() => {});
+  const cardTone = await card.getAttribute('data-status').catch(() => null);
+  const cardDot = await card.locator('span[title]').first().getAttribute('class').catch(() => null);
+  const cardText = (await card.innerText().catch(() => '')).trim();
+  const counts = (await page.locator('[data-testid="reachable-counts"]').innerText().catch(() => '')).trim();
+  check(cardTone === 'degraded' && /bg-amber-500/.test(cardDot ?? '') && !/bg-green-500/.test(cardDot ?? '') && /agent silent 12 d/.test(cardText) && /Agent last checked in 12d ago/.test(cardText) && /\d+ agent silent/.test(counts),
+    `${label}: Remote Support draws the agent-silent computer amber with "agent silent 12 d" and counts it apart from online ones`, `${cardTone} | ${cardDot} | ${cardText.replace(/\s+/g, ' ')} | ${counts}`);
   await go(page, '/dashboard');
   await settled(page);
   const dash = await page.locator('main').innerText();
