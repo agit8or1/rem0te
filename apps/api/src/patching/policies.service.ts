@@ -368,12 +368,13 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     const row = await this.prisma.patchPolicy.create({
       data: {
         id: doc.policyId, tenantId, customerId: dto.businessId, name: dto.name, document: doc as unknown as Prisma.InputJsonValue, digest,
-        status: 'AWAITING_APPROVAL', approvalUrl: sub.body.approvalUrl, expiresAt, createdById: actor.userId,
+        // 0.40: in direct mode the signer makes it active at admission; the mirror follows its word.
+        status: sub.body.direct === true && sub.body.status === 'ACTIVE' ? 'ACTIVE' : 'AWAITING_APPROVAL', approvalUrl: sub.body.approvalUrl, expiresAt, createdById: actor.userId,
       },
     });
     await this.audit.log({
       tenantId: tenantId ?? undefined, customerId: dto.businessId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_POLICY_CREATED', resource: 'patch_policy', resourceId: row.id,
-      meta: { name: dto.name, digest, rings: rings.map((x) => x.length), allow: allowParams(dto.allow), window: dto.window, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, reboot: dto.reboot, expiresAt: doc.expiresAt, reason: dto.reason },
+      meta: { name: dto.name, digest, approval: sub.body.direct === true ? 'direct' : 'signed', rings: rings.map((x) => x.length), allow: allowParams(dto.allow), window: dto.window, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, reboot: dto.reboot, expiresAt: doc.expiresAt, reason: dto.reason },
     });
     return this.detail(actor, row.id, now);
   }
@@ -420,6 +421,8 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
       currentWindow: r.status === 'ACTIVE' ? occurrenceAt(now, doc.window) : null,
       nextWindow: r.status === 'ACTIVE' ? nextOccurrence(now, doc.window, r.expiresAt) : null,
       lastProposal: r.lastProposal,
+      // 0.40: activated in direct mode, with no approvals (the signer's word).
+      direct: signer?.status === 200 && signer.body.direct === true,
       signer: signer?.status === 200 ? { reachable: true, status: signer.body.status ?? null, signedPlans: signer.body.signedPlans ?? 0, refusals: signer.body.refusals ?? [] } : { reachable: false, status: null, signedPlans: null, refusals: [] },
       deployments,
       sweep: { enabled: PatchPolicyService.sweepEnabled(), everySeconds: PatchPolicyService.sweepSeconds() },
@@ -494,7 +497,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
       detail: configured ? `APPROVAL_SIGNER_INTERNAL_URL is ${this.signer.base()}` : 'APPROVAL_SIGNER_INTERNAL_URL is unset or not a loopback http address.',
       fix: configured ? null : 'Install the signer (step 3) and set APPROVAL_SIGNER_INTERNAL_URL in the API environment.' });
 
-    let caps: { patchPolicies?: number; kid?: string; roster?: { approvers: number } } | null = null;
+    let caps: { patchPolicies?: number; kid?: string; roster?: { approvers: number }; approval?: { default: 'direct' | 'signed'; directBusinesses: number } } | null = null;
     let reachable = false;
     if (configured) {
       const c = await this.signer.capabilities().catch(() => null);
@@ -511,10 +514,15 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     add({ id: 'signer_key_published', step: 3, ok: kidOk, title: 'Agents trust the signer\'s key',
       detail: !kf ? 'approval/keys.json is not in the signed repository, so agents trust no approval key.' : !caps?.kid ? `approval/keys.json lists ${trustedKids.length} key(s); the signer's key id is unknown.` : kidOk ? `approval/keys.json lists the signer's key ${caps.kid}.` : `approval/keys.json does not list the signer's key ${caps.kid}; agents would refuse every plan it signs.`,
       fix: kidOk ? null : 'Print the signer\'s keys.json (approval-signer keys) and publish it as approval/keys.json with rem0te-release.' });
+    // 0.40: direct mode (the signer operator's default) needs no approvers at all.
     const approvers = caps?.roster?.approvers ?? 0;
-    add({ id: 'approvers', step: 5, ok: approvers >= 2, title: 'At least two approvers are enrolled',
-      detail: caps ? `${approvers} approver(s) on the roster.` : 'Unknown: the signer is not reachable.',
-      fix: approvers >= 2 ? null : 'Enrol two approvers on the signer, with the fingerprint ceremony (docs/approved-actions.md, Setting it up).' });
+    const direct = caps?.approval?.default === 'direct';
+    const others = caps?.approval?.directBusinesses ?? 0;
+    add({ id: 'approvers', step: 5, ok: direct || approvers >= 2, title: direct ? 'Approval mode: direct' : 'Approval mode: signed — at least two approvers are enrolled',
+      detail: !caps ? 'Unknown: the signer is not reachable.'
+        : direct ? `The signer's default policy is in direct mode: plans and patch policies are signed as soon as they are requested, with a fresh sign-in and no approval step. ${approvers} approver(s) on the roster, for any business set to signed.`
+        : `Signed mode: ${approvers} approver(s) on the roster.${others ? ` ${others} business(es) are set to direct mode on the signer.` : ''}`,
+      fix: direct || approvers >= 2 ? null : 'Either turn on direct mode for a single operator (approval-signer policy set --business default --approval direct), or enrol two approvers on the signer with the fingerprint ceremony (docs/approved-actions.md, Setting it up).' });
 
     const key = `${UPDATE_INSTALL.id}@${UPDATE_INSTALL.version}`;
     const [windows, signed, capable, current] = await Promise.all([

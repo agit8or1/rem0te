@@ -69,7 +69,7 @@ export default function SoftwareCatalogPage() {
           winget&apos;s own hash check applies again when it installs. The install step downloads once more, and those bytes are checked by winget against the source manifest, not hashed again by the agent.
         </p>
         <p>
-          Every plan is high risk and needs two approvers on the approval signer; you cannot approve your own request, and nothing on this page can approve. A deployment starts with one canary computer, and each later ring can be requested only once the one before it has passed: the canary&apos;s detection rule must confirm the change, failures must stay within the threshold, and the soak time must have passed.
+          Every plan is high risk and needs two approvers on the approval signer; you cannot approve your own request, and nothing on this page can approve. (In direct mode, which only the approval signer&apos;s operator can turn on for a business, a ring is signed as soon as it is requested, after a fresh sign-in.) A deployment starts with one canary computer, and each later ring can be requested only once the one before it has passed: the canary&apos;s detection rule must confirm the change, failures must stay within the threshold, and the soak time must have passed.
           Computers whose software is managed by Configuration Manager or Intune refuse software plans. Nothing here has been run on a real Windows computer yet.
         </p>
       </div>

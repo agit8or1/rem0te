@@ -10,7 +10,7 @@ import { assertFresh } from '../security-controls/review';
 import { ActionsService } from '../actions/actions.service';
 import { SignerClient } from '../actions/signer.client';
 import { RevocationRelay } from '../actions/revocations.controller';
-import { SOFTWARE_INSTALL, SOFTWARE_UNINSTALL, SoftwareParams, type CatalogAction } from '../actions/catalog';
+import { SOFTWARE_INSTALL, SOFTWARE_UNINSTALL, SoftwareParams, planDirect, type CatalogAction } from '../actions/catalog';
 import { Posture, MANAGER_LABEL } from '../patching/posture';
 import { readOnlyAgentRefusal } from '../common/platform';
 import {
@@ -329,7 +329,7 @@ export class SoftwareService {
   }
 
   /** "Install" / "Uninstall" on one computer: a one-computer deployment, one ring, the usual two approvals. */
-  async single(actor: ActorContext, endpointId: string, entryId: string, operation: string, raw: unknown) {
+  async single(actor: ActorContext, endpointId: string, entryId: string, operation: string, raw: unknown, freshMethod?: string | null) {
     if (operation !== 'install' && operation !== 'uninstall') throw new NotFoundException();
     const p = SingleDto.safeParse(raw);
     if (!p.success) bad(p.error);
@@ -339,8 +339,9 @@ export class SoftwareService {
     const st = await this.availability(actor, ep, ACTIONS[operation]);
     if (!st.possible) throw new ConflictException({ code: 'SOFTWARE_NOT_POSSIBLE', message: st.reason, fix: st.fix });
     const e = await this.entry(actor, entryId);
+    await this.actions.assertDirectFresh(ep.customerId, freshMethod);
     const d = await this.build(actor, { entryId: e.id, operation, rings: [[endpointId]], soakHours: 0, failureThreshold: 0, windowHours: p.data.windowHours, name: `${operation === 'install' ? 'Install' : 'Uninstall'} ${e.name} on ${(ep.hostname ?? ep.name).slice(0, 60)}`.slice(0, 120) }, true);
-    return this.requestRing(actor, d.id, 0, { reason: p.data.reason, startsInMinutes: p.data.startsInMinutes });
+    return this.requestRing(actor, d.id, 0, { reason: p.data.reason, startsInMinutes: p.data.startsInMinutes }, freshMethod);
   }
 
   // ── Deployments ───────────────────────────────────────────────────────────
@@ -483,7 +484,7 @@ export class SoftwareService {
         const j = jobs.get(i);
         return {
           ring: i, canary: i === 0, gate: gates[i],
-          job: j ? { id: j.id, status: j.status, statusReason: j.statusReason, approvalUrl: j.approvalUrl, outcome: j.outcome, window: { notBefore: j.notBefore, notAfter: j.notAfter }, digest: j.digest } : null,
+          job: j ? { id: j.id, status: j.status, statusReason: j.statusReason, approvalUrl: j.approvalUrl, outcome: j.outcome, window: { notBefore: j.notBefore, notAfter: j.notAfter }, digest: j.digest, direct: planDirect(j.plan), createdAt: j.createdAt } : null,
           computers: r.endpointIds.map((e) => {
             const t = j?.targets.find((x) => x.endpointId === e);
             const res = (t?.result ?? null) as { reason?: string; detail?: string; observed?: Record<string, string> } | null;
@@ -502,7 +503,7 @@ export class SoftwareService {
    * as they were when it was made; if the catalog entry has since changed or
    * been archived, no further ring is requested.
    */
-  async requestRing(actor: ActorContext, id: string, ring: number, raw: unknown) {
+  async requestRing(actor: ActorContext, id: string, ring: number, raw: unknown, freshMethod?: string | null) {
     const p = RequestRingDto.safeParse(raw);
     if (!p.success) bad(p.error);
     const dto = p.data;
@@ -537,6 +538,7 @@ export class SoftwareService {
         software: d.display as unknown as NonNullable<NonNullable<Parameters<ActionsService['createPlan']>[1]['display']>['software']>,
       },
       softwareDeployment: { id: d.id, ring },
+      freshMethod,
     });
     await this.audit.log({ tenantId: d.tenantId ?? undefined, customerId: d.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'SOFTWARE_RING_REQUESTED', resource: 'software_deployment', resourceId: d.id, meta: { ring, jobId: job.id, computers: endpointIds.length, excluded: Object.fromEntries(excluded), operation: d.operation, packageId: params.data.packageId, version: params.data.version } });
     return { job: await this.actions.view(job, actor), deployment: await this.detail(actor, id) };

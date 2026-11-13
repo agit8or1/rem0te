@@ -9,18 +9,26 @@
  *   - the roster: who may approve, for which businesses, identified by their
  *     passkey's public key — enrolled by an operator ceremony, never read
  *     from the portal at decision time;
- *   - the policy: which businesses require customer sign-off.
+ *   - the policy: which businesses require customer sign-off, and (0.40)
+ *     which are in direct mode.
  *
  * So a compromised portal or database can propose a plan, but cannot make it
  * signed: every signature needs fresh, user-verified passkey assertions from
  * roster members over the exact plan this process rendered, from distinct
  * people who are not the requester, in the number the catalog and this
  * process's own policy require.
+ *
+ * Direct mode (0.40) is the exception its operator chooses, per business,
+ * with this process's CLI and nothing else: a plan for such a business is
+ * signed at admission, after every other check here, with no approvers.
+ * There a compromised portal CAN have plans signed — what an RMM's own agent
+ * normally allows — and what still bounds it is this process's catalog,
+ * pauses, allowlist and revocations, and the agent's own checks.
  */
 import { createHash, createPrivateKey, createPublicKey, sign as edSign, verify as edVerify, type KeyObject } from 'node:crypto';
 import { canonicalJson } from '../integration/crypto';
 import {
-  APPROVALS_REQUIRED, ENVELOPE_SCHEMA, PLAN_SIGNING_PREFIX, Plan, planDigest, validatePlanAction, type Envelope,
+  APPROVALS_REQUIRED, DIRECT, ENVELOPE_SCHEMA, PLAN_SIGNING_PREFIX, Plan, planDigest, validatePlanAction, type Envelope,
 } from '../actions/catalog';
 import {
   POLICY_PROPOSAL_DAYS, PolicyDoc, RingEvidence as RingEvidenceSchema, evaluatePolicyPlan, policyDigest, policyQuorum, policySigningBytes, validatePolicyDoc,
@@ -48,7 +56,10 @@ export interface RosterMember {
   disabled?: boolean;
 }
 export interface Roster { members: RosterMember[] }
-export interface Policy { default: { customerSignoff: boolean }; businesses: Record<string, { customerSignoff: boolean }> }
+/** One business's rules. `approval` (0.40) is 'direct' or 'signed'; absent is 'signed'. */
+export interface BusinessPolicy { customerSignoff: boolean; approval?: 'direct' | 'signed' }
+export interface Policy { default: BusinessPolicy; businesses: Record<string, BusinessPolicy> }
+export type ApprovalMode = 'direct' | 'signed';
 
 export type JobStatus = 'AWAITING_APPROVAL' | 'SIGNED' | 'REJECTED' | 'CANCELED' | 'EXPIRED';
 export interface Decision { userId: string; name: string; role: Role; decision: 'approve' | 'reject'; credentialSha256: string; at: string }
@@ -89,8 +100,21 @@ export function webauthnChallenge(c: Pick<Challenge, 'id' | 'digest' | 'decision
   return createHash('sha256').update(`rem0te-approval-v1\n${c.id}\n${c.digest}\n${c.decision}\n${c.role}`).digest('base64url');
 }
 
-export function policyFor(policy: Policy, businessId: string) {
-  return policy.businesses[businessId] ?? policy.default;
+/**
+ * A business's rules, read so that only a deliberate setting counts: direct
+ * only when the stored value is exactly 'direct', and never together with
+ * customer sign-off — the CLI refuses that pair, and a hand-edited file that
+ * holds it gets customer sign-off, the stricter of the two.
+ */
+export function policyFor(policy: Policy, businessId: string): { customerSignoff: boolean; approval: ApprovalMode } {
+  const p = policy.businesses[businessId] ?? policy.default;
+  const customerSignoff = p.customerSignoff === true;
+  return { customerSignoff, approval: p.approval === DIRECT && !customerSignoff ? DIRECT : 'signed' };
+}
+
+/** Script allowlist entries are this signer's own, for every business: they follow its `default` mode. */
+export function allowlistDirect(policy: Policy): boolean {
+  return policyFor({ default: policy.default, businesses: {} }, '-').approval === DIRECT;
 }
 
 /**
@@ -111,9 +135,11 @@ export function admitPlan(
   if (!v.ok) throw new Refused(v.reason);
   const businesses = new Set(p.targets.map((t) => t.businessId));
   if (businesses.size !== 1) throw new Refused('one_business_per_plan');
-  const requireCustomer = policyFor(policy, p.targets[0].businessId).customerSignoff;
-  if (p.policy.customerSignoff !== requireCustomer) throw new Refused('policy_mismatch', `customer sign-off is ${requireCustomer ? 'required' : 'not required'} for this business`);
-  if (p.policy.approvalsRequired !== APPROVALS_REQUIRED[p.policy.risk]) throw new Refused('policy_mismatch', 'approvals required does not match the catalog risk');
+  const biz = policyFor(policy, p.targets[0].businessId);
+  if (p.policy.customerSignoff !== biz.customerSignoff) throw new Refused('policy_mismatch', `customer sign-off is ${biz.customerSignoff ? 'required' : 'not required'} for this business`);
+  const direct = biz.approval === DIRECT;
+  if ((p.policy.approval === DIRECT) !== direct) throw new Refused('policy_mismatch', `this business is in ${direct ? 'direct' : 'signed'} approval mode on the approval signer`);
+  if (p.policy.approvalsRequired !== (direct ? 0 : APPROVALS_REQUIRED[p.policy.risk])) throw new Refused('policy_mismatch', 'approvals required does not match the catalog risk and the approval mode');
   if (Date.parse(p.window.notAfter) <= now.getTime()) throw new Refused('window_closed');
   if (p.action.id === SCRIPT_RUN_ACTION) assertScriptAllowed(p, scripts);
   assertSoftwareAllowed(p, softwareRevoked);
@@ -226,6 +252,8 @@ export interface PolicyRecord {
   revokedAt: string | null;
   revokedBy: 'portal' | 'operator' | null;
   revokeReason: string | null;
+  /** 0.40: activated at admission because the business was in direct mode; it carries no approvals. */
+  direct?: true;
   /** Every plan signed under it: the ring order is decided from this, not from the portal. */
   ledger: LedgerEntry[];
   /** The last refusals, for the operator. */
@@ -291,7 +319,8 @@ export function verifyPolicy(r: PolicyRecord, publicKey: KeyObject): boolean {
  * Decide a plan the portal proposes under a policy. On success the plan is
  * signed with the policy's approvers as its approvers — the agent then
  * checks them as it checks any plan's: two, distinct, not the requester —
- * and the ledger records it. Everything the portal says about the policy,
+ * and the ledger records it. In direct mode (0.40) the plan says so, and a
+ * policy activated in direct mode has no approvers to carry. Everything the portal says about the policy,
  * the risk and the approvals is re-derived here.
  */
 export function signUnderPolicy(
@@ -305,11 +334,12 @@ export function signUnderPolicy(
   if (changed.length) throw new Refused('device_key_changed', deviceKeyChangedMessage(changed));
   const ev = raw.evidence == null ? null : RingEvidenceSchema.safeParse(raw.evidence);
   if (ev && !ev.success) throw new Refused('bad_evidence', ev.error.issues.slice(0, 2).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
+  const biz = policyFor(business, r.doc.businessId);
   const req: PolicyPlanRequest = { plan, policyDigest: typeof raw.policyDigest === 'string' ? raw.policyDigest : '', evidence: ev ? ev.data! : null };
   const decision: PolicyDecision = evaluatePolicyPlan({
     doc: r.doc, digest: r.digest, status: effectivePolicyStatus(r, now), approvals: approvalsOf(r),
     signatureValid: verifyPolicy(r, createPublicKey(k.key)), revokedAt: r.revokedAt, ledger: r.ledger,
-  }, req, { now, customerSignoff: policyFor(business, r.doc.businessId).customerSignoff });
+  }, req, { now, customerSignoff: biz.customerSignoff, direct: biz.approval === DIRECT });
   if (!decision.ok) throw new Refused(decision.code, decision.message);
   const job: JobRecord = {
     jobId: plan.jobId, status: 'AWAITING_APPROVAL', plan, digest,
@@ -393,12 +423,18 @@ export interface ScriptAllowRecord {
   revokedAt: string | null;
   revokedBy: 'portal' | 'operator' | null;
   revokeReason: string | null;
+  /** 0.40: made ACTIVE at admission because the signer's default mode was direct. */
+  direct?: true;
   createdAt: string;
   updatedAt: string;
 }
 
-/** Accept a proposed allowlist entry. The content is hashed here and must match what the portal claims. */
-export function admitScriptProposal(raw: unknown, now: Date): ScriptAllowRecord {
+/**
+ * Accept a proposed allowlist entry. In direct mode (0.40: the signer's
+ * `default` policy) it is ACTIVE at once, and a library review by the
+ * script's own author is accepted — the portal allows that only in the same
+ * mode. Everything about the content is checked the same way. The content is hashed here and must match what the portal claims. */
+export function admitScriptProposal(raw: unknown, now: Date, direct = false): ScriptAllowRecord {
   const parsed = ScriptProposal.safeParse(raw);
   if (!parsed.success) throw new Refused('invalid_script', parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
   const p = parsed.data;
@@ -406,11 +442,11 @@ export function admitScriptProposal(raw: unknown, now: Date): ScriptAllowRecord 
   if (bad) throw new Refused('invalid_script', bad);
   const sha = sha256Hex(p.content);
   if (sha !== p.contentSha256) throw new Refused('hash_mismatch', `the content hashes to ${sha}, not the ${p.contentSha256} the portal named`);
-  if (p.contributors.some((c) => c.userId === p.reviewedBy.userId)) throw new Refused('invalid_script', 'the library reviewer is listed as a contributor');
+  if (!direct && p.contributors.some((c) => c.userId === p.reviewedBy.userId)) throw new Refused('invalid_script', 'the library reviewer is listed as a contributor');
   const block = scriptBlockOf(p);
   return {
-    id: p.allowlistId, status: 'AWAITING_APPROVAL', proposal: p, contentSha256: block.contentSha256, definitionSha256: block.definitionSha256,
-    decisions: [], revokedAt: null, revokedBy: null, revokeReason: null, createdAt: now.toISOString(), updatedAt: now.toISOString(),
+    id: p.allowlistId, status: direct ? 'ACTIVE' : 'AWAITING_APPROVAL', proposal: p, contentSha256: block.contentSha256, definitionSha256: block.definitionSha256,
+    decisions: [], revokedAt: null, revokedBy: null, revokeReason: null, ...(direct ? { direct: true as const } : {}), createdAt: now.toISOString(), updatedAt: now.toISOString(),
   };
 }
 

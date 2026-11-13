@@ -1038,6 +1038,20 @@ const SECTIONS: Section[] = [
           was running, never that anything printed; an uncertain outcome must be reconciled before you can ask again.
           More in <Link href="/docs/approved-actions" className="underline text-foreground">Approved actions</Link>.
         </p>
+        <p data-help="direct-mode">
+          <strong className="text-foreground">Direct mode (0.40), for a single operator.</strong> If you run this portal
+          alone, the approval signer&apos;s operator can turn approvals off for a business, or for every business, with
+          one command on the signer:{' '}
+          <code className="text-foreground">policy set --business default --approval direct</code>. A request is then
+          signed as soon as you make it, after you confirm it is you, and runs when the computer next checks in — the
+          Actions tab, patching, software and scripts say <em>Approved automatically (direct mode)</em>, and there is no
+          approval page. What it gives up: a second person. Anyone who fully takes over this portal can then run
+          catalog actions on those computers, as with most RMMs. What still holds: the fresh sign-in, permissions, the
+          audit log, containment pauses, revocations, maintenance windows and session rules, and the computer checking
+          the signer&apos;s signature. Direct mode cannot be combined with customer sign-off, ClientSt0r proposals are
+          refused under it, and computers need the 0.40 agent (an older one refuses direct plans). More in{' '}
+          <Link href="/docs/approved-actions#direct-mode-the-default-for-a-single-operator" className="underline text-foreground">Approved actions → Direct mode</Link>.
+        </p>
         <p>
           From 0.32, the same <em>Actions</em> tab (or <strong className="text-foreground">Run action</strong> at the top of
           a computer&apos;s page) offers four <strong className="text-foreground">maintenance actions</strong>: restart one

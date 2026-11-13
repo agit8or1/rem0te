@@ -31,8 +31,9 @@ export class SignerClient {
     return { status: r.status, body: (await r.json().catch(() => ({}))) as T };
   }
 
-  policy(businessId: string) { return this.call<{ customerSignoff: boolean }>('GET', `/internal/v1/policy/${encodeURIComponent(businessId)}`); }
-  submit(plan: unknown) { return this.call<{ jobId?: string; digest?: string; status?: string; approvalUrl?: string; error?: string; message?: string }>('POST', '/internal/v1/plans', { plan }); }
+  /** A business's rules on the signer, or 'default' (which also governs the script allowlist). Read only. */
+  policy(businessId: string) { return this.call<{ customerSignoff: boolean; approval?: 'direct' | 'signed' }>('GET', `/internal/v1/policy/${encodeURIComponent(businessId)}`); }
+  submit(plan: unknown) { return this.call<{ jobId?: string; digest?: string; status?: string; direct?: boolean; approvalUrl?: string; error?: string; message?: string }>('POST', '/internal/v1/plans', { plan }); }
   status(jobId: string) {
     return this.call<{ status?: string; digest?: string; decisions?: { name: string; role: string; decision: string; at: string }[]; envelope?: { schema: string; kid: string; plan: string; sig: string } | null; error?: string }>('GET', `/internal/v1/plans/${jobId}`);
   }
@@ -41,11 +42,11 @@ export class SignerClient {
   // The portal proposes a policy and may revoke one. It cannot approve one
   // (that is passkeys on the signer's own page), cannot un-revoke one, and
   // cannot make the signer sign a plan the policy does not cover.
-  capabilities() { return this.call<{ patchPolicies?: number; kid?: string; roster?: { approvers: number } }>('GET', '/internal/v1/capabilities'); }
+  capabilities() { return this.call<{ patchPolicies?: number; kid?: string; roster?: { approvers: number }; approval?: { default: 'direct' | 'signed'; directBusinesses: number } }>('GET', '/internal/v1/capabilities'); }
   keys() { return this.call<{ keys?: { kid: string }[] }>('GET', '/internal/v1/keys'); }
-  submitPolicy(policy: unknown) { return this.call<{ policyId?: string; digest?: string; status?: string; approvalUrl?: string; error?: string; message?: string }>('POST', '/internal/v1/policies', { policy }); }
+  submitPolicy(policy: unknown) { return this.call<{ policyId?: string; digest?: string; status?: string; direct?: boolean; approvalUrl?: string; error?: string; message?: string }>('POST', '/internal/v1/policies', { policy }); }
   policyStatus(id: string) {
-    return this.call<{ status?: string; digest?: string; approvals?: { name: string; role: string; at: string }[]; revokedAt?: string | null; signedPlans?: number; refusals?: { at: string; jobId: string; code: string; message: string }[]; error?: string }>('GET', `/internal/v1/policies/${id}`);
+    return this.call<{ status?: string; digest?: string; direct?: boolean; approvals?: { name: string; role: string; at: string }[]; revokedAt?: string | null; signedPlans?: number; refusals?: { at: string; jobId: string; code: string; message: string }[]; error?: string }>('GET', `/internal/v1/policies/${id}`);
   }
   revokePolicy(id: string, reason: string) { return this.call<{ status?: string; revokedAt?: string; error?: string }>('POST', `/internal/v1/policies/${id}/revoke`, { reason }); }
   /** Ask the signer to sign a ring plan under a policy. It decides; a refusal comes back as 409 with the code. */
@@ -58,10 +59,10 @@ export class SignerClient {
   // it) and may revoke one. It cannot approve or edit one: approvers add it
   // with passkeys on the signer's own page, after reading the content there.
   proposeScript(proposal: unknown) {
-    return this.call<{ id?: string; status?: string; contentSha256?: string; definitionSha256?: string; approvalUrl?: string; error?: string; message?: string }>('POST', '/internal/v1/scripts', { proposal });
+    return this.call<{ id?: string; status?: string; direct?: boolean; contentSha256?: string; definitionSha256?: string; approvalUrl?: string; error?: string; message?: string }>('POST', '/internal/v1/scripts', { proposal });
   }
   scriptStatus(id: string) {
-    return this.call<{ id?: string; status?: string; contentSha256?: string; approvalUrl?: string; decisions?: { name: string; decision: string; at: string }[]; revokedAt?: string | null; revokeReason?: string | null; error?: string }>('GET', `/internal/v1/scripts/${id}`);
+    return this.call<{ id?: string; status?: string; direct?: boolean; contentSha256?: string; approvalUrl?: string; decisions?: { name: string; decision: string; at: string }[]; revokedAt?: string | null; revokeReason?: string | null; error?: string }>('GET', `/internal/v1/scripts/${id}`);
   }
   revokeScript(id: string, reason: string) { return this.call<{ status?: string; revokedAt?: string; error?: string }>('POST', `/internal/v1/scripts/${id}/revoke`, { reason }); }
 

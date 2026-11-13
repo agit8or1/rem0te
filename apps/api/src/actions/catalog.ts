@@ -425,6 +425,19 @@ export const catalogEntry = (id: string, version: number) => CATALOG.find((a) =>
 
 /** Approvals required by risk. The agent enforces the same minimums. */
 export const APPROVALS_REQUIRED: Record<Risk, number> = { low: 1, high: 2 };
+/**
+ * Direct mode (0.40). A business the approval signer's operator set to
+ * `--approval direct` has its plans signed at admission, with no approvers:
+ * the plan says `policy.approval: 'direct'`, asks for 0 approvals and never
+ * for customer sign-off. The agent relaxes its approval rules only on that
+ * signed field (internal/action isDirect).
+ */
+export const DIRECT = 'direct' as const;
+export const approvalsRequiredFor = (risk: Risk, direct: boolean) => (direct ? 0 : APPROVALS_REQUIRED[risk]);
+/** Whether a stored plan was signed in direct mode. */
+export function planDirect(plan: unknown): boolean {
+  return (plan as { policy?: { approval?: unknown } } | null)?.policy?.approval === DIRECT;
+}
 /** The most any action allows; each action sets its own (maxTargets). */
 export const MAX_TARGETS = MAX_RING_TARGETS;
 /** Longest window a requester may ask for. */
@@ -468,8 +481,11 @@ export const Plan = z.object({
   reason: z.string().min(3).max(500),
   policy: z.object({
     risk: z.enum(['low', 'high']),
-    approvalsRequired: z.number().int().min(1).max(5),
+    /** 0 only in direct mode (validatePlanAction). */
+    approvalsRequired: z.number().int().min(0).max(5),
     customerSignoff: z.boolean(),
+    /** 0.40: present only when the signer's operator set the business to direct mode. */
+    approval: z.literal(DIRECT).optional(),
   }).strict(),
   window: z.object({ notBefore: Iso, notAfter: Iso }).strict(),
   /**
@@ -525,7 +541,10 @@ export function validatePlanAction(p: Plan): { ok: true; action: CatalogAction }
   if (eps.size !== p.targets.length || rids.size !== p.targets.length) return { ok: false, reason: 'duplicate_target' };
   const risk = a.risk(p.targets);
   if (p.policy.risk !== risk) return { ok: false, reason: 'risk_mismatch' };
-  if (p.policy.approvalsRequired < APPROVALS_REQUIRED[risk]) return { ok: false, reason: 'too_few_approvals_required' };
+  if (p.policy.approval === DIRECT) {
+    if (p.policy.customerSignoff) return { ok: false, reason: 'direct_with_customer_signoff' };
+    if (p.policy.approvalsRequired !== 0) return { ok: false, reason: 'policy_mismatch' };
+  } else if (p.policy.approvalsRequired < APPROVALS_REQUIRED[risk]) return { ok: false, reason: 'too_few_approvals_required' };
   const nb = Date.parse(p.window.notBefore), na = Date.parse(p.window.notAfter);
   if (!(na > nb) || na - nb > (a.maxWindowHours ?? MAX_WINDOW_HOURS) * 3600_000) return { ok: false, reason: 'bad_window' };
   return { ok: true, action: a };

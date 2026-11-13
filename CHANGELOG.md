@@ -5,6 +5,121 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.40.0] — 2026-11-13 · *Straightedge*
+
+**Direct mode: approved actions for a single operator.**
+
+The owner runs the portal alone. Every approved action, patch ring, software deployment and script run needed
+passkey approvals on the approval signer from people on its roster, and at least one approver who was not the
+requester. One person can never satisfy that, so the catalog could not be used at all on a one-person install. The
+owner chose **direct mode** over a single-operator passkey step: the signer signs the plan as soon as it is
+requested, with no approvers, and everything else stays in place.
+
+### Added
+- **The setting lives on the approval signer, per business, with a `default`.** Only the signer's CLI sets it:
+  `policy set --business <id|default> --approval direct|signed`. A missing value means `signed`. `policy show` prints
+  it. Each change is appended to `policy-changes.log` in the signer's directory (0600) with before, after and who.
+  The CLI prints a warning on stderr when direct is turned on. There is no HTTP route on the signer or the portal
+  that writes it. The signer's `GET /internal/v1/policy/:id|default` is read-only, and the portal only mirrors it.
+- **Direct mode and customer sign-off never hold together.** The CLI refuses `--approval direct` for a business
+  that requires customer sign-off, and refuses turning customer sign-off on for a business that is direct. Each
+  refusal exits 2 and says why: direct mode signs at the request, so nobody could sign off first. If someone hand-edits
+  `policy.json` to hold both, `policyFor` reads it as `signed`.
+- **Signing at admission.** When `policyFor(...)` says direct, a submitted plan is signed in the same request. It
+  must carry `policy.approval: "direct"` and `approvalsRequired: 0`. Signing happens after every existing admission
+  check (risk, window, catalog, allowlist, software revocations) and after the signed-pause check. There is no
+  roster, no passkey and no approval page, and the job's approvers list is empty. The plan still names `requestedBy`.
+  A plan's direct flag must match the signer's own policy, either way, or it is `policy_mismatch`. Signed-mode plans
+  are byte-identical to before, because the field is absent.
+- **The agent (new release).** When the signed plan says `"direct"`, the agent needs zero approvers and drops the
+  requester and script-contributor same-person rules. With the field absent, nothing changes. Any other value, or
+  direct together with customer sign-off, is `bad_plan`. Its risk computation, the signed pause, revocations,
+  Precheck, journal order and session rules are untouched. **Agents older than 0.40 refuse a direct plan with
+  `bad_plan`**, which fails closed. The UI says to upgrade the agent when that is the reason.
+- **Patch policies and the script allowlist.** Under direct, a patch policy proposal becomes ACTIVE at admission,
+  signed with no approvals and recorded `direct: true`. It is signed only after the pause and device-key pin checks,
+  and its ring plans carry the direct flag. A direct-activated policy counts only while its business is direct
+  (`policyQuorum(..., direct)`). Switch the business back to signed and its rings are refused with
+  `policy_not_approved` until the policy is approved the strict way. A script allowlist proposal becomes ACTIVE at
+  admission only when the signer's **`default`** policy is direct, because the allowlist is not per business. The
+  script library then lets a version's author review it, recorded in `ScriptVersion.selfReviewed` (migration 0065).
+- **The portal.** A direct request needs the capability **and a fresh sign-in** (`assertFresh`, `actions.direct`)
+  on every request path: the computer's Approved actions card, a patch install on one computer, a patch or software
+  ring, a single software install, a script run, and a script allowlist proposal. Rings requested under an active
+  patch policy are exempt, because creating the policy already needed a fresh sign-in. ClientSt0r cannot make a
+  direct request (`403 DIRECT_MODE_PORTAL_ONLY`). The Approved actions card and Patching setup show the mode. In
+  direct mode the UI shows no "awaiting approval" and no approval-page link. It says *Approved automatically (direct
+  mode) by <you>, <time>*. The no-signer text is unchanged.
+
+### Why
+A single person cannot be two people. A passkey step for one operator would add a ceremony without adding a second
+check. Direct mode is honest about what it gives up: anyone who fully controls the portal session can run catalog
+actions without a second person. What still protects a direct run: a fresh sign-in on every request, capabilities,
+the audit log, containment pauses (portal and signed), revocation, maintenance windows and session rules, and the
+agent verifying the signer's signature. The signer still runs every admission check, and only the signer's
+operator, on the host, can turn it on.
+
+### Decided
+- ClientSt0r proposals are refused under direct, not signed on arrival. Direct mode is for the operator at the
+  console.
+- Plans signed in direct mode stay valid until their window closes after a business is switched back to signed.
+  Cancel them in the UI if needed.
+- Under direct the agent accepts a plan that does name approvers, such as a ring under a policy approved earlier.
+- An approval page opened for a direct job answers `not_awaiting`.
+
+### Upgrade notes
+- **New agent release.** Publish the agent (`sudo rem0te-signed-publish`) before turning direct mode on. Older
+  agents refuse direct plans with `bad_plan`.
+- Migration 0065 (`selfReviewed`, with its CHECK and trigger). Deploy the signer's `dist` as well as the portal.
+- To turn it on for every business without its own entry:
+  `sudo -u rem0te-approver env APPROVAL_SIGNER_DIR=/var/lib/rem0te-approver node /opt/rem0te-approver/dist/approval-signer/main.js policy set --business default --approval direct`
+- CLAUDE.md needs a §58 paragraph.
+
+### Security invariants
+§58 has 8 checks:
+- the policy is written only by the CLI, and every change is logged;
+- no HTTP route writes it;
+- policyFor, the CLI, validatePlanAction and the store agree on the exact value and the sign-off exclusion;
+- signing at admission comes only after admission and the pause;
+- patch-policy activation and quorum;
+- allowlist activation under `default`, and the library's one-question probe;
+- the agent relaxes only on the signed field;
+- every portal request path passes a fresh sign-in, and ClientSt0r is refused.
+
+27 mutations, each removing or weakening one of those, were each caught, and the file was restored. §14, §15, §23,
+§38, §39 and §40 were adjusted to the new call shapes.
+
+### Verification
+- `unit-approval-signer.mjs`: 252 checks (45 new). Covered: direct signs at admission with no approvers; signed
+  mode is unchanged; a plan's flag that disagrees with the policy is refused; the CLI refuses direct with customer
+  sign-off, both ways; direct patch policies and allowlist entries go ACTIVE; a direct policy stops counting once the
+  business is signed; businesses A and B are isolated; and the signed pause still refuses.
+- `e2e-approved-action.mjs`: 92 checks. The direct section covers:
+  - no fresh sign-in → `STEP_UP_REQUIRED`, and nothing is written;
+  - after a step-up → APPROVED with 0 approvals, and the signed plan names direct and the requester;
+  - the 0.38 sim refuses it with `bad_plan`, and the new sim runs it → SUCCEEDED;
+  - a forged direct plan → `bad_signature`;
+  - ClientSt0r → `DIRECT_MODE_PORTAL_ONLY`;
+  - the customer sign-off business is still AWAITING_APPROVAL;
+  - the signer pause → `409`;
+  - back to signed → two approvals.
+- Go `internal/action`: 97 tests pass, 12 new. Covered: direct with no approvals; refused under a signed pause;
+  refused when revoked; a non-direct plan with zero approvals is still `too_few_approvals`; an unknown mode and
+  direct with sign-off are `bad_plan`; and the field cannot be added after signing.
+- Unchanged, re-run: unit-patch-policy 163, unit-script-run 136, unit-software 146; e2e-patch-policies 98,
+  e2e-script-run 81, e2e-software-deploy 156, e2e-staged-patching 94, e2e-containment 70 (the AUDIT_CHAIN_ALERT
+  check runs only on an intact chain, and the shared scratch database's chain was already broken by earlier suites),
+  e2e-maintenance-actions 64, e2e-revocation 44. All passed, 0 failed.
+- Checks: security invariants, check-versions, `pnpm -r lint`, tsc in both apps, `nest build` and `next build` all
+  pass. The docs bundle has 40 pages. No routes were added; GET `/actions/catalog` gained an `endpointId` query.
+
+### Fixed
+
+- **`rem0te-signed-status` printed the approval key digest twice.** In 0.39.0
+  the line read `approval/keys.json c857758077bec857758077be61af…`: the
+  short form followed by the full digest, because the `:-none` fallback
+  expansion prints the value when it is set. It is now an `if`.
+
 ## [0.39.0] — 2026-11-13 · *Threshold*
 
 ### Added

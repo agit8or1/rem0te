@@ -8,7 +8,8 @@
  *   node dist/approval-signer/main.js roster add --export '<json from the approver's Passkeys page>' \
  *        --approve '*'|<businessId,...> [--customer <businessId,...>] --confirm-fingerprint XXXX-XXXX-XXXX-XXXX
  *   node dist/approval-signer/main.js roster disable --user <id>
- *   node dist/approval-signer/main.js policy set --business <id> --customer-signoff required|not_required
+ *   node dist/approval-signer/main.js policy show
+ *   node dist/approval-signer/main.js policy set --business <id>|default [--customer-signoff required|not_required] [--approval direct|signed]
  *   node dist/approval-signer/main.js pause list
  *   node dist/approval-signer/main.js pause set --global|--business <id> --reason '<why>'
  *   node dist/approval-signer/main.js pause clear --id <id> --reason '<why>'
@@ -109,13 +110,39 @@ switch (cmd) {
     break;
   }
   case 'policy': {
-    if (sub !== 'set') die('policy set --business <id> --customer-signoff required|not_required');
-    const b = arg('business') || die('--business is required');
-    const v = arg('customer-signoff');
-    if (v !== 'required' && v !== 'not_required') die('--customer-signoff required|not_required');
+    // The only writer of policy.json: no HTTP route on this process or the
+    // portal changes it (§ 58). 0.40 adds the approval mode; every change is
+    // appended to policy-changes.log, which nothing rewrites.
+    const usage = 'policy show | policy set --business <id>|default [--customer-signoff required|not_required] [--approval direct|signed]';
+    if (sub === 'show') { console.log(JSON.stringify(store.policy(), null, 2)); break; }
+    if (sub !== 'set') die(usage);
+    const b = arg('business') || die('--business is required (a business id, or default)');
+    if (b !== 'default' && !/^[A-Za-z0-9_-]{8,64}$/.test(b)) die('--business must be a business id or default');
+    const cs = arg('customer-signoff');
+    const ap = arg('approval');
+    if (cs === undefined && ap === undefined) die(usage);
+    if (cs !== undefined && cs !== 'required' && cs !== 'not_required') die('--customer-signoff required|not_required');
+    if (ap !== undefined && ap !== 'direct' && ap !== 'signed') die('--approval direct|signed');
     const p = store.policy();
-    if (b === 'default') p.default = { customerSignoff: v === 'required' }; else p.businesses[b] = { customerSignoff: v === 'required' };
+    // A business with no entry of its own starts from the default's rules,
+    // then takes what changed; the other setting is kept, not reset.
+    const before = b === 'default' ? { ...p.default } : p.businesses[b] ? { ...p.businesses[b] } : null;
+    const next = { ...(before ?? p.default) };
+    if (cs !== undefined) next.customerSignoff = cs === 'required';
+    if (ap !== undefined) next.approval = ap as 'direct' | 'signed';
+    // Direct mode signs at admission; customer sign-off needs a customer to
+    // approve before signing. They cannot both hold.
+    if (next.customerSignoff && next.approval === 'direct') {
+      die(ap === 'direct'
+        ? `Refused: ${b === 'default' ? 'the default policy' : `business ${b}`} requires customer sign-off. Direct mode signs a plan as soon as it is requested, so nobody could sign off first. Set --customer-signoff not_required first, if that is what you mean.`
+        : `Refused: ${b === 'default' ? 'the default policy' : `business ${b}`} is in direct mode, which signs a plan as soon as it is requested, so a customer could never sign off first. Set --approval signed first.`);
+    }
+    if (b === 'default') p.default = next; else p.businesses[b] = next;
     store.savePolicy(p);
+    store.appendPolicyChange({ at: new Date().toISOString(), business: b, before, after: next, by: process.env.SUDO_USER || process.env.USER || 'unknown' });
+    if (ap === 'direct') {
+      console.error(`Direct mode is now ON for ${b === 'default' ? 'the default policy (every business without its own entry, and the script allowlist)' : `business ${b}`}: plans the portal requests are signed at once, with no approval. Anyone who fully controls the portal can then run catalog actions on these computers. Agents older than 0.40 refuse direct plans (bad_plan).`);
+    }
     console.log(JSON.stringify(p, null, 2));
     break;
   }

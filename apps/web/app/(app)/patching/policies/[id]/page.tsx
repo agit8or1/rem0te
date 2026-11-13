@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
+import { directApproved } from '@/lib/direct-mode';
 import { CLASS_NAMES, DEPLOYMENT_STATUS, POLICY_STATUS, describeWindow } from '@/lib/patching';
 import { AlertTriangle, ArrowLeft, ExternalLink } from 'lucide-react';
 import { rebootSummary } from '@/components/patching/patch-reboot-choice';
@@ -37,6 +38,9 @@ interface Policy {
   signer: { reachable: boolean; status: string | null; signedPlans: number | null; refusals: { at: string; jobId: string; code: string; message: string }[] };
   deployments: { id: string; name: string; status: string; windowKey: string | null; pausedReason: string | null; createdAt: string }[];
   sweep: { enabled: boolean; everySeconds: number };
+  /** 0.40: activated at admission in direct mode, with no approvals (the signer's word). */
+  direct?: boolean;
+  createdById?: string;
   /** 0.34: each computer's result-key fingerprint as this portal holds it (null: none, a pre-0.34 agent). */
   resultKeys?: Record<string, string | null>;
   mayRevoke: boolean;
@@ -79,7 +83,7 @@ export default function PolicyPage() {
       <PageHeader title={p.name} description={`Patch policy for ${d.businessName} · proposed by ${d.createdBy.name} ${formatDate(p.createdAt)} · expires ${formatDate(p.expiresAt)}`}>
         <div className="flex gap-2 items-center">
           <Badge variant={POLICY_STATUS[p.status] ?? 'outline'}>{p.status.toLowerCase().replace(/_/g, ' ')}</Badge>
-          {p.status === 'AWAITING_APPROVAL' && <a href={p.approvalUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="outline"><ExternalLink className="h-3.5 w-3.5 mr-1" />Approval page</Button></a>}
+          {p.status === 'AWAITING_APPROVAL' && !p.direct && <a href={p.approvalUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="outline"><ExternalLink className="h-3.5 w-3.5 mr-1" />Approval page</Button></a>}
           {p.mayRevoke && <Button size="sm" variant="ghost" disabled={revoke.isPending} onClick={ask}>Revoke</Button>}
         </div>
       </PageHeader>
@@ -106,7 +110,7 @@ export default function PolicyPage() {
             {row('Failures allowed per ring', String(d.failureThreshold))}
             {row('Restart', rebootSummary(d.reboot))}
             {row('Reason', d.reason)}
-            {row('Approved by', p.approvals.length ? p.approvals.map((a) => `${a.name} (${a.role}, ${formatDate(a.at)})`).join('; ') : 'nobody yet — two approvers other than its author approve it on the approval signer')}
+            {row('Approved by', p.direct ? `${directApproved(d.createdBy.name, p.createdAt)} — it stops counting if the business leaves direct mode on the approval signer` : p.approvals.length ? p.approvals.map((a) => `${a.name} (${a.role}, ${formatDate(a.at)})`).join('; ') : 'nobody yet — two approvers other than its author approve it on the approval signer')}
             {row('Document digest', <code className="break-all">{p.digest}</code>)}
           </dl>
           <div className="space-y-1">

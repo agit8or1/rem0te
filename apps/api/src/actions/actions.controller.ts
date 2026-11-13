@@ -1,8 +1,10 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import type { Request } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { Actor } from '../common/decorators/actor.decorator';
 import { RateLimit } from '../common/throttling';
 import type { ActorContext } from '../rbac/access-control.service';
+import { StepUpService } from '../auth/step-up.service';
 import { ActionsService } from './actions.service';
 
 /**
@@ -14,10 +16,19 @@ import { ActionsService } from './actions.service';
 @Controller()
 @UseGuards(JwtAuthGuard)
 export class ActionsController {
-  constructor(private readonly actions: ActionsService) {}
+  constructor(private readonly actions: ActionsService, private readonly stepUp: StepUpService) {}
+
+  /** 0.40: direct mode needs a fresh sign-in for a request (ActionsService.createPlan). */
+  private freshMethod(req: Request): string | null {
+    const u = req.user as { sub?: string; iat?: number } | undefined;
+    return u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null;
+  }
 
   @Get('actions/catalog')
-  catalog() { return { success: true, data: this.actions.catalog() }; }
+  async catalog(@Actor() actor: ActorContext, @Query('endpointId') endpointId?: string) {
+    // 0.40: with endpointId, also the approval mode its business is in on the signer (read only).
+    return { success: true, data: { ...this.actions.catalog(), approval: endpointId ? await this.actions.approvalModeFor(actor, endpointId) : null } };
+  }
 
   @Get('endpoints/:id/actions')
   async list(@Actor() actor: ActorContext, @Param('id') id: string) {
@@ -26,8 +37,8 @@ export class ActionsController {
 
   @Post('endpoints/:id/actions')
   @RateLimit(10)
-  async request(@Actor() actor: ActorContext, @Param('id') id: string, @Body() body: unknown) {
-    return { success: true, data: await this.actions.request(actor, id, body) };
+  async request(@Actor() actor: ActorContext, @Param('id') id: string, @Body() body: unknown, @Req() req: Request) {
+    return { success: true, data: await this.actions.request(actor, id, body, undefined, undefined, this.freshMethod(req)) };
   }
 
   @Get('actions/:id')

@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
+import { DIRECT_REQUEST_NOTE, DIRECT_TOAST, directApproved, oldAgentRefusal } from '@/lib/direct-mode';
 import { AlertTriangle, ExternalLink, Loader2, ShieldCheck, Wrench } from 'lucide-react';
 
 /**
@@ -48,6 +49,8 @@ interface Job {
   params?: { service?: unknown; delayMinutes?: unknown } | null;
   reason: string; origin: string; via: string; ticketRef: string | null; requestedById: string;
   risk: 'low' | 'high'; approvalsRequired: number; customerSignoff: boolean;
+  /** 0.40: signed at the request, in direct mode. */
+  direct?: boolean; requestedByName?: string | null;
   window: { notBefore: string; notAfter: string }; digest: string; approvalUrl: string;
   approvers: { name: string; role: string; at: string }[] | null;
   dispatchedAt: string | null; deliveries: number; outcome: string | null;
@@ -159,9 +162,11 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
   const [choice, setChoice] = useState<string>('');
 
   const { data: catalog } = useQuery({
-    queryKey: ['actions-catalog'],
-    queryFn: () => actionsApi.catalog().then((r) => r.data.data as { configured: boolean; actions: CatalogAction[] }),
+    queryKey: ['actions-catalog', endpointId],
+    queryFn: () => actionsApi.catalog(endpointId).then((r) => r.data.data as { configured: boolean; actions: CatalogAction[]; approval: 'direct' | 'signed' | null }),
   });
+  // 0.40: the business's approval mode on the signer, read only.
+  const directMode = catalog?.approval === 'direct';
   const { data: jobs = [], isLoading } = useQuery({
     queryKey: ['endpoint-actions', endpointId],
     queryFn: () => actionsApi.list(endpointId).then((r) => r.data.data as Job[]),
@@ -182,7 +187,11 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
       actionId: action!.id, version: action!.version, params: params(action!), reason: reason.trim(),
       windowHours: Math.min(4, action!.maxWindowHours ?? 4),
     }),
-    onSuccess: () => { setReason(''); setConfirmed(false); refresh(); toast({ title: 'Requested', description: 'Nothing runs until the approvers authorize it on the approval page.' }); },
+    onSuccess: (r) => {
+      setReason(''); setConfirmed(false); refresh();
+      const j = r.data?.data as Job | undefined;
+      toast(j?.direct ? { title: 'Approved automatically', description: DIRECT_TOAST } : { title: 'Requested', description: 'Nothing runs until the approvers authorize it on the approval page.' });
+    },
     onError: (e) => toast({ title: 'Not requested', description: apiMessage(e, 'The request was refused.'), variant: 'destructive' }),
   });
   const cancel = useMutation({
@@ -235,12 +244,19 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
             <p className="text-xs text-muted-foreground">
               {action.verification} It does not show {action.doesNotProve.join(', ')}.
             </p>
+            {directMode ? (
+              <p className="text-xs text-muted-foreground flex gap-2" data-testid="direct-mode-note">
+                <ShieldCheck className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                {DIRECT_REQUEST_NOTE}
+              </p>
+            ) : (
             <p className="text-xs text-muted-foreground flex gap-2">
               <ShieldCheck className="h-3.5 w-3.5 shrink-0 mt-0.5" />
               Requesting runs nothing. People on the approval roster authorize the exact plan with a passkey on the approval page — {action.workstationRisk === 'high'
                 ? 'this action always needs two different approvers, whatever the computer'
                 : 'one for a standard workstation, two for anything else'}, plus the customer where their policy requires it. You cannot approve your own request.
             </p>
+            )}
             {action.requiresCapability && (
               <p className="text-xs text-muted-foreground">Requesting this, and reading what it collects, also needs permission to read this computer’s event logs ({action.requiresCapability}).</p>
             )}
@@ -262,7 +278,7 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
                   </div>
                 )}
                 <div className="space-y-1">
-                  <Label htmlFor="action-reason" className="text-xs">Why (shown to the approvers)</Label>
+                  <Label htmlFor="action-reason" className="text-xs">{directMode ? 'Why (recorded in the audit log)' : 'Why (shown to the approvers)'}</Label>
                   <Textarea id="action-reason" rows={2} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={PLACEHOLDER[action.id] ?? 'e.g. Ticket 42: what is wrong'} />
                 </div>
                 <label className="flex items-start gap-2 text-xs">
@@ -270,9 +286,9 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
                   {action.acknowledge}
                 </label>
                 <Button size="sm" disabled={!confirmed || reason.trim().length < 3 || request.isPending} onClick={() => request.mutate()}>
-                  {request.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Request approval
+                  {request.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}{directMode ? 'Run it' : 'Request approval'}
                 </Button>
-                {action.maxWindowHours < 4 && <p className="text-xs text-muted-foreground">An approved plan for this action is valid for {action.maxWindowHours} hour{action.maxWindowHours === 1 ? '' : 's'} only: approve it promptly, or it expires unrun.</p>}
+                {action.maxWindowHours < 4 && !directMode && <p className="text-xs text-muted-foreground">An approved plan for this action is valid for {action.maxWindowHours} hour{action.maxWindowHours === 1 ? '' : 's'} only: approve it promptly, or it expires unrun.</p>}
                 {!isOnline && <p className="text-xs text-muted-foreground">This computer is offline. An approved plan waits for it until its window closes, then expires unrun.</p>}
               </>
             )}
@@ -327,7 +343,7 @@ function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => voi
           )}
         </div>
         <div className="flex gap-2">
-          {j.status === 'AWAITING_APPROVAL' && (
+          {j.status === 'AWAITING_APPROVAL' && !j.direct && (
             <Button size="sm" variant="outline" asChild>
               <a href={j.approvalUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5 mr-1" />Open approval page</a>
             </Button>
@@ -337,8 +353,10 @@ function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => voi
       </div>
       <p className="text-xs">{j.reason}</p>
       <p className="text-xs text-muted-foreground">
-        {j.risk === 'high' ? 'Higher impact' : 'Standard workstation'} · needs {j.approvalsRequired} approver{j.approvalsRequired > 1 ? 's' : ''}{j.customerSignoff ? ' and customer sign-off' : ''} · may run {formatDate(j.window.notBefore)} – {formatDate(j.window.notAfter)}
+        {j.risk === 'high' ? 'Higher impact' : 'Standard workstation'} · {j.direct ? 'direct mode' : <>needs {j.approvalsRequired} approver{j.approvalsRequired > 1 ? 's' : ''}{j.customerSignoff ? ' and customer sign-off' : ''}</>} · may run {formatDate(j.window.notBefore)} – {formatDate(j.window.notAfter)}
       </p>
+      {j.direct && <p className="text-xs text-muted-foreground" data-testid="direct-approved">{directApproved(j.requestedByName, j.createdAt)}</p>}
+      {oldAgentRefusal(j.direct, mine?.statusReason ?? j.statusReason) && <p className="text-xs" data-testid="old-agent-refusal">{oldAgentRefusal(j.direct, mine?.statusReason ?? j.statusReason)}</p>}
       {j.approvers?.length ? <p className="text-xs text-muted-foreground">Approved by {j.approvers.map((a) => `${a.name}${a.role === 'customer' ? ' (customer)' : ''}`).join(', ')}</p> : null}
       {j.statusReason && <p className="text-xs text-muted-foreground">Reason: {j.statusReason.replace(/_/g, ' ')}</p>}
       {(j.statusReason === 'revoked' || mine?.statusReason === 'revoked') && <p className="text-xs text-muted-foreground">The script or software entry this runs was revoked after the plan was signed, so it will never run here.</p>}

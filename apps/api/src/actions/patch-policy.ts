@@ -426,8 +426,16 @@ export type PolicyDecision = { ok: true } | { ok: false; code: string; message: 
 
 const no = (code: string, message: string): PolicyDecision => ({ ok: false, code, message });
 
-/** The quorum a policy needs: two distinct approvers who are not its author, and a customer sign-off when the business requires one. */
-export function policyQuorum(doc: PolicyDoc, approvals: PolicyApproval[], customerSignoff: boolean): boolean {
+/**
+ * The quorum a policy needs: two distinct approvers who are not its author,
+ * and a customer sign-off when the business requires one. In direct mode
+ * (0.40, the signer's operator's setting for the business, which never
+ * coexists with customer sign-off) it needs none: the signer activates it at
+ * admission. A policy activated that way carries no approvals, so it stops
+ * meeting the quorum the moment the business leaves direct mode.
+ */
+export function policyQuorum(doc: PolicyDoc, approvals: PolicyApproval[], customerSignoff: boolean, direct = false): boolean {
+  if (direct) return !customerSignoff;
   const approvers = new Set(approvals.filter((a) => a.role === 'approver' && a.userId !== doc.createdBy.userId).map((a) => a.userId));
   if (approvers.size < APPROVALS_REQUIRED.high) return false;
   if (customerSignoff && !approvals.some((a) => a.role === 'customer' && a.userId !== doc.createdBy.userId && !approvers.has(a.userId))) return false;
@@ -438,7 +446,7 @@ export function policyQuorum(doc: PolicyDoc, approvals: PolicyApproval[], custom
  * Is this plan inside the policy? Every refusal is a distinct code, because
  * each is a different thing a compromised portal might try.
  */
-export function evaluatePolicyPlan(s: PolicyState, r: PolicyPlanRequest, opts: { now: Date; customerSignoff: boolean }): PolicyDecision {
+export function evaluatePolicyPlan(s: PolicyState, r: PolicyPlanRequest, opts: { now: Date; customerSignoff: boolean; direct?: boolean }): PolicyDecision {
   const { doc } = s, p = r.plan, now = opts.now;
   // The policy itself.
   if (s.revokedAt || s.status === 'REVOKED') return no('policy_revoked', 'This policy was revoked; nothing more is signed under it.');
@@ -447,8 +455,8 @@ export function evaluatePolicyPlan(s: PolicyState, r: PolicyPlanRequest, opts: {
   // Expiry is checked before status: an expired policy's status is EXPIRED, and the code should say why.
   if (now.getTime() >= Date.parse(doc.expiresAt)) return no('policy_expired', 'This policy has expired. Approve a new one.');
   if (s.status !== 'ACTIVE') return no('policy_not_active', `This policy is ${s.status.toLowerCase().replace(/_/g, ' ')}.`);
-  if (!policyQuorum(doc, s.approvals, false)) return no('policy_not_approved', 'This policy does not carry two approvals from people other than its author.');
-  if (!policyQuorum(doc, s.approvals, opts.customerSignoff)) return no('policy_mismatch', 'This business now requires customer sign-off, which this policy was not approved with. Approve a new policy.');
+  if (!policyQuorum(doc, s.approvals, false, opts.direct === true)) return no('policy_not_approved', 'This policy does not carry two approvals from people other than its author (a policy activated in direct mode stops counting when the business leaves direct mode).');
+  if (!policyQuorum(doc, s.approvals, opts.customerSignoff, opts.direct === true)) return no('policy_mismatch', 'This business now requires customer sign-off, which this policy was not approved with. Approve a new policy.');
   if (Date.parse(p.window.notAfter) > Date.parse(doc.expiresAt)) return no('policy_expired', 'The plan would run past the policy\'s expiry.');
 
   // The action and what it installs.
