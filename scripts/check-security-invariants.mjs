@@ -2298,6 +2298,16 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && local.indexOf('Get-FileHash') < local.indexOf('& $e migrate')
       && /migration\.local = \{ command: buildLocalMigrationCommand\(host, served\.sha256\), stuck \}/.test(usvc),
     'buildLocalMigrationCommand validates host and digest, downloads by it and refuses a mismatch before migrate; the card builds it from the served target');
+  // 0.39: Add device's one-liner installs the full agent for a new computer.
+  const sis = mig.slice(mig.indexOf('export function buildSignedInstallScript('));
+  const pubc = read('apps/api/src/public/public.controller.ts');
+  check('the new-computer install script pins the published digest, checks it first, and is served only for a valid unclaimed token',
+    /!\/\^\[0-9a-f\]\{64\}\$\/\.test\(agentSha256\)/.test(sis) && /!\/\^\[A-Fa-f0-9\]\{16,128\}\$\/\.test\(claimToken\)/.test(sis) && /!validPortalHost\(portalHost\)/.test(sis)
+      && sis.indexOf('Get-FileHash') < sis.indexOf('& $e install') && /Remove-Item -LiteralPath \$e -Force/.test(sis) && !/^\s*exit\b/m.test(sis.slice(sis.indexOf('return `')))
+      && /if \(validatedToken && !jobNonce\) \{\s*const agentT = this\.updateTrust\.agentTarget\(\);/.test(pubc)
+      && /if \(tokenRecord && !tokenRecord\.claimedAt && tokenRecord\.expiresAt >= new Date\(\)\) \{\s*validatedToken = enrollToken;/.test(pubc)
+      && /res\.send\(buildSignedInstallScript\(portalHost, agentT\.sha256, validatedToken\)\)/.test(pubc),
+    'buildSignedInstallScript validates host, digest and token, hashes before install, never exits; served only when the token is validated (unclaimed, unexpired) and not for a rollout nonce');
   const sfn = msvc.slice(msvc.indexOf('async scriptForNonce('));
   check('the served script takes its digest from the signed repository, at the moment it is fetched',
     /const agent = this\.updateTrust\.agentTarget\(\);/.test(sfn) && /return buildMigrationScript\(host, agent\.sha256\);/.test(sfn) && !/sha256\s*:/.test(read('apps/api/prisma/migrations/0055_agent_migration/migration.sql')),
@@ -3341,6 +3351,15 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /if \[\[ \$VERSION == "\$pv" && \$COMMIT != "\$\{PUBL\[AGENT_COMMIT\]:-\}" \]\]; then\n\s+die /.test(pub)
       && pub.indexOf('ver_lt "$VERSION" "$pv"') < pub.indexOf('gobuild '),
     'rem0te-signed-publish: ver_lt → die before any build; same version + other commit → die');
+  // 0.38: --approval-keys. Only a public key list goes in, never key material,
+  // and the kept copy changes only after the release carrying it is published.
+  check('publish --approval-keys refuses key material and keeps the list only after it is published',
+    /if grep -qiE 'PRIVATE\|-----BEGIN' "\$approval_src"; then die /.test(pub)
+      && pub.indexOf("grep -qiE 'PRIVATE|-----BEGIN'") < pub.indexOf('new_build_dir')
+      && /\[\[ -n \$approval_build \]\] && args\+=\(-add "approval\/keys\.json=\$approval_build"\)/.test(pub)
+      && pub.indexOf('as_release 027 mv -f "$APPROVAL_KEYS.new" "$APPROVAL_KEYS"') > pub.indexOf('publish_repo "$WORK_REPO"')
+      && /APPROVAL_KEYS=\$STATE_DIR\/approval-keys\.json/.test(pub),
+    'rem0te-signed-publish: key-material refusal before any build; -add approval/keys.json; the kept copy (under STATE_DIR) replaced only after publish_repo');
   check('the RustDesk build needs GitHub\'s published SHA-256 and comes only from RustDesk\'s GitHub release (or the loopback test server)',
     /if \(!sha\) fail\(`GitHub publishes no SHA-256 digest/.test(asset)
       && /: url === `https:\/\/github\.com\/rustdesk\/rustdesk\/releases\/download\/\$\{version\}\/\$\{name\}`;/.test(asset)

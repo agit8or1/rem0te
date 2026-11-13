@@ -48,6 +48,10 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
+# Node 22's V8 allocates memory-protection keys for its JIT (0.39). They are
+# not in @system-service, and without them node dies with SIGSYS at start-up
+# (status=31/SYS, audit "syscall=330", pkey_alloc on x86_64).
+SystemCallFilter=pkey_alloc pkey_free pkey_mprotect
 SystemCallFilter=~@privileged @resources @mount
 ReadOnlyPaths=/etc/rem0te-approver
 InaccessiblePaths=/etc/reboot-remote /opt/reboot-remote

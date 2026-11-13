@@ -41,7 +41,7 @@
 import { PrismaClient } from '@prisma/client';
 import argon2 from 'argon2';
 import { execFileSync, spawn } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -366,6 +366,29 @@ async function main() {
     check(pubDoc('timestamp.json').signed.version > tsBefore && Object.keys(t).filter((n) => n.startsWith('windows/rustdesk/')).length === 1, 'a newer timestamp; the RustDesk build stays listed', JSON.stringify(Object.keys(t)));
     const v = verifyMirror();
     check(/verified: root v1/.test(v), 'verify -mirror accepts it through the API', v);
+  }
+
+  section('0.38: --approval-keys signs the approval signer\'s public key list in, and later publishes keep it');
+  {
+    // What `approval-signer keygen` prints: keysDocument() — public halves only.
+    const pub = generateKeyPairSync('ed25519').publicKey.export({ format: 'der', type: 'spki' }).subarray(-32);
+    const doc = { schema: 'rem0te-approval-keys/1', keys: [{ kid: sha(pub).slice(0, 16), ed25519: pub.toString('base64') }] };
+    const good = path.join(work, 'approval-keys.json');
+    writeFileSync(good, JSON.stringify(doc));
+    const bad = path.join(work, 'approval-private.json');
+    writeFileSync(bad, '-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEI\n-----END PRIVATE KEY-----\n');
+    const before = tree(PUB);
+    const rb = note(await publish(['--approval-keys', bad]));
+    check(rb.code !== 0 && /looks like it holds key material/.test(rb.out) && sameTree(before, tree(PUB)), 'a file holding a private key is refused, and nothing is published', rb.out.slice(-600));
+    const r = note(await publish(['--approval-keys', good]));
+    const t = servedTargets();
+    check(r.code === 0 && t['approval/keys.json']?.hashes?.sha256 === sha(readFileSync(good)), 'approval/keys.json is a signed target with the file\'s digest', JSON.stringify(t['approval/keys.json'] ?? null) + r.out.slice(-800));
+    check(existsSync(path.join(STATE, 'approval-keys.json')), 'the list is kept in the release user\'s state directory');
+    check(/verified: root v1/.test(verifyMirror()), 'verify -mirror accepts the release that carries it');
+    const st = note(await run(path.join(BIN, 'rem0te-signed-status')));
+    check(st.out.includes(`approval/keys.json ${sha(readFileSync(good)).slice(0, 12)}`), 'rem0te-signed-status shows the published approval keys', st.out.slice(-1200));
+    const r2 = note(await publish(['--republish']));
+    check(r2.code === 0 && servedTargets()['approval/keys.json']?.hashes?.sha256 === sha(readFileSync(good)), 'a later publish signs it again from the kept copy', r2.out.slice(-600));
   }
 
   section('The daily refresh: a new timestamp, and nothing else');

@@ -80,6 +80,8 @@ if (cmd === 'summary') {
   const tv = String(tray?.custom?.version ?? '');
   lines.TRAY_VERSION = VERSION_RE.test(tv) ? tv : (tray ? 'unversioned' : '');
   lines.INSTALLER_SHA256 = SHA_RE.test(inst?.hashes?.sha256 ?? '') ? inst.hashes.sha256 : '';
+  const ak = entry('approval/keys.json');
+  lines.APPROVAL_KEYS_SHA256 = SHA_RE.test(ak?.hashes?.sha256 ?? '') ? ak.hashes.sha256 : '';
   lines.RUSTDESK_VERSIONS = Object.keys(c.targets?.signed?.targets ?? {})
     .map((n) => /^windows\/rustdesk\/rustdesk-(\d+\.\d+\.\d+)-x86_64\.exe$/.exec(n)?.[1]).filter(Boolean).join(',');
   for (const [k, val] of Object.entries(lines)) console.log(`${k}=${val}`);

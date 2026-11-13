@@ -53,6 +53,7 @@ if [[ ${P[CONFIGURED]} == 1 ]]; then
   line "  tray" "${P[TRAY_VERSION]:-none}"
   line "  installer" "${P[INSTALLER_SHA256]:+install.ps1 ${P[INSTALLER_SHA256]:0:12}}"
   line "  RustDesk" "${P[RUSTDESK_VERSIONS]:-none}"
+  line "  approval keys" "${P[APPROVAL_KEYS_SHA256]:+approval/keys.json ${P[APPROVAL_KEYS_SHA256]:0:12}}${P[APPROVAL_KEYS_SHA256]:-none (approved actions are off: rem0te-signed-publish --approval-keys FILE)}"
   for r in TIMESTAMP SNAPSHOT TARGETS ROOT; do
     h=${P[${r}_LEFT_H]}
     line "  ${r,,}" "v${P[${r}_VERSION]} expires ${P[${r}_EXPIRES]} ($(human "$h"))"

@@ -2,6 +2,7 @@
 # rem0te-signed-publish — build, sign, verify and publish one signed release (0.37).
 #
 #   sudo rem0te-signed-publish [--source DIR] [--rustdesk-version X.Y.Z] [--republish] [--conf FILE]
+#                              [--approval-keys FILE]
 #
 # From the source checkout recorded at setup (or --source):
 #   1. `git archive HEAD` into a fresh build directory owned by the release
@@ -18,6 +19,12 @@
 #   6. publish it: a staging directory beside the published repository,
 #      verified again, moved in by renames with timestamp.json last.
 #
+# --approval-keys FILE (0.38) signs the approval signer's public key list
+# (what `approval-signer keygen` prints) in as approval/keys.json, which is how
+# agents learn to trust approved actions. It is kept in the release user's state
+# directory once the publish succeeds, and every later publish signs it again.
+# A file holding anything that looks like a private key is refused.
+#
 # Refuses a version older than the one published. The same version and commit
 # again is a no-op unless --republish (e.g. to add a newly pinned RustDesk).
 # Everything is logged to LOG_FILE (under the release user's state directory).
@@ -29,13 +36,14 @@ CONF=@CONF@
 # shellcheck source=lib.sh
 source "$LIB/lib.sh"
 
-src_override='' rd_override='' republish=0
+src_override='' rd_override='' republish=0 approval_src=''
 while [[ $# -gt 0 ]]; do
   case $1 in
     --conf) CONF=$2; shift 2 ;;
     --source) src_override=$2; shift 2 ;;
     --rustdesk-version) rd_override=$2; shift 2 ;;
     --republish) republish=1; shift ;;
+    --approval-keys) approval_src=$2; republish=1; shift 2 ;;
     -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) die "unknown argument $1" ;;
   esac
@@ -57,12 +65,28 @@ as_owner git -C "$SOURCE_DIR" rev-parse --git-dir > /dev/null 2>&1 || die "$SOUR
 check_trustroot_clean
 COMMIT=$(head_commit)
 [[ $COMMIT =~ ^[0-9a-f]{40}$ ]] || die "could not read HEAD's commit"
+APPROVAL_KEYS=$STATE_DIR/approval-keys.json
+if [[ -n $approval_src ]]; then
+  [[ -f $approval_src && ! -L $approval_src ]] || die "--approval-keys: $approval_src is not a regular file"
+  (( $(stat -c %s "$approval_src") <= 65536 )) || die "--approval-keys: $approval_src is larger than 64 KiB; a key list is a few hundred bytes"
+  if grep -qiE 'PRIVATE|-----BEGIN' "$approval_src"; then die "--approval-keys: $approval_src looks like it holds key material, not the public key list. Never move the signer's private key."; fi
+  "$NODE" -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$approval_src" 2>/dev/null || die "--approval-keys: $approval_src is not JSON"
+fi
 
 declare -A PUBL=()
 while IFS='=' read -r k v; do PUBL[$k]=$v; done < <(repo_info "$PUB_DIR" summary)
 
 new_build_dir
 extract_head "$BUILD/src"
+# The approval key list goes into the build directory first; it replaces the
+# kept copy only after the release that carries it is published.
+approval_build=''
+if [[ -n $approval_src ]]; then
+  approval_build=$BUILD/approval-keys.json
+  as_release 027 /bin/sh -c 'cat > "$0"' "$approval_build" < "$approval_src"
+elif as_release 077 test -f "$APPROVAL_KEYS"; then
+  approval_build=$APPROVAL_KEYS
+fi
 VERSION=$(json_version "$BUILD/src/version.json") || die "HEAD's version.json has no x.y.z version"
 say "building $VERSION from commit $COMMIT"
 pv=${PUBL[AGENT_VERSION]:-}
@@ -146,6 +170,7 @@ args=(release -repo "$BUILD/repo"
   -add "windows/rem0te-agent.exe=$BUILD/out/rem0te-agent.exe" -custom "windows/rem0te-agent.exe=$custom"
   -add "windows/rem0te-tray.exe=$BUILD/out/rem0te-tray.exe" -custom "windows/rem0te-tray.exe=$custom"
   -add "windows/install.ps1=$BUILD/out/install.ps1")
+[[ -n $approval_build ]] && args+=(-add "approval/keys.json=$approval_build")
 if [[ $(repo_info "$WORK_REPO" target "windows/rustdesk/$rd_name") != "${A[SHA256]}" ]]; then
   args+=(-add "windows/rustdesk/$rd_name=$cache/$rd_name" -custom "windows/rustdesk/$rd_name={\"version\":\"$RD\"}")
 fi
@@ -159,6 +184,10 @@ promote_work "$BUILD/repo"
 publish_repo "$WORK_REPO"
 if [[ -w $LIB_DIR ]]; then install -m 0755 "$TOOL" "$LIB_DIR/rem0te-release"; fi
 as_release 027 /bin/sh -c 'printf "%s %s %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" > "$0"' "$STATE_DIR/last-publish" "$VERSION" "$COMMIT"
+if [[ -n $approval_src ]]; then
+  as_release 027 cp "$approval_build" "$APPROVAL_KEYS.new" && as_release 027 mv -f "$APPROVAL_KEYS.new" "$APPROVAL_KEYS"
+  say "approval/keys.json published; later publishes keep signing it"
+fi
 log "published $VERSION $COMMIT"
 say ""
 say "Published $VERSION ($COMMIT) to $PUB_DIR."

@@ -63,7 +63,7 @@ const OS: Record<Os, { label: string; shell: string; path: (t: string) => string
   windows: {
     label: 'Windows', shell: 'PowerShell, as Administrator',
     path: (t) => `/api/v1/public/install/win/${t}`, cmd: (u) => `irm ${u} | iex`,
-    agent: 'Installs RustDesk and the Rem0te agent: heartbeat, inventory, monitoring and update scans.',
+    agent: 'Installs RustDesk and the full Rem0te agent: heartbeat, inventory, monitoring, update scans, and installs, restarts and scripts from the dashboard. (Before this server publishes a signed agent, the standard agent, which can be upgraded later.)',
   },
   linux: {
     label: 'Linux', shell: 'a root shell',

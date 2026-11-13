@@ -79,11 +79,20 @@ It refuses to publish:
 - the same version and commit again, which is a no-op unless you pass `--republish`. Use that, for example, to add a
   newly pinned RustDesk build without a new release.
 
+**`--approval-keys FILE`** (0.38) signs the approval signer's public key list, the output of
+`approval-signer keygen`, into the release as `approval/keys.json`. That is how agents learn to trust approved
+actions ([approved-actions.md](approved-actions.md)). The list is kept in `/var/lib/rem0te-release/approval-keys.json`
+once the release carrying it is published, and every later publish signs it again, so you pass it once. A file over
+64 KiB, one that isn't JSON, or one with anything that looks like key material (`PRIVATE`, `-----BEGIN`) is refused
+before anything is built. The signer's private key never leaves the signer. `rem0te-release` also refuses a list the
+agent would reject.
+
 Everything it prints also goes to `/var/lib/rem0te-release/publish.log`.
 
 **`rem0te-signed-status`**: one screen showing:
 - which keys are present, and whether the root keys are still on the host or were exported;
-- the published agent version and commit, the tray, the installer and the RustDesk builds;
+- the published agent version and commit, the tray, the installer, the RustDesk builds, and the approval keys (or
+  *none*: approved actions are off until they are published);
 - when each role expires, with a warning under 48 hours;
 - the last publish, whether the timer is active, and whether `api.env` has `UPDATE_REPO_DIR`.
 
@@ -333,6 +342,23 @@ Notes on these settings:
 - While legacy agents are contained, staged rollouts aimed at them don't progress.
 - The **Windows agents** table on the same page lists every legacy agent, and every signed agent still behind the
   current root. The channel is self-reported, and it only ever reduces what the portal hands an agent.
+
+## New computers get the full agent (0.39)
+
+Once a signed agent is published, **Add device** installs it directly, with nothing to upgrade later. Both ways of
+installing from that page do:
+
+- **The PowerShell line** (`irm https://<portal>/api/v1/public/install/win/<token> | iex`). For a valid, unclaimed,
+  unexpired enrolment token, that route serves a short script instead of the standard installer. The script
+  downloads `windows/rem0te-agent.exe` by its published digest into a fresh directory locked to SYSTEM and
+  Administrators, checks the SHA-256, and only then runs `rem0te-agent.exe install --portal <portal> --token <token>`.
+  The agent verifies the installer, RustDesk and the tray against signed metadata and claims the computer with the
+  token. The script never calls `exit`, so the window stays open with its output.
+- **The download link** (`windows.exe?token=…`), which has served the signed agent binary itself since 0.24.
+
+Without a token the route is unchanged, because an existing standard agent's reinstall carries none. Moving those
+computers is the migration's job, canary first. An unknown, expired or claimed token gets the standard installer
+script, which then can't claim anything.
 
 ## Moving existing agents
 
