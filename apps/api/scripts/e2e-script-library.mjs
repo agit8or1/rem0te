@@ -215,7 +215,7 @@ async function all() {
   check(v1.staticChecks?.findings?.some((f) => f.rule === 'invoke_expression' && f.line === 4 && f.severity === 'danger') && /not thereby safe/.test(v1.staticChecks.disclaimer), 'Invoke-Expression is flagged on line 4, with the disclaimer that no findings is not safe', JSON.stringify(v1.staticChecks));
   check(v1.execution?.available === false && v1.you.canSubmit === false && v1.you.canReview === false, 'not runnable; the reviewer cannot submit, and nothing is in review yet');
   const keysOf = (o) => (o && typeof o === 'object' ? Object.entries(o).flatMap(([k, x]) => [k, ...keysOf(x)]) : []);
-  check(!keysOf(r.body).some((k) => /^(run|runs|execute|exec|dispatch|endpoints?|endpointIds|targets|schedule)$/i.test(k)) && Object.keys(v1.you).every((k) => /^(canSubmit|canWithdraw|canReview|cannotReviewBecause|canEdit)$/.test(k)), 'the response offers nothing to run: no run, target or endpoint field, and only review permissions', keysOf(r.body).join(','));
+  check(!keysOf(r.body).some((k) => /^(run|runs|execute|exec|dispatch|endpoints?|endpointIds|targets|schedule)$/i.test(k)) && Object.keys(v1.you).every((k) => /^(canSubmit|canWithdraw|canReview|selfReview|cannotReviewBecause|canEdit)$/.test(k)), 'the response offers nothing to run: no run, target or endpoint field, and only review permissions', keysOf(r.body).join(','));
 
   section('Submit and withdraw: the author only');
   r = await req('POST', `/scripts/${sA}/versions/1/review`, { s: await stepUp(S.rae), body: { decision: 'approve', expectedSha256: sha(SPOOLER), note: 'early' } });
