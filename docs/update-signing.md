@@ -79,11 +79,20 @@ It refuses to publish:
 - the same version and commit again, which is a no-op unless you pass `--republish`. Use that, for example, to add a
   newly pinned RustDesk build without a new release.
 
+**`--approval-keys FILE`** (0.38) signs the approval signer's public key list, the output of
+`approval-signer keygen`, into the release as `approval/keys.json`. That is how agents learn to trust approved
+actions ([approved-actions.md](approved-actions.md)). The list is kept in `/var/lib/rem0te-release/approval-keys.json`
+once the release carrying it is published, and every later publish signs it again, so you pass it once. A file over
+64 KiB, one that isn't JSON, or one with anything that looks like key material (`PRIVATE`, `-----BEGIN`) is refused
+before anything is built. The signer's private key never leaves the signer. `rem0te-release` also refuses a list the
+agent would reject.
+
 Everything it prints also goes to `/var/lib/rem0te-release/publish.log`.
 
 **`rem0te-signed-status`**: one screen showing:
 - which keys are present, and whether the root keys are still on the host or were exported;
-- the published agent version and commit, the tray, the installer and the RustDesk builds;
+- the published agent version and commit, the tray, the installer, the RustDesk builds, and the approval keys (or
+  *none*: approved actions are off until they are published);
 - when each role expires, with a warning under 48 hours;
 - the last publish, whether the timer is active, and whether `api.env` has `UPDATE_REPO_DIR`.
 

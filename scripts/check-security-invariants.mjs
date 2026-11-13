@@ -3341,6 +3341,15 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /if \[\[ \$VERSION == "\$pv" && \$COMMIT != "\$\{PUBL\[AGENT_COMMIT\]:-\}" \]\]; then\n\s+die /.test(pub)
       && pub.indexOf('ver_lt "$VERSION" "$pv"') < pub.indexOf('gobuild '),
     'rem0te-signed-publish: ver_lt → die before any build; same version + other commit → die');
+  // 0.38: --approval-keys. Only a public key list goes in, never key material,
+  // and the kept copy changes only after the release carrying it is published.
+  check('publish --approval-keys refuses key material and keeps the list only after it is published',
+    /if grep -qiE 'PRIVATE\|-----BEGIN' "\$approval_src"; then die /.test(pub)
+      && pub.indexOf("grep -qiE 'PRIVATE|-----BEGIN'") < pub.indexOf('new_build_dir')
+      && /\[\[ -n \$approval_build \]\] && args\+=\(-add "approval\/keys\.json=\$approval_build"\)/.test(pub)
+      && pub.indexOf('as_release 027 mv -f "$APPROVAL_KEYS.new" "$APPROVAL_KEYS"') > pub.indexOf('publish_repo "$WORK_REPO"')
+      && /APPROVAL_KEYS=\$STATE_DIR\/approval-keys\.json/.test(pub),
+    'rem0te-signed-publish: key-material refusal before any build; -add approval/keys.json; the kept copy (under STATE_DIR) replaced only after publish_repo');
   check('the RustDesk build needs GitHub\'s published SHA-256 and comes only from RustDesk\'s GitHub release (or the loopback test server)',
     /if \(!sha\) fail\(`GitHub publishes no SHA-256 digest/.test(asset)
       && /: url === `https:\/\/github\.com\/rustdesk\/rustdesk\/releases\/download\/\$\{version\}\/\$\{name\}`;/.test(asset)
