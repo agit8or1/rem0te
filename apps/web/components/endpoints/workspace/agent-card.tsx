@@ -186,7 +186,10 @@ export function AgentCard({ endpointId, canEdit, alerts }: { endpointId: string;
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-sm">Agent</CardTitle>
-          <Link href="/endpoints/agent-migrations" className="text-xs text-muted-foreground underline-offset-2 hover:underline">Agent migrations</Link>
+          <span className="flex items-center gap-3">
+            <Link href="/endpoints/full-agent" className="text-xs text-muted-foreground underline-offset-2 hover:underline" data-testid="agent-card-full-agent">Full agent</Link>
+            <Link href="/endpoints/agent-migrations" className="text-xs text-muted-foreground underline-offset-2 hover:underline">Agent migrations</Link>
+          </span>
         </div>
       </CardHeader>
       <CardContent className="space-y-2.5 text-sm">
@@ -259,9 +262,12 @@ export function AgentCard({ endpointId, canEdit, alerts }: { endpointId: string;
                   </div>
                 )}
                 {a.migration.possible && canEdit ? (
-                  <Button size="sm" onClick={() => setMigrateOpen(true)} data-testid="agent-migrate">
-                    <ShieldCheck className="h-4 w-4 mr-1.5" />Upgrade to signed agent
-                  </Button>
+                  <div className="space-y-1">
+                    <Button size="sm" onClick={() => setMigrateOpen(true)} data-testid="agent-migrate">
+                      <ShieldCheck className="h-4 w-4 mr-1.5" />Upgrade to signed agent
+                    </Button>
+                    <p className="text-xs text-muted-foreground">Or let the automatic migration move it: <Link className="underline" href="/endpoints/full-agent">Full agent</Link> shows every step and where this computer is.</p>
+                  </div>
                 ) : a.migration.possible ? (
                   <p className="text-xs text-muted-foreground">Upgrading to the signed agent needs the computers:edit permission.</p>
                 ) : a.migration.reason ? (

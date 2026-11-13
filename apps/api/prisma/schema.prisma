@@ -207,6 +207,14 @@ enum ActivityAction {
   AGENT_MIGRATION_REQUESTED
   AGENT_MIGRATION_CANCELLED
   AGENT_MIGRATION_COMPLETED
+  // 0.37: automatic migration to the signed agent, canary first.
+  AGENT_AUTO_MIGRATION_SETTINGS_CHANGED
+  AGENT_AUTO_MIGRATION_CANARY_CHOSEN
+  AGENT_AUTO_MIGRATION_CANARY_CONFIRMED
+  AGENT_AUTO_MIGRATION_ROLLING
+  AGENT_AUTO_MIGRATION_HALTED
+  AGENT_AUTO_MIGRATION_RESUMED
+  AGENT_AUTO_MIGRATION_RESTARTED
   CONNECTION_GRANT_CREATED
   CONNECTION_GRANT_REDEEMED
   CONNECTION_GRANT_DENIED
@@ -1725,6 +1733,12 @@ model PlatformSettings {
   agentAutoUpdateEnabled     Boolean @default(true)
   agentAutoUpdatePerHour     Int     @default(120)
   agentAutoUpdateMaxAttempts Int     @default(3)
+
+  // Automatic migration to the signed agent (0.37,
+  // agent-auto-migration/rollout.ts): off, or one canary computer first and
+  // the rest after it has soaked this many minutes (15–1440, CHECK in 0064).
+  agentAutoMigrationMode        String @default("canary_then_all")
+  agentAutoMigrationSoakMinutes Int    @default(60)
 }
 
 // ─── Platform Security Config ────────────────────────────────────────────────
@@ -3494,9 +3508,42 @@ model AgentMigration {
   completedAt      DateTime?
   cancelledAt      DateTime?
   cancelledById    String?
+  // 0.37: made by the automatic migration (no requester; the rollout row is
+  // the record, AgentAutoMigration), not by a person. CHECK: automatic rows
+  // have no requestedById and a rolloutId.
+  automatic        Boolean   @default(false)
+  rolloutId        String?
 
   @@index([endpointId, requestedAt])
   @@index([customerId, requestedAt])
+  @@index([rolloutId, requestedAt])
+}
+
+/// 0.37: one automatic migration to the signed agent, per published signed
+/// agent build (targetSha256). Canary first: one computer is migrated, and
+/// the rest only once it has reported that build for the soak. The state
+/// machine is agent-auto-migration/rollout.ts; per-computer requests are
+/// ordinary AgentMigration rows with automatic = true.
+model AgentAutoMigration {
+  id                String    @id @default(cuid())
+  targetSha256      String    @unique
+  /// The signed target's custom version / commit (rem0te-signed-publish writes them), when present.
+  targetVersion     String?
+  targetCommit      String?
+  /// choosing_canary | canary | soaking | rolling | halted (CHECK in 0064).
+  state             String    @default("choosing_canary")
+  canaryEndpointId  String?
+  canaryMigrationId String?
+  canaryRequestedAt DateTime?
+  canaryConfirmedAt DateTime?
+  /// Computers already tried as the canary and not to be picked again.
+  rejectedCanaryIds String[]  @default([])
+  rollingAt         DateTime?
+  haltedAt          DateTime?
+  haltCode          String?
+  haltReason        String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 }
 
 // ─── Chat with the person at the computer (0.34) ────────────────────────────

@@ -343,6 +343,25 @@ not here — it cannot be told from a RustDesk-only computer.
 self-check run under pwsh against a stub agent). It has not run on a real
 Windows computer.
 
+## The Rem0te agent: moving to the signed agent automatically (0.37)
+
+**On by default** once a signed agent is published: standard Windows agents are
+moved to the signed agent without anyone pressing *Upgrade to signed agent* —
+one computer first (the canary), the rest only after it has reported the
+published build for a soak (default 60 minutes) with no failed update, paced by
+the same per-hour number as automatic updates above. The same opt-out applies:
+a business, site or device-group policy whose agent mode is *Off* opts its
+computers out of this too, and *Window* holds them to the window. A failure
+halts it, with its reason, until a Platform Admin resumes or restarts it. In
+**Signed only** it does nothing.
+
+Every move is an ordinary per-computer migration request (the same nonce and
+the same fixed script); nothing new runs on a computer. The whole process —
+signing set up, a signed agent published, the timestamp kept fresh, computers
+moved — is on **Devices → Full agent**, with the command for each step that is
+not done. Details: [update-signing.md](update-signing.md#moving-computers-automatically-037).
+`AUTO_MIGRATION_SWEEP=off` stops it in one API process.
+
 ## Signed updates (v0.24)
 
 Windows agents that run `rem0te-agent.exe` update only through the offline-signed repository this portal mirrors:

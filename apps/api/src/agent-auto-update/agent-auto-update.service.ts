@@ -89,19 +89,41 @@ export class AgentAutoUpdateService {
    * sets one deciding. Membership is computed now and never kept.
    */
   async modeFor(ep: { id: string; customerId: string | null; siteId: string | null }, now: Date) {
-    if (!ep.customerId) return { mode: 'ANY_TIME' as AgentMode, policy: null, windowOpen: true, skipLoggedOnUser: false };
-    const policies = await this.prisma.clientUpdatePolicy.findMany({ where: { customerId: ep.customerId } });
-    const m = await this.clientUpdates.membershipFor(policies, [ep.id]);
-    const res = resolvePolicy(policies, { id: ep.id, customerId: ep.customerId, siteId: ep.siteId, groupIds: m.groupsOf(ep.id) });
-    const ranked = res.ranked.map((p) => ({ ...p, scope: policyScope(p) as 'business' | 'site' | 'group', agentMode: (p.agentMode ?? null) as AgentMode | null }));
-    const { mode, policy } = resolveMode(ranked);
-    const groupName = policy?.groupId ? m.groups.get(policy.groupId)?.name ?? null : null;
-    return {
-      mode, policy: policy as (ClientUpdatePolicy & { scope: 'business' | 'site' | 'group' }) | null, groupName,
-      // A WINDOW policy with a malformed window is closed (fails closed), like the RustDesk sweep.
-      windowOpen: mode === 'WINDOW' ? isWindowOpen(policyWindow(policy), now) : true,
-      skipLoggedOnUser: mode === 'WINDOW' ? !!policy?.skipLoggedOnUser : false,
-    };
+    return (await this.modesFor([ep], now)).get(ep.id)!;
+  }
+
+  /**
+   * modeFor for many computers at once (0.37: the Full agent page's counts
+   * and the automatic migration's opt-out). One policy read and one
+   * membership snapshot per business; the same ranking for each computer.
+   */
+  async modesFor(eps: { id: string; customerId: string | null; siteId: string | null }[], now: Date) {
+    const out = new Map<string, {
+      mode: AgentMode; policy: (ClientUpdatePolicy & { scope: 'business' | 'site' | 'group' }) | null; groupName?: string | null; windowOpen: boolean; skipLoggedOnUser: boolean;
+    }>();
+    const byBiz = new Map<string, typeof eps>();
+    for (const ep of eps) {
+      if (!ep.customerId) { out.set(ep.id, { mode: 'ANY_TIME', policy: null, windowOpen: true, skipLoggedOnUser: false }); continue; }
+      const list = byBiz.get(ep.customerId) ?? [];
+      list.push(ep); byBiz.set(ep.customerId, list);
+    }
+    for (const [customerId, list] of byBiz) {
+      const policies = await this.prisma.clientUpdatePolicy.findMany({ where: { customerId } });
+      const m = await this.clientUpdates.membershipFor(policies, list.map((e) => e.id));
+      for (const ep of list) {
+        const res = resolvePolicy(policies, { id: ep.id, customerId: ep.customerId, siteId: ep.siteId, groupIds: m.groupsOf(ep.id) });
+        const ranked = res.ranked.map((p) => ({ ...p, scope: policyScope(p) as 'business' | 'site' | 'group', agentMode: (p.agentMode ?? null) as AgentMode | null }));
+        const { mode, policy } = resolveMode(ranked);
+        const groupName = policy?.groupId ? m.groups.get(policy.groupId)?.name ?? null : null;
+        out.set(ep.id, {
+          mode, policy: policy as (ClientUpdatePolicy & { scope: 'business' | 'site' | 'group' }) | null, groupName,
+          // A WINDOW policy with a malformed window is closed (fails closed), like the RustDesk sweep.
+          windowOpen: mode === 'WINDOW' ? isWindowOpen(policyWindow(policy), now) : true,
+          skipLoggedOnUser: mode === 'WINDOW' ? !!policy?.skipLoggedOnUser : false,
+        });
+      }
+    }
+    return out;
   }
 
   private async rolloutOwns(endpointId: string) {

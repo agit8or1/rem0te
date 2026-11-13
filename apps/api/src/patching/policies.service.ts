@@ -482,7 +482,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     const agent = this.updateTrust.agentTarget();
     add({ id: 'signed_release', step: 1, ok: !!agent, title: 'A signed agent release is published',
       detail: agent ? `windows/rem0te-agent.exe is served, sha256 ${agent.sha256.slice(0, 16)}…` : 'The update repository serves no signed agent build (windows/rem0te-agent.exe), so no plan can name one.',
-      fix: agent ? null : 'Publish a signed release with rem0te-release on the release machine (docs/update-signing.md).' });
+      fix: agent ? null : 'Publish one on this server: sudo rem0te-signed-publish (Devices → Full agent shows each step).' });
 
     let trustedKids: string[] = [];
     const kf = this.updateTrust.targetFile('approval/keys.json');
@@ -524,7 +524,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     ]);
     add({ id: 'computers_signed', step: 2, ok: current > 0, title: 'Computers are on the signed channel, on the published build',
       detail: `${signed} of ${windows} computer(s) on the signed channel; ${capable} report the update action; ${current} run the published build.`,
-      fix: current > 0 ? null : 'Migrate computers to the signed channel and let them update to the published build (docs/update-signing.md).' });
+      fix: current > 0 ? null : 'Migrate computers to the signed channel (Devices → Full agent: automatic, canary first) and let them update to the published build.' });
     const withPosture = await this.prisma.endpointInventory.count({ where: { patchScannedAt: { not: null }, endpoint: { updateChannel: 'signed', status: { not: 'ARCHIVED' } } } });
     add({ id: 'computers_scanned', step: 2, ok: withPosture > 0, title: 'Signed computers have reported a Windows Update scan',
       detail: `${withPosture} signed computer(s) have a signed scan.`,

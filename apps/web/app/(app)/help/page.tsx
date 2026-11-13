@@ -709,6 +709,20 @@ const SECTIONS: Section[] = [
           held, not confirmed or done. More in{' '}
           <Link href="/docs/update-signing#moving-existing-agents" className="underline">Update signing</Link>.
         </p>
+        <p className="font-medium text-foreground">Moving to the signed agent, automatically (0.37)</p>
+        <p>
+          <Link href="/endpoints/full-agent" className="underline">Devices → Full agent</Link> shows the whole move to the
+          signed agent as four steps — signing set up on this server, a signed agent published, the timestamp kept
+          fresh, computers moved — each with its live state and, when it is not done, the command to run
+          (<code>sudo ./deploy/release/rem0te-signed-setup.sh</code> once, then <code>sudo rem0te-signed-publish</code>{' '}
+          with each release). Once a signed agent is published, the portal moves standard Windows computers by itself:
+          one computer first, the canary, and the rest only after it has reported the published build for an hour with
+          no failed update, paced like automatic updates. A failure halts it, with the reason on the page, until a
+          Platform Admin resumes it or picks another canary. Computers whose update policy opts out, that are paused,
+          in a staged rollout or not checking in are skipped, and nothing moves in <em>Signed only</em>. The signed
+          agent has not run on real Windows yet: the canary is the first time. More in{' '}
+          <Link href="/docs/update-signing#moving-computers-automatically-037" className="underline">Update signing</Link>.
+        </p>
         <p className="font-medium text-foreground">Agents keep themselves up to date (0.36)</p>
         <p>
           You don&apos;t need to click Update agent after a release. When a Windows computer&apos;s agent is older than

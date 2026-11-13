@@ -3229,6 +3229,101 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     "onModuleInit: TRAY_SWEEP === 'off' → no timer; run-e2e.sh exports it; e2e-ui's API env sets it");
 }
 
+// 57. Automatic migration to the signed agent (0.37). Once a signed agent is
+//     published, the portal moves standard Windows agents to it by itself,
+//     one canary first. It must stay exactly the 0.34 per-computer migration
+//     made by the system: its only effect on a computer is an AgentMigration
+//     row written through requestAutomatic, which re-checks migrationBlock
+//     (Signed only, an updates pause, a staged rollout…) before writing, so
+//     the heartbeat hands it out — and holds it — exactly as a person's; it
+//     never writes the update-trust mode and does nothing at all in Signed
+//     only; the rest move only after the canary was confirmed on the
+//     published build and soaked (state machine, a single conditional write
+//     to rolling, a database CHECK), paced by the 0.36 per-hour number;
+//     per-computer requests are history rows, not audit entries; widening
+//     the setting, resuming and restarting are Platform Admin and fresh,
+//     turning it off never needs fresh authentication; the Full agent page
+//     counts only visible computers and names the canary only to someone who
+//     can see it; and the off switch is exact and set for every other suite.
+{
+  const ro = read('apps/api/src/agent-auto-migration/rollout.ts');
+  const svc = read('apps/api/src/agent-auto-migration/agent-auto-migration.service.ts');
+  const ctl = read('apps/api/src/agent-auto-migration/agent-auto-migration.controller.ts');
+  const msvc = read('apps/api/src/update-trust/agent-migration.service.ts');
+  const mig = read('apps/api/src/update-trust/agent-migration.ts');
+  const sql = read('apps/api/prisma/migrations/0064_auto_migration/migration.sql');
+  const fb = (src, sig) => { const i = src.indexOf(sig); const j = src.indexOf('\n  }\n', i); return i < 0 ? '' : src.slice(i, j); };
+  check('the automatic migration never writes the update-trust mode or requests a trust change',
+    ![svc, ro, ctl].some((t) => /updateTrustMode\s*:|legacyPortalMigration\s*:\s*(true|false|next|data)|\.setMode\(|trust\.request\(|\$execute/.test(t))
+      && /const update = \{ agentAutoMigrationMode: next\.mode, agentAutoMigrationSoakMinutes: next\.soakMinutes \};/.test(svc)
+      && (svc.match(/platformSettings\.(upsert|update|create|updateMany)\(/g) ?? []).length === 1,
+    'agent-auto-migration writes PlatformSettings once, with only its own two columns');
+  const ra = fb(msvc, 'async requestAutomatic(');
+  check('its only effect on a computer is an AgentMigration row written through requestAutomatic, after migrationBlock',
+    /const b = await this\.block\(endpointId\);\s*if \(b\) return \{ refused: b\.code \};/.test(ra)
+      && ra.indexOf('this.block(endpointId)') < ra.indexOf('agentMigration.create(')
+      && /requestedById: null, automatic: true, rolloutId,/.test(ra) && !/audit\./.test(ra)
+      && !/agentMigration\.(create|update|upsert|delete)|reinstallRequestedAt|updateRequestedAt|rustdeskNode\.update|endpointCommand|buildMigrationScript|scriptForNonce|\.forHeartbeat\(/.test(svc)
+      && (svc.match(/this\.migration\.requestAutomatic\(/g) ?? []).length === 3,
+    'requestAutomatic: block() first, no requester, no audit; the service writes no migration, flag or command itself (3 requestAutomatic calls: canary, rest, resume)');
+  check('halting stops only automatic requests, never a person\'s',
+    /updateMany\(\{ where: \{ id: migrationId, automatic: true, \.\.\.OPEN \}, data: \{ cancelledAt: new Date\(\) \} \}\)/.test(fb(msvc, 'async cancelAutomatic('))
+      && /"AgentMigration_automatic_shape" CHECK \(\s*\("automatic" AND "requestedById" IS NULL AND "rolloutId" IS NOT NULL\) OR \(NOT "automatic" AND "rolloutId" IS NULL\)/.test(sql),
+    'cancelAutomatic matches automatic: true; 0064 ties automatic to no requester and a rollout');
+  check('Signed only (with or without portal migration): the sweep does nothing',
+    /if \(i\.trustMode === 'signed_only'\) return 'signed_only';/.test(ro) && /if \(g\.gate \|\| !g\.agent\) return;/.test(fb(svc, 'async tick('))
+      && /if \(i\.settings\.mode === 'off'\) return 'mode_off';/.test(ro) && /if \(!i\.publishedSha256 \|\| !\/\^\[0-9a-f\]\{64\}\$\/\.test\(i\.publishedSha256\)\) return 'no_release';/.test(ro),
+    "gate(): mode off, no release and signed_only return a reason; tick() returns on any gate");
+  const ns = ro.slice(ro.indexOf('export function nextStep('), ro.indexOf('// ── Picking computers'));
+  check('the rest move only after the canary was confirmed on the published build and soaked',
+    /if \(onBuild\(canary, r\.targetSha256\)\) return \{ do: 'confirm' \};/.test(ns)
+      && /export const onBuild = \(f: Pick<CanaryFacts, 'updateChannel' \| 'agentSha256'>, sha: string\) => f\.updateChannel === 'signed' && f\.agentSha256 === sha;/.test(ro)
+      && /if \(t < end\) return \{ do: 'wait'/.test(ns) && /if \(canary\.lastSeenAt && canary\.lastSeenAt\.getTime\(\) >= end\) return \{ do: 'start_rolling' \};/.test(ns)
+      && ns.indexOf("if (t < end)") < ns.indexOf("do: 'start_rolling'") && (ns.match(/do: 'start_rolling'/g) ?? []).length === 1
+      && (svc.match(/state: 'rolling'/g) ?? []).length === 1 && /where: \{ id: r\.id, state: 'soaking' \}, data: \{ state: 'rolling', rollingAt: now \}/.test(svc)
+      && /"AgentAutoMigration_rolling_needs_canary" CHECK \("state" <> 'rolling' OR \("canaryConfirmedAt" IS NOT NULL AND "rollingAt" IS NOT NULL\)\)/.test(sql)
+      && /export const CANARY_CONFIRM_MS = 2 \* H;/.test(ro) && /export const SOAK_MIN = 15;/.test(ro) && /export const SOAK_MAX = 1440;/.test(ro)
+      && /CHECK \(\s*"agentAutoMigrationMode" IN \('off', 'canary_then_all'\) AND "agentAutoMigrationSoakMinutes" BETWEEN 15 AND 1440/.test(sql),
+    'nextStep: confirm only onBuild; start_rolling once, after the soak and a later check-in; one conditional write to rolling; 0064 CHECKs');
+  check('rolling is paced by the 0.36 per-hour number, a bounded batch per tick, and only reporting computers',
+    /let left = budget\(pace\.perHour, await this\.usedLastHour\(now\)\);/.test(svc)
+      && /return this\.prisma\.agentMigration\.count\(\{ where: \{ automatic: true, requestedAt: \{ gt: new Date\(now\.getTime\(\) - 3600_000\) \} \} \}\);/.test(svc)
+      && /export const BATCH_PER_TICK = 50;/.test(ro) && /return Math\.max\(0, Math\.min\(BATCH_PER_TICK, perHour - usedLastHour\)\);/.test(ro)
+      && /lastSeenAt: \{ gte: heartbeatCutoff\(now\.getTime\(\)\) \},/.test(svc) && /pg_try_advisory_xact_lock\(hashtext\('rem0te\.agent-auto-migration'\)\)/.test(svc),
+    'migrateRest: budget(perHour, usedLastHour); candidates inside the heartbeat window; one process at a time');
+  const put = fb(svc, 'async putSettings(');
+  check('per-computer requests are not audit entries; settings, resume and restart are Platform Admin, fresh where they widen, audited',
+    !/AGENT_MIGRATION_REQUESTED/.test(svc + ra)
+      && [...svc.matchAll(/resource: '([a-z_]+)'/g)].every((m) => ['agent_auto_migration', 'platform_settings'].includes(m[1]))
+      && /this\.acl\.assertPlatformAdmin\(actor\);[\s\S]{0,400}if \(isWidening\(before, next\)\) \{\s*assertFresh\(freshMethod,/.test(put)
+      && /if \(after\.mode === 'off'\) return false;\s*if \(before\.mode === 'off'\) return true;\s*return after\.soakMinutes < before\.soakMinutes;/.test(ro)
+      && /action: 'AGENT_AUTO_MIGRATION_SETTINGS_CHANGED', resource: 'platform_settings', resourceId: 'singleton',\s*meta: \{ before: shape\(before\), after: shape\(after\) \},/.test(put)
+      && ['async resume(', 'async restart('].every((f) => /^async \w+\(actor: ActorContext, freshMethod: string \| null\) \{\s*this\.acl\.assertPlatformAdmin\(actor\);\s*assertFresh\(freshMethod,/.test(fb(svc, f)))
+      && /async getSettings\(actor: ActorContext\) \{\s*this\.acl\.assertPlatformAdmin\(actor\);/.test(svc)
+      && /@Controller\('admin\/agent-auto-migration'\)\s*@UseGuards\(PlatformAdminGuard\)/.test(ctl)
+      && (ctl.slice(ctl.indexOf("@Controller('admin/agent-auto-migration')")).match(/@(Get|Put|Post|Delete|Patch)\(/g) ?? []).length === 4,
+    'no per-computer audit; isWidening → assertFresh; off never widens; resume/restart assertPlatformAdmin then assertFresh; PlatformAdminGuard, four routes');
+  const ov = fb(svc, 'async overview(');
+  check('the Full agent page needs computers:view, counts only visible computers and names the canary only to someone who can see it',
+    /@Get\('overview'\)\s*@RequireCapability\(CAP\.COMPUTERS_VIEW\)/.test(ctl) && /@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)/.test(ctl)
+      && /const vis = this\.acl\.endpointVisibilityWhere\(actor, businessId\);\s*const eps = await this\.prisma\.endpoint\.findMany\(\{\s*where: \{ AND: \[vis\] \},/.test(ov)
+      && /where: \{ endpointId: \{ in: ids \} \}/.test(ov) && (ov.match(/prisma\.endpoint\.(findMany|count|findFirst|groupBy)\(/g) ?? []).length === 2
+      && /findFirst\(\{ where: \{ AND: \[\{ id: r\.canaryEndpointId \}, vis\] \}/.test(ov)
+      && /const progress = actor\.isPlatformAdmin \? await this\.progress\(r\.id\) : null;/.test(ov),
+    'overview(): endpoints from endpointVisibilityWhere; migrations/rollouts by those ids; canary through the same where; progress for Platform Admins only');
+  const web = read('apps/web/app/(app)/endpoints/full-agent/page.tsx');
+  check('the page shows the interface\'s commands verbatim and never claims the timestamp timer runs',
+    /export const SETUP_COMMAND = 'sudo \.\/deploy\/release\/rem0te-signed-setup\.sh';/.test(mig) && /export const PUBLISH_COMMAND = 'sudo rem0te-signed-publish';/.test(mig)
+      && /export const STATUS_COMMAND = 'sudo rem0te-signed-status';/.test(mig) && /export const TIMESTAMP_TIMER = 'rem0te-timestamp-refresh\.timer';/.test(mig)
+      && !/timerActive|timerRunning|timer is running|timer runs/i.test(svc + web) && /cannot see/i.test(web),
+    'agent-migration.ts holds the four strings; neither the service nor the page claims the timer runs, and the page says the portal cannot see it');
+  check('AUTO_MIGRATION_SWEEP=off is exact, and set for run-e2e.sh and the browser suite',
+    /onModuleInit\(\) \{\s*if \(process\.env\.AUTO_MIGRATION_SWEEP === 'off'\) return;/.test(svc) && /processOn: env\.AUTO_MIGRATION_SWEEP !== 'off',/.test(ro)
+      && /\nexport AUTO_MIGRATION_SWEEP=off\n/.test(read('scripts/run-e2e.sh'))
+      && /AUTO_MIGRATION_SWEEP: 'off',/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    "onModuleInit: AUTO_MIGRATION_SWEEP === 'off' → no timer; settingsFrom; run-e2e.sh exports it; e2e-ui's API env sets it");
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

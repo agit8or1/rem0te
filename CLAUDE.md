@@ -636,6 +636,32 @@ inert, only to someone who can see the computer; and `TRAY_SWEEP=off` is exact
 and set by `run-e2e.sh` and `e2e-ui.mjs`. Behavioural proof: `e2e-tray.mjs` (port 3632);
 unit: `unit-tray.mjs` and the Go `internal/tray` tests.
 
+§57 (0.37) is automatic migration to the signed agent. Its only effect on a
+computer is an `AgentMigration` row written by
+`AgentMigrationService.requestAutomatic`. That runs `block()` (the 0.34
+`migrationBlock`: Signed only, an `updates` pause, a staged rollout…) before
+it writes, records no requester and no audit entry, and the heartbeat hands
+the row out and holds it exactly as it does a person's. The service writes no
+migration, flag or command itself, never writes the update-trust mode, and
+writes `PlatformSettings` once, with only its own two columns. In Signed only,
+with or without portal migration, it does nothing (`gate()`, then `tick()`
+returns). The rest move only after the canary was confirmed on the published
+build's digest and soaked: `nextStep` has one `start_rolling`, after the soak
+and a later check-in. There is one conditional write to `rolling`, from
+`soaking`, and 0064's CHECK refuses `rolling` without `canaryConfirmedAt`.
+Rolling is paced by `budget(perHour, usedLastHour)` over automatic requests,
+at most 50 a pass, and takes only computers checking in. A halt stops only
+automatic requests. Settings, resume and restart are Platform Admin.
+`isWidening` (on, or a shorter soak) and resume/restart need `assertFresh`;
+off never does. The Full agent page's `GET /agent-signing/overview` is
+`computers:view`, reads computers only through `endpointVisibilityWhere`,
+names the canary through the same where, and gives fleet progress only to
+Platform Admins. Its commands are the four strings in `agent-migration.ts`, and
+neither the page nor the API claims the timestamp timer runs.
+`AUTO_MIGRATION_SWEEP=off` is exact and set by `run-e2e.sh` and `e2e-ui.mjs`.
+Behavioural proof: `e2e-auto-migration.mjs` (ports 3911–3912, `RELEASE_BIN`);
+unit: `unit-auto-migration.mjs`.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

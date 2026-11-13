@@ -154,6 +154,13 @@ jobs:
       - name: Agent auto-update tests
         run: node apps/api/scripts/unit-agent-auto-update.mjs
 
+      # Automatic migration to the signed agent (0.37): settings and what
+      # widens, the gate, the canary/soak state machine (confirmed only on the
+      # published build; halted on a failure, a cancel, a missing computer or
+      # a timeout), canary ordering, the pace budget and the hold mapping.
+      - name: Automatic migration tests
+        run: node apps/api/scripts/unit-auto-migration.mjs
+
       # Scheduled client updates (0.32): the update window's validation, time
       # zones (+5:30, +5:45, a 30-minute DST zone), windows across midnight,
       # both DST transitions, next opening/closing against a minute-by-minute

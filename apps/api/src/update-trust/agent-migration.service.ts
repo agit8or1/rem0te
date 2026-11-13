@@ -135,6 +135,45 @@ export class AgentMigrationService {
     return { request: row, unchanged: false };
   }
 
+  /**
+   * The automatic migration's request for one computer (0.37,
+   * agent-auto-migration). The same precondition function as a person's
+   * request, re-checked here at the moment of writing, and the same row — so
+   * the same heartbeat hand-out, the same nonce and the same fixed script —
+   * with no requester and its rollout named. It is a history row, not an
+   * audit entry: one per computer would bury the log, so the rollout's own
+   * steps are audited instead (agent-auto-migration.service.ts). Returns null
+   * when refused (with the code) or when the computer already has an open
+   * request.
+   */
+  async requestAutomatic(endpointId: string, rolloutId: string, role: 'canary' | 'rollout'): Promise<{ id: string } | { refused: string }> {
+    const b = await this.block(endpointId);
+    if (b) return { refused: b.code };
+    if (await this.openFor(endpointId)) return { refused: 'ALREADY_REQUESTED' };
+    const ep = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { tenantId: true, customerId: true } });
+    if (!ep) return { refused: 'NOT_FOUND' };
+    try {
+      const row = await this.prisma.agentMigration.create({
+        data: {
+          endpointId, tenantId: ep.tenantId, customerId: ep.customerId, nonce: newMigrationNonce(),
+          reason: role === 'canary' ? 'Automatic migration to the signed agent: canary' : 'Automatic migration to the signed agent',
+          requestedById: null, automatic: true, rolloutId,
+        },
+        select: { id: true },
+      });
+      return row;
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') return { refused: 'ALREADY_REQUESTED' };
+      throw e;
+    }
+  }
+
+  /** The automatic migration stopping its own open request (a halted canary). Never a person's request. */
+  async cancelAutomatic(migrationId: string): Promise<boolean> {
+    const w = await this.prisma.agentMigration.updateMany({ where: { id: migrationId, automatic: true, ...OPEN }, data: { cancelledAt: new Date() } });
+    return w.count === 1;
+  }
+
   async cancel(actor: ActorContext, endpointId: string) {
     const open = await this.openFor(endpointId);
     if (!open) return { cancelled: false };

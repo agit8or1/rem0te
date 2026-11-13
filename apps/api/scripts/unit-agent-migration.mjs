@@ -52,10 +52,10 @@ check(code({ status: 'ARCHIVED' }) === 'ARCHIVED', 'archived: ARCHIVED');
 check(code({ hasSecret: false }) === 'NO_DEVICE_SECRET', 'no device secret: NO_DEVICE_SECRET');
 {
   const b = M.migrationBlock({ ...ok, repoConfigured: false });
-  check(b?.code === 'NO_SIGNED_RELEASE' && /^No signed release is published/.test(b.reason) && /offline signing keys only you hold/.test(b.reason) && b.link?.href === '/docs/update-signing#roles-and-keys',
-    'no repository: "No signed release is published …", linked to Roles and keys', JSON.stringify(b));
+  check(b?.code === 'NO_SIGNED_RELEASE' && /^No signed release is published/.test(b.reason) && b.fix.includes('sudo ./deploy/release/rem0te-signed-setup.sh') && b.link?.href === '/endpoints/full-agent',
+    'no repository: "No signed release is published …", the setup command, linked to the Full agent page', JSON.stringify(b));
   const c = M.migrationBlock({ ...ok, signedAgentPublished: false });
-  check(c?.code === 'NO_SIGNED_RELEASE' && /windows\/rem0te-agent\.exe/.test(c.reason) && c.link?.href === '/docs/update-signing#roles-and-keys', 'a repository without the agent: the same code, naming the target');
+  check(c?.code === 'NO_SIGNED_RELEASE' && /windows\/rem0te-agent\.exe/.test(c.reason) && c.fix.includes('sudo rem0te-signed-publish') && c.link?.href === '/endpoints/full-agent', 'a repository without the agent: the same code, naming the target and the publish command');
 }
 check(code({ portalHost: null }) === 'NO_PORTAL_ADDRESS', 'no portal address: NO_PORTAL_ADDRESS');
 check(code({ mode: 'signed_only', legacyPortalMigration: false }) === 'SIGNED_ONLY', 'Signed only: SIGNED_ONLY (a per-computer request must not reopen what the mode closed)');

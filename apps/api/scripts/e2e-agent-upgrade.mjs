@@ -200,8 +200,8 @@ async function main() {
     check(r.status === 200 && d.kind === 'standard' && d.channel === 'standard' && d.version === version, 'standard Windows agent: type, channel and version', msg(r));
     check(d.current.state === 'current' && d.portal.mode === 'legacy_allowed' && d.portal.modeLabel === 'Legacy allowed', 'current against this portal; mode Legacy allowed', JSON.stringify({ c: d.current, p: d.portal }));
     check(d.update.possible && d.update.label === 'Update agent', 'Update agent offered');
-    check(d.migration && !d.migration.possible && d.migration.code === 'NO_SIGNED_RELEASE' && /No signed release is published/.test(d.migration.reason) && d.migration.link?.href === '/docs/update-signing#roles-and-keys',
-      'Upgrade to signed agent: refused with "No signed release is published" and the Roles and keys link', JSON.stringify(d.migration));
+    check(d.migration && !d.migration.possible && d.migration.code === 'NO_SIGNED_RELEASE' && /No signed release is published/.test(d.migration.reason) && d.migration.link?.href === '/endpoints/full-agent',
+      'Upgrade to signed agent: refused with "No signed release is published" and the Full agent link', JSON.stringify(d.migration));
     const old = (await card(S.ownerA, w3)).data;
     check(old.current.state === 'behind' && /older than 0\.20\.0/.test(old.current.text), 'an agent below the contract is "behind" and says why', JSON.stringify(old.current));
     const sg = (await card(S.ownerA, wSigned)).data;
@@ -440,7 +440,7 @@ async function main() {
     r = await req('GET', `/endpoints/${w3.id}/patches`, { s: S.ownerA });
     check(/already requested/.test(r.data?.install?.fix ?? '') && r.data.install.fixAction === 'agent-card', 'a request open: says so', JSON.stringify(r.data?.install));
     r = await withoutRepo(() => req('GET', `/endpoints/${w2.id}/patches`, { s: S.ownerA }));
-    check(/No signed release is published/.test(r.data?.install?.fix ?? '') && r.data.install.fixLink?.href === '/docs/update-signing#roles-and-keys', 'nothing published: "No signed release is published", linked to Roles and keys', JSON.stringify(r.data?.install));
+    check(/No signed release is published/.test(r.data?.install?.fix ?? '') && r.data.install.fixLink?.href === '/endpoints/full-agent', 'nothing published: "No signed release is published", linked to the Full agent page', JSON.stringify(r.data?.install));
     r = await req('GET', `/endpoints/${wNoSecret.id}/patches`, { s: S.ownerA });
     check(/device secret/.test(r.data?.install?.fix ?? ''), 'no device secret: says that', JSON.stringify(r.data?.install));
   }
