@@ -31,7 +31,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { CommonModule } from './common/common.module';
 import { AuthModule } from './auth/auth.module';
 import { StepUpModule } from './auth/step-up.service';
-import { RoutineConfirmModule } from './security-controls/routine-confirm.module';
+import { ConfirmPolicyModule } from './security-controls/confirm-policy.module';
 import { MfaModule } from './mfa/mfa.module';
 import { RbacModule } from './rbac/rbac.module';
 import { AuditModule } from './audit/audit.module';
@@ -121,7 +121,7 @@ import { TrayModule } from './tray/tray.module';
     HealthModule,
     AuthModule,
     StepUpModule,
-    RoutineConfirmModule,
+    ConfirmPolicyModule,
     MfaModule,
     TenantsModule,
     UsersModule,

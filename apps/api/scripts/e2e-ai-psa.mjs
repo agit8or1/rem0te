@@ -411,7 +411,7 @@ async function all() {
 
   // ── What the audit kept ───────────────────────────────────────────────────
   section('Audit rows carry ids and counts, never text or keys');
-  const rows = await prisma.activityLog.findMany({ where: { action: { in: ['AI_SETTINGS_CHANGED', 'AI_SETTINGS_TESTED', 'AI_ASKED', 'AI_ANSWERED', 'PSA_CONNECTOR_CHANGED', 'PSA_TICKET_CREATED', 'PSA_TICKET_FAILED'] }, actorId: { in: created.users } } });
+  const rows = await prisma.activityLog.findMany({ where: { action: { in: ['AI_SETTINGS_CHANGED', 'AI_SETTINGS_TESTED', 'AI_ASKED', 'AI_ANSWERED', 'PSA_CONNECTOR_CHANGED', 'PSA_TICKET_CREATED', 'PSA_TICKET_FAILED'] }, actorId: { in: created.users } }, orderBy: { createdAt: 'asc' } });
   const kinds = new Set(rows.map((x) => x.action));
   check(['AI_SETTINGS_CHANGED', 'AI_SETTINGS_TESTED', 'AI_ASKED', 'AI_ANSWERED', 'PSA_CONNECTOR_CHANGED', 'PSA_TICKET_CREATED', 'PSA_TICKET_FAILED'].every((k) => kinds.has(k)), `every new action was recorded (${[...kinds].join(', ')})`);
   const blob = JSON.stringify(rows.map((x) => x.metadata ?? x.meta ?? null));

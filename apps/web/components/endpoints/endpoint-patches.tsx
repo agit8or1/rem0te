@@ -17,6 +17,7 @@ import { osName, updateSourceLabel } from '@/lib/platform-wording';
 import { connectivityLabel, connectivityOf } from '@/lib/connectivity';
 import { useApprovalMode } from '@/hooks/use-approval-mode';
 import { DIRECT_TOAST, oldAgentUpdateRefusal } from '@/lib/direct-mode';
+import { useAsks } from '@/lib/confirm-policy';
 
 /**
  * Windows Update posture of one computer (v0.27), as its signed agent's
@@ -150,6 +151,7 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
   const allPicked = installable.length > 0 && chosen.length === installable.length;
   // 0.40.1: in direct mode this is an install button, not a request for approval.
   const direct = useApprovalMode({ endpointId }) === 'direct';
+  const askDirect = useAsks('actions.direct');
   const go = useMutation({
     mutationFn: () => patchingApi.install(endpointId, {
       updates: chosen.map((u) => ({ updateId: u.updateId, revision: u.revision })),
@@ -204,7 +206,7 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
       <CardContent className="space-y-3 text-xs">
         <p className="text-muted-foreground" data-testid="patch-install-mode">
           {direct
-            ? 'Tick the updates to install. Direct mode is on: it is signed as soon as you confirm it is you, and installs on this computer when it next checks in.'
+            ? `Tick the updates to install. Direct mode is on: it is signed as soon as you ${askDirect ? 'confirm it is you' : 'request it'}, and installs on this computer when it next checks in.`
             : 'Tick the updates to install on this computer. Two people on the approval roster approve it on the approval signer — not you, and not from here. It runs inside the window you give.'}
         </p>
         {requested}

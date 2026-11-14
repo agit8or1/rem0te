@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiError } from '@/components/security-controls/shared';
+import { useAsks } from '@/lib/confirm-policy';
 
 /**
  * Settings → API keys (0.29).
@@ -70,6 +71,7 @@ export default function ApiKeysPage() {
   const [name, setName] = useState('');
   const [scopes, setScopes] = useState<string[]>(['computers:read']);
   const [expires, setExpires] = useState('90');
+  const askCreate = useAsks('apikey.create');
   const create = useMutation({
     mutationFn: () => apiKeysApi.create({
       name: name.trim(), scopes,
@@ -178,8 +180,10 @@ export default function ApiKeysPage() {
             <KeyRound className="mr-1 h-4 w-4" />Create key
           </Button>
           <p className="text-xs text-muted-foreground">
-            You will be asked to confirm it is you: a key keeps working after you sign out, so creating one needs a fresh
-            sign-in. Scopes cannot be changed later — create a new key and revoke the old one. Revoking never asks.
+            {askCreate
+              ? 'You will be asked to confirm it is you: a key keeps working after you sign out, so creating one needs a fresh sign-in. '
+              : 'A key keeps working after you sign out. '}
+            Scopes cannot be changed later — create a new key and revoke the old one.{askCreate ? ' Revoking never asks.' : ''}
           </p>
           {needsBusiness && !target && <p className="text-xs text-muted-foreground">Choose a business above first.</p>}
         </CardContent>

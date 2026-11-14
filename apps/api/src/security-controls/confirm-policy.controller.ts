@@ -5,13 +5,16 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { Actor } from '../common/decorators/actor.decorator';
 import { RateLimit } from '../common/throttling';
 import type { ActorContext } from '../rbac/access-control.service';
-import { RoutineConfirmService } from './routine-confirm';
+import { ConfirmPolicyService } from './confirm-policy.service';
 
-/** 0.46.1 / 0.47: Settings → General → Confirm before everyday changes (routine-confirm.ts). */
-@Controller('security/routine-confirm')
+/**
+ * 0.49: Settings → Confirm it is you (confirm-policy.service.ts). Replaces
+ * 0.47's everyday-changes route, which is gone.
+ */
+@Controller('security/confirm-policy')
 @UseGuards(JwtAuthGuard)
-export class RoutineConfirmController {
-  constructor(private readonly svc: RoutineConfirmService, private readonly stepUp: StepUpService) {}
+export class ConfirmPolicyController {
+  constructor(private readonly svc: ConfirmPolicyService, private readonly stepUp: StepUpService) {}
 
   @Get()
   async get(@Actor() actor: ActorContext) {
@@ -20,10 +23,9 @@ export class RoutineConfirmController {
 
   @Put()
   @RateLimit(20)
-  async put(@Actor() actor: ActorContext, @Body() body: { value?: unknown }, @Req() req: Request) {
+  async put(@Actor() actor: ActorContext, @Body() body: unknown, @Req() req: Request) {
     const u = req.user as { sub?: string; iat?: number } | undefined;
     const fresh = u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null;
-    return { success: true, data: await this.svc.set(actor, body?.value, fresh) };
+    return { success: true, data: await this.svc.set(actor, body, fresh) };
   }
 }
-

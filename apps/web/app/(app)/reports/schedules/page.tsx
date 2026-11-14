@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiError } from '@/components/security-controls/shared';
+import { reauthSuffix, useAsks } from '@/lib/confirm-policy';
 import { EmailOffNotice } from '@/components/email/recipients-card';
 import { useMayOwnSchedules } from '@/components/reports/report-kit';
 
@@ -103,6 +104,7 @@ export default function ReportSchedulesPage() {
   // A schedule keeps its business; an edit names the one it already has.
   const [editingBiz, setEditingBiz] = useState<string | null>(null);
   const [form, setForm] = useState<ReportScheduleInput>(blank());
+  const askSchedule = useAsks('reports.schedule');
   const prefillApplies = !!prefill && (isPlatformAdmin ? prefill.businessId === businessId : !!businessId);
   useEffect(() => {
     setEditing(null);
@@ -239,7 +241,7 @@ export default function ReportSchedulesPage() {
                 </div>
                 <label className="flex items-center gap-2"><input type="checkbox" checked={form.attachCsv} onChange={(e) => set({ attachCsv: e.target.checked })} />Attach the report as CSV (the same audited export as Download CSV, with the same row limit)</label>
                 <div className="flex gap-2">
-                  <Button disabled={save.isPending || form.recipientIds.length === 0} onClick={() => save.mutate()}>{editing ? 'Save' : 'Create'} (re-authenticate)</Button>
+                  <Button disabled={save.isPending || form.recipientIds.length === 0} onClick={() => save.mutate()}>{`${editing ? 'Save' : 'Create'}${reauthSuffix(askSchedule)}`}</Button>
                   {editing && <Button variant="ghost" onClick={() => { setEditing(null); setForm(blank()); }}>Cancel</Button>}
                 </div>
                 <p className="text-xs text-muted-foreground">Without a CSV the email carries only a link: recipients sign in to see the report. <Link className="underline" href="/docs">How scheduled reports work</Link>.</p>

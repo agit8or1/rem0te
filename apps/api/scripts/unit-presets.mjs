@@ -131,11 +131,13 @@ t('independent review refuses the requester, non-reviewers and technician contex
   assert.doesNotThrow(() => assertIndependentReviewer({ userId: 'c', isPlatformAdmin: false, platformPermissions: ['approvals:review'] }, 'b', 'x'));
   assert.throws(() => assertIndependentReviewer({ ...admin, technician: { sources: [] } }, 'b', 'x'));
 });
-t('fresh auth: required always; a protected exception needs a passkey', () => {
-  assert.throws(() => assertFresh(null));
-  assert.doesNotThrow(() => assertFresh('password'));
-  assert.throws(() => assertFresh('totp', { phishingResistant: true }));
-  assert.doesNotThrow(() => assertFresh('passkey', { phishingResistant: true }));
+// 0.49: every call names its catalog key; with no policy loaded every key asks
+// (unit-confirm-policy.mjs covers a loaded policy).
+t('fresh auth: asks while no policy is loaded; a protected exception needs a passkey', () => {
+  assert.throws(() => assertFresh(null, { action: 'security.controls' }), (e) => e?.response?.code === 'STEP_UP_REQUIRED' && e.response.action === 'security.controls');
+  assert.doesNotThrow(() => assertFresh('password', { action: 'security.controls' }));
+  assert.throws(() => assertFresh('totp', { action: 'temporary.access', phishingResistant: true }), (e) => e?.response?.action === 'fresh.auth.passkey');
+  assert.doesNotThrow(() => assertFresh('passkey', { action: 'temporary.access', phishingResistant: true }));
 });
 
 // ── Launch policy ───────────────────────────────────────────────────────────

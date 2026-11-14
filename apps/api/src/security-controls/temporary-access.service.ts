@@ -89,7 +89,7 @@ export class TemporaryAccessService {
     const row = await this.prisma.temporaryAccessRequest.findUnique({ where: { id } });
     if (!row || row.userId !== actor.userId) throw new NotFoundException('Request not found');
     if (row.status !== 'APPROVED' || row.activatedAt) throw new ConflictException('Only an approved, not-yet-activated request can be activated');
-    assertFresh(freshMethod, { phishingResistant: row.mode === 'PROTECTED_EXCEPTION' });
+    assertFresh(freshMethod, { action: 'temporary.access', phishingResistant: row.mode === 'PROTECTED_EXCEPTION' });
     // Still eligible now? A demotion after approval ends it here.
     await this.acl.assertEndpointInScope(actor, row.endpointId, CAP.COMPUTERS_VIEW);
     const why = this.eligible(actor, row.endpointId, row.mode as TemporaryMode);

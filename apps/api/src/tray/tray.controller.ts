@@ -159,7 +159,7 @@ export class EndpointTrayController {
 
 function fresh(stepUp: StepUpService, req: Request) {
   const u = req.user as { sub?: string; iat?: number } | undefined;
-  assertFresh(u?.sub ? stepUp.read(req, u.sub, u.iat)?.method ?? null : null, { message: 'Confirm it is you to change whether chats are recorded.' });
+  assertFresh(u?.sub ? stepUp.read(req, u.sub, u.iat)?.method ?? null : null, { action: 'chat.recording', message: 'Confirm it is you to change whether chats are recorded.' });
 }
 
 /**

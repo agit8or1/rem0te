@@ -153,8 +153,8 @@ try {
   r = await req('PUT', '/admin/public-address', { cookie: cAdmin, body: { url: API_ORIGIN } });
   check(r.status === 403 && r.body.code === 'STEP_UP_REQUIRED', 'saving needs step-up', `${r.status} ${j(r.body)}`);
   check(r.body.action === 'platform.configure', 'the step-up response names the action (platform.configure)', j(r.body));
-  const settings = await prisma.platformSettings.findUnique({ where: { id: 'singleton' } });
-  check(settings.stepUpActions.includes('platform.configure'), 'the migration turned platform.configure on for the existing settings row', j(settings.stepUpActions));
+  const pol = await prisma.confirmPolicy.findUnique({ where: { key: 'platform.configure' } });
+  check(!pol || pol.value === 'ask', 'the confirm policy asks for platform.configure (0.49: no off row)', j(pol));
   const sAdmin = await stepUp(cAdmin);
 
   section('Reachability check');

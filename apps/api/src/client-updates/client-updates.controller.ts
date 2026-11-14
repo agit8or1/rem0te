@@ -1,11 +1,11 @@
-import { routineConfirmRequired } from '../security-controls/review';
+import { confirmRequired } from '../security-controls/review';
 import { Body, Controller, Delete, ForbiddenException, Get, Param, Put, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { Actor } from '../common/decorators/actor.decorator';
 import type { ActorContext } from '../rbac/access-control.service';
 import { StepUpService } from '../auth/step-up.service';
-import { ClientUpdatesService, FreshAuthNeeded } from './client-updates.service';
+import { ClientUpdatesService, FreshAuthNeeded, type Fresh } from './client-updates.service';
 
 const biz = (q: Record<string, unknown>) => (typeof q.businessId === 'string' && q.businessId ? q.businessId : undefined);
 
@@ -19,9 +19,15 @@ const biz = (q: Record<string, unknown>) => (typeof q.businessId === 'string' &&
 export class ClientUpdatesController {
   constructor(private readonly svc: ClientUpdatesService, private readonly stepUp: StepUpService) {}
 
-  private isFresh(req: Request): boolean {
+  /**
+   * 0.49: per catalog key — the write may go ahead when the confirm policy
+   * has that key off (confirmRequired, which asks until the policy is read),
+   * or the request carries a fresh step-up.
+   */
+  private isFresh(req: Request): Fresh {
     const u = req.user as { sub?: string; iat?: number } | undefined;
-    return !!(u?.sub && this.stepUp.read(req, u.sub, u.iat)?.method);
+    const stepped = !!(u?.sub && this.stepUp.read(req, u.sub, u.iat)?.method);
+    return (key) => stepped || !confirmRequired(key);
   }
 
   /**
@@ -31,10 +37,10 @@ export class ClientUpdatesController {
    * STEP_UP_REQUIRED refusal, which the console answers with its step-up
    * dialog and a retry; the action names what is being confirmed.
    */
-  private async fresh<T>(fn: () => Promise<T>, what: 'schedule' | 'agent' = 'schedule'): Promise<T> {
+  private async fresh<T>(fn: () => Promise<T>): Promise<T> {
     try { return await fn(); } catch (e) {
       if (e instanceof FreshAuthNeeded) {
-        throw new ForbiddenException(what === 'agent' ? {
+        throw new ForbiddenException(e.key === 'agent.autoupdate.business' ? {
           code: 'STEP_UP_REQUIRED', action: 'agent.autoupdate.business',
           message: 'Confirm it is you to continue: turning on automatic agent updates lets the server re-run the installer on this business’s outdated computers without anyone clicking Update agent.',
         } : {
@@ -63,7 +69,7 @@ export class ClientUpdatesController {
    */
   @Put('policy/agent-mode')
   async putAgentMode(@Actor() a: ActorContext, @Body() body: unknown, @Req() req: Request) {
-    return { success: true, data: await this.fresh(() => this.svc.putAgentMode(a, body, this.isFresh(req) || !routineConfirmRequired()), 'agent') };
+    return { success: true, data: await this.fresh(() => this.svc.putAgentMode(a, body, this.isFresh(req))) };
   }
 
   @Delete('policy/sites/:siteId')

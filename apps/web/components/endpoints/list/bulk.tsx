@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useAsks } from '@/lib/confirm-policy';
 import { BULK_MAX, bulkApi, describeRule, deviceGroupsApi, refusalMessage } from './api';
 import type { BulkAction, BulkResponse, DeviceGroup, DeviceRule, SortKey } from './types';
 
@@ -49,6 +50,7 @@ export function BulkBar({
   const [migrateOpen, setMigrateOpen] = React.useState(false);
   const [reason, setReason] = React.useState('');
   const ids = [...selected.keys()];
+  const askMigrate = useAsks('agent.migrate');
   // Only a static group can be added to or removed from; a rule group's members follow its rule.
   const manageable = groups.filter((g) => g.may.manage && g.kind !== 'rule' && g.id !== target?.id);
 
@@ -137,7 +139,7 @@ export function BulkBar({
             {spin('agent.update') ?? <Wrench className="h-4 w-4 mr-1.5" />}Update agent
           </Button>
           <Button size="sm" variant="outline" className="h-8" disabled={!!busy} onClick={() => setMigrateOpen(true)}
-            title="Moves each standard Windows computer to the full (signed) agent. Needs a fresh sign-in and a reason; each computer is checked on its own.">
+            title={`Moves each standard Windows computer to the full (signed) agent. Needs ${askMigrate ? 'a fresh sign-in and ' : ''}a reason; each computer is checked on its own.`}>
             <ShieldCheck className="h-4 w-4 mr-1.5" />Upgrade to full agent…
           </Button>
         </>
@@ -150,7 +152,7 @@ export function BulkBar({
               The full agent is the signed agent. Each standard Windows computer is handed, once, the portal’s migration script. It downloads the signed agent,
               checks it against the digest the signed repository publishes, and runs <code>migrate</code>, which keeps the
               enrolment, device secret and RustDesk configuration. After that the computer runs only signed code. Computers
-              that cannot be moved are refused one by one with the reason. You will be asked to confirm it is you.
+              that cannot be moved are refused one by one with the reason.{askMigrate ? ' You will be asked to confirm it is you.' : ''}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">

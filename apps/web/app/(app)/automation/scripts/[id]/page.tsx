@@ -8,6 +8,7 @@ import { AlertTriangle, ArrowLeft, Check, GitCompare, Pencil, Send, Undo2, X } f
 import { scriptsApi, type ScriptParameter, type ScriptRisk } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
+import { useAsks } from '@/lib/confirm-policy';
 import { PageHeader } from '@/components/common/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -165,6 +166,7 @@ function VersionView({ id, v, onChanged }: { id: string; v: VersionData; onChang
   const { toast } = useToast();
   const [note, setNote] = useState('');
   const [ack, setAck] = useState(false);
+  const askReview = useAsks('scripts.review');
   useEffect(() => { setNote(''); setAck(false); }, [v.version]);
   const fail = (title: string) => (e: unknown) => toast({ title, description: apiMessage(e, 'Refused.'), variant: 'destructive' });
   const submit = useMutation({ mutationFn: () => scriptsApi.submit(id, v.version), onSuccess: () => { toast({ title: 'Submitted for review' }); onChanged(); }, onError: fail('Not submitted') });
@@ -256,7 +258,7 @@ function VersionView({ id, v, onChanged }: { id: string; v: VersionData; onChang
             {v.you.canReview && (
               <div className="space-y-2" data-review>
                 {v.you.selfReview && <p className="text-xs" data-self-review>The approval signer is in direct mode (its default policy), so you may review a version you wrote. It is recorded as a self-review, not an independent one.</p>}
-                <p className="text-xs">You are reviewing content <code className="font-mono">{shortHash(v.contentSha256)}</code>. An approval records that exact hash; any later edit is a new version that needs its own review. Approving asks you to confirm it is you, and runs nothing.</p>
+                <p className="text-xs">You are reviewing content <code className="font-mono">{shortHash(v.contentSha256)}</code>. An approval records that exact hash; any later edit is a new version that needs its own review. {askReview ? 'Approving asks you to confirm it is you, and runs nothing.' : 'Approving runs nothing.'}</p>
                 <div className="space-y-1">
                   <Label htmlFor="rv-note" className="text-xs">Note (what you checked, or why not)</Label>
                   <Textarea id="rv-note" rows={2} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} />

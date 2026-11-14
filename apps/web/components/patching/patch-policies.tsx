@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
+import { useAsks } from '@/lib/confirm-policy';
 import { POLICY_STATUS, WEEKDAYS, CLASS_NAMES, DEFAULT_POLICY_CLASSES, DRIVERS_CLASS, SEVERITIES, describeWindow } from '@/lib/patching';
 import { AlertTriangle, CheckCircle2, Loader2, Plus, ScrollText, XCircle } from 'lucide-react';
 import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
@@ -126,6 +127,7 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
   const [expiresInDays, setExpiresInDays] = useState(30);
   const [reason, setReason] = useState('');
   const [reboot, setReboot] = useState<RebootRule>('never');
+  const askPropose = useAsks('patching.policy');
 
   const rings = useMemo(() => {
     const max = Math.max(-1, ...Object.values(ringOf).filter((r): r is number => r !== ''));
@@ -230,7 +232,7 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
         </div>
 
         <p className="text-xs text-muted-foreground flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />
-          The restart rule is part of what the approvers sign: a ring plan may never ask for more than it. Proposing needs a fresh sign-in; approving happens only on the approval signer.
+          The restart rule is part of what the approvers sign: a ring plan may never ask for more than it. {askPropose ? 'Proposing needs a fresh sign-in; approving' : 'Approving'} happens only on the approval signer.
         </p>
         <div className="flex gap-2">
           <Button size="sm" disabled={!ok || create.isPending} onClick={() => create.mutate()}>{create.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Propose for approval</Button>

@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiError } from '@/components/security-controls/shared';
+import { reauthSuffix, useAsks } from '@/lib/confirm-policy';
 import { deviceGroupsApi } from '@/components/endpoints/list/api';
 
 /**
@@ -387,6 +388,7 @@ function Notify({ businessId, ok, fail }: Props) {
     queryKey: ['email-recipients', scope, businessId], queryFn: () => emailApi.recipients(scope, businessId).then((r) => r.data.data), retry: false, enabled: may,
   });
   const confirmed = (book?.recipients ?? []).filter((r) => r.verified);
+  const askNotify = useAsks('monitoring.notify');
   const setDest = (i: number, k: number, d: Dest) => setLevels(edit.levels.map((x, j) => (j === i ? { ...x, destinations: x.destinations.map((y, m) => (m === k ? d : y)) } : x)));
 
   if (error) return <p className="p-4 text-sm text-muted-foreground">{apiError(error).message}</p>;
@@ -400,7 +402,7 @@ function Notify({ businessId, ok, fail }: Props) {
           Each level fires once an alert has been open that many minutes and is not acknowledged. Destinations receive a JSON POST
           (Slack/Teams-style incoming webhooks and ticketing relays work). {businessId ? 'A business destination must be https on a public host name.' : ''}
           {' '}An email destination is one of the confirmed addresses below; the email says only the alert, the computer, the business and a link.
-          {' '}Saving asks you to confirm it is you: a destination receives alert text, including computer names.
+          {askNotify ? ' Saving asks you to confirm it is you: a destination receives alert text, including computer names.' : ' A destination receives alert text, including computer names.'}
         </p>
         <EmailOffNotice enabled={mail?.enabled} />
         {!may && <p className="text-muted-foreground">Only {businessId ? 'a Business Owner of this business or the MSP' : 'the MSP'} can change this; addresses are shown shortened.</p>}
@@ -451,7 +453,7 @@ function Notify({ businessId, ok, fail }: Props) {
         </div>
         {may && (
           <div className="flex gap-2">
-            <Button disabled={!draft || save.isPending} onClick={() => save.mutate()}>Save (re-authenticate)</Button>
+            <Button disabled={!draft || save.isPending} onClick={() => save.mutate()}>{`Save${reauthSuffix(askNotify)}`}</Button>
             {draft && <Button variant="ghost" onClick={() => setDraft(null)}>Discard changes</Button>}
           </div>
         )}

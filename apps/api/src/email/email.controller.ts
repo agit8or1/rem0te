@@ -9,9 +9,9 @@ import { StepUpService } from '../auth/step-up.service';
 import { assertFresh } from '../security-controls/review';
 import { EmailService } from './email.service';
 
-function fresh(stepUp: StepUpService, req: Request) {
+function fresh(stepUp: StepUpService, req: Request, action: 'email.relay' | 'email.recipients') {
   const u = req.user as { sub?: string; iat?: number } | undefined;
-  assertFresh(u?.sub ? stepUp.read(req, u.sub, u.iat)?.method ?? null : null);
+  assertFresh(u?.sub ? stepUp.read(req, u.sub, u.iat)?.method ?? null : null, { action });
 }
 
 /**
@@ -30,7 +30,7 @@ export class SmtpSettingsController {
   @Put()
   @RateLimit(20)
   async put(@Actor() a: ActorContext, @Body() body: unknown, @Req() req: Request) {
-    fresh(this.stepUp, req);
+    fresh(this.stepUp, req, 'email.relay');
     return { success: true, data: await this.email.putSettings(a, body) };
   }
 
@@ -63,7 +63,7 @@ export class EmailRecipientsController {
   @Post('recipients')
   @RateLimit(10)
   async add(@Actor() a: ActorContext, @Body() body: unknown, @Req() req: Request) {
-    fresh(this.stepUp, req);
+    fresh(this.stepUp, req, 'email.recipients');
     return { success: true, data: await this.email.addRecipient(a, body) };
   }
 
@@ -71,13 +71,13 @@ export class EmailRecipientsController {
   @HttpCode(HttpStatus.OK)
   @RateLimit(10)
   async resend(@Actor() a: ActorContext, @Param('id') id: string, @Req() req: Request) {
-    fresh(this.stepUp, req);
+    fresh(this.stepUp, req, 'email.recipients');
     return { success: true, data: await this.email.resendVerification(a, id) };
   }
 
   @Delete('recipients/:id')
   async remove(@Actor() a: ActorContext, @Param('id') id: string, @Req() req: Request) {
-    fresh(this.stepUp, req);
+    fresh(this.stepUp, req, 'email.recipients');
     return { success: true, data: await this.email.removeRecipient(a, id) };
   }
 

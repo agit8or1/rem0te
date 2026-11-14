@@ -11,8 +11,9 @@
  *     including a re-enrol token for an existing computer. A stale session
  *     gets 403 STEP_UP_REQUIRED (action enrollment.create) and no row is
  *     written; a fresh one succeeds and the audit entry records how;
- *   - it is unconditional: emptying PlatformSettings.stepUpActions does not
- *     turn it off;
+ *   - (0.49) it is its own catalog key (enrollment.create): turning every
+ *     other confirmation off under Settings → Confirm it is you does not
+ *     turn this one off;
  *   - the proof is the existing step-up cookie, so it is bound to the user and
  *     to the sign-in: another user's step-up, a step-up from an earlier
  *     sign-in, a forged one and an expired one are all refused;
@@ -28,7 +29,7 @@
  *   - (0.34) for API keys too, scope and validation come first (another
  *     business 403, an unknown one 404, no valid scope 400, a Business User
  *     403 on the permission), the refusal writes nothing, the audit entry
- *     records the step-up method, emptying stepUpActions does not lift it,
+ *     records the step-up method, other keys being off does not lift it,
  *     revoking never needs it, and there is no route that widens a key's
  *     scopes or restores a revoked key;
  *   - registering a computer by RustDesk ID (POST /endpoints, Platform Admin
@@ -124,7 +125,7 @@ function forgeStepUp(payload, secret = JWT_SECRET) {
 const jwtPayload = (cookie) => JSON.parse(Buffer.from(cookie.split('=')[1].split('.')[1], 'base64url').toString('utf8'));
 
 const created = { businesses: [], users: [], rustdeskIds: [] };
-let savedStepUpActions = null;
+let savedConfirmPolicy = null;
 
 async function all() {
   const tenant = await prisma.tenant.findFirst({ orderBy: { createdAt: 'asc' } });
@@ -207,15 +208,19 @@ async function all() {
   check(isStepUp(r), 'a malformed step-up cookie: refused', msg(r));
 
   // ── Unconditional ─────────────────────────────────────────────────────────
-  section('It cannot be configured away');
-  const ps = await prisma.platformSettings.findUnique({ where: { id: 'singleton' }, select: { stepUpActions: true } });
-  savedStepUpActions = ps ? ps.stepUpActions : undefined;
-  await prisma.platformSettings.upsert({ where: { id: 'singleton' }, update: { stepUpActions: [] }, create: { id: 'singleton', stepUpActions: [] } });
+  section('Other functions being off does not turn it off (0.49)');
+  savedConfirmPolicy = await prisma.confirmPolicy.findMany();
+  const others = Object.fromEntries((await req('GET', '/security/confirm-policy', { cookie: S.admin.cookie })).data.catalog
+    .map((f) => f.key).filter((k) => k !== 'enrollment.create' && k !== 'apikey.create').map((k) => [k, 'off']));
+  r = await req('PUT', '/security/confirm-policy', { cookie: S.admin.cookie, stepUp: S.admin.stepUp, body: { values: others } });
+  check(r.status === 200 && r.data.values['enrollment.create'] === 'ask' && r.data.values['software.catalog'] === 'off', 'every other confirmation turned off by a fresh Platform Admin', msg(r));
   r = await req('POST', '/enrollment/tokens', { cookie: ownerA2.cookie, body: { businessId: A.id } });
-  check(isStepUp(r), 'with every configurable step-up action switched off, a stale mint is still refused', msg(r));
+  check(isStepUp(r), 'with every other confirmation off, a stale mint is still refused', msg(r));
   r = await req('POST', '/apikeys', { cookie: ownerA2.cookie, body: { name: `${TAG}-unconfigured`, scopes: ['computers:read'] } });
   check(isStepUp(r, 'apikey.create'), 'and so is a stale API key creation', msg(r));
-  await restoreStepUpActions();
+  r = await req('PUT', '/security/confirm-policy', { cookie: S.admin.cookie, body: { values: Object.fromEntries(Object.keys(others).map((k) => [k, 'ask'])) } });
+  check(r.status === 200 && Object.values(r.data.values).every((v) => v === 'ask'), 'asking again needs no fresh confirmation', msg(r));
+  await restoreConfirmPolicy();
 
   // ── API keys ──────────────────────────────────────────────────────────────
   section('API keys: cannot step up, keep the ability; creating ANY key needs a fresh sign-in (0.34)');
@@ -307,17 +312,17 @@ async function all() {
   check(r.status === 200 && (r.data ?? []).length >= 4 && (r.data ?? []).every((t) => t.customerId === A.id), 'owner A lists only A\'s tokens', `${(r.data ?? []).length} rows`);
 }
 
-async function restoreStepUpActions() {
-  if (savedStepUpActions === null) return;
-  if (savedStepUpActions === undefined) await prisma.platformSettings.update({ where: { id: 'singleton' }, data: { stepUpActions: { set: ['credential.reveal', 'permissions.change', 'technicians.manage', 'sso.configure', 'passkey.manage', 'platform.configure'] } } }).catch(() => {});
-  else await prisma.platformSettings.update({ where: { id: 'singleton' }, data: { stepUpActions: { set: savedStepUpActions } } });
-  savedStepUpActions = null;
+async function restoreConfirmPolicy() {
+  if (savedConfirmPolicy === null) return;
+  await prisma.confirmPolicy.deleteMany({});
+  if (savedConfirmPolicy.length) await prisma.confirmPolicy.createMany({ data: savedConfirmPolicy });
+  savedConfirmPolicy = null;
 }
 
 async function cleanup() {
   await stopApi();
   try {
-    await restoreStepUpActions();
+    await restoreConfirmPolicy();
     const ids = created.businesses;
     const eps = await prisma.endpoint.findMany({ where: { customerId: { in: ids } }, select: { id: true } });
     const epIds = eps.map((e) => e.id);

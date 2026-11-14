@@ -200,7 +200,7 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
     // 0.40: in direct mode (the signer's default policy) the signer adds the
     // entry at once, so proposing it is the decision.
     const direct = await this.allowlistDirect();
-    if (direct) assertFresh(freshMethod ?? null, { action: 'scripts.direct', routine: 'scripts.direct', message: 'Direct mode: the approval signer adds this script to its allowlist as soon as you propose it. Confirm it is you.' });
+    if (direct) assertFresh(freshMethod ?? null, { action: 'scripts.direct', message: 'Direct mode: the approval signer adds this script to its allowlist as soon as you propose it. Confirm it is you.' });
     const ppl = new Map((await this.prisma.user.findMany({ where: { id: { in: [...v.contributorIds, v.decidedById, actor.userId] } }, select: { id: true, email: true, firstName: true, lastName: true } }))
       .map((u) => [u.id, ([u.firstName, u.lastName].filter(Boolean).join(' ') || u.email).slice(0, 120)]));
     const name = (id: string) => ppl.get(id) ?? 'a removed user';

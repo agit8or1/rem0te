@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { useAsks } from '@/lib/confirm-policy';
 
 /**
  * Shared pieces of the script library pages. A script runs only as the
@@ -29,6 +30,8 @@ export function apiMessage(e: unknown, fallback: string) {
 
 /** Said plainly on every library page: how a script runs, and what has and has not been proven. */
 export function ScriptRunNotice() {
+  const askPropose = useAsks('scripts.direct');
+  const askRun = useAsks('actions.direct');
   return (
     <div role="note" className="mb-4 flex gap-3 rounded-md border border-blue-300 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-100" data-script-run-notice>
       <Info className="h-4 w-4 shrink-0 mt-0.5" />
@@ -39,8 +42,9 @@ export function ScriptRunNotice() {
           who did not write it add its exact SHA-256 to the signer&apos;s own allowlist, and each run is approved there again by two
           approvers. The agent checks the signature and the hash before it runs anything, as SYSTEM in Windows PowerShell, with a
           timeout and the first 64 KB of its output kept, redacted. In direct mode, which only the approval signer&apos;s operator
-          can turn on, proposing adds it to the allowlist and requesting a run signs it, each after a fresh sign-in, with no
-          approval step.
+          can turn on, {askPropose && askRun
+            ? 'proposing adds it to the allowlist and requesting a run signs it, each after a fresh sign-in, with no approval step.'
+            : `proposing adds it to the allowlist${askPropose ? ' after a fresh sign-in' : ''} and requesting a run signs it${askRun ? ' after a fresh sign-in' : ''}, with no approval step.`}
         </p>
         <p>
           <strong>What is proven:</strong> the agent&apos;s own decision code, running scripts in PowerShell 7 on Linux (arguments passed as data,

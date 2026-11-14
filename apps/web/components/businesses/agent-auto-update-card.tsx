@@ -6,6 +6,7 @@ import { RefreshCw } from 'lucide-react';
 import { clientUpdatesApi } from '@/lib/api-client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
+import { useAsks } from '@/lib/confirm-policy';
 
 type Mode = 'ANY_TIME' | 'WINDOW' | 'OFF';
 interface PolicyRead {
@@ -39,6 +40,7 @@ export function AgentAutoUpdateCard({ businessId }: { businessId: string }) {
     },
     onError: (e) => toast({ title: 'Not saved', description: (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'The request failed.', variant: 'destructive' }),
   });
+  const askMode = useAsks('agent.autoupdate.business');
   // Without computers:view there is nothing to show (and nothing to change).
   if (isError || !data) return null;
   const platformOn = (data.agentAuto?.platformEnabled ?? true) && (data.agentAuto?.processOn ?? true);
@@ -73,7 +75,7 @@ export function AgentAutoUpdateCard({ businessId }: { businessId: string }) {
           A site or device group with its own setting, and a computer set to On or Off on its Agent card, win over this one
           (computer → device group → site → business → global). The maintenance window, site overrides and device groups are set on{' '}
           <Link className="underline" href="/settings/client-updates">Settings → Client updates</Link>. This does not change the
-          RustDesk client update setting there. Off takes effect at once; anything else asks you to confirm it is you.
+          RustDesk client update setting there. {askMode ? 'Off takes effect at once; anything else asks you to confirm it is you.' : 'A change takes effect at once.'}
         </p>
         {!data.may.edit && data.may.reason && <p className="text-xs text-muted-foreground">{data.may.reason}</p>}
       </CardContent>

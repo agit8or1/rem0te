@@ -15,6 +15,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { DIRECT_TOAST, oldAgentUpdateRefusal } from '@/lib/direct-mode';
+import { useAsks } from '@/lib/confirm-policy';
 import { useApprovalMode } from '@/hooks/use-approval-mode';
 import { ArrowLeft, ExternalLink, Loader2, ShieldCheck } from 'lucide-react';
 import { rebootSummary } from '@/components/patching/patch-reboot-choice';
@@ -81,6 +82,7 @@ export default function DeploymentPage() {
   });
   const refresh = () => qc.invalidateQueries({ queryKey: ['patch-deployment', id] });
   const direct = useApprovalMode({ businessId: d?.businessId }) === 'direct';
+  const askDirect = useAsks('actions.direct');
   const [reason, setReason] = useState('');
   const [exclude, setExclude] = useState<Record<string, string>>({});
   const [startsIn, setStartsIn] = useState(0);
@@ -139,7 +141,7 @@ export default function DeploymentPage() {
           {d.next.canRequest && nextRing && d.origin !== 'POLICY' && (
             <>
               <p className="text-xs text-muted-foreground">
-                Requests {nextRing.canary ? 'the canary' : `ring ${nextRing.ring}`} ({nextRing.computers.length} computer{nextRing.computers.length === 1 ? '' : 's'}) as one signed plan. {direct ? 'Direct mode is on: it is signed as soon as you confirm it is you.' : 'Two people on the approval roster must approve it with a passkey; you cannot approve your own request.'} Restart rule: {rebootSummary(d.reboot).toLowerCase()}.
+                Requests {nextRing.canary ? 'the canary' : `ring ${nextRing.ring}`} ({nextRing.computers.length} computer{nextRing.computers.length === 1 ? '' : 's'}) as one signed plan. {direct ? `Direct mode is on: it is signed as soon as you ${askDirect ? 'confirm it is you' : 'request it'}.` : 'Two people on the approval roster must approve it with a passkey; you cannot approve your own request.'} Restart rule: {rebootSummary(d.reboot).toLowerCase()}.
               </p>
               {!nextRing.canary && (
                 <div className="space-y-1">

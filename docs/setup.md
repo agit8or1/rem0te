@@ -109,8 +109,8 @@ Then send anyone who needs help to `https://<your-host>/quick`.
 2. Pick the business, then a site (or none), and who should be able to reach the computer. The
    binding is fixed at this point — the machine that runs the link cannot choose a different
    business or site.
-3. Pick the operating system and make the install command — you confirm it is you first (0.33,
-   [sign-in.md](sign-in.md#always-on-whatever-is-configured)). Copy the one-line command (or, on
+3. Pick the operating system and make the install command — you confirm it is you first, unless a Platform Admin set *Install links* to *Don't ask* (0.33; 0.49,
+   [sign-in.md](sign-in.md#install-links-and-api-keys)). Copy the one-line command (or, on
    Windows, the one-click installer link). It is single-use, expires in 24 hours, and is shown once.
 4. Run it on the device, or send it to the person there.
 5. Leave the page open: it shows the device arriving, then its first health — online, the agent

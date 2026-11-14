@@ -73,7 +73,8 @@ export class SecurityControlsController {
     const u = req.user as { sub?: string; iat?: number } | undefined;
     return u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null;
   }
-  private requireFresh(req: Request) { assertFresh(this.fresh(req)); }
+  /** Each route names its catalog key (confirm-catalog.ts). */
+  private requireFresh(req: Request, action: 'security.controls' | 'security.trust' | 'temporary.access' | 'containment.lift') { assertFresh(this.fresh(req), { action }); }
 
   /**
    * The Security Features view. Platform Admins and technicians:manage see the
@@ -92,7 +93,7 @@ export class SecurityControlsController {
 
   @Post('presets/:id/clone')
   async clone(@Actor() a: ActorContext, @Param('id') id: string, @Body() dto: CloneDto, @Req() req: Request) {
-    this.requireFresh(req);
+    this.requireFresh(req, 'security.controls');
     return { success: true, data: await this.admin.clonePreset(a, id, dto.name) };
   }
 
@@ -104,20 +105,20 @@ export class SecurityControlsController {
 
   @Put('presets/:id')
   async updatePreset(@Actor() a: ActorContext, @Param('id') id: string, @Body() dto: PresetDto, @Req() req: Request) {
-    this.requireFresh(req);
+    this.requireFresh(req, 'security.controls');
     return { success: true, data: await this.admin.updatePreset(a, id, dto) };
   }
 
   @Post('presets/:id/reset')
   @HttpCode(HttpStatus.OK)
   async reset(@Actor() a: ActorContext, @Param('id') id: string, @Req() req: Request) {
-    this.requireFresh(req);
+    this.requireFresh(req, 'security.controls');
     return { success: true, data: await this.admin.resetPreset(a, id) };
   }
 
   @Delete('presets/:id')
   async deletePreset(@Actor() a: ActorContext, @Param('id') id: string, @Req() req: Request) {
-    this.requireFresh(req);
+    this.requireFresh(req, 'security.controls');
     return { success: true, data: await this.admin.deletePreset(a, id) };
   }
 
@@ -130,14 +131,14 @@ export class SecurityControlsController {
 
   @Put('policy')
   async setPolicy(@Actor() a: ActorContext, @Body() body: unknown, @Req() req: Request) {
-    this.requireFresh(req);
+    this.requireFresh(req, 'security.controls');
     return { success: true, data: await this.admin.setPlatformPolicy(a, body) };
   }
 
   /** Tighten-only by construction; still needs fresh auth. */
   @Put('policy/business/:businessId')
   async setBusinessPolicy(@Actor() a: ActorContext, @Param('businessId') id: string, @Body() body: unknown, @Req() req: Request) {
-    this.requireFresh(req);
+    this.requireFresh(req, 'security.controls');
     return { success: true, data: await this.admin.setBusinessPolicy(a, id, body) };
   }
 
@@ -171,7 +172,7 @@ export class SecurityControlsController {
   @Post('trust-changes/:id/decision')
   @HttpCode(HttpStatus.OK)
   async decideTrust(@Actor() a: ActorContext, @Param('id') id: string, @Body() dto: DecisionDto, @Req() req: Request) {
-    this.requireFresh(req);
+    this.requireFresh(req, 'security.trust');
     return { success: true, data: await this.trust.decide(a, id, dto.decision) };
   }
 
@@ -191,7 +192,7 @@ export class SecurityControlsController {
   @Post('temporary-access/:id/decision')
   @HttpCode(HttpStatus.OK)
   async decideTemporary(@Actor() a: ActorContext, @Param('id') id: string, @Body() dto: DecisionDto, @Req() req: Request) {
-    this.requireFresh(req);
+    this.requireFresh(req, 'temporary.access');
     return { success: true, data: await this.temporary.decide(a, id, dto.decision, dto.note) };
   }
 
@@ -212,13 +213,13 @@ export class SecurityControlsController {
 
   @Patch('endpoints/:id/device-class')
   async deviceClass(@Actor() a: ActorContext, @Param('id') id: string, @Body() dto: DeviceClassDto, @Req() req: Request) {
-    this.requireFresh(req);
+    this.requireFresh(req, 'security.controls');
     return { success: true, data: await this.admin.setDeviceClass(a, id, dto.deviceClass) };
   }
 
   @Patch('technician-devices/:id/managed')
   async managed(@Actor() a: ActorContext, @Param('id') id: string, @Body() dto: ManagedDto, @Req() req: Request) {
-    this.requireFresh(req);
+    this.requireFresh(req, 'security.controls');
     return { success: true, data: await this.admin.setManagedWorkstation(a, id, dto.managed) };
   }
 
@@ -230,7 +231,7 @@ export class SecurityControlsController {
   @Post('pauses/:id/clear')
   @HttpCode(HttpStatus.OK)
   async clearPause(@Actor() a: ActorContext, @Param('id') id: string, @Req() req: Request) {
-    this.requireFresh(req);
+    this.requireFresh(req, 'containment.lift');
     return { success: true, data: await this.admin.clearPause(a, id) };
   }
 
@@ -239,14 +240,14 @@ export class SecurityControlsController {
 
   @Post('maintenance-exceptions')
   async requestException(@Actor() a: ActorContext, @Body() dto: ExceptionDto, @Req() req: Request) {
-    this.requireFresh(req);
+    this.requireFresh(req, 'security.controls');
     return { success: true, data: await this.admin.requestException(a, dto) };
   }
 
   @Post('maintenance-exceptions/:id/decision')
   @HttpCode(HttpStatus.OK)
   async decideException(@Actor() a: ActorContext, @Param('id') id: string, @Body() dto: DecisionDto, @Req() req: Request) {
-    this.requireFresh(req);
+    this.requireFresh(req, 'security.controls');
     return { success: true, data: await this.admin.decideException(a, id, dto.decision) };
   }
 
@@ -261,7 +262,7 @@ export class SecurityControlsController {
 
   @Post('alert-suppressions')
   async suppress(@Actor() a: ActorContext, @Body() dto: SuppressDto, @Req() req: Request) {
-    this.requireFresh(req);
+    this.requireFresh(req, 'security.controls');
     return { success: true, data: await this.admin.suppress(a, dto) };
   }
 
