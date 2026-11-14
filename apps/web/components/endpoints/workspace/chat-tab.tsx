@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { endpointsApi } from '@/lib/api-client';
+import { Paperclip } from 'lucide-react';
+import { chatInboxApi, endpointsApi } from '@/lib/api-client';
+import { EmojiPicker } from '@/components/chat/emoji-picker';
+import { ChatAttachment, formatBytes, type ChatAttachmentMeta } from './chat-attachment';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -27,6 +30,11 @@ import { ago } from './device-model';
  * each message's receipt — sent, delivered to the agent, shown, read — set
  * only when the agent confirms it. Message text is rendered as React text:
  * escaped, never HTML, and never turned into a link.
+ *
+ * 0.44: emoji (a built-in picker; they are ordinary text), files and images
+ * both ways (chat-attachment.tsx — the server decides from the bytes what
+ * is shown inline), and a per-user read mark that clears this chat from the
+ * header's chat inbox while the panel is in front.
  */
 
 type Presence = { code: string; text: string };
@@ -39,6 +47,7 @@ type Conversation = {
 type Message = {
   id: string; sender: 'TECHNICIAN' | 'END_USER'; authorName: string; body: string; createdAt: string;
   deliveredAt: string | null; shownAt: string | null; readAt: string | null; receipt: 'sent' | 'delivered' | 'shown' | 'read' | null;
+  attachment: ChatAttachmentMeta | null;
 };
 type Overview = {
   support: { supported: true; via: 'window' | 'tray' } | { supported: false; reason: string; message: string };
@@ -48,7 +57,7 @@ type Overview = {
   lastSignedInUser: { name: string | null; at: string } | null;
   open: Conversation | null;
   conversations: Conversation[];
-  limits: { maxChars: number; perMinute: number; retentionDays: number };
+  limits: { maxChars: number; perMinute: number; retentionDays: number; attachmentBytes: number; attachmentsPerChat: number; attachmentBytesPerChat: number };
 };
 
 const RECEIPT: Record<NonNullable<Message['receipt']>, string> = {
@@ -76,6 +85,7 @@ function time(at: string) {
 }
 
 function Transcript({ endpointId, conversationId, live, canAck }: { endpointId: string; conversationId: string; live: boolean; canAck: boolean }) {
+  const qc = useQueryClient();
   const { data, isLoading, isError } = useQuery<{ conversation: Conversation; messages: Message[]; truncated: boolean; recorded: boolean }>({
     queryKey: ['chat-transcript', endpointId, conversationId],
     queryFn: () => endpointsApi.chatTranscript(endpointId, conversationId).then((r) => r.data?.data),
@@ -96,6 +106,24 @@ function Transcript({ endpointId, conversationId, live, canAck }: { endpointId: 
     ids.forEach((id) => acked.current.add(id));
     endpointsApi.chatAck(endpointId, conversationId, ids).catch(() => ids.forEach((id) => acked.current.delete(id)));
   }, [ackKey, endpointId, conversationId]);
+  // Read (0.44): while this live panel is in front, the newest reply it shows
+  // marks the chat read for this user — the header's inbox and the title
+  // count drop it. Per user: a colleague's panel clears nothing of yours.
+  const newestReply = live ? [...messages].reverse().find((m) => m.sender === 'END_USER')?.createdAt ?? null : null;
+  const lastRead = useRef<string | null>(null);
+  useEffect(() => {
+    if (!newestReply || lastRead.current === newestReply) return;
+    const mark = () => {
+      if (document.visibilityState !== 'visible' || lastRead.current === newestReply) return;
+      lastRead.current = newestReply;
+      chatInboxApi.markRead(conversationId, newestReply)
+        .then(() => qc.invalidateQueries({ queryKey: ['chat-inbox'] }))
+        .catch(() => { lastRead.current = null; });
+    };
+    mark();
+    document.addEventListener('visibilitychange', mark);
+    return () => document.removeEventListener('visibilitychange', mark);
+  }, [newestReply, conversationId, qc]);
   const end = useRef<HTMLDivElement>(null);
   const count = messages.length;
   useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }); }, [count]);
@@ -119,7 +147,9 @@ function Transcript({ endpointId, conversationId, live, canAck }: { endpointId: 
               {mine ? m.authorName : `${m.authorName} (at the computer)`} · {time(m.createdAt)}
             </div>
             <div className={`mt-0.5 max-w-[85%] whitespace-pre-wrap break-words rounded-lg px-3 py-2 text-sm ${mine ? 'bg-primary text-primary-foreground' : 'bg-background border'}`}>
-              {m.body}
+              {m.attachment
+                ? <ChatAttachment endpointId={endpointId} conversationId={conversationId} a={m.attachment} mine={mine} />
+                : m.body}
             </div>
             {mine && m.receipt && (
               <div className="mt-0.5 text-[11px] text-muted-foreground" data-testid="chat-receipt" data-receipt={m.receipt}
@@ -140,6 +170,9 @@ export function DeviceChatTab({ endpointId }: { endpointId: string }) {
   const { toast } = useToast();
   const [text, setText] = useState('');
   const [viewing, setViewing] = useState<string | null>(null);
+  const [uploading, setUploading] = useState<{ name: string; pct: number } | null>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
+  const filePick = useRef<HTMLInputElement>(null);
   const { data, isLoading, isError } = useQuery<Overview>({
     queryKey: ['chat', endpointId],
     queryFn: () => endpointsApi.chat(endpointId).then((r) => r.data?.data),
@@ -159,6 +192,32 @@ export function DeviceChatTab({ endpointId }: { endpointId: string }) {
     onSuccess: () => { setText(''); refresh(); },
     onError: (e) => toast({ title: 'Not sent', description: apiError(e, 'The message was not sent.'), variant: 'destructive' }),
   });
+  const upload = useMutation({
+    mutationFn: ({ cid, file }: { cid: string; file: File }) => {
+      setUploading({ name: file.name, pct: 0 });
+      return endpointsApi.chatUpload(endpointId, cid, file, (e) => setUploading({ name: file.name, pct: e.total ? Math.round((e.loaded / e.total) * 100) : 0 }));
+    },
+    onSuccess: () => { setUploading(null); refresh(); },
+    onError: (e) => {
+      setUploading(null);
+      const status = (e as { response?: { status?: number } })?.response?.status;
+      toast({ title: 'File not sent', description: status === 413 ? 'A file can be at most 10 MB.' : apiError(e, 'The file was not sent.'), variant: 'destructive' });
+    },
+  });
+  const sendFile = (cid: string, file: File | undefined | null) => {
+    if (!file || !data) return;
+    if (file.size > data.limits.attachmentBytes) {
+      toast({ title: 'File not sent', description: `A file can be at most ${formatBytes(data.limits.attachmentBytes)}.`, variant: 'destructive' });
+      return;
+    }
+    upload.mutate({ cid, file });
+  };
+  const insertEmoji = (e: string) => {
+    const el = input.current;
+    const at = el?.selectionStart ?? text.length, to = el?.selectionEnd ?? text.length;
+    setText(text.slice(0, at) + e + text.slice(to));
+    requestAnimationFrame(() => { if (el) { el.focus(); el.selectionStart = el.selectionEnd = at + e.length; } });
+  };
   const endChat = useMutation({
     mutationFn: (cid: string) => endpointsApi.chatEnd(endpointId, cid),
     onSuccess: refresh,
@@ -220,6 +279,8 @@ export function DeviceChatTab({ endpointId }: { endpointId: string }) {
                 onSubmit={(e) => { e.preventDefault(); if (text.trim() && !tooLong) send.mutate({ cid: open.id, body: text }); }}
               >
                 <Textarea
+                  ref={input}
+                  onPaste={(e) => { const f = e.clipboardData?.files?.[0]; if (f) { e.preventDefault(); sendFile(open.id, f); } }}
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (text.trim() && !tooLong) send.mutate({ cid: open.id, body: text }); } }}
@@ -227,10 +288,31 @@ export function DeviceChatTab({ endpointId }: { endpointId: string }) {
                   rows={3}
                   data-testid="chat-input"
                 />
+                <input
+                  ref={filePick}
+                  type="file"
+                  className="hidden"
+                  data-testid="chat-file-input"
+                  onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; sendFile(open.id, f); }}
+                />
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className={`text-xs tabular-nums ${tooLong ? 'text-destructive' : 'text-muted-foreground'}`}>
-                    {text.length} / {max} · at most {data.limits.perMinute} messages a minute
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <EmojiPicker onPick={insertEmoji} />
+                    <button
+                      type="button"
+                      onClick={() => filePick.current?.click()}
+                      disabled={upload.isPending}
+                      aria-label={`Send a file or picture (up to ${formatBytes(data.limits.attachmentBytes)})`}
+                      title={`Send a file or picture (up to ${formatBytes(data.limits.attachmentBytes)}; pictures show in the chat, other files are downloads)`}
+                      data-testid="chat-attach"
+                      className="flex h-8 w-8 items-center justify-center rounded-md border text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+                    >
+                      <Paperclip className="h-4 w-4" />
+                    </button>
+                    <span className={`text-xs tabular-nums ${tooLong ? 'text-destructive' : 'text-muted-foreground'}`}>
+                      {uploading ? `Sending ${uploading.name}… ${uploading.pct}%` : `${text.length} / ${max} · at most ${data.limits.perMinute} messages a minute`}
+                    </span>
+                  </div>
                   <div className="flex gap-2">
                     <Button type="button" variant="outline" size="sm" onClick={() => endChat.mutate(open.id)} disabled={endChat.isPending} data-testid="chat-end">
                       End chat

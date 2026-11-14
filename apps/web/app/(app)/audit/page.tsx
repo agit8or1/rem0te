@@ -31,6 +31,7 @@ const ACTION_COLORS: Record<string, string> = {
   CHAT_STARTED: 'bg-sky-100 text-sky-700',
   CHAT_ENDED: 'bg-gray-100 text-gray-700',
   CHAT_PRUNED: 'bg-gray-100 text-gray-700',
+  CHAT_ATTACHMENT_SENT: 'bg-sky-100 text-sky-700',
   QUICK_CONNECT_DENIED: 'bg-red-100 text-red-700',
   QUICK_CONNECT_SETTING_CHANGED: 'bg-amber-100 text-amber-700',
   PLATFORM_SETTINGS_UPDATED: 'bg-purple-100 text-purple-700',

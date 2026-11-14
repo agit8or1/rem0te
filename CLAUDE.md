@@ -523,6 +523,31 @@ tools, host objects and web messages off, and the page draws text with
 `e2e-chat.mjs` (port 3531); unit: `unit-chat.mjs` and the Go `internal/tray`
 tests.
 
+0.44 extended §45 for emoji, files and the console's chat inbox. The 2,000 cap
+is UTF-16 code units everywhere: TS `text.length`, Go `utf16Len`, the
+textarea's `maxlength`, and 0067's CHECK (`char_length` plus the
+astral-plane count; the old code-point CHECK let 1,500 emoji through that
+both ends refused). The emoji pickers are built in, one 132-entry list that
+must agree between `apps/api/src/chat/emoji.ts` and `apps/web/lib/emoji.ts`,
+drawn with `textContent`. An attachment is an image only by its magic bytes
+(`sniff`: PNG, JPEG, GIF, WebP; never SVG, never the declared type), and is
+served inert: an image as its sniffed type inline, anything else
+`application/octet-stream` + `attachment`, always nosniff and
+`default-src 'none'; sandbox`, with a sanitised name. Reading a file needs
+what reading the transcript needs (`computers:view` + `visibleEndpoint`, and
+the id, conversation and endpoint together); sending needs `support:chat`,
+the `remote` pause, the 10 MB multer limit in memoryStorage, and the
+20-file / 50 MB caps claimed in one conditional update. Files are `bytea`
+rows that cascade with their message and chat, so the prune and an
+unrecorded chat's end take them; the prune's audit counts them. The audit
+meta of `CHAT_ATTACHMENT_SENT` is ids, kind, type and size, never a name or
+bytes. `GET /chat/inbox` is `computers:view`, lists only open chats through
+`endpointVisibilityWhere`, and reads only the caller's own `ChatReadState`;
+a read mark only moves forward. The web middleware's matcher excludes `api/`
+and `assist/`, because Next buffers a proxied body and cuts it at 10 MB.
+Behavioural proof: `e2e-chat-attachments.mjs` (port 3703); unit:
+`unit-chat.mjs`.
+
 0.35 added five sections, §46 to §50, one per part of the release. §44 also
 now requires every `*_SWEEP` / `*_SEALER` off switch the API reads to be
 `'off'` in `e2e-ui.mjs`, found from the source rather than listed, because two
@@ -664,6 +689,18 @@ rows hold ids, tools and outcomes only; screenshots and usage are served,
 inert, only to someone who can see the computer; and `TRAY_SWEEP=off` is exact
 and set by `run-e2e.sh` and `e2e-ui.mjs`. Behavioural proof: `e2e-tray.mjs` (port 3632);
 unit: `unit-tray.mjs` and the Go `internal/tray` tests.
+
+0.44 extended §55 for files on `/assist`: there are six `assertPageWrite`
+calls, and the upload's `AssistUploadGuard` checks `x-assist` and the cookie
+before multer reads a byte. A file is read only through the cookie's own
+chat (`bound()`). The page loads pictures by same-origin URL, so
+`ASSIST_CSP` keeps `img-src 'self'` with no `blob:`, `data:` or `https:`.
+The page makes exactly one link, a file's download, built from its id. In an
+unrecorded chat a file outlives `ack` and `purgeRead`
+(`attachment: { is: null }`), because both sides load it from the server, and
+goes when the chat ends. Nothing about files goes through the tray pipes.
+WebView2's handling of pictures, the file picker and downloads has never run
+on Windows.
 
 0.37 added §56 for signed releases on one host (`deploy/release/`). The
 keys live on the portal host under the `rem0te-release` system user, in

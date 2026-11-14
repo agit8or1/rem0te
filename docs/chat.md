@@ -21,6 +21,52 @@ protocol 1 (0.34 or 0.35) keeps working through `/enrollment/chat/*` until it up
 >
 > Treat them as untested until they have run on Windows.
 
+## Emoji, files and pictures (0.44)
+
+Both sides have an **emoji picker** (the smiley button by the message box). It is built in: the same list of 132
+emoji is compiled into the console and the `/assist` page, and nothing is fetched from a CDN. An emoji is ordinary
+text. It goes through the same path as any other character and is drawn as text, never as an image.
+
+Both sides can also **send a file or a picture**: the paperclip button, a paste, or (on `/assist`) a drop onto the
+window.
+
+- **What counts as a picture is decided by the file's first bytes**, never by its name or the type the browser
+  declared. PNG, JPEG, GIF and WebP are shown in the chat. Everything else, SVG and HTML included, is a file.
+- **A picture** is served as its real type, inline. It carries `X-Content-Type-Options: nosniff`, a
+  `default-src 'none'; sandbox` CSP and `Cache-Control: private, no-store`. A picture whose name claims another
+  type gets its real extension added (`photo.png` that is really a JPEG becomes `photo.png.jpg`).
+- **A file** is only ever a download: `application/octet-stream`, `Content-Disposition: attachment`, nosniff and
+  the same sandbox CSP. A browser that opened it directly would still not render it. A file named like a picture or
+  a web page gets `.bin` added, so it does not look like something it is not.
+- **Names are cleaned** before they are stored. Only the last path segment is kept. Control, zero-width and
+  bidirectional characters are removed, and characters Windows reserves become `_`. Windows device names (`CON`,
+  `NUL`...) are prefixed, and the name is cut to 120 characters, keeping the extension. The name is shown as text.
+- **Who can read a file:** exactly who can read the transcript. On the console that is `computers:view` and the
+  computer visible to you; anyone else gets a 404. On `/assist` it is the page's cookie, and only files in the chat
+  that cookie is bound to.
+- **Who can send one:** on the console, `support:chat` over that computer. On `/assist`, the cookie plus the
+  `x-assist` header. Both are checked before the upload is read. A **remote connections** pause refuses a file
+  from either side (`403 CONTAINED`).
+- Files are stored in the database with their message, not on disk. They go when the chat's messages go (see
+  *Retention*).
+
+## The chat inbox: new messages anywhere in the console (0.44)
+
+A **chat icon in the header** shows the number of unread replies across every open chat you can see. Click it for
+the list of open chats: the computer, its business, how many replies are unread and a preview of the newest. Choose
+one to go to that computer's Chat tab.
+
+- When a new reply arrives, wherever you are in the console, a **notification** names the computer and shows the
+  first part of the message, with **Open**. You get none for the chat you are looking at.
+- The **browser tab's title** starts with the unread count, for example `(2) Rem0te`.
+- An optional **sound**, off by default, can be switched on in the inbox panel. The setting is kept in that browser.
+- A chat the person **started from the tray** shows up the same way.
+- **Read marks are yours.** Viewing a chat marks its replies read for you, not for your colleagues.
+- **Only chats on computers you can see**, and only with `computers:view`. A Business User sees only the computers
+  they have been given access to.
+- The console asks every 10 seconds. The API answers *unchanged* without building the list when nothing moved, and
+  otherwise looks at no more than 50 open chats in one query.
+
 ## Which computers can chat
 
 Windows computers with a tray, which means either of these:
@@ -118,7 +164,10 @@ opens on the one active Remote Desktop session when there is exactly one. With n
 
 | Limit | Value | Why |
 |---|---|---|
-| Message length | 2,000 characters, refused, never cut | Enforced in the API, the database (`CHECK`) and the agent |
+| Message length | 2,000 characters, refused, never cut | Enforced in the API, the database (`CHECK`) and the agent. Counted in UTF-16 code units (0.44), the way a browser's `maxlength` counts, so an emoji outside the basic plane counts as two |
+| File size | 10 MB a file | Refused with 413 (`ATTACHMENT_TOO_LARGE`); the upload stops being read past the limit |
+| Files per chat | 20 files, 50 MB in all | `ATTACHMENT_COUNT` / `ATTACHMENT_TOTAL` (409); claimed in one conditional update, so two uploads at once cannot both pass |
+| File name | 120 characters | Cut, keeping the extension |
 | Technician messages | 20 a minute per conversation | Rate limit (`CHAT_RATE_LIMITED`, 429) |
 | Replies from the computer | 20 a minute per conversation, 30 a minute per computer | Rate limit; the window also refuses past 20 a minute |
 | Messages per conversation | 1,000 | Then start a new chat |
@@ -132,7 +181,8 @@ treats it as HTML or markdown.
 ## Containment
 
 A **remote connections** pause ([containment](containment.md)) covers chat. While one covers the computer's
-business, starting a chat and sending a message are refused (`403 CONTAINED`), and the tab says why. A chat already
+business, starting a chat, sending a message and sending a file (from either side, 0.44) are refused
+(`403 CONTAINED`), and the tab says why. A chat already
 open stays readable, and it can still be ended.
 
 ## Audit
@@ -141,7 +191,8 @@ open stays readable, and it can still be ended.
 |---|---|---|
 | `CHAT_STARTED` | A technician starts a chat, or (0.36) the person starts one from the tray | `conversationId`, `recorded`, `by: end_user` when the person started it, `supportRequestId` if linked |
 | `CHAT_ENDED` | Ended by the technician, the person (closing the window) or inactivity | `conversationId`, `reason`, message counts each way, duration in seconds |
-| `CHAT_PRUNED` | The retention sweep deleted transcripts | how many conversations and messages, the retention, the cutoff |
+| `CHAT_ATTACHMENT_SENT` | A file or picture was sent, by either side (0.44) | `conversationId`, `attachmentId`, `by`, `kind`, `contentType`, `sizeBytes`. Never the name or the content |
+| `CHAT_PRUNED` | The retention sweep deleted transcripts | how many conversations, messages and files, the retention, the cutoff |
 | `ENDPOINT_HEARTBEAT_REJECTED` | A chat poll or reply with a wrong or missing device secret | `rustdeskId`, `reason` (`chat_poll_unauthenticated` / `chat_reply_unauthenticated`) |
 
 **Message text is never written to the audit log**, and neither are names or the signed-in account. The transcript
@@ -151,10 +202,12 @@ or deletes an audit row.
 ## Retention
 
 A chat that is **not recorded** (0.36, set per business; see [tray.md](tray.md#recording)) keeps no text at all.
-Each message is deleted once both sides have it, and whatever is left is deleted when the chat ends. The rest of
+Each text message is deleted once both sides have it, and whatever is left is deleted when the chat ends. A file
+or picture stays until the chat ends, because both sides load it from the server, and then it is deleted with
+everything else (0.44). The rest of
 this section is about recorded chats.
 
-Ended conversations are deleted with their messages **400 days** after they ended. An hourly sweep in the API deletes
+Ended conversations are deleted with their messages and files **400 days** after they ended. An hourly sweep in the API deletes
 them in batches and records one `CHAT_PRUNED` entry per pass that deleted anything. The same sweep ends chats that
 have been quiet for two hours.
 
@@ -226,22 +279,28 @@ misbehaves. These figures are **estimated** from the code paths; chat has not be
 | `GET /endpoints/:id/chat/conversations/:cid` | `computers:view` | The transcript (newest 500, oldest first) |
 | `POST /endpoints/:id/chat/conversations` | `support:chat` | Start, or return the chat already open. Optional `supportRequestId` (needs `support:requests`, same business and computer) |
 | `POST /endpoints/:id/chat/conversations/:cid/messages` | `support:chat` | `{ text }` |
+| `POST /endpoints/:id/chat/conversations/:cid/attachments` | `support:chat` | Multipart `file`, at most 10 MB (0.44) |
+| `GET /endpoints/:id/chat/conversations/:cid/attachments/:aid` | `computers:view` | The file, served as described above (0.44) |
+| `GET /chat/inbox?since=` | `computers:view` | Open chats on computers you can see, with your unread counts; `{ unchanged: true }` when `since` is still current (0.44) |
+| `POST /chat/inbox/read` | `computers:view` | `{ conversationId, upTo? }`: your read mark, which only moves forward (0.44) |
 | `POST /endpoints/:id/chat/conversations/:cid/ack` | `support:chat` | `{ ids }`: the panel has shown these replies. In a chat that is not recorded, that deletes them (0.36) |
 | `POST /endpoints/:id/chat/conversations/:cid/end` | `support:chat` | End it |
 | `POST /enrollment/chat/poll` | device secret | The 0.34 chat host only (chat protocol 1); the 0.36 tray uses `/tray/*` and `/assist` ([tray.md](tray.md)) |
 | `POST /enrollment/chat/reply` | device secret | The agent's chat host only |
 
 Refusals: `CHAT_UNSUPPORTED` (409, with the reason above), `CONTAINED` (403), `CHAT_ENDED` (409), `CHAT_TOO_LONG` /
-`CHAT_EMPTY` (400), `CHAT_RATE_LIMITED` (429), `CHAT_FULL` (409).
+`CHAT_EMPTY` (400), `CHAT_RATE_LIMITED` (429), `CHAT_FULL` (409), `ATTACHMENT_MISSING` / `ATTACHMENT_EMPTY` (400),
+`ATTACHMENT_TOO_LARGE` (413), `ATTACHMENT_COUNT` / `ATTACHMENT_TOTAL` (409).
 
 ## What has been proven, and what hasn't
 
 | | Evidence |
 |---|---|
 | Portal routes, scoping (business A / B, a Business User without access gets 404), containment, caps, receipts only from the agent, the long-poll and its cap, user-closed and inactivity endings, retention pruning, no message text in the audit log | `apps/api/scripts/e2e-chat.mjs`, the real API from `dist` on a scratch database, with the device simulated over the real device routes |
-| Text, names, support reasons, presence, receipts, retention bounds | `apps/api/scripts/unit-chat.mjs` |
+| Text, names, support reasons, presence, receipts, retention bounds; the emoji lists, magic bytes, file names, download headers and caps (0.44) | `apps/api/scripts/unit-chat.mjs` |
+| Files both ways, inline pictures against disguised files, headers, the 10 MB and per-chat caps, scoping, containment, recording off, retention, the inbox and per-user read marks, emoji through the text path (0.44) | `apps/api/scripts/e2e-chat-attachments.mjs` (port 3703), the real API from `dist` on a scratch database |
 | The tray host and the tray (0.36, replacing the 0.34 chat host): frames, hello nonce, the closed field set per frame, receipts, the unread badge, the per-minute cap, the pipe server | `go test ./internal/tray/` against a fake portal and a fake operating system; text cleaning and the limiter in `go test ./internal/chat/` |
 | Windows build | `GOOS=windows go build` and `go vet` |
 | Static guarantees (routes, scoping, containment, secret, audit meta, caps, the window holding no secret, pipe flags and ACL) | `scripts/check-security-invariants.mjs`, the chat section |
 | The tray path (0.36): codes, the `/assist` page, recording on and off, user-started chats | `apps/api/scripts/e2e-tray.mjs`; the page in Chromium by `apps/web/scripts/e2e-ui.mjs` |
-| **The window or the tray on a real Windows desktop, `CreateProcessAsUser`, the pipe DACL, session selection, Fast User Switching, RDP, WebView2** | **None. Not run on Windows.** |
+| **The window or the tray on a real Windows desktop, `CreateProcessAsUser`, the pipe DACL, session selection, Fast User Switching, RDP, WebView2, and (0.44) pictures, the file picker, paste, drop and downloads inside the WebView2 window** | **None. Not run on Windows.** |

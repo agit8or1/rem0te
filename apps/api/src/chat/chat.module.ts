@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
-import { ChatController } from './chat.controller';
+import { ChatController, ChatInboxController } from './chat.controller';
+import { ChatInboxService } from './chat-inbox.service';
 import { ChatService } from './chat.service';
 
 // Global: the heartbeat asks it whether a chat is open, and the device routes
@@ -8,8 +9,8 @@ import { ChatService } from './chat.service';
 @Global()
 @Module({
   imports: [AuditModule],
-  controllers: [ChatController],
-  providers: [ChatService],
+  controllers: [ChatController, ChatInboxController],
+  providers: [ChatService, ChatInboxService],
   exports: [ChatService],
 })
 export class ChatModule {}

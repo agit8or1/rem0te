@@ -236,6 +236,14 @@ export const endpointsApi = {
   chatEnd: (id: string, cid: string) => api.post(`/endpoints/${id}/chat/conversations/${cid}/end`, {}),
   // 0.36: the panel has shown these replies (in a chat that is not recorded, the server then deletes them).
   chatAck: (id: string, cid: string, ids: string[]) => api.post(`/endpoints/${id}/chat/conversations/${cid}/ack`, { ids }),
+  // 0.44: a file or image, as multipart (the server decides what it is from its bytes).
+  chatUpload: (id: string, cid: string, file: File, onUploadProgress?: (e: { loaded: number; total?: number }) => void) => {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    return api.post(`/endpoints/${id}/chat/conversations/${cid}/attachments`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' }, onUploadProgress,
+    });
+  },
   // 0.36: the tray on this computer, its self-help runs and the support requests sent from it.
   tray: (id: string) => api.get(`/endpoints/${id}/tray`),
   // Queues a re-collection for the endpoint's next heartbeat — up to ~3
@@ -629,6 +637,21 @@ export const supportRequestsApi = {
 // ─── v0.36: whether chats are recorded ───────────────────────────────────────
 // Changing either needs a fresh sign-in (403 STEP_UP_REQUIRED, which the
 // interceptor answers) and is audited.
+/**
+ * Where a chat attachment is read (0.44): an image's URL for <img>, a file's
+ * for a download link. Built only from ids, each encoded; the session cookie
+ * goes with the request, so no token is put in the URL.
+ */
+export function chatAttachmentUrl(endpointId: string, conversationId: string, attachmentId: string): string {
+  return `${BASE_URL}/endpoints/${encodeURIComponent(endpointId)}/chat/conversations/${encodeURIComponent(conversationId)}/attachments/${encodeURIComponent(attachmentId)}`;
+}
+
+// ─── v0.44: the chat inbox (the header's chat icon, toasts, the title count) ─
+export const chatInboxApi = {
+  get: (since?: string) => api.get('/chat/inbox', { params: since ? { since } : {} }),
+  markRead: (conversationId: string, upTo?: string) => api.post('/chat/inbox/read', upTo ? { conversationId, upTo } : { conversationId }),
+};
+
 export const chatRecordingApi = {
   get: (businessId?: string) => api.get('/chat-recording', { params: businessId ? { businessId } : {} }),
   setBusiness: (businessId: string, recording: boolean | null) => api.put('/chat-recording', { businessId, recording }),

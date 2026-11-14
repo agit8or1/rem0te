@@ -5,6 +5,127 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.44.0] — 2026-11-14 · *Satchel*
+
+**Chat gets emoji, files and pictures in both directions, and a new reply reaches the technician wherever they are
+in the console.**
+
+The owner's request was: "need ability for emoji, file/image attachments, etc for chat also on console, new chat
+msgs should have alerts regardless where in the system you are". Through 0.43, a chat could carry only plain text.
+A screenshot of an error dialog had to go through a support request instead. A reply arriving while the technician
+was on another page went unnoticed until they came back to that computer's Chat tab.
+
+### Added
+- **An emoji picker on both sides**: the console's Chat tab and the person's `/assist` page in the tray window. It is
+  built in, with no CDN: one list of 132 emoji, kept identical in `apps/api/src/chat/emoji.ts` (compiled into the
+  `/assist` script) and `apps/web/lib/emoji.ts`. An emoji is ordinary text. It goes through the existing text path
+  untouched (skin tones, ZWJ sequences, variation selectors and flags are stored and read back byte for byte), and
+  it is drawn with `textContent` or as React text.
+- **Files and pictures, both ways.** Use the paperclip or paste on either side; `/assist` also accepts a drop.
+  - **Limits:** 10 MB a file, enforced by multer in memory, so the upload stops being read and the request is a 413.
+    A chat holds up to 20 files and 50 MB. Those caps are claimed in one conditional update, so two uploads at once
+    cannot both pass the last slot.
+  - **Images are decided by the bytes.** `sniff()` reads magic bytes and recognises PNG (with its `IHDR`), JPEG, GIF
+    and WebP. The declared type and the file name are never consulted. SVG and HTML are files.
+  - **Served inert.** An image is served as its sniffed type, inline. Anything else is `application/octet-stream`
+    with `Content-Disposition: attachment`. Both carry `nosniff`, `Content-Security-Policy: default-src 'none';
+    sandbox`, `Cache-Control: private, no-store` and `Cross-Origin-Resource-Policy: same-origin`.
+  - **Names are sanitised** (`attachmentName`). The name is NFC-normalised and only its last path segment is kept.
+    Controls, zero-width and bidi characters are removed. Windows-reserved characters become `_`, and device names
+    are prefixed. The name is cut to 120 characters, keeping the extension. A picture gets its true extension, so a
+    JPEG named `photo.png` becomes `photo.png.jpg`. A file named like a picture or a page gets `.bin` added. The
+    header carries an ASCII fallback plus `filename*`.
+  - **Reading** needs what reading the transcript needs. On the console that is `computers:view` and the computer
+    visible to the caller; the attachment id, the conversation and the computer must match together, or it is a
+    404. On `/assist` it is the cookie, and only files in its own chat.
+  - **Sending** needs `support:chat` on the console. On `/assist` it needs the cookie and `x-assist`, both checked
+    by `AssistUploadGuard` before a byte is buffered. Either side is refused under a `remote` containment pause.
+  - **Storage.** Files are `bytea` rows in the new `ChatAttachment` table, the same approach as support-request
+    attachments. They cascade with their message and their chat, so the 400-day prune takes them, and an unrecorded
+    chat's end deletes them in the same transaction. In an unrecorded chat a file is **not** deleted on
+    acknowledgement the way text is, because both sides load it from the server; it goes when the chat ends.
+  - The 0.34 Win32 window (chat protocol 1) cannot show a file. It gets a "Sent a file: *name*" line instead.
+- **The chat inbox: alerts anywhere in the console.**
+  - **A chat icon in the header** carries an unread badge. It opens a list of open chats showing the computer,
+    business, unread count and a preview of the newest reply.
+  - **A toast** names the computer, shows the preview and has **Open**, which goes straight to that computer's Chat
+    tab (`rem0te:open-chat`). It is suppressed for the chat you are already watching.
+  - **The tab title** carries the count, for example `(2) Rem0te`.
+  - **An optional chime**, off by default and remembered per browser.
+  - A chat the person starts from the tray alerts the same way.
+  - `GET /chat/inbox` is polled every 10 s with a `since` version. When nothing moved it answers `unchanged`
+    without building the list. Otherwise it reads at most 50 open chats and builds their counts and previews in one
+    query.
+  - Only chats on computers the caller can see are listed (`endpointVisibilityWhere`, `computers:view`).
+  - Read marks are per user (`ChatReadState`). `POST /chat/inbox/read` only moves a mark forward and never past now.
+    Viewing a chat marks it read.
+- **Routes:**
+  - `POST` and `GET /endpoints/:id/chat/conversations/:cid/attachments[/:aid]`
+  - `POST` and `GET /assist/api/attachments[/:aid]`
+  - `GET /chat/inbox`
+  - `POST /chat/inbox/read`
+- **Audit:** `CHAT_ATTACHMENT_SENT`, with `conversationId`, `attachmentId`, `by`, `kind`, `contentType` and
+  `sizeBytes`, and never the name or the content. `CHAT_PRUNED` now also counts files.
+
+### Fixed
+- **The database's 2,000-character cap counted something different from both ends.** The API and the agent count
+  UTF-16 code units (`text.length`, Go's `utf16Len`), and so does a textarea's `maxlength`. 0056's CHECK used
+  `char_length`, which counts code points. A message of 1,500 emoji (3,000 units) was therefore refused by the page
+  and the API but would have passed the database. 0067's CHECK adds the count of astral-plane characters to
+  `char_length`, so all three agree on UTF-16 code units. Nothing stored before could break it, because the API
+  already refused anything over the cap.
+- **Uploads near 10 MB were cut short by the web middleware.** Next 16 buffers a request body that passes through
+  `middleware.ts` and truncates it at 10 MB, so a file at the limit arrived corrupted rather than being refused.
+  The matcher now excludes `api/` and `assist/`. Both were already public prefixes that the middleware let through
+  untouched, so nothing it checked is lost.
+
+### Changed
+- §45 checks:
+  - the attachment and inbox routes' capabilities, and that `sendAttachment` / `readAttachment` go through
+    `visibleEndpoint`;
+  - the `remote` pause on both send paths, and the exact attachment audit meta, with no name or bytes;
+  - the UTF-16 cap in TS, Go, `maxlength` and 0067;
+  - magic-byte classification, inert headers, the read and send gates (guard before interceptor, memoryStorage, the
+    limits, the caps), and the cascade and prune counts;
+  - the inbox's visibility and per-user marks, the two emoji lists agreeing, and the console rendering a file only
+    through `chatAttachmentUrl`, with no link in the inbox.
+- §55 checks six `assertPageWrite` calls, an `ASSIST_CSP` with `img-src 'self'` and no `blob:`, `data:` or
+  `https:`, and the unrecorded-chat deletes sparing files until the end.
+- `unit-tray.mjs`'s "never made into links" check now allows exactly one link: a file's download, built from its
+  id. The message body is still `textContent`.
+- `docs/chat.md`, `docs/tray.md`, `/help`, CLAUDE.md and `docs/API-REFERENCE.md` (517 routes, matching the runtime
+  table) describe the above.
+
+### Not run on real Windows
+The tray's WebView2 window has not shown a picture, opened the file picker, taken a paste or a drop, or saved a
+download. `/assist` has been driven only as a page against the real API. Inside WebView2, Chromium's behaviour is
+expected; whether `AllowedNavigation` (which permits only `/assist/`) lets a download through is the open question.
+
+#### Verification
+- `unit-chat.mjs` 90 checks (the emoji lists, magic bytes, names including the JPEG named `.png`, headers, caps),
+  `unit-tray.mjs` 67.
+- E2e, each against the real API from `dist` on a scratch database:
+
+  | Suite | Checks | What 0.44 adds |
+  |---|---|---|
+  | `e2e-chat-attachments.mjs` (new, port 3703) | 88 | Emoji through the text path and the UTF-16 cap at the database; files both ways; HTML named `.png` and declared `image/png`, and an SVG, both stored as files; every header; over 10 MB refused; the count and total caps; A/B and Business User scoping; containment on both sides; recording off; the prune; the inbox's visibility, `unchanged`, per-user marks; no name or content in any audit row |
+  | `e2e-chat.mjs` | 89 | — |
+  | `e2e-tray.mjs` | 142 | — (`/assist` changed) |
+- `check-security-invariants.mjs` holds. A mutation harness made 35 single edits, each breaking one §45 or §55
+  rule: dropping a capability, the containment check, `nosniff` or the sandbox; trusting the declared type; letting
+  an SVG pass as an image; widening multer's limit; letting the cascade restrict; leaking a file name into the
+  audit; listing chats past visibility; desynchronising the emoji lists; adding `blob:` to the CSP; counting code
+  points. The invariants caught all 35.
+- `pnpm -r lint`, `tsc` in both apps, `nest build` and `next build` pass.
+- Go is unchanged. `go test ./internal/chat ./internal/tray` was not run here, because the host cannot download the
+  Go 1.27 toolchain that `go.mod` asks for; CI runs it.
+- `e2e-ui.mjs` was not run and not changed (it uses fixed ports shared with other work); CI runs it.
+
+**Migration 0067** (`0067_chat_attachments`) adds `CHAT_ATTACHMENT_SENT`, `ChatConversation.attachmentCount` and
+`attachmentBytes`, the `ChatAttachment` and `ChatReadState` tables with their CHECKs, and replaces
+`ChatMessage_body_bounded`. Deploy it with the schema steps: `migrate deploy`, sync `prisma/`, and run `prisma
+generate` at the target. No agent change: the tray reaches the new page as soon as the portal is deployed.
+
 ## [0.43.0] — 2026-11-14 · *Aisle*
 
 **The software catalog page lists every winget package, and you build a catalog by ticking rows.**

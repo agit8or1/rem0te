@@ -42,7 +42,11 @@ There is no Quit item. The tray is part of the managed agent, and it is started 
 The chat window is the portal's **`/assist/chat`** page shown in a small WebView2 window, about 440 × 640. If the
 Microsoft Edge WebView2 runtime is missing, the tray opens the same page in the default browser and says so in a
 balloon. Messages work exactly as they do on the signed agent's chat ([chat.md](chat.md)): the same 2,000-character
-cap, the same control-character rules, and receipts set only when the page reports them.
+cap, the same control-character rules, and receipts set only when the page reports them. From 0.44 the page also
+has the emoji picker and can send and show files and pictures ([chat.md](chat.md#emoji-files-and-pictures-044)). It
+uploads to `/assist/api/attachments` over HTTPS with its cookie; nothing goes through the tray's pipes. Pictures load
+from the same origin, so the page's CSP is unchanged (`img-src 'self'`, no `blob:` or `data:`). **Whether WebView2
+shows the picker, pictures and downloads as Chromium does has not been checked on Windows.**
 
 **How the window signs in, without a long-lived credential in a URL:**
 
@@ -272,7 +276,7 @@ On the signed agent, the account comes from the session token and is not taken f
 | Pause | Effect on the tray |
 |---|---|
 | `actions` | Flush DNS, Renew IP address and Restart the remote support service are refused and recorded as refused runs. The signed tray host also checks the **signed** pause before running one |
-| `remote` | Restarting the remote support service is refused, and new chats can be neither started nor written in (as in [chat.md](chat.md)) |
+| `remote` | Restarting the remote support service is refused, and new chats can be neither started nor written in, nor sent files (as in [chat.md](chat.md)) |
 | Either | Support requests and the read-only tools still work |
 
 ## The technician's side
@@ -321,6 +325,8 @@ Set `TRAY_SWEEP=off` to stop it. `scripts/run-e2e.sh` and the browser suite do.
 | `GET /assist/open?c=` | The code | Sets the cookie, 303 to `chat` |
 | `GET /assist/chat`, `/assist/assist.js`, `/assist/assist.css` | — | The page |
 | `GET /assist/api/state`, `POST /assist/api/{start,messages,receipts,end}` | The `/assist` cookie, plus `x-assist: 1` on writes | The chat |
+| `POST /assist/api/attachments` | The cookie and `x-assist: 1`, checked before the upload is read | A file or picture, multipart `file` and `clientId` (0.44) |
+| `GET /assist/api/attachments/:aid` | The cookie | A file in the cookie's own chat (0.44) |
 | `GET /endpoints/:id/tray` | `computers:view` | The tray, self-help runs and tray requests for one computer |
 | `GET /chat-recording` | Signed in | The setting for your business and the platform default |
 | `PUT /chat-recording` | Business Owner or Platform Admin, fresh sign-in | `{ businessId, recording: true \| false \| null }` |

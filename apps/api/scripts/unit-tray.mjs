@@ -49,7 +49,14 @@ check(!/unsafe-inline|unsafe-eval|https:|data:|\*/.test(csp), 'no unsafe-inline,
 check(!/<script(?![^>]*\bsrc=)/i.test(P.ASSIST_HTML) && !/\son[a-z]+=/i.test(P.ASSIST_HTML) && !/style=/i.test(P.ASSIST_HTML), 'the page has no inline script, no inline handler and no inline style');
 check(/src="assist\.js"/.test(P.ASSIST_HTML) && /href="assist\.css"/.test(P.ASSIST_HTML), 'it loads its script and stylesheet by relative URL (works behind /assist and on the API alike)');
 check(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/.test(P.ASSIST_JS), 'the script never builds HTML from strings or evaluates code');
-check(/textContent/.test(P.ASSIST_JS) && !/createElement\(['"]a['"]\)/.test(P.ASSIST_JS) && !/href\s*=/.test(P.ASSIST_JS), 'messages are rendered as text and never made into links');
+// 0.44: the one link the page makes is an attachment's download, to a URL built from its id alone.
+check(/textContent/.test(P.ASSIST_JS)
+  && (P.ASSIST_JS.match(/createElement\(['"]a['"]\)/g) ?? []).length === 1
+  && (P.ASSIST_JS.match(/href\s*=/g) ?? []).length === 1
+  && /\.href = url;/.test(P.ASSIST_JS)
+  && /var url = 'api\/attachments\/' \+ encodeURIComponent\(a\.id\);/.test(P.ASSIST_JS)
+  && /body\.textContent = m\.text;/.test(P.ASSIST_JS),
+  'messages are rendered as text and never made into links; the only link is a file\'s download, built from its id');
 check(/'x-assist': '1'/.test(P.ASSIST_JS), 'every write from the page carries x-assist: 1');
 check(!/localStorage|sessionStorage|indexedDB|document\.cookie/.test(P.ASSIST_JS), 'the page keeps nothing in browser storage and cannot read its cookie');
 
