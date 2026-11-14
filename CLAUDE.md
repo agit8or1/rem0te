@@ -782,6 +782,20 @@ are tested against one fixture,
 `unit-software.mjs` under pwsh). **None of the new forms has run on real
 Windows.** The mutation harness for §15 and §59 is in the 0.42 changelog.
 
+§60 (0.43) is building catalogs by selection. `GET software/winget/packages`
+with `page` or `pageSize` is a browse: still View computers, a page of at most
+100 (`BROWSE_MAX_PAGE_SIZE`, capped rather than refused), every parameter
+checked by `parseBrowse` before Prisma sees it, each row marked only with
+global entries and the one business looked at. `POST
+software/winget/catalog/bulk` is Edit computers and `@RateLimit(3)`: the
+25-package cap (`TOO_MANY_PACKAGES`), then who may change that catalog, then
+`assertFresh` once, then the packages. Each one goes through `resolveWinget`
+and `wingetEntry(…, 'bulk')`, so it is audited per entry exactly as one click
+is, and the bulk path writes nothing itself. `catalogBusiness` makes another
+business's catalog a 404 for both routes. Behavioural proof:
+`e2e-software-browse.mjs` (ports 3721–3722, no signer, no Go); unit:
+`unit-software.mjs`.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

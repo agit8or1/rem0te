@@ -1319,6 +1319,18 @@ const SECTIONS: Section[] = [
           starting with the word you typed (<em>Notepad++</em> for &ldquo;notepad&rdquo;), then the word anywhere in the
           name, shorter names first.
         </p>
+        <p data-help="winget-browse">
+          <strong className="text-foreground">Build a catalog by picking packages (0.43).</strong> The catalog page lists
+          the whole winget index as a table, 50 a page, as soon as it opens: name, publisher, package id, latest version
+          and which catalog already holds it, at what version. Type to filter it (best match first, or click
+          <em> Name</em> to sort by name), pick a letter, or click a publisher to see only theirs. Choose the catalog to
+          build (a Platform Admin: global or any business; a Business Owner: their own), tick packages, and{' '}
+          <em>Add N selected</em> adds up to 25 in one go, after a fresh sign-in. Each goes through the same manifest
+          read, installer choice and detection rule as one, is audited, and its row says whether it was added, was
+          already there, or was refused and why. <em>Remove</em> archives the ticked rows&apos; entries in that catalog.
+          A computer&apos;s Software tab lists its business&apos;s and the global catalog first, each with{' '}
+          <em>Install</em>, and the winget search below it.
+        </p>
         <p data-help="remove-program">
           <strong className="text-foreground">Uninstall anything installed (0.41).</strong> Each program in a
           computer&apos;s <em>Installed software</em> list has <em>Uninstall</em> when it can be removed with no one at the

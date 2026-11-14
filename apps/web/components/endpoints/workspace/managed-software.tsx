@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ExternalLink, Loader2, Package, Search } from 'lucide-react';
@@ -96,7 +96,7 @@ export function ManagedSoftware({ endpointId }: { endpointId: string }) {
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center gap-2"><Package className="h-4 w-4" />Managed software</CardTitle>
         <p className="text-xs text-muted-foreground">
-          Packages from the <Link className="underline" href="/automation/software">software catalog</Link>, and any package in the winget community catalog.{' '}
+          This business&apos;s and the global <Link className="underline" href="/automation/software">software catalog</Link> first, ready to install; below it, a search of the whole winget community catalog.{' '}
           {direct
             ? 'Direct mode is on for this business: installing or uninstalling one is signed at once and runs when the computer next checks in.'
             : 'Installing or uninstalling one creates a plan that two people approve on the approval signer.'}
@@ -116,20 +116,20 @@ export function ManagedSoftware({ endpointId }: { endpointId: string }) {
               {[data.install.warning, data.uninstall.warning].filter((w, i, a): w is string => !!w && a.indexOf(w) === i).map((w) => (
                 <p key={w} className="text-xs flex gap-2" data-software-warning><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />{w}</p>
               ))}
-              <WingetSearch canInstall={data.install.possible} architecture={data.architecture} onInstall={(hit) => setAsking({ kind: 'winget', hit })} />
-              {data.entries.length === 0 ? <p className="text-muted-foreground">The catalog has nothing for this computer&apos;s business yet. Search above to install a package; it is added to the catalog as it is installed.</p> : (
+              <CatalogPicker entries={data.entries}>{(rows) => (
                 <div className="overflow-x-auto rounded-md border">
                   <table className="w-full text-left text-xs">
                     <thead className="text-muted-foreground">
                       <tr><th className="px-3 py-1.5 font-medium">Software</th><th className="px-3 font-medium">State</th><th className="px-3 font-medium">Last plan</th><th className="px-3 font-medium" /></tr>
                     </thead>
                     <tbody>
-                      {data.entries.map((e) => {
+                      {rows.map((e) => {
                         const s = STATE[e.compliance];
                         return (
                           <tr key={e.id} className="border-t align-top" data-managed-row>
                             <td className="px-3 py-1.5">
-                              <Link className="font-medium underline" href={`/automation/software/${e.id}`}>{e.name}</Link> <span className="font-mono">{e.version}</span>
+                              <Link className="font-medium underline" href={`/automation/software/${e.id}`}>{e.name}</Link> <span className="font-mono">{e.version}</span>{' '}
+                              <Badge variant="outline" className="text-[10px]">{e.scope === 'global' ? 'global' : 'this business'}</Badge>
                               <span className="block text-muted-foreground font-mono">{e.packageId}</span>
                             </td>
                             <td className="px-3 py-1.5">
@@ -158,7 +158,8 @@ export function ManagedSoftware({ endpointId }: { endpointId: string }) {
                     </tbody>
                   </table>
                 </div>
-              )}
+              )}</CatalogPicker>
+              <WingetSearch canInstall={data.install.possible} architecture={data.architecture} onInstall={(hit) => setAsking({ kind: 'winget', hit })} />
               {data.inventoryAt && <p className="text-xs text-muted-foreground">Inventory {ago(data.inventoryAt)}. Only display-name rules are read from it; the other rules are known once a software plan has run here.</p>}
             </>
           )}
@@ -193,7 +194,7 @@ function WingetSearch({ canInstall, architecture, onInstall }: { canInstall: boo
   const [q, setQ] = useState('');
   const [asked, setAsked] = useState('');
   const { isPlatformAdmin } = usePermissions();
-  const { data, error, isFetching, refetch } = useQuery({
+  const search = useQuery({
     queryKey: ['winget-search', asked],
     queryFn: () => softwareApi.wingetSearch(asked).then((r) => r.data.data as WingetSearchResult),
     enabled: asked.length >= 2,
@@ -207,6 +208,9 @@ function WingetSearch({ canInstall, architecture, onInstall }: { canInstall: boo
     retry: false,
     staleTime: 60_000,
   });
+  // 0.43: the empty query shares the status query's cache key, so its answer is not a search: show results only for one.
+  const data = asked.length >= 2 ? search.data : undefined;
+  const { error, isFetching, refetch } = search;
   const idx = data?.index ?? status.data?.index;
   return (
     <div className="space-y-2 rounded-md border p-2" data-testid="winget-search">
@@ -356,5 +360,28 @@ export function RemoveProgramDialog({ endpointId, program, data, onClose }: { en
       optionalReason
       onClose={onClose}
     />
+  );
+}
+
+/**
+ * 0.43: the catalog entries that apply to this computer (its business's and
+ * the global ones), as the list to pick from, above the winget search. A
+ * filter appears once there are more than eight.
+ */
+function CatalogPicker({ entries, children }: { entries: Row[]; children: (rows: Row[]) => ReactNode }) {
+  const [f, setF] = useState('');
+  const t = f.trim().toLowerCase();
+  const rows = t ? entries.filter((e) => `${e.name} ${e.packageId} ${e.publisher ?? ''}`.toLowerCase().includes(t)) : entries;
+  return (
+    <div className="space-y-2" data-testid="catalog-picker">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-medium">From the catalog <span className="font-normal text-muted-foreground">({entries.length} {entries.length === 1 ? 'package' : 'packages'}: this business&apos;s and global)</span></p>
+        {entries.length > 8 && <Input className="h-7 w-56 text-xs" placeholder="Filter the catalog" aria-label="Filter the catalog" value={f} maxLength={64} onChange={(e) => setF(e.target.value)} />}
+      </div>
+      {entries.length === 0
+        ? <p className="text-xs text-muted-foreground">The catalog has nothing for this computer&apos;s business yet. Search the winget catalog below to install a package (it is added to the catalog as it is installed), or build the catalog on <Link className="underline" href="/automation/software">Automation → Software catalog</Link>.</p>
+        : rows.length === 0 ? <p className="text-xs text-muted-foreground">No catalog entry matches “{f.trim()}”.</p>
+        : children(rows)}
+    </div>
   );
 }

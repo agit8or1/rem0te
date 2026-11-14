@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, type ActionJob, type ActionTarget, type SoftwareCatalogEntry, type SoftwareDeployment } from '@prisma/client';
 import { z } from 'zod';
 import { PrismaService } from '../prisma/prisma.service';
@@ -14,13 +14,13 @@ import { SOFTWARE_INSTALL, SOFTWARE_REMOVE, SOFTWARE_UNINSTALL, SOFTWARE_VERSION
 import { Posture, MANAGER_LABEL } from '../patching/posture';
 import { readOnlyAgentRefusal } from '../common/platform';
 import {
-  ArchiveEntryDto, CreateDeploymentDto, CreateEntryDto, FromWingetDto, ManifestPreviewDto, QuickInstallDto, ReasonDto, RemoveProgramDto, RequestRingDto, SingleDto, UpdateEntryDto,
-  archOf, autoSelectInstaller, complianceOf, deriveDetection, detectFromInventory, entryFor, entryName, evaluateSoftwareGate, evidenceFor, installedOf, inventoryRemovalState, nextRing, paramsOf, programsOf, removalHint, selectInstaller,
-  type Arch, type SwGate, type SwGateTarget,
+  ArchiveEntryDto, BULK_MAX_PACKAGES, BulkFromWingetDto, CreateDeploymentDto, CreateEntryDto, FromWingetDto, ManifestPreviewDto, QuickInstallDto, ReasonDto, RemoveProgramDto, RequestRingDto, SingleDto, UpdateEntryDto,
+  alreadyIn, archOf, autoSelectInstaller, bulkStatusOf, catalogMarks, complianceOf, deriveDetection, detectFromInventory, entryFor, entryName, evaluateSoftwareGate, evidenceFor, installedOf, inventoryRemovalState, nextRing, paramsOf, programsOf, removalHint, selectInstaller,
+  type Arch, type CatalogMark, type SwGate, type SwGateTarget,
 } from './definition';
 import { fetchInstallerManifest } from './manifest';
 import { WingetIndexService } from './winget-index.service';
-import { SEARCH_LIMIT, SEARCH_RE } from './winget-index';
+import { SEARCH_LIMIT, SEARCH_RE, isBrowse, parseBrowse } from './winget-index';
 
 /**
  * Software deployment (0.34): a catalog of allowlisted winget packages, each
@@ -55,6 +55,12 @@ type Ring = { endpointIds: string[] };
 type Job = ActionJob & { targets: ActionTarget[] };
 type Ep = NonNullable<Awaited<ReturnType<ActionsService['endpointFor']>>>;
 export interface Availability { possible: boolean; reason: string | null; fix: string | null; warning: string | null }
+
+/** A bulk add reads this many manifests at once: 25 one at a time could take minutes at the 10-second fetch bound. */
+const BULK_CONCURRENCY = 4;
+type BulkResult =
+  | { packageId: string; status: 'added' | 'updated' | 'already'; in: 'global' | 'business'; entryId: string; version: string }
+  | { packageId: string; status: 'refused'; code: string; message: string };
 
 function bad(e: z.ZodError): never {
   throw new BadRequestException({ code: 'INVALID_REQUEST', message: e.issues.slice(0, 4).map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ') });
@@ -374,8 +380,9 @@ export class SoftwareService {
   // ── The winget catalog: search, add, one-click install (0.41) ──────────────
 
   /** Search the copy of the winget community index. Reading it needs what reading the catalog needs. */
-  async wingetSearch(actor: ActorContext, q: string | undefined) {
+  async wingetSearch(actor: ActorContext, q: string | undefined, browse?: Record<string, unknown>) {
     if (!actor.isPlatformAdmin && !this.acl.can(actor, CAP.COMPUTERS_VIEW)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'The software catalog needs the View computers permission.' });
+    if (browse && isBrowse(browse)) return this.wingetBrowse(actor, { ...browse, q });
     const s = (q ?? '').trim();
     const index = await this.index.status();
     if (s.length < 2) return { query: s, results: [], index };
@@ -505,6 +512,119 @@ export class SoftwareService {
     const r = await this.resolveWinget(d.packageId, d.version, d.architecture);
     const w = await this.wingetEntry(actor, customerId, r, freshMethod, 'winget_search');
     return { entry: this.view(actor, w.entry), change: w.change, installer: r.installer };
+  }
+
+  // ── Browsing the index and building a catalog by selection (0.43) ─────────
+
+  /**
+   * The business a browse marks, or a bulk add writes. A Platform Admin
+   * names any business, or none (the global catalog only); everyone else is
+   * their own business. Another business, or one that is archived or does
+   * not exist, looks like a missing one.
+   */
+  private async catalogBusiness(actor: ActorContext, businessId: unknown): Promise<{ id: string; name: string } | null> {
+    let id: string | null;
+    if (businessId !== undefined && businessId !== null && businessId !== '') {
+      if (typeof businessId !== 'string' || !Id.safeParse(businessId).success) throw new NotFoundException('Business not found');
+      if (!actor.isPlatformAdmin && businessId !== actor.businessId) throw new NotFoundException('Business not found');
+      id = businessId;
+    } else {
+      id = actor.isPlatformAdmin ? null : actor.businessId ?? null;
+    }
+    if (!id) return null;
+    const biz = await this.prisma.customer.findUnique({ where: { id }, select: { id: true, name: true, isArchived: true } });
+    if (!biz || biz.isArchived) throw new NotFoundException('Business not found');
+    return { id: biz.id, name: biz.name };
+  }
+
+  /** Live entries for these packages in the global catalog and (if named) one business's. */
+  private async liveFor(packageIds: string[], businessId: string | null) {
+    if (!packageIds.length) return [];
+    return this.prisma.softwareCatalogEntry.findMany({
+      where: {
+        archivedAt: null,
+        OR: packageIds.map((id) => ({ packageId: { equals: id, mode: 'insensitive' as const } })),
+        AND: [businessId ? { OR: [{ scope: 'GLOBAL' as const }, { customerId: businessId }] } : { scope: 'GLOBAL' as const }],
+      },
+      include: { customer: { select: { name: true } } },
+    });
+  }
+
+  /**
+   * One page of the winget index, each row marked with the catalogs that
+   * already hold it (global, and the business looked at) and the version
+   * pinned there. A read, for anyone who can read the catalog.
+   */
+  private async wingetBrowse(actor: ActorContext, raw: Record<string, unknown>) {
+    const p = parseBrowse(raw);
+    if (!p.ok) throw new BadRequestException({ code: 'INVALID_REQUEST', message: p.message });
+    const biz = await this.catalogBusiness(actor, raw.businessId);
+    const [index, page] = await Promise.all([this.index.status(), this.index.browse(p.value)]);
+    const live = await this.liveFor(page.rows.map((r) => r.packageId), biz?.id ?? null);
+    const marks = catalogMarks(live.filter((e) => this.canRead(actor, e)), biz?.id ?? null);
+    return {
+      mode: 'browse' as const, query: p.value.q, sort: page.sort, ranked: page.ranked, publisher: p.value.publisher, letter: p.value.letter,
+      page: page.page, pages: page.pages, pageSize: p.value.pageSize, total: page.total,
+      results: page.rows.map((r) => ({ ...r, inCatalog: marks.get(r.packageId.toLowerCase()) ?? [] })),
+      target: biz ? { businessId: biz.id, businessName: biz.name } : null,
+      you: { canAddGlobal: actor.isPlatformAdmin, canAddBusiness: !!biz && this.canEdit(actor, { scope: 'BUSINESS', customerId: biz.id }) },
+      index,
+    };
+  }
+
+  /**
+   * "Add N selected" from the browsable index: up to BULK_MAX_PACKAGES
+   * packages into one catalog, in one request, with one fresh sign-in. Each
+   * package goes through the one-click path (resolveWinget: manifest,
+   * installer, detection; then wingetEntry: the write and its audit entry,
+   * via 'bulk'), and the answer says per package what happened: added,
+   * already there (in this catalog, or for a business in the global one),
+   * or refused with the same code a single add would give.
+   */
+  async addManyFromWinget(actor: ActorContext, raw: unknown, freshMethod: string | null) {
+    const n = (raw as { packages?: unknown } | null)?.packages;
+    if (Array.isArray(n) && n.length > BULK_MAX_PACKAGES) throw new BadRequestException({ code: 'TOO_MANY_PACKAGES', message: `At most ${BULK_MAX_PACKAGES} packages in one request.` });
+    const p = BulkFromWingetDto.safeParse(raw);
+    if (!p.success) bad(p.error);
+    const d = p.data;
+    let biz: { id: string; name: string } | null = null;
+    if (d.scope === 'global') {
+      if (!actor.isPlatformAdmin) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only a Platform Admin adds to the global catalog.' });
+    } else {
+      biz = await this.catalogBusiness(actor, d.businessId);
+      if (!biz) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Name the business whose catalog this is.' });
+      if (!this.canEdit(actor, { scope: 'BUSINESS', customerId: biz.id })) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only this business\'s Business Owner or a Platform Admin changes its software catalog.' });
+    }
+    // Once, before any manifest is read or anything is written.
+    assertFresh(freshMethod, { action: 'software.catalog' });
+    const customerId = biz?.id ?? null;
+    const marks = catalogMarks(await this.liveFor(d.packages.map((x) => x.packageId), customerId), customerId);
+    const results: BulkResult[] = new Array(d.packages.length);
+    let next = 0;
+    const worker = async () => {
+      for (let i = next++; i < d.packages.length; i = next++) results[i] = await this.bulkOne(actor, customerId, d.packages[i], d.architecture, marks, freshMethod);
+    };
+    await Promise.all(Array.from({ length: Math.min(BULK_CONCURRENCY, d.packages.length) }, worker));
+    const counts = { added: 0, updated: 0, already: 0, refused: 0 };
+    for (const r of results) counts[r.status]++;
+    return { target: biz ? { scope: 'business' as const, businessId: biz.id, businessName: biz.name } : { scope: 'global' as const }, results, counts };
+  }
+
+  private async bulkOne(actor: ActorContext, customerId: string | null, pkg: { packageId: string; version?: string }, arch: Arch, marks: Map<string, CatalogMark[]>, freshMethod: string | null): Promise<BulkResult> {
+    const have = alreadyIn(marks.get(pkg.packageId.toLowerCase()), customerId);
+    if (have) return { packageId: pkg.packageId, status: 'already', in: have.scope, entryId: have.entryId, version: have.version };
+    try {
+      const r = await this.resolveWinget(pkg.packageId, pkg.version, arch);
+      const w = await this.wingetEntry(actor, customerId, r, freshMethod, 'bulk');
+      return { packageId: r.packageId, status: bulkStatusOf(w.change), in: w.entry.scope === 'GLOBAL' ? 'global' : 'business', entryId: w.entry.id, version: w.entry.version };
+    } catch (e) {
+      // Not a refusal: say so for this row and carry on with the others (what was added stays added, and audited).
+      if (!(e instanceof HttpException)) return { packageId: pkg.packageId, status: 'refused', code: 'FAILED', message: 'It could not be added. Try it on its own.' };
+      const b = e.getResponse() as string | { code?: unknown; message?: unknown };
+      const code = typeof b === 'object' && typeof b.code === 'string' ? b.code : e.getStatus() === 404 ? 'NOT_FOUND' : 'REFUSED';
+      const message = typeof b === 'string' ? b : typeof b.message === 'string' ? b.message : e.message;
+      return { packageId: pkg.packageId, status: 'refused', code, message: message.slice(0, 400) };
+    }
   }
 
   /**

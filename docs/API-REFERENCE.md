@@ -3,7 +3,7 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **511** of them across
+integration, under `/api/integration/v1`). There are **512** of them across
 **75** controllers.
 
 For request and response shapes, worked examples and error codes, see
@@ -843,6 +843,7 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/software/deployments/:id/rings/:ring/request` | signed in, throttled | `COMPUTERS_VIEW` |
 | `POST` | `/api/v1/software/manifest-preview` | signed in, throttled | `COMPUTERS_EDIT` |
 | `POST` | `/api/v1/software/winget/catalog` | signed in, throttled | `COMPUTERS_EDIT` |
+| `POST` | `/api/v1/software/winget/catalog/bulk` | signed in, throttled | `COMPUTERS_EDIT` |
 | `GET` | `/api/v1/software/winget/packages` | signed in | `COMPUTERS_VIEW` |
 | `POST` | `/api/v1/software/winget/refresh` | signed in, throttled | `COMPUTERS_EDIT` |
 

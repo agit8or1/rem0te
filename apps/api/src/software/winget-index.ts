@@ -259,3 +259,81 @@ export function rankSearch(q: string, rows: IndexRow[], limit = SEARCH_LIMIT): I
   return rows.map((r) => ({ r, t: tier(r) })).filter((x) => x.t > 0)
     .sort((a, b) => a.t - b.t || a.r.name.length - b.r.name.length || a.r.packageId.localeCompare(b.r.packageId)).slice(0, limit).map((x) => x.r);
 }
+
+// ── Browsing (0.43) ─────────────────────────────────────────────────────────
+
+/**
+ * The whole index as a paged table (Automation → Software catalog), so a
+ * catalog can be built by picking rows instead of guessing names. A query
+ * still narrows it with the 0.42 ranking; without one it is sorted by name.
+ * Every parameter is checked here, before anything reaches Prisma, and the
+ * values only ever reach SQL as bound parameters.
+ */
+export const BROWSE_PAGE_SIZE = 50;
+export const BROWSE_MAX_PAGE_SIZE = 100;
+export const BROWSE_MAX_PAGE = 10_000;
+/** A query matching more than this many rows is listed by name instead of ranked: ranking reads every candidate. */
+export const BROWSE_RANK_CAP = 2000;
+/** The index's publisher is normalised (lower case, letters and digits only); a filter names one exactly. */
+export const PUBLISHER_RE = /^[a-z0-9]{1,120}$/;
+/** The A–Z filter; "#" is a name that starts with anything else. */
+export const BROWSE_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+export type BrowseSort = 'relevance' | 'name' | '-name';
+export interface BrowseQuery { q: string; page: number; pageSize: number; sort: BrowseSort; publisher: string | null; letter: string | null }
+
+/** Is this request a browse (it names a page), rather than the 0.41 search? */
+export const isBrowse = (raw: Record<string, unknown>) => raw.page !== undefined || raw.pageSize !== undefined;
+
+function intParam(v: unknown, dflt: number): number | null {
+  if (v === undefined || v === '') return dflt;
+  if (typeof v !== 'string' && typeof v !== 'number') return null;
+  const s = String(v);
+  if (!/^[0-9]{1,6}$/.test(s)) return null;
+  return Number(s);
+}
+
+export function parseBrowse(raw: Record<string, unknown>): { ok: true; value: BrowseQuery } | { ok: false; message: string } {
+  const page = intParam(raw.page, 1);
+  if (page === null || page < 1 || page > BROWSE_MAX_PAGE) return { ok: false, message: `page is a whole number from 1 to ${BROWSE_MAX_PAGE}.` };
+  const size = intParam(raw.pageSize, BROWSE_PAGE_SIZE);
+  if (size === null || size < 1) return { ok: false, message: 'pageSize is a whole number from 1.' };
+  const q = typeof raw.q === 'string' ? raw.q.trim() : raw.q === undefined ? '' : null;
+  if (q === null || (q.length > 0 && !SEARCH_RE.test(q))) return { ok: false, message: 'Search with letters, digits, spaces and . + _ - (2 to 64 characters).' };
+  const sortIn = raw.sort === undefined || raw.sort === '' ? (q ? 'relevance' : 'name') : raw.sort;
+  if (sortIn !== 'relevance' && sortIn !== 'name' && sortIn !== '-name') return { ok: false, message: 'sort is relevance, name or -name.' };
+  const sort: BrowseSort = sortIn === 'relevance' && !q ? 'name' : sortIn;
+  let publisher: string | null = null;
+  if (raw.publisher !== undefined && raw.publisher !== '') {
+    if (typeof raw.publisher !== 'string' || !PUBLISHER_RE.test(raw.publisher.toLowerCase())) return { ok: false, message: 'publisher is the index\'s publisher key: lower-case letters and digits.' };
+    publisher = raw.publisher.toLowerCase();
+  }
+  let letter: string | null = null;
+  if (raw.letter !== undefined && raw.letter !== '') {
+    const l = typeof raw.letter === 'string' ? raw.letter.toUpperCase() : '';
+    if (l.length !== 1 || (l !== '#' && !BROWSE_LETTERS.includes(l))) return { ok: false, message: 'letter is one of A to Z, or #.' };
+    letter = l;
+  }
+  // Capped, not refused: asking for more than a page holds gets a full page.
+  return { ok: true, value: { q, page, pageSize: Math.min(size, BROWSE_MAX_PAGE_SIZE), sort, publisher, letter } };
+}
+
+/** Which rows a page holds: a page past the end is the last page, and page 1 of nothing is page 1 of 1. */
+export function pageWindow(total: number, page: number, pageSize: number): { page: number; pages: number; skip: number } {
+  const pages = Math.max(1, Math.ceil(Math.max(0, total) / pageSize));
+  const p = Math.min(Math.max(1, page), pages);
+  return { page: p, pages, skip: (p - 1) * pageSize };
+}
+
+/** The A–Z filter's letter for a name (the database applies the same rule). */
+export function letterOf(name: string): string {
+  const c = (name.trim()[0] ?? '').toUpperCase();
+  return c !== '' && BROWSE_LETTERS.includes(c) ? c : '#';
+}
+
+/** Rank a query's candidates (relevance) and cut one page out of the ranking. */
+export function rankPage(q: string, rows: IndexRow[], page: number, pageSize: number): { rows: IndexRow[]; total: number; page: number; pages: number } {
+  const ranked = rankSearch(q, rows, Number.MAX_SAFE_INTEGER);
+  const w = pageWindow(ranked.length, page, pageSize);
+  return { rows: ranked.slice(w.skip, w.skip + pageSize), total: ranked.length, page: w.page, pages: w.pages };
+}

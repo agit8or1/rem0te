@@ -5,6 +5,122 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.43.0] — 2026-11-14 · *Aisle*
+
+**The software catalog page lists every winget package, and you build a catalog by ticking rows.**
+
+The owner's report: *"I still don't see populated software packages to select from in the catalog, so the user or
+admin can build software catalogs for each business or globally."* Production's winget index was healthy (16,352
+packages, read daily), but Automation → Software catalog showed only a search box until you typed a name, and *Add
+to catalog* took one package at a time. Building a catalog meant knowing what to search for, and then one request
+per package. 0.43 turns the index into a table and adds a bulk add.
+
+### Added
+- **The whole winget index as a paged table** on Automation → Software catalog, filled when the page opens
+  (`components/software/winget-browser.tsx`):
+  - columns: name, publisher, package id, latest version, and **In catalog**;
+  - 50 a page, with Previous / Next, the page number and the total;
+  - **a filter** that narrows the table as you type, with the 0.42 ranking (best match first);
+  - **Name** sorts A–Z or Z–A;
+  - **an A–Z (and #) letter filter**;
+  - click a publisher to see only theirs.
+
+  The API is the existing `GET software/winget/packages`: a request naming `page` or `pageSize` is a browse
+  (`isBrowse`), anything else is the 0.41 search, unchanged. `parseBrowse` checks every parameter before Prisma sees
+  it. `pageSize` is capped at 100, not refused. A query matching more than 2,000 packages (`BROWSE_RANK_CAP`) is
+  listed by name rather than ranked, with `ranked: false`, and the page says so. Ranking reads every candidate, and a
+  two-letter query can match most of the index. It is still a read for anyone who can view computers.
+- **Each row says which catalog already holds it, at what version**: *in global catalog · 24.09*, *in Acme catalog ·
+  24.08* (`catalogMarks`). That is the global catalog plus the one business being looked at: `businessId` for a
+  Platform Admin, otherwise the caller's own business. Archived entries and another business's entries never mark a
+  row.
+- **Building a catalog by selection.** *Catalog to build* is **Global** or any business for a Platform Admin. A
+  Business Owner always builds their own business's catalog. Tick rows, then **Add N selected to *target***. That is
+  one request, `POST software/winget/catalog/bulk`:
+  - at most 25 packages (`BULK_MAX_PACKAGES`; 26 is `400 TOO_MANY_PACKAGES`);
+  - one fresh sign-in, checked once before any manifest is read;
+  - `@RateLimit(3)` a minute, because each package is one bounded manifest fetch from raw.githubusercontent.com.
+    Four fetches run at a time, so 25 packages take at most about 70 seconds at the 10-second fetch bound.
+
+  Each package goes through the one-click path unchanged: `resolveWinget` reads the manifest, picks the machine-wide
+  x64 installer and derives the detection rule, then `wingetEntry` writes the entry and audits it,
+  `SOFTWARE_CATALOG_CREATED` with **`via: 'bulk'`**, one entry per package added.
+
+  The answer has one result per package, in the order asked:
+  - **added**;
+  - **already**: the target's own entry, or, for a business, a global entry, which already applies there. No
+    manifest is read for these, and no business copy is made;
+  - **refused**, with the same code a single add gives (`NO_DETECTION`, `NO_MACHINE_INSTALLER`,
+    `VERSION_NOT_INSTALLABLE`, `MANIFEST_NOT_FOUND`, `PACKAGE_NOT_IN_INDEX`…) and its message.
+
+  The table shows each result on its row. One refused package does not stop the others.
+- **Remove N from *target*** archives the target's entries for the ticked rows through the ordinary archive route,
+  with one reason (and the signer revocation, when a signer is configured). The archive route allows ten a minute, so
+  the page removes at most ten at a time.
+- **The computer's Software tab lists its catalog first**: the business's entries and the global ones, each marked
+  *this business* or *global*, with **Install** and **Uninstall**, and a filter once there are more than eight
+  (`CatalogPicker`). The winget search moved below it.
+- **A stale index is called out**, not only an empty one. `WingetIndexStatus` now shows the same warning banner when
+  the copy is more than two days old (two missed daily reads), alongside *Read the index now* for a Platform Admin. An
+  empty table always says why: the index is empty, or nothing matches the filter.
+
+### Fixed
+- **The computer's winget search said *Nothing in the winget catalog matches ""* before anything was searched.**
+  The search query and the 0.42 index-status query share the cache key `['winget-search', '']`. The disabled search
+  therefore read the status query's answer as an empty result. Results are now shown only for a real query.
+
+### Changed
+- §60 (`check-security-invariants.mjs`) checks that:
+  - the browse is View computers, its page is capped at 100, and its parameters are checked before the query;
+  - the bulk route is Edit computers and `@RateLimit(3)`, with the cap, then who may edit, then `assertFresh`, then
+    the packages;
+  - each package goes through `resolveWinget` and `wingetEntry(…, 'bulk')`, with no write or audit of its own;
+  - another business's catalog is a 404 on both routes (`catalogBusiness`).
+
+  §40 now counts 21 software routes and nine `this.fresh(req)`.
+- `scripts/run-e2e.sh` runs `software-browse` with the self-starting suites. `docs/software-deployment.md` (*Building a
+  catalog by selection*, and the API table), `/help`, CLAUDE.md and `docs/API-REFERENCE.md` describe it.
+
+#### Verification
+- `unit-software.mjs`: 272 checks (25 new; pwsh is not on this host, so the collector run is skipped). The new checks
+  cover:
+  - `parseBrowse`'s defaults, the page-size cap, and the hostile page, query, sort, publisher and letter values;
+  - `pageWindow`, including 16,352 rows and a page past the end;
+  - relevance pages, which are cuts of the 0.42 ranking;
+  - `letterOf`;
+  - `BulkFromWingetDto`'s 25 cap, case-insensitive duplicates and closed keys;
+  - `catalogMarks` and `alreadyIn`.
+- `e2e-software-browse.mjs` (new, ports 3721–3722, scratch database, a loopback winget-pkgs stand-in, no signer):
+  73 checks.
+  - An empty index is reported as empty.
+  - Paging: every one of 251 packages appears on exactly one of six pages, a page past the end is the last page,
+    `-name` sorts in reverse, `pageSize` 1000 gives 100, and six hostile parameters are each `400`.
+  - The filter, publisher and letter (`#` included) narrow as expected, and the 0.41 search is unchanged.
+  - Without a fresh sign-in the request is `STEP_UP_REQUIRED`, and no manifest is fetched.
+  - Refusals: 26 packages, duplicates, a caller-supplied hash, a Business Owner adding to global, a Business User
+    with Edit computers, and another business's catalog (`404`) for both the bulk and the browse.
+  - A global bulk of seven: two added and five refused with their codes, one audit entry per added package with
+    `via: bulk`, and none for the refused ones.
+  - Marks per viewer.
+  - A Business Owner's bulk: *already* through the global entry with no manifest read, Globex's entry never showing
+    for Acme, and three audit entries by the owner.
+  - 25 in one request, with results in order.
+  - The fourth bulk in a minute is `429`.
+  - Archiving from a row's mark, and adding the package again.
+- `e2e-software-catalog.mjs` 84 and `e2e-software-deploy.mjs` 156: no change, both pass (Go 1.27.4 builds of
+  `rem0te-release` and `rem0te-action-sim`).
+- A browser pass against `next dev` and a scratch API (not committed) on ports 3724–3726:
+  - the table loads 50 of 131 rows on open, and the pager, filter and letter work;
+  - Add 3 selected to a business shows *refused (NO_DETECTION)* on that row, and the catalog list below refreshes;
+  - Remove archives the entry;
+  - the Software tab shows the catalog above the search.
+
+  `e2e-ui.mjs` was not run here: other branches were running suites on fixed ports at the same time, so CI runs it.
+- `check-security-invariants.mjs`, `check-versions.mjs`, `pnpm -r lint`, `tsc` in both apps, `nest build` and `next
+  build` pass. `gen-api-reference.mjs --check` matches the runtime route table: 512 routes, one new.
+
+No migration. The agent does not change.
+
 ## [0.42.0] — 2026-11-14 · *Toolbelt*
 
 **Drivers and definition updates can be installed, more programs can be uninstalled, and an empty software search

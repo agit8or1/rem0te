@@ -9,7 +9,8 @@ the installer itself with winget, hashes it, and installs only if the hash is th
 
 From 0.41 you don't have to build the catalog by hand: [search the winget catalog](#searching-the-winget-catalog-041)
 and click **Install**, and [uninstall anything](#uninstalling-any-installed-program-041) the computer lists in
-Programs and Features.
+Programs and Features. From 0.43 the whole index is a [table you pick from](#building-a-catalog-by-selection-043): tick packages and
+add them to the global catalog or a business's in one go.
 
 Nothing is uploaded to the portal. It never holds an installer, so it can't hand a computer one.
 
@@ -238,6 +239,62 @@ The agent's side is unchanged: it downloads with winget, hashes the installer it
 
 **Add to catalog** on Automation → Software catalog does steps 1 to 4 for the x64 installer, without installing.
 
+## Building a catalog by selection (0.43)
+
+Automation → Software catalog lists **the whole winget index as a table**, filled as soon as the page opens. You no
+longer have to guess a name to search for.
+
+- **Columns:** name, publisher, package id, latest version, and **In catalog**. *In catalog* says which catalog
+  already holds the package and the version pinned there: *in global catalog · 24.09*, or *in Acme catalog · 24.08*.
+  It covers the global catalog and the catalog you are building. Another business's entries are never shown.
+- **50 a page**, with Previous / Next, the page number and the total count.
+- **Filter** narrows the table as you type, with the same ranking as search (best match first). Click **Name** to
+  sort by name instead, A–Z or Z–A. A query matching more than 2,000 packages is listed by name rather than ranked,
+  and the page says so.
+- **A–Z** shows only names starting with that letter. **#** shows names starting with anything else, such as *7-Zip*.
+- **Publisher:** click a publisher in a row to show only that publisher's packages. The index stores publishers in
+  normalised form: lower case, letters and digits only.
+
+**Catalog to build** picks the target:
+
+- A Platform Admin chooses **Global catalog** or any business.
+- A Business Owner always builds their own business's catalog.
+- Anyone else who can view computers sees the table and its marks, but has no checkboxes.
+
+**Tick rows, then choose Add N selected to *target***. That sends one request (`POST software/winget/catalog/bulk`)
+of at most **25 packages**. It needs one fresh sign-in, and is limited to three a minute, because each package means
+one manifest read from raw.githubusercontent.com. Each package goes through the same path as *Add to catalog*: its
+manifest is read, the machine-wide x64 installer is chosen, a detection rule is derived, and the entry is written. Each
+entry added is audited as `SOFTWARE_CATALOG_CREATED` with `via: bulk`.
+
+The answer lists each package, and the table shows the result on its row:
+
+- **added** at the pinned version.
+- **already in the global / business catalog**, at its version. For a business, an entry in the global catalog
+  already applies, so no business copy is made. No manifest is read for these.
+- **refused**, with the same code a single add gives: `NO_DETECTION`, `NO_MACHINE_INSTALLER`,
+  `VERSION_NOT_INSTALLABLE`, `MANIFEST_NOT_FOUND`, `PACKAGE_NOT_IN_INDEX`…, and the reason. A refused package changes
+  nothing. Add it by hand with the form if you can supply a detection rule.
+
+**Remove N from *target*** archives the target catalog's entries for the ticked rows, one at a time, through the
+ordinary archive route. It asks for one reason. With an approval signer configured, each entry is revoked there
+first, as [Archiving](#archiving-an-entry-revokes-it) describes. The archive route allows ten a minute, so remove at
+most ten at a time.
+
+The rules are the existing catalog rules:
+
+- the global catalog is the Platform Admin's;
+- a business's catalog is its own Business Owner's (not a technician's) or a Platform Admin's;
+- naming another business's catalog, to add to it or to mark the table with it, is `404`, as if the business did not
+  exist.
+
+If the index has never been read, or was last read more than two days ago, the banner above the table says so. An
+empty table always says why: the index is empty, or nothing matches the filter.
+
+On a computer's **Software tab** (0.43), *Managed software* now lists the computer's catalog first: the business's
+entries and the global ones, each marked *this business* or *global*. Each has **Install** (and **Uninstall**), with a
+filter once there are more than eight. The winget search is below the list, for anything not yet in the catalog.
+
 ## Uninstalling any installed program (0.41)
 
 The **Installed software** list on a computer's Software tab (what Programs and Features shows) has **Uninstall** on
@@ -456,9 +513,10 @@ All under `/api/v1`, all with a session:
 | `GET software/deployments`, `GET software/deployments/:id`, `POST software/deployments` | View computers, then the high-risk action check per computer |
 | `POST software/deployments/:id/rings/:ring/request`, `…/pause`, `…/resume`, `…/cancel` | View computers, then as above; pausing, resuming and canceling need the deployment's creator, the Business Owner or a Platform Admin |
 | `GET endpoints/:id/software/catalog`, `POST endpoints/:id/software/:entryId/install\|uninstall` | View computers, then as above |
-| `GET software/winget/packages?q=` (0.41) | View computers |
+| `GET software/winget/packages?q=` (0.41); with `page`, `pageSize` (at most 100), `sort`, `publisher`, `letter`, `businessId` (0.43) one page of the index, marked with the catalogs holding each package | View computers; another business is 404 |
 | `POST software/winget/refresh` (0.41) | Edit computers, then Platform Admin |
 | `POST software/winget/catalog` (0.41) | Edit computers, then Business Owner / Platform Admin and a fresh sign-in |
+| `POST software/winget/catalog/bulk` (0.43): up to 25 packages, a result each; three a minute | Edit computers, then Business Owner / Platform Admin and a fresh sign-in; another business is 404 |
 | `POST endpoints/:id/software/winget-install` (0.41) | View computers, then the high-risk action check; a catalog write needs Business Owner / Platform Admin and a fresh sign-in |
 | `POST endpoints/:id/software/remove-program` (0.41) | View computers, then the high-risk action check |
 | `GET reports/software-compliance`, `…/export.csv` | View computers |

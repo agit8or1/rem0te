@@ -143,6 +143,11 @@ export const softwareApi = {
   wingetSearch: (q: string) => api.get('/software/winget/packages', { params: { q } }),
   wingetRefresh: () => api.post('/software/winget/refresh', {}),
   wingetAdd: (body: { scope: 'global' | 'business'; businessId?: string; packageId: string; version?: string; architecture?: 'x64' | 'x86' | 'arm64' }) => api.post('/software/winget/catalog', body),
+  // 0.43: one page of the whole index, marked with the catalogs holding each package; and adding up to 25 at once.
+  wingetBrowse: (params: { q?: string; page: number; pageSize?: number; sort?: 'relevance' | 'name' | '-name'; publisher?: string; letter?: string; businessId?: string }) =>
+    api.get('/software/winget/packages', { params: Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== '')) }),
+  wingetAddMany: (body: { scope: 'global' | 'business'; businessId?: string; packages: { packageId: string; version?: string }[]; architecture?: 'x64' | 'x86' | 'arm64' }) =>
+    api.post('/software/winget/catalog/bulk', body),
   quickInstall: (endpointId: string, body: { packageId: string; version?: string; reason?: string; windowHours?: number }) =>
     api.post(`/endpoints/${endpointId}/software/winget-install`, body),
   removeProgram: (endpointId: string, body: { key: string; view: '64' | '32'; displayName: string; reason?: string; windowHours?: number }) =>
