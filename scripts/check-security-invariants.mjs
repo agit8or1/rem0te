@@ -401,9 +401,10 @@ check(
   // actions; 0.34 windows.script.run (§ 39), then software install and
   // uninstall (§ 40). The list is exact and ordered: anything further is a
   // review.
-  // 0.41 adds windows.software.remove (§ 59).
-  const CATALOG_IDS = ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect', 'windows.script.run', 'windows.software.install', 'windows.software.uninstall', 'windows.software.remove'];
-  check('agent catalog is exactly the Spooler start, update install, service restart, restart schedule/cancel, log collection, approved-script run, software install/uninstall and program removal',
+  // 0.41 adds windows.software.remove (§ 59); 0.45 windows.service.control
+  // and windows.process.stop (§ 60).
+  const CATALOG_IDS = ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect', 'windows.script.run', 'windows.software.install', 'windows.software.uninstall', 'windows.software.remove', 'windows.service.control', 'windows.process.stop'];
+  check('agent catalog is exactly the Spooler start, update install, service restart, restart schedule/cancel, log collection, approved-script run, software install/uninstall, program removal, service control and ending a process',
     goIds.join(',') === CATALOG_IDS.join(',') && /const ServiceName = "Spooler"/.test(goCat) && /s == ServiceName/.test(goCat),
     `agent catalog ids: ${goIds.join(', ')}`);
   const tsCat = read('apps/api/src/actions/catalog.ts');
@@ -424,7 +425,9 @@ check(
     // 0.34: the five closed software keys, checked in § 40.
     /ParamsOK:\s+softwareParamsOK,/,
     // 0.41: the key, its view and the expected DisplayName, checked in § 59.
-    /ParamsOK:\s+removeParamsOK,/];
+    /ParamsOK:\s+removeParamsOK,/,
+    // 0.45: a service, its display name, an operation and a start type; a process id, name and creation time (§ 60).
+    /ParamsOK:\s+serviceControlParamsOK,/, /ParamsOK:\s+processStopParamsOK,/];
   const openParams = entries.filter((e) => !CLOSED.some((re) => re.test(e))).map((e) => (e.match(/ID: "([^"]+)"/) ?? [])[1] ?? '?');
   check('every agent catalog entry has closed parameters', entries.length === CATALOG_IDS.length && openParams.length === 0, `not closed: ${openParams.join(', ')}`);
   const maint = read('tools/windows-installer/internal/action/maintenance.go');
@@ -447,12 +450,13 @@ check(
       && /if err != nil \{\s*return &Result\{Outcome: "not_executed", Reason: "session_state_unknown"/.test(maint),
     'maintenance risk must be "high" and "cannot tell" must count as a session');
   check('the agent\'s action package runs no process; the Windows side runs only shutdown.exe and wevtutil.exe from System32',
-    !/"os\/exec"|exec\.Command/.test(maint + read('tools/windows-installer/internal/action/action.go') + goCat + read('tools/windows-installer/internal/action/software.go') + read('tools/windows-installer/internal/action/remove.go'))
+    !/"os\/exec"|exec\.Command/.test(maint + read('tools/windows-installer/internal/action/action.go') + goCat + read('tools/windows-installer/internal/action/software.go') + read('tools/windows-installer/internal/action/remove.go')
+      + read('tools/windows-installer/internal/action/svcctl.go') + read('tools/windows-installer/internal/action/procstop.go'))
       && [...read('tools/windows-installer/action_windows.go').matchAll(/runSystem32\([^,]+, "([^"]+)"/g)].map((m) => m[1]).every((x) => x === 'shutdown.exe' || x === 'wevtutil.exe')
       && (read('tools/windows-installer/action_windows.go').match(/exec\.Command(?:Context)?\(/g) ?? []).length === 2,
     'maintenance must not grow a way to run something else');
-  // Four maintenance actions (0.32), the script run and the two software actions (0.34), program removal (0.41).
-  check('the maintenance actions, the script run and the software actions are not offered to ClientSt0r', (tsCat.match(/integration: false,/g) ?? []).length === 8 && /export const SCRIPT_RUN: CatalogAction = \{[\s\S]{0,2000}?\bintegration: false,/.test(tsCat) && /proposable\(\): string\[\] \{[^}]{0,200}CATALOG\.filter\(\(a\) => a\.integration\)\.map/.test(read('apps/api/src/integration/action-proposals.service.ts'))
+  // Four maintenance actions (0.32), the script run and the two software actions (0.34), program removal (0.41), service control and ending a process (0.45).
+  check('the maintenance actions, the script run and the software actions are not offered to ClientSt0r', (tsCat.match(/integration: false,/g) ?? []).length === 10 && /export const SCRIPT_RUN: CatalogAction = \{[\s\S]{0,2000}?\bintegration: false,/.test(tsCat) && /proposable\(\): string\[\] \{[^}]{0,200}CATALOG\.filter\(\(a\) => a\.integration\)\.map/.test(read('apps/api/src/integration/action-proposals.service.ts'))
       && /if \(!catalogEntry\(body\.action\.id, body\.action\.version\)\?\.integration\)/.test(read('apps/api/src/integration/action-proposals.service.ts')),
     'advertising them changes the ticket-rmm contract');
   // 0.34: the plan's one `script:` field is the signed ScriptBlock — hashes,
@@ -1397,7 +1401,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //     charset helper; a build-time guard refuses the script otherwise. The
 //     server bounds rows and bytes, drops what the charsets refuse, keeps
 //     results out of the history, scopes every diagnostics read by the
-//     device-list visibility rule, and the workspace tabs offer no action.
+//     device-list visibility rule, and the workspace tabs write only a
+//     Refresh (0.45: their controls are approved actions, § 60).
 {
   const ws = read('apps/api/src/public/windows-script.ts');
   // The template's own copy (column 0), not the guard's SNAPSHOT_BLOCK_START constant.
@@ -1453,10 +1458,17 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'UNKNOWN_SNAPSHOT before anything else; resultOnTab in history');
   const tabs = read('apps/web/components/endpoints/workspace/snapshot-tabs.tsx');
   const posts = [...tabs.matchAll(/api\.(post|put|patch|delete)\(([^)]*)\)/g)].map((m) => m[0]);
-  check('the Processes, Services and Network tabs offer no action: their only write is a Refresh (a catalog key)',
-    posts.length === 1 && /api\.post\(`\/endpoints\/\$\{endpointId\}\/diagnostics\/runs`, \{ key: snapKey \}\)/.test(posts[0])
-      && !/>\s*(End task|End process|Kill|Stop|Start|Restart|Disable|Enable)\b/i.test(tabs) && !/dangerouslySetInnerHTML/.test(tabs),
-    `writes: ${posts.join(' | ')}`);
+  // 0.45: the tabs' own writes are still only a Refresh (the button, and
+  // Keep refreshing on the Processes tab). Their Start / Stop / Restart /
+  // Startup type… and End process go through device-control.tsx, whose only
+  // writes are the two approved-action routes and the same Refresh (§ 60).
+  const dcUi = read('apps/web/components/endpoints/workspace/device-control.tsx');
+  const dcPosts = [...dcUi.matchAll(/api\.(post|put|patch|delete)\(([^,)]*)/g)].map((m) => m[2]);
+  check('the Processes, Services and Network tabs write only a Refresh (a catalog key); their controls write only the two approved-action routes',
+    posts.length === 2 && /api\.post\(`\/endpoints\/\$\{endpointId\}\/diagnostics\/runs`, \{ key: snapKey \}\)/.test(posts[0]) && /api\.post\(`\/endpoints\/\$\{endpointId\}\/diagnostics\/runs`, \{ key \}\)/.test(posts[1])
+      && dcPosts.length === 3 && dcPosts.every((x) => ['`/endpoints/${endpointId}/diagnostics/runs`', '`/endpoints/${endpointId}/services/control`', '`/endpoints/${endpointId}/processes/stop`'].includes(x.trim()))
+      && !/dangerouslySetInnerHTML/.test(tabs + dcUi),
+    `writes: ${[...posts, ...dcPosts].join(' | ')}`);
 }
 
 // 32. The standard macOS agent (0.33). The Linux agent's rules (§ 24, whose
@@ -3740,12 +3752,16 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     ['patching', fn(read('apps/api/src/patching/patching.service.ts'), 'async requestRing(actor: ActorContext, id: string, ring: number, raw: unknown, under?: UnderPolicy, freshMethod', 4000)],
     ['software', fn(read('apps/api/src/software/software.service.ts'), 'async requestRing(actor: ActorContext, id: string, ring: number, raw: unknown, freshMethod', 4000)],
     ['script-run', fn(read('apps/api/src/script-run/script-run.service.ts'), 'async requestRun(actor: ActorContext, raw: unknown, freshMethod', 4000)],
+    ['device-control service', fn(read('apps/api/src/device-control/device-control.service.ts'), 'async controlService(actor: ActorContext, endpointId: string, raw: unknown, freshMethod', 3000)],
+    ['device-control process', fn(read('apps/api/src/device-control/device-control.service.ts'), 'async stopProcess(actor: ActorContext, endpointId: string, raw: unknown, freshMethod', 3000)],
   ].map(([n, b]) => [n, /this\.(actions\.)?createPlan\(actor, \{[\s\S]*?freshMethod,?\s*\}\)/.test(b)]);
   const ctls = [
     ['actions', /this\.actions\.request\(actor, id, body, undefined, undefined, this\.freshMethod\(req\)\)/.test(read('apps/api/src/actions/actions.controller.ts'))],
     ['patching install', /this\.patching\.installOnEndpoint\(actor, id, body, this\.freshMethod\(req\)\)/.test(read('apps/api/src/patching/patching.controller.ts'))],
     ['script-run run', /this\.svc\.requestRun\(actor, body, this\.fresh\(req\)\)/.test(read('apps/api/src/script-run/script-run.controller.ts'))],
     ['script-run propose', /this\.svc\.propose\(actor, versionId, this\.fresh\(req\)\)/.test(read('apps/api/src/script-run/script-run.controller.ts'))],
+    ['device-control service', /this\.svc\.controlService\(actor, id, body, this\.fresh\(req\)\)/.test(read('apps/api/src/device-control/device-control.controller.ts'))],
+    ['device-control process', /this\.svc\.stopProcess\(actor, id, body, this\.fresh\(req\)\)/.test(read('apps/api/src/device-control/device-control.controller.ts'))],
   ];
   const prop = fn(read('apps/api/src/script-run/script-run.service.ts'), 'async propose(actor: ActorContext, versionId: string, freshMethod', 3000);
   check('direct: a portal request in direct mode needs a fresh sign-in before it is submitted, ClientSt0r is refused, and every request path passes the sign-in on',
@@ -3956,6 +3972,162 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /if \(!actor\.isPlatformAdmin && businessId !== actor\.businessId\) throw new NotFoundException\('Business not found'\);/.test(pm('catalogBusiness'))
       && bulk.indexOf('this.catalogBusiness(actor, d.businessId)') > 0 && pm('wingetBrowse').indexOf('this.catalogBusiness(actor, raw.businessId)') > 0,
     'catalogBusiness must 404 a business that is not the caller\'s own');
+}
+
+// 61. Service control and ending a process (0.45): windows.service.control@1
+//     and windows.process.stop@1. Closed parameters with the same charsets on
+//     the agent and the portal; the same protected lists, refused on both
+//     sides; the agent reads the service or process itself first (a driver,
+//     a changed display name, a reused process id are refused), runs its
+//     Precheck after the signed pause and journals before it changes
+//     anything; the Windows side uses only the service control manager and
+//     OpenProcess / GetProcessTimes / TerminateProcess — no sc.exe, taskkill
+//     or PowerShell — and the creation time is checked on the very handle the
+//     process is ended through. Editing a service is its startup type only:
+//     nothing anywhere carries a binary path, account, password, recovery
+//     action or dependency.
+{
+  const fn = (src, head, n = 2400) => { const i = src.indexOf(head); return i < 0 ? '' : src.slice(i, i + n); };
+  const gsc = read('tools/windows-installer/internal/action/svcctl.go');
+  const gps = read('tools/windows-installer/internal/action/procstop.go');
+  const gmt = read('tools/windows-installer/internal/action/maintenance.go');
+  const gwin = read('tools/windows-installer/svcproc_windows.go');
+  const goCat = read('tools/windows-installer/internal/action/catalog.go');
+  const tsCat = read('apps/api/src/actions/catalog.ts');
+  const dsv = read('apps/api/src/device-control/device-control.service.ts');
+  const dct = read('apps/api/src/device-control/device-control.controller.ts');
+  const dui = read('apps/web/components/endpoints/workspace/device-control.tsx');
+  const stripGo = (s) => s.replace(/^\s*\/\/.*$/gm, '').replace(/\/\/[^\n"`]*$/gm, '');
+  const goRe = (src, name) => (src.match(new RegExp(`${name}\\s*= regexp\\.MustCompile\\(\`([^\`]+)\`\\)`)) ?? [])[1] ?? null;
+  const tsRe = (name) => (tsCat.match(new RegExp(`export const ${name} = /(.+)/;`)) ?? [])[1] ?? null;
+  const pairs = [['ServiceNameRE', gmt, 'SERVICE_NAME_RE'], ['ServiceDisplayNameRE', gsc, 'SERVICE_DISPLAY_NAME_RE'], ['ProcessNameRE', gps, 'PROCESS_NAME_RE'], ['ProcessStartedRE', gps, 'PROCESS_STARTED_RE']]
+    .map(([g, src, t]) => [g, goRe(src, g), tsRe(t)]);
+  check('service/process: the four charsets are the same regular expression on the agent and the portal',
+    pairs.every(([, a, b]) => !!a && a === b), pairs.map(([n, a, b]) => `${n}: agent ${a} portal ${b}`).join('; '));
+  const hostileSvc = ['..', 'a\\b', 'a/b', '-x', 'a b', 'a"b', 'a;b', 'a|b', 'a%x%', 'a$b', 'a.exe', 'a\nb', 'a'.repeat(65), ''];
+  const hostileProc = ['C:\\x', 'a/b', '-x', ' x', 'a"b', 'a;b', 'a|b', 'a&b', 'a%x', 'a`b', 'a$b', 'a\nb', 'a'.repeat(65), ''];
+  const svcRe = pairs[0][1] ? new RegExp(pairs[0][1]) : null, procRe = pairs[2][1] ? new RegExp(pairs[2][1]) : null, dispRe = pairs[1][1] ? new RegExp(pairs[1][1]) : null;
+  const let1 = svcRe ? hostileSvc.filter((x) => svcRe.test(x)) : ['(regex not found)'];
+  const let2 = procRe ? hostileProc.filter((x) => procRe.test(x)) : ['(regex not found)'];
+  const let3 = dispRe ? ['a"b', 'a<b', 'a>b', 'a\\b', 'a\nb', 'a\x00b', 'x'.repeat(257)].filter((x) => dispRe.test(x)) : ['(regex not found)'];
+  check('service/process: a service or process name can never be a path, an option or carry a shell character; a display name no quote, bracket, backslash or control character',
+    let1.length === 0 && let2.length === 0 && let3.length === 0, `accepted: ${[...let1, ...let2, ...let3].map((x) => JSON.stringify(x)).join(', ')}`);
+
+  const goList = (src, name) => ((src.match(new RegExp(`(?:var )?\\b${name}\\s*= \\[\\]string\\{([\\s\\S]*?)\\n?\\}`)) ?? [])[1] ?? '').replace(/\/\/.*$/gm, '').split(',').map((x) => x.trim().replace(/"/g, '')).filter(Boolean);
+  const tsList = (name) => ((tsCat.match(new RegExp(`export const ${name} = \\[([\\s\\S]*?)\\] as const;`)) ?? [])[1] ?? '').replace(/\/\/.*$/gm, '').split(',').map((x) => x.trim().replace(/'/g, '')).filter(Boolean);
+  check('service: the operations and start types are the same closed lists on both sides',
+    goList(gsc, 'ServiceOps').join() === 'start,stop,restart,set_start_type' && tsList('SERVICE_OPS').join() === 'start,stop,restart,set_start_type'
+      && goList(gsc, 'ServiceStartTypes').join() === 'automatic,automatic_delayed,manual,disabled' && tsList('SERVICE_START_TYPES').join() === 'automatic,automatic_delayed,manual,disabled',
+    `agent ${goList(gsc, 'ServiceOps')} / ${goList(gsc, 'ServiceStartTypes')}; portal ${tsList('SERVICE_OPS')} / ${tsList('SERVICE_START_TYPES')}`);
+  check('service/process: the parameters are exactly the closed keys, on both sides',
+    /if !exactKeys\(p, "service", "displayName", "op", "startType"\) \{/.test(gsc) && /\} else if !exactKeys\(p, "service", "displayName", "op"\) \{/.test(gsc)
+      && /if s\.Service, ok = strField\(p, "service"\); !ok \|\| !ServiceNameRE\.MatchString\(s\.Service\) \{/.test(gsc)
+      && /if !exactKeys\(p, "pid", "name", "startedAt"\) && !exactKeys\(p, "pid", "name", "startedAt", "tree"\) \{/.test(gps)
+      && /if !ok \|\| n != math\.Trunc\(n\) \|\| n < 1 \|\| n > math\.MaxUint32 \{/.test(gps)
+      && /export const ServiceControlParams = z\.union\(\[\s*z\.object\(\{ service: z\.string\(\)\.regex\(SERVICE_NAME_RE\), displayName: z\.string\(\)\.refine\(serviceDisplayNameOk\), op: z\.enum\(\['start', 'stop', 'restart'\]\) \}\)\.strict\(\),\s*z\.object\(\{ service: z\.string\(\)\.regex\(SERVICE_NAME_RE\), displayName: z\.string\(\)\.refine\(serviceDisplayNameOk\), op: z\.literal\('set_start_type'\), startType: z\.enum\(SERVICE_START_TYPES\) \}\)\.strict\(\),\s*\]\);/.test(tsCat)
+      && /export const ProcessStopParams = z\.object\(\{\s*pid: z\.number\(\)\.int\(\)\.min\(1\)\.max\(4_294_967_295\),\s*name: z\.string\(\)\.regex\(PROCESS_NAME_RE\)[^\n]*\n\s*startedAt: z\.string\(\)\.regex\(PROCESS_STARTED_RE\)[^\n]*\n\s*tree: z\.boolean\(\)\.optional\(\),\s*\}\)\.strict\(\);/.test(tsCat),
+    'ServiceControlParams / ProcessStopParams (Go and zod)');
+
+  const MUST_SVC = ['WinDefend', 'Sense', 'SecurityHealthService', 'wscsvc', 'mpssvc', 'BFE', 'EventLog', 'SamSs', 'KeyIso', 'VaultSvc', 'CryptSvc', 'gpsvc', 'RpcSs', 'RpcEptMapper', 'DcomLaunch', 'LSM', 'PlugPlay', 'Power', 'ProfSvc', 'Winmgmt', 'TrustedInstaller', 'Schedule', 'Dhcp', 'Dnscache'];
+  const MUST_PROC = ['System', 'Idle', 'smss', 'csrss', 'wininit', 'winlogon', 'services', 'lsass', 'lsaiso', 'svchost', 'fontdrvhost', 'dwm', 'MsMpEng', 'rem0te-agent', 'rem0te-tray', 'rustdesk'];
+  const gS = goList(gsc, 'ProtectedServices'), tS = tsList('PROTECTED_SERVICES'), gP = goList(gps, 'ProtectedProcesses'), tP = tsList('PROTECTED_PROCESSES');
+  check('service/process: the protected lists are the same on both sides, and hold the security, core and reachability services and processes',
+    gS.length > 0 && gS.join() === tS.join() && MUST_SVC.every((n) => gS.includes(n))
+      && goList(gsc, 'KeepRunningServices').join() === 'RustDesk' && tsList('KEEP_RUNNING_SERVICES').join() === 'RustDesk'
+      && goList(gsc, 'NoDisableServices').join() === tsList('NO_DISABLE_SERVICES').join() && goList(gsc, 'NoDisableServices').includes('wuauserv')
+      && /const OwnServicePrefix = "Rem0te"/.test(gsc) && /export const OWN_SERVICE_PREFIX = 'Rem0te';/.test(tsCat)
+      && gP.length > 0 && gP.join() === tP.join() && MUST_PROC.every((n) => gP.includes(n))
+      && /const MaxTreeProcesses = 64/.test(gps) && /export const MAX_TREE_PROCESSES = 64;/.test(tsCat),
+    `services agent ${gS.length} / portal ${tS.length}; processes agent ${gP.join(', ')} / portal ${tP.join(', ')}`);
+  check('service/process: the lists are compared case-insensitively, RustDesk is never stopped or set to Manual/Disabled and the update services never disabled, on both sides',
+    /strings\.EqualFold\(x, s\)/.test(fn(gsc, 'func inFold(', 200)) && /const inFold = \(list: readonly string\[\], s: string\) => list\.some\(\(x\) => x\.toLowerCase\(\) === s\.toLowerCase\(\)\);/.test(tsCat)
+      && /case inFold\(KeepRunningServices, name\) && \(op == "stop" \|\| \(op == "set_start_type" && startType != "automatic" && startType != "automatic_delayed"\)\):/.test(gsc)
+      && /if \(inFold\(KEEP_RUNNING_SERVICES, name\) && \(op === 'stop' \|\| \(op === 'set_start_type' && startType !== 'automatic' && startType !== 'automatic_delayed'\)\)\)/.test(tsCat)
+      && /case inFold\(NoDisableServices, name\) && op == "set_start_type" && startType == "disabled":/.test(gsc) && /if \(inFold\(NO_DISABLE_SERVICES, name\) && op === 'set_start_type' && startType === 'disabled'\)/.test(tsCat),
+    'ServiceRefusal / serviceRefusal');
+
+  // Both sides refuse: the portal before a plan exists, the agent before anything changes.
+  const cs = fn(dsv, 'async controlService(', 3000), sp = fn(dsv, 'async stopProcess(', 3000);
+  check('service/process: the portal refuses a protected row and anything its own latest snapshot does not list, before createPlan, and passes the fresh sign-in on',
+    cs.indexOf('serviceRefusal(d.service, d.op, d.startType ?? null)') > 0 && cs.indexOf('serviceRefusal(') < cs.indexOf('createPlan(')
+      && /rows\.find\(\(r\) => r\?\.name === d\.service && r\?\.displayName === d\.displayName\)/.test(cs) && cs.indexOf("'SERVICE_NOT_IN_SNAPSHOT'") < cs.indexOf('createPlan(')
+      && sp.indexOf('processRefusal(d.name, d.pid)') > 0 && sp.indexOf('processRefusal(') < sp.indexOf('createPlan(')
+      && /rows\.find\(\(r\) => r\?\.pid === d\.pid && r\?\.name === d\.name && r\?\.startedAt === d\.startedAt\)/.test(sp) && sp.indexOf("'PROCESS_NOT_IN_SNAPSHOT'") < sp.indexOf('createPlan(')
+      && (dsv.match(/this\.actions\.createPlan\(actor, \{/g) ?? []).length === 2
+      && /action: SERVICE_CONTROL, endpointIds: \[endpointId\], params,[\s\S]{0,200}freshMethod,\s*\}\);/.test(cs) && /action: PROCESS_STOP, endpointIds: \[endpointId\], params,[\s\S]{0,200}freshMethod,\s*\}\);/.test(sp)
+      && /const ep = await this\.endpoint\(actor, endpointId\);/.test(cs) && /await this\.acl\.assertEndpointInScope\(actor, endpointId\);/.test(fn(dsv, 'private async endpoint(', 300))
+      && (dct.match(/this\.fresh\(req\)/g) ?? []).length === 2 && !/actionJob\.(create|update|upsert)|actionTarget\.(create|update|upsert)|signer\.submit|\/internal\/v1\/plans/.test(dsv),
+    'DeviceControlService.controlService / stopProcess');
+  const routes = [...dct.matchAll(/@(Get|Post|Put|Patch|Delete)\('([^']*)'\)\s*(?:@HttpCode\([^)]*\)\s*)?@RequireCapability\(CAP\.([A-Z_]+)\)/g)].map((m) => `${m[1]} ${m[2]} ${m[3]}`);
+  check('service/process: three routes, each naming its capability; none approves, signs or edits a service beyond its startup type',
+    routes.join('|') === 'Get endpoints/:id/device-control COMPUTERS_VIEW|Post endpoints/:id/services/control COMPUTERS_VIEW|Post endpoints/:id/processes/stop COMPUTERS_VIEW'
+      && (dct.match(/@(?:Get|Post|Put|Patch|Delete)\(/g) ?? []).length === 3,
+    `routes: ${routes.join(', ')}`);
+  const rs = fn(gsc, 'func readService(', 3000), mp = fn(gps, 'func matchProcess(', 4000);
+  check('service: the agent refuses a protected service (by the plan\'s name and the service manager\'s), a driver, a boot or system start type and a changed display name before anything changes',
+    rs.indexOf('ServiceRefusal(s.Service, s.Op, s.StartType)') > 0 && rs.indexOf('ServiceRefusal(s.Service') < rs.indexOf('o.Services.Service(s.Service)')
+      && /if info\.Driver \{[\s\S]{0,200}Reason: "not_a_service"/.test(rs) && /if why := ServiceRefusal\(info\.Name, s\.Op, s\.StartType\); why != "" \{/.test(rs)
+      && /if strings\.TrimSpace\(info\.DisplayName\) != s\.DisplayName \{[\s\S]{0,120}Reason: "service_changed"/.test(rs) && /if info\.StartType == "boot" \|\| info\.StartType == "system" \{/.test(rs)
+      && /driver := c\.ServiceType&\(windows\.SERVICE_KERNEL_DRIVER\|windows\.SERVICE_FILE_SYSTEM_DRIVER/.test(gwin),
+    'readService (svcctl.go) and winServices.Service');
+  check('process: the agent refuses a protected process (the root and every process of its tree), and a PID whose name or creation time is not the plan\'s',
+    mp.indexOf('ProcessRefusal(s.Name, s.PID)') > 0 && mp.indexOf('ProcessRefusal(s.Name, s.PID)') < mp.indexOf('o.Processes.Processes()')
+      && /if !strings\.EqualFold\(ImageBase\(root\.Name\), s\.Name\) \|\| !SameCreation\(root\.Created, s\.StartedAt\) \{[\s\S]{0,200}Reason: "process_changed"/.test(mp)
+      && /if why := ProcessRefusal\(root\.Name, root\.PID\); why != "" \{/.test(mp) && /if why := ProcessRefusal\(c\.Name, c\.PID\); why != "" \{/.test(mp)
+      && /c\.ParentPID != parent\.PID \|\| c\.Created\.IsZero\(\) \|\| c\.Created\.Before\(parent\.Created\)/.test(mp)
+      && /func SameCreation\(read, want time\.Time\) bool \{\s*if read\.IsZero\(\) \{\s*return false\s*\}\s*return read\.UTC\(\)\.Truncate\(time\.Millisecond\)\.Equal\(want\.UTC\(\)\)\s*\}/.test(gps),
+    'matchProcess / SameCreation (procstop.go)');
+
+  const svcEntry = goCat.split(/\n\t\{\n/).find((e) => /ID: "windows\.service\.control"/.test(e)) ?? '';
+  const procEntry = goCat.split(/\n\t\{\n/).find((e) => /ID: "windows\.process\.stop"/.test(e)) ?? '';
+  const tsSvc = (tsCat.match(/export const SERVICE_CONTROL: CatalogAction = \{([\s\S]*?)\n\};/) ?? [])[1] ?? '';
+  const tsProc = (tsCat.match(/export const PROCESS_STOP: CatalogAction = \{([\s\S]*?)\n\};/) ?? [])[1] ?? '';
+  check('service/process: high impact on any computer, one computer per plan, a Precheck, never from the Actions tab, never offered to ClientSt0r, and said to be unproven on real Windows',
+    [svcEntry, procEntry].every((e) => /MaxTargets: 1,/.test(e) && /Risk:\s+func\(int, int\) string \{ return "high" \},/.test(e))
+      && /Precheck:\s+servicePrecheck,/.test(svcEntry) && /Precheck:\s+processPrecheck,/.test(procEntry)
+      && [tsSvc, tsProc].every((e) => /risk: \(\) => 'high',/.test(e) && /maxTargets: 1,/.test(e) && /direct: false,/.test(e) && /integration: false,/.test(e) && /SERVICE_PROCESS_UNPROVEN,/.test(e))
+      && /params: ServiceControlParams,/.test(tsSvc) && /params: ProcessStopParams,/.test(tsProc)
+      && /export const SERVICE_PROCESS_UNPROVEN = '[^']*not yet run on a real Windows computer\.';/.test(tsCat) && /unproven: SERVICE_PROCESS_UNPROVEN,/.test(dsv) && /data-testid="control-unproven"/.test(dui),
+    'catalog.go entries and SERVICE_CONTROL / PROCESS_STOP');
+  check('service/process: the Precheck runs the reads (and the RustDesk restart\'s session check); every change is journaled as a step first',
+    /if o\.Services == nil \{[\s\S]{0,400}if _, r := readService\(o, s, obs\); r != nil \{\s*return r\s*\}\s*if s\.Op == "restart" && inFold\(KeepRunningServices, s\.Service\) \{\s*return sessionCheck\("the RustDesk restart"\)\(p, o\)/.test(fn(gsc, 'func servicePrecheck(', 800))
+      && /if o\.Processes == nil \{[\s\S]{0,400}if _, _, r := matchProcess\(o, s, obs\); r != nil \{/.test(fn(gps, 'func processPrecheck(', 800))
+      && (() => { const b = fn(gsc, 'func controlService(', 5000); const calls = [...b.matchAll(/o\.Services\.(Start|Stop|SetStartType)\(/g)].map((m) => m.index); return calls.length === 5 && calls.every((i, k) => b.slice(k ? calls[k - 1] : 0, i).includes('journalStep(o, p, ')); })()
+      && (() => { const b = fn(gps, 'func stopProcess(', 4000); const iM = b.indexOf('matchProcess(o, s, r.Observed)'), iJ = b.indexOf('journalStep(o, p, "ending")'), iT = b.indexOf('o.Processes.Terminate('); return iM > 0 && iJ > iM && iT > iJ; })(),
+    'servicePrecheck / processPrecheck / controlService / stopProcess');
+
+  // The Windows side: the service control manager and the process API, nothing else.
+  const w = stripGo(gwin);
+  check('service/process: the Windows side runs no process — no sc.exe, taskkill, PowerShell or shell — and the action package neither',
+    !/"os\/exec"|exec\.Command|ShellExecute|CreateProcess|StartProcess|syscall\.Exec/.test(w) && !/sc\.exe|taskkill|powershell|pwsh|cmd\.exe|wmic|net\.exe/i.test(w)
+      && !/"os\/exec"|exec\.Command|taskkill|sc\.exe|powershell/i.test(stripGo(gsc) + stripGo(gps)),
+    'svcproc_windows.go, svcctl.go, procstop.go');
+  const csc = [...w.matchAll(/windows\.ChangeServiceConfig\(([^)]*)\)/g)].map((m) => m[1].split(',').map((x) => x.trim()));
+  const csc2 = [...w.matchAll(/windows\.ChangeServiceConfig2\(([^)]*\)*)\)/g)].map((m) => m[1]);
+  check('service: the one configuration write changes the startup type only — SERVICE_NO_CHANGE and nil for everything else — and never UpdateConfig, recovery actions, create or delete',
+    csc.length === 1 && csc[0].length === 11 && csc[0][1] === 'windows.SERVICE_NO_CHANGE' && csc[0][2] === 't' && csc[0][3] === 'windows.SERVICE_NO_CHANGE' && csc[0].slice(4).every((x) => x === 'nil')
+      && csc2.length === 1 && /^s\.Handle, windows\.SERVICE_CONFIG_DELAYED_AUTO_START_INFO, /.test(csc2[0])
+      && !/\bUpdateConfig\b|SetRecoveryActions|RecoveryActions|ResetRecovery|CreateService|\.Delete\(\)|SERVICE_CONFIG_FAILURE_ACTIONS|BinaryPathName|ServiceStartName|Password|Dependencies/.test(w)
+      && (w.match(/\.Control\(svc\.Stop\)/g) ?? []).length === 1 && !/\.Control\(svc\.(Pause|Continue|Interrogate|Shutdown)/.test(w),
+    `ChangeServiceConfig(${(csc[0] ?? []).join(', ')}); ChangeServiceConfig2(${csc2.join(' | ')})`);
+  const term = fn(w, 'func (winProcesses) Terminate(', 2000);
+  check('process: TerminateProcess is called once, on a handle whose creation time was checked first; nothing else ends a process',
+    (w.match(/windows\.TerminateProcess\(/g) ?? []).length === 1 && term.indexOf('creationTime(h)') > 0 && term.indexOf('action.SameCreation(') > term.indexOf('creationTime(h)')
+      && term.indexOf('windows.TerminateProcess(h, 1)') > term.indexOf('action.SameCreation(') && /windows\.PROCESS_TERMINATE\|windows\.PROCESS_QUERY_LIMITED_INFORMATION\|windows\.SYNCHRONIZE/.test(term)
+      && !/NtTerminateProcess|DebugActiveProcess|GenerateConsoleCtrlEvent|PostMessage|EndTask|TerminateThread|NtSuspendProcess/.test(w + stripGo(gps)),
+    'winProcesses.Terminate');
+  // Nothing anywhere carries what would make a service run something else.
+  const NOEDIT = /binaryPath|BinaryPathName|ServiceStartName|startName|password|recoveryAction|failureAction|dependencies|dependsOn|imagePath|\baccount\s*:/i;
+  const tsNoComments = (s) => s.replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, '');
+  const svcSection = tsNoComments(tsCat.slice(tsCat.indexOf('// ── Service control and ending a process (0.45)'), tsCat.indexOf('export const CATALOG: CatalogAction[]')));
+  const svcSectionParams = svcSection.replace(/^ {2}(description|warnings|verification|doesNotProve|acknowledge|indirectVia):[\s\S]*?\n(?= {2}[a-zA-Z]+:)/gm, '').replace(/'[^'\n]*'/g, "''");
+  const dtoPart = tsNoComments(dsv.slice(dsv.indexOf('export const ServiceControlDto'), dsv.indexOf('type Ep =')));
+  const uiSend = (dui.match(/export const serviceControl = [\s\S]*?\n {2}api\.post\([^)]*\);/) ?? [''])[0];
+  check('service: no binary path, account, password, recovery action or dependency in any parameter, DTO, request or agent structure',
+    !NOEDIT.test(svcSectionParams) && !NOEDIT.test(dtoPart) && !NOEDIT.test(uiSend) && uiSend.length > 0
+      && !/BinaryPathName|ServiceStartName|Password|Dependencies|Recovery/.test((gsc.match(/type ServiceInfo struct \{[\s\S]*?\n\}/) ?? [''])[0] + (gsc.match(/type ServiceSpec struct\{[^}]*\}/) ?? [''])[0])
+      && !/SetStartType\([^)]*(path|account|password)/i.test(stripGo(gsc)) && /Name: s\.Name, DisplayName: c\.DisplayName, State: svcState\(st\.State\), StartType: startTypeName\(c\), Driver: driver/.test(gwin),
+    'the 0.45 catalog section, ServiceControlDto, the web request, ServiceInfo/ServiceSpec');
 }
 
 if (failures.length > 0) {

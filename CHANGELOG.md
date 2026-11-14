@@ -5,6 +5,103 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.45.0] — 2026-11-14 · *Breaker*
+
+**Services can be started, stopped, restarted and set to a startup type, and the Processes tab is a task manager
+that can end a process. Neither has run on real Windows yet.**
+
+The owner runs the portal alone in direct mode and asked for this. Through 0.44 the Services and Processes tabs were
+read-only snapshots. The only service rem0te could touch was the Print Spooler (start, 0.26) or one of six on a
+fixed restart list (0.32), so restarting a hung service off that list, or ending a frozen program, meant a remote
+session. 0.45 adds both as approved actions (catalog actions 11 and 12), held to the same rules as every other action.
+
+### Added
+- **`windows.service.control@1`**: start, stop or restart one service, or set its startup type to Automatic,
+  Automatic (delayed start), Manual or Disabled. It is requested from the **Services** tab, where each row shows only
+  the buttons allowed for that service, and *Startup type…* offers only the start types allowed for it.
+  - **Editing is the startup type only.** No parameter, request field or agent call carries a binary path, logon
+    account, password, recovery action or dependency: changing any of them would let whoever changed it run a
+    program as SYSTEM. The UI says so. `mgr.Service.UpdateConfig` is never used, because it writes the binary path,
+    account, password, dependencies and description back as well. The agent's only configuration write is
+    `ChangeServiceConfig` with `SERVICE_NO_CHANGE` and nil for everything except the start type, plus
+    `ChangeServiceConfig2` for the delayed-start flag.
+  - The plan names the service's key name, the display name the latest service list showed, the operation, and the
+    start type when the operation is a startup-type change. On the computer the agent reads the service from the
+    service control manager first. It refuses a driver, or a boot or system start type (`not_a_service`), and a
+    service whose display name is no longer the plan's (`service_changed`). It then makes the change, reads the
+    service back, and reports both the state and the start type it found. Starting a running service, or setting the
+    start type it already has, is `no_change`.
+- **`windows.process.stop@1`, and the Processes tab as a task manager.** The tab shows name, PID, user, CPU time,
+  memory and start time, and is sortable and filterable. *Keep refreshing* asks for a new list at most once a minute
+  while the tab is open. *End process* is on each row, with an option to also end the processes it started (children
+  first, at most 64).
+  - The plan names the process id, its name and its start time to the millisecond, all three taken from the snapshot.
+    Windows reuses process ids, so the agent refuses unless all three still match (`process_changed`). It checks the
+    start time again on the very handle it ends the process through (`OpenProcess` → `GetProcessTimes` →
+    `TerminateProcess`, never `taskkill`), then reports whether the process is still running.
+  - Command lines are not shown: the process list has never collected them.
+- **Protected lists, refused by the portal and again by the computer**, compared case-insensitively. The lists are
+  the same on both sides (`ProtectedServices` / `PROTECTED_SERVICES`, `ProtectedProcesses` / `PROTECTED_PROCESSES`).
+  The tabs show *Protected* on these rows, with the reason.
+  - **Services that are never changed:** security, core and reachability services, Task Scheduler (the agent's
+    heartbeat is a scheduled task) and anything named `Rem0te…`.
+  - **RustDesk** can be started, restarted or set to Automatic, but never stopped, and never set to Manual or
+    Disabled: either would cut the computer off after the next reboot. A RustDesk restart waits until no RustDesk
+    session is open, and "cannot tell" counts as open.
+  - **Windows Update and the services it needs** can be stopped, but not disabled.
+  - **Processes that are never ended:** core Windows, security, Rem0te and RustDesk processes. **`svchost`** answers
+    *stop the service instead*.
+- Both actions are **high risk on any computer**, one computer per plan, at most one open request per action per
+  computer, never requestable from the Actions tab (`ACTION_NOT_DIRECT`), and never offered to ClientSt0r
+  (`integration: false`). They go through `createPlan`: in direct mode they are signed at once after a fresh sign-in,
+  with the direct-mode wording; in signed mode they need two approvers. The containment *actions* pause holds them at
+  the portal, and the agent refuses them under a signed pause before it asks Windows anything. The agent's Precheck
+  runs after the pause check and before the *executing* journal entry, and every change is journaled as a step first.
+- **Routes:** `GET /endpoints/:id/device-control` (availability, approval mode, protected lists, recent requests),
+  `POST /endpoints/:id/services/control` and `POST /endpoints/:id/processes/stop`. All three require
+  `computers:view`, are scoped to the computer, and the POSTs are rate-limited. The portal refuses a protected row,
+  and anything its own latest snapshot does not list (`SERVICE_NOT_IN_SNAPSHOT`, `PROCESS_NOT_IN_SNAPSHOT`), before
+  a plan exists.
+- After a request finishes, the tab asks for a new list (as the person viewing it, through the ordinary Refresh
+  route), so the row shows what the computer now reports.
+- **`rem0te-action-sim -scm STATE.json`**: a simulated service control manager and process table (services that
+  will not stop, start or keep a start type; processes that survive or refuse to open), for the e2e suite.
+- **Security invariant §61** (0.43 has §60), and §14's ordered catalog list is now twelve. §61 checks that:
+  - the four charsets are the same regex source on both sides;
+  - the protected lists and their rules agree;
+  - the parameters are closed;
+  - the portal refuses before `createPlan` and passes the fresh sign-in on;
+  - the three routes name their capability;
+  - the agent's reads and Precheck order hold;
+  - the Windows side runs no process, its only service-configuration write is the no-change one, and
+    `TerminateProcess` is called once, after the creation-time check on the same handle;
+  - nothing carries a binary path, account or password.
+  
+  Each check was mutation-tested (34 mutations, all caught). §58's direct-mode check now lists both new request
+  paths.
+
+### Not yet proven
+- **None of this has run on real Windows.** The service control manager calls, Toolhelp, `GetProcessTimes` and
+  `TerminateProcess` compile and pass `go vet` for Windows, but have only been exercised against the simulator. The
+  catalog warnings, the tabs and the docs all say so.
+
+### Known limits
+- A service is controlled by its key name in the existing `ServiceNameRE` charset (letters, digits, underscore).
+  Per-instance services such as `MSSQL$SQLEXPRESS` are listed but cannot be controlled.
+- The display name is compared with the stored snapshot's, which is redacted on receipt. A display name that the
+  redaction changed is refused on the computer (`service_changed`), never mis-applied.
+
+### Proof
+- Go `internal/action/svcproc_test.go` (18 tests); `apps/api/scripts/unit-service-process.mjs` (109 checks, also in
+  CI); `apps/api/scripts/e2e-service-process.mjs` (96 checks, ports 3711–3713, in `run-e2e.sh`). The e2e covers:
+  - each operation in direct and signed mode;
+  - protected refusals at the portal, and again on the computer for plans a compromised portal could forge;
+  - a display-name mismatch, PID reuse, a protected process in a tree, and the RustDesk session check;
+  - the containment pause at both layers;
+  - ClientSt0r refused.
+- The 0.32–0.42 suites that list the catalog (`e2e-maintenance-actions`, `e2e-script-run`, `e2e-software-deploy`,
+  `e2e-software-catalog`, `e2e-revocation`, `unit-script-run`, `unit-software`) now expect twelve actions.
+
 ## [0.44.0] — 2026-11-14 · *Satchel*
 
 **Chat gets emoji, files and pictures in both directions, and a new reply reaches the technician wherever they are

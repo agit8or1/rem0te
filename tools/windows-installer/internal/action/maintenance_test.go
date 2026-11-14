@@ -95,12 +95,10 @@ func (f *fixture) runMaint(env []byte, m Maintenance) Result {
 	return r
 }
 
-func TestCatalogIsExactlyTheTenActions(t *testing.T) {
-	want := []string{"windows.service.start@1", "windows.update.install@1", "windows.service.restart@1", "windows.reboot.schedule@1", "windows.reboot.cancel@1", "windows.logs.collect@1",
-		"windows.script.run@1", "windows.software.install@1", "windows.software.uninstall@1", "windows.software.remove@1"}
-	if got := Supported(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("catalog %v", got)
-	}
+// The exact, ordered catalog list is TestCatalogIsExactlyTheTwelveActions
+// (svcproc_test.go, 0.45). No action is low risk on a workstation but the
+// 0.26 spooler start.
+func TestOnlyTheSpoolerStartIsLowRisk(t *testing.T) {
 	for _, a := range catalog {
 		if a.Risk(1, 1) == "low" && a.ID != "windows.service.start" {
 			t.Fatalf("%s is low risk on a workstation; only the 0.26 spooler start is", a.ID)

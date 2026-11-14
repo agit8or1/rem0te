@@ -173,6 +173,34 @@ var catalog = []Action{
 		Execute:     removeProgram,
 		Interrupted: removeInterrupted,
 	},
+	{
+		// Start, stop or restart one service, or change its startup type and
+		// nothing else (0.45, svcctl.go). The plan names the service, the
+		// display name the portal saw and the operation; the agent reads the
+		// service itself and refuses a driver, a changed display name and a
+		// protected service. Never the binary path, account, password,
+		// recovery actions or dependencies. One computer per plan. High
+		// impact on any computer: two approvers, always.
+		ID: "windows.service.control", Version: 1, MaxTargets: 1,
+		ParamsOK:    serviceControlParamsOK,
+		Risk:        func(int, int) string { return "high" },
+		Precheck:    servicePrecheck,
+		Execute:     controlService,
+		Interrupted: serviceInterrupted,
+	},
+	{
+		// End one process, optionally with the processes it started (0.45,
+		// procstop.go). The plan names its id, image name and creation time;
+		// the agent refuses unless all three still match (a reused PID) and
+		// refuses protected processes. One computer per plan. High impact on
+		// any computer: two approvers, always.
+		ID: "windows.process.stop", Version: 1, MaxTargets: 1,
+		ParamsOK:    processStopParamsOK,
+		Risk:        func(int, int) string { return "high" },
+		Precheck:    processPrecheck,
+		Execute:     stopProcess,
+		Interrupted: processInterrupted,
+	},
 }
 
 func needMaint(_ *Plan, o Options) *Result {

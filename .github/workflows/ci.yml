@@ -264,6 +264,13 @@ jobs:
       - name: Software deployment tests
         run: node apps/api/scripts/unit-software.mjs
 
+      # Service control and ending a process (0.45): the closed parameters and
+      # charsets, the protected lists and refusal rules against the agent's Go
+      # source, the request DTOs (nothing but the row, the op and a window),
+      # and that a stored process_list row is a valid plan parameter as it is.
+      - name: Service and process control tests
+        run: node apps/api/scripts/unit-service-process.mjs
+
       # AI summary through ClientSt0r (0.34): redaction of every free-text field
       # before it leaves, the payload's field list, the proposed request and
       # response schemas, and the peers file's optional capabilitiesUrl.

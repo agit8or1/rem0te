@@ -9,7 +9,7 @@
 //	    [-service stopped|running|disabled] [-stops-after N] \
 //	    [-wua wua.json] [-registry registry.json]
 //	    [-sessions N] [-stop-fails] [-events-dir DIR] [-rustdesk-logs DIR]
-//	    [-script FILE -pwsh PATH]
+//	    [-script FILE -pwsh PATH] [-scm scm.json]
 //
 //	rem0te-action-sim -scan -wua wua.json [-registry registry.json]     posture, as patch-scan writes it
 //	    [-state DIR -rustdesk-id ID -secret S]                          ...signed with DIR's device key (v0.34)
@@ -61,6 +61,17 @@
 // them; the removal it decides on is recorded in "removals" and applied to
 // the state. No process is started for it: the Windows registry read and
 // process start (software_remove_windows.go) are not exercised here.
+//
+// Service control and ending a process (0.45, windows.service.control and
+// windows.process.stop): -scm STATE.json is a simulated service control
+// manager and process table (services: name, displayName, state, startType,
+// driver, stopFails, startFails, ignoresStartType; processes: pid, ppid,
+// name, created, denied, survives), read before and written back after. The
+// agent's decision code reads it; every change it makes is appended to the
+// state's "calls" ("start NAME", "stop NAME", "config NAME TYPE",
+// "terminate PID"), so a refusal can be shown to have called nothing. The
+// Windows service manager and OpenProcess/TerminateProcess calls
+// (svcproc_windows.go) are not exercised here.
 //
 // Revocation (v0.36): -portal HOST:PORT fetches the approval signer's signed
 // revocation statement from that portal's relay with the agent's own code
@@ -117,6 +128,118 @@ func (p programs) Remove(c action.RemovalCommand, timeout time.Duration) (int, [
 }
 
 func (p programs) FileHead(path string, max int) ([]byte, error) { return p.r.FileHead(path, max) }
+
+// scmState is the simulated service manager and process table (0.45, -scm).
+type scmState struct {
+	Services  []simService `json:"services"`
+	Processes []simProcess `json:"processes"`
+	Calls     []string     `json:"calls"`
+}
+type simService struct {
+	Name             string `json:"name"`
+	DisplayName      string `json:"displayName"`
+	State            string `json:"state"`
+	StartType        string `json:"startType"`
+	Driver           bool   `json:"driver,omitempty"`
+	StopFails        bool   `json:"stopFails,omitempty"`
+	StartFails       bool   `json:"startFails,omitempty"`
+	IgnoresStartType bool   `json:"ignoresStartType,omitempty"`
+}
+type simProcess struct {
+	PID      uint32 `json:"pid"`
+	PPID     uint32 `json:"ppid"`
+	Name     string `json:"name"`
+	Created  string `json:"created,omitempty"`
+	Denied   bool   `json:"denied,omitempty"`
+	Survives bool   `json:"survives,omitempty"`
+}
+
+type simSCM struct{ st *scmState }
+
+func (m simSCM) find(name string) *simService {
+	for i := range m.st.Services {
+		if strings.EqualFold(m.st.Services[i].Name, name) {
+			return &m.st.Services[i]
+		}
+	}
+	return nil
+}
+func (m simSCM) Service(name string) (action.ServiceInfo, bool, error) {
+	v := m.find(name)
+	if v == nil {
+		return action.ServiceInfo{}, false, nil
+	}
+	return action.ServiceInfo{Name: v.Name, DisplayName: v.DisplayName, State: v.State, StartType: v.StartType, Driver: v.Driver}, true, nil
+}
+func (m simSCM) Start(name string, _ time.Duration) error {
+	v := m.find(name)
+	if v == nil {
+		return errors.New("The specified service does not exist as an installed service.")
+	}
+	m.st.Calls = append(m.st.Calls, "start "+v.Name)
+	if v.StartType == "disabled" {
+		return errors.New("The service cannot be started, either because it is disabled or because it has no enabled devices associated with it.")
+	}
+	if v.StartFails {
+		return errors.New("The service did not respond to the start or control request in a timely fashion.")
+	}
+	v.State = "running"
+	return nil
+}
+func (m simSCM) Stop(name string, _ time.Duration) error {
+	v := m.find(name)
+	if v == nil {
+		return errors.New("The specified service does not exist as an installed service.")
+	}
+	m.st.Calls = append(m.st.Calls, "stop "+v.Name)
+	if v.StopFails {
+		return errors.New("A stop control has been sent to a service that other running services are dependent on.")
+	}
+	v.State = "stopped"
+	return nil
+}
+func (m simSCM) SetStartType(name, t string) error {
+	v := m.find(name)
+	if v == nil {
+		return errors.New("The specified service does not exist as an installed service.")
+	}
+	m.st.Calls = append(m.st.Calls, "config "+v.Name+" "+t)
+	if !v.IgnoresStartType {
+		v.StartType = t
+	}
+	return nil
+}
+func (m simSCM) Processes() ([]action.ProcessInfo, error) {
+	out := make([]action.ProcessInfo, 0, len(m.st.Processes))
+	for _, p := range m.st.Processes {
+		q := action.ProcessInfo{PID: p.PID, ParentPID: p.PPID, Name: p.Name}
+		if t, err := time.Parse(time.RFC3339Nano, p.Created); err == nil && !p.Denied {
+			q.Created = t
+		}
+		out = append(out, q)
+	}
+	return out, nil
+}
+func (m simSCM) Terminate(pid uint32, created time.Time, _ time.Duration) error {
+	for i, p := range m.st.Processes {
+		if p.PID != pid {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339Nano, p.Created)
+		if err != nil || !action.SameCreation(t, created.UTC().Truncate(time.Millisecond)) {
+			return action.ErrProcessChanged
+		}
+		m.st.Calls = append(m.st.Calls, fmt.Sprintf("terminate %d", pid))
+		if p.Denied {
+			return errors.New("Access is denied.")
+		}
+		if !p.Survives {
+			m.st.Processes = append(m.st.Processes[:i], m.st.Processes[i+1:]...)
+		}
+		return nil
+	}
+	return action.ErrProcessGone
+}
 
 type sim struct {
 	stateFile string
@@ -230,6 +353,7 @@ func main() {
 	scriptMinute := flag.Duration("script-minute", time.Minute, "how long one minute of a script timeout lasts (shortened by the e2e)")
 	wingetState := flag.String("winget", "", "stub winget state (internal/winget/stub.State JSON); the sim runs itself as winget")
 	wingetTimeout := flag.Duration("winget-timeout", 0, "replace every winget timeout (0: the agent's defaults)")
+	scmPath := flag.String("scm", "", "simulated service manager and process table (0.45, windows.service.control / windows.process.stop)")
 	scan := flag.Bool("scan", false, "print this computer's patch posture and exit")
 	restart := flag.Bool("restart", false, "simulate a restart (clears pending restarts) and exit")
 	fire := flag.Bool("fire-restart", false, "if a restart is scheduled in -state, it happens; then exit")
@@ -391,6 +515,18 @@ func main() {
 		o.Programs = programs{stub.Registry{State: abs}}
 		o.SoftwareTimeout = *wingetTimeout
 	}
+	var scm *scmState
+	if *scmPath != "" {
+		scm = &scmState{}
+		b, err := os.ReadFile(*scmPath)
+		if err != nil {
+			fail(err)
+		}
+		if err := json.Unmarshal(b, scm); err != nil {
+			fail(err)
+		}
+		o.Services, o.Processes = simSCM{scm}, simSCM{scm}
+	}
 	// v0.36: the revocation statement, either fetched through the agent's own
 	// code from the portal's relay or given as a file (a test's forgery).
 	switch {
@@ -409,6 +545,10 @@ func main() {
 		fail(err)
 	}
 	saveWUA()
+	if scm != nil {
+		b, _ := json.Marshal(scm)
+		_ = os.WriteFile(*scmPath, b, 0o600)
+	}
 	_ = os.WriteFile(sf, []byte(p.state), 0o600)
 	out, _ := json.Marshal(r)
 	fmt.Println(string(out))

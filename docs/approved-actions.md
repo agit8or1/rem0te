@@ -18,12 +18,17 @@ approved again by two approvers who did not write the script. See [Script runs (
 
 Also from 0.34, the eighth and ninth are the **software actions**: install and uninstall one allowlisted winget
 package, pinned by version and installer SHA-256, requested only from the software catalog (one computer, or a
-canary and rings). See [Software deployment](software-deployment.md). The rest of this page describes the Print
-Spooler action, and the machinery every action shares.
+canary and rings). See [Software deployment](software-deployment.md). From 0.41 the tenth removes a program from a
+computer's installed-software list (`windows.software.remove@1`).
 
-Those nine are the whole catalog. You can't request a command, a script that isn't an allowlisted library version,
-a path, a URL, a service off the list, a restart message of your own, a log file or time range of your own, or a
-change to any service's startup type. Credential extraction, removing backups, disabling defenses, granting admin rights and wiping
+From 0.45 the eleventh and twelfth are **controlling a service** (`windows.service.control@1`: start, stop, restart,
+or change its startup type) and **ending a process** (`windows.process.stop@1`), each on one computer, requested from
+that computer's Services and Processes tabs. See [Services and Task Manager (0.45)](#services-and-task-manager-045).
+The rest of this page describes the Print Spooler action, and the machinery every action shares.
+
+Those twelve are the whole catalog. You can't request a command, a script that isn't an allowlisted library version,
+a path, a URL, a service's binary path, logon account, password, recovery actions or dependencies, a restart message
+of your own, or a log file or time range of your own. Credential extraction, removing backups, disabling defenses, granting admin rights and wiping
 disks aren't in the catalog and never will be. Nor can you request a package outside the catalog, an installer of
 your own, installer switches, or a per-user install. They aren't switched off; nothing exists to request them.
 
@@ -316,6 +321,92 @@ state now; reconcile it as for the spooler (`running`, `stopped`, `restart_sched
 signed agent build. Production has no signer installed, so the Actions tab says "no approval signer is configured"
 and requests nothing; a computer whose agent does not report an action shows that action as not available on it.
 
+## Services and Task Manager (0.45)
+
+> **Not yet run on real Windows.** Both actions are proven against a simulated service manager and process table,
+> through the real portal, signer and agent decision code. The Windows calls are compiled and vetted, but have not run
+> on a Windows computer. The tabs say so too.
+
+Two actions, each on one computer, requested from the computer's own tabs and never from the Actions tab
+(`ACTION_NOT_DIRECT`):
+
+| Action | What it does | Requested from |
+|---|---|---|
+| `windows.service.control@1` | Start, stop or restart one service, or set its startup type to Automatic, Automatic (delayed start), Manual or Disabled | **Services** tab: the row's *Start*, *Stop*, *Restart* and *Startup type…* buttons |
+| `windows.process.stop@1` | End one process, optionally with the processes it started (children first, at most 64) | **Processes** tab: the row's *End process* button |
+
+Both are **high impact on any computer**, need an approval signer, a computer on a 0.45+ signed agent that reports the
+action, and the computer online. They are never offered to ClientSt0r. Only one service change and one *End process*
+can be open per computer at a time.
+
+**Direct mode.** In a business in direct mode the request is signed as soon as you make it, with no approval step, so
+the button asks you to confirm it is you (a fresh sign-in) and the dialog says *it runs as soon as you request it*. In
+signed mode it waits for two approvers as any other action does. The containment *actions* pause stops both: the tabs
+show the pause and request nothing, and the agent refuses a plan under a signed pause before it asks Windows anything.
+
+**Editing a service is its startup type only.** Nothing in rem0te changes a service's program (binary path), the
+account it runs as or its password, its recovery actions or its dependencies. Each of those would let whoever
+changes it run a program of their choice as SYSTEM, so the action has no parameter for them, the portal's request has
+no field for them, and the agent's only configuration call passes *no change* for everything but the start type. Do
+those on the computer itself, in a remote session.
+
+### What the plan names, and what the computer checks
+
+A service plan names the service's key name, the display name the latest service list showed, the operation and (for
+a startup-type change) the start type. A process plan names the process id, its image name and its start time, from
+the latest process list, to the millisecond. The portal refuses anything its own latest snapshot doesn't list
+(`SERVICE_NOT_IN_SNAPSHOT`, `PROCESS_NOT_IN_SNAPSHOT`): refresh the tab and try again.
+
+On the computer, after the signed pause and before anything is journaled as executing, the agent reads the service or
+process itself:
+
+- **A service** must exist, be a service (a kernel or file-system driver, or a boot or system start type, is refused
+  `not_a_service`) and still have the display name the plan names (`service_changed` otherwise). It then starts,
+  stops or reconfigures it through the service control manager only — never `sc.exe` or PowerShell — reads it back,
+  and reports both the state and the startup type it found. Starting a running service, or setting the startup type
+  it already has, is `no_change`.
+- **A process** must still have that id **and** that name **and** that start time. Windows reuses process ids: if
+  the id now belongs to a process started later, or with another name, the plan is refused `process_changed` and
+  nothing is ended. The agent opens the process, checks its start time again on the very handle it will end it
+  through, then calls `TerminateProcess` — never `taskkill` — and reports whether it is still running. A process that
+  is already gone is `no_change`. Ending is immediate: the program isn't asked to close, and anything unsaved is lost.
+
+### What is protected
+
+Refused by the portal and again by the computer, compared case-insensitively. The tabs show *Protected* on these rows
+with the reason, and no buttons.
+
+- **Services, never changed in any way:** Defender and Defender for Endpoint, Windows Security, the firewall and its
+  filtering engine, System Guard, web threat defence, the event log, the security accounts manager, key isolation, the
+  credential vault, Netlogon, cryptographic services, Group Policy; RPC, the DCOM launcher, the session manager, Plug
+  and Play, Power, the user profile service, WMI, the Windows Modules Installer, the broker and event services the
+  shell depends on, Application Information; **Task Scheduler** (the agent's heartbeat is a scheduled task); and DHCP
+  Client, DNS Client, Network Store Interface and Workstation, which the computer needs to be reached. Any service whose
+  name begins `Rem0te` is rem0te's own and is never touched.
+- **RustDesk** can be started, restarted or set to Automatic, never stopped or set to Manual or Disabled. A RustDesk
+  restart waits for no open RustDesk session: with one open, or when the agent can't tell, it is `not_executed`
+  (`remote_session_open`, `session_state_unknown`) and nothing is restarted.
+- **Windows Update, the Update Orchestrator, Windows Update Medic and BITS** can be stopped and restarted, never
+  disabled.
+- **Processes, never ended:** System and Idle (process ids 0 and 4), Registry, Memory Compression, Secure System,
+  `smss`, `csrss`, `wininit`, `winlogon`, `services`, `fontdrvhost`, `dwm`, `lsass`, `lsaiso`, Defender's
+  `MsMpEng`, `NisSrv` and `MpDefenderCoreService`, `MsSense`, `SecurityHealthService`, `SgrmBroker`, and rem0te's and
+  RustDesk's own processes. **`svchost`** is refused with *stop the service instead*: a service host runs several
+  services, and ending it stops all of them. If any process in a tree is protected, nothing in it is ended.
+
+### The tabs
+
+The **Processes** tab is a task manager: name, process id, user, CPU time, memory and start time, sortable and
+filterable, with the total memory. *Keep refreshing* asks for a new process list at most once a minute while the tab is
+open; the automatic snapshots (§50) keep their own five-minute cadence while anyone has the tab open. Command lines
+are not shown: the process list never collects them.
+
+The **Services** tab shows each row's buttons only when that operation is allowed for that service, and *Startup
+type…* offers only the start types allowed for it. After a request finishes, the tab asks for a new list so the row
+shows what the computer now reports; the last result for the row (what the computer saw, or why it refused) is shown
+beside it.
+
+
 ## Script runs (0.34)
 
 `windows.script.run@1` runs one approved [script-library](script-library.md) version as SYSTEM in Windows
@@ -511,6 +602,9 @@ a passkey. A rejection is final.
 | `APPROVAL_SIGNER_ERROR`, `APPROVAL_SIGNER_REFUSED`, `APPROVAL_SIGNER_UNREACHABLE` | The signer didn't answer, or refused the plan (e.g. `policy_mismatch` after a policy change, `paused` while the signer holds a pause, or for a script run `script_not_allowlisted`) |
 | `STEP_UP_REQUIRED` | 0.40 direct mode: confirm it is you (a fresh sign-in) before a request that is signed at once |
 | `DIRECT_MODE_PORTAL_ONLY` | 0.40: a ClientSt0r proposal for a business in direct mode. Only a person signed in to the portal can request one |
+| `PROTECTED_SERVICE`, `PROTECTED_PROCESS` | 0.45: a service or process that is never changed from here (see [What is protected](#what-is-protected)). The computer refuses it again (`protected_service`, `protected_process`) |
+| `SERVICE_NOT_IN_SNAPSHOT`, `PROCESS_NOT_IN_SNAPSHOT` | 0.45: the computer's latest service or process list doesn't show that service (with that display name) or that process (that id, name and start time). Refresh the tab |
+| `SERVICE_CONTROL_NOT_POSSIBLE`, `PROCESS_STOP_NOT_POSSIBLE` | 0.45: the tab's reason: an agent without the action, offline, no signer, a pause, your access, or an earlier request on the computer still open |
 | `CONTAINED` | Actions are paused for this business, or globally ([Containment](containment.md)). An approved plan is held, not canceled, and is delivered when the pause is lifted |
 
 Agent refusal reasons: `bad_signature`, `unknown_key`, `bad_plan`, `job_mismatch`, `not_signed`, `unknown_action`,
@@ -535,6 +629,13 @@ nothing changed), `restart_already_scheduled`, `stop_failed`, `start_failed`, `d
 `no_software` (an agent built without the software surface). See
 [Software deployment](software-deployment.md#refusals-and-results).
 
+0.45 service and process results: `service_not_found`, `service_changed` (another display name now), `not_a_service`
+(a driver, or a boot or system start type), `protected_service`, `process_changed` (the process id now belongs to a
+process with another name or start time), `protected_process`, `tree_too_large` (all refused, nothing changed);
+`not_running` and `no_change` (nothing to do); `did_not_stop`, `did_not_remain_running`, `start_type_not_applied`,
+`still_running`, `terminate_failed` and `verify_failed` (failed); `no_service_control` / `no_process_control` (an
+agent built without them).
+
 ## What has been proven, and what hasn't
 
 | Level | State |
@@ -544,13 +645,17 @@ nothing changed), `restart_already_scheduled`, `stop_failed`, `start_failed`, `d
 | **Fixture-tested, 0.32** | `internal/action` Go tests for the maintenance actions (allowlist, charset, delay bounds, session check, journal steps, interruption, redaction and size caps); `unit-approval-signer.mjs` adds the maintenance admission and two-approver cases; `e2e-maintenance-actions.mjs` runs all four through the portal, the signer and the agent's real decision code against a simulated Windows (service manager, `shutdown.exe`, `wevtutil` and the session count are simulated) |
 | **Fixture-tested, 0.34** | `internal/action` Go tests for script runs (every refusal, at-most-once, interruption, exit code, timeout, output cap), including runs under real **PowerShell 7 on Linux**; `unit-approval-signer.mjs` adds the script allowlist and script-run cases; `e2e-script-run.mjs` runs the whole path through the portal, the signer and the agent's real decision code with PowerShell 7 |
 | **Fixture-tested, 0.34** | `internal/action` Go tests for the software actions against a stub winget run through the agent's real exec path (success, already installed, hash and manifest mismatch, winget missing or too old, managed elsewhere, timeout, not effective, restart required, argument injection in every field); `unit-approval-signer.mjs` adds the software admission, two-approver and 25-computer cases; `e2e-software-deploy.mjs` runs the catalog, single installs and uninstalls, rings, compliance and isolation through the portal, the signer and the agent's real decision code. winget, App Installer under SYSTEM, the uninstall registry and file versions are simulated |
+| **Fixture-tested, 0.45** | Service control and ending a process: `internal/action` Go tests (`svcproc_test.go`: closed parameters, the refusal lists, every operation with read-back, no change, failures, the RustDesk session check, a reused process id, trees, the signed pause, interruption, direct plans). `unit-service-process.mjs` (109 checks) compares the portal's parameters, charsets and protected lists with the agent's Go source. `e2e-service-process.mjs` (96 checks) runs every operation in direct and signed mode through the portal, the signer and the agent's real decision code against a simulated service manager and process table, including plans a compromised portal would forge. **The service control manager and OpenProcess / TerminateProcess calls have not run on real Windows** |
 | **Paired lab** (real Windows workstation, real authenticator, real ClientSt0r) | **Not done.** (0.34: nor Windows PowerShell 5.1, the SYSTEM context or the job object for script runs, nor winget under SYSTEM for the software actions.) The Windows calls (service control manager, registry product type, `rustdesk --get-id`, and from 0.32 `shutdown.exe`, `wevtutil.exe` and the RustDesk process count) are compiled and vetted for Windows but haven't run on a lab machine |
 | **Production-ready** | **No.** It needs the paired lab first, and an operator who has done the key and roster ceremonies |
 
 ## Known limits
 
-- Nine actions, on Windows only. Every action but update install, script run and the two software actions names one
+- Twelve actions, on Windows only. Every action but update install, script run and the two software actions names one
   computer per plan; an update ring, a script run or a software ring names up to 25.
+- 0.45: a service is controlled only by a key name in the `ServiceNameRE` charset (letters, digits, underscore), so
+  per-instance services with `$` or `.` in their name (`MSSQL$SQLEXPRESS`) are listed but can't be controlled. The
+  process list never collects command lines, so the Processes tab doesn't show them.
 - The RustDesk session check is made once, when a restart is scheduled, and sees RustDesk sessions only.
 - A scheduled restart is reported as scheduled. Whether it happened is seen only from the next boot time (and, after
   an update restart, from the next patch scan).
