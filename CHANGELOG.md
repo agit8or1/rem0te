@@ -5,6 +5,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.50.2] — 2026-11-14 · *Roster*
+
+**The "Upgrade to full agent" button says where the upgrade is, and running a reinstall link clears a queued reinstall.**
+
+DEWEY-WKS2022 showed *Upgrade requested — waiting for check-in* while the Devices list showed it online three minutes
+earlier. Its audit trail:
+
+| When (UTC) | What happened |
+|---|---|
+| 2026-11-13 05:09 | The upgrade to the signed agent was requested |
+| 05:11 | It was handed out and downloaded |
+| Nov 13 → Nov 14 | The computer went silent |
+| 2026-11-14 21:49 | **Reinstall agent** (at next check-in) was queued |
+| 23:17:13 | The 0.48.2 reinstall link was run on the machine (`ENDPOINT_CLAIMED`) |
+| 23:17:21 | First heartbeat: the migration was handed out again, and so was the queued reinstall |
+| 23:20:04 | `AGENT_MIGRATION_COMPLETED` |
+
+Two things were wrong:
+
+- **The button's label never changed.** It printed one constant, `UPGRADE_PENDING_LABEL`, for every open migration
+  state, so a request that was handed out, downloaded or *not confirmed* (handed out more than two hours ago with no
+  signed agent reporting) still read "waiting for check-in". The server's state text was right, but only in the
+  tooltip and the header line. Now the button reads:
+  - *waiting for check-in* (pending);
+  - *on hold* (held);
+  - *handed out — installing* (dispatched);
+  - *downloaded — waiting for the full agent to report* (downloaded);
+  - *not confirmed — check the computer* (not_confirmed).
+
+  `UpgradeView` carries the state as `step`, and the button carries it as `data-step`. The pending wording is
+  unchanged, which `e2e-ui.mjs` checks.
+- **A queued reinstall outlived the reinstall.** `claimEndpoint` now clears `reinstallRequestedAt`, `reinstallRequestedBy`
+  and `reinstallDispatchedAt` when it rebinds the node. A claim is the installer having just run, so the request is done.
+  Before, the fresh agent was handed the reinstall on its first heartbeats and ran the installer again. It would stop
+  only once a heartbeat reported this server's agent version or a signed update check after the hand-out. Clearing a
+  request only narrows what happens. The claim is still audited as `ENDPOINT_CLAIMED`.
+
+---
+
 ## [0.50.0] — 2026-11-14 · *Roster*
 
 **Patch policies a business can apply company-wide, and change per computer.**

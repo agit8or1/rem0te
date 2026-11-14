@@ -739,7 +739,9 @@ const SECTIONS: Section[] = [
           <strong> Agent out of date</strong> chip opens them. On every standard Windows agent Upgrade to full agent is
           always a button: when it can&apos;t be used it is greyed out with the reason beside it, such as a signed release
           that has not been published yet, what to do, and a link to Devices → Full agent. While a request is open it
-          reads <strong>Upgrade requested — waiting for check-in</strong>. From 0.38 the Agent card also has{' '}
+          says where it is (0.50.2): <strong>waiting for check-in</strong>, <strong>on hold</strong>,{' '}
+          <strong>handed out — installing</strong>, <strong>downloaded</strong> (waiting for the full agent to report), or{' '}
+          <strong>not confirmed</strong> (handed out over two hours ago with no full agent reporting: check the computer). From 0.38 the Agent card also has{' '}
           <strong>Upgrade on the computer itself</strong>: one line to paste into PowerShell as administrator on the
           computer, which downloads the published full agent, checks its digest and upgrades. It opens by itself when a
           computer downloaded its upgrade and stopped checking in, because then nothing sent from the console reaches
