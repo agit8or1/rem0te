@@ -23,6 +23,21 @@ already running, but the console gave no hint that the request was pointless.
 
 This changes only the web page. The agent's check, the action catalog and §14 are unchanged.
 
+**The Devices list fits the page again, with no sideways scrolling.**
+
+With the sidebar open, eleven default columns plus the Connect column were wider than the content area at ordinary
+laptop and desktop widths, so the list scrolled left and right. Most cells were `whitespace-nowrap`, so nothing could
+give way.
+
+- **OS** shows only at `xl` (1280 px) and wider. **Site** and **Logged-in user** show only at `2xl` (1536 px) and wider.
+  The column picker marks them "(wide screens)". A chosen column is never removed; it is only hidden while the window
+  is narrow.
+- **Alerts** is off by default. The Health column already shows the worst open alert, and Alerts is still in the
+  picker. A browser that saved its own column choice keeps it.
+- Long business and site names are truncated, with the full name on hover. Device names, Last seen and the
+  CPU/RAM/disk figures wrap instead of forcing the row wider.
+- The table keeps `overflow-x-auto` as a fallback for very narrow windows, and Connect stays pinned on the right.
+
 ---
 
 ## [0.47.0] — 2026-11-14 · *Latch*
