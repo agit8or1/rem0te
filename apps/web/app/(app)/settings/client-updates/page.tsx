@@ -310,7 +310,7 @@ function PolicyForm({ businessId, siteId, groupId = null, current, defaultTz, ca
       <div className="space-y-1 border-t pt-3 md:w-[32rem]">
         <Label htmlFor={`${listId}-agent`}>Keep agents up to date automatically</Label>
         <select id={`${listId}-agent`} data-testid="cu-agent-mode" className="w-full rounded-md border bg-background p-2 text-sm" value={agentMode} disabled={disabled} onChange={(e) => setAgentMode(e.target.value)}>
-          <option value="">{groupId || siteId ? 'Inherit (the next policy that applies)' : 'Default — any time, paced'}</option>
+          <option value="">{groupId || siteId ? 'Inherit (the next policy that applies)' : 'Inherit global — on by default (any time, paced)'}</option>
           <option value="ANY_TIME">Any time, paced</option>
           <option value="WINDOW">Only inside this policy’s window</option>
           <option value="OFF">Off — never update agents automatically</option>
@@ -367,6 +367,8 @@ function AgentAutoUpdateCard({ setNotice }: { setNotice: (n: { ok: boolean; text
               Standard Windows agents older than <span className="font-mono">{d.served.version}</span> re-run the installer at a check-in, as Update agent does
               {d.served.signedSha256 ? <>; signed agents not on the published build run their own verified update</> : <>; no signed agent build is published, so signed agents are not compared</>}.
               Linux and macOS agents are read-only and are never updated from here. Each attempt downloads the RustDesk client again (about 40 MB).
+              With nothing set anywhere, every computer is updated. Turned off here, no computer is — whatever its business, site, group or own setting says.
+              Precedence below this switch: a computer’s own setting (its Agent card) → device group → site → business → this default.
             </p>
             <div className="flex flex-wrap items-end gap-3">
               <div className="space-y-1">

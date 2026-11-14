@@ -310,6 +310,32 @@ when that policy also skips computers with a user; and the pace.
   checkbox. Changing it to anything but *Off* needs fresh authentication;
   opting out never does. Audited as `CLIENT_UPDATE_POLICY_CHANGED`, with
   `agentMode` in before and after.
+  **On the business's own page (0.46)** the *Automatic agent updates* card
+  sets the same business-level mode: *Inherit global (On)*, *On*, *Off* or
+  *In maintenance window*. It writes only the business policy's agent mode
+  (`PUT /client-updates/policy/agent-mode`), with the same people, fresh
+  authentication and audit as above. It never changes the RustDesk checkbox:
+  a business with no policy gets one created with RustDesk updates **off** and
+  the default night window (22:00–05:00 UTC). Windows, sites and groups are on
+  Settings → Client updates.
+- **Per computer (0.46):** the Agent card's *For this computer* selector —
+  *Inherit (currently: On, from …)*, *On* or *Off* (`Endpoint.agentAutoUpdate`,
+  `PUT /endpoints/:id/agent/auto-update`). It beats every policy:
+  - **Off** never updates this agent automatically, whatever its group, site
+    or business say. It also stops an attempt already open, and keeps the
+    computer out of the automatic move to the signed agent below.
+  - **On** turns any policy opt-out into *any time, paced*. A *maintenance
+    window* set by the policy that would otherwise govern is kept: On
+    overrides an opt-out, it does not take a computer out of its window.
+  - **Inherit** follows the policies, as before.
+
+  It needs `computers:edit` on that computer. *On*, and *Inherit* (which may
+  turn it back on), need fresh authentication; *Off* never does. Every change
+  is audited as `AGENT_AUTO_UPDATE_COMPUTER_SET`, with before and after.
+- **Precedence**, top wins: the platform switch and `AGENT_AUTO_UPDATE=off`
+  (either off means nothing is updated) → the computer's own setting → device
+  group → site → business → the platform default, **On**. With nothing set
+  anywhere every computer updates, including a new business's new computer.
 - **Per process:** `AGENT_AUTO_UPDATE=off` stops it in this API process
   (`scripts/run-e2e.sh` and the browser suite set it).
 - **Canary first is not built.** The client-update machinery has no canary
@@ -350,7 +376,8 @@ moved to the signed agent without anyone pressing *Upgrade to full agent* —
 one computer first (the canary), the rest only after it has reported the
 published build for a soak (default 60 minutes) with no failed update, paced by
 the same per-hour number as automatic updates above. The same opt-out applies:
-a business, site or device-group policy whose agent mode is *Off* opts its
+a computer set to *Off* on its Agent card (0.46), or a business, site or
+device-group policy whose agent mode is *Off*, opts its
 computers out of this too, and *Window* holds them to the window. A failure
 halts it, with its reason, until a Platform Admin resumes or restarts it. In
 **Signed only** it does nothing.

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
@@ -9,6 +9,7 @@ import type { ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
 import { StepUpService } from '../auth/step-up.service';
 import { AgentUpgradeService } from './agent-upgrade.service';
+import { AgentAutoUpdateService } from '../agent-auto-update/agent-auto-update.service';
 
 /**
  * The Agent card (0.34): read it, update the agent the computer runs, and
@@ -19,7 +20,7 @@ import { AgentUpgradeService } from './agent-upgrade.service';
 @Controller('endpoints')
 @UseGuards(JwtAuthGuard, CapabilitiesGuard)
 export class AgentUpgradeController {
-  constructor(private readonly svc: AgentUpgradeService, private readonly stepUp: StepUpService) {}
+  constructor(private readonly svc: AgentUpgradeService, private readonly stepUp: StepUpService, private readonly auto: AgentAutoUpdateService) {}
 
   private freshMethod(req: Request): string | null {
     const u = req.user as { sub?: string; iat?: number } | undefined;
@@ -46,6 +47,18 @@ export class AgentUpgradeController {
   @HttpCode(HttpStatus.OK)
   async migrate(@Actor() actor: ActorContext, @Param('id') id: string, @Body() body: { reason?: unknown } | undefined, @Req() req: Request) {
     return { success: true, data: await this.svc.migrate(actor, id, body?.reason, this.freshMethod(req)) };
+  }
+
+  /**
+   * 0.46: this computer's own automatic-agent-update setting — { mode:
+   * 'inherit' | 'on' | 'off' }. computers:edit; anything but Off needs fresh
+   * authentication; audited (AGENT_AUTO_UPDATE_COMPUTER_SET).
+   */
+  @Put(':id/agent/auto-update')
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  @RateLimit(20)
+  async setAutoUpdate(@Actor() actor: ActorContext, @Param('id') id: string, @Body() body: unknown, @Req() req: Request) {
+    return { success: true, data: await this.auto.setComputer(actor, id, body, this.freshMethod(req)) };
   }
 
   @Post(':id/agent/migrate/cancel')

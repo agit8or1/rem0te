@@ -659,7 +659,22 @@ is Platform Admin, `assertFresh` and audited, and a policy agent mode other
 than `OFF` needs fresh authentication. The signed heartbeat's daily check
 runs only `rem0te-agent.exe update`, only when the portal allows it, and the
 legacy channel has none. `AGENT_AUTO_UPDATE=off` is exact and set by
-`run-e2e.sh` and `e2e-ui.mjs`. Behavioural proof: `e2e-agent-auto-update.mjs`
+`run-e2e.sh` and `e2e-ui.mjs`. 0.46 added a per-computer setting,
+`Endpoint.agentAutoUpdate`, which is null, `'on'` or `'off'` (0068's CHECK).
+It sits above every policy: computer > group > site > business > default On.
+`modesFor` reads it for every computer in one query and hands it to
+`resolveMode`, and every dispatch decision goes through `modeFor`. Off always
+wins. `resolveMode` returns OFF for it before looking at any policy. `decide()`
+checks the platform and process switches before the mode, so either one, when
+off, still beats a computer's On. On never yields OFF. It keeps a WINDOW the
+governing policy sets. Changing the setting needs `computers:edit`
+(`assertEndpointInScope`). Anything but Off needs `assertFresh` before the
+write, and the write is conditional on the value read. It is audited
+(`AGENT_AUTO_UPDATE_COMPUTER_SET`, before and after), and only
+`setComputer` writes the column. The business page's selector
+(`putAgentMode`) writes only the business policy's agent mode. It has the
+same `assertEdit` and fresh rule, never sets `enabled`, and creates a missing
+row with `enabled: false`. Behavioural proof: `e2e-agent-auto-update.mjs`
 (ports 3641/3642); unit: `unit-agent-auto-update.mjs`.
 
 §54 is test stacks and the GeoIP database. `GeoipService` falls back to the

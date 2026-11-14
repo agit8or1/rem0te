@@ -30,10 +30,13 @@ export class ClientUpdatesController {
    * STEP_UP_REQUIRED refusal, which the console answers with its step-up
    * dialog and a retry; the action names what is being confirmed.
    */
-  private async fresh<T>(fn: () => Promise<T>): Promise<T> {
+  private async fresh<T>(fn: () => Promise<T>, what: 'schedule' | 'agent' = 'schedule'): Promise<T> {
     try { return await fn(); } catch (e) {
       if (e instanceof FreshAuthNeeded) {
-        throw new ForbiddenException({
+        throw new ForbiddenException(what === 'agent' ? {
+          code: 'STEP_UP_REQUIRED', action: 'agent.autoupdate.business',
+          message: 'Confirm it is you to continue: turning on automatic agent updates lets the server re-run the installer on this business’s outdated computers without anyone clicking Update agent.',
+        } : {
           code: 'STEP_UP_REQUIRED', action: 'updates.schedule',
           message: 'Confirm it is you to continue: turning on automatic client updates lets the server install software on this business’s computers without anyone clicking Update.',
         });
@@ -50,6 +53,16 @@ export class ClientUpdatesController {
   @Put('policy')
   async putPolicy(@Actor() a: ActorContext, @Body() body: unknown, @Req() req: Request) {
     return { success: true, data: await this.fresh(() => this.svc.putPolicy(a, body, this.isFresh(req))) };
+  }
+
+  /**
+   * 0.46: the business page's "Automatic agent updates" selector — the
+   * business policy's agentMode only, never the RustDesk `enabled`. Same
+   * people and rules as PUT policy: anything but OFF needs fresh authentication.
+   */
+  @Put('policy/agent-mode')
+  async putAgentMode(@Actor() a: ActorContext, @Body() body: unknown, @Req() req: Request) {
+    return { success: true, data: await this.fresh(() => this.svc.putAgentMode(a, body, this.isFresh(req)), 'agent') };
   }
 
   @Delete('policy/sites/:siteId')

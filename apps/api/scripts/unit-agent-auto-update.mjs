@@ -77,6 +77,59 @@ const D = (o) => s.decide(base(o));
   check('a site that opts back in beats the business opt-out', s.resolveMode([P('s', 'site', 'ANY_TIME'), P('b', 'business', 'OFF')]).mode === 'ANY_TIME');
 }
 
+// ── 0.46: the computer's own setting, above every policy ────────────────────
+{
+  const P = (id, scope, agentMode) => ({ id, scope, agentMode, skipLoggedOnUser: false });
+  const bizOn = [P('b', 'business', 'ANY_TIME')], bizOff = [P('b', 'business', 'OFF')];
+  let r = s.resolveMode(bizOn, 'off');
+  check('computer Off over business On → OFF, from the computer, no policy', r.mode === 'OFF' && r.source === 'computer' && r.policy === null);
+  check('…and Inherit would have been On, from the business policy', r.inherited.mode === 'ANY_TIME' && r.inherited.source === 'policy' && r.inherited.policy.id === 'b');
+  r = s.resolveMode([P('g', 'group', 'ANY_TIME'), P('s', 'site', 'WINDOW'), P('b', 'business', 'ANY_TIME')], 'off');
+  check('computer Off beats a group, a site and the business all opting in', r.mode === 'OFF' && r.source === 'computer');
+  r = s.resolveMode(bizOff, 'on');
+  check('computer On over business Off → ANY_TIME, from the computer', r.mode === 'ANY_TIME' && r.source === 'computer' && r.policy === null && r.inherited.mode === 'OFF');
+  r = s.resolveMode([P('g', 'group', 'OFF'), P('b', 'business', 'ANY_TIME')], 'on');
+  check('computer On over a group opt-out → ANY_TIME', r.mode === 'ANY_TIME' && r.source === 'computer');
+  r = s.resolveMode([P('s', 'site', 'WINDOW'), P('b', 'business', 'OFF')], 'on');
+  check('computer On keeps the window the governing policy sets (and that policy, for its window)', r.mode === 'WINDOW' && r.source === 'computer' && r.policy.id === 's');
+  r = s.resolveMode(bizOff, null);
+  check('inherit (null) → the policies decide: business Off', r.mode === 'OFF' && r.source === 'policy' && r.policy.id === 'b');
+  r = s.resolveMode([], null);
+  check('inherit with no policy anywhere → ANY_TIME, the platform default (a new business, a new computer)', r.mode === 'ANY_TIME' && r.source === 'default' && r.policy === null && r.inherited.source === 'default');
+  r = s.resolveMode([P('b', 'business', null)], null);
+  check('a business row that leaves the mode unset still inherits the default (On)', r.mode === 'ANY_TIME' && r.source === 'default');
+  check('a stored value other than on/off inherits', s.computerOverride('ON') === null && s.computerOverride('') === null && s.computerOverride(null) === null && s.computerOverride('on') === 'on' && s.computerOverride('off') === 'off');
+  check('the closed set is exactly on/off', JSON.stringify(s.COMPUTER_OVERRIDES) === '["on","off"]');
+  check('parseComputerSetting: inherit → null, on, off', s.parseComputerSetting({ mode: 'inherit' }) === null && s.parseComputerSetting({ mode: 'on' }) === 'on' && s.parseComputerSetting({ mode: 'off' }) === 'off');
+  const throws = (f) => { try { f(); return false; } catch { return true; } };
+  check('parseComputerSetting refuses anything else, an extra field, or nothing', throws(() => s.parseComputerSetting({ mode: 'ON' })) && throws(() => s.parseComputerSetting({ mode: 'on', force: true })) && throws(() => s.parseComputerSetting({})) && throws(() => s.parseComputerSetting(null)));
+
+  // Through decide(): what the heartbeat would do.
+  const via = (ranked, override, o = {}) => { const m = s.resolveMode(ranked, override); return D({ mode: m.mode, modeSource: m.source, ...o }); };
+  let d = via(bizOn, 'off');
+  check('decide: computer Off over business On → opted out, computer_off, nothing dispatched', d.state === 'opted_out' && d.reason === 'computer_off' && d.dispatch === null);
+  d = via(bizOff, 'on');
+  check('decide: computer On over business Off → dispatched', d.state === 'queued' && d.reason === 'next_heartbeat' && d.dispatch === 'new');
+  d = via(bizOff, null);
+  check('decide: inherit of a business Off → policy_off (the policy\'s, not the computer\'s)', d.reason === 'policy_off' && d.dispatch === null);
+  d = via([], null);
+  check('decide: inherit with nothing set anywhere → dispatched (default enabled)', d.dispatch === 'new');
+  d = via(bizOn, 'on', { settings: { ...SET, enabled: false } });
+  check('decide: the platform switch off beats computer On → platform_off, nothing dispatched', d.state === 'opted_out' && d.reason === 'platform_off' && d.dispatch === null);
+  d = via(bizOn, 'on', { settings: { ...SET, processOn: false } });
+  check('decide: AGENT_AUTO_UPDATE=off beats computer On → process_off', d.reason === 'process_off' && d.dispatch === null);
+  d = via(bizOn, 'off', { lastAt: at(-5 * MIN), attempts: 1 });
+  check('decide: computer Off stops a resend mid-attempt too', d.dispatch === null && d.reason === 'computer_off');
+  d = via([P('s', 'site', 'WINDOW')], 'on', { windowOpen: false });
+  check('decide: computer On under a WINDOW policy still waits for the window', d.reason === 'outside_window' && d.dispatch === null);
+  check('selfCheckAllowed: computer Off → no periodic self-check; computer On → allowed; platform off → not', (() => {
+    const off = s.resolveMode(bizOn, 'off'), on = s.resolveMode(bizOff, 'on');
+    const a = { settings: SET, windowOpen: true, paused: false, rollout: false, sessionOpen: false };
+    return !s.selfCheckAllowed({ ...a, mode: off.mode }) && s.selfCheckAllowed({ ...a, mode: on.mode }) && !s.selfCheckAllowed({ ...a, settings: { ...SET, enabled: false }, mode: on.mode });
+  })());
+  check('the computer_off reason has its text', typeof s.REASON_TEXT.computer_off === 'string' && /this computer/i.test(s.REASON_TEXT.computer_off));
+}
+
 // ── decide(): the states ────────────────────────────────────────────────────
 {
   let d = D();

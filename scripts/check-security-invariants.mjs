@@ -792,8 +792,8 @@ check(
     'putPolicy and deleteSiteOverride must call assertEdit');
   check('turning a policy on, or removing a site override, needs fresh authentication',
     /if \(input\.enabled && !fresh\) throw new FreshAuthNeeded\(\);/.test(svc) && /\/\/ The site falls back to the business policy, which may be on\.\s*if \(!fresh\) throw new FreshAuthNeeded\(\);/.test(svc)
-      && (ctl.match(/this\.isFresh\(req\)/g) ?? []).length === 3 && /code: 'STEP_UP_REQUIRED'/.test(ctl),
-    'the service must refuse without fresh auth and the controller must pass isFresh(req) on all three writes (0.35 added removing a group policy, §46)');
+      && (ctl.match(/this\.isFresh\(req\)/g) ?? []).length === 4 && /code: 'STEP_UP_REQUIRED'/.test(ctl),
+    'the service must refuse without fresh auth and the controller must pass isFresh(req) on all four writes (0.35 added removing a group policy, §46; 0.46 the business agent mode, §53)');
   check('a site override must belong to the business it is set in',
     /if \(!site \|\| site\.customerId !== customerId\) throw new NotFoundException/.test(svc), 'siteOf must compare site.customerId');
   // 0.36: clearUnwanted is reconcileQueued, which the sweep also runs every
@@ -3118,6 +3118,12 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //     audited, and opting a policy back in needs fresh authentication; the
 //     signed heartbeat's periodic check runs only `rem0te-agent.exe update`;
 //     and the off switch is exact and set for every other suite.
+//     0.46: a computer's own setting (Endpoint.agentAutoUpdate) is consulted
+//     in every dispatch decision, its Off always wins (and the platform and
+//     process switches still win over its On), changing it needs computers:edit
+//     and, for anything but Off, fresh authentication, and every change is
+//     conditional and audited; the business page's selector writes only the
+//     business policy's agent mode under the policy's own rules.
 {
   const enr = read('apps/api/src/enrollment/enrollment.service.ts');
   const sch = read('apps/api/src/agent-auto-update/schedule.ts');
@@ -3147,7 +3153,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && at("if (i.pendingRequest) return out('queued', 'pending_request', t);") > 0 && at("if (i.sessionOpen) return out('queued', 'session_open', t);") > 0
       && at("if (i.mode === 'WINDOW' && !i.windowOpen) return out('queued', 'outside_window', t);") > 0
       && [ "if (i.paused)", "if (i.rollout)", "if (i.pendingRequest)", "if (i.sessionOpen)", 'if (i.attempts >= i.settings.maxAttempts && !inAttempt)' ].every((x) => at(x) > 0 && at(x) < at("dispatch: 'resend'") && at(x) < at("dispatch: 'new'"))
-      && at("if (i.mode === 'OFF') return out('opted_out', 'policy_off', t);") < at("dispatch: 'resend'")
+      && at("if (i.mode === 'OFF') return out('opted_out', i.modeSource === 'computer' ? 'computer_off' : 'policy_off', t);") > 0
+      && at("if (i.mode === 'OFF') return out('opted_out', i.modeSource === 'computer' ? 'computer_off' : 'policy_off', t);") < at("dispatch: 'resend'")
       && (dec.match(/dispatch: '(resend|new)'/g) ?? []).length === 2,
     'decide(): every hold and the attempt cap return before the only two dispatching returns');
   check('one attempt hands the flag out for less than the agent\'s 30-minute floor, and attempts back off',
@@ -3167,18 +3174,70 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /const ch = agentChannel\(facts\);\s*if \(!\('channel' in ch\)\) return \{ flag: null, selfCheck: false \};/.test(svc),
     'agentChannel: read-only OS first, then the device secret; forHeartbeat returns nothing without a channel');
   const put = svc.slice(svc.indexOf('async putSettings('));
+  const setc = svc.slice(svc.indexOf('  async setComputer('), svc.indexOf('  private paceUsed('));
   check('attempts are not audit entries; the settings change is Platform Admin, fresh and audited before/after',
-    (svc.match(/this\.audit\.log\(/g) ?? []).length === 1 && put.includes('this.audit.log(')
+    // 0.46: two audit.log calls — putSettings, and setComputer (a person's change of one computer's setting).
+    (svc.match(/this\.audit\.log\(/g) ?? []).length === 2 && put.includes('this.audit.log(') && setc.includes('this.audit.log(')
       && /this\.acl\.assertPlatformAdmin\(actor\);[\s\S]{0,300}assertFresh\(freshMethod, \{ action: 'agent\.autoupdate'/.test(put)
       && /action: 'AGENT_AUTO_UPDATE_SETTINGS_CHANGED', resource: 'platform_settings', resourceId: 'singleton',\s*meta: \{ before: shape\(before\), after: shape\(after\) \},/.test(put)
       && /async getSettings\(actor: ActorContext\) \{\s*this\.acl\.assertPlatformAdmin\(actor\);/.test(svc)
       && /@Controller\('admin\/agent-auto-update'\)\s*@UseGuards\(PlatformAdminGuard\)/.test(ctl) && (ctl.match(/@(Get|Put|Post|Delete|Patch)\(/g) ?? []).length === 2
       && !/activityLog\.(create|update|delete|upsert)/.test(svc + sch),
-    'one audit.log in the service, in putSettings after assertPlatformAdmin and assertFresh; PlatformAdminGuard; GET + PUT only');
+    'two audit.log calls in the service — putSettings (after assertPlatformAdmin and assertFresh) and setComputer; PlatformAdminGuard; GET + PUT only');
   check('opting a policy back in (any agent mode but OFF) needs fresh authentication; opting out does not',
     /if \(input\.agentMode !== undefined && input\.agentMode !== 'OFF' && \(input\.agentMode \?\? null\) !== \(before\?\.agentMode \?\? null\) && !fresh\) throw new FreshAuthNeeded\(\);/.test(cus)
       && cus.indexOf('throw new FreshAuthNeeded();\n    const biz') > cus.indexOf("input.agentMode !== 'OFF'") - 400,
     'client-updates.service putPolicy: the agentMode fresh check');
+
+  // 0.46: one computer's own setting (Endpoint.agentAutoUpdate), and the
+  // business page's selector (the business policy's agentMode only).
+  const modes = svc.slice(svc.indexOf('  async modesFor('), svc.indexOf('  private async rolloutOwns('));
+  const rm = sch.slice(sch.indexOf('export function resolveMode<'), sch.indexOf('// ── The decision'));
+  check('the per-computer override is consulted in every dispatch decision: modesFor reads it for every computer and hands it to resolveMode',
+    /const overrides = new Map\(\(eps\.length \? await this\.prisma\.endpoint\.findMany\(\{ where: \{ id: \{ in: eps\.map\(\(e\) => e\.id\) \} \}, select: \{ id: true, agentAutoUpdate: true \} \}\) : \[\]\)/.test(modes)
+      && /const r = resolveMode\(\[\], overrides\.get\(ep\.id\) \?\? null\);/.test(modes)
+      && /const override = overrides\.get\(ep\.id\) \?\? null;\s*const \{ mode, policy, source, inherited \} = resolveMode\(ranked, override\);/.test(modes)
+      && (svc.match(/resolveMode\(/g) ?? []).length === 2
+      && /async modeFor\([^)]*\) \{\s*return \(await this\.modesFor\(\[ep\], now\)\)\.get\(ep\.id\)!;/.test(svc)
+      && (svc.match(/const gov = await this\.modeFor\(ep, now\);/g) ?? []).length === 3
+      && (svc.match(/mode: gov\.mode, modeSource: gov\.source, windowOpen: gov\.windowOpen,/g) ?? []).length === 2,
+    'agent-auto-update.service modesFor: one findMany of agentAutoUpdate, passed to resolveMode on both branches; forHeartbeat, selfCheck and card go through modeFor');
+  check('Off always wins: a computer\'s Off is OFF before any policy is looked at, and decide() checks the platform and process switches before the mode',
+    rm.indexOf("if (computer === 'off') return { mode: 'OFF', policy: null, source: 'computer', inherited };") > 0
+      && rm.indexOf("if (computer === 'off')") < rm.indexOf("if (computer === 'on')")
+      // On never yields OFF: its only two answers are the policy's WINDOW or ANY_TIME.
+      && /if \(computer === 'on'\) \{\s*return inherited\.mode === 'WINDOW'\s*\? \{ mode: 'WINDOW', policy: inherited\.policy, source: 'computer', inherited \}\s*: \{ mode: 'ANY_TIME', policy: null, source: 'computer', inherited \};\s*\}\s*return \{ mode: inherited\.mode, policy: inherited\.policy, source: inherited\.source, inherited \};\s*\}$/m.test(rm.trimEnd())
+      && at("if (!i.settings.enabled) return out('opted_out', 'platform_off', t);") > 0
+      && at("if (!i.settings.enabled)") < at("if (i.mode === 'OFF')") && at("if (!i.settings.processOn)") < at("if (i.mode === 'OFF')")
+      && /return i\.settings\.enabled && i\.settings\.processOn && i\.mode !== 'OFF'/.test(sch)
+      && /export function computerOverride\(v: string \| null \| undefined\): ComputerOverride \| null \{\s*return v === 'on' \|\| v === 'off' \? v : null;/.test(sch)
+      && /CHECK \("agentAutoUpdate" IS NULL OR "agentAutoUpdate" IN \('on', 'off'\)\)/.test(read('apps/api/prisma/migrations/0068_agent_auto_update_scope/migration.sql')),
+    "schedule.ts resolveMode: `if (computer === 'off')` first; decide(): platform and process switches before the mode; selfCheckAllowed needs both; 0068's CHECK");
+  const upCtl = read('apps/api/src/agent-upgrade/agent-upgrade.controller.ts');
+  check('changing one computer\'s setting needs computers:edit on it, and anything but Off needs fresh authentication before the write',
+    /@Put\(':id\/agent\/auto-update'\)\s*@RequireCapability\(CAP\.COMPUTERS_EDIT\)\s*@RateLimit\(20\)\s*async setAutoUpdate\([\s\S]{0,200}?\) \{\s*return \{ success: true, data: await this\.auto\.setComputer\(actor, id, body, this\.freshMethod\(req\)\) \};/.test(upCtl)
+      && /^\s*await this\.acl\.assertEndpointInScope\(actor, endpointId, CAP\.COMPUTERS_EDIT\);\s*this\.acl\.assertCapability\(actor, CAP\.COMPUTERS_EDIT\);/.test(setc.slice(setc.indexOf('{') + 1))
+      && /if \(value !== 'off'\) \{\s*assertFresh\(freshMethod, \{/.test(setc)
+      && setc.indexOf("if (value !== 'off') {") > 0 && setc.indexOf("if (value !== 'off') {") < setc.indexOf('this.prisma.endpoint.updateMany(')
+      && (svc.match(/this\.auto\.setComputer\(|setComputer\(/g) ?? []).length === 1,
+    "agent-upgrade.controller: PUT :id/agent/auto-update with COMPUTERS_EDIT; setComputer: assertEndpointInScope(COMPUTERS_EDIT) first, `if (value !== 'off') { assertFresh(` before the updateMany");
+  const writers = walk('apps/api/src').filter((f) => /\bagentAutoUpdate\s*:\s*(?!true\b)/.test(read(f)));
+  check('every change of a computer\'s setting is conditional and audited with before and after, and only setComputer writes it',
+    /const w = await this\.prisma\.endpoint\.updateMany\(\{ where: \{ id: endpointId, agentAutoUpdate: ep\.agentAutoUpdate \}, data: \{ agentAutoUpdate: value \} \}\);\s*if \(w\.count !== 1\) throw new ConflictException\(\{[^\n]*\}\);\s*await this\.audit\.log\(\{\s*tenantId: ep\.tenantId/.test(setc)
+      && /action: 'AGENT_AUTO_UPDATE_COMPUTER_SET', resource: 'endpoint', resourceId: endpointId,\s*meta: \{ before: before \?\? 'inherit', after: value \?\? 'inherit',/.test(setc)
+      && setc.indexOf('this.audit.log(') > setc.indexOf('this.prisma.endpoint.updateMany(')
+      && JSON.stringify(writers) === JSON.stringify(['apps/api/src/agent-auto-update/agent-auto-update.service.ts'])
+      && (svc.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '').match(/agentAutoUpdate: value/g) ?? []).length === 1,
+    `only agent-auto-update.service names agentAutoUpdate in a write (found: ${writers.join(', ') || 'none'}); updateMany conditional on the value read, then AGENT_AUTO_UPDATE_COMPUTER_SET before/after`);
+  const pam = cus.slice(cus.indexOf('  async putAgentMode('), cus.indexOf('  async deleteSiteOverride('));
+  check('the business selector writes only the agent mode: same edit rule, fresh for anything but OFF, enabled never turned on, audited',
+    pam.length > 500 && /this\.assertEdit\(a, customerId\);/.test(pam) && pam.indexOf('this.assertEdit(a, customerId);') < pam.indexOf('this.prisma.clientUpdatePolicy.updateMany(')
+      && /if \(input\.agentMode !== 'OFF' && !fresh\) throw new FreshAuthNeeded\(\);/.test(pam)
+      && pam.indexOf("if (input.agentMode !== 'OFF' && !fresh)") < pam.indexOf('this.prisma.clientUpdatePolicy.updateMany(') && pam.indexOf("if (input.agentMode !== 'OFF' && !fresh)") < pam.indexOf('this.prisma.clientUpdatePolicy.create(')
+      && /data: \{ agentMode: input\.agentMode, updatedById: a\.userId \}/.test(pam) && /enabled: false, timeZone: 'UTC'/.test(pam) && !/enabled: true|enabled: input/.test(pam)
+      && /action: 'CLIENT_UPDATE_POLICY_CHANGED', resource: 'client_update_policy', resourceId: after\.id,/.test(pam)
+      && /AgentModeInput = z\.object\(\{\s*businessId: z\.string\(\)\.regex\(ID\),\s*agentMode: z\.enum\(\['ANY_TIME', 'WINDOW', 'OFF'\]\)\.nullable\(\),\s*\}\)\.strict\(\);/.test(read('apps/api/src/client-updates/policy.ts')),
+    'client-updates.service putAgentMode: assertEdit, the fresh check before either write, agentMode-only update, enabled: false on create, audited; AgentModeInput strict');
   check('the card\'s automatic-update state is read only after the computer\'s scope check',
     (() => {
       const cardFn = up.slice(up.indexOf('  async card(actor: ActorContext, id: string) {'), up.indexOf('  async updateAgent('));

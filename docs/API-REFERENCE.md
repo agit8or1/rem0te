@@ -3,7 +3,7 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **521** of them across
+integration, under `/api/integration/v1`). There are **523** of them across
 **77** controllers.
 
 For request and response shapes, worked examples and error codes, see
@@ -92,6 +92,7 @@ Admins and Business Owners are not confined by it; see
 | Method | Path | Access | Capability |
 |---|---|---|---|
 | `GET` | `/api/v1/endpoints/:id/agent` | signed in | `COMPUTERS_VIEW` |
+| `PUT` | `/api/v1/endpoints/:id/agent/auto-update` | signed in, throttled | `COMPUTERS_EDIT` |
 | `POST` | `/api/v1/endpoints/:id/agent/migrate` | signed in, throttled | `COMPUTERS_EDIT` |
 | `POST` | `/api/v1/endpoints/:id/agent/migrate/cancel` | signed in, throttled | `COMPUTERS_EDIT` |
 | `POST` | `/api/v1/endpoints/:id/agent/update` | signed in, throttled | `COMPUTERS_EDIT` |
@@ -206,6 +207,7 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/client-updates/computers/:endpointId/policy` | signed in | — |
 | `GET` | `/api/v1/client-updates/policy` | signed in | — |
 | `PUT` | `/api/v1/client-updates/policy` | signed in | — |
+| `PUT` | `/api/v1/client-updates/policy/agent-mode` | signed in | — |
 | `DELETE` | `/api/v1/client-updates/policy/groups/:groupId` | signed in | — |
 | `DELETE` | `/api/v1/client-updates/policy/sites/:siteId` | signed in | — |
 

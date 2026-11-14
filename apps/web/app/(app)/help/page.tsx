@@ -742,7 +742,7 @@ const SECTIONS: Section[] = [
           with each release). Once a signed agent is published, the portal moves standard Windows computers by itself:
           one computer first, the canary, and the rest only after it has reported the published build for an hour with
           no failed update, paced like automatic updates. A failure halts it, with the reason on the page, until a
-          Platform Admin resumes it or picks another canary. Computers whose update policy opts out, that are paused,
+          Platform Admin resumes it or picks another canary. Computers set to Off on their Agent card, or whose update policy opts out, that are paused,
           in a staged rollout or not checking in are skipped, and nothing moves in <em>Signed only</em>. The signed
           agent has not run on real Windows yet: the canary is the first time. More in{' '}
           <Link href="/docs/update-signing#moving-computers-automatically-037" className="underline">Update signing</Link>.
@@ -763,6 +763,19 @@ const SECTIONS: Section[] = [
           Admin sets the platform switch, the hourly pace and the attempts there. The device list&apos;s{' '}
           <em>Agent outdated</em> filter shows every computer still behind. More in{' '}
           <Link href="/docs/updates#the-rem0te-agent-automatic-updates-036" className="underline">Updates</Link>.
+        </p>
+        <p className="font-medium text-foreground">Turning automatic agent updates on or off for one computer or one business (0.46)</p>
+        <p>
+          <strong>It is on by default.</strong> If nothing is set anywhere, every computer updates its agent. To change
+          that for one computer, use <strong>For this computer</strong> under Automatic updates on its Agent card. It
+          has three choices: <em>Inherit</em>, which shows what the computer currently gets and from where, <em>On</em>
+          and <em>Off</em>. The computer&apos;s own setting beats every policy. Off never updates that agent
+          automatically. On overrides an opt-out, but still waits for a maintenance window its policy sets. To change
+          it for a whole business, use the <strong>Automatic agent updates</strong> card on that business&apos;s page:
+          Inherit global (On), On, Off or In maintenance window. That card leaves RustDesk client updates as they are.
+          Only the platform switch in Settings → Client updates beats a computer&apos;s On. The order is: computer, then
+          device group, then site, then business, then the platform default. Turning something Off never asks you to
+          confirm it is you. Turning it On, or back to Inherit, does ask. Every change goes in the audit log.
         </p>
       </div>
     ),

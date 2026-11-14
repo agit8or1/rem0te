@@ -258,6 +258,8 @@ export const endpointsApi = {
   agent: (id: string) => api.get(`/endpoints/${id}/agent`),
   updateAgent: (id: string) => api.post(`/endpoints/${id}/agent/update`, {}),
   migrateAgent: (id: string, reason: string) => api.post(`/endpoints/${id}/agent/migrate`, { reason }),
+  /** 0.46: this computer's own automatic-agent-update setting. Anything but off may answer STEP_UP_REQUIRED. */
+  setAgentAutoUpdate: (id: string, mode: 'inherit' | 'on' | 'off') => api.put(`/endpoints/${id}/agent/auto-update`, { mode }),
   cancelAgentMigration: (id: string) => api.post(`/endpoints/${id}/agent/migrate/cancel`, {}),
   agentMigrations: (params?: { state?: string; businessId?: string }) => api.get('/agent-migrations', { params }),
   // Trust the new device secret a computer is heartbeating with after its
@@ -857,6 +859,8 @@ export const clientUpdatesApi = {
     /** 0.36: automatic agent updates here; null inherits, omitted leaves it as it is. */
     agentMode?: 'ANY_TIME' | 'WINDOW' | 'OFF' | null;
   }) => api.put('/client-updates/policy', data),
+  /** 0.46: the business page's selector — the business policy's agent mode only (null inherits). Anything but OFF may answer STEP_UP_REQUIRED. */
+  setAgentMode: (businessId: string, agentMode: 'ANY_TIME' | 'WINDOW' | 'OFF' | null) => api.put('/client-updates/policy/agent-mode', { businessId, agentMode }),
   removeSiteOverride: (businessId: string, siteId: string) => api.delete(`/client-updates/policy/sites/${siteId}`, bq(businessId)),
   computers: (businessId?: string | null) => api.get('/client-updates/computers', bq(businessId)),
   // 0.35: device-group policies. Removing one needs fresh authentication.

@@ -21,6 +21,7 @@ import { formatDate } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions, CAP } from '@/lib/auth';
 import { Download, Plus, X, Zap } from 'lucide-react';
+import { AgentAutoUpdateCard } from '@/components/businesses/agent-auto-update-card';
 
 export default function BusinessDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -162,6 +163,9 @@ export default function BusinessDetailPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* 0.46: this business's automatic agent updates (the business policy's agent mode). */}
+          <AgentAutoUpdateCard businessId={id} />
         </TabsContent>
 
         <TabsContent value="computers" className="mt-4 space-y-4">

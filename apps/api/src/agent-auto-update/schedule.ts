@@ -162,14 +162,59 @@ export interface ModePolicy {
 }
 
 /**
- * The agent mode for a computer, from its client-update policies in
- * precedence order (most specific first, as group-policy/precedence.ts ranks
- * them): the first one that sets a mode decides; one that leaves it unset
- * passes to the next. None set: the platform default, any time.
+ * 0.46: one computer's own setting. Null inherits; 'on' and 'off' override
+ * every policy for that computer (Endpoint.agentAutoUpdate, CHECK in 0068).
  */
-export function resolveMode<P extends ModePolicy>(ranked: P[]): { mode: AgentMode; policy: P | null } {
+export type ComputerOverride = 'on' | 'off';
+export const COMPUTER_OVERRIDES: readonly ComputerOverride[] = ['on', 'off'];
+/** A stored value, read defensively: anything but 'on' or 'off' inherits. */
+export function computerOverride(v: string | null | undefined): ComputerOverride | null {
+  return v === 'on' || v === 'off' ? v : null;
+}
+
+export const ComputerSetting = z.object({ mode: z.enum(['inherit', 'on', 'off']) }).strict();
+/** Validate a per-computer change; throws an Error whose message is fit for a 400. Returns the stored value (null inherits). */
+export function parseComputerSetting(raw: unknown): ComputerOverride | null {
+  const p = ComputerSetting.safeParse(raw ?? {});
+  if (!p.success) throw new Error(p.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '));
+  return p.data.mode === 'inherit' ? null : p.data.mode;
+}
+
+/** Where the governing mode came from: the computer's own setting, a policy, or the platform default. */
+export type ModeSource = 'computer' | 'policy' | 'default';
+
+/**
+ * The agent mode for a computer, from its own setting and then its
+ * client-update policies in precedence order (most specific first, as
+ * group-policy/precedence.ts ranks them): computer > group > site >
+ * business > the platform default.
+ *
+ *   - computer 'off': OFF, whatever any policy says. Off always wins.
+ *   - computer 'on': what the policies would give, except that OFF becomes
+ *     ANY_TIME. A WINDOW the governing policy sets is kept, with that
+ *     policy: On overrides an opt-out, it does not take a computer out of
+ *     its maintenance window.
+ *   - inherit (null): the first policy that sets a mode decides; one that
+ *     leaves it unset passes to the next. None set: the platform default,
+ *     any time.
+ *
+ * `inherited` is always the policies' answer alone, so the Agent card can
+ * say what Inherit would mean. The platform switch and AGENT_AUTO_UPDATE=off
+ * are not modes: decide() checks them before the mode, so they win over a
+ * computer's On too.
+ */
+export function resolveMode<P extends ModePolicy>(ranked: P[], computer: ComputerOverride | null = null): {
+  mode: AgentMode; policy: P | null; source: ModeSource; inherited: { mode: AgentMode; policy: P | null; source: 'policy' | 'default' };
+} {
   const p = ranked.find((x) => x.agentMode !== null && x.agentMode !== undefined) ?? null;
-  return { mode: p ? (p.agentMode as AgentMode) : DEFAULT_MODE, policy: p };
+  const inherited = { mode: p ? (p.agentMode as AgentMode) : DEFAULT_MODE, policy: p, source: p ? 'policy' as const : 'default' as const };
+  if (computer === 'off') return { mode: 'OFF', policy: null, source: 'computer', inherited };
+  if (computer === 'on') {
+    return inherited.mode === 'WINDOW'
+      ? { mode: 'WINDOW', policy: inherited.policy, source: 'computer', inherited }
+      : { mode: 'ANY_TIME', policy: null, source: 'computer', inherited };
+  }
+  return { mode: inherited.mode, policy: inherited.policy, source: inherited.source, inherited };
 }
 
 // ── The decision ────────────────────────────────────────────────────────────
@@ -182,7 +227,7 @@ export type Reason =
   // unknown
   | 'archived' | 'no_target' | 'version_unparsed' | 'no_signed_build_reported'
   // opted out
-  | 'platform_off' | 'process_off' | 'policy_off'
+  | 'platform_off' | 'process_off' | 'policy_off' | 'computer_off'
   // queued (held)
   | 'paused' | 'rollout' | 'pending_request' | 'portal_migration' | 'outside_window' | 'session_open' | 'user_logged_on' | 'user_unknown'
   | 'backoff' | 'pacing' | 'next_heartbeat'
@@ -198,6 +243,8 @@ export interface DecideInput {
   /** UpdateTrustService.gateForHeartbeat for this channel. */
   gate: 'pass' | 'withhold' | 'migrate';
   mode: AgentMode;
+  /** 0.46: where `mode` came from (resolveMode), so an Off says whose it is. */
+  modeSource?: ModeSource;
   /** WINDOW mode: is the governing policy's window open now. */
   windowOpen: boolean;
   /** The governing policy skips computers with someone logged on (WINDOW mode only). */
@@ -251,7 +298,8 @@ export function decide(i: DecideInput): Decision {
   const t = { target };
   if (!i.settings.enabled) return out('opted_out', 'platform_off', t);
   if (!i.settings.processOn) return out('opted_out', 'process_off', t);
-  if (i.mode === 'OFF') return out('opted_out', 'policy_off', t);
+  // 0.46: a computer set to Off says so; a policy's opt-out says that.
+  if (i.mode === 'OFF') return out('opted_out', i.modeSource === 'computer' ? 'computer_off' : 'policy_off', t);
   // A standard agent in Signed only is handed nothing to run; with portal
   // migration on, every heartbeat already hands it the migration instead.
   if (channel !== 'signed' && i.gate === 'withhold') return out('manual', 'signed_only', t);
@@ -304,9 +352,10 @@ export const REASON_TEXT: Record<Reason, string> = {
   no_target: 'The server cannot say what to update to (no readable version.json, or no signed build published).',
   version_unparsed: 'The agent reports a version that is not a dotted number, so it cannot be compared.',
   no_signed_build_reported: 'The signed agent has not reported which build it runs.',
-  platform_off: 'Automatic agent updates are off for the whole platform (Settings → Client updates).',
+  platform_off: 'Automatic agent updates are off for the whole platform (Settings → Client updates), whatever this computer or its business is set to.',
   process_off: 'Automatic agent updates are turned off on this server (AGENT_AUTO_UPDATE=off).',
   policy_off: 'This computer’s update policy opts out of automatic agent updates.',
+  computer_off: 'This computer is set to Off for automatic agent updates (its own setting, on this Agent card), whatever its policies say.',
   paused: 'Updates are paused (containment) for this business or everywhere.',
   rollout: 'A staged rollout owns this computer’s updates.',
   pending_request: 'Another request that re-runs the installer is already queued here (a RustDesk client update, Update agent, or an upgrade to the signed agent); it updates the agent too.',

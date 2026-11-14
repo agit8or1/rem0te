@@ -28,6 +28,19 @@
  *     B's owner sees none of A's computers, cards or history, B's computers
  *     follow B's policy and not A's opt-out, and neither owner can change the
  *     other's policy;
+ *   - 0.46, one computer's own setting (PUT /endpoints/:id/agent/auto-update):
+ *     On needs fresh authentication and Off never does; clearing to Inherit
+ *     needs it too; computers:edit only (a viewer is refused, another
+ *     business's computer is a 404); each change is one
+ *     AGENT_AUTO_UPDATE_COMPUTER_SET entry with before and after; computer
+ *     On beats a business opt-out, computer Off beats the default On and
+ *     stops a resend mid-attempt, On still waits for a site's window, and the
+ *     platform switch beats a computer's On; 0068's CHECK refuses other values;
+ *   - 0.46, the business page's selector (PUT /client-updates/policy/agent-mode):
+ *     Off creates the business row with the RustDesk update still off, On and
+ *     Inherit need fresh authentication, the RustDesk `enabled` and window are
+ *     never touched, another business and a Business User are refused;
+ *   - 0.46, default enabled: a new business's new computer is asked;
  *   - AGENT_AUTO_UPDATE=off on a second API hands nothing out.
  *
  *   cd apps/api && npx nest build
@@ -408,6 +421,160 @@ async function all() {
   r = await heartbeat(b2);
   check(flags(r).reinstall?.targetVersion === SERVED, 'Birch\'s B-WIN is still asked after all of Acme\'s changes', JSON.stringify(flags(r)));
   check((await prisma.agentAutoUpdateAttempt.findMany({ where: { endpointId: { in: [b1.id, b2.id] } } })).every((x) => x.customerId === birch.id), 'Birch\'s history rows are Birch\'s');
+
+  // ── 0.46: one computer's own setting, and the business page's selector ────
+  section('0.46: a computer\'s own setting — Inherit / On / Off, over every policy');
+  const roleUser = await prisma.role.findFirst({ where: { type: 'BUSINESS_USER' } });
+  const una = await mkUser('una-viewer-acme');
+  await prisma.membership.create({ data: { userId: una.id, tenantId: tenant.id, customerId: acme.id, roleId: roleUser.id, capabilities: ['computers:view'] } });
+  S.una = await login(una.email);
+  const aOv1 = await mkEp(acme, 'A-OVR-1');
+  const aOv2 = await mkEp(acme, 'A-OVR-SOUTH', { siteId: south.id });
+  const bOv1 = await mkEp(birch, 'B-OVR-1'), bOv2 = await mkEp(birch, 'B-OVR-2'), bOv3 = await mkEp(birch, 'B-OVR-3');
+  const setOv = (s, ep, mode) => req('PUT', `/endpoints/${ep.id}/agent/auto-update`, { s, body: { mode } });
+  const ovOf = async (ep) => (await prisma.endpoint.findUnique({ where: { id: ep.id }, select: { agentAutoUpdate: true } })).agentAutoUpdate;
+  const ovAudits = (ep) => prisma.activityLog.findMany({ where: { action: 'AGENT_AUTO_UPDATE_COMPUTER_SET', resourceId: ep.id }, orderBy: { createdAt: 'asc' } });
+
+  c = await auto(aOv1);
+  check(c?.setting?.value === 'inherit' && c.setting.inherited.effective === 'off' && c.setting.inherited.from === 'business policy' && c.setting.effective === 'off' && c.setting.source === 'policy',
+    'A-OVR-1 (Acme, business opted out): Inherit, currently Off from the business policy', JSON.stringify(c?.setting));
+  r = await heartbeat(aOv1);
+  check(flags(r).reinstall === null, 'inheriting the opt-out: nothing handed out', JSON.stringify(flags(r)));
+  S.owen = await login(owen.email);
+  r = await setOv(S.owen, aOv1, 'on');
+  check(r.status === 403 && code(r) === 'STEP_UP_REQUIRED', 'turning it On without fresh authentication: STEP_UP_REQUIRED', msg(r));
+  check((await ovOf(aOv1)) === null && (await ovAudits(aOv1)).length === 0, 'nothing written, nothing audited');
+  r = await setOv(S.una, aOv1, 'off');
+  check(r.status === 403, 'a Business User with computers:view only cannot change it, even to Off (403)', msg(r));
+  S.owenUp = await stepUp(S.owen);
+  r = await setOv(S.owenUp, aOv1, 'on');
+  check(r.status === 200 && r.data.value === 'on' && r.data.changed === true && (await ovOf(aOv1)) === 'on', 'with it: On (stored as on)', msg(r));
+  let oa = await ovAudits(aOv1);
+  check(oa.length === 1 && oa[0].metadata.before === 'inherit' && oa[0].metadata.after === 'on' && oa[0].customerId === acme.id && oa[0].actorId === owen.id,
+    'audited AGENT_AUTO_UPDATE_COMPUTER_SET: inherit → on, by the owner, in Acme', JSON.stringify(oa.map((x) => x.metadata)));
+  r = await heartbeat(aOv1);
+  check(flags(r).reinstall?.targetVersion === SERVED && (await attempts(aOv1)).length === 1, 'computer On over business Off: the heartbeat is handed reinstallAgent', JSON.stringify(flags(r)));
+  c = await auto(aOv1);
+  check(c?.setting?.value === 'on' && c.setting.source === 'computer' && c.setting.effective === 'on' && c.setting.inherited.effective === 'off' && c.policy === null,
+    'the card: On, this computer\'s own setting; Inherit would still be Off', JSON.stringify(c?.setting));
+  r = await setOv(S.owenUp, aOv1, 'on');
+  check(r.status === 200 && r.data.changed === false && (await ovAudits(aOv1)).length === 1, 'setting the value it already has writes and audits nothing', msg(r));
+  r = await setOv(S.owenUp, aOv1, 'ON');
+  check(r.status === 400 && code(r) === 'INVALID_AGENT_AUTO_UPDATE', 'an unknown value is a 400', msg(r));
+  r = await req('PUT', `/endpoints/${aOv1.id}/agent/auto-update`, { s: S.owenUp, body: { mode: 'on', force: true } });
+  check(r.status === 400, 'an extra field is a 400', msg(r));
+  await prisma.$executeRawUnsafe(`UPDATE "Endpoint" SET "agentAutoUpdate" = 'maybe' WHERE id = $1`, aOv1.id).then(() => check(false, 'the database refuses a value other than on/off (0068 CHECK)'), () => check(true, 'the database refuses a value other than on/off (0068 CHECK)'));
+
+  r = await setOv(S.bea, bOv1, 'off');
+  check(r.status === 200 && r.data.value === 'off' && (await ovOf(bOv1)) === 'off', 'Birch\'s owner sets B-OVR-1 Off — no fresh authentication needed to stop', msg(r));
+  oa = await ovAudits(bOv1);
+  check(oa.length === 1 && oa[0].metadata.before === 'inherit' && oa[0].metadata.after === 'off' && oa[0].customerId === birch.id, 'audited: inherit → off, in Birch', JSON.stringify(oa.map((x) => x.metadata)));
+  r = await heartbeat(bOv1);
+  check(flags(r).reinstall === null && (await attempts(bOv1)).length === 0, 'computer Off over the default On: nothing handed out, no attempt', JSON.stringify(flags(r)));
+  c = await auto(bOv1, S.bea);
+  check(c?.state === 'opted_out' && c.reason === 'computer_off' && c.setting.effective === 'off' && c.setting.inherited.effective === 'on' && c.setting.inherited.from === 'the platform default',
+    'the card: opted out by this computer\'s own setting; Inherit would be On, from the platform default', JSON.stringify(c));
+  r = await heartbeat(bOv2);
+  check(flags(r).reinstall?.targetVersion === SERVED, 'B-OVR-2, a new computer that inherits: handed the flag (default on)', JSON.stringify(flags(r)));
+  r = await setOv(S.bea, bOv2, 'off');
+  check(r.status === 200, 'set Off while its attempt is open', msg(r));
+  r = await heartbeat(bOv2);
+  check(flags(r).reinstall === null, 'its next heartbeat inside the attempt is not handed the flag again: Off stops a resend too', JSON.stringify(flags(r)));
+  r = await setOv(S.bea, bOv1, 'inherit');
+  check(r.status === 403 && code(r) === 'STEP_UP_REQUIRED' && (await ovOf(bOv1)) === 'off', 'clearing it back to Inherit (which may be on) without fresh authentication: STEP_UP_REQUIRED', msg(r));
+  S.beaUp = await stepUp(S.bea);
+  r = await setOv(S.beaUp, bOv1, 'inherit');
+  check(r.status === 200 && r.data.value === 'inherit' && (await ovOf(bOv1)) === null, 'with it: Inherit (stored as null)', msg(r));
+  oa = await ovAudits(bOv1);
+  check(oa.length === 2 && oa[1].metadata.before === 'off' && oa[1].metadata.after === 'inherit', 'audited: off → inherit', JSON.stringify(oa.map((x) => x.metadata)));
+  r = await heartbeat(bOv1);
+  check(flags(r).reinstall?.targetVersion === SERVED, 'inheriting again: handed the flag', JSON.stringify(flags(r)));
+  r = await setOv(S.owenUp, bOv1, 'off');
+  check(r.status === 404, 'Acme\'s owner cannot change a Birch computer (404)', msg(r));
+  r = await setOv(S.beaUp, aOv1, 'off');
+  check(r.status === 404 && (await ovOf(aOv1)) === 'on', 'and Birch\'s owner cannot change an Acme computer (404)', msg(r));
+
+  // On keeps the governing policy's window.
+  r = await req('PUT', '/client-updates/policy', { s: S.owenUp, body: { businessId: acme.id, siteId: south.id, enabled: false, timeZone: 'UTC', windows: closedWindow(), skipActiveSession: true, skipLoggedOnUser: false, agentMode: 'WINDOW' } });
+  check(r.status === 200, 'South\'s window closed again', msg(r));
+  r = await setOv(S.owenUp, aOv2, 'on');
+  check(r.status === 200, 'A-OVR-SOUTH set On', msg(r));
+  r = await heartbeat(aOv2);
+  check(flags(r).reinstall === null && (await attempts(aOv2)).length === 0, 'On under a site WINDOW policy whose window is shut: still waits', JSON.stringify(flags(r)));
+  c = await auto(aOv2);
+  check(c?.reason === 'outside_window' && c.setting.source === 'computer' && c.setting.effective === 'window' && c.policy?.scope === 'site', 'the card: its own On, waiting for the site\'s window', JSON.stringify(c));
+
+  // The platform switch wins over a computer's On.
+  r = await req('PUT', '/admin/agent-auto-update', { s: S.adminUp, body: { enabled: false } });
+  check(r.status === 200 && r.data.enabled === false, 'the platform switch off', msg(r));
+  await ageAttempt(aOv1, 30 * H, 0);
+  r = await heartbeat(aOv1);
+  check(flags(r).reinstall === null, 'A-OVR-1 (computer On): nothing — the platform switch wins', JSON.stringify(flags(r)));
+  c = await auto(aOv1);
+  check(c?.reason === 'platform_off' && c.setting.value === 'on' && c.setting.effective === 'off' && c.setting.platform.enabled === false, 'the card: platform off, effective Off though the computer says On', JSON.stringify(c?.setting));
+  r = await req('PUT', '/admin/agent-auto-update', { s: S.adminUp, body: { enabled: true } });
+  check(r.status === 200 && r.data.enabled === true, 'the platform switch back on', msg(r));
+
+  section('0.46: the business page\'s "Automatic agent updates" selector');
+  const birchPol = () => prisma.clientUpdatePolicy.findFirst({ where: { customerId: birch.id, siteId: null, groupId: null } });
+  const setMode = (s, businessId, agentMode) => req('PUT', '/client-updates/policy/agent-mode', { s, body: { businessId, agentMode } });
+  const polAudits = () => prisma.activityLog.findMany({ where: { action: 'CLIENT_UPDATE_POLICY_CHANGED', customerId: birch.id }, orderBy: { createdAt: 'asc' } });
+  r = await req('GET', `/client-updates/policy?businessId=${birch.id}`, { s: S.bea });
+  check(r.status === 200 && r.data.policy === null && r.data.agentAuto?.platformEnabled === true && r.data.may.edit === true, 'Birch has no policy: the page reads Inherit global (On), and its owner may change it', msg(r));
+  S.bea = await login(bea.email);
+  r = await setMode(S.bea, birch.id, 'OFF');
+  let bp = await birchPol();
+  check(r.status === 200 && r.data.changed === true && bp?.agentMode === 'OFF' && bp.enabled === false && bp.timeZone === 'UTC', 'Off without fresh authentication: the business row is created with agentMode OFF and the RustDesk client update still off', `${msg(r)} ${JSON.stringify(bp)}`);
+  let pas = await polAudits();
+  check(pas.length >= 1 && pas.at(-1).metadata.agentModeOnly === true && pas.at(-1).metadata.before === null && pas.at(-1).metadata.after.agentMode === 'OFF', 'audited CLIENT_UPDATE_POLICY_CHANGED (agent mode only), before null', JSON.stringify(pas.at(-1)?.metadata));
+  r = await heartbeat(bOv3);
+  check(flags(r).reinstall === null && (await attempts(bOv3)).length === 0, 'B-OVR-3 (inherits) is not asked any more', JSON.stringify(flags(r)));
+  c = await auto(bOv3, S.bea);
+  check(c?.reason === 'policy_off' && c.setting.inherited.from === 'business policy', 'its card: opted out by the business policy', JSON.stringify(c));
+  r = await heartbeat(bOv1);
+  check(r.status === 200 || r.status === 201, 'B-OVR-1 heartbeats');
+  r = await setMode(S.bea, birch.id, 'ANY_TIME');
+  check(r.status === 403 && code(r) === 'STEP_UP_REQUIRED' && (await birchPol()).agentMode === 'OFF', 'turning it back On without fresh authentication: STEP_UP_REQUIRED, unchanged', msg(r));
+  S.beaUp = await stepUp(S.bea);
+  r = await setMode(S.beaUp, birch.id, 'ANY_TIME');
+  bp = await birchPol();
+  check(r.status === 200 && bp.agentMode === 'ANY_TIME' && bp.enabled === false, 'with it: On, and enabled is still false', `${msg(r)} ${JSON.stringify(bp)}`);
+  r = await heartbeat(bOv3);
+  check(flags(r).reinstall?.targetVersion === SERVED, 'B-OVR-3 is asked again', JSON.stringify(flags(r)));
+  r = await setMode(S.beaUp, birch.id, 'ANY_TIME');
+  check(r.status === 200 && r.data.changed === false, 'the same value again changes and records nothing', msg(r));
+  // With the RustDesk client update on, Off still needs no fresh authentication and leaves `enabled` alone.
+  r = await req('PUT', '/client-updates/policy', { s: S.beaUp, body: { businessId: birch.id, enabled: true, timeZone: 'UTC', windows: closedWindow(), skipActiveSession: true, skipLoggedOnUser: false } });
+  check(r.status === 200 && (await birchPol()).enabled === true, 'Birch turns its RustDesk client updates on (Settings → Client updates)', msg(r));
+  const winBefore = JSON.stringify((await birchPol()).windows);
+  S.bea = await login(bea.email);
+  r = await setMode(S.bea, birch.id, 'OFF');
+  bp = await birchPol();
+  check(r.status === 200 && bp.agentMode === 'OFF' && bp.enabled === true && JSON.stringify(bp.windows) === winBefore, 'the selector set to Off: no fresh authentication, and the RustDesk setting and window are untouched', `${msg(r)} ${JSON.stringify(bp)}`);
+  r = await req('PUT', '/client-updates/policy', { s: S.bea, body: { businessId: birch.id, enabled: false, timeZone: 'UTC', windows: closedWindow(), skipActiveSession: true, skipLoggedOnUser: false } });
+  check(r.status === 200 && (await birchPol()).enabled === false && (await birchPol()).agentMode === 'OFF', 'RustDesk client updates off again (agent mode untouched by that save)', msg(r));
+  r = await setMode(S.bea, birch.id, null);
+  check(r.status === 403 && code(r) === 'STEP_UP_REQUIRED', 'Inherit global (which is On) without fresh authentication: STEP_UP_REQUIRED', msg(r));
+  S.beaUp = await stepUp(S.bea);
+  r = await setMode(S.beaUp, birch.id, 'WINDOW');
+  check(r.status === 200 && (await birchPol()).agentMode === 'WINDOW', 'In maintenance window, with fresh authentication', msg(r));
+  r = await setMode(S.beaUp, birch.id, null);
+  check(r.status === 200 && (await birchPol()).agentMode === null, 'and back to Inherit global', msg(r));
+  r = await setMode(S.owenUp, birch.id, 'OFF');
+  check((r.status === 403 || r.status === 404) && (await birchPol()).agentMode === null, 'Acme\'s owner cannot set Birch\'s', msg(r));
+  r = await setMode(S.una, acme.id, 'OFF');
+  check(r.status === 403, 'a Business User cannot set their business\'s (403)', msg(r));
+  r = await req('PUT', '/client-updates/policy/agent-mode', { s: S.beaUp, body: { businessId: birch.id, agentMode: 'OFF', enabled: true } });
+  check(r.status === 400 && (await birchPol()).enabled === false, 'an extra field (enabled) is a 400: the selector can never touch the RustDesk setting', msg(r));
+
+  section('0.46: default enabled — a new business and its new computer inherit On');
+  const cedar = await prisma.customer.create({ data: { tenantId: tenant.id, name: `AAU Cedar ${sfx}` } });
+  created.businesses.push(cedar.id);
+  const cNew = await mkEp(cedar, 'C-NEW');
+  r = await heartbeat(cNew);
+  check(flags(r).reinstall?.targetVersion === SERVED, 'C-NEW, in a brand-new business with nothing set anywhere: handed the flag', JSON.stringify(flags(r)));
+  c = await auto(cNew, S.admin);
+  check(c?.setting?.value === 'inherit' && c.setting.source === 'default' && c.setting.inherited.from === 'the platform default' && c.setting.effective === 'on', 'its card: Inherit, On, from the platform default', JSON.stringify(c?.setting));
 
   section('AGENT_AUTO_UPDATE=off on another API');
   await stopApi();
