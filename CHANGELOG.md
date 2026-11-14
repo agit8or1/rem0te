@@ -5,6 +5,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.47.1] — 2026-11-14 · *Latch*
+
+**The Print Spooler action now shows whether the Spooler is already running.**
+
+The owner opened *Actions → Start the Windows Print Spooler* and nothing on the page said what state the Spooler was in.
+Pressing it on a running Spooler was harmless, because the agent reads the service itself and changes nothing when it is
+already running, but the console gave no hint that the request was pointless.
+
+- When *Start the Windows Print Spooler* or *Restart a Windows service* is chosen, the action panel shows that service's
+  state and start type from the latest `service_list` snapshot, with the time it was taken. This is the same read the
+  Services tab makes, with the same query key, so the two never disagree. A **Refresh** button asks the computer for a
+  new service list.
+- If the snapshot says the Spooler is **Running**, the start request is replaced with "Nothing to do". A *start it
+  anyway* link stays for a snapshot that may be stale, and the computer still checks again before it acts.
+- With no snapshot, or no Spooler in the snapshot, the panel says so and the request is offered as before.
+
+This changes only the web page. The agent's check, the action catalog and §14 are unchanged.
+
+---
+
 ## [0.47.0] — 2026-11-14 · *Latch*
 
 **Everyday changes no longer ask "confirm it is you" every time.**

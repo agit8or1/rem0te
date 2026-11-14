@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { actionsApi } from '@/lib/api-client';
+import { actionsApi, api } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { DIRECT_REQUEST_NOTE, DIRECT_TOAST, directApproved, oldAgentRefusal } from '@/lib/direct-mode';
-import { AlertTriangle, ExternalLink, Loader2, ShieldCheck, Wrench } from 'lucide-react';
+import { AlertTriangle, ExternalLink, Loader2, RefreshCw, ShieldCheck, Wrench } from 'lucide-react';
 
 /**
  * Approved catalog actions on one computer (v0.26).
@@ -178,9 +178,15 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
   const direct = (catalog?.actions ?? []).filter((a) => a.direct);
   const supported = (a: CatalogAction) => agentActions.includes(`${a.id}@${a.version}`);
   const action = direct.find((a) => a.id === picked) ?? direct.find(supported) ?? direct[0];
+  // 0.47.1: the service this action names, so its current state can be shown from the latest service list.
+  const [svcState, setSvcState] = useState<string | null>(null);
+  const [startAnyway, setStartAnyway] = useState(false);
   const choiceValue = action?.choice ? (action.choice.options.find((o) => String(o.value) === choice) ?? action.choice.options[0]) : null;
   const params = (a: CatalogAction): Record<string, unknown> =>
     FIXED_PARAMS[a.id] ?? (a.choice && choiceValue ? { [a.choice.field]: choiceValue.value } : {});
+  const serviceName = action?.id === 'windows.service.start' ? 'Spooler'
+    : action?.id === 'windows.service.restart' && choiceValue ? String(choiceValue.value) : null;
+  const alreadyRunning = action?.id === 'windows.service.start' && svcState === 'Running';
   const pick = (id: string) => { setPicked(id); setChoice(''); setConfirmed(false); };
   const request = useMutation({
     mutationFn: () => actionsApi.request(endpointId, {
@@ -260,8 +266,14 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
             {action.requiresCapability && (
               <p className="text-xs text-muted-foreground">Requesting this, and reading what it collects, also needs permission to read this computer’s event logs ({action.requiresCapability}).</p>
             )}
+            {serviceName && <ServiceNow endpointId={endpointId} service={serviceName} onState={setSvcState} />}
             {pending ? (
               <p className="text-xs">An earlier request for this action is {STATUS[pending.status]?.label.toLowerCase() ?? pending.status}; resolve it before asking again.</p>
+            ) : alreadyRunning && !startAnyway ? (
+              <div className="rounded-md border bg-muted/40 p-2 text-xs space-y-1" data-testid="action-already-running">
+                <p><strong>Nothing to do:</strong> the latest service list shows {serviceName} is already running.</p>
+                <p className="text-muted-foreground">If you think it has stopped since, refresh the service list above, or <button type="button" className="underline" onClick={() => setStartAnyway(true)}>start it anyway</button> (the computer checks again and changes nothing if it is running).</p>
+              </div>
             ) : blocked ? (
               <p className="rounded-md border bg-muted/40 p-2 text-xs" data-testid="action-unavailable">
                 <strong>Cannot be requested for this computer:</strong> {blocked}
@@ -429,6 +441,48 @@ function ScriptOutputView({ out }: { out: ScriptOutput | { pruned: true } | null
       </p>
       {stream('Output', out.stdout, out.stdoutBytes, out.stdoutTruncated)}
       {stream('Errors', out.stderr, out.stderrBytes, out.stderrTruncated)}
+    </div>
+  );
+}
+
+/**
+ * 0.47.1: the named service's state from the latest service list snapshot
+ * (the same read as the Services tab), with Refresh. The owner pressed
+ * "Start the Print Spooler" with nothing on the page saying it was already
+ * running. The computer still checks for itself before it starts anything;
+ * this only stops asking for a start that the last snapshot says is moot.
+ */
+function ServiceNow({ endpointId, service, onState }: { endpointId: string; service: string; onState: (s: string | null) => void }) {
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({
+    queryKey: ['diagnostics-snapshot', endpointId, 'service_list'],
+    queryFn: () => api.get(`/endpoints/${endpointId}/diagnostics/snapshots/service_list`).then((r) => r.data?.data as {
+      takenAt: string | null; pending: unknown | null; latest: { result: Record<string, unknown> | null } | null;
+    }),
+    refetchInterval: (q) => (q.state.data?.pending ? 4_000 : 30_000),
+  });
+  const refresh = useMutation({
+    mutationFn: () => api.post(`/endpoints/${endpointId}/diagnostics/runs`, { key: 'service_list' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['diagnostics-snapshot', endpointId, 'service_list'] }),
+  });
+  const list = (data?.latest?.result?.services as { name?: string; displayName?: string | null; state?: string; startMode?: string }[] | undefined) ?? [];
+  const row = list.find((v) => typeof v.name === 'string' && v.name.toLowerCase() === service.toLowerCase()) ?? null;
+  const state = row?.state ?? null;
+  useEffect(() => { onState(state); }, [state, onState]);
+  const tone = state === 'Running' ? 'text-emerald-700 dark:text-emerald-400' : state ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground';
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border p-2 text-xs" data-testid="action-service-state" data-state={state ?? 'unknown'}>
+      <span>
+        {isLoading ? 'Reading the service list…'
+          : !data?.takenAt ? 'No service list from this computer yet.'
+            : !row ? `${service} is not in the latest service list.`
+              : <>{row.displayName ?? service}: <strong className={tone}>{state === 'Running' ? 'Running' : state ?? 'unknown'}</strong>{row.startMode ? ` · ${row.startMode}` : ''}</>}
+        {data?.takenAt && <span className="text-muted-foreground"> — as of {formatDate(data.takenAt)}</span>}
+        {data?.pending ? <span className="text-muted-foreground"> · refreshing…</span> : null}
+      </span>
+      <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" disabled={refresh.isPending || !!data?.pending} onClick={() => refresh.mutate()} data-testid="action-service-refresh">
+        <RefreshCw className="h-3 w-3 mr-1" />Refresh
+      </Button>
     </div>
   );
 }
