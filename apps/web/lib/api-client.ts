@@ -104,7 +104,24 @@ export const patchingApi = {
   // Creating and revoking need a fresh sign-in (the interceptor prompts).
   createPolicy: (body: PatchPolicyInput) => api.post('/patching/policies', body),
   revokePolicy: (id: string, reason: string) => api.post(`/patching/policies/${id}/revoke`, { reason }),
+  // 0.50: company-wide and assignable policies, and each computer's Patch
+  // policy setting. Each revision is still a signed closed list; the portal
+  // proposes revisions itself. Writes need a fresh sign-in (the interceptor prompts).
+  endpointPolicy: (endpointId: string) => api.get(`/endpoints/${endpointId}/patch-policy`),
+  setEndpointPolicy: (endpointId: string, body: PatchPolicySettingInput) => api.put(`/endpoints/${endpointId}/patch-policy`, body),
+  series: (businessId: string) => api.get('/patching/series', { params: { businessId } }),
+  createSeries: (body: PatchSeriesInput) => api.post('/patching/series', body),
+  retireSeries: (id: string, reason: string) => api.post(`/patching/series/${id}/retire`, { reason }),
 };
+
+export type PatchPolicySettingInput = { mode: 'inherit' } | { mode: 'exclude' } | { mode: 'policy'; seriesId: string };
+export interface PatchSeriesInput {
+  businessId: string; scope: 'business' | 'assigned'; name: string;
+  allow: { classifications: string[]; severities?: string[]; excludeKbs?: string[] };
+  soakHours: number; failureThreshold: number;
+  window: { days: string[]; start: string; end: string; timezone: string };
+  reboot: 'never' | 'if_required_in_window'; expiresInDays: number; reason: string; canaryEndpointId?: string;
+}
 
 // 0.34 software deployment (docs/software-deployment.md). The catalog is
 // allowlisted winget packages pinned to one version and installer SHA-256.

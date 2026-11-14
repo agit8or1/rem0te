@@ -110,6 +110,11 @@ jobs:
       # the signer's policy records (quorum, tamper, revocation).
       - name: Patch policy tests
         run: node apps/api/scripts/unit-patch-policy.mjs
+      # 0.50: company-wide and assignable patch policies — the rings the
+      # portal builds (checked with the signer's own validatePolicyDoc), the
+      # membership fingerprint and the bounded revision decision.
+      - name: Patch policy assignment tests
+        run: node apps/api/scripts/unit-patch-assignment.mjs
 
       # The tamper-evident audit chain (0.28): every tamper kind, gaps,
       # checkpoint signatures and the export checker, against the compiled

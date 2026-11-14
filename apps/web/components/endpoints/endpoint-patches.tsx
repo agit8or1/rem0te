@@ -18,6 +18,7 @@ import { connectivityLabel, connectivityOf } from '@/lib/connectivity';
 import { useApprovalMode } from '@/hooks/use-approval-mode';
 import { DIRECT_TOAST, oldAgentUpdateRefusal } from '@/lib/direct-mode';
 import { useAsks } from '@/lib/confirm-policy';
+import { PatchPolicySetting } from '@/components/patching/patch-policy-setting';
 
 /**
  * Windows Update posture of one computer (v0.27), as its signed agent's
@@ -287,6 +288,7 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
       <div className="space-y-4">
         <PatchSummaryCard s={p.summary} platform={platform} />
         <InstallUpdates endpointId={endpointId} p={p} onOpenAgentCard={onOpenAgentCard} />
+        {os !== 'Linux' && os !== 'macOS' && <PatchPolicySetting endpointId={endpointId} />}
         <Card>
           <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />{source}</CardTitle>
@@ -335,6 +337,7 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
     <div className="space-y-4">
       <PatchSummaryCard s={p.summary} platform={platform} />
       <InstallUpdates endpointId={endpointId} p={p} onOpenAgentCard={onOpenAgentCard} />
+      <PatchPolicySetting endpointId={endpointId} />
       <Card>
         <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Windows Update</CardTitle>

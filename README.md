@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.49.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.50.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -66,7 +66,7 @@ it, its default and its limits: **Settings → Security → Security Features**,
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
 
-## What's new in 0.40 to 0.48
+## What's new in 0.40 to 0.50
 
 Every change on a computer below (services, processes, installing and removing software) needs the full (signed)
 Windows agent and an approval signer, and none of those changes has yet run on a real Windows computer: they have
@@ -74,6 +74,18 @@ been tested against a simulated one. Ask AI and Create ticket have been tested o
 real provider or PSA. [What each agent can do](docs/capabilities.md)
 says what is proven and what is not.
 
+- **Patch policies for a whole business, changed per computer (0.50).** A company-wide patch policy covers every
+  Windows computer of a business on the signed agent: the portal picks the canary, puts the rest in rings of at most
+  25, and lists any computer it left out with the reason. Each computer's *Patch policy* is *Inherit*, *Exclude* or
+  *Use policy X* (for example one for servers), and its Patches tab shows which applies and why. When computers
+  change, the portal proposes a new revision, approved like any policy: after a debounce, at most once an hour per
+  business, never during a deployment. [Staged patching](docs/staged-patching.md)
+- **Choose which changes ask "confirm it is you" (0.49).** Settings → Confirm it is you lists 30 functions in nine
+  groups, each *Ask* or *Don't ask*. Your own password, authenticator and passkeys, and turning a confirmation off,
+  always ask. [Signing in](docs/sign-in.md#which-functions-ask-049)
+- **Reinstall a computer that is already here (0.48.2).** A download link bound to one existing computer, from its
+  page or its row in Devices, for an agent that stopped or was removed. It re-attaches to the same record.
+  [Troubleshooting](docs/troubleshooting.md)
 - **Ask AI and Create ticket (0.48).** Every event-log entry and alert has **Ask AI**, which explains it in plain
   words after redacting names, addresses, accounts and serials, and **Create ticket**, which sends it to your PSA
   by email-to-ticket, a signed webhook or ClientSt0r. You bring your own Anthropic, OpenAI or compatible key, kept
@@ -88,7 +100,7 @@ says what is proven and what is not.
 - **Chat with files and an inbox (0.44).** Emoji, pictures and files in chat, and unread replies in the header
   from anywhere in the console. [Chat](docs/chat.md)
 - **Automatic agent updates per computer and per business (0.46)**, and **fewer "confirm it is you" prompts**
-  for everyday changes (0.47, a Platform Admin setting). [Updates](docs/updates.md)
+  for everyday changes (0.47, per function from 0.49). [Updates](docs/updates.md)
 - **Direct mode for a single operator (0.40)**: requests are signed at once, with no second approver.
 - **The Devices list fits the window (0.47.1, 0.48.1)**: from 1280 to 2560 pixels with the sidebar open. Last seen,
   Agent, OS, Site and Logged-in user each appear at their own width (1440, 1536, 1700, 1860 and 2000 pixels).

@@ -109,6 +109,10 @@ enum ActivityAction {
   PATCH_POLICY_REVOKED
   PATCH_POLICY_PROPOSED
   PATCH_POLICY_REFUSED
+  PATCH_POLICY_SUPERSEDED
+  PATCH_POLICY_SERIES_CREATED
+  PATCH_POLICY_SERIES_RETIRED
+  PATCH_POLICY_OVERRIDE_SET
   PATCH_INSTALL_REQUESTED
   CONTAINMENT_PAUSED
   CONTAINMENT_CLEARED
@@ -648,6 +652,8 @@ model Customer {
   softwareEntries      SoftwareCatalogEntry[]
   softwareDeployments  SoftwareDeployment[]
   patchPolicies        PatchPolicy[]
+  /// 0.50: company-wide and assignable patch policies (each a series of signed revisions).
+  patchPolicySeries    PatchPolicySeries[]
   endpointGroups       EndpointGroup[]
   savedViews           SavedView[]
   emailRecipients      EmailRecipient[]
@@ -757,6 +763,15 @@ model Endpoint {
   // platform switch and AGENT_AUTO_UPDATE=off still win over both (CHECK in
   // 0070; agent-auto-update/schedule.ts, resolveMode).
   agentAutoUpdate      String?
+  // Patch policy for this one computer (0.50): 'inherit' (the business's
+  // company-wide policy, if it has one), 'exclude' (no automatic patching at
+  // all) or 'policy' (the assignable policy patchPolicySeriesId, of the same
+  // business). CHECKs and the same-business trigger in 0072. Written only by
+  // PatchSeriesService.setOverride, audited before and after.
+  patchPolicyMode      String              @default("inherit")
+  patchPolicySeriesId  String?
+  patchPolicySeries    PatchPolicySeries?  @relation(fields: [patchPolicySeriesId], references: [id], onDelete: NoAction)
+  patchPolicyMembers   PatchPolicyComputer[]
   // Chat (0.34): the chat protocol the signed agent says it speaks (1), from
   // agent-status.json via an authenticated heartbeat. Null = this agent can't
   // chat. Self-reported: it decides only whether the portal offers a chat.
@@ -2745,9 +2760,81 @@ model PatchPolicy {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   deployments     PatchDeployment[]
+  /// 0.50: a revision of a company-wide or assignable policy. Null for a
+  /// policy made by hand with named rings. The signed document is the same
+  /// closed list either way; the series is the portal's own bookkeeping.
+  seriesId        String?
+  series          PatchPolicySeries? @relation(fields: [seriesId], references: [id], onDelete: NoAction)
+  revision        Int?
+  /// The revision this one replaces, and when it was replaced.
+  supersedesId    String?
+  supersededAt    DateTime?
+  members         PatchPolicyComputer[]
 
+  @@unique([seriesId, revision])
   @@index([customerId, createdAt])
   @@index([status])
+}
+
+/// 0.50: a patch policy that revises itself. scope 'business' covers every
+/// computer of the business whose Patch policy is Inherit; 'assigned' covers
+/// the computers set to use it. Each revision is an ordinary PatchPolicy —
+/// a closed, signed list of computers proposed through
+/// PatchPolicyService.admit, the same path as a policy made by hand.
+model PatchPolicySeries {
+  id                String    @id @default(cuid())
+  tenantId          String?
+  customerId        String
+  customer          Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// 'business' | 'assigned' (CHECK, 0072); one active 'business' per business (partial unique).
+  scope             String
+  name              String
+  /// { allow, soakHours, failureThreshold, window, reboot, expiresInDays, canaryEndpointId?, reason }. Fixed for the series' life.
+  settings          Json
+  /// 'active' | 'retired' (CHECK, 0072).
+  status            String    @default("active")
+  createdById       String
+  /// The revision the sweep runs (its computers hold the live rows).
+  currentPolicyId   String?   @unique
+  lastRevision      Int       @default(0)
+  /// Debounce: a change of computers is proposed only after it has held this long.
+  settleFingerprint String?
+  settleSince       DateTime?
+  /// The last check: { at, code, message, leftOut[], members, rings[] }.
+  lastCheck         Json?
+  retiredAt         DateTime?
+  retiredById       String?
+  retireReason      String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  revisions         PatchPolicy[]
+  endpoints         Endpoint[]
+
+  @@index([customerId, status])
+}
+
+/// 0.50: which computers a policy names, and whether that policy is the one
+/// patching it now. At most one live row per computer (partial unique,
+/// 0072), and a live row only for an ACTIVE policy (trigger).
+model PatchPolicyComputer {
+  policyId   String
+  policy     PatchPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  endpointId String
+  endpoint   Endpoint    @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  customerId String
+  ring       Int
+  live       Boolean     @default(false)
+  createdAt  DateTime    @default(now())
+
+  @@id([policyId, endpointId])
+  @@index([endpointId])
+}
+
+/// 0.50: the per-business bound on automatic revisions — one claim per
+/// PATCH_POLICY_REVISION_MINUTES, taken by a conditional upsert.
+model PatchPolicyRevisionClaim {
+  customerId String   @id
+  at         DateTime
 }
 
 // ─── Containment (v0.28) ─────────────────────────────────────────────────────
