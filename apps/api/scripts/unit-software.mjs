@@ -168,7 +168,7 @@ check('next: paused → nothing', D.nextRing('PAUSED', 'canary failed', new Map(
   const E = require(path.join(dist, 'monitoring/engine.js'));
   const zlib = require('node:zlib');
   // A zip written the way an MSIX is: optional data descriptors (local sizes 0), central directory last.
-  const makeZip = (entries) => {
+  const makeZip = (entries, opts = {}) => {
     const locals = [], cds = [];
     let off = 0;
     for (const e of entries) {
@@ -185,13 +185,28 @@ check('next: paused → nothing', D.nextRing('PAUSED', 'canary failed', new Map(
       const cd = Buffer.alloc(46);
       cd.writeUInt32LE(0x02014b50, 0); cd.writeUInt16LE(20, 4); cd.writeUInt16LE(20, 6); cd.writeUInt16LE(dd | (e.encrypted ? 1 : 0), 8); cd.writeUInt16LE(e.method, 10);
       cd.writeUInt32LE(crc, 16); cd.writeUInt32LE(comp.length, 20); cd.writeUInt32LE(e.claimSize ?? data.length, 24); cd.writeUInt16LE(name.length, 28); cd.writeUInt32LE(off, 42);
-      locals.push(lh, name, comp, desc); cds.push(cd, name);
+      // 0.41.1: ZIP64 the way MSIX packagers write it — every size and offset in the extra field.
+      let x64 = Buffer.alloc(0);
+      if (opts.zip64) {
+        x64 = Buffer.alloc(28); x64.writeUInt16LE(1, 0); x64.writeUInt16LE(24, 2);
+        x64.writeBigUInt64LE(BigInt(e.claimSize ?? data.length), 4); x64.writeBigUInt64LE(BigInt(comp.length), 12); x64.writeBigUInt64LE(BigInt(opts.badLocal ? 1e12 : off), 20);
+        if (opts.shortExtra) x64.writeUInt16LE(8, 2);
+        cd.writeUInt32LE(0xffffffff, 20); cd.writeUInt32LE(0xffffffff, 24); cd.writeUInt32LE(0xffffffff, 42); cd.writeUInt16LE(x64.length, 30);
+      }
+      locals.push(lh, name, comp, desc); cds.push(cd, name, x64);
       off += 30 + name.length + comp.length + desc.length;
     }
     const cdBuf = Buffer.concat(cds);
     const eocd = Buffer.alloc(22);
     eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(entries.length, 8); eocd.writeUInt16LE(entries.length, 10); eocd.writeUInt32LE(cdBuf.length, 12); eocd.writeUInt32LE(off, 16);
-    return Buffer.concat([...locals, cdBuf, eocd]);
+    if (!opts.zip64) return Buffer.concat([...locals, cdBuf, eocd]);
+    const z = Buffer.alloc(56), zAt = off + cdBuf.length;
+    z.writeUInt32LE(0x06064b50, 0); z.writeBigUInt64LE(44n, 4); z.writeUInt16LE(45, 12); z.writeUInt16LE(45, 14);
+    z.writeBigUInt64LE(BigInt(entries.length), 24); z.writeBigUInt64LE(BigInt(entries.length), 32); z.writeBigUInt64LE(BigInt(cdBuf.length), 40); z.writeBigUInt64LE(BigInt(opts.badCdOff ? 1e12 : off), 48);
+    const loc = Buffer.alloc(20); loc.writeUInt32LE(0x07064b50, 0); loc.writeBigUInt64LE(BigInt(opts.noLocator ? 0 : zAt), 8); loc.writeUInt32LE(1, 16);
+    if (opts.noLocator) loc.writeUInt32LE(0, 0);
+    eocd.writeUInt16LE(0xffff, 8); eocd.writeUInt16LE(0xffff, 10); eocd.writeUInt32LE(0xffffffff, 12); eocd.writeUInt32LE(0xffffffff, 16);
+    return Buffer.concat([...locals, cdBuf, z, loc, eocd]);
   };
   const DB = Buffer.from('SQLite format 3\u0000' + 'x'.repeat(5000));
   const zipOk = makeZip([{ name: 'AppxManifest.xml', data: '<x/>', method: 8 }, { name: 'Public/index.db', data: DB, method: 8, descriptor: true }]);
@@ -202,6 +217,16 @@ check('next: paused → nothing', D.nextRing('PAUSED', 'canary failed', new Map(
   check('index: an entry over the cap is refused before inflating', throws(() => W.readZipEntry(zipOk, 'Public/index.db', 100), /larger than/));
   check('index: an entry that inflates past what it claims is refused', throws(() => W.readZipEntry(makeZip([{ name: 'Public/index.db', data: DB, method: 8, claimSize: 10 }]), 'Public/index.db', 20), /inflate|expected|larger/));
   check('index: a missing entry is refused', throws(() => W.readZipEntry(zipOk, 'Public/other.db', 1 << 20), /not in the archive/));
+  {
+    // 0.41.1: the real source2.msix is ZIP64 (MSIX packagers always write it); 0.41.0 refused it in production.
+    const z64 = (o) => makeZip([{ name: 'AppxManifest.xml', data: '<x/>', method: 8 }, { name: 'Public/index.db', data: DB, method: 8, descriptor: true }], { zip64: true, ...o });
+    check('index: a ZIP64 archive (MSIX-shaped) is read', W.readZipEntry(z64({}), 'Public/index.db', 1 << 20).equals(DB));
+    check('index: ZIP64 — a missing locator is refused', throws(() => W.readZipEntry(z64({ noLocator: true }), 'Public/index.db', 1 << 20), /locator/));
+    check('index: ZIP64 — a central directory offset past the end is refused', throws(() => W.readZipEntry(z64({ badCdOff: true }), 'Public/index.db', 1 << 20), /out of bounds|out of range/));
+    check('index: ZIP64 — a local header offset past the end is refused', throws(() => W.readZipEntry(z64({ badLocal: true }), 'Public/index.db', 1 << 20), /bad local header|out of bounds/));
+    check('index: ZIP64 — a short extra field is refused', throws(() => W.readZipEntry(z64({ shortExtra: true }), 'Public/index.db', 1 << 20), /short ZIP64|bad central/));
+    check('index: ZIP64 — the cap still holds', throws(() => W.readZipEntry(z64({}), 'Public/index.db', 100), /larger than/));
+  }
   check('index: an encrypted entry is refused', throws(() => W.readZipEntry(makeZip([{ name: 'Public/index.db', data: 'abc', method: 0, encrypted: true }]), 'Public/index.db', 100), /encrypted/));
   check('index: another compression method is refused', throws(() => W.readZipEntry(makeZip([{ name: 'Public/index.db', data: 'abc', method: 12 }]), 'Public/index.db', 100), /method 12/));
   check('index: something that is not a zip is refused', throws(() => W.readZipEntry(Buffer.from('<html>not found</html>'.repeat(4)), 'Public/index.db', 100), /not a zip/));

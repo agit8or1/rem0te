@@ -70,23 +70,66 @@ export class ZipError extends Error {}
  * One file out of a zip, by its exact name, from the central directory (the
  * local headers of an MSIX carry a data descriptor, so their sizes are 0).
  * Stored or deflated only; the output is capped and its CRC-32 checked. No
- * ZIP64, no encryption, no other entry is read.
+ * encryption, no other entry is read.
+ *
+ * 0.41.1: ZIP64 is read. MSIX packagers write the ZIP64 end records whatever
+ * the archive's size, so the real source2.msix (4 MB) was refused with
+ * "ZIP64 is not read" on its first production read. Every 64-bit value is
+ * bounds-checked against the buffer before use, so it cannot point outside.
  */
+/** A little-endian u64 that must fit a safe integer (no archive here is near 2^53 bytes). */
+function u64(b: Buffer, at: number): number {
+  if (at < 0 || at + 8 > b.length) throw new ZipError('ZIP64 field out of bounds');
+  const v = b.readBigUInt64LE(at);
+  if (v > BigInt(Number.MAX_SAFE_INTEGER)) throw new ZipError('ZIP64 value out of range');
+  return Number(v);
+}
+
 export function readZipEntry(zip: Buffer, name: string, maxOut: number): Buffer {
   const min = Math.max(0, zip.length - 22 - 0xffff);
   let eocd = -1;
   for (let i = zip.length - 22; i >= min; i--) if (zip.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
   if (eocd < 0) throw new ZipError('not a zip file (no end of central directory)');
-  const entries = zip.readUInt16LE(eocd + 10), cdSize = zip.readUInt32LE(eocd + 12), cdOff = zip.readUInt32LE(eocd + 16);
-  if (cdOff === 0xffffffff || entries === 0xffff) throw new ZipError('ZIP64 is not read');
-  if (cdOff + cdSize > eocd) throw new ZipError('central directory out of bounds');
+  let entries = zip.readUInt16LE(eocd + 10), cdSize = zip.readUInt32LE(eocd + 12), cdOff = zip.readUInt32LE(eocd + 16);
+  let cdEnd = eocd;
+  if (cdOff === 0xffffffff || cdSize === 0xffffffff || entries === 0xffff) {
+    // The ZIP64 end-of-central-directory locator sits just before the classic record.
+    const loc = eocd - 20;
+    if (loc < 0 || zip.readUInt32LE(loc) !== 0x07064b50) throw new ZipError('ZIP64 locator missing');
+    const z = u64(zip, loc + 8);
+    if (z + 56 > loc || zip.readUInt32LE(z) !== 0x06064b50) throw new ZipError('bad ZIP64 end of central directory');
+    entries = u64(zip, z + 32); cdSize = u64(zip, z + 40); cdOff = u64(zip, z + 48);
+    cdEnd = z;
+  }
+  if (cdOff + cdSize > cdEnd) throw new ZipError('central directory out of bounds');
   let p = cdOff;
   for (let n = 0; n < entries; n++) {
-    if (p + 46 > eocd || zip.readUInt32LE(p) !== 0x02014b50) throw new ZipError('bad central directory entry');
+    if (p + 46 > cdEnd || zip.readUInt32LE(p) !== 0x02014b50) throw new ZipError('bad central directory entry');
     const flags = zip.readUInt16LE(p + 8), method = zip.readUInt16LE(p + 10), crc = zip.readUInt32LE(p + 16);
-    const csize = zip.readUInt32LE(p + 20), usize = zip.readUInt32LE(p + 24);
-    const nlen = zip.readUInt16LE(p + 28), xlen = zip.readUInt16LE(p + 30), clen = zip.readUInt16LE(p + 32), local = zip.readUInt32LE(p + 42);
+    let csize = zip.readUInt32LE(p + 20), usize = zip.readUInt32LE(p + 24);
+    const nlen = zip.readUInt16LE(p + 28), xlen = zip.readUInt16LE(p + 30), clen = zip.readUInt16LE(p + 32);
+    let local = zip.readUInt32LE(p + 42);
+    if (p + 46 + nlen + xlen + clen > cdEnd) throw new ZipError('bad central directory entry');
     const fname = zip.subarray(p + 46, p + 46 + nlen).toString('utf8');
+    if (usize === 0xffffffff || csize === 0xffffffff || local === 0xffffffff) {
+      // The ZIP64 extra field (id 1) holds, in order, only the values set to 0xffffffff.
+      const extra = zip.subarray(p + 46 + nlen, p + 46 + nlen + xlen);
+      let found = false;
+      for (let q = 0; q + 4 <= extra.length;) {
+        const id = extra.readUInt16LE(q), len = extra.readUInt16LE(q + 2);
+        if (q + 4 + len > extra.length) break;
+        if (id === 1) {
+          let r = q + 4;
+          const next = () => { if (r + 8 > q + 4 + len) throw new ZipError('short ZIP64 extra field'); const v = u64(extra, r); r += 8; return v; };
+          if (usize === 0xffffffff) usize = next();
+          if (csize === 0xffffffff) csize = next();
+          if (local === 0xffffffff) local = next();
+          found = true; break;
+        }
+        q += 4 + len;
+      }
+      if (!found) throw new ZipError('ZIP64 extra field missing');
+    }
     p += 46 + nlen + xlen + clen;
     if (fname !== name) continue;
     if (flags & 1) throw new ZipError('encrypted entry');
