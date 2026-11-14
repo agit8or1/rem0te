@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import {
-  Archive, ArchiveRestore, ChevronDown, Copy, Download, Eye, Loader2, MoreHorizontal, PackageCheck, PlayCircle, ShieldCheck, Stethoscope, Wrench, FileDown,
+  Archive, ArchiveRestore, ChevronDown, Link2, Copy, Download, Eye, Loader2, MoreHorizontal, PackageCheck, PlayCircle, ShieldCheck, Stethoscope, Wrench, FileDown,
 } from 'lucide-react';
 import { endpointsApi, diagnosticsApi } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
@@ -13,6 +13,8 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
+import { CAP, usePermissions } from '@/lib/auth';
+import { connectivityFrom, connectivityLabel } from '@/lib/connectivity';
 import { useToast } from '@/hooks/use-toast';
 import type { WorkspaceTab } from './device-model';
 import { AgentActionDialogs, UPGRADE_LABEL, UpgradeButton, upgradeView, type AgentActions } from './agent-actions';
@@ -76,6 +78,15 @@ export function DeviceActions({
   const router = useRouter();
   const qc = useQueryClient();
   const [confirm, setConfirm] = useState<Confirm>(null);
+  const { can } = usePermissions();
+  // 0.48.2: a reinstall link for a computer that can no longer take a queued
+  // reinstall (agent removed, broken or silent). It opens Add device bound to
+  // this computer, so the new install re-attaches to this record — history,
+  // site, groups and settings kept — instead of enrolling a duplicate.
+  const canLink = can(CAP.COMPUTERS_ADD) && ep.status !== 'ARCHIVED';
+  const reinstallHref = `/endpoints/enroll?endpointId=${encodeURIComponent(endpointId)}${
+    typeof ep.customerId === 'string' ? `&businessId=${encodeURIComponent(ep.customerId)}` : ''}`;
+  const conn = connectivityFrom(ep);
   const name = (ep.name as string) ?? 'This computer';
   const archived = ep.status === 'ARCHIVED';
   const rustdeskId = (ep.rustdeskNode as { rustdeskId?: string } | null)?.rustdeskId;
@@ -194,7 +205,12 @@ export function DeviceActions({
             )}
             {perms.edit && reportsInventory && !archived && (
               <DropdownMenuItem onSelect={() => setConfirm('reinstall')}>
-                <Download className="h-4 w-4 mr-2" />Reinstall agent…
+                <Download className="h-4 w-4 mr-2" />Reinstall agent at next check-in…
+              </DropdownMenuItem>
+            )}
+            {canLink && (
+              <DropdownMenuItem asChild>
+                <Link href={reinstallHref} data-testid="action-reinstall-link"><Link2 className="h-4 w-4 mr-2" />Reinstall manually (download link)…</Link>
               </DropdownMenuItem>
             )}
             {perms.remove && (
@@ -215,6 +231,14 @@ export function DeviceActions({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      {canLink && conn !== 'online' && (
+        <p className="text-xs text-muted-foreground" data-testid="header-reinstall-hint">
+          <span className="font-medium text-foreground">{connectivityLabel(conn, ep.lastSeenAt)}.</span>{' '}
+          If its agent stopped, was removed or the computer was rebuilt, reinstall it by hand:{' '}
+          <Link className="underline font-medium text-foreground" href={reinstallHref}>make a reinstall link for {name}</Link>.
+          It re-attaches to this computer and keeps its history and settings.
+        </p>
+      )}
       {reasons.length > 0 && (
         <ul className="text-xs text-muted-foreground space-y-0.5" data-testid="action-reasons">
           {reasons.map((r) => <li key={r.label} data-testid={r.testId}><span className="font-medium text-foreground">{r.label}</span> unavailable: {r.why}{r.extra}</li>)}

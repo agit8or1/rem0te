@@ -5,6 +5,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.48.2] — 2026-11-14 · *Dispatch*
+
+**Every computer already in Rem0te gets a reinstall link, for an agent that can no longer be reached.**
+
+The owner had DEWEY-WKS2022 in the device list, not checking in, and no way to get an installer for it. **Update agent**
+and **Reinstall agent** both go through the heartbeat: they are delivered the next time the agent checks in, so they do
+nothing for an agent that stopped, was removed, or a disk that was rebuilt. The server has supported an enrolment link
+bound to one existing computer since the 0.32 Add device flow. The claim re-attaches the install to that record
+(`DeviceClaimToken.endpointId`, `reEnrolling` in `claimEndpoint`). But the console linked to it in only one place, the
+"cannot report its specs yet" banner for computers enrolled before device secrets existed.
+
+- **The computer's page:**
+  - **More → Reinstall manually (download link)…** is always offered to someone with Add computers on a computer that is
+    not archived.
+  - When the computer is not online, a line under its buttons gives its connectivity and links to **make a reinstall
+    link for <name>**.
+  - The heartbeat-based item is renamed **Reinstall agent at next check-in…**, so the two are not confused.
+- **The Devices list:** each row's **⋯** menu has **Reinstall agent (download link)**.
+- **Add device, reached from one of these links:**
+  - It names the computer.
+  - It fills *who may connect* from the computer's current access mode and people (`GET /endpoints/:id` and
+    `/endpoints/:id/access`).
+  - **Why the prefill matters:** the claim applies the token's `accessMode` to the computer, and its `assignedUserIds`
+    when there are any. Before this, a re-enrol link defaulted to "only the chosen people". Re-enrolling a company-wide
+    computer without noticing turned it into an assigned-users computer.
+  - It says the link works once and expires after 24 hours (`tokenTtlHours`; the claim consumes it conditionally).
+
+This changes only the web page. Making the link still needs Add computers and confirming it is you
+(`enrollment.create`), the same as adding a new computer. `docs/troubleshooting.md` has a new section, "Reinstalling the
+agent on a computer that is already in Rem0te", and `/help` has the same.
+
+---
+
 ## [0.48.1] — 2026-11-14 · *Dispatch*
 
 **The documentation, the in-app help and the screenshots catch up with 0.40 to 0.48.**

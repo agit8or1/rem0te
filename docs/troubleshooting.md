@@ -270,6 +270,34 @@ fires for it, because the computer is still reachable.
 
 ---
 
+## Reinstalling the agent on a computer that is already in Rem0te
+
+**Update agent** and **Reinstall agent at next check-in** both work through the
+heartbeat. They are delivered the next time the agent checks in, so they do
+nothing for a computer whose agent has stopped, was removed, or whose disk was
+rebuilt. For that computer, make a reinstall link and run it on the machine
+yourself:
+
+1. Open the computer in **Devices**. When it is not checking in, the line under
+   its buttons offers **make a reinstall link for <name>**. The same link is
+   always under **More → Reinstall manually (download link)…**, and in the
+   row's **⋯** menu in the Devices list.
+2. The link opens **Add device** bound to that one computer. Its business is
+   fixed, its site is kept, and *who may connect* is filled in from the
+   computer's current access. Leave that alone unless you mean to change it,
+   because the install applies what the link says.
+3. Pick the operating system, then download the installer or copy the command.
+   Run it on that computer only, as an administrator. The link works once and
+   expires after 24 hours.
+
+The install gives the machine a new device secret and re-attaches it to the
+same record, so its history, site, groups and settings are kept and no
+duplicate appears in the list. A reinstall on a new RustDesk ID moves the
+record to the new ID. Making the link needs **Add computers**, the same
+permission as adding a new one.
+
+---
+
 ## A computer went offline right after Update or Reinstall agent
 
 Two symptoms, one cause, in Windows installers 0.18.22 through 0.19.1:

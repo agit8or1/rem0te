@@ -564,6 +564,11 @@ export function DeviceList() {
                         <DropdownMenuItem asChild><Link href={`/endpoints/${r.id}?tab=patches`}>Patches</Link></DropdownMenuItem>
                         {r.alerts && <DropdownMenuItem asChild><Link href={`/endpoints/${r.id}?tab=monitoring`}>Monitoring</Link></DropdownMenuItem>}
                         <DropdownMenuItem asChild><Link href={`/endpoints/${r.id}?tab=diagnostics`}>Test connection</Link></DropdownMenuItem>
+                        {can(CAP.COMPUTERS_ADD) && r.status !== 'ARCHIVED' && (
+                          <DropdownMenuItem asChild>
+                            <Link href={`/endpoints/enroll?endpointId=${encodeURIComponent(r.id)}${r.business?.id ? `&businessId=${encodeURIComponent(r.business.id)}` : ''}`}>Reinstall agent (download link)</Link>
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onSelect={() => {
                           navigator.clipboard?.writeText(r.hostname ?? r.name).then(

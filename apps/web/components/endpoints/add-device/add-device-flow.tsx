@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, CheckCircle2, Circle, Copy, Loader2, XCircle } from 'lucide-react';
-import { businessesApi, enrollmentApi, sitesApi, usersApi } from '@/lib/api-client';
+import { businessesApi, endpointsApi, enrollmentApi, sitesApi, usersApi } from '@/lib/api-client';
 import { CAP, usePermissions } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -156,6 +156,28 @@ export function AddDeviceFlow() {
     const o = q.get('os'); if (o === 'windows' || o === 'linux' || o === 'macos') setOs(o);
   }, []);
 
+  // 0.48.2: reinstalling an existing computer. The claim applies the link's
+  // access mode and people to the computer, so start from what the computer
+  // has now: a reinstall should not quietly change who may connect.
+  const existing = useQuery({
+    queryKey: ['reinstall-target', endpointId],
+    enabled: !!endpointId,
+    queryFn: async () => {
+      const [ep, acc] = await Promise.all([
+        endpointsApi.get(endpointId!).then((r) => r.data?.data as { name?: string; accessMode?: string } | undefined),
+        endpointsApi.listAccess(endpointId!).then((r) => (r.data?.data ?? []) as { userId: string }[]).catch(() => [] as { userId: string }[]),
+      ]);
+      return { name: ep?.name ?? null, accessMode: ep?.accessMode === 'COMPANY_WIDE' ? 'COMPANY_WIDE' as const : 'ASSIGNED_USERS' as const, userIds: acc.map((a) => a.userId) };
+    },
+  });
+  const [prefilled, setPrefilled] = useState(false);
+  useEffect(() => {
+    if (prefilled || !existing.data) return;
+    setAccessMode(existing.data.accessMode);
+    setAssignedUserIds(existing.data.userIds);
+    setPrefilled(true);
+  }, [existing.data, prefilled]);
+
   // A person pinned to one business (owner, user, technician acting in one) has no choice to make.
   useEffect(() => { if (!businessId && ownBusinessId) setBusinessId(ownBusinessId); }, [ownBusinessId, businessId]);
 
@@ -267,9 +289,14 @@ export function AddDeviceFlow() {
   return (
     <div className="space-y-4" data-testid="add-device-flow">
       {endpointId && (
-        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-          This link re-enrols an existing computer. Run it on that computer only: it gives the machine a new
-          device identity, and the computer keeps its history and site.
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm space-y-1" data-testid="reinstall-banner">
+          <p className="font-medium">Reinstalling the agent on {existing.data?.name ?? 'an existing computer'}</p>
+          <p>
+            The link below is made for this one computer. Download and run it on that computer only, as an administrator.
+            It replaces the agent, gives the machine a new device secret, and re-attaches it to the same record: its history,
+            site, groups and settings are kept, and no duplicate appears in the device list. Who may connect is filled in from
+            the computer&rsquo;s current access below; change it only if you mean to. The link works once and expires after 24 hours.
+          </p>
         </div>
       )}
 
