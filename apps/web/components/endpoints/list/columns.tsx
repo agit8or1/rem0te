@@ -41,13 +41,20 @@ export interface ColumnDef {
   /**
    * 0.47.1: hidden on narrower screens so the default set fits beside the
    * sidebar without sideways scrolling. Literal classes, so Tailwind sees them.
-   * 0.48.1, measured with the sidebar open: at 1440 px the content pane is
-   * 1150 px wide and Device, Business, Health, Last seen, CPU / RAM / disk and
-   * Pending patches fill it exactly; at 1280 px it is 990 px, so Last seen
-   * waits for 1440 px ('wide'), and OS, Agent, Site and Logged-in user for
-   * 1536 px ('2xl').
+   * 0.48.1: each optional column comes in at its own window width, chosen from
+   * its measured minimum width on the docs stack with the sidebar open (the
+   * content pane is the window minus 290 px). Comfortable density, which is
+   * wider than compact by 4 px a column:
+   *   always shown (box, Device, Business, Health, CPU / RAM / disk,
+   *   Pending patches, Connect)                       965
+   *   + Last seen      109 = 1074, needs 1364 -> from 1440
+   *   + Agent          131 = 1205, needs 1495 -> from 1536
+   *   + OS             174 = 1379, needs 1669 -> from 1700
+   *   + Site           152 = 1531, needs 1821 -> from 1860
+   *   + Logged-in user 148 = 1679, needs 1969 -> from 2000
+   * Each threshold leaves 30 px or more for longer names than the demo's.
    */
-  hideBelow?: 'wide' | '2xl';
+  hideBelow?: HideBelow;
   cell?: (r: DeviceRow, c: CellContext) => React.ReactNode;
 }
 
@@ -66,7 +73,17 @@ function Pct({ label, v }: { label: string; v: number | null }) {
   return <span className={hot}>{label} {v}%</span>;
 }
 
-export const HIDE_BELOW: Record<'wide' | '2xl', string> = { wide: 'hidden min-[1440px]:table-cell', '2xl': 'hidden 2xl:table-cell' };
+export type HideBelow = 'lastSeen' | 'agent' | 'os' | 'site' | 'user';
+/** The window width each column needs; the column picker shows it. */
+export const HIDE_BELOW_PX: Record<HideBelow, number> = { lastSeen: 1440, agent: 1536, os: 1700, site: 1860, user: 2000 };
+/** The same widths as literal classes, so Tailwind generates them. */
+export const HIDE_BELOW: Record<HideBelow, string> = {
+  lastSeen: 'hidden min-[1440px]:table-cell',
+  agent: 'hidden min-[1536px]:table-cell',
+  os: 'hidden min-[1700px]:table-cell',
+  site: 'hidden min-[1860px]:table-cell',
+  user: 'hidden min-[2000px]:table-cell',
+};
 
 export const COLUMNS: ColumnDef[] = [
   {
@@ -86,7 +103,7 @@ export const COLUMNS: ColumnDef[] = [
     ),
   },
   { id: 'business', label: 'Business', defaultOn: true, sort: 'business', cell: (r) => r.business?.name ? <span className="block max-w-[10rem] truncate" title={r.business.name}>{r.business.name}</span> : dash },
-  { id: 'site', label: 'Site', defaultOn: true, sort: 'site', hideBelow: '2xl', cell: (r) => r.site?.name ? <span className="block max-w-[8rem] truncate" title={r.site.name}>{r.site.name}</span> : dash },
+  { id: 'site', label: 'Site', defaultOn: true, sort: 'site', hideBelow: 'site', cell: (r) => r.site?.name ? <span className="block max-w-[8rem] truncate" title={r.site.name}>{r.site.name}</span> : dash },
   // Id kept as 'group' so saved views from 0.33 keep the column.
   {
     id: 'group', label: 'Groups', defaultOn: false,
@@ -100,7 +117,7 @@ export const COLUMNS: ColumnDef[] = [
     )),
   },
   {
-    id: 'os', label: 'OS', defaultOn: true, sort: 'os', hideBelow: '2xl',
+    id: 'os', label: 'OS', defaultOn: true, sort: 'os', hideBelow: 'os',
     cell: (r) => (
       <span className="flex items-center gap-1.5" title={r.os ?? r.platform ?? 'Unknown'}>
         <OsIcon platform={r.platform ?? r.os} />
@@ -120,7 +137,7 @@ export const COLUMNS: ColumnDef[] = [
     },
   },
   {
-    id: 'agent', label: 'Agent', defaultOn: true, sort: 'agent', hideBelow: '2xl',
+    id: 'agent', label: 'Agent', defaultOn: true, sort: 'agent', hideBelow: 'agent',
     // The last heartbeat is the Last seen column; this one says which agent sent it.
     cell: (r, c) => (
       <div className="text-xs whitespace-nowrap" title={r.agent.lastHeartbeatAt ? `Last heartbeat ${new Date(r.agent.lastHeartbeatAt).toLocaleString()}` : 'No heartbeat yet'}>
@@ -132,7 +149,7 @@ export const COLUMNS: ColumnDef[] = [
     ),
   },
   {
-    id: 'lastSeen', label: 'Last seen', defaultOn: true, sort: 'lastSeen', hideBelow: 'wide',
+    id: 'lastSeen', label: 'Last seen', defaultOn: true, sort: 'lastSeen', hideBelow: 'lastSeen',
     cell: (r, c) => (
       <span className={cn('text-xs block max-w-[8rem]', connectivityFrom(r, c.now) === 'agent_silent' ? CONNECTIVITY_TEXT.agent_silent : 'text-muted-foreground')}
         title={`${r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleString() : 'Never'}${connectivityFrom(r, c.now) === 'agent_silent' ? `. ${connectivityHint('agent_silent')}` : ''}`} data-testid="last-seen-cell">
@@ -142,7 +159,7 @@ export const COLUMNS: ColumnDef[] = [
     ),
   },
   {
-    id: 'user', label: 'Logged-in user', defaultOn: true, sort: 'user', hideBelow: '2xl',
+    id: 'user', label: 'Logged-in user', defaultOn: true, sort: 'user', hideBelow: 'user',
     cell: (r, c) => {
       if (!r.loggedOnUser) return dash;
       const old = !r.resources || c.now - new Date(r.resources.sampledAt).getTime() > c.liveStaleMs;

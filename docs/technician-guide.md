@@ -140,11 +140,12 @@ company-wide; for a technician, only the machines your assignment names.
 | **Alerts** | How many monitoring alerts are open (or acknowledged). Click it for the device's Monitoring tab. |
 
 **Narrower windows show fewer columns (0.47.1, 0.48.1).** So the list fits the page beside the sidebar without
-scrolling sideways, **Last seen** shows only when the window is at least 1440 pixels wide, and **OS**, **Agent**,
-**Site** and **Logged-in user** only from 1536 pixels. At 1280 to 1439 pixels that leaves Device, Business, Health,
-CPU / RAM / disk and Pending patches; the dot beside each name still says online, agent silent or offline. The
-column picker marks the hidden ones *(wide screens)*. A column you chose is never removed, only hidden while the
-window is narrow. **Alerts** is off by default, because **Health** already shows the worst open alert (*None* when
+scrolling sideways, each of these columns appears only when the window is wide enough for it: **Last seen** from 1440
+pixels, **Agent** from 1536, **OS** from 1700, **Site** from 1860 and **Logged-in user** from 2000. At 1280 to 1439
+pixels that leaves Device, Business, Health, CPU / RAM / disk and Pending patches; a 1920-pixel screen shows
+everything but Logged-in user. The dot beside each name still says online, agent silent or offline. The column
+picker shows each one's width, for example *(1700 px and wider)*. A column you chose is never removed, only hidden
+while the window is narrower than that. **Alerts** is off by default, because **Health** already shows the worst open alert (*None* when
 there is none); turn it on under **Columns**. A browser that saved its own column choice keeps it. Device names
 never wrap; long business and site names are cut short, with the full name on hover; and **Connect** stays pinned
 on the right.

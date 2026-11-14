@@ -18,7 +18,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
-import { COLUMNS, DEFAULT_COLUMNS, HIDE_BELOW, ago, type CellContext } from './columns';
+import { COLUMNS, DEFAULT_COLUMNS, HIDE_BELOW, HIDE_BELOW_PX, ago, type CellContext } from './columns';
 import { BULK_MAX, describeRule, deviceGroupsApi, deviceListApi, deviceViewsApi, refusalMessage, ruleFromFilters, storedFilters, toParams, viewFilters } from './api';
 import { clearLegacyViews, loadLegacyViews, loadPrefs, savePrefs, type LegacyView } from './prefs';
 import { BulkBar, BulkResultDialog, GroupsDialog } from './bulk';
@@ -466,11 +466,11 @@ export function DeviceList() {
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-9"><Columns3 className="h-4 w-4 mr-1.5" />Columns</Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuContent align="end" className="w-72">
               <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Remembered in this browser</DropdownMenuLabel>
               {offered.filter((c) => !c.fixed).map((c) => (
                 <DropdownMenuItem key={c.id} onSelect={(e) => { e.preventDefault(); toggleColumn(c.id); }}>
-                  <Check className={cn('h-4 w-4 mr-2', columns.includes(c.id) ? 'opacity-100' : 'opacity-0')} />{c.label}{c.hideBelow && <span className="ml-1 text-xs text-muted-foreground">(wide screens)</span>}
+                  <Check className={cn('h-4 w-4 mr-2', columns.includes(c.id) ? 'opacity-100' : 'opacity-0')} /><span className="whitespace-nowrap">{c.label}</span>{c.hideBelow && <span className="ml-auto pl-2 text-xs text-muted-foreground whitespace-nowrap">({HIDE_BELOW_PX[c.hideBelow]} px and wider)</span>}
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />

@@ -63,25 +63,56 @@ gallery now has 69 images.
 - `capture-media.mjs` takes a per-shot `height`, so a dialog taller than the window is not cut off above its
   buttons.
 
-**The Devices list fits at 1440 and 1280 pixels, for real this time.** 0.47.1 set out to stop the list scrolling
-sideways, but it measured nothing. Its `break-all` on the device name split single-token names mid-word
-(`CASC-PAY` / `ROLL-01`), because breaking the name was the only way the row could shrink. Even then, OS (from
-1280 px), Agent and Last seen together were wider than the 1150 px content pane at 1440, so Pending patches sat
-under the pinned Connect column. Now, in `columns.tsx`:
+**The Devices list fits the window at every common desktop width, 1280 to 2560 pixels.** 0.47.1 set out to stop
+the list scrolling sideways, but it measured nothing. Its `break-all` on the device name split single-token names
+mid-word (`CASC-PAY` / `ROLL-01`), because breaking the name was the only way the row could shrink. Even then, OS
+(from 1280 px), Agent and Last seen together were wider than the 1150 px content pane at 1440, so Pending patches
+sat under the pinned Connect column. From 1536 px all nine columns came back at once and needed 1679 px. So on a
+1920-pixel screen, the commonest desktop size, the table still scrolled and Pending patches started under Connect.
 
+Each optional column now comes in at its own window width, only where it fits. The widths come from measuring each
+column's minimum width on the docs stack. Default columns, sidebar open (the content pane is the window minus
+290 px), comfortable density (compact is 4 px a column narrower and changes no threshold):
+
+| Column | Min width | Table needs | Window needs | Shows from |
+|---|---|---|---|---|
+| Always shown: checkbox, Device, Business, Health, CPU / RAM / disk, Pending patches, Connect | 965 | 965 | 1255 | always |
+| + Last seen | 109 | 1074 | 1364 | 1440 px |
+| + Agent | 131 | 1205 | 1495 | 1536 px |
+| + OS | 174 | 1379 | 1669 | 1700 px |
+| + Site | 152 | 1531 | 1821 | 1860 px |
+| + Logged-in user | 148 | 1679 | 1969 | 2000 px |
+
+Each threshold leaves at least 30 px for names longer than the demo's. The order follows usefulness: Agent, OS,
+Site, then Logged-in user, which does not fit at 1920 and so waits for 2000. In `columns.tsx`:
+
+- `HIDE_BELOW` is one literal `min-[Npx]:table-cell` class per column, so Tailwind generates them. `HIDE_BELOW_PX`
+  holds the same numbers.
+- The column picker shows each one's width, e.g. *(1700 px and wider)*, instead of *(wide screens)*. A column you
+  tick is still governed by width: it is hidden, never removed, while the window is narrower.
 - The device name is `whitespace-nowrap` again.
-- OS and Agent show from 1536 px (`2xl`), with Site and Logged-in user.
-- Last seen shows from 1440 px, through a new `wide` step (`min-[1440px]`). The connectivity dot beside each name
-  still says online, agent silent or offline.
-- Health's empty state is a short muted *None*, with *No open alerts* on hover.
+- Health's empty state is a short muted *None*, with *No open alerts* on hover. The connectivity dot beside each
+  name still says online, agent silent or offline when Last seen is hidden.
 
-Measured in Playwright on the docs stack with the sidebar open and the default columns. The table's `scrollWidth`
-equals its `clientWidth`: 1150 at 1440×1000 and 990 at 1280×900. Every header ends left of Connect, and every
-name is on one line.
+Measured in Playwright on the docs stack, default columns, sidebar open. At every width, in both densities, the
+table's `scrollWidth` equals its `clientWidth`. Every header ends left of Connect, and every name is on one line:
 
-Not fixed: from 1536 px all nine columns come back at once and need 1679 px. So at 1536 to about 1970 px the table
-still scrolls sideways, and Pending patches starts under Connect. That was already so in 0.47.1. It needs the wide
-columns staged across more widths, which is a design choice rather than a fix.
+| Window | Pane (scroll = client) | Columns shown besides Device, Business, Health, CPU / RAM / disk, Pending patches |
+|---|---|---|
+| 1280 × 900 | 990 | — |
+| 1366 × 768 | 1076 | — |
+| 1440 × 1000 | 1150 | Last seen |
+| 1536 × 864 | 1246 | Agent, Last seen |
+| 1600 × 900 | 1310 | Agent, Last seen |
+| 1680 × 1050 | 1390 | Agent, Last seen |
+| 1920 × 1080 | 1630 | Site, OS, Agent, Last seen |
+| 2560 × 1440 | 2270 | Site, OS, Agent, Last seen, Logged-in user |
+
+The thresholds themselves (1700, 1860 and 2000) were also checked, and they fit as well. Compact density gives the
+same results.
+
+Not fixed: below about 1255 px, and at phone width, the table still scrolls sideways.
+Names that do not wrap then run under the pinned Connect column.
 
 ---
 

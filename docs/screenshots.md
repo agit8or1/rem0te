@@ -140,8 +140,9 @@ The platform's own security surface, in one place.
 ### Device list — light
 <a href="images/github/computers-inventory-light.png"><img src="images/github/computers-inventory-light.png" alt="The Devices list in light theme at 1440 pixels: search, filters for business, site, group, online, alerts, agent, restart pending and archived, Views, Columns and Export CSV, above a table with device, business, health, last seen, CPU, RAM and disk, and pending patches, and a Connect button per row."></a>
 
-From 0.48.1 the list fits a 1440-pixel window with the sidebar open: Last seen appears from 1440 pixels, and OS,
-Agent, Site and Logged-in user from 1536. Alerts is off by default because Health already shows the worst open
+From 0.48.1 the list fits the window from 1280 to 2560 pixels with the sidebar open. Each wider column appears
+at its own width: Last seen from 1440 pixels, Agent from 1536, OS from 1700, Site from 1860 and Logged-in user from
+2000. Alerts is off by default because Health already shows the worst open
 alert.
 
 Every device you may see, across every business. The server does the searching and

@@ -317,9 +317,11 @@ const SECTIONS: Section[] = [
         </p>
         <p>
           <strong className="text-foreground">Narrower windows show fewer columns (0.47.1, 0.48.1).</strong> So the
-          list fits beside the sidebar without scrolling sideways, Last seen shows only on windows at least 1440 pixels
-          wide, and OS, Agent, Site and Logged-in user only from 1536 pixels; the column picker marks them{' '}
-          <em>(wide screens)</em>, and the dot beside each name still shows whether it is online. Alerts is off by
+          list fits beside the sidebar without scrolling sideways, each of these columns appears only when the window is
+          wide enough for it: Last seen from 1440 pixels, Agent from 1536, OS from 1700, Site from 1860 and Logged-in
+          user from 2000, so a 1920-pixel screen shows everything but Logged-in user. The column picker shows each
+          one&apos;s width, a column you chose is only hidden while the window is narrower, and the dot beside each
+          name still shows whether it is online. Alerts is off by
           default, because Health already shows the worst open alert. Device names never wrap, long business and site
           names are cut short with the full name on hover, and Connect stays on the right.
         </p>
