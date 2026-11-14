@@ -153,7 +153,10 @@ on the signer. You need two approvers other than whoever will propose the policy
 
 Pre-flight check: **The policy sweep is running.** It runs unless `PATCH_POLICY_SWEEP=off`.
 
-Try one computer first: on its **Patches** tab, choose **Install updates**, then pick an update and give a reason.
+Try one computer first: on its **Patches** tab, the **Install updates** card lists every update Windows offers it,
+each with its own checkbox (0.42; **Select all** ticks every installable one). Tick one and give a reason. Updates that
+cannot be installed — feature upgrades, optional previews, anything needing a licence — are listed greyed out with
+why.
 That builds a one-computer deployment whose plan two approvers approve on the signer (in direct mode it is signed at
 once). Watch it reach **effective**.
 Then:
@@ -163,7 +166,8 @@ Then:
    - **Ring 0** is the canary: one computer that is representative and that someone can restart.
    - Later rings can each hold up to 25 computers.
 3. Choose what it may install:
-   - the classes (Security, Critical, Update Rollups, Updates);
+   - the classes (Security, Critical, Update Rollups, Updates, and from 0.42 Drivers and Definition Updates — only
+     Security is ticked to start with, and drivers are installed only if you tick them);
    - optionally, severities;
    - any KBs it must never install.
 4. Choose when:

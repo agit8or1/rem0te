@@ -423,7 +423,12 @@ const code = (r) => (r.ok ? 'ok' : r.code);
   check('admitPolicy refuses an expiry in the past', refused(() => core.admitPolicy(doc({ expiresAt: iso(NOW.getTime() - 1000) }), NOW)) === 'policy_expired');
   check('admitPolicy refuses a canary ring of two computers', refused(() => core.admitPolicy(doc({ rings: [[CANARY, R1A]] }), NOW)) === 'bad_rings');
   check('admitPolicy refuses a computer in two rings', refused(() => core.admitPolicy(doc({ rings: [[CANARY], [CANARY, R1A]] }), NOW)) === 'bad_rings');
-  check('admitPolicy refuses a driver classification', refused(() => core.admitPolicy(doc({ allow: { classifications: ['ebfc1fc5-71a4-4f7b-9aca-3b9a503104a0'] } }), NOW)) === 'invalid_policy');
+  // 0.42: drivers and definition updates may be named; upgrades, feature packs, service packs and tools never.
+  check('admitPolicy accepts drivers and definition updates (0.42)', refused(() => core.admitPolicy(doc({ allow: { classifications: ['ebfc1fc5-71a4-4f7b-9aca-3b9a503104a0', 'e0789628-ce08-4437-be74-2495b842f43b'] } }), NOW)) === null);
+  check('admitPolicy accepts all six installable classes at once', refused(() => core.admitPolicy(doc({ allow: { classifications: ['0fa1201d-4330-4fa8-8ae9-b877473b6441', 'e6cf1350-c01b-414d-a61f-263d14d133b4', '28bc880e-0592-4cbf-8f95-c79b17911d5f', 'cd5ffd1e-e932-4e3a-bf74-18bf0b1bbd83', 'ebfc1fc5-71a4-4f7b-9aca-3b9a503104a0', 'e0789628-ce08-4437-be74-2495b842f43b'] } }), NOW)) === null);
+  for (const [name, g] of [['an upgrade', '3689bdc8-b205-4af4-8d4a-a63924c5e9d5'], ['a feature pack', 'b54e7d24-7add-428f-8b75-90a396fa584f'], ['a service pack', '68c5b0a3-d1a6-4553-ae49-01d3a7827828'], ['a tools', 'b4832bd8-e735-4761-8daf-37f882276dab']]) {
+    check(`admitPolicy refuses ${name} classification`, refused(() => core.admitPolicy(doc({ allow: { classifications: [g] } }), NOW)) === 'invalid_policy');
+  }
   check('admitPolicy refuses an unknown timezone', refused(() => core.admitPolicy(doc({ window: { days: ['sat'], start: '22:00', end: '04:00', timezone: 'Mars/Olympus_Mons' } }), NOW)) === 'invalid_policy');
   check('admitPolicy refuses a reboot rule outside the closed pair', refused(() => core.admitPolicy(doc({ reboot: 'in_window' }), NOW)) === 'invalid_policy' && refused(() => core.admitPolicy(doc({ reboot: 'always' }), NOW)) === 'invalid_policy');
   check('admitPolicy accepts the in-window restart rule (0.34)', refused(() => core.admitPolicy(doc({ reboot: 'if_required_in_window' }), NOW)) === null);
@@ -490,6 +495,27 @@ const code = (r) => (r.ok ? 'ok' : r.code);
   check('a plan under a policy whose key for a computer is not the pinned one → device_key_changed',
     refused(() => core.signUnderPolicy(r, { plan: plan(d, { dep: 'dep_acme_0003' }), policyDigest: r.digest }, k, business, NOW, pinsChanged)) === 'device_key_changed');
   check('a re-enrolled computer is another identity, so another pin', core.deviceIdentity({ ...CANARY, deviceSecretSha256: sha('re-enrolled') }) !== core.deviceIdentity(CANARY));
+}
+
+// ── 0.42: what the portal offers as installable (the agent's Eligible copy) ──
+{
+  const PO = require(join(dist, 'patching', 'posture.js'));
+  const base = { updateId: '5a1b2c3d-0000-4000-8000-000000000001', revision: 1, title: 'x', downloaded: false, rebootBehavior: 0, userInput: false, eulaAccepted: true, browseOnly: false, sizeBytes: 0 };
+  const el = (classification, extra = {}) => PO.eligibility({ ...base, classification, ...extra });
+  const DRV = 'ebfc1fc5-71a4-4f7b-9aca-3b9a503104a0', DEF = 'e0789628-ce08-4437-be74-2495b842f43b', SEC = '0fa1201d-4330-4fa8-8ae9-b877473b6441';
+  check('eligibility: exactly six installable classes', Object.keys(PO.CLASSIFICATIONS).length === 6 && !!PO.CLASSIFICATIONS[DRV] && !!PO.CLASSIFICATIONS[DEF]);
+  check('eligibility: a driver that can request input is installable (0.42)', el(DRV, { userInput: true }).ok === true);
+  check('eligibility: a definition update is installable, but not if it asks for input', el(DEF).ok === true && el(DEF, { userInput: true }).ok === false);
+  check('eligibility: a security update that can request input still is not', el(SEC, { userInput: true }).ok === false);
+  check('eligibility: an optional or licence-bound driver is not', el(DRV, { browseOnly: true }).ok === false && el(DRV, { eulaAccepted: false }).ok === false);
+  for (const [n, g] of [['Upgrades', '3689bdc8-b205-4af4-8d4a-a63924c5e9d5'], ['Feature Packs', 'b54e7d24-7add-428f-8b75-90a396fa584f'], ['Service Packs', '68c5b0a3-d1a6-4553-ae49-01d3a7827828'], ['Tools', 'b4832bd8-e735-4761-8daf-37f882276dab']]) {
+    const e = el(g);
+    check(`eligibility: ${n} are never installable, and say so`, e.ok === false && e.reason === `${n} are not installed by a plan`, JSON.stringify(e));
+  }
+  check('eligibility: unclassified is not installable', el('').ok === false);
+  const allowDrv = { classifications: [DRV] };
+  check('policyAllowsUpdate: a policy naming drivers lets a driver through, a security-only one does not',
+    P.policyAllowsUpdate(allowDrv, { classification: DRV }).ok === true && P.policyAllowsUpdate({ classifications: [SEC] }, { classification: DRV }).ok === false);
 }
 
 if (failures.length) {

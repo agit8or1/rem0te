@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
-import { DIRECT_TOAST } from '@/lib/direct-mode';
+import { DIRECT_TOAST, oldAgentUpdateRefusal } from '@/lib/direct-mode';
 import { useApprovalMode } from '@/hooks/use-approval-mode';
 import { ArrowLeft, ExternalLink, Loader2, ShieldCheck } from 'lucide-react';
 import { rebootSummary } from '@/components/patching/patch-reboot-choice';
@@ -214,7 +214,7 @@ function RingCard({ r, d, onChanged }: { r: Ring; d: Deployment; onChanged: () =
                   </td>
                   {c.updates.map((s) => {
                     const v = STATE[s.state] ?? { label: s.state, variant: 'outline' as const };
-                    return <td key={s.key} className="py-1 pr-2"><Badge variant={v.variant} className="text-[10px]" title={s.detail ?? undefined}>{v.label}</Badge>{s.detail && ['failed', 'refused', 'unknown', 'canceled', 'superseded', 'excluded'].includes(s.state) && <span className="block text-muted-foreground max-w-[14rem]">{s.detail}</span>}</td>;
+                    return <td key={s.key} className="py-1 pr-2"><Badge variant={v.variant} className="text-[10px]" title={s.detail ?? undefined}>{v.label}</Badge>{s.detail && ['failed', 'refused', 'unknown', 'canceled', 'superseded', 'excluded'].includes(s.state) && <span className="block text-muted-foreground max-w-[14rem]" data-testid={oldAgentUpdateRefusal(s.detail) ? 'old-agent-update' : undefined}>{oldAgentUpdateRefusal(s.detail) ?? s.detail}</span>}</td>;
                   })}
                 </tr>
               ))}

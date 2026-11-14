@@ -16,7 +16,7 @@ import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboo
 import { osName, updateSourceLabel } from '@/lib/platform-wording';
 import { connectivityLabel, connectivityOf } from '@/lib/connectivity';
 import { useApprovalMode } from '@/hooks/use-approval-mode';
-import { DIRECT_TOAST } from '@/lib/direct-mode';
+import { DIRECT_TOAST, oldAgentUpdateRefusal } from '@/lib/direct-mode';
 
 /**
  * Windows Update posture of one computer (v0.27), as its signed agent's
@@ -108,7 +108,7 @@ export function PatchSummaryCard({ s, platform }: { s: Summary; platform?: unkno
                 <Badge variant={c.confirmedByLaterScan ? 'success' : c.state === 'failed' ? 'destructive' : 'outline'} className="text-[10px]">
                   {c.confirmedByLaterScan ? 'confirmed by a later scan' : c.state.replace(/_/g, ' ')}
                 </Badge>
-                {c.detail && <span className="text-muted-foreground">{c.detail}</span>}
+                {c.detail && <span className="text-muted-foreground">{oldAgentUpdateRefusal(c.detail) ?? c.detail}</span>}
               </div>
             ))}
           </div>
@@ -127,29 +127,38 @@ function apiMessage(e: unknown, fallback: string) {
  * deployment; its plan awaits two approvals on the approval signer, or in
  * direct mode (0.40) is signed at once after a fresh sign-in. When it
  * is not possible: the reason and the next step, never a disabled button.
+ *
+ * 0.42: every offered update is listed right on the card, each with its own
+ * checkbox — no "Install updates…" click to reveal them. Drivers and
+ * definition updates are installable now; whatever is not (feature upgrades,
+ * optional updates, a licence to accept) is shown greyed out with why.
  */
 function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string; p: Patches; onOpenAgentCard?: () => void }) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [reason, setReason] = useState('');
   const [windowHours, setWindowHours] = useState(8);
   const [reboot, setReboot] = useState<RebootRule>('never');
   const [done, setDone] = useState<{ approvalUrl: string; deploymentId: string; direct: boolean } | null>(null);
   const installable = p.updates.filter((u) => u.installable);
+  // Installable first, in the order Windows Update gave them.
+  const listed = [...installable, ...p.updates.filter((u) => !u.installable)];
   const key = (u: { updateId: string; revision: number }) => `${u.updateId}@${u.revision}`;
+  // Only what is still offered and installable counts, if a rescan moved things.
+  const chosen = installable.filter((u) => picked.has(key(u)));
+  const allPicked = installable.length > 0 && chosen.length === installable.length;
   // 0.40.1: in direct mode this is an install button, not a request for approval.
   const direct = useApprovalMode({ endpointId }) === 'direct';
   const go = useMutation({
     mutationFn: () => patchingApi.install(endpointId, {
-      updates: installable.filter((u) => picked.has(key(u))).map((u) => ({ updateId: u.updateId, revision: u.revision })),
+      updates: chosen.map((u) => ({ updateId: u.updateId, revision: u.revision })),
       reboot, reason: reason.trim() || (direct ? 'Installed from the computer’s Patches tab' : ''), windowHours,
     }),
     onSuccess: (r) => {
       const d = r.data.data as { job: { approvalUrl: string; direct?: boolean }; deployment: { id: string } };
       setDone({ approvalUrl: d.job.approvalUrl, deploymentId: d.deployment.id, direct: !!d.job.direct });
-      setOpen(false); setPicked(new Set()); setReason(''); setReboot('never');
+      setPicked(new Set()); setReason(''); setReboot('never');
       qc.invalidateQueries({ queryKey: ['endpoint-patches', endpointId] });
       toast(d.job.direct ? { title: 'Installing', description: DIRECT_TOAST } : { title: 'Install requested', description: 'It awaits two approvals on the approval signer.' });
     },
@@ -182,63 +191,70 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
       </Card>
     );
   }
+  const toggle = (k: string, on: boolean) => setPicked((s) => { const n = new Set(s); if (on) n.add(k); else n.delete(k); return n; });
   return (
     <Card data-testid="patch-install">
       <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
         <CardTitle className="text-sm flex items-center gap-2"><Download className="h-4 w-4" />Install updates</CardTitle>
-        {!open && <Button size="sm" onClick={() => setOpen(true)}>Install updates…</Button>}
+        <Button size="sm" variant="ghost" className="h-7 text-xs" data-testid="patch-select-all" disabled={installable.length === 0}
+          onClick={() => setPicked(allPicked ? new Set() : new Set(installable.map(key)))}>
+          {allPicked ? 'Select none' : `Select all (${installable.length})`}
+        </Button>
       </CardHeader>
       <CardContent className="space-y-3 text-xs">
         <p className="text-muted-foreground" data-testid="patch-install-mode">
           {direct
-            ? 'Pick the updates and install them. Direct mode is on: it is signed as soon as you confirm it is you, and installs on this computer when it next checks in.'
-            : 'Installs on this computer only. Two people on the approval roster approve it on the approval signer — not you, and not from here. It runs inside the window you give.'}
+            ? 'Tick the updates to install. Direct mode is on: it is signed as soon as you confirm it is you, and installs on this computer when it next checks in.'
+            : 'Tick the updates to install on this computer. Two people on the approval roster approve it on the approval signer — not you, and not from here. It runs inside the window you give.'}
         </p>
         {requested}
-        {open && (
-          <div className="space-y-3">
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <p className="font-medium">Updates ({installable.length} installable)</p>
-                <Button size="sm" variant="ghost" className="h-6 text-xs" data-testid="patch-select-all"
-                  onClick={() => setPicked(picked.size === installable.length ? new Set() : new Set(installable.map(key)))}>
-                  {picked.size === installable.length ? 'Select none' : 'Select all'}
-                </Button>
-              </div>
-              {installable.map((u) => {
-                const k = key(u);
-                return (
-                  <label key={k} className="flex items-start gap-2 rounded-md border p-2">
-                    <input type="checkbox" className="mt-0.5" checked={picked.has(k)} onChange={(e) => setPicked((s) => { const n = new Set(s); if (e.target.checked) n.add(k); else n.delete(k); return n; })} />
-                    <span>{u.kb && <strong>{u.kb} </strong>}{u.title}<span className="block text-muted-foreground">{u.className ?? 'Unclassified'}{u.severity ? ` · ${u.severity}` : ''}{u.rebootBehavior > 0 ? ' · may need a restart' : ''}</span></span>
-                  </label>
-                );
-              })}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
-              <RebootChoice id="inst-reboot" value={reboot} onChange={setReboot} scope="plan" />
-              <div className="space-y-1">
-                <Label htmlFor="inst-window" className="text-xs">Window to run in (hours)</Label>
-                <Input id="inst-window" type="number" min={1} max={24} value={windowHours} onChange={(e) => setWindowHours(Math.min(24, Math.max(1, Number(e.target.value) || 1)))} />
-              </div>
-            </div>
-            <div className="space-y-1 max-w-xl">
-              <Label htmlFor="inst-reason" className="text-xs">{direct ? 'Note (optional, recorded in the audit log)' : 'Reason (shown to the approvers)'}</Label>
-              <Input id="inst-reason" maxLength={400} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. the user reports the November CU is missing" />
-            </div>
-            <div className="flex gap-2">
-              <Button size="sm" data-testid="patch-install-go" disabled={picked.size === 0 || (!direct && reason.trim().length < 3) || (reason.trim().length > 0 && reason.trim().length < 3) || go.isPending} onClick={() => go.mutate()}>
-                {go.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}{direct ? (picked.size ? `Install ${picked.size} selected` : 'Install selected') : 'Request approval'}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-            </div>
-            <p className="text-muted-foreground">Fixture-tested only: proven against a simulated Windows Update and synthetic passkeys, not yet on a real Windows computer.</p>
-          </div>
+        <div className="space-y-1" data-testid="patch-update-list">
+          <p className="font-medium">{p.updates.length} offered · {installable.length} installable{chosen.length ? ` · ${chosen.length} selected` : ''}</p>
+          {listed.map((u) => {
+            const k = key(u);
+            return (
+              <label key={k} data-testid="patch-update-row" data-installable={u.installable ? 'true' : 'false'}
+                className={`flex items-start gap-2 rounded-md border p-2 ${u.installable ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}>
+                <input type="checkbox" className="mt-0.5" disabled={!u.installable} checked={u.installable && picked.has(k)} onChange={(e) => toggle(k, e.target.checked)} aria-label={u.title} />
+                <span className="min-w-0">
+                  {u.kb && <strong>{u.kb} </strong>}{u.title}
+                  <span className="block text-muted-foreground">
+                    {u.className ?? 'Unclassified'}{u.severity ? ` · ${u.severity}` : ''}{u.sizeBytes ? ` · ${size(u.sizeBytes)}` : ''}{u.downloaded ? ', downloaded' : ''}{u.rebootBehavior > 0 ? ' · may need a restart' : ''}
+                  </span>
+                  {!u.installable && <span className="block" data-testid="patch-not-installable">Not installable: {u.notInstallableBecause}</span>}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+        {installable.some((u) => /^(Drivers|Definition Updates)$/.test(u.className ?? '')) && (
+          <p className="text-muted-foreground" data-testid="patch-old-agent-note">
+            Drivers and definition updates need the 0.42 agent; an older one refuses them and the deployment says to update the agent.
+          </p>
         )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
+          <RebootChoice id="inst-reboot" value={reboot} onChange={setReboot} scope="plan" />
+          <div className="space-y-1">
+            <Label htmlFor="inst-window" className="text-xs">Window to run in (hours)</Label>
+            <Input id="inst-window" type="number" min={1} max={24} value={windowHours} onChange={(e) => setWindowHours(Math.min(24, Math.max(1, Number(e.target.value) || 1)))} />
+          </div>
+        </div>
+        <div className="space-y-1 max-w-xl">
+          <Label htmlFor="inst-reason" className="text-xs">{direct ? 'Note (optional, recorded in the audit log)' : 'Reason (shown to the approvers)'}</Label>
+          <Input id="inst-reason" maxLength={400} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. the user reports the November CU is missing" />
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" data-testid="patch-install-go" disabled={chosen.length === 0 || (!direct && reason.trim().length < 3) || (reason.trim().length > 0 && reason.trim().length < 3) || go.isPending} onClick={() => go.mutate()}>
+            {go.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}{direct ? (chosen.length ? `Install ${chosen.length} selected` : 'Install selected') : 'Request approval'}
+          </Button>
+          {chosen.length > 0 && <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>Clear</Button>}
+        </div>
+        <p className="text-muted-foreground">Fixture-tested only: proven against a simulated Windows Update and synthetic passkeys, not yet on a real Windows computer.</p>
       </CardContent>
     </Card>
   );
 }
+
 
 export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { endpointId: string; platform?: unknown; onOpenAgentCard?: () => void }) {
   // The read-only Linux and macOS agents report through the same basic scan; their words are their own (0.35).
@@ -346,7 +362,7 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
         </CardContent>
       </Card>
 
-      {p.updates.length > 0 && (
+      {p.updates.length > 0 && !p.install.possible && (
         <Card>
           <CardHeader className="pb-3"><CardTitle className="text-sm">Offered</CardTitle></CardHeader>
           <CardContent className="space-y-2">

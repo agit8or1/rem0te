@@ -21,15 +21,22 @@ export const CLASSIFICATIONS: Record<string, string> = {
   'e6cf1350-c01b-414d-a61f-263d14d133b4': 'Critical Updates',
   '28bc880e-0592-4cbf-8f95-c79b17911d5f': 'Update Rollups',
   'cd5ffd1e-e932-4e3a-bf74-18bf0b1bbd83': 'Updates',
-};
-/** Never installed by a plan in this release; shown so nobody wonders where they went. */
-export const EXCLUDED_CLASSIFICATIONS: Record<string, string> = {
+  // 0.42: chosen update by update, or named by a policy someone ticked.
   'ebfc1fc5-71a4-4f7b-9aca-3b9a503104a0': 'Drivers',
+  'e0789628-ce08-4437-be74-2495b842f43b': 'Definition Updates',
+};
+export const CLASS_DRIVERS = 'ebfc1fc5-71a4-4f7b-9aca-3b9a503104a0';
+/**
+ * The agent's UserInputTolerated (0.42): Windows Update marks nearly every
+ * driver as able to ask for input, and drivers install headless as SYSTEM.
+ */
+export const USER_INPUT_TOLERATED: ReadonlySet<string> = new Set([CLASS_DRIVERS]);
+/** Never installed by a plan: an OS migration, not a patch. Shown so nobody wonders where they went. */
+export const EXCLUDED_CLASSIFICATIONS: Record<string, string> = {
   '3689bdc8-b205-4af4-8d4a-a63924c5e9d5': 'Upgrades',
   'b54e7d24-7add-428f-8b75-90a396fa584f': 'Feature Packs',
   '68c5b0a3-d1a6-4553-ae49-01d3a7827828': 'Service Packs',
   'b4832bd8-e735-4761-8daf-37f882276dab': 'Tools',
-  'e0789628-ce08-4437-be74-2495b842f43b': 'Definition Updates',
 };
 
 export const PostureUpdate = z.object({
@@ -77,7 +84,7 @@ export const idKey = (u: { updateId: string; revision: number }) => `${u.updateI
 export function eligibility(u: PostureUpdate): { ok: boolean; reason: string | null } {
   if (!CLASSIFICATIONS[u.classification]) return { ok: false, reason: EXCLUDED_CLASSIFICATIONS[u.classification] ? `${EXCLUDED_CLASSIFICATIONS[u.classification]} are not installed by a plan` : 'unclassified updates are not installed by a plan' };
   if (u.browseOnly) return { ok: false, reason: 'optional update' };
-  if (u.userInput) return { ok: false, reason: 'needs someone at the computer' };
+  if (u.userInput && !USER_INPUT_TOLERATED.has(u.classification)) return { ok: false, reason: 'needs someone at the computer' };
   if (!u.eulaAccepted) return { ok: false, reason: 'needs a licence accepted' };
   return { ok: true, reason: null };
 }

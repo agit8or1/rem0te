@@ -15,7 +15,7 @@ import { Posture, MANAGER_LABEL } from '../patching/posture';
 import { readOnlyAgentRefusal } from '../common/platform';
 import {
   ArchiveEntryDto, CreateDeploymentDto, CreateEntryDto, FromWingetDto, ManifestPreviewDto, QuickInstallDto, ReasonDto, RemoveProgramDto, RequestRingDto, SingleDto, UpdateEntryDto,
-  archOf, autoSelectInstaller, complianceOf, deriveDetection, detectFromInventory, entryFor, entryName, evaluateSoftwareGate, evidenceFor, installedOf, nextRing, paramsOf, programsOf, removalHint, selectInstaller,
+  archOf, autoSelectInstaller, complianceOf, deriveDetection, detectFromInventory, entryFor, entryName, evaluateSoftwareGate, evidenceFor, installedOf, inventoryRemovalState, nextRing, paramsOf, programsOf, removalHint, selectInstaller,
   type Arch, type SwGate, type SwGateTarget,
 } from './definition';
 import { fetchInstallerManifest } from './manifest';
@@ -320,12 +320,15 @@ export class SoftwareService {
     // entry's uninstall when an entry describes it, else windows.software.remove
     // when the inventory says it can be removed silently.
     const removals = targets.filter((t) => t.job.actionId === SOFTWARE_REMOVE.id);
-    const installed = installedOf(inv?.software).slice(0, 500).map((p) => {
-      const e = entryFor(p, readable);
+    const all = installedOf(inv?.software).slice(0, 500);
+    const installed = all.map((p) => {
+      // 0.42: RustDesk and Rem0te are never offered, not even through a catalog entry.
+      const hint = removalHint(p);
+      const e = hint.code === 'protected' ? null : entryFor(p, readable);
       const last = p.key ? removals.find((t) => { const q = t.job.params as { key?: string; view?: string } | null; return q?.key === p.key && q?.view === p.view; }) : undefined;
       return {
         name: p.name, version: p.version, publisher: p.publisher, key: p.key, view: p.view,
-        entryId: e?.id ?? null, removal: e ? { possible: true, method: 'catalog' as const, reason: null } : removalHint(p),
+        entryId: e?.id ?? null, removal: e ? { possible: true, method: 'catalog' as const, reason: null, code: null } : hint,
         last: last ? { jobId: last.jobId, status: last.status, outcome: last.outcome, reason: last.statusReason, at: last.resultAt ?? last.createdAt } : null,
       };
     });
@@ -336,6 +339,9 @@ export class SoftwareService {
       approval: await this.actions.approvalModeFor(actor, endpointId),
       architecture: archOf(inv?.osArch),
       installed,
+      // 0.42: one banner for the list — an inventory from before the 0.41
+      // agent has no keys, one from the 0.41 collector no removal kinds.
+      inventory: inventoryRemovalState(all),
       entries: readable.map((e) => {
         const mine = targets.filter((t) => (t.job.params as { packageId?: string } | null)?.packageId === e.packageId);
         const c = complianceOf(evidenceFor(e, inv?.collectedAt ?? null, programs, mine), now);
@@ -531,8 +537,10 @@ export class SoftwareService {
    * that no catalog entry describes: windows.software.remove@1, naming the
    * uninstall key, its registry view and the DisplayName the inventory saw.
    * The computer reads the key again and refuses if it names anything else;
-   * it runs only msiexec /x for an MSI product or the key's own silent
-   * uninstall command, and never an interactive one.
+   * it runs only msiexec /x for an MSI product, the key's own silent
+   * uninstall command or (0.42) a recognised silent form of its registered
+   * uninstaller, and never an interactive one. RustDesk and Rem0te are
+   * refused here and again on the computer.
    */
   async removeProgram(actor: ActorContext, endpointId: string, raw: unknown, freshMethod: string | null) {
     const p = RemoveProgramDto.safeParse(raw);
@@ -547,6 +555,7 @@ export class SoftwareService {
     const prog = installedOf(inv?.software).find((x) => x.key === d.key && x.view === d.view && x.name === d.displayName);
     if (!prog) throw new NotFoundException({ code: 'PROGRAM_NOT_IN_INVENTORY', message: 'This computer\'s last inventory does not list that program under that key.' });
     const hint = removalHint(prog);
+    if (hint.code === 'protected') throw new ConflictException({ code: 'PROTECTED_PROGRAM', message: hint.reason });
     if (!hint.possible) throw new ConflictException({ code: 'NO_SILENT_UNINSTALL', message: hint.reason });
     const job = await this.actions.createPlan(actor, {
       action: SOFTWARE_REMOVE, endpointIds: [endpointId], params: { key: d.key, view: d.view, displayName: d.displayName },

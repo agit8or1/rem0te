@@ -27,7 +27,7 @@ export function renderApprovalPage(v: View, nonce: string): string {
     : `<strong>${p.targets.length} computers</strong><ul>${p.targets.map((x) => `<li>${esc(x.hostname)} <span class="mut">(${esc(x.deviceClass.toLowerCase())}, RustDesk ID ${esc(x.rustdeskId)})</span></li>`).join('')}</ul>`;
   const dep = p.display?.deployment;
   const updates = p.display?.updates?.length
-    ? `<table class="inner"><tr><th>Update</th><th>Classification</th><th>Severity</th></tr>${p.display.updates.map((u) => `<tr><td>${u.kb ? `<strong>${esc(u.kb)}</strong> ` : ''}${esc(u.title)}<br><code>${esc(u.updateId)} rev ${esc(u.revision)}</code></td><td>${esc(u.className ?? 'unknown')}</td><td>${esc(u.severity ?? '—')}</td></tr>`).join('')}</table><p class="mut">Titles and KBs are as the computers reported them. Each computer installs an update only if Windows Update itself offers it as a security, critical, rollup or ordinary update.</p>`
+    ? `<table class="inner"><tr><th>Update</th><th>Classification</th><th>Severity</th></tr>${p.display.updates.map((u) => `<tr><td>${u.kb ? `<strong>${esc(u.kb)}</strong> ` : ''}${esc(u.title)}<br><code>${esc(u.updateId)} rev ${esc(u.revision)}</code></td><td>${esc(u.className ?? 'unknown')}</td><td>${esc(u.severity ?? '—')}</td></tr>`).join('')}</table><p class="mut">Titles and KBs are as the computers reported them. Each computer installs an update only if Windows Update itself offers it as a security, critical, rollup, ordinary, driver or definition update.</p>`
     : '';
   const restarts = (p.params as { reboot?: unknown }).reboot === 'if_required_in_window'
     ? `<strong>restarting if Windows requires it</strong>, after a fixed ${UPDATE_RESTART_WARNING_MINUTES}-minute warning, only inside the window below and never while a RustDesk session is open. <span class="mut">${esc(REBOOT_UNPROVEN)}</span>`
@@ -174,7 +174,7 @@ ${d.reboot === 'if_required_in_window'
 <table>
 ${row('Customer', esc(d.businessName))}
 ${row('Computers', `<ul>${rings}</ul><span class="mut">Bound to each computer's enrolled identity and result key. A re-enrolled computer is not covered.</span>`)}
-${row('Installs', esc(d.allow.classifications.map((c) => CLASS_NAME[c] ?? c).join(', ')) + (d.allow.severities ? ` — severity ${esc(d.allow.severities.join(', '))} only` : '') + '<br><span class="mut">Only updates Windows Update itself offers each computer. Never drivers, feature upgrades, optional updates, or anything needing a licence or someone at the keyboard.</span>')}
+${row('Installs', esc(d.allow.classifications.map((c) => CLASS_NAME[c] ?? c).join(', ')) + (d.allow.severities ? ` — severity ${esc(d.allow.severities.join(', '))} only` : '') + '<br><span class="mut">Only updates Windows Update itself offers each computer. Drivers and definition updates only if listed above. Never feature upgrades, feature or service packs, tools, optional updates, or anything needing a licence or (drivers excepted) someone at the keyboard.</span>')}
 ${row('Never installs', d.allow.excludeKbs ? esc(d.allow.excludeKbs.join(', ')) : '<span class="mut">no KBs excluded</span>')}
 ${row('Window', `${esc(days)}, ${esc(d.window.start)}–${esc(d.window.end)} <strong>${esc(d.window.timezone)}</strong> local time`)}
 ${row('Between rings', `soak ${esc(d.soakHours)} h; at most ${esc(d.failureThreshold)} failed computer(s) per ring before the deployment pauses itself`)}

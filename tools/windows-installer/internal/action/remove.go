@@ -14,11 +14,21 @@ package action
 //     (the key now belongs to something else, or was replaced);
 //   - an MSI product ({GUID} key, WindowsInstaller = 1): msiexec.exe from
 //     System32 with exactly /x {GUID} /qn /norestart;
-//   - otherwise only the key's QuietUninstallString, run without a shell:
-//     an absolute path to an .exe (never an interpreter or a system tool)
-//     and the arguments the installer registered. A key with only an
-//     interactive UninstallString is refused, no_silent_uninstall — nothing
-//     is ever run that would wait for someone to click.
+//   - the key's QuietUninstallString, run without a shell: an absolute path
+//     to an .exe (never an interpreter or a system tool) and the arguments
+//     the installer registered;
+//   - otherwise (0.42) one of a closed set of silent forms recognised from
+//     the key's own UninstallString, decided here and nowhere else:
+//     msiexec /I|/X of this key's own product code → the msi form above;
+//     Inno Setup (an *_is1 key, unins###.exe, no arguments) →
+//     /VERYSILENT /SUPPRESSMSGBOXES /NORESTART; NSIS (an uninstaller whose
+//     file carries the NSIS header, arguments at most /allusers or
+//     /currentuser) → /S; Chromium (Installer\setup.exe --uninstall
+//     --system-level …) → the same with --force-uninstall. Anything else is
+//     refused, no_silent_uninstall — nothing is ever run that would wait for
+//     someone to click.
+//   - RustDesk and Rem0te itself are never removed (protected_program):
+//     removing RustDesk is how a computer is cut off from remote help.
 // Afterwards the key must be gone for the result to be "succeeded".
 //
 // This package starts no process: ProgramRegistry.Remove does, on Windows
@@ -40,6 +50,9 @@ type ProgramRegistry interface {
 	// Remove runs c and waits at most timeout: the exit code, bounded output,
 	// and an error only when it could not run or was killed at the timeout.
 	Remove(c RemovalCommand, timeout time.Duration) (int, []byte, error)
+	// FileHead reads at most max bytes from the start of a regular file
+	// (0.42: the NSIS header check). It only reads.
+	FileHead(path string, max int) ([]byte, error)
 }
 
 // Program is what one uninstall key says.
@@ -48,10 +61,12 @@ type Program struct {
 	WindowsInstaller                                                   bool
 }
 
-// RemovalCommand is one of two closed forms.
+// RemovalCommand is one of the closed forms.
 type RemovalCommand struct {
-	// Kind: "msi" (System32\msiexec.exe /x ProductCode /qn /norestart) or
-	// "quiet" (Exe, with Args as the installer registered them).
+	// Kind: "msi" (System32\msiexec.exe /x ProductCode /qn /norestart),
+	// "quiet" (Exe, with Args as the installer registered them), or (0.42)
+	// "inno", "nsis", "chromium": Exe from the UninstallString, with Args
+	// built here from a closed form (InnoArgs, NSISArgs, ChromiumArgs).
 	Kind        string
 	ProductCode string
 	Exe         string
@@ -71,7 +86,44 @@ var (
 	productCodeRE = regexp.MustCompile(`^\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}$`)
 	msiInQuietRE  = regexp.MustCompile(`(?i)^"?(?:[A-Za-z]:\\Windows\\(?:System32|SysWOW64)\\)?msiexec(?:\.exe)?"?\s+/[XI]\s*(\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\})(?:\s+/(?:qn|quiet|passive|norestart|qb!?|qb-!?))*\s*$`)
 	absExeRE      = regexp.MustCompile(`^[A-Za-z]:\\[^"*?<>|/:]+\.[Ee][Xx][Ee]$`)
+
+	// 0.42: the recognised silent forms, matched on what the key registers.
+	innoKeyRE     = regexp.MustCompile(`(?i)_is1$`)
+	innoExeRE     = regexp.MustCompile(`(?i)^unins[0-9]{3}\.exe$`)
+	chromiumArgRE = regexp.MustCompile(`^--[a-z][a-z0-9-]{0,40}(?:=[A-Za-z0-9._-]{1,40})?$`)
+	nsisArgsOK    = map[string]bool{"": true, "/allusers": true, "/currentuser": true}
+	driverKeyRE   = regexp.MustCompile(`^[0-9A-Fa-f]{40}$`)
 )
+
+// ProtectedProgramPattern names programs that are never removed from here
+// (0.42): RustDesk, which is how this computer is reached at all, and
+// Rem0te's own agent and tray. Matched, case-insensitively, against the
+// DisplayName and the key. The portal uses the same expression
+// (PROTECTED_PROGRAM_RE).
+const ProtectedProgramPattern = `^(?:rustdesk|rem0te|reboot ?remote)(?:[^a-z0-9]|$)`
+
+var protectedProgramRE = regexp.MustCompile(`(?i)` + ProtectedProgramPattern)
+
+// ProtectedProgram reports whether a key or display name is protected.
+func ProtectedProgram(key, displayName string) bool {
+	return protectedProgramRE.MatchString(strings.TrimSpace(displayName)) || protectedProgramRE.MatchString(key)
+}
+
+// NSISMarker is the start of an NSIS first header: the 0xDEADBEEF signature
+// and "NullsoftInst". Every NSIS installer and uninstaller carries it, just
+// after the executable stub; NSISHeadBytes is how far into the file it is
+// looked for.
+const (
+	NSISMarker    = "\xef\xbe\xad\xdeNullsoftInst"
+	NSISHeadBytes = 1 << 20
+)
+
+// InnoArgs, NSISArgs and ChromiumArgs are the arguments each recognised form
+// is given. Fixed here: nothing from a plan reaches them, and from the
+// registry only the closed tokens RecognizeUninstall accepted.
+func InnoArgs() string                      { return "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" }
+func NSISArgs(registered string) string     { return strings.TrimSpace(registered + " /S") }
+func ChromiumArgs(registered string) string { return registered + " --force-uninstall" }
 
 // NeverRun: programs a QuietUninstallString may name but the agent never
 // starts — interpreters, script hosts and system tools that would turn a
@@ -192,16 +244,23 @@ func ParseQuietUninstall(s string) (RemovalCommand, error) {
 }
 
 // removalFor: what would remove this program, or the refusal.
-func removalFor(key string, pr Program) (RemovalCommand, *Result) {
+func removalFor(key string, pr Program, o Options) (RemovalCommand, *Result) {
+	if ProtectedProgram(key, pr.DisplayName) {
+		return RemovalCommand{}, &Result{Outcome: "refused", Reason: "protected_program",
+			Detail: "RustDesk and Rem0te are never removed from here: removing them cuts this computer off from remote help. Remove them at the computer"}
+	}
 	if isMSI(key, pr) {
 		return RemovalCommand{Kind: "msi", ProductCode: strings.ToUpper(key)}, nil
 	}
 	if strings.TrimSpace(pr.QuietUninstallString) == "" {
-		d := "the program registers no uninstall command"
-		if strings.TrimSpace(pr.UninstallString) != "" {
-			d = "the program registers only an interactive uninstall (UninstallString, no QuietUninstallString); it would wait for someone at the computer, so it is not run"
+		if strings.TrimSpace(pr.UninstallString) == "" {
+			return RemovalCommand{}, &Result{Outcome: "refused", Reason: "no_silent_uninstall", Detail: "the program registers no uninstall command"}
 		}
-		return RemovalCommand{}, &Result{Outcome: "refused", Reason: "no_silent_uninstall", Detail: d}
+		c, why := RecognizeUninstall(key, pr, o.Programs)
+		if why != "" {
+			return RemovalCommand{}, &Result{Outcome: "refused", Reason: "no_silent_uninstall", Detail: why}
+		}
+		return c, nil
 	}
 	c, err := ParseQuietUninstall(pr.QuietUninstallString)
 	if err != nil {
@@ -212,6 +271,65 @@ func removalFor(key string, pr Program) (RemovalCommand, *Result) {
 		return RemovalCommand{}, &Result{Outcome: "refused", Reason: "uninstall_command_refused", Detail: "the QuietUninstallString removes a different Windows Installer product from this key's; it is not run"}
 	}
 	return c, nil
+}
+
+// interactiveOnly is the refusal for an UninstallString of no recognised form.
+const interactiveOnly = "the program registers only an interactive uninstaller (UninstallString, no QuietUninstallString) of no form this agent can run silently; it would wait for someone at the computer, so it is not run"
+
+// RecognizeUninstall decides (0.42) whether a key's interactive
+// UninstallString is one of the closed silent forms, and builds the command,
+// or says why not. The UninstallString goes through the same parser as a
+// QuietUninstallString first — absolute .exe, no shell characters, no
+// environment variables, nothing on NeverRun — and the arguments the agent
+// adds are fixed. files reads the NSIS header; nil means not NSIS.
+func RecognizeUninstall(key string, pr Program, files ProgramRegistry) (RemovalCommand, string) {
+	us := strings.TrimSpace(pr.UninstallString)
+	if driverKeyRE.MatchString(key) || strings.HasPrefix(strings.ToLower(strings.TrimSpace(pr.DisplayName)), "windows driver package") {
+		return RemovalCommand{}, "a driver package is removed with Windows' own driver tools (Device Manager), not by its uninstaller; it is not run"
+	}
+	if m := msiInQuietRE.FindStringSubmatch(us); m != nil {
+		if !strings.EqualFold(m[1], key) {
+			return RemovalCommand{}, "the UninstallString removes a different Windows Installer product from this key's; it is not run"
+		}
+		return RemovalCommand{Kind: "msi", ProductCode: strings.ToUpper(m[1])}, ""
+	}
+	if strings.Contains(strings.ToLower(us), `\officeclicktorun.exe`) {
+		return RemovalCommand{}, "Microsoft 365 / Office (Click-to-Run) has no closed silent form here; remove it in Settings, Apps, or with Microsoft's removal tool"
+	}
+	c, err := ParseQuietUninstall(us)
+	if err != nil || c.Kind != "quiet" {
+		return RemovalCommand{}, interactiveOnly
+	}
+	exe, args := c.Exe, c.Args
+	i := strings.LastIndexByte(exe, '\\')
+	base, dir := strings.ToLower(exe[i+1:]), strings.ToLower(exe[:i])
+	switch {
+	case innoKeyRE.MatchString(key) && innoExeRE.MatchString(base) && args == "":
+		return RemovalCommand{Kind: "inno", Exe: exe, Args: InnoArgs()}, ""
+	case base == "setup.exe" && strings.HasSuffix(dir, `\installer`):
+		toks := strings.Fields(args)
+		un, sys := false, false
+		for _, t := range toks {
+			if !chromiumArgRE.MatchString(t) || t == "--force-uninstall" {
+				return RemovalCommand{}, interactiveOnly
+			}
+			un, sys = un || t == "--uninstall", sys || t == "--system-level"
+		}
+		if !un || !sys || len(toks) > 8 {
+			return RemovalCommand{}, interactiveOnly
+		}
+		return RemovalCommand{Kind: "chromium", Exe: exe, Args: ChromiumArgs(strings.Join(toks, " "))}, ""
+	case (strings.Contains(base, "unins") || (base == "helper.exe" && strings.HasSuffix(dir, `\uninstall`))) && nsisArgsOK[strings.ToLower(args)]:
+		if files == nil {
+			return RemovalCommand{}, interactiveOnly
+		}
+		head, err := files.FileHead(exe, NSISHeadBytes)
+		if err != nil || !strings.Contains(string(head), NSISMarker) {
+			return RemovalCommand{}, interactiveOnly
+		}
+		return RemovalCommand{Kind: "nsis", Exe: exe, Args: NSISArgs(args)}, ""
+	}
+	return RemovalCommand{}, interactiveOnly
 }
 
 // readProgram: the key, and a refusal when it changed or cannot be read.
@@ -254,7 +372,7 @@ func removePrecheck(p *Plan, o Options) *Result {
 		obs["presentBefore"] = "false"
 		return &Result{Outcome: "no_change", Observed: obs, ExecutedAt: o.now().UTC().Format(time.RFC3339), Detail: "the uninstall key is not there; nothing was run"}
 	}
-	if _, refused := removalFor(s.Key, pr); refused != nil {
+	if _, refused := removalFor(s.Key, pr, o); refused != nil {
 		refused.Observed = obs
 		return refused
 	}
@@ -280,13 +398,13 @@ func removeProgram(p *Plan, o Options) Result {
 		return r
 	}
 	r.Observed["presentBefore"], r.Observed["versionBefore"] = "true", clip80(pr.DisplayVersion)
-	c, refused := removalFor(s.Key, pr)
+	c, refused := removalFor(s.Key, pr, o)
 	if refused != nil {
 		refused.Observed, refused.ExecutedAt, refused.AgentSHA256 = r.Observed, r.ExecutedAt, r.AgentSHA256
 		return *refused
 	}
 	r.Observed["method"] = c.Kind
-	if c.Kind == "quiet" {
+	if c.Kind != "msi" {
 		r.Observed["program"] = clip80(c.Exe[strings.LastIndexByte(c.Exe, '\\')+1:])
 	}
 	journalStep(o, p, "removing")
@@ -303,7 +421,7 @@ func removeProgram(p *Plan, o Options) Result {
 	r.Observed["exitCode"] = fmt.Sprint(code)
 	journalStep(o, p, "detecting")
 	present := presence(o, s)
-	for i := 0; present == "true" && i < removeSettleTries && (code == 0 || c.Kind == "quiet"); i++ {
+	for i := 0; present == "true" && i < removeSettleTries && (code == 0 || c.Kind != "msi"); i++ {
 		o.Platform.Sleep(removeSettleEvery)
 		present = presence(o, s)
 	}

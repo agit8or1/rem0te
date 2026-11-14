@@ -511,9 +511,36 @@ check(
   check('the agent refuses a computer managed by WSUS / WUfB / MDM / ConfigMgr before installing anything',
     iMgr > 0 && iInstall > iMgr && /Eligible\(/.test(inst), 'Managers() and Eligible() must be checked before the install call');
   const elig = read('tools/windows-installer/internal/patch/patch.go');
-  check('the agent installs only security, critical, rollup and ordinary updates',
-    /var Installable = map\[string\]string\{[\s\S]{0,600}\}/.test(elig) && !/ebfc1fc5-71a4-4f7b-9aca-3b9a503104a0[^\n]*Installable|Installable[^}]*ebfc1fc5/.test(elig),
-    'drivers (and other classifications) must not be in the allowlist');
+  // 0.42: drivers and definition updates joined the allowlist, at the
+  // owner's request. Upgrades, feature packs, service packs, tools and
+  // anything unclassified never do: those are OS migrations, not patches.
+  const INSTALLABLE = ['ClassCritical', 'ClassDefinitions', 'ClassDrivers', 'ClassSecurity', 'ClassUpdateRollups', 'ClassUpdates'];
+  const NEVER = ['ClassUpgrades', 'ClassFeaturePacks', 'ClassServicePacks', 'ClassTools'];
+  const instBody = (elig.match(/var Installable = map\[string\]string\{([\s\S]*?)\n\}/) ?? [])[1] ?? '';
+  const instKeys = [...instBody.matchAll(/^\s*(\w+):\s*"[^"]*",?\s*$/gm)].map((x) => x[1]).sort();
+  const instLines = instBody.split('\n').map((l) => l.replace(/\/\/.*$/, '').trim()).filter(Boolean);
+  const guidOf = (c) => (elig.match(new RegExp(`\\b${c}\\s*=\\s*"([0-9a-f-]{36})"`)) ?? [])[1] ?? null;
+  const goGuids = INSTALLABLE.map(guidOf);
+  const neverGuids = NEVER.map(guidOf);
+  const tolBody = (elig.match(/var UserInputTolerated = map\[string\]bool\{([^}]*)\}/) ?? [])[1] ?? null;
+  check('the agent installs exactly six classifications — never upgrades, feature packs, service packs, tools or unclassified',
+    instKeys.join() === INSTALLABLE.join() && instLines.length === INSTALLABLE.length
+      && NEVER.every((c) => !instBody.includes(c)) && goGuids.every(Boolean) && neverGuids.every((g) => g && !instBody.includes(g))
+      && /if _, ok := Installable\[u\.Classification\]; !ok \{\s*return false, "excluded_classification"/.test(elig),
+    `Installable is ${instKeys.join(', ') || '(not found)'}; must be exactly ${INSTALLABLE.join(', ')}`);
+  check('only drivers may be installed although Windows says they can request input; browse-only and licence rules hold for every class',
+    tolBody !== null && tolBody.trim() === 'ClassDrivers: true'
+      && /if u\.BrowseOnly \{\s*return false, "optional_update"/.test(elig) && /if u\.UserInput && !UserInputTolerated\[u\.Classification\] \{\s*return false, "needs_user_input"/.test(elig)
+      && /if !u\.EulaAccepted \{[\s\S]{0,120}return false, "eula_required"/.test(elig),
+    'Eligible: UserInputTolerated must be exactly drivers, and optional / licence refusals unconditional');
+  const post = read('apps/api/src/patching/posture.ts');
+  const tsBody = (post.match(/export const CLASSIFICATIONS: Record<string, string> = \{([\s\S]*?)\n\};/) ?? [])[1] ?? '';
+  const tsGuids = [...tsBody.matchAll(/'([0-9a-f-]{36})':/g)].map((x) => x[1]).sort();
+  check('the portal\'s installable list is the agent\'s, guid for guid, and its user-input exception is drivers only',
+    tsGuids.join() === [...goGuids].sort().join() && neverGuids.every((g) => !tsBody.includes(g))
+      && /export const USER_INPUT_TOLERATED: ReadonlySet<string> = new Set\(\[CLASS_DRIVERS\]\);/.test(post) && post.includes(`export const CLASS_DRIVERS = '${guidOf('ClassDrivers')}';`)
+      && /if \(u\.userInput && !USER_INPUT_TOLERATED\.has\(u\.classification\)\) return/.test(post),
+    `portal CLASSIFICATIONS ${tsGuids.join(', ')}`);
   const pctl = read('apps/api/src/patching/patching.controller.ts');
   check('the patching API has no approve or sign route', !/@(?:Get|Post|Put|Patch|Delete)\('[^']*(approv|sign)/i.test(pctl), 'approval happens on the approval signer only');
   const psvc = read('apps/api/src/patching/patching.service.ts');
@@ -3680,26 +3707,66 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /MaxTargets: 1,/.test(rmEntry) && /ParamsOK:\s+removeParamsOK,/.test(rmEntry) && /Risk:\s+func\(int, int\) string \{ return "high" \},/.test(rmEntry) && /Precheck:\s+removePrecheck,/.test(rmEntry)
       && /risk: \(\) => 'high',/.test(tsRm) && /maxTargets: 1,/.test(tsRm) && /direct: false,/.test(tsRm) && /integration: false,/.test(tsRm) && /params: RemoveParams,/.test(tsRm),
     'the agent entry and SOFTWARE_REMOVE must agree');
-  const iRead = goRm.indexOf('pr, found, bad := readProgram(o, s, r.Observed)'), iFor = goRm.indexOf('c, refused := removalFor(s.Key, pr)'), iJ = goRm.indexOf('journalStep(o, p, "removing")'), iRun = goRm.indexOf('o.Programs.Remove(c, ');
+  const iRead = goRm.indexOf('pr, found, bad := readProgram(o, s, r.Observed)'), iFor = goRm.indexOf('c, refused := removalFor(s.Key, pr, o)'), iJ = goRm.indexOf('journalStep(o, p, "removing")'), iRun = goRm.indexOf('o.Programs.Remove(c, ');
   check('remove: the agent reads the key itself, refuses a key that names another program, and decides the command before running it',
     iRead > 0 && iFor > iRead && iJ > iFor && iRun > iJ
       && /if found && strings\.TrimSpace\(pr\.DisplayName\) != s\.DisplayName \{[\s\S]{0,200}Reason: "program_changed"/.test(goRm)
-      && /func removePrecheck\(p \*Plan, o Options\) \*Result \{[\s\S]*?AppManagers\(\)[\s\S]*?readProgram\(o, s, obs\)[\s\S]*?removalFor\(s\.Key, pr\)/.test(goRm),
+      && /func removePrecheck\(p \*Plan, o Options\) \*Result \{[\s\S]*?AppManagers\(\)[\s\S]*?readProgram\(o, s, obs\)[\s\S]*?removalFor\(s\.Key, pr, o\)/.test(goRm),
     'removeProgram: readProgram, then removalFor, then the journal step, then Remove; Precheck checks managers, the key and the command first');
-  check('remove: only msiexec /x {GUID} /qn /norestart or the key\'s own QuietUninstallString; an interactive-only key is refused',
+  const rf = (goRm.match(/func removalFor\(key string, pr Program, o Options\) \(RemovalCommand, \*Result\) \{([\s\S]*?)\n\}\n/) ?? [])[1] ?? '';
+  const ru = (goRm.match(/func RecognizeUninstall\(key string, pr Program, files ProgramRegistry\) \(RemovalCommand, string\) \{([\s\S]*?)\n\}\n/) ?? [])[1] ?? '';
+  check('remove: only msiexec /x {GUID} /qn /norestart, the key\'s own QuietUninstallString, or a recognised silent form of its UninstallString; anything else is refused',
     /func MsiArgs\(productCode string\) \[\]string \{\s*return \[\]string\{"\/x", productCode, "\/qn", "\/norestart"\}\s*\}/.test(goRm)
-      && /if strings\.TrimSpace\(pr\.QuietUninstallString\) == "" \{[\s\S]{0,400}Reason: "no_silent_uninstall"/.test(goRm)
-      && /c, err := ParseQuietUninstall\(pr\.QuietUninstallString\)/.test(goRm) && !/ParseQuietUninstall\(pr\.UninstallString\)|Exe: pr\.UninstallString/.test(goRm)
-      && /if c\.Kind == "msi" && !strings\.EqualFold\(c\.ProductCode, key\)/.test(goRm)
+      && /if strings\.TrimSpace\(pr\.QuietUninstallString\) == "" \{[\s\S]{0,600}Reason: "no_silent_uninstall"/.test(rf)
+      && /c, err := ParseQuietUninstall\(pr\.QuietUninstallString\)/.test(rf) && /c, why := RecognizeUninstall\(key, pr, o\.Programs\)/.test(rf)
+      && /if c\.Kind == "msi" && !strings\.EqualFold\(c\.ProductCode, key\)/.test(rf)
       && /strings\.ContainsAny\(s, "%&\|<>\^`\\n"\)/.test(goRm) && /return RemovalCommand\{\}, errors\.New\("an msiexec command other than \/x of one product code"\)/.test(goRm),
-    'removalFor / ParseQuietUninstall must keep the two closed forms');
+    'removalFor / ParseQuietUninstall must keep the closed forms');
+  // 0.42: the recognised forms. Each goes through ParseQuietUninstall first
+  // (absolute .exe, no shell characters, no environment variables, nothing
+  // on NeverRun), and the agent's arguments are constants.
+  const kindsBuilt = [...ru.matchAll(/RemovalCommand\{Kind: "([a-z]+)"/g)].map((x) => x[1]).sort().join();
+  check('remove: the UninstallString forms are exactly msi (its own product), inno, nsis and chromium, each parsed as strictly as a QuietUninstallString',
+    kindsBuilt === 'chromium,inno,msi,nsis' && ru.indexOf('c, err := ParseQuietUninstall(us)') > 0 && ru.indexOf('c, err := ParseQuietUninstall(us)') < ru.indexOf('Kind: "inno"')
+      && /if err != nil \|\| c\.Kind != "quiet" \{\s*return RemovalCommand\{\}, interactiveOnly/.test(ru)
+      && /if m := msiInQuietRE\.FindStringSubmatch\(us\); m != nil \{\s*if !strings\.EqualFold\(m\[1\], key\) \{/.test(ru)
+      && ru.indexOf('driverKeyRE.MatchString(key)') >= 0 && ru.indexOf('driverKeyRE.MatchString(key)') < ru.indexOf('msiInQuietRE')
+      && /\\officeclicktorun\.exe/.test(ru) && !/Kind: "office"|Kind: "driver"/.test(ru),
+    `RecognizeUninstall builds ${kindsBuilt || '(nothing found)'}`);
+  check('remove: each recognised form gets fixed arguments — Inno /VERYSILENT /SUPPRESSMSGBOXES /NORESTART with none registered, NSIS /S after its header is read, Chromium --force-uninstall on --uninstall --system-level',
+    /func InnoArgs\(\) string\s*\{ return "\/VERYSILENT \/SUPPRESSMSGBOXES \/NORESTART" \}/.test(goRm)
+      && /func NSISArgs\(registered string\) string\s*\{ return strings\.TrimSpace\(registered \+ " \/S"\) \}/.test(goRm)
+      && /func ChromiumArgs\(registered string\) string \{ return registered \+ " --force-uninstall" \}/.test(goRm)
+      && /case innoKeyRE\.MatchString\(key\) && innoExeRE\.MatchString\(base\) && args == "":\s*return RemovalCommand\{Kind: "inno", Exe: exe, Args: InnoArgs\(\)\}/.test(ru)
+      && /innoKeyRE\s*= regexp\.MustCompile\(`\(\?i\)_is1\$`\)/.test(goRm) && /innoExeRE\s*= regexp\.MustCompile\(`\(\?i\)\^unins\[0-9\]\{3\}\\\.exe\$`\)/.test(goRm)
+      && /nsisArgsOK\s*= map\[string\]bool\{"": true, "\/allusers": true, "\/currentuser": true\}/.test(goRm)
+      && /head, err := files\.FileHead\(exe, NSISHeadBytes\)\s*if err != nil \|\| !strings\.Contains\(string\(head\), NSISMarker\) \{\s*return RemovalCommand\{\}, interactiveOnly/.test(ru)
+      && /NSISMarker\s*= "\\xef\\xbe\\xad\\xdeNullsoftInst"/.test(goRm) && /if files == nil \{\s*return RemovalCommand\{\}, interactiveOnly/.test(ru)
+      && /if !chromiumArgRE\.MatchString\(t\) \|\| t == "--force-uninstall" \{/.test(ru) && /if !un \|\| !sys \|\| len\(toks\) > 8 \{/.test(ru)
+      && /chromiumArgRE\s*= regexp\.MustCompile\(`\^--\[a-z\]\[a-z0-9-\]\{0,40\}\(\?:=\[A-Za-z0-9\._-\]\{1,40\}\)\?\$`\)/.test(goRm)
+      && /case base == "setup\.exe" && strings\.HasSuffix\(dir, `\\installer`\):/.test(ru),
+    'InnoArgs / NSISArgs / ChromiumArgs and the RecognizeUninstall cases');
+  const goProt = (goRm.match(/const ProtectedProgramPattern = `([^`]+)`/) ?? [])[1] ?? null;
+  const tsProt = (tsCat.match(/export const PROTECTED_PROGRAM_RE = \/(.+)\/i;/) ?? [])[1] ?? null;
+  const protRe = goProt ? new RegExp(goProt, 'i') : null;
+  const PROTECT = ['RustDesk', 'rustdesk 1.4.3', 'RustDesk Service', 'Rem0te Agent', 'rem0te-tray', 'Reboot Remote', 'RebootRemote'];
+  const NOT = ['RustDesker', 'TeamViewer', 'Remote Desktop Manager', 'Rem0teX'];
+  check('remove: RustDesk and Rem0te are never removed — the same pattern on both sides, checked first on the agent, refused by the portal',
+    !!goProt && goProt === tsProt && PROTECT.every((n) => protRe.test(n)) && NOT.every((n) => !protRe.test(n))
+      && /var protectedProgramRE = regexp\.MustCompile\(`\(\?i\)` \+ ProtectedProgramPattern\)/.test(goRm)
+      && /^\s*if ProtectedProgram\(key, pr\.DisplayName\) \{\s*return RemovalCommand\{\}, &Result\{Outcome: "refused", Reason: "protected_program",/.test(rf)
+      && /if \(hint\.code === 'protected'\) throw new ConflictException\(\{ code: 'PROTECTED_PROGRAM'/.test(read('apps/api/src/software/software.service.ts'))
+      && /if \(isProtectedProgram\(p\.key, p\.name\)\) return no\('protected'/.test(read('apps/api/src/software/definition.ts')),
+    `agent ${goProt}; portal ${tsProt}`);
   const never = ((goRm.match(/var NeverRun = \[\]string\{([\s\S]*?)\}/) ?? [])[1] ?? '').split(',').map((x) => x.trim().replace(/"/g, '')).filter(Boolean);
   const MUST = ['cmd.exe', 'powershell.exe', 'pwsh.exe', 'wscript.exe', 'cscript.exe', 'mshta.exe', 'rundll32.exe', 'regsvr32.exe', 'msiexec.exe', 'bash.exe', 'wsl.exe'];
   check('remove: a QuietUninstallString naming an interpreter, script host or system tool is never run',
     MUST.every((n) => never.includes(n)) && /for _, n := range NeverRun \{\s*if base == n \{/.test(goRm), `NeverRun: ${never.join(', ')}`);
   const winCode = goRmWin.replace(/^\s*\/\/.*$/gm, '');
-  check('remove: the Windows side starts one process from one place, msiexec from System32 only, with no shell',
+  check('remove: the Windows side starts one process from one place, msiexec from System32 only, with no shell; the recognised forms take the quiet path and its checks',
     (goRmWin.match(/exec\.Command(?:Context)?\(/g) ?? []).length === 1 && /cmd := exec\.CommandContext\(ctx, path, args\.\.\.\)/.test(goRmWin)
+      && /case "quiet", "inno", "nsis", "chromium":\s*\/\/[^\n]*\n[^\n]*\n\s*if _, err := action\.ParseQuietUninstall/.test(goRmWin)
+      && /func \(winPrograms\) FileHead\(path string, max int\) \(\[\]byte, error\) \{\s*if _, err := action\.ParseQuietUninstall\(`"` \+ path \+ `"`\); err != nil \{/.test(goRmWin)
       && /path, args = filepath\.Join\(d, "msiexec\.exe"\), action\.MsiArgs\(c\.ProductCode\)/.test(goRmWin) && /d, err := windows\.GetSystemDirectory\(\)/.test(goRmWin)
       && /if _, err := action\.ParseQuietUninstall\(`"` \+ c\.Exe \+ `"`\); err != nil \{/.test(goRmWin)
       && !/cmd\.exe|powershell|pwsh|ShellExecute|\/bin\/sh|"cmd"/i.test(winCode) && !/"os\/exec"|exec\.Command/.test(goRm),
@@ -3754,6 +3821,17 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /if \(typeof o\.key === 'string' && PROGRAM_KEY_RE\.test\(o\.key\) && \(o\.view === '64' \|\| o\.view === '32'\)\) \{/.test(read('apps/api/src/monitoring/engine.ts'))
       && /key: typeof p\.key === 'string' && PROGRAM_KEY_RE\.test\(p\.key\) \? p\.key : null/.test(def),
     'sanitizeSoftware and installedOf');
+  // 0.42: the collector reports a removal kind; it is a hint, kept only from
+  // the closed list, and the collector itself only reads.
+  const ws = read('apps/api/src/public/windows-script.ts');
+  const kfn = ws.slice(ws.indexOf('function Split-Rem0teUninstall'), ws.indexOf('function Get-Rem0teInventory'));
+  check('inventory: the removal kind is a closed hint — kept only from REMOVAL_KINDS, collected by functions that only read',
+    /export const REMOVAL_KINDS = \['msi', 'quiet', 'inno', 'nsis', 'chromium', 'office', 'driver', 'none'\] as const;/.test(tsCat)
+      && /export const REMOVABLE_KINDS: ReadonlySet<RemovalKind> = new Set\(\['msi', 'quiet', 'inno', 'nsis', 'chromium'\]\);/.test(tsCat)
+      && /if \(typeof o\.kind === 'string' && \(REMOVAL_KINDS as readonly string\[\]\)\.includes\(o\.kind\)\) item\.kind/.test(read('apps/api/src/monitoring/engine.ts'))
+      && kfn.length > 500 && !/Start-Process|Invoke-Expression|Invoke-Item|Remove-Item|Set-ItemProperty|New-ItemProperty|\.Invoke\(|\biex\b/i.test(kfn)
+      && /\[IO\.File\]::OpenRead\(\\\$path\)/.test(kfn) && (kfn.match(/OpenRead|Open\(|WriteAll|Out-File|Set-Content/g) ?? []).length === 1,
+    'REMOVAL_KINDS, sanitizeSoftware and the collector functions in windows-script.ts');
 }
 
 if (failures.length > 0) {

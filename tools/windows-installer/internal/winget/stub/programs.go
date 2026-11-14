@@ -23,6 +23,9 @@ type Program struct {
 	UninstallString      string `json:"uninstallString,omitempty"`
 	QuietUninstallString string `json:"quietUninstallString,omitempty"`
 	WindowsInstaller     bool   `json:"windowsInstaller,omitempty"`
+	// NSIS (0.42): the uninstaller file the UninstallString names carries
+	// the NSIS header (what FileHead returns for it).
+	NSIS bool `json:"nsis,omitempty"`
 	// What running its removal does: the exit code (0 = success), whether
 	// the key stays (noEffect), and whether it never finishes (hang).
 	RemoveExitCode int  `json:"removeExitCode,omitempty"`
@@ -70,7 +73,7 @@ func (r Registry) Remove(c Removal, timeout time.Duration) (int, []byte, error) 
 	idx := -1
 	for i, p := range s.Programs {
 		if (c.Kind == "msi" && strings.EqualFold(p.Key, c.ProductCode)) ||
-			(c.Kind == "quiet" && strings.Contains(p.QuietUninstallString, c.Exe)) {
+			(c.Kind != "msi" && c.Exe != "" && (strings.Contains(p.QuietUninstallString, c.Exe) || strings.Contains(p.UninstallString, c.Exe))) {
 			idx = i
 			break
 		}
@@ -99,6 +102,34 @@ func (r Registry) Remove(c Removal, timeout time.Duration) (int, []byte, error) 
 		return -1, nil, err
 	}
 	return p.RemoveExitCode, nil, nil
+}
+
+// NSISMarker is what an NSIS uninstaller's first header starts with (the
+// agent's own constant, repeated so the stub does not import the agent).
+const NSISMarker = "\xef\xbe\xad\xdeNullsoftInst"
+
+// FileHead returns a simulated file start for an uninstaller a program's
+// UninstallString names: an NSIS header when that program is marked NSIS,
+// an ordinary executable's start otherwise, and an error for a file no
+// program names.
+func (r Registry) FileHead(path string, max int) ([]byte, error) {
+	s, err := Load(r.State)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range s.Programs {
+		if path != "" && strings.Contains(p.UninstallString, path) {
+			b := []byte("MZ\x90\x00 simulated executable ")
+			if p.NSIS {
+				b = append(b, []byte(NSISMarker+" simulated NSIS first header")...)
+			}
+			if len(b) > max {
+				b = b[:max]
+			}
+			return b, nil
+		}
+	}
+	return nil, errors.New("The system cannot find the file specified.")
 }
 
 type timeoutErr struct{}

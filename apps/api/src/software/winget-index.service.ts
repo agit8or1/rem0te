@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   INDEX_DB_ENTRY, INDEX_FETCH_TIMEOUT_MS, INDEX_MAX_DB_BYTES, INDEX_MAX_MSIX_BYTES, INDEX_ROWS_SQL, INDEX_SCHEMA_SQL,
-  checkIndexSchema, indexSweepEnabled, indexUrl, installable, normalizeIndexRows, rankSearch, readZipEntry, refreshDue,
+  checkIndexSchema, indexSweepEnabled, indexUrl, installable, nextIndexRead, normalizeIndexRows, rankSearch, readZipEntry, refreshDue,
   type IndexRow,
 } from './winget-index';
 
@@ -57,6 +57,8 @@ export class WingetIndexService implements OnModuleInit, OnModuleDestroy {
       refreshedAt: s?.refreshedAt ?? null, attemptedAt: s?.attemptedAt ?? null, packages: s?.packages ?? 0, skipped: s?.skipped ?? 0,
       sourceWrittenAt: s?.sourceWrittenAt ?? null, sourceSha256: s?.sourceSha256 ?? null, lastError: s?.lastError ?? null,
       sweep: indexSweepEnabled() ? 'on' as const : 'off' as const, refreshing: !!this.running,
+      // 0.42: when an empty (or day-old) index will next be read, so the page can say so.
+      nextReadAt: nextIndexRead(s ?? null, new Date(), indexSweepEnabled()),
     };
   }
 

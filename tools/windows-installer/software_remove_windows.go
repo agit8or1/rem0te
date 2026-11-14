@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,6 +72,30 @@ func (winPrograms) Program(view, key string) (action.Program, bool, error) {
 	}, true, nil
 }
 
+// FileHead reads at most max bytes from the start of path (0.42: the NSIS
+// header check). Read-only; the same path checks as a removal, so nothing is
+// read through a reparse point or from anything but a regular file.
+func (winPrograms) FileHead(path string, max int) ([]byte, error) {
+	if _, err := action.ParseQuietUninstall(`"` + path + `"`); err != nil {
+		return nil, fmt.Errorf("refusing %s: %v", path, err)
+	}
+	st, err := os.Lstat(path)
+	if err != nil || !st.Mode().IsRegular() || reparse(path) || reparse(filepath.Dir(path)) {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b := make([]byte, max)
+	n, err := io.ReadFull(f, b)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return b[:n], nil
+}
+
 type cappedOut struct{ bytes.Buffer }
 
 func (c *cappedOut) Write(p []byte) (int, error) {
@@ -89,8 +114,10 @@ func (removeTimeout) Error() string { return "the uninstaller did not finish in 
 func (removeTimeout) Timeout() bool { return true }
 
 // Remove runs System32\msiexec.exe /x CODE /qn /norestart, or the program a
-// QuietUninstallString names with the arguments it registered, as one
-// process with no shell (the command line goes to CreateProcess as it is).
+// QuietUninstallString names with the arguments it registered, or (0.42) the
+// uninstaller an UninstallString names with the closed arguments
+// internal/action built for its form (inno, nsis, chromium), as one process
+// with no shell (the command line goes to CreateProcess as it is).
 func (winPrograms) Remove(c action.RemovalCommand, timeout time.Duration) (int, []byte, error) {
 	var path string
 	var args []string
@@ -102,7 +129,7 @@ func (winPrograms) Remove(c action.RemovalCommand, timeout time.Duration) (int, 
 			return -1, nil, err
 		}
 		path, args = filepath.Join(d, "msiexec.exe"), action.MsiArgs(c.ProductCode)
-	case "quiet":
+	case "quiet", "inno", "nsis", "chromium":
 		// Checked again here: internal/action parsed it; the file must be a
 		// regular file reached through no reparse point.
 		if _, err := action.ParseQuietUninstall(`"` + c.Exe + `"`); err != nil {

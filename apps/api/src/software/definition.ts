@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   DISPLAY_NAME_RE, Detection, MAX_RING_TARGETS, PACKAGE_ID_MAX, PACKAGE_ID_RE, PROGRAM_KEY_RE, SHA256_RE, SOFTWARE_VERSION_RE, SoftwareParams, UNINSTALL_KEY_RE, programNameOk,
+  REMOVABLE_KINDS, REMOVAL_KINDS, isProtectedProgram, type RemovalKind,
 } from '../actions/catalog';
 
 /**
@@ -103,6 +104,8 @@ export function programsOf(sw: unknown): InventoryProgram[] | null {
 export interface InstalledProgram {
   name: string; version: string | null; publisher: string | null;
   key: string | null; view: '64' | '32' | null; quiet: boolean | null; msi: boolean | null;
+  /** 0.42: the removal kind the inventory collector recognised; null from an older collector. */
+  kind: RemovalKind | null;
 }
 export function installedOf(sw: unknown): InstalledProgram[] {
   if (!Array.isArray(sw)) return [];
@@ -110,6 +113,7 @@ export function installedOf(sw: unknown): InstalledProgram[] {
     name: p.name as string, version: typeof p.version === 'string' ? p.version : null, publisher: typeof p.publisher === 'string' ? p.publisher : null,
     key: typeof p.key === 'string' && PROGRAM_KEY_RE.test(p.key) ? p.key : null, view: p.view === '64' || p.view === '32' ? p.view : null,
     quiet: typeof p.quiet === 'boolean' ? p.quiet : null, msi: typeof p.msi === 'boolean' ? p.msi : null,
+    kind: typeof p.kind === 'string' && (REMOVAL_KINDS as readonly string[]).includes(p.kind) ? (p.kind as RemovalKind) : null,
   }));
 }
 
@@ -128,17 +132,56 @@ export function entryFor<E extends { id: string; detection: unknown }>(p: Instal
   return null;
 }
 
+/** What removes a program, as the console shows it. */
+export type RemovalMethod = 'msi' | 'quiet' | 'inno' | 'nsis' | 'chromium';
+export interface RemovalHint {
+  possible: boolean; method: RemovalMethod | null; reason: string | null;
+  /**
+   * 0.42: why it is not offered, as a stable code — protected, no_key (the
+   * inventory predates the 0.41 agent), old_collector (the 0.41 collector
+   * did not report the newer forms), interactive, office, driver, name.
+   */
+  code: 'protected' | 'no_key' | 'old_collector' | 'interactive' | 'office' | 'driver' | 'name' | 'unknown' | null;
+}
+
+const KIND_REASON: Partial<Record<RemovalKind, { code: RemovalHint['code']; reason: string }>> = {
+  office: { code: 'office', reason: 'Microsoft 365 / Office (Click-to-Run) has no silent uninstall the agent can run. Remove it in Settings → Apps on the computer, or with Microsoft\'s removal tool.' },
+  driver: { code: 'driver', reason: 'A driver package is removed with Windows\' own driver tools (Device Manager), not by its uninstaller.' },
+  none: { code: 'interactive', reason: 'Its uninstaller is interactive only, of no form the agent can run silently; it would wait for someone at the computer to click through it.' },
+};
+
 /**
  * How the console can remove a program that no catalog entry describes, or
  * why it cannot. Only a hint: the computer reads the key again and decides.
+ * 0.42: the collector reports the kind the agent would recognise (the same
+ * rules, tested against one fixture), so Uninstall is offered exactly where
+ * the agent acts; RustDesk and Rem0te are never offered.
  */
-export function removalHint(p: InstalledProgram): { possible: boolean; method: 'msi' | 'quiet' | null; reason: string | null } {
-  if (!p.key || !p.view) return { possible: false, method: null, reason: 'The inventory did not report this program\'s uninstall key (agents before 0.41 do not, and some key names have characters the agent refuses). It updates with the next full inventory.' };
-  if (!programNameOk(p.name)) return { possible: false, method: null, reason: 'Its display name has characters the agent refuses to match.' };
-  if (p.msi && /^\{[0-9A-Fa-f-]{36}\}$/.test(p.key)) return { possible: true, method: 'msi', reason: null };
-  if (p.quiet) return { possible: true, method: 'quiet', reason: null };
-  if (p.quiet === false) return { possible: false, method: null, reason: 'It registers only an interactive uninstaller, which would wait for someone at the computer to click through it.' };
-  return { possible: false, method: null, reason: 'The inventory did not say how it uninstalls. It updates with the next full inventory.' };
+export function removalHint(p: InstalledProgram): RemovalHint {
+  const no = (code: RemovalHint['code'], reason: string): RemovalHint => ({ possible: false, method: null, reason, code });
+  if (isProtectedProgram(p.key, p.name)) return no('protected', 'RustDesk and Rem0te are never removed from here: removing them cuts this computer off from remote help.');
+  if (!p.key || !p.view) return no('no_key', 'The inventory did not report this program\'s uninstall key (agents before 0.41 do not, and some key names have characters the agent refuses). Refresh the inventory.');
+  if (!programNameOk(p.name)) return no('name', 'Its display name has characters the agent refuses to match.');
+  if (p.kind) {
+    if (REMOVABLE_KINDS.has(p.kind)) return { possible: true, method: p.kind as RemovalMethod, reason: null, code: null };
+    const r = KIND_REASON[p.kind]!;
+    return no(r.code, r.reason);
+  }
+  // An inventory from the 0.41 collector: only the two forms it knew.
+  if (p.msi && /^\{[0-9A-Fa-f-]{36}\}$/.test(p.key)) return { possible: true, method: 'msi', reason: null, code: null };
+  if (p.quiet) return { possible: true, method: 'quiet', reason: null, code: null };
+  if (p.quiet === false) return no('old_collector', 'This inventory came from an older collector that did not check for the silent forms 0.42 recognises (Inno Setup, NSIS, Chromium, msiexec /I). Refresh the inventory.');
+  return no('unknown', 'The inventory did not say how it uninstalls. Refresh the inventory.');
+}
+
+/**
+ * The banner for the whole list (0.42), instead of the same reason on every
+ * row: whether the inventory predates the 0.41 agent (no keys) or the 0.42
+ * collector (no kinds), and so needs a refresh.
+ */
+export function inventoryRemovalState(ps: InstalledProgram[]): { programs: number; withKey: number; withKind: number; needsRefresh: 'no_keys' | 'old_collector' | null } {
+  const withKey = ps.filter((p) => p.key && p.view).length, withKind = ps.filter((p) => p.kind).length;
+  return { programs: ps.length, withKey, withKind, needsRefresh: ps.length === 0 ? null : withKey === 0 ? 'no_keys' : withKind === 0 ? 'old_collector' : null };
 }
 
 /**

@@ -201,7 +201,7 @@ function CreateDeployment({ businessId, onDone }: { businessId: string; onDone: 
         </div>
 
         <p className="text-xs text-muted-foreground flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />
-          Every ring plan carries the restart rule above, and the approvers see it. Drivers, feature upgrades, optional updates and anything needing a licence or someone at the keyboard are refused, by the portal and again by each computer.
+          Every ring plan carries the restart rule above, and the approvers see it. Feature upgrades, optional updates and anything needing a licence are refused, by the portal and again by each computer; so is anything needing someone at the keyboard, except drivers. Drivers and definition updates need a 0.42 agent.
         </p>
         <div className="flex gap-2">
           <Button size="sm" disabled={name.trim().length < 3 || updates.size === 0 || !ringsOk || create.isPending} onClick={() => create.mutate()}>

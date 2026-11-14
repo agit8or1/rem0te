@@ -98,7 +98,7 @@ export type PolicyWindow = z.infer<typeof PolicyWindow>;
 
 export const PolicyAllow = z.object({
   /** Windows Update classification ids; a subset of what any plan may install. */
-  classifications: z.array(z.string().refine((c) => !!CLASSIFICATIONS[c], 'not an installable classification')).min(1).max(4)
+  classifications: z.array(z.string().refine((c) => !!CLASSIFICATIONS[c], 'not an installable classification')).min(1).max(6)
     .refine((c) => new Set(c).size === c.length, 'a classification is listed twice'),
   severities: z.array(z.enum(SEVERITIES)).min(1).max(5).refine((s) => new Set(s).size === s.length, 'a severity is listed twice').optional(),
   excludeKbs: z.array(Kb).min(1).max(50).refine((s) => new Set(s).size === s.length, 'a KB is listed twice').optional(),

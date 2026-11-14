@@ -45,6 +45,20 @@ export function indexUrl(env: Record<string, string | undefined> = process.env):
 export const indexSweepEnabled = (env: Record<string, string | undefined> = process.env) => env.WINGET_INDEX_SWEEP !== 'off';
 
 /** Is a refresh due? Successful reads at most daily; failures retried after the backoff. */
+/**
+ * When the sweep will next read the index (0.42), so an empty catalog says
+ * when it fills: the later of the hour after the last attempt and a day after
+ * the last success (or now, never read). The sweep looks every 15 minutes, so
+ * this is the earliest, not the exact time. null when the sweep is off.
+ */
+export const INDEX_TICK_MINUTES = 15;
+export function nextIndexRead(s: { refreshedAt: Date | null; attemptedAt: Date | null } | null, now: Date, sweepOn: boolean): Date | null {
+  if (!sweepOn) return null;
+  const retry = s?.attemptedAt ? s.attemptedAt.getTime() + INDEX_RETRY_MINUTES * 60_000 : 0;
+  const due = s?.refreshedAt ? s.refreshedAt.getTime() + INDEX_REFRESH_HOURS * 3_600_000 : 0;
+  return new Date(Math.max(retry, due, now.getTime()));
+}
+
 export function refreshDue(s: { refreshedAt: Date | null; attemptedAt: Date | null } | null, now: Date): boolean {
   if (!s) return true;
   if (s.attemptedAt && now.getTime() - s.attemptedAt.getTime() < INDEX_RETRY_MINUTES * 60_000) return false;
@@ -207,27 +221,41 @@ export const SEARCH_LIMIT = 25;
 export const installable = (r: Pick<IndexRow, 'latestVersion'>) => SOFTWARE_VERSION_RE.test(r.latestVersion);
 
 /**
- * Rank candidate rows for a query: an exact id, then the id or moniker, then
- * the name, then the publisher; earlier and shorter matches first; ties by id.
+ * Rank candidate rows for a query (0.42). Tiers, best first:
+ *   1. an exact name, moniker or id;
+ *   2. a name that starts with the query as a whole word ("Notepad++" for
+ *      "notepad", not "Notepad2");
+ *   3. the query as a whole word anywhere in the name ("Windows Notepad"),
+ *      or a moniker that starts with it as a word;
+ *   4. a name that starts with the query at all ("Notepad2");
+ *   5. an id segment or moniker that starts with it;
+ *   6. the query anywhere in the name, then the id, then the publisher.
+ * Every term must appear somewhere. Ties: the shorter name, then the id.
+ * 0.41 ranked an id-segment prefix above a whole-word name, so "notepad"
+ * put Notepad2, NotepadsApp and Notepad3 ahead of Notepad++ (sixth).
  */
 export function rankSearch(q: string, rows: IndexRow[], limit = SEARCH_LIMIT): IndexRow[] {
-  const s = q.trim().toLowerCase();
-  const terms = s.split(/\s+/).filter(Boolean);
-  const score = (r: IndexRow): number => {
+  const s = q.trim().toLowerCase().replace(/\s+/g, ' ');
+  const terms = s.split(' ').filter(Boolean);
+  // A word boundary is anything that is not a letter or a digit ("+" counts as a boundary: "notepad" is a word of "notepad++").
+  // Plain string scans, so nothing built from the query reaches a RegExp.
+  const alnum = (c: string | undefined) => c !== undefined && /[a-z0-9]/.test(c);
+  const wordAt = (h: string, i: number) => !alnum(h[i - 1]) && !alnum(h[i + s.length]);
+  const startsWord = { test: (h: string) => h.startsWith(s) && wordAt(h, 0) };
+  const word = { test: (h: string) => { for (let i = h.indexOf(s); i >= 0; i = h.indexOf(s, i + 1)) if (wordAt(h, i)) return true; return false; } };
+  const tier = (r: IndexRow): number => {
     const id = r.packageId.toLowerCase(), name = r.name.toLowerCase(), mon = (r.moniker ?? '').toLowerCase(), pub = (r.publisher ?? '').toLowerCase();
-    const hay = `${id} ${name} ${mon} ${pub}`;
-    if (!terms.every((t) => hay.includes(t))) return -1;
-    if (id === s || mon === s) return 1000;
-    if (name === s) return 900;
-    let v = 0;
-    if (id.startsWith(s) || id.split('.').some((seg) => seg.startsWith(s))) v = Math.max(v, 700);
-    if (name.startsWith(s)) v = Math.max(v, 650);
-    if (mon.startsWith(s)) v = Math.max(v, 600);
-    if (name.includes(s)) v = Math.max(v, 500);
-    if (id.includes(s)) v = Math.max(v, 450);
-    if (pub.includes(s.replace(/[^a-z0-9]/g, ''))) v = Math.max(v, 300);
-    return Math.max(v, 100) - Math.min(99, name.length / 4);
+    if (!terms.every((t) => `${id} ${name} ${mon} ${pub}`.includes(t))) return -1;
+    if (name === s || mon === s || id === s) return 1;
+    if (startsWord.test(name)) return 2;
+    if (word.test(name) || startsWord.test(mon)) return 3;
+    if (name.startsWith(s)) return 4;
+    if (id.split('.').some((seg) => seg.startsWith(s)) || mon.startsWith(s)) return 5;
+    if (name.includes(s)) return 6;
+    if (id.includes(s)) return 7;
+    if (pub.includes(s.replace(/[^a-z0-9]/g, ''))) return 8;
+    return 9;
   };
-  return rows.map((r) => ({ r, v: score(r) })).filter((x) => x.v >= 0)
-    .sort((a, b) => b.v - a.v || a.r.packageId.localeCompare(b.r.packageId)).slice(0, limit).map((x) => x.r);
+  return rows.map((r) => ({ r, t: tier(r) })).filter((x) => x.t > 0)
+    .sort((a, b) => a.t - b.t || a.r.name.length - b.r.name.length || a.r.packageId.localeCompare(b.r.packageId)).slice(0, limit).map((x) => x.r);
 }

@@ -292,6 +292,17 @@ the sim takes `-wua` / `-registry` fixture files). An `ActionJob` is now one
 signed plan with an `ActionTarget` row per computer; `endpointId` on the job is
 only the first target, so per-computer state lives on the target.
 
+0.42 widened §15's classification allowlist to exactly six classes, the same
+GUIDs on the agent (`patch.Installable`) and in the portal (`CLASSIFICATIONS`):
+Security, Critical, Update Rollups, Updates, Drivers and Definition Updates.
+Upgrades, Feature Packs, Service Packs and Tools stay out, and §15 fails if
+any of them reaches either list. `UserInput` refuses an update except in the
+one tolerated class, Drivers (`UserInputTolerated` / `USER_INPUT_TOLERATED`,
+exactly that one on both sides); `BrowseOnly` and an un-accepted EULA still
+refuse every class. A patch policy may name the new classes but the UI never
+ticks Drivers by default. An agent older than 0.42 refuses them
+(`excluded_classification`), and the UI says to update the agent.
+
 0.32 widened §14's catalog checks to an exact, ordered list of six actions —
 the Spooler start, update install, and four maintenance actions
 (`windows.service.restart`, `windows.reboot.schedule`, `windows.reboot.cancel`,
@@ -750,6 +761,26 @@ by `e2e-ui.mjs`. The host needs `sqlite3`. **The remove action has never run on
 real Windows.** Behavioural proof: `e2e-software-catalog.mjs` (ports 3661–3665,
 `RELEASE_BIN` / `ACTION_SIM`, `sqlite3`); unit: `unit-software.mjs` and the Go
 `internal/action` remove tests.
+
+0.42 widened §59 to a closed set of recognised silent forms, decided by
+`RecognizeUninstall` from the key's own `UninstallString` (which first passes
+the same checks as a `QuietUninstallString`): System32 msiexec `/I` or `/X` of
+the key's *own* product code (the MSI path), Inno Setup (`_is1` key,
+`unins###.exe`, no arguments) with fixed `InnoArgs`, NSIS (an `*unins*` or
+Mozilla `uninstall\helper.exe`, at most `/allusers`/`/currentuser`, and the
+file's first megabyte holding `NSISMarker`) with fixed `NSISArgs`, and Chromium
+`setup.exe --uninstall … --system-level` plus `--force-uninstall`. Nothing else
+is recognised: Office Click-to-Run is `office`, driver packages `driver`, both
+refused. `FileHead` refuses a reparse point or a non-regular file. RustDesk and
+Rem0te are protected first, on the agent (`ProtectedProgram`,
+`protected_program`) and in the portal (`PROTECTED_PROGRAM_RE`,
+`PROTECTED_PROGRAM`), the same pattern. The heartbeat collector reports a
+`kind` by the same rules; it only reads, the portal keeps it only from the
+closed `REMOVAL_KINDS`, and it is a hint — the agent decides again. Both sides
+are tested against one fixture,
+`tools/windows-installer/internal/action/testdata/removal-kinds.json` (Go, and
+`unit-software.mjs` under pwsh). **None of the new forms has run on real
+Windows.** The mutation harness for §15 and §59 is in the 0.42 changelog.
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 

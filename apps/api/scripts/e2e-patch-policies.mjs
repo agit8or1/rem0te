@@ -348,8 +348,10 @@ async function all() {
     check(r.status === 400, 'an expiry beyond 90 days is refused', msg(r));
     r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, reboot: 'always' } });
     check(r.status === 400, 'a policy restart rule outside the closed pair is refused', msg(r));
-    r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, allow: { classifications: ['ebfc1fc5-71a4-4f7b-9aca-3b9a503104a0'] } } });
-    check(r.status === 400, 'drivers are not a class a policy can allow', msg(r));
+    r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, allow: { classifications: ['3689bdc8-b205-4af4-8d4a-a63924c5e9d5'] } } });
+    check(r.status === 400, 'feature upgrades are not a class a policy can allow', msg(r));
+    r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, allow: { classifications: ['b4832bd8-e735-4761-8daf-37f882276dab'] } } });
+    check(r.status === 400, 'nor are tools', msg(r));
     // 0.34, fail closed: a canary whose agent cannot sign its results (its latest scan is unsigned, as from a 0.33 agent).
     await sleep(1100); await heartbeat(outsider, { patchPosture: unsignedScan(outsider) });
     r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, rings: [[outsider.id], [r1a.id, r1b.id]] } });

@@ -10,7 +10,7 @@
 import { z } from 'zod';
 import { comparePrecedence, PRIORITY_MAX, PRIORITY_MIN, type PolicyScope } from '../group-policy/precedence';
 import { HEARTBEAT_STALE_MS } from '../common/connectivity';
-import { PROGRAM_KEY_RE } from '../actions/catalog';
+import { PROGRAM_KEY_RE, REMOVAL_KINDS } from '../actions/catalog';
 
 export const MONITOR_KINDS = ['OFFLINE', 'DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH', 'SERVICE_STOPPED', 'EVENT_MATCH', 'REBOOT_PENDING', 'AGENT_SILENT'] as const;
 export type MonitorKind = (typeof MONITOR_KINDS)[number];
@@ -595,6 +595,8 @@ export function diffInventory(before: InvSnapshot | null, after: InvSnapshot): C
 export interface InventorySoftware {
   name: string; version: string | null; publisher: string | null; installedOn: string | null;
   key?: string; view?: '64' | '32'; quiet?: boolean; msi?: boolean;
+  /** 0.42: the removal kind the collector recognised (REMOVAL_KINDS). */
+  kind?: (typeof REMOVAL_KINDS)[number];
 }
 
 /** The software list from the inventory pass, clamped. Duplicates (same name and publisher) keep the first. */
@@ -617,6 +619,7 @@ export function sanitizeSoftware(v: unknown): InventorySoftware[] | undefined {
       item.key = o.key; item.view = o.view;
       if (typeof o.quiet === 'boolean') item.quiet = o.quiet;
       if (typeof o.msi === 'boolean') item.msi = o.msi;
+      if (typeof o.kind === 'string' && (REMOVAL_KINDS as readonly string[]).includes(o.kind)) item.kind = o.kind as InventorySoftware['kind'];
     }
     out.push(item);
     if (out.length >= LIMITS.software) break;

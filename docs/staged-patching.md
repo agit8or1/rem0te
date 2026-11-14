@@ -20,11 +20,20 @@ the same approval signer, roster, signature and agent checks. This page covers o
 
 | Installed by a plan | Never installed by a plan |
 |---|---|
-| Security Updates, Critical Updates, Update Rollups, Updates | Drivers, Upgrades (feature updates), Feature Packs, Service Packs, Tools, Definition Updates |
-| Only updates Windows Update **itself offers** that computer at install time | Optional / preview updates (`BrowseOnly`) |
-| | Anything that needs a licence accepted, or someone at the keyboard |
+| Security Updates, Critical Updates, Update Rollups, Updates | Upgrades (feature updates), Feature Packs, Service Packs, Tools, anything unclassified |
+| **Drivers** and **Definition Updates** (0.42) | Optional / preview updates (`BrowseOnly`) |
+| Only updates Windows Update **itself offers** that computer at install time | Anything that needs a licence accepted |
+| | Anything that says it needs someone at the keyboard (`CanRequestUserInput`), **except drivers** |
 | | Third-party software, scripts, files, URLs. A plan names updates only by Windows Update ID and revision |
 | | Computers whose updates are managed by **WSUS**, **Windows Update for Business policy**, **MDM (Intune)** or **Configuration Manager** |
+
+**Drivers and definition updates (0.42).** On a real Windows 10 computer, 8 of 11 offered updates were drivers and
+one was a Defender security-intelligence update, and none of them could be picked. They can be now. Windows Update
+marks nearly every driver as one that *can* request user input (all eight there did), and drivers install unattended
+as SYSTEM in practice, so for drivers only that flag no longer refuses the update. Every other classification still
+refuses it, and optional, licence-bound and feature updates stay out whatever their class. A patch policy may name
+**Drivers** or **Definition Updates** too, but they are never ticked by default. An agent older than 0.42 still
+refuses them (`excluded_classification`); the deployment says so and tells you to update the agent.
 
 These rules are enforced twice: by the portal, when you build a deployment, and again by **the computer**, which
 asks Windows Update for each named update and decides from that answer. The KBs and titles in a plan are what the
@@ -391,7 +400,11 @@ There are no new server settings.
 
 ## Known limits
 
-- Windows only, and Microsoft updates only. No third-party patching, drivers or feature upgrades.
+- Windows only, and Microsoft updates only. No third-party patching or feature upgrades. Drivers (0.42) install as
+  Windows Update offers them; there is no rollback of a driver from here.
+- Installing a driver or a definition update (0.42) has been proven against the simulated Windows Update only. On a
+  real computer it is the same `IUpdateInstaller` call as any other update, unattended (`ForceQuiet`), but a driver
+  that does stop to ask has not been seen yet.
 - The in-window restart has not yet run on a real Windows computer. Its warning is Windows' own shutdown dialog; there
   is no other notice, no postponing by the user, and no retry once deferred.
 - No uninstall or rollback.

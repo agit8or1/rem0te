@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Loader2, Package, Plus, RefreshCw, Search } from 'lucide-react';
+import { Loader2, Package, Plus, Search } from 'lucide-react';
 import { businessesApi, softwareApi } from '@/lib/api-client';
 import { usePermissions } from '@/lib/auth';
 import { PageHeader } from '@/components/common/page-header';
@@ -17,6 +17,7 @@ import { useToast } from '@/hooks/use-toast';
 import {
   DeploymentList, EntryForm, SignerBanner, describeDetection, refusalText, selectClass,
   type DeploymentSummary, type Entry,
+  WingetIndexStatus, type WingetIndex,
 } from '@/components/software/software-ui';
 
 /**
@@ -144,7 +145,6 @@ export default function SoftwareCatalogPage() {
 }
 
 interface WingetHit { packageId: string; name: string; latestVersion: string; installable: boolean }
-interface WingetIndex { refreshedAt: string | null; attemptedAt: string | null; packages: number; lastError: string | null; sweep: 'on' | 'off'; refreshing: boolean }
 
 /**
  * 0.41: search the server's copy of the winget community index and add a
@@ -171,11 +171,6 @@ function WingetCatalog({ canAdd, isPlatformAdmin, target, onAdded }: {
     queryFn: () => softwareApi.wingetSearch('').then((r) => r.data.data as { index: WingetIndex }),
     retry: false,
   });
-  const refresh = useMutation({
-    mutationFn: () => softwareApi.wingetRefresh(),
-    onSuccess: () => { status.refetch(); toast({ title: 'Winget index read' }); },
-    onError: (e) => toast({ title: 'Not read', description: refusalText(e, 'The index could not be read.'), variant: 'destructive' }),
-  });
   const add = useMutation({
     mutationFn: (h: WingetHit) => softwareApi.wingetAdd({ ...(target ?? { scope: 'global' }), packageId: h.packageId, version: h.latestVersion }),
     onSuccess: (r) => {
@@ -191,18 +186,11 @@ function WingetCatalog({ canAdd, isPlatformAdmin, target, onAdded }: {
     <Card className="mb-4" data-testid="winget-catalog">
       <CardHeader className="pb-3 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
         <CardTitle className="text-sm">Winget community catalog</CardTitle>
-        {isPlatformAdmin && (
-          <Button size="sm" variant="outline" className="h-7 text-xs" disabled={refresh.isPending || idx?.refreshing} onClick={() => refresh.mutate()}>
-            {refresh.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1" />}Read the index now
-          </Button>
-        )}
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
+        <WingetIndexStatus idx={idx} isPlatformAdmin={isPlatformAdmin} onRead={() => { status.refetch(); if (asked) search.refetch(); }} />
         <p className="text-xs text-muted-foreground">
-          {idx?.refreshedAt
-            ? `${idx.packages.toLocaleString()} packages, read from winget's own source index ${new Date(idx.refreshedAt).toLocaleString()}.`
-            : `The server has not read the winget index yet${idx?.lastError ? ` (last attempt: ${idx.lastError})` : ''}.`}{' '}
-          It is read at most daily{idx?.sweep === 'off' ? ' (the sweep is switched off on this server)' : ''}. Adding a package pins the installer winget-pkgs lists for its latest version; installing it is approved like any catalog entry.
+          The index is winget&apos;s own source index, read at most daily. Adding a package pins the installer winget-pkgs lists for its latest version; installing it is approved like any catalog entry.
         </p>
         <form className="flex gap-2 max-w-xl" onSubmit={(e) => { e.preventDefault(); setAsked(q.trim()); }}>
           <Input className="h-8" placeholder="Name, publisher or package id" aria-label="Search the winget catalog" value={q} maxLength={64} onChange={(e) => setQ(e.target.value)} />
@@ -223,7 +211,7 @@ function WingetCatalog({ canAdd, isPlatformAdmin, target, onAdded }: {
               </li>
             ))}
           </ul>
-        ) : <p className="text-xs text-muted-foreground">Nothing matches “{search.data.query}”.</p>)}
+        ) : <p className="text-xs text-muted-foreground" data-testid="winget-no-results">{search.data.index.packages === 0 ? `No results for “${search.data.query}”: the index is empty (see above), not the catalog.` : `Nothing matches “${search.data.query}”.`}</p>)}
         {canAdd && !target && <p className="text-xs text-muted-foreground">Pick a business above to add packages to its catalog.</p>}
       </CardContent>
     </Card>

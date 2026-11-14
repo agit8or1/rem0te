@@ -317,8 +317,8 @@ async function all() {
     setState(ep, { version: WINGET, ...state });
     return ep;
   };
-  // What the 0.41 inventory reports per program: its key, view, and whether it registers a silent uninstall or is an MSI.
-  const inv = (name, version, key, view, quiet, msi) => ({ name, version, publisher: null, installedOn: null, key, view, quiet, msi });
+  // What the inventory reports per program: its key, view, whether it registers a silent uninstall or is an MSI (0.41), and the removal kind (0.42).
+  const inv = (name, version, key, view, quiet, msi, kind) => ({ name, version, publisher: null, installedOn: null, key, view, quiet, msi, ...(kind ? { kind } : {}) });
   const GUID = '{11111111-2222-3333-4444-555555555555}';
   const PROGRAMS = [
     { view: '64', key: GUID, displayName: 'Contoso Agent', displayVersion: '3.1', windowsInstaller: true, uninstallString: `MsiExec.exe /X${GUID}` },
@@ -327,10 +327,21 @@ async function all() {
     { view: '64', key: 'Replaced', displayName: 'Something Else Now', displayVersion: '9.0', quietUninstallString: '"C:\\Program Files\\Else\\u.exe" /S' },
     { view: '64', key: 'Shelly', displayName: 'Shelly', displayVersion: '1.0', quietUninstallString: 'cmd.exe /c rd /s /q C:\\Shelly' },
     { view: '64', key: 'Sticky', displayName: 'Sticky App', displayVersion: '1.0', quietUninstallString: '"C:\\Program Files\\Sticky\\unins000.exe" /VERYSILENT', noEffect: true },
+    // 0.42: interactive UninstallStrings of the recognised forms, and RustDesk.
+    { view: '32', key: 'ContosoInno_is1', displayName: 'Contoso Inno 5', displayVersion: '5.0', uninstallString: '"C:\\Program Files (x86)\\Contoso Inno\\unins000.exe"' },
+    { view: '64', key: 'ContosoNsis', displayName: 'Contoso NSIS Player', displayVersion: '3.0', uninstallString: '"C:\\Program Files\\Contoso NSIS\\uninstall.exe"', nsis: true },
+    { view: '64', key: 'ContosoFakeNsis', displayName: 'Contoso Not NSIS', displayVersion: '7.0', uninstallString: '"C:\\Program Files\\Contoso Fake\\uninstall.exe"' },
+    { view: '64', key: 'Contoso Browser', displayName: 'Contoso Browser', displayVersion: '142.0', uninstallString: '"C:\\Program Files\\Contoso\\Browser\\Application\\142.0\\Installer\\setup.exe" --uninstall --channel=stable --system-level --verbose-logging' },
+    { view: '64', key: 'RustDesk', displayName: 'RustDesk', displayVersion: '1.4.3', uninstallString: '"C:\\Program Files\\RustDesk\\RustDesk.exe" --uninstall', quietUninstallString: '"C:\\Program Files\\RustDesk\\RustDesk.exe" --uninstall --silent' },
   ];
   const canarySw = [
-    inv('Contoso Agent', '3.1', GUID, '64', false, true), inv('Contoso Tool 2', '2.0', 'ContosoTool', '32', true, false), inv('Click Through', '1.0', 'ClickThrough', '64', false, false),
-    inv('Replaced App', '1.0', 'Replaced', '64', true, false), inv('Shelly', '1.0', 'Shelly', '64', true, false), inv('Sticky App', '1.0', 'Sticky', '64', true, false),
+    inv('Contoso Agent', '3.1', GUID, '64', false, true, 'msi'), inv('Contoso Tool 2', '2.0', 'ContosoTool', '32', true, false, 'quiet'), inv('Click Through', '1.0', 'ClickThrough', '64', false, false, 'none'),
+    inv('Replaced App', '1.0', 'Replaced', '64', true, false, 'quiet'), inv('Shelly', '1.0', 'Shelly', '64', true, false, 'quiet'), inv('Sticky App', '1.0', 'Sticky', '64', true, false, 'quiet'),
+    inv('Contoso Inno 5', '5.0', 'ContosoInno_is1', '32', false, false, 'inno'), inv('Contoso NSIS Player', '3.0', 'ContosoNsis', '64', false, false, 'nsis'),
+    // A collector that called it NSIS when the file has no NSIS header: the computer decides, and refuses.
+    inv('Contoso Not NSIS', '7.0', 'ContosoFakeNsis', '64', false, false, 'nsis'),
+    inv('Contoso Browser', '142.0', 'Contoso Browser', '64', false, false, 'chromium'), inv('RustDesk', '1.4.3', 'RustDesk', '64', true, false, 'quiet'),
+    inv('Microsoft 365 - en-us', '16.0', 'O365HomePremRetail - en-us', '64', false, false, 'office'),
     { name: 'Legacy Thing', version: '1.0', publisher: null, installedOn: null },
   ];
   const sevenPkg = { installer: SEVEN.x64, displayName: '7-Zip 24.09 (x64)', displayVersion: '24.09', uninstallKey: '7-Zip' };
@@ -538,6 +549,51 @@ async function all() {
       'each result is recorded against its job', JSON.stringify(jobs.map((x) => [x.status, x.statusReason])));
     const after = (await req('GET', `/endpoints/${canary.id}/software/catalog`, { s: S.owen })).body?.data;
     check(after?.installed?.find((p) => p.name === 'Sticky App')?.last?.reason === 'not_effective', 'the Software tab shows the last removal against the program');
+
+    // ── 0.42: the silent forms recognised from an interactive UninstallString ──
+    const b42 = Object.fromEntries((after?.installed ?? []).map((p) => [p.name, p.removal]));
+    check(b42['Contoso Inno 5']?.method === 'inno' && b42['Contoso NSIS Player']?.method === 'nsis' && b42['Contoso Browser']?.method === 'chromium'
+      && b42.RustDesk?.possible === false && b42.RustDesk?.code === 'protected' && b42['Microsoft 365 - en-us']?.code === 'office' && b42['Click Through']?.code === 'interactive'
+      && after?.inventory?.needsRefresh === null,
+    '0.42: Inno, NSIS and Chromium are offered as such; RustDesk is protected; Office and interactive-only say why; no refresh banner', JSON.stringify({ b42, inv: after?.inventory }).slice(0, 700));
+    r = await req('POST', `/endpoints/${canary.id}/software/remove-program`, { s: S.owenF, body: { key: 'RustDesk', view: '64', displayName: 'RustDesk' } });
+    check(r.status === 409 && code(r) === 'PROTECTED_PROGRAM', 'removing RustDesk → 409 PROTECTED_PROGRAM, though it registers a silent uninstall', msg(r));
+    r = await req('POST', `/endpoints/${canary.id}/software/remove-program`, { s: S.owenF, body: { key: 'O365HomePremRetail - en-us', view: '64', displayName: 'Microsoft 365 - en-us' } });
+    check(r.status === 409 && code(r) === 'NO_SILENT_UNINSTALL' && /Click-to-Run/.test(msg(r)), 'Office Click-to-Run → 409 with where to remove it instead', msg(r));
+    o = await removeOne({ key: 'ContosoInno_is1', view: '32', displayName: 'Contoso Inno 5' });
+    st = stateNow(canary);
+    check(o.x.body?.data?.method === 'inno' && o.res?.outcome === 'succeeded' && o.res.observed?.method === 'inno' && same(st.removals.at(-1), { kind: 'inno', exe: 'C:\\Program Files (x86)\\Contoso Inno\\unins000.exe', args: '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' }),
+      'Inno Setup: the registered unins000.exe with /VERYSILENT /SUPPRESSMSGBOXES /NORESTART, decided on the computer; the key is gone', JSON.stringify({ r: o.res, last: st.removals.at(-1) }).slice(0, 500));
+    await report(canary);
+    o = await removeOne({ key: 'ContosoNsis', view: '64', displayName: 'Contoso NSIS Player' });
+    st = stateNow(canary);
+    check(o.res?.outcome === 'succeeded' && o.res.observed?.method === 'nsis' && same(st.removals.at(-1), { kind: 'nsis', exe: 'C:\\Program Files\\Contoso NSIS\\uninstall.exe', args: '/S' }),
+      'NSIS: the uninstaller whose file carries the NSIS header, with /S', JSON.stringify({ r: o.res, last: st.removals.at(-1) }).slice(0, 500));
+    await report(canary);
+    const nBefore = stateNow(canary).removals.length;
+    o = await removeOne({ key: 'ContosoFakeNsis', view: '64', displayName: 'Contoso Not NSIS' });
+    check(o.res?.outcome === 'refused' && o.res.reason === 'no_silent_uninstall' && stateNow(canary).removals.length === nBefore,
+      'an inventory that says NSIS for a file without the header: the computer reads the file, refuses, runs nothing', JSON.stringify(o.res).slice(0, 300));
+    await report(canary);
+    o = await removeOne({ key: 'Contoso Browser', view: '64', displayName: 'Contoso Browser' });
+    st = stateNow(canary);
+    check(o.res?.outcome === 'succeeded' && o.res.observed?.method === 'chromium' && st.removals.at(-1)?.args === '--uninstall --channel=stable --system-level --verbose-logging --force-uninstall',
+      'Chromium: setup.exe --uninstall … --system-level as registered, plus --force-uninstall', JSON.stringify({ r: o.res, last: st.removals.at(-1) }).slice(0, 500));
+    await report(canary);
+    check(stateNow(canary).programs.some((p) => p.key === 'RustDesk'), 'RustDesk is still installed');
+  }
+
+  section('0.42: an inventory too old to say how its programs uninstall gets one banner');
+  {
+    const oldKeys = await mkEp('SWC-OLD41', acme, { software: [inv('Click Through', '1.0', 'ClickThrough', '64', false, false), inv('Contoso Tool 2', '2.0', 'ContosoTool', '32', true, false)] });
+    const noKeys = await mkEp('SWC-OLD40', acme, { software: [{ name: 'Legacy Thing', version: '1.0', publisher: null, installedOn: null }, { name: 'Other', version: '2', publisher: null, installedOn: null }] });
+    const a = (await req('GET', `/endpoints/${oldKeys.id}/software/catalog`, { s: S.owen })).body?.data;
+    const b = (await req('GET', `/endpoints/${noKeys.id}/software/catalog`, { s: S.owen })).body?.data;
+    check(a?.inventory?.needsRefresh === 'old_collector' && a.installed.find((p) => p.name === 'Click Through')?.removal?.code === 'old_collector' && a.installed.find((p) => p.name === 'Contoso Tool 2')?.removal?.method === 'quiet',
+      'a 0.41 inventory (no kinds): one old_collector banner; what 0.41 knew is still offered', JSON.stringify(a?.inventory));
+    check(b?.inventory?.needsRefresh === 'no_keys' && b.installed.every((p) => p.removal.code === 'no_key'), 'an inventory from before 0.41 (no keys): one no_keys banner', JSON.stringify(b?.inventory));
+    const rr = await req('POST', `/endpoints/${noKeys.id}/inventory/refresh`, { s: S.owen });
+    check(rr.status >= 200 && rr.status < 300, 'the banner\'s Refresh inventory route answers', msg(rr));
   }
 
   section('Uninstall on Globex (signed): two approvers, then the computer');

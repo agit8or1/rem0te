@@ -154,7 +154,7 @@ export const UPDATE_INSTALL: CatalogAction = {
     'Many updates need a restart before they take effect. With the restart rule "never", the computer is not restarted: until someone restarts it, it keeps running the old code and reports "restart required".',
     `With the restart rule "restart if required, inside the window", a computer that Windows says needs a restart after the install shows the fixed restart warning and restarts ${UPDATE_RESTART_WARNING_MINUTES} minutes later: programs still open are closed without saving. It does not restart while a RustDesk session is open (or when it cannot tell), or if the restart would fall after the plan's window closes; it reports the restart deferred and leaves the computer as it is. ${REBOOT_UNPROVEN}`,
     'Updates download from Microsoft. People using the computer may notice it slow down while they install.',
-    'Each computer installs only the named updates that Windows Update offers it and that are security, critical, rollup or ordinary updates. Drivers, feature upgrades and optional updates are never installed, and no licence is accepted on anyone\'s behalf.',
+    'Each computer installs only the named updates that Windows Update offers it and that are security, critical, rollup, ordinary, driver or definition updates. Feature upgrades, feature and service packs, tools and optional updates are never installed, and no licence is accepted on anyone\'s behalf.',
   ],
   verification: 'Each computer reports what Windows Update said for every named update, whether a restart is pending, and — under the in-window rule — whether it scheduled a restart and for when, or why it deferred it. A later scan, after any restart, shows whether the update took effect.',
   doesNotProve: ['that the update fixed any problem', 'that applications still work afterwards', 'that a scheduled restart happened (a later scan with no restart pending shows that)'],
@@ -421,8 +421,10 @@ export const SOFTWARE_UNINSTALL: CatalogAction = {
 // tools/windows-installer/internal/action/remove.go: the plan names the key,
 // its registry view and the DisplayName expected there — never a command —
 // and the agent reads the key itself, refuses if it names another program,
-// and runs only msiexec /x for an MSI product or the key's own
-// QuietUninstallString (docs/software-deployment.md).
+// and runs only msiexec /x for an MSI product, the key's own
+// QuietUninstallString, or (0.42) one of the closed silent forms it
+// recognises in the key's UninstallString — Inno Setup, NSIS, Chromium
+// (docs/software-deployment.md). RustDesk and Rem0te are never removed.
 
 /** An uninstall subkey name, as Programs and Features lists it (no backslash: one key, never a path). */
 export const PROGRAM_KEY_RE = /^[A-Za-z0-9{}][A-Za-z0-9{}()._+ ,&'!-]{0,127}$/;
@@ -430,6 +432,19 @@ export const PROGRAM_KEY_RE = /^[A-Za-z0-9{}][A-Za-z0-9{}()._+ ,&'!-]{0,127}$/;
 // eslint-disable-next-line no-control-regex -- refusing control characters is the point
 export const PROGRAM_NAME_RE = /^[^\x00-\x1f\x7f"<>\\]{1,200}$/;
 export const programNameOk = (s: string) => PROGRAM_NAME_RE.test(s) && s.trim() === s;
+/**
+ * 0.42: never removed from here — RustDesk is how the computer is reached at
+ * all, and Rem0te is the agent and tray. The same expression as the agent's
+ * ProtectedProgramPattern (remove.go), case-insensitive, matched against the
+ * display name and the key.
+ */
+export const PROTECTED_PROGRAM_RE = /^(?:rustdesk|rem0te|reboot ?remote)(?:[^a-z0-9]|$)/i;
+export const isProtectedProgram = (key: string | null | undefined, name: string | null | undefined) =>
+  PROTECTED_PROGRAM_RE.test((name ?? '').trim()) || PROTECTED_PROGRAM_RE.test(key ?? '');
+/** The removal kinds the inventory collector reports (0.42); the first five are removable. */
+export const REMOVAL_KINDS = ['msi', 'quiet', 'inno', 'nsis', 'chromium', 'office', 'driver', 'none'] as const;
+export type RemovalKind = (typeof REMOVAL_KINDS)[number];
+export const REMOVABLE_KINDS: ReadonlySet<RemovalKind> = new Set(['msi', 'quiet', 'inno', 'nsis', 'chromium']);
 /** The closed parameters windows.software.remove signs. */
 export const RemoveParams = z.object({
   key: z.string().regex(PROGRAM_KEY_RE),
@@ -442,12 +457,12 @@ export const SOFTWARE_REMOVE: CatalogAction = {
   id: 'windows.software.remove',
   version: 1,
   title: 'Remove an installed program',
-  description: 'Removes one program Programs and Features lists, by its uninstall registry key. The computer reads the key itself and runs only Windows Installer (msiexec /x, for an MSI product) or the program\'s own registered silent uninstall command.',
+  description: 'Removes one program Programs and Features lists, by its uninstall registry key. The computer reads the key itself and runs only Windows Installer (msiexec /x, for an MSI product), the program\'s own registered silent uninstall command, or its registered uninstaller in one of the silent forms the agent recognises (Inno Setup, NSIS, Chromium). RustDesk and Rem0te are never removed.',
   params: RemoveParams,
   warnings: [
     'Uninstalling removes the program for everyone on the computer. Its settings and data may be removed with it.',
     'Running copies of the program may be closed without saving.',
-    'For a program that is not a Windows Installer product, what runs is the uninstaller the program registered (its QuietUninstallString). rem0te did not write it and cannot vouch for what it does. A program that registered only an interactive uninstaller is refused rather than left waiting for a click.',
+    'For a program that is not a Windows Installer product, what runs is the uninstaller the program registered: its QuietUninstallString, or its UninstallString with the silent switch that installer type defines (Inno Setup /VERYSILENT, NSIS /S, Chromium --force-uninstall). rem0te did not write it and cannot vouch for what it does. A program whose uninstaller is of no form the agent recognises is refused rather than left waiting for a click.',
     'This plan never restarts the computer.',
   ],
   verification: 'The computer checks that the uninstall key names the program this plan was made for before running anything, and reports whether the key is gone afterwards.',

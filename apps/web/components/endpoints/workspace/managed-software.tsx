@@ -15,7 +15,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { describeDetection, refusalText } from '@/components/software/software-ui';
+import { WingetIndexStatus, describeDetection, refusalText, type WingetIndex } from '@/components/software/software-ui';
+import { usePermissions } from '@/lib/auth';
 import { ago } from './device-model';
 
 /**
@@ -41,16 +42,22 @@ interface Row {
 }
 export interface InstalledProgram {
   name: string; version: string | null; publisher: string | null; key: string | null; view: '64' | '32' | null; entryId: string | null;
-  removal: { possible: boolean; method: 'catalog' | 'msi' | 'quiet' | null; reason: string | null };
+  removal: {
+    possible: boolean; method: 'catalog' | 'msi' | 'quiet' | 'inno' | 'nsis' | 'chromium' | null; reason: string | null;
+    // 0.42: why not, as a code (protected, no_key, old_collector, interactive, office, driver, name, unknown).
+    code?: string | null;
+  };
   last: { jobId: string; status: string; outcome: string | null; reason: string | null; at: string } | null;
 }
 export interface EndpointSoftware {
   inventoryAt: string | null; install: Availability; uninstall: Availability; remove: Availability;
   approval: 'direct' | 'signed' | null; architecture: string; installed: InstalledProgram[]; entries: Row[];
+  /** 0.42: whether the inventory predates the 0.41 agent (no keys) or the 0.42 collector (no removal kinds). */
+  inventory?: { programs: number; withKey: number; withKind: number; needsRefresh: 'no_keys' | 'old_collector' | null };
 }
 interface CatalogAction { id: string; title: string; description: string; warnings: string[]; acknowledge: string; verification: string; doesNotProve: string[]; maxWindowHours: number }
 interface WingetHit { packageId: string; name: string; publisher: string | null; moniker: string | null; latestVersion: string; installable: boolean }
-interface WingetSearchResult { query: string; results: WingetHit[]; index: { refreshedAt: string | null; packages: number; lastError: string | null; sweep: 'on' | 'off' } }
+interface WingetSearchResult { query: string; results: WingetHit[]; index: WingetIndex }
 
 const STATE: Record<Row['compliance'], { label: string; variant: 'success' | 'warning' | 'destructive' | 'outline' }> = {
   compliant: { label: 'installed', variant: 'success' }, outdated: { label: 'outdated', variant: 'warning' },
@@ -185,13 +192,22 @@ export function ManagedSoftware({ endpointId }: { endpointId: string }) {
 function WingetSearch({ canInstall, architecture, onInstall }: { canInstall: boolean; architecture: string; onInstall: (h: WingetHit) => void }) {
   const [q, setQ] = useState('');
   const [asked, setAsked] = useState('');
-  const { data, error, isFetching } = useQuery({
+  const { isPlatformAdmin } = usePermissions();
+  const { data, error, isFetching, refetch } = useQuery({
     queryKey: ['winget-search', asked],
     queryFn: () => softwareApi.wingetSearch(asked).then((r) => r.data.data as WingetSearchResult),
     enabled: asked.length >= 2,
     retry: false,
     staleTime: 60_000,
   });
+  // 0.42: the index state before anything is searched, so an empty catalog says so up front.
+  const status = useQuery({
+    queryKey: ['winget-search', ''],
+    queryFn: () => softwareApi.wingetSearch('').then((r) => r.data.data as WingetSearchResult),
+    retry: false,
+    staleTime: 60_000,
+  });
+  const idx = data?.index ?? status.data?.index;
   return (
     <div className="space-y-2 rounded-md border p-2" data-testid="winget-search">
       <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); setAsked(q.trim()); }}>
@@ -200,12 +216,10 @@ function WingetSearch({ canInstall, architecture, onInstall }: { canInstall: boo
           {isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}<span className="ml-1">Search</span>
         </Button>
       </form>
+      <WingetIndexStatus idx={idx} isPlatformAdmin={isPlatformAdmin} compact onRead={() => { status.refetch(); if (asked.length >= 2) refetch(); }} />
       {error && <p className="text-xs text-muted-foreground">{refusalText(error, 'The search failed.')}</p>}
       {data && (
         <>
-          {data.index.packages === 0 && (
-            <p className="text-xs text-muted-foreground">The server has not read the winget index yet{data.index.lastError ? ` (last attempt: ${data.index.lastError})` : ''}. It reads it daily{data.index.sweep === 'off' ? ', but the sweep is switched off on this server' : ''}; a Platform Admin can read it now on Automation → Software catalog.</p>
-          )}
           {data.results.length > 0 ? (
             <ul className="divide-y text-xs" data-winget-results>
               {data.results.map((h) => (
@@ -219,8 +233,8 @@ function WingetSearch({ canInstall, architecture, onInstall }: { canInstall: boo
                 </li>
               ))}
             </ul>
-          ) : data.index.packages > 0 && <p className="text-xs text-muted-foreground">Nothing in the winget catalog matches “{data.query}”.</p>}
-          {data.index.refreshedAt && <p className="text-[11px] text-muted-foreground">Index of {data.index.packages.toLocaleString()} packages, read {ago(data.index.refreshedAt)}. Installs for {architecture}, machine-wide.</p>}
+          ) : <p className="text-xs text-muted-foreground" data-testid="winget-no-results">{data.index.packages === 0 ? `No results for “${data.query}”: the index is empty (above), so nothing can be found yet.` : `Nothing in the winget catalog matches “${data.query}”.`}</p>}
+          {data.index.refreshedAt && <p className="text-[11px] text-muted-foreground">Installs for {architecture}, machine-wide.</p>}
         </>
       )}
     </div>
@@ -310,6 +324,15 @@ export function RequestDialog({ endpointId, direct, actionId, warning, title, fa
   );
 }
 
+/** What the computer runs for each removal kind (0.42), in the words the dialog uses. */
+const REMOVE_NOTE: Record<string, string> = {
+  msi: 'A Windows Installer product: the computer runs msiexec /x {product code} /qn /norestart.',
+  quiet: 'The computer runs the silent uninstall command the program registered (its QuietUninstallString).',
+  inno: 'An Inno Setup program: the computer runs its registered uninstaller with /VERYSILENT /SUPPRESSMSGBOXES /NORESTART.',
+  nsis: 'An NSIS program: the computer runs its registered uninstaller with /S. NSIS uninstallers hand over to a copy of themselves and return early, so the computer waits for the key to go.',
+  chromium: 'A Chromium browser (Chrome, Edge…): the computer runs its registered setup.exe --uninstall with --force-uninstall, system-wide as registered. Microsoft may refuse to uninstall Edge; the result says so.',
+};
+
 /** Uninstall a program from the installed-software list: its catalog entry's uninstall, or windows.software.remove. */
 export function RemoveProgramDialog({ endpointId, program, data, onClose }: { endpointId: string; program: InstalledProgram; data: EndpointSoftware; onClose: () => void }) {
   const direct = data.approval === 'direct';
@@ -328,9 +351,7 @@ export function RemoveProgramDialog({ endpointId, program, data, onClose }: { en
     <RequestDialog
       endpointId={endpointId} direct={direct} actionId="windows.software.remove" warning={data.remove.warning}
       title={`Uninstall ${program.name}`} fallback={`Removes ${program.name} by its uninstall key.`} verb="uninstall"
-      note={program.removal.method === 'msi'
-        ? `A Windows Installer product: the computer runs msiexec /x ${program.key} /qn /norestart after checking the key still names “${program.name}”.`
-        : `The computer runs the silent uninstall command this program registered under “${program.key}”, after checking the key still names “${program.name}”.`}
+      note={`${REMOVE_NOTE[program.removal.method ?? 'quiet'] ?? REMOVE_NOTE.quiet} The computer first checks the key “${program.key}” still names “${program.name}”, and decides the command itself from what the key says.`}
       send={(reason, windowHours) => softwareApi.removeProgram(endpointId, { key: program.key!, view: program.view!, displayName: program.name, ...(reason ? { reason } : {}), windowHours })}
       optionalReason
       onClose={onClose}
