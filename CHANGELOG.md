@@ -5,6 +5,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.41.1] — 2026-11-14 · *Pantry*
+
+**The winget index is read. 0.41.0 refused the real one because it is ZIP64.**
+
+#### Fixed
+- **Software search was empty in production, and the catalog page said `winget index not read: ZIP64 is not read`.**
+  0.41.0's zip reader refused any archive with ZIP64 end records. MSIX packagers write them whatever the archive's size,
+  so the real `source2.msix` (about 4 MB, `Public/index.db` 9 MB, 20 entries) was refused on its first read, a minute
+  after the deploy. The tests built their MSIX fixture by hand without ZIP64, which is why nothing failed before
+  production. `readZipEntry` now reads the ZIP64 end-of-central-directory locator and record, and each entry's ZIP64 extra
+  field (id 1, holding only the values set to `0xffffffff`, in order). Every 64-bit value is bounds-checked against the
+  buffer, and must be a safe integer, before it is used. The 32 MB download cap, the 128 MB output cap and the CRC-32
+  check are unchanged.
+- Checked against the real file downloaded on the host. The index extracts with its CRC matching, and the existing row
+  query returns 16,391 packages under the 50,001 cap (e.g. `Notepad++.Notepad++` 8.9.9.1, publisher `notepadteam`).
+
+#### Verification
+- `unit-software.mjs`: 220 checks (6 new). Covered: an MSIX-shaped ZIP64 archive is read; a missing locator, a central
+  directory offset past the end, a local header offset past the end and a short extra field are each refused; and the
+  output cap still holds.
+
+No migration, no agent change and no new route.
+
 ## [0.41.0] — 2026-11-13 · *Pantry*
 
 **Search the winget catalog, install in one click, and uninstall anything a computer lists.**
