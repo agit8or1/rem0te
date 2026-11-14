@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.48.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.48.1-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -65,6 +65,33 @@ it, its default and its limits: **Settings → Security → Security Features**,
 [docs/security-model.md](docs/security-model.md).
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
+
+## What's new in 0.40 to 0.48
+
+Every change on a computer below (services, processes, installing and removing software) needs the full (signed)
+Windows agent and an approval signer, and none of those changes has yet run on a real Windows computer: they have
+been tested against a simulated one. Ask AI and Create ticket have been tested only against stand-ins, never a
+real provider or PSA. [What each agent can do](docs/capabilities.md)
+says what is proven and what is not.
+
+- **Ask AI and Create ticket (0.48).** Every event-log entry and alert has **Ask AI**, which explains it in plain
+  words after redacting names, addresses, accounts and serials, and **Create ticket**, which sends it to your PSA
+  by email-to-ticket, a signed webhook or ClientSt0r. You bring your own Anthropic, OpenAI or compatible key, kept
+  encrypted and never shown again. [AI and tickets](docs/ai-and-tickets.md)
+- **Services and processes (0.45).** Start, stop or restart a service, change its startup type, or end a process,
+  from the Services and Processes tabs. Each is a signed action; protected Windows, security, Rem0te and RustDesk
+  services and processes are refused on both sides. The Actions tab shows the Print Spooler's state (0.47.1).
+  [Approved actions](docs/approved-actions.md)
+- **Software from winget (0.41, 0.43).** Search or browse winget's catalog and add packages, up to 25 at once,
+  each pinned to a version and installer hash. Remove an installed program from the Software tab.
+  [Software deployment](docs/software-deployment.md)
+- **Chat with files and an inbox (0.44).** Emoji, pictures and files in chat, and unread replies in the header
+  from anywhere in the console. [Chat](docs/chat.md)
+- **Automatic agent updates per computer and per business (0.46)**, and **fewer "confirm it is you" prompts**
+  for everyday changes (0.47, a Platform Admin setting). [Updates](docs/updates.md)
+- **Direct mode for a single operator (0.40)**: requests are signed at once, with no second approver.
+- **The Devices list fits the window (0.47.1, 0.48.1)**: from 1280 to 2560 pixels with the sidebar open. Last seen,
+  Agent, OS, Site and Logged-in user each appear at their own width (1440, 1536, 1700, 1860 and 2000 pixels).
 
 ## What's new in 0.30
 
@@ -242,9 +269,9 @@ dot.
 </tr>
 </table>
 
-**[→ See all 59 screenshots](docs/screenshots.md)** — the dashboard, search, the device list and
-every device tab, reports, the script library, patching, administration and configuration, in light
-and dark and at phone width. Captured from v0.36.
+**[→ See all 69 screenshots](docs/screenshots.md)** — the dashboard, search, the device list and
+every device tab, Ask AI and Create ticket, chat, reports, the script library, the winget catalog, patching,
+administration and configuration, in light and dark and at phone width. Captured from v0.36 to v0.48.
 
 ---
 
@@ -390,10 +417,11 @@ client configuration targets the RustDesk **1.4.x** client series.
 
 - **Part of an RMM, not all of one.** Rem0te monitors computers, keeps a software inventory and change history,
   reports Windows Update status, deploys Windows updates in approved stages, and hands alerts and ticket analysis
-  to ClientSt0r. It has no scripting or remote shell, no third-party patching, no software deployment and no
-  backup. What works depends on the agent: the standard agent reports patches **read-only**, deploying needs the
-  signed agent and the approval signer, and Linux and macOS get remote access only. None of the signed-agent
-  patching has run on real Windows yet. [What each agent can do](docs/capabilities.md) has the full table.
+  to ClientSt0r. It runs reviewed PowerShell scripts, deploys winget software and controls services only as
+  signed, approved actions; it has no remote shell, no third-party patching and no backup. What works depends on
+  the agent: the standard agent reports patches **read-only**, every change needs the signed agent and the approval
+  signer, and Linux and macOS get remote access only. None of the signed-agent actions has run on real Windows
+  yet. [What each agent can do](docs/capabilities.md) has the full table.
 - **ClientSt0r cannot pair yet.** Rem0te implements the ticket-rmm-v1 contract, and ClientSt0r 3.17.659 speaks
   a different protocol: four measured gaps, listed in
   [CLIENTST0R.md](docs/contracts/ticket-rmm-v1/CLIENTST0R.md).
@@ -439,6 +467,9 @@ in-app updater is **off by default** and requires a GPG-signed release tag.
 | [Clients](docs/clients.md) | Every RustDesk client Rem0te hands out. |
 | [What each agent can do](docs/capabilities.md) | Capabilities by agent type, configuration, and what is tested on real Windows. |
 | [Inventory & event logs](docs/inventory.md) | What a computer reports about itself, and reading its Windows event log. |
+| [AI and tickets](docs/ai-and-tickets.md) | Ask AI and Create ticket on event-log entries and alerts. |
+| [Approved actions](docs/approved-actions.md) | Signed changes on a computer: services, processes, restarts, logs. |
+| [Software deployment](docs/software-deployment.md) | The winget catalog, installing, and removing programs. |
 | [Tactical RMM](docs/tactical-rmm.md) | Connecting and querying from inside Tactical RMM. |
 | [Setup](docs/setup.md) | Installing and operating a server. |
 | [Architecture](docs/architecture.md) | What runs where, and the RustDesk config chain. |

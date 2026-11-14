@@ -139,20 +139,25 @@ snapshot is refreshed and roughly when the next automatic one is due.
 | **Services** | Display name, name, state, start mode (including delayed start) and the account it runs as; a filter, and *Automatic, not running* | 1,000 services; 128 KB |
 | **Network** | One card per connection: status, speed, IPv4/IPv6, gateway, DNS servers and suffix, MAC, DHCP server and lease | 32 adapters, 16 addresses each |
 
-![The Processes tab: the read-only notice, the snapshot's age, Refresh, the filter and the sortable columns](screenshots/guide/device-processes.png)
+![The Processes tab: the snapshot notice, its age, Refresh, the filter, the sortable columns and End process](screenshots/guide/device-processes.png)
 
-1. **Read-only snapshot** — what the tab is, and that nothing on it acts on the computer.
+1. **Read-only snapshot** — the list itself is a picture of a moment; reading it changes nothing on the computer.
 2. **When it was taken** — how old it is (flagged after a day) and who asked, or *automatically*. The amber line
    under it is the docs server's own: it runs with `SNAPSHOT_SWEEP=off`, so it never asks for one itself, and the tab says so.
 3. **Refresh** — asks for a new one on the computer's next check-in.
-4. **Filter** — by name, PID or user.
+4. **Filter** — by name, PID or user. *Keep refreshing* beside it asks for a new list at most once a minute while
+   the tab is open.
 5. **The columns** — click one to sort.
+6. **End process** (0.45) — a signed approved action on this one process. Core Windows, security, rem0te and RustDesk
+   processes show *Protected* instead; see [Services and Task Manager](approved-actions.md#services-and-task-manager-045).
 
-![The Services tab filtered to "sp": the Print Spooler stopped](screenshots/guide/device-services.png)
+![The Services tab filtered to "sp": the Print Spooler stopped, with Start and Startup type…](screenshots/guide/device-services.png)
 
 1. **Filter** — by display name or name; *Automatic, not running* beside it.
 2. **A service** — state, start mode and account. This Print Spooler is the one the open Windows-service alert is about.
 3. **Refresh** — as on Processes.
+4. **The row's buttons** (0.45) — only the operations allowed for this service: here *Start* and *Startup type…*,
+   because it is stopped. Each is a signed approved action; protected services show *Protected* and the reason.
 
 ![The Network tab: one card per adapter](screenshots/guide/device-network.png)
 
@@ -160,9 +165,12 @@ snapshot is refreshed and roughly when the next automatic one is due.
 2. **A disconnected adapter** — listed with its status rather than hidden.
 3. **Refresh** — as on Processes.
 
-**There is nothing to click that acts on the computer** — no end task, stop, start or restart. Restarting a service
-is a signed maintenance action on the Actions tab (signed agent, allowlisted services, approvals); ending a process
-is not offered at all. When a result had to be cut to fit, the tab says so.
+**Reading a snapshot never acts on the computer.** From 0.45 the Services tab's row buttons (*Start*, *Stop*,
+*Restart*, *Startup type…*) and the Processes tab's *End process* are signed approved actions, each on one computer,
+needing the approval signer and a 0.45+ signed agent: see
+[Services and Task Manager (0.45)](approved-actions.md#services-and-task-manager-045). They have been tested only
+against a simulated Windows. Without the signer or that agent, the rows say why and offer nothing. When a result had
+to be cut to fit, the tab says so.
 
 ## Automatic snapshots
 

@@ -28,8 +28,10 @@ export const MASKS = [
   // The demo API reads the HOST's real TLS certificates and systemd units, so
   // pages like Security name the live deployment's domain. Replace any FQDN
   // that is not deliberately public. The allowlist keeps intentional branding
-  // (mspreboot.com) and upstream references (github.com, rustdesk.com) intact.
-  { match: /\b(?!(?:[a-z0-9-]+\.)*(?:mspreboot|github|rustdesk|example)\.(?:com|net|org)\b)(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|net|org|io|dev|local|uk|co)\b/gi,
+  // (mspreboot.com) and upstream references (github.com, rustdesk.com) intact,
+  // and the two AI providers' fixed API hosts that Settings → AI names (0.48.1):
+  // masking those printed "remote.example.com, with your Anthropic API key".
+  { match: /\b(?!(?:[a-z0-9-]+\.)*(?:mspreboot|github|rustdesk|example)\.(?:com|net|org)\b|api\.(?:anthropic|openai)\.com\b|(?<=\bapi\.)(?:anthropic|openai)\.com\b)(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|net|org|io|dev|local|uk|co)\b/gi,
     to: 'remote.example.com' },
 ];
 

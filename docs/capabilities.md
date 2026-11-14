@@ -86,6 +86,9 @@ values.
 | Monitoring and notifications | Nothing to start: global monitors are seeded. Webhooks: a notification policy ([monitoring.md](monitoring.md)) |
 | The signed agent | The signed update channel ([update-signing.md](update-signing.md)), and endpoints moved to it — locally, by GPO/Intune, or from the computer's Agent card (0.34) |
 | Approved actions, update deployment | The approval signer, installed separately, with roster approvers who have passkeys ([approved-actions.md](approved-actions.md), [staged-patching.md](staged-patching.md)) |
+| Ask AI on event-log entries and alerts (0.48) | A Platform Admin's provider and key in **Settings → AI** (Anthropic, OpenAI or an OpenAI-compatible service). Off until saved and switched on ([ai-and-tickets.md](ai-and-tickets.md)) |
+| Create ticket (0.48) | A connector in **Settings → PSA / ticketing**: email-to-ticket (needs the email relay and a confirmed PSA address), a webhook, or ClientSt0r once it advertises tickets. People need `tickets:create` |
+| Service control and End process (0.45), removing programs (0.41) | The approval signer, and a signed agent from that release on the computer |
 | ClientSt0r ticket analysis and alert tickets | A peers file, the integration worker, organization and technician mappings ([integration-clientst0r.md](integration-clientst0r.md)). **ClientSt0r cannot pair yet**: see the contract's [CLIENTST0R.md](contracts/ticket-rmm-v1/CLIENTST0R.md) |
 
 ## What has been tested, and how
@@ -107,6 +110,10 @@ values.
 | Approved actions (Print Spooler) | **No** | Yes (`e2e-approved-action.mjs`) | Yes |
 | Agent upgrade from the console (0.34): the request, the heartbeat handing exactly that computer its nonce, the served script and its digest pin | **No** — `migrate` itself has never run on Windows | The heartbeat's agent-status block under pwsh against fixture files (`unit-agent-migration.mjs`) | Yes: real API, real signed repository from `rem0te-release`, a stand-in agent binary (`e2e-agent-upgrade.mjs`) |
 | Maintenance actions (service restart, restart schedule/cancel, log collection) | **No** | Yes (`e2e-maintenance-actions.mjs`; service manager, `shutdown.exe`, `wevtutil` and the session count simulated) | Yes |
+| Service control and End process (0.45) | **No** | Yes (`e2e-service-process.mjs`; the service manager and process table simulated by `rem0te-action-sim -scm`) | Yes |
+| Removing installed programs (0.41–0.42: MSI, quiet, Inno, NSIS, Chromium) | **No** | Yes (`e2e-software-catalog.mjs`, stub registry) | Yes |
+| Chat files, pictures and emoji (0.44) | **No** — the tray's WebView2 window has not shown a picture or saved a download | `/assist` driven as a page against the real API (`e2e-chat-attachments.mjs`) | Yes |
+| Ask AI and Create ticket (0.48) | Not Windows-dependent. **No real AI provider or PSA has been called** | Loopback stand-ins in the Anthropic and OpenAI shapes, a webhook receiver and an SMTP sink (`e2e-ai-psa.mjs`) | Yes (`unit-ai-psa.mjs`) |
 | ClientSt0r workflow | — | — | Against a contract-conformant reference peer (`e2e-ticket-workflow.mjs`). **Against the real ClientSt0r: does not interoperate yet** (`interop-clientst0r.mjs`, four measured gaps) |
 
 ### Still needs a lab
