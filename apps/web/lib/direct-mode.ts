@@ -24,3 +24,15 @@ export function oldAgentRefusal(direct: boolean | undefined, reason: string | nu
   if (!direct || reason !== 'bad_plan') return null;
   return 'This computer refused a direct-mode plan: its agent is older than 0.40 and accepts only plans approved on the approval page. Update the agent on this computer, then request it again.';
 }
+
+/**
+ * An agent from before 0.42 installs only security, critical, rollup and
+ * ordinary updates, and answers a driver or definition update with
+ * excluded_classification. A 0.42 portal plans nothing else that reason could
+ * be about, so it means the agent, not the update.
+ */
+export const OLD_AGENT_UPDATE_REFUSAL =
+  'This computer’s agent is older than 0.42 and does not install drivers or definition updates. Update the agent on this computer (the Agent card), then install it again.';
+export function oldAgentUpdateRefusal(reason: string | null | undefined): string | null {
+  return reason === 'excluded_classification' ? OLD_AGENT_UPDATE_REFUSAL : null;
+}

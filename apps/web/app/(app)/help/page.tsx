@@ -1073,8 +1073,10 @@ const SECTIONS: Section[] = [
           reports every update <em>effective</em> (installed, no longer offered, no restart pending). Unless the plan&apos;s
           restart rule says otherwise (below), Rem0te never restarts a computer, so &ldquo;restart required&rdquo; waits
           for someone to restart it. Only security,
-          critical, rollup and ordinary Microsoft updates are installed; drivers, feature upgrades, optional updates and
-          computers managed by WSUS, Intune or Configuration Manager are refused. Each computer&apos;s{' '}
+          critical, rollup, ordinary Microsoft updates and, from 0.42, drivers and definition updates are installed;
+          feature upgrades, optional updates, anything needing a licence and computers managed by WSUS, Intune or
+          Configuration Manager are refused. Patch policies never pick drivers unless you tick them, and an agent older
+          than 0.42 refuses drivers and definition updates until it is updated. Each computer&apos;s{' '}
           <em>Patches</em> tab shows what Windows Update offers it. Every agent reports this; installing through a
           deployment needs the signed agent. More in{' '}
           <Link href="/docs/staged-patching" className="underline text-foreground">Staged patching</Link>.
@@ -1311,7 +1313,11 @@ const SECTIONS: Section[] = [
           would choose for the computer&apos;s architecture, pins its hash, derives the detection rule from what the
           installer registers, adds the package to the business&apos;s catalog if it is not there (Business Owner or
           Platform Admin, fresh sign-in, audited) and requests the install. Anything it cannot decide is refused with the
-          reason rather than guessed. A Platform Admin can read the index now from the catalog page.
+          reason rather than guessed. From 0.42 both search boxes show when the index was last read, how many packages it
+          holds, its last error and when it is next read; an index never read says it is empty rather than finding
+          nothing, and a Platform Admin can read it now from either place. Results put an exact name first, then a name
+          starting with the word you typed (<em>Notepad++</em> for &ldquo;notepad&rdquo;), then the word anywhere in the
+          name, shorter names first.
         </p>
         <p data-help="remove-program">
           <strong className="text-foreground">Uninstall anything installed (0.41).</strong> Each program in a
@@ -1321,8 +1327,12 @@ const SECTIONS: Section[] = [
           Windows Installer (<code className="text-foreground">msiexec /x</code>) for an MSI product or the silent
           uninstall command the program registered — never an interactive one, a shell or a script host. It succeeds only
           if the key is gone afterwards. It is high risk, one computer at a time, approved like any software plan (or
-          signed at once in direct mode). Programs reported by agents older than 0.41 show why they cannot be removed
-          until the next full inventory.
+          signed at once in direct mode). From 0.42 the computer also recognises the silent form of the common installer
+          types when only an interactive uninstaller is registered: Windows Installer for the key&apos;s own product code,
+          Inno Setup, NSIS (checked by the uninstaller&apos;s own header) and Chromium-based browsers. Microsoft 365
+          Click-to-Run and driver packages stay refused, with the reason, and RustDesk and Rem0te are never removed from
+          here. When a computer&apos;s inventory predates this, one banner offers <em>Refresh inventory</em> instead of
+          the same reason on every row.
         </p>
         <p>
           <strong className="text-foreground">None of this has run on real Windows yet.</strong> It has been tested against

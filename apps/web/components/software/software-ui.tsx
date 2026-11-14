@@ -55,6 +55,52 @@ export const refusalText = (e: unknown, fallback: string) => { const r = refusal
 
 export const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
+/** The server's copy of the winget index (WingetIndexState), as GET software/winget/packages reports it. */
+export interface WingetIndex {
+  refreshedAt: string | null; attemptedAt: string | null; packages: number; lastError: string | null;
+  sweep: 'on' | 'off'; refreshing: boolean; nextReadAt?: string | null;
+}
+
+/**
+ * Where the winget index stands (0.42), wherever it is searched: when it was
+ * last read, how many packages, the last error, and when it is next read —
+ * with "Read the index now" for a Platform Admin. An empty index is said to
+ * be empty, never shown as a search that found nothing.
+ */
+export function WingetIndexStatus({ idx, isPlatformAdmin, onRead, compact }: { idx: WingetIndex | undefined; isPlatformAdmin: boolean; onRead?: () => void; compact?: boolean }) {
+  const { toast } = useToast();
+  const read = useMutation({
+    mutationFn: () => softwareApi.wingetRefresh(),
+    onSuccess: () => { onRead?.(); toast({ title: 'Winget index read' }); },
+    onError: (e) => { onRead?.(); toast({ title: 'Not read', description: refusalText(e, 'The index could not be read.'), variant: 'destructive' }); },
+  });
+  if (!idx) return null;
+  const empty = idx.packages === 0;
+  const when = (s: string) => formatDate(s);
+  const next = idx.sweep === 'off'
+    ? 'The automatic read is switched off on this server (WINGET_INDEX_SWEEP=off).'
+    : idx.nextReadAt ? `It is read automatically ${new Date(idx.nextReadAt).getTime() <= Date.now() + 60_000 ? 'within the next 15 minutes' : `at about ${when(idx.nextReadAt)}`}.` : '';
+  return (
+    <div className={`text-xs ${empty ? 'rounded-md border border-yellow-300 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-950/40 p-2' : 'text-muted-foreground'} space-y-1`} data-testid="winget-index-status" data-index-empty={empty ? 'true' : 'false'}>
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        {empty && <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-yellow-600" />}
+        <span>
+          {empty
+            ? <><strong>The winget catalog is empty on this server</strong> — its index has not been read{idx.attemptedAt ? ` (last tried ${when(idx.attemptedAt)})` : ' yet'}, so a search finds nothing.</>
+            : <>Winget index: {idx.packages.toLocaleString()} packages, read {idx.refreshedAt ? when(idx.refreshedAt) : 'at an unknown time'}.</>}
+        </span>
+        {isPlatformAdmin && (empty || !compact) && (
+          <Button size="sm" variant="outline" className="h-6 text-[11px]" data-testid="winget-read-now" disabled={read.isPending || idx.refreshing} onClick={() => read.mutate()}>
+            {read.isPending || idx.refreshing ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}Read the index now
+          </Button>
+        )}
+      </p>
+      {idx.lastError && <p data-testid="winget-index-error">Last error: {idx.lastError}{empty ? '' : ' (the previous copy is still searched)'}</p>}
+      {(empty || !compact) && <p>{next}{!isPlatformAdmin && empty ? ' A Platform Admin can read it now from Automation → Software catalog.' : ''}</p>}
+    </div>
+  );
+}
+
 export function describeDetection(d: SoftwareDetection | null | undefined): string {
   if (!d) return 'No detection rule';
   const cmp = `${d.compare === 'gte' ? 'at least' : 'exactly'} ${d.version}`;

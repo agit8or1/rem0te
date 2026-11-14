@@ -15,6 +15,8 @@ const (
 	idOpt = "99999999-8888-7777-6666-555555555555"
 	idOld = "12121212-3434-5656-7878-909090909090"
 	idNew = "01010101-0202-0303-0404-050505050505"
+	idUpg = "abababab-cdcd-efef-0101-232323232323"
+	idDef = "dededede-0000-1111-2222-333333333333"
 )
 
 func cu() Update {
@@ -22,14 +24,21 @@ func cu() Update {
 		Severity: "Critical", RebootBehavior: 1, EulaAccepted: true, SizeBytes: 900 << 20}
 }
 func drv() Update {
-	return Update{UpdateID: idDrv, Revision: 1, Title: "Intel - Display - 31.0", Classification: ClassDrivers, EulaAccepted: true}
+	// As Windows Update reports a real driver: it can request user input.
+	return Update{UpdateID: idDrv, Revision: 1, Title: "Intel - Display - 31.0", Classification: ClassDrivers, UserInput: true, EulaAccepted: true}
+}
+func upg() Update {
+	return Update{UpdateID: idUpg, Revision: 1, Title: "Feature update to Windows 11, version 25H2", Classification: ClassUpgrades, EulaAccepted: true}
+}
+func defs() Update {
+	return Update{UpdateID: idDef, Revision: 4, KB: "KB2267602", Title: "Security Intelligence Update for Microsoft Defender Antivirus", Classification: ClassDefinitions, EulaAccepted: true}
 }
 
 func fake() *FakeWUA {
 	o := drv()
 	opt := cu()
 	opt.UpdateID, opt.Revision, opt.BrowseOnly, opt.Classification, opt.KB = idOpt, 1, true, ClassUpdates, "KB5044999"
-	return &FakeWUA{Offered: []Update{cu(), o, opt}, Superseded: []Identity{{idOld, 3}}, Installed: []Identity{{idNew, 7}}}
+	return &FakeWUA{Offered: []Update{cu(), o, opt, upg(), defs()}, Superseded: []Identity{{idOld, 3}}, Installed: []Identity{{idNew, 7}}}
 }
 
 func states(r Report) map[string]string {
@@ -42,14 +51,14 @@ func states(r Report) map[string]string {
 
 func TestInstallOnlyEligibleApprovedUpdates(t *testing.T) {
 	f := fake()
-	ids := []Identity{{idCU, 200}, {idDrv, 1}, {idOpt, 1}, {idOld, 3}, {idNew, 7}, {"deadbeef-0000-0000-0000-000000000000", 1}}
+	ids := []Identity{{idCU, 200}, {idDrv, 1}, {idOpt, 1}, {idOld, 3}, {idNew, 7}, {idUpg, 1}, {idDef, 4}, {"deadbeef-0000-0000-0000-000000000000", 1}}
 	r := Install(f, &FakeRegistry{}, ids)
 	if r.Refusal != "" {
 		t.Fatal(r.Refusal)
 	}
 	s := states(r)
 	want := map[string]string{
-		idCU: "installed:", idDrv: "excluded:excluded_classification", idOpt: "excluded:optional_update",
+		idCU: "installed:", idDrv: "installed:", idDef: "installed:", idUpg: "excluded:excluded_classification", idOpt: "excluded:optional_update",
 		idOld: "superseded:a newer update replaces it", idNew: "already_installed:",
 		"deadbeef-0000-0000-0000-000000000000": "not_offered:Windows Update does not offer this update to this computer",
 	}
@@ -59,7 +68,7 @@ func TestInstallOnlyEligibleApprovedUpdates(t *testing.T) {
 		}
 	}
 	// Only the eligible one went to the installer.
-	if strings.Join(f.Calls, ",") != "lookup,install" || len(f.Installed) != 2 {
+	if strings.Join(f.Calls, ",") != "lookup,install" || len(f.Installed) != 4 {
 		t.Fatalf("calls %v installed %v", f.Calls, f.Installed)
 	}
 	if Overall(r) != "succeeded" {
@@ -75,9 +84,18 @@ func TestEligibility(t *testing.T) {
 		{func(u *Update) {}, ""},
 		{func(u *Update) { u.Classification = ClassUpgrades }, "excluded_classification"},
 		{func(u *Update) { u.Classification = ClassFeaturePacks }, "excluded_classification"},
-		{func(u *Update) { u.Classification = ClassDefinitions }, "excluded_classification"},
+		{func(u *Update) { u.Classification = ClassServicePacks }, "excluded_classification"},
+		{func(u *Update) { u.Classification = ClassTools }, "excluded_classification"},
+		{func(u *Update) { u.Classification = ClassDefinitions }, ""},
+		{func(u *Update) { u.Classification = ClassDrivers }, ""},
 		{func(u *Update) { u.Classification = "" }, "excluded_classification"},
 		{func(u *Update) { u.UserInput = true }, "needs_user_input"},
+		// 0.42: a driver that can request input is still installable; a
+		// definition update that can is not — only drivers are tolerated.
+		{func(u *Update) { u.Classification, u.UserInput = ClassDrivers, true }, ""},
+		{func(u *Update) { u.Classification, u.UserInput = ClassDefinitions, true }, "needs_user_input"},
+		{func(u *Update) { u.Classification, u.BrowseOnly = ClassDrivers, true }, "optional_update"},
+		{func(u *Update) { u.Classification, u.EulaAccepted = ClassDrivers, false }, "eula_required"},
 		{func(u *Update) { u.EulaAccepted = false }, "eula_required"},
 		{func(u *Update) { u.BrowseOnly = true }, "optional_update"},
 	} {
@@ -225,12 +243,18 @@ func TestScriptParsesAndStaysInBounds(t *testing.T) {
 func TestInstallFilteredOnlyNarrows(t *testing.T) {
 	ord := cu()
 	ord.UpdateID, ord.Revision, ord.Classification, ord.KB, ord.Severity = idOld, 3, ClassUpdates, "KB5044100", ""
-	f := &FakeWUA{Offered: []Update{cu(), drv(), ord}}
-	ids := []Identity{{idCU, 200}, {idDrv, 1}, {idOld, 3}}
-	// A filter naming drivers cannot get a driver past Eligible.
-	r := InstallFiltered(f, &FakeRegistry{}, ids, &Filter{Classifications: []string{ClassSecurity, ClassUpdates, ClassDrivers}})
-	if s := states(r); s[idDrv] != "excluded:excluded_classification" || s[idCU] != "installed:" || s[idOld] != "installed:" {
+	f := &FakeWUA{Offered: []Update{cu(), drv(), ord, upg()}}
+	ids := []Identity{{idCU, 200}, {idDrv, 1}, {idOld, 3}, {idUpg, 1}}
+	// A filter naming upgrades cannot get an upgrade past Eligible.
+	r := InstallFiltered(f, &FakeRegistry{}, ids, &Filter{Classifications: []string{ClassSecurity, ClassUpdates, ClassUpgrades}})
+	if s := states(r); s[idUpg] != "excluded:excluded_classification" || s[idDrv] != "excluded:classification_not_in_policy" || s[idCU] != "installed:" || s[idOld] != "installed:" {
 		t.Fatalf("%v", s)
+	}
+	// 0.42: a policy that names drivers lets the driver through.
+	f = &FakeWUA{Offered: []Update{cu(), drv()}}
+	r = InstallFiltered(f, &FakeRegistry{}, []Identity{{idCU, 200}, {idDrv, 1}}, &Filter{Classifications: []string{ClassSecurity, ClassDrivers}})
+	if s := states(r); s[idDrv] != "installed:" || s[idCU] != "installed:" {
+		t.Fatalf("drivers named: %v", s)
 	}
 	f = &FakeWUA{Offered: []Update{cu(), ord}}
 	r = InstallFiltered(f, &FakeRegistry{}, []Identity{{idCU, 200}, {idOld, 3}}, &Filter{Classifications: []string{ClassSecurity, ClassUpdates}, Severities: []string{"Critical"}})
@@ -243,7 +267,7 @@ func TestInstallFilteredOnlyNarrows(t *testing.T) {
 		t.Fatalf("kb / unrated: %v", s)
 	}
 	var none *Filter
-	if ok, _ := none.Allows(drv()); !ok {
+	if ok, _ := none.Allows(upg()); !ok {
 		t.Fatal("a nil filter must narrow nothing (Eligible still decides)")
 	}
 }

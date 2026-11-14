@@ -5,6 +5,125 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.42.0] — 2026-11-14 · *Toolbelt*
+
+**Drivers and definition updates can be installed, more programs can be uninstalled, and an empty software search
+says why.**
+
+On a real Windows 10 computer, Windows Update offered 11 updates: 8 drivers, one Defender security-intelligence
+update and two others, and the Patches tab could install none of them. Its Installed software list showed
+*Uninstall* on almost nothing, because most programs register only an interactive uninstaller, and the rows said the
+same thing over and over. Software search returned an empty list, with nothing to say whether the catalog was empty or
+the query just found nothing. 0.42 fixes all three, using the same signed plans and the same checks on the computer.
+
+### Added
+- **Drivers and Definition Updates are installable classes**, on the agent (`patch.Installable`) and in the portal
+  (`CLASSIFICATIONS`), so the allowlist is now exactly six classes, with the same GUIDs on both sides. Upgrades,
+  Feature Packs, Service Packs, Tools and unclassified updates are still refused.
+  - Windows Update marks nearly every driver `CanRequestUserInput` (all eight on that computer were), and through
+    0.41 that flag refused the update outright. For **drivers only**, it no longer refuses (`UserInputTolerated` /
+    `USER_INPUT_TOLERATED`, which hold exactly that one class). Drivers install unattended as SYSTEM, through the same
+    `IUpdateInstaller` call with `ForceQuiet`. `BrowseOnly` (optional or preview) and an un-accepted EULA still refuse
+    every class.
+  - Patch policies may name Drivers or Definition Updates, but the form starts with Security ticked and **never ticks
+    Drivers by default** (`DEFAULT_POLICY_CLASSES`).
+  - An agent older than 0.42 still refuses them, with `excluded_classification`. The Patches tab, the deployment
+    page and its confirmations now say *update the agent on this computer* (`oldAgentUpdateRefusal`), as they already
+    did for direct mode, instead of printing the bare code.
+- **The Install updates card lists every offered update with its own checkbox**, plus **Select all (N)**. Installable
+  updates come first. The ones that cannot be installed are listed greyed out with their reason (*Not installable:
+  feature upgrade*, *optional update*, *needs a licence accepted*…). Through 0.41 the list sat behind a picker, and the
+  updates that were not installable simply were not in it.
+- **Uninstall recognises the silent forms of common installer types** when a key registers only an interactive
+  `UninstallString`. The computer decides from the key's own string (`RecognizeUninstall`), after it passes the same
+  checks as a `QuietUninstallString` (absolute `.exe`, no shell characters, nothing on `NeverRun`). The set is closed:
+  - **msiexec `/I` or `/X` of this key's own product code** → the existing System32 `msiexec /x {GUID} /qn /norestart`
+    path. Any other GUID is not recognised.
+  - **Inno Setup** (an `_is1` key, `unins###.exe`, no arguments registered) → `/VERYSILENT /SUPPRESSMSGBOXES
+    /NORESTART`.
+  - **NSIS** (an `*unins*` uninstaller or Mozilla's `uninstall\helper.exe`, with at most `/allusers` or `/currentuser`
+    registered) → `/S`, **only if the file's first megabyte carries the NSIS header** (`NSISMarker`). The agent reads
+    the header through `FileHead`, which refuses a reparse point or a non-regular file. A file merely named
+    `uninst.exe` is not enough: an interactive uninstaller ignores `/S`, and the job would hang until its timeout.
+  - **Chromium** (`…\Installer\setup.exe --uninstall … --system-level`) → the same arguments plus `--force-uninstall`.
+
+  Arguments are fixed constants; nothing from the key is appended to them. As before, success means the key is gone
+  afterwards. Microsoft 365 / Office Click-to-Run (`office`) and driver packages (`driver`) are recognised only so the
+  row can say why they are refused: use Settings → Apps or Microsoft's tool, or Device Manager.
+- **RustDesk and Rem0te cannot be uninstalled from Rem0te.** Removing RustDesk is how a computer gets cut off from
+  remote help. The agent refuses first, before it reads anything else (`protected_program`). The portal refuses too
+  (`PROTECTED_PROGRAM`, the same pattern `PROTECTED_PROGRAM_RE`), and never offers *Uninstall* or a catalog entry
+  for those rows.
+- **The inventory collector reports a removal `kind`** for each key (`msi`, `quiet`, `inno`, `nsis`, `chromium`,
+  `office`, `driver`, `none`), using the same rules as the agent. It only reads. The portal keeps a kind only from the
+  closed `REMOVAL_KINDS`, and it is only a hint: the computer decides again. The agent and the collector are tested
+  against one fixture of 32 real-world keys (`tools/windows-installer/internal/action/testdata/removal-kinds.json`),
+  so *Uninstall* appears exactly where the computer would act.
+- **One banner with Refresh inventory** replaces the same reason on every row when the inventory predates this. That
+  means no keys at all (an agent before 0.41) or keys without kinds (the 0.41 collector). The collector arrives with
+  the agent install, so if a refresh does not change the banner, update the agent.
+- **The winget index state is shown wherever you search**: on the computer's Software tab and on Automation →
+  Software catalog. It shows when the index was last read, how many packages it holds, its last error, and when the
+  sweep will read it next (`nextReadAt`, from `nextIndexRead`). A Platform Admin gets *Read the index now* in both
+  places. An index that has never been read says *the winget catalog is empty on this server*, and a search against
+  it says the index is empty rather than showing an empty list.
+
+### Fixed
+- **Searching `notepad` put Notepad2, NotepadsApp and Notepad3 ahead of Notepad++.** `rankSearch` only checked whether
+  a name started with the query, then sorted by id. It now ranks in tiers:
+  1. an exact name, moniker or id;
+  2. a name that starts with the query as a whole word (*Notepad++*);
+  3. the query as a whole word anywhere in the name;
+  4. a name that merely starts with it;
+  5. an id segment or moniker;
+  6. any substring.
+
+  Ties go to the shorter name, then the id. Production's index (16,352 packages) made the old order visible; the unit
+  checks use synthetic rows shaped like it, not the real file.
+
+### Changed
+- §15 checks that the allowlist is exactly the six classes on both sides, with matching GUIDs. It fails if Upgrades,
+  Feature Packs, Service Packs or Tools reach either list, and checks that the user-input exception is exactly Drivers.
+- §59 checks:
+  - `removalFor` runs the protected check first;
+  - `RecognizeUninstall` returns only the closed kinds, with fixed argument constants;
+  - the protected pattern is the same on the agent and in the portal;
+  - the Windows exec switch takes the new kinds only through the quiet path;
+  - `FileHead` refuses reparse points;
+  - the collector only reads, and its kind is a closed hint.
+- `docs/staged-patching.md`, `docs/patching-setup.md`, `docs/software-deployment.md`, `/help` and CLAUDE.md describe
+  the new classes, forms, protections and index state.
+
+### Not run on real Windows
+Installing a driver or a definition update through WUA, the Inno, NSIS and Chromium uninstallers, the NSIS header read,
+and the collector's new functions under Windows PowerShell 5.1 have all been tested only against the simulated
+Windows Update, the stub registry and pwsh 7 on Linux. Rolling back a driver from here is not offered.
+
+#### Verification
+- Go: `go test ./...` passes; `GOOS=windows go vet` and `go build` pass. New tests in `internal/patch` (the six
+  classes and the drivers user-input exception) and `internal/action`: each recognised form, the NSIS form with and
+  without the header, `/allusers`, Mozilla's helper, the Office, driver and protected refusals,
+  `RecognizeUninstallIsClosed`, and the shared removal-kinds fixture.
+- `unit-patch-policy.mjs` 179 checks, `unit-software.mjs` 282 checks (with `PWSH`, which runs the collector's
+  functions over the shared fixture and a real NSIS file head; 247 without), `unit-approval-signer.mjs` 252 checks.
+- E2e, against a scratch database:
+
+  | Suite | Checks | What 0.42 adds |
+  |---|---|---|
+  | `e2e-staged-patching.mjs` | 100 | A computer installs a driver and a definition update end to end through the sim; the feature upgrade and the optional update stay refused |
+  | `e2e-patch-policies.mjs` | 99 | Policies naming Upgrades or Tools are refused |
+  | `e2e-software-catalog.mjs` | 84 | Inno, NSIS, a fake NSIS without the header, a Chromium browser, RustDesk and Microsoft 365 through the real agent and stub registry; the banner for 0.40 and 0.41 inventories |
+  | `e2e-software-deploy.mjs` | 156 | — |
+  | `e2e-approved-action.mjs` | 91 | — |
+- `check-security-invariants.mjs` holds. A mutation harness made 31 single edits to the agent and the portal, each
+  breaking one §15 or §59 rule (adding Upgrades, tolerating user input for another class, dropping the NSIS header
+  check, appending key arguments, unprotecting RustDesk on either side…). The invariants caught all 31.
+- The generated heartbeat and `install-signed.ps1` parse under pwsh.
+- `e2e-ui.mjs`: 1054 checks pass, against the same scratch database.
+
+No migration and no new route. The agent and the inventory collector change, so the new update classes and uninstall
+forms reach a computer only after its agent is updated.
+
 ## [0.41.1] — 2026-11-14 · *Pantry*
 
 **The winget index is read. 0.41.0 refused the real one because it is ZIP64.**

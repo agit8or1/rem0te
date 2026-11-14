@@ -1206,6 +1206,93 @@ function Send-Rem0teResult(\$cmdId, \$ok, \$extra, \$err) {
     \$json = \$payload | ConvertTo-Json -Depth 8 -Compress
     try { Invoke-RestMethod -Uri ('https://' + \$state.host + '/api/v1/enrollment/command-result') -Method Post -Body \$json -ContentType 'application/json' -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop | Out-Null } catch {}
 }
+# How a program's uninstall key could be removed silently (0.42) - the same
+# closed forms as the signed agent's internal/action/remove.go, so the console
+# offers Uninstall exactly where the computer would act. Only a hint: the
+# agent reads the key again and decides there. Nothing here runs anything; an
+# NSIS uninstaller is recognised by reading the start of its file.
+# Kinds: msi quiet inno nsis chromium office driver none.
+function Split-Rem0teUninstall([string]\$s) {
+    \$s = \$s.Trim()
+    if (-not \$s -or \$s.Length -gt 1024) { return \$null }
+    if (\$s -match '[\\x00-\\x1f\\x7f]') { return \$null }
+    if (\$s -match '(?i)^"?(?:[A-Za-z]:\\\\Windows\\\\(?:System32|SysWOW64)\\\\)?msiexec(?:\\.exe)?"?\\s+/[XI]\\s*(\\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\\})(?:\\s+/(?:qn|quiet|passive|norestart|qb!?|qb-!?))*\\s*\$') {
+        return @{ kind = 'msi'; code = \$Matches[1] }
+    }
+    if (\$s.ToLowerInvariant().Contains('msiexec')) { return \$null }
+    if (\$s -match '[%&|<>^]' -or \$s.Contains([string][char]96)) { return \$null }
+    \$exe = ''; \$rest = ''
+    if (\$s.StartsWith('"')) {
+        \$e = \$s.IndexOf('"', 1)
+        if (\$e -lt 0) { return \$null }
+        \$exe = \$s.Substring(1, \$e - 1); \$rest = \$s.Substring(\$e + 1)
+        if (\$rest -and -not \$rest.StartsWith(' ')) { return \$null }
+    } else {
+        \$i = \$s.IndexOf(' ')
+        if (\$i -ge 0) { \$exe = \$s.Substring(0, \$i); \$rest = \$s.Substring(\$i) } else { \$exe = \$s }
+    }
+    \$rest = \$rest.Trim()
+    if (\$exe -cnotmatch '^[A-Za-z]:\\\\[^"*?<>|/:]+\\.[Ee][Xx][Ee]\$') { return \$null }
+    foreach (\$seg in \$exe.Split([char]92)) {
+        if (-not \$seg -or \$seg -eq '.' -or \$seg -eq '..' -or \$seg.EndsWith(' ') -or \$seg.EndsWith('.')) { return \$null }
+    }
+    \$at = \$exe.LastIndexOf([char]92)
+    \$base = \$exe.Substring(\$at + 1).ToLowerInvariant()
+    \$never = @('cmd.exe', 'powershell.exe', 'pwsh.exe', 'powershell_ise.exe', 'wscript.exe', 'cscript.exe', 'mshta.exe', 'rundll32.exe',
+        'regsvr32.exe', 'msiexec.exe', 'bash.exe', 'wsl.exe', 'conhost.exe', 'explorer.exe', 'schtasks.exe', 'sc.exe', 'reg.exe', 'regedit.exe',
+        'certutil.exe', 'bitsadmin.exe', 'msbuild.exe', 'installutil.exe', 'regasm.exe', 'regsvcs.exe', 'wmic.exe', 'forfiles.exe', 'taskkill.exe', 'net.exe', 'net1.exe')
+    if (\$never -contains \$base) { return \$null }
+    return @{ kind = 'quiet'; exe = \$exe; args = \$rest; base = \$base; dir = \$exe.Substring(0, \$at).ToLowerInvariant() }
+}
+function Test-Rem0teNsis([string]\$path) {
+    try {
+        \$it = Get-Item -LiteralPath \$path -Force -ErrorAction Stop
+        if (\$it.PSIsContainer -or (\$it.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return \$false }
+        \$fs = [IO.File]::OpenRead(\$path)
+        try {
+            \$buf = New-Object byte[] 1048576
+            \$n = 0
+            while (\$n -lt \$buf.Length) { \$r = \$fs.Read(\$buf, \$n, \$buf.Length - \$n); if (\$r -le 0) { break }; \$n += \$r }
+        } finally { \$fs.Dispose() }
+        \$text = [Text.Encoding]::GetEncoding(28591).GetString(\$buf, 0, \$n)
+        return \$text.Contains([string][char]0xEF + [char]0xBE + [char]0xAD + [char]0xDE + 'NullsoftInst')
+    } catch { return \$false }
+}
+function Get-Rem0teRemovalKind([string]\$key, \$ue) {
+    \$guid = '^\\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\\}\$'
+    if (\$ue.WindowsInstaller -eq 1 -and \$key -match \$guid) { return 'msi' }
+    \$q = [string]\$ue.QuietUninstallString
+    if (\$q.Trim()) {
+        \$c = Split-Rem0teUninstall \$q
+        if (-not \$c) { return 'none' }
+        if (\$c.kind -eq 'msi') { if (\$c.code -eq \$key) { return 'msi' }; return 'none' }
+        return 'quiet'
+    }
+    \$u = ([string]\$ue.UninstallString).Trim()
+    if (-not \$u) { return 'none' }
+    if (\$key -cmatch '^[0-9A-Fa-f]{40}\$' -or ([string]\$ue.DisplayName).Trim().ToLowerInvariant().StartsWith('windows driver package')) { return 'driver' }
+    \$c = Split-Rem0teUninstall \$u
+    if (\$c -and \$c.kind -eq 'msi') { if (\$c.code -eq \$key) { return 'msi' }; return 'none' }
+    if (\$u.ToLowerInvariant().Contains('\\officeclicktorun.exe')) { return 'office' }
+    if (-not \$c) { return 'none' }
+    if (\$key -match '_is1\$' -and \$c.base -match '^unins[0-9]{3}\\.exe\$' -and -not \$c.args) { return 'inno' }
+    if (\$c.base -eq 'setup.exe' -and \$c.dir.EndsWith('\\installer')) {
+        \$toks = @(\$c.args.Split([char]32) | Where-Object { \$_ })
+        if (\$toks.Count -gt 8) { return 'none' }
+        \$un = \$false; \$sys = \$false
+        foreach (\$t in \$toks) {
+            if (\$t -cnotmatch '^--[a-z][a-z0-9-]{0,40}(?:=[A-Za-z0-9._-]{1,40})?\$' -or \$t -ceq '--force-uninstall') { return 'none' }
+            if (\$t -ceq '--uninstall') { \$un = \$true }
+            if (\$t -ceq '--system-level') { \$sys = \$true }
+        }
+        if (\$un -and \$sys) { return 'chromium' }
+        return 'none'
+    }
+    if ((\$c.base.Contains('unins') -or (\$c.base -eq 'helper.exe' -and \$c.dir.EndsWith('\\uninstall'))) -and (@('', '/allusers', '/currentuser') -contains \$c.args.ToLowerInvariant())) {
+        if (Test-Rem0teNsis \$c.exe) { return 'nsis' }
+    }
+    return 'none'
+}
 function Get-Rem0teInventory {
     \$cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
     \$os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
@@ -1251,12 +1338,15 @@ function Get-Rem0teInventory {
     # registers a silent uninstall or is a Windows Installer product, so the
     # console can offer Uninstall (windows.software.remove reads the key
     # again on the computer and decides there; nothing here runs).
+    # 0.42: and the removal kind Get-Rem0teRemovalKind recognises (msi, quiet,
+    # inno, nsis, chromium; office, driver or none when there is no silent
+    # form), so the console offers Uninstall exactly where the agent acts.
     \$sw = @()
     foreach (\$rk in @(@{ p = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'; v = '64' }, @{ p = 'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'; v = '32' })) {
         foreach (\$ue in @(Get-ItemProperty -Path \$rk.p -ErrorAction SilentlyContinue)) {
             if (-not \$ue.DisplayName) { continue }
             if (\$ue.SystemComponent -eq 1 -or \$ue.ParentKeyName -or \$ue.ReleaseType) { continue }
-            \$sw += @{ name = [string]\$ue.DisplayName; version = [string]\$ue.DisplayVersion; publisher = [string]\$ue.Publisher; installedOn = [string]\$ue.InstallDate; key = [string]\$ue.PSChildName; view = \$rk.v; quiet = [bool]\$ue.QuietUninstallString; msi = (\$ue.WindowsInstaller -eq 1) }
+            \$sw += @{ name = [string]\$ue.DisplayName; version = [string]\$ue.DisplayVersion; publisher = [string]\$ue.Publisher; installedOn = [string]\$ue.InstallDate; key = [string]\$ue.PSChildName; view = \$rk.v; quiet = [bool]\$ue.QuietUninstallString; msi = (\$ue.WindowsInstaller -eq 1); kind = (Get-Rem0teRemovalKind ([string]\$ue.PSChildName) \$ue) }
             if (\$sw.Count -ge 600) { break }
         }
     }

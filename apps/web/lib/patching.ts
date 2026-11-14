@@ -14,7 +14,13 @@ export const CLASS_NAMES: Record<string, string> = {
   'e6cf1350-c01b-414d-a61f-263d14d133b4': 'Critical Updates',
   '28bc880e-0592-4cbf-8f95-c79b17911d5f': 'Update Rollups',
   'cd5ffd1e-e932-4e3a-bf74-18bf0b1bbd83': 'Updates',
+  // 0.42. Never ticked by default: a policy installs drivers only if someone chose to.
+  'ebfc1fc5-71a4-4f7b-9aca-3b9a503104a0': 'Drivers',
+  'e0789628-ce08-4437-be74-2495b842f43b': 'Definition Updates',
 };
+/** Classes a new policy starts with (Security Updates only); drivers are never pre-selected. */
+export const DEFAULT_POLICY_CLASSES = ['0fa1201d-4330-4fa8-8ae9-b877473b6441'];
+export const DRIVERS_CLASS = 'ebfc1fc5-71a4-4f7b-9aca-3b9a503104a0';
 
 export const SEVERITIES = ['Critical', 'Important', 'Moderate', 'Low', 'Unrated'] as const;
 

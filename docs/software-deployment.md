@@ -16,7 +16,8 @@ Nothing is uploaded to the portal. It never holds an installer, so it can't hand
 > **Not run on real Windows.** Everything on this page is fixture-tested. The agent's real decision code runs
 > against a stub winget, a simulated uninstall registry and simulated file versions. winget itself, App Installer
 > under the SYSTEM account, the Windows registry and file-version calls, and (0.41) msiexec and the uninstallers
-> programs register have **not** run on a Windows computer under test. Treat it as unproven on Windows until the paired lab in
+> programs register — including (0.42) Inno Setup's `/VERYSILENT`, NSIS's `/S`, Chromium's `--force-uninstall`
+> and the NSIS header read — have **not** run on a Windows computer under test. Treat it as unproven on Windows until the paired lab in
 > [Approved actions](approved-actions.md#what-has-been-proven-and-what-hasnt) is done.
 
 ## What is in the catalog
@@ -197,6 +198,17 @@ downloads: `https://cdn.winget.microsoft.com/cache/source2.msix`, an MSIX (a zip
 Search is on the computer's Software tab (**Managed software**) and on Automation → Software catalog. It needs
 View computers, and takes letters, digits, spaces and `. + _ -`.
 
+Both places show where the index stands (0.42): when it was last read, how many packages, the last error, and when
+the sweep will next read it — with **Read the index now** right there for a Platform Admin. An index that has never
+been read says *the winget catalog is empty on this server*, and a search against it says the index is empty rather
+than that nothing matched. (In production the index first filled with 0.41.1; 0.41.0 refused the real file, and the
+page said nothing useful.)
+
+Results are ranked (0.42): an exact name, moniker or id first; then a name that **starts with the query as a whole
+word** (*Notepad++* for `notepad`); then the query as a whole word anywhere in the name (*Windows Notepad*); then a
+name that merely starts with it (*Notepad2*); then an id segment or moniker; then any substring. Ties go to the
+shorter name, then the id. 0.41 put Notepad2, NotepadsApp and Notepad3 ahead of Notepad++ for `notepad`.
+
 ### One click: Install
 
 **Install** on a search result does, in one request:
@@ -243,7 +255,9 @@ each program that can be removed without someone at the computer:
 | Its DisplayName is not the one in the plan | Nothing: refused, `program_changed` (the key now names another program) |
 | A Windows Installer product (`{GUID}` key, `WindowsInstaller = 1`) | `System32\msiexec.exe /x {GUID} /qn /norestart` |
 | A `QuietUninstallString` | That program with the arguments the installer registered, as one process with no shell. It must be an absolute path to an `.exe`, with no environment variables or shell characters, and not an interpreter or system tool (`cmd`, PowerShell, `mshta`, `rundll32`, `msiexec` other than `/x` of this key's own product…): otherwise refused, `uninstall_command_refused` |
-| Only an interactive `UninstallString` | Nothing: refused, `no_silent_uninstall`. It would wait for someone to click |
+| Only an interactive `UninstallString`, of a form the agent recognises (0.42) | The silent form that installer type defines, decided on the computer from the key's own `UninstallString`, which goes through the same checks as a `QuietUninstallString` first. **msiexec `/I` or `/X` of this key's own product code** → the MSI row above. **Inno Setup** (a key ending `_is1`, `unins###.exe`, no arguments registered) → `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`. **NSIS** (an uninstaller named `*unins*` or Mozilla's `uninstall\helper.exe`, at most `/allusers` or `/currentuser` registered, **and** whose file carries the NSIS header — the agent reads the first megabyte) → `/S`. **Chromium** (`…\Installer\setup.exe --uninstall … --system-level`) → the same arguments plus `--force-uninstall` |
+| Any other interactive `UninstallString` | Nothing: refused, `no_silent_uninstall`. It would wait for someone to click. That includes Microsoft 365 / Office Click-to-Run (remove it in Settings → Apps or with Microsoft's tool) and driver packages (`Windows Driver Package - …`, keys of 40 hex characters; use Device Manager) |
+| **RustDesk** or **Rem0te** (0.42) | Nothing, whatever the key registers: refused, `protected_program`. Removing RustDesk is how a computer is cut off from remote help. The portal refuses first (`PROTECTED_PROGRAM`) and never offers it |
 
   The result is **succeeded only if the key is gone afterwards** (an NSIS uninstaller returns at once, so the agent
   waits up to two minutes for the key to go). msiexec's 3010 / 1641 is `restart_required`; the computer is not
@@ -258,6 +272,16 @@ each program that can be removed without someone at the computer:
 The inventory reports each program's key, view, and whether it registers a silent uninstall or is an MSI from agents
 built from 0.41. Until a computer sends its next full inventory (about every six hours), programs show *cannot
 uninstall from here* with the reason. The console only offers; the computer reads the key again and decides.
+
+From 0.42 the inventory collector also reports the **removal kind** it recognises for each key — `msi`, `quiet`,
+`inno`, `nsis`, `chromium`, or `office`, `driver`, `none` when there is no silent form — by the same rules as the
+agent. Both are tested against one fixture of real-world keys (`tools/windows-installer/internal/action/testdata/removal-kinds.json`),
+so **Uninstall** appears exactly where the computer would act. The kind is a hint: the computer reads the key again
+and decides itself.
+
+When the inventory predates that — no keys at all (an agent before 0.41) or keys without kinds (the 0.41 collector) —
+the list shows **one banner with Refresh inventory** instead of the same reason on every row. The collector arrives
+with the agent install, so if a refresh does not change the banner, update the agent on that computer.
 
 ## What the computer does
 
@@ -376,7 +400,8 @@ The computer's Software tab shows the same state per entry, with its evidence an
 | `NO_DETECTION` | One-click install (0.41) | The manifest doesn't say what the installer registers; add the entry by hand |
 | `ENTRY_PINS_ANOTHER_INSTALLER` | One-click install (0.41) | The business's entry for that version pins another installer (architecture or pasted hash) |
 | `NOT_ALLOWED` | One-click install (0.41) | The package isn't in the catalog, and adding it is the Business Owner's or a Platform Admin's |
-| `PROGRAM_NOT_IN_INVENTORY`, `NO_SILENT_UNINSTALL` | Uninstall a program (0.41) | The last inventory doesn't list that key, or it registers only an interactive uninstaller |
+| `PROGRAM_NOT_IN_INVENTORY`, `NO_SILENT_UNINSTALL` | Uninstall a program (0.41) | The last inventory doesn't list that key, or its uninstaller is interactive only, of no form the agent recognises |
+| `PROTECTED_PROGRAM` | Uninstall a program (0.42) | RustDesk and Rem0te are never removed from here |
 
 Agent outcomes:
 

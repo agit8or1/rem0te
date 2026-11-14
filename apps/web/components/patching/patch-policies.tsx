@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
-import { POLICY_STATUS, WEEKDAYS, CLASS_NAMES, SEVERITIES, describeWindow } from '@/lib/patching';
+import { POLICY_STATUS, WEEKDAYS, CLASS_NAMES, DEFAULT_POLICY_CLASSES, DRIVERS_CLASS, SEVERITIES, describeWindow } from '@/lib/patching';
 import { AlertTriangle, CheckCircle2, Loader2, Plus, ScrollText, XCircle } from 'lucide-react';
 import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
 
@@ -114,7 +114,7 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
   });
   const [name, setName] = useState('');
   const [ringOf, setRingOf] = useState<Record<string, number | ''>>({});
-  const [classes, setClasses] = useState<Set<string>>(new Set([Object.keys(CLASS_NAMES)[0]]));
+  const [classes, setClasses] = useState<Set<string>>(new Set(DEFAULT_POLICY_CLASSES));
   const [severities, setSeverities] = useState<Set<string>>(new Set());
   const [excludeKbs, setExcludeKbs] = useState('');
   const [days, setDays] = useState<Set<string>>(new Set(['sat']));
@@ -187,6 +187,7 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
             {Object.entries(CLASS_NAMES).map(([id, n]) => (
               <label key={id} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={classes.has(id)} onChange={(e) => setClasses((s) => toggle(s, id, e.target.checked))} />{n}</label>
             ))}
+            {classes.has(DRIVERS_CLASS) && <p className="text-xs text-muted-foreground" data-testid="policy-drivers-note">Drivers install as Windows Update offers them, on every computer in each ring. A driver can be harder to undo than an update; the canary ring is where you find out. Needs the 0.42 agent.</p>}
           </div>
           <div className="space-y-1">
             <p className="text-xs font-medium">Severities (none ticked: any)</p>

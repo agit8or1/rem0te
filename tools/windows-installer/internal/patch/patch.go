@@ -65,16 +65,31 @@ const (
 	ClassDefinitions   = "e0789628-ce08-4437-be74-2495b842f43b"
 )
 
-// Installable is the allowlist. Drivers, feature upgrades, feature packs,
-// service packs, tools and anything unclassified are never installed by an
-// approved plan in this release: they change what the computer is, not just
-// how patched it is, and they are where a "patch" becomes an OS migration.
+// Installable is the allowlist. Feature upgrades, feature packs, service
+// packs, tools and anything unclassified are never installed by an approved
+// plan: they change what the computer is, not just how patched it is, and
+// they are where a "patch" becomes an OS migration.
+//
+// Drivers and Definition Updates joined the list in 0.42. Both are what
+// Windows Update itself installs unattended on a home computer, and the
+// owner of one asked to choose them: a person picks them update by update,
+// and a patch policy names them only if someone ticks them.
 var Installable = map[string]string{
 	ClassSecurity:      "Security Updates",
 	ClassCritical:      "Critical Updates",
 	ClassUpdateRollups: "Update Rollups",
 	ClassUpdates:       "Updates",
+	ClassDrivers:       "Drivers",
+	ClassDefinitions:   "Definition Updates",
 }
+
+// UserInputTolerated is the classifications whose CanRequestUserInput flag
+// does not refuse an update (0.42). Windows Update marks nearly every driver
+// as one that *can* ask, and drivers install headless as SYSTEM in practice —
+// on a real Windows 10 computer all eight offered drivers carried the flag.
+// Every other class still refuses it: there, the flag means an installer that
+// may stop and wait for someone who is not there.
+var UserInputTolerated = map[string]bool{ClassDrivers: true}
 
 // Update is one update Windows Update offers this computer now.
 type Update struct {
@@ -105,7 +120,7 @@ func Eligible(u Update) (bool, string) {
 	if u.BrowseOnly {
 		return false, "optional_update"
 	}
-	if u.UserInput {
+	if u.UserInput && !UserInputTolerated[u.Classification] {
 		return false, "needs_user_input"
 	}
 	if !u.EulaAccepted {

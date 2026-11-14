@@ -49,7 +49,8 @@ func target(ep, rid, secret string) map[string]any {
 func (f *fixture) withWUA() (*patch.FakeWUA, *patch.FakeRegistry) {
 	w := &patch.FakeWUA{Offered: []patch.Update{
 		{UpdateID: cuID, Revision: 200, KB: "KB5044284", Title: "2026-11 Cumulative Update", Classification: patch.ClassSecurity, EulaAccepted: true, RebootBehavior: 1},
-		{UpdateID: drvID, Revision: 1, Title: "Display driver", Classification: patch.ClassDrivers, EulaAccepted: true},
+		// 0.42: drivers are installable; a feature upgrade never is.
+		{UpdateID: drvID, Revision: 1, Title: "Feature update to Windows 11", Classification: patch.ClassUpgrades, EulaAccepted: true},
 	}, Results: map[string]patch.FakeResult{cuID + "@200": {ResultCode: 2, RebootRequired: true}}}
 	return w, &patch.FakeRegistry{}
 }
@@ -138,7 +139,10 @@ func TestUpdateAllowIsClosedAndOnlyNarrows(t *testing.T) {
 		"not an object":         "Security Updates",
 		"no classifications":    map[string]any{"severities": []any{"Critical"}},
 		"empty classifications": map[string]any{"classifications": []any{}},
-		"driver class":          map[string]any{"classifications": []any{patch.ClassDrivers}},
+		"upgrade class":         map[string]any{"classifications": []any{patch.ClassUpgrades}},
+		"feature packs":         map[string]any{"classifications": []any{patch.ClassFeaturePacks}},
+		"service packs":         map[string]any{"classifications": []any{patch.ClassServicePacks}},
+		"tools":                 map[string]any{"classifications": []any{patch.ClassTools}},
 		"unknown class":         map[string]any{"classifications": []any{"00000000-0000-0000-0000-000000000000"}},
 		"class by name":         map[string]any{"classifications": []any{"Security Updates"}},
 		"duplicate class":       map[string]any{"classifications": []any{patch.ClassSecurity, patch.ClassSecurity}},
@@ -150,6 +154,10 @@ func TestUpdateAllowIsClosedAndOnlyNarrows(t *testing.T) {
 		if updateParamsOK(map[string]any{"reboot": "never", "updates": one, "allow": allow}) {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+	// 0.42: a policy may name drivers and definition updates.
+	if !updateParamsOK(map[string]any{"reboot": "never", "updates": one, "allow": map[string]any{"classifications": []any{patch.ClassDrivers, patch.ClassDefinitions}}}) {
+		t.Error("drivers and definition updates in allow were refused")
 	}
 	if updateParamsOK(map[string]any{"reboot": "never", "updates": one, "allow": ok["allow"], "extra": 1}) {
 		t.Error("a fourth parameter was accepted")

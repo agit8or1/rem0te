@@ -64,10 +64,14 @@ const sha = (b) => createHash('sha256').update(b).digest('hex');
 
 // ── Updates as Windows Update describes them ────────────────────────────────
 const SEC = '0fa1201d-4330-4fa8-8ae9-b877473b6441', UPD = 'cd5ffd1e-e932-4e3a-bf74-18bf0b1bbd83', DRV = 'ebfc1fc5-71a4-4f7b-9aca-3b9a503104a0';
+const DEF = 'e0789628-ce08-4437-be74-2495b842f43b', UPG = '3689bdc8-b205-4af4-8d4a-a63924c5e9d5';
 const u = (updateId, revision, kb, title, classification, className, extra = {}) => ({ updateId, revision, kb, title, classification, className, severity: classification === SEC ? 'Critical' : '', downloaded: false, rebootBehavior: 1, userInput: false, eulaAccepted: true, browseOnly: false, sizeBytes: 600 << 20, ...extra });
 const CU = u('5a1b2c3d-0000-4000-8000-000000000001', 201, 'KB5044284', '2026-11 Cumulative Update for Windows 11 (KB5044284)', SEC, 'Security Updates');
 const NET = u('5a1b2c3d-0000-4000-8000-000000000002', 3, 'KB5044099', '2026-11 .NET Framework update (KB5044099)', UPD, 'Updates', { rebootBehavior: 0 });
-const DRIVER = u('5a1b2c3d-0000-4000-8000-000000000003', 1, undefined, 'Contoso - Display - 31.0.101', DRV, 'Drivers');
+// 0.42: as Windows Update reports a real driver — it "can request user input", and is installable anyway.
+const DRIVER = u('5a1b2c3d-0000-4000-8000-000000000003', 1, undefined, 'Contoso - Display - 31.0.101', DRV, 'Drivers', { userInput: true, rebootBehavior: 0 });
+const DEFS = u('5a1b2c3d-0000-4000-8000-000000000005', 7, 'KB2267602', 'Security Intelligence Update for Microsoft Defender Antivirus - KB2267602', DEF, 'Definition Updates', { rebootBehavior: 0 });
+const FEAT = u('5a1b2c3d-0000-4000-8000-000000000006', 1, undefined, 'Feature update to Windows 11, version 25H2', UPG, 'Upgrades');
 const OPT = u('5a1b2c3d-0000-4000-8000-000000000004', 1, 'KB5044777', '2026-11 Optional preview update', UPD, 'Updates', { browseOnly: true });
 const id = (x) => ({ updateId: x.updateId, revision: x.revision });
 const key = (x) => `${x.updateId}@${x.revision}`;
@@ -208,7 +212,7 @@ async function all() {
     writeFileSync(pc.reg, JSON.stringify(registry));
     return pc;
   };
-  const canary = await mkPc(acme, 'CANARY', [CU, NET, DRIVER, OPT], { results: { [key(CU)]: { resultCode: 2, rebootRequired: true, hresult: '0x00000000' } } });
+  const canary = await mkPc(acme, 'CANARY', [CU, NET, DRIVER, OPT, FEAT], { results: { [key(CU)]: { resultCode: 2, rebootRequired: true, hresult: '0x00000000' } } });
   const r1a = await mkPc(acme, 'R1-A', [CU, NET], { results: { [key(CU)]: { resultCode: 2, rebootRequired: true, hresult: '0x00000000' } } });
   const r1b = await mkPc(acme, 'R1-B', [CU], { installed: [id(NET)] });
   const r1c = await mkPc(acme, 'R1-C', [CU, NET], { results: { [key(CU)]: { resultCode: 4, hresult: '0x80240022' } } });
@@ -236,12 +240,12 @@ async function all() {
   section('Posture: the signed agent scans, the heartbeat reports, the portal acknowledges');
   {
     const p = scan(canary);
-    check(p.schema === 'rem0te-patch-posture/1' && p.updates.length === 4 && p.managers.length === 0, 'patch-scan (the agent\'s real internal/patch) reports what Windows Update offers', JSON.stringify(p).slice(0, 200));
+    check(p.schema === 'rem0te-patch-posture/1' && p.updates.length === 5 && p.managers.length === 0, 'patch-scan (the agent\'s real internal/patch) reports what Windows Update offers', JSON.stringify(p).slice(0, 200));
     const hb = await heartbeat(canary, { patchPosture: p });
     check(hb.status === 201 || hb.status === 200, 'heartbeat accepted', msg(hb));
     check(hb.body?.data?.patchPostureAck === p.scannedAt && hb.body?.data?.patchScan === false, 'the portal acknowledges that exact scan, and does not ask for another', msg(hb));
     const inv = await prisma.endpointInventory.findUnique({ where: { endpointId: canary.id } });
-    check(inv.pendingUpdateCount === 4 && inv.patchScannedAt?.toISOString() === new Date(p.scannedAt).toISOString(), 'the inventory page\'s update count comes from the same scan');
+    check(inv.pendingUpdateCount === 5 && inv.patchScannedAt?.toISOString() === new Date(p.scannedAt).toISOString(), 'the inventory page\'s update count comes from the same scan');
     const forged = await heartbeat(r1a, { patchPosture: { ...scan(r1a), command: 'powershell -enc ...' } });
     const inv2 = await prisma.endpointInventory.findUnique({ where: { endpointId: r1a.id } });
     check(forged.body?.data?.patchPostureAck === null && !inv2?.patchPosture, 'a posture with an unknown field is refused whole: not stored, not acknowledged', msg(forged));
@@ -264,8 +268,9 @@ async function all() {
     for (const pc of [r1a, r1b, r1c, wsus, intune, birchPc]) await heartbeat(pc, { patchPosture: scan(pc) });
     const view = await req('GET', `/endpoints/${canary.id}/patches`, { s: S.owen, business: acme.id });
     const byKb = Object.fromEntries((view.body?.data?.updates ?? []).map((x) => [x.kb ?? x.title, x]));
-    check(view.status === 200 && byKb.KB5044284?.installable === true && byKb['Contoso - Display - 31.0.101']?.installable === false && byKb.KB5044777?.installable === false,
-      'the computer\'s Patches view: the CU installable; the driver and the optional preview are not, with why', msg(view));
+    check(view.status === 200 && byKb.KB5044284?.installable === true && byKb['Contoso - Display - 31.0.101']?.installable === true && byKb.KB5044777?.installable === false
+      && byKb['Feature update to Windows 11, version 25H2']?.installable === false && /Upgrades are not installed/.test(byKb['Feature update to Windows 11, version 25H2']?.notInstallableBecause ?? ''),
+      'the computer\'s Patches view: the CU and the driver (although it can request input, 0.42) installable; the optional preview and the feature upgrade are not, with why', msg(view));
     const w = await req('GET', `/endpoints/${wsus.id}/patches`, { s: S.owen, business: acme.id });
     check(w.body?.data?.managers?.[0]?.label === 'WSUS', 'WSUS-PC shows its updates are managed by WSUS', msg(w));
     const ws = w.body?.data?.summary;
@@ -299,8 +304,8 @@ async function all() {
     check(r.status === 400 && code(r) === 'BAD_RINGS', 'ring 0 must be exactly one computer (the canary)', msg(r));
     r = await req('POST', '/patching/deployments', { s: S.owen, business: acme.id, body: { ...good, rings: [[canary.id], [wsus.id]] } });
     check(r.status === 409 && code(r) === 'MANAGED_ELSEWHERE', 'a WSUS-managed computer is refused, by name', msg(r));
-    r = await req('POST', '/patching/deployments', { s: S.owen, business: acme.id, body: { ...good, updates: [id(DRIVER)] } });
-    check(r.status === 400 && code(r) === 'UPDATE_NOT_INSTALLABLE', 'a driver is refused', msg(r));
+    r = await req('POST', '/patching/deployments', { s: S.owen, business: acme.id, body: { ...good, updates: [id(FEAT)] } });
+    check(r.status === 400 && code(r) === 'UPDATE_NOT_INSTALLABLE', 'a feature upgrade is refused', msg(r));
     r = await req('POST', '/patching/deployments', { s: S.owen, business: acme.id, body: { ...good, updates: [id(OPT)] } });
     check(r.status === 400 && code(r) === 'UPDATE_NOT_INSTALLABLE', 'an optional preview update is refused', msg(r));
     r = await req('POST', '/patching/deployments', { s: S.owen, business: acme.id, body: { ...good, updates: [{ updateId: '5a1b2c3d-0000-4000-8000-0000000000ff', revision: 1 }] } });
@@ -542,6 +547,31 @@ async function restarts(ctx) {
     const out = c.outs[0];
     check(out?.outcome === 'restart_required' && out.restart?.state === 'restart_deferred' && out.restart.reason === 'window_closed', 'installed; the restart deferred because it would fall after the window', JSON.stringify(out));
     check(simRestart(late) === null && wuaNow(late).rebootRequired === true, 'nothing scheduled: the computer is left as it is');
+  }
+
+  section('0.42: a driver and a definition update, picked one by one on the Patches tab, install; a feature upgrade never does');
+  {
+    const home = await mkPc(acme, 'DRV-HOME', [CU, DRIVER, DEFS, FEAT, OPT], {});
+    await heartbeat(home, { patchPosture: scan(home) });
+    const v = (await req('GET', `/endpoints/${home.id}/patches`, { s: S.owen, business: acme.id })).body?.data;
+    const inst = Object.fromEntries((v?.updates ?? []).map((x) => [x.updateId, x.installable]));
+    check(inst[DRIVER.updateId] === true && inst[DEFS.updateId] === true && inst[CU.updateId] === true && inst[FEAT.updateId] === false && inst[OPT.updateId] === false && v.install.installable === 3,
+      'the Patches view offers the driver, the definition update and the CU; not the feature upgrade or the optional preview', JSON.stringify(inst));
+    let r = await req('POST', `/endpoints/${home.id}/patches/install`, { s: S.owen, business: acme.id, body: { updates: [id(FEAT)], reboot: 'never', reason: 'feature upgrade' } });
+    check(r.status === 400 && code(r) === 'UPDATE_NOT_INSTALLABLE', 'picking the feature upgrade is refused by the portal', msg(r));
+    r = await req('POST', `/endpoints/${home.id}/patches/install`, { s: S.owen, business: acme.id, body: { updates: [id(DRIVER), id(DEFS)], reboot: 'never', reason: 'driver and definitions only' } });
+    const job = r.body?.data?.job;
+    check(r.status === 201 && !!job?.id, 'only the driver and the definition update, picked individually, are requested', msg(r));
+    const plan = job?.id ? (await prisma.actionJob.findUnique({ where: { id: job.id } })).plan : null;
+    check(plan && plan.params.updates.map(key).sort().join() === [DRIVER, DEFS].map(key).sort().join(), 'the signed plan names exactly those two', JSON.stringify(plan?.params));
+    await approve(job.id, pk.olivia); await approve(job.id, pk.quinn);
+    const c = await cycle(home);
+    const out = c.outs[0];
+    const st = Object.fromEntries((out?.updates ?? []).map((x) => [x.updateId, x.state]));
+    check(out?.outcome === 'succeeded' && st[DRIVER.updateId] === 'installed' && st[DEFS.updateId] === 'installed' && !st[CU.updateId],
+      'the agent installs the driver (input flag tolerated) and the definition update, and nothing it was not asked for', JSON.stringify(out));
+    const left = wuaNow(home).offered.map((x) => x.updateId);
+    check(left.includes(CU.updateId) && left.includes(FEAT.updateId) && !left.includes(DRIVER.updateId) && !left.includes(DEFS.updateId), 'Windows Update (simulated) still offers the CU and the upgrade; the two picked are gone', JSON.stringify(left));
   }
 }
 

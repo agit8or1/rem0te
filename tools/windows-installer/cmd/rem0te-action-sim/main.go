@@ -116,6 +116,8 @@ func (p programs) Remove(c action.RemovalCommand, timeout time.Duration) (int, [
 	return p.r.Remove(stub.Removal{Kind: c.Kind, ProductCode: c.ProductCode, Exe: c.Exe, Args: c.Args}, timeout)
 }
 
+func (p programs) FileHead(path string, max int) ([]byte, error) { return p.r.FileHead(path, max) }
+
 type sim struct {
 	stateFile string
 	state     string

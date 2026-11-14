@@ -14,10 +14,17 @@
  *     search ranking and the refresh rule; choosing the installer and the
  *     detection rule for a one-click install; the closed parameters of
  *     windows.software.remove and what the console offers to remove.
+ *   - 0.42: search ranking tiers; the removal kinds and protected programs;
+ *     and, when PWSH (or pwsh on PATH) is there, the inventory collector's
+ *     Get-Rem0teRemovalKind run over the same fixture the agent's Go test
+ *     reads (tools/windows-installer/internal/action/testdata/removal-kinds.json).
  *
  *   cd apps/api && npx nest build && node scripts/unit-software.mjs
  */
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
@@ -249,6 +256,33 @@ check('next: paused → nothing', D.nextRing('PAUSED', 'canary failed', new Map(
   const rank = W.rankSearch('7zip', rows.rows).map((r) => r.packageId);
   check('index: an exact id or moniker ranks first', rank[0] === '7zip.7zip', rank.join());
   check('index: every term must match', W.rankSearch('google chrome', rows.rows).map((r) => r.packageId).join() === 'Google.Chrome' && W.rankSearch('google firefox', rows.rows).length === 0);
+  // 0.42: tiers — exact, starts with the word, whole word, prefix, id/moniker, substring; shorter name, then id.
+  {
+    const R = W.normalizeIndexRows([
+      { id: 'Flo.Notepad2', name: 'Notepad2', moniker: 'notepad2', version: '4.24', publisher: 'flo' },
+      { id: 'JackieLiu.NotepadsApp', name: 'Notepads App', moniker: 'notepads', version: '1.5', publisher: 'jackieliu' },
+      { id: 'Rizonesoft.Notepad3', name: 'Notepad3', moniker: 'notepad3', version: '6.24', publisher: 'rizonesoft' },
+      { id: 'dail8859.NotepadNext', name: 'Notepad Next', version: '0.9', publisher: 'dail8859' },
+      { id: 'Notepad++.Notepad++', name: 'Notepad++', moniker: 'notepad++', version: '8.9.9.1', publisher: 'notepadplusplusteam' },
+      { id: 'Microsoft.WindowsNotepad', name: 'Windows Notepad', version: '11.2', publisher: 'microsoft' },
+      { id: 'Contoso.SuperNotepadPro', name: 'SuperNotepadPro', version: '1', publisher: 'contoso' },
+      { id: 'Google.Chrome', name: 'Google Chrome', moniker: 'chrome', version: '142.0', publisher: 'google' },
+      { id: 'Google.ChromeRemoteDesktopHost', name: 'Chrome Remote Desktop Host', version: '1', publisher: 'google' },
+      { id: 'Google.Chrome.Canary', name: 'Google Chrome Canary', version: '144.0', publisher: 'google' },
+      { id: 'Hibbiki.Chromium', name: 'Chromium', moniker: 'chromium', version: '142.0', publisher: 'hibbiki' },
+      { id: 'VideoLAN.VLC', name: 'VLC media player', moniker: 'vlc', version: '3.0.24', publisher: 'videolan' },
+      { id: 'Contoso.VLCRemote', name: 'VLC Remote', version: '1', publisher: 'contoso' },
+    ]).rows;
+    const ids = (q) => W.rankSearch(q, R).map((r) => r.packageId);
+    const np = ids('notepad');
+    check('rank: "notepad" puts Notepad++ first — a name starting with the whole word, shortest', np[0] === 'Notepad++.Notepad++' && np[1] === 'dail8859.NotepadNext', np.join());
+    check('rank: then the whole word inside a name, then a bare prefix, shorter first, then id', np.indexOf('Microsoft.WindowsNotepad') === 2 && np.indexOf('Flo.Notepad2') === 3 && np.indexOf('Rizonesoft.Notepad3') === 4 && np.indexOf('JackieLiu.NotepadsApp') === 5 && np.at(-1) === 'Contoso.SuperNotepadPro', np.join());
+    const ch = ids('chrome');
+    check('rank: "chrome" gives Google.Chrome first (exact moniker) ahead of a name starting with the word', ch[0] === 'Google.Chrome' && ch[1] === 'Google.ChromeRemoteDesktopHost' && ch[2] === 'Google.Chrome.Canary' && !ch.includes('Hibbiki.Chromium'), ch.join());
+    check('rank: an exact name wins over everything', ids('notepad++')[0] === 'Notepad++.Notepad++' && ids('vlc media player')[0] === 'VideoLAN.VLC' && ids('vlc')[0] === 'VideoLAN.VLC');
+    check('rank: an exact id wins', ids('google.chrome.canary')[0] === 'Google.Chrome.Canary');
+    check('rank: a query with regex characters is literal', ids('notepad+').length >= 1 && ids('n.tepad').length === 0);
+  }
   check('index: the search charset refuses shell and SQL characters', W.SEARCH_RE.test('notepad++') && W.SEARCH_RE.test('7-zip') && !["a'b", 'a;b', 'a%b', 'a"b', 'x', '<b>'].some((s) => W.SEARCH_RE.test(s)));
   check('index: WINGET_INDEX_URL is honoured only for loopback http', W.indexUrl({ WINGET_INDEX_URL: 'http://127.0.0.1:3473/source2.msix' }) === 'http://127.0.0.1:3473/source2.msix'
     && ['https://evil.example/source2.msix', 'http://127.0.0.1.evil.example:80/x', 'http://localhost:3473/x', 'file:///etc/passwd', 'http://127.0.0.1:3473/../x?y'].every((u) => W.indexUrl({ WINGET_INDEX_URL: u }) === W.WINGET_INDEX_URL)
@@ -310,7 +344,7 @@ check('next: paused → nothing', D.nextRing('PAUSED', 'canary failed', new Map(
     { name: 'Chrome', version: '131', key: '{D4A9D1E5-5D04-3B53-BAB2-0E7B54B9C8E1}', view: '32', quiet: false, msi: true },
     { name: 'Evil', version: '1', key: '..\\Run', view: '64', quiet: true },
     { name: 'NoView', version: '1', key: 'NoView', view: 'x', quiet: true },
-    { name: 'Interactive', version: '1', key: 'Interactive', view: '64', quiet: false, msi: false },
+    { name: 'Interactive', version: '1', key: 'Interactive', view: '64', quiet: false, msi: false, kind: 'none' },
     { name: 'Old agent', version: '1' },
   ]);
   const by = Object.fromEntries(inv.map((p) => [p.name, p]));
@@ -318,10 +352,85 @@ check('next: paused → nothing', D.nextRing('PAUSED', 'canary failed', new Map(
   const progs = D.installedOf(inv);
   const P = Object.fromEntries(progs.map((p) => [p.name, p]));
   check('remove: an MSI product key → msiexec; a silent uninstall → quiet', D.removalHint(P.Chrome).method === 'msi' && D.removalHint(P['7-Zip 24.09 (x64)']).method === 'quiet');
+  // 0.42: the kinds the collector recognises, RustDesk and Rem0te protected, and the list banner.
+  const prog = (name, extra) => D.installedOf([{ name, key: 'K', view: '64', ...extra }])[0];
+  for (const k of ['msi', 'quiet', 'inno', 'nsis', 'chromium']) check(`remove: kind ${k} is offered, as ${k}`, D.removalHint(prog('App', { kind: k })).possible && D.removalHint(prog('App', { kind: k })).method === k);
+  for (const [k, code, re] of [['office', 'office', /Click-to-Run/], ['driver', 'driver', /driver package/i], ['none', 'interactive', /interactive/]]) {
+    const h = D.removalHint(prog('App', { kind: k }));
+    check(`remove: kind ${k} is not offered, with its reason`, !h.possible && h.code === code && re.test(h.reason), JSON.stringify(h));
+  }
+  check('remove: an unknown kind from a device is dropped, not trusted', D.installedOf([{ name: 'A', key: 'K', view: '64', kind: 'shell' }])[0].kind === null);
+  for (const n of ['RustDesk', 'rustdesk 1.4.3', 'Rem0te Agent', 'rem0te-tray', 'Reboot Remote']) {
+    const h = D.removalHint(prog(n, { kind: 'quiet', quiet: true }));
+    check(`remove: ${n} is protected even with a silent uninstall`, !h.possible && h.code === 'protected' && /RustDesk and Rem0te/.test(h.reason), JSON.stringify(h));
+  }
+  check('remove: the key alone also protects', D.removalHint(D.installedOf([{ name: 'Remote helper', key: 'RustDesk', view: '64', kind: 'quiet' }])[0]).code === 'protected');
+  check('remove: lookalikes are not protected', ['RustDesker', 'Remote Desktop Manager', 'Rem0teX'].every((n) => D.removalHint(prog(n, { kind: 'quiet' })).possible));
+  check('remove: the portal and agent protected-program patterns are one expression', cat.PROTECTED_PROGRAM_RE.source === '^(?:rustdesk|rem0te|reboot ?remote)(?:[^a-z0-9]|$)' && cat.PROTECTED_PROGRAM_RE.flags === 'i');
+  {
+    const E = require(path.join(dist, 'monitoring/engine.js'));
+    const sw = E.sanitizeSoftware([{ name: 'A', key: 'A_is1', view: '32', kind: 'inno' }, { name: 'B', key: 'B', view: '64', kind: 'run-this' }, { name: 'C', kind: 'nsis' }]);
+    const by = Object.fromEntries(sw.map((x) => [x.name, x]));
+    check('inventory: a known removal kind is kept with its key; anything else, or a kind without a key, is dropped', by.A.kind === 'inno' && by.B.kind === undefined && by.C.kind === undefined, JSON.stringify(sw));
+  }
+  {
+    const Wi = require(path.join(dist, 'software/winget-index.js'));
+    const T = new Date('2026-11-14T12:00:00Z'), h = (x) => new Date(T.getTime() - x * 3600_000);
+    check('index: the next read — now when never read, an hour after a failed attempt, a day after a success, never with the sweep off',
+      Wi.nextIndexRead(null, T, true).getTime() === T.getTime() && Wi.nextIndexRead({ refreshedAt: null, attemptedAt: h(0.25) }, T, true).getTime() === T.getTime() + 45 * 60_000
+        && Wi.nextIndexRead({ refreshedAt: h(2), attemptedAt: h(2) }, T, true).getTime() === T.getTime() + 22 * 3600_000 && Wi.nextIndexRead(null, T, false) === null);
+  }
+  check('remove: a 0.41 inventory (booleans, no kind) says to refresh for the newer forms', D.removalHint(prog('App', { quiet: false, msi: false })).code === 'old_collector');
+  const st = (list) => D.inventoryRemovalState(D.installedOf(list));
+  check('remove: the banner — no keys → refresh; keys without kinds → refresh (old collector); kinds → nothing',
+    st([{ name: 'A' }, { name: 'B' }]).needsRefresh === 'no_keys' && st([{ name: 'A', key: 'A', view: '64', quiet: false }]).needsRefresh === 'old_collector'
+      && st([{ name: 'A', key: 'A', view: '64', kind: 'none' }]).needsRefresh === null && st([]).needsRefresh === null, JSON.stringify(st([{ name: 'A' }])));
   check('remove: interactive only, or no key reported, → not offered, with the reason', !D.removalHint(P.Interactive).possible && /interactive/.test(D.removalHint(P.Interactive).reason) && !D.removalHint(P['Old agent']).possible && /0\.41/.test(D.removalHint(P['Old agent']).reason) && !D.removalHint(P.Evil).possible);
   const entries = [{ id: 'e1', detection: { kind: 'uninstall_key', key: '7-zip', compare: 'gte', version: '24' } }, { id: 'e2', detection: { kind: 'display_name', name: 'Chr', match: 'prefix', compare: 'gte', version: '1' } }, { id: 'e3', detection: { kind: 'file_version', base: 'ProgramFiles', file: 'x.exe', compare: 'gte', version: '1' } }];
   check('remove: a program a catalog entry describes is uninstalled through that entry', D.entryFor(P['7-Zip 24.09 (x64)'], entries)?.id === 'e1' && D.entryFor(P.Chrome, entries)?.id === 'e2' && D.entryFor(P.Interactive, entries) === null);
   check('remove: the request is closed and names the inventory\'s key', D.RemoveProgramDto.safeParse({ key: '7-Zip', view: '64', displayName: '7-Zip 24.09 (x64)' }).success && !D.RemoveProgramDto.safeParse({ key: '7-Zip', view: '64', displayName: 'x', quietUninstallString: 'calc.exe' }).success);
+}
+
+// ── 0.42: the inventory collector's removal kinds, under PowerShell ─────────
+{
+  const fx = JSON.parse(readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'tools/windows-installer/internal/action/testdata/removal-kinds.json'), 'utf8')).cases;
+  const W = require(path.join(dist, 'public/windows-script.js'));
+  const script = W.buildSignedWindowsScript('0.42.0');
+  const a = script.indexOf('function Split-Rem0teUninstall'), b = script.indexOf('function Get-Rem0teInventory');
+  check('collector: the removal-kind functions are in the signed install script, before the inventory', a > 0 && b > a && /kind = \(Get-Rem0teRemovalKind \(\[string\]\$ue\.PSChildName\) \$ue\)/.test(script));
+  const fns = script.slice(a, b);
+  check('collector: the removal-kind functions only read', !/Start-Process|Invoke-Expression|\biex\b|Remove-Item|Set-ItemProperty|New-ItemProperty|\.Invoke\(|&\s*\$|cmd\.exe \/c|msiexec\s+\/x/i.test(fns.replace(/^\s*#.*$/gm, '').replace(/'[^'\n]*'/g, "''")));
+  const pwsh = process.env.PWSH || 'pwsh';
+  let have = true; try { execFileSync(pwsh, ['-NoProfile', '-Command', '1'], { stdio: 'ignore' }); } catch { have = false; }
+  if (!have) console.log('  (pwsh not found: the collector fixture run is skipped; set PWSH)');
+  else {
+    const dir = mkdtempSync(path.join(tmpdir(), 'rmkind-'));
+    try {
+      writeFileSync(path.join(dir, 'fx.json'), JSON.stringify(fx));
+      // Test-Rem0teNsis reads the file; here the fixture says which files carry the header.
+      writeFileSync(path.join(dir, 'run.ps1'), `${fns}
+$nsisFiles = @{}
+$cases = Get-Content -Raw -LiteralPath '${path.join(dir, 'fx.json')}' | ConvertFrom-Json
+foreach ($c in $cases) { if ($c.nsis) { $sp = Split-Rem0teUninstall ([string]$c.uninstallString); if ($sp) { $nsisFiles[$sp.exe] = $true } } }
+function Test-Rem0teNsis([string]$path) { return [bool]$nsisFiles[$path] }
+$out = foreach ($c in $cases) {
+  $ue = [pscustomobject]@{ DisplayName = [string]$c.displayName; UninstallString = $c.uninstallString; QuietUninstallString = $c.quietUninstallString; WindowsInstaller = $(if ($c.windowsInstaller) { 1 } else { $null }) }
+  [pscustomobject]@{ name = $c.name; kind = (Get-Rem0teRemovalKind ([string]$c.key) $ue) }
+}
+$out | ConvertTo-Json -Compress
+`);
+      const got = JSON.parse(execFileSync(pwsh, ['-NoProfile', '-NonInteractive', '-File', path.join(dir, 'run.ps1')], { encoding: 'utf8' }));
+      const byName = Object.fromEntries(got.map((g) => [g.name, g.kind]));
+      for (const c of fx) check(`collector: ${c.name} → ${c.kind} (as the agent decides)`, byName[c.name] === c.kind, `got ${byName[c.name]}`);
+      // The real NSIS reader, on files: an NSIS header, an ordinary file, a missing one.
+      const nsisFile = path.join(dir, 'uninst.exe'), plainFile = path.join(dir, 'plain.exe');
+      writeFileSync(nsisFile, Buffer.concat([Buffer.from('MZ'), Buffer.alloc(40000), Buffer.from([0xef, 0xbe, 0xad, 0xde]), Buffer.from('NullsoftInst'), Buffer.alloc(100)]));
+      writeFileSync(plainFile, Buffer.concat([Buffer.from('MZ'), Buffer.alloc(40000), Buffer.from('Nullsoft but no header')]));
+      writeFileSync(path.join(dir, 'head.ps1'), `${fns}\n@((Test-Rem0teNsis '${nsisFile}'), (Test-Rem0teNsis '${plainFile}'), (Test-Rem0teNsis '${path.join(dir, 'missing.exe')}')) | ConvertTo-Json -Compress\n`);
+      const heads = JSON.parse(execFileSync(pwsh, ['-NoProfile', '-NonInteractive', '-File', path.join(dir, 'head.ps1')], { encoding: 'utf8' }));
+      check('collector: the NSIS header is read from the file itself', heads.join() === 'true,false,false', heads.join());
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
 }
 
 if (failures.length) {
