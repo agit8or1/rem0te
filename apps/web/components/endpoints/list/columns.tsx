@@ -38,6 +38,11 @@ export interface ColumnDef {
   /** Needs monitoring:alerts — the column is not offered without it. */
   needsAlerts?: boolean;
   className?: string;
+  /**
+   * 0.47.1: hidden on narrower screens so the default set fits beside the
+   * sidebar without sideways scrolling. Literal classes, so Tailwind sees them.
+   */
+  hideBelow?: 'xl' | '2xl';
   cell?: (r: DeviceRow, c: CellContext) => React.ReactNode;
 }
 
@@ -56,6 +61,8 @@ function Pct({ label, v }: { label: string; v: number | null }) {
   return <span className={hot}>{label} {v}%</span>;
 }
 
+export const HIDE_BELOW: Record<'xl' | '2xl', string> = { xl: 'hidden xl:table-cell', '2xl': 'hidden 2xl:table-cell' };
+
 export const COLUMNS: ColumnDef[] = [
   {
     id: 'name', label: 'Device', defaultOn: true, fixed: true, sort: 'name',
@@ -64,7 +71,7 @@ export const COLUMNS: ColumnDef[] = [
         <span className={cn('h-2 w-2 rounded-full shrink-0', CONNECTIVITY_DOT[connectivityFrom(r, c.now)])} data-connectivity={connectivityFrom(r, c.now)}
           title={`${connectivityLabel(connectivityFrom(r, c.now), r.lastSeenAt, c.now)}. ${connectivityHint(connectivityFrom(r, c.now))}`} />
         <div className="min-w-0">
-          <Link href={`/endpoints/${r.id}`} className="font-medium hover:underline whitespace-nowrap">{r.name}</Link>
+          <Link href={`/endpoints/${r.id}`} className="font-medium hover:underline break-all">{r.name}</Link>
           {r.hostname && r.hostname.toLowerCase() !== r.name.toLowerCase() ? (
             <p className="text-xs text-muted-foreground truncate">{r.hostname}</p>
           ) : null}
@@ -73,8 +80,8 @@ export const COLUMNS: ColumnDef[] = [
       </div>
     ),
   },
-  { id: 'business', label: 'Business', defaultOn: true, sort: 'business', cell: (r) => r.business?.name ?? dash },
-  { id: 'site', label: 'Site', defaultOn: true, sort: 'site', cell: (r) => r.site?.name ?? dash },
+  { id: 'business', label: 'Business', defaultOn: true, sort: 'business', cell: (r) => r.business?.name ? <span className="block max-w-[10rem] truncate" title={r.business.name}>{r.business.name}</span> : dash },
+  { id: 'site', label: 'Site', defaultOn: true, sort: 'site', hideBelow: '2xl', cell: (r) => r.site?.name ? <span className="block max-w-[8rem] truncate" title={r.site.name}>{r.site.name}</span> : dash },
   // Id kept as 'group' so saved views from 0.33 keep the column.
   {
     id: 'group', label: 'Groups', defaultOn: false,
@@ -88,7 +95,7 @@ export const COLUMNS: ColumnDef[] = [
     )),
   },
   {
-    id: 'os', label: 'OS', defaultOn: true, sort: 'os',
+    id: 'os', label: 'OS', defaultOn: true, sort: 'os', hideBelow: 'xl',
     cell: (r) => (
       <span className="flex items-center gap-1.5" title={r.os ?? r.platform ?? 'Unknown'}>
         <OsIcon platform={r.platform ?? r.os} />
@@ -122,7 +129,7 @@ export const COLUMNS: ColumnDef[] = [
   {
     id: 'lastSeen', label: 'Last seen', defaultOn: true, sort: 'lastSeen',
     cell: (r, c) => (
-      <span className={cn('text-xs whitespace-nowrap', connectivityFrom(r, c.now) === 'agent_silent' ? CONNECTIVITY_TEXT.agent_silent : 'text-muted-foreground')}
+      <span className={cn('text-xs block max-w-[8rem]', connectivityFrom(r, c.now) === 'agent_silent' ? CONNECTIVITY_TEXT.agent_silent : 'text-muted-foreground')}
         title={`${r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleString() : 'Never'}${connectivityFrom(r, c.now) === 'agent_silent' ? `. ${connectivityHint('agent_silent')}` : ''}`} data-testid="last-seen-cell">
         {connectivityFrom(r, c.now) === 'online' ? `Online · ${ago(r.lastSeenAt, c.now)}`
           : connectivityFrom(r, c.now) === 'agent_silent' ? connectivityLabel('agent_silent', r.lastSeenAt, c.now) : ago(r.lastSeenAt, c.now)}
@@ -130,7 +137,7 @@ export const COLUMNS: ColumnDef[] = [
     ),
   },
   {
-    id: 'user', label: 'Logged-in user', defaultOn: true, sort: 'user',
+    id: 'user', label: 'Logged-in user', defaultOn: true, sort: 'user', hideBelow: '2xl',
     cell: (r, c) => {
       if (!r.loggedOnUser) return dash;
       const old = !r.resources || c.now - new Date(r.resources.sampledAt).getTime() > c.liveStaleMs;
@@ -145,7 +152,7 @@ export const COLUMNS: ColumnDef[] = [
       const isStale = c.now - new Date(x.sampledAt).getTime() > c.liveStaleMs;
       return (
         <div className={cn('text-xs', isStale && stale)} title={`Sampled ${new Date(x.sampledAt).toLocaleString()}${isStale ? ' — stale, not live' : ''}`}>
-          <div className="flex gap-2 whitespace-nowrap">
+          <div className="flex flex-wrap gap-x-2 max-w-[9rem]">
             <Pct label="CPU" v={x.cpuPercent} /><Pct label="RAM" v={x.memoryUsedPercent} /><Pct label="Disk" v={x.diskUsedPercent} />
           </div>
           <p className="text-muted-foreground">{isStale ? 'stale · ' : ''}{ago(x.sampledAt, c.now)}</p>
@@ -171,7 +178,7 @@ export const COLUMNS: ColumnDef[] = [
     },
   },
   {
-    id: 'alerts', label: 'Alerts', defaultOn: true, sort: 'alerts', needsAlerts: true, className: 'text-right',
+    id: 'alerts', label: 'Alerts', defaultOn: false, sort: 'alerts', needsAlerts: true, className: 'text-right',
     cell: (r) => (r.alerts ? (
       r.alerts.open ? <Link href={`/endpoints/${r.id}?tab=monitoring`} className="font-medium hover:underline">{r.alerts.open}</Link> : <span className="text-muted-foreground">0</span>
     ) : dash),

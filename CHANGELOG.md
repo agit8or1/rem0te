@@ -5,6 +5,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.47.1] — 2026-11-14 · *Latch*
+
+**The Print Spooler action now shows whether the Spooler is already running.**
+
+The owner opened *Actions → Start the Windows Print Spooler* and nothing on the page said what state the Spooler was in.
+Pressing it on a running Spooler was harmless, because the agent reads the service itself and changes nothing when it is
+already running, but the console gave no hint that the request was pointless.
+
+- When *Start the Windows Print Spooler* or *Restart a Windows service* is chosen, the action panel shows that service's
+  state and start type from the latest `service_list` snapshot, with the time it was taken. This is the same read the
+  Services tab makes, with the same query key, so the two never disagree. A **Refresh** button asks the computer for a
+  new service list.
+- If the snapshot says the Spooler is **Running**, the start request is replaced with "Nothing to do". A *start it
+  anyway* link stays for a snapshot that may be stale, and the computer still checks again before it acts.
+- With no snapshot, or no Spooler in the snapshot, the panel says so and the request is offered as before.
+
+This changes only the web page. The agent's check, the action catalog and §14 are unchanged.
+
+**The Devices list fits the page again, with no sideways scrolling.**
+
+With the sidebar open, eleven default columns plus the Connect column were wider than the content area at ordinary
+laptop and desktop widths, so the list scrolled left and right. Most cells were `whitespace-nowrap`, so nothing could
+give way.
+
+- **OS** shows only at `xl` (1280 px) and wider. **Site** and **Logged-in user** show only at `2xl` (1536 px) and wider.
+  The column picker marks them "(wide screens)". A chosen column is never removed; it is only hidden while the window
+  is narrow.
+- **Alerts** is off by default. The Health column already shows the worst open alert, and Alerts is still in the
+  picker. A browser that saved its own column choice keeps it.
+- Long business and site names are truncated, with the full name on hover. Device names, Last seen and the
+  CPU/RAM/disk figures wrap instead of forcing the row wider.
+- The table keeps `overflow-x-auto` as a fallback for very narrow windows, and Connect stays pinned on the right.
+
+---
+
 ## [0.47.0] — 2026-11-14 · *Latch*
 
 **Everyday changes no longer ask "confirm it is you" every time.**

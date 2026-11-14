@@ -18,7 +18,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
-import { COLUMNS, DEFAULT_COLUMNS, ago, type CellContext } from './columns';
+import { COLUMNS, DEFAULT_COLUMNS, HIDE_BELOW, ago, type CellContext } from './columns';
 import { BULK_MAX, describeRule, deviceGroupsApi, deviceListApi, deviceViewsApi, refusalMessage, ruleFromFilters, storedFilters, toParams, viewFilters } from './api';
 import { clearLegacyViews, loadLegacyViews, loadPrefs, savePrefs, type LegacyView } from './prefs';
 import { BulkBar, BulkResultDialog, GroupsDialog } from './bulk';
@@ -470,7 +470,7 @@ export function DeviceList() {
               <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Remembered in this browser</DropdownMenuLabel>
               {offered.filter((c) => !c.fixed).map((c) => (
                 <DropdownMenuItem key={c.id} onSelect={(e) => { e.preventDefault(); toggleColumn(c.id); }}>
-                  <Check className={cn('h-4 w-4 mr-2', columns.includes(c.id) ? 'opacity-100' : 'opacity-0')} />{c.label}
+                  <Check className={cn('h-4 w-4 mr-2', columns.includes(c.id) ? 'opacity-100' : 'opacity-0')} />{c.label}{c.hideBelow && <span className="ml-1 text-xs text-muted-foreground">(wide screens)</span>}
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />
@@ -513,7 +513,7 @@ export function DeviceList() {
                   checked={pageAllSelected} disabled={!pageRows.length} onChange={() => togglePage(pageRows)} />
               </th>
               {shown.map((c) => (
-                <th key={c.id} className={cn('text-left font-medium whitespace-nowrap', pad, c.className)} aria-sort={c.sort && sort === c.sort ? (dir === 'asc' ? 'ascending' : 'descending') : undefined}>
+                <th key={c.id} className={cn('text-left font-medium whitespace-nowrap', pad, c.className, c.hideBelow && HIDE_BELOW[c.hideBelow])} aria-sort={c.sort && sort === c.sort ? (dir === 'asc' ? 'ascending' : 'descending') : undefined}>
                   {c.sort ? (
                     <button type="button" className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort(c.sort!)}>
                       {c.label}
@@ -543,7 +543,7 @@ export function DeviceList() {
                 <td className={cn(pad, 'align-top w-8')}>
                   <input type="checkbox" className="h-4 w-4 mt-0.5" aria-label={`Select ${r.name}`} checked={selected.has(r.id)} onChange={() => toggleRow(r)} />
                 </td>
-                {shown.map((c) => <td key={c.id} className={cn(pad, 'align-top', c.className)}>{c.cell?.(r, ctx)}</td>)}
+                {shown.map((c) => <td key={c.id} className={cn(pad, 'align-top', c.className, c.hideBelow && HIDE_BELOW[c.hideBelow])}>{c.cell?.(r, ctx)}</td>)}
                 <td className={cn(pad, 'align-top text-right whitespace-nowrap sticky right-0 bg-background shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.15)]')}>
                   <div className="flex justify-end items-center gap-1">
                     {canConnect && (
