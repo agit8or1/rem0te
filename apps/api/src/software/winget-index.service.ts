@@ -5,11 +5,12 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  INDEX_DB_ENTRY, INDEX_FETCH_TIMEOUT_MS, INDEX_MAX_DB_BYTES, INDEX_MAX_MSIX_BYTES, INDEX_ROWS_SQL, INDEX_SCHEMA_SQL,
-  checkIndexSchema, indexSweepEnabled, indexUrl, installable, nextIndexRead, normalizeIndexRows, rankSearch, readZipEntry, refreshDue,
-  type IndexRow,
+  BROWSE_LETTERS, BROWSE_RANK_CAP, INDEX_DB_ENTRY, INDEX_FETCH_TIMEOUT_MS, INDEX_MAX_DB_BYTES, INDEX_MAX_MSIX_BYTES, INDEX_ROWS_SQL, INDEX_SCHEMA_SQL,
+  checkIndexSchema, indexSweepEnabled, indexUrl, installable, nextIndexRead, normalizeIndexRows, pageWindow, rankPage, rankSearch, readZipEntry, refreshDue,
+  type BrowseQuery, type BrowseSort, type IndexRow,
 } from './winget-index';
 
 const execFileAsync = promisify(execFile);
@@ -146,14 +147,44 @@ export class WingetIndexService implements OnModuleInit, OnModuleDestroy {
 
   // ── Search ────────────────────────────────────────────────────────────────
 
+  /** Every term in the id, name, moniker or (normalised) publisher: bound parameters only. */
+  private termsWhere(q: string): Prisma.WingetPackageWhereInput[] {
+    const terms = q.trim().split(/\s+/).filter(Boolean).slice(0, 4);
+    return terms.map((t) => ({ OR: [{ packageId: { contains: t, mode: 'insensitive' as const } }, { name: { contains: t, mode: 'insensitive' as const } }, { moniker: { contains: t, mode: 'insensitive' as const } }, { publisher: { contains: t.toLowerCase().replace(/[^a-z0-9]/g, '') || t, mode: 'insensitive' as const } }] }));
+  }
+
   async search(q: string, limit: number): Promise<(IndexRow & { installable: boolean })[]> {
     const s = q.trim();
-    const terms = s.split(/\s+/).filter(Boolean).slice(0, 4);
-    const rows = await this.prisma.wingetPackage.findMany({
-      where: { AND: terms.map((t) => ({ OR: [{ packageId: { contains: t, mode: 'insensitive' as const } }, { name: { contains: t, mode: 'insensitive' as const } }, { moniker: { contains: t, mode: 'insensitive' as const } }, { publisher: { contains: t.toLowerCase().replace(/[^a-z0-9]/g, '') || t, mode: 'insensitive' as const } }] })) },
-      take: 500, orderBy: { packageId: 'asc' },
-    });
+    const rows = await this.prisma.wingetPackage.findMany({ where: { AND: this.termsWhere(s) }, take: 500, orderBy: { packageId: 'asc' } });
     return rankSearch(s, rows, limit).map((r) => ({ ...r, installable: installable(r) }));
+  }
+
+  /**
+   * One page of the index (0.43): narrowed by a query, a publisher and a
+   * letter, sorted by name, or by the 0.42 ranking when there is a query
+   * whose matches are few enough to rank (BROWSE_RANK_CAP); more than that
+   * is listed by name and says so (ranked: false).
+   */
+  async browse(b: BrowseQuery): Promise<{ rows: (IndexRow & { installable: boolean })[]; total: number; page: number; pages: number; sort: BrowseSort; ranked: boolean }> {
+    const where: Prisma.WingetPackageWhereInput = {
+      AND: [
+        ...(b.q ? this.termsWhere(b.q) : []),
+        ...(b.publisher ? [{ publisher: b.publisher }] : []),
+        ...(b.letter === '#' ? [{ NOT: { OR: [...BROWSE_LETTERS].map((l) => ({ name: { startsWith: l, mode: 'insensitive' as const } })) } }]
+          : b.letter ? [{ name: { startsWith: b.letter, mode: 'insensitive' as const } }] : []),
+      ],
+    };
+    const total = await this.prisma.wingetPackage.count({ where });
+    const out = (rows: IndexRow[]) => rows.map((r) => ({ ...r, installable: installable(r) }));
+    if (b.sort === 'relevance' && total <= BROWSE_RANK_CAP) {
+      const candidates = await this.prisma.wingetPackage.findMany({ where, take: BROWSE_RANK_CAP, orderBy: { packageId: 'asc' } });
+      const r = rankPage(b.q, candidates, b.page, b.pageSize);
+      return { rows: out(r.rows), total: r.total, page: r.page, pages: r.pages, sort: 'relevance', ranked: true };
+    }
+    const w = pageWindow(total, b.page, b.pageSize);
+    const dir = b.sort === '-name' ? 'desc' as const : 'asc' as const;
+    const rows = await this.prisma.wingetPackage.findMany({ where, orderBy: [{ name: dir }, { packageId: dir }], skip: w.skip, take: b.pageSize });
+    return { rows: out(rows), total, page: w.page, pages: w.pages, sort: b.sort === 'relevance' ? 'name' : b.sort, ranked: false };
   }
 
   async lookup(packageId: string): Promise<IndexRow | null> {

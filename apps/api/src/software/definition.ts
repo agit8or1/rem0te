@@ -449,6 +449,55 @@ export const FromWingetDto = z.object({
   version: z.string().regex(SOFTWARE_VERSION_RE).optional(),
   architecture: z.enum(['x64', 'x86', 'arm64']).default('x64'),
 }).strict();
+/**
+ * 0.43: add several packages from the browsable index to one catalog, in one
+ * request. Each package goes through the same path as FromWingetDto: its
+ * manifest is read, the installer picked and the detection rule derived, and
+ * the entry written and audited. At most BULK_MAX_PACKAGES, because each one
+ * is a bounded manifest fetch from raw.githubusercontent.com.
+ */
+export const BULK_MAX_PACKAGES = 25;
+export const BulkFromWingetDto = z.object({
+  scope: z.enum(['global', 'business']),
+  businessId: Id.optional(),
+  packages: z.array(z.object({ packageId: PackageId, version: z.string().regex(SOFTWARE_VERSION_RE).optional() }).strict()).min(1).max(BULK_MAX_PACKAGES)
+    .refine((a) => new Set(a.map((p) => p.packageId.toLowerCase())).size === a.length, 'each package once'),
+  architecture: z.enum(['x64', 'x86', 'arm64']).default('x64'),
+}).strict();
+
+export type BulkStatus = 'added' | 'updated' | 'already' | 'refused';
+/** What one package of a bulk add came to, from wingetEntry's change. */
+export const bulkStatusOf = (change: 'created' | 'updated' | 'reused'): Exclude<BulkStatus, 'refused'> => (change === 'created' ? 'added' : change === 'reused' ? 'already' : 'updated');
+
+export interface CatalogMark { scope: 'global' | 'business'; businessId: string | null; businessName: string | null; entryId: string; version: string; revision: number }
+/**
+ * Which catalogs already hold each package (0.43): live entries of the
+ * global catalog and of the one business being looked at, keyed by the
+ * package id in lower case (winget ids are case-insensitive). Global first.
+ */
+export function catalogMarks(
+  entries: { id: string; packageId: string; scope: 'GLOBAL' | 'BUSINESS'; customerId: string | null; version: string; revision: number; archivedAt: Date | null; customer?: { name: string } | null }[],
+  businessId: string | null,
+): Map<string, CatalogMark[]> {
+  const out = new Map<string, CatalogMark[]>();
+  for (const e of entries) {
+    if (e.archivedAt) continue;
+    if (e.scope !== 'GLOBAL' && (!businessId || e.customerId !== businessId)) continue;
+    const k = e.packageId.toLowerCase();
+    const list = out.get(k) ?? [];
+    list.push({ scope: e.scope === 'GLOBAL' ? 'global' : 'business', businessId: e.customerId, businessName: e.customer?.name ?? null, entryId: e.id, version: e.version, revision: e.revision });
+    out.set(k, list);
+  }
+  for (const l of out.values()) l.sort((a, b) => (a.scope === b.scope ? 0 : a.scope === 'global' ? -1 : 1));
+  return out;
+}
+
+/** Is a package already in the catalog a bulk add targets? The target's own entry, or (for a business) a global one, which already applies there. */
+export function alreadyIn(marks: CatalogMark[] | undefined, target: string | null): CatalogMark | null {
+  if (!marks?.length) return null;
+  return marks.find((m) => (target ? m.businessId === target : m.scope === 'global')) ?? (target ? marks.find((m) => m.scope === 'global') ?? null : null);
+}
+
 /** One click on a computer's Software tab: catalog entry (made or reused) and the install request, in one. */
 export const QuickInstallDto = z.object({
   packageId: PackageId,

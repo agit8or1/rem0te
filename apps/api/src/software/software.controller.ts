@@ -141,11 +141,19 @@ export class SoftwareController {
 
   // ── 0.41: the searchable winget catalog, one-click install, removing a program ──
 
-  /** Search the server's copy of the winget community index (refreshed at most daily): ?q=name, publisher or id. */
+  /**
+   * Search the server's copy of the winget community index (refreshed at most daily): ?q=name, publisher or id.
+   * 0.43: with ?page= or ?pageSize= (at most 100), one page of the whole index instead — narrowed by q,
+   * publisher and letter, sorted by name or relevance, each row marked with the catalogs holding it
+   * (global, and ?businessId= or the caller's own business).
+   */
   @Get('software/winget/packages')
   @RequireCapability(CAP.COMPUTERS_VIEW)
-  async wingetSearch(@Actor() actor: ActorContext, @Query('q') q?: string) {
-    return { success: true, data: await this.svc.wingetSearch(actor, typeof q === 'string' ? q : undefined) };
+  async wingetSearch(
+    @Actor() actor: ActorContext, @Query('q') q?: string, @Query('page') page?: string, @Query('pageSize') pageSize?: string,
+    @Query('sort') sort?: string, @Query('publisher') publisher?: string, @Query('letter') letter?: string, @Query('businessId') businessId?: string,
+  ) {
+    return { success: true, data: await this.svc.wingetSearch(actor, typeof q === 'string' ? q : undefined, { page, pageSize, sort, publisher, letter, businessId }) };
   }
 
   /** Read the index now (Platform Admin; refused within an hour of the last read). */
@@ -163,6 +171,19 @@ export class SoftwareController {
   @RateLimit(10)
   async wingetAdd(@Actor() actor: ActorContext, @Body() body: unknown, @Req() req: Request) {
     return { success: true, data: await this.svc.addFromWinget(actor, body, this.fresh(req)) };
+  }
+
+  /**
+   * 0.43: add up to 25 packages from the index to one catalog in one request: one fresh sign-in, each package
+   * through the same manifest read, installer choice and detection rule as one, audited one entry each, and a
+   * result per package. Each package is one bounded manifest fetch, so this is three a minute.
+   */
+  @Post('software/winget/catalog/bulk')
+  @HttpCode(HttpStatus.OK)
+  @RequireCapability(CAP.COMPUTERS_EDIT)
+  @RateLimit(3)
+  async wingetAddMany(@Actor() actor: ActorContext, @Body() body: unknown, @Req() req: Request) {
+    return { success: true, data: await this.svc.addManyFromWinget(actor, body, this.fresh(req)) };
   }
 
   /** One click: the package's catalog entry (reused or made) and a one-computer install, in one request. */
