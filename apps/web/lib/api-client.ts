@@ -926,6 +926,56 @@ export const emailApi = {
   verify: (token: string) => api.post('/email/verify', { token }),
 };
 
+// AI providers and Ask AI (0.48). Saving the provider or its key needs fresh
+// authentication (the interceptor prompts and retries). The key is write-only:
+// the settings view says only whether one is set and its last four characters.
+export type AiProvider = 'anthropic' | 'openai' | 'openai_compatible';
+export type AiAuthStyle = 'bearer' | 'api-key';
+export interface AiSettingsView {
+  configured: boolean; enabled: boolean; provider: AiProvider | null; providerLabel?: string; model: string | null; baseUrl: string | null;
+  authStyle: AiAuthStyle; keySet: boolean; keyLast4: string | null; updatedAt?: string; lastTestAt?: string | null; lastTestResult?: string | null;
+  defaults: Record<AiProvider, string>; keyChange?: string;
+}
+export interface AiStatus { enabled: boolean; provider: AiProvider | null; providerLabel: string | null; model: string | null }
+/** What an Ask AI or Create ticket button names: never the entry's text, which the server reads itself. */
+export type EntrySource = { source: 'event'; commandId: string; index: number } | { source: 'alert'; alertId: string };
+export interface AiAnswer { answer: string; provider: AiProvider; model: string; cached: boolean; redactions: Record<string, number>; askedAt: string }
+export const aiApi = {
+  settings: () => api.get('/ai/settings'),
+  saveSettings: (data: { enabled: boolean; provider: AiProvider; model?: string; baseUrl?: string | null; authStyle?: AiAuthStyle; apiKey?: string | null }) => api.put('/ai/settings', data),
+  test: () => api.post('/ai/settings/test'),
+  status: () => api.get('/ai/status'),
+  explain: (endpointId: string, src: EntrySource) => api.post(`/endpoints/${endpointId}/ai/explain`, src),
+  preview: (endpointId: string, src: EntrySource) => api.post(`/endpoints/${endpointId}/ai/preview`, src),
+};
+
+// PSA tickets (0.48). Connector writes need fresh authentication.
+export type PsaKind = 'email' | 'webhook' | 'clientst0r';
+export interface PsaConnectorView {
+  id: string; scopeKey: string; kind: PsaKind; kindLabel: string; enabled: boolean; label: string | null; updatedAt: string;
+  emailRecipientId?: string | null; address?: string | null; confirmed?: boolean;
+  webhookHost?: string | null; webhookUrlSet?: boolean; signed?: boolean; integrationConfigured?: boolean;
+}
+export interface PsaScopeView {
+  scopeKey: string; businessId: string | null; name: string; connector: PsaConnectorView | null;
+  platformDefault: { kind: PsaKind; kindLabel: string; enabled: boolean } | null; kinds: { kind: PsaKind; label: string }[];
+}
+export interface PsaTicketRow { id: string; sourceRef: string; fingerprint: string; connectorKind: PsaKind; ref: string | null; url: string | null; createdAt: string }
+export interface PsaTicketStatus {
+  available: boolean; reason: string | null; canCreate: boolean; requires: string[];
+  connector: { kind: PsaKind; kindLabel: string; label: string | null; scope: 'business' | 'global' } | null; tickets: PsaTicketRow[];
+}
+export interface PsaTicketResult { id: string; ref: string | null; url: string | null; connectorKind: PsaKind; kindLabel: string; status: string; sourceRef: string; aiIncluded: boolean; createdAt: string }
+export const psaApi = {
+  connector: (scope: 'global' | 'business', businessId?: string | null) => api.get('/psa/connectors', { params: { scope, ...(businessId ? { businessId } : {}) } }),
+  saveConnector: (data: { scope: 'global' | 'business'; businessId?: string; kind: PsaKind; enabled: boolean; label?: string | null; emailRecipientId?: string; webhookUrl?: string; webhookSecret?: string | null }) =>
+    api.put('/psa/connectors', data),
+  removeConnector: (scope: 'global' | 'business', businessId?: string | null) => api.delete('/psa/connectors', { params: { scope, ...(businessId ? { businessId } : {}) } }),
+  ticketStatus: (endpointId: string) => api.get(`/endpoints/${endpointId}/tickets`),
+  draft: (endpointId: string, src: EntrySource) => api.post(`/endpoints/${endpointId}/tickets/draft`, src),
+  create: (endpointId: string, data: EntrySource & { subject?: string; note?: string; includeAi?: boolean }) => api.post(`/endpoints/${endpointId}/tickets`, data),
+};
+
 // Scheduled reports (0.34). Creating or changing one needs fresh authentication.
 export type ScheduledReportKey = 'patch-compliance' | 'agent-coverage' | 'alert-frequency' | 'offline-time';
 export interface ReportScheduleInput {

@@ -201,6 +201,15 @@ enum ActivityAction {
   // Off) changed, before and after.
   AGENT_AUTO_UPDATE_COMPUTER_SET
   ROUTINE_CONFIRM_CHANGED
+  // 0.48: the AI provider (Settings → AI) and asking it about an event, and
+  // PSA connectors and the tickets made through them. Never any text or key.
+  AI_SETTINGS_CHANGED
+  AI_SETTINGS_TESTED
+  AI_ASKED
+  AI_ANSWERED
+  PSA_CONNECTOR_CHANGED
+  PSA_TICKET_CREATED
+  PSA_TICKET_FAILED
   // 0.33 device groups, shared device views and bulk actions
   DEVICE_GROUP_CREATED
   DEVICE_GROUP_UPDATED
@@ -640,6 +649,7 @@ model Customer {
   savedViews           SavedView[]
   emailRecipients      EmailRecipient[]
   reportSchedules      ReportSchedule[]
+  psaConnectors        PsaConnector[]
 
   @@index([tenantId])
   @@index([tenantId, name])
@@ -788,6 +798,8 @@ model Endpoint {
   assistCodes       AssistCode[]
   assistSessions    AssistSession[]
   selfHelpRuns      TraySelfHelpRun[]
+  /// 0.48: tickets created in a PSA from this computer's events or alerts.
+  psaTickets        PsaTicket[]
 
   // Access mode: how the computer's remote-access authorization is scoped.
   //   ASSIGNED_USERS  → only users listed in ComputerAccess may connect
@@ -3838,4 +3850,86 @@ model WingetIndexState {
   sourceSha256    String?
   sourceWrittenAt DateTime?
   lastError       String?
+}
+
+// ─── AI and PSA tickets (0.48) ────────────────────────────────────────────────
+
+/// The one AI provider this server asks (Settings → AI). Platform Admin only;
+/// the key is AES-256-GCM under ENCRYPTION_KEY (ai/ai-settings.service.ts),
+/// never returned, logged or audited — only its last four characters are kept
+/// in the clear for display. Changing the provider, base URL or auth style
+/// clears the key unless a new one is given in the same request.
+model AiSettings {
+  id             String    @id @default("singleton")
+  enabled        Boolean   @default(false)
+  provider       String
+  model          String
+  baseUrl        String?
+  authStyle      String    @default("bearer")
+  apiKeyEnc      String?
+  apiKeyLast4    String?
+  updatedById    String
+  updatedAt      DateTime  @updatedAt
+  lastTestAt     DateTime?
+  lastTestResult String?
+}
+
+/// An answer the provider gave, kept a day so the same event asked again costs
+/// nothing. cacheKey is SHA-256 over provider, model, base URL and the
+/// fingerprint of the REDACTED input, so the text it was asked about is never
+/// stored here — only the answer.
+model AiAnswer {
+  id           String   @id @default(cuid())
+  cacheKey     String   @unique
+  provider     String
+  model        String
+  answer       String
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+
+  @@index([expiresAt])
+}
+
+/// Where "Create ticket" sends: one connector per scope ("global" is the
+/// platform default, "b:<customerId>" a business's own). kind is email (to a
+/// confirmed EmailRecipient of the same scope), webhook (a public HTTPS URL,
+/// optionally HMAC-signed with an encrypted secret) or clientst0r.
+model PsaConnector {
+  id               String    @id @default(cuid())
+  scopeKey         String    @unique
+  customerId       String?
+  customer         Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  kind             String
+  enabled          Boolean   @default(true)
+  label            String?
+  emailRecipientId String?
+  webhookUrl       String?
+  webhookSecretEnc String?
+  updatedById      String
+  updatedAt        DateTime  @updatedAt
+  createdAt        DateTime  @default(now())
+}
+
+/// A ticket created from a computer's event-log entry or alert. sourceRef is
+/// "event:<commandId>:<index>" or "alert:<alertId>"; fingerprint identifies
+/// the event itself across fetches. No subject or body is stored.
+model PsaTicket {
+  id             String   @id @default(cuid())
+  tenantId       String?
+  customerId     String?
+  endpointId     String
+  endpoint       Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  sourceRef      String
+  fingerprint    String
+  connectorKind  String
+  connectorScope String
+  ref            String?
+  url            String?
+  createdById    String
+  createdAt      DateTime @default(now())
+
+  @@index([endpointId, createdAt])
+  @@index([endpointId, fingerprint])
 }

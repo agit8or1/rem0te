@@ -42,7 +42,7 @@ const check = (c, m, d = '') => { if (c) { pass++; console.log(`  \x1b[32m✓\x1
 
 const VIEWPORTS = { desktop: { width: 1440, height: 900 }, tablet: { width: 820, height: 1180 } };
 const SETTINGS_ADMIN = ['/settings', '/users', '/offboarding', '/technician-approvals', '/audit', '/businesses', '/admin/technicians', '/admin/access', '/admin/sso',
-  '/settings/client-updates', '/admin/rollouts', '/settings/email', '/admin/security', '/admin/status', '/about'];
+  '/settings/client-updates', '/admin/rollouts', '/settings/email', '/settings/ai', '/settings/psa', '/admin/security', '/admin/status', '/about'];
 
 async function signIn(context, email, password) {
   const page = await context.newPage();

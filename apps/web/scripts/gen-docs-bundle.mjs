@@ -54,6 +54,7 @@ const ORDER = [
   ['metric-history.md', 'Metric history', 'Computers and monitoring', 'CPU, memory and disk over time: the Performance tab, gaps, roll-up, retention and storage.'],
   ['reports.md', 'Reports', 'Computers and monitoring', 'Patch compliance, agent coverage, alert frequency, offline time and software compliance, from stored data, with audited CSV export.'],
   ['email.md', 'Email and scheduled reports', 'Computers and monitoring', 'The SMTP relay, confirmed recipients, alert emails, and reports emailed weekly or monthly.'],
+  ['ai-and-tickets.md', 'AI and tickets', 'Computers and monitoring', 'Ask AI about an event-log entry or alert, and create a ticket in the PSA: providers, redaction, connectors and limits.'],
   ['updates.md', 'Updates', 'Computers and monitoring', 'Updating the portal, RustDesk and the agent, and client rollouts.'],
   ['staged-patching.md', 'Staged patching', 'Computers and monitoring', 'Windows updates in rings — canary, approvals, halt on failure.'],
   ['patching-setup.md', 'Patching setup', 'Computers and monitoring', 'Turning on signed patching in production, in order, with a live pre-flight.'],

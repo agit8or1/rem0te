@@ -126,3 +126,8 @@ export function constantTimeEqualHex(a: string, b: string): boolean {
 export function alertEventSigningString(event: unknown): string {
   return `rem0te-alert-event-v1\n${canonicalJson(event)}`;
 }
+
+/** Ticket requests (0.48, PROPOSED P16) sign under their own prefix too: never replayable as a job or alert event. */
+export function ticketRequestSigningString(event: unknown): string {
+  return `rem0te-ticket-request-v1\n${canonicalJson(event)}`;
+}

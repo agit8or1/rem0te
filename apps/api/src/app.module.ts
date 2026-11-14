@@ -6,6 +6,8 @@ import { ContainmentModule } from './containment/containment.module';
 import { AuditChainModule } from './audit/audit-chain.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
 import { EmailModule } from './email/email.module';
+import { AiModule } from './ai/ai.module';
+import { PsaModule } from './psa/psa.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { RetentionModule } from './retention/retention.module';
 import { ChatModule } from './chat/chat.module';
@@ -108,6 +110,8 @@ import { TrayModule } from './tray/tray.module';
     AuditChainModule,
     MonitoringModule,
     EmailModule,
+    AiModule,
+    PsaModule,
     MetricsModule,
     RetentionModule,
     ChatModule,

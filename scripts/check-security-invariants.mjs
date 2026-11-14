@@ -2159,23 +2159,129 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'fetchInstallerManifest must stay bounded and WINGET_MANIFEST_BASE loopback-only');
 }
 
-// 41. AI without a provider key (0.34). The device page's AI summary used to
-//     call a model provider directly with a key in rem0te's environment,
-//     sending the computer's name, hostname, business and every note
-//     verbatim. "Provider keys stay in ClientSt0r" is now true everywhere:
-//     no provider SDK or key variable anywhere in the API, the summary goes
-//     only through the integration client to the peer's gateway, and what it
-//     carries is fixed here.
+// 41. AI providers (0.48 — reversing 0.34's "AI without a provider key", at
+//     the owner's request). From 0.34 to 0.47 the API held no provider key
+//     and the only AI was ClientSt0r's gateway. 0.48 lets a Platform Admin
+//     store one provider key so "Ask AI" works with no ClientSt0r peer. What
+//     keeps that safe is fixed here:
+//       - provider endpoints, key headers and SDK names live only in
+//         apps/api/src/ai/, and no provider SDK is a dependency;
+//       - the one call site is ai/client.ts, through common/safe-https.ts
+//         (resolved and checked on every call, connected to the checked
+//         address, certificate verified, no redirects; plain http only to
+//         127.0.0.1 under NODE_ENV=test);
+//       - the key is AES-256-GCM under ENCRYPTION_KEY and is in no response,
+//         audit row or log line; setting it is a Platform Admin's with
+//         assertFresh, never routine;
+//       - every prompt is built from the server's own copy of the entry and
+//         passes redactForAi (which ends in redactForPeer); the browser names
+//         an entry and cannot supply text; AI_ASKED is written before it leaves.
+//     The ClientSt0r device-timeline path (0.34) keeps its own checks below.
 {
   const files = walk('apps/api/src');
-  const PROVIDER = /@anthropic-ai\/|\bopenai\b|@google\/generative-ai|@google-cloud\/vertexai|@mistralai\/|cohere-ai|groq-sdk|\b(ANTHROPIC|OPENAI|AZURE_OPENAI|GEMINI|GOOGLE_AI|MISTRAL|COHERE|GROQ)_[A-Z_]*KEY\b|api\.anthropic\.com|api\.openai\.com|generativelanguage\.googleapis\.com/i;
-  const hits = files.filter((f) => PROVIDER.test(read(f)));
-  check('no model-provider SDK, endpoint or key variable is referenced in apps/api/src', hits.length === 0, hits.join(', '));
+  const PROVIDER = /@anthropic-ai\/|\bopenai\b|@google\/generative-ai|@google-cloud\/vertexai|@mistralai\/|cohere-ai|groq-sdk|\b(ANTHROPIC|OPENAI|AZURE_OPENAI|GEMINI|GOOGLE_AI|MISTRAL|COHERE|GROQ)_[A-Z_]*KEY\b|api\.anthropic\.com|api\.openai\.com|generativelanguage\.googleapis\.com|x-api-key|anthropic-version/i;
+  const hits = files.filter((f) => PROVIDER.test(read(f)) && !f.startsWith('apps/api/src/ai/'));
+  check('AI: provider endpoints, key headers and names appear only in apps/api/src/ai/', hits.length === 0, hits.join(', '));
   const pkg = JSON.parse(read('apps/api/package.json'));
   const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
   const sdk = deps.filter((d) => /^(@anthropic-ai\/|openai$|@google\/generative-ai|@mistralai\/|cohere-ai$|groq-sdk$|@ai-sdk\/|ai$)/.test(d));
-  check('apps/api/package.json depends on no model-provider SDK', sdk.length === 0, sdk.join(', '));
+  check('apps/api/package.json depends on no model-provider SDK (plain HTTPS through safe-https)', sdk.length === 0, sdk.join(', '));
+  const aiFiles = files.filter((f) => f.startsWith('apps/api/src/ai/'));
+  const aiSrc = Object.fromEntries(aiFiles.map((f) => [f, read(f)]));
+  const A = (n) => aiSrc[`apps/api/src/ai/${n}`] ?? '';
+  const net = aiFiles.filter((f) => /\bfetch\(|\bhttps?\.request\(|axios|got\(|undici/.test(aiSrc[f]));
+  check('AI: no fetch or raw request anywhere in ai/ — only safePost', net.length === 0, net.join(', '));
+  const callers = aiFiles.filter((f) => /\bsafePost\(/.test(aiSrc[f]));
+  check('AI: the one provider call site is ai/client.ts, through safePost, with the 60 s bound and a size cap',
+    callers.length === 1 && callers[0].endsWith('/ai/client.ts') && /export const AI_TIMEOUT_MS = 60_000;/.test(A('client.ts')) && /safePost\(req\.url, req\.headers, req\.body, \{ timeoutMs: AI_TIMEOUT_MS, maxBytes: AI_MAX_RESPONSE \}\)/.test(A('client.ts')),
+    `safePost callers: ${callers.join(', ')}`);
+  const outside = files.filter((f) => /from '[./]*common\/safe-https'|from '\.\/safe-https'/.test(read(f))).filter((f) => !f.startsWith('apps/api/src/ai/') && f !== 'apps/api/src/psa/connectors/webhook.ts');
+  check('AI/PSA: only ai/ and the PSA webhook connector use the typed-destination client', outside.length === 0, outside.join(', '));
+  const sh = read('apps/api/src/common/safe-https.ts');
+  const post = sh.slice(sh.indexOf('export async function safePost('));
+  check('safe-https: the URL is checked, resolved, every address judged with no local allowance, and the checked address is what is connected to',
+    post.indexOf('checkPublicHttpsUrl(rawUrl)') > 0 && post.indexOf('checkPublicHttpsUrl(rawUrl)') < post.indexOf('lookup(name, { all: true')
+      && /const r = checkResolved\(addrs, 'none'\);/.test(post) && /address = r\.address;/.test(post) && /host: address,/.test(post)
+      && /servername: name, rejectUnauthorized: true, minVersion: 'TLSv1\.2'/.test(post) && /agent: false as const/.test(post),
+    'safePost: checkPublicHttpsUrl, lookup all, checkResolved(…, none), host: address, servername: name, rejectUnauthorized');
+  check('safe-https: redirects are refused, never followed; the response is capped',
+    /if \(status >= 300 && status < 400\) \{ res\.destroy\(\); return done\(\(\) => reject\(new OutboundError\('REDIRECT_REFUSED'/.test(post) && /if \(total > opts\.maxBytes\)/.test(post), 'a 3xx must reject; the body must be capped');
+  check('safe-https: plain http only to 127.0.0.1 and only under NODE_ENV=test; https, public DNS names otherwise',
+    /return process\.env\.NODE_ENV === 'test' && TEST_LOOPBACK\.test\(raw\);/.test(sh) && /const TEST_LOOPBACK = \/\^http:\\\/\\\/127\\\.0\\\.0\\\.1:\[0-9\]\{2,5\}/.test(sh)
+      && /if \(u\.protocol !== 'https:'\) return \{ ok: false/.test(sh) && /if \(isIP\(h\)\) return \{ ok: false/.test(sh) && /INTERNAL_SUFFIX\.test\(h\)\) \{\s*\n\s*return \{ ok: false/.test(sh),
+    'checkPublicHttpsUrl must refuse http, IP literals, localhost and internal names; the loopback exception must stay test-only');
+  check('AI: AI_TEST_BASE_URL is honoured only through testLoopbackAllowed',
+    /const v = process\.env\.AI_TEST_BASE_URL;\s*\n\s*return v && testLoopbackAllowed\(v\)/.test(A('providers.ts')) && (A('providers.ts').match(/AI_TEST_BASE_URL/g) ?? []).length <= 3,
+    'providers.ts testBase()');
+  const set = A('ai-settings.service.ts');
+  check('AI: the key is sealed with its own purpose and only its last four characters are kept in the clear',
+    /apiKeyEnc = sealSecret\(this\.encKey, 'rem0te-ai-key-v1', d\.data\.apiKey\); apiKeyLast4 = last4\(d\.data\.apiKey\);/.test(set) && /createCipheriv\('aes-256-gcm'/.test(read('apps/api/src/common/secret-box.ts')) && /c\.setAAD\(Buffer\.from\(purpose\)\)/.test(read('apps/api/src/common/secret-box.ts')),
+    'ai-settings.service put(): sealSecret(…, rem0te-ai-key-v1, …)');
+  const view = set.slice(set.indexOf('  view(s: AiSettings | null) {'), set.indexOf('  async get()'));
+  const statusFn = set.slice(set.indexOf('  async status() {'), set.indexOf('  async put('));
+  check('AI: no response carries the key or its ciphertext (view and status)', view.length > 100 && !/apiKeyEnc:|apiKey:|\.\.\.s\b/.test(view) && !/apiKey|baseUrl:/.test(statusFn.replace('!!s.apiKeyEnc', '')), 'view() / status() must not spread the row or name the key');
+  const putFn = set.slice(set.indexOf('  async put('), set.indexOf('  async active('));
+  check('AI: the settings audit says only whether the key changed; a moved destination drops the key',
+    /meta: \{ before: pub\(cur\), after: pub\(row\), key: keyChange \}/.test(putFn) && /const pub = \(s: AiSettings \| null\) => s && \{ enabled: s\.enabled, provider: s\.provider, model: s\.model, baseUrl: s\.baseUrl, authStyle: s\.authStyle \};/.test(putFn)
+      && /else if \(cur\?\.apiKeyEnc && moved\) \{ apiKeyEnc = null;/.test(putFn),
+    'AI_SETTINGS_CHANGED meta must be before/after without the key, and changing provider/baseUrl/authStyle must clear it');
+  check('AI: nothing in ai/ logs (no Logger, no console)', aiFiles.every((f) => !/new Logger\(|console\.|this\.log(ger)?\./.test(aiSrc[f])), aiFiles.filter((f) => /new Logger\(|console\./.test(aiSrc[f])).join(', '));
+  const ctl = A('ai.controller.ts');
+  check('AI: setting the provider or key is a Platform Admin\'s (class guard) with assertFresh, never routine',
+    /@Controller\('ai\/settings'\)\s*\n@UseGuards\(PlatformAdminGuard\)/.test(ctl) && /@Put\(\)\s*\n\s*@RateLimit\(20\)\s*\n\s*async put\([^\n]*\) \{\s*\n\s*const u = [^\n]*\n\s*assertFresh\(/.test(ctl) && !/routine:/.test(ctl)
+      && !/'ai\.|'psa\./.test((read('apps/api/src/security-controls/review.ts').match(/export const ROUTINE_ACTIONS = \[([\s\S]*?)\] as const;/) ?? [])[1] ?? ''),
+    'AiSettingsController: PlatformAdminGuard at class level, assertFresh first in put(), no routine; ROUTINE_ACTIONS names no ai./psa. action');
+  const svcAi = A('ai.service.ts');
+  const ask = svcAi.slice(svcAi.indexOf('  async ask('), svcAi.indexOf('  async preview('));
+  const pcalls = [...aiFiles].flatMap((f) => [...aiSrc[f].matchAll(/await callProvider\(([^;]*)\);/g)].map((m) => `${f.split('/').pop()}: ${m[1]}`));
+  check('AI: every prompt is the fixed system prompt and the redacted payload (or the fixed test prompt)',
+    pcalls.length === 2 && pcalls.includes('ai.service.ts: cfg, key, SYSTEM_PROMPT, userPrompt(src.payload.text)') && pcalls.includes('ai-settings.service.ts: cfg, key, TEST_SYSTEM, TEST_USER, 16'),
+    `callProvider calls: ${pcalls.join(' | ')}`);
+  const red = A('redact.ts');
+  check('AI: the payload is built only by eventPayload/alertPayload, through redactForAi, which ends in redactForPeer',
+    /payload: eventPayload\(event, endpoint\.osVersion, names\)/.test(svcAi) && /payload: alertPayload\(alert, endpoint\.osVersion, names\)/.test(svcAi)
+      && /const message = redactForAi\(/.test(red) && /const peer = redactForPeer\(s, counts\);/.test(red) && /export const INPUT_CAP = 8000;/.test(red)
+      && !/name: true[^}]*\}\s*,?\s*payload/.test(svcAi),
+    'resolveSource → eventPayload/alertPayload → redactForAi → redactForPeer');
+  check('AI: the browser names an entry and cannot supply text (strict source objects)',
+    /z\.object\(\{ source: z\.literal\('event'\), commandId: z\.string\(\)\.regex\([^)]*\), index: z\.number\(\)\.int\(\)\.min\(0\)\.max\(999\) \}\)\.strict\(\)/.test(svcAi) && /z\.object\(\{ source: z\.literal\('alert'\), alertId: z\.string\(\)\.regex\([^)]*\) \}\)\.strict\(\)/.test(svcAi),
+    'SourceInput must stay two strict objects of ids');
+  check('AI: scope, then the entry\'s own capability (event logs / alerts), before anything is read',
+    /const ep = await this\.acl\.assertEndpointInScope\(actor, endpointId, CAP\.COMPUTERS_VIEW\);/.test(svcAi) && /assertEndpointInScope\(actor, endpointId, CAP\.COMPUTERS_EVENT_LOGS\);\s*\n\s*this\.acl\.assertCapability\(actor, CAP\.COMPUTERS_EVENT_LOGS\);/.test(svcAi) && /this\.acl\.assertCapability\(actor, CAP\.ALERTS_VIEW\);/.test(svcAi),
+    'resolveSource checks');
+  check('AI: AI_ASKED is written (logOrFail) before the request leaves; audit meta never carries text',
+    ask.indexOf("await this.audit.logOrFail({ ...base, action: 'AI_ASKED'") > 0 && ask.indexOf("await this.audit.logOrFail({ ...base, action: 'AI_ASKED'") < ask.indexOf('callProvider(')
+      && ![...ask.matchAll(/meta: \{([^}]*)\}/g)].some((m) => /(^|[\s,{])answer\s*[,:}]|answer\.text|text|message|prompt/.test(m[1])),
+    'ask(): logOrFail(AI_ASKED) before callProvider; no answer/text in meta');
+  check('AI: a per-user budget, besides the route limit',
+    /private readonly budget = new UserBudget\(/.test(svcAi) && /if \(!this\.budget\.take\(actor\.userId\)\)/.test(ask) && /@RateLimit\(10\)\s*\n\s*async explain/.test(ctl), 'AiService budget + @RateLimit on explain');
+  const psa = read('apps/api/src/psa/psa.service.ts'), wh = read('apps/api/src/psa/connectors/webhook.ts'), pctl = read('apps/api/src/psa/psa.controller.ts');
+  const create = psa.slice(psa.indexOf('  async create('));
+  check('PSA: a ticket needs scope and the entry\'s capability (resolveSource), tickets:create, the budget and no notifications pause, before the send',
+    create.indexOf('this.ai.resolveSource(') > 0 && create.indexOf('this.acl.assertCapability(a, CAP.TICKETS_CREATE)') > create.indexOf('this.ai.resolveSource(')
+      && create.indexOf("activePause(this.prisma, 'notifications'") > create.indexOf('CAP.TICKETS_CREATE') && create.indexOf('drv.send(') > create.indexOf("activePause(this.prisma, 'notifications'")
+      && /this\.budget\.take\(a\.userId\)/.test(create),
+    'PsaService.create order');
+  check('PSA: the ticket audit carries ids, the kind and the reference — never the subject, note or body',
+    ![...create.matchAll(/meta: \{([^}]*)\}/g)].some((m) => /subject|body|draft\.note\b|note:|text/.test(m[1])) && /action: 'PSA_TICKET_CREATED', meta: \{ \.\.\.ids, ticketId: ticket\.id, ref: ticket\.ref/.test(create),
+    'PSA_TICKET_CREATED / _FAILED meta');
+  check('PSA: connector writes need fresh authentication, never routine',
+    (pctl.match(/fresh\(this\.stepUp, req\);/g) ?? []).length === 2 && !/routine:/.test(pctl) && /assertFresh\(u\?\.sub/.test(pctl), 'PsaConnectorsController put/remove');
+  check('PSA: the webhook secret is sealed, kept only for the same URL, and never shown; only the host is shown or audited',
+    /enc = sealSecret\(deps\.encKey, 'rem0te-psa-webhook-secret-v1', given\)/.test(wh) && /else if \(cur\?\.webhookSecretEnc && cur\.webhookUrl === url\)/.test(wh)
+      && /return \{ webhookHost: hostOf\(row\.webhookUrl\), webhookUrlSet: !!row\.webhookUrl, signed: !!row\.webhookSecretEnc \};/.test(wh) && /audit: \{ host: c\.url\.host, secret: change \}/.test(wh),
+    'webhook driver');
+  check('PSA: the webhook URL obeys the typed-destination rule and is sent only through safePost',
+    /const c = checkPublicHttpsUrl\(raw\.webhookUrl, 'The webhook URL'\);/.test(wh) && /safePost\(row\.webhookUrl, headers, body,/.test(wh) && !/\bfetch\(/.test(wh), 'webhook driver');
+  const mig = read('apps/api/prisma/migrations/0070_ai_psa/migration.sql');
+  check('0070 CHECKs the provider, the connector kind and the scope',
+    /CHECK \("provider" IN \('anthropic', 'openai', 'openai_compatible'\)\)/.test(mig) && /CHECK \("kind" IN \('email', 'webhook', 'clientst0r'\)\)/.test(mig) && /"PsaConnector_scope" CHECK/.test(mig),
+    'migration 0070');
+  const eml = read('apps/api/src/psa/connectors/email.ts');
+  check('PSA: email-to-ticket goes only to a confirmed recipient of the connector\'s own scope, through EmailService',
+    /deps\.email\.sendToRecipients\(\[row\.emailRecipientId \?\? ''\], row\.scopeKey,/.test(eml) && /if \(!r\.verifiedAt\) return \{ ok: false/.test(eml) && !/createTransport|nodemailer/.test(eml), 'email driver');
 
+  // The ClientSt0r device-timeline summary (0.34) still holds every rule it had.
   const svc = read('apps/api/src/integration/timeline.service.ts');
   const cli = read('apps/api/src/integration/timeline.client.ts');
   const signer = read('apps/api/src/integration/signer.ts');

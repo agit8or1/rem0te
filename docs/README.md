@@ -41,6 +41,8 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   software version compliance per catalog entry (0.34).
 - **[email.md](email.md)** — outbound email (0.34): the SMTP relay and which hosts it may be, confirmed recipients,
   alert emails, scheduled reports (exactly once per period, evaluated as their owner), and stopping all mail.
+- **[ai-and-tickets.md](ai-and-tickets.md)** — Ask AI and Create ticket on event-log entries and alerts (0.48):
+  the AI provider and how its key is kept, what is redacted before anything is sent, and the PSA connectors.
 - **[tactical-rmm.md](tactical-rmm.md)** — connecting and querying from inside
   Tactical RMM: URL Actions, agent matching, and the Collector Task.
 - **[integration-clientst0r.md](integration-clientst0r.md)** — ClientSt0r ticket

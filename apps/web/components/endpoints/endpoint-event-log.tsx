@@ -14,6 +14,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { ScrollText, Search, Loader2, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
+import { EntryActions, NOT_CONFIGURED_AI, useAiStatus, useTicketStatus } from '@/components/endpoints/ai-ticket-actions';
 
 /**
  * Reading a Windows event log off a managed computer.
@@ -90,7 +91,7 @@ function LevelBadge({ level, name }: { level: number | null; name: string | null
   );
 }
 
-function EventRowView({ row }: { row: EventRow }) {
+function EventRowView({ row, endpointId, commandId, index }: { row: EventRow; endpointId: string; commandId: string; index: number }) {
   const [open, setOpen] = useState(false);
   const message = row.message ?? '';
   // One line is enough to recognise an event; the rest is behind a click
@@ -124,6 +125,9 @@ function EventRowView({ row }: { row: EventRow }) {
               {open ? 'Less' : 'More'}
             </button>
           )}
+          <div className="mt-1.5">
+            <EntryActions endpointId={endpointId} source={{ source: 'event', commandId, index }} />
+          </div>
         </div>
       </div>
     </div>
@@ -138,6 +142,9 @@ export function EndpointEventLog({
   isOnline: boolean;
 }) {
   const { toast } = useToast();
+  // 0.48: whether Ask AI and Create ticket can be offered, said once above the rows.
+  const { data: aiStatus } = useAiStatus();
+  const { data: ticketStatus } = useTicketStatus(endpointId);
 
   const [logName, setLogName] = useState<string>('System');
   const [sinceHours, setSinceHours] = useState<number>(24);
@@ -398,6 +405,12 @@ export function EndpointEventLog({
               </p>
             )}
 
+            {events.length > 0 && (aiStatus?.enabled === false || (ticketStatus?.canCreate && !ticketStatus.available)) && (
+              <div className="mb-3 space-y-1 text-xs text-muted-foreground">
+                {aiStatus?.enabled === false && <p>Ask AI: {NOT_CONFIGURED_AI}.</p>}
+                {ticketStatus?.canCreate && !ticketStatus.available && <p>Create ticket: {ticketStatus.reason}</p>}
+              </div>
+            )}
             {events.length > 0 && (
               <div className="-my-2">
                 {/* Wide by nature: a timestamp, a level, an id, a source and a
@@ -406,7 +419,7 @@ export function EndpointEventLog({
                 <div className="overflow-x-auto">
                   <div className="min-w-[720px]">
                     {events.map((row, i) => (
-                      <EventRowView key={`${row.eventId}-${row.timeCreated}-${i}`} row={row} />
+                      <EventRowView key={`${row.eventId}-${row.timeCreated}-${i}`} row={row} endpointId={endpointId} commandId={shown.id} index={i} />
                     ))}
                   </div>
                 </div>
