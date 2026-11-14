@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.48.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.50.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -65,6 +65,16 @@ it, its default and its limits: **Settings → Security → Security Features**,
 [docs/security-model.md](docs/security-model.md).
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
+
+## What's new in 0.50
+
+**One patch policy for the whole business, changed per computer.** A company-wide patch policy covers every Windows
+computer of a business on the signed agent. The portal picks the canary and puts the rest in rings of at most 25, and
+lists any computer it left out with the reason. Each computer's *Patch policy* setting is *Inherit*, *Exclude* or
+*Use policy X*, an assignable policy such as one for servers. A computer is in one policy at a time, and its Patches
+tab shows which one and why. What gets signed is still a closed list of named computers. When the computers change,
+the portal proposes a new revision, approved like any policy: after a debounce, at most once an hour per business,
+and never during a deployment. Fixture-tested only. [staged-patching.md](docs/staged-patching.md)
 
 ## What's new in 0.30
 

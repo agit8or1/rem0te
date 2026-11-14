@@ -417,7 +417,8 @@ which signs nothing. The signer verifies every previous-ring statement under
 the *policy's* key, never the key a statement names, before `evaluateRingGate`,
 and the gate reads only signed facts. A missing signature only counts against a
 ring. The portal relays signatures as received, and a policy whose gating
-computers have no key is refused (`RESULT_KEY_MISSING`). The agent signs every
+computers have no key is refused (`RESULT_KEY_MISSING`); from 0.50 a
+company-wide revision puts keyless computers only in its last ring (§63). The agent signs every
 final result in one place (`final()`), with the verifier's prefixes; the
 result-status table (`RESULT_STATUS`) is shared by the portal and the signer.
 Behavioural proof: `e2e-patch-policies.mjs` (five forged canary successes
@@ -924,6 +925,34 @@ then written and audited (`ROUTINE_CONFIRM_CHANGED`). 0069 CHECKs the value,
 defaults a new installation to `'every'` and sets one already in use (it has users) to `'off'`.
 The e2e suites run on fresh databases, so they keep proving `'every'`. The
 `'off'` half is `apps/api/scripts/unit-routine-confirm.mjs`.
+
+§63 (0.50) is company-wide patch policies and the per-computer Patch policy
+setting. A series (`PatchPolicySeries`, `business` or `assigned`) exists only in
+the portal. Each revision is an ordinary `PolicyDoc`, which is still a strict,
+closed list of named computers. It is admitted only through
+`PatchPolicyService.admit`, the one `submitPolicy` and the one
+`patchPolicy.create`. The signer has no series code. `admit` calls
+`heldElsewhere` for every computer before `validatePolicyDoc` and the signer
+(`COMPUTER_IN_POLICY`). No document is ever rewritten. Member rows
+(`PatchPolicyComputer`) are created only at admission. A running revision is
+replaced, never widened. 0072 holds the one-live-row partial unique index, a
+trigger allowing `live` only for an ACTIVE policy, a release trigger, one
+active company-wide series per business, the setting's CHECK, and a trigger
+refusing another business's or a non-assignable series. The sweep proposes
+only under a series' running revision, and `notReady` requires the computer's
+live row and honours Exclude. The setting is written only by
+`PatchSeriesService.setOverride`, in this order: scope with `computers:edit`,
+the capability, `assertFresh` (`patching.override`), a conditional write, then
+`PATCH_POLICY_OVERRIDE_SET` with before and after. Re-proposal is bounded in
+`revisionDecision`: `mid_ring`, then `settling`, then `rate_limited`, before
+its one propose. `PATCH_POLICY_REVISION_MINUTES` defaults to 60 with a
+1-minute floor outside tests. The per-business claim is one conditional upsert,
+taken before `proposeRevision`, its only caller. The series runs only inside
+`PATCH_POLICY_SWEEP`, with no timer of its own. Take-over waits for ACTIVE and
+no open deployment, in one transaction. Revoking a revision retires its series.
+§38 still holds for revisions: a keyless computer goes only in the last ring.
+Behavioural proof: `e2e-patch-assignment.mjs` (ports 3741–3743, `RELEASE_BIN` /
+`ACTION_SIM`); unit: `unit-patch-assignment.mjs`.
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 

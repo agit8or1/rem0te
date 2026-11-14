@@ -518,7 +518,10 @@ async function all() {
   section('A policy that allows a restart inside its window (0.34)');
   {
     // Through the portal: accepted, signed into the document, shown to the approvers. Left unapproved, so the sweep never acts on it.
-    const r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, name: 'Acme security, with restarts', reboot: 'if_required_in_window' } });
+    // 0.50: a computer is in one policy at a time, so a second policy over the active one's computers is refused.
+    const dup = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, name: 'Acme security, with restarts', reboot: 'if_required_in_window' } });
+    check(dup.status === 409 && code(dup) === 'COMPUTER_IN_POLICY', '0.50: a second policy naming the active policy\'s computers is refused (COMPUTER_IN_POLICY)', msg(dup));
+    const r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, rings: [[outsider.id]], name: 'Acme security, with restarts', reboot: 'if_required_in_window' } });
     check(r.status === 201 && r.body?.data?.document?.reboot === 'if_required_in_window', 'the portal proposes a policy whose rule is "restart if required, inside the window"', msg(r));
     const page = r.status === 201 ? await (await fetch(r.body.data.approvalUrl)).text() : '';
     check(page.includes('if Windows requires one') && page.includes('15-minute warning') && page.includes('not yet run on a real Windows computer'), 'its approval page says it restarts, with the fixed warning, and that this has not run on real Windows', page.slice(0, 200));

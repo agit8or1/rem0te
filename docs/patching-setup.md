@@ -199,6 +199,28 @@ From then on, inside each open window:
 It signs nothing outside the policy. The bounds are listed in
 [Staged patching → Patch policies](staged-patching.md#patch-policies).
 
+### Or: one policy for the whole business (0.50)
+
+Instead of naming rings by hand, open **Patching** → **Company-wide patch policy** → **Company-wide policy** (fresh
+sign-in). Choose the classes, window, soak, failure threshold, restart rule, how long each revision lasts (at most 90
+days) and, optionally, the canary. The portal names the computers: every Windows computer of the business on the
+signed agent whose **Patch policy** is *Inherit*. The canary is the one you chose, or the one that checks in most
+reliably, and the rest go in rings of at most 25. Computers it can't include are listed with the reason.
+
+Each set of computers is an ordinary signed policy, a *revision*, approved like any other (at once in direct mode).
+When computers join or leave, the portal proposes the next revision: after the change has held
+`PATCH_POLICY_SETTLE_MINUTES`, at most once per `PATCH_POLICY_REVISION_MINUTES` per business, and never while a
+deployment is running. It renews the policy the same way before it expires. In signed mode the previous revision keeps
+running until two approvers approve the new one.
+
+**Assignable policy** is the same thing, but it covers only the computers set to use it, for example servers with a
+narrower window. Each computer's **Patch policy** setting, on its **Patches** tab or under **Each computer's Patch
+policy**, is *Inherit*, *Exclude* (no automatic patching, effective at once) or *Use policy X*. Changing it needs
+**Edit computers** on that computer and a fresh sign-in, and it is audited. A computer is in one policy at a time, so
+a hand-made policy can't name a computer one of these covers. The Patches tab shows which policy patches the computer
+and why. Device groups aren't a scope: use an assignable policy. See
+[Staged patching → Company-wide policies](staged-patching.md#company-wide-policies-and-each-computers-patch-policy-050).
+
 **Revoking** is one-way: **Revoke** on the policy's page (fresh sign-in), or on the signer host (`$S` as in
 [Approved actions → Setting it up](approved-actions.md#setting-it-up), step 2):
 
@@ -223,6 +245,8 @@ the install for the 15-minute warning, or every restart defers.
 | `APPROVAL_SIGNER_INTERNAL_URL` | unset | The signer's internal listener, loopback only. Unset: no approvals, no policies |
 | `PATCH_POLICY_SWEEP` | on | `off` stops the sweep: approved policies are never acted on. Scratch, e2e and docs stacks set it off |
 | `PATCH_POLICY_SWEEP_SECONDS` | 60 | How often the sweep runs (minimum 2) |
+| `PATCH_POLICY_REVISION_MINUTES` | 60 | 0.50: at most one automatic revision pass of a business's company-wide and assignable policies per this many minutes (minimum 1, maximum 1440) |
+| `PATCH_POLICY_SETTLE_MINUTES` | 10 | 0.50: how long a change of computers must hold before a revision is proposed (renewal doesn't wait) |
 
 ## See also
 

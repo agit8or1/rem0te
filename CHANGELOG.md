@@ -5,6 +5,132 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.50.0] — 2026-11-14 · *Roster*
+
+**Patch policies a business can apply company-wide, and change per computer.**
+
+The owner asked: "make sure we have patching policies - they can be assigned companywide or changed per pc". Until
+0.49 a patch policy (0.32) named its computers ring by ring, by hand. Adding a computer meant writing a new policy and
+getting it approved again, and nothing stopped two policies from naming the same computer.
+
+**The signer and the agent are unchanged.** What the approval signer signs is still a `PolicyDoc`: a strict, closed
+list of named computers in rings, each bound to its enrolled identity and (§38) its result key. "Company-wide" exists
+only in the portal. It is a *series* of ordinary policy documents, called **revisions**, each admitted through the
+same `PatchPolicyService.admit` path as a hand-made policy. No new agent release is needed.
+
+#### Added
+- **Company-wide patch policy** (Patching → *Company-wide patch policy* → *Company-wide policy*; a Business Owner of the
+  business or a Platform Admin, fresh sign-in). It covers every computer of the business whose setting is *Inherit*
+  and that is Windows, on the signed agent and not archived. You choose the classes, window, soak, threshold, restart
+  rule, revision lifetime (≤ 90 days) and optionally a canary. The portal builds the rings:
+  - **Canary:** the chosen computer while it is eligible, else the previous revision's, else the one with the most
+    check-in hours in seven days (`EndpointMetricHourly`), then the oldest, then by id.
+  - **The rest:** in rings of at most 25, evened out, in enrolment order. Computers without a result key go only in the
+    last ring, so §38 holds and `validatePolicyDoc` still refuses `RESULT_KEY_MISSING` on anything else.
+  - **Cap:** 101 computers (1 + 4 × 25).
+  - **Left out:** listed with a code: `not_windows`, `no_signed_agent`, `no_identity`, `in_other_policy`,
+    `not_allowed`, `no_result_key` or `policy_full`.
+- **Assignable patch policy.** The same thing, covering only computers set to *Use policy X*: for example servers with
+  a narrower window or a different restart rule. A business has at most one company-wide policy (`SERIES_EXISTS`) and
+  any number of assignable ones.
+- **Each computer's Patch policy** (a card on the Patches tab, and a table under the business's company-wide policy):
+  *Inherit* (default), *Exclude* (no automatic patching) or *Use policy X*. `PUT /endpoints/:id/patch-policy` needs
+  **Edit computers** on that computer and `assertFresh` with the catalog key `patching.override` (routine
+  `patching.policy`, so it is an everyday change under *Confirm it is you*). The write is conditional on the value read
+  (`409 CHANGED` otherwise) and audited `PATCH_POLICY_OVERRIDE_SET` with `before` and `after`. The card shows the
+  effective state and why: *Patched automatically*, *Pending a revision*, *Left out*, *Excluded* or *No automatic
+  patching*.
+- **Routes:**
+  - `GET` / `PUT /endpoints/:id/patch-policy`
+  - `GET /patching/series?businessId=`
+  - `POST /patching/series`
+  - `POST /patching/series/:id/retire`
+- **Audit actions:** `PATCH_POLICY_SERIES_CREATED`, `PATCH_POLICY_SERIES_RETIRED`, `PATCH_POLICY_SUPERSEDED` and
+  `PATCH_POLICY_OVERRIDE_SET`. Each revision is also audited as `PATCH_POLICY_CREATED`, like any policy, with its
+  series in the meta.
+- **Settings:** `PATCH_POLICY_REVISION_MINUTES` (60; floor 1, ceiling 1440) and `PATCH_POLICY_SETTLE_MINUTES` (10).
+
+#### How a revision happens, and what bounds it
+The existing patch-policy sweep (`PATCH_POLICY_SWEEP`) calls the series tick. There is no new timer and no new off
+switch. For each series it computes the rings the next revision would have and fingerprints them
+(`rem0te-patch-membership-v1`). It proposes a revision when the fingerprint differs from the running revision's, or
+when the running one is within seven days (or a third of its life) of expiry. `revisionDecision` checks the bounds in
+this order:
+1. **`mid_ring`:** the running revision has an active or paused deployment. Nothing is revised.
+2. **`settling`:** a membership change must hold for the settle time. Renewal skips this.
+3. **`rate_limited`:** a conditional upsert on `PatchPolicyRevisionClaim` (one row per business) lets one API
+   process take one revision pass per business per window. One pass revises every series of the business that needs
+   it, so moving a computer from the company-wide policy to an assignable one is one pass.
+
+**Rejections and pending revisions.** A rejected revision is not re-proposed for the same fingerprint. A pending
+revision whose computers changed again is withdrawn and replaced.
+
+**Take-over** (`promote`) happens only when the new revision is ACTIVE and the running one is not mid-ring. It is one
+transaction: release the old revision's live rows, make the new one's live, then move `currentPolicyId`
+conditionally. The old revision is then revoked on the signer and audited `PATCH_POLICY_SUPERSEDED`. In direct mode
+(§58) that is at admission. **In signed mode the old revision keeps running until two approvers approve the new
+one.**
+
+**Revoking and retiring.** Revoking a revision by hand, or on the signer, retires its series, so a revoked policy is
+never silently re-proposed. *Retire* revokes every revision.
+
+#### One policy per computer
+- **The live row.** `PatchPolicyComputer` holds each policy's computers. A partial unique index on `endpointId WHERE
+  live` means a computer is live in at most one policy. A trigger allows `live` only for an ACTIVE policy, and another
+  releases a policy's rows when it leaves ACTIVE. The sweep's `notReady` now requires the computer's live row in that
+  policy, and honours *Exclude* at once, before any revision drops the computer.
+- **Hand-made policies.** A hand-made policy can no longer name a computer that another policy patches or that awaits
+  approval in one, one a company-wide or assignable policy covers, or one set to *Exclude*: `409 COMPUTER_IN_POLICY`.
+  **This is a behaviour change:** before 0.50 two hand-made policies could overlap, and the sweep could plan the same
+  computer under both. Where two existing ACTIVE policies already named the same computer, the migration's backfill
+  (oldest policy first, `ON CONFLICT DO NOTHING`) makes it live in the older one only. The newer policy's sweep leaves it
+  out ("another active policy patches it") until the older one is revoked.
+
+#### Migration 0072 (`0072_patch_policy_assignment`)
+- **Endpoint:** `patchPolicyMode` (`inherit`|`exclude`|`policy`) and `patchPolicySeriesId`. A CHECK ties them
+  together. A trigger refuses another business's series, or one that isn't an active assignable series, and resets the
+  setting to *Inherit* when the computer changes business.
+- **New tables:** `PatchPolicySeries` (CHECKs on scope and status; one active company-wide series per business), the
+  `PatchPolicyComputer` membership rows described above, and `PatchPolicyRevisionClaim`.
+- **PatchPolicy:** `seriesId`, `revision`, `supersedesId` and `supersededAt`.
+- **Backfill:** member rows from existing documents, with ACTIVE policies live.
+- A schema change: on deploy run `prisma migrate deploy` and regenerate the client at the target (CLAUDE.md).
+
+#### Not done, deliberately
+- **Device groups are not a patch-policy scope.** §46 computes group membership on every read, and a signed policy is a
+  fixed list. A group-scoped series would be one more input to the revision machinery with no step saved over an
+  assignable policy.
+- **No patch-policy column on the Devices list.** It would cost a per-row effective-policy computation. The Patches tab
+  and the business view show it.
+- **Settings are fixed for a series' life.** Retire it and create another.
+
+#### Invariants
+**§63** (new) pins:
+- the closed `PolicyDoc` and a series-free signer;
+- one `submitPolicy` and one `patchPolicy.create`, both in `policies.service.ts`;
+- `heldElsewhere` before `validatePolicyDoc` and the signer;
+- no document rewrite, and member rows created only at admission;
+- the sweep only under a running revision, with the live-row requirement;
+- the migration's index, triggers and CHECKs;
+- the setting written only by `setOverride` (scope → capability → fresh → conditional write → audit);
+- the bound order and floor;
+- the conditional claim before the one `proposeRevision`;
+- no timer of its own;
+- conditional take-over;
+- revoke retiring the series;
+- the suites in `run-e2e.sh` and CI.
+
+#### Tested
+Against fixtures and the simulated agent only. **None of it has run on real Windows.**
+- `unit-patch-assignment.mjs`: 62 checks (new; in CI).
+- `e2e-patch-assignment.mjs`: 68 checks (new; ports 3741–3743; `RELEASE_BIN`, `ACTION_SIM`; in `run-e2e.sh`).
+- `e2e-patch-policies.mjs`: 100 checks. It now also asserts `COMPUTER_IN_POLICY`, and its restart-rule policy names a
+  computer no other policy holds.
+- `e2e-staged-patching.mjs`: 100 checks.
+- `unit-patch-policy.mjs`: 179 checks.
+
+---
+
 ## [0.48.0] — 2026-11-14 · *Dispatch*
 
 **Ask AI and Create ticket on a computer's event-log entries and alerts.**

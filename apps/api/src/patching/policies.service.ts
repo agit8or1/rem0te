@@ -69,6 +69,15 @@ const ReasonDto = z.object({ reason: z.string().trim().min(3).max(300) }).strict
 /** Less than this left in a window and nothing new is proposed in it. */
 const MIN_WINDOW_MS = 15 * 60_000;
 
+/** 0.50: what a series revision carries into admission. Set only by PatchSeriesService. */
+export interface SeriesRevision { seriesId: string; revision: number; supersedesId: string | null }
+/** 0.50: the series service, attached at start so the sweep can run it (no import cycle). */
+export interface SeriesHooks {
+  tick(now: Date): Promise<void>;
+  onRevoked(r: PatchPolicy, by: 'portal' | 'approval signer', actorId: string | null): Promise<void>;
+}
+export type CreatePolicy = z.infer<typeof CreatePolicyDto>;
+
 type LastProposal = { at: string; windowKey: string | null; ok: boolean; code: string; message: string; deploymentId?: string | null; ring?: number | null; jobId?: string | null };
 
 @Injectable()
@@ -77,6 +86,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
   private timer: ReturnType<typeof setInterval> | null = null;
   private first: ReturnType<typeof setTimeout> | null = null;
   private busy = false;
+  private series: SeriesHooks | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -104,6 +114,9 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
   }
   onModuleDestroy() { if (this.timer) clearInterval(this.timer); if (this.first) clearTimeout(this.first); }
 
+  /** 0.50: PatchSeriesService registers itself here once. */
+  attachSeries(h: SeriesHooks) { this.series = h; }
+
   /** One pass over every live policy. Never runs twice at once in this process; the database's unique (policy, window) stops a second process. */
   async sweep(now = new Date()) {
     if (this.busy) return;
@@ -113,15 +126,45 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
         where: { OR: [{ status: { in: ['AWAITING_APPROVAL', 'ACTIVE'] } }, { status: 'REVOKED', signerRevokedAt: null }] },
         orderBy: { createdAt: 'asc' }, take: 200,
       });
+      const fresh: PatchPolicy[] = [];
       for (const r0 of rows) {
+        try { fresh.push(await this.refresh(r0, now)); } catch (e) { this.logger.warn(`policy ${r0.id}: ${(e as Error).message}`); }
+      }
+      // 0.50: company-wide and assignable policies revise and take over here,
+      // between mirroring the signer and proposing ring plans.
+      if (this.series) await this.series.tick(now).catch((e) => this.logger.warn(`series: ${(e as Error).message}`));
+      for (const r0 of fresh) {
         try {
-          const r = await this.refresh(r0, now);
-          if (r.status === 'ACTIVE') await this.propose(r, now);
+          if (r0.status !== 'ACTIVE') continue;
+          const r = await this.prisma.patchPolicy.findUnique({ where: { id: r0.id } });
+          // A series revision is proposed under only while it is the series' running one.
+          if (!r || r.status !== 'ACTIVE' || !(await this.isRunning(r))) continue;
+          await this.propose(r, now);
         } catch (e) {
           this.logger.warn(`policy ${r0.id}: ${(e as Error).message}`);
         }
       }
     } finally { this.busy = false; }
+  }
+
+  /** A hand-made policy runs while ACTIVE; a series revision only while it is the series' current one. */
+  async isRunning(r: PatchPolicy): Promise<boolean> {
+    if (!r.seriesId) return true;
+    const s = await this.prisma.patchPolicySeries.findUnique({ where: { id: r.seriesId }, select: { currentPolicyId: true, status: true } });
+    return !!s && s.status === 'active' && s.currentPolicyId === r.id;
+  }
+
+  /**
+   * 0.50: a hand-made policy that became ACTIVE takes its computers' live
+   * rows, one at a time, so a computer another policy already holds (the
+   * partial unique index) stays out of this one and its sweep leaves it out.
+   * A series revision goes live only through PatchSeriesService.promote.
+   */
+  private async goLive(r: PatchPolicy) {
+    if (r.seriesId || r.status !== 'ACTIVE') return;
+    for (const m of await this.prisma.patchPolicyComputer.findMany({ where: { policyId: r.id, live: false }, select: { endpointId: true } })) {
+      await this.prisma.patchPolicyComputer.update({ where: { policyId_endpointId: { policyId: r.id, endpointId: m.endpointId } }, data: { live: true } }).catch(() => undefined);
+    }
   }
 
   /** Mirror the signer's view of a policy; keep asking it to revoke until it confirms. */
@@ -154,6 +197,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
       const u = await this.prisma.patchPolicy.update({ where: { id: r.id }, data: { status: 'REVOKED', revokedAt: new Date(s.body.revokedAt ?? now), revokeReason: r.revokeReason ?? 'revoked on the approval signer', signerRevokedAt: new Date(s.body.revokedAt ?? now), approvals } });
       await this.stopDeployments(u, 'the policy was revoked on the approval signer');
       await this.audit.log({ tenantId: r.tenantId ?? undefined, customerId: r.customerId, action: 'PATCH_POLICY_REVOKED', resource: 'patch_policy', resourceId: r.id, meta: { by: 'approval signer' } });
+      if (u.seriesId && this.series) await this.series.onRevoked(u, 'approval signer', null);
       return u;
     }
     if (st && st !== r.status && ['AWAITING_APPROVAL', 'ACTIVE', 'REJECTED', 'EXPIRED'].includes(st)) return this.setStatus(r, st, { approvals: s.body.approvals ?? [] }, approvals);
@@ -164,6 +208,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
   private async setStatus(r: PatchPolicy, status: PatchPolicy['status'], meta: Record<string, unknown>, approvals?: Prisma.InputJsonValue) {
     const u = await this.prisma.patchPolicy.update({ where: { id: r.id }, data: { status, ...(approvals !== undefined ? { approvals } : {}) } });
     await this.audit.log({ tenantId: r.tenantId ?? undefined, customerId: r.customerId, action: 'PATCH_POLICY_UPDATED', resource: 'patch_policy', resourceId: r.id, meta: { from: r.status, status, ...meta } });
+    if (status === 'ACTIVE') await this.goLive(u);
     return u;
   }
 
@@ -210,7 +255,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
   /** The canary's offered, installable, policy-allowed updates become this window's deployment. */
   private async startDeployment(r: PatchPolicy, doc: PolicyDoc, actor: ActorContext, windowKey: string, now: Date, rec: (ok: boolean, code: string, message: string, extra?: Partial<LastProposal>, audit?: boolean) => Promise<void>): Promise<PatchDeployment | null> {
     const canary = doc.rings[0][0];
-    const why = await this.notReady(actor, canary, doc.rings.length > 1);
+    const why = await this.notReady(actor, canary, doc.rings.length > 1, r.id);
     if (why) { await rec(false, 'canary_not_ready', `The canary, ${canary.hostname}: ${why}`); return null; }
     const posture = (await this.patching.postures([canary.endpointId])).get(canary.endpointId)!;
     const updates = posture.updates.filter((u) => eligibility(u).ok && policyAllowsUpdate(doc.allow, u).ok).slice(0, MAX_UPDATES_PER_PLAN);
@@ -244,12 +289,12 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     const exclude: { endpointId: string; why: string }[] = [];
     if (ring > 0) {
       for (const c of doc.rings[ring]) {
-        const no = await this.notReady(actor, c, ring < doc.rings.length - 1);
+        const no = await this.notReady(actor, c, ring < doc.rings.length - 1, r.id);
         if (no) exclude.push({ endpointId: c.endpointId, why: no.slice(0, 200) });
       }
       if (exclude.length === doc.rings[ring].length) return rec(false, 'ring_not_ready', `No computer in ring ${ring} is ready: ${exclude.map((x) => x.why).slice(0, 2).join('; ')}`, { deploymentId: d.id, ring });
     } else {
-      const no = await this.notReady(actor, doc.rings[0][0], doc.rings.length > 1);
+      const no = await this.notReady(actor, doc.rings[0][0], doc.rings.length > 1, r.id);
       if (no) return rec(false, 'canary_not_ready', `The canary, ${doc.rings[0][0].hostname}: ${no}`, { deploymentId: d.id, ring });
     }
     try {
@@ -276,9 +321,18 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Why this policy computer cannot be in a plan right now, or null. */
-  private async notReady(actor: ActorContext, c: PolicyDoc['rings'][number][number], gatesNextRing = true): Promise<string | null> {
+  private async notReady(actor: ActorContext, c: PolicyDoc['rings'][number][number], gatesNextRing = true, policyId: string | null = null): Promise<string | null> {
     const ep = await this.actions.endpointFor(c.endpointId);
     if (!ep || ep.status === 'ARCHIVED') return 'it is no longer enrolled.';
+    // 0.50: one policy patches a computer at a time (its live row), and
+    // Exclude on its Patches tab stops automatic patching at once, before any
+    // revision drops it.
+    if (policyId) {
+      const member = await this.prisma.patchPolicyComputer.findUnique({ where: { policyId_endpointId: { policyId, endpointId: c.endpointId } }, select: { live: true } });
+      if (!member?.live) return 'another active policy patches it (one policy per computer).';
+    }
+    const mode = await this.prisma.endpoint.findUnique({ where: { id: c.endpointId }, select: { patchPolicyMode: true } });
+    if (mode?.patchPolicyMode === 'exclude') return 'its Patch policy is set to Exclude (no automatic patching).';
     if (ep.rustdeskNode?.rustdeskId !== c.rustdeskId || ep.rustdeskNode?.agentSecretHash !== c.deviceSecretSha256) return 'it was re-enrolled since the policy was approved, so it is not the computer that was approved.';
     const d = await this.access.evaluateAction(actor, ep, 'high');
     if (!d.ok) return d.message;
@@ -305,7 +359,16 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
   async create(actor: ActorContext, raw: unknown, now = new Date()) {
     const parsed = CreatePolicyDto.safeParse(raw);
     if (!parsed.success) this.bad('INVALID_REQUEST', parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
-    const dto = parsed.data;
+    return this.admit(actor, parsed.data, now, null);
+  }
+
+  /**
+   * The one way a policy document reaches the approval signer: a person's
+   * create, or (0.50) a series revision proposed by PatchSeriesService. Every
+   * computer is checked here, as the author, whichever asked; the document is
+   * the closed list it always was.
+   */
+  async admit(actor: ActorContext, dto: CreatePolicy, now: Date, series: SeriesRevision | null) {
     if (!this.signer.configured()) throw new ServiceUnavailableException({ code: 'APPROVAL_SIGNER_NOT_CONFIGURED', message: 'Patch policies need the approval signer (APPROVAL_SIGNER_INTERNAL_URL). See Patching setup.' });
     const caps = await this.signer.capabilities();
     if (caps.status !== 200 || caps.body.patchPolicies !== 1) throw new ConflictException({ code: 'SIGNER_TOO_OLD', message: 'The approval signer does not support patch policies. Install the 0.32 signer.' });
@@ -341,6 +404,11 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
         if (!resultKey && dto.rings.length > 1 && i < dto.rings.length - 1) {
           throw new ConflictException({ code: 'RESULT_KEY_MISSING', message: `${name}${i === 0 ? ' (the canary)' : ''}: no signed scan from a 0.34+ agent, so its results cannot be verified, and they would open ring ${i + 1}. Update its agent and let it scan, or put it in the last ring.`, endpointId: id });
         }
+        // 0.50: one policy per computer. A hand-made policy names only
+        // computers no series covers and no other policy holds; a revision only
+        // computers no other policy holds (its own series' revisions aside).
+        const held = await this.heldElsewhere(id, series?.seriesId ?? null);
+        if (held) throw new ConflictException({ code: 'COMPUTER_IN_POLICY', message: `${name}: ${held}`, endpointId: id });
         businessName = ep.customer.name.slice(0, 120);
         tenantId = ep.tenantId;
         out.push({ endpointId: id, hostname: name, rustdeskId: ep.rustdeskNode.rustdeskId, deviceSecretSha256: ep.rustdeskNode.agentSecretHash, ...(resultKey ? { resultKey } : {}) });
@@ -365,18 +433,59 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     if (sub.status !== 201 || sub.body.digest !== digest || !sub.body.approvalUrl) {
       throw new ConflictException({ code: 'APPROVAL_SIGNER_REFUSED', signerCode: sub.body.error ?? null, message: sub.body.message ?? sub.body.error ?? 'The approval signer refused the policy.' });
     }
-    const row = await this.prisma.patchPolicy.create({
-      data: {
-        id: doc.policyId, tenantId, customerId: dto.businessId, name: dto.name, document: doc as unknown as Prisma.InputJsonValue, digest,
-        // 0.40: in direct mode the signer makes it active at admission; the mirror follows its word.
-        status: sub.body.direct === true && sub.body.status === 'ACTIVE' ? 'ACTIVE' : 'AWAITING_APPROVAL', approvalUrl: sub.body.approvalUrl, expiresAt, createdById: actor.userId,
-      },
-    });
+    const [row] = await this.prisma.$transaction([
+      this.prisma.patchPolicy.create({
+        data: {
+          id: doc.policyId, tenantId, customerId: dto.businessId, name: dto.name, document: doc as unknown as Prisma.InputJsonValue, digest,
+          // 0.40: in direct mode the signer makes it active at admission; the mirror follows its word.
+          status: sub.body.direct === true && sub.body.status === 'ACTIVE' ? 'ACTIVE' : 'AWAITING_APPROVAL', approvalUrl: sub.body.approvalUrl, expiresAt, createdById: actor.userId,
+          ...(series ? { seriesId: series.seriesId, revision: series.revision, supersedesId: series.supersedesId } : {}),
+        },
+      }),
+      // 0.50: which computers it names, not yet live (goLive, or a series promotion).
+      this.prisma.patchPolicyComputer.createMany({ data: rings.flatMap((ring, i) => ring.map((c) => ({ policyId: doc.policyId, endpointId: c.endpointId, customerId: dto.businessId, ring: i, live: false }))) }),
+    ]);
+    await this.goLive(row);
     await this.audit.log({
       tenantId: tenantId ?? undefined, customerId: dto.businessId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_POLICY_CREATED', resource: 'patch_policy', resourceId: row.id,
-      meta: { name: dto.name, digest, approval: sub.body.direct === true ? 'direct' : 'signed', rings: rings.map((x) => x.length), allow: allowParams(dto.allow), window: dto.window, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, reboot: dto.reboot, expiresAt: doc.expiresAt, reason: dto.reason },
+      meta: { name: dto.name, digest, approval: sub.body.direct === true ? 'direct' : 'signed', ...(series ? { seriesId: series.seriesId, revision: series.revision, supersedes: series.supersedesId } : {}), rings: rings.map((x) => x.length), allow: allowParams(dto.allow), window: dto.window, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, reboot: dto.reboot, expiresAt: doc.expiresAt, reason: dto.reason },
     });
     return this.detail(actor, row.id, now);
+  }
+
+  /**
+   * Why this computer cannot be named by a new policy, or null. `seriesId`:
+   * the series proposing a revision (its own revisions do not count). A
+   * hand-made policy (seriesId null) also refuses a computer that a series
+   * covers or that is set to Exclude.
+   */
+  async heldElsewhere(endpointId: string, seriesId: string | null): Promise<string | null> {
+    const live = await this.prisma.patchPolicyComputer.findFirst({
+      where: { endpointId, live: true, ...(seriesId ? { policy: { OR: [{ seriesId: null }, { seriesId: { not: seriesId } }] } } : {}) },
+      select: { policy: { select: { name: true, revision: true, series: { select: { id: true, scope: true } } } } },
+    });
+    // A revision may name a computer another series still holds only when
+    // the computer's setting has moved it away from that series: the holder
+    // drops it at its own revision, and this one takes over only after
+    // (promote refuses while the live row is held).
+    if (live && seriesId && live.policy.series) {
+      const ep = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { patchPolicyMode: true, patchPolicySeriesId: true } });
+      const stillThere = live.policy.series.scope === 'business' ? ep?.patchPolicyMode === 'inherit' : ep?.patchPolicyMode === 'policy' && ep.patchPolicySeriesId === live.policy.series.id;
+      if (!stillThere) return null;
+    }
+    if (live) return `the active policy "${live.policy.name}"${live.policy.revision ? ` (revision ${live.policy.revision})` : ''} already patches it. A computer is in one policy at a time.`;
+    const pending = await this.prisma.patchPolicyComputer.findFirst({
+      where: { endpointId, policy: { status: 'AWAITING_APPROVAL', seriesId: null } },
+      select: { policy: { select: { name: true } } },
+    });
+    if (pending) return `the policy "${pending.policy.name}", awaiting approval, already names it. A computer is in one policy at a time.`;
+    if (seriesId) return null;
+    const ep = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { customerId: true, patchPolicyMode: true, patchPolicySeries: { select: { name: true } } } });
+    if (ep?.patchPolicyMode === 'exclude') return 'its Patch policy is set to Exclude (no automatic patching). Change it on its Patches tab first.';
+    if (ep?.patchPolicyMode === 'policy') return `its Patch policy is set to use "${ep.patchPolicySeries?.name ?? 'another policy'}". Change it on its Patches tab first.`;
+    const biz = ep?.customerId ? await this.prisma.patchPolicySeries.findFirst({ where: { customerId: ep.customerId, scope: 'business', status: 'active' }, select: { name: true } }) : null;
+    if (biz) return `the company-wide policy "${biz.name}" covers it. Set its Patch policy to Exclude or to another policy first.`;
+    return null;
   }
 
   private async scoped(actor: ActorContext, id: string): Promise<PatchPolicy> {
@@ -398,6 +507,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
       const doc = r.document as unknown as PolicyDoc;
       out.push({
         id: r.id, name: r.name, status: r.status, expiresAt: r.expiresAt, createdAt: r.createdAt,
+        seriesId: r.seriesId, revision: r.revision, supersededAt: r.supersededAt,
         computers: doc.rings.flat().length, rings: doc.rings.length, window: doc.window,
         nextWindow: r.status === 'ACTIVE' ? nextOccurrence(now, doc.window, r.expiresAt) : null,
         lastProposal: r.lastProposal,
@@ -415,6 +525,8 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
       id: r.id, name: r.name, businessId: r.customerId, status: r.status, digest: r.digest, approvalUrl: r.approvalUrl,
       approvals: r.approvals ?? [], expiresAt: r.expiresAt, createdAt: r.createdAt, createdById: r.createdById,
       revokedAt: r.revokedAt, revokeReason: r.revokeReason, signerConfirmedRevocation: !!r.signerRevokedAt,
+      // 0.50: a revision of a company-wide or assignable policy, and what it replaced.
+      seriesId: r.seriesId, revision: r.revision, supersedesId: r.supersedesId, supersededAt: r.supersededAt,
       document: doc,
       // v0.34: compare these with `rem0te-agent.exe status` on each computer.
       resultKeys: Object.fromEntries(doc.rings.flat().map((c) => [c.endpointId, c.resultKey ? resultKeyFingerprint(c.resultKey) : null])),
@@ -448,7 +560,29 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     const out = this.signer.configured() ? await this.signer.revokePolicy(id, reason).catch(() => null) : null;
     if (out?.status === 200) { await this.prisma.patchPolicy.update({ where: { id }, data: { signerRevokedAt: new Date(out.body.revokedAt ?? now) } }); confirmed = true; }
     await this.audit.log({ tenantId: r.tenantId ?? undefined, customerId: r.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_POLICY_REVOKED', resource: 'patch_policy', resourceId: id, meta: { reason, from: r.status, signerConfirmed: confirmed, canceledPlans: stopped.plans, canceledDeployments: stopped.deployments } });
+    // 0.50: revoking a revision by hand ends its series, so the sweep does not propose it again.
+    if (u.seriesId && this.series) await this.series.onRevoked(u, 'portal', actor.userId);
     return this.detail(actor, id, now);
+  }
+
+  /**
+   * 0.50: withdraw a policy the portal itself replaced or emptied (a series
+   * revision superseded, a stale pending revision, an emptied series). Only
+   * ever narrows: the row goes REVOKED, its open deployments stop, the signer
+   * is told now and by every sweep until it confirms. Audited.
+   */
+  async withdraw(r: PatchPolicy, reason: string, meta: Record<string, unknown>, now = new Date()) {
+    if (r.status === 'REVOKED') return r;
+    const superseded = typeof meta.supersededBy === 'string';
+    const u = await this.prisma.patchPolicy.update({ where: { id: r.id }, data: { status: 'REVOKED', revokedAt: now, revokeReason: reason.slice(0, 300), ...(superseded ? { supersededAt: now } : {}) } });
+    const stopped = await this.stopDeployments(u, reason);
+    const out = this.signer.configured() ? await this.signer.revokePolicy(r.id, reason.slice(0, 300)).catch(() => null) : null;
+    if (out?.status === 200) await this.prisma.patchPolicy.update({ where: { id: r.id }, data: { signerRevokedAt: new Date(out.body.revokedAt ?? now) } });
+    await this.audit.log({
+      tenantId: r.tenantId ?? undefined, customerId: r.customerId, action: superseded ? 'PATCH_POLICY_SUPERSEDED' : 'PATCH_POLICY_REVOKED', resource: 'patch_policy', resourceId: r.id,
+      meta: { reason, from: r.status, signerConfirmed: out?.status === 200, canceledPlans: stopped.plans, canceledDeployments: stopped.deployments, ...meta },
+    });
+    return u;
   }
 
   /** Cancel what has not reached a computer and close the policy's open deployments. Anything delivered runs to its own result. */

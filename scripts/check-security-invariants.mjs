@@ -4338,6 +4338,100 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('routine: 0069 CHECKs the value', /CHECK \("routineConfirm" IN \('off', 'every'\)\)/.test(mig), 'migration 0069 must constrain routineConfirm');
 }
 
+// 63. Company-wide patch policies and the per-computer Patch policy setting
+//     (0.50). A series (company-wide, or assignable) never signs or widens
+//     anything: each revision is an ordinary PatchPolicy document — a closed
+//     list of named computers — admitted through the one admission path, and
+//     the signer is unchanged. A running revision's document and computers are
+//     never rewritten; a revision only replaces it. A computer is live in at
+//     most one policy (partial unique index; live only while ACTIVE). The
+//     setting is written by one service method, needs computers:edit and a
+//     fresh sign-in, and is audited before and after. Re-proposal is bounded:
+//     never mid-ring, settled first, one claim per business per N minutes.
+{
+  const pp = read('apps/api/src/actions/patch-policy.ts');
+  const pol = read('apps/api/src/patching/policies.service.ts');
+  const ser = read('apps/api/src/patching/series.service.ts');
+  const asg = read('apps/api/src/patching/assignment.ts');
+  const mig = read('apps/api/prisma/migrations/0072_patch_policy_assignment/migration.sql');
+  const docBlock = (pp.match(/export const PolicyDoc = z\.object\(\{([\s\S]*?)\}\)\.strict\(\);/) ?? [])[1] ?? '';
+  check('assignment: the signed document is still a closed list of named computers (no scope, series or "all computers" field)',
+    /rings: z\.array\(z\.array\(PolicyComputer\)/.test(docBlock) && !/scope|series|allComputers|revision/i.test(docBlock)
+      && /const allowed = new Map\(doc\.rings\[ring\]\.map\(\(c\) => \[c\.endpointId, c\]\)\);/.test(pp),
+    'PolicyDoc must stay strict with rings of PolicyComputer, and the signer must check targets against doc.rings');
+  check('assignment: the approval signer has no series code',
+    !/PatchPolicySeries|patchPolicyMode|seriesId/.test(read('apps/api/src/approval-signer/server.ts') + read('apps/api/src/approval-signer/core.ts') + read('apps/api/src/approval-signer/store.ts')),
+    'approval-signer/*.ts must not know about series');
+  const srcAll = walk('apps/api/src').filter((f) => f.endsWith('.ts'));
+  const submits = srcAll.filter((f) => /\.submitPolicy\(/.test(read(f)));
+  const creates = srcAll.filter((f) => /patchPolicy\.create\(/.test(read(f)));
+  check('assignment: revisions go only through PatchPolicyService.admit — the one submitPolicy and the one patchPolicy.create',
+    submits.length === 1 && submits[0].endsWith('patching/policies.service.ts') && (pol.match(/\.submitPolicy\(/g) ?? []).length === 1
+      && creates.length === 1 && creates[0].endsWith('patching/policies.service.ts')
+      && /return this\.admit\(actor, parsed\.data, now, null\);/.test(pol)
+      && (ser.match(/this\.policies\.admit\(/g) ?? []).length === 2 && !/submitPolicy|patchPolicy\.create|signer\./.test(ser),
+    `submitPolicy in ${submits.join(', ')}; patchPolicy.create in ${creates.join(', ')}`);
+  const admitFn = pol.slice(pol.indexOf('  async admit('), pol.indexOf('  async heldElsewhere('));
+  check('assignment: admission checks one-policy-per-computer for every computer before the signer sees the document',
+    /const held = await this\.heldElsewhere\(id, series\?\.seriesId \?\? null\);\s*if \(held\) throw new ConflictException\(\{ code: 'COMPUTER_IN_POLICY'/.test(admitFn)
+      && admitFn.indexOf('heldElsewhere(') < admitFn.indexOf('submitPolicy(') && /validatePolicyDoc\(doc, now\)/.test(admitFn),
+    'admit must call heldElsewhere per computer, then validatePolicyDoc, then submitPolicy');
+  const docWrites = srcAll.filter((f) => /patchPolicy\.(update|updateMany|upsert)\(\{[^;]*?document:/.test(read(f).replace(/\n/g, ' ')));
+  const memberCreates = srcAll.filter((f) => /patchPolicyComputer\.(create|createMany|upsert)\(/.test(read(f)));
+  check('assignment: nothing widens a running revision — no document is rewritten, member rows are written only at admission',
+    docWrites.length === 0 && memberCreates.length === 1 && memberCreates[0].endsWith('patching/policies.service.ts') && (pol.match(/patchPolicyComputer\.createMany\(/g) ?? []).length === 1
+      && /patchPolicyComputer\.createMany\(\{ data: rings\.flatMap\(\(ring, i\) => ring\.map\(\(c\) => \(\{ policyId: doc\.policyId, endpointId: c\.endpointId/.test(admitFn),
+    `document rewritten in ${docWrites.join(', ')}; member rows created in ${memberCreates.join(', ')}`);
+  check('assignment: a revision is proposed under only while it is its series\' running one, and every planned computer must be live in it',
+    /if \(!r \|\| r\.status !== 'ACTIVE' \|\| !\(await this\.isRunning\(r\)\)\) continue;/.test(pol)
+      && /if \(!member\?\.live\) return 'another active policy patches it/.test(pol) && /patchPolicyMode === 'exclude'\) return 'its Patch policy is set to Exclude/.test(pol),
+    'the sweep must skip non-running revisions and notReady must require the live row and honour Exclude');
+  check('assignment: one live policy per computer, in the database',
+    /CREATE UNIQUE INDEX "PatchPolicyComputer_one_live" ON "PatchPolicyComputer"\("endpointId"\) WHERE "live";/.test(mig)
+      && /a computer is live only in an ACTIVE patch policy/.test(mig) && /CREATE TRIGGER patch_policy_release AFTER UPDATE OF "status" ON "PatchPolicy"/.test(mig)
+      && /CREATE UNIQUE INDEX "PatchPolicySeries_one_business" ON "PatchPolicySeries"\("customerId"\) WHERE "scope" = 'business' AND "status" = 'active';/.test(mig),
+    'migration 0072 must hold the partial unique index, the ACTIVE-only trigger, the release trigger and one company-wide policy per business');
+  check('assignment: the setting is a closed value, of the computer\'s own business, in the database',
+    /CHECK \("patchPolicyMode" IN \('inherit', 'exclude', 'policy'\)\s*AND \(\("patchPolicyMode" = 'policy'\) = \("patchPolicySeriesId" IS NOT NULL\)\)\)/.test(mig)
+      && /s\."customerId" IS DISTINCT FROM NEW\."customerId" OR s\."scope" <> 'assigned' OR s\."status" <> 'active'/.test(mig),
+    'migration 0072 must CHECK the mode and refuse another business\'s or a non-assignable series');
+  const modeWrites = srcAll.filter((f) => /data: \{[^}]*patchPolicy(Mode|SeriesId):/.test(read(f)));
+  const setFn = ser.slice(ser.indexOf('  async setOverride('));
+  const iScope = setFn.indexOf('assertEndpointInScope(actor, endpointId, CAP.COMPUTERS_EDIT)'), iCap = setFn.indexOf('assertCapability(actor, CAP.COMPUTERS_EDIT)'),
+    iFresh = setFn.indexOf("assertFresh(freshMethod, { action: 'patching.override'"), iWrite = setFn.indexOf('this.prisma.endpoint.updateMany('), iAudit = setFn.indexOf("action: 'PATCH_POLICY_OVERRIDE_SET'");
+  check('assignment: the setting is written only by PatchSeriesService.setOverride — computers:edit, fresh sign-in, a conditional write, then the audit with before and after',
+    modeWrites.length === 1 && modeWrites[0].endsWith('patching/series.service.ts') && (ser.match(/data: \{[^}]*patchPolicyMode:/g) ?? []).length === 1
+      && iScope > 0 && iCap > iScope && iFresh > iCap && iWrite > iFresh && iAudit > iWrite
+      && /where: \{ id: endpointId, patchPolicyMode: before\.mode, patchPolicySeriesId: before\.seriesId \}/.test(setFn) && /meta: \{ before, after, seriesName/.test(setFn),
+    `written in ${modeWrites.join(', ')}; order scope ${iScope}, cap ${iCap}, fresh ${iFresh}, write ${iWrite}, audit ${iAudit}`);
+  const dec = asg.slice(asg.indexOf('export function revisionDecision('), asg.indexOf('export function revisionReason('));
+  const iMid = dec.indexOf("code: 'mid_ring', message: 'A deployment"), iSettle = dec.indexOf("if (trigger === 'membership') {"), iRate = dec.indexOf("code: 'rate_limited'"), iProp = dec.lastIndexOf("act: 'propose'");
+  check('assignment: re-proposal is bounded — not mid-ring, settled first, then the per-business bound, before any propose',
+    iMid > 0 && iSettle > iMid && iRate > iSettle && iProp > iRate && (dec.match(/act: 'propose'/g) ?? []).length === 1
+      && /return Number\.isFinite\(n\) && n > 0 \? Math\.min\(Math\.max\(n, revisionFloorMinutes\(\)\), 24 \* 60\) : 60;/.test(asg)
+      && /return process\.env\.NODE_ENV === 'test' \? 0\.05 : 1;/.test(asg),
+    'revisionDecision must check mid_ring, settling and rate_limited before its one propose; the bound defaults to 60 and has a floor of 1 minute outside tests');
+  check('assignment: the per-business claim is one conditional upsert, taken before any automatic revision',
+    /ON CONFLICT \("customerId"\) DO UPDATE SET "at" = EXCLUDED\."at" WHERE "PatchPolicyRevisionClaim"\."at" <= \$\{cutoff\}/.test(ser)
+      && /if \(decision\.act === 'propose'\) \{\s*if \(claimed === null\) claimed = await this\.claim\(businessId, now\);\s*if \(!claimed\)/.test(ser)
+      && (ser.match(/this\.proposeRevision\(/g) ?? []).length === 1,
+    'tickBusiness must claim (conditionally) before proposeRevision, its only caller');
+  check('assignment: the series runs only inside the patch-policy sweep (PATCH_POLICY_SWEEP), with no timer of its own',
+    !/setInterval|setTimeout/.test(ser) && /this\.policies\.attachSeries\(\{ tick: \(now\) => this\.tick\(now\)/.test(ser)
+      && /if \(this\.series\) await this\.series\.tick\(now\)/.test(pol),
+    'series.service.ts must not schedule itself');
+  const prom = ser.slice(ser.indexOf('  async promote('), ser.indexOf('  private async record('));
+  check('assignment: a revision takes over only when ACTIVE and the running one is not mid-ring, in one transaction',
+    /r\.status === 'ACTIVE' && r\.id !== s\.currentPolicyId/.test(prom) && /if \(v\.current && v\.current\.status === 'ACTIVE' && v\.midRing\)/.test(prom)
+      && /\$transaction\(async \(tx\) =>/.test(prom) && /currentPolicyId: s\.currentPolicyId, status: 'active' \}, data: \{ currentPolicyId: next\.id \}/.test(prom),
+    'promote must wait for ACTIVE and no open deployment, and move the live rows and the pointer together');
+  check('assignment: revoking a revision by hand, or on the signer, ends its series',
+    /if \(u\.seriesId && this\.series\) await this\.series\.onRevoked\(u, 'portal', actor\.userId\);/.test(pol) && /if \(u\.seriesId && this\.series\) await this\.series\.onRevoked\(u, 'approval signer', null\);/.test(pol),
+    'revoke() and the signer-revoked mirror must retire the series');
+  check('assignment: the suites prove it', / patch-assignment /.test(read('scripts/run-e2e.sh')) && /unit-patch-assignment\.mjs/.test(read('.github/workflows/ci.yml')),
+    'run-e2e.sh must run e2e-patch-assignment and CI must run unit-patch-assignment');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);
