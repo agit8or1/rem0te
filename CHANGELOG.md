@@ -5,6 +5,71 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.47.0] — 2026-11-14 · *Latch*
+
+**Everyday changes no longer ask "confirm it is you" every time.**
+
+The owner runs this portal alone and was asked to confirm it was them, with a password, authenticator code or passkey,
+when uninstalling a program. 0.40's direct mode asked for a fresh sign-in on every request. 0.34 asked on every software
+catalog write, and 0.41's one-click install is one. A 10-minute confirmation meant the prompt came back for nearly every
+action. The owner said: "stop putting the authenticator request for every function".
+
+#### Added
+- **Settings → General → Confirm before everyday changes**: **Off** or **Every 10 minutes**.
+  - `PlatformSettings.routineConfirm`, CHECKed by migration 0069.
+  - Read: `GET /security/routine-confirm`, open to anyone signed in.
+  - Change: `PUT /security/routine-confirm`. It is a Platform Admin's and is audited as `ROUTINE_CONFIRM_CHANGED` with
+    before and after. Turning it off asks for one fresh sign-in, because that removes a protection. Turning it on never
+    asks.
+- **What "everyday" covers.** It is a closed list of seven, `ROUTINE_ACTIONS` in `security-controls/review.ts`:
+  - direct-mode action requests: every computer action, patch install, software install or uninstall, service change
+    and process end;
+  - direct-mode script allowlist proposals;
+  - software catalog writes: add, change, archive, one-click, bulk;
+  - upgrading a computer, or a selection, to the full agent;
+  - per-computer automatic agent updates;
+  - per-business automatic agent updates;
+  - creating or revoking a patch policy.
+- **What always asks**, whatever the setting:
+  - security controls and presets, temporary access;
+  - revealing credentials, permissions, technicians, SSO, passkeys;
+  - API keys, enrolment links;
+  - containment, notification destinations, email relay, report schedules, chat recording;
+  - the fleet-wide automatic update and automatic migration settings;
+  - script review.
+
+#### Changed
+- **This installation is set to Off.** Migration 0069 defaults a new installation to `'every'` and sets an installation already in
+  use (one with user accounts when it runs) to `'off'`, as the owner asked. A fresh database has a settings row from
+  earlier migrations but no users until it is seeded, so CI's databases keep `'every'`. That one change is not in the audit log, because a migration does not write audit
+  rows. Every later change is.
+- **The setting fails closed.** It is re-read every 30 s and applied at once on a change. Until the API has read it, an
+  everyday change asks, and any value but exactly `'off'` asks.
+- **Wording.** The direct-mode notes on the Actions, Services and Processes tabs no longer say "you will be asked to
+  confirm it is you". docs/approved-actions.md and /help describe the setting.
+
+#### Security invariants
+§62 has 8 checks:
+- the list is exactly seven;
+- the setting fails closed;
+- no security path passes `routine` or reads the setting;
+- each everyday site passes only its own action;
+- the fleet-wide update switch still asks;
+- only the business agent-mode route is relaxed in client updates;
+- turning it off is a Platform Admin's, confirmed, then written, then audited;
+- 0069's CHECK.
+
+8 mutations, each removing or weakening one of these, were each caught. The 0.12 "assertFresh refuses a missing method
+unconditionally" check now allows exactly the routine early return, and the three software catalog checks expect the
+`routine` option.
+
+#### Verification
+- `unit-routine-confirm.mjs` (new, in CI), 8 checks. Before the setting is read, everything asks. With `'off'`, all seven
+  pass without a fresh method, while a non-routine call, a phishing-resistant check and any other value still ask. With
+  `'every'`, they ask again.
+- The e2e suites run on fresh databases, which default to `'every'`, so they keep proving the strict path unchanged.
+- Security invariants, check-versions, lint, tsc in both apps, nest build and next build all pass.
+
 ## [0.46.0] — 2026-11-14 · *Thermostat*
 
 **Automatic agent updates can be switched per computer and per business, from where you are looking. They are

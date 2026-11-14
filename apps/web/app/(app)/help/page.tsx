@@ -1071,12 +1071,14 @@ const SECTIONS: Section[] = [
           alone, the approval signer&apos;s operator can turn approvals off for a business, or for every business, with
           one command on the signer:{' '}
           <code className="text-foreground">policy set --business default --approval direct</code>. A request is then
-          signed as soon as you make it, after you confirm it is you, and runs when the computer next checks in — the
+          signed as soon as you make it, and runs when the computer next checks in — the
           Actions tab, patching, software and scripts say <em>Approved automatically (direct mode)</em>, and there is no
           approval page. What it gives up: a second person. Anyone who fully takes over this portal can then run
           catalog actions on those computers, as with most RMMs. What still holds: the fresh sign-in, permissions, the
           audit log, containment pauses, revocations, maintenance windows and session rules, and the computer checking
-          the signer&apos;s signature. Direct mode cannot be combined with customer sign-off, ClientSt0r proposals are
+          the signer&apos;s signature. Whether a request also asks you to confirm it is you is set under
+          <em>Settings → General → Confirm before everyday changes</em> (0.47): Off, signing in is enough; or Every 10
+          minutes. Security settings always ask. Direct mode cannot be combined with customer sign-off, ClientSt0r proposals are
           refused under it, and computers need the 0.40 agent (an older one refuses direct plans). More in{' '}
           <Link href="/docs/approved-actions#direct-mode-the-default-for-a-single-operator" className="underline text-foreground">Approved actions → Direct mode</Link>.
         </p>

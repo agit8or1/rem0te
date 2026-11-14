@@ -8,6 +8,7 @@ import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { PublicAddressCard } from '@/components/settings/public-address-card';
 import { SnapshotScheduleCard } from '@/components/settings/snapshot-schedule-card';
 import { ChatRecordingCard } from '@/components/settings/chat-recording-card';
+import { RoutineConfirmCard } from '@/components/settings/routine-confirm-card';
 import { Copy, KeyRound, RefreshCw, ShieldCheck, Siren } from 'lucide-react';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
@@ -211,6 +212,7 @@ export default function SettingsPage() {
           <PublicAddressCard />
           <SupportLinkCard />
           <ChatRecordingCard />
+          <RoutineConfirmCard />
 
           <Card>
             <CardHeader><CardTitle className="text-sm">General</CardTitle></CardHeader>

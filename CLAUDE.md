@@ -879,6 +879,22 @@ Behavioural proof: `e2e-service-process.mjs` (ports 3711–3713; `RELEASE_BIN`,
 process table); unit: `unit-service-process.mjs` and the Go
 `internal/action/svcproc_test.go`.
 
+§62 (0.47) is everyday changes without a second confirmation. `assertFresh`
+skips its check only when called with `routine` naming one of the exact seven
+`ROUTINE_ACTIONS` in `security-controls/review.ts`, and only while
+`PlatformSettings.routineConfirm` is `'off'`. Until the setting has been read
+it asks, and any value but exactly `'off'` asks. Each everyday site passes only
+its own action. No security path passes `routine`: enrolment, API keys,
+security controls, temporary access, containment, chat recording, email,
+monitoring, update trust, report schedules, the automatic migration, script
+review and step-up itself. The fleet-wide automatic update switch still always
+asks, and in client updates only the business agent-mode route is relaxed.
+Turning the setting off is a Platform Admin's, confirmed first (not routine),
+then written and audited (`ROUTINE_CONFIRM_CHANGED`). 0069 CHECKs the value,
+defaults a new installation to `'every'` and sets one already in use (it has users) to `'off'`.
+The e2e suites run on fresh databases, so they keep proving `'every'`. The
+`'off'` half is `apps/api/scripts/unit-routine-confirm.mjs`.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

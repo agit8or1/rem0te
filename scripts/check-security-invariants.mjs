@@ -1129,8 +1129,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const rev = read('apps/api/src/security-controls/review.ts');
   const mintFn = enr.slice(enr.indexOf('async createClaimToken('), enr.indexOf('async listClaimTokens('));
   check('assertFresh refuses a missing method unconditionally',
-    /export function assertFresh\(method: string \| null,[^)]*\) \{\s*if \(!method\) \{\s*throw new ForbiddenException\(\{\s*code: 'STEP_UP_REQUIRED'/.test(rev),
-    'review.ts: assertFresh must throw STEP_UP_REQUIRED whenever method is null, with no option that skips it');
+    // 0.46.1: the one exception is an everyday change while routineConfirm is 'off' (§ 62).
+    /export function assertFresh\(method: string \| null,[^)]*\) \{\s*(?:\/\/[^\n]*\n\s*)?if \(opts\.routine && !routineConfirmRequired\(\)\) return;\s*if \(!method\) \{\s*throw new ForbiddenException\(\{\s*code: 'STEP_UP_REQUIRED'/.test(rev),
+    'review.ts: assertFresh must throw STEP_UP_REQUIRED whenever method is null; the only option that skips it is routine, and only while routineConfirmRequired() is false');
   check('createClaimToken demands a mint proof and checks it before the token is written',
     /async createClaimToken\(actor: ActorContext, dto: [^)]*\}, auth: TokenMintAuth\)/.test(mintFn)
       && /export type TokenMintAuth =\s*\| \{ via: 'session'; freshMethod: string \| null \}\s*\| \{ via: 'api-key'; apiKeyId: string \| undefined \};/.test(enr)
@@ -2135,7 +2136,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     !/FileInterceptor|FilesInterceptor|UploadedFile|multer|multipart|@Req\(\) req: Request\)[^{]*\{[^}]*req\.pipe|express\.raw/.test(swDir),
     'the portal never receives an installer: each computer downloads it with winget and checks the pinned hash');
   const method = (name) => svc.slice(svc.indexOf(`  async ${name}(`), svc.indexOf('\n  }\n', svc.indexOf(`  async ${name}(`)));
-  const fresh = ['create', 'update', 'archive'].map((n) => { const b = method(n); const a = b.indexOf("assertFresh(freshMethod, { action: 'software.catalog' });"); const w = b.search(/this\.prisma\.softwareCatalogEntry\.(create|updateMany)\(/); const au = b.indexOf("action: 'SOFTWARE_CATALOG_"); return [n, a > 0 && w > a && au > w]; });
+  const fresh = ['create', 'update', 'archive'].map((n) => { const b = method(n); const a = b.indexOf("assertFresh(freshMethod, { action: 'software.catalog', routine: 'software.catalog' });"); const w = b.search(/this\.prisma\.softwareCatalogEntry\.(create|updateMany)\(/); const au = b.indexOf("action: 'SOFTWARE_CATALOG_"); return [n, a > 0 && w > a && au > w]; });
   check('software: adding, changing or archiving a catalog entry needs a fresh sign-in before the write, and is audited after it',
     // 0.40: the two request routes also pass this.fresh(req) on, for direct mode (§ 58).
     fresh.every(([, ok]) => ok) && (ctl.match(/this\.fresh\(req\)/g) ?? []).length === 9 && /requestRing\(actor, id, Number\(ring\), body, this\.fresh\(req\)\)/.test(ctl) && /single\(actor, id, entryId, operation, body, this\.fresh\(req\)\)/.test(ctl) && /this\.stepUp\.read\(req, u\.sub, u\.iat\)/.test(ctl),
@@ -3950,7 +3951,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /export const RemoveProgramDto = z\.object\(\{[\s\S]{0,600}?\}\)\.strict\(\);/.test(def),
     'removeProgram must scope, match the inventory and go through createPlan');
   const we = pm('wingetEntry'), qi = m('quickInstall'), rw = pm('resolveWinget');
-  const iEdit = we.indexOf('if (!this.canEdit(actor, scope))'), iFr = we.indexOf("assertFresh(freshMethod, { action: 'software.catalog' });"), iW = we.search(/this\.prisma\.softwareCatalogEntry\.(create|updateMany)\(/), iAu = we.indexOf("action: 'SOFTWARE_CATALOG_");
+  const iEdit = we.indexOf('if (!this.canEdit(actor, scope))'), iFr = we.indexOf("assertFresh(freshMethod, { action: 'software.catalog', routine: 'software.catalog' });"), iW = we.search(/this\.prisma\.softwareCatalogEntry\.(create|updateMany)\(/), iAu = we.indexOf("action: 'SOFTWARE_CATALOG_");
   check('one-click: a catalog entry is written only by whoever may change the catalog, after a fresh sign-in, audited, with the hash from winget-pkgs',
     iEdit > 0 && iFr > iEdit && iW > iFr && iAu > iW && /hashSource: 'WINGET_PKGS' as const/.test(rw) && /autoSelectInstaller\(f\.manifest, arch\)/.test(rw) && /deriveDetection\(sel\.installer, v\)/.test(rw)
       && qi.indexOf('this.availability(actor, ep, SOFTWARE_INSTALL)') > 0 && qi.indexOf('assertDirectFresh(') > qi.indexOf('this.availability(') && qi.indexOf('this.wingetEntry(') > qi.indexOf('assertDirectFresh(')
@@ -4017,7 +4018,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /if \(!actor\.isPlatformAdmin && !this\.acl\.can\(actor, CAP\.COMPUTERS_VIEW\)\) throw new ForbiddenException[^\n]*\n\s*if \(browse && isBrowse\(browse\)\) return this\.wingetBrowse/.test(m('wingetSearch')),
     'wingetSearch checks the capability before it hands a browse on; parseBrowse caps pageSize');
   const bulk = m('addManyFromWinget'), one = pm('bulkOne');
-  const iCap = bulk.indexOf('BULK_MAX_PACKAGES'), iEdit = bulk.indexOf('if (!this.canEdit(actor,'), iFr = bulk.indexOf("assertFresh(freshMethod, { action: 'software.catalog' });"), iWork = bulk.indexOf('this.bulkOne(');
+  const iCap = bulk.indexOf('BULK_MAX_PACKAGES'), iEdit = bulk.indexOf('if (!this.canEdit(actor,'), iFr = bulk.indexOf("assertFresh(freshMethod, { action: 'software.catalog', routine: 'software.catalog' });"), iWork = bulk.indexOf('this.bulkOne(');
   check('bulk: at most 25 packages, Edit computers and rate-limited, a fresh sign-in once before any package is read or written',
     /export const BULK_MAX_PACKAGES = 25;/.test(def) && /packages: z\.array\([\s\S]{0,200}\)\.min\(1\)\.max\(BULK_MAX_PACKAGES\)/.test(def)
       && /@Post\('software\/winget\/catalog\/bulk'\)\s*@HttpCode\(HttpStatus\.OK\)\s*@RequireCapability\(CAP\.COMPUTERS_EDIT\)\s*@RateLimit\(3\)/.test(ctl)
@@ -4187,6 +4188,48 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && !/BinaryPathName|ServiceStartName|Password|Dependencies|Recovery/.test((gsc.match(/type ServiceInfo struct \{[\s\S]*?\n\}/) ?? [''])[0] + (gsc.match(/type ServiceSpec struct\{[^}]*\}/) ?? [''])[0])
       && !/SetStartType\([^)]*(path|account|password)/i.test(stripGo(gsc)) && /Name: s\.Name, DisplayName: c\.DisplayName, State: svcState\(st\.State\), StartType: startTypeName\(c\), Driver: driver/.test(gwin),
     'the 0.45 catalog section, ServiceControlDto, the web request, ServiceInfo/ServiceSpec');
+}
+
+// 62. Everyday changes without a second confirmation (0.46.1). assertFresh
+//     skips its check only for an action named in ROUTINE_ACTIONS, and only
+//     while PlatformSettings.routineConfirm is 'off'; until the setting has
+//     been read it asks. The list is exact. Security settings never pass
+//     `routine`. Turning the confirmation off is itself confirmed, is a
+//     Platform Admin's, and is audited; 0069 CHECKs the value.
+{
+  const rev = read('apps/api/src/security-controls/review.ts');
+  const rc = read('apps/api/src/security-controls/routine-confirm.ts');
+  const mig = read('apps/api/prisma/migrations/0069_routine_confirm/migration.sql');
+  const list = (rev.match(/export const ROUTINE_ACTIONS = \[([\s\S]*?)\] as const;/) ?? [])[1] ?? '';
+  const names = [...list.matchAll(/'([a-z.]+)'/g)].map((m) => m[1]);
+  const WANT = ['actions.direct', 'scripts.direct', 'software.catalog', 'agent.migrate', 'agent.autoupdate.computer', 'agent.autoupdate.business', 'patching.policy'];
+  check('routine: the everyday list is exactly seven actions', JSON.stringify(names) === JSON.stringify(WANT), `ROUTINE_ACTIONS is ${JSON.stringify(names)}`);
+  check('routine: the setting fails closed — it asks until read, and anything but "off" asks',
+    /let routineSetting: RoutineConfirm = 'every';/.test(rev) && /let routineLoaded = false;/.test(rev)
+      && /routineSetting = v === 'off' \? 'off' : 'every';/.test(rev) && /return !routineLoaded \|\| routineSetting !== 'off';/.test(rev),
+    'review.ts: routineConfirmRequired must be true until loaded and for any value but off');
+  // Every `routine:` in the API names an action on the list, and none sits in a security path.
+  const SECURITY = ['enrollment/enrollment.service.ts', 'apikeys/apikeys.service.ts', 'security-controls/security-controls.controller.ts', 'security-controls/temporary-access.service.ts',
+    'containment/containment.controller.ts', 'tray/tray.controller.ts', 'email/email.controller.ts', 'monitoring/monitoring.controller.ts', 'update-trust/update-trust.controller.ts',
+    'reports/report-schedules.controller.ts', 'agent-auto-migration/agent-auto-migration.service.ts', 'script-library/script-library.service.ts', 'auth/step-up.service.ts'];
+  const leaks = SECURITY.filter((f) => /routine:|routineConfirmRequired/.test(read(`apps/api/src/${f}`)));
+  check('routine: no security path passes routine or consults the setting', leaks.length === 0, `found in ${leaks.join(', ')}`);
+  const sites = { 'actions/actions.service.ts': 'actions.direct', 'script-run/script-run.service.ts': 'scripts.direct', 'software/software.service.ts': 'software.catalog',
+    'agent-upgrade/agent-upgrade.service.ts': 'agent.migrate', 'agent-auto-update/agent-auto-update.service.ts': 'agent.autoupdate.computer', 'patching/patching.controller.ts': 'patching.policy' };
+  const bad = Object.entries(sites).filter(([f, a]) => { const src = read(`apps/api/src/${f}`); const used = [...src.matchAll(/routine: '([a-z.]+)'/g)].map((m) => m[1]); return !used.length || used.some((u) => u !== a); });
+  check('routine: each everyday site passes only its own action', bad.length === 0, `wrong or missing at ${bad.map(([f]) => f).join(', ')}`);
+  const aau = read('apps/api/src/agent-auto-update/agent-auto-update.service.ts');
+  check('routine: the fleet-wide automatic update switch still always asks',
+    /assertFresh\(freshMethod, \{ action: 'agent\.autoupdate', message:/.test(aau) && !/action: 'agent\.autoupdate', routine/.test(aau), 'the platform settings change must not be routine');
+  const cu = read('apps/api/src/client-updates/client-updates.controller.ts');
+  check('routine: only the business agent-mode route is relaxed in client updates',
+    (cu.match(/routineConfirmRequired\(\)/g) ?? []).length === 1 && /this\.svc\.putAgentMode\(a, body, this\.isFresh\(req\) \|\| !routineConfirmRequired\(\)\)/.test(cu),
+    'client-updates.controller: routineConfirmRequired may appear once, on putAgentMode');
+  const setFn = rc.slice(rc.indexOf('  async set('), rc.indexOf('\n  }\n', rc.indexOf('  async set(')));
+  const iAdm = setFn.indexOf("if (!actor.isPlatformAdmin) throw"), iFr = setFn.search(/if \(raw === 'off'\) \{[\s\S]{0,200}assertFresh\(freshMethod, \{ action: 'fresh\.auth'/), iW = setFn.indexOf('platformSettings.upsert'), iAu = setFn.indexOf("action: 'ROUTINE_CONFIRM_CHANGED'");
+  check('routine: turning the confirmation off is a Platform Admin\'s, confirmed first, then written and audited',
+    iAdm > 0 && iFr > iAdm && iW > iFr && iAu > iW && !/routine:/.test(setFn), 'RoutineConfirmService.set order: admin, fresh (not routine) for off, write, audit');
+  check('routine: 0069 CHECKs the value', /CHECK \("routineConfirm" IN \('off', 'every'\)\)/.test(mig), 'migration 0069 must constrain routineConfirm');
 }
 
 if (failures.length > 0) {

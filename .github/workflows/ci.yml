@@ -271,6 +271,11 @@ jobs:
       - name: Service and process control tests
         run: node apps/api/scripts/unit-service-process.mjs
 
+      # Everyday changes and the step-up (0.46.1): with routineConfirm 'off'
+      # only the seven listed actions skip it; nothing else ever does.
+      - name: Routine confirmation tests
+        run: node apps/api/scripts/unit-routine-confirm.mjs
+
       # AI summary through ClientSt0r (0.34): redaction of every free-text field
       # before it leaves, the payload's field list, the proposed request and
       # response schemas, and the peers file's optional capabilitiesUrl.

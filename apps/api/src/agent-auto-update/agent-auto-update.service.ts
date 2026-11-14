@@ -392,6 +392,7 @@ export class AgentAutoUpdateService {
     if (value !== 'off') {
       assertFresh(freshMethod, {
         action: 'agent.autoupdate.computer',
+        routine: 'agent.autoupdate.computer',
         message: value === 'on'
           ? 'Turning on automatic agent updates for this computer lets the server re-run its installer without anyone clicking Update agent: confirm it is you.'
           : 'Letting this computer inherit its policies may turn automatic agent updates back on for it: confirm it is you.',

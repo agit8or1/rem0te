@@ -251,7 +251,7 @@ export class AgentUpgradeService {
   async migrate(actor: ActorContext, id: string, reason: unknown, freshMethod: string | null, via: 'single' | 'bulk' = 'single') {
     await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
-    assertFresh(freshMethod, { action: 'agent.migrate', message: 'Upgrading a computer to the signed agent runs a portal-served script on it once: confirm it is you.' });
+    assertFresh(freshMethod, { action: 'agent.migrate', routine: 'agent.migrate', message: 'Upgrading a computer to the signed agent runs a portal-served script on it once: confirm it is you.' });
     // eslint-disable-next-line no-control-regex -- control characters are exactly what this strips
     const why = typeof reason === 'string' ? reason.replace(/[\x00-\x1f\x7f]/g, ' ').trim() : '';
     if (why.length < 3 || why.length > 400) throw new BadRequestException({ code: 'REASON_REQUIRED', message: 'Give a reason of 3 to 400 characters; it is recorded in the audit log.' });
@@ -326,7 +326,7 @@ export class AgentUpgradeService {
    */
   async bulk(a: ActorContext, action: 'agent.update' | 'agent.migrate', targets: BulkTarget[], results: Map<string, BulkResult>, opts: { reason?: string; freshMethod: string | null }) {
     if (action === 'agent.migrate') {
-      assertFresh(opts.freshMethod, { action: 'agent.migrate', message: 'Upgrading computers to the signed agent runs a portal-served script on each once: confirm it is you.' });
+      assertFresh(opts.freshMethod, { action: 'agent.migrate', routine: 'agent.migrate', message: 'Upgrading computers to the signed agent runs a portal-served script on each once: confirm it is you.' });
     }
     const identity = `user:${a.userId}`;
     const controls = await this.controls.platform();
