@@ -221,6 +221,96 @@ refused (below).
 first policy is approved, propose a result key that isn't the computer's
 ([the trust-on-first-use window](#the-trust-on-first-use-window)).
 
+### Company-wide policies and each computer's Patch policy (0.50)
+
+A policy made by hand names its computers ring by ring. A **company-wide** policy names them for you: every computer
+of the business whose **Patch policy** setting is *Inherit* — Windows, on the signed agent, not archived. An
+**assignable** policy covers only the computers set to use it, for example a separate policy for servers with its own
+window and restart rule.
+
+**The signed document does not change.** Each one is still a closed list of named computers in rings, bound to their
+enrolled identity. A company-wide policy is a *series* of such documents, called **revisions**. Each revision goes
+through the same admission as a policy made by hand: the same per-computer checks, the same `validatePolicyDoc`, and
+the same signer. The signer knows nothing about series. It signs a ring plan only inside the revision it holds,
+exactly as before. The portal can't widen a running revision. It can only propose another one, which is admitted
+(direct mode) or approved (signed mode) like any policy.
+
+**How the portal builds the rings:**
+
+- **The canary** is the computer you chose, while it is eligible. Otherwise it is the previous revision's canary.
+  Failing both, it is the computer that checks in most reliably: the most hours with a check-in in the last seven
+  days. A canary needs the update action ready on the published signed build. With other computers after it, it
+  also needs a result key (§38).
+- **The rest** go in rings of at most 25, as even as possible, in a stable order: oldest enrolment first, so a new
+  computer joins at the end. A computer whose agent can't sign its results (no result key) goes only in the last
+  ring, whose results open nothing. At most 101 computers: a canary and four rings of 25.
+- **Left out, with the reason**, on the policy and on each computer's Patches tab:
+
+| Code | Why |
+|---|---|
+| `not_windows` | It isn't Windows. Patch policies install Windows updates only |
+| `no_signed_agent` | It runs the standard agent, which only reports updates |
+| `no_identity` | It has no enrolled device identity |
+| `in_other_policy` | A policy made by hand already patches it, or names it while awaiting approval |
+| `not_allowed` | The access policy refuses high-impact requests on it for the policy's author |
+| `no_result_key` | It can't sign its results, and the last ring, the only place it could go, is full |
+| `policy_full` | The policy already names 101 computers. The newest are left out |
+
+**When a revision is proposed.** The sweep (`PATCH_POLICY_SWEEP`) works out the rings the next revision would have.
+It proposes one when they differ from the running revision's (a computer joined, left, changed its setting, was
+re-enrolled, or its result key changed), or when the running revision is near its expiry. "Near" means seven days,
+or a third of a short policy's life. Three bounds apply, checked in this order before anything is proposed:
+
+1. **Never mid-ring.** While the running revision has a deployment that is active or paused, nothing is revised. The
+   policy shows `mid_ring`.
+2. **Debounced.** A change of computers must hold for `PATCH_POLICY_SETTLE_MINUTES` (10) before it is proposed
+   (`settling`). Renewal doesn't wait for this.
+3. **At most one revision pass per business per `PATCH_POLICY_REVISION_MINUTES` (60).** The bound is a conditional
+   claim row per business, so two API processes can't both take it (`rate_limited`). One pass can revise several
+   policies of the business together. Moving a computer from the company-wide policy to an assignable one is
+   therefore one pass, not two.
+
+A revision rejected by the approvers isn't proposed again for the same computers. A revision still awaiting approval
+when the computers change again is replaced by the next one. Revoking a revision by hand, or on the signer, **retires**
+the policy, so nothing proposes it again. **Retire** on the policy does the same and revokes every revision.
+
+**Taking over.** A revision goes live only once it is ACTIVE on the signer and the running revision has no
+deployment in progress. In direct mode that is at admission. In signed mode it is after two approvals, and **the
+previous revision keeps running until then**. Take-over is one transaction. The running revision's computers are
+released first, then the new revision's are made live, then the policy's pointer moves. The replaced revision is
+then revoked on the signer and audited as `PATCH_POLICY_SUPERSEDED`. The sweep proposes ring plans only under a
+policy's running revision.
+
+**One policy per computer.** Each computer has at most one *live* policy, the one the sweep may patch it under. This
+is a partial unique index in the database (`PatchPolicyComputer_one_live`). A trigger allows a live row only for an
+ACTIVE policy, and another trigger releases a policy's rows when it stops being ACTIVE. A policy made by hand can't
+name a computer another policy patches, one a company-wide or assignable policy covers, or one set to *Exclude*
+(`COMPUTER_IN_POLICY`). The sweep plans a computer only while it is live in that policy.
+
+**The Patch policy setting** is on each computer's Patches tab and in the business's policy view (**Patching →
+Company-wide patch policy → Each computer's Patch policy**):
+
+| Setting | Means |
+|---|---|
+| **Inherit** (the default) | The business's company-wide policy, if it has one |
+| **Exclude** | No automatic patching. The sweep leaves the computer out at once, before any revision drops it. *Install updates* on its Patches tab still works |
+| **Use policy X** | An assignable policy of the same business |
+
+Precedence is the computer's own setting first, then the business's company-wide policy. Device groups are not a
+scope for patch policies. Group membership (§46) is computed on every read, and a signed policy names a fixed list,
+so a group-scoped policy would be one more source of revisions without saving a step. Use an assignable policy and
+set its computers.
+
+Changing the setting needs **Edit computers** on that computer and a fresh sign-in (`patching.override`; an everyday
+change under *Confirm it is you*). The write is conditional on the value read. It is audited as
+`PATCH_POLICY_OVERRIDE_SET` with the value before and after. The database CHECKs the value, and a trigger refuses a
+policy of another business or one that isn't assignable. A computer moved to another business goes back to
+*Inherit*. The setting signs nothing. A revision follows under the bounds above, and the Patches tab says where that
+stands: *patched automatically*, *pending a revision*, *left out* (and why), *excluded*, or *no automatic patching*.
+
+A company-wide policy's settings (classes, window, soak, threshold, restart rule, how long each revision lasts,
+canary) are fixed for its life. To change them, retire it and create another.
+
 ### Signed results (0.34)
 
 Before 0.34 a ring's results reached the signer only through the portal, so a compromised portal that wrote a whole
@@ -395,6 +485,7 @@ There are no new server settings.
 | **Fixture-tested (0.32)** | Yes. `unit-patch-policy.mjs` (114 checks) covers every policy refusal, the window arithmetic across DST in several zones, and the signer's policy records. `e2e-patch-policies.mjs` (75 checks) covers: a one-computer install through two approvals to effective; no button on a standard-agent computer; a policy approved by passkey; the sweep proposing the canary inside the window; the agent installing only the policy's class; ring 1 signed automatically only after the canary was effective; the signer refusing widened rings, a disallowed class, a wider filter, out-of-window plans, a skipped canary, an altered digest, a non-author requester, expired and revoked policies, and a containment pause; and no duplicate after an API restart. Go tests cover the agent's `allow` filter |
 | **Fixture-tested (0.34, restart rule)** | Yes, for the restart rule. Go tests: the closed rule, the shared scheduling path and fixed warning, never under *never*, and every deferral (session open, cannot tell, window closing first, a restart already pending, an uncertain install, nothing installed). `e2e-staged-patching.mjs` (94 checks) adds: restart in the window, scheduled, the simulated restart (`rem0te-action-sim -fire-restart`) and the post-restart scan to *effective* and a completed deployment; an open session and a closing window each deferring with nothing scheduled. `e2e-patch-policies.mjs` (84 checks) adds a *never* policy's signer refusing a restart plan (`reboot_not_allowed`), and an in-window policy signing one |
 | **Fixture-tested (0.34, signed results)** | Yes. Go tests (`internal/devsig`, `internal/action`) cover creating the key once under concurrency, an unusable key file, signing and opening (forged, claimed key, altered, cross-domain), every journaled result signed, and replay returning the same signature. `unit-patch-policy.mjs` (151 checks) covers forged, replayed, cross-device, cross-plan, stale, malformed and missing signatures, an unsigned canceled target, a pre-0.34 policy, and `result_key_missing`. `unit-approval-signer.mjs` (99 checks) covers the pin on approval, `device_key_changed` at proposal and at signing, the ledger's plan hash, and `device-key list/forget`. `e2e-patch-policies.mjs` (89 checks) covers the portal refusing a canary without a key, the key bound from the agent's own scan, the stored signature equal to the agent's, five forged canary successes refused, and the genuine one opening ring 1 |
+| **Fixture-tested (0.50, company-wide policies)** | Yes, against the simulated agent only. `unit-patch-assignment.mjs` (62 checks) covers the ring builder (canary choice, rings of at most 25, keyless computers only in the last ring, the 101 cap, stable order), the membership fingerprint, every revision decision and its bounds, and the setting's parser. `e2e-patch-assignment.mjs` (68 checks) covers a company-wide policy built from the business's computers with the left-out reasons; a new computer joining by revision no sooner than the per-business bound, and no further revision when nothing changed; nothing revised mid-ring; Exclude dropping the computer by revision; *Use policy X* moving a computer to an assignable policy in one revision pass; another business's policy refused by the API and by the database trigger; the one-live-row index and the setting's CHECK; the setting audited before and after and needing a fresh sign-in; a hand-made policy refused over a covered computer (`COMPUTER_IN_POLICY`); signed mode, where the old revision keeps running until the new one is approved; renewal before expiry; and retirement. `e2e-patch-policies.mjs` (100 checks) and `e2e-staged-patching.mjs` (100 checks) still pass |
 | **Paired lab** (real Windows, real Windows Update, real authenticator) | **Not done.** The script hasn't run against a real Windows Update service. Classification IDs, result codes and pending-restart keys are as Microsoft documents them, not yet as observed |
 | **Production-ready** | **No.** It needs the paired lab first: a canary, a WSUS-managed computer, an update that needs a restart, and one that fails |
 
@@ -408,7 +499,14 @@ There are no new server settings.
 - The in-window restart has not yet run on a real Windows computer. Its warning is Windows' own shutdown dialog; there
   is no other notice, no postponing by the user, and no retry once deferred.
 - No uninstall or rollback.
-- Rings are chosen by hand, for a deployment and for a policy. There is no automatic grouping by model, site or role.
+- Rings are chosen by hand for a deployment and for a hand-made policy. A company-wide or assignable policy (0.50)
+  builds them in enrolment order. There is no grouping by model, site or role, and device groups are not a policy
+  scope.
+- A company-wide policy's settings are fixed for its life; to change them, retire it and create another. It names at
+  most 101 computers.
+- A change of a computer's Patch policy reaches the signed policy only by revision, so it can take the debounce plus
+  up to an hour (more if a deployment is running, and until two approvals in signed mode). Exclude takes effect at once.
+- The Devices list doesn't show each computer's patch policy; the Patches tab and the business's policy view do.
 - The session check sees RustDesk sessions only, once. Console and Remote Desktop users see the warning.
 - Under a policy, ring results are signed by the computers (0.34), and a forged result is refused. Each computer's
   key is trusted on first use: the first time a policy names it, approvers vouch for it, and only a fingerprint

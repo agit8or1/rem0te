@@ -1179,6 +1179,19 @@ const SECTIONS: Section[] = [
           <Link href="/docs/staged-patching" className="underline text-foreground">Staged patching</Link>.
         </p>
         <p>
+          From 0.50, a business can have a <strong className="text-foreground">company-wide patch policy</strong>:
+          the portal names every Windows computer of the business on the signed agent, picks a canary (yours, or the
+          one that checks in most reliably) and puts the rest in rings of at most 25. Each set of computers is still an
+          ordinary signed policy, a revision, approved like any other. When computers join or leave, the next revision
+          is proposed after the change has held a few minutes, at most once an hour per business and never during a
+          deployment; in signed mode the old revision keeps running until the new one is approved. Each
+          computer&apos;s <strong className="text-foreground">Patch policy</strong> setting, on its <em>Patches</em>{' '}
+          tab, is <em>Inherit</em>, <em>Exclude</em> or <em>Use policy X</em> (an assignable policy of the same
+          business). A computer is in one policy at a time; the tab shows which one patches it and why. Changing the
+          setting needs Edit computers and a fresh sign-in, and is audited. Fixture-tested only. More in{' '}
+          <Link href="/docs/staged-patching" className="underline text-foreground">Staged patching</Link>.
+        </p>
+        <p>
           From 0.34, a deployment, an <em>Install updates</em> request and a patch policy each have a{' '}
           <strong className="text-foreground">restart rule</strong>: <em>Never restart</em> (the default) or{' '}
           <em>Restart if required, inside the window</em>. With the second, a computer that Windows says needs a restart

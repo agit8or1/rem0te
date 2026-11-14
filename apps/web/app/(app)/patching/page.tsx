@@ -17,6 +17,7 @@ import { formatDate } from '@/lib/utils';
 import { DEPLOYMENT_STATUS } from '@/lib/patching';
 import { useAsks } from '@/lib/confirm-policy';
 import { PoliciesCard, PreflightCard } from '@/components/patching/patch-policies';
+import { CompanyPoliciesCard } from '@/components/patching/company-policies';
 import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
 import { AlertTriangle, Loader2, Plus, ShieldCheck } from 'lucide-react';
 
@@ -82,6 +83,8 @@ export default function PatchingPage() {
       {isPlatformAdmin && <PreflightCard />}
 
       {creating && businessId && <CreateDeployment businessId={businessId} onDone={() => { setCreating(false); refetch(); }} />}
+
+      {businessId && <CompanyPoliciesCard businessId={businessId} />}
 
       {businessId && <PoliciesCard businessId={businessId} />}
 

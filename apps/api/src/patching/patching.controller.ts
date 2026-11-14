@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { Actor } from '../common/decorators/actor.decorator';
@@ -8,6 +8,7 @@ import { StepUpService } from '../auth/step-up.service';
 import { assertFresh } from '../security-controls/review';
 import { PatchingService } from './patching.service';
 import { PatchPolicyService } from './policies.service';
+import { PatchSeriesService } from './series.service';
 
 /**
  * Staged Windows patching (v0.27). Reading posture, building deployments and
@@ -22,7 +23,7 @@ import { PatchPolicyService } from './policies.service';
 @Controller()
 @UseGuards(JwtAuthGuard)
 export class PatchingController {
-  constructor(private readonly patching: PatchingService, private readonly policies: PatchPolicyService, private readonly stepUp: StepUpService) {}
+  constructor(private readonly patching: PatchingService, private readonly policies: PatchPolicyService, private readonly series: PatchSeriesService, private readonly stepUp: StepUpService) {}
 
   /** Patch policies (create, revoke): catalog key patching.policy (confirm-catalog.ts). */
   private fresh(req: Request) {
@@ -74,6 +75,40 @@ export class PatchingController {
   async revokePolicy(@Actor() actor: ActorContext, @Param('id') id: string, @Body() body: unknown, @Req() req: Request) {
     this.fresh(req);
     return { success: true, data: await this.policies.revoke(actor, id, body) };
+  }
+
+  // ── 0.50: company-wide and assignable policies, and each computer's setting ──
+
+  @Get('endpoints/:id/patch-policy')
+  async endpointPolicy(@Actor() actor: ActorContext, @Param('id') id: string) {
+    return { success: true, data: await this.series.effective(actor, id) };
+  }
+
+  /** computers:edit on that computer; the step-up is checked inside, after the change is known (setOverride). */
+  @Put('endpoints/:id/patch-policy')
+  @RateLimit(20)
+  async setEndpointPolicy(@Actor() actor: ActorContext, @Param('id') id: string, @Body() body: unknown, @Req() req: Request) {
+    const out = await this.series.setOverride(actor, id, body, this.freshMethod(req));
+    return { success: true, data: { ...out, ...(await this.series.effective(actor, id)) } };
+  }
+
+  @Get('patching/series')
+  async listSeries(@Actor() actor: ActorContext, @Query('businessId') businessId: string) {
+    return { success: true, data: await this.series.list(actor, businessId) };
+  }
+
+  @Post('patching/series')
+  @RateLimit(10)
+  async createSeries(@Actor() actor: ActorContext, @Body() body: unknown, @Req() req: Request) {
+    this.fresh(req);
+    return { success: true, data: await this.series.create(actor, body) };
+  }
+
+  @Post('patching/series/:id/retire')
+  @HttpCode(HttpStatus.OK)
+  async retireSeries(@Actor() actor: ActorContext, @Param('id') id: string, @Body() body: unknown, @Req() req: Request) {
+    this.fresh(req);
+    return { success: true, data: await this.series.retire(actor, id, body) };
   }
 
   @Get('patching/candidates')

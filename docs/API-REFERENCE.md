@@ -3,7 +3,7 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **537** of them across
+integration, under `/api/integration/v1`). There are **542** of them across
 **82** controllers.
 
 For request and response shapes, worked examples and error codes, see
@@ -580,6 +580,8 @@ Admins and Business Owners are not confined by it; see
 
 | Method | Path | Access | Capability |
 |---|---|---|---|
+| `GET` | `/api/v1/endpoints/:id/patch-policy` | signed in | — |
+| `PUT` | `/api/v1/endpoints/:id/patch-policy` | signed in, throttled | — |
 | `GET` | `/api/v1/endpoints/:id/patches` | signed in | — |
 | `POST` | `/api/v1/endpoints/:id/patches/install` | signed in, throttled | — |
 | `GET` | `/api/v1/patching/candidates` | signed in | — |
@@ -595,6 +597,9 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/patching/policies/:id` | signed in | — |
 | `POST` | `/api/v1/patching/policies/:id/revoke` | signed in | — |
 | `GET` | `/api/v1/patching/preflight` | signed in | — |
+| `GET` | `/api/v1/patching/series` | signed in | — |
+| `POST` | `/api/v1/patching/series` | signed in, throttled | — |
+| `POST` | `/api/v1/patching/series/:id/retire` | signed in | — |
 
 ## Psa endpointsidtickets
 
