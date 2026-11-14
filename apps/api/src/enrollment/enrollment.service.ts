@@ -515,6 +515,12 @@ export class EnrollmentService {
         lastSeenAt: new Date(),
         ...secretBinding,
         ...(encryptedPassword ? { permanentPassword: encryptedPassword } : {}),
+        // 0.50.2: a claim is the installer having just run on this computer,
+        // so a reinstall queued for it is done. Left set, it was handed to the
+        // fresh agent on its first heartbeats and the installer ran again
+        // (DEWEY-WKS2022: queued 21:49, reinstalled by link 23:17, handed out
+        // again at 23:17:21). Clearing a request only narrows what happens.
+        reinstallRequestedAt: null, reinstallRequestedBy: null, reinstallDispatchedAt: null,
       },
     });
 

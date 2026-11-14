@@ -80,6 +80,19 @@ export const OPEN_MIGRATION_STATES = new Set(['pending', 'held', 'dispatched', '
 
 export const UPGRADE_LABEL = 'Upgrade to full agent';
 export const UPGRADE_PENDING_LABEL = 'Upgrade requested — waiting for check-in';
+/**
+ * 0.50.2: the button's words follow the request's real state. Until then every
+ * open state read "waiting for check-in", so a computer that had collected the
+ * upgrade a day earlier and then gone silent (DEWEY-WKS2022) still said it was
+ * waiting for a check-in while the list showed it online.
+ */
+export const UPGRADE_STATE_LABEL: Record<string, string> = {
+  pending: UPGRADE_PENDING_LABEL,
+  held: 'Upgrade requested — on hold',
+  dispatched: 'Upgrade handed out — installing',
+  downloaded: 'Upgrade downloaded — waiting for the full agent to report',
+  not_confirmed: 'Upgrade not confirmed — check the computer',
+};
 export const FULL_AGENT_HREF = '/endpoints/full-agent';
 
 function apiMessage(e: unknown, fallback: string) {
@@ -148,14 +161,14 @@ export type AgentActions = ReturnType<typeof useAgentActions>;
  */
 export type UpgradeView =
   | { state: 'enabled' }
-  | { state: 'pending'; text: string; requestedAt: string; reason: string }
+  | { state: 'pending'; text: string; requestedAt: string; reason: string; step: string }
   | { state: 'blocked'; reason: string; fix: string | null; link: { href: string; label: string } | null }
   | { state: 'no-permission'; reason: string };
 
 export function upgradeView(a: AgentCardData | undefined, canEdit: boolean): UpgradeView | null {
   if (!a || !a.migration || a.kind === 'signed') return null;
   const m = a.migration;
-  if (m.request && OPEN_MIGRATION_STATES.has(m.request.state)) return { state: 'pending', text: m.request.text, requestedAt: m.request.requestedAt, reason: m.request.reason };
+  if (m.request && OPEN_MIGRATION_STATES.has(m.request.state)) return { state: 'pending', text: m.request.text, requestedAt: m.request.requestedAt, reason: m.request.reason, step: m.request.state };
   if (!canEdit) return { state: 'no-permission', reason: 'Upgrading to the full agent needs the computers:edit permission.' };
   if (m.possible) return { state: 'enabled' };
   return { state: 'blocked', reason: m.reason ?? 'The server does not offer it for this computer right now.', fix: m.fix, link: m.link };
@@ -177,8 +190,8 @@ export function UpgradeButton({ view, onClick, testId, className }: { view: Upgr
     <span title={title} className="inline-flex max-w-full">
       {/* Wraps rather than widening a 375 px screen: "Upgrade requested — waiting for check-in" is long. */}
       <Button size="sm" variant={view.state === 'enabled' ? 'default' : 'outline'} className={cn('h-auto min-h-9 max-w-full whitespace-normal py-1.5 text-left', className)} onClick={onClick}
-        disabled={view.state !== 'enabled'} data-testid={testId} data-state={view.state}>
-        <ShieldCheck className="h-4 w-4 mr-1.5 shrink-0" />{pending ? UPGRADE_PENDING_LABEL : UPGRADE_LABEL}
+        disabled={view.state !== 'enabled'} data-testid={testId} data-state={view.state} data-step={view.state === 'pending' ? view.step : undefined}>
+        <ShieldCheck className="h-4 w-4 mr-1.5 shrink-0" />{pending ? (UPGRADE_STATE_LABEL[view.step] ?? UPGRADE_PENDING_LABEL) : UPGRADE_LABEL}
       </Button>
     </span>
   );
