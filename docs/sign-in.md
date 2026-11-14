@@ -37,7 +37,7 @@ After the provider, the rest of sign-in is the same as for a password: account s
 
 - Challenges are stored on the server and single-use.
 - A signature counter that goes backwards (a cloned authenticator) is refused.
-- Adding or removing a passkey needs step-up (`passkey.manage`).
+- Adding or removing a passkey needs step-up (`passkey.manage`), always: from 0.49 it is one of the confirmations that cannot be turned off.
 
 The relying party is the web app's address: `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGIN`, defaulting to the host and origin of the server's [public address](setup.md#public-address) (*Settings → General*, else `FRONTEND_URL`). Passkeys are bound to that host name, so changing it later makes every existing passkey unusable, unless `WEBAUTHN_RP_ID` pins it. Browsers do not allow an IP address as an RP ID; use a host name (`localhost` in development).
 
@@ -49,22 +49,55 @@ Some actions need you to confirm it is you, even with a valid session: re-enter 
 
 **A session remembers whether its sign-in passed a second factor.** A sign-in that went through the authenticator, or a passkey sign-in, is MFA-verified; a password or SSO sign-in by someone with no authenticator is not. Revealing a computer's password needs an MFA-verified session from anyone who has an authenticator, so a session that began before the authenticator was enrolled must sign in again (`403 MFA_REQUIRED`).
 
-| Action | Protects |
+### Which functions ask (0.49)
+
+**Settings → Confirm it is you** (Platform Admin) lists every function that asks, in groups, each with **Ask** or
+**Don't ask**, and *Don't ask for any* / *Ask for all* per group and overall. *Don't ask* means signing in, with its
+MFA, is enough for that function. Signing in is always required, permissions are checked first as before, and every
+change made with the function is still in the audit log. Everyone else sees the page read-only.
+
+| Group | Functions (key in the `403`) |
 |---|---|
-| `credential.reveal` | revealing a computer's stored RustDesk password, and any Connect that releases it (the launcher grant or the Connect script) |
-| `permissions.change` | changing a user's permissions or level, approving technician access, offboarding |
-| `technicians.manage` | technician assignments, groups and platform permissions |
-| `sso.configure` | SSO provider changes; linking and unlinking your own SSO identity |
-| `passkey.manage` | adding or removing a passkey |
-| `platform.configure` | changing the server's public address (*Settings → General*) |
+| Software | `software.catalog` — adding, editing or archiving a catalog entry, one-click and bulk winget adds |
+| Patching & updates | `patching.policy` — creating or revoking a patch policy; `updates.schedule` — turning on automatic RustDesk client updates, or removing a site or group policy |
+| Approved actions & scripts | `actions.direct` — any direct-mode request (actions, patch and software rings, services, processes, script runs); `scripts.direct` — a direct-mode script allowlist proposal |
+| Agents | `agent.migrate` — upgrading to the full agent (one or a selection); `agent.autoupdate.computer`, `agent.autoupdate.business`, `agent.autoupdate` — automatic agent updates for a computer, a business, the fleet; `agent.automigrate` — widening, resuming or restarting the automatic migration |
+| Devices & enrolment | `enrollment.create` — making an install link; `credential.reveal` — revealing a computer's stored password, and any Connect that releases it |
+| Monitoring & notifications | `monitoring.notify` — changing who is notified |
+| Reports & email | `email.relay` — the SMTP relay; `email.recipients` — adding, re-sending to or removing a recipient; `reports.schedule` — creating or changing a scheduled report |
+| Integrations | `ai.settings` — the AI provider and key; `psa.connector` — ticketing connectors; `apikey.create` — creating any API key |
+| Security & access | `containment.lift` — lifting a pause; `temporary.access` — deciding or activating temporary access; `security.controls` — presets, policies, device classes, technician devices, maintenance exceptions, alert suppressions; `security.trust` — trust-change decisions; `chat.recording`; `update.trust` — the update-trust mode; `scripts.review` — approving a script version; `permissions.change` — a user's permissions or level, technician-access approvals, offboarding; `technicians.manage` — technician assignments, groups, platform permissions, ClientSt0r mappings; `sso.configure` — SSO providers and linking your own identity; `platform.configure` — the server's public address |
 
-All are on by default (`PlatformSettings.stepUpActions`). The API answers `403` with `code: STEP_UP_REQUIRED` and the web app prompts. Access is always checked **first**, so someone with no business doing the action is refused outright, not asked to re-authenticate.
+The list is one file in the API (`apps/api/src/security-controls/confirm-catalog.ts`); the page, the step-up dialog's
+wording and the console's "(re-authenticate)" labels all come from it through `GET /security/confirm-policy`, so a page
+never says a function will ask when it has been set not to.
 
-### Always on, whatever is configured
+**Always asks, and not on the page as a setting:** changing your own password (it asks for the current one),
+setting up or removing your authenticator (it asks for a code), adding or removing your passkeys (`passkey.manage`),
+a protected-device exception (a passkey only, `fresh.auth.passkey`), confirming it is you itself, and **turning any
+confirmation off on this page** (`confirm.relax`). Turning a confirmation back on never asks. The API refuses a request
+to set an always-ask key (`400 CONFIRM_ALWAYS_ASKS`) or a key it does not know (`400 UNKNOWN_CONFIRM_KEY`).
 
-A few actions need a fresh confirmation that cannot be switched off in that table: lifting a containment pause,
-changing who monitoring notifies, turning on automatic client updates, technician-access decisions — and, from 0.33,
-**making an enrolment token**:
+**Every change is audited** as `CONFIRM_POLICY_CHANGED`, with the changed keys before and after. The API reads the
+policy at start and every 30 seconds, and applies a change at once. Until it has read the policy — and for any key it
+does not recognise — everything asks.
+
+**A new installation asks for everything.** An installation upgraded from 0.47 or 0.48 keeps what it had: where
+*Confirm before everyday changes* was **Off**, its seven functions (`actions.direct`, `scripts.direct`,
+`software.catalog`, `agent.migrate`, `agent.autoupdate.computer`, `agent.autoupdate.business`, `patching.policy`) start
+as *Don't ask*, and everything else asks. Migration 0071 did that, and dropped the old setting and
+`PlatformSettings.stepUpActions` (the 0.20 per-action list, which nothing in the console could change).
+
+The API answers `403` with `code: STEP_UP_REQUIRED` and the function's key as `action`, and the web app prompts and
+retries the request. Access is always checked **first**, so someone with no business doing the action is refused
+outright, not asked to re-authenticate.
+
+### Install links and API keys
+
+Making an install link (`enrollment.create`) and creating an API key (`apikey.create`) were the two confirmations that
+could not be switched off from 0.33 and 0.34 until 0.49. They are on the page now, each as its own function, and
+turning other functions off never turns them off. What the paragraphs below describe holds while they ask: with
+either set to *Don't ask*, a stolen or unattended session can make an install link or a key with no further proof.
 
 | Action (in the `403`) | When |
 |---|---|

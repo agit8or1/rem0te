@@ -70,7 +70,7 @@ export class UpdateTrustController {
   async setMode(@Actor() actor: ActorContext, @Body() dto: ModeDto, @Req() req: Request) {
     this.acl.assertPlatformAdmin(actor);
     const u = req.user as { sub?: string; iat?: number } | undefined;
-    assertFresh(u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null);
+    assertFresh(u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null, { action: 'update.trust' });
     return { success: true, data: await this.svc.setMode(actor, { mode: dto.mode, legacyPortalMigration: dto.legacyPortalMigration }) };
   }
 }

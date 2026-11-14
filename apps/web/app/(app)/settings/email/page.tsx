@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiError } from '@/components/security-controls/shared';
+import { reauthSuffix, useAsks } from '@/lib/confirm-policy';
 import { RecipientsCard } from '@/components/email/recipients-card';
 
 /**
@@ -43,6 +44,7 @@ export default function EmailSettingsPage() {
   const { data: globals } = useQuery<{ recipients: EmailRecipientView[] }>({ queryKey: ['email-recipients', 'global', null], queryFn: () => emailApi.recipients('global').then((r) => r.data.data), enabled: isPlatformAdmin, retry: false });
   const [f, setF] = useState<Form | null>(null);
   const [testTo, setTestTo] = useState('');
+  const askSave = useAsks('email.relay');
   useEffect(() => {
     if (data && !f) setF({ enabled: data.enabled, host: data.host ?? '', port: String(data.port ?? 587), tlsMode: data.tlsMode ?? 'starttls', username: data.username ?? '', password: '', clearPassword: false, fromAddress: data.fromAddress ?? '', fromName: data.fromName ?? '' });
   }, [data, f]);
@@ -114,7 +116,7 @@ export default function EmailSettingsPage() {
               <div className="space-y-1"><Label htmlFor="smtp-from-name">From name (optional)</Label><Input id="smtp-from-name" placeholder="rem0te" value={f.fromName} onChange={(e) => set({ fromName: e.target.value })} /></div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button disabled={save.isPending || !f.host.trim() || !f.fromAddress.trim()} onClick={() => save.mutate()}>Save (re-authenticate)</Button>
+              <Button disabled={save.isPending || !f.host.trim() || !f.fromAddress.trim()} onClick={() => save.mutate()}>{`Save${reauthSuffix(askSave)}`}</Button>
               <Button variant="ghost" onClick={() => setF(null)}>Discard changes</Button>
             </div>
             {data.updatedAt && <p className="text-xs text-muted-foreground">Last changed {new Date(data.updatedAt).toLocaleString()}. Changes are audited; the password never is.</p>}

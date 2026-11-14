@@ -263,7 +263,7 @@ valid session. Access is checked first, then step-up. See
 From 0.33, `computers:add` alone no longer makes an enrolment link: making one
 also needs a fresh re-authentication, for every role, and so does creating an
 API key (any key from 0.34). See
-[sign-in.md](sign-in.md#always-on-whatever-is-configured).
+[sign-in.md](sign-in.md#install-links-and-api-keys).
 
 ## Access review and offboarding (v0.20)
 

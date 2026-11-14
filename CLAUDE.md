@@ -361,8 +361,8 @@ read with no way to run or change the sweep. Behavioural proof:
 `apps/api/scripts/e2e-retention.mjs` (port 3411); unit: `unit-retention.mjs`.
 
 §34 is API keys and device-group membership. Creating *any* API key needs
-`assertFresh`, after scope and validation and before the write. The step-up is
-not configurable. Keys are immutable: there are list, create and revoke routes
+`assertFresh`, after scope and validation and before the write, naming its
+catalog key `apikey.create` (§62; until 0.49 it was not configurable). Keys are immutable: there are list, create and revoke routes
 only, and nothing widens a key's scopes or clears `revokedAt`. Membership is
 the `EndpointGroupMember` table (`Endpoint.endpointGroupId` is gone). Two 0049
 triggers enforce the business rule: a cross-business insert is refused, and a
@@ -471,8 +471,8 @@ and a size cap; plain http only to 127.0.0.1 under `NODE_ENV=test`
 key is AES-256-GCM (`common/secret-box.ts`, purpose `rem0te-ai-key-v1`), is in
 no response, audit row or log line (nothing in `ai/` logs), and only its last
 four characters are kept in the clear; a changed provider, base URL or auth
-style drops it. Setting it is Platform Admin (class guard) with `assertFresh`,
-never routine. Every prompt is the fixed system prompt plus a payload built by
+style drops it. Setting it is Platform Admin (class guard) with `assertFresh`
+naming `ai.settings` (§62). Every prompt is the fixed system prompt plus a payload built by
 `eventPayload` / `alertPayload` through `redactForAi` (which ends in
 `redactForPeer`) from the server's own copy of the entry: the browser names an
 entry with a strict source object and cannot supply text. Scope, then the
@@ -482,7 +482,7 @@ leaves; audit meta never carries text; a per-user budget sits on top of the
 route limit. PSA tickets need the same plus `tickets:create`, the budget and
 no `notifications` pause before the send; their audit carries ids, the kind
 and the reference, never the subject, note or body. Connector writes need
-`assertFresh`, never routine. The webhook URL obeys the same typed-destination
+`assertFresh` naming `psa.connector` (§62). The webhook URL obeys the same typed-destination
 rule, its secret is sealed, kept only for the same URL and never shown (only
 the host is shown or audited). Email-to-ticket goes only to a confirmed
 recipient of the connector's own scope, through `EmailService`. The ClientSt0r
@@ -909,21 +909,45 @@ Behavioural proof: `e2e-service-process.mjs` (ports 3711–3713; `RELEASE_BIN`,
 process table); unit: `unit-service-process.mjs` and the Go
 `internal/action/svcproc_test.go`.
 
-§62 (0.47) is everyday changes without a second confirmation. `assertFresh`
-skips its check only when called with `routine` naming one of the exact seven
-`ROUTINE_ACTIONS` in `security-controls/review.ts`, and only while
-`PlatformSettings.routineConfirm` is `'off'`. Until the setting has been read
-it asks, and any value but exactly `'off'` asks. Each everyday site passes only
-its own action. No security path passes `routine`: enrolment, API keys,
-security controls, temporary access, containment, chat recording, email,
-monitoring, update trust, report schedules, the automatic migration, script
-review and step-up itself. The fleet-wide automatic update switch still always
-asks, and in client updates only the business agent-mode route is relaxed.
-Turning the setting off is a Platform Admin's, confirmed first (not routine),
-then written and audited (`ROUTINE_CONFIRM_CHANGED`). 0069 CHECKs the value,
-defaults a new installation to `'every'` and sets one already in use (it has users) to `'off'`.
-The e2e suites run on fresh databases, so they keep proving `'every'`. The
-`'off'` half is `apps/api/scripts/unit-routine-confirm.mjs`.
+§62 (0.49, replacing 0.47's) is *Settings → Confirm it is you*: which functions
+ask a signed-in person to confirm it is them again. **This reverses the "the
+step-up is not configurable" rule at the owner's request** ("authenticator
+challenge should be optional for features once you login"), as §41 was in
+0.48. Every invariant that used to say a step-up could not be configured
+(§16, §17, §27, §34, §42, §43, §53, §57, §59, §60 and the rest) now says the
+site names its catalog key; whether that key asks is the policy's.
+
+There is one catalog, `apps/api/src/security-controls/confirm-catalog.ts`,
+plain data with no imports: about thirty functions in nine groups, each with a
+stable key, a label, a description, a prompt and a default of `ask`. The web
+holds no copy. It reads `GET /security/confirm-policy` (`lib/confirm-policy.ts`,
+`useAsks('key')`), and every key it words a prompt by must be in the catalog.
+Every step-up site in the API names exactly one key: `assertFresh`'s required
+`action`, `StepUpService.assert`'s action, and client updates' `FreshAuthNeeded`.
+§62 holds the exact keys per file (`SITE_KEYS`), so adding a step-up, or moving
+one to another key, changes that list in the same commit. Every catalog key
+must be named by some site.
+
+The policy is `ConfirmPolicy` rows (0071; CHECK `ask` / `off`, key charset).
+`confirmRequired(key)` asks until the rows have been read, and for an
+always-ask key or one the catalog does not name; only exactly `'off'` skips. A
+phishing-resistant check (a protected-device exception) always asks. The
+policy is read at start and every 30 s, and set again after a change. Only
+`ConfirmPolicyService` touches the rows. The always-ask set is exactly
+`passkey.manage`, `fresh.auth.passkey` and `confirm.relax`. It is not in the
+catalog, and `PUT` refuses it (`CONFIRM_ALWAYS_ASKS`) as it refuses an unknown
+key (`UNKNOWN_CONFIRM_KEY`). Password and authenticator changes ask for the
+current password or a code in their own forms. `PUT /security/confirm-policy`
+is a Platform Admin's. Any change from `ask` to `off` needs `assertFresh` with
+`confirm.relax` before the write; back to `ask` never does. It is audited
+(`CONFIRM_POLICY_CHANGED`, the changed keys before and after, nothing else).
+
+0071 sets 0.47's seven everyday keys to `off` only where `routineConfirm` was
+`'off'`. Any of the five configurable `StepUpService` actions missing from
+`stepUpActions` becomes an `off` row. Both columns are then dropped. A fresh
+database has no rows, so the e2e suites keep proving that everything asks.
+`e2e-confirm-policy.mjs` (port 3761) restores the rows it found. Behavioural
+proof: `e2e-confirm-policy.mjs`; unit: `apps/api/scripts/unit-confirm-policy.mjs`.
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 

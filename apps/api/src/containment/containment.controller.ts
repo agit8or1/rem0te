@@ -31,7 +31,7 @@ export class ContainmentController {
   @HttpCode(HttpStatus.OK)
   async clear(@Actor() actor: ActorContext, @Param('id') id: string, @Body() body: unknown, @Req() req: Request) {
     const u = req.user as { sub?: string; iat?: number } | undefined;
-    assertFresh(u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null);
+    assertFresh(u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null, { action: 'containment.lift' });
     return { success: true, data: await this.svc.clear(actor, id, body) };
   }
 }

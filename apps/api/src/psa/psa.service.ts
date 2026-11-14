@@ -44,7 +44,7 @@ const bad = (e: z.ZodError) => new BadRequestException({ code: 'INVALID_REQUEST'
  * Business Owner's) — and the "Create ticket" button uses the business's if
  * it has an enabled one, else the platform's.
  *
- * Settings writes need fresh authentication (never routine, §62) and are
+ * Settings writes need fresh authentication (catalog key psa.connector, §62) and are
  * audited without secrets: an email connector by its masked address, a
  * webhook by its host only and whether a signing secret was set.
  *

@@ -1,5 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 import type { ActorContext } from '../rbac/access-control.service';
+import { ALWAYS_ASK_KEYS, CONFIRM_KEYS, type ConfirmKey, type ConfirmValue, type StepUpKey } from './confirm-catalog';
 
 /**
  * Independent review: the decider is someone other than the requester, and
@@ -20,18 +21,23 @@ export function assertIndependentReviewer(actor: ActorContext, requesterId: stri
 }
 
 /**
- * Fresh authentication, required whatever step-up actions are enabled.
+ * Fresh authentication: a recent step-up (password, authenticator code or
+ * passkey) on top of the signed-in session.
  *
- * `action` names what is being confirmed, so the console's dialog can say it
- * (default `fresh.auth`). It changes the wording only, never the rule.
+ * `action` is the function's key in the confirm catalog (confirm-catalog.ts),
+ * required at every site; the console's dialog words its prompt from it.
+ * 0.49: the check is skipped only when `confirmRequired(action)` is false —
+ * the key is configurable, the policy has been read, and a Platform Admin set
+ * it to `off`. An unknown key, an always-ask key or an unread policy asks. A
+ * phishing-resistant check (a protected-device exception) always asks,
+ * whatever the policy says.
  */
-export function assertFresh(method: string | null, opts: { phishingResistant?: boolean; action?: string; message?: string; routine?: RoutineAction } = {}) {
-  // 0.46.1: an everyday change asks only when the platform setting says so.
-  if (opts.routine && !routineConfirmRequired()) return;
+export function assertFresh(method: string | null, opts: { action: StepUpKey; phishingResistant?: boolean; message?: string }) {
+  if (!opts.phishingResistant && !confirmRequired(opts.action)) return;
   if (!method) {
     throw new ForbiddenException({
-      code: 'STEP_UP_REQUIRED', action: opts.action ?? 'fresh.auth',
-      message: opts.message ?? 'Confirm it is you to continue: this action always needs a fresh re-authentication.',
+      code: 'STEP_UP_REQUIRED', action: opts.action,
+      message: opts.message ?? 'Confirm it is you to continue: re-enter your password, an authenticator code, or use a passkey.',
     });
   }
   if (opts.phishingResistant && method !== 'passkey') {
@@ -39,41 +45,44 @@ export function assertFresh(method: string | null, opts: { phishingResistant?: b
   }
 }
 
+// ── The confirm policy (0.49) ──────────────────────────────────────────────
+// Fails closed: until ConfirmPolicyService has read the rows, everything asks.
+// Only a configurable catalog key whose value is exactly 'off' skips.
+const CONFIGURABLE: ReadonlySet<string> = new Set<string>(CONFIRM_KEYS);
+const ALWAYS: ReadonlySet<string> = new Set<string>(ALWAYS_ASK_KEYS);
+let confirmPolicy: ReadonlyMap<string, ConfirmValue> = new Map();
+let confirmLoaded = false;
+
 /**
- * Everyday changes (0.46.1). The owner runs the portal alone and was asked to
- * confirm it was them on every software install, uninstall, service change
- * and process end. With `PlatformSettings.routineConfirm` = 'off' (the
- * default), these ask nothing beyond the signed-in session and its MFA; with
- * 'every' they ask, and the confirmation lasts 10 minutes (STEP_UP_TTL_MS).
- *
- * This is a closed list. Anything not on it always asks, whatever the setting:
- * security controls, presets, credentials, permissions, API keys, passkeys,
- * enrolment links, containment, notification destinations, email relay,
- * chat recording, and the fleet-wide automatic update and migration switches.
+ * Set by ConfirmPolicyService when it reads or changes the policy. Takes the
+ * rows as read; anything that is not a configurable key with the value 'off'
+ * is dropped, so it asks.
  */
-export const ROUTINE_ACTIONS = [
-  'actions.direct',            // a direct-mode action request (computer actions, patches, software, services, processes)
-  'scripts.direct',            // a direct-mode script allowlist proposal
-  'software.catalog',          // adding, changing or archiving a software catalog entry
-  'agent.migrate',             // upgrading a computer, or a selection, to the full agent
-  'agent.autoupdate.computer', // one computer's automatic agent updates
-  'agent.autoupdate.business', // one business's automatic agent updates
-  'patching.policy',           // creating or revoking a patch policy
-] as const;
-export type RoutineAction = (typeof ROUTINE_ACTIONS)[number];
-export type RoutineConfirm = 'off' | 'every';
-
-// Fails closed: until the setting has been read from the database, ask.
-let routineSetting: RoutineConfirm = 'every';
-let routineLoaded = false;
-
-/** Set by RoutineConfirmService when it reads or changes the setting. */
-export function setRoutineConfirm(v: unknown): void {
-  routineSetting = v === 'off' ? 'off' : 'every';
-  routineLoaded = true;
+export function setConfirmPolicy(rows: ReadonlyArray<{ key: unknown; value: unknown }>): void {
+  const m = new Map<string, ConfirmValue>();
+  for (const r of rows) {
+    if (typeof r.key === 'string' && CONFIGURABLE.has(r.key) && !ALWAYS.has(r.key) && r.value === 'off') m.set(r.key, 'off');
+  }
+  confirmPolicy = m;
+  confirmLoaded = true;
 }
 
-/** Whether an everyday change must ask; true until the setting is known. */
-export function routineConfirmRequired(): boolean {
-  return !routineLoaded || routineSetting !== 'off';
+/** Whether a function must ask "confirm it is you": true until the policy is read, and for any key that is not configurable. */
+export function confirmRequired(key: string): boolean {
+  if (!confirmLoaded) return true;
+  if (ALWAYS.has(key) || !CONFIGURABLE.has(key)) return true;
+  return confirmPolicy.get(key) !== 'off';
+}
+
+/** The effective value of every configurable key, for the view. */
+export function confirmValues(): Record<ConfirmKey, ConfirmValue> {
+  const out = {} as Record<ConfirmKey, ConfirmValue>;
+  for (const k of CONFIRM_KEYS) out[k] = confirmRequired(k) ? 'ask' : 'off';
+  return out;
+}
+
+/** For tests: forget what was read, so everything asks again. */
+export function resetConfirmPolicy(): void {
+  confirmPolicy = new Map();
+  confirmLoaded = false;
 }

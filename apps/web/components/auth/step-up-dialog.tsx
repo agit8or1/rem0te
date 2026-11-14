@@ -9,26 +9,16 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { registerStepUpHandler, stepUpApi } from '@/lib/api-client';
+import { useConfirmPolicy } from '@/lib/confirm-policy';
 import { errorMessage, getPasskey, passkeysSupported } from '@/lib/webauthn';
 
-const ACTION_LABEL: Record<string, string> = {
-  'credential.reveal': 'reveal a computer password',
-  'permissions.change': 'change permissions',
-  'technicians.manage': 'manage technician access',
-  'sso.configure': 'change single sign-on settings',
+// 0.49: every configurable function is worded from the API's catalog
+// (GET /security/confirm-policy, its `prompt`). Only the always-ask keys,
+// which the catalog does not list as toggles, are worded here.
+const ALWAYS_ASK_LABEL: Record<string, string> = {
   'passkey.manage': 'add or remove a passkey',
-  'platform.configure': "change the server's public address",
-  // v0.23 security controls: always re-authenticate, whatever is enabled.
-  'fresh.auth': 'change technician access or security controls',
   'fresh.auth.passkey': 'activate a protected-device exception',
-  // 0.32: an enabled client-update policy installs software unattended.
-  'updates.schedule': 'turn on automatic client updates',
-  // 0.33: an enrolment token adds a computer to a business.
-  'enrollment.create': 'make an install link',
-  // 0.34: every API key (0.33 asked only for keys that can enrol computers).
-  'apikey.create': 'create an API key',
-  // 0.34: a per-computer move to the signed agent runs a portal-served script once.
-  'agent.migrate': 'upgrade computers to the signed agent',
+  'confirm.relax': 'turn a confirmation off',
 };
 
 /**
@@ -47,6 +37,8 @@ export function StepUpDialog() {
   // step-up, so do not offer it.
   const [totpOnly, setTotpOnly] = React.useState(false);
   const resolver = React.useRef<((ok: boolean) => void) | null>(null);
+  const { data: policy } = useConfirmPolicy();
+  const label = action ? (policy?.catalog.find((f) => f.key === action)?.prompt ?? ALWAYS_ASK_LABEL[action]) : undefined;
 
   React.useEffect(() => {
     registerStepUpHandler((a) => new Promise<boolean>((resolve) => {
@@ -102,7 +94,7 @@ export function StepUpDialog() {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" />Confirm it&apos;s you</DialogTitle>
           <DialogDescription>
-            {action && ACTION_LABEL[action] ? `To ${ACTION_LABEL[action]}, ` : 'For this action, '}
+            {label ? `To ${label}, ` : 'For this action, '}
             confirm your identity. This lasts 10 minutes for this sign-in only.
           </DialogDescription>
         </DialogHeader>

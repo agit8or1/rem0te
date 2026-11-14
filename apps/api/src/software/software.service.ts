@@ -175,7 +175,7 @@ export class SoftwareService {
       if (!biz || biz.isArchived) throw new NotFoundException('Business not found');
     }
     // What a computer will be told to install is decided here: fresh, every time.
-    assertFresh(freshMethod, { action: 'software.catalog', routine: 'software.catalog' });
+    assertFresh(freshMethod, { action: 'software.catalog' });
     const pinned = await this.pin(d.packageId, d.version, d.hash);
     paramsOf({ packageId: d.packageId, version: d.version, installerSha256: pinned.installerSha256, detection: d.detection });
     let e: SoftwareCatalogEntry;
@@ -205,7 +205,7 @@ export class SoftwareService {
     const p = UpdateEntryDto.safeParse(raw);
     if (!p.success) bad(p.error);
     const d = p.data;
-    assertFresh(freshMethod, { action: 'software.catalog', routine: 'software.catalog' });
+    assertFresh(freshMethod, { action: 'software.catalog' });
     const pinned = await this.pin(e.packageId, d.version, d.hash);
     paramsOf({ packageId: e.packageId, version: d.version, installerSha256: pinned.installerSha256, detection: d.detection });
     const r = await this.prisma.softwareCatalogEntry.updateMany({
@@ -231,7 +231,7 @@ export class SoftwareService {
     if (!this.canEdit(actor, e)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever may change this catalog can archive its entries.' });
     const p = ArchiveEntryDto.safeParse(raw);
     if (!p.success) bad(p.error);
-    assertFresh(freshMethod, { action: 'software.catalog', routine: 'software.catalog' });
+    assertFresh(freshMethod, { action: 'software.catalog' });
     if (e.archivedAt || e.revision !== p.data.expectedRevision) throw new ConflictException({ code: 'ENTRY_CHANGED', message: 'This entry changed or was archived since you opened it.' });
     // 0.36: archiving revokes the entry on the approval signer first, for
     // good. Its next signed revocation statement names the entry, and an
@@ -449,7 +449,7 @@ export class SoftwareService {
     if (!this.canEdit(actor, scope)) {
       throw new ForbiddenException({ code: 'NOT_ALLOWED', message: customerId ? `${r.packageId} ${r.version} is not in this business's catalog, and adding it is for its Business Owner or a Platform Admin.` : 'Only a Platform Admin adds to the global catalog.' });
     }
-    assertFresh(freshMethod, { action: 'software.catalog', routine: 'software.catalog' });
+    assertFresh(freshMethod, { action: 'software.catalog' });
     paramsOf({ packageId: r.packageId, version: r.version, installerSha256: r.pinned.installerSha256, detection: r.detection });
     const own = live.find((e) => (customerId ? e.customerId === customerId : e.scope === 'GLOBAL'));
     // One live entry per package per catalog: moving it to another version is
@@ -508,7 +508,7 @@ export class SoftwareService {
       const biz = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { isArchived: true } });
       if (!biz || biz.isArchived) throw new NotFoundException('Business not found');
     }
-    assertFresh(freshMethod, { action: 'software.catalog', routine: 'software.catalog' });
+    assertFresh(freshMethod, { action: 'software.catalog' });
     const r = await this.resolveWinget(d.packageId, d.version, d.architecture);
     const w = await this.wingetEntry(actor, customerId, r, freshMethod, 'winget_search');
     return { entry: this.view(actor, w.entry), change: w.change, installer: r.installer };
@@ -596,7 +596,7 @@ export class SoftwareService {
       if (!this.canEdit(actor, { scope: 'BUSINESS', customerId: biz.id })) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only this business\'s Business Owner or a Platform Admin changes its software catalog.' });
     }
     // Once, before any manifest is read or anything is written.
-    assertFresh(freshMethod, { action: 'software.catalog', routine: 'software.catalog' });
+    assertFresh(freshMethod, { action: 'software.catalog' });
     const customerId = biz?.id ?? null;
     const marks = catalogMarks(await this.liveFor(d.packages.map((x) => x.packageId), customerId), customerId);
     const results: BulkResult[] = new Array(d.packages.length);

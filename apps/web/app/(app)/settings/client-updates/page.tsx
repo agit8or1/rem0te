@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiError } from '@/components/security-controls/shared';
+import { useAsks } from '@/lib/confirm-policy';
 import { connectivityFrom, connectivityHint, connectivityLabel, CONNECTIVITY_DOT } from '@/lib/connectivity';
 
 /**
@@ -242,6 +243,7 @@ function PolicyForm({ businessId, siteId, groupId = null, current, defaultTz, ca
   const [skipLoggedOnUser, setSkipLoggedOnUser] = useState(current?.skipLoggedOnUser ?? false);
   const [priority, setPriority] = useState<string>(current?.priority != null ? String(current.priority) : '');
   const [agentMode, setAgentMode] = useState<string>(current?.agentMode ?? '');
+  const askAgentMode = useAsks('agent.autoupdate.business');
   const zones = useMemo(() => knownTimeZones(), []);
   const listId = `tz-${groupId ?? siteId ?? 'business'}`;
 
@@ -318,7 +320,7 @@ function PolicyForm({ businessId, siteId, groupId = null, current, defaultTz, ca
         <p className="text-xs text-muted-foreground">
           When a computer’s agent is older than this server’s, its next check-in re-runs the installer (a signed agent runs its own verified update instead).
           Independent of the RustDesk checkbox above. Never during a remote session; at most a few attempts per release; paced across the platform.
-          Turning it on or to the window needs you to confirm it is you; turning it off does not.
+          {askAgentMode ? 'Turning it on or to the window needs you to confirm it is you; turning it off does not.' : ''}
         </p>
       </div>
       {canEdit && (

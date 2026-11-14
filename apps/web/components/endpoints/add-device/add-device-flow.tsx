@@ -14,6 +14,7 @@ import { agentType, ago, describeMonitor } from '@/components/endpoints/workspac
 import { useMonitoringView } from '@/components/endpoints/workspace/use-device-data';
 import { formatDate } from '@/lib/utils';
 import { connectivityLabel, connectivityOf } from '@/lib/connectivity';
+import { useAsks } from '@/lib/confirm-policy';
 
 /**
  * Add device (0.32): one guided flow instead of three entry points.
@@ -147,6 +148,7 @@ export function AddDeviceFlow() {
   /** The raw token: in memory only, and only for the link made in this visit. */
   const [rawToken, setRawToken] = useState<string | null>(null);
   const [placeConfirmed, setPlaceConfirmed] = useState(false);
+  const askEnrol = useAsks('enrollment.create');
 
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
@@ -358,8 +360,14 @@ export function AddDeviceFlow() {
               <p className="text-sm text-destructive" data-testid="create-error">{apiError(create.error, 'Could not make the link').message}</p>
             ))}
             <p className="text-xs text-muted-foreground" data-testid="create-stepup-note">
-              You will be asked to confirm it&apos;s you (password, authenticator code or passkey) unless you did in the last 10 minutes:
-              an install link adds a computer to {businessLabel}.
+              {askEnrol ? (
+                <>
+                  You will be asked to confirm it&apos;s you (password, authenticator code or passkey) unless you did in the last 10 minutes:
+                  an install link adds a computer to {businessLabel}.
+                </>
+              ) : (
+                <>An install link adds a computer to {businessLabel}.</>
+              )}
             </p>
             <div className="flex flex-wrap gap-2">
               <Button disabled={!os || create.isPending} onClick={() => create.mutate()} data-testid="make-link">

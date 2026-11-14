@@ -8,6 +8,7 @@ import { endpointsApi, scriptRunsApi, type ScriptArgument, type ScriptParameter 
 import { useToast } from '@/hooks/use-toast';
 import { cn, formatDate } from '@/lib/utils';
 import { DIRECT_TOAST, directApproved } from '@/lib/direct-mode';
+import { useAsks } from '@/lib/confirm-policy';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -110,6 +111,7 @@ export function ScriptRunPanel({ versionId }: { versionId: string }) {
     onSuccess: () => { toast({ title: 'Revoked', description: 'This content can never be run again. Edit it into a new version to run a fix.' }); setRevokeReason(''); refresh(); },
     onError: fail('Not revoked'),
   });
+  const askPropose = useAsks('scripts.direct');
 
   if (error) return null; // No library rights to run (the API answered 404): nothing to offer.
   if (!r) return null;
@@ -126,7 +128,7 @@ export function ScriptRunPanel({ versionId }: { versionId: string }) {
         <div className="space-y-1">
           <p className="text-xs font-medium flex items-center gap-2">Approval signer allowlist {st && <Badge variant={st.variant}>{st.label}</Badge>}</p>
           {!e && !r.revoked && <p className="text-xs text-muted-foreground">{r.allowlistDirect
-            ? 'Not proposed yet. The approval signer is in direct mode: proposing it adds its SHA-256 to the signer\u2019s allowlist at once, after you confirm it is you.'
+            ? `Not proposed yet. The approval signer is in direct mode: proposing it adds its SHA-256 to the signer\u2019s allowlist at once${askPropose ? ', after you confirm it is you' : ''}.`
             : <>Not proposed yet. A reviewer proposes it; two approvers on the approval roster who did not write it then read it on the signer&apos;s page and add its SHA-256.</>}</p>}
           {e && <p className="text-xs text-muted-foreground">Entry for content <code className="font-mono">{shortHash(e.contentSha256)}</code>, proposed {formatDate(e.createdAt)}.{e.revokedAt ? ` Revoked ${formatDate(e.revokedAt)}${e.revokeReason ? `: ${e.revokeReason}` : ''}.` : ''}</p>}
           {r.revoked && <p className="text-xs">This content was revoked. Revocation is permanent: the approval signer will never allow these exact bytes again. Edit it into a new version and have that reviewed.</p>}
@@ -165,6 +167,7 @@ function RunForm({ r }: { r: Readiness }) {
   const [timeout, setTimeoutMinutes] = useState<number>(r.timeouts.includes(5) ? 5 : r.timeouts[0]);
   const [reason, setReason] = useState('');
   const [ack, setAck] = useState(false);
+  const askRun = useAsks('actions.direct');
   const [q, setQ] = useState('');
   const [requested, setRequested] = useState<{ id: string; approvalUrl: string; endpointIds: string[]; direct?: string } | null>(null);
   const { data: eps, isLoading } = useQuery<EndpointLite[]>({
@@ -260,7 +263,7 @@ function RunForm({ r }: { r: Readiness }) {
       <Button size="sm" disabled={!ack || ids.length === 0 || !!problem || reason.trim().length < 3 || run.isPending} onClick={() => run.mutate()}>
         {run.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Request a run
       </Button>
-      <p className="text-xs text-muted-foreground flex gap-2"><ShieldCheck className="h-3.5 w-3.5 shrink-0 mt-0.5" />Requesting runs nothing. Two approvers on the approval roster, neither of whom wrote this script, approve the exact plan with a passkey on the approval signer&apos;s page. You cannot approve your own request. (In direct mode, set on the approval signer for this business, the run is signed as soon as you request it, after you confirm it is you.)</p>
+      <p className="text-xs text-muted-foreground flex gap-2"><ShieldCheck className="h-3.5 w-3.5 shrink-0 mt-0.5" />Requesting runs nothing. Two approvers on the approval roster, neither of whom wrote this script, approve the exact plan with a passkey on the approval signer&apos;s page. You cannot approve your own request. (In direct mode, set on the approval signer for this business, the run is signed as soon as you request it{askRun ? ', after you confirm it is you' : ''}.)</p>
       {requested && (
         <div className="rounded-md border p-2 space-y-1 text-xs" data-script-run-requested>
           <p>{requested.direct ? `${requested.direct}. It runs when each computer next checks in.` : 'Requested. Waiting for approval.'}</p>

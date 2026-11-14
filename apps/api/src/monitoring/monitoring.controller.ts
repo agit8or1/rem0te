@@ -21,7 +21,7 @@ export class MonitoringController {
 
   private fresh(req: Request) {
     const u = req.user as { sub?: string; iat?: number } | undefined;
-    assertFresh(u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null);
+    assertFresh(u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null, { action: 'monitoring.notify' });
   }
 
   @Get('summary')

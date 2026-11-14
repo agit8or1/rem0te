@@ -5,6 +5,184 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.49.0] — 2026-11-14 · *Turnstile*
+
+**Settings → Confirm it is you: choose, per function, which changes ask you to confirm it is you after you have
+signed in.**
+
+The owner asked: "authenticator challenge should be optional for features once you login. maybe put a section under
+settings to enable it for certain functions or disable it for certain functions". They run this portal mostly alone
+and were re-confirming (password, authenticator code or passkey) for changes they had already signed in, with MFA, to
+make.
+
+**This reverses the "this step-up is not configurable" rule, at the owner's request**, as 0.48 reversed §41. From 0.33
+to 0.48 about twenty step-up sites were deliberately unconditional: install links, API keys, the email relay,
+containment lifts, notification destinations, security controls, the fleet-wide update switches and more. Invariants
+§16, §17, §27, §34, §42, §43, §53, §57, §59 and §60 said so. 0.47 relaxed only seven "everyday" functions behind one
+switch (`PlatformSettings.routineConfirm`). Separately, the six `StepUpService` actions (0.20) had a per-action list,
+`PlatformSettings.stepUpActions`, that nothing in the console or API could change. 0.49 replaces both with one policy.
+Every one of those invariants now requires its site to **name its catalog key**. Whether that key asks is the
+policy's.
+
+### What you see
+
+- **Settings → Confirm it is you** (a new tab; `/settings?tab=confirm`). Functions are in nine groups. Each has a label,
+  a one-line description and **Ask** / **Don't ask**. There is *Don't ask for any* and *Ask for all* per group and for
+  everything. It is a Platform Admin's to change and read-only for everyone else.
+- The page says what *Don't ask* means: signing in, with its MFA, is enough. Signing in is still required,
+  permissions are still checked first, and every change is still in the audit log.
+- **Always asks**, a read-only note, not toggles:
+  - changing your own password (asks for the current one);
+  - setting up or removing your authenticator (asks for a code);
+  - adding or removing your passkeys;
+  - a protected-device exception (a passkey only);
+  - confirming it is you itself;
+  - turning a confirmation off on this page.
+- Turning any confirmation off asks you to confirm it is you once. Turning one back on never does.
+- The step-up dialog's "To …, confirm your identity" and every "(re-authenticate)" / "You will be asked to confirm
+  it is you" in the console now come from the policy. 25 places use `useAsks('<key>')` (`lib/confirm-policy.ts`), so
+  a page no longer claims a confirmation that has been turned off. While the policy is loading they say it asks.
+
+### The catalog
+
+One file, `apps/api/src/security-controls/confirm-catalog.ts`. It is plain data, and every key defaults to `ask`. The
+web keeps no copy: it reads `GET /security/confirm-policy`.
+
+| Group | Keys |
+|---|---|
+| Software | `software.catalog` |
+| Patching & updates | `patching.policy`, `updates.schedule` |
+| Approved actions & scripts | `actions.direct`, `scripts.direct` |
+| Agents | `agent.migrate`, `agent.autoupdate.computer`, `agent.autoupdate.business`, `agent.autoupdate`, `agent.automigrate` |
+| Devices & enrolment | `enrollment.create`, `credential.reveal` |
+| Monitoring & notifications | `monitoring.notify` |
+| Reports & email | `email.relay`, `email.recipients`, `reports.schedule` |
+| Integrations | `ai.settings`, `psa.connector`, `apikey.create` |
+| Security & access | `containment.lift`, `temporary.access`, `security.controls`, `security.trust`, `chat.recording`, `update.trust`, `scripts.review`, `permissions.change`, `technicians.manage`, `sso.configure`, `platform.configure` |
+
+The always-ask keys are `passkey.manage`, `fresh.auth.passkey` and `confirm.relax`. They are not in the catalog, and
+the API refuses them.
+
+**Every step-up site names its key.**
+- `assertFresh(method, { action })` now *requires* `action`, typed as a catalog or always-ask key, so TypeScript
+  refuses a site that names nothing.
+- `StepUpService.assert(req, action)` takes the same keys.
+- Client updates' `FreshAuthNeeded` carries its key. The controller's `isFresh(req)` became a per-key predicate: a
+  fresh step-up, or `!confirmRequired(key)`.
+- Sites that used to share the generic `fresh.auth` now have their own keys:
+  - security controls: `security.controls`, `security.trust`, `temporary.access`, `containment.lift`;
+  - email: `email.relay` for the relay, `email.recipients` for recipients;
+  - `containment.lift`, `monitoring.notify`, `reports.schedule`, `update.trust`, `chat.recording` and
+    `scripts.review`.
+
+**Resolution fails closed.** `confirmRequired(key)` (review.ts) asks in each of these cases:
+- the rows have not been read yet;
+- the key is always-ask;
+- the catalog does not name the key;
+- the row says anything but exactly `'off'`.
+
+A phishing-resistant check (a protected-device exception) always asks, whatever the policy says.
+`ConfirmPolicyService` reads the rows at start and every 30 s, and applies a change at once. A failed read keeps the
+last policy, and a failed first read asks for everything.
+
+### API
+
+- `GET /security/confirm-policy`: any signed-in user. Returns the groups, the catalog with each value, `values`,
+  `alwaysAsk` and `canChange`.
+- `PUT /security/confirm-policy` `{ values: { key: 'ask' | 'off' } }`: a Platform Admin, one key or many.
+  - It refuses an always-ask key (`400 CONFIRM_ALWAYS_ASKS`), an unknown key (`400 UNKNOWN_CONFIRM_KEY`) and any other
+    value (`INVALID_CONFIRM_VALUE`). A batch carrying one bad key is refused whole.
+  - Any change from `ask` to `off` needs `assertFresh` with `confirm.relax` before anything is written.
+  - It is audited as `CONFIRM_POLICY_CHANGED`, with only the changed keys before and after. A change to the value a
+    key already has writes and audits nothing.
+- 0.47's `GET/PUT /security/routine-confirm` are gone, and the 0.47 body shape `{ value }` is refused.
+  `GET /auth/step-up`'s `actions` now lists the `StepUpService` actions that currently ask.
+- `docs/API-REFERENCE.md` was regenerated and checked against the runtime route table (537 routes).
+
+### Migration 0071 — what it does to this installation
+
+- `ConfirmPolicy` holds a row only for a function that has been set. Its CHECKs: `value IN ('ask','off')`, and a key
+  charset.
+- Where `PlatformSettings.routineConfirm` was `'off'`, 0.47's seven functions become `off` rows: `actions.direct`,
+  `scripts.direct`, `software.catalog`, `agent.migrate`, `agent.autoupdate.computer`, `agent.autoupdate.business` and
+  `patching.policy`. That is **this production installation**: 0069 set it to `'off'` because it had users. Everything
+  else asks, as it did.
+- Any of the five configurable `StepUpService` actions missing from `stepUpActions` becomes an `off` row. Here the list
+  was the default six, so nothing changes. `passkey.manage` is always-ask from now on, whatever the list said.
+- `routineConfirm` (and its CHECK) and `stepUpActions` are dropped, so there is one source of truth. The
+  `ROUTINE_CONFIRM_CHANGED` enum value stays for the historic audit rows.
+- A fresh database has `routineConfirm = 'every'` from 0069 and no users, so it gets no rows and asks for everything.
+  That is what every e2e suite runs on, so they keep proving the strict path.
+- These INSERTs are the one policy change that is not audited.
+
+Checked by migrating a database to 0070, setting `routineConfirm = 'off'` and dropping `sso.configure` from
+`stepUpActions`, then applying 0071. It gave exactly those eight `off` rows and both columns gone, and
+`prisma migrate diff` shows no drift from `schema.prisma`.
+
+**Deploying this is a schema change**: `prisma migrate deploy`, the `prisma/` rsync and `prisma generate` at the
+target (CLAUDE.md).
+
+### If something looks wrong later
+
+- **"It asked me although I set it to Don't ask."** For the first 30 s after an API restart, or while the database
+  could not be read, everything asks. That is deliberate (fail closed). `GET /security/confirm-policy` shows what the
+  API has. The one exception is a protected-device exception, which always wants a passkey.
+- **"It did not ask."** Look for that function's row in `ConfirmPolicy`, and for the `CONFIRM_POLICY_CHANGED` entry
+  that put it there. Only the 0071 INSERTs are unaudited.
+- **A new step-up site** must name a catalog key, or a new one added to `confirm-catalog.ts`. It must also be added to
+  §62's `SITE_KEYS`, the exact keys per file, in the same commit. A catalog key that no site names fails §62 too.
+
+### Invariants
+
+§62 is rewritten. It checks that:
+- every `assertFresh`, `StepUpService.assert` and `FreshAuthNeeded` names a catalog or always-ask key, with exactly
+  the expected keys per file;
+- no other site throws `STEP_UP_REQUIRED` itself;
+- every catalog key is used;
+- the always-ask set is exact and absent from the catalog;
+- `assertFresh`'s only skip is `confirmRequired`, never for a phishing-resistant check;
+- unread, unknown and always-ask keys ask, and only exactly `'off'` skips;
+- the policy is reloaded every 30 s;
+- only `ConfirmPolicyService` touches the rows;
+- `set()` runs in this order: admin, parse (which refuses always-ask and unknown keys), `confirm.relax` for any `off`,
+  write, audit, with audit meta of before and after only;
+- the routes are GET and PUT only;
+- 0071 has its CHECK, its guarded mapping and both column drops;
+- every key the console words a prompt by is in the catalog, and the console holds no copy of it.
+
+The checks that used to pin the 0.47 `routine` strings now pin the catalog key at each site (§27, §34, §42, §46, §53,
+the client-update and software checks). The section headers of §16, §17, §42, §43, §53, §57, §59 and §60 record the
+reversal. **36 mutations of the new code, all caught.**
+
+### Tests
+
+- `apps/api/scripts/unit-confirm-policy.mjs` (40 checks; no database) replaces `unit-routine-confirm.mjs` in CI. It
+  covers the catalog, the resolution and `ConfirmPolicyService` against an in-memory Prisma, plus the 0071 mapping.
+- `apps/api/scripts/e2e-confirm-policy.mjs` (39 checks, port 3761) is added to `scripts/run-e2e.sh`. It proves:
+  - a fresh database asks for everything;
+  - `ask` asks, and `off` skips at once;
+  - an always-ask or unknown key cannot be set;
+  - relaxing without a fresh confirmation is refused with `confirm.relax`, and nothing is written;
+  - a Business Owner is refused, even fresh;
+  - the audit row holds exactly the changed keys;
+  - asking again needs no confirmation;
+  - `passkey.manage` still asks with every other key off;
+  - after a restart the rows are read and odd rows are ignored;
+  - 0071's CHECKs refuse a bad value or key.
+
+  It puts back the rows it found, so later suites still ask.
+- `e2e-enrol-stepup.mjs` used to empty `stepUpActions` to prove enrolment could not be configured away. It now turns
+  every *other* key off through the API and proves `enrollment.create` and `apikey.create` still ask.
+  `e2e-public-address.mjs` checks the policy row instead of the dropped column.
+- `unit-presets.mjs` called `assertFresh(method)` with no options, which 0.49's required `action` turns into a
+  TypeError. It now names its keys, proves the `403` carries `STEP_UP_REQUIRED` and the key while no policy is loaded,
+  and that a protected exception answers `fresh.auth.passkey`.
+- `e2e-ai-psa.mjs` failed one check about one run in a few: "AI_ANSWERED carries provider, model and token counts".
+  The audit query had no `orderBy`, so the first `ok` answer it found was sometimes the OpenAI one (300 tokens), not
+  the Anthropic one the check expects (321). The rows are now read in `createdAt` order. Nothing in the API changed.
+
+---
+
 ## [0.48.0] — 2026-11-14 · *Dispatch*
 
 **Ask AI and Create ticket on a computer's event-log entries and alerts.**

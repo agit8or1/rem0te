@@ -561,6 +561,10 @@ check(
 // 16. Containment and evidence (0.28). A pause is enforced at three layers
 //     and each layer can only be lifted by its own operator; the audit chain
 //     is guarded in the database, and health detail needs a token.
+//     0.49 (§ 62, at the owner's request): every "fresh authentication" here
+//     is a step-up that names its catalog key (containment.lift); a Platform Admin
+//     may turn a key off under Settings → Confirm it is you. Until 0.49 it
+//     could not be configured.
 {
   const sigSrv = read('apps/api/src/approval-signer/server.ts');
   const pauseRoute = sigSrv.slice(sigSrv.indexOf("url.pathname === '/internal/v1/pauses'"), sigSrv.indexOf("url.pathname === '/internal/v1/pauses'") + 1400);
@@ -621,6 +625,10 @@ check(
 //     a maintenance window never touches containment or security alerts,
 //     notification destinations need fresh authentication, and linking a
 //     ClientSt0r ticket grants nothing.
+//     0.49 (§ 62, at the owner's request): every "fresh authentication" here
+//     is a step-up that names its catalog key (monitoring.notify); a Platform Admin
+//     may turn a key off under Settings → Confirm it is you. Until 0.49 it
+//     could not be configured.
 {
   const ws = read('apps/api/src/public/windows-script.ts');
   const blk = ws.slice(ws.indexOf('# ---- Monitoring (0.29)'), ws.indexOf('# Apply a staged RustDesk upgrade.'));
@@ -790,8 +798,9 @@ check(
   check('both policy writes check permission before anything else changes',
     /async putPolicy\([\s\S]{0,700}this\.assertEdit\(a, customerId\);/.test(svc) && /async deleteSiteOverride\([\s\S]{0,400}this\.assertEdit\(a, customerId\);/.test(svc),
     'putPolicy and deleteSiteOverride must call assertEdit');
-  check('turning a policy on, or removing a site override, needs fresh authentication',
-    /if \(input\.enabled && !fresh\) throw new FreshAuthNeeded\(\);/.test(svc) && /\/\/ The site falls back to the business policy, which may be on\.\s*if \(!fresh\) throw new FreshAuthNeeded\(\);/.test(svc)
+  // 0.49: the step-up names its catalog key (updates.schedule), which the confirm policy may turn off (§ 62).
+  check('turning a policy on, or removing a site override, needs fresh authentication (catalog key updates.schedule)',
+    /if \(input\.enabled && !fresh\('updates\.schedule'\)\) throw new FreshAuthNeeded\('updates\.schedule'\);/.test(svc) && /\/\/ The site falls back to the business policy, which may be on\.\s*if \(!fresh\('updates\.schedule'\)\) throw new FreshAuthNeeded\('updates\.schedule'\);/.test(svc)
       && (ctl.match(/this\.isFresh\(req\)/g) ?? []).length === 4 && /code: 'STEP_UP_REQUIRED'/.test(ctl),
     'the service must refuse without fresh auth and the controller must pass isFresh(req) on all four writes (0.35 added removing a group policy, §46; 0.46 the business agent mode, §53)');
   check('a site override must belong to the business it is set in',
@@ -909,7 +918,8 @@ check(
   // 0.40: the one exception is direct mode on the signer's default policy (§ 58), recorded as selfReviewed.
   const iSame = rev.search(/const self = v\.authorId === actor\.userId \|\| v\.contributorIds\.includes\(actor\.userId\);\s*const selfReviewed = self && await this\.approvalMode\.allowlistDirect\(\);\s*if \(self && !selfReviewed\) \{\s*await refuse\('same_person'\);\s*throw new ForbiddenException\(\{ code: 'SAME_PERSON'/);
   const iHash = rev.search(/if \(d\.expectedSha256 !== v\.contentSha256\) \{/);
-  const iFresh = rev.search(/if \(d\.decision === 'approve'\) assertFresh\(freshMethod\);/);
+  // 0.49: named by its catalog key, scripts.review (§ 62).
+  const iFresh = rev.search(/if \(d\.decision === 'approve'\) assertFresh\(freshMethod, \{ action: 'scripts\.review' \}\);/);
   const iWrite = rev.search(/tx\.scriptVersion\.updateMany\(\{\s*where: \{ id: v\.id, status: 'IN_REVIEW', contentSha256: d\.expectedSha256 \}/);
   const mig = read('apps/api/prisma/migrations/0035_script_library/migration.sql');
   check('approval refuses SAME_PERSON (author and contributors), binds the hash seen, and needs fresh authentication — before it writes',
@@ -1114,9 +1124,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 
 // 27. Enrolment step-up (0.33). An enrolment token puts a machine of the
 //     holder's choosing into a business, so a session alone must not mint
-//     one: a person needs a fresh re-authentication, whatever their role and
-//     whatever step-up actions are configured (assertFresh, never the
-//     configurable StepUpService.assert). An API key cannot step up and keeps
+//     one: a person needs a fresh re-authentication, whatever their role
+//     (assertFresh with its own catalog key, enrollment.create — 0.49 made
+//     every step-up configurable per key at the owner's request, § 62, so
+//     turning other keys off never turns this one off). An API key cannot step up and keeps
 //     the ability, so minting a key needs the same fresh re-authentication
 //     (0.33: keys carrying enrollment:write; 0.34: every key, § 34). Every
 //     caller must say which proof it has; nothing else writes a
@@ -1128,10 +1139,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const pub = read('apps/api/src/public-api/public-api.controller.ts');
   const rev = read('apps/api/src/security-controls/review.ts');
   const mintFn = enr.slice(enr.indexOf('async createClaimToken('), enr.indexOf('async listClaimTokens('));
-  check('assertFresh refuses a missing method unconditionally',
-    // 0.46.1: the one exception is an everyday change while routineConfirm is 'off' (§ 62).
-    /export function assertFresh\(method: string \| null,[^)]*\) \{\s*(?:\/\/[^\n]*\n\s*)?if \(opts\.routine && !routineConfirmRequired\(\)\) return;\s*if \(!method\) \{\s*throw new ForbiddenException\(\{\s*code: 'STEP_UP_REQUIRED'/.test(rev),
-    'review.ts: assertFresh must throw STEP_UP_REQUIRED whenever method is null; the only option that skips it is routine, and only while routineConfirmRequired() is false');
+  check('assertFresh refuses a missing method unless the confirm policy has its key off',
+    // 0.49: the one exception is a catalog key a Platform Admin set to 'off' (§ 62).
+    /export function assertFresh\(method: string \| null,[^)]*\) \{\s*if \(!opts\.phishingResistant && !confirmRequired\(opts\.action\)\) return;\s*if \(!method\) \{\s*throw new ForbiddenException\(\{\s*code: 'STEP_UP_REQUIRED'/.test(rev),
+    'review.ts: assertFresh must throw STEP_UP_REQUIRED whenever method is null; the only skip is confirmRequired(action) being false');
   check('createClaimToken demands a mint proof and checks it before the token is written',
     /async createClaimToken\(actor: ActorContext, dto: [^)]*\}, auth: TokenMintAuth\)/.test(mintFn)
       && /export type TokenMintAuth =\s*\| \{ via: 'session'; freshMethod: string \| null \}\s*\| \{ via: 'api-key'; apiKeyId: string \| undefined \};/.test(enr)
@@ -1598,7 +1609,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 // 34. API keys and device-group membership (0.34).
 //     A key is long-lived Business Owner access that outlives the session
 //     that made it, so creating ANY key needs a fresh re-authentication
-//     (assertFresh, unconditional — 0.33 asked only for enrollment:write),
+//     (assertFresh, catalog key apikey.create, which only a Platform Admin can
+//     turn off, § 62 — 0.33 asked only for enrollment:write; until 0.49 the
+//     step-up here was not configurable),
 //     after scope and before the row is written. Keys are immutable: the only
 //     routes are list, create and revoke; nothing widens a key's scopes or
 //     clears revokedAt, so creation is the one way to get a key's access, and
@@ -1638,8 +1651,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     `apiKey writers: ${keyWriters.join(', ')}; update data: ${JSON.stringify(updates)}`);
   const dlg = read('apps/web/components/auth/step-up-dialog.tsx');
   check('the console asks for the step-up and retries, keeping the form',
-    /'apikey\.create':/.test(dlg) && /cfg\._stepUpRetried = true;\s*return api\.request\(cfg\);/.test(read('apps/web/lib/api-client.ts')),
-    'StepUpDialog must label apikey.create; the interceptor must retry the original request');
+    // 0.49: the dialog words every catalog key (apikey.create among them) from the API's catalog prompts.
+    /policy\?\.catalog\.find\(\(f\) => f\.key === action\)\?\.prompt/.test(dlg) && /cfg\._stepUpRetried = true;\s*return api\.request\(cfg\);/.test(read('apps/web/lib/api-client.ts')),
+    'StepUpDialog must label the action from the catalog; the interceptor must retry the original request');
 
   const mig = read('apps/api/prisma/migrations/0049_device_group_members/migration.sql');
   const schema = read('apps/api/prisma/schema.prisma');
@@ -2136,7 +2150,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     !/FileInterceptor|FilesInterceptor|UploadedFile|multer|multipart|@Req\(\) req: Request\)[^{]*\{[^}]*req\.pipe|express\.raw/.test(swDir),
     'the portal never receives an installer: each computer downloads it with winget and checks the pinned hash');
   const method = (name) => svc.slice(svc.indexOf(`  async ${name}(`), svc.indexOf('\n  }\n', svc.indexOf(`  async ${name}(`)));
-  const fresh = ['create', 'update', 'archive'].map((n) => { const b = method(n); const a = b.indexOf("assertFresh(freshMethod, { action: 'software.catalog', routine: 'software.catalog' });"); const w = b.search(/this\.prisma\.softwareCatalogEntry\.(create|updateMany)\(/); const au = b.indexOf("action: 'SOFTWARE_CATALOG_"); return [n, a > 0 && w > a && au > w]; });
+  const fresh = ['create', 'update', 'archive'].map((n) => { const b = method(n); const a = b.indexOf("assertFresh(freshMethod, { action: 'software.catalog' });"); const w = b.search(/this\.prisma\.softwareCatalogEntry\.(create|updateMany)\(/); const au = b.indexOf("action: 'SOFTWARE_CATALOG_"); return [n, a > 0 && w > a && au > w]; });
   check('software: adding, changing or archiving a catalog entry needs a fresh sign-in before the write, and is audited after it',
     // 0.40: the two request routes also pass this.fresh(req) on, for direct mode (§ 58).
     fresh.every(([, ok]) => ok) && (ctl.match(/this\.fresh\(req\)/g) ?? []).length === 9 && /requestRing\(actor, id, Number\(ring\), body, this\.fresh\(req\)\)/.test(ctl) && /single\(actor, id, entryId, operation, body, this\.fresh\(req\)\)/.test(ctl) && /this\.stepUp\.read\(req, u\.sub, u\.iat\)/.test(ctl),
@@ -2172,7 +2186,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //         127.0.0.1 under NODE_ENV=test);
 //       - the key is AES-256-GCM under ENCRYPTION_KEY and is in no response,
 //         audit row or log line; setting it is a Platform Admin's with
-//         assertFresh, never routine;
+//         assertFresh, catalog key ai.settings (§ 62);
 //       - every prompt is built from the server's own copy of the entry and
 //         passes redactForAi (which ends in redactForPeer); the browser names
 //         an entry and cannot supply text; AI_ASKED is written before it leaves.
@@ -2227,10 +2241,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'AI_SETTINGS_CHANGED meta must be before/after without the key, and changing provider/baseUrl/authStyle must clear it');
   check('AI: nothing in ai/ logs (no Logger, no console)', aiFiles.every((f) => !/new Logger\(|console\.|this\.log(ger)?\./.test(aiSrc[f])), aiFiles.filter((f) => /new Logger\(|console\./.test(aiSrc[f])).join(', '));
   const ctl = A('ai.controller.ts');
-  check('AI: setting the provider or key is a Platform Admin\'s (class guard) with assertFresh, never routine',
-    /@Controller\('ai\/settings'\)\s*\n@UseGuards\(PlatformAdminGuard\)/.test(ctl) && /@Put\(\)\s*\n\s*@RateLimit\(20\)\s*\n\s*async put\([^\n]*\) \{\s*\n\s*const u = [^\n]*\n\s*assertFresh\(/.test(ctl) && !/routine:/.test(ctl)
-      && !/'ai\.|'psa\./.test((read('apps/api/src/security-controls/review.ts').match(/export const ROUTINE_ACTIONS = \[([\s\S]*?)\] as const;/) ?? [])[1] ?? ''),
-    'AiSettingsController: PlatformAdminGuard at class level, assertFresh first in put(), no routine; ROUTINE_ACTIONS names no ai./psa. action');
+  check('AI: setting the provider or key is a Platform Admin\'s (class guard) with assertFresh first, naming ai.settings',
+    /@Controller\('ai\/settings'\)\s*\n@UseGuards\(PlatformAdminGuard\)/.test(ctl) && /@Put\(\)\s*\n\s*@RateLimit\(20\)\s*\n\s*async put\([^\n]*\) \{\s*\n\s*const u = [^\n]*\n\s*assertFresh\([^\n]*\{ action: 'ai\.settings'/.test(ctl),
+    'AiSettingsController: PlatformAdminGuard at class level, assertFresh first in put() with its catalog key (0.49, § 62)');
   const svcAi = A('ai.service.ts');
   const ask = svcAi.slice(svcAi.indexOf('  async ask('), svcAi.indexOf('  async preview('));
   const pcalls = [...aiFiles].flatMap((f) => [...aiSrc[f].matchAll(/await callProvider\(([^;]*)\);/g)].map((m) => `${f.split('/').pop()}: ${m[1]}`));
@@ -2265,8 +2278,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('PSA: the ticket audit carries ids, the kind and the reference — never the subject, note or body',
     ![...create.matchAll(/meta: \{([^}]*)\}/g)].some((m) => /subject|body|draft\.note\b|note:|text/.test(m[1])) && /action: 'PSA_TICKET_CREATED', meta: \{ \.\.\.ids, ticketId: ticket\.id, ref: ticket\.ref/.test(create),
     'PSA_TICKET_CREATED / _FAILED meta');
-  check('PSA: connector writes need fresh authentication, never routine',
-    (pctl.match(/fresh\(this\.stepUp, req\);/g) ?? []).length === 2 && !/routine:/.test(pctl) && /assertFresh\(u\?\.sub/.test(pctl), 'PsaConnectorsController put/remove');
+  check('PSA: connector writes need fresh authentication, naming psa.connector',
+    (pctl.match(/fresh\(this\.stepUp, req\);/g) ?? []).length === 2 && /assertFresh\(u\?\.sub[^\n]*\{ action: 'psa\.connector'/.test(pctl), 'PsaConnectorsController put/remove (catalog key psa.connector, § 62)');
   check('PSA: the webhook secret is sealed, kept only for the same URL, and never shown; only the host is shown or audited',
     /enc = sealSecret\(deps\.encKey, 'rem0te-psa-webhook-secret-v1', given\)/.test(wh) && /else if \(cur\?\.webhookSecretEnc && cur\.webhookUrl === url\)/.test(wh)
       && /return \{ webhookHost: hostOf\(row\.webhookUrl\), webhookUrlSet: !!row\.webhookUrl, signed: !!row\.webhookSecretEnc \};/.test(wh) && /audit: \{ host: c\.url\.host, secret: change \}/.test(wh),
@@ -2340,17 +2353,21 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //     drops it. A `notifications` pause stops every send. A scheduled report
 //     is claimed (unique per period) before it is sent, and its owner's
 //     access is rebuilt from the database before anything is produced.
+//     0.49 (§ 62, at the owner's request): every "fresh authentication" here
+//     is a step-up that names its catalog key (email.relay / email.recipients / reports.schedule); a Platform Admin
+//     may turn a key off under Settings → Confirm it is you. Until 0.49 it
+//     could not be configured.
 {
   const ctl = read('apps/api/src/email/email.controller.ts');
   const svc = read('apps/api/src/email/email.service.ts');
   const host = read('apps/api/src/email/smtp-host.ts');
   const smtpCtl = ctl.slice(ctl.indexOf("@Controller('email/settings')"), ctl.indexOf("@Controller('email')"));
   check('the SMTP relay settings are Platform Admin only and saving them needs fresh authentication',
-    /@UseGuards\(PlatformAdminGuard\)\s*export class SmtpSettingsController/.test(smtpCtl) && /@Put\(\)[\s\S]{0,200}fresh\(this\.stepUp, req\)/.test(smtpCtl) && /assertFresh\(/.test(ctl),
+    /@UseGuards\(PlatformAdminGuard\)\s*export class SmtpSettingsController/.test(smtpCtl) && /@Put\(\)[\s\S]{0,200}fresh\(this\.stepUp, req, 'email\.relay'\)/.test(smtpCtl) && /assertFresh\(/.test(ctl),
     'SmtpSettingsController must carry PlatformAdminGuard, and PUT must call fresh()');
   const rcpCtl = ctl.slice(ctl.indexOf("@Controller('email')"));
   check('adding, re-sending to and removing an email recipient need fresh authentication',
-    /@Post\('recipients'\)[\s\S]{0,200}fresh\(this\.stepUp, req\)/.test(rcpCtl) && /@Post\('recipients\/:id\/resend'\)[\s\S]{0,250}fresh\(this\.stepUp, req\)/.test(rcpCtl) && /@Delete\('recipients\/:id'\)[\s\S]{0,200}fresh\(this\.stepUp, req\)/.test(rcpCtl),
+    /@Post\('recipients'\)[\s\S]{0,200}fresh\(this\.stepUp, req, 'email\.recipients'\)/.test(rcpCtl) && /@Post\('recipients\/:id\/resend'\)[\s\S]{0,250}fresh\(this\.stepUp, req, 'email\.recipients'\)/.test(rcpCtl) && /@Delete\('recipients\/:id'\)[\s\S]{0,200}fresh\(this\.stepUp, req, 'email\.recipients'\)/.test(rcpCtl),
     'POST recipients, POST recipients/:id/resend and DELETE recipients/:id must call fresh()');
   const sch = read('apps/api/src/reports/report-schedules.controller.ts');
   check('creating or changing a scheduled report needs fresh authentication',
@@ -2428,6 +2445,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //     requesting computer's authenticated heartbeat is handed its nonce, the
 //     request needs a fresh sign-in (single and bulk) and computers:edit, and
 //     an updates pause holds it like every other update flag.
+//     0.49 (§ 62, at the owner's request): every "fresh authentication" here
+//     is a step-up that names its catalog key (agent.migrate); a Platform Admin
+//     may turn a key off under Settings → Confirm it is you. Until 0.49 it
+//     could not be configured.
 {
   const mig = read('apps/api/src/update-trust/agent-migration.ts');
   const msvc = read('apps/api/src/update-trust/agent-migration.service.ts');
@@ -2805,8 +2826,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /const before = await this\.prisma\.clientUpdatePolicy\.findFirst\(\{ where: \{ customerId, groupId \} \}\);/.test(body(csvc, 'async deleteGroupPolicy(')),
     'groupForPolicy finds by id AND business; monitoring scopeFor and putPolicy use it; deleteGroupPolicy looks up by business AND group');
   check('turning a group client-update policy on, or removing one, needs fresh authentication; deleting the group is refused while it carries one',
-    /const group = groupId \? await this\.groups\.groupForPolicy[\s\S]{0,900}if \(input\.enabled && !fresh\) throw new FreshAuthNeeded\(\);/.test(body(csvc, 'async putPolicy('))
-      && /if \(!before\) throw new NotFoundException\('This group has no policy'\);\s*\n\s*if \(!fresh\) throw new FreshAuthNeeded\(\);/.test(body(csvc, 'async deleteGroupPolicy('))
+    /const group = groupId \? await this\.groups\.groupForPolicy[\s\S]{0,900}if \(input\.enabled && !fresh\('updates\.schedule'\)\) throw new FreshAuthNeeded\('updates\.schedule'\);/.test(body(csvc, 'async putPolicy('))
+      && /if \(!before\) throw new NotFoundException\('This group has no policy'\);\s*\n\s*if \(!fresh\('updates\.schedule'\)\) throw new FreshAuthNeeded\('updates\.schedule'\);/.test(body(csvc, 'async deleteGroupPolicy('))
       && /this\.fresh\(\(\) => this\.svc\.deleteGroupPolicy\(a, biz\(q\), groupId, this\.isFresh\(req\)\)\)/.test(cctl)
       && /const held = await this\.policiesOn\(g\.id\);\s*\n\s*if \(held\) throw new ConflictException\(\{ code: 'GROUP_HAS_POLICIES'/.test(body(dgs, 'async remove(')),
     'putPolicy: enabled && !fresh after the group checks; deleteGroupPolicy: !fresh → FreshAuthNeeded, routed through this.fresh; DeviceGroupsService.remove refuses a group with policies');
@@ -3231,6 +3252,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //     and, for anything but Off, fresh authentication, and every change is
 //     conditional and audited; the business page's selector writes only the
 //     business policy's agent mode under the policy's own rules.
+//     0.49 (§ 62, at the owner's request): every "fresh authentication" here
+//     is a step-up that names its catalog key (agent.autoupdate / agent.autoupdate.business / agent.autoupdate.computer); a Platform Admin
+//     may turn a key off under Settings → Confirm it is you. Until 0.49 it
+//     could not be configured.
 {
   const enr = read('apps/api/src/enrollment/enrollment.service.ts');
   const sch = read('apps/api/src/agent-auto-update/schedule.ts');
@@ -3292,8 +3317,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && !/activityLog\.(create|update|delete|upsert)/.test(svc + sch),
     'two audit.log calls in the service — putSettings (after assertPlatformAdmin and assertFresh) and setComputer; PlatformAdminGuard; GET + PUT only');
   check('opting a policy back in (any agent mode but OFF) needs fresh authentication; opting out does not',
-    /if \(input\.agentMode !== undefined && input\.agentMode !== 'OFF' && \(input\.agentMode \?\? null\) !== \(before\?\.agentMode \?\? null\) && !fresh\) throw new FreshAuthNeeded\(\);/.test(cus)
-      && cus.indexOf('throw new FreshAuthNeeded();\n    const biz') > cus.indexOf("input.agentMode !== 'OFF'") - 400,
+    /if \(input\.agentMode !== undefined && input\.agentMode !== 'OFF' && \(input\.agentMode \?\? null\) !== \(before\?\.agentMode \?\? null\) && !fresh\('agent\.autoupdate\.business'\)\) throw new FreshAuthNeeded\('agent\.autoupdate\.business'\);/.test(cus)
+      && cus.indexOf("throw new FreshAuthNeeded('agent.autoupdate.business');\n    const biz") > cus.indexOf("input.agentMode !== 'OFF'") - 400,
     'client-updates.service putPolicy: the agentMode fresh check');
 
   // 0.46: one computer's own setting (Endpoint.agentAutoUpdate), and the
@@ -3339,8 +3364,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const pam = cus.slice(cus.indexOf('  async putAgentMode('), cus.indexOf('  async deleteSiteOverride('));
   check('the business selector writes only the agent mode: same edit rule, fresh for anything but OFF, enabled never turned on, audited',
     pam.length > 500 && /this\.assertEdit\(a, customerId\);/.test(pam) && pam.indexOf('this.assertEdit(a, customerId);') < pam.indexOf('this.prisma.clientUpdatePolicy.updateMany(')
-      && /if \(input\.agentMode !== 'OFF' && !fresh\) throw new FreshAuthNeeded\(\);/.test(pam)
-      && pam.indexOf("if (input.agentMode !== 'OFF' && !fresh)") < pam.indexOf('this.prisma.clientUpdatePolicy.updateMany(') && pam.indexOf("if (input.agentMode !== 'OFF' && !fresh)") < pam.indexOf('this.prisma.clientUpdatePolicy.create(')
+      && /if \(input\.agentMode !== 'OFF' && !fresh\('agent\.autoupdate\.business'\)\) throw new FreshAuthNeeded\('agent\.autoupdate\.business'\);/.test(pam)
+      && pam.indexOf("if (input.agentMode !== 'OFF' && !fresh(") < pam.indexOf('this.prisma.clientUpdatePolicy.updateMany(') && pam.indexOf("if (input.agentMode !== 'OFF' && !fresh(") < pam.indexOf('this.prisma.clientUpdatePolicy.create(')
       && /data: \{ agentMode: input\.agentMode, updatedById: a\.userId \}/.test(pam) && /enabled: false, timeZone: 'UTC'/.test(pam) && !/enabled: true|enabled: input/.test(pam)
       && /action: 'CLIENT_UPDATE_POLICY_CHANGED', resource: 'client_update_policy', resourceId: after\.id,/.test(pam)
       && /AgentModeInput = z\.object\(\{\s*businessId: z\.string\(\)\.regex\(ID\),\s*agentMode: z\.enum\(\['ANY_TIME', 'WINDOW', 'OFF'\]\)\.nullable\(\),\s*\}\)\.strict\(\);/.test(read('apps/api/src/client-updates/policy.ts')),
@@ -3706,6 +3731,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //     turning it off never needs fresh authentication; the Full agent page
 //     counts only visible computers and names the canary only to someone who
 //     can see it; and the off switch is exact and set for every other suite.
+//     0.49 (§ 62, at the owner's request): every "fresh authentication" here
+//     is a step-up that names its catalog key (agent.automigrate); a Platform Admin
+//     may turn a key off under Settings → Confirm it is you. Until 0.49 it
+//     could not be configured.
 {
   const ro = read('apps/api/src/agent-auto-migration/rollout.ts');
   const svc = read('apps/api/src/agent-auto-migration/agent-auto-migration.service.ts');
@@ -3951,6 +3980,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //     command: the agent reads the key itself, refuses one that names another
 //     program, and runs only System32 msiexec /x {GUID} /qn /norestart or the
 //     key's own QuietUninstallString, through one exec site with no shell.
+//     0.49 (§ 62, at the owner's request): every "fresh authentication" here
+//     is a step-up that names its catalog key (software.catalog (and actions.direct for a direct-mode request)); a Platform Admin
+//     may turn a key off under Settings → Confirm it is you. Until 0.49 it
+//     could not be configured.
 {
   const goRm = read('tools/windows-installer/internal/action/remove.go');
   const goRmWin = read('tools/windows-installer/software_remove_windows.go');
@@ -4057,7 +4090,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /export const RemoveProgramDto = z\.object\(\{[\s\S]{0,600}?\}\)\.strict\(\);/.test(def),
     'removeProgram must scope, match the inventory and go through createPlan');
   const we = pm('wingetEntry'), qi = m('quickInstall'), rw = pm('resolveWinget');
-  const iEdit = we.indexOf('if (!this.canEdit(actor, scope))'), iFr = we.indexOf("assertFresh(freshMethod, { action: 'software.catalog', routine: 'software.catalog' });"), iW = we.search(/this\.prisma\.softwareCatalogEntry\.(create|updateMany)\(/), iAu = we.indexOf("action: 'SOFTWARE_CATALOG_");
+  const iEdit = we.indexOf('if (!this.canEdit(actor, scope))'), iFr = we.indexOf("assertFresh(freshMethod, { action: 'software.catalog' });"), iW = we.search(/this\.prisma\.softwareCatalogEntry\.(create|updateMany)\(/), iAu = we.indexOf("action: 'SOFTWARE_CATALOG_");
   check('one-click: a catalog entry is written only by whoever may change the catalog, after a fresh sign-in, audited, with the hash from winget-pkgs',
     iEdit > 0 && iFr > iEdit && iW > iFr && iAu > iW && /hashSource: 'WINGET_PKGS' as const/.test(rw) && /autoSelectInstaller\(f\.manifest, arch\)/.test(rw) && /deriveDetection\(sel\.installer, v\)/.test(rw)
       && qi.indexOf('this.availability(actor, ep, SOFTWARE_INSTALL)') > 0 && qi.indexOf('assertDirectFresh(') > qi.indexOf('this.availability(') && qi.indexOf('this.wingetEntry(') > qi.indexOf('assertDirectFresh(')
@@ -4111,6 +4144,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //     anything written; each package goes through resolveWinget and
 //     wingetEntry (the one-click path, audited per entry, via 'bulk'); and
 //     another business's catalog looks like a missing one.
+//     0.49 (§ 62, at the owner's request): every "fresh authentication" here
+//     is a step-up that names its catalog key (software.catalog); a Platform Admin
+//     may turn a key off under Settings → Confirm it is you. Until 0.49 it
+//     could not be configured.
 {
   const svc = read('apps/api/src/software/software.service.ts');
   const ctl = read('apps/api/src/software/software.controller.ts');
@@ -4124,7 +4161,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /if \(!actor\.isPlatformAdmin && !this\.acl\.can\(actor, CAP\.COMPUTERS_VIEW\)\) throw new ForbiddenException[^\n]*\n\s*if \(browse && isBrowse\(browse\)\) return this\.wingetBrowse/.test(m('wingetSearch')),
     'wingetSearch checks the capability before it hands a browse on; parseBrowse caps pageSize');
   const bulk = m('addManyFromWinget'), one = pm('bulkOne');
-  const iCap = bulk.indexOf('BULK_MAX_PACKAGES'), iEdit = bulk.indexOf('if (!this.canEdit(actor,'), iFr = bulk.indexOf("assertFresh(freshMethod, { action: 'software.catalog', routine: 'software.catalog' });"), iWork = bulk.indexOf('this.bulkOne(');
+  const iCap = bulk.indexOf('BULK_MAX_PACKAGES'), iEdit = bulk.indexOf('if (!this.canEdit(actor,'), iFr = bulk.indexOf("assertFresh(freshMethod, { action: 'software.catalog' });"), iWork = bulk.indexOf('this.bulkOne(');
   check('bulk: at most 25 packages, Edit computers and rate-limited, a fresh sign-in once before any package is read or written',
     /export const BULK_MAX_PACKAGES = 25;/.test(def) && /packages: z\.array\([\s\S]{0,200}\)\.min\(1\)\.max\(BULK_MAX_PACKAGES\)/.test(def)
       && /@Post\('software\/winget\/catalog\/bulk'\)\s*@HttpCode\(HttpStatus\.OK\)\s*@RequireCapability\(CAP\.COMPUTERS_EDIT\)\s*@RateLimit\(3\)/.test(ctl)
@@ -4296,46 +4333,184 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'the 0.45 catalog section, ServiceControlDto, the web request, ServiceInfo/ServiceSpec');
 }
 
-// 62. Everyday changes without a second confirmation (0.46.1). assertFresh
-//     skips its check only for an action named in ROUTINE_ACTIONS, and only
-//     while PlatformSettings.routineConfirm is 'off'; until the setting has
-//     been read it asks. The list is exact. Security settings never pass
-//     `routine`. Turning the confirmation off is itself confirmed, is a
-//     Platform Admin's, and is audited; 0069 CHECKs the value.
+// 62. Confirm it is you, per function (0.49; replaces 0.47's seven everyday
+//     actions and 0.20's stepUpActions). Reversed at the owner's request: the
+//     owner runs the portal mostly alone and asked for the step-up after
+//     sign-in to be optional per function ("authenticator challenge should be
+//     optional for features once you login"), as §41 was reversed in 0.48.
+//     Before 0.49, about twenty invariants said a step-up was "not
+//     configurable" (§16, §17, §34, §42, §43, §53, §57, §59, §60 among them);
+//     each now requires its site to name its catalog key instead.
+//
+//     One catalog, confirm-catalog.ts, plain data. Every step-up site in the
+//     API names exactly one key: assertFresh's required `action`,
+//     StepUpService.assert's action, and client updates' FreshAuthNeeded.
+//     The policy is ConfirmPolicy rows (0071). Only a configurable key whose
+//     row is exactly 'off' skips; an unknown key, an always-ask key or a
+//     policy not yet read asks. A phishing-resistant check always asks. The
+//     always-ask set (own passkeys, a protected-device exception's passkey,
+//     turning a confirmation off) is not in the catalog and cannot be set.
+//     Changing the policy is a Platform Admin's; relaxing anything confirms
+//     first with the always-ask `confirm.relax`, tightening never does, and
+//     every change is audited. The web holds no copy of the catalog.
 {
-  const rev = read('apps/api/src/security-controls/review.ts');
-  const rc = read('apps/api/src/security-controls/routine-confirm.ts');
-  const mig = read('apps/api/prisma/migrations/0069_routine_confirm/migration.sql');
-  const list = (rev.match(/export const ROUTINE_ACTIONS = \[([\s\S]*?)\] as const;/) ?? [])[1] ?? '';
-  const names = [...list.matchAll(/'([a-z.]+)'/g)].map((m) => m[1]);
-  const WANT = ['actions.direct', 'scripts.direct', 'software.catalog', 'agent.migrate', 'agent.autoupdate.computer', 'agent.autoupdate.business', 'patching.policy'];
-  check('routine: the everyday list is exactly seven actions', JSON.stringify(names) === JSON.stringify(WANT), `ROUTINE_ACTIONS is ${JSON.stringify(names)}`);
-  check('routine: the setting fails closed — it asks until read, and anything but "off" asks',
-    /let routineSetting: RoutineConfirm = 'every';/.test(rev) && /let routineLoaded = false;/.test(rev)
-      && /routineSetting = v === 'off' \? 'off' : 'every';/.test(rev) && /return !routineLoaded \|\| routineSetting !== 'off';/.test(rev),
-    'review.ts: routineConfirmRequired must be true until loaded and for any value but off');
-  // Every `routine:` in the API names an action on the list, and none sits in a security path.
-  const SECURITY = ['enrollment/enrollment.service.ts', 'apikeys/apikeys.service.ts', 'security-controls/security-controls.controller.ts', 'security-controls/temporary-access.service.ts',
-    'containment/containment.controller.ts', 'tray/tray.controller.ts', 'email/email.controller.ts', 'monitoring/monitoring.controller.ts', 'update-trust/update-trust.controller.ts',
-    'reports/report-schedules.controller.ts', 'agent-auto-migration/agent-auto-migration.service.ts', 'script-library/script-library.service.ts', 'auth/step-up.service.ts'];
-  const leaks = SECURITY.filter((f) => /routine:|routineConfirmRequired/.test(read(`apps/api/src/${f}`)));
-  check('routine: no security path passes routine or consults the setting', leaks.length === 0, `found in ${leaks.join(', ')}`);
-  const sites = { 'actions/actions.service.ts': 'actions.direct', 'script-run/script-run.service.ts': 'scripts.direct', 'software/software.service.ts': 'software.catalog',
-    'agent-upgrade/agent-upgrade.service.ts': 'agent.migrate', 'agent-auto-update/agent-auto-update.service.ts': 'agent.autoupdate.computer', 'patching/patching.controller.ts': 'patching.policy' };
-  const bad = Object.entries(sites).filter(([f, a]) => { const src = read(`apps/api/src/${f}`); const used = [...src.matchAll(/routine: '([a-z.]+)'/g)].map((m) => m[1]); return !used.length || used.some((u) => u !== a); });
-  check('routine: each everyday site passes only its own action', bad.length === 0, `wrong or missing at ${bad.map(([f]) => f).join(', ')}`);
-  const aau = read('apps/api/src/agent-auto-update/agent-auto-update.service.ts');
-  check('routine: the fleet-wide automatic update switch still always asks',
-    /assertFresh\(freshMethod, \{ action: 'agent\.autoupdate', message:/.test(aau) && !/action: 'agent\.autoupdate', routine/.test(aau), 'the platform settings change must not be routine');
-  const cu = read('apps/api/src/client-updates/client-updates.controller.ts');
-  check('routine: only the business agent-mode route is relaxed in client updates',
-    (cu.match(/routineConfirmRequired\(\)/g) ?? []).length === 1 && /this\.svc\.putAgentMode\(a, body, this\.isFresh\(req\) \|\| !routineConfirmRequired\(\)\)/.test(cu),
-    'client-updates.controller: routineConfirmRequired may appear once, on putAgentMode');
-  const setFn = rc.slice(rc.indexOf('  async set('), rc.indexOf('\n  }\n', rc.indexOf('  async set(')));
-  const iAdm = setFn.indexOf("if (!actor.isPlatformAdmin) throw"), iFr = setFn.search(/if \(raw === 'off'\) \{[\s\S]{0,200}assertFresh\(freshMethod, \{ action: 'fresh\.auth'/), iW = setFn.indexOf('platformSettings.upsert'), iAu = setFn.indexOf("action: 'ROUTINE_CONFIRM_CHANGED'");
-  check('routine: turning the confirmation off is a Platform Admin\'s, confirmed first, then written and audited',
-    iAdm > 0 && iFr > iAdm && iW > iFr && iAu > iW && !/routine:/.test(setFn), 'RoutineConfirmService.set order: admin, fresh (not routine) for off, write, audit');
-  check('routine: 0069 CHECKs the value', /CHECK \("routineConfirm" IN \('off', 'every'\)\)/.test(mig), 'migration 0069 must constrain routineConfirm');
+  const SRC = 'apps/api/src';
+  const cat = read(`${SRC}/security-controls/confirm-catalog.ts`);
+  const rev = read(`${SRC}/security-controls/review.ts`);
+  const svc = read(`${SRC}/security-controls/confirm-policy.service.ts`);
+  const ctl = read(`${SRC}/security-controls/confirm-policy.controller.ts`);
+  const sus = read(`${SRC}/auth/step-up.service.ts`);
+  const mig = read('apps/api/prisma/migrations/0071_confirm_policy/migration.sql');
+  const catBody = (cat.match(/export const CONFIRM_CATALOG = \[([\s\S]*?)\] as const satisfies readonly ConfirmFunction\[\];/) ?? [])[1] ?? '';
+  const KEYS = [...catBody.matchAll(/\{ key: '([a-z.]+)', group: '([^']+)'/g)].map((m) => m[1]);
+  const alwaysBody = (cat.match(/export const ALWAYS_ASK = \[([\s\S]*?)\] as const;/) ?? [])[1] ?? '';
+  const ALWAYS = [...alwaysBody.matchAll(/\{ key: '([a-z.]+)'/g)].map((m) => m[1]);
+  const isKey = (k) => KEYS.includes(k) || ALWAYS.includes(k);
+
+  check('confirm: the catalog is plain data (no imports) with unique keys, each defaulting to ask',
+    !/^import /m.test(cat) && KEYS.length >= 30 && new Set(KEYS).size === KEYS.length
+      && (catBody.match(/default: 'ask'/g) ?? []).length === KEYS.length && !/default: 'off'/.test(catBody),
+    `confirm-catalog.ts: ${KEYS.length} keys`);
+  check('confirm: the always-ask set is exactly passkey.manage, fresh.auth.passkey, confirm.relax, and none is in the catalog',
+    JSON.stringify(ALWAYS) === JSON.stringify(['passkey.manage', 'fresh.auth.passkey', 'confirm.relax']) && ALWAYS.every((k) => !KEYS.includes(k)),
+    `ALWAYS_ASK is ${JSON.stringify(ALWAYS)}`);
+
+  // Every step-up site names a key.
+  const files = walk(SRC).filter((f) => !f.endsWith('security-controls/review.ts'));
+  const bad = [];
+  let sites = 0;
+  for (const f of files) {
+    const src = read(f);
+    for (const m of src.matchAll(/assertFresh\(/g)) {
+      if (/function assertFresh/.test(src.slice(Math.max(0, m.index - 20), m.index))) continue;
+      if (/import \{[^}]*$/.test(src.slice(Math.max(0, m.index - 200), m.index))) continue;
+      sites++;
+      const call = src.slice(m.index, src.indexOf(');', m.index) + 2);
+      const lit = call.match(/action: '([a-z.]+)'/);
+      if (lit) { if (!isKey(lit[1])) bad.push(`${f}: ${lit[1]}`); continue; }
+      if (/\{ action \}|\{ action, /.test(call)) {
+        // A variable: the enclosing helper must take a closed union of catalog keys.
+        const unions = [...src.matchAll(/action: ((?:'[a-z.]+' \| )*'[a-z.]+')\)/g)].map((u) => [...u[1].matchAll(/'([a-z.]+)'/g)].map((x) => x[1]));
+        if (!unions.length || unions.some((u) => u.some((k) => !isKey(k)))) bad.push(`${f}: variable action without a closed union of catalog keys`);
+        continue;
+      }
+      bad.push(`${f}: ${call.slice(0, 120)}`);
+    }
+    for (const m of src.matchAll(/stepUp\.assert\(req, '([a-z.]+)'\)/g)) { sites++; if (!isKey(m[1])) bad.push(`${f}: stepUp.assert ${m[1]}`); }
+    if (/stepUp\.assert\(req, [^']/.test(src)) bad.push(`${f}: stepUp.assert with a non-literal action`);
+    for (const m of src.matchAll(/new FreshAuthNeeded\(([^)]*)\)/g)) { sites++; const k = m[1].match(/^'([a-z.]+)'$/); if (!k || !KEYS.includes(k[1])) bad.push(`${f}: FreshAuthNeeded(${m[1]})`); }
+    // A STEP_UP_REQUIRED thrown anywhere else must name a key too.
+    if (!/auth\/step-up\.service\.ts$|client-updates\.controller\.ts$|global-exception\.filter\.ts$/.test(f) && /code: 'STEP_UP_REQUIRED'/.test(src)) bad.push(`${f}: throws STEP_UP_REQUIRED itself`);
+  }
+  check('confirm: every step-up site in the API names a catalog key (assertFresh action, StepUpService.assert, FreshAuthNeeded)',
+    bad.length === 0 && sites >= 60, `${sites} sites; ${bad.join('; ')}`);
+  // Each site names its own key: the exact set of keys per file. Adding a
+  // step-up, or moving one to another key, changes this list in the same commit.
+  const SITE_KEYS = {
+    'actions/actions.service.ts': ['actions.direct'],
+    'agent-auto-migration/agent-auto-migration.service.ts': ['agent.automigrate'],
+    'agent-auto-update/agent-auto-update.service.ts': ['agent.autoupdate', 'agent.autoupdate.computer'],
+    'agent-upgrade/agent-upgrade.service.ts': ['agent.migrate'],
+    'ai/ai.controller.ts': ['ai.settings'],
+    'apikeys/apikeys.service.ts': ['apikey.create'],
+    'client-updates/client-updates.service.ts': ['agent.autoupdate.business', 'updates.schedule'],
+    'containment/containment.controller.ts': ['containment.lift'],
+    'email/email.controller.ts': ['email.recipients', 'email.relay'],
+    'endpoints/endpoints.controller.ts': ['credential.reveal'],
+    'enrollment/enrollment.service.ts': ['enrollment.create'],
+    'integration/integration-admin.controller.ts': ['technicians.manage'],
+    'monitoring/monitoring.controller.ts': ['monitoring.notify'],
+    'offboarding/offboarding.controller.ts': ['permissions.change'],
+    'passkeys/passkeys.controller.ts': ['passkey.manage'],
+    'patching/patching.controller.ts': ['patching.policy'],
+    'platform/public-url.controller.ts': ['platform.configure'],
+    'psa/psa.controller.ts': ['psa.connector'],
+    'reports/report-schedules.controller.ts': ['reports.schedule'],
+    'script-library/script-library.service.ts': ['scripts.review'],
+    'script-run/script-run.service.ts': ['scripts.direct'],
+    'security-controls/confirm-policy.service.ts': ['confirm.relax'],
+    'security-controls/security-controls.controller.ts': ['containment.lift', 'security.controls', 'security.trust', 'temporary.access'],
+    'security-controls/temporary-access.service.ts': ['temporary.access'],
+    'software/software.service.ts': ['software.catalog'],
+    'sso/sso.controller.ts': ['sso.configure'],
+    'technicians/technicians.controller.ts': ['permissions.change', 'technicians.manage'],
+    'tray/tray.controller.ts': ['chat.recording'],
+    'update-trust/update-trust.controller.ts': ['update.trust'],
+    'users/users.controller.ts': ['permissions.change'],
+  };
+  const named = {};
+  for (const f of files) {
+    const src = read(f);
+    const ks = new Set();
+    for (const m of src.matchAll(/assertFresh\([^;]*?action: '([a-z.]+)'/g)) ks.add(m[1]);
+    for (const m of src.matchAll(/stepUp\.assert\(req, '([a-z.]+)'\)|FreshAuthNeeded\('([a-z.]+)'\)|requireFresh\(req, '([a-z.]+)'\)|fresh\(this\.stepUp, req, '([a-z.]+)'\)/g)) ks.add(m[1] ?? m[2] ?? m[3] ?? m[4]);
+    if (ks.size) named[f.slice(SRC.length + 1)] = [...ks].sort();
+  }
+  const diff = [...new Set([...Object.keys(named), ...Object.keys(SITE_KEYS)])].filter((f) => JSON.stringify(named[f] ?? []) !== JSON.stringify(SITE_KEYS[f] ?? []));
+  check('confirm: each step-up site names its own key (the exact keys per file)', diff.length === 0, diff.map((f) => `${f}: ${JSON.stringify(named[f] ?? [])} vs ${JSON.stringify(SITE_KEYS[f] ?? [])}`).join('; '));
+  const used = new Set(Object.values(named).flat());
+  check('confirm: every catalog key is named by a site (no toggle that changes nothing)', KEYS.every((k) => used.has(k)), KEYS.filter((k) => !used.has(k)).join(', '));
+  check("confirm: assertFresh's action is required and typed as a catalog key",
+    /export function assertFresh\(method: string \| null, opts: \{ action: StepUpKey; phishingResistant\?: boolean; message\?: string \}\)/.test(rev)
+      && /export type StepUpKey = ConfirmKey \| AlwaysAskKey;/.test(cat),
+    'review.ts: opts.action: StepUpKey, not optional');
+  check('confirm: StepUpService actions are catalog keys and its gate consults only the policy',
+    /\] as const satisfies readonly StepUpKey\[\];/.test(sus) && /async assert\(req: Request, action: StepUpAction\): Promise<void> \{\s*if \(!confirmRequired\(action\)\) return;/.test(sus) && !/stepUpActions/.test(sus),
+    'step-up.service.ts');
+  const cu = read(`${SRC}/client-updates/client-updates.controller.ts`);
+  check("confirm: client updates' gate is per key — the policy or a fresh step-up",
+    /return \(key\) => stepped \|\| !confirmRequired\(key\);/.test(cu) && (cu.match(/this\.isFresh\(req\)/g) ?? []).length === 4,
+    'client-updates.controller.ts isFresh(req): Fresh');
+
+  // Resolution fails closed.
+  const assertBody = rev.slice(rev.indexOf('export function assertFresh('), rev.indexOf('\n}\n', rev.indexOf('export function assertFresh(')));
+  check('confirm: assertFresh skips only when the policy says off, never for a phishing-resistant check, and otherwise refuses a missing method',
+    /\{\s*if \(!opts\.phishingResistant && !confirmRequired\(opts\.action\)\) return;\s*if \(!method\) \{\s*throw new ForbiddenException\(\{\s*code: 'STEP_UP_REQUIRED', action: opts\.action,/.test(assertBody)
+      && (assertBody.match(/return;/g) ?? []).length === 1,
+    'review.ts assertFresh');
+  check('confirm: an unread policy, an always-ask key and an unknown key ask; only exactly "off" skips',
+    /let confirmLoaded = false;/.test(rev) && /if \(!confirmLoaded\) return true;\s*if \(ALWAYS\.has\(key\) \|\| !CONFIGURABLE\.has\(key\)\) return true;\s*return confirmPolicy\.get\(key\) !== 'off';/.test(rev)
+      && /if \(typeof r\.key === 'string' && CONFIGURABLE\.has\(r\.key\) && !ALWAYS\.has\(r\.key\) && r\.value === 'off'\) m\.set\(r\.key, 'off'\);/.test(rev),
+    'review.ts confirmRequired / setConfirmPolicy');
+  check('confirm: the policy is read at start and every 30 s, and set again after a change',
+    /async onModuleInit\(\) \{\s*await this\.load\(\);\s*this\.timer = setInterval\(\(\) => \{ void this\.load\(\); \}, 30_000\);/.test(svc) && /const after = await this\.load\(\);/.test(svc),
+    'ConfirmPolicyService');
+  const readers = walk(SRC).filter((f) => /confirmPolicy\.(findMany|findUnique|findFirst|upsert|update|updateMany|create|createMany|delete|deleteMany)\(/.test(read(f)));
+  check('confirm: only ConfirmPolicyService reads or writes the ConfirmPolicy rows', JSON.stringify(readers) === JSON.stringify([`${SRC}/security-controls/confirm-policy.service.ts`]), readers.join(', '));
+  check('confirm: nothing is left of 0.47 routine confirmation or 0.20 stepUpActions in the API',
+    walk(SRC).every((f) => !/routine:|routineConfirm|ROUTINE_ACTIONS|stepUpActions|security\/routine-confirm/.test(read(f))), 'grep routine / stepUpActions under apps/api/src');
+
+  // Changing it.
+  const setFn = svc.slice(svc.indexOf('  async set('), svc.indexOf('\n  }\n', svc.indexOf('  async set(')));
+  const iAdm = setFn.indexOf("if (!actor.isPlatformAdmin) throw"), iParse = setFn.indexOf('this.parse(raw)'), iFr = setFn.search(/if \(changed\.some\(\(\[, v\]\) => v === 'off'\)\) \{[\s\S]{0,200}assertFresh\(freshMethod, \{ action: 'confirm\.relax'/),
+    iW = setFn.indexOf('confirmPolicy.upsert('), iAu = setFn.indexOf("action: 'CONFIRM_POLICY_CHANGED'");
+  check('confirm: changing the policy is a Platform Admin\'s; relaxing confirms first (confirm.relax), then it is written and audited',
+    iAdm > 0 && iParse > iAdm && iFr > iParse && iW > iFr && iAu > iW && (setFn.match(/assertFresh\(/g) ?? []).length === 1,
+    'ConfirmPolicyService.set order: admin, parse, fresh for any off, write, audit');
+  const parseFn = svc.slice(svc.indexOf('  private parse('), svc.indexOf('\n  }\n', svc.indexOf('  private parse(')));
+  check('confirm: an always-ask key or a key outside the catalog is refused before anything is written',
+    /if \(ALWAYS\.has\(k\)\) throw new BadRequestException\(\{ code: 'CONFIRM_ALWAYS_ASKS'/.test(parseFn) && /if \(!CONFIGURABLE\.has\(k\)\) throw new BadRequestException\(\{ code: 'UNKNOWN_CONFIRM_KEY'/.test(parseFn)
+      && /if \(v !== 'ask' && v !== 'off'\) throw/.test(parseFn),
+    'ConfirmPolicyService.parse');
+  check('confirm: the audit meta is the changed keys before and after, nothing else',
+    /meta: \{\s*before: Object\.fromEntries\(changed\.map\(\(\[k\]\) => \[k, before\[k\]\]\)\),\s*after: Object\.fromEntries\(changed\.map\(\(\[k\]\) => \[k, after\[k\]\]\)\),\s*\},/.test(setFn),
+    'CONFIRM_POLICY_CHANGED meta');
+  check('confirm: the routes are GET and PUT security/confirm-policy behind JwtAuthGuard',
+    /@Controller\('security\/confirm-policy'\)\s*\n@UseGuards\(JwtAuthGuard\)/.test(ctl) && (ctl.match(/@(Get|Put|Post|Patch|Delete)\(/g) ?? []).join() === '@Get(,@Put(',
+    'confirm-policy.controller.ts');
+  check("confirm: 0071 CHECKs the value, maps 0.47's seven only where routineConfirm was off, and drops both old settings",
+    /CHECK \("value" IN \('ask', 'off'\)\)/.test(mig) && /"routineConfirm" = 'off'\);/.test(mig) && /DROP COLUMN "routineConfirm"/.test(mig) && /DROP COLUMN "stepUpActions"/.test(mig)
+      && !/'(passkey\.manage|confirm\.relax|fresh\.auth\.passkey)', 'off'|unnest\(ARRAY\[[^\]]*'passkey\.manage'/.test(mig),
+    'migration 0071');
+
+  // The web holds no copy, and every key it words a prompt by exists.
+  const web = walk('apps/web').filter((f) => !/docs-content\.generated\.ts$/.test(f));
+  const webKeys = new Set();
+  for (const f of web) for (const m of read(f).matchAll(/(?:asks|useAsks|confirmNote|needsConfirm)\(\s*'([a-z.]+)'/g)) webKeys.add(m[1]);
+  const unknown = [...webKeys].filter((k) => !isKey(k));
+  check('confirm: every key the console words a prompt by is in the catalog', webKeys.size >= 10 && unknown.length === 0, `${webKeys.size} keys; unknown: ${unknown.join(', ')}`);
+  const copies = web.filter((f) => (read(f).match(/'(software\.catalog|patching\.policy|actions\.direct|agent\.migrate|apikey\.create|email\.relay|security\.controls|update\.trust)'/g) ?? []).filter((x, i, a) => a.indexOf(x) === i).length >= 5);
+  check('confirm: the console has no copy of the catalog (it reads GET /security/confirm-policy)', copies.length === 0 && /\/security\/confirm-policy/.test(read('apps/web/lib/api-client.ts')), copies.join(', '));
 }
 
 if (failures.length > 0) {

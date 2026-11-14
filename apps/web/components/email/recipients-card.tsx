@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiError } from '@/components/security-controls/shared';
+import { reauthSuffix, useAsks } from '@/lib/confirm-policy';
 
 /**
  * Confirmed email recipients (0.34) for one scope: a business, or the MSP's
@@ -31,6 +32,7 @@ export function RecipientsCard({ scope, businessId, ok, fail }: { scope: 'global
   });
   const [address, setAddress] = useState('');
   const [label, setLabel] = useState('');
+  const askRecipients = useAsks('email.recipients');
   const refresh = () => { qc.invalidateQueries({ queryKey: ['email-recipients'] }); qc.invalidateQueries({ queryKey: ['report-schedules'] }); };
   const sentText = (s: string | undefined) => (s === 'sent' ? 'A confirmation link was sent.' : s === 'email_off' ? 'Saved, but outbound email is off: no confirmation was sent yet.' : `The confirmation could not be sent (${s ?? 'unknown'}).`);
   const add = useMutation({
@@ -68,7 +70,7 @@ export function RecipientsCard({ scope, businessId, ok, fail }: { scope: 'global
           <div className="flex flex-wrap items-end gap-2">
             <div className="space-y-1"><Label htmlFor={`rcpt-addr-${scope}`}>Address</Label><Input id={`rcpt-addr-${scope}`} className="w-64" type="email" placeholder="noc@example.com" value={address} onChange={(e) => setAddress(e.target.value)} /></div>
             <div className="space-y-1"><Label htmlFor={`rcpt-label-${scope}`}>Label (optional)</Label><Input id={`rcpt-label-${scope}`} className="w-40" value={label} onChange={(e) => setLabel(e.target.value)} /></div>
-            <Button size="sm" disabled={!address.includes('@') || add.isPending} onClick={() => add.mutate()}>Add and send link (re-authenticate)</Button>
+            <Button size="sm" disabled={!address.includes('@') || add.isPending} onClick={() => add.mutate()}>{`Add and send link${reauthSuffix(askRecipients)}`}</Button>
           </div>
         )}
       </CardContent>

@@ -99,7 +99,8 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[access-control.md](access-control.md)** — the permission model in full.
 - **[offboarding.md](offboarding.md)** — who can reach a computer and why, and
   removing someone's access — including what revocation cannot undo.
-- **[sign-in.md](sign-in.md)** — passwords, SSO (OIDC), passkeys, step-up, and
+- **[sign-in.md](sign-in.md)** — passwords, SSO (OIDC), passkeys, step-up and which
+  functions ask for it (*Settings → Confirm it is you*, 0.49), and
   recovering from a sign-in misconfiguration.
 
 ## Building on it

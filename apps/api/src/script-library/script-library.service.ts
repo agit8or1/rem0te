@@ -397,7 +397,7 @@ export class ScriptLibraryService {
       await refuse('hash_mismatch');
       throw new ConflictException({ code: 'HASH_MISMATCH', message: 'The content you reviewed is not this version\'s. Reload it and review again.' });
     }
-    if (d.decision === 'approve') assertFresh(freshMethod);
+    if (d.decision === 'approve') assertFresh(freshMethod, { action: 'scripts.review' });
     const approve = d.decision === 'approve';
     const done = await this.prisma.$transaction(async (tx) => {
       const r = await tx.scriptVersion.updateMany({

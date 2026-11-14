@@ -146,7 +146,7 @@ With a single Platform Admin and no reviewer, nothing that widens trust can be a
 
 ## Fresh authentication
 
-Every mutation under `/security-controls` needs a fresh re-authentication, **whatever step-up actions the platform has enabled**. Revoking a grant, clearing a request, and revoking a suppression or exception are the only exceptions: removing access must always be easy.
+Every mutation under `/security-controls` needs a fresh re-authentication (its catalog keys `security.controls`, `security.trust`, `temporary.access` and `containment.lift`; from 0.49 a Platform Admin may set them to *Don't ask* under **Settings → Confirm it is you**, and a protected-device exception always needs a passkey). Revoking a grant, clearing a request, and revoking a suppression or exception are the only exceptions: removing access must always be easy.
 
 ## Effective access inspector
 

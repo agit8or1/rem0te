@@ -660,10 +660,11 @@ export const chatRecordingApi = {
   setPlatform: (recording: boolean) => api.put('/chat-recording/platform', { recording }),
 };
 
-// 0.46.1: whether everyday changes ask "confirm it is you" (Settings → General).
-export const routineConfirmApi = {
-  get: () => api.get('/security/routine-confirm'),
-  set: (value: 'off' | 'every') => api.put('/security/routine-confirm', { value }),
+// 0.49: which functions ask "confirm it is you" (Settings → Confirm it is you).
+// The catalog comes from the API; the console keeps no copy of it.
+export const confirmPolicyApi = {
+  get: () => api.get('/security/confirm-policy'),
+  set: (values: Record<string, 'ask' | 'off'>) => api.put('/security/confirm-policy', { values }),
 };
 
 /** The customer side: no account, the link is the only key. */

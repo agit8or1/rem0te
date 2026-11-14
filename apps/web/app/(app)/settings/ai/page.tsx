@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiError } from '@/components/security-controls/shared';
+import { reauthSuffix, useAsks } from '@/lib/confirm-policy';
 
 /**
  * Settings → AI (0.48): the one provider "Ask AI" uses on event-log entries
@@ -44,6 +45,7 @@ export default function AiSettingsPage() {
   const fail = (e: unknown) => setNotice({ ok: false, text: apiError(e).message });
   const { data, error } = useQuery<AiSettingsView>({ queryKey: ['ai-settings'], queryFn: () => aiApi.settings().then((r) => r.data.data), enabled: isPlatformAdmin, retry: false });
   const [f, setF] = useState<Form | null>(null);
+  const askSave = useAsks('ai.settings');
   useEffect(() => { if (data && !f) setF(formFrom(data)); }, [data, f]);
 
   const effectiveModel = f ? (f.provider === 'anthropic' && f.modelPick !== OTHER ? f.modelPick : f.model.trim()) : '';
@@ -136,7 +138,7 @@ export default function AiSettingsPage() {
               <p className="text-xs text-muted-foreground">Stored encrypted on this server and never shown again. Changes are audited; the key never is.</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button disabled={save.isPending || (f.provider === 'openai_compatible' && !f.baseUrl.trim()) || !effectiveModel} onClick={() => save.mutate()}>Save (re-authenticate)</Button>
+              <Button disabled={save.isPending || (f.provider === 'openai_compatible' && !f.baseUrl.trim()) || !effectiveModel} onClick={() => save.mutate()}>{`Save${reauthSuffix(askSave)}`}</Button>
               <Button variant="ghost" onClick={() => setF(null)}>Discard changes</Button>
             </div>
             {data.updatedAt && <p className="text-xs text-muted-foreground">Last changed {new Date(data.updatedAt).toLocaleString()}.</p>}
