@@ -1370,6 +1370,50 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'services-and-task-manager',
+    title: 'Services and Task Manager',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          From 0.45 a Windows computer&apos;s <strong className="text-foreground">Services</strong> tab can start, stop
+          or restart a service, or change its <em>Startup type</em> (Automatic, Automatic (delayed start), Manual or
+          Disabled). Its <strong className="text-foreground">Processes</strong> tab is a task manager — name, process
+          id, user, CPU time, memory and start time, sortable and filterable — with <em>End process</em> on each row,
+          optionally with the processes it started. Each is an approved action on that one computer: high risk, signed
+          by the approval signer, two approvers in signed mode, and in direct mode signed as soon as you confirm it is
+          you. The containment <em>actions</em> pause stops both.
+        </p>
+        <p data-help="service-not-editable">
+          <strong className="text-foreground">Editing a service means its startup type only.</strong> Its program
+          (binary path), the account it runs as and its password, its recovery actions and its dependencies are never
+          changed from here: each would let whoever changes it run a program as SYSTEM. Do those in a remote session.
+        </p>
+        <p>
+          <strong className="text-foreground">What is protected.</strong> Security and core Windows services (Defender,
+          the firewall, the event log, RPC, WMI, Task Scheduler, DHCP and DNS Client, and the rest), Rem0te&apos;s own
+          service, and the core Windows, security, Rem0te and RustDesk processes have no buttons, and the computer
+          refuses them again. RustDesk can be restarted (only with no remote session open) or set to start
+          automatically, never stopped or set to Manual or Disabled; Windows Update can be stopped but not disabled.
+          <code className="text-foreground">svchost</code> says <em>stop the service instead</em>: it hosts several
+          services at once.
+        </p>
+        <p>
+          <strong className="text-foreground">What the computer checks.</strong> A service must still have the display
+          name the list showed, and drivers are never touched. A process must still have the same id, name and start
+          time — Windows reuses process ids, so a different process that now has the id is never ended. The computer
+          uses only the service control manager and Windows&apos; own process calls (no <code className="text-foreground">sc.exe</code>,{' '}
+          <code className="text-foreground">taskkill</code> or PowerShell), reads the result back and reports it; the tab
+          then refreshes its list.
+        </p>
+        <p>
+          <strong className="text-foreground">None of this has run on real Windows yet.</strong> It has been tested
+          against a simulated service manager and process table only. More in{' '}
+          <Link href="/docs/approved-actions#services-and-task-manager-045" className="underline text-foreground">Approved actions</Link>.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'sign-in-and-offboarding',
     title: 'Sign-in, Step-up and Offboarding',
     content: (

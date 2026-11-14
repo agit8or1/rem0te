@@ -9,7 +9,7 @@ import { MAX_SCRIPT_OUTPUT_BYTES, ScriptBlock, ScriptRunParams, TIMEOUT_MINUTES,
  * the Windows agent (tools/windows-installer/internal/action/catalog.go),
  * which is the copy that decides what actually runs.
  *
- * Ten actions. Starting the Print Spooler on one computer (0.26); installing
+ * Twelve actions. Starting the Print Spooler on one computer (0.26); installing
  * named Windows updates on a ring of computers (0.27); four maintenance
  * actions (0.32): restarting one service from a fixed allowlist, scheduling a
  * warned restart, canceling it, and collecting a fixed set of logs; (0.34)
@@ -17,8 +17,10 @@ import { MAX_SCRIPT_OUTPUT_BYTES, ScriptBlock, ScriptRunParams, TIMEOUT_MINUTES,
  * the approval signer's own allowlist; and (0.34) installing or
  * uninstalling one allowlisted winget package, pinned by version and
  * installer SHA-256; and (0.41) removing one installed program named by its
- * uninstall registry key, whose own registered uninstaller the agent runs.
- * Nothing here can carry a
+ * uninstall registry key, whose own registered uninstaller the agent runs;
+ * and (0.45) controlling one Windows service (start, stop, restart, or its
+ * startup type and nothing else) and ending one process named by its id,
+ * name and creation time. Nothing here can carry a
  * command line, a path or a URL, and the script action names a hash, not
  * text — parameters are closed enums, bounded integers, update identities or
  * typed script arguments checked against a reviewed schema — so an AI
@@ -477,7 +479,170 @@ export const SOFTWARE_REMOVE: CatalogAction = {
   acknowledge: 'I understand that this removes the program for everyone on the computer, by running its own uninstaller.',
 };
 
-export const CATALOG: CatalogAction[] = [SERVICE_START, UPDATE_INSTALL, SERVICE_RESTART, REBOOT_SCHEDULE, REBOOT_CANCEL, LOGS_COLLECT, SCRIPT_RUN, SOFTWARE_INSTALL, SOFTWARE_UNINSTALL, SOFTWARE_REMOVE];
+// ── Service control and ending a process (0.45) ────────────────────────────
+// Keep in step with tools/windows-installer/internal/action/{svcctl,procstop}.go:
+// the same charsets, operations, start types and protected lists, which
+// § 60 of scripts/check-security-invariants.mjs compares. The agent reads
+// the service or process itself and refuses one that changed; the portal
+// first refuses anything its own latest snapshot does not list.
+
+/** Said wherever these two actions are offered or described. */
+export const SERVICE_PROCESS_UNPROVEN = 'Service control and ending a process have been tested against a simulated Windows only; they have not yet run on a real Windows computer.';
+
+/** A service name: the same charset as windows.service.restart (the agent's ServiceNameRE). */
+export const SERVICE_NAME_RE = /^[A-Za-z0-9_]{1,64}$/;
+/** The display name the plan expects to find. Compared on the computer, never run. */
+// eslint-disable-next-line no-control-regex -- refusing control characters is the point
+export const SERVICE_DISPLAY_NAME_RE = /^[^\x00-\x1f\x7f"<>\\]{1,256}$/;
+export const serviceDisplayNameOk = (s: string) => SERVICE_DISPLAY_NAME_RE.test(s) && s.trim() === s;
+export const SERVICE_OPS = ['start', 'stop', 'restart', 'set_start_type'] as const;
+export type ServiceOp = (typeof SERVICE_OPS)[number];
+export const SERVICE_START_TYPES = ['automatic', 'automatic_delayed', 'manual', 'disabled'] as const;
+export type ServiceStartType = (typeof SERVICE_START_TYPES)[number];
+
+/**
+ * Never started, stopped, restarted or reconfigured from here, whatever the
+ * operation (the agent's ProtectedServices; svcctl.go says why each group).
+ * Security: Defender, Defender for Endpoint, Windows Security, the firewall
+ * and its filtering engine, System Guard, web threat defence, the event log,
+ * the security accounts manager, key isolation, the credential vault, domain
+ * logon, cryptographic services, Group Policy. Core: RPC, DCOM, the session
+ * manager, Plug and Play, Power, user profiles, WMI, the Modules Installer,
+ * the shell's brokers, elevation. Task Scheduler, which runs the agent's
+ * heartbeat. DHCP, DNS Client, Network Store Interface and Workstation, which
+ * keep the computer reachable.
+ */
+export const PROTECTED_SERVICES = [
+  // Security
+  'WinDefend', 'WdNisSvc', 'MDCoreSvc', 'Sense', 'SecurityHealthService', 'wscsvc', 'mpssvc', 'BFE', 'SgrmBroker', 'webthreatdefsvc',
+  'EventLog', 'SamSs', 'KeyIso', 'VaultSvc', 'Netlogon', 'CryptSvc', 'gpsvc',
+  // Core
+  'RpcSs', 'RpcEptMapper', 'DcomLaunch', 'LSM', 'PlugPlay', 'Power', 'ProfSvc', 'Winmgmt', 'TrustedInstaller',
+  'BrokerInfrastructure', 'SystemEventsBroker', 'CoreMessagingRegistrar', 'StateRepository', 'UserManager', 'EventSystem', 'Appinfo',
+  // The heartbeat
+  'Schedule',
+  // Reachability
+  'Dhcp', 'Dnscache', 'nsi', 'LanmanWorkstation',
+] as const;
+/** Any service whose name starts with this is Rem0te's own (the agent's OwnServicePrefix). */
+export const OWN_SERVICE_PREFIX = 'Rem0te';
+/** Started, restarted or set to start automatically, never stopped or set to Manual or Disabled: how the computer is reached. */
+export const KEEP_RUNNING_SERVICES = ['RustDesk'] as const;
+/** Never set to Disabled: Windows Update and what it needs to deliver updates. */
+export const NO_DISABLE_SERVICES = ['wuauserv', 'UsoSvc', 'WaaSMedicSvc', 'BITS'] as const;
+
+const inFold = (list: readonly string[], s: string) => list.some((x) => x.toLowerCase() === s.toLowerCase());
+export type ServiceRefusalCode = 'own' | 'protected' | 'keep_running' | 'no_disable';
+/** Why this operation on this service is refused, or null. The same rules as the agent's ServiceRefusal. */
+export function serviceRefusal(name: string, op: ServiceOp, startType?: ServiceStartType | null): { code: ServiceRefusalCode; reason: string } | null {
+  if (name.slice(0, OWN_SERVICE_PREFIX.length).toLowerCase() === OWN_SERVICE_PREFIX.toLowerCase()) return { code: 'own', reason: 'This is Rem0te\'s own service; it is never changed from here.' };
+  if (inFold(PROTECTED_SERVICES, name)) return { code: 'protected', reason: 'A protected security or core Windows service: stopping, restarting or reconfiguring it can leave the computer unprotected, unbootable or unreachable.' };
+  if (inFold(KEEP_RUNNING_SERVICES, name) && (op === 'stop' || (op === 'set_start_type' && startType !== 'automatic' && startType !== 'automatic_delayed'))) return { code: 'keep_running', reason: 'RustDesk is how this computer is reached: it can be started, restarted or set to start automatically, never stopped or set to Manual or Disabled.' };
+  if (inFold(NO_DISABLE_SERVICES, name) && op === 'set_start_type' && startType === 'disabled') return { code: 'no_disable', reason: 'A Windows Update service: disabling it stops the computer receiving updates.' };
+  return null;
+}
+
+/**
+ * The closed parameters windows.service.control signs: the service, the
+ * display name the snapshot showed, the operation, and for set_start_type
+ * the start type. Nothing else — never a binary path, account, password,
+ * recovery action or dependency, each of which would be code execution as
+ * SYSTEM.
+ */
+export const ServiceControlParams = z.union([
+  z.object({ service: z.string().regex(SERVICE_NAME_RE), displayName: z.string().refine(serviceDisplayNameOk), op: z.enum(['start', 'stop', 'restart']) }).strict(),
+  z.object({ service: z.string().regex(SERVICE_NAME_RE), displayName: z.string().refine(serviceDisplayNameOk), op: z.literal('set_start_type'), startType: z.enum(SERVICE_START_TYPES) }).strict(),
+]);
+export type ServiceControlParams = z.infer<typeof ServiceControlParams>;
+
+export const SERVICE_CONTROL: CatalogAction = {
+  id: 'windows.service.control',
+  version: 1,
+  title: 'Control a Windows service',
+  description: 'Starts, stops or restarts one Windows service, or changes its startup type (Automatic, Automatic (delayed), Manual, Disabled). Nothing else about the service is ever changed: not its program, the account it runs as, its password, recovery actions or dependencies. The computer reads the service itself and refuses if its display name is not the one shown here.',
+  params: ServiceControlParams,
+  warnings: [
+    'Whatever the service was doing stops while it is stopped or restarting. Programs and other services that depend on it may stop working until it is started again.',
+    'Windows refuses to stop a service that other running services depend on; the stop then fails and nothing else is stopped.',
+    'A startup type change takes effect at the next restart of the computer (or of the service); it does not start or stop the service now. A Disabled service cannot be started until its startup type is changed back.',
+    'Security and core Windows services, Rem0te\'s own, stopping or disabling RustDesk, and disabling Windows Update are refused here and again on the computer. Restarting RustDesk waits until no RustDesk session is open (or the computer cannot tell).',
+    SERVICE_PROCESS_UNPROVEN,
+  ],
+  verification: 'The computer reports the service\'s state and startup type before and after; a change that did not take is reported as a failure.',
+  doesNotProve: ['that whatever was failing now works', 'that programs depending on the service noticed'],
+  risk: () => 'high',
+  maxTargets: 1,
+  resultDeadlineMinutes: 30,
+  direct: false,
+  indirectVia: 'Services are controlled from the computer\'s Services tab, which names a service from its latest service list.',
+  integration: false,
+  acknowledge: 'I understand that this changes a service on the computer, and that anything depending on it may stop working.',
+};
+
+/** A process name as the process list shows it (the image name without .exe): a name, never a path. */
+export const PROCESS_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 _.()+-]{0,63}$/;
+/** The process's creation time as the portal stores it: UTC, to the millisecond. */
+export const PROCESS_STARTED_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/;
+/**
+ * Never ended from here (the agent's ProtectedProcesses; procstop.go says
+ * why): the kernel's own, the session and logon chain, the security
+ * subsystem, every service host (svchost: stop the service instead), the
+ * security products, and Rem0te's agent and tray and RustDesk.
+ */
+export const PROTECTED_PROCESSES = [
+  'System', 'Idle', 'Registry', 'Memory Compression', 'Secure System',
+  'smss', 'csrss', 'wininit', 'winlogon', 'services', 'fontdrvhost', 'dwm',
+  'lsass', 'lsaiso',
+  'svchost',
+  'MsMpEng', 'NisSrv', 'MpDefenderCoreService', 'MsSense', 'SecurityHealthService', 'SgrmBroker',
+  'rem0te-agent', 'rem0te-tray', 'rustdesk',
+] as const;
+/** The most processes one tree plan ends; the agent enforces the same (MaxTreeProcesses). */
+export const MAX_TREE_PROCESSES = 64;
+export const imageBase = (n: string) => (n.length > 4 && n.slice(-4).toLowerCase() === '.exe' ? n.slice(0, -4) : n);
+/** Why this process is never ended, or null. The same rules as the agent's ProcessRefusal. */
+export function processRefusal(name: string, pid: number): { code: 'kernel' | 'svchost' | 'rem0te' | 'protected'; reason: string } | null {
+  const base = imageBase(name.trim()).toLowerCase();
+  if (pid === 0 || pid === 4) return { code: 'kernel', reason: 'The System and Idle processes are the kernel\'s own; they cannot be ended.' };
+  if (base === 'svchost') return { code: 'svchost', reason: 'svchost hosts Windows services: stop the service instead, from the Services tab.' };
+  if (base === 'rem0te-agent' || base === 'rem0te-tray' || base === 'rustdesk') return { code: 'rem0te', reason: 'Rem0te and RustDesk are how this computer is reached; they are never ended from here.' };
+  if (inFold(PROTECTED_PROCESSES, base)) return { code: 'protected', reason: 'A protected Windows or security process: ending it can stop Windows, sign everyone out or leave the computer unprotected.' };
+  return null;
+}
+/** The closed parameters windows.process.stop signs: the process id, its name and creation time from the snapshot, and optionally its tree. */
+export const ProcessStopParams = z.object({
+  pid: z.number().int().min(1).max(4_294_967_295),
+  name: z.string().regex(PROCESS_NAME_RE).refine((s) => s.trim() === s),
+  startedAt: z.string().regex(PROCESS_STARTED_RE).refine((s) => !Number.isNaN(Date.parse(s))),
+  tree: z.boolean().optional(),
+}).strict();
+export type ProcessStopParams = z.infer<typeof ProcessStopParams>;
+
+export const PROCESS_STOP: CatalogAction = {
+  id: 'windows.process.stop',
+  version: 1,
+  title: 'End a process',
+  description: 'Ends one process, as Task Manager\'s End task does, optionally with the processes it started. The plan names the process id, its name and when it started; the computer refuses unless all three still match, so a process id Windows has since given to another process is never ended.',
+  params: ProcessStopParams,
+  warnings: [
+    'The process is ended at once, without being asked to close: anything it had not saved is lost.',
+    'Ending a program someone is using closes it in front of them.',
+    'With "and the processes it started", every process it started (and they started) is ended too, children first. If any of them is protected, nothing is ended.',
+    'Windows and security processes, every service host (svchost: stop the service instead), Rem0te and RustDesk are refused here and again on the computer.',
+    SERVICE_PROCESS_UNPROVEN,
+  ],
+  verification: 'The computer reports whether that process (that id, started at that time) is still running afterwards.',
+  doesNotProve: ['that the program will not start again', 'that whatever it was doing was undone'],
+  risk: () => 'high',
+  maxTargets: 1,
+  resultDeadlineMinutes: 30,
+  direct: false,
+  indirectVia: 'A process is ended from the computer\'s Processes tab, which names it from its latest process list.',
+  integration: false,
+  acknowledge: 'I understand that the process is ended at once and anything it had not saved is lost.',
+};
+
+export const CATALOG: CatalogAction[] = [SERVICE_START, UPDATE_INSTALL, SERVICE_RESTART, REBOOT_SCHEDULE, REBOOT_CANCEL, LOGS_COLLECT, SCRIPT_RUN, SOFTWARE_INSTALL, SOFTWARE_UNINSTALL, SOFTWARE_REMOVE, SERVICE_CONTROL, PROCESS_STOP];
 
 /** The log sources windows.logs.collect returns, in order; the agent sends the same. */
 export const LOG_SOURCES = ['system_errors', 'application_errors', 'agent_journal', 'agent_log', 'rustdesk_log'] as const;

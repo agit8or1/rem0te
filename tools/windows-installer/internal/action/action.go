@@ -233,6 +233,11 @@ type Options struct {
 	// key and runs its removal; nil where not available. SoftwareTimeout
 	// replaces its timeout too.
 	Programs ProgramRegistry
+	// Service control and ending a process (0.45, svcctl.go, procstop.go):
+	// the service control manager and the process table; nil where not
+	// available. StopTimeout bounds each start and stop wait.
+	Services  ServiceControl
+	Processes ProcessTable
 	// Revocations (v0.36): the approval signer's signed revocation
 	// statement as delivered for this run, unverified (nil when none was).
 	// revocation.go verifies it, keeps the newest, and refuses a plan

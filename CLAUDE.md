@@ -451,11 +451,13 @@ is bounded, with a loopback-only `WINGET_MANIFEST_BASE`. Behavioural proof:
 the sim takes `-winget STATE.json` and `-winget-timeout`); unit:
 `unit-software.mjs`.
 
-With §39, §40 and §59, §14's exact, ordered catalog list is ten actions: the
-six through 0.32, then `windows.script.run`, `windows.software.install`,
-`windows.software.uninstall` and (0.41) `windows.software.remove`. It is the
-same on the agent and in the portal, with `scriptParamsOK`, `softwareParamsOK`
-and `removeParamsOK` among the closed forms and eight `integration: false`
+With §39, §40, §59 and §61, §14's exact, ordered catalog list is twelve
+actions: the six through 0.32, then `windows.script.run`,
+`windows.software.install`, `windows.software.uninstall`, (0.41)
+`windows.software.remove`, and (0.45) `windows.service.control` and
+`windows.process.stop`. It is the same on the agent and in the portal, with
+`scriptParamsOK`, `softwareParamsOK`, `removeParamsOK`, `serviceControlParamsOK`
+and `processStopParamsOK` among the closed forms and ten `integration: false`
 entries.
 
 §41 is AI without a provider key. There is no model-provider SDK, endpoint or
@@ -832,6 +834,35 @@ is, and the bulk path writes nothing itself. `catalogBusiness` makes another
 business's catalog a 404 for both routes. Behavioural proof:
 `e2e-software-browse.mjs` (ports 3721–3722, no signer, no Go); unit:
 `unit-software.mjs`.
+
+§61 (0.45) is service control and ending a process (`windows.service.control@1`,
+`windows.process.stop@1`). (§60 is 0.43's.) Both are high risk on any computer,
+one computer per plan, never from the Actions tab, never offered to ClientSt0r,
+and requested only from the Services and Processes tabs
+(`apps/api/src/device-control`, three `computers:view` routes) after the
+portal's own refusal and a match in its latest `service_list` / `process_list`
+snapshot, through `createPlan` with the fresh sign-in passed on (§58 lists both
+callers). The service-name, display-name, process-name and start-time charsets
+are the same regex source on both sides; so are the protected lists
+(`ProtectedServices` / `PROTECTED_SERVICES`, the `Rem0te` prefix, RustDesk
+keep-running, the Windows Update no-disable list, `ProtectedProcesses`, the
+64-process tree cap), compared case-insensitively. The agent reads the service
+or process itself in `Precheck`, after the signed pause and before *executing*:
+a driver or a boot/system start type is `not_a_service`, another display name
+`service_changed`, and a process whose name or start time (to the millisecond,
+`SameCreation`) is not the plan's is `process_changed` — PID reuse. Every change
+is journaled as a step first. A RustDesk restart waits for no open session.
+The Windows side (`svcproc_windows.go`) runs no process — no `sc.exe`,
+`taskkill` or PowerShell; its one configuration write is `ChangeServiceConfig`
+with `SERVICE_NO_CHANGE` and nil for everything but the start type (never
+`UpdateConfig`, which rewrites the binary path and account), plus the delayed
+flag; `TerminateProcess` is called once, on a handle whose creation time was
+checked first. Nothing anywhere carries a binary path, account, password,
+recovery action or dependency. **None of it has run on real Windows.**
+Behavioural proof: `e2e-service-process.mjs` (ports 3711–3713; `RELEASE_BIN`,
+`ACTION_SIM`, whose `-scm STATE.json` is the simulated service manager and
+process table); unit: `unit-service-process.mjs` and the Go
+`internal/action/svcproc_test.go`.
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 

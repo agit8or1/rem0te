@@ -1,17 +1,22 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { AlertTriangle, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { ago } from './device-model';
 import { connectivityLabel } from '@/lib/connectivity';
+import {
+  ControlBanner, ControlDialog, LastResult, NOT_EDITABLE, PROCESS_ACTION, ProtectedBadge, SERVICE_ACTION, START_TYPES, lastFor, processOption, processStop,
+  serviceControl, serviceOptions, useDeviceControl, useRefreshAfterResult, type ServiceOp, type StartType,
+} from './device-control';
 
 /**
  * Processes, Services and Network (0.33): full read-only snapshots.
@@ -29,10 +34,18 @@ import { connectivityLabel } from '@/lib/connectivity';
  * arrive it says why (`automatic.reason`) rather than inviting a Refresh
  * that would only expire.
  *
- * There is deliberately nothing here that acts on the computer: no end
- * process, stop, start or restart. Changing a computer is a signed
- * maintenance action (Actions tab, signed agent), never a button on a list.
+ * 0.45: the snapshot itself still changes nothing. The Services tab's
+ * Start / Stop / Restart / Startup type… and the Processes tab's End process
+ * are signed approved actions (windows.service.control@1,
+ * windows.process.stop@1; device-control.tsx), each naming one row of the
+ * snapshot, refused for protected rows here, by the server and by the
+ * computer, and never run without the approval signer (or its direct mode).
+ * The Processes tab is a task-manager view: sortable, filterable, and with
+ * "Keep refreshing" asks for a new list each time one arrives while the tab
+ * is open (a Refresh, as the requesting person, so the visibility and
+ * capability checks and the per-computer rate limits apply).
  *
+
  * Every value came from a managed computer and is rendered as text.
  */
 
@@ -275,36 +288,101 @@ function SortTable<T>({ rows, cols, initial, empty }: { rows: T[]; cols: Col<T>[
 
 interface Proc { name: string; pid: number | null; cpuSeconds: number | null; workingSetBytes: number | null; user: string | null; startedAt: string | null }
 
+/** Least time between two Keep refreshing asks; the computer answers at its next check-in (about every 3 minutes). */
+const KEEP_REFRESH_GAP_MS = 60_000;
+
+/**
+ * "Keep refreshing" (0.45): while on and the tab is open, ask for a new
+ * process list whenever none is on its way — so one arrives at about every
+ * check-in. It is the Refresh button pressed for you: the same route, as you.
+ */
+function useKeepRefreshing(endpointId: string, key: SnapshotKey, on: boolean) {
+  const qc = useQueryClient();
+  const q = useSnapshot(endpointId, key);
+  const [lastAsk, setLastAsk] = useState(0);
+  const s = q.data;
+  useEffect(() => {
+    if (!on || !s || !s.supported || !s.agentBound || s.pending) return;
+    const due = Math.max(0, lastAsk + KEEP_REFRESH_GAP_MS - Date.now());
+    const t = setTimeout(() => {
+      setLastAsk(Date.now());
+      api.post(`/endpoints/${endpointId}/diagnostics/runs`, { key }).catch(() => undefined)
+        .finally(() => qc.invalidateQueries({ queryKey: ['diagnostics-snapshot', endpointId, key] }));
+    }, due);
+    return () => clearTimeout(t);
+  }, [on, s, lastAsk, endpointId, key, qc]);
+}
+
 export function DeviceProcessesTab({ endpointId }: { endpointId: string }) {
   const [filter, setFilter] = useState('');
+  const [keep, setKeep] = useState(false);
+  const [ending, setEnding] = useState<Proc | null>(null);
+  const [tree, setTree] = useState(false);
+  const ctl = useDeviceControl(endpointId);
+  const c = ctl.data;
+  useKeepRefreshing(endpointId, 'process_list', keep);
+  useRefreshAfterResult(endpointId, c, PROCESS_ACTION, 'process_list');
   return (
-    <SnapshotFrame endpointId={endpointId} snapKey="process_list" title="Processes"
-      note="Name, process id, total processor time since start, working set, user and start time. Command lines, paths, modules and environment are never collected. Nothing here ends a process.">
-      {(r) => {
-        const all = arr<Proc>(r.processes);
-        const q = filter.trim().toLowerCase();
-        const rows = all.filter((p) => !q || `${p.name} ${p.pid ?? ''} ${p.user ?? ''}`.toLowerCase().includes(q));
-        return (
-          <>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs text-muted-foreground">
-                {txt(r.processCount)} processes running; {all.length} listed.
-                {r.userNamesRead === false && ' The agent could not read which user each process runs as (it was not elevated).'}
-              </p>
-              <Input className="h-8 w-full sm:w-56" placeholder="Filter by name, PID or user" aria-label="Filter processes" value={filter} onChange={(e) => setFilter(e.target.value)} />
-            </div>
-            <SortTable<Proc> rows={rows} initial={{ col: 3, desc: true }} empty={q ? `Nothing matches “${filter}”.` : 'No processes reported.'} cols={[
-              { label: 'Name', sort: (p) => p.name.toLowerCase(), cell: (p) => p.name },
-              { label: 'PID', sort: (p) => p.pid ?? -1, cell: (p) => <span className="font-mono">{txt(p.pid)}</span> },
-              { label: 'CPU time', sort: (p) => p.cpuSeconds ?? -1, cell: (p) => cpu(p.cpuSeconds), className: 'whitespace-nowrap' },
-              { label: 'Memory', sort: (p) => p.workingSetBytes ?? -1, cell: (p) => bytes(p.workingSetBytes), className: 'whitespace-nowrap' },
-              { label: 'User', sort: (p) => (p.user ?? '').toLowerCase(), cell: (p) => txt(p.user), className: 'break-all' },
-              { label: 'Started', sort: (p) => (p.startedAt ? new Date(p.startedAt).getTime() : 0), cell: (p) => (p.startedAt ? <span title={formatDate(p.startedAt)}>{ago(p.startedAt)}</span> : '—'), className: 'whitespace-nowrap' },
-            ]} />
-          </>
-        );
-      }}
-    </SnapshotFrame>
+    <>
+      <SnapshotFrame endpointId={endpointId} snapKey="process_list" title="Processes"
+        note="A task-manager view of the latest process list: name, process id, total processor time since start, working set, user and start time. Command lines, paths, modules and environment are never collected, so they are not shown. End process is a signed approved action (windows.process.stop) naming the process’s id, name and start time; the computer refuses if any of the three changed.">
+        {(r) => {
+          const all = arr<Proc>(r.processes);
+          const q = filter.trim().toLowerCase();
+          const rows = all.filter((p) => !q || `${p.name} ${p.pid ?? ''} ${p.user ?? ''}`.toLowerCase().includes(q));
+          const totalMem = all.reduce((n, p) => n + (p.workingSetBytes ?? 0), 0);
+          return (
+            <>
+              {c && <ControlBanner c={c} which="process" />}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  {txt(r.processCount)} processes running; {all.length} listed, using {bytes(totalMem)} in all.
+                  {r.userNamesRead === false && ' The agent could not read which user each process runs as (it was not elevated).'}
+                </p>
+                <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto">
+                  <label className="flex items-center gap-1.5 text-xs" title="Ask for a new list each time one arrives, while this tab is open">
+                    <input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} data-testid="keep-refreshing" />
+                    Keep refreshing
+                  </label>
+                  <Input className="h-8 w-full sm:w-56" placeholder="Filter by name, PID or user" aria-label="Filter processes" value={filter} onChange={(e) => setFilter(e.target.value)} />
+                </div>
+              </div>
+              <SortTable<Proc> rows={rows} initial={{ col: 3, desc: true }} empty={q ? `Nothing matches “${filter}”.` : 'No processes reported.'} cols={[
+                { label: 'Name', sort: (p) => p.name.toLowerCase(), cell: (p) => p.name },
+                { label: 'PID', sort: (p) => p.pid ?? -1, cell: (p) => <span className="font-mono">{txt(p.pid)}</span> },
+                { label: 'CPU time', sort: (p) => p.cpuSeconds ?? -1, cell: (p) => cpu(p.cpuSeconds), className: 'whitespace-nowrap' },
+                { label: 'Memory', sort: (p) => p.workingSetBytes ?? -1, cell: (p) => bytes(p.workingSetBytes), className: 'whitespace-nowrap' },
+                { label: 'User', sort: (p) => (p.user ?? '').toLowerCase(), cell: (p) => txt(p.user), className: 'break-all' },
+                { label: 'Started', sort: (p) => (p.startedAt ? new Date(p.startedAt).getTime() : 0), cell: (p) => (p.startedAt ? <span title={formatDate(p.startedAt)}>{ago(p.startedAt)}</span> : '—'), className: 'whitespace-nowrap' },
+                { label: 'Action', cell: (p) => {
+                  if (!c) return null;
+                  const o = processOption(c, p);
+                  const last = lastFor(c, PROCESS_ACTION, (x) => x.pid === p.pid && x.startedAt === p.startedAt);
+                  return (
+                    <div className="space-y-0.5">
+                      {o.protectedWhy ? <ProtectedBadge why={o.protectedWhy} />
+                        : o.ok && c.process.possible ? <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" data-testid="end-process" onClick={() => { setTree(false); setEnding(p); }}>End process</Button>
+                          : o.why ? <span className="text-[11px] text-muted-foreground" title={o.why}>—</span> : null}
+                      <LastResult r={last} />
+                    </div>
+                  );
+                }, className: 'whitespace-nowrap' },
+              ]} />
+            </>
+          );
+        }}
+      </SnapshotFrame>
+      {ending && c && (
+        <ControlDialog endpointId={endpointId} actionId={PROCESS_ACTION} title={`End ${ending.name} (PID ${ending.pid})`} onClose={() => setEnding(null)}
+          send={(reason, windowHours) => processStop(endpointId, { pid: ending.pid!, name: ending.name, startedAt: ending.startedAt!, ...(tree ? { tree: true } : {}), ...(reason ? { reason } : {}), windowHours })}>
+          <p className="text-xs">Started {formatDate(ending.startedAt!)}{ending.user ? `, running as ${ending.user}` : ''}. The computer ends it only if process {ending.pid} is still {ending.name}, started at that moment.</p>
+          <label className="flex items-start gap-2 text-xs">
+            <input type="checkbox" className="mt-0.5" checked={tree} onChange={(e) => setTree(e.target.checked)} data-testid="end-tree" />
+            And the processes it started (at most {c.protected.maxTree}; if any of them is protected, nothing is ended)
+          </label>
+        </ControlDialog>
+      )}
+    </>
   );
 }
 
@@ -313,42 +391,97 @@ export function DeviceProcessesTab({ endpointId }: { endpointId: string }) {
 interface Svc { name: string; displayName: string | null; state: string; startMode: string; account: string | null }
 const START_LABEL: Record<string, string> = { Automatic: 'Automatic', AutomaticDelayedStart: 'Automatic (delayed)', Manual: 'Manual', Disabled: 'Disabled', Boot: 'Boot', System: 'System', Unknown: '—' };
 const STATE_LABEL: Record<string, string> = { StartPending: 'Starting', StopPending: 'Stopping', ContinuePending: 'Resuming', PausePending: 'Pausing' };
+const OP_WORD: Record<ServiceOp, string> = { start: 'Start', stop: 'Stop', restart: 'Restart', set_start_type: 'Change the startup type of' };
 
 export function DeviceServicesTab({ endpointId }: { endpointId: string }) {
   const [filter, setFilter] = useState('');
   const [onlyProblems, setOnlyProblems] = useState(false);
+  const [asking, setAsking] = useState<{ v: Svc; op: ServiceOp; types: StartType[] } | null>(null);
+  const [startType, setStartType] = useState<StartType | ''>('');
+  const ctl = useDeviceControl(endpointId);
+  const c = ctl.data;
+  useRefreshAfterResult(endpointId, c, SERVICE_ACTION, 'service_list');
   return (
-    <SnapshotFrame endpointId={endpointId} snapKey="service_list" title="Services"
-      note="Name, display name, state, start mode and the account each service runs as. Binary paths and arguments are never collected. Nothing here starts or stops a service: restarting one is a signed maintenance action on the Actions tab.">
-      {(r) => {
-        const all = arr<Svc>(r.services);
-        const auto = (v: Svc) => v.startMode === 'Automatic' || v.startMode === 'AutomaticDelayedStart';
-        const q = filter.trim().toLowerCase();
-        const rows = all.filter((v) => (!onlyProblems || (auto(v) && v.state !== 'Running')) && (!q || `${v.name} ${v.displayName ?? ''} ${v.account ?? ''}`.toLowerCase().includes(q)));
-        const problems = all.filter((v) => auto(v) && v.state !== 'Running').length;
-        return (
-          <>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs text-muted-foreground">{txt(r.serviceCount)} services installed; {all.length} listed; {problems} set to start automatically but not running.</p>
-              <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto">
-                <label className="flex items-center gap-1.5 text-xs">
-                  <input type="checkbox" checked={onlyProblems} onChange={(e) => setOnlyProblems(e.target.checked)} />
-                  Automatic, not running
-                </label>
-                <Input className="h-8 w-full sm:w-56" placeholder="Filter by name or account" aria-label="Filter services" value={filter} onChange={(e) => setFilter(e.target.value)} />
+    <>
+      <SnapshotFrame endpointId={endpointId} snapKey="service_list" title="Services"
+        note={`Name, display name, state, start mode and the account each service runs as. Binary paths and arguments are never collected. Start, Stop, Restart and Startup type… are a signed approved action (windows.service.control) naming the service and its display name; the computer refuses if the display name changed. ${NOT_EDITABLE}`}>
+        {(r) => {
+          const all = arr<Svc>(r.services);
+          const auto = (v: Svc) => v.startMode === 'Automatic' || v.startMode === 'AutomaticDelayedStart';
+          const q = filter.trim().toLowerCase();
+          const rows = all.filter((v) => (!onlyProblems || (auto(v) && v.state !== 'Running')) && (!q || `${v.name} ${v.displayName ?? ''} ${v.account ?? ''}`.toLowerCase().includes(q)));
+          const problems = all.filter((v) => auto(v) && v.state !== 'Running').length;
+          return (
+            <>
+              {c && <ControlBanner c={c} which="service" />}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">{txt(r.serviceCount)} services installed; {all.length} listed; {problems} set to start automatically but not running.</p>
+                <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto">
+                  <label className="flex items-center gap-1.5 text-xs">
+                    <input type="checkbox" checked={onlyProblems} onChange={(e) => setOnlyProblems(e.target.checked)} />
+                    Automatic, not running
+                  </label>
+                  <Input className="h-8 w-full sm:w-56" placeholder="Filter by name or account" aria-label="Filter services" value={filter} onChange={(e) => setFilter(e.target.value)} />
+                </div>
               </div>
+              <SortTable<Svc> rows={rows} initial={{ col: 0, desc: false }} empty={q || onlyProblems ? 'Nothing matches.' : 'No services reported.'} cols={[
+                { label: 'Service', sort: (v) => (v.displayName ?? v.name).toLowerCase(), cell: (v) => txt(v.displayName) },
+                { label: 'Name', sort: (v) => v.name.toLowerCase(), cell: (v) => <span className="font-mono">{v.name}</span> },
+                { label: 'State', sort: (v) => v.state, cell: (v) => <span className={v.state === 'Running' ? 'text-green-700 dark:text-green-400' : auto(v) ? 'text-red-600 dark:text-red-400 font-medium' : 'text-muted-foreground'}>{STATE_LABEL[v.state] ?? v.state}</span> },
+                { label: 'Start mode', sort: (v) => v.startMode, cell: (v) => START_LABEL[v.startMode] ?? v.startMode, className: 'whitespace-nowrap' },
+                { label: 'Runs as', sort: (v) => (v.account ?? '').toLowerCase(), cell: (v) => txt(v.account), className: 'break-all' },
+                { label: 'Action', cell: (v) => {
+                  if (!c) return null;
+                  const o = serviceOptions(c, v);
+                  const last = lastFor(c, SERVICE_ACTION, (x) => x.service === v.name);
+                  const can = c.service.possible;
+                  return (
+                    <div className="space-y-0.5" data-testid="service-actions" data-service={v.name}>
+                      <div className="flex flex-wrap items-center gap-1">
+                        {can && o.ops.map((op) => (
+                          <Button key={op} size="sm" variant="outline" className="h-6 px-2 text-[11px]" data-testid={`svc-${op}`} onClick={() => setAsking({ v, op, types: [] })}>{OP_WORD[op]}</Button>
+                        ))}
+                        {can && o.startTypes.length > 0 && (
+                          <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" data-testid="svc-start-type" onClick={() => { setStartType(''); setAsking({ v, op: 'set_start_type', types: o.startTypes }); }}>Startup type…</Button>
+                        )}
+                        {o.protectedWhy && <ProtectedBadge why={o.protectedWhy} />}
+                        {o.unusable && <span className="text-[11px] text-muted-foreground" title={o.unusable}>—</span>}
+                      </div>
+                      {o.protectedWhy && <p className="text-[11px] text-muted-foreground max-w-[16rem] whitespace-normal">{o.protectedWhy}</p>}
+                      <LastResult r={last} />
+                    </div>
+                  );
+                }, className: 'whitespace-nowrap' },
+              ]} />
+            </>
+          );
+        }}
+      </SnapshotFrame>
+      {asking && c && (
+        <ControlDialog endpointId={endpointId} actionId={SERVICE_ACTION} onClose={() => setAsking(null)}
+          title={asking.op === 'set_start_type' ? `Startup type of ${asking.v.displayName}` : `${OP_WORD[asking.op]} ${asking.v.displayName}`}
+          valid={asking.op !== 'set_start_type' || !!startType}
+          send={(reason, windowHours) => serviceControl(endpointId, {
+            service: asking.v.name, displayName: asking.v.displayName!, op: asking.op, ...(asking.op === 'set_start_type' ? { startType: startType as StartType } : {}), ...(reason ? { reason } : {}), windowHours,
+          })}>
+          <p className="text-xs">{asking.v.displayName} (<span className="font-mono">{asking.v.name}</span>) is {(STATE_LABEL[asking.v.state] ?? asking.v.state).toLowerCase()}, startup type {(START_LABEL[asking.v.startMode] ?? asking.v.startMode).toLowerCase()}, in the latest list. The computer checks its display name is still this before changing anything.</p>
+          {asking.op === 'set_start_type' && (
+            <div className="space-y-1">
+              <Label className="text-xs">New startup type</Label>
+              <div className="flex flex-col gap-1">
+                {asking.types.map((t) => (
+                  <label key={t} className="flex items-center gap-2 text-xs">
+                    <input type="radio" name="dc-start-type" value={t} checked={startType === t} onChange={() => setStartType(t)} data-testid={`start-type-${t}`} />
+                    {START_TYPES.find((x) => x.value === t)?.label}
+                  </label>
+                ))}
+              </div>
+              <p className="text-[11px] text-muted-foreground">{NOT_EDITABLE}</p>
             </div>
-            <SortTable<Svc> rows={rows} initial={{ col: 0, desc: false }} empty={q || onlyProblems ? 'Nothing matches.' : 'No services reported.'} cols={[
-              { label: 'Service', sort: (v) => (v.displayName ?? v.name).toLowerCase(), cell: (v) => txt(v.displayName) },
-              { label: 'Name', sort: (v) => v.name.toLowerCase(), cell: (v) => <span className="font-mono">{v.name}</span> },
-              { label: 'State', sort: (v) => v.state, cell: (v) => <span className={v.state === 'Running' ? 'text-green-700 dark:text-green-400' : auto(v) ? 'text-red-600 dark:text-red-400 font-medium' : 'text-muted-foreground'}>{STATE_LABEL[v.state] ?? v.state}</span> },
-              { label: 'Start mode', sort: (v) => v.startMode, cell: (v) => START_LABEL[v.startMode] ?? v.startMode, className: 'whitespace-nowrap' },
-              { label: 'Runs as', sort: (v) => (v.account ?? '').toLowerCase(), cell: (v) => txt(v.account), className: 'break-all' },
-            ]} />
-          </>
-        );
-      }}
-    </SnapshotFrame>
+          )}
+        </ControlDialog>
+      )}
+    </>
   );
 }
 

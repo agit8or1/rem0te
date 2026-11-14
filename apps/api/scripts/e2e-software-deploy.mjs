@@ -61,7 +61,7 @@ const prisma = new PrismaClient();
 const sfx = randomBytes(3).toString('hex');
 const PW = 'software-e2e-password-123';
 // The 0.34 catalog: the original six, then script run, then software.
-const ALL_ACTIONS = ['windows.service.start@1', 'windows.update.install@1', 'windows.service.restart@1', 'windows.reboot.schedule@1', 'windows.reboot.cancel@1', 'windows.logs.collect@1', 'windows.script.run@1', 'windows.software.install@1', 'windows.software.uninstall@1', 'windows.software.remove@1'];
+const ALL_ACTIONS = ['windows.service.start@1', 'windows.update.install@1', 'windows.service.restart@1', 'windows.reboot.schedule@1', 'windows.reboot.cancel@1', 'windows.logs.collect@1', 'windows.script.run@1', 'windows.software.install@1', 'windows.software.uninstall@1', 'windows.software.remove@1', 'windows.service.control@1', 'windows.process.stop@1'];
 
 let pass = 0, fail = 0; const failures = [];
 const check = (c, n, d = '') => { if (c) { pass++; console.log(`  \x1b[32m✓\x1b[0m ${n}`); } else { fail++; failures.push(`${n} — ${d}`); console.log(`  \x1b[31m✗\x1b[0m ${n}\n      ${d}`); } };
@@ -344,7 +344,7 @@ async function all() {
     const cat = await req('GET', '/actions/catalog', { s: S.sam, business: acme.id });
     const acts = cat.body?.data?.actions ?? [];
     const by = Object.fromEntries(acts.map((a) => [a.id, a]));
-    check(acts.map((a) => `${a.id}@${a.version}`).join(',') === ALL_ACTIONS.join(','), 'GET /actions/catalog lists exactly the nine, in order, software last (after script run)', acts.map((a) => a.id).join(','));
+    check(acts.map((a) => `${a.id}@${a.version}`).join(',') === ALL_ACTIONS.join(','), 'GET /actions/catalog lists exactly the twelve, in order, software after script run, then 0.45\'s service control and ending a process', acts.map((a) => a.id).join(','));
     check(['windows.software.install', 'windows.software.uninstall'].every((id) => by[id]?.workstationRisk === 'high' && by[id]?.direct === false && by[id]?.maxTargets === 25),
       'install and uninstall: high impact on a workstation, at most 25 computers, not requestable from the Actions tab');
     const caps = await call('GET', '/api/integration/v1/capabilities');

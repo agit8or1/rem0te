@@ -63,7 +63,7 @@ const ORIGIN = `http://127.0.0.1:${SIGNER_PUBLIC}`;
 const prisma = new PrismaClient();
 const sfx = randomBytes(3).toString('hex');
 const PW = 'software-catalog-e2e-password-123';
-const ALL_ACTIONS = ['windows.service.start@1', 'windows.update.install@1', 'windows.service.restart@1', 'windows.reboot.schedule@1', 'windows.reboot.cancel@1', 'windows.logs.collect@1', 'windows.script.run@1', 'windows.software.install@1', 'windows.software.uninstall@1', 'windows.software.remove@1'];
+const ALL_ACTIONS = ['windows.service.start@1', 'windows.update.install@1', 'windows.service.restart@1', 'windows.reboot.schedule@1', 'windows.reboot.cancel@1', 'windows.logs.collect@1', 'windows.script.run@1', 'windows.software.install@1', 'windows.software.uninstall@1', 'windows.software.remove@1', 'windows.service.control@1', 'windows.process.stop@1'];
 
 let pass = 0, fail = 0; const failures = [];
 const check = (c, n, d = '') => { if (c) { pass++; console.log(`  \x1b[32m✓\x1b[0m ${n}`); } else { fail++; failures.push(`${n} — ${d}`); console.log(`  \x1b[31m✗\x1b[0m ${n}\n      ${d}`); } };
@@ -423,7 +423,7 @@ async function all() {
     const cat = (await req('GET', `/actions/catalog?endpointId=${canary.id}`, { s: S.owen })).body?.data;
     const rm = cat?.actions?.find((a) => a.id === 'windows.software.remove');
     check(cat?.approval === 'direct' && cat.actions.map((a) => `${a.id}@${a.version}`).join(',') === ALL_ACTIONS.join(',') && rm?.direct === false && rm.maxTargets === 1 && rm.workstationRisk === 'high',
-      'GET /actions/catalog?endpointId=: direct, ten actions, windows.software.remove last — high impact, one computer, not from the Actions tab', JSON.stringify(cat?.actions?.map((a) => a.id)));
+      'GET /actions/catalog?endpointId=: direct, twelve actions, windows.software.remove among them — high impact, one computer, not from the Actions tab', JSON.stringify(cat?.actions?.map((a) => a.id)));
     const before = { entries: await prisma.softwareCatalogEntry.count({ where: { customerId: acme.id } }), jobs: await prisma.actionJob.count({ where: { customerId: acme.id } }) };
     let r = await req('POST', `/endpoints/${canary.id}/software/winget-install`, { s: S.owen, body: { packageId: SEVEN.id } });
     check(r.status === 403 && code(r) === 'STEP_UP_REQUIRED', 'without a fresh sign-in (direct mode) → 403 STEP_UP_REQUIRED', msg(r));
