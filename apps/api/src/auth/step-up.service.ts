@@ -3,18 +3,21 @@ import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'crypto';
 import type { Request, Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
+import { confirmRequired } from '../security-controls/review';
+import type { StepUpKey } from '../security-controls/confirm-catalog';
 
 /**
  * Step-up authentication: a recent re-authentication, on top of a valid
  * session, for the actions where a stolen or unattended session would do the
  * most harm.
  *
- * Vocabulary (PlatformSettings.stepUpActions holds the enabled subset):
+ * Vocabulary — keys in the confirm catalog (security-controls/confirm-catalog.ts);
+ * 0.49 replaced the 0.20 enabled-actions column with the ConfirmPolicy rows:
  *   credential.reveal    revealing a computer's stored RustDesk password
  *   permissions.change   changing a business user's capabilities or role
  *   technicians.manage   technician assignments, groups, platform permissions
  *   sso.configure        OIDC provider configuration and account linking
- *   passkey.manage       adding or removing a passkey
+ *   passkey.manage       adding or removing a passkey (always asks)
  *   platform.configure   changing the server's public address
  *
  * The proof is a short-lived HMAC token in an httpOnly, SameSite=strict cookie,
@@ -33,7 +36,7 @@ export const STEP_UP_ACTIONS = [
   'sso.configure',
   'passkey.manage',
   'platform.configure',
-] as const;
+] as const satisfies readonly StepUpKey[];
 export type StepUpAction = (typeof STEP_UP_ACTIONS)[number];
 
 export const STEP_UP_COOKIE = 'step_up';
@@ -95,20 +98,19 @@ export class StepUpService {
     }
   }
 
-  async enabledActions(): Promise<string[]> {
-    const s = await this.prisma.platformSettings.findUnique({ where: { id: 'singleton' }, select: { stepUpActions: true } });
-    // No row yet: the schema defaults, i.e. everything on.
-    return s?.stepUpActions ?? [...STEP_UP_ACTIONS];
+  /** Which of this service's actions currently ask (for GET /auth/step-up). */
+  enabledActions(): string[] {
+    return STEP_UP_ACTIONS.filter((a) => confirmRequired(a));
   }
 
   /**
-   * Throw STEP_UP_REQUIRED unless `action` is not configured for step-up or
-   * the request carries a valid one. `req.user` must already be the
-   * authenticated JWT payload.
+   * Throw STEP_UP_REQUIRED unless the confirm policy has `action` off
+   * (review.ts confirmRequired: an unread policy or an always-ask key such as
+   * passkey.manage asks) or the request carries a valid step-up.
+   * `req.user` must already be the authenticated JWT payload.
    */
   async assert(req: Request, action: StepUpAction): Promise<void> {
-    const enabled = await this.enabledActions();
-    if (!enabled.includes(action)) return;
+    if (!confirmRequired(action)) return;
     const user = req.user as { sub?: string; iat?: number } | undefined;
     if (!user?.sub) throw new ForbiddenException('Not authenticated');
     if (this.read(req, user.sub, user.iat)) return;

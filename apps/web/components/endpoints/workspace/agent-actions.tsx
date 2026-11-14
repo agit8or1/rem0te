@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { useAsks } from '@/lib/confirm-policy';
 
 /**
  * The agent's actions (0.37): Update agent / Check for update now, Upgrade to
@@ -205,6 +206,7 @@ export function UpgradeReason({ view, testId }: { view: UpgradeView; testId: str
 /** The two dialogs, opened through `askUpdate` / `askMigrate`. Render once per hook instance. */
 export function AgentActionDialogs({ actions }: { actions: AgentActions }) {
   const { a, update, migrate, dialog } = actions;
+  const askMigrate = useAsks('agent.migrate');
   return (
     <>
       {dialog.confirmUpdate && a && (
@@ -230,7 +232,7 @@ export function AgentActionDialogs({ actions }: { actions: AgentActions }) {
               migration script. It downloads the signed agent, checks it against the digest the signed repository
               publishes, and runs <code>migrate</code>, which keeps the enrolment, device secret and RustDesk
               configuration. That one run trusts the portal, as every standard-agent update already does; afterwards the
-              computer runs only code signed offline. You will be asked to confirm it is you.
+              computer runs only code signed offline.{askMigrate ? ' You will be asked to confirm it is you.' : ''}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">

@@ -102,7 +102,7 @@ built against v0.6/v0.7.
 - `POST /pub/v1/enrollment/tokens` — scope `enrollment:write`. No step-up: an API key
   cannot do one. Instead, *creating* the key needs a fresh re-authentication in the
   console (0.33 for `enrollment:write`, 0.34 for every key), and every token a key mints is audited with
-  `mintedVia: "api-key"` and the key's id. See [sign-in.md](sign-in.md#always-on-whatever-is-configured).
+  `mintedVia: "api-key"` and the key's id. See [sign-in.md](sign-in.md#install-links-and-api-keys).
   ```json
   {
     "accessMode":       "ASSIGNED_USERS" | "COMPANY_WIDE",

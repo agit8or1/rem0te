@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { WingetIndexStatus, describeDetection, refusalText, type WingetIndex } from '@/components/software/software-ui';
 import { usePermissions } from '@/lib/auth';
+import { useAsks } from '@/lib/confirm-policy';
 import { ago } from './device-model';
 
 /**
@@ -90,6 +91,7 @@ export function ManagedSoftware({ endpointId }: { endpointId: string }) {
   const { data, error, isLoading } = useEndpointSoftware(endpointId);
   const [asking, setAsking] = useState<Asking | null>(null);
   const direct = data?.approval === 'direct';
+  const askCatalog = useAsks('software.catalog');
 
   return (
     <Card data-testid="managed-software">
@@ -180,7 +182,7 @@ export function ManagedSoftware({ endpointId }: { endpointId: string }) {
           title={`Install ${asking.hit.name} ${asking.hit.latestVersion}`}
           fallback={`Installs ${asking.hit.packageId} on this computer.`}
           verb="install"
-          note={`The server reads ${asking.hit.packageId} ${asking.hit.latestVersion}'s installer manifest from winget-pkgs, picks the machine-wide installer winget would choose for this computer (${data.architecture}), pins its SHA-256 and derives how to tell it is installed. If this business's catalog has no entry for it at that version, one is added (Business Owner or Platform Admin only, with a fresh sign-in). The computer hashes what winget downloads and refuses a mismatch.`}
+          note={`The server reads ${asking.hit.packageId} ${asking.hit.latestVersion}'s installer manifest from winget-pkgs, picks the machine-wide installer winget would choose for this computer (${data.architecture}), pins its SHA-256 and derives how to tell it is installed. If this business's catalog has no entry for it at that version, one is added (Business Owner or Platform Admin only${askCatalog ? ', with a fresh sign-in' : ''}). The computer hashes what winget downloads and refuses a mismatch.`}
           send={(reason, windowHours) => softwareApi.quickInstall(endpointId, { packageId: asking.hit.packageId, version: asking.hit.latestVersion, ...(reason ? { reason } : {}), windowHours })}
           optionalReason
           onClose={() => setAsking(null)}

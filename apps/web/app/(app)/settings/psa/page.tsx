@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiError } from '@/components/security-controls/shared';
+import { reauthSuffix, useAsks } from '@/lib/confirm-policy';
 import { RecipientsCard } from '@/components/email/recipients-card';
 
 /**
@@ -35,6 +36,7 @@ function ScopeCard({ scope, businessId, ok, fail }: { scope: 'global' | 'busines
   const { data, error } = useQuery<PsaScopeView>({ queryKey: key, queryFn: () => psaApi.connector(scope, businessId).then((r) => r.data.data), retry: false });
   const { data: rec } = useQuery<{ recipients: EmailRecipientView[] }>({ queryKey: ['email-recipients', scope, businessId], queryFn: () => emailApi.recipients(scope, businessId).then((r) => r.data.data), retry: false });
   const [f, setF] = useState<Form | null>(null);
+  const askSave = useAsks('psa.connector');
   useEffect(() => {
     if (data && !f) {
       const c = data.connector;
@@ -129,7 +131,7 @@ function ScopeCard({ scope, businessId, ok, fail }: { scope: 'global' | 'busines
               )}
               <label className="flex items-center gap-2"><input type="checkbox" checked={f.enabled} onChange={(e) => set({ enabled: e.target.checked })} />Send tickets through this connector</label>
               <div className="flex flex-wrap gap-2">
-                <Button disabled={save.isPending || !canSave} onClick={() => save.mutate()}>Save (re-authenticate)</Button>
+                <Button disabled={save.isPending || !canSave} onClick={() => save.mutate()}>{`Save${reauthSuffix(askSave)}`}</Button>
                 {c && <Button variant="outline" disabled={remove.isPending} onClick={() => remove.mutate()}>Remove</Button>}
                 <Button variant="ghost" onClick={() => setF(null)}>Discard changes</Button>
               </div>

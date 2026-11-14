@@ -949,7 +949,8 @@ const SECTIONS: Section[] = [
           Platform Admin for any business.
         </p>
         <p>
-          Creating a key asks you to <strong className="text-foreground">confirm it&apos;s you</strong>, whatever its
+          Creating a key asks you to <strong className="text-foreground">confirm it&apos;s you</strong> (unless a Platform
+          Admin set <em>API keys</em> to Don&apos;t ask under Settings → Confirm it is you), whatever its
           scopes: a key keeps working after you sign out, so a stolen or unattended session must not be enough to make
           one. Your entries stay in the form while you confirm. A key cannot be edited afterwards — to change its
           scopes, create a new one and revoke the old. Revoking never asks. See the{' '}
@@ -1096,11 +1097,11 @@ const SECTIONS: Section[] = [
           signed as soon as you make it, and runs when the computer next checks in — the
           Actions tab, patching, software and scripts say <em>Approved automatically (direct mode)</em>, and there is no
           approval page. What it gives up: a second person. Anyone who fully takes over this portal can then run
-          catalog actions on those computers, as with most RMMs. What still holds: the fresh sign-in, permissions, the
+          catalog actions on those computers, as with most RMMs. What still holds: signing in, permissions, the
           audit log, containment pauses, revocations, maintenance windows and session rules, and the computer checking
-          the signer&apos;s signature. Whether a request also asks you to confirm it is you is set under
-          <em>Settings → General → Confirm before everyday changes</em> (0.47): Off, signing in is enough; or Every 10
-          minutes. Security settings always ask. Direct mode cannot be combined with customer sign-off, ClientSt0r proposals are
+          the signer&apos;s signature. Whether a request also asks you to confirm it is you is set under{' '}
+          <Link href="/settings?tab=confirm" className="underline text-foreground">Settings → Confirm it is you</Link>{' '}
+          (0.49, <em>Direct-mode requests</em>): Ask, or Don&apos;t ask, when signing in is enough. Direct mode cannot be combined with customer sign-off, ClientSt0r proposals are
           refused under it, and computers need the 0.40 agent (an older one refuses direct plans). More in{' '}
           <Link href="/docs/approved-actions#direct-mode-the-default-for-a-single-operator" className="underline text-foreground">Approved actions → Direct mode</Link>.
         </p>
@@ -1290,7 +1291,7 @@ const SECTIONS: Section[] = [
           approved actions, remote connections, agent updates and ClientSt0r jobs — and, from 0.34, outbound email — for every business or for one. A red
           strip at the top of the page says what is stopped and why; a refused click says <em>CONTAINED</em>. A Business
           Owner can suspend their own business, and only they can lift that. A pause set by the MSP is lifted by someone
-          other than whoever set it, always with a fresh sign-in. The audit log is now tamper-evident: every entry is
+          other than whoever set it, with a fresh sign-in unless <em>Lifting a containment pause</em> is set to Don&apos;t ask. The audit log is now tamper-evident: every entry is
           chained to the one before it and checked hourly. See{' '}
           <Link href="/settings/security/containment" className="underline text-foreground">Settings → Security → Containment</Link>{' '}
           and <Link href="/docs/containment" className="underline text-foreground">Containment</Link>.
@@ -1470,15 +1471,27 @@ const SECTIONS: Section[] = [
       <div className="space-y-3 text-sm text-muted-foreground">
         <p>
           Some actions — revealing a computer password (including a Connect that uses it), changing permissions,
-          managing technicians, SSO and passkey changes — ask you to{' '}
+          managing technicians, SSO and passkey changes, making an install link, creating an API key, security settings
+          and more — ask you to{' '}
           <strong className="text-foreground">confirm it&apos;s you</strong> with your password, an authenticator code
-          or a passkey. If you have an authenticator, its code or a passkey is required — your password alone is not
-          enough. It lasts 10 minutes for that sign-in.
+          or a passkey, even though you are signed in. If you have an authenticator, its code or a passkey is required —
+          your password alone is not enough. It lasts 10 minutes for that sign-in.
         </p>
         <p>
-          Making an install link, and creating any API key, always ask — for every role, and whatever the step-up
-          settings say. A link puts a computer into a business, and a key keeps working after you sign out, so an
-          unattended or stolen session must not be enough for either. API keys that already have the enrolment scope
+          <strong className="text-foreground">Choosing which ones ask (0.49).</strong> A Platform Admin sets each function
+          to <em>Ask</em> or <em>Don&apos;t ask</em> under{' '}
+          <Link href="/settings?tab=confirm" className="underline text-foreground">Settings → Confirm it is you</Link>,
+          in groups (software, patching, approved actions, agents, devices and enrolment, monitoring, reports and email,
+          integrations, security and access), with <em>Don&apos;t ask for any</em> and <em>Ask for all</em>. Signing in is
+          still required, permissions are still checked, and every change is still in the audit log. A new installation
+          asks for everything. Turning a confirmation off asks you once; turning one back on never does; every change of
+          the setting is audited. These always ask, whatever is set: changing your own password or authenticator, adding
+          or removing your passkeys, a protected-device exception (a passkey only), and turning a confirmation off.
+        </p>
+        <p>
+          Making an install link and creating an API key ask by default for every role. A link puts a computer into a
+          business, and a key keeps working after you sign out, so think twice before setting either to Don&apos;t ask:
+          an unattended or stolen session would then be enough. API keys that already have the enrolment scope
           keep working: a key cannot confirm anything, and is itself the second proof.
         </p>
         <p>

@@ -155,7 +155,9 @@ Full model in [access-control.md](access-control.md).
   path.
 - **Step-up** (v0.20): a 10-minute HMAC token in an httpOnly `step_up` cookie,
   bound to the user and to the session's `iat`, minted after a password, TOTP or
-  passkey check. Required per action (`PlatformSettings.stepUpActions`).
+  passkey check. Which functions need it is a per-function policy (0.49:
+  `security-controls/confirm-catalog.ts`, `ConfirmPolicy` rows, Settings → Confirm
+  it is you); an unknown key or an unread policy asks.
 - **SSO** (v0.20): OIDC authorization code + PKCE via `openid-client`;
   `OidcLoginState` rows (single-use, 10 minutes) bound to the browser by a
   `sso_state` cookie; identities in `ExternalIdentity`, keyed by

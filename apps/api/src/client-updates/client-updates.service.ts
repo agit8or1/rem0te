@@ -17,7 +17,13 @@ import { describeWindow, parseUpdateWindow, windowState } from './update-window'
 const ID = /^[A-Za-z0-9_-]{8,64}$/;
 
 /** Thrown to the controller when a write needs fresh authentication it does not have. */
-export class FreshAuthNeeded extends Error {}
+export class FreshAuthNeeded extends Error {
+  constructor(readonly key: FreshKey) { super(key); }
+}
+/** The catalog keys client updates confirm (confirm-catalog.ts). */
+export type FreshKey = 'updates.schedule' | 'agent.autoupdate.business';
+/** Whether this request may go ahead without (more) confirmation for a key: the policy has it off, or the step-up is fresh. */
+export type Fresh = (key: FreshKey) => boolean;
 
 /**
  * Scheduled RustDesk client updates (0.32): the policy, who may set it, what
@@ -292,7 +298,7 @@ export class ClientUpdatesService {
     return new ConflictException({ code: 'PRIORITY_TAKEN', message: `Another device-group policy in this business already has priority ${priority}. Each needs its own, so a computer in both groups is decided by it.` });
   }
 
-  async putPolicy(a: ActorContext, raw: unknown, fresh: boolean) {
+  async putPolicy(a: ActorContext, raw: unknown, fresh: Fresh) {
     const parsed = PolicyInput.safeParse(raw ?? {});
     if (!parsed.success) {
       throw new BadRequestException({ code: 'INVALID_REQUEST', message: parsed.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ') });
@@ -314,12 +320,12 @@ export class ClientUpdatesService {
     if (group && priority === null) throw new BadRequestException({ code: 'PRIORITY_REQUIRED', message: 'A device-group policy needs a priority (1 first): it decides between two groups a computer is in.' });
     if (!group && priority !== null) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Only a device-group policy has a priority.' });
     if (group && await this.prisma.clientUpdatePolicy.findFirst({ where: { customerId, priority, groupId: { not: null, notIn: [group.id] } }, select: { id: true } })) throw this.priorityTaken(priority!);
-    if (input.enabled && !fresh) throw new FreshAuthNeeded();
+    if (input.enabled && !fresh('updates.schedule')) throw new FreshAuthNeeded('updates.schedule');
     const before = await this.prisma.clientUpdatePolicy.findFirst({ where: group ? { customerId, groupId: group.id } : { customerId, siteId, groupId: null } });
     // 0.36: a change of agent mode to anything but OFF can start installer
     // runs nobody clicked for, so it needs fresh authentication too; opting
     // out (OFF) never does.
-    if (input.agentMode !== undefined && input.agentMode !== 'OFF' && (input.agentMode ?? null) !== (before?.agentMode ?? null) && !fresh) throw new FreshAuthNeeded();
+    if (input.agentMode !== undefined && input.agentMode !== 'OFF' && (input.agentMode ?? null) !== (before?.agentMode ?? null) && !fresh('agent.autoupdate.business')) throw new FreshAuthNeeded('agent.autoupdate.business');
     const biz = await this.business(customerId);
 
     const data = {
@@ -362,7 +368,7 @@ export class ClientUpdatesService {
    * maintenance window" has a window to wait for. Inherit on a business with
    * no row writes nothing.
    */
-  async putAgentMode(a: ActorContext, raw: unknown, fresh: boolean) {
+  async putAgentMode(a: ActorContext, raw: unknown, fresh: Fresh) {
     const parsed = AgentModeInput.safeParse(raw ?? {});
     if (!parsed.success) {
       throw new BadRequestException({ code: 'INVALID_REQUEST', message: parsed.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ') });
@@ -373,7 +379,7 @@ export class ClientUpdatesService {
     const before = await this.prisma.clientUpdatePolicy.findFirst({ where: { customerId, siteId: null, groupId: null } });
     const was = before?.agentMode ?? null;
     if (was === input.agentMode) return { policy: this.view(before, new Date()), changed: false };
-    if (input.agentMode !== 'OFF' && !fresh) throw new FreshAuthNeeded();
+    if (input.agentMode !== 'OFF' && !fresh('agent.autoupdate.business')) throw new FreshAuthNeeded('agent.autoupdate.business');
     const biz = await this.business(customerId);
     let after: ClientUpdatePolicy;
     if (before) {
@@ -407,7 +413,7 @@ export class ClientUpdatesService {
     return { policy: this.view(after, new Date()), changed: true };
   }
 
-  async deleteSiteOverride(a: ActorContext, requested: string | null | undefined, siteId: string, fresh: boolean) {
+  async deleteSiteOverride(a: ActorContext, requested: string | null | undefined, siteId: string, fresh: Fresh) {
     if (!ID.test(siteId)) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'siteId is not an id' });
     const customerId = this.scope(a, requested);
     this.assertEdit(a, customerId);
@@ -415,7 +421,7 @@ export class ClientUpdatesService {
     const before = await this.prisma.clientUpdatePolicy.findFirst({ where: { customerId, siteId } });
     if (!before) throw new NotFoundException('This site has no override');
     // The site falls back to the business policy, which may be on.
-    if (!fresh) throw new FreshAuthNeeded();
+    if (!fresh('updates.schedule')) throw new FreshAuthNeeded('updates.schedule');
     const biz = await this.business(customerId);
     await this.prisma.clientUpdatePolicy.delete({ where: { id: before.id } });
     const cleared = await this.clearUnwanted(customerId);
@@ -432,14 +438,14 @@ export class ClientUpdatesService {
    * site's or the business's policy, which may be on — so, like removing a
    * site override, this needs fresh authentication.
    */
-  async deleteGroupPolicy(a: ActorContext, requested: string | null | undefined, groupId: string, fresh: boolean) {
+  async deleteGroupPolicy(a: ActorContext, requested: string | null | undefined, groupId: string, fresh: Fresh) {
     if (!ID.test(groupId)) throw new NotFoundException('Group not found');
     const customerId = this.scope(a, requested);
     this.assertEdit(a, customerId);
     const before = await this.prisma.clientUpdatePolicy.findFirst({ where: { customerId, groupId } });
     // Another business's group, a made-up id and a group with no policy here are one answer.
     if (!before) throw new NotFoundException('This group has no policy');
-    if (!fresh) throw new FreshAuthNeeded();
+    if (!fresh('updates.schedule')) throw new FreshAuthNeeded('updates.schedule');
     const biz = await this.business(customerId);
     await this.prisma.clientUpdatePolicy.delete({ where: { id: before.id } });
     const cleared = await this.clearUnwanted(customerId);

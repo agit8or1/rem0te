@@ -9,7 +9,7 @@ import { PsaService } from './psa.service';
 
 function fresh(stepUp: StepUpService, req: Request) {
   const u = req.user as { sub?: string; iat?: number } | undefined;
-  // Never routine (§62): a connector decides where tickets — with computer names and log text — are sent.
+  // Catalog key psa.connector (§62): a connector decides where tickets — with computer names and log text — are sent.
   assertFresh(u?.sub ? stepUp.read(req, u.sub, u.iat)?.method ?? null : null, { action: 'psa.connector', message: 'Confirm it is you to change where tickets are sent.' });
 }
 

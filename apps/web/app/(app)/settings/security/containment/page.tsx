@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { apiError } from '@/components/security-controls/shared';
+import { reauthSuffix, useAsks } from '@/lib/confirm-policy';
 
 /**
  * Settings → Security → Containment (0.28).
@@ -99,6 +100,7 @@ export default function ContainmentPage() {
   // ── Clear ──────────────────────────────────────────────────────────────
   const [clearing, setClearing] = useState<string | null>(null);
   const [clearReason, setClearReason] = useState('');
+  const askLift = useAsks('containment.lift');
   const clear = useMutation({
     mutationFn: (id: string) => containmentApi.clear(id, clearReason).then((r) => r.data.data as Pause),
     onSuccess: (p) => {
@@ -160,7 +162,7 @@ export default function ContainmentPage() {
                       <Label htmlFor={`clear-${p.id}`}>Why is it safe to resume?</Label>
                       <Textarea id={`clear-${p.id}`} value={clearReason} onChange={(e) => setClearReason(e.target.value)} rows={2} maxLength={300} />
                       <div className="flex gap-2">
-                        <Button size="sm" disabled={clearReason.trim().length < 3 || clear.isPending} onClick={() => clear.mutate(p.id)}>Lift (re-authenticate)</Button>
+                        <Button size="sm" disabled={clearReason.trim().length < 3 || clear.isPending} onClick={() => clear.mutate(p.id)}>{`Lift${reauthSuffix(askLift)}`}</Button>
                         <Button size="sm" variant="ghost" onClick={() => setClearing(null)}>Cancel</Button>
                       </div>
                       <p className="text-xs text-muted-foreground">

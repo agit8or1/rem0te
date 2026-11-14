@@ -653,17 +653,6 @@ const CALLOUT_PAGES = [
     ],
   },
   {
-    name: 'guide/routine-confirm',
-    height: 1100,
-    path: '/settings',
-    before: async (page) => { await page.waitForSelector('text=Confirm before everyday changes', { timeout: 15_000 }); await page.waitForTimeout(600); },
-    callouts: [
-      { find: { text: 'Confirm before everyday changes' }, card: true },
-      { find: { text: 'Off', tag: 'button', exact: true } },
-      { find: { text: 'Every 10 minutes', tag: 'button' } },
-    ],
-  },
-  {
     // Before guide/chat-files: opening the chat marks its replies read.
     name: 'guide/chat-inbox',
     height: 900,

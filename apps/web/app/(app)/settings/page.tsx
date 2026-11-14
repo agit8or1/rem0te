@@ -8,7 +8,7 @@ import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { PublicAddressCard } from '@/components/settings/public-address-card';
 import { SnapshotScheduleCard } from '@/components/settings/snapshot-schedule-card';
 import { ChatRecordingCard } from '@/components/settings/chat-recording-card';
-import { RoutineConfirmCard } from '@/components/settings/routine-confirm-card';
+import { ConfirmPolicyCard } from '@/components/settings/confirm-policy-card';
 import { Copy, KeyRound, RefreshCw, ShieldCheck, Siren } from 'lucide-react';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
@@ -34,6 +34,12 @@ export default function SettingsPage() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const router = useRouter();
+  // ?tab=confirm (0.49) opens a tab directly; read after mount so the server render matches.
+  const [tab, setTab] = useState('general');
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('tab');
+    if (t && ['general', 'security', 'confirm', 'monitoring', 'quick-connect', 'rustdesk', 'branding', 'network'].includes(t)) setTab(t);
+  }, []);
 
   const { data: me } = useQuery({
     queryKey: ['me'],
@@ -196,10 +202,11 @@ export default function SettingsPage() {
     <div className="p-6 space-y-6 max-w-4xl">
       <PageHeader title="Settings" description="Platform configuration" />
 
-      <Tabs defaultValue="general">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
+          <TabsTrigger value="confirm">Confirm it is you</TabsTrigger>
           <TabsTrigger value="monitoring">Monitoring &amp; API</TabsTrigger>
           <TabsTrigger value="quick-connect">Quick Connect</TabsTrigger>
           <TabsTrigger value="rustdesk">RustDesk</TabsTrigger>
@@ -212,7 +219,6 @@ export default function SettingsPage() {
           <PublicAddressCard />
           <SupportLinkCard />
           <ChatRecordingCard />
-          <RoutineConfirmCard />
 
           <Card>
             <CardHeader><CardTitle className="text-sm">General</CardTitle></CardHeader>
@@ -369,6 +375,10 @@ export default function SettingsPage() {
               </Button>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="confirm" className="mt-4">
+          <ConfirmPolicyCard />
         </TabsContent>
 
         <TabsContent value="security" className="mt-4 space-y-4">

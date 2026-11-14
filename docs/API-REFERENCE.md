@@ -231,6 +231,15 @@ Admins and Business Owners are not confined by it; see
 | `DELETE` | `/api/v1/client-updates/policy/groups/:groupId` | signed in | — |
 | `DELETE` | `/api/v1/client-updates/policy/sites/:siteId` | signed in | — |
 
+## Confirm policy
+
+`apps/api/src/security-controls/confirm-policy.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/security/confirm-policy` | signed in | — |
+| `PUT` | `/api/v1/security/confirm-policy` | signed in, throttled | — |
+
 ## Containment
 
 `apps/api/src/containment/containment.controller.ts`
@@ -741,15 +750,6 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/admin/rollouts/pilot-groups` | signed in | — |
 | `GET` | `/api/v1/admin/rollouts/pin` | signed in | — |
 | `PATCH` | `/api/v1/admin/rollouts/pin` | signed in | — |
-
-## Routine confirm
-
-`apps/api/src/security-controls/routine-confirm.controller.ts`
-
-| Method | Path | Access | Capability |
-|---|---|---|---|
-| `GET` | `/api/v1/security/routine-confirm` | signed in | — |
-| `PUT` | `/api/v1/security/routine-confirm` | signed in, throttled | — |
 
 ## Script library
 

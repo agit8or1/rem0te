@@ -15,6 +15,7 @@ import { usePermissions } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { DEPLOYMENT_STATUS } from '@/lib/patching';
+import { useAsks } from '@/lib/confirm-policy';
 import { PoliciesCard, PreflightCard } from '@/components/patching/patch-policies';
 import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
 import { AlertTriangle, Loader2, Plus, ShieldCheck } from 'lucide-react';
@@ -54,6 +55,7 @@ export default function PatchingPage() {
   });
   const businessId = picked || technician?.businessId || own || '';
   const [creating, setCreating] = useState(false);
+  const askDirect = useAsks('actions.direct');
 
   const { data: rows = [], isLoading, refetch } = useQuery({
     queryKey: ['patch-deployments', businessId],
@@ -63,7 +65,7 @@ export default function PatchingPage() {
 
   return (
     <div className="p-4 md:p-6">
-      <PageHeader title="Patching" description="Windows updates, a canary first, then rings. Each ring is approved on the approval signer: by two people on its roster, or at once after you confirm it is you in direct mode.">
+      <PageHeader title="Patching" description={`Windows updates, a canary first, then rings. Each ring is approved on the approval signer: by two people on its roster, or at once ${askDirect ? 'after you confirm it is you' : 'when it is requested'} in direct mode.`}>
         {businessId && !creating && <Button size="sm" onClick={() => setCreating(true)}><Plus className="h-4 w-4 mr-1" />New deployment</Button>}
       </PageHeader>
 

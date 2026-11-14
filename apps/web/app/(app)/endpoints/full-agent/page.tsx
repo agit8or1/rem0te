@@ -15,6 +15,7 @@ import { agentSigningApi } from '@/lib/api-client';
 import { usePermissions, CAP } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
+import { useAsks } from '@/lib/confirm-policy';
 import { ago } from '@/components/endpoints/workspace/device-model';
 
 /**
@@ -102,6 +103,7 @@ function AutoMigration({ a, admin }: { a: Overview['steps']['computers']['auto']
   const qc = useQueryClient();
   const [soak, setSoak] = React.useState(String(a.soakMinutes));
   const [confirm, setConfirm] = React.useState<null | 'resume' | 'restart'>(null);
+  const askAuto = useAsks('agent.automigrate');
   React.useEffect(() => { setSoak(String(a.soakMinutes)); }, [a.soakMinutes]);
   const done = () => qc.invalidateQueries({ queryKey: ['agent-signing-overview'] });
   const put = useMutation({
@@ -186,8 +188,8 @@ function AutoMigration({ a, admin }: { a: Overview['steps']['computers']['auto']
           onOpenChange={(o) => { if (!o && !act.isPending) setConfirm(null); }}
           title={confirm === 'resume' ? 'Resume with the same canary?' : 'Restart with another canary?'}
           description={confirm === 'resume'
-            ? 'The same computer is asked again, and its 2-hour and soak clocks start from now. The rest still move only after it passes. You will be asked to confirm it is you.'
-            : 'Another eligible computer is picked as the canary; this one is not picked again for this build. You will be asked to confirm it is you.'}
+            ? `The same computer is asked again, and its 2-hour and soak clocks start from now. The rest still move only after it passes.${askAuto ? ' You will be asked to confirm it is you.' : ''}`
+            : `Another eligible computer is picked as the canary; this one is not picked again for this build.${askAuto ? ' You will be asked to confirm it is you.' : ''}`}
           confirmLabel={confirm === 'resume' ? 'Resume' : 'Restart'}
           loading={act.isPending}
           onConfirm={() => act.mutate(confirm)}

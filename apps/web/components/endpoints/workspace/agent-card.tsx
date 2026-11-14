@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Row } from '@/components/endpoints/endpoint-specs';
 import { formatDate } from '@/lib/utils';
+import { useAsks } from '@/lib/confirm-policy';
 import { agentSilentAlert, ago, alertHref } from './device-model';
 import type { AlertRow } from '@/components/monitoring/alerts';
 import {
@@ -78,6 +79,7 @@ function AutoUpdateSetting({ endpointId, u, canEdit }: { endpointId: string; u: 
   const qc = useQueryClient();
   const { toast } = useToast();
   const st = u.setting!;
+  const askSet = useAsks('agent.autoupdate.computer');
   const set = useMutation({
     mutationFn: (mode: 'inherit' | 'on' | 'off') => endpointsApi.setAgentAutoUpdate(endpointId, mode),
     onSuccess: (_r, mode) => {
@@ -104,7 +106,7 @@ function AutoUpdateSetting({ endpointId, u, canEdit }: { endpointId: string; u: 
             : st.source === 'policy' ? ` — from the ${st.inherited.from}.` : ' — the platform default: every computer updates its agent unless something here says otherwise.'}
       </p>
       {!canEdit && <p className="text-muted-foreground">Changing it needs the computers:edit permission.</p>}
-      {canEdit && <p className="text-muted-foreground">Off takes effect at once. On and Inherit ask you to confirm it is you. Business-wide: the business’s page or <Link className="underline" href="/settings/client-updates">Settings → Client updates</Link>.</p>}
+      {canEdit && <p className="text-muted-foreground">{askSet ? 'Off takes effect at once. On and Inherit ask you to confirm it is you.' : 'A change takes effect at once.'} Business-wide: the business’s page or <Link className="underline" href="/settings/client-updates">Settings → Client updates</Link>.</p>}
     </div>
   );
 }

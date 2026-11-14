@@ -129,8 +129,8 @@ OpenAI and compatible providers take a typed model id.
   or cleared.
 - Changing the provider, base URL or key header **clears the saved key** unless a new one is entered
   in the same save, so a key is never sent somewhere other than where it was entered for.
-- Saving needs a Platform Admin and a fresh sign-in every time. It is not one of the everyday changes
-  that **Settings → General** can relax.
+- Saving needs a Platform Admin and, unless a Platform Admin set `ai.settings` to *Don't ask* under
+  **Settings → Confirm it is you** (0.49), a fresh sign-in.
 
 **Test** sends a tiny "reply with OK" prompt and shows the result; no event data is sent.
 
