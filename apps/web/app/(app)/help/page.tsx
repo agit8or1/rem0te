@@ -717,6 +717,15 @@ const SECTIONS: Section[] = [
           cannot reach it, then accept it as above. A computer archived by mistake
           comes back with <strong>Restore</strong> on the same page.
         </p>
+        <p className="font-medium text-foreground">Reinstalling a computer that is already here (0.48.2)</p>
+        <p>
+          Update agent and Reinstall agent at next check-in wait for the agent to check in, so they cannot reach a computer whose
+          agent stopped, was removed or was rebuilt. Use <strong>More → Reinstall manually (download link)…</strong> on the
+          computer (or the line under its buttons when it is not checking in, or the row&apos;s menu in Devices). It opens Add
+          device bound to that computer, with its current access filled in. Run the download on that computer as an
+          administrator: it re-attaches to the same record and keeps history, site, groups and settings. The link works once
+          and expires after 24 hours.
+        </p>
         <p className="font-medium text-foreground">Updating or upgrading a computer&apos;s agent</p>
         <p>
           From 0.34 the <strong>Agent</strong> card on a computer&apos;s Overview tab says which agent it runs, its
