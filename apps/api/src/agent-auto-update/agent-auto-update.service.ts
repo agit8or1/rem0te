@@ -1,8 +1,9 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { ClientUpdatePolicy, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
+import { CAP } from '../rbac/capabilities';
 import { ContainmentService } from '../containment/containment.service';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { ClientUpdatesService } from '../client-updates/client-updates.service';
@@ -12,9 +13,9 @@ import { openSessionReason } from '../admin/session-evidence';
 import { assertFresh } from '../security-controls/review';
 import { servedAgentVersion } from '../common/served-version';
 import {
-  agentChannel, ATTEMPT_WINDOW_MS, attemptsFor, decide, flagFor, isBehind, parseSettingsUpdate, REASON_TEXT, resolveMode,
+  agentChannel, ATTEMPT_WINDOW_MS, attemptsFor, computerOverride, decide, flagFor, isBehind, parseComputerSetting, parseSettingsUpdate, REASON_TEXT, resolveMode,
   selfCheckAllowed, settingsFrom, targetFor, VERIFY_GRACE_MS,
-  type AgentAutoSettings, type AgentChannel, type AgentMode, type Decision, type Served,
+  type AgentAutoSettings, type AgentChannel, type AgentMode, type ComputerOverride, type Decision, type ModeSource, type Served,
 } from './schedule';
 
 const SETTINGS_CACHE_MS = 30_000;
@@ -98,12 +99,27 @@ export class AgentAutoUpdateService {
    * membership snapshot per business; the same ranking for each computer.
    */
   async modesFor(eps: { id: string; customerId: string | null; siteId: string | null }[], now: Date) {
+    type ScopedPolicy = ClientUpdatePolicy & { scope: 'business' | 'site' | 'group' };
     const out = new Map<string, {
-      mode: AgentMode; policy: (ClientUpdatePolicy & { scope: 'business' | 'site' | 'group' }) | null; groupName?: string | null; windowOpen: boolean; skipLoggedOnUser: boolean;
+      mode: AgentMode; policy: ScopedPolicy | null; groupName?: string | null; windowOpen: boolean; skipLoggedOnUser: boolean;
+      /** 0.46: the computer's own setting, where the mode came from, and what Inherit would give. */
+      override: ComputerOverride | null; source: ModeSource;
+      inherited: { mode: AgentMode; policy: ScopedPolicy | null; groupName: string | null; source: 'policy' | 'default' };
     }>();
+    // 0.46: every computer's own setting, read here — one query for the lot —
+    // so no caller can decide a mode without it.
+    const overrides = new Map((eps.length ? await this.prisma.endpoint.findMany({ where: { id: { in: eps.map((e) => e.id) } }, select: { id: true, agentAutoUpdate: true } }) : [])
+      .map((e) => [e.id, computerOverride(e.agentAutoUpdate)]));
     const byBiz = new Map<string, typeof eps>();
     for (const ep of eps) {
-      if (!ep.customerId) { out.set(ep.id, { mode: 'ANY_TIME', policy: null, windowOpen: true, skipLoggedOnUser: false }); continue; }
+      if (!ep.customerId) {
+        const r = resolveMode([], overrides.get(ep.id) ?? null);
+        out.set(ep.id, {
+          mode: r.mode, policy: null, windowOpen: true, skipLoggedOnUser: false,
+          override: overrides.get(ep.id) ?? null, source: r.source, inherited: { mode: r.inherited.mode, policy: null, groupName: null, source: r.inherited.source },
+        });
+        continue;
+      }
       const list = byBiz.get(ep.customerId) ?? [];
       list.push(ep); byBiz.set(ep.customerId, list);
     }
@@ -113,10 +129,14 @@ export class AgentAutoUpdateService {
       for (const ep of list) {
         const res = resolvePolicy(policies, { id: ep.id, customerId: ep.customerId, siteId: ep.siteId, groupIds: m.groupsOf(ep.id) });
         const ranked = res.ranked.map((p) => ({ ...p, scope: policyScope(p) as 'business' | 'site' | 'group', agentMode: (p.agentMode ?? null) as AgentMode | null }));
-        const { mode, policy } = resolveMode(ranked);
-        const groupName = policy?.groupId ? m.groups.get(policy.groupId)?.name ?? null : null;
+        const override = overrides.get(ep.id) ?? null;
+        const { mode, policy, source, inherited } = resolveMode(ranked, override);
+        const nameOf = (p: { groupId: string | null } | null) => (p?.groupId ? m.groups.get(p.groupId)?.name ?? null : null);
+        const groupName = nameOf(policy);
         out.set(ep.id, {
-          mode, policy: policy as (ClientUpdatePolicy & { scope: 'business' | 'site' | 'group' }) | null, groupName,
+          override, source,
+          inherited: { mode: inherited.mode, policy: inherited.policy as ScopedPolicy | null, groupName: nameOf(inherited.policy), source: inherited.source },
+          mode, policy: policy as ScopedPolicy | null, groupName,
           // A WINDOW policy with a malformed window is closed (fails closed), like the RustDesk sweep.
           windowOpen: mode === 'WINDOW' ? isWindowOpen(policyWindow(policy), now) : true,
           skipLoggedOnUser: mode === 'WINDOW' ? !!policy?.skipLoggedOnUser : false,
@@ -180,7 +200,7 @@ export class AgentAutoUpdateService {
     const d = decide({
       now, settings, archived: ep.status === 'ARCHIVED', facts, served,
       gate: await this.updateTrust.gateForHeartbeat(channel === 'signed' ? 'signed' : 'legacy'),
-      mode: gov.mode, windowOpen: gov.windowOpen, skipLoggedOnUser: gov.skipLoggedOnUser,
+      mode: gov.mode, modeSource: gov.source, windowOpen: gov.windowOpen, skipLoggedOnUser: gov.skipLoggedOnUser,
       paused: c.updatesHeld, rollout: c.rolloutManaged || await this.rolloutOwns(ep.id),
       pendingRequest: c.flagGoingOut || !!c.node.updateRequestedAt || !!c.node.reinstallRequestedAt,
       sessionOpen: !!(await openSessionReason(this.prisma, ep.id, reported, now, true)),
@@ -292,7 +312,7 @@ export class AgentAutoUpdateService {
     const d: Decision = decide({
       now, settings, archived: ep.status === 'ARCHIVED', facts, served,
       gate: channel ? await this.updateTrust.gateForHeartbeat(channel === 'signed' ? 'signed' : 'legacy') : 'pass',
-      mode: gov.mode, windowOpen: gov.windowOpen, skipLoggedOnUser: gov.skipLoggedOnUser,
+      mode: gov.mode, modeSource: gov.source, windowOpen: gov.windowOpen, skipLoggedOnUser: gov.skipLoggedOnUser,
       paused: !!pause, rollout: await this.rolloutOwns(endpointId),
       pendingRequest: !!n?.updateRequestedAt || !!n?.reinstallRequestedAt || migrationOpen,
       sessionOpen: !!(await openSessionReason(this.prisma, endpointId, reported, now, true)),
@@ -308,6 +328,9 @@ export class AgentAutoUpdateService {
       select: { id: true, channel: true, fromVersion: true, targetVersion: true, attempt: true, dispatchedAt: true, outcome: true, resolvedAt: true },
     });
     const silent = !ep.lastSeenAt || now.getTime() - ep.lastSeenAt.getTime() > 10 * 60_000;
+    const policyName = (p: { scope: string; groupId: string | null; siteId: string | null }, groupName: string | null | undefined) =>
+      p.scope === 'group' ? `group ${groupName ?? p.groupId}` : p.scope === 'site' ? `site ${ep.site?.name ?? p.siteId}` : 'business policy';
+    const onOff = (m: AgentMode) => (m === 'OFF' ? 'off' : m === 'WINDOW' ? 'window' : 'on') as 'on' | 'window' | 'off';
     return {
       state: d.state,
       reason,
@@ -317,9 +340,22 @@ export class AgentAutoUpdateService {
       mode: gov.mode,
       policy: gov.policy ? {
         id: gov.policy.id, scope: gov.policy.scope,
-        name: gov.policy.scope === 'group' ? `group ${gov.groupName ?? gov.policy.groupId}` : gov.policy.scope === 'site' ? `site ${ep.site?.name ?? gov.policy.siteId}` : 'business policy',
+        name: policyName(gov.policy, gov.groupName),
         window: gov.mode === 'WINDOW' ? describeWindow(policyWindow(gov.policy)) : null,
       } : null,
+      // 0.46: this computer's own setting, what Inherit would give and from
+      // where, and the result. The platform switch and the process switch win
+      // over all of it, so `effective` is off whenever either is.
+      setting: {
+        value: (gov.override ?? 'inherit') as 'inherit' | ComputerOverride,
+        source: gov.source,
+        inherited: {
+          mode: gov.inherited.mode, effective: onOff(gov.inherited.mode), source: gov.inherited.source,
+          from: gov.inherited.policy ? policyName(gov.inherited.policy, gov.inherited.groupName) : 'the platform default',
+        },
+        effective: settings.enabled && settings.processOn ? onOff(gov.mode) : 'off',
+        platform: { enabled: settings.enabled, processOn: settings.processOn },
+      },
       window: w ? { open: w.open, opensAt: w.opensAt, closesAt: w.closesAt } : null,
       attempts: { made: st.attempts, max: settings.maxAttempts, lastAt: st.lastAt },
       nextAt: d.nextAt,
@@ -328,6 +364,47 @@ export class AgentAutoUpdateService {
       manual: d.state === 'manual' ? { command: manualCommand } : null,
       history: history.map((h) => ({ ...h, automatic: true })),
     };
+  }
+
+  // ── One computer's own setting (0.46) ─────────────────────────────────────
+
+  /**
+   * Set this computer's automatic agent updates to Inherit, On or Off. Needs
+   * computers:edit on that computer (another business's computer is a 404).
+   * Anything but Off that changes the value needs fresh authentication —
+   * On, and Inherit too, since what it inherits may be on — matching the
+   * policy rule (putPolicy's agentMode); Off never does: stopping is never
+   * harder than starting. The write is conditional on the value this request
+   * read, and every change is audited with before and after. Setting the
+   * value it already has writes nothing and records nothing.
+   */
+  async setComputer(actor: ActorContext, endpointId: string, raw: unknown, freshMethod: string | null) {
+    await this.acl.assertEndpointInScope(actor, endpointId, CAP.COMPUTERS_EDIT);
+    this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
+    let value: ComputerOverride | null;
+    try { value = parseComputerSetting(raw); } catch (e) {
+      throw new BadRequestException({ code: 'INVALID_AGENT_AUTO_UPDATE', message: (e as Error).message });
+    }
+    const ep = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { id: true, tenantId: true, customerId: true, agentAutoUpdate: true } });
+    if (!ep) throw new NotFoundException('Computer not found');
+    const before = computerOverride(ep.agentAutoUpdate);
+    if (before === value) return { value: value ?? 'inherit', changed: false };
+    if (value !== 'off') {
+      assertFresh(freshMethod, {
+        action: 'agent.autoupdate.computer',
+        message: value === 'on'
+          ? 'Turning on automatic agent updates for this computer lets the server re-run its installer without anyone clicking Update agent: confirm it is you.'
+          : 'Letting this computer inherit its policies may turn automatic agent updates back on for it: confirm it is you.',
+      });
+    }
+    const w = await this.prisma.endpoint.updateMany({ where: { id: endpointId, agentAutoUpdate: ep.agentAutoUpdate }, data: { agentAutoUpdate: value } });
+    if (w.count !== 1) throw new ConflictException({ code: 'CHANGED', message: 'This computer’s setting changed while the request ran; nothing was changed. Reload and try again.' });
+    await this.audit.log({
+      tenantId: ep.tenantId ?? undefined, customerId: ep.customerId ?? undefined, actorId: actor.userId, actorIp: actor.ip,
+      action: 'AGENT_AUTO_UPDATE_COMPUTER_SET', resource: 'endpoint', resourceId: endpointId,
+      meta: { before: before ?? 'inherit', after: value ?? 'inherit', ...(actor.technician ? { viaTechnicianAssignment: true } : {}) },
+    });
+    return { value: value ?? 'inherit', changed: true };
   }
 
   private paceUsed(now: Date) {

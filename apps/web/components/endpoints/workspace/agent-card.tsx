@@ -1,7 +1,10 @@
 'use client';
 
 import Link from 'next/link';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Copy, Loader2, Wrench } from 'lucide-react';
+import { endpointsApi } from '@/lib/api-client';
+import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -63,8 +66,51 @@ function LocalUpgrade({ local, onCopy }: { local: { command: string; stuck: bool
   );
 }
 
+const EFFECTIVE_LABEL: Record<'on' | 'window' | 'off', string> = { on: 'On', window: 'In maintenance window', off: 'Off' };
+
+/**
+ * 0.46: this computer's own setting — Inherit / On / Off. Off takes effect
+ * without a prompt; On, and Inherit (which may turn it back on), ask the
+ * person to confirm it is them (the API answers STEP_UP_REQUIRED and the
+ * step-up dialog retries). The labels come from the API's answer.
+ */
+function AutoUpdateSetting({ endpointId, u, canEdit }: { endpointId: string; u: AutoUpdateState; canEdit: boolean }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const st = u.setting!;
+  const set = useMutation({
+    mutationFn: (mode: 'inherit' | 'on' | 'off') => endpointsApi.setAgentAutoUpdate(endpointId, mode),
+    onSuccess: (_r, mode) => {
+      qc.invalidateQueries({ queryKey: ['endpoint-agent', endpointId] });
+      toast({ title: 'Saved', description: mode === 'inherit' ? 'This computer follows its policies again.' : `Automatic agent updates are ${mode === 'on' ? 'on' : 'off'} for this computer, whatever its policies say.` });
+    },
+    onError: (e) => toast({ title: 'Not saved', description: (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'The request failed.', variant: 'destructive' }),
+  });
+  const inherit = `Inherit (currently: ${EFFECTIVE_LABEL[st.inherited.effective]}, from ${st.inherited.from})`;
+  const platformOff = !st.platform.enabled || !st.platform.processOn;
+  return (
+    <div className="space-y-1" data-testid="agent-auto-update-setting" data-value={st.value} data-effective={st.effective}>
+      <label htmlFor={`aau-${endpointId}`} className="font-medium text-foreground">For this computer</label>
+      <select id={`aau-${endpointId}`} data-testid="agent-auto-update-select" className="w-full rounded-md border bg-background p-1.5 text-xs"
+        value={st.value} disabled={!canEdit || set.isPending} onChange={(e) => set.mutate(e.target.value as 'inherit' | 'on' | 'off')}>
+        <option value="inherit">{inherit}</option>
+        <option value="on">On{st.inherited.mode === 'WINDOW' ? ' (keeps its policy’s window)' : ' — any time, paced'}</option>
+        <option value="off">Off — never update this agent automatically</option>
+      </select>
+      <p className="text-muted-foreground" data-testid="agent-auto-update-effective">
+        Effective: <span className="font-medium text-foreground">{EFFECTIVE_LABEL[st.effective]}</span>
+        {platformOff ? (!st.platform.enabled ? ' — automatic agent updates are off for the whole platform (Settings → Client updates), which wins over this.' : ' — turned off on this server (AGENT_AUTO_UPDATE=off), which wins over this.')
+          : st.source === 'computer' ? ' — this computer’s own setting, over every policy.'
+            : st.source === 'policy' ? ` — from the ${st.inherited.from}.` : ' — the platform default: every computer updates its agent unless something here says otherwise.'}
+      </p>
+      {!canEdit && <p className="text-muted-foreground">Changing it needs the computers:edit permission.</p>}
+      {canEdit && <p className="text-muted-foreground">Off takes effect at once. On and Inherit ask you to confirm it is you. Business-wide: the business’s page or <Link className="underline" href="/settings/client-updates">Settings → Client updates</Link>.</p>}
+    </div>
+  );
+}
+
 /** The Agent card's "Automatic updates" block (0.36). Everything it says comes from the API. */
-function AutoUpdateBlock({ u, onCopy }: { u: AutoUpdateState; onCopy: (t: string) => void }) {
+function AutoUpdateBlock({ u, onCopy, endpointId, canEdit }: { u: AutoUpdateState; onCopy: (t: string) => void; endpointId: string; canEdit: boolean }) {
   const warn = u.state === 'failing' || u.state === 'manual';
   return (
     <div className="border-t pt-3 space-y-1.5 text-xs" data-testid="agent-auto-update" data-state={u.state} data-reason={u.reason}>
@@ -75,6 +121,7 @@ function AutoUpdateBlock({ u, onCopy }: { u: AutoUpdateState; onCopy: (t: string
         </Badge>
       </div>
       <p className="text-muted-foreground">{u.text}</p>
+      {u.setting && u.state !== 'manual' && <AutoUpdateSetting endpointId={endpointId} u={u} canEdit={canEdit} />}
       {u.state === 'queued' && u.window && !u.window.open && u.window.opensAt && (
         <p className="text-muted-foreground">Window opens {formatDate(u.window.opensAt)}{u.policy?.window ? ` (${u.policy.window})` : ''}.</p>
       )}
@@ -84,7 +131,7 @@ function AutoUpdateBlock({ u, onCopy }: { u: AutoUpdateState; onCopy: (t: string
         <p className="text-muted-foreground">Attempt {u.attempts.made} of {u.attempts.max}{u.attempts.lastAt ? `, last ${ago(u.attempts.lastAt)}` : ''}{u.target ? ` · to ${short(u.target)}` : ''}.</p>
       )}
       {u.state !== 'manual' && u.state !== 'unknown' && (
-        <p className="text-muted-foreground">Policy: {MODE_LABEL[u.mode]}{u.policy ? `, from the ${u.policy.name}` : ' (the platform default)'}.</p>
+        <p className="text-muted-foreground">Mode: {MODE_LABEL[u.mode]}{u.setting?.source === 'computer' ? (u.policy ? `, this computer’s own setting (window from the ${u.policy.name})` : ', this computer’s own setting') : u.policy ? `, from the ${u.policy.name}` : ' (the platform default)'}.</p>
       )}
       {u.manual?.command && (
         <div className="flex items-start gap-2">
@@ -178,7 +225,7 @@ export function AgentCard({ endpointId, canEdit, alerts }: { endpointId: string;
             {a.updatesPaused && <p className="rounded-md border border-amber-500/40 bg-amber-500/5 p-2 text-xs">{a.updatesPaused}</p>}
 
             {a.autoUpdate && (
-              <AutoUpdateBlock u={a.autoUpdate} onCopy={copy} />
+              <AutoUpdateBlock u={a.autoUpdate} onCopy={copy} endpointId={endpointId} canEdit={canEdit} />
             )}
 
             {a.kind === 'signed' && (

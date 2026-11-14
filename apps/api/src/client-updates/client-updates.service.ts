@@ -8,7 +8,7 @@ import { ContainmentService } from '../containment/containment.service';
 import { latestRustdeskVersion } from '../common/rustdesk-release';
 import { openSessionReason } from '../admin/session-evidence';
 import {
-  BLOCKER, blocker, effectivePolicy, explainPolicy, HOLD_TEXT, policyHold, PolicyInput, policyScope, policyWindow, QUEUED_REASON_TEXT, reconcileQueued, resolvePolicy,
+  AgentModeInput, BLOCKER, blocker, effectivePolicy, explainPolicy, HOLD_TEXT, policyHold, PolicyInput, policyScope, policyWindow, QUEUED_REASON_TEXT, reconcileQueued, resolvePolicy,
   ROLLOUT_OPEN, type HoldReason,
 } from './policy';
 import { GroupMembershipService, type Membership } from '../group-policy/membership.service';
@@ -175,11 +175,17 @@ export class ClientUpdatesService {
           return { id: g.id, name: g.name, kind: g.kind === 'RULE' ? 'rule' : 'static', policy: this.view(p, now), members: p ? m.count(g.id) : null, use };
         })
         .sort((x, y) => (x.policy?.priority ?? Infinity) - (y.policy?.priority ?? Infinity) || (x.name.toLowerCase() < y.name.toLowerCase() ? -1 : x.name.toLowerCase() > y.name.toLowerCase() ? 1 : 0) || (x.id < y.id ? -1 : 1)),
-      precedence: 'A group policy beats a site override, which beats the business policy. A computer in several groups with a policy follows the one with the lowest priority number (1 first); two group policies of a business never share a priority.',
+      precedence: 'A group policy beats a site override, which beats the business policy. A computer in several groups with a policy follows the one with the lowest priority number (1 first); two group policies of a business never share a priority. For automatic agent updates only, a computer’s own setting (Inherit / On / Off, on its Agent card) beats all of them.',
       target,
       containment: paused ? { paused: true, scope: paused.scope.toLowerCase(), reason: paused.reason } : { paused: false },
       may: { edit: refusal === null, reason: refusal },
       sweep: { enabled: process.env.CLIENT_UPDATE_SWEEP !== 'off' },
+      // 0.46: what a business with no agent mode inherits — the platform switch (on
+      // by default). Read-only here; Settings → Client updates changes it (Platform Admin).
+      agentAuto: {
+        platformEnabled: (await this.prisma.platformSettings.findUnique({ where: { id: 'singleton' }, select: { agentAutoUpdateEnabled: true } }))?.agentAutoUpdateEnabled ?? true,
+        processOn: process.env.AGENT_AUTO_UPDATE !== 'off',
+      },
       now,
     };
   }
@@ -343,6 +349,62 @@ export class ClientUpdatesService {
       },
     });
     return { policy: this.view(after, new Date()), clearedQueued: cleared };
+  }
+
+  /**
+   * 0.46: the business page's "Automatic agent updates" selector — only the
+   * business policy's agentMode, nothing else on it. Same people as putPolicy
+   * (assertEdit), same fresh-authentication rule (anything but OFF that
+   * changes the value), audited the same way (CLIENT_UPDATE_POLICY_CHANGED,
+   * before and after). The RustDesk client's `enabled` is never written: a
+   * business with no policy row gets one with `enabled: false` and a default
+   * night window (22:00–05:00, the settings page's default), so a later "In
+   * maintenance window" has a window to wait for. Inherit on a business with
+   * no row writes nothing.
+   */
+  async putAgentMode(a: ActorContext, raw: unknown, fresh: boolean) {
+    const parsed = AgentModeInput.safeParse(raw ?? {});
+    if (!parsed.success) {
+      throw new BadRequestException({ code: 'INVALID_REQUEST', message: parsed.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ') });
+    }
+    const input = parsed.data;
+    const customerId = this.scope(a, input.businessId);
+    this.assertEdit(a, customerId);
+    const before = await this.prisma.clientUpdatePolicy.findFirst({ where: { customerId, siteId: null, groupId: null } });
+    const was = before?.agentMode ?? null;
+    if (was === input.agentMode) return { policy: this.view(before, new Date()), changed: false };
+    if (input.agentMode !== 'OFF' && !fresh) throw new FreshAuthNeeded();
+    const biz = await this.business(customerId);
+    let after: ClientUpdatePolicy;
+    if (before) {
+      // Conditional on the mode this request read: a concurrent save is not overwritten.
+      const w = await this.prisma.clientUpdatePolicy.updateMany({ where: { id: before.id, agentMode: was }, data: { agentMode: input.agentMode, updatedById: a.userId } });
+      if (w.count !== 1) throw new ConflictException({ code: 'CHANGED', message: 'The business policy changed while the request ran; nothing was changed. Reload and try again.' });
+      after = (await this.prisma.clientUpdatePolicy.findUnique({ where: { id: before.id } }))!;
+    } else {
+      try {
+        after = await this.prisma.clientUpdatePolicy.create({
+          data: {
+            tenantId: biz.tenantId, customerId, siteId: null, groupId: null,
+            enabled: false, timeZone: 'UTC', windows: [{ days: [0, 1, 2, 3, 4, 5, 6], start: '22:00', end: '05:00' }] as unknown as Prisma.InputJsonValue,
+            skipActiveSession: true, skipLoggedOnUser: false, agentMode: input.agentMode, updatedById: a.userId,
+          },
+        });
+      } catch (e) {
+        // The partial unique index (0033): another request created the row first.
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw new ConflictException({ code: 'CHANGED', message: 'The business policy changed while the request ran; nothing was changed. Reload and try again.' });
+        throw e;
+      }
+    }
+    await this.audit.log({
+      tenantId: biz.tenantId, customerId, actorId: a.userId, actorIp: a.ip,
+      action: 'CLIENT_UPDATE_POLICY_CHANGED', resource: 'client_update_policy', resourceId: after.id,
+      meta: {
+        scope: 'business', siteId: null, before: this.snapshot(before), after: this.snapshot(after), agentModeOnly: true,
+        ...(a.technician ? { viaTechnicianAssignment: true } : {}),
+      },
+    });
+    return { policy: this.view(after, new Date()), changed: true };
   }
 
   async deleteSiteOverride(a: ActorContext, requested: string | null | undefined, siteId: string, fresh: boolean) {

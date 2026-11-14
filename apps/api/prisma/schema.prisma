@@ -197,6 +197,9 @@ enum ActivityAction {
   // Per-business opt-outs ride on CLIENT_UPDATE_POLICY_CHANGED. The automatic
   // requests themselves are AgentAutoUpdateAttempt rows, not audit entries.
   AGENT_AUTO_UPDATE_SETTINGS_CHANGED
+  // 0.46: one computer's own automatic-agent-update setting (Inherit / On /
+  // Off) changed, before and after.
+  AGENT_AUTO_UPDATE_COMPUTER_SET
   // 0.33 device groups, shared device views and bulk actions
   DEVICE_GROUP_CREATED
   DEVICE_GROUP_UPDATED
@@ -733,6 +736,13 @@ model Endpoint {
   // authenticated heartbeat, made inert, and only ever shown.
   agentUpdateCheckedAt DateTime?
   agentUpdateResult    String?
+  // Automatic agent updates for this one computer (0.46): null inherits its
+  // client-update policies (group > site > business > the platform default,
+  // on); 'on' or 'off' overrides every policy. 'on' turns an opt-out into
+  // any time, paced, but keeps a window the governing policy sets. The
+  // platform switch and AGENT_AUTO_UPDATE=off still win over both (CHECK in
+  // 0070; agent-auto-update/schedule.ts, resolveMode).
+  agentAutoUpdate      String?
   // Chat (0.34): the chat protocol the signed agent says it speaks (1), from
   // agent-status.json via an authenticated heartbeat. Null = this agent can't
   // chat. Self-reported: it decides only whether the portal offers a chat.

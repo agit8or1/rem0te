@@ -36,6 +36,15 @@ export const PolicyInput = z.object({
 }).strict();
 export type PolicyInput = z.infer<typeof PolicyInput>;
 
+/**
+ * 0.46: the business page's selector — the business policy's agentMode and
+ * nothing else (null inherits the platform default, any time).
+ */
+export const AgentModeInput = z.object({
+  businessId: z.string().regex(ID),
+  agentMode: z.enum(['ANY_TIME', 'WINDOW', 'OFF']).nullable(),
+}).strict();
+
 export interface PolicyLike {
   id: string;
   customerId: string;
@@ -56,7 +65,10 @@ export const policyScope = (p: Pick<PolicyLike, 'siteId' | 'groupId'>): PolicySc
  * Every policy that could govern one computer, ranked (group-policy/
  * precedence.ts): a device-group policy for a group it is in — between two,
  * the lower priority — then its site's override, then its business's. There
- * is no per-computer client-update policy: the one-off is the Update button.
+ * is no per-computer client-update policy: the one-off is the Update button
+ * (0.46: a computer has its own automatic-agent-update setting, Endpoint.
+ * agentAutoUpdate, which agent-auto-update/schedule.ts resolveMode puts
+ * above every policy here; it does not touch the RustDesk client policy).
  * The winner replaces the others entirely, including being off when a
  * broader one is on.
  */

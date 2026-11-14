@@ -58,6 +58,14 @@ export interface AutoUpdateState {
   target: string | null;
   mode: 'ANY_TIME' | 'WINDOW' | 'OFF';
   policy: { id: string; scope: 'business' | 'site' | 'group'; name: string; window: string | null } | null;
+  /** 0.46: this computer's own setting, what Inherit would give, and the result. */
+  setting?: {
+    value: 'inherit' | 'on' | 'off';
+    source: 'computer' | 'policy' | 'default';
+    inherited: { mode: 'ANY_TIME' | 'WINDOW' | 'OFF'; effective: 'on' | 'window' | 'off'; source: 'policy' | 'default'; from: string };
+    effective: 'on' | 'window' | 'off';
+    platform: { enabled: boolean; processOn: boolean };
+  };
   window: { open: boolean; opensAt: string | null; closesAt: string | null } | null;
   attempts: { made: number; max: number; lastAt: string | null };
   nextAt: string | null;

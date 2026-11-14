@@ -5,6 +5,99 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.46.0] — 2026-11-14 · *Thermostat*
+
+**Automatic agent updates can be switched per computer and per business, from where you are looking. They are
+still on by default.**
+
+The request was a setting for automatic agent updates, per computer and per company, enabled by default. Through
+0.42 the only per-business control was the *Keep agents up to date automatically* dropdown, inside the RustDesk
+client-update policy form on Settings → Client updates. There was no per-computer control at all:
+`client-updates/policy.ts` said so in as many words. So you could not keep one machine (a kiosk, a lab box, a
+customer's fragile line-of-business PC) off automatic agent updates without opting out its whole business, site or
+group. You also could not let one pilot machine update inside a business that had opted out. Nothing on a business's
+own page said automatic updates existed. Production has no `ClientUpdatePolicy` rows, so every computer there inherits
+*On*, and still does after this release.
+
+### Added
+- **A per-computer setting**, `Endpoint.agentAutoUpdate`: null (*Inherit*), `'on'` or `'off'`. Migration
+  `0068_agent_auto_update_scope` adds the column with a CHECK, and the `AGENT_AUTO_UPDATE_COMPUTER_SET` audit action.
+  It sits above every policy: **computer → device group → site → business → the platform default (On)**.
+  - **Off** never updates that agent automatically, whatever its policies say. It also stops an attempt that is
+    already open, without waiting for the 20-minute window. It turns off the signed agent's daily self-check, and keeps
+    the computer out of the automatic move to the signed agent (0.37 asks the same `modeFor`).
+  - **On** turns an opt-out (OFF) into *any time, paced*. **A maintenance window from the governing policy is kept**,
+    so a computer set to On in a *window* site still waits for that window. This was a choice. On is "don't let a
+    policy opt this machine out", not "ignore the maintenance window someone set". A computer that must update at once
+    can still be updated with *Update agent*.
+  - The platform switch and `AGENT_AUTO_UPDATE=off` are not modes. `decide()` checks them before the mode, so either
+    one, when off, beats a computer's On (`platform_off` / `process_off`).
+  - A new reason, `computer_off`, so the card says whose Off it is. A policy's opt-out is still `policy_off`.
+- **`PUT /endpoints/:id/agent/auto-update`** `{ mode: 'inherit' | 'on' | 'off' }` needs `computers:edit` on that
+  computer. Another business's computer is a 404, and a viewer gets a 403. Anything but Off that changes the value
+  needs fresh authentication. That covers *On*, and also *Inherit*, because what a computer inherits may be on. This
+  matches the policy rule from 0.36. Off never needs it. The write is conditional on the value the request read (a
+  `409 CHANGED` otherwise). Every change is one audit entry with `before` and `after`. Saving the value it already has
+  writes nothing.
+- **The Agent card's *For this computer* selector**: *Inherit (currently: On, from the business policy)*, *On*, *Off*.
+  Below it, the effective state and the reason. The card's `autoUpdate.setting` carries the value, its source
+  (`computer` / `policy` / `default`), what Inherit would give and from where, and the effective state. That state is
+  *Off* whenever the platform or process switch is off.
+- **An *Automatic agent updates* card on each business's page**: *Inherit global (On)*, *On*, *Off*, *In maintenance
+  window*. It calls the new `PUT /client-updates/policy/agent-mode` `{ businessId, agentMode }`, which writes **only**
+  the business policy's `agentMode`. The people allowed are the same as for the policy (`assertEdit`: Business Owner,
+  a technician with `computers:edit` over the whole business, or the MSP). Fresh authentication works the same way:
+  anything but OFF. The audit is the same too (`CLIENT_UPDATE_POLICY_CHANGED`, marked `agentModeOnly`).
+  - It never touches the RustDesk checkbox. Saving the whole policy form re-sends `enabled`, so a business whose
+    RustDesk updates were on needed a step-up just to switch agent updates *off*. The selector avoids that.
+  - A business with no policy row gets one with **`enabled: false`** and the settings page's default night window
+    (22:00–05:00 UTC), so *In maintenance window* has a window to wait for.
+  - The card links to Settings → Client updates for windows, sites and groups.
+- `GET /client-updates/policy` also returns `agentAuto: { platformEnabled, processOn }`, so a business's page can say
+  what *Inherit global* means without the Platform Admin settings route.
+
+### Changed
+- **Default enabled, said plainly.** With nothing set anywhere, every computer updates, including a new business's
+  new computer (the e2e suite now proves both). The business policy's *Inherit* option on Settings → Client updates
+  now reads *Inherit global — on by default*. The platform card states that its switch wins over every business,
+  site, group and computer, and gives the precedence.
+- `resolveMode(ranked, computer)` now takes the computer's setting and returns `source` and `inherited` as well.
+  `modesFor` reads every computer's setting in one query, so no caller can decide a mode without it.
+
+### Security invariants
+§53 gains five checks, each mutation-tested (27 mutants, all killed):
+- The override is read in `modesFor` and passed to `resolveMode` on both branches. Every dispatch decision goes
+  through `modeFor`.
+- Off always wins: `resolveMode` returns OFF first, its On branch can only give WINDOW or ANY_TIME, and `decide()`
+  checks the platform and process switches before the mode. `selfCheckAllowed` needs both switches on, and 0068 has
+  its CHECK.
+- The route needs `COMPUTERS_EDIT`. `setComputer` checks scope first and calls `assertFresh` for anything but Off
+  before the write.
+- The write is conditional and is followed by the audit entry. Only `agent-auto-update.service.ts` names the column
+  in a write.
+- `putAgentMode`: `assertEdit`, then the fresh check before either write, an agentMode-only update, and
+  `enabled: false` on create. Its input is strict.
+
+The existing checks are updated: two `audit.log` calls in the service now (the settings and the computer), and four
+`isFresh(req)` calls in the client-updates controller. The `policy_off` ordering check used to pass vacuously once
+the string it looked for had changed. It now requires the line to exist.
+
+### Tests
+- `unit-agent-auto-update.mjs`: 101 checks (was 78). New: computer Off over business On, computer On over business
+  Off, Inherit, the global switch and the process switch over computer On, Off mid-attempt, On under a closed window,
+  the self-check, and the parser.
+- `e2e-agent-auto-update.mjs`: 151 checks (was 96). New:
+  - setting and clearing per computer, with the step-up, the audit and its before/after, and isolation;
+  - a heartbeat getting or not getting the flag in each case;
+  - the platform switch over a computer's On;
+  - the business selector, including Off with RustDesk updates on and an `enabled` smuggled into the body (400);
+  - a new business inheriting On.
+- `e2e-group-policies.mjs`: 77 passed.
+
+Nothing in this release has run on a real Windows computer. The heartbeat flags it uses are the 0.36 ones.
+
+---
+
 ## [0.45.0] — 2026-11-14 · *Breaker*
 
 **Services can be started, stopped, restarted and set to a startup type, and the Processes tab is a task manager
