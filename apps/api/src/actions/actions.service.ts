@@ -146,7 +146,7 @@ export interface PlanRequest {
  */
 function assertDirectRequest(via: 'portal' | 'clientst0r', freshMethod: string | null | undefined) {
   if (via === 'clientst0r') throw new ForbiddenException({ code: 'DIRECT_MODE_PORTAL_ONLY', message: 'This business is in direct mode on the approval signer: an action runs as soon as it is requested, so only a person signed in to the portal can request one. ClientSt0r proposals are refused in direct mode.' });
-  assertFresh(freshMethod ?? null, { action: 'actions.direct', message: 'Direct mode: this runs as soon as you request it, with no approval step. Confirm it is you.' });
+  assertFresh(freshMethod ?? null, { action: 'actions.direct', routine: 'actions.direct', message: 'Direct mode: this runs as soon as you request it, with no approval step. Confirm it is you.' });
 }
 
 @Injectable()

@@ -161,7 +161,7 @@ export function ControlBanner({ c, which }: { c: DeviceControl; which: 'service'
   return (
     <div className="space-y-1 text-xs" data-testid={`control-banner-${which}`}>
       {a.possible
-        ? <p className="text-muted-foreground">{which === 'service' ? 'Start, stop, restart or change a service’s startup type' : 'End a process'} from its row. {c.approval === 'direct' ? 'Direct mode: a request runs at the computer’s next check-in, after you confirm it is you.' : 'Each request waits for two approvers on the approval page.'}</p>
+        ? <p className="text-muted-foreground">{which === 'service' ? 'Start, stop, restart or change a service’s startup type' : 'End a process'} from its row. {c.approval === 'direct' ? 'Direct mode: a request runs at the computer’s next check-in.' : 'Each request waits for two approvers on the approval page.'}</p>
         : <p className="text-amber-700 dark:text-amber-400 flex items-start gap-1" data-testid="control-unavailable"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />{a.reason}{a.fix ? ` ${a.fix}` : ''}</p>}
       <p className="text-amber-700 dark:text-amber-400" data-testid="control-unproven">{c.unproven}</p>
     </div>

@@ -660,6 +660,12 @@ export const chatRecordingApi = {
   setPlatform: (recording: boolean) => api.put('/chat-recording/platform', { recording }),
 };
 
+// 0.46.1: whether everyday changes ask "confirm it is you" (Settings → General).
+export const routineConfirmApi = {
+  get: () => api.get('/security/routine-confirm'),
+  set: (value: 'off' | 'every') => api.put('/security/routine-confirm', { value }),
+};
+
 /** The customer side: no account, the link is the only key. */
 export const publicSupportApi = {
   intake: (slug: string) => api.get(`/public/support/intake/${encodeURIComponent(slug)}`),

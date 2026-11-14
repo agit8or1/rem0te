@@ -24,8 +24,9 @@ import { PatchPolicyService } from './policies.service';
 export class PatchingController {
   constructor(private readonly patching: PatchingService, private readonly policies: PatchPolicyService, private readonly stepUp: StepUpService) {}
 
+  /** Patch policies (create, revoke): an everyday change since 0.46.1 (review.ts ROUTINE_ACTIONS). */
   private fresh(req: Request) {
-    assertFresh(this.freshMethod(req));
+    assertFresh(this.freshMethod(req), { action: 'patching.policy', routine: 'patching.policy' });
   }
 
   private freshMethod(req: Request): string | null {

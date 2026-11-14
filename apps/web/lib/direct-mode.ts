@@ -7,7 +7,7 @@ import { formatDate } from '@/lib/utils';
  * portal only reports what the signer answered (`approval` / `direct`).
  */
 export const DIRECT_REQUEST_NOTE =
-  'Direct mode is on for this business (set by the approval signer’s operator): your request is signed at once, with no approval step, and runs when the computer next checks in. You will be asked to confirm it is you.';
+  'Direct mode is on for this business (set by the approval signer’s operator): your request is signed at once, with no approval step, and runs when the computer next checks in.';
 
 export const DIRECT_TOAST = 'Approved automatically (direct mode). It runs when the computer next checks in.';
 

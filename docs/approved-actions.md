@@ -58,8 +58,17 @@ software and script revocations — and then the signer signs it at once, with n
 signed field (`policy.approval: "direct"`) and names who asked. The portal never shows an approval page: the job goes
 straight to *Approved*, labelled **Approved automatically (direct mode) by *you*, *time***, and runs when the computer
 next checks in. Patch policies and software rings work the same way: a patch policy is active as soon as it is
-proposed, and its rings are signed inside its window as before. Each request asks you to confirm it is you (a fresh
-sign-in) first.
+proposed, and its rings are signed inside its window as before.
+
+**Confirming it is you (0.47).** Whether a direct request also asks you to confirm it is you is a platform setting,
+**Settings → General → Confirm before everyday changes**. **Off** (this installation's setting since 0.47): signing in,
+with its MFA, is enough. **Every 10 minutes** (the default for a new installation): each request asks for a fresh
+sign-in, and the confirmation lasts 10 minutes. The setting covers exactly seven everyday changes: direct-mode requests
+(every action, patch and software install, uninstall, service and process change), script allowlist proposals,
+software catalog writes, upgrading an agent, per-computer and per-business automatic agent updates, and patch
+policies. Security settings, passwords, permissions, API keys, passkeys, enrolment links, containment, notification
+destinations and the fleet-wide update switches always ask. Turning the setting off asks once, and every change is in
+the audit log.
 
 **What it gives up: a second person.** In signed mode a compromised portal can propose a plan but cannot make it
 run. In direct mode it can: anyone who fully takes over the portal (its code or its sign-ins) can run catalog actions
@@ -340,7 +349,7 @@ action, and the computer online. They are never offered to ClientSt0r. Only one 
 can be open per computer at a time.
 
 **Direct mode.** In a business in direct mode the request is signed as soon as you make it, with no approval step, so
-the button asks you to confirm it is you (a fresh sign-in) and the dialog says *it runs as soon as you request it*. In
+the button asks you to confirm it is you when *Confirm before everyday changes* is on, and the dialog says *it runs as soon as you request it*. In
 signed mode it waits for two approvers as any other action does. The containment *actions* pause stops both: the tabs
 show the pause and request nothing, and the agent refuses a plan under a signed pause before it asks Windows anything.
 

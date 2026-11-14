@@ -1,3 +1,4 @@
+import { routineConfirmRequired } from '../security-controls/review';
 import { Body, Controller, Delete, ForbiddenException, Get, Param, Put, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -62,7 +63,7 @@ export class ClientUpdatesController {
    */
   @Put('policy/agent-mode')
   async putAgentMode(@Actor() a: ActorContext, @Body() body: unknown, @Req() req: Request) {
-    return { success: true, data: await this.fresh(() => this.svc.putAgentMode(a, body, this.isFresh(req)), 'agent') };
+    return { success: true, data: await this.fresh(() => this.svc.putAgentMode(a, body, this.isFresh(req) || !routineConfirmRequired()), 'agent') };
   }
 
   @Delete('policy/sites/:siteId')

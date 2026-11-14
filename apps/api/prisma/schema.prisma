@@ -200,6 +200,7 @@ enum ActivityAction {
   // 0.46: one computer's own automatic-agent-update setting (Inherit / On /
   // Off) changed, before and after.
   AGENT_AUTO_UPDATE_COMPUTER_SET
+  ROUTINE_CONFIRM_CHANGED
   // 0.33 device groups, shared device views and bulk actions
   DEVICE_GROUP_CREATED
   DEVICE_GROUP_UPDATED
@@ -1705,6 +1706,12 @@ model PlatformSettings {
   // Actions that need a recent re-authentication (password, TOTP or passkey)
   // on top of a valid session. See auth/step-up.service.ts for the vocabulary.
   stepUpActions String[] @default(["credential.reveal", "permissions.change", "technicians.manage", "sso.configure", "passkey.manage", "platform.configure"])
+
+  // 0.46.1: whether everyday changes (security-controls/review.ts,
+  // ROUTINE_ACTIONS) ask for the step-up confirmation: 'every' (the default
+  // for a new installation) or 'off' (0069 set the existing one to 'off').
+  // CHECK in 0069. Security settings always ask, whatever this says.
+  routineConfirm String @default("every")
 
   // The address people and computers use to reach this server, as an origin
   // (`https://remote.example.com`). When set it replaces FRONTEND_URL and
