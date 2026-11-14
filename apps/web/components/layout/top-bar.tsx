@@ -4,11 +4,13 @@
  * The bar above every signed-in page (0.33). It holds global search: the
  * button opens the command palette, and so does Ctrl+K (⌘K on a Mac) from
  * anywhere in the app. Below `md` it also holds the menu button that opens the
- * sidebar as a drawer (0.34, nav-drawer.tsx).
+ * sidebar as a drawer (0.34, nav-drawer.tsx). On the right, the chat inbox
+ * (0.44, chat-inbox.tsx): unread replies from the person at a computer.
  */
 import { useEffect, useState } from 'react';
 import { Menu, Search } from 'lucide-react';
 import { CommandPalette } from '@/components/search/command-palette';
+import { ChatInbox } from '@/components/chat/chat-inbox';
 import { usePermissions } from '@/lib/auth';
 import { NAV_DRAWER_ID, useNavDrawer } from './nav-drawer';
 
@@ -59,6 +61,7 @@ export function TopBar() {
         <span className="hidden truncate sm:inline">Search devices, businesses, people…</span>
         <kbd className="ml-auto hidden shrink-0 rounded border bg-background px-1.5 py-0.5 font-mono text-[10px] sm:inline">{mac ? '⌘K' : 'Ctrl K'}</kbd>
       </button>
+      <ChatInbox />
       <CommandPalette open={open} onOpenChange={setOpen} />
     </header>
   );

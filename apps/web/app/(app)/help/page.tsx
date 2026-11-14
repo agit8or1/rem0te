@@ -442,6 +442,21 @@ const SECTIONS: Section[] = [
             Up to 2,000 characters a message and 20 messages a minute. Text is shown as plain text on both sides.
           </li>
           <li>
+            <strong className="text-foreground">Emoji, files and pictures.</strong> Both sides have an emoji picker
+            and can send a file with the paperclip, or by pasting. Each file can be up to 10 MB, with up to 20 files
+            (50 MB) in a chat. PNG, JPEG, GIF and WebP pictures are shown in the chat. Whether a file counts as a
+            picture is decided by its contents, not its name. Every other file is offered only as a download and is
+            never opened in the browser. Anyone who can read the transcript can open its files. A{' '}
+            <em>remote connections</em> pause stops files too. In a chat that is not recorded, files are deleted when
+            the chat ends.
+          </li>
+          <li>
+            <strong className="text-foreground">New messages reach you anywhere in the console.</strong> The chat icon
+            in the header counts unread replies and lists the open chats. A new reply shows a notification with the
+            computer&apos;s name and an <em>Open</em> button, and the tab title shows the count. A sound can be
+            switched on in that panel. Read marks are your own.
+          </li>
+          <li>
             Starting and writing need the <em>Chat with the person at a computer</em> permission. Anyone who can see the
             computer can read a recorded transcript, which is deleted 400 days after the chat ends. A{' '}
             <em>remote connections</em> containment pause stops new chats and messages. The audit log records each start

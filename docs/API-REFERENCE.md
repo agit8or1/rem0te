@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **512** of them across
-**75** controllers.
+integration, under `/api/integration/v1`). There are **518** of them across
+**76** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -172,7 +172,16 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/customers/:id/users/:userId/reset-access` | signed in | `USERS_MANAGE` |
 | `GET` | `/api/v1/customers/capability-catalog` | signed in | — |
 
-## Chat
+## Chat chatinbox
+
+`apps/api/src/chat/chat.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/chat/inbox` | signed in, throttled | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/chat/inbox/read` | signed in, throttled | `COMPUTERS_VIEW` |
+
+## Chat endpointsidchat
 
 `apps/api/src/chat/chat.controller.ts`
 
@@ -182,6 +191,8 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/endpoints/:id/chat/conversations` | signed in, throttled | `CHAT_SEND` |
 | `GET` | `/api/v1/endpoints/:id/chat/conversations/:cid` | signed in | `COMPUTERS_VIEW` |
 | `POST` | `/api/v1/endpoints/:id/chat/conversations/:cid/ack` | signed in, throttled | `CHAT_SEND` |
+| `POST` | `/api/v1/endpoints/:id/chat/conversations/:cid/attachments` | signed in, throttled | `CHAT_SEND` |
+| `GET` | `/api/v1/endpoints/:id/chat/conversations/:cid/attachments/:aid` | signed in, throttled | `COMPUTERS_VIEW` |
 | `POST` | `/api/v1/endpoints/:id/chat/conversations/:cid/end` | signed in | `CHAT_SEND` |
 | `POST` | `/api/v1/endpoints/:id/chat/conversations/:cid/messages` | signed in, throttled | `CHAT_SEND` |
 
@@ -964,6 +975,8 @@ Admins and Business Owners are not confined by it; see
 
 | Method | Path | Access | Capability |
 |---|---|---|---|
+| `POST` | `/api/v1/assist/api/attachments` | public, throttled | — |
+| `GET` | `/api/v1/assist/api/attachments/:aid` | public, throttled | — |
 | `POST` | `/api/v1/assist/api/end` | public, throttled | — |
 | `POST` | `/api/v1/assist/api/messages` | public, throttled | — |
 | `POST` | `/api/v1/assist/api/receipts` | public, throttled | — |

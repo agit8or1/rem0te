@@ -20,6 +20,7 @@ import { DeviceSoftwareTab } from '@/components/endpoints/workspace/software-tab
 import { DeviceNetworkTab, DeviceProcessesTab, DeviceServicesTab } from '@/components/endpoints/workspace/snapshot-tabs';
 import { DeviceHistoryTab, type SessionRow } from '@/components/endpoints/workspace/history-tab';
 import { DeviceChatTab } from '@/components/endpoints/workspace/chat-tab';
+import { OPEN_CHAT_EVENT } from '@/components/chat/chat-inbox';
 import { DiagnosticsPanel } from '@/components/endpoints/workspace/diagnostics-panel';
 import { AgentCard } from '@/components/endpoints/workspace/agent-card';
 import { UPGRADE_LABEL, upgradeView, useAgentActions } from '@/components/endpoints/workspace/agent-actions';
@@ -68,6 +69,13 @@ export default function EndpointDetailPage() {
     // From a link further down the Overview, bring the tab into view.
     tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, []);
+  // The header's chat inbox (0.44) opening this computer's chat while we are
+  // already on its page: a route push to the same path would not re-read ?tab=.
+  useEffect(() => {
+    const onOpen = (e: Event) => { if ((e as CustomEvent<{ endpointId?: string }>).detail?.endpointId === id) setTab('chat'); };
+    window.addEventListener(OPEN_CHAT_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_CHAT_EVENT, onOpen);
+  }, [id, setTab]);
 
   const { data: endpoint, isLoading } = useQuery({
     queryKey: ['endpoint', id],

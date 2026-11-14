@@ -99,5 +99,80 @@ check(cut.toISOString() === new Date(now - 400 * 86400e3).toISOString(), 'the cu
 check(C.POLL_HOLD_MS === 25_000 && C.POLL_RECHECK_MS === 10_000 && C.INACTIVE_MS === 7_200_000, 'the poll is held 25 s, re-read every 10 s; two hours of quiet ends a chat');
 check(C.MAX_PER_MINUTE.technician === 20 && C.MAX_PER_MINUTE.endUser === 20 && C.MAX_DEVICE_PER_MINUTE === 30 && C.MAX_MESSAGE_CHARS === 2000, 'caps: 20 a minute per side, 30 per computer, 2,000 characters');
 
+// ── 0.44 ─────────────────────────────────────────────────────────────────────
+
+section('Emoji (0.44): ordinary text, untouched, counted as the browser and the agent count');
+const A = require(path.join(dist, 'chat/chat-attachment.js'));
+const smile = '\u{1F600}', thumb = '\u{1F44D}\u{1F3FD}', family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}', heart = '\u2764\uFE0F', flag = '\u{1F1F3}\u{1F1F4}';
+t = C.chatText(`Fixed it ${smile} ${thumb} ${family} ${heart} ${flag}`);
+check(t.ok && t.text === `Fixed it ${smile} ${thumb} ${family} ${heart} ${flag}`, 'emoji, skin tones, ZWJ sequences, variation selectors and flags pass through unchanged', JSON.stringify(t));
+check(C.chatText(smile.repeat(1000)).ok && C.chatText(smile.repeat(1001)).code === 'TOO_LONG', '1,000 emoji are 2,000 UTF-16 code units: allowed; 1,001 refused (the textarea\'s maxlength counts the same way)');
+check(C.chatText(`${'x'.repeat(1998)}${smile}`).ok && C.chatText(`${'x'.repeat(1999)}${smile}`).code === 'TOO_LONG', 'an emoji counts two: 1,998 + one fits, 1,999 + one does not');
+const goTxt = (await import('node:fs')).readFileSync(path.join(dist, '..', '..', '..', 'tools', 'windows-installer', 'internal', 'chat', 'text.go'), 'utf8');
+check(/if utf16Len\(s\) > MaxMessageChars \{/.test(goTxt) && /if r >= 0x10000 \{\s*\n\s*n \+= 2/.test(goTxt), 'the agent counts UTF-16 code units too (internal/chat utf16Len)');
+const fs0 = await import('node:fs');
+const apiEmoji = fs0.readFileSync(path.join(dist, '..', 'src', 'chat', 'emoji.ts'), 'utf8');
+const webEmoji = fs0.readFileSync(path.join(dist, '..', '..', 'web', 'lib', 'emoji.ts'), 'utf8');
+const listOf = (src) => src.slice(src.indexOf('= ['), src.indexOf('];') + 2);
+const E = require(path.join(dist, 'chat/emoji.js')).EMOJI;
+check(E.length >= 100 && listOf(apiEmoji) === listOf(webEmoji), `the picker offers the same ${E.length} emoji on the console and on /assist`);
+check(E.every((e) => C.chatText(e).ok && C.chatText(e).text === e), 'every emoji the picker offers survives chatText exactly');
+
+section('Attachments (0.44): what a file is comes from its bytes');
+const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]), Buffer.from('IHDR'), Buffer.alloc(13)]);
+const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46]);
+const gif = Buffer.from('GIF89a\x01\x00\x01\x00\x00\x00', 'latin1');
+const webp = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBPVP8 '), Buffer.alloc(8)]);
+const html = Buffer.from('<!doctype html><script>alert(document.cookie)</script>');
+const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>');
+for (const [b, want] of [[png, 'image/png'], [jpg, 'image/jpeg'], [gif, 'image/gif'], [webp, 'image/webp']]) {
+  const s = A.sniff(b);
+  check(s.kind === 'image' && s.contentType === want, `${want} by its magic number`, JSON.stringify(s));
+}
+for (const [name, b] of [['HTML', html], ['SVG', svg], ['a PNG signature with no IHDR', png.subarray(0, 12)], ['RIFF that is not WebP', Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('AVI LIST'), Buffer.alloc(8)])], ['empty', Buffer.alloc(0)]]) {
+  const s = A.sniff(b);
+  check(s.kind === 'file' && s.contentType === 'application/octet-stream', `${name}: a file, application/octet-stream`, JSON.stringify(s));
+}
+let k = A.checkAttachment({ buffer: html, originalname: 'cute-cat.png', mimetype: 'image/png' });
+check(k.ok && k.kind === 'file' && k.contentType === 'application/octet-stream' && k.fileName === 'cute-cat.png.bin', 'HTML named .png and declared image/png: a download, renamed .png.bin — the declared type is never read', JSON.stringify(k));
+k = A.checkAttachment({ buffer: svg, originalname: 'logo.svg' });
+check(k.ok && k.kind === 'file' && k.fileName === 'logo.svg.bin', 'SVG is never an image here: a download named .svg.bin', JSON.stringify(k));
+k = A.checkAttachment({ buffer: jpg, originalname: 'photo.png' });
+check(k.ok && k.kind === 'image' && k.contentType === 'image/jpeg' && k.fileName === 'photo.png.jpg', 'a JPEG named .png is a JPEG, saved as .jpg', JSON.stringify(k));
+k = A.checkAttachment({ buffer: png, originalname: 'shot.PNG' });
+check(k.ok && k.fileName === 'shot.png' && /^[0-9a-f]{64}$/.test(k.sha256) && k.sizeBytes === png.length, 'a PNG keeps its name (extension lower-cased); size and SHA-256 recorded', JSON.stringify(k));
+check(A.checkAttachment({ buffer: Buffer.alloc(0), originalname: 'x' }).code === 'ATTACHMENT_EMPTY', 'an empty file is refused');
+check(A.checkAttachment({ buffer: Buffer.alloc(A.MAX_ATTACHMENT_BYTES + 1), originalname: 'x' }).code === 'ATTACHMENT_TOO_LARGE' && A.checkAttachment({ buffer: Buffer.alloc(A.MAX_ATTACHMENT_BYTES), originalname: 'x' }).ok, '10 MiB is the limit; one byte more is refused');
+check(A.checkAttachment(undefined).code === 'ATTACHMENT_MISSING' && A.checkAttachment({ buffer: 'not a buffer' }).code === 'ATTACHMENT_MISSING', 'no file: refused');
+
+section('Attachment names');
+const fileS = { kind: 'file', contentType: 'application/octet-stream', ext: null };
+const nm = (n) => A.attachmentName(n, fileS);
+check(nm('../../Windows/System32/evil.dll') === 'evil.dll' && nm('C:\\Users\\a\\report.pdf') === 'report.pdf', 'only the last path segment survives');
+check(nm(`invoice${ch(0x202e)}fdp.exe`) === 'invoice fdp.exe' && nm(`a${ch(0)}b${ch(0x200b)}c.txt`) === 'a b c.txt', 'bidi overrides, controls and zero-width characters are removed (an extension cannot be hidden)', `${nm(`invoice${ch(0x202e)}fdp.exe`)} | ${nm(`a${ch(0)}b${ch(0x200b)}c.txt`)}`);
+check(nm('a<b>c:d"e|f?g*h.txt') === 'a_b_c_d_e_f_g_h.txt', 'Windows-reserved characters become _', nm('a<b>c:d"e|f?g*h.txt'));
+check(nm('CON.txt') === '_CON.txt' && nm('lpt1') === '_lpt1' && nm('console.txt') === 'console.txt', 'Windows device names are prefixed, other names are not');
+check(nm('  ..hidden.txt.. ') === 'hidden.txt' && nm('') === 'file' && nm('...') === 'file' && nm(42) === 'file', 'no leading or trailing dots or spaces; never empty');
+const long = nm(`${'n'.repeat(300)}.docx`);
+check([...long].length === 120 && long.endsWith('.docx'), 'at most 120 characters, the extension kept', long.length);
+check(nm(`${smile} party.zip`) === `${smile} party.zip` && [...nm(`${smile.repeat(200)}.zip`)].length === 120, 'emoji in a name are kept, and counted as characters');
+check(nm('page.html') === 'page.html.bin' && nm('report.PDF') === 'report.pdf' && nm('archive.tar.gz') === 'archive.tar.gz', 'a web page or image name on a file gets .bin; other extensions are kept');
+check(A.decodeName(Buffer.from('café ☕.txt', 'utf8').toString('latin1')) === 'café ☕.txt' && A.decodeName('plain.txt') === 'plain.txt', 'a UTF-8 name busboy read as latin1 is decoded back');
+
+section('How an attachment is served');
+let h = A.attachmentHeaders({ kind: 'image', contentType: 'image/png', fileName: 'shot.png', sizeBytes: 10 });
+check(h['Content-Type'] === 'image/png' && h['Content-Disposition'].startsWith('inline;') && h['X-Content-Type-Options'] === 'nosniff' && h['Content-Security-Policy'] === "default-src 'none'; sandbox" && h['Cache-Control'] === 'private, no-store', 'an image: its own type, inline, nosniff, a sandbox CSP, never cached', JSON.stringify(h));
+h = A.attachmentHeaders({ kind: 'file', contentType: 'application/octet-stream', fileName: 'tool.exe', sizeBytes: 10 });
+check(h['Content-Type'] === 'application/octet-stream' && h['Content-Disposition'].startsWith('attachment;') && h['X-Content-Type-Options'] === 'nosniff' && h['Content-Security-Policy'] === "default-src 'none'; sandbox", 'a file: application/octet-stream, as an attachment, nosniff, a sandbox CSP', JSON.stringify(h));
+h = A.attachmentHeaders({ kind: 'image', contentType: 'image/svg+xml', fileName: 'x.svg', sizeBytes: 10 });
+check(h['Content-Type'] === 'application/octet-stream' && h['Content-Disposition'].startsWith('attachment;'), 'a row claiming an image of any other type is still served as a download', JSON.stringify(h));
+const cd = A.contentDisposition('attachment', `r"ep\\ort ${smile};.pdf`);
+check(cd === `attachment; filename="r_ep_ort __.pdf"; filename*=UTF-8''r%22ep%5Cort%20%F0%9F%98%80%3B.pdf`, 'Content-Disposition: an ASCII fallback with quotes, backslashes and ; replaced, and the RFC 5987 UTF-8 name', cd);
+
+section('Caps on one chat');
+check(A.withinConversationCaps(19, 0, 1) === 'ok' && A.withinConversationCaps(20, 0, 1) === 'ATTACHMENT_COUNT', 'at most 20 files in one chat');
+check(A.withinConversationCaps(0, 40 * 1048576, 10 * 1048576) === 'ok' && A.withinConversationCaps(0, 40 * 1048576 + 1, 10 * 1048576) === 'ATTACHMENT_TOTAL', 'at most 50 MiB in one chat');
+check(A.MAX_ATTACHMENT_BYTES === 10485760 && A.MAX_ATTACHMENTS_PER_CONVERSATION === 20 && A.MAX_ATTACHMENT_BYTES_PER_CONVERSATION === 52428800, 'caps: 10 MiB a file, 20 files and 50 MiB a chat (the CHECK constraints say the same)');
+
 console.log(`\nunit-chat: ${pass} passed, ${fail} failed`);
 if (fail) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

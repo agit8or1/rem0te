@@ -169,6 +169,7 @@ enum ActivityAction {
   CHAT_ENDED
   CHAT_PRUNED
   CHAT_RECORDING_CHANGED
+  CHAT_ATTACHMENT_SENT
   TRAY_PAIRED
   TRAY_SELF_HELP
   ENDPOINT_AGENT_REINSTALL_REQUESTED
@@ -450,6 +451,7 @@ model User {
   externalIdentities     ExternalIdentity[]
   claimedSupportRequests SupportRequest[]        @relation("SupportRequestClaimer")
   savedViews             SavedView[]
+  chatReadStates         ChatReadState[]
 
   @@index([email])
 }
@@ -3611,10 +3613,17 @@ model ChatConversation {
 
   technicianMessages Int @default(0)
   endUserMessages    Int @default(0)
+  // Attachments sent in this chat (0.44), either side, and their bytes:
+  // claimed by one conditional update before an attachment is written, so the
+  // per-chat caps hold under concurrent uploads (CHECK ChatConversation_attachments_bounded).
+  attachmentCount    Int @default(0)
+  attachmentBytes    Int @default(0)
 
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-  messages  ChatMessage[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  messages    ChatMessage[]
+  attachments ChatAttachment[]
+  readStates  ChatReadState[]
 
   @@index([endpointId, createdAt])
   @@index([status, lastActivityAt])
@@ -3643,9 +3652,56 @@ model ChatMessage {
   // END_USER messages (0.36): when a technician's panel confirmed it showed it.
   // In a chat that is not recorded, that is when the message is deleted.
   technicianSeenAt DateTime?
+  // A file or image sent as this message (0.44). The message's body is then
+  // the attachment's sanitised file name.
+  attachment       ChatAttachment?
 
   @@unique([conversationId, clientId])
   @@index([conversationId, createdAt])
+}
+
+/// A file or image sent in a chat (0.44), by either side. The bytes live in
+/// this row (bytea): they are deleted with their message and conversation by
+/// the foreign keys — the retention sweep, an unrecorded chat's end, a deleted
+/// computer — with nothing on disk to forget. `kind` is decided from the
+/// bytes' magic numbers, never the declared type: `image` only for PNG, JPEG,
+/// GIF and WebP (shown inline, as that type), everything else `file`
+/// (served only as an application/octet-stream download). The audit log
+/// records ids, sizes and kinds, never the bytes or the name.
+model ChatAttachment {
+  id             String           @id @default(cuid())
+  conversationId String
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  messageId      String           @unique
+  message        ChatMessage      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  sender         ChatSender
+  // TECHNICIAN: the user who sent it. END_USER: null.
+  authorId       String?
+  // Sanitised (chat-attachment.ts attachmentName): ≤ 120 characters, no
+  // controls, path separators or Windows-reserved characters.
+  fileName       String
+  // image | file (CHECK ChatAttachment_kind_type)
+  kind           String
+  contentType    String
+  sizeBytes      Int
+  sha256         String
+  bytes          Bytes
+  createdAt      DateTime         @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+/// Per user, per chat (0.44): when this person last read the chat, for the
+/// console's unread counts and new-message alerts. Nothing else reads it.
+model ChatReadState {
+  userId         String
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  lastReadAt     DateTime
+
+  @@id([userId, conversationId])
+  @@index([conversationId])
 }
 
 // ─── The tray (0.36) ─────────────────────────────────────────────────────────

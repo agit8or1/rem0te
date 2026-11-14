@@ -2445,23 +2445,32 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const ctl = read('apps/api/src/chat/chat.controller.ts');
   const svc = read('apps/api/src/chat/chat.service.ts');
   const pol = read('apps/api/src/chat/chat-policy.ts');
-  const routes = [...ctl.matchAll(/@(Get|Post)\(([^)]*)\)\s*\n((?:\s*@[A-Za-z]+\([^)]*\)\s*\n)*)\s*async (\w+)/g)];
+  const routeRe = /@(Get|Post)\(([^)]*)\)\s*\n((?:\s*@[A-Za-z]+\([^)]*\)\s*\n)*)\s*async (\w+)/g;
+  const chatCls = ctl.slice(ctl.indexOf('export class ChatController'), ctl.indexOf('export class ChatReadDto'));
+  const inboxCls = ctl.slice(ctl.indexOf("@Controller('chat/inbox')"));
+  const routes = [...chatCls.matchAll(routeRe)];
   const capOf = Object.fromEntries(routes.map((m) => [m[4], (m[3].match(/@RequireCapability\(CAP\.(\w+)\)/) ?? [])[1]]));
-  check('every chat route names its capability: viewing needs COMPUTERS_VIEW, starting, writing, acknowledging and ending need CHAT_SEND',
-    routes.length === 6 && /@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)/.test(ctl) && !/@Public\(\)/.test(ctl)
-      && capOf.overview === 'COMPUTERS_VIEW' && capOf.transcript === 'COMPUTERS_VIEW'
-      && capOf.start === 'CHAT_SEND' && capOf.send === 'CHAT_SEND' && capOf.ack === 'CHAT_SEND' && capOf.end === 'CHAT_SEND',
-    `routes: ${JSON.stringify(capOf)}`);
-  const methods = ['overview', 'transcript', 'start', 'send', 'ack', 'end'];
+  const inboxRoutes = [...inboxCls.matchAll(routeRe)];
+  check('every chat route names its capability: viewing and reading a file need COMPUTERS_VIEW, starting, writing, sending a file, acknowledging and ending need CHAT_SEND',
+    routes.length === 8 && /@Controller\('endpoints\/:id\/chat'\)\s*\n@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)\s*\nexport class ChatController/.test(ctl) && !/@Public\(\)/.test(ctl)
+      && capOf.overview === 'COMPUTERS_VIEW' && capOf.transcript === 'COMPUTERS_VIEW' && capOf.attachment === 'COMPUTERS_VIEW'
+      && capOf.start === 'CHAT_SEND' && capOf.send === 'CHAT_SEND' && capOf.upload === 'CHAT_SEND' && capOf.ack === 'CHAT_SEND' && capOf.end === 'CHAT_SEND'
+      // The inbox (0.44): computers:view, behind the same guards.
+      && /@Controller\('chat\/inbox'\)\s*\n@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)\s*\nexport class ChatInboxController/.test(ctl)
+      && inboxRoutes.length === 2 && inboxRoutes.every((m) => /@RequireCapability\(CAP\.COMPUTERS_VIEW\)/.test(m[3])),
+    `routes: ${JSON.stringify(capOf)}; inbox: ${inboxRoutes.length}`);
+  const methods = ['overview', 'transcript', 'start', 'send', 'sendAttachment', 'readAttachment', 'ack', 'end'];
   const body = (name) => { const i = svc.indexOf(`  async ${name}(`); const j = svc.indexOf('\n  }\n', i); return i < 0 ? '' : svc.slice(i, j); };
   check('chat reaches a computer only through visibleEndpoint: assertEndpointInScope, then the visibility rule AND-ed with the id',
     /await this\.acl\.assertEndpointInScope\(actor, endpointId, capability\);\s*\n\s*const ep = await this\.prisma\.endpoint\.findFirst\(\{\s*\n\s*where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(actor\), \{ id: endpointId \}\] \},/.test(svc)
       && methods.every((m) => /await this\.visibleEndpoint\(actor, endpointId/.test(body(m)))
-      && ['start', 'send', 'ack', 'end'].every((m) => /this\.visibleEndpoint\(actor, endpointId, CAP\.CHAT_SEND\)/.test(body(m))),
+      && ['start', 'send', 'sendAttachment', 'ack', 'end'].every((m) => /this\.visibleEndpoint\(actor, endpointId, CAP\.CHAT_SEND\)/.test(body(m))),
     'each technician method must begin with this.visibleEndpoint(actor, endpointId[, CAP.CHAT_SEND]); a spread visibility clause beside an OR widens it');
-  check('starting a chat and sending in one both consult the remote containment pause',
-    ['start', 'send'].every((m) => /await this\.containment\.assertOpen\('remote', ep\.customerId\)/.test(body(m))),
-    "start() and send() must call this.containment.assertOpen('remote', ep.customerId)");
+  check('starting a chat, sending in one and sending a file (either side) all consult the remote containment pause',
+    ['start', 'send', 'sendAttachment'].every((m) => /await this\.containment\.assertOpen\('remote', ep\.customerId\)/.test(body(m)))
+      && /^\s*async assistSendAttachment\([^)]*\) \{\s*\n\s*await this\.containment\.assertOpen\('remote', customerId\);/.test(body('assistSendAttachment'))
+      && body('sendAttachment').indexOf("assertOpen('remote'") < body('sendAttachment').indexOf('checkAttachment('),
+    "start(), send() and sendAttachment() call assertOpen('remote', ep.customerId); assistSendAttachment() starts with assertOpen('remote', customerId), before the file is looked at");
   const ec = read('apps/api/src/enrollment/enrollment.controller.ts');
   const es = read('apps/api/src/enrollment/enrollment.service.ts');
   const auth = es.slice(es.indexOf('async authenticateDevice('), es.indexOf('async authenticateDevice(') + 1200);
@@ -2474,16 +2483,86 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /chatProtocol: dto\.updateChannel === 'signed' \? dto\.agentChat \?\? null : null/.test(es),
     'chat/poll and chat/reply call authenticateDevice (secretMatches); the heartbeat gate is authenticated && (signed chat || a tray recorded only from an authenticated heartbeat)');
   const metas = [...svc.matchAll(/meta: \{([^}]*)\}/g)].map((m) => m[1]);
-  check('chat audit rows carry ids and counts only, and chat never changes or deletes an ActivityLog row',
-    metas.length === 4 && metas.every((m) => !/\b(body|text|authorName|deviceUser|deviceDetail)\b/.test(m))
+  check('chat audit rows carry ids and counts only — an attachment\'s ids, kind, type and size, never its name or bytes — and chat never changes or deletes an ActivityLog row',
+    metas.length === 5 && metas.every((m) => !/\b(body|text|authorName|deviceUser|deviceDetail|fileName|bytes|sha256|buffer|originalname)\b/.test(m))
+      && /meta: \{ conversationId: c\.id, attachmentId: att\.id, by: tech \? 'technician' : 'end_user', kind: a\.kind, contentType: a\.contentType, sizeBytes: a\.sizeBytes \},/.test(svc)
       && !/activityLog\.(update|updateMany|delete|deleteMany|upsert)/.test(svc) && !/\$executeRaw/.test(svc),
-    `audit meta must hold no message text or names; no activityLog update/delete in chat.service.ts. meta: ${JSON.stringify(metas)}`);
+    `audit meta must hold no message text, names, file names or bytes; no activityLog update/delete in chat.service.ts. meta: ${JSON.stringify(metas)}`);
   const sql = read('apps/api/prisma/migrations/0056_chat/migration.sql');
+  const sql67 = read('apps/api/prisma/migrations/0067_chat_attachments/migration.sql');
   const txt = read('tools/windows-installer/internal/chat/text.go');
-  check('the message cap is 2,000 characters in the API, the database and the agent',
-    /export const MAX_MESSAGE_CHARS = 2000;/.test(pol) && /char_length\("body"\) BETWEEN 1 AND 2000\)/.test(sql)
-      && /const MaxMessageChars = 2000\n/.test(txt) && /if utf16Len\(s\) > MaxMessageChars \{/.test(txt),
-    'MAX_MESSAGE_CHARS, ChatMessage_body_bounded and MaxMessageChars must agree');
+  check('the message cap is 2,000 UTF-16 code units in the API, the database and the agent (an emoji counts two everywhere, as a textarea\'s maxlength does)',
+    /export const MAX_MESSAGE_CHARS = 2000;/.test(pol) && /if \(text\.length > MAX_MESSAGE_CHARS\)/.test(pol)
+      && /char_length\("body"\) BETWEEN 1 AND 2000\)/.test(sql)
+      && /ALTER TABLE "ChatMessage" DROP CONSTRAINT "ChatMessage_body_bounded";\s*\nALTER TABLE "ChatMessage" ADD CONSTRAINT "ChatMessage_body_bounded" CHECK \(\s*\n\s*char_length\("body"\) >= 1\s*\n\s*AND char_length\("body"\) \+ char_length\(regexp_replace\("body", '\[\^\\U00010000-\\U0010FFFF\]', '', 'g'\)\) <= 2000\);/.test(sql67)
+      && /const MaxMessageChars = 2000\n/.test(txt) && /if utf16Len\(s\) > MaxMessageChars \{/.test(txt) && /if r >= 0x10000 \{\s*\n\s*n \+= 2/.test(txt)
+      && /maxlength="2000"/.test(read('apps/api/src/tray/assist-page.ts')),
+    'MAX_MESSAGE_CHARS (String.length), 0067\'s ChatMessage_body_bounded (code points + supplementary ones) and MaxMessageChars (utf16Len) must agree');
+  {
+    // Attachments (0.44).
+    const att = read('apps/api/src/chat/chat-attachment.ts');
+    const tctl0 = read('apps/api/src/tray/tray.controller.ts');
+    const asv0 = read('apps/api/src/tray/assist.service.ts');
+    const sniffFn = att.slice(att.indexOf('export function sniff('), att.indexOf('\n}\n', att.indexOf('export function sniff(')));
+    const checkFn = att.slice(att.indexOf('export function checkAttachment('), att.indexOf('\n}\n', att.indexOf('export function checkAttachment(')));
+    check('an attachment is an image only by its magic bytes — PNG, JPEG, GIF, WebP — and never by its declared type; SVG and HTML are files',
+      /export const IMAGE_TYPES = \['image\/png', 'image\/jpeg', 'image\/gif', 'image\/webp'\] as const;/.test(att)
+        && /b\.subarray\(0, 8\)\.equals\(PNG_MAGIC\) && b\.subarray\(12, 16\)\.toString\('latin1'\) === 'IHDR'/.test(sniffFn)
+        && /b\[0\] === 0xff && b\[1\] === 0xd8 && b\[2\] === 0xff/.test(sniffFn) && /'GIF87a'/.test(sniffFn) && /'GIF89a'/.test(sniffFn)
+        && /toString\('latin1'\) === 'RIFF' && b\.subarray\(8, 12\)\.toString\('latin1'\) === 'WEBP'/.test(sniffFn)
+        && /return \{ kind: 'file', contentType: FILE_TYPE, ext: null \};\s*$/.test(sniffFn) && !/svg|html|text\//i.test(sniffFn)
+        && /const s = sniff\(b\);/.test(checkFn) && !/mimetype|contentType:\s*file\./.test(checkFn)
+        && /\("kind" = 'image' AND "contentType" IN \('image\/png', 'image\/jpeg', 'image\/gif', 'image\/webp'\)\)\s*\n\s*OR \("kind" = 'file' AND "contentType" = 'application\/octet-stream'\)\);/.test(sql67),
+      'sniff(): four magic numbers, else file/octet-stream; checkAttachment() classifies with sniff(b) and never reads the declared mimetype; ChatAttachment_kind_type agrees');
+    const hdr = att.slice(att.indexOf('export function attachmentHeaders('), att.indexOf('\n}\n', att.indexOf('export function attachmentHeaders(')));
+    check('an attachment is served inert: its sniffed image type inline, anything else application/octet-stream as an attachment; nosniff and a sandbox CSP always; both routes serve through the one function',
+      /const image = a\.kind === 'image' && \(IMAGE_TYPES as readonly string\[\]\)\.includes\(a\.contentType\);/.test(hdr)
+        && /'Content-Type': image \? a\.contentType : FILE_TYPE,/.test(hdr) && /contentDisposition\(image \? 'inline' : 'attachment', a\.fileName\)/.test(hdr)
+        && /'X-Content-Type-Options': 'nosniff',/.test(hdr) && /'Content-Security-Policy': "default-src 'none'; sandbox",/.test(hdr)
+        && /export const FILE_TYPE = 'application\/octet-stream';/.test(att)
+        && /for \(const \[k, v\] of Object\.entries\(attachmentHeaders\(a\)\)\) res\.setHeader\(k, v\);/.test(ctl)
+        && /sendAttachment\(res, await this\.chat\.readAttachment\(actor, id, cid, aid\)\);/.test(ctl)
+        && /sendAttachment\(res, await this\.assist\.attachment\(req\.headers\.cookie, aid\)\);/.test(tctl0)
+        && /const ascii = Array\.from\(fileName, \(c\) => \(\/\^\[\\x20-\\x7e\]\$\/\.test\(c\) && !\/\["\\\\%;\]\/\.test\(c\) \? c : '_'\)\)\.join\(''\);/.test(att),
+      'attachmentHeaders(): type, disposition, nosniff, sandbox CSP; chat.controller sendAttachment() sets exactly those; the console and /assist both use it; the ASCII filename drops quotes, backslashes, % and ;');
+    check('reading a file needs what reading the transcript needs: computers:view on a visible computer, the file found only under its own conversation and computer; the page reads only its own chat',
+      /^\s*async readAttachment\([^)]*\) \{\s*\n\s*await this\.visibleEndpoint\(actor, endpointId\);\s*\n\s*return this\.attachmentOf\(endpointId, conversationId, attachmentId\);/.test(body('readAttachment'))
+        && /where: \{ id: attachmentId, conversationId, conversation: \{ endpointId \} \},/.test(svc)
+        && /const \{ s, cid \} = await this\.bound\(cookie\);\s*\n\s*return this\.chat\.assistAttachment\(s\.endpointId, cid, attachmentId\);/.test(asv0)
+        && (svc.match(/this\.attachmentOf\(/g) ?? []).length === 2 && (svc.match(/chatAttachment\.findFirst\(/g) ?? []).length === 1,
+      'readAttachment(): visibleEndpoint then attachmentOf; attachmentOf: { id, conversationId, conversation: { endpointId } }; AssistService.attachment uses the session\'s bound conversation');
+    check('sending a file: support:chat on the console; on /assist x-assist and a live cookie are checked by a guard before multer reads a byte; memory only, 10 MB',
+      /@Post\('api\/attachments'\)\s*\n\s*@Public\(\)\s*\n\s*@RateLimit\(20\)\s*\n\s*@UseGuards\(AssistUploadGuard\)\s*\n\s*@UseInterceptors\(CHAT_UPLOAD\)/.test(tctl0)
+        && /assertPageWrite\(req\);\s*\n\s*await this\.assist\.session\(req\.headers\.cookie\);\s*\n\s*return true;/.test(tctl0)
+        && /export const CHAT_UPLOAD = FileInterceptor\('file', \{\s*\n\s*storage: memoryStorage\(\),\s*\n\s*limits: \{ fileSize: MAX_ATTACHMENT_BYTES, files: 1,/.test(ctl)
+        && /export const MAX_ATTACHMENT_BYTES = 10 \* 1024 \* 1024;/.test(att)
+        && /"sizeBytes" BETWEEN 1 AND 10485760 AND octet_length\("bytes"\) = "sizeBytes"\);/.test(sql67)
+        && /"attachmentCount" BETWEEN 0 AND 20 AND "attachmentBytes" BETWEEN 0 AND 52428800\);/.test(sql67)
+        && /attachmentCount: \{ lt: MAX_ATTACHMENTS_PER_CONVERSATION \},\s*\n\s*attachmentBytes: \{ lte: MAX_ATTACHMENT_BYTES_PER_CONVERSATION - a\.sizeBytes \},/.test(svc),
+      '/assist upload: @UseGuards(AssistUploadGuard) before @UseInterceptors(CHAT_UPLOAD); the guard runs assertPageWrite and session(); CHAT_UPLOAD memoryStorage, fileSize 10 MB; the chat caps are claimed by one conditional update and backed by CHECKs');
+    check('files go with their chat: deleted by foreign key with the message and the conversation (retention, an unrecorded chat\'s end), and counted in CHAT_PRUNED',
+      /ALTER TABLE "ChatAttachment" ADD CONSTRAINT "ChatAttachment_conversationId_fkey" FOREIGN KEY \("conversationId"\) REFERENCES "ChatConversation"\("id"\) ON DELETE CASCADE/.test(sql67)
+        && /ALTER TABLE "ChatAttachment" ADD CONSTRAINT "ChatAttachment_messageId_fkey" FOREIGN KEY \("messageId"\) REFERENCES "ChatMessage"\("id"\) ON DELETE CASCADE/.test(sql67)
+        && /meta: \{ conversations, messages, attachments, retentionDays: this\.cfg\.retentionDays, endedBefore: cutoff\.toISOString\(\) \},/.test(svc)
+        && /attachments \+= rows\.reduce\(\(s, x\) => s \+ x\.attachmentCount, 0\);/.test(svc),
+      'ChatAttachment conversationId and messageId FKs ON DELETE CASCADE; prune() counts attachments into CHAT_PRUNED');
+    const inb = read('apps/api/src/chat/chat-inbox.service.ts');
+    check('the chat inbox lists only open chats on computers the caller can see, reads the caller\'s own marks, and marks read only a visible computer\'s chat',
+      /where: \{ status: 'OPEN', endpoint: \{ AND: \[this\.acl\.endpointVisibilityWhere\(actor\), \{ status: \{ not: 'ARCHIVED' \} \}\] \} \},/.test(inb)
+        && /readStates: \{ where: \{ userId: actor\.userId \}, select: \{ lastReadAt: true \} \},/.test(inb)
+        && /LEFT JOIN "ChatReadState" r ON r\."conversationId" = c\.id AND r\."userId" = \$\{actor\.userId\}/.test(inb)
+        && /WHERE c\.id = ANY\(\$\{ids\}::text\[\]\)`\);/.test(inb) && !/\$queryRawUnsafe|\$executeRaw/.test(inb) && !/"bytes"/.test(inb)
+        && /await this\.acl\.assertEndpointInScope\(actor, c\.endpointId, 'computers:view'\);\s*\n\s*const visible = await this\.prisma\.endpoint\.count\(\{ where: \{ AND: \[this\.acl\.endpointVisibilityWhere\(actor\), \{ id: c\.endpointId \}\] \} \}\);\s*\n\s*if \(!visible\) throw new NotFoundException/.test(inb)
+        && /where: \{ userId_conversationId: \{ userId: actor\.userId, conversationId: c\.id \} \},/.test(inb),
+      'inbox(): endpointVisibilityWhere AND not archived; only this user\'s ChatReadState; one parameterised query over those ids, never the bytes; markRead(): assertEndpointInScope + visibility, keyed by actor.userId');
+    const apiE = read('apps/api/src/chat/emoji.ts'), webE = read('apps/web/lib/emoji.ts');
+    const list = (s) => s.slice(s.indexOf('= ['), s.indexOf('];') + 2);
+    check('the emoji pickers are built in and the same on the console and on /assist; an emoji is inserted as text',
+      list(apiE).length > 100 && list(apiE) === list(webE) && !/https?:|cdn|import\(/i.test(apiE + webE)
+        && /var EMOJI = \$\{JSON\.stringify\(EMOJI\)\};/.test(read('apps/api/src/tray/assist-page.ts'))
+        && /b\.textContent = e;/.test(read('apps/api/src/tray/assist-page.ts')),
+      'apps/api/src/chat/emoji.ts and apps/web/lib/emoji.ts hold the same list; assist.js embeds it and draws each with textContent');
+  }
   const e2e = read('scripts/run-e2e.sh');
   check('transcripts are kept 400 days by default, and the e2e runner turns the sweep off for scratch APIs',
     /export const RETENTION_DEFAULT_DAYS = 400;/.test(pol) && /enabled: env\.CHAT_RETENTION_SWEEP !== 'off',/.test(pol)
@@ -2517,9 +2596,14 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && (host.match(/exec\.Command/g) ?? []).length === 1 && /exec\.CommandContext\(ctx, rd, "--get-id"\)/.test(host),
     'PipeSDDL protected DACL (SY + user GRGW); FIRST_PIPE_INSTANCE and REJECT_REMOTE_CLIENTS; client PID == launched PID; one exec (rustdesk --get-id)');
   const tab = read('apps/web/components/endpoints/workspace/chat-tab.tsx');
-  check('the portal renders chat as text: no HTML injection, no links made from messages',
-    !/dangerouslySetInnerHTML|<a\s|href=|linkify|marked|markdown/i.test(tab) && /\{m\.body\}/.test(tab),
-    'chat-tab.tsx renders {m.body} as React text, with no dangerouslySetInnerHTML or anchors');
+  const attTsx = read('apps/web/components/endpoints/workspace/chat-attachment.tsx');
+  const inboxTsx = read('apps/web/components/chat/chat-inbox.tsx');
+  check('the portal renders chat as text: no HTML injection, no links made from messages; an attachment link is built from ids alone',
+    !/dangerouslySetInnerHTML|<a\s|href=|linkify|marked|markdown/i.test(tab) && /: m\.body\}/.test(tab)
+      && !/dangerouslySetInnerHTML|linkify|markdown/i.test(attTsx + inboxTsx) && !/<a\s|href=/.test(inboxTsx)
+      && (attTsx.match(/href=/g) ?? []).length === 1 && /href=\{url\}/.test(attTsx) && /const url = chatAttachmentUrl\(endpointId, conversationId, a\.id\);/.test(attTsx)
+      && /src=\{url\}/.test(attTsx) && /\{a\.fileName\}/.test(attTsx),
+    'chat-tab.tsx renders m.body as React text, with no dangerouslySetInnerHTML or anchors; chat-attachment.tsx has one href and one src, both chatAttachmentUrl(ids); the inbox has no links');
   const ws = read('apps/api/src/public/windows-script.ts');
   check('only the signed agent starts the tray host, and the remote pause says it covers chat',
     (ws.match(/ArgumentList @\('tray-host'\)/g) ?? []).length === 1 && ws.indexOf("ArgumentList @('tray-host')") > ws.indexOf('export function buildSignedWindowsScript(')
@@ -3200,8 +3284,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /res\.setHeader\('Content-Security-Policy', ASSIST_CSP\);/.test(tctl)
       && /source: '\/:path\(\(\?!assist\(\?:\/\|\$\)\)\.\*\)',/.test(next)
       && /if \(req\.headers\['x-assist'\] !== '1'\) throw new ForbiddenException/.test(tctl)
-      && (tctl.match(/assertPageWrite\(req\);/g) ?? []).length === 4,
-    "ASSIST_CSP default-src 'none', script-src 'self', no unsafe-*; pageHeaders sets it; next.config.js applies the console CSP to /:path((?!assist(?:/|$)).*); assertPageWrite in start, messages, receipts, end");
+      && (tctl.match(/assertPageWrite\(req\);/g) ?? []).length === 6
+      // 0.44: attachments are shown from api/attachments, same origin — no blob:, data: or other source is allowed for images.
+      && /"img-src 'self'",/.test(pol) && !/blob:|data:|https:/.test(pol.slice(pol.indexOf('export const ASSIST_CSP'), pol.indexOf("].join('; ');", pol.indexOf('export const ASSIST_CSP')))),
+    "ASSIST_CSP default-src 'none', script-src 'self', img-src 'self' only, no unsafe-*; pageHeaders sets it; next.config.js applies the console CSP to /:path((?!assist(?:/|$)).*); assertPageWrite in start, messages, attachments (handler and guard), receipts, end");
   check('no device secret, tray key or code reaches the page, and the tray is handed a code, never a URL',
     !/agentSecret|trayKey|heartbeat\.dat|rem0te_assist/.test(page)
       && /return \{ code, expiresAt: new Date\(now \+ CODE_TTL_MS\), conversationId \};/.test(tsv)
@@ -3255,9 +3341,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /meta: \{ scope: 'platform', before: before\?\.chatRecordingDefault \?\? true, after: recording \},/.test(tsv),
     'both PUTs call fresh() (assertFresh); the platform one checks isPlatformAdmin first; CHAT_RECORDING_CHANGED meta is scope/before/after only');
   check('an unrecorded chat keeps no text: technician messages go once read, replies once a technician\'s panel saw them, everything at the end',
-    /const r = await this\.prisma\.chatMessage\.deleteMany\(\{ where: \{ conversationId, sender: 'TECHNICIAN', readAt: \{ not: null \} \} \}\);/.test(csvc)
+    /const r = await this\.prisma\.chatMessage\.deleteMany\(\{ where: \{ conversationId, sender: 'TECHNICIAN', readAt: \{ not: null \}, attachment: \{ is: null \} \} \}\);/.test(csvc)
       && /const purged = read\.length \? await this\.purgeRead\(conversationId\) : 0;/.test(csvc)
-      && /const deleted = c\.recorded \? \{ count: 0 \} : await this\.prisma\.chatMessage\.deleteMany\(\{ where: \{ \.\.\.mine, technicianSeenAt: \{ not: null \} \} \}\);/.test(csvc)
+      && /const deleted = c\.recorded \? \{ count: 0 \} : await this\.prisma\.chatMessage\.deleteMany\(\{ where: \{ \.\.\.mine, technicianSeenAt: \{ not: null \}, attachment: \{ is: null \} \} \}\);/.test(csvc)
+      // 0.44: a message carrying a file waits for the end, and the end takes it with everything else (FK cascade to the file).
       && /if \(!c\.recorded\) await tx\.chatMessage\.deleteMany\(\{ where: \{ conversationId \} \}\);/.test(csvc)
       && /export function chatRecorded\(business: boolean \| null \| undefined, platformDefault: boolean \| null \| undefined\): boolean \{\s*\n\s*if \(business === true \|\| business === false\) return business;\s*\n\s*return platformDefault !== false;/.test(pol),
     'purgeRead deletes read TECHNICIAN rows; assistReceipts calls it; ack deletes seen END_USER rows; end() deletes all when !recorded; chatRecorded: the business\'s boolean, else the default unless it is false');

@@ -60,5 +60,12 @@ export const config = {
   // and are the same images already published in the repository, so gating them
   // buys nothing and costs a middleware round trip per image on a page that has
   // a lot of them.
-  matcher: ['/((?!_next/static|_next/image|docs-img|favicon.ico|world\\-basemap\\.json|world\\-basemap\\-detail\\.json).*)'],
+  //
+  // `api/` and `assist/` (0.44) are rewritten to the API, which authenticates
+  // them itself, and the middleware already let them through untouched
+  // (PUBLIC_PREFIXES). They are excluded here as well because a request the
+  // middleware matches has its body buffered and cut at 10 MB — a 10 MB chat
+  // attachment plus its multipart framing is over that, and reached the API
+  // truncated. Not matching them changes nothing else.
+  matcher: ['/((?!_next/static|_next/image|docs-img|favicon.ico|world\\-basemap\\.json|world\\-basemap\\-detail\\.json|api/|assist/).*)'],
 };

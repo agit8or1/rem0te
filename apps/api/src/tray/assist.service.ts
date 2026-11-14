@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, Logger, NotFoundExc
 import { PrismaService } from '../prisma/prisma.service';
 import { ContainmentService } from '../containment/containment.service';
 import { pauseMessage } from '../containment/pause';
-import { ChatService } from '../chat/chat.service';
+import { ChatService, type UploadedChatFile } from '../chat/chat.service';
 import { chatText, isClientId } from '../chat/chat-policy';
 import { SupportRequestsService } from '../support-requests/support-requests.service';
 import { TrayService } from './tray.service';
@@ -24,6 +24,8 @@ import { SESSION_TTL_MS, isCode, newSecret, readAssistCookie, sha256 } from './t
  *             support request in the queue so a technician sees it.
  *   messages  a reply (the 0.34 device reply rules: length, rate, client id).
  *   receipts  shown / read for technician messages, only what the page says.
+ *   files     (0.44) send a file into, and read one from, this window's own
+ *             conversation; the `remote` pause stops sending.
  *   end       the person ends the chat.
  */
 @Injectable()
@@ -165,6 +167,25 @@ export class AssistService {
     const { s, cid } = await this.bound(cookie);
     if (!isClientId(body?.clientId) || typeof body?.text !== 'string') throw new BadRequestException('clientId and text are required');
     return this.chat.deviceReply(s.endpointId, { conversationId: cid, clientId: body.clientId, text: body.text });
+  }
+
+  /**
+   * A file from the person at the computer (0.44), into this window's own
+   * conversation only. The cookie and x-assist were checked by
+   * AssistUploadGuard before the upload was read; they are checked again
+   * here, with the binding, as for every page write.
+   */
+  async sendAttachment(cookie: string | undefined, clientId: unknown, file: UploadedChatFile) {
+    const { s, cid } = await this.bound(cookie);
+    if (!isClientId(clientId)) throw new BadRequestException('clientId is required');
+    const ep = await this.endpoint(s.endpointId);
+    return this.chat.assistSendAttachment(s.endpointId, ep.customerId, cid, clientId, file);
+  }
+
+  /** A file in this window's own conversation — never another chat's, even on the same computer. */
+  async attachment(cookie: string | undefined, attachmentId: string) {
+    const { s, cid } = await this.bound(cookie);
+    return this.chat.assistAttachment(s.endpointId, cid, attachmentId);
   }
 
   async receipts(cookie: string | undefined, body: { shown?: unknown; read?: unknown }) {

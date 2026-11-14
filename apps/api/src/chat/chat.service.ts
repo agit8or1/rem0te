@@ -15,6 +15,17 @@ import {
   presence, receipt, retentionCutoff, technicianDisplayName, type ChatSweepConfig,
 } from './chat-policy';
 import { chatRecorded } from '../tray/tray-policy';
+import {
+  MAX_ATTACHMENTS_PER_CONVERSATION, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_BYTES_PER_CONVERSATION, attachmentBody, checkAttachment,
+  type AttachmentCheck,
+} from './chat-attachment';
+
+/** What a message says about its attachment: never the bytes. */
+const ATTACHMENT_META = { select: { id: true, fileName: true, kind: true, contentType: true, sizeBytes: true } } as const;
+type AttachmentMeta = { id: string; fileName: string; kind: string; contentType: string; sizeBytes: number };
+type MessageRow = ChatMessage & { attachment?: AttachmentMeta | null };
+/** An upload as multer hands it over (memory storage). */
+export type UploadedChatFile = { buffer?: Buffer; originalname?: string; size?: number } | undefined;
 
 /** The technician name an end-user-started chat shows until a technician first writes. */
 export const AWAITING_TECHNICIAN = 'Waiting for a technician';
@@ -36,6 +47,12 @@ export const AWAITING_TECHNICIAN = 'Waiting for a technician';
  *   tray (0.36) the /assist page and the tray reach the same conversation
  *               through TrayService / AssistService; the panel's ack route
  *               POST /endpoints/:id/chat/conversations/:cid/ack (support:chat)
+ *   files (0.44) POST /endpoints/:id/chat/conversations/:cid/attachments      support:chat
+ *               GET  /endpoints/:id/chat/conversations/:cid/attachments/:aid computers:view
+ *               and the page's POST/GET /assist/api/attachments (its cookie).
+ *               Classified by magic bytes (chat-attachment.ts); an attachment
+ *               is a message whose body is its sanitised name, so it rides
+ *               every existing path — rate caps, receipts, recording.
  *
  * Recording (0.36): a conversation is `recorded` or not, frozen when it
  * starts from the business's setting (or the platform default). One that is
@@ -53,6 +70,27 @@ export const AWAITING_TECHNICIAN = 'Waiting for a technician';
  */
 
 type Waiter = { wake: () => void };
+
+/** An attachment as both sides' readers see it: its id, name, kind, type and size — the bytes are a separate request. */
+function attachmentView(a: AttachmentMeta) {
+  return { id: a.id, fileName: a.fileName, kind: a.kind as 'image' | 'file', contentType: a.contentType, sizeBytes: a.sizeBytes };
+}
+
+const ATTACHMENT_REFUSAL: Record<string, { status: number; message: string }> = {
+  ATTACHMENT_MISSING: { status: 400, message: 'Choose a file to send.' },
+  ATTACHMENT_EMPTY: { status: 400, message: 'That file is empty.' },
+  ATTACHMENT_TOO_LARGE: { status: 413, message: 'A file can be at most 10 MB.' },
+  ATTACHMENT_COUNT: { status: 409, message: `A chat can hold at most ${MAX_ATTACHMENTS_PER_CONVERSATION} files. End it and start another.` },
+  ATTACHMENT_TOTAL: { status: 409, message: 'This chat already holds 50 MB of files, the most one chat can.' },
+};
+function refuseAttachment(code: string): never {
+  const r = ATTACHMENT_REFUSAL[code] ?? { status: 400, message: 'The file could not be sent.' };
+  throw new HttpException({ code, message: r.message }, r.status);
+}
+function attachmentOrThrow(a: AttachmentCheck): Extract<AttachmentCheck, { ok: true }> {
+  if (!a.ok) refuseAttachment(a.code);
+  return a;
+}
 
 const CONV_SUMMARY = {
   id: true, status: true, startedById: true, technicianName: true, businessName: true, supportRequestId: true,
@@ -142,10 +180,11 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     return { ...c, presence: presence(c, now, via) };
   }
 
-  private messageView(m: ChatMessage) {
+  private messageView(m: MessageRow) {
     return {
       id: m.id, sender: m.sender, authorName: m.authorName, body: m.body, createdAt: m.createdAt,
       deliveredAt: m.deliveredAt, shownAt: m.shownAt, readAt: m.readAt, technicianSeenAt: m.technicianSeenAt, receipt: receipt(m),
+      attachment: m.attachment ? attachmentView(m.attachment) : null,
     };
   }
 
@@ -173,7 +212,10 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
       lastSignedInUser: ep.inventory?.liveSampledAt ? { name: ep.inventory.loggedOnUser || null, at: ep.inventory.liveSampledAt } : null,
       open: open ? this.conversationView(open, now, via) : null,
       conversations: rows.map((r) => this.conversationView(r, now, via)),
-      limits: { maxChars: MAX_MESSAGE_CHARS, perMinute: MAX_PER_MINUTE.technician, retentionDays: this.cfg.retentionDays },
+      limits: {
+        maxChars: MAX_MESSAGE_CHARS, perMinute: MAX_PER_MINUTE.technician, retentionDays: this.cfg.retentionDays,
+        attachmentBytes: MAX_ATTACHMENT_BYTES, attachmentsPerChat: MAX_ATTACHMENTS_PER_CONVERSATION, attachmentBytesPerChat: MAX_ATTACHMENT_BYTES_PER_CONVERSATION,
+      },
     };
   }
 
@@ -195,6 +237,7 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     const rows = await this.prisma.chatMessage.findMany({
       where: { conversationId, ...(since ? { createdAt: { gte: since } } : {}) },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: TRANSCRIPT_PAGE,
+      include: { attachment: ATTACHMENT_META },
     });
     rows.reverse();
     return {
@@ -304,6 +347,101 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * POST /endpoints/:id/chat/conversations/:cid/attachments (0.44), a
+   * multipart `file`: the technician sends a file or image. The same gate as
+   * a message — support:chat on a computer the caller can see, the `remote`
+   * pause, an open chat, the per-minute cap — then the file is classified by
+   * its bytes and stored as one message carrying it.
+   */
+  async sendAttachment(actor: ActorContext, endpointId: string, conversationId: string, file: UploadedChatFile) {
+    const ep = await this.visibleEndpoint(actor, endpointId, CAP.CHAT_SEND);
+    await this.containment.assertOpen('remote', ep.customerId);
+    const a = attachmentOrThrow(checkAttachment(file));
+    const c = await this.openConversation(endpointId, conversationId);
+    await this.assertRate(c, 'TECHNICIAN', MAX_PER_MINUTE.technician);
+    const user = await this.prisma.user.findUnique({ where: { id: actor.userId }, select: { firstName: true, lastName: true } });
+    const name = user ? technicianDisplayName(user) : c.technicianName;
+    const m = await this.storeAttachment(c, { sender: 'TECHNICIAN', authorId: actor.userId, authorName: name, clientId: null, actorIp: actor.ip }, a, file!.buffer!);
+    this.wake(endpointId);
+    return { message: this.messageView(m) };
+  }
+
+  /**
+   * GET /endpoints/:id/chat/conversations/:cid/attachments/:aid (0.44): the
+   * file, for anyone who may read the transcript — computers:view on a
+   * computer they can see. Found only under its own conversation and
+   * computer; anything else is the same 404.
+   */
+  async readAttachment(actor: ActorContext, endpointId: string, conversationId: string, attachmentId: string) {
+    await this.visibleEndpoint(actor, endpointId);
+    return this.attachmentOf(endpointId, conversationId, attachmentId);
+  }
+
+  private async attachmentOf(endpointId: string, conversationId: string, attachmentId: string) {
+    if (!isId(conversationId) || !isId(attachmentId)) throw new NotFoundException('Attachment not found');
+    const a = await this.prisma.chatAttachment.findFirst({
+      where: { id: attachmentId, conversationId, conversation: { endpointId } },
+      select: { ...ATTACHMENT_META.select, bytes: true },
+    });
+    if (!a) throw new NotFoundException('Attachment not found');
+    return a;
+  }
+
+  /**
+   * One attachment, written as a message carrying it. The chat's caps are
+   * claimed first by one conditional update (open, under 20 files, room for
+   * these bytes), so two uploads at once cannot both take the last place;
+   * the message, the file and the audit row follow in the same transaction.
+   * The audit row has ids, the kind, the type and the size — never the bytes
+   * or the name.
+   */
+  private async storeAttachment(
+    c: ChatConversation,
+    who: { sender: 'TECHNICIAN' | 'END_USER'; authorId: string | null; authorName: string; clientId: string | null; actorIp?: string },
+    a: Extract<AttachmentCheck, { ok: true }>, bytes: Buffer,
+  ): Promise<MessageRow> {
+    const tech = who.sender === 'TECHNICIAN';
+    // A chat the person started (0.36) names whoever first answers it.
+    const named = tech && c.startedBy === 'end_user' && c.technicianName === AWAITING_TECHNICIAN ? { technicianName: who.authorName } : {};
+    return this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.chatConversation.updateMany({
+        where: {
+          id: c.id, status: 'OPEN',
+          attachmentCount: { lt: MAX_ATTACHMENTS_PER_CONVERSATION },
+          attachmentBytes: { lte: MAX_ATTACHMENT_BYTES_PER_CONVERSATION - a.sizeBytes },
+        },
+        data: {
+          attachmentCount: { increment: 1 }, attachmentBytes: { increment: a.sizeBytes }, lastActivityAt: new Date(),
+          ...(tech ? { technicianMessages: { increment: 1 } } : { endUserMessages: { increment: 1 } }), ...named,
+        },
+      });
+      if (claimed.count !== 1) {
+        const now = await tx.chatConversation.findUnique({ where: { id: c.id }, select: { status: true, attachmentCount: true } });
+        if (!now || now.status !== 'OPEN') throw new ConflictException({ code: 'CHAT_ENDED', message: 'This chat has ended.' });
+        refuseAttachment(now.attachmentCount >= MAX_ATTACHMENTS_PER_CONVERSATION ? 'ATTACHMENT_COUNT' : 'ATTACHMENT_TOTAL');
+      }
+      const msg = await tx.chatMessage.create({
+        data: { conversationId: c.id, sender: who.sender, authorId: who.authorId, authorName: who.authorName, body: attachmentBody(a.fileName), clientId: who.clientId },
+      });
+      const att = await tx.chatAttachment.create({
+        data: {
+          conversationId: c.id, messageId: msg.id, sender: who.sender, authorId: who.authorId,
+          fileName: a.fileName, kind: a.kind, contentType: a.contentType, sizeBytes: a.sizeBytes, sha256: a.sha256, bytes,
+        },
+        select: ATTACHMENT_META.select,
+      });
+      await tx.activityLog.create({
+        data: this.audit.entry({
+          tenantId: c.tenantId ?? undefined, customerId: c.customerId ?? undefined, actorId: who.authorId ?? undefined, actorIp: who.actorIp,
+          action: 'CHAT_ATTACHMENT_SENT', resource: 'endpoint', resourceId: c.endpointId,
+          meta: { conversationId: c.id, attachmentId: att.id, by: tech ? 'technician' : 'end_user', kind: a.kind, contentType: a.contentType, sizeBytes: a.sizeBytes },
+        }),
+      });
+      return { ...msg, attachment: att };
+    });
+  }
+
+  /**
    * POST /endpoints/:id/chat/conversations/:cid/ack { ids } (0.36): the
    * technician's panel has shown these replies from the person at the
    * computer. Recorded or not, technicianSeenAt is set once; in a chat that is
@@ -319,18 +457,21 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     if (!ids.length) return { seen: 0, deleted: 0 };
     const mine = { id: { in: ids }, conversationId: c.id, sender: 'END_USER' as const };
     const seen = await this.prisma.chatMessage.updateMany({ where: { ...mine, technicianSeenAt: null }, data: { technicianSeenAt: new Date() } });
-    const deleted = c.recorded ? { count: 0 } : await this.prisma.chatMessage.deleteMany({ where: { ...mine, technicianSeenAt: { not: null } } });
+    const deleted = c.recorded ? { count: 0 } : await this.prisma.chatMessage.deleteMany({ where: { ...mine, technicianSeenAt: { not: null }, attachment: { is: null } } });
     return { seen: seen.count, deleted: deleted.count };
   }
 
   /**
    * Not recorded (0.36): delete the technician messages the person's window
    * has reported read — the last receipt there is. Their row is the only copy.
+   * A message carrying an attachment (0.44) stays until the chat ends, when
+   * close() deletes it with everything else: the page loads the file from
+   * the server, so deleting it once "read" would take it off the screen.
    */
   async purgeRead(conversationId: string) {
     const c = await this.prisma.chatConversation.findUnique({ where: { id: conversationId }, select: { recorded: true } });
     if (!c || c.recorded) return 0;
-    const r = await this.prisma.chatMessage.deleteMany({ where: { conversationId, sender: 'TECHNICIAN', readAt: { not: null } } });
+    const r = await this.prisma.chatMessage.deleteMany({ where: { conversationId, sender: 'TECHNICIAN', readAt: { not: null }, attachment: { is: null } } });
     return r.count;
   }
 
@@ -348,7 +489,8 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
       });
       if (r.count !== 1) return null;
       const c = await tx.chatConversation.findUniqueOrThrow({ where: { id: conversationId } });
-      // Not recorded (0.36): nothing of the conversation's text outlives it.
+      // Not recorded (0.36): nothing of the conversation's text outlives it,
+      // and no attachment (0.44): deleting the messages deletes their files.
       if (!c.recorded) await tx.chatMessage.deleteMany({ where: { conversationId } });
       await tx.activityLog.create({
         data: this.audit.entry({
@@ -454,7 +596,7 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
         ? { conversationId: c.id }
         : { conversationId: c.id, sender: 'TECHNICIAN', deliveredAt: null };
       const rows = c.status === 'OPEN' || dto.history
-        ? await this.prisma.chatMessage.findMany({ where, orderBy: [{ createdAt: dto.history ? 'desc' : 'asc' }, { id: 'asc' }], take: dto.history ? 200 : POLL_BATCH })
+        ? await this.prisma.chatMessage.findMany({ where, orderBy: [{ createdAt: dto.history ? 'desc' : 'asc' }, { id: 'asc' }], take: dto.history ? 200 : POLL_BATCH, include: { attachment: ATTACHMENT_META } })
         : [];
       if (dto.history) rows.reverse();
       return {
@@ -501,8 +643,14 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     return { ...out, holdMs: Date.now() - started };
   }
 
-  private deviceMessage(m: ChatMessage) {
-    return { id: m.id, from: m.sender === 'TECHNICIAN' ? 'technician' : 'user', name: m.authorName, text: m.body, at: m.createdAt };
+  /**
+   * A message as the 0.34 Win32 chat window gets it. That window draws text
+   * only, so an attachment (0.44) is a line saying what was sent and where to
+   * see it; it is never handed the file.
+   */
+  private deviceMessage(m: MessageRow) {
+    const text = m.attachment ? `Sent a file: ${m.attachment.fileName}. This chat window cannot show files: open the chat from the tray icon once the agent is updated.` : m.body;
+    return { id: m.id, from: m.sender === 'TECHNICIAN' ? 'technician' : 'user', name: m.authorName, text, at: m.createdAt };
   }
 
   /** What the person at the computer typed. Same length rule as the technician; capped per conversation and per computer. */
@@ -636,7 +784,9 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
         data: { deviceSeenAt: new Date(), ...(c.deviceState !== 'window_open' ? { deviceState: 'window_open', deviceStateAt: new Date() } : {}) },
       });
     }
-    const rows = await this.prisma.chatMessage.findMany({ where: { conversationId: c.id }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 200 });
+    const rows = await this.prisma.chatMessage.findMany({
+      where: { conversationId: c.id }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 200, include: { attachment: ATTACHMENT_META },
+    });
     rows.reverse();
     return {
       conversation: {
@@ -646,6 +796,7 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
       messages: rows.map((m) => ({
         id: m.id, from: m.sender === 'TECHNICIAN' ? 'technician' : 'user', name: m.authorName, text: m.body, at: m.createdAt,
         clientId: m.clientId, receivedBySupport: m.sender === 'END_USER' ? !!m.technicianSeenAt : undefined,
+        attachment: m.attachment ? attachmentView(m.attachment) : null,
       })),
     };
   }
@@ -662,6 +813,49 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     if (read.length) await this.prisma.chatMessage.updateMany({ where: { id: { in: read }, readAt: null, ...mine }, data: { readAt: now } });
     const purged = read.length ? await this.purgeRead(conversationId) : 0;
     return { shown: shown.length, read: read.length, purged };
+  }
+
+  /**
+   * The person at the computer sends a file from the /assist page (0.44).
+   * The page's gate — its cookie, bound to this conversation — is checked by
+   * the caller; here, the same rules as a reply (an open chat, per-minute
+   * caps per conversation and per computer, a client id for retries) and,
+   * unlike a text reply, the `remote` pause: a computer under suspicion does
+   * not get to upload files.
+   */
+  async assistSendAttachment(endpointId: string, customerId: string | null, conversationId: string, clientId: string, file: UploadedChatFile) {
+    await this.containment.assertOpen('remote', customerId);
+    const a = attachmentOrThrow(checkAttachment(file));
+    const c = await this.prisma.chatConversation.findFirst({ where: { id: conversationId, endpointId } });
+    if (!c) throw new NotFoundException('Conversation not found');
+    const prior = () => this.prisma.chatMessage.findUnique({
+      where: { conversationId_clientId: { conversationId: c.id, clientId } }, include: { attachment: ATTACHMENT_META },
+    });
+    const dup = await prior();
+    if (dup) return { id: dup.id, at: dup.createdAt, duplicate: true, attachment: dup.attachment ? attachmentView(dup.attachment) : null };
+    if (c.status !== 'OPEN') throw new ConflictException({ code: 'CHAT_ENDED', message: 'This chat has ended.' });
+    await this.assertRate(c, 'END_USER', MAX_PER_MINUTE.endUser);
+    const deviceRecent = await this.prisma.chatMessage.count({
+      where: { sender: 'END_USER', createdAt: { gt: new Date(Date.now() - 60_000) }, conversation: { endpointId } },
+    });
+    if (deviceRecent >= MAX_DEVICE_PER_MINUTE) {
+      throw new HttpException({ code: 'CHAT_RATE_LIMITED', message: `At most ${MAX_DEVICE_PER_MINUTE} messages a minute from one computer.` }, HttpStatus.TOO_MANY_REQUESTS);
+    }
+    try {
+      const m = await this.storeAttachment(c, { sender: 'END_USER', authorId: null, authorName: c.deviceUser ?? 'Person at the computer', clientId }, a, file!.buffer!);
+      return { id: m.id, at: m.createdAt, duplicate: false, attachment: m.attachment ? attachmentView(m.attachment) : null };
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        const again = await prior();
+        if (again) return { id: again.id, at: again.createdAt, duplicate: true, attachment: again.attachment ? attachmentView(again.attachment) : null };
+      }
+      throw e;
+    }
+  }
+
+  /** The page reads a file in its own conversation, and only there. */
+  async assistAttachment(endpointId: string, conversationId: string, attachmentId: string) {
+    return this.attachmentOf(endpointId, conversationId, attachmentId);
   }
 
   /** The person ended the chat from the page. */
@@ -710,24 +904,26 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
    */
   async prune(now = new Date()) {
     const cutoff = retentionCutoff(now.getTime(), this.cfg.retentionDays);
-    let conversations = 0, messages = 0;
+    let conversations = 0, messages = 0, attachments = 0;
     for (let i = 0; i < this.cfg.batches; i++) {
       const rows = await this.prisma.chatConversation.findMany({
-        where: { status: 'ENDED', endedAt: { lt: cutoff } }, select: { id: true, technicianMessages: true, endUserMessages: true },
+        where: { status: 'ENDED', endedAt: { lt: cutoff } }, select: { id: true, technicianMessages: true, endUserMessages: true, attachmentCount: true },
         orderBy: { endedAt: 'asc' }, take: this.cfg.batch,
       });
       if (!rows.length) break;
       const r = await this.prisma.chatConversation.deleteMany({ where: { id: { in: rows.map((x) => x.id) }, status: 'ENDED', endedAt: { lt: cutoff } } });
       conversations += r.count;
       messages += rows.reduce((s, x) => s + x.technicianMessages + x.endUserMessages, 0);
+      // Their attachments go with them (foreign keys, ON DELETE CASCADE).
+      attachments += rows.reduce((s, x) => s + x.attachmentCount, 0);
       if (rows.length < this.cfg.batch) break;
     }
     if (conversations) {
       await this.audit.log({
         action: 'CHAT_PRUNED', resource: 'chat',
-        meta: { conversations, messages, retentionDays: this.cfg.retentionDays, endedBefore: cutoff.toISOString() },
+        meta: { conversations, messages, attachments, retentionDays: this.cfg.retentionDays, endedBefore: cutoff.toISOString() },
       });
     }
-    return { conversations, messages, cutoff };
+    return { conversations, messages, attachments, cutoff };
   }
 }

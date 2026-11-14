@@ -1,4 +1,7 @@
-import { Body, Controller, ForbiddenException, Get, HttpCode, HttpStatus, Param, Post, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
+import {
+  Body, CanActivate, Controller, ExecutionContext, ForbiddenException, Get, HttpCode, HttpStatus, Injectable, Param, Post, Put, Query, Req, Res,
+  UploadedFile, UseGuards, UseInterceptors,
+} from '@nestjs/common';
 import type { Request, Response } from 'express';
 import {
   ArrayMaxSize, IsArray, IsBoolean, IsIn, IsObject, IsOptional, IsString, Length, Matches, MaxLength, ValidateIf,
@@ -18,6 +21,8 @@ import { TrayService } from './tray.service';
 import { AssistService } from './assist.service';
 import { ASSIST_CSS, ASSIST_EXPIRED_HTML, ASSIST_HTML, ASSIST_JS } from './assist-page';
 import { ASSIST_CSP, SELF_HELP_IDS, assistCookie } from './tray-policy';
+import { CHAT_UPLOAD, sendAttachment } from '../chat/chat.controller';
+import type { UploadedChatFile } from '../chat/chat.service';
 
 // ── DTOs ─────────────────────────────────────────────────────────────────────
 
@@ -206,6 +211,23 @@ function assertPageWrite(req: Request) {
 }
 
 /**
+ * The page's upload (0.44), checked before a byte of it is read: guards run
+ * before interceptors, so x-assist and a live /assist session are required
+ * before multer buffers the file. The service checks both again, with the
+ * conversation binding, as it does for every page write.
+ */
+@Injectable()
+export class AssistUploadGuard implements CanActivate {
+  constructor(private readonly assist: AssistService) {}
+  async canActivate(ctx: ExecutionContext): Promise<boolean> {
+    const req = ctx.switchToHttp().getRequest<Request>();
+    assertPageWrite(req);
+    await this.assist.session(req.headers.cookie);
+    return true;
+  }
+}
+
+/**
  * /assist (0.36): the end-user chat page the tray opens, served by the API
  * and reached through the web app's /assist rewrite. No portal session is
  * read or accepted here; the only credential is the /assist cookie.
@@ -276,6 +298,26 @@ export class AssistController {
   async send(@Req() req: Request, @Body() dto: AssistMessageDto) {
     assertPageWrite(req);
     return { success: true, data: await this.assist.send(req.headers.cookie, dto) };
+  }
+
+  /** A file from the person at the computer (0.44): multipart `file` and `clientId`. */
+  @Post('api/attachments')
+  @Public()
+  @RateLimit(20)
+  @UseGuards(AssistUploadGuard)
+  @UseInterceptors(CHAT_UPLOAD)
+  async upload(@Req() req: Request, @UploadedFile() file: UploadedChatFile) {
+    assertPageWrite(req);
+    const clientId = (req.body as Record<string, unknown> | undefined)?.clientId;
+    return { success: true, data: await this.assist.sendAttachment(req.headers.cookie, clientId, file) };
+  }
+
+  /** A file in this window's own chat (0.44): an image inline, anything else as a download; inert either way. */
+  @Get('api/attachments/:aid')
+  @Public()
+  @RateLimit(120)
+  async attachment(@Req() req: Request, @Param('aid') aid: string, @Res() res: Response) {
+    sendAttachment(res, await this.assist.attachment(req.headers.cookie, aid));
   }
 
   @Post('api/receipts')

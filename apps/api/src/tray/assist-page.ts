@@ -9,7 +9,16 @@
  * HTML or markdown and nothing becomes a link: a URL in a message is text.
  * Relative URLs throughout, so the page works both behind the web app's
  * /assist rewrite and at the API's own /api/v1/assist.
+ *
+ * 0.44: an emoji picker (built in: EMOJI, inserted as text) and attachments.
+ * The page uploads over HTTPS to api/attachments itself — the tray's pipes
+ * carry nothing of it — and shows an image by pointing an <img> at
+ * api/attachments/<id>: same origin, under /assist, so the cookie goes with
+ * it and the CSP's img-src 'self' needs no blob: or data:. Every other file
+ * is a download link. A file's name is put on the page with textContent.
  */
+import { EMOJI } from '../chat/emoji';
+import { MAX_ATTACHMENT_BYTES } from '../chat/chat-attachment';
 
 export const ASSIST_HTML = `<!doctype html>
 <html lang="en">
@@ -36,8 +45,12 @@ export const ASSIST_HTML = `<!doctype html>
   <button id="start-send" type="button">Start chat</button>
 </section>
 <footer id="compose" hidden>
+  <div id="emoji" role="dialog" aria-label="Emoji" hidden></div>
   <textarea id="text" rows="2" maxlength="2000" aria-label="Your message" placeholder="Write a message. Enter sends, Shift+Enter adds a line."></textarea>
+  <input id="file" type="file" hidden>
   <div id="row">
+    <button id="emoji-open" type="button" aria-label="Insert an emoji" aria-expanded="false" aria-controls="emoji">&#x1F642;</button>
+    <button id="attach" type="button" aria-label="Send a file or picture (up to 10 MB)">Attach</button>
     <span id="note"></span>
     <button id="end" type="button">End chat</button>
     <button id="send" type="button">Send</button>
@@ -75,6 +88,16 @@ button { font: inherit; border: 1px solid var(--line); border-radius: 6px; paddi
 #send, #start-send { background: var(--accent); color: #fff; border-color: transparent; }
 button:disabled { opacity: .5; cursor: default; }
 #gone { padding: 24px 16px; text-align: center; color: var(--muted); }
+#emoji { display: grid; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); gap: 2px; max-height: 160px; overflow-y: auto; margin-bottom: 6px; padding: 4px; border: 1px solid var(--line); border-radius: 6px; }
+#emoji[hidden] { display: none; }
+#emoji button { padding: 2px; border: 0; font-size: 20px; line-height: 28px; background: transparent; }
+#emoji button:hover, #emoji button:focus { background: var(--them); }
+#emoji-open { padding: 3px 8px; font-size: 16px; }
+.att { margin-top: 2px; }
+.att img { display: block; max-width: 100%; max-height: 220px; border-radius: 6px; cursor: zoom-in; margin-bottom: 4px; }
+.att.big img { max-height: none; cursor: zoom-out; }
+.att a { color: inherit; overflow-wrap: anywhere; }
+body.drop #log { outline: 2px dashed var(--accent); outline-offset: -4px; }
 `;
 
 export const ASSIST_JS = `'use strict';
@@ -86,6 +109,11 @@ export const ASSIST_JS = `'use strict';
   // this window has drawn is kept here (and lost when it closes, as it says).
   var kept = {}, order = [], pending = {};
   var POLL_MS = 3000;
+  var MAX_FILE = ${MAX_ATTACHMENT_BYTES};
+  var EMOJI = ${JSON.stringify(EMOJI)};
+  // One element per attachment, reused on every redraw, so an image is
+  // fetched once rather than on every poll.
+  var nodes = {};
 
   function rid() { var a = new Uint8Array(16); crypto.getRandomValues(a); return Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join(''); }
   function api(method, path, body) {
@@ -102,6 +130,24 @@ export const ASSIST_JS = `'use strict';
   function gone(text) {
     $('log').hidden = true; $('compose').hidden = true; $('start').hidden = true;
     var g = $('gone'); g.hidden = false; g.textContent = text;
+  }
+  function size(n) { return n < 1024 ? n + ' B' : n < 1048576 ? Math.round(n / 1024) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
+  function attachmentNode(a) {
+    if (nodes[a.id]) return nodes[a.id];
+    var url = 'api/attachments/' + encodeURIComponent(a.id);
+    var wrap = document.createElement('div'); wrap.className = 'att';
+    if (a.kind === 'image') {
+      var img = document.createElement('img');
+      img.alt = a.fileName; img.src = url;
+      img.addEventListener('click', function () { wrap.classList.toggle('big'); });
+      wrap.appendChild(img);
+    }
+    var link = document.createElement('a');
+    link.href = url; link.setAttribute('download', a.fileName);
+    link.textContent = (a.kind === 'image' ? 'Save ' : 'Download ') + a.fileName + ' (' + size(a.sizeBytes) + ')';
+    wrap.appendChild(link);
+    nodes[a.id] = wrap;
+    return wrap;
   }
   function time(iso) { try { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } }
 
@@ -143,7 +189,8 @@ export const ASSIST_JS = `'use strict';
       var m = kept[id];
       var row = document.createElement('div'); row.className = 'msg ' + (m.from === 'user' ? 'user' : 'tech');
       var meta = document.createElement('div'); meta.className = 'meta'; meta.textContent = (m.from === 'user' ? 'You' : m.name) + ' · ' + time(m.at);
-      var body = document.createElement('div'); body.className = 'body'; body.textContent = m.text;
+      var body = document.createElement('div'); body.className = 'body';
+      if (m.attachment) body.appendChild(attachmentNode(m.attachment)); else body.textContent = m.text;
       row.appendChild(meta); row.appendChild(body);
       if (m.from === 'user') {
         var st = document.createElement('div'); st.className = 'state';
@@ -193,6 +240,7 @@ export const ASSIST_JS = `'use strict';
     ended = c.status !== 'OPEN';
     $('compose').hidden = false;
     $('text').disabled = ended; $('send').disabled = ended; $('end').disabled = ended;
+    $('attach').disabled = ended || !!s.contained; $('emoji-open').disabled = ended;
     $('note').textContent = ended ? (c.endedReason === 'end_user' ? 'You ended this chat.' : 'This chat has ended.') : '';
     draw(s);
     receipts(s);
@@ -227,6 +275,52 @@ export const ASSIST_JS = `'use strict';
     });
   }
 
+  function upload(f) {
+    if (!f || ended || !state || !state.conversation) return;
+    if (f.size > MAX_FILE) { $('note').textContent = 'A file can be at most 10 MB.'; return; }
+    if (!f.size) { $('note').textContent = 'That file is empty.'; return; }
+    var cid = rid();
+    pending[cid] = { text: 'Sending ' + f.name + '...' };
+    draw(state);
+    var fd = new FormData();
+    fd.append('clientId', cid);
+    fd.append('file', f, f.name);
+    fetch('api/attachments', { method: 'POST', credentials: 'same-origin', headers: { 'x-assist': '1' }, body: fd }).then(function (r) {
+      return r.text().then(function (t) { var j = null; try { j = JSON.parse(t); } catch (e) {} return { status: r.status, body: j }; });
+    }).then(function (r) {
+      if ((r.status === 200 || r.status === 201) && r.body && r.body.data) {
+        var d = r.body.data;
+        delete pending[cid];
+        if (!kept[d.id]) { order.push(d.id); kept[d.id] = { id: d.id, from: 'user', name: 'You', text: d.attachment ? d.attachment.fileName : '', at: d.at, attachment: d.attachment }; }
+      } else {
+        pending[cid].text = f.name;
+        pending[cid].failed = r.status === 413 ? 'a file can be at most 10 MB.' : errText(r, 'it could not be delivered.');
+      }
+      if (state) draw(state);
+    }).catch(function () { pending[cid].text = f.name; pending[cid].failed = 'the connection failed.'; if (state) draw(state); });
+  }
+
+  function insertText(t) {
+    var el = $('text');
+    if (el.disabled || el.value.length + t.length > 2000) return;
+    var a = el.selectionStart || 0, b = el.selectionEnd || 0;
+    el.value = el.value.slice(0, a) + t + el.value.slice(b);
+    el.selectionStart = el.selectionEnd = a + t.length;
+    el.focus();
+  }
+  function emojiPanel() {
+    var p = $('emoji');
+    EMOJI.forEach(function (e) {
+      var b = document.createElement('button'); b.type = 'button'; b.textContent = e; b.setAttribute('aria-label', e);
+      b.addEventListener('click', function () { insertText(e); });
+      p.appendChild(b);
+    });
+    $('emoji-open').addEventListener('click', function () {
+      p.hidden = !p.hidden; $('emoji-open').setAttribute('aria-expanded', p.hidden ? 'false' : 'true');
+    });
+    p.addEventListener('keydown', function (e) { if (e.key === 'Escape') { p.hidden = true; $('emoji-open').setAttribute('aria-expanded', 'false'); $('text').focus(); } });
+  }
+
   function start() {
     var t = $('start-text').value;
     if (!t.trim() || busy) return;
@@ -250,6 +344,21 @@ export const ASSIST_JS = `'use strict';
     $('start-send').addEventListener('click', start);
     $('end').addEventListener('click', end);
     $('text').addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+    emojiPanel();
+    $('attach').addEventListener('click', function () { $('file').click(); });
+    $('file').addEventListener('change', function () { var f = $('file').files && $('file').files[0]; $('file').value = ''; upload(f); });
+    // A pasted or dropped picture or file is sent as an attachment.
+    $('text').addEventListener('paste', function (e) {
+      var fs = e.clipboardData && e.clipboardData.files;
+      if (fs && fs.length) { e.preventDefault(); upload(fs[0]); }
+    });
+    document.addEventListener('dragover', function (e) { if (!ended) { e.preventDefault(); document.body.classList.add('drop'); } });
+    document.addEventListener('dragleave', function () { document.body.classList.remove('drop'); });
+    document.addEventListener('drop', function (e) {
+      e.preventDefault(); document.body.classList.remove('drop');
+      var fs = e.dataTransfer && e.dataTransfer.files;
+      if (fs && fs.length) upload(fs[0]);
+    });
     document.addEventListener('visibilitychange', function () { if (state) receipts(state); });
     window.addEventListener('focus', function () { if (state) receipts(state); });
     loop();
