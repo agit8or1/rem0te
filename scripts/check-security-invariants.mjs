@@ -2116,7 +2116,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const routeList = [...ctl.matchAll(/@(Get|Post|Put|Patch|Delete)\('([^']*)'\)\s*(?:@HttpCode\([^)]*\)\s*)?@RequireCapability\(CAP\.([A-Z_]+)\)/g)].map((m) => [m[1], m[2], m[3]]);
   const allRoutes = [...ctl.matchAll(/@(?:Get|Post|Put|Patch|Delete)\('([^']*)'\)/g)].map((m) => m[1]);
   check('software: every route names its capability; there is no approve, sign or upload route',
-    allRoutes.length === 20 && routeList.length === allRoutes.length && !allRoutes.some((r) => /approv|sign|upload|installer|file|blob|binary/i.test(r))
+    allRoutes.length === 21 && routeList.length === allRoutes.length && !allRoutes.some((r) => /approv|sign|upload|installer|file|blob|binary/i.test(r))
       && routeList.filter(([m, r]) => m === 'Post' && /^software\/(catalog|manifest-preview|winget\/(catalog|refresh))/.test(r)).every(([, , c]) => c === 'COMPUTERS_EDIT'),
     `routes: ${allRoutes.join(', ')}`);
   check('software: nothing in the software module accepts a file',
@@ -2126,7 +2126,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const fresh = ['create', 'update', 'archive'].map((n) => { const b = method(n); const a = b.indexOf("assertFresh(freshMethod, { action: 'software.catalog' });"); const w = b.search(/this\.prisma\.softwareCatalogEntry\.(create|updateMany)\(/); const au = b.indexOf("action: 'SOFTWARE_CATALOG_"); return [n, a > 0 && w > a && au > w]; });
   check('software: adding, changing or archiving a catalog entry needs a fresh sign-in before the write, and is audited after it',
     // 0.40: the two request routes also pass this.fresh(req) on, for direct mode (§ 58).
-    fresh.every(([, ok]) => ok) && (ctl.match(/this\.fresh\(req\)/g) ?? []).length === 8 && /requestRing\(actor, id, Number\(ring\), body, this\.fresh\(req\)\)/.test(ctl) && /single\(actor, id, entryId, operation, body, this\.fresh\(req\)\)/.test(ctl) && /this\.stepUp\.read\(req, u\.sub, u\.iat\)/.test(ctl),
+    fresh.every(([, ok]) => ok) && (ctl.match(/this\.fresh\(req\)/g) ?? []).length === 9 && /requestRing\(actor, id, Number\(ring\), body, this\.fresh\(req\)\)/.test(ctl) && /single\(actor, id, entryId, operation, body, this\.fresh\(req\)\)/.test(ctl) && /this\.stepUp\.read\(req, u\.sub, u\.iat\)/.test(ctl),
     `per method: ${fresh.map(([n, ok]) => `${n}=${ok}`).join(', ')}`);
   check('software: only a business\'s own owner (not a technician) or a Platform Admin changes its entries; only an admin the global ones',
     /private canEdit\(actor: ActorContext, e: [^)]*\): boolean \{\s*if \(actor\.isPlatformAdmin\) return true;\s*if \(e\.scope === 'GLOBAL'\) return false;[\s\S]{0,120}return !actor\.technician && actor\.businessId === e\.customerId && this\.acl\.isBusinessOwner\(actor\);/.test(svc),
@@ -3832,6 +3832,43 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && kfn.length > 500 && !/Start-Process|Invoke-Expression|Invoke-Item|Remove-Item|Set-ItemProperty|New-ItemProperty|\.Invoke\(|\biex\b/i.test(kfn)
       && /\[IO\.File\]::OpenRead\(\\\$path\)/.test(kfn) && (kfn.match(/OpenRead|Open\(|WriteAll|Out-File|Set-Content/g) ?? []).length === 1,
     'REMOVAL_KINDS, sanitizeSoftware and the collector functions in windows-script.ts');
+}
+
+// 60. Browsing the winget index and building catalogs by selection (0.43).
+//     The browse is a read (GET, View computers) whose page size is capped
+//     at 100 and whose parameters are checked before Prisma sees them. The
+//     bulk add is one Edit-computers route, rate-limited, at most 25
+//     packages, needing a fresh sign-in once before any manifest is read or
+//     anything written; each package goes through resolveWinget and
+//     wingetEntry (the one-click path, audited per entry, via 'bulk'); and
+//     another business's catalog looks like a missing one.
+{
+  const svc = read('apps/api/src/software/software.service.ts');
+  const ctl = read('apps/api/src/software/software.controller.ts');
+  const ix = read('apps/api/src/software/winget-index.ts');
+  const def = read('apps/api/src/software/definition.ts');
+  const m = (name) => { const i = svc.indexOf(`  async ${name}(`); return i < 0 ? '' : svc.slice(i, svc.indexOf('\n  }\n', i)); };
+  const pm = (name) => { const i = svc.indexOf(`  private async ${name}(`); return i < 0 ? '' : svc.slice(i, svc.indexOf('\n  }\n', i)); };
+  check('browse: the index page is a read for whoever reads the catalog, at most 100 rows, its parameters checked first',
+    /@Get\('software\/winget\/packages'\)\s*@RequireCapability\(CAP\.COMPUTERS_VIEW\)/.test(ctl) && /export const BROWSE_MAX_PAGE_SIZE = 100;/.test(ix)
+      && /pageSize: Math\.min\(size, BROWSE_MAX_PAGE_SIZE\)/.test(ix) && /const p = parseBrowse\(raw\);\s*if \(!p\.ok\) throw new BadRequestException/.test(pm('wingetBrowse'))
+      && /if \(!actor\.isPlatformAdmin && !this\.acl\.can\(actor, CAP\.COMPUTERS_VIEW\)\) throw new ForbiddenException[^\n]*\n\s*if \(browse && isBrowse\(browse\)\) return this\.wingetBrowse/.test(m('wingetSearch')),
+    'wingetSearch checks the capability before it hands a browse on; parseBrowse caps pageSize');
+  const bulk = m('addManyFromWinget'), one = pm('bulkOne');
+  const iCap = bulk.indexOf('BULK_MAX_PACKAGES'), iEdit = bulk.indexOf('if (!this.canEdit(actor,'), iFr = bulk.indexOf("assertFresh(freshMethod, { action: 'software.catalog' });"), iWork = bulk.indexOf('this.bulkOne(');
+  check('bulk: at most 25 packages, Edit computers and rate-limited, a fresh sign-in once before any package is read or written',
+    /export const BULK_MAX_PACKAGES = 25;/.test(def) && /packages: z\.array\([\s\S]{0,200}\)\.min\(1\)\.max\(BULK_MAX_PACKAGES\)/.test(def)
+      && /@Post\('software\/winget\/catalog\/bulk'\)\s*@HttpCode\(HttpStatus\.OK\)\s*@RequireCapability\(CAP\.COMPUTERS_EDIT\)\s*@RateLimit\(3\)/.test(ctl)
+      && iCap > 0 && iEdit > iCap && iFr > iEdit && iWork > iFr && /if \(!actor\.isPlatformAdmin\) throw new ForbiddenException\(\{ code: 'NOT_ALLOWED', message: 'Only a Platform Admin adds to the global catalog\.' \}\);/.test(bulk),
+    'addManyFromWinget: the cap, then who may change the catalog, then assertFresh, then the packages');
+  check('bulk: each package goes through the one-click path (resolveWinget, then wingetEntry, audited via bulk), and writes nothing itself',
+    /const r = await this\.resolveWinget\(pkg\.packageId, pkg\.version, arch\);\s*const w = await this\.wingetEntry\(actor, customerId, r, freshMethod, 'bulk'\);/.test(one)
+      && !/this\.prisma\.softwareCatalogEntry\.(create|update|updateMany|upsert|delete)/.test(bulk + one) && !/this\.audit\.log/.test(bulk + one),
+    'bulkOne must reuse resolveWinget and wingetEntry');
+  check('bulk and browse: another business\'s catalog looks like a missing one',
+    /if \(!actor\.isPlatformAdmin && businessId !== actor\.businessId\) throw new NotFoundException\('Business not found'\);/.test(pm('catalogBusiness'))
+      && bulk.indexOf('this.catalogBusiness(actor, d.businessId)') > 0 && pm('wingetBrowse').indexOf('this.catalogBusiness(actor, raw.businessId)') > 0,
+    'catalogBusiness must 404 a business that is not the caller\'s own');
 }
 
 if (failures.length > 0) {

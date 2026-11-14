@@ -433,6 +433,64 @@ $out | ConvertTo-Json -Compress
   }
 }
 
+// ── 0.43: browsing the index, and building a catalog by selection ──────────
+{
+  const W = require(path.join(dist, 'software/winget-index.js'));
+  const ok = (raw) => { const p = W.parseBrowse(raw); return p.ok ? p.value : null; };
+  const no = (raw) => !W.parseBrowse(raw).ok;
+  check('browse: only a request naming a page or a page size is a browse', W.isBrowse({ page: '1' }) && W.isBrowse({ pageSize: '50' }) && !W.isBrowse({ q: 'x' }) && !W.isBrowse({}));
+  const d = ok({ page: '1' });
+  check('browse: defaults — page 1, 50 rows, by name, no filters', d && d.page === 1 && d.pageSize === 50 && d.sort === 'name' && d.q === '' && d.publisher === null && d.letter === null, JSON.stringify(d));
+  check('browse: a page size over 100 is capped at 100, not refused', ok({ page: '1', pageSize: '500' })?.pageSize === 100 && ok({ page: '1', pageSize: '100' })?.pageSize === 100 && ok({ page: '2', pageSize: '7' })?.pageSize === 7);
+  check('browse: page and page size are whole positive numbers', no({ page: '0' }) && no({ page: '-1' }) && no({ page: '1.5' }) && no({ page: 'x' }) && no({ page: '1', pageSize: '0' }) && no({ page: '1e3' }) && no({ page: '10001' }) && no({ page: ['1', '2'] }));
+  check('browse: a query defaults to relevance; relevance without a query is by name', ok({ page: '1', q: 'notepad' })?.sort === 'relevance' && ok({ page: '1', sort: 'relevance' })?.sort === 'name' && ok({ page: '1', q: 'notepad', sort: '-name' })?.sort === '-name');
+  check('browse: the query charset is the search\'s; a one-character or hostile query is refused', no({ page: '1', q: 'a' }) && no({ page: '1', q: "x' OR 1=1" }) && no({ page: '1', q: 'a%' }) && no({ page: '1', q: 'é' }) && ok({ page: '1', q: '  7zip  ' })?.q === '7zip');
+  check('browse: sort is one of three', no({ page: '1', sort: 'publisher' }) && no({ page: '1', sort: 'name; drop' }));
+  check('browse: a publisher is the normalised key, lower-cased', ok({ page: '1', publisher: 'IgorPavlov' })?.publisher === 'igorpavlov' && no({ page: '1', publisher: 'igor pavlov' }) && no({ page: '1', publisher: 'a%' }) && no({ page: '1', publisher: 'x'.repeat(121) }));
+  check('browse: a letter is A–Z or #', ok({ page: '1', letter: 'n' })?.letter === 'N' && ok({ page: '1', letter: '#' })?.letter === '#' && no({ page: '1', letter: 'NO' }) && no({ page: '1', letter: '1' }) && no({ page: '1', letter: '%' }));
+  check('browse: the letter of a name', W.letterOf('7-Zip') === '#' && W.letterOf('notepad++') === 'N' && W.letterOf(' Zoom') === 'Z' && W.letterOf('') === '#' && W.letterOf('Éclair') === '#');
+  const pw = (t, p, s) => JSON.stringify(W.pageWindow(t, p, s));
+  check('paging: 16,352 rows at 50 a page is 328 pages; the last holds 2', pw(16352, 328, 50) === JSON.stringify({ page: 328, pages: 328, skip: 16350 }) && pw(16352, 1, 50) === JSON.stringify({ page: 1, pages: 328, skip: 0 }));
+  check('paging: a page past the end is the last page; nothing is page 1 of 1', pw(120, 9, 50) === JSON.stringify({ page: 3, pages: 3, skip: 100 }) && pw(0, 4, 50) === JSON.stringify({ page: 1, pages: 1, skip: 0 }) && pw(100, 2, 50) === JSON.stringify({ page: 2, pages: 2, skip: 50 }));
+  const R = W.normalizeIndexRows([
+    { id: 'Flo.Notepad2', name: 'Notepad2', version: '4', publisher: 'flo' },
+    { id: 'Notepad++.Notepad++', name: 'Notepad++', moniker: 'notepad++', version: '8.7.4', publisher: 'notepadplusplusteam' },
+    { id: 'Microsoft.WindowsNotepad', name: 'Windows Notepad', version: '11', publisher: 'microsoft' },
+    { id: 'Rick.Notepad3', name: 'Notepad3', version: '6', publisher: 'rick' },
+    { id: 'JackieLiu.NotepadsApp', name: 'Notepads App', version: '1', publisher: 'jackieliu' },
+  ]).rows;
+  const p1 = W.rankPage('notepad', R, 1, 2), p2 = W.rankPage('notepad', R, 2, 2), p3 = W.rankPage('notepad', R, 3, 2);
+  const flat = [...p1.rows, ...p2.rows, ...p3.rows].map((r) => r.packageId);
+  check('paging: relevance pages are cuts of the 0.42 ranking, in order, with the total', flat.join() === W.rankSearch('notepad', R, 100).map((r) => r.packageId).join() && flat[0] === 'Notepad++.Notepad++' && p1.total === 5 && p1.pages === 3 && p3.rows.length === 1, flat.join());
+  check('paging: relevance drops rows that do not match every term', W.rankPage('notepad microsoft', R, 1, 50).rows.map((r) => r.packageId).join() === 'Microsoft.WindowsNotepad');
+  check('browse: the rank cap and the page cap are what the docs say', W.BROWSE_RANK_CAP === 2000 && W.BROWSE_MAX_PAGE_SIZE === 100 && W.BROWSE_PAGE_SIZE === 50);
+
+  // Selection: the bulk request, and the marks on each row.
+  const pk = (n) => Array.from({ length: n }, (_, i) => ({ packageId: `Vendor.App${i}` }));
+  check('bulk: one to 25 packages', D.BulkFromWingetDto.safeParse({ scope: 'global', packages: pk(25) }).success && !D.BulkFromWingetDto.safeParse({ scope: 'global', packages: pk(26) }).success && !D.BulkFromWingetDto.safeParse({ scope: 'global', packages: [] }).success && D.BULK_MAX_PACKAGES === 25);
+  check('bulk: each package once, case-insensitively (winget ids are)', !D.BulkFromWingetDto.safeParse({ scope: 'global', packages: [{ packageId: '7zip.7zip' }, { packageId: '7ZIP.7zip' }] }).success);
+  check('bulk: ids and versions in the plan charsets; no other keys', !D.BulkFromWingetDto.safeParse({ scope: 'global', packages: [{ packageId: '-x.y' }] }).success
+    && !D.BulkFromWingetDto.safeParse({ scope: 'global', packages: [{ packageId: 'a.b', version: '1 && x' }] }).success
+    && !D.BulkFromWingetDto.safeParse({ scope: 'global', packages: [{ packageId: 'a.b', installerSha256: 'x' }] }).success
+    && !D.BulkFromWingetDto.safeParse({ scope: 'global', packages: [{ packageId: 'a.b' }], detection: {} }).success
+    && D.BulkFromWingetDto.parse({ scope: 'business', businessId: 'biz_12345678', packages: [{ packageId: 'a.b', version: '1.0' }] }).architecture === 'x64');
+  check('bulk: what each change reports', D.bulkStatusOf('created') === 'added' && D.bulkStatusOf('reused') === 'already' && D.bulkStatusOf('updated') === 'updated');
+  const E = (id, packageId, scope, customerId, version, extra = {}) => ({ id, packageId, scope, customerId, version, revision: 1, archivedAt: null, customer: customerId ? { name: `Biz ${customerId}` } : null, ...extra });
+  const entries = [
+    E('e1', '7zip.7zip', 'BUSINESS', 'acme', '24.08'), E('e2', '7zip.7zip', 'GLOBAL', null, '24.09'),
+    E('e3', 'Notepad++.Notepad++', 'BUSINESS', 'globex', '8.7'), E('e4', 'Git.Git', 'BUSINESS', 'acme', '2.47', { archivedAt: new Date() }),
+    E('e5', 'mozilla.firefox', 'BUSINESS', 'acme', '133'),
+  ];
+  const mA = D.catalogMarks(entries, 'acme'), mG = D.catalogMarks(entries, null);
+  check('marks: global first, then the business looked at, with the pinned version', mA.get('7zip.7zip').map((x) => `${x.scope}:${x.version}`).join() === 'global:24.09,business:24.08' && mA.get('7zip.7zip')[1].businessName === 'Biz acme');
+  check('marks: another business\'s entry is never shown, and archived entries are not "in" a catalog', !mA.has('notepad++.notepad++') && !mA.has('git.git') && !mG.has('notepad++.notepad++') && mG.get('7zip.7zip').length === 1);
+  check('marks: keyed by the id in lower case', mA.get('mozilla.firefox')?.[0].entryId === 'e5');
+  check('already: the target\'s own entry, else (for a business) the global one; nothing for the global target from a business entry',
+    D.alreadyIn(mA.get('7zip.7zip'), 'acme')?.entryId === 'e1' && D.alreadyIn(mA.get('7zip.7zip'), null)?.entryId === 'e2'
+      && D.alreadyIn(D.catalogMarks([entries[1]], 'acme').get('7zip.7zip'), 'acme')?.scope === 'global'
+      && D.alreadyIn(mA.get('mozilla.firefox'), null) === null && D.alreadyIn(undefined, 'acme') === null);
+}
+
 if (failures.length) {
   console.error(`✗ ${failures.length} failed, ${passed} passed`);
   for (const f of failures) console.error(`  - ${f}`);

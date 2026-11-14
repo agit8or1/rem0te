@@ -56,6 +56,9 @@ export const refusalText = (e: unknown, fallback: string) => { const r = refusal
 export const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
 /** The server's copy of the winget index (WingetIndexState), as GET software/winget/packages reports it. */
+/** Two missed daily reads. */
+const INDEX_STALE_MS = 48 * 3_600_000;
+
 export interface WingetIndex {
   refreshedAt: string | null; attemptedAt: string | null; packages: number; lastError: string | null;
   sweep: 'on' | 'off'; refreshing: boolean; nextReadAt?: string | null;
@@ -76,27 +79,29 @@ export function WingetIndexStatus({ idx, isPlatformAdmin, onRead, compact }: { i
   });
   if (!idx) return null;
   const empty = idx.packages === 0;
+  // 0.43: a copy more than two days old (the sweep reads daily) is called out too, not only an empty one.
+  const stale = !empty && (!idx.refreshedAt || Date.now() - new Date(idx.refreshedAt).getTime() > INDEX_STALE_MS);
   const when = (s: string) => formatDate(s);
   const next = idx.sweep === 'off'
     ? 'The automatic read is switched off on this server (WINGET_INDEX_SWEEP=off).'
     : idx.nextReadAt ? `It is read automatically ${new Date(idx.nextReadAt).getTime() <= Date.now() + 60_000 ? 'within the next 15 minutes' : `at about ${when(idx.nextReadAt)}`}.` : '';
   return (
-    <div className={`text-xs ${empty ? 'rounded-md border border-yellow-300 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-950/40 p-2' : 'text-muted-foreground'} space-y-1`} data-testid="winget-index-status" data-index-empty={empty ? 'true' : 'false'}>
+    <div className={`text-xs ${empty || stale ? 'rounded-md border border-yellow-300 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-950/40 p-2' : 'text-muted-foreground'} space-y-1`} data-testid="winget-index-status" data-index-empty={empty ? 'true' : 'false'} data-index-stale={stale ? 'true' : 'false'}>
       <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        {empty && <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-yellow-600" />}
+        {(empty || stale) && <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-yellow-600" />}
         <span>
           {empty
             ? <><strong>The winget catalog is empty on this server</strong> — its index has not been read{idx.attemptedAt ? ` (last tried ${when(idx.attemptedAt)})` : ' yet'}, so a search finds nothing.</>
-            : <>Winget index: {idx.packages.toLocaleString()} packages, read {idx.refreshedAt ? when(idx.refreshedAt) : 'at an unknown time'}.</>}
+            : <>Winget index: {idx.packages.toLocaleString()} packages, read {idx.refreshedAt ? when(idx.refreshedAt) : 'at an unknown time'}.{stale ? <strong> That copy is out of date: packages published to winget since are missing from it.</strong> : null}</>}
         </span>
-        {isPlatformAdmin && (empty || !compact) && (
+        {isPlatformAdmin && (empty || stale || !compact) && (
           <Button size="sm" variant="outline" className="h-6 text-[11px]" data-testid="winget-read-now" disabled={read.isPending || idx.refreshing} onClick={() => read.mutate()}>
             {read.isPending || idx.refreshing ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}Read the index now
           </Button>
         )}
       </p>
       {idx.lastError && <p data-testid="winget-index-error">Last error: {idx.lastError}{empty ? '' : ' (the previous copy is still searched)'}</p>}
-      {(empty || !compact) && <p>{next}{!isPlatformAdmin && empty ? ' A Platform Admin can read it now from Automation → Software catalog.' : ''}</p>}
+      {(empty || stale || !compact) && <p>{next}{!isPlatformAdmin && empty ? ' A Platform Admin can read it now from Automation → Software catalog.' : ''}</p>}
     </div>
   );
 }
