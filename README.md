@@ -90,7 +90,8 @@ says what is proven and what is not.
 - **Automatic agent updates per computer and per business (0.46)**, and **fewer "confirm it is you" prompts**
   for everyday changes (0.47, a Platform Admin setting). [Updates](docs/updates.md)
 - **Direct mode for a single operator (0.40)**: requests are signed at once, with no second approver.
-- **The Devices list fits the window (0.47.1)**: OS, Site and Logged-in user show on wider screens only.
+- **The Devices list fits the window (0.47.1, 0.48.1)**: at 1280 and 1440 pixels with the sidebar open, with
+  Last seen, OS, Agent, Site and Logged-in user kept for wider screens.
 
 ## What's new in 0.30
 

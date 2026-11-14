@@ -9,9 +9,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 **The documentation, the in-app help and the screenshots catch up with 0.40 to 0.48.**
 
-Nothing in the API or the agent changes. The docs had fallen behind the code. `docs/diagnostics.md` still said
-nothing on the Processes and Services tabs acts on the computer, though 0.45 put Start, Stop, Restart, Startup
-type and End process there. The gallery said starting or stopping a service "is not offered here". The README's
+Nothing in the API or the agent changes; the one code change is the Devices list layout, below. The docs had
+fallen behind the code. `docs/diagnostics.md` still said nothing on the Processes and Services tabs acts on the
+computer, though 0.45 put Start, Stop, Restart, Startup type and End process there. The gallery said starting or stopping a service "is not offered here". The README's
 limitations said Rem0te had "no scripting… no software deployment". The 0.48 pages had no pictures at all.
 
 **Pages**
@@ -63,9 +63,25 @@ gallery now has 69 images.
 - `capture-media.mjs` takes a per-shot `height`, so a dialog taller than the window is not cut off above its
   buttons.
 
-Seen while capturing, not fixed here: at 1440 px the 0.47.1 Devices list still breaks device names mid-word
-(`break-all` on the name cell). Its last data column is partly hidden behind the pinned Connect column. The
-recaptured Devices-list images show this as it is.
+**The Devices list fits at 1440 and 1280 pixels, for real this time.** 0.47.1 set out to stop the list scrolling
+sideways, but it measured nothing. Its `break-all` on the device name split single-token names mid-word
+(`CASC-PAY` / `ROLL-01`), because breaking the name was the only way the row could shrink. Even then, OS (from
+1280 px), Agent and Last seen together were wider than the 1150 px content pane at 1440, so Pending patches sat
+under the pinned Connect column. Now, in `columns.tsx`:
+
+- The device name is `whitespace-nowrap` again.
+- OS and Agent show from 1536 px (`2xl`), with Site and Logged-in user.
+- Last seen shows from 1440 px, through a new `wide` step (`min-[1440px]`). The connectivity dot beside each name
+  still says online, agent silent or offline.
+- Health's empty state is a short muted *None*, with *No open alerts* on hover.
+
+Measured in Playwright on the docs stack with the sidebar open and the default columns. The table's `scrollWidth`
+equals its `clientWidth`: 1150 at 1440×1000 and 990 at 1280×900. Every header ends left of Connect, and every
+name is on one line.
+
+Not fixed: from 1536 px all nine columns come back at once and need 1679 px. So at 1536 to about 1970 px the table
+still scrolls sideways, and Pending patches starts under Connect. That was already so in 0.47.1. It needs the wide
+columns staged across more widths, which is a design choice rather than a fix.
 
 ---
 

@@ -13,7 +13,7 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 ## Using it
 
 - **[technician-guide.md](technician-guide.md)** — day-to-day: find a computer,
-  connect, help someone unenrolled, review sessions; which Devices-list columns show on narrower windows (0.47.1).
+  connect, help someone unenrolled, review sessions; which Devices-list columns show on narrower windows (0.48.1).
 - **[clients.md](clients.md)** — every RustDesk client Rem0te hands out, who each
   is for, and how it learns where this server is.
 - **[connecting.md](connecting.md)** — what actually happens when you click

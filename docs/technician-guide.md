@@ -131,7 +131,7 @@ company-wide; for a technician, only the machines your assignment names.
 | **Device** | Name, hostname, and a dot: green online (the agent is checking in), amber reachable through RustDesk with the agent silent, grey offline. |
 | **Business / Site** | Who the machine belongs to and where. |
 | **OS** | An icon and the reported Windows edition or platform. |
-| **Health** | The worst *open* monitoring alert — Critical, Warning, Info — or *No open alerts*. That is not a promise nothing is wrong, only that no monitor says so. |
+| **Health** | The worst *open* monitoring alert — Critical, Warning, Info — or *None* (no open alerts). That is not a promise nothing is wrong, only that no monitor says so. |
 | **Agent** | *Signed* (the 0.27+ signed agent), *Standard*, or *No agent report*, with when it last checked in. |
 | **Last seen** | *Online*, *Reachable (RustDesk) · agent silent …* in amber, or how long ago it was last heard from. |
 | **Logged-in user** | Who the last heartbeat said was signed in. |
@@ -139,12 +139,15 @@ company-wide; for a technician, only the machines your assignment names.
 | **Pending patches** | From the last update scan: how many are waiting, and a *restart* tag if Windows wants one. |
 | **Alerts** | How many monitoring alerts are open (or acknowledged). Click it for the device's Monitoring tab. |
 
-**Narrower windows show fewer columns (0.47.1).** So the list fits the page without scrolling sideways, **OS**
-shows only when the window is at least 1280 pixels wide, and **Site** and **Logged-in user** only from 1536 pixels.
-The column picker marks them *(wide screens)*. A column you chose is never removed, only hidden while the window is
-narrow. **Alerts** is off by default, because **Health** already shows the worst open alert; turn it on under
-**Columns**. A browser that saved its own column choice keeps it. Long business and site names are cut short, with
-the full name on hover, and **Connect** stays pinned on the right.
+**Narrower windows show fewer columns (0.47.1, 0.48.1).** So the list fits the page beside the sidebar without
+scrolling sideways, **Last seen** shows only when the window is at least 1440 pixels wide, and **OS**, **Agent**,
+**Site** and **Logged-in user** only from 1536 pixels. At 1280 to 1439 pixels that leaves Device, Business, Health,
+CPU / RAM / disk and Pending patches; the dot beside each name still says online, agent silent or offline. The
+column picker marks the hidden ones *(wide screens)*. A column you chose is never removed, only hidden while the
+window is narrow. **Alerts** is off by default, because **Health** already shows the worst open alert (*None* when
+there is none); turn it on under **Columns**. A browser that saved its own column choice keeps it. Device names
+never wrap; long business and site names are cut short, with the full name on hover; and **Connect** stays pinned
+on the right.
 
 **Every number says how old it is, and an old one is greyed.** A resource sample
 is stale after 15 minutes (five missed heartbeats); an update scan after 36 hours.

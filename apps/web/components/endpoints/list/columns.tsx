@@ -41,8 +41,13 @@ export interface ColumnDef {
   /**
    * 0.47.1: hidden on narrower screens so the default set fits beside the
    * sidebar without sideways scrolling. Literal classes, so Tailwind sees them.
+   * 0.48.1, measured with the sidebar open: at 1440 px the content pane is
+   * 1150 px wide and Device, Business, Health, Last seen, CPU / RAM / disk and
+   * Pending patches fill it exactly; at 1280 px it is 990 px, so Last seen
+   * waits for 1440 px ('wide'), and OS, Agent, Site and Logged-in user for
+   * 1536 px ('2xl').
    */
-  hideBelow?: 'xl' | '2xl';
+  hideBelow?: 'wide' | '2xl';
   cell?: (r: DeviceRow, c: CellContext) => React.ReactNode;
 }
 
@@ -61,7 +66,7 @@ function Pct({ label, v }: { label: string; v: number | null }) {
   return <span className={hot}>{label} {v}%</span>;
 }
 
-export const HIDE_BELOW: Record<'xl' | '2xl', string> = { xl: 'hidden xl:table-cell', '2xl': 'hidden 2xl:table-cell' };
+export const HIDE_BELOW: Record<'wide' | '2xl', string> = { wide: 'hidden min-[1440px]:table-cell', '2xl': 'hidden 2xl:table-cell' };
 
 export const COLUMNS: ColumnDef[] = [
   {
@@ -71,7 +76,7 @@ export const COLUMNS: ColumnDef[] = [
         <span className={cn('h-2 w-2 rounded-full shrink-0', CONNECTIVITY_DOT[connectivityFrom(r, c.now)])} data-connectivity={connectivityFrom(r, c.now)}
           title={`${connectivityLabel(connectivityFrom(r, c.now), r.lastSeenAt, c.now)}. ${connectivityHint(connectivityFrom(r, c.now))}`} />
         <div className="min-w-0">
-          <Link href={`/endpoints/${r.id}`} className="font-medium hover:underline break-all">{r.name}</Link>
+          <Link href={`/endpoints/${r.id}`} className="font-medium hover:underline whitespace-nowrap">{r.name}</Link>
           {r.hostname && r.hostname.toLowerCase() !== r.name.toLowerCase() ? (
             <p className="text-xs text-muted-foreground truncate">{r.hostname}</p>
           ) : null}
@@ -95,7 +100,7 @@ export const COLUMNS: ColumnDef[] = [
     )),
   },
   {
-    id: 'os', label: 'OS', defaultOn: true, sort: 'os', hideBelow: 'xl',
+    id: 'os', label: 'OS', defaultOn: true, sort: 'os', hideBelow: '2xl',
     cell: (r) => (
       <span className="flex items-center gap-1.5" title={r.os ?? r.platform ?? 'Unknown'}>
         <OsIcon platform={r.platform ?? r.os} />
@@ -109,13 +114,13 @@ export const COLUMNS: ColumnDef[] = [
       if (!r.alerts) return <span className="text-muted-foreground" title="Seeing alerts needs the monitoring:alerts permission">—</span>;
       // Derived from open monitoring alerts only: "no open alerts" is not a
       // claim that nothing is wrong, only that no monitor says so.
-      if (!r.alerts.open) return <span className="text-xs text-muted-foreground whitespace-nowrap">No open alerts</span>;
+      if (!r.alerts.open) return <span className="text-xs text-muted-foreground whitespace-nowrap" title="No open alerts">None</span>;
       const w = r.alerts.worst;
       return <Badge variant={w === 'CRITICAL' ? 'destructive' : w === 'WARNING' ? 'warning' : 'secondary'}>{w === 'CRITICAL' ? 'Critical' : w === 'WARNING' ? 'Warning' : 'Info'}</Badge>;
     },
   },
   {
-    id: 'agent', label: 'Agent', defaultOn: true, sort: 'agent',
+    id: 'agent', label: 'Agent', defaultOn: true, sort: 'agent', hideBelow: '2xl',
     // The last heartbeat is the Last seen column; this one says which agent sent it.
     cell: (r, c) => (
       <div className="text-xs whitespace-nowrap" title={r.agent.lastHeartbeatAt ? `Last heartbeat ${new Date(r.agent.lastHeartbeatAt).toLocaleString()}` : 'No heartbeat yet'}>
@@ -127,7 +132,7 @@ export const COLUMNS: ColumnDef[] = [
     ),
   },
   {
-    id: 'lastSeen', label: 'Last seen', defaultOn: true, sort: 'lastSeen',
+    id: 'lastSeen', label: 'Last seen', defaultOn: true, sort: 'lastSeen', hideBelow: 'wide',
     cell: (r, c) => (
       <span className={cn('text-xs block max-w-[8rem]', connectivityFrom(r, c.now) === 'agent_silent' ? CONNECTIVITY_TEXT.agent_silent : 'text-muted-foreground')}
         title={`${r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleString() : 'Never'}${connectivityFrom(r, c.now) === 'agent_silent' ? `. ${connectivityHint('agent_silent')}` : ''}`} data-testid="last-seen-cell">

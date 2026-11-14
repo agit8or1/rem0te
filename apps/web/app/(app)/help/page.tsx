@@ -316,12 +316,12 @@ const SECTIONS: Section[] = [
           device last reported, not what it is doing now. Health and alerts need the monitoring:alerts permission.
         </p>
         <p>
-          <strong className="text-foreground">Narrower windows show fewer columns (0.47.1).</strong> So the list fits
-          without scrolling sideways, OS shows only on windows at least 1280 pixels wide, and Site and Logged-in user
-          only from 1536 pixels; the column picker marks them <em>(wide screens)</em>. Alerts is off by default, because
-          Health already shows the worst open alert. Long business and site names are cut short with the full name on
-          hover, device names and figures wrap, and Connect
-          stays on the right.
+          <strong className="text-foreground">Narrower windows show fewer columns (0.47.1, 0.48.1).</strong> So the
+          list fits beside the sidebar without scrolling sideways, Last seen shows only on windows at least 1440 pixels
+          wide, and OS, Agent, Site and Logged-in user only from 1536 pixels; the column picker marks them{' '}
+          <em>(wide screens)</em>, and the dot beside each name still shows whether it is online. Alerts is off by
+          default, because Health already shows the worst open alert. Device names never wrap, long business and site
+          names are cut short with the full name on hover, and Connect stays on the right.
         </p>
         <p>
           <strong className="text-foreground">Columns</strong> and row density are remembered in this browser.{' '}

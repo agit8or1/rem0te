@@ -138,10 +138,11 @@ The platform's own security surface, in one place.
 ## Devices
 
 ### Device list — light
-<a href="images/github/computers-inventory-light.png"><img src="images/github/computers-inventory-light.png" alt="The Devices list in light theme at 1440 pixels: search, filters for business, site, group, online, alerts, agent, restart pending and archived, Views, Columns and Export CSV, above a table with device, business, OS, health, agent, last seen and CPU, RAM and disk, and a Connect button per row."></a>
+<a href="images/github/computers-inventory-light.png"><img src="images/github/computers-inventory-light.png" alt="The Devices list in light theme at 1440 pixels: search, filters for business, site, group, online, alerts, agent, restart pending and archived, Views, Columns and Export CSV, above a table with device, business, health, last seen, CPU, RAM and disk, and pending patches, and a Connect button per row."></a>
 
-From 0.47.1 the list fits the window: OS appears from 1280 pixels, Site and Logged-in user from 1536, and Alerts is
-off by default because Health already shows the worst open alert. Device names wrap rather than widen the row.
+From 0.48.1 the list fits a 1440-pixel window with the sidebar open: Last seen appears from 1440 pixels, and OS,
+Agent, Site and Logged-in user from 1536. Alerts is off by default because Health already shows the worst open
+alert.
 
 Every device you may see, across every business. The server does the searching and
 filtering, so it covers every page, not just the one on screen.
