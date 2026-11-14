@@ -9,24 +9,24 @@ here first and then apply the settings by hand (see the checklist at the bottom)
 Keep it under GitHub's 350-character limit; the first ~120 characters are what shows
 in search results and social cards.
 
-> Self-hosted remote support portal for managing multiple customer businesses on top
-> of RustDesk. Organise each customer's computers, control who can connect to what,
-> enrol managed devices, and keep an audit trail — without RustDesk Pro.
+> Self-hosted RMM and remote support for MSPs, built on RustDesk. Manage many customer businesses: signed approved actions, staged Windows patching with company-wide policies, winget software deployment, monitoring and alerts, chat with end users, AI log explanations and PSA tickets, all on a sealed audit trail.
 
 Short form, if a shorter field is needed:
 
-> Self-hosted remote support for customer businesses, powered by RustDesk.
+> Self-hosted RMM and remote support for MSPs, built on RustDesk.
 
-**This is a remote-support tool and the copy says only that.** A previous edit
-listed pending Windows updates and event logs here, which reads as a claim to do
-patch management. Rem0te *reports* what a machine is waiting to install; it does
-not install it, schedule it, or remediate anything — and the Tactical RMM
-integration is one more way to open a session, not a foothold in that category.
+**Rewritten in 0.48.1.** Until then this section argued that Rem0te was "a
+remote-support tool and the copy says only that", and that it "does not patch,
+monitor or remediate". That stopped being true release by release:
+- 0.27 added staged patching, and 0.32 patch policies;
+- 0.29 added monitoring and alerts;
+- 0.32 and 0.45 added maintenance actions and service control;
+- 0.39 and 0.41 added scripts and software deployment;
+- 0.48 added AI log explanations and PSA tickets.
 
-Somebody who arrives expecting an RMM leaves disappointed, and the disappointment
-is the copy's fault rather than the product's. The inventory, the event-log viewer
-and the TRMM launch are all documented and in the gallery for anyone who reads
-further; they do not belong in the sentence that sets expectations.
+The copy now says what the product does. Keep the honest half of the old rule:
+name only what ships, and nothing the changelog says has not run on real Windows
+should be described as proven.
 
 ## Website
 
@@ -53,7 +53,7 @@ service-level figures to it unless they are published somewhere checkable.
 
 ## Topics
 
-Fourteen, as currently set. GitHub allows up to 20.
+Eighteen, as set in 0.48.1. GitHub allows up to 20.
 
 ```
 rustdesk
@@ -61,31 +61,29 @@ remote-support
 remote-access
 self-hosted
 msp
+rmm
 remote-desktop
 multi-tenant
+patch-management
+monitoring
+winget
+endpoint-management
 tactical-rmm
 nestjs
 nextjs
 typescript
 postgresql
-systemd
 ubuntu
 ```
 
-- `rustdesk`, `remote-support`, `remote-access`, `self-hosted`, `msp` — how
-  people looking for this kind of tool actually search.
-- `remote-desktop`, `multi-tenant` — the broader category and the shape.
-- `tactical-rmm` — kept, because there is a real integration to find and it is
-  squarely about remote control: right-click an agent in TRMM, open a session
-  here. Someone searching this finds a way to connect, which is what it is.
-- `nestjs`, `nextjs`, `typescript`, `postgresql`, `systemd`, `ubuntu` — the
-  stack and how it deploys, for contributors.
-
-**Deliberately not `rmm`, and no longer `asset-inventory`.** Rem0te is a
-remote-support tool. It does not patch, monitor or remediate, and it collects
-inventory only so that a technician can see what they are about to connect to.
-Both topics would advertise a category this does not compete in, and topics are
-how people decide whether to click.
+- `rustdesk`, `remote-support`, `remote-access`, `self-hosted`, `msp`, `rmm`: how
+  people looking for this kind of tool search.
+- `patch-management`, `monitoring`, `winget`, `endpoint-management`: what it does
+  beyond connecting, added in 0.48.1 now that it does them.
+- `remote-desktop`, `multi-tenant`: the broader category and the shape.
+- `tactical-rmm`: the integration (open a session here from a TRMM agent).
+- `nestjs`, `nextjs`, `typescript`, `postgresql`, `ubuntu`: the stack, for contributors.
+  `systemd` was dropped to make room.
 
 ## Repository settings checklist
 

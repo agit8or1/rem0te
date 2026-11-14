@@ -1,6 +1,6 @@
 # AI and tickets
 
-From 0.48, every Windows event-log entry on a computer's **Events** tab, and every alert on its
+From 0.48, every Windows event-log entry on a computer's **Event logs** tab, and every alert on its
 **Monitoring** tab, has two buttons:
 
 - **Ask AI** — explains what the entry means, likely causes, whether it matters and safe next steps,
@@ -11,6 +11,19 @@ From 0.48, every Windows event-log entry on a computer's **Events** tab, and eve
 Both buttons name the entry by reference (the stored event-log result and its position, or the
 alert's id). The server reads the entry itself from what the computer reported, so neither button
 can be used to send arbitrary text to a provider or a PSA.
+
+![A computer's Event logs tab: each entry with Ask AI and Create ticket, and one entry already ticketed](screenshots/guide/event-log-ai.png)
+
+1. **Event logs** — the tab. Fetch a slice of a log first ([Inventory and event logs](inventory.md#event-logs));
+   the buttons work on the stored result.
+2. **Ask AI** — greyed out, with *Not configured* on hover, until a Platform Admin sets a provider.
+3. **Create ticket** — shown only to someone with `tickets:create`, and greyed out, with the reason on hover, until a
+   connector is set up.
+4. **Ticket created · T-10481** — this entry already has a ticket; the reference is the PSA's own. The button then
+   reads *Ticket again*.
+
+The images on this page come from the documentation server, where the AI provider and the PSA are loopback
+stand-ins; nothing in them reached a real provider or PSA.
 
 ## Ask AI
 
@@ -47,6 +60,14 @@ Before anything leaves this server, the entry passes through `apps/api/src/ai/re
 
 The dialog says how many values were removed, and **Show what was sent** displays the exact redacted text.
 
+![The AI explanation dialog: provider and model, the redaction note, the answer, Show what was sent and Copy](screenshots/guide/ask-ai.png)
+
+1. **Provider, model and redaction** — which provider answered, and how many values were removed before sending.
+   *cached* appears beside the title when the answer came from the day's cache.
+2. **The answer** — what it means, likely causes, whether it matters and safe next steps, drawn as plain text.
+3. **Show what was sent** — the exact redacted text the provider received.
+4. **Copy** — the answer as text, for a ticket or a note.
+
 ### The prompt and the answer
 
 The instructions are fixed. The entry goes in the user message inside `<untrusted_log_data>` tags,
@@ -77,6 +98,16 @@ AI can be wrong. Check its suggestions before acting on them.
 never the entry, the prompt or the answer.
 
 ## Settings → AI (Platform Admin)
+
+![Settings → AI: the redaction note, the provider, the model, the saved key shown only by its last four characters, Save and Test](screenshots/guide/ai-settings.png)
+
+1. **Settings → AI** — Platform Admins only. Everyone else sees only whether Ask AI is on.
+2. **What is sent** — the redaction, in short.
+3. **Provider** — Anthropic, OpenAI or an OpenAI-compatible service.
+4. **Model** — Anthropic's three, or *Other* to type one.
+5. **API key** — write-only: once saved it shows as *set · …* and its last four characters.
+6. **Save (re-authenticate)** — asks you to confirm it is you every time.
+7. **Test** — a tiny prompt with the saved settings; the result and time are shown below it.
 
 One provider at a time:
 
@@ -115,6 +146,14 @@ When no provider is on, the button says *Not configured — a Platform Admin set
 
 ### The ticket
 
+![The Create ticket dialog: where it is sent, the subject, a note, Include AI explanation and Send](screenshots/guide/create-ticket.png)
+
+1. **Where it goes** — the connector's name, and whether it is this business's or the platform default.
+2. **Subject** — filled in for you; change it if you like.
+3. **Note** — optional, added to the ticket body.
+4. **Include AI explanation** — available once someone has asked AI about this entry.
+5. **Send** — the dialog then shows the PSA's reference, and the row shows *Ticket created*.
+
 - **Subject**: `[Rem0te] <computer> — <log>/<event id> <level>` (or the alert's title), editable before
   sending, one line, at most 200 characters.
 - **Body**: the computer, business, who asked, a link to the computer in the portal, the entry (log,
@@ -147,6 +186,17 @@ or a webhook's host, and whether a signing secret was set — never the secret o
 
 A Platform Admin sets the **platform default**; a Business Owner may set their business's own
 connector, which wins for that business's computers. Every save needs a fresh sign-in.
+
+![Settings → PSA / ticketing: the platform default set to a webhook, its host and signing, and the connector form](screenshots/guide/psa-settings.png)
+
+1. **Settings → PSA / ticketing** — a Platform Admin sees the platform default; a Business Owner sees their own
+   business's connector.
+2. **Now** — the connector in use: its kind and name, and for a webhook only its host (here the documentation
+   server's loopback stand-in) and whether it is signed. The full URL is never shown again.
+3. **Connector** — email-to-ticket, webhook or ClientSt0r.
+4. **Webhook URL** — enter it again to change anything about the connector.
+5. **Signing secret** — kept while the URL stays the same.
+6. **Send tickets through this connector** — off keeps the settings without sending.
 
 ### Email-to-ticket
 

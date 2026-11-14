@@ -70,6 +70,13 @@ policies. Security settings, passwords, permissions, API keys, passkeys, enrolme
 destinations and the fleet-wide update switches always ask. Turning the setting off asks once, and every change is in
 the audit log.
 
+![Settings → General: the Confirm before everyday changes card, set to Off](screenshots/guide/routine-confirm.png)
+
+1. **Confirm before everyday changes** — on **Settings → General**, for a Platform Admin. Everyone can see what it is
+   set to.
+2. **Off** — signing in is enough for the seven everyday changes.
+3. **Every 10 minutes** — each of them asks you to confirm it is you, and the confirmation lasts 10 minutes.
+
 **What it gives up: a second person.** In signed mode a compromised portal can propose a plan but cannot make it
 run. In direct mode it can: anyone who fully takes over the portal (its code or its sign-ins) can run catalog actions
 on that business's computers — what an RMM's own agent normally allows, and what the standard agent already allows
@@ -77,9 +84,11 @@ through remote sessions. Turn it on only where that is the trade you want.
 
 **What still protects:**
 
-- A **fresh sign-in** for every request, and the permission for the action (`actions:request`, and the action's
-  own capability where it has one).
-- The **catalog**: still closed parameters (ten actions from 0.41, with `windows.software.remove`). Direct mode makes nothing new requestable.
+- Your **sign-in** (with its MFA), plus a fresh confirmation for each request while *Confirm before everyday
+  changes* is set to *Every 10 minutes*, and the permission for the action (`actions:request`, and the action's own
+  capability where it has one).
+- The **catalog**: still closed parameters (twelve actions from 0.45, with service control and ending a process).
+  Direct mode makes nothing new requestable.
 - The **audit log**: every request, with who asked; the signer logs each plan it signed in direct mode.
 - **Containment pauses**, in the portal and on the signer, and **revocations** of scripts and software.
 - The agent's own checks: **maintenance windows** and **session rules**, its own risk computation, the window, the
@@ -415,6 +424,29 @@ type…* offers only the start types allowed for it. After a request finishes, t
 shows what the computer now reports; the last result for the row (what the computer saw, or why it refused) is shown
 beside it.
 
+![Startup type… on a stopped Print Spooler: what the latest list says, the start types allowed, the reason, the window and the confirmation](screenshots/guide/service-control.png)
+
+1. **What the latest list says** — the service's state and startup type, and that the computer checks its display
+   name again before changing anything.
+2. **New startup type** — only the types allowed for this service; the current one is not offered. Below it, what is
+   never changed: the program, account, password, recovery actions and dependencies.
+3. **The warnings** — what stops while the service is stopped, when a startup type change takes effect, what is
+   refused, and that this has been tested only against a simulated Windows.
+4. **Why** — optional, recorded in the audit log (shown to the approvers in signed mode).
+5. **The confirmation** — tick it to enable the button.
+6. **Run it** — in direct mode the plan is signed at once and runs at the computer's next check-in; in signed mode
+   the button is *Request it*.
+
+![End process on SearchIndexer.exe: the process id, name and start time the computer checks, the tree option, the reason and the confirmation](screenshots/guide/process-stop.png)
+
+1. **What the computer checks** — when the process started and as whom. It ends it only if that process id still
+   has that name and that start time.
+2. **And the processes it started** — ends the tree, children first, at most 64; nothing if any of them is
+   protected.
+3. **Why** — optional, recorded in the audit log.
+4. **The confirmation** — the process ends at once, and anything unsaved is lost.
+5. **Run it** — as for a service.
+
 
 ## Script runs (0.34)
 
@@ -585,9 +617,38 @@ build would refuse the plan.
 
 ## Requesting one
 
-On the computer's page, open **Actions**. Read the warning, give a reason (the approvers see it), tick the
-confirmation, and choose **Request approval**. The page shows the status and an **Open approval page** link while the
-plan awaits approval. Send that link to the approvers. Nobody can approve from the portal; there is no approve route.
+On the computer's page, open **Actions**. Read the warning, give a reason, tick the confirmation, and choose the
+button. In **signed mode** the reason is shown to the approvers and the button is **Request approval**: the page then
+shows the status and an **Open approval page** link while the plan awaits approval. Send that link to the approvers.
+Nobody can approve from the portal; there is no approve route. In **direct mode** the reason goes to the audit log,
+the button is **Run it**, and the plan is signed at once.
+
+**The service's state, before you ask (0.47.1).** When you pick *Start the Windows Print Spooler* or *Restart a
+Windows service*, the panel shows that service's state and startup type from the computer's latest service list, and
+when that list was taken. It is the same read the **Services** tab makes, so the two never disagree. **Refresh** asks
+the computer for a new list (it arrives at its next check-in).
+
+- If the list says the Print Spooler is **Running**, the request is replaced with **Nothing to do**. The list may be
+  out of date, so a *start it anyway* link stays; the computer checks again before it acts and changes nothing if
+  the Spooler is running.
+- With no service list yet, or no such service in it, the panel says so and you can request as before.
+
+This is only what the page shows. The agent's own check, the catalog and what is signed are unchanged.
+
+![The Actions tab on a computer whose Spooler is stopped: the action picker, the direct-mode note, the Spooler's state with Refresh, and the request form](screenshots/guide/actions-spooler.png)
+
+1. **The action picker** — the actions this computer can be asked for from here. Service control, ending a process,
+   software and updates are requested from their own tabs.
+2. **Direct mode** — this business signs at once. In signed mode this line says who must approve instead.
+3. **The service's state** — from the latest service list, with its time and **Refresh**.
+4. **Why** — recorded in the audit log (shown to the approvers in signed mode).
+5. **The button** — *Run it* in direct mode, *Request approval* in signed mode. It stays disabled until there is a
+   reason and the box is ticked.
+
+![The same action on a computer whose Spooler is already running: Nothing to do](screenshots/guide/actions-nothing-to-do.png)
+
+1. **Running** — the latest service list says the Spooler is already running.
+2. **Nothing to do** — the request is replaced by this note, with *start it anyway* for a list you think is stale.
 
 The approval page shows the business, the computer (hostname, class, RustDesk ID), the action and its parameters, the
 warning, who asked and why, the window, the agent build and the plan digest. **Approve** and **Reject** each ask for

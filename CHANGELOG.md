@@ -5,6 +5,117 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.48.1] — 2026-11-14 · *Dispatch*
+
+**The documentation, the in-app help and the screenshots catch up with 0.40 to 0.48.**
+
+Nothing in the API or the agent changes; the one code change is the Devices list layout, below. The docs had
+fallen behind the code. `docs/diagnostics.md` still said nothing on the Processes and Services tabs acts on the
+computer, though 0.45 put Start, Stop, Restart, Startup type and End process there. The gallery said starting or stopping a service "is not offered here". The README's
+limitations said Rem0te had "no scripting… no software deployment". The 0.48 pages had no pictures at all.
+
+**Pages**
+
+- `ai-and-tickets.md`: five numbered-callout images: the Event logs tab with Ask AI, Create ticket and a ticketed
+  entry; the AI explanation; Settings → AI; the Create ticket dialog; and Settings → PSA / ticketing. The tab is
+  named *Event logs*, as the UI says, not *Events*. The page was checked against the code: the 10/5 per-minute
+  limits, the 6,000-character message cap, the 15 s webhook timeout, and the reference fields read from a reply.
+- `approved-actions.md`:
+  - The *Confirm before everyday changes* card (0.47).
+  - The Actions tab: the Spooler's state with Refresh, and *Nothing to do* when it is running (0.47.1).
+  - The service and process dialogs (0.45), with the signed-mode labels: *Request approval* on the Actions tab,
+    *Request it* in the service and process dialogs.
+  - Direct mode's "what still protects" now counts twelve actions.
+- `diagnostics.md`: End process, and the buttons on each service row. Both state that they have been tested only
+  against a simulated Windows.
+- `chat.md`: files and pictures, and the header's chat inbox (0.44).
+- `software-deployment.md`: the winget browser (0.43).
+- `technician-guide.md`:
+  - Which Devices-list columns appear at which window width (0.47.1).
+  - The device-tab table now mentions Uninstall, End process, the service buttons, Ask AI and Create ticket, the
+    Spooler state and chat files.
+- `access-control.md`: the 0.44–0.48 capabilities, including `tickets:create`.
+- `capabilities.md`: what each of these needs configured, and what has been tested where.
+- `docs/README.md`: the index entries now name what each page covers since 0.40. A staged-patching sentence had
+  been pasted into the script-library entry; it is back in the staged-patching entry.
+- `/help`: the Spooler state on the Actions tab, and the Devices-list widths.
+- `README.md`: a *What's new in 0.40 to 0.48* section and corrected limitations.
+
+**Images**: 13 new guide images and 10 new gallery images. The Devices list, the bulk bar, saved views, the
+Services, Processes and Event logs tabs, `/help` and `/docs` were recaptured, as guide or gallery images. The
+gallery now has 69 images.
+
+**Capture tooling**
+
+- `apps/api/prisma/_docs-demo-dispatch.ts` is a new demo module and refuses any database but `reboot_remote_docs`.
+  It seeds a 36-package winget index and two computers on the signed agent with the whole action catalog. It also
+  seeds an open, recorded chat with emoji, a picture and a file. `docs/screenshots.md` → *Regenerating these* says
+  what the stack needs:
+  - a scratch approval signer and release repository;
+  - `NODE_ENV=test` with a loopback `AI_TEST_BASE_URL`;
+  - a loopback webhook;
+  - the four sweep switches that list was missing.
+- The masks replaced every host name not on the allowlist. So Settings → AI read "remote.example.com, with your
+  Anthropic API key", which is wrong about where the key goes. `capture-masks.mjs` now keeps exactly
+  `api.anthropic.com` and `api.openai.com`; any other host, including a subdomain of those two, is still masked.
+- The masks also printed four-part version numbers as `198.51.100.24`, because a dotted quad looks like a public IP
+  address. The demo index uses no such versions. The masking was left as it is.
+- `capture-media.mjs` takes a per-shot `height`, so a dialog taller than the window is not cut off above its
+  buttons.
+
+**The Devices list fits the window at every common desktop width, 1280 to 2560 pixels.** 0.47.1 set out to stop
+the list scrolling sideways, but it measured nothing. Its `break-all` on the device name split single-token names
+mid-word (`CASC-PAY` / `ROLL-01`), because breaking the name was the only way the row could shrink. Even then, OS
+(from 1280 px), Agent and Last seen together were wider than the 1150 px content pane at 1440, so Pending patches
+sat under the pinned Connect column. From 1536 px all nine columns came back at once and needed 1679 px. So on a
+1920-pixel screen, the commonest desktop size, the table still scrolled and Pending patches started under Connect.
+
+Each optional column now comes in at its own window width, only where it fits. The widths come from measuring each
+column's minimum width on the docs stack. Default columns, sidebar open (the content pane is the window minus
+290 px), comfortable density (compact is 4 px a column narrower and changes no threshold):
+
+| Column | Min width | Table needs | Window needs | Shows from |
+|---|---|---|---|---|
+| Always shown: checkbox, Device, Business, Health, CPU / RAM / disk, Pending patches, Connect | 965 | 965 | 1255 | always |
+| + Last seen | 109 | 1074 | 1364 | 1440 px |
+| + Agent | 131 | 1205 | 1495 | 1536 px |
+| + OS | 174 | 1379 | 1669 | 1700 px |
+| + Site | 152 | 1531 | 1821 | 1860 px |
+| + Logged-in user | 148 | 1679 | 1969 | 2000 px |
+
+Each threshold leaves at least 30 px for names longer than the demo's. The order follows usefulness: Agent, OS,
+Site, then Logged-in user, which does not fit at 1920 and so waits for 2000. In `columns.tsx`:
+
+- `HIDE_BELOW` is one literal `min-[Npx]:table-cell` class per column, so Tailwind generates them. `HIDE_BELOW_PX`
+  holds the same numbers.
+- The column picker shows each one's width, e.g. *(1700 px and wider)*, instead of *(wide screens)*. A column you
+  tick is still governed by width: it is hidden, never removed, while the window is narrower.
+- The device name is `whitespace-nowrap` again.
+- Health's empty state is a short muted *None*, with *No open alerts* on hover. The connectivity dot beside each
+  name still says online, agent silent or offline when Last seen is hidden.
+
+Measured in Playwright on the docs stack, default columns, sidebar open. At every width, in both densities, the
+table's `scrollWidth` equals its `clientWidth`. Every header ends left of Connect, and every name is on one line:
+
+| Window | Pane (scroll = client) | Columns shown besides Device, Business, Health, CPU / RAM / disk, Pending patches |
+|---|---|---|
+| 1280 × 900 | 990 | — |
+| 1366 × 768 | 1076 | — |
+| 1440 × 1000 | 1150 | Last seen |
+| 1536 × 864 | 1246 | Agent, Last seen |
+| 1600 × 900 | 1310 | Agent, Last seen |
+| 1680 × 1050 | 1390 | Agent, Last seen |
+| 1920 × 1080 | 1630 | Site, OS, Agent, Last seen |
+| 2560 × 1440 | 2270 | Site, OS, Agent, Last seen, Logged-in user |
+
+The thresholds themselves (1700, 1860 and 2000) were also checked, and they fit as well. Compact density gives the
+same results.
+
+Not fixed: below about 1255 px, and at phone width, the table still scrolls sideways.
+Names that do not wrap then run under the pinned Connect column.
+
+---
+
 ## [0.48.0] — 2026-11-14 · *Dispatch*
 
 **Ask AI and Create ticket on a computer's event-log entries and alerts.**
@@ -161,7 +272,6 @@ give way.
 
 ---
 
-||||||| parent of df5f889 (v0.48.0 Dispatch: Ask AI and Create ticket on event-log entries and alerts)
 ## [0.47.0] — 2026-11-14 · *Latch*
 
 **Everyday changes no longer ask "confirm it is you" every time.**

@@ -131,13 +131,24 @@ company-wide; for a technician, only the machines your assignment names.
 | **Device** | Name, hostname, and a dot: green online (the agent is checking in), amber reachable through RustDesk with the agent silent, grey offline. |
 | **Business / Site** | Who the machine belongs to and where. |
 | **OS** | An icon and the reported Windows edition or platform. |
-| **Health** | The worst *open* monitoring alert — Critical, Warning, Info — or *No open alerts*. That is not a promise nothing is wrong, only that no monitor says so. |
+| **Health** | The worst *open* monitoring alert — Critical, Warning, Info — or *None* (no open alerts). That is not a promise nothing is wrong, only that no monitor says so. |
 | **Agent** | *Signed* (the 0.27+ signed agent), *Standard*, or *No agent report*, with when it last checked in. |
 | **Last seen** | *Online*, *Reachable (RustDesk) · agent silent …* in amber, or how long ago it was last heard from. |
 | **Logged-in user** | Who the last heartbeat said was signed in. |
 | **CPU / RAM / disk** | The last resource sample and its age. |
 | **Pending patches** | From the last update scan: how many are waiting, and a *restart* tag if Windows wants one. |
 | **Alerts** | How many monitoring alerts are open (or acknowledged). Click it for the device's Monitoring tab. |
+
+**Narrower windows show fewer columns (0.47.1, 0.48.1).** So the list fits the page beside the sidebar without
+scrolling sideways, each of these columns appears only when the window is wide enough for it: **Last seen** from 1440
+pixels, **Agent** from 1536, **OS** from 1700, **Site** from 1860 and **Logged-in user** from 2000. At 1280 to 1439
+pixels that leaves Device, Business, Health, CPU / RAM / disk and Pending patches; a 1920-pixel screen shows
+everything but Logged-in user. The dot beside each name still says online, agent silent or offline. The column
+picker shows each one's width, for example *(1700 px and wider)*. A column you chose is never removed, only hidden
+while the window is narrower than that. **Alerts** is off by default, because **Health** already shows the worst open alert (*None* when
+there is none); turn it on under **Columns**. A browser that saved its own column choice keeps it. Device names
+never wrap; long business and site names are cut short, with the full name on hover; and **Connect** stays pinned
+on the right.
 
 **Every number says how old it is, and an old one is greyed.** A resource sample
 is stale after 15 minutes (five missed heartbeats); an update scan after 36 hours.
@@ -371,15 +382,15 @@ what it does.
 |---|---|
 | Overview | Assignment (from 0.35 with every **group** the computer is in — static groups and the rule groups it matches right now, as you would see them in the list; each links to the list filtered by it), key alerts, patch status, the **Agent** card, recent activity, then the hardware, utilisation, storage, network and update cards, each with its age |
 | Monitoring | Alerts first (acknowledge and resolve here), then what is watched on this computer in words, the agent's last report, and what changed |
-| Software | Installed software with a filter, and recent software changes (Windows agents only) |
-| Processes | Every running process, as a read-only snapshot with its age and a Refresh (standard Windows agent, 0.33) |
-| Services | Every service with state, start mode and run-as account; snapshot with age and Refresh (0.33) |
+| Software | Installed software with a filter, and recent software changes (Windows agents only); **Uninstall** on a program asks the full agent to remove it as an approved action (0.41 — [software-deployment.md](software-deployment.md)) |
+| Processes | Every running process, as a snapshot with its age and a Refresh (0.33); from 0.45 **End process** on a row asks the full agent to end it as an approved action ([approved-actions.md](approved-actions.md)) |
+| Services | Every service with state, start mode and run-as account; snapshot with age and Refresh (0.33); from 0.45 **Start**, **Stop**, **Restart** and **Startup type** on a row, as approved actions on the full agent, with protected services marked *Protected* |
 | Network | Every network connection: addresses, gateway, DNS, DHCP, MAC; snapshot with age and Refresh (0.33) |
 | Patches | Patch status, updates offered, Windows Update history |
-| Event logs | A page of one Windows event log, on request (Windows agents only) |
+| Event logs | A page of one Windows event log, on request (Windows agents only); from 0.48 **Ask AI** and **Create ticket** on an entry ([ai-and-tickets.md](ai-and-tickets.md)) |
 | Diagnostics | Test connection: server, computer and your own RustDesk |
-| Actions | Request an approved action and see past requests |
-| Chat | Chat with the person at the computer, receipts and earlier transcripts (signed Windows agent; elsewhere it says why not — [chat.md](chat.md)) |
+| Actions | Request an approved action and see past requests; from 0.47.1 the Print Spooler's last known state, with **Refresh**, and *Nothing to do* when it is already running |
+| Chat | Chat with the person at the computer, receipts and earlier transcripts; emoji, files and pictures from 0.44 (signed Windows agent; elsewhere it says why not — [chat.md](chat.md)) |
 | History | Remote sessions, technician notes, the AI-written summary (labelled as such) and who can connect |
 
 **The Agent card** (Overview, 0.34) says which agent the computer runs (*Standard*,
