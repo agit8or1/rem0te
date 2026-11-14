@@ -460,16 +460,46 @@ actions: the six through 0.32, then `windows.script.run`,
 and `processStopParamsOK` among the closed forms and ten `integration: false`
 entries.
 
-§41 is AI without a provider key. There is no model-provider SDK, endpoint or
-key variable anywhere in `apps/api/src` or `apps/api/package.json`
-(`@anthropic-ai/sdk` is gone). The device AI summary goes only `timeline.service
-→ timeline.client → signer.signedPost(peer, 'inference')`. The summary is sent
-only when ClientSt0r's signed capabilities document lists `device_timeline_v1`,
-after both capabilities and containment. It is audited before it leaves,
-without text. The snapshot selects no name, hostname, address, business, site,
-tag, author or RustDesk field, and every free-text field passes
-`redactForPeer`. Behavioural proof: `e2e-ai-timeline.mjs`; unit:
-`unit-ai-timeline.mjs`.
+§41 (0.48, reversing 0.34's "AI without a provider key" at the owner's
+request) is AI providers and PSA tickets. Provider endpoints, key headers and
+names appear only in `apps/api/src/ai/`, and no provider SDK is a dependency.
+The one call site is `ai/client.ts`, through `common/safe-https.ts`'s
+`safePost`: a public DNS name, resolved and judged on every call, connected to
+the checked address with SNI, certificates verified, redirects refused, 60 s
+and a size cap; plain http only to 127.0.0.1 under `NODE_ENV=test`
+(`testLoopbackAllowed`, which is the only way `AI_TEST_BASE_URL` is read). The
+key is AES-256-GCM (`common/secret-box.ts`, purpose `rem0te-ai-key-v1`), is in
+no response, audit row or log line (nothing in `ai/` logs), and only its last
+four characters are kept in the clear; a changed provider, base URL or auth
+style drops it. Setting it is Platform Admin (class guard) with `assertFresh`,
+never routine. Every prompt is the fixed system prompt plus a payload built by
+`eventPayload` / `alertPayload` through `redactForAi` (which ends in
+`redactForPeer`) from the server's own copy of the entry: the browser names an
+entry with a strict source object and cannot supply text. Scope, then the
+entry's capability (`computers:event_logs` / `monitoring:alerts`), before
+anything is read; `AI_ASKED` is written with `logOrFail` before the request
+leaves; audit meta never carries text; a per-user budget sits on top of the
+route limit. PSA tickets need the same plus `tickets:create`, the budget and
+no `notifications` pause before the send; their audit carries ids, the kind
+and the reference, never the subject, note or body. Connector writes need
+`assertFresh`, never routine. The webhook URL obeys the same typed-destination
+rule, its secret is sealed, kept only for the same URL and never shown (only
+the host is shown or audited). Email-to-ticket goes only to a confirmed
+recipient of the connector's own scope, through `EmailService`. The ClientSt0r
+connector is offered only when the peer's signed capabilities list
+`ticket_create_request_v1` (proposed, §5C). 0070 CHECKs the provider, kind and
+scope. A native PSA connector is one file in `apps/api/src/psa/connectors/`
+implementing `PsaDriver`, plus `KINDS` and 0070's CHECK. The ClientSt0r
+device-timeline summary keeps its 0.34 checks: it goes only `timeline.service
+→ timeline.client → signer.signedPost(peer, 'inference')`, only when the
+peer's signed capabilities list `device_timeline_v1`, after capabilities and
+containment, audited before it leaves without text, from a snapshot with no
+name, hostname, address, business, site, tag, author or RustDesk field, every
+free-text field through `redactForPeer`. Behavioural proof: `e2e-ai-psa.mjs`
+(ports 3751–3754, loopback stubs for the provider, the webhook and SMTP) and
+`e2e-ai-timeline.mjs`; unit: `unit-ai-psa.mjs` and `unit-ai-timeline.mjs`.
+**No real provider or PSA has been called from this server.** Never point a
+test at one.
 
 §42 is outbound email. The relay is Platform Admin only and saved with
 `assertFresh`. Its host is a public DNS name, checked on save and resolved and

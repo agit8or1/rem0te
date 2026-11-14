@@ -282,6 +282,12 @@ jobs:
       - name: AI summary tests
         run: node apps/api/scripts/unit-ai-timeline.mjs
 
+      # Ask AI and PSA tickets (0.48): the redactor on realistic Windows
+      # events, each provider's request shape, the typed-URL rule, field
+      # encryption, the ticket draft and the webhook HMAC.
+      - name: AI provider and PSA ticket tests
+        run: node apps/api/scripts/unit-ai-psa.mjs
+
       # Outbound email (0.34): the SMTP host rule (every address class, IPv4-
       # mapped IPv6, what SMTP_ALLOW_LOCAL_RELAY admits, every resolved address
       # checked), the report schedule maths across zones and both DST

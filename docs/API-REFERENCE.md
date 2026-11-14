@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **525** of them across
-**78** controllers.
+integration, under `/api/integration/v1`). There are **537** of them across
+**82** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -96,6 +96,26 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/endpoints/:id/agent/migrate` | signed in, throttled | `COMPUTERS_EDIT` |
 | `POST` | `/api/v1/endpoints/:id/agent/migrate/cancel` | signed in, throttled | `COMPUTERS_EDIT` |
 | `POST` | `/api/v1/endpoints/:id/agent/update` | signed in, throttled | `COMPUTERS_EDIT` |
+
+## Ai 1
+
+`apps/api/src/ai/ai.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/ai/status` | signed in | — |
+| `POST` | `/api/v1/endpoints/:id/ai/explain` | signed in, throttled | — |
+| `POST` | `/api/v1/endpoints/:id/ai/preview` | signed in, throttled | — |
+
+## Ai aisettings
+
+`apps/api/src/ai/ai.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/ai/settings` | Platform Admin | — |
+| `PUT` | `/api/v1/ai/settings` | Platform Admin, throttled | — |
+| `POST` | `/api/v1/ai/settings/test` | Platform Admin, throttled | — |
 
 ## API keys
 
@@ -566,6 +586,26 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/patching/policies/:id` | signed in | — |
 | `POST` | `/api/v1/patching/policies/:id/revoke` | signed in | — |
 | `GET` | `/api/v1/patching/preflight` | signed in | — |
+
+## Psa endpointsidtickets
+
+`apps/api/src/psa/psa.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/endpoints/:id/tickets` | signed in | — |
+| `POST` | `/api/v1/endpoints/:id/tickets` | signed in, throttled | — |
+| `POST` | `/api/v1/endpoints/:id/tickets/draft` | signed in, throttled | — |
+
+## Psa psaconnectors
+
+`apps/api/src/psa/psa.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/psa/connectors` | signed in | — |
+| `PUT` | `/api/v1/psa/connectors` | signed in, throttled | — |
+| `DELETE` | `/api/v1/psa/connectors` | signed in, throttled | — |
 
 ## Public (unauthenticated)
 

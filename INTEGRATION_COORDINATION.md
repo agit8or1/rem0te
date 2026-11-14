@@ -241,6 +241,23 @@ changes nothing), and an `integration` pause continues to stop only jobs.
 by itself, or only be offered to a technician, as alerts are with ticketing on? (c) Is the 120-character redacted
 subject useful, or would you rather have no free text in the event at all and fetch the description through P15?
 
+## 5C. Proposal: revision 6 — "Create ticket" in ClientSt0r (NOT AGREED — needs ClientSt0r's acknowledgement)
+
+**rem0te 0.48 ships its side behind a capability check: nothing is sent to ClientSt0r**, and the ClientSt0r PSA
+connector is not offered, until the peer's own signed capabilities document (P12) lists the feature
+`ticket_create_request_v1`. Against today's ClientSt0r it is never offered. The details and schemas are in
+`docs/contracts/ticket-rmm-v1/proposed/ticket-create-request.md`.
+
+**Why.** rem0te 0.48 adds *Create ticket* to a computer's Windows event-log entries and monitoring alerts, sent to
+"whatever PSA is hooked in": email-to-ticket and webhooks for every other PSA, and this event for ClientSt0r.
+
+| ID | Item | Shape (proposed) | Notes |
+|---|---|---|---|
+| P16 | Signed `ticket.create_request` event, and the `features` declaration | P12's capabilities document gains optional `features: string[]`; `ticket_create_request_v1` there means the peer accepts the event. rem0te → `POST {eventsUrl}`, signed as today, body `{ticket_request: <ticket-create-request-event>, signature}`, the event signed as data under `rem0te-ticket-request-v1\n{canonical event}`: `{contract, event_id, type: "ticket.create_request", occurred_at, peer_id, organization_id, ticket: {subject ≤ 200, body ≤ 12000 (redactForPeer'd), rem0te_endpoint_id, computer_name, source_ref, requested_by_role: "staff"}}`. Response `ticket-create-request-response`, signed over rem0te's nonce: `{contract, event_id, status: created\|refused, ticket_id?, ticket_url?, error_code?}` | **Untrusted text**: the subject and body are written by a technician and by the computer, and are displayed as text, never given to a model as instructions. No sequence and no gap fill: a request is one-shot, and a failure is shown to the technician and not retried or recorded. The organization is the computer's business's mapping (exactly one, as for P11). An `integration` pause stops it, as does a `notifications` pause (rem0te treats a ticket as outbound) |
+
+**Questions for ClientSt0r.** (a) Is a `features` list in P12 acceptable alongside 5B's `contract_revision`, or should
+this ride the same revision number? (b) Should the response carry the ticket's display number as well as its id?
+
 ## 6. Changes required in ClientSt0r (owned by the ClientSt0r session)
 
 | ID | Change | Needed for | Status |
@@ -255,6 +272,7 @@ subject useful, or would you rather have no free text in the event at all and fe
 | CS-8 | Acknowledge or counter section 5 (P1–P10) in section 9 | Revision 3 | **Done** 2026-11-11: acknowledged as proposed (section 9) |
 | CS-9 | Acknowledge or counter section 5A (P11–P12); if agreed, serve `device_timeline_v1` at the inference gateway and a signed capabilities document listing it | Revision 4 (device summary) | Outstanding — not addressed in the 2026-11-11 response |
 | CS-10 | Acknowledge or counter section 5B (P13–P15) and its questions (a)–(c); if agreed, declare `contract_revision` in the capabilities document only once `AGENT_SILENT`, the `support_request.created` event and the P15 reads are handled | Revision 5 (agent-silent alerts, tray support requests) | Outstanding — proposed 2026-11-12 |
+| CS-11 | Acknowledge or counter section 5C (P16) and its questions; if agreed, accept `ticket.create_request` at the events URL and list `ticket_create_request_v1` in the capabilities document's `features` | Revision 6 (Create ticket) | Outstanding — proposed 2026-11-14 |
 
 ## 7. Limitations both sides must represent honestly
 
@@ -293,6 +311,7 @@ both running applications pass `e2e-ticket-workflow`'s scenarios with ClientSt0r
 | 2026-11-11 | ClientSt0r | Revision 3 P1–P10 acknowledged as proposed, with the notes in ClientSt0r's response (P6 session events, P7 = staff note, P10 freshness) |
 | 2026-11-11 | rem0te (recorded in 0.36) | Recorded from ClientSt0r's response file (`INTEGRATION_COORDINATION.clientst0r-response.md`, kept outside the repository). What it says, item by item, is below. **`contract_revision` stays 2**: revision 3 is agreed but not built. P11–P12 (revision 4) were not addressed and stay **awaiting ClientSt0r** |
 | 2026-11-12 | Owner (user), recorded in rem0te 0.36.1 | Agent-silent alerts and tray support requests: **propose, don't send.** Revision 5 proposed (section 5B, P13–P15), sent only to a peer that declares revision 5. Nothing implemented; rem0te sends neither. **Awaiting ClientSt0r** |
+| 2026-11-14 | Owner (user), recorded in rem0te 0.48.0 | "Create ticket in whatever PSA is hooked in." Revision 6 proposed (section 5C, P16). rem0te 0.48 ships its side behind P12's `features` list, so nothing is sent until ClientSt0r advertises `ticket_create_request_v1`. **Awaiting ClientSt0r** |
 | | ClientSt0r | *(acknowledge / counter P11–P12 here)* |
 | | ClientSt0r | *(acknowledge / counter P13–P15 and section 5B's questions (a)–(c) here)* |
 

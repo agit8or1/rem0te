@@ -1251,6 +1251,19 @@ const SECTIONS: Section[] = [
           <Link href="/docs/email" className="underline text-foreground">Email and scheduled reports</Link>.
         </p>
         <p>
+          From 0.48 every event-log entry and alert on a computer has <strong className="text-foreground">Ask AI</strong>{' '}
+          and <strong className="text-foreground">Create ticket</strong>. Ask AI explains the entry using the provider a
+          Platform Admin set under <Link href="/settings/ai" className="underline text-foreground">Settings → AI</Link>{' '}
+          (Anthropic, OpenAI or an OpenAI-compatible service). The entry is redacted on this server first, so names, addresses,
+          accounts and serials are removed, and the provider never learns which computer or business it came from.
+          <strong className="text-foreground"> Show what was sent</strong> displays the exact text. Create ticket sends the
+          entry to the PSA connected under{' '}
+          <Link href="/settings/psa" className="underline text-foreground">Settings → PSA / ticketing</Link>, by email-to-ticket,
+          a signed webhook, or ClientSt0r once it supports it. A business&apos;s own connector wins over the platform default.
+          It needs the <em>Create PSA tickets</em> permission. AI can be wrong, so check its suggestions before acting. See{' '}
+          <Link href="/docs/ai-and-tickets" className="underline text-foreground">AI and tickets</Link>.
+        </p>
+        <p>
           From 0.28, writes can be <strong className="text-foreground">paused</strong> while an incident is looked at:
           approved actions, remote connections, agent updates and ClientSt0r jobs — and, from 0.34, outbound email — for every business or for one. A red
           strip at the top of the page says what is stopped and why; a refused click says <em>CONTAINED</em>. A Business

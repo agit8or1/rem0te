@@ -5,6 +5,127 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.48.0] — 2026-11-14 · *Dispatch*
+
+**Ask AI and Create ticket on a computer's event-log entries and alerts.**
+
+The owner asked: "for system log entries, have an ask ai button. also a create ticket button which will create a ticket
+in the psa (whatever one is hooked into it)". Asked how, they chose AI "direct via this server. settings should allow to
+store api key for openai/claude/etc", and "any psa thats integrated".
+
+**This reverses 0.34's §41, at the owner's request.** From 0.34 to 0.47 the API held no model-provider key: the only AI
+was the device summary through ClientSt0r's gateway, and §41 failed CI on any provider name, endpoint or key in
+`apps/api/src`. Production has no ClientSt0r peer configured, so in practice there was no AI at all. 0.48 lets a
+Platform Admin store **one** provider key. What protects it, and what is sent, is below and is pinned by the rewritten
+§41 (35 mutations, all caught).
+
+#### Added
+- **Settings → AI** (Platform Admin). One active provider at a time:
+  - **Anthropic** — `POST https://api.anthropic.com/v1/messages`, `x-api-key`, `anthropic-version: 2023-06-01`. Models
+    `claude-sonnet-5-5` (default), `claude-opus-5-5`, `claude-haiku-5-5`, or typed.
+  - **OpenAI** — `POST https://api.openai.com/v1/chat/completions`, Bearer, typed model.
+  - **OpenAI-compatible** — a custom HTTPS base URL (`{base}/chat/completions`) for Azure (its v1 API, with an
+    `api-key` header), OpenRouter, Groq, Mistral and others.
+  - A **Test** button (a 16-token prompt), an on/off switch, and the key shown only as "set · …last 4".
+  - Routes: `GET`/`PUT /ai/settings`, `POST /ai/settings/test`, `GET /ai/status` (anyone signed in: on/off, provider
+    and model only).
+- **Ask AI** on every event-log row (and on alert rows on the Monitoring tab): `POST /endpoints/:id/ai/explain`, with
+  `POST /endpoints/:id/ai/preview` showing exactly what would be sent. The answer is shown as plain text with the
+  provider and model, a *redacted before sending* note and Copy. With no provider: "Not configured — a Platform Admin
+  sets a provider in Settings → AI".
+- **Settings → PSA / ticketing.** One connector per scope — the platform default (a Platform Admin's) and optionally a
+  business's own (its Business Owner's). *Create ticket* uses the business's if it has an enabled one, else the
+  platform's.
+  - **Email-to-ticket** (ConnectWise, Autotask, HaloPSA, Syncro, Freshdesk, Zendesk…): the PSA's inbound address is an
+    email recipient of the same scope, so it must be confirmed from its mailbox (§42's flow, reused) before a ticket
+    is sent to it, and the mail goes through the §42 relay with all its checks.
+  - **Webhook**: an HTTPS POST of a fixed JSON body (`{source, type: "ticket.create", version: 1, sent_at, ticket}`)
+    for HaloPSA/Syncro automations, Zapier, Make and n8n. With a signing secret, `X-Rem0te-Timestamp` and
+    `X-Rem0te-Signature: sha256=<HMAC-SHA256(secret, "<timestamp>.<body>")>`. A JSON answer naming `ticket_id` / `id`
+    / `number` / `ref` (and `url`) is kept as the ticket's reference.
+  - **ClientSt0r**: a signed `ticket.create_request` event, **proposed, not agreed** (INTEGRATION_COORDINATION.md §5C,
+    P16; `docs/contracts/ticket-rmm-v1/proposed/`). Offered only once the peer's signed capabilities document lists
+    `ticket_create_request_v1`, so against today's ClientSt0r it never is.
+  - Native API connectors (Halo, Autotask, ConnectWise REST) are not built. Adding one is one file in
+    `apps/api/src/psa/connectors/` implementing `PsaDriver`, plus its kind in `KINDS` and in 0070's CHECK.
+  - Routes: `GET`/`PUT`/`DELETE /psa/connectors`, `GET /endpoints/:id/tickets`, `POST /endpoints/:id/tickets/draft`,
+    `POST /endpoints/:id/tickets`.
+- **Create ticket** on every event-log row and alert row: a dialog with the subject (default
+  `[Rem0te] <computer> — <log>/<event id> <level>`), a note and *Include AI explanation*, then the PSA's reference. The
+  row then shows "Ticket created · ref". The body carries the computer, business, time, the entry (id, provider, level,
+  message), a link to the computer in the portal, the note, and the AI answer if one was asked and ticked.
+- **Capability `tickets:create`** (*Create PSA tickets*). A Business Owner has it; a Business User only when granted. Not
+  in the technician presets (they stay read-side only).
+- Migration **0070**: `AiSettings`, `AiAnswer` (the day's cache), `PsaConnector`, `PsaTicket`, and seven audit actions.
+  CHECKs on the provider, auth style, base-URL presence, connector kind, scope and targets.
+
+#### How the key is protected
+- AES-256-GCM under `ENCRYPTION_KEY` (`common/secret-box.ts`, purpose-bound associated data `rem0te-ai-key-v1`, as the
+  SMTP password is). Decrypted only to build one request.
+- Never in any response (only `keySet` and the last four characters), audit row (`AI_SETTINGS_CHANGED` says only `set`
+  / `kept` / `cleared` / `cleared_destination_changed`) or log line (nothing in `apps/api/src/ai/` logs at all).
+- Changing the provider, base URL or auth style clears it unless a new one is given in the same save, so it is never
+  sent anywhere but where it was entered for.
+- Setting it is a Platform Admin's (a class-level guard) with `assertFresh` — **not** one of §62's everyday actions, so
+  it asks whatever *Confirm before everyday changes* says.
+- The custom base URL obeys §42's rules (`common/safe-https.ts`): a public DNS name on save; resolved on every call, every
+  address judged, the connection made to the checked address with the name kept for SNI and certificate checks
+  (DNS rebinding gets nothing); TLS 1.2+, certificates verified, redirects refused, 60 s, 256 KB. Plain http only to
+  127.0.0.1 and only under `NODE_ENV=test` (the e2e stubs). The two fixed providers go through the same client.
+
+#### What is sent to the provider
+- The browser names an entry (a stored event-log result and its index, or an alert id) and **cannot supply text**: the
+  server reads the entry from what the computer reported, so the route is not a general-purpose prompt.
+- Only the event's id, provider, level, log name, time and message, plus the computer's OS version. Never its name or
+  business.
+- Redacted first by `redactForAi` (`ai/redact.ts`): the computer's own names (name, hostname, serial, domain, the
+  logged-on user, business, site), account SIDs, `DOMAIN\user`, UNC hosts, labelled account and workstation fields
+  of Security-log messages, `\Users\<name>` paths, fully qualified host names, serial-like tokens and labelled serials —
+  then `redactForPeer` (credentials, tokens, e-mail, IPv4/IPv6, MACs, RustDesk IDs, `C:\Users\<name>`). Well-known
+  principals (`NT AUTHORITY\SYSTEM`, `S-1-5-18`), registry roots, file names, KB numbers and hex error codes are kept, so
+  the entry stays useful. Capped at 8 KB.
+- A fixed system prompt: explain the entry, likely causes, whether it matters and safe next steps; the entry is fenced
+  as untrusted data, never instructions; nothing destructive. The answer is shown as text — HTML is stripped server-side
+  and the page renders no markup or links.
+
+#### Access, audit, limits
+- Ask AI needs `computers:view` on a computer the person can see (another business's is a 404), plus
+  `computers:event_logs` for an event (as reading the log does) or `monitoring:alerts` for an alert.
+- `AI_ASKED` is written with `logOrFail` **before** the request leaves (no record, no request); `AI_ANSWERED` after, with
+  provider, model and token counts. Ids, sizes and redaction counts only — never text.
+- 30 asks per person per hour (`AI_ASK_PER_HOUR`) on top of the route limit. An identical entry (same redacted input,
+  provider and model) is answered from a one-day cache and sends nothing.
+- Create ticket needs the same plus `tickets:create`, 20 per person per hour (`PSA_TICKETS_PER_HOUR`). A
+  `notifications` containment pause stops every ticket (a ticket is outbound like a mail); the ClientSt0r connector
+  also stops under `integration`.
+- `PSA_TICKET_CREATED` / `PSA_TICKET_FAILED` carry the connector kind, ids and the returned reference, never the
+  subject, note or body. `PSA_CONNECTOR_CHANGED` names an email connector by its masked address and a webhook by its
+  host only (a webhook URL's path is often its secret), and whether a signing secret was set. Connector writes need
+  `assertFresh` (never routine).
+- A `PsaTicket` row (computer, entry, connector, reference, who, when — no text) and a History note on the computer
+  record each ticket. A failed send is reported and recorded in neither.
+
+#### Proof
+- `apps/api/scripts/unit-ai-psa.mjs` (31): the redactor on realistic Windows events (4625 logons, profile paths, UNC
+  shares, FQDNs, SIDs, serials, e-mail, IPv4/IPv6/MAC), each provider's request and answer shape, the typed-URL rule,
+  sealed secrets, the ticket draft, the webhook body and HMAC, the proposed event. In CI.
+- `apps/api/scripts/e2e-ai-psa.mjs` (94, ports 3751–3754) against loopback stubs in the Anthropic and OpenAI shapes, a
+  webhook stub and the SMTP sink: the key never returned and absent from audit rows, the database in the clear and the
+  API's output; `assertFresh` on the key; what the stub received has no computer name, hostname, user, business,
+  address, serial, SID or e-mail; each provider's headers; the cache hit; another business's computer a 404; the
+  per-user budget; a correct webhook HMAC; redirects refused; email-to-ticket refused until the address is confirmed,
+  then delivered; business and global `notifications` pauses; audit rows without text. Added to `run-e2e.sh`.
+- §41 rewritten in `scripts/check-security-invariants.mjs`, with 35 mutations all caught; the ClientSt0r device-timeline
+  checks are kept.
+
+#### Not proven
+- **No real model provider or PSA was called.** The provider shapes are written to Anthropic's and OpenAI's documented
+  APIs and exercised only against stubs; a real key has not been tried from this server. Azure's `api-key` header
+  path, OpenRouter, Groq and Mistral are untested beyond the shape.
+- The ClientSt0r connector's send path has never run: ClientSt0r advertises nothing yet.
+
+---
+
 ## [0.47.1] — 2026-11-14 · *Latch*
 
 **The Print Spooler action now shows whether the Spooler is already running.**
@@ -40,6 +161,7 @@ give way.
 
 ---
 
+||||||| parent of df5f889 (v0.48.0 Dispatch: Ask AI and Create ticket on event-log entries and alerts)
 ## [0.47.0] — 2026-11-14 · *Latch*
 
 **Everyday changes no longer ask "confirm it is you" every time.**

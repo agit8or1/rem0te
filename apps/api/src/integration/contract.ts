@@ -500,6 +500,12 @@ export const PeerCapabilities = z.object({
     task: TaskName,
     model_profiles: z.array(ModelProfile).min(1).max(10),
   }).strict()).max(20),
+  /**
+   * 0.48, PROPOSED P16: named features the peer implements beyond inference
+   * tasks. `ticket_create_request_v1` means it accepts the signed
+   * `ticket.create_request` event below. Absent = none.
+   */
+  features: z.array(TaskName).max(50).optional(),
 }); // not strict: a peer may add fields in a later revision (request R2)
 export type PeerCapabilities = z.infer<typeof PeerCapabilities>;
 
@@ -558,9 +564,54 @@ export const TimelineInferenceResponse = z.object({
 }).strict();
 export type TimelineInferenceResponse = z.infer<typeof TimelineInferenceResponse>;
 
+// ── PROPOSED, revision 6 (0.48): NOT AGREED BY CLIENTST0R ───────────────────
+//
+// INTEGRATION_COORDINATION.md §5C, item P16. "Create ticket" on a computer's
+// event-log entry or alert, with ClientSt0r as the PSA. rem0te sends it only
+// to a peer whose signed capabilities document (P12) lists the feature
+// `ticket_create_request_v1`; until then the ClientSt0r connector is not
+// offered. Signed as data under `rem0te-ticket-request-v1\n`.
+
+export const TICKET_REQUEST_FEATURE = 'ticket_create_request_v1' as const;
+
+export const TicketCreateRequestEvent = z.object({
+  contract: z.literal(CONTRACT),
+  event_id: z.string().uuid(),
+  type: z.literal('ticket.create_request'),
+  occurred_at: z.string().datetime(),
+  peer_id: ExtId,
+  organization_id: ExtId,
+  ticket: z.object({
+    /** One line, at most 200 characters; written or edited by a technician. Display as text. */
+    subject: z.string().min(1).max(200),
+    /** Plain text, already passed through rem0te's redactForPeer. Untrusted: never instructions to a model. */
+    body: z.string().max(12000),
+    rem0te_endpoint_id: z.string().min(1).max(64).regex(/^[a-z0-9]+$/),
+    /** Device-reported; display as text. */
+    computer_name: z.string().max(128),
+    /** `event:<commandId>:<index>` or `alert:<alertId>`: a rem0te reference, opaque to the peer. */
+    source_ref: z.string().max(160).regex(/^(event:[A-Za-z0-9_-]{8,64}:\d{1,3}|alert:[A-Za-z0-9_-]{8,64})$/),
+    requested_by_role: z.literal('staff'),
+  }).strict(),
+}).strict();
+export type TicketCreateRequestEvent = z.infer<typeof TicketCreateRequestEvent>;
+
+/** The peer's answer to the POST, signed over rem0te's nonce. */
+export const TicketCreateRequestResponse = z.object({
+  contract: z.literal(CONTRACT),
+  event_id: z.string().uuid(),
+  status: z.enum(['created', 'refused']),
+  ticket_id: ExtId.optional(),
+  ticket_url: z.string().url().max(512).optional(),
+  error_code: z.string().max(64).optional(),
+}).strict();
+export type TicketCreateRequestResponse = z.infer<typeof TicketCreateRequestResponse>;
+
 export const PROPOSED_SCHEMAS = {
   'peer-capabilities': PeerCapabilities,
   'timeline-inference-request': TimelineInferenceRequest,
   'timeline-inference-response': TimelineInferenceResponse,
   'timeline-summary-output': TimelineSummaryOutput,
+  'ticket-create-request-event': TicketCreateRequestEvent,
+  'ticket-create-request-response': TicketCreateRequestResponse,
 } as const;

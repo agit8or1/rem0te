@@ -11,6 +11,7 @@ import { AlertDetail, type AlertRow, SeverityBadge, StateBadge } from '@/compone
 import { formatDate } from '@/lib/utils';
 import { ago, CHANGE_LABEL, describeMonitor, MONITOR_KIND_LABEL, monitorSource, openAlerts } from './device-model';
 import { useMonitoringView } from './use-device-data';
+import { EntryActions } from '@/components/endpoints/ai-ticket-actions';
 
 /**
  * One computer's monitoring: its alerts first, then what is watched and what
@@ -30,7 +31,13 @@ function AlertList({ rows, endpointId }: { rows: AlertRow[]; endpointId: string 
             {a.occurrences > 1 && <span className="text-xs text-muted-foreground">{a.occurrences} times</span>}
             <span className="ml-auto text-xs text-muted-foreground" title={formatDate(a.lastSeenAt)}>last seen {ago(a.lastSeenAt)}</span>
           </button>
-          {open === a.id && <AlertDetail id={a.id} onChanged={() => qc.invalidateQueries({ queryKey: ['mon-endpoint', endpointId] })} />}
+          {open === a.id && (
+            <>
+              {/* 0.48: Ask AI and Create ticket, by the alert's id. */}
+              <div className="px-3 pb-2"><EntryActions endpointId={endpointId} source={{ source: 'alert', alertId: a.id }} /></div>
+              <AlertDetail id={a.id} onChanged={() => qc.invalidateQueries({ queryKey: ['mon-endpoint', endpointId] })} />
+            </>
+          )}
         </div>
       ))}
     </>

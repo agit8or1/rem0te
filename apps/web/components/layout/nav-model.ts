@@ -35,7 +35,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Activity, ArrowRightLeft, BarChart3, BellRing, Building2, Cpu, WifiOff, Download, FileCode2, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
   Monitor, MonitorCheck, MonitorX, Package, PackageCheck, PlayCircle, RefreshCw, Settings, Shield, ShieldCheck, Siren,
-  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail,
+  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail, Sparkles, Ticket,
 } from 'lucide-react';
 import { CAP, type Capability } from '@/lib/auth';
 
@@ -157,6 +157,9 @@ export const NAV: NavSection[] = [
       { href: '/settings/client-updates', label: 'Client updates', icon: CalendarClock, show: (c) => c.isBusinessOwner || c.canManageTechnicians || (c.technician && c.can(CAP.COMPUTERS_EDIT)) },
       { href: '/admin/rollouts', label: 'Client rollouts', icon: PackageCheck, show: (c) => c.isPlatformAdmin },
       { href: '/settings/email', label: 'Email', icon: Mail, show: (c) => c.isPlatformAdmin },
+      // 0.48: the AI provider is the operator's; a Business Owner may set their business's own PSA.
+      { href: '/settings/ai', label: 'AI', icon: Sparkles, show: (c) => c.isPlatformAdmin },
+      { href: '/settings/psa', label: 'PSA / ticketing', icon: Ticket, show: (c) => c.isPlatformAdmin || (c.isBusinessOwner && !c.technician) },
       { href: '/admin/security', label: 'Security', icon: Shield, show: (c) => c.isPlatformAdmin },
       { href: '/admin/status', label: 'System status', icon: Activity, show: (c) => c.isPlatformAdmin },
       { href: '/about', label: 'Updates', icon: RefreshCw, show: (c) => c.isPlatformAdmin },
