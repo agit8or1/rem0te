@@ -139,6 +139,13 @@ company-wide; for a technician, only the machines your assignment names.
 | **Pending patches** | From the last update scan: how many are waiting, and a *restart* tag if Windows wants one. |
 | **Alerts** | How many monitoring alerts are open (or acknowledged). Click it for the device's Monitoring tab. |
 
+**Narrower windows show fewer columns (0.47.1).** So the list fits the page without scrolling sideways, **OS**
+shows only when the window is at least 1280 pixels wide, and **Site** and **Logged-in user** only from 1536 pixels.
+The column picker marks them *(wide screens)*. A column you chose is never removed, only hidden while the window is
+narrow. **Alerts** is off by default, because **Health** already shows the worst open alert; turn it on under
+**Columns**. A browser that saved its own column choice keeps it. Long business and site names are cut short, with
+the full name on hover, and **Connect** stays pinned on the right.
+
 **Every number says how old it is, and an old one is greyed.** A resource sample
 is stale after 15 minutes (five missed heartbeats); an update scan after 36 hours.
 A greyed value is what the machine last said, not what it is doing now.
@@ -371,15 +378,15 @@ what it does.
 |---|---|
 | Overview | Assignment (from 0.35 with every **group** the computer is in — static groups and the rule groups it matches right now, as you would see them in the list; each links to the list filtered by it), key alerts, patch status, the **Agent** card, recent activity, then the hardware, utilisation, storage, network and update cards, each with its age |
 | Monitoring | Alerts first (acknowledge and resolve here), then what is watched on this computer in words, the agent's last report, and what changed |
-| Software | Installed software with a filter, and recent software changes (Windows agents only) |
-| Processes | Every running process, as a read-only snapshot with its age and a Refresh (standard Windows agent, 0.33) |
-| Services | Every service with state, start mode and run-as account; snapshot with age and Refresh (0.33) |
+| Software | Installed software with a filter, and recent software changes (Windows agents only); **Uninstall** on a program asks the full agent to remove it as an approved action (0.41 — [software-deployment.md](software-deployment.md)) |
+| Processes | Every running process, as a snapshot with its age and a Refresh (0.33); from 0.45 **End process** on a row asks the full agent to end it as an approved action ([approved-actions.md](approved-actions.md)) |
+| Services | Every service with state, start mode and run-as account; snapshot with age and Refresh (0.33); from 0.45 **Start**, **Stop**, **Restart** and **Startup type** on a row, as approved actions on the full agent, with protected services marked *Protected* |
 | Network | Every network connection: addresses, gateway, DNS, DHCP, MAC; snapshot with age and Refresh (0.33) |
 | Patches | Patch status, updates offered, Windows Update history |
-| Event logs | A page of one Windows event log, on request (Windows agents only) |
+| Event logs | A page of one Windows event log, on request (Windows agents only); from 0.48 **Ask AI** and **Create ticket** on an entry ([ai-and-tickets.md](ai-and-tickets.md)) |
 | Diagnostics | Test connection: server, computer and your own RustDesk |
-| Actions | Request an approved action and see past requests |
-| Chat | Chat with the person at the computer, receipts and earlier transcripts (signed Windows agent; elsewhere it says why not — [chat.md](chat.md)) |
+| Actions | Request an approved action and see past requests; from 0.47.1 the Print Spooler's last known state, with **Refresh**, and *Nothing to do* when it is already running |
+| Chat | Chat with the person at the computer, receipts and earlier transcripts; emoji, files and pictures from 0.44 (signed Windows agent; elsewhere it says why not — [chat.md](chat.md)) |
 | History | Remote sessions, technician notes, the AI-written summary (labelled as such) and who can connect |
 
 **The Agent card** (Overview, 0.34) says which agent the computer runs (*Standard*,

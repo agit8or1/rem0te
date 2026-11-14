@@ -13,7 +13,7 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 ## Using it
 
 - **[technician-guide.md](technician-guide.md)** — day-to-day: find a computer,
-  connect, help someone unenrolled, review sessions.
+  connect, help someone unenrolled, review sessions; which Devices-list columns show on narrower windows (0.47.1).
 - **[clients.md](clients.md)** — every RustDesk client Rem0te hands out, who each
   is for, and how it learns where this server is.
 - **[connecting.md](connecting.md)** — what actually happens when you click
@@ -27,7 +27,8 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[diagnostics.md](diagnostics.md)** — one-click read-only diagnostics: disk space,
   services, recent errors, top processes, network and DNS, pending updates and
   restart status, and what the agent will and will not read (0.31); the Processes,
-  Services and Network snapshot tabs (0.33).
+  Services and Network snapshot tabs (0.33), and the buttons on them that start, stop or restart a service, change
+  its startup type, or end a process (0.45).
 - **[monitoring.md](monitoring.md)** — monitors (offline, disk, CPU, memory,
   services, event log, pending restart), inheritance, alerts, site outages,
   maintenance windows, escalation and ClientSt0r tickets (0.29).
@@ -49,7 +50,8 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   analysis (contract ticket-rmm-v1): staff-only findings, what a job can and
   cannot touch, peers file, mappings. Contract: [contracts/ticket-rmm-v1](contracts/ticket-rmm-v1/README.md).
 - **[chat.md](chat.md)** — chatting with the person at a Windows computer: receipts, recording, limits,
-  containment, audit and 400-day retention; not yet run on real Windows (0.34, through the tray from 0.36).
+  containment, audit and 400-day retention; emoji, files and pictures, and the chat inbox in the header (0.44);
+  not yet run on real Windows (0.34, through the tray from 0.36).
 - **[tray.md](tray.md)** — the tray icon on Windows computers, with either agent: chat, support requests with
   usage and a screenshot, self-help tools, the credentials each part holds; not yet run on real Windows (0.36).
 - **[support-requests.md](support-requests.md)** — the customer support link,
@@ -66,19 +68,22 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   and cannot do, key ceremony, shipping a release, signed-only containment, migrating legacy agents, rotation, recovery.
 - **[approved-actions.md](approved-actions.md)** — the first approved action (0.26): starting the Print Spooler once,
   approved by passkey on a separate approval signer and verified by the agent; setup, the roster ceremony, results,
-  reconciliation, and what is and is not proven.
+  reconciliation, and what is and is not proven. Also the maintenance actions (0.32), direct mode for a single
+  operator (0.40), service control and ending a process (0.45), the Spooler's state on the Actions tab (0.47.1), and
+  the setting that stops everyday changes asking you to confirm it is you (0.47).
 - **[staged-patching.md](staged-patching.md)** — Windows updates in stages (0.27): a canary, then rings, each a
   signed plan two approvers authorize; what is installed and refused, the promotion gate, what *effective* means,
-  and what is and is not proven.
+  and what is and is not proven. Since 0.32 it also covers installing from one computer's Patches tab and patch
+  policies, which are approved once and then signed ring by ring by the signer inside a maintenance window.
 - **[software-deployment.md](software-deployment.md)** — software deployment (0.34): a catalog of allowlisted winget
   packages pinned by version and installer SHA-256, installed or uninstalled on one computer or by canary and rings
   as signed two-approver actions; detection rules, version compliance, who verifies what, and what is not proven.
+  Searching winget and adding with one click (0.41), browsing the whole catalog and adding up to 25 at once (0.43),
+  and removing an installed program from the Software tab (0.41, more uninstaller kinds in 0.42).
 - **[script-library.md](script-library.md)**: the script library. PowerShell scripts with immutable, hashed
   versions, static-check warnings, and review by someone other than the author. From 0.34 an approved version
   runs on Windows as the signed action `windows.script.run@1`, only once its hash is on the approval signer's own
   allowlist; the page covers that path, its limits, the threat model, and that it hasn't run on real Windows yet.
-  and what is and is not proven. Since 0.32 it also covers installing from one computer's Patches tab and patch
-  policies, which are approved once and then signed ring by ring by the signer inside a maintenance window.
 - **[patching-setup.md](patching-setup.md)** — turning on signed patching in production, in order (0.32): signed
   release, signed channel, signer, approvers, the first policy; where each key lives; the live pre-flight.
 - **[containment.md](containment.md)** — stopping writes during an incident (0.28): a global write pause and
@@ -93,7 +98,8 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[server-sizing.md](server-sizing.md)** — how big a server for 50 to 5,000 computers, from measured heartbeat cost and row sizes.
 - **[data-retention.md](data-retention.md)** — what ages out of the database and when, what never does (the audit log), and the `RETENTION_*` settings.
 - **[updates.md](updates.md)** — the three things that can be out of date
-  (Rem0te, the RustDesk clients, hbbs/hbbr) and how each is updated.
+  (Rem0te, the RustDesk clients, hbbs/hbbr) and how each is updated; automatic agent updates, and turning them on
+  or off for one computer or one business (0.46).
 - **[architecture.md](architecture.md)** — what runs where, the data model, and
   the RustDesk configuration chain.
 - **[access-control.md](access-control.md)** — the permission model in full.

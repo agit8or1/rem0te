@@ -1,7 +1,8 @@
 # Rem0te — screenshot gallery
 
-Every image below is a capture of **Rem0te v0.36** running against an isolated demo
-database, at **1440×1000** or, where marked, **390×844** (phone width), both at
+Every image below is a capture of Rem0te running against an isolated demo
+database (most from **v0.36**; the device list, the device tabs, the AI, ticket, chat, winget and Actions images
+from **v0.48**), at **1440×1000** or, where marked, **390×844** (phone width), both at
 `deviceScaleFactor: 2`.
 Nothing is mocked, drawn, or AI-generated.
 
@@ -25,11 +26,11 @@ capture — see [Regenerating these](#regenerating-these).
 | [Overview and dashboards](#overview-and-dashboards) | The dashboard, search, the customer list |
 | [Visual insights and monitoring](#visual-insights-and-monitoring) | Client map, alerts, live sessions, history, audit, host health |
 | [Devices](#devices) | The device list, bulk actions, saved views, one device, Linux and macOS |
-| [Device tabs](#device-tabs) | Performance, processes, services, network, patches, event log |
+| [Device tabs](#device-tabs) | Performance, processes, services, network, patches, event log, Ask AI and Create ticket, actions, chat |
 | [Everyday workflows](#everyday-workflows) | Adding a device, downloads, Quick Connect, launching from Tactical RMM |
-| [Reports, automation and patching](#reports-automation-and-patching) | Reports, the script library, client-update windows, patch policies |
+| [Reports, automation and patching](#reports-automation-and-patching) | Reports, the script library, the winget catalog, client-update windows, patch policies |
 | [Access and administration](#access-and-administration) | The three-level model, capabilities, accounts |
-| [Configuration](#configuration) | Platform settings, branding, releases, documentation |
+| [Configuration](#configuration) | Platform settings, branding, AI, PSA / ticketing, releases, documentation |
 | [Regenerating these](#regenerating-these) | How to rebuild the gallery without touching production |
 
 Most features appear once, in whichever theme suits them; the dashboard, device
@@ -137,7 +138,10 @@ The platform's own security surface, in one place.
 ## Devices
 
 ### Device list — light
-<a href="images/github/computers-inventory-light.png"><img src="images/github/computers-inventory-light.png" alt="The Devices list in light theme: search, filters for business, site, group, online, alerts, agent, restart pending and archived, Views, Columns and Export CSV, above a table with device, business, site, OS, health, agent and last seen, and a Connect button per row."></a>
+<a href="images/github/computers-inventory-light.png"><img src="images/github/computers-inventory-light.png" alt="The Devices list in light theme at 1440 pixels: search, filters for business, site, group, online, alerts, agent, restart pending and archived, Views, Columns and Export CSV, above a table with device, business, OS, health, agent, last seen and CPU, RAM and disk, and a Connect button per row."></a>
+
+From 0.47.1 the list fits the window: OS appears from 1280 pixels, Site and Logged-in user from 1536, and Alerts is
+off by default because Health already shows the worst open alert. Device names wrap rather than widen the row.
 
 Every device you may see, across every business. The server does the searching and
 filtering, so it covers every page, not just the one on screen.
@@ -240,16 +244,30 @@ Metric history: 24 hours of every sample, then hourly means with their range for
 <a href="images/github/device-performance-dark.png"><img src="images/github/device-performance-dark.png" alt="The same Performance tab in dark theme over 24 hours."></a>
 
 ### Processes — dark
-<a href="images/github/device-processes-dark.png"><img src="images/github/device-processes-dark.png" alt="The Processes tab in dark theme: a read-only snapshot taken ten minutes ago, a filter, and processes sorted by memory with PID, CPU time, user and start time."></a>
+<a href="images/github/device-processes-dark.png"><img src="images/github/device-processes-dark.png" alt="The Processes tab in dark theme: a snapshot with its age and who asked, a filter, and processes sorted by memory with PID, CPU time, user and start time, each row with End process or a Protected badge."></a>
 
-A snapshot, not a live view: it says when it was taken and who asked, and nothing on
-it acts on the computer.
+A snapshot, not a live view: it says when it was taken and who asked. From 0.45 a row's
+**End process** asks the full agent to end that process as an approved action; Windows,
+security, Rem0te and RustDesk processes show *Protected* instead.
+
+### Ending a process — light
+<a href="images/github/process-stop-light.png"><img src="images/github/process-stop-light.png" alt="The End process dialog for SearchIndexer.exe in light theme: the process id, name and start time the computer will check, the option to end the processes it started, the warnings, the reason, the window and the confirmation."></a>
+
+The plan names the process id, its name and when it started; the computer refuses unless
+all three still match, so a process id Windows has reused is never ended. It has been
+tested against a simulated Windows only.
 
 ### Services — light
-<a href="images/github/device-services-light.png"><img src="images/github/device-services-light.png" alt="The Services tab in light theme listing services with state, start mode and the account each runs as."></a>
+<a href="images/github/device-services-light.png"><img src="images/github/device-services-light.png" alt="The Services tab in light theme listing services with state, start mode and the account each runs as, with Start, Stop, Restart and Startup type buttons, and protected services marked Protected with the reason."></a>
 
-Display name, name, state, start mode and account. Starting or stopping a service is
-not offered here.
+Display name, name, state, start mode and account. From 0.45 each row offers only the
+operations allowed for that service, each a signed approved action.
+
+### Changing a service — dark
+<a href="images/github/service-control-dark.png"><img src="images/github/service-control-dark.png" alt="The Startup type dialog for the Print Spooler in dark theme: what the latest list says, the startup types allowed, what is never changed, the warnings, the reason, the window, the confirmation and Run it."></a>
+
+Only the state or the startup type ever changes; the program, account, password,
+recovery actions and dependencies never do. Tested against a simulated Windows only.
 
 ### Network — dark
 <a href="images/github/device-network-dark.png"><img src="images/github/device-network-dark.png" alt="The Network tab in dark theme: one card per adapter with status, speed, addresses, gateway, DNS, MAC and DHCP lease."></a>
@@ -263,7 +281,8 @@ possible on this computer, why.
 ### Event log — dark
 <a href="images/github/device-event-log-dark.png"><img src="images/github/device-event-log-dark.png" alt="The Event Log tab on a computer's page in dark theme, with selectors for log, time range and event count, level chips for Critical, Error, Warning and Information, an optional source filter, and a table of returned System log entries with timestamps, level badges, event IDs, providers and messages."></a>
 
-Read a page of a managed computer's Windows event log without connecting to it.
+Read a page of a managed computer's Windows event log without connecting to it. From
+0.48 each entry has **Ask AI** and **Create ticket**; the second entry here already has a ticket.
 Five logs are available — Application, System, Security, Setup and Windows
 PowerShell — and nothing else: the allowlist is enforced by the API and again
 by the agent that opens the log.
@@ -272,6 +291,36 @@ There is no channel to reach into an endpoint, so this is a request rather than
 a query: it is collected on the machine's next heartbeat, up to about three
 minutes away. Reading logs is its own permission, separate from viewing the
 computer, and every request is audited with the log, the window and who asked.
+
+### Ask AI — dark
+<a href="images/github/ask-ai-dark.png"><img src="images/github/ask-ai-dark.png" alt="The AI explanation dialog in dark theme for a Print Spooler event 7000: the provider and model, how many values were redacted, what it means, likely causes, whether it matters, safe next steps, Show what was sent and Copy."></a>
+
+The entry is redacted on the server before anything is sent; the dialog names the
+provider and model and how many values were removed. The answer shown came from a
+loopback stand-in on the demo server, not a real provider.
+
+### Create ticket — light
+<a href="images/github/create-ticket-light.png"><img src="images/github/create-ticket-light.png" alt="The Create ticket dialog in light theme: sent to the HaloPSA automation webhook, the filled-in subject, a note, Include AI explanation, and Send."></a>
+
+The ticket goes to the business's own connector, or the platform default. The demo
+server's connector is a loopback stand-in; no real PSA was called.
+
+### Actions — light
+<a href="images/github/actions-spooler-light.png"><img src="images/github/actions-spooler-light.png" alt="The Actions tab in light theme: the action picker, the Start the Windows Print Spooler warnings, the direct-mode note, Print Spooler Stopped with its time and Refresh, the reason box and Run it."></a>
+
+From 0.47.1 the Spooler action shows the service's last known state. When it is
+already running the button reads *Nothing to do*.
+
+### Chat with files — dark
+<a href="images/github/chat-files-dark.png"><img src="images/github/chat-files-dark.png" alt="A computer's Chat tab in dark theme: the chat window is open on the computer, a picture of a printer error shown inline, a text file offered as a download, emoji in the messages, a Read receipt, and the emoji and paperclip buttons."></a>
+
+Pictures are shown only when their first bytes say PNG, JPEG, GIF or WebP; anything
+else is a download. The tray's chat window has not yet run on real Windows.
+
+### The chat inbox — light
+<a href="images/github/chat-inbox-light.png"><img src="images/github/chat-inbox-light.png" alt="The dashboard in light theme with the header's chat inbox open: one open chat on HARB-DISPATCH-01 with two unread replies and the sound switch."></a>
+
+Unread replies from every open chat you can see, from anywhere in the console.
 
 ---
 
@@ -349,6 +398,12 @@ actions. The notice says what has been proven and what has not.
 
 The reviewer approves an exact hash, and cannot be the person who wrote the content.
 
+### Browsing the winget catalog — light
+<a href="images/github/winget-browse-light.png"><img src="images/github/winget-browse-light.png" alt="The Software catalog page in light theme: the winget community catalog with the catalog to build, a filter, A to Z letters, three packages ticked and Add 3 selected to the global catalog."></a>
+
+Tick up to 25 packages and add them to a catalog in one go; each is pinned to its
+latest version and installer hash. The demo server holds a 36-package sample of the index.
+
 ### Client updates in a window — light
 <a href="images/github/client-updates-light.png"><img src="images/github/client-updates-light.png" alt="Settings, Client updates for Harbor Logistics in light theme: a notice that the sweep is off on this server, the business policy's windows, the Tacoma warehouse override, the Remote depots device-group policy, and each computer's automatic-update state."></a>
 
@@ -407,6 +462,18 @@ settings that apply to the whole platform.
 
 Name and logo shown to the businesses you support.
 
+### AI provider — light
+<a href="images/github/settings-ai-light.png"><img src="images/github/settings-ai-light.png" alt="Settings, AI in light theme: what is redacted before anything is sent, Enable Ask AI, the provider, the model, the API key shown only as set and its last four characters, Save, and Test the provider."></a>
+
+Platform Admins only. The key is write-only. The demo server's key is a fake one and its
+provider a loopback stand-in.
+
+### PSA / ticketing — dark
+<a href="images/github/settings-psa-dark.png"><img src="images/github/settings-psa-dark.png" alt="Settings, PSA / ticketing in dark theme: the platform default is a signed webhook named HaloPSA automation, the connector form, the signing secret, and the body the webhook receives."></a>
+
+Where *Create ticket* sends. The saved URL is never shown again, only its host; on the
+demo server that host is a loopback stand-in.
+
 ### Release history — dark
 <a href="images/github/release-history-dark.png"><img src="images/github/release-history-dark.png" alt="The About page in dark theme showing the running version and a parsed list of releases from the changelog."></a>
 
@@ -442,12 +509,19 @@ DATABASE_URL=… ENCRYPTION_KEY=… npx tsx prisma/_docs-demo-data.ts
 #    ages — without this the dashboard counts stop matching the inventory.
 DATABASE_URL=… npx tsx prisma/_docs-demo-monitoring.ts # monitors, alerts, a site outage, API keys
 DATABASE_URL=… npx tsx prisma/_docs-demo-workbench.ts  # 0.31–0.36 pages, see below
+DATABASE_URL=… DOCS_AGENT_SHA256=… [DOCS_CHAT_IMAGE=…] \
+  npx tsx prisma/_docs-demo-dispatch.ts                 # 0.41–0.48 pages, see below
 DATABASE_URL=… npx tsx prisma/_docs-demo-refresh.ts    # last, right before capturing
 # Run the demo API with every sweep off, or it acts on the demo data:
 #   MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off \
 #   METRIC_SWEEP=off RETENTION_SWEEP=off REPORT_SCHEDULE_SWEEP=off \
 #   SCRIPT_OUTPUT_SWEEP=off CHAT_RETENTION_SWEEP=off AUDIT_SEALER=off \
-#   STALE_SWEEP=off SNAPSHOT_SWEEP=off
+#   STALE_SWEEP=off SNAPSHOT_SWEEP=off TRAY_SWEEP=off \
+#   AUTO_MIGRATION_SWEEP=off WINGET_INDEX_SWEEP=off AGENT_AUTO_UPDATE=off
+#   GEOIP_DB_PATH=<a file that does not exist>   # or it reads this host's GeoIP
+# For the 0.41–0.48 pages the demo API also needs (see below):
+#   NODE_ENV=test AI_TEST_BASE_URL=http://127.0.0.1:<stub>   # loopback AI stand-in
+#   APPROVAL_SIGNER_INTERNAL_URL=…  UPDATE_REPO_DIR=…       # a scratch signer and release repo
 # STALE_SWEEP=off matters: the demo's agent-silent computer is isOnline with
 # an old heartbeat, and the stale sweep would mark it offline.
 # The client-update and patching pages then say their sweep is off; that is
@@ -495,6 +569,26 @@ re-run: it deletes what it owns first. It refuses any database not named
 - two patch policies, one awaiting approval and one active;
 - a fictional relay host (`remote.example.net`) and Quick Connect turned on.
 
+`_docs-demo-dispatch.ts` (0.48.1) seeds what the 0.41–0.48 pages need, and can be re-run. It refuses any database
+not named `reboot_remote_docs`. It writes:
+
+- a 36-package sample of the winget index, for the catalog browser (no four-part version numbers: the masks below
+  would print one as an IP address);
+- HARB-DISPATCH-01 and -02 on the signed agent at 0.48.0 with the whole action catalog, so the Services, Processes
+  and Actions tabs offer their buttons; their agent digest is `DOCS_AGENT_SHA256`, which must be the
+  `windows/rem0te-agent.exe` digest in the scratch release repository `UPDATE_REPO_DIR` points at;
+- an open, recorded chat on HARB-DISPATCH-01 with emoji, a picture (`DOCS_CHAT_IMAGE`, or a generated one) and a
+  text file, the last reply unread, and the chat window reported open for the next 45 minutes.
+
+The Actions, Services and Processes buttons need an approval signer, so the demo stack runs a scratch one
+(`dist/approval-signer/main.js serve`, its own `APPROVAL_SIGNER_DIR`, `policy set --business default
+--approval direct`) and a scratch release repository built with `rem0te-release`. Nothing is ever approved or
+executed: the captures stop at the dialog. Ask AI and Create ticket point at loopback stand-ins: the API runs with
+`NODE_ENV=test` and `AI_TEST_BASE_URL` (honoured only under `test`, loopback only) and an obviously fake key, and
+the PSA connector is a webhook to a loopback listener. Never point a demo stack at a real provider, PSA, SMTP server
+or webhook. Ask AI caches an answer for a day, and a cached one shows a *cached* badge, so clear `AiAnswer` before
+capturing it.
+
 `_docs-demo-refresh.ts` keeps one computer, NWD-BILLING-RMT, deliberately *agent
 silent*: still online to RustDesk, heartbeat three days old, so the amber state
 is on the dashboard, the map and its own page. Every other computer reads agent
@@ -520,7 +614,7 @@ writes to the database:
 | RustDesk IDs | `•••••••••` |
 | Public IP addresses | `198.51.100.24` (RFC 5737 documentation range) |
 | API key prefixes | `rk_SAMPLE` |
-| Host names outside `mspreboot`, `github`, `rustdesk` and `example` | `remote.example.com` |
+| Host names outside `mspreboot`, `github`, `rustdesk` and `example`, and the AI providers' fixed `api.anthropic.com` and `api.openai.com` | `remote.example.com` |
 
 Private ranges and loopback are left as they are — they carry nothing.
 

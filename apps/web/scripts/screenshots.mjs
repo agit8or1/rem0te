@@ -380,6 +380,8 @@ const CALLOUT_PAGES = [
       { find: '[data-testid="snapshot-refresh"]' },
       { find: 'input[aria-label="Filter processes"]' },
       { find: 'main table thead' },
+      // 0.45: End process on a row (the docs stack has a signer and a published stand-in agent build).
+      { find: { text: 'End process', tag: 'button' } },
     ],
   },
   {
@@ -395,6 +397,8 @@ const CALLOUT_PAGES = [
       { find: 'input[aria-label="Filter services"]' },
       { find: { text: 'Print Spooler', tag: 'tr' } },
       { find: '[data-testid="snapshot-refresh"]' },
+      // 0.45: the row's own buttons — Start and Startup type… on a stopped Spooler.
+      { find: { text: 'Startup type', tag: 'button' } },
     ],
   },
   {
@@ -579,6 +583,229 @@ const CALLOUT_PAGES = [
       { find: { text: 'awaiting approval' } },
       { find: { text: 'active', exact: true } },
       { find: { text: 'New policy', tag: 'button' } },
+    ],
+  },
+  // ── 0.44–0.48 ───────────────────────────────────────────────────────────
+  // The docs stack for these runs an approval signer in direct mode, a
+  // throwaway signed release whose stand-in agent HARB-DISPATCH-01/02 report
+  // (prisma/_docs-demo-dispatch.ts), and loopback stand-ins for the AI
+  // provider and the PSA webhook. Nothing here reaches a real service.
+  {
+    name: 'guide/actions-spooler',
+    height: 1000,
+    path: '@endpoint:HARB-DISPATCH-01?tab=actions',
+    before: async (page) => { await page.waitForSelector('[data-testid="action-service-state"]', { timeout: 15_000 }); await page.waitForTimeout(800); },
+    callouts: [
+      { find: '[data-testid="action-picker"]' },
+      { find: '[data-testid="direct-mode-note"]' },
+      { find: '[data-testid="action-service-state"]' },
+      { find: '#action-reason' },
+      { find: { text: 'Run it', tag: 'button', exact: true } },
+    ],
+  },
+  {
+    name: 'guide/actions-nothing-to-do',
+    height: 900,
+    path: '@endpoint:HARB-DISPATCH-02?tab=actions',
+    before: async (page) => { await page.waitForSelector('[data-testid="action-already-running"]', { timeout: 15_000 }); await page.waitForTimeout(800); },
+    callouts: [
+      { find: '[data-testid="action-service-state"]' },
+      { find: '[data-testid="action-already-running"]' },
+    ],
+  },
+  {
+    name: 'guide/service-control',
+    height: 1250,
+    path: '@endpoint:HARB-DISPATCH-01?tab=services',
+    before: async (page) => {
+      await page.waitForSelector('input[aria-label="Filter services"]', { timeout: 15_000 });
+      await page.fill('input[aria-label="Filter services"]', 'sp');
+      await page.waitForTimeout(600);
+      await page.click('tr:has-text("Print Spooler") button:has-text("Startup type")');
+      await page.waitForSelector('[data-testid="control-dialog"]', { timeout: 10_000 });
+      await page.waitForTimeout(600);
+    },
+    callouts: [
+      { find: { text: 'in the latest list', tag: 'p' } },
+      { find: { text: 'New startup type', tag: 'div' } },
+      { find: '[data-testid="control-dialog"] ul' },
+      { find: '#dc-reason' },
+      { find: { text: 'I understand that this changes', tag: 'label' } },
+      { find: '[data-testid="control-submit"]' },
+    ],
+  },
+  {
+    name: 'guide/process-stop',
+    height: 1000,
+    path: '@endpoint:HARB-DISPATCH-01?tab=processes',
+    before: async (page) => {
+      await page.waitForSelector('[data-testid="snapshot-age"]', { timeout: 15_000 });
+      await page.click('tr:has-text("SearchIndexer") button:has-text("End process")');
+      await page.waitForSelector('[data-testid="control-dialog"]', { timeout: 10_000 });
+      await page.waitForTimeout(600);
+    },
+    callouts: [
+      { find: { text: 'The computer ends it only if', tag: 'p' } },
+      { find: { text: 'And the processes it started', tag: 'label' } },
+      { find: '#dc-reason' },
+      { find: { text: 'I understand that the process', tag: 'label' } },
+      { find: '[data-testid="control-submit"]' },
+    ],
+  },
+  {
+    name: 'guide/routine-confirm',
+    height: 1100,
+    path: '/settings',
+    before: async (page) => { await page.waitForSelector('text=Confirm before everyday changes', { timeout: 15_000 }); await page.waitForTimeout(600); },
+    callouts: [
+      { find: { text: 'Confirm before everyday changes' }, card: true },
+      { find: { text: 'Off', tag: 'button', exact: true } },
+      { find: { text: 'Every 10 minutes', tag: 'button' } },
+    ],
+  },
+  {
+    // Before guide/chat-files: opening the chat marks its replies read.
+    name: 'guide/chat-inbox',
+    height: 900,
+    path: '/dashboard',
+    before: async (page) => {
+      await page.waitForSelector('[data-testid="chat-inbox-badge"]', { timeout: 20_000 });
+      await page.click('[data-testid="chat-inbox-trigger"]');
+      await page.waitForSelector('[data-testid="chat-inbox-item"]', { timeout: 10_000 });
+      await page.waitForTimeout(600);
+    },
+    callouts: [
+      { find: '[data-testid="chat-inbox-trigger"]' },
+      { find: '[data-testid="chat-inbox-item"]' },
+      { find: '[data-testid="chat-inbox-sound"]' },
+    ],
+  },
+  {
+    name: 'guide/chat-files',
+    height: 1100,
+    path: '@endpoint:HARB-DISPATCH-01?tab=chat',
+    before: async (page) => {
+      await page.waitForSelector('[data-testid="chat-attachment-image"]', { timeout: 15_000 });
+      await page.waitForTimeout(1200);
+      await page.evaluate(() => {
+        const t = document.querySelector('[data-testid="chat-transcript"]');
+        const a = document.querySelector('[data-testid="chat-attachment"]');
+        if (t && a) t.scrollTop = a.getBoundingClientRect().top - t.getBoundingClientRect().top + t.scrollTop - 70;
+      });
+      await page.waitForTimeout(400);
+    },
+    callouts: [
+      { find: '[data-testid="chat-attachment"][data-kind="image"]' },
+      { find: '[data-testid="chat-attachment"][data-kind="file"]' },
+      { find: '[data-testid="chat-presence"]' },
+      { find: '[data-testid="chat-emoji-open"]' },
+      { find: '[data-testid="chat-attach"]' },
+    ],
+  },
+  {
+    // Ticks rows and stops: adding reads manifests from winget-pkgs, which a capture never does.
+    name: 'guide/winget-browse',
+    height: 1300,
+    path: '/automation/software',
+    before: async (page) => {
+      await page.waitForSelector('[data-testid="winget-catalog"] table', { timeout: 15_000 });
+      for (const n of ['7-Zip', 'Mozilla Firefox', 'Notepad++']) await page.check(`input[aria-label="Select ${n}"]`).catch(() => {});
+      await page.waitForSelector('[data-testid="winget-add-selected"]', { timeout: 10_000 });
+      await page.evaluate(() => { for (const el of document.querySelectorAll('*')) if (el.scrollTop) el.scrollTop = 0; window.scrollTo(0, 0); });
+      await page.waitForTimeout(400);
+    },
+    callouts: [
+      { find: '#wb-target' },
+      { find: 'input[aria-label="Filter the winget catalog"]' },
+      { find: '[data-testid="winget-letters"]' },
+      { find: 'input[aria-label="Select 7-Zip"]' },
+      { find: '[data-testid="winget-add-selected"]' },
+    ],
+  },
+  {
+    name: 'guide/ai-settings',
+    height: 1000,
+    path: '/settings/ai',
+    before: async (page) => { await page.waitForSelector('[data-testid="ai-test"]', { timeout: 15_000 }); await page.waitForTimeout(600); },
+    callouts: [
+      { find: 'a[href="/settings/ai"]' },
+      { find: { text: 'Before anything is sent', tag: 'p' } },
+      { find: '#ai-provider' },
+      { find: '#ai-model-pick' },
+      { find: '#ai-key' },
+      { find: { text: 'Save (re-authenticate)', tag: 'button' } },
+      { find: '[data-testid="ai-test"] button' },
+    ],
+  },
+  {
+    // The platform default is a webhook to the docs stack's loopback stand-in,
+    // so the row names 127.0.0.1; a real one names the PSA's host.
+    name: 'guide/psa-settings',
+    height: 1000,
+    path: '/settings/psa',
+    before: async (page) => { await page.waitForSelector('#psa-kind-global', { timeout: 15_000 }); await page.waitForTimeout(600); },
+    callouts: [
+      { find: 'a[href="/settings/psa"]' },
+      { find: { text: 'Now: Webhook', tag: 'div' } },
+      { find: '#psa-kind-global' },
+      { find: '#psa-url-global' },
+      { find: '#psa-secret-global' },
+      { find: { text: 'Send tickets through this connector', tag: 'label' } },
+    ],
+  },
+  {
+    name: 'guide/event-log-ai',
+    height: 1300,
+    path: '@endpoint:HARB-DISPATCH-01?tab=events',
+    before: async (page) => { await page.waitForSelector('text=Ticket created', { timeout: 15_000 }); await page.waitForTimeout(800); },
+    callouts: [
+      { find: '[data-testid="tab-events"]' },
+      { find: { text: 'Ask AI', tag: 'button' } },
+      { find: { text: 'Create ticket', tag: 'button' } },
+      { find: { text: 'Ticket created' } },
+    ],
+  },
+  {
+    name: 'guide/ask-ai',
+    height: 1000,
+    path: '@endpoint:HARB-DISPATCH-01?tab=events',
+    before: async (page) => {
+      await page.waitForSelector('button:has-text("Ask AI")', { timeout: 15_000 });
+      await page.click('button:has-text("Ask AI") >> nth=0');
+      await page.waitForSelector('text=Safe next steps', { timeout: 30_000 });
+      await page.waitForTimeout(600);
+    },
+    callouts: [
+      { find: { text: 'Redacted before sending', tag: 'p' } },
+      { find: '[role="dialog"] div.break-words' },
+      { find: { text: 'Show what was sent', tag: 'button' } },
+      { find: { text: 'Copy', tag: 'button' } },
+    ],
+  },
+  {
+    name: 'guide/create-ticket',
+    height: 1000,
+    path: '@endpoint:HARB-DISPATCH-01?tab=events',
+    before: async (page) => {
+      // Asked about first, so "Include AI explanation" can be ticked (answered from the day's cache).
+      await page.waitForSelector('button:has-text("Ask AI")', { timeout: 15_000 });
+      await page.click('button:has-text("Ask AI") >> nth=0');
+      await page.waitForSelector('text=Safe next steps', { timeout: 30_000 });
+      await page.click('[role="dialog"] button:has-text("Close")');
+      await page.waitForTimeout(500);
+      await page.click('button:has-text("Create ticket") >> nth=0');
+      await page.waitForSelector('#ticket-subject', { timeout: 10_000 });
+      await page.waitForTimeout(800);
+      await page.fill('#ticket-note', 'Dispatch cannot print labels. Spooler restarted remotely; watching for a repeat.');
+      await page.check('[role="dialog"] input[type="checkbox"]');
+      await page.waitForTimeout(300);
+    },
+    callouts: [
+      { find: { text: 'Sent to', tag: 'p' } },
+      { find: '#ticket-subject' },
+      { find: '#ticket-note' },
+      { find: { text: 'Include AI explanation', tag: 'label' } },
+      { find: { text: 'Send', tag: 'button', exact: true } },
     ],
   },
 ];

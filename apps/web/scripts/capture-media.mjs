@@ -110,6 +110,55 @@ export const SHOTS = [
   // computer whose offline monitor comes from its device group (Remote depots), not from its business.
   { name: 'device-agent-silent-light', maxHeight: 900, path: '@endpoint:NWD-BILLING-RMT', theme: 'light', wait: '[data-testid="device-status"]', settle: 3000 },
   { name: 'device-group-monitor-dark', maxHeight: 1100, path: '@endpoint:HARB-DEPOT-BOI?tab=monitoring', theme: 'dark', wait: '[data-testid="endpoint-monitoring"]', settle: 2500 },
+  // 0.45–0.48: the device tabs that act or ask. The docs stack has an approval signer in direct
+  // mode, a throwaway signed release the demo agents report, and loopback stand-ins for the AI
+  // provider and PSA webhook (prisma/_docs-demo-dispatch.ts, docs/screenshots.md).
+  { name: 'ask-ai-dark', path: '@endpoint:HARB-DISPATCH-01?tab=events', theme: 'dark', settle: 1200,
+    before: async (p) => {
+      await p.waitForSelector('button:has-text("Ask AI")', { timeout: 15000 });
+      await p.click('button:has-text("Ask AI") >> nth=0');
+      await p.waitForSelector('text=Safe next steps', { timeout: 30000 });
+    } },
+  { name: 'create-ticket-light', path: '@endpoint:HARB-DISPATCH-01?tab=events', theme: 'light', settle: 1200,
+    before: async (p) => {
+      await p.waitForSelector('button:has-text("Create ticket")', { timeout: 15000 });
+      await p.click('button:has-text("Create ticket") >> nth=0');
+      await p.waitForSelector('#ticket-subject', { timeout: 10000 });
+      await p.waitForTimeout(800);
+      await p.fill('#ticket-note', 'Dispatch cannot print labels. Spooler restarted remotely; watching for a repeat.');
+    } },
+  { name: 'actions-spooler-light', maxHeight: 900, path: '@endpoint:HARB-DISPATCH-01?tab=actions', theme: 'light', wait: '[data-testid="action-service-state"]', settle: 1500 },
+  { name: 'service-control-dark', height: 1500, path: '@endpoint:HARB-DISPATCH-01?tab=services', theme: 'dark', settle: 1000,
+    before: async (p) => {
+      await p.waitForSelector('input[aria-label="Filter services"]', { timeout: 15000 });
+      await p.fill('input[aria-label="Filter services"]', 'sp');
+      await p.waitForTimeout(600);
+      await p.click('tr:has-text("Print Spooler") button:has-text("Startup type")');
+      await p.waitForSelector('[data-testid="control-dialog"]', { timeout: 10000 });
+    } },
+  { name: 'process-stop-light', path: '@endpoint:HARB-DISPATCH-01?tab=processes', theme: 'light', settle: 1000,
+    before: async (p) => {
+      await p.waitForSelector('[data-testid="snapshot-age"]', { timeout: 15000 });
+      await p.click('tr:has-text("SearchIndexer") button:has-text("End process")');
+      await p.waitForSelector('[data-testid="control-dialog"]', { timeout: 10000 });
+    } },
+  // Light runs before dark: opening the chat (chat-files-dark) marks its replies read.
+  { name: 'chat-inbox-light', maxHeight: 500, path: '/dashboard', theme: 'light', wait: '[data-testid="chat-inbox-badge"]', settle: 1000,
+    before: async (p) => {
+      await p.waitForSelector('[data-testid="chat-inbox-badge"]', { timeout: 20000 });
+      await p.click('[data-testid="chat-inbox-trigger"]');
+      await p.waitForSelector('[data-testid="chat-inbox-item"]', { timeout: 10000 });
+    } },
+  { name: 'chat-files-dark', path: '@endpoint:HARB-DISPATCH-01?tab=chat', theme: 'dark', wait: '[data-testid="chat-attachment-image"]', settle: 1500,
+    before: async (p) => {
+      await p.waitForSelector('[data-testid="chat-attachment-image"]', { timeout: 15000 });
+      await p.waitForTimeout(1000);
+      await p.evaluate(() => {
+        const t = document.querySelector('[data-testid="chat-transcript"]');
+        const a = document.querySelector('[data-testid="chat-attachment"]');
+        if (t && a) t.scrollTop = a.getBoundingClientRect().top - t.getBoundingClientRect().top + t.scrollTop - 70;
+      });
+    } },
   { name: 'my-computers-dark', path: '/my-computers', theme: 'dark', settle: 3000 },
   { name: 'unassigned-light', maxHeight: 620, path: '/admin/unassigned', theme: 'light', settle: 2500 },
 
@@ -151,6 +200,22 @@ export const SHOTS = [
   { name: 'reports-alerts-light', path: '/reports/alert-frequency', theme: 'light', wait: 'text=Export CSV', settle: 2500 },
   { name: 'script-library-dark', path: '/automation/scripts', theme: 'dark', wait: 'text=Clear stuck print queue', settle: 1500 },
   { name: 'script-review-light', path: '@script:Clear stuck print queue', theme: 'light', wait: 'text=Static checks', settle: 1500 },
+  // 0.43: browsing the winget index and ticking packages. Never presses Add: that reads manifests from winget-pkgs.
+  { name: 'winget-browse-light', path: '/automation/software', theme: 'light', settle: 1200,
+    before: async (p) => {
+      await p.waitForSelector('[data-testid="winget-catalog"] table', { timeout: 15000 });
+      for (const n of ['7-Zip', 'Mozilla Firefox', 'Notepad++']) await p.check(`input[aria-label="Select ${n}"]`).catch(() => {});
+      // Ticking scrolls the table; frame its top (target, filter, letters, Add N selected).
+      await p.evaluate(() => {
+        const n = document.querySelector('[data-testid="winget-catalog"]');
+        n?.scrollIntoView({ block: 'start' });
+        // The content pane scrolls, not the window; leave room for the sticky header.
+        for (let el = n?.parentElement; el; el = el.parentElement) {
+          if (el.scrollHeight > el.clientHeight && /auto|scroll/.test(getComputedStyle(el).overflowY)) { el.scrollBy(0, -110); return; }
+        }
+        window.scrollBy(0, -110);
+      });
+    } },
   { name: 'client-updates-light', path: '/settings/client-updates', theme: 'light', settle: 2000,
     before: pickBusiness('#cu-business', 'Harbor Logistics') },
   { name: 'patch-policies-dark', path: '/patching', theme: 'dark', settle: 2000,
@@ -169,6 +234,9 @@ export const SHOTS = [
   { name: 'settings-dark', maxHeight: 820, path: '/settings', theme: 'dark',
     click: ['button:has-text("RustDesk")'], settle: 3000 },
   { name: 'branding-light', maxHeight: 760, path: '/settings/branding', theme: 'light', settle: 3000 },
+  // 0.48: the AI provider (a plainly fake key, answered by a loopback stand-in) and the PSA connector.
+  { name: 'settings-ai-light', maxHeight: 940, path: '/settings/ai', theme: 'light', wait: '[data-testid="ai-test"]', settle: 1500 },
+  { name: 'settings-psa-dark', maxHeight: 820, path: '/settings/psa', theme: 'dark', wait: '#psa-kind-global', settle: 1500 },
   { name: 'release-history-dark', path: '/about', theme: 'dark', settle: 3000 },
   { name: 'documentation-light', path: '/docs', theme: 'light', settle: 3500 },
 ];
@@ -256,6 +324,9 @@ async function run() {
         .replace('@business', `/businesses/${businessId}`)
         .replace('@endpoint', `/endpoints/${endpointId}`);
       const p = s.anon ? await (await makeContext(browser, theme)).newPage() : page;
+      // A dialog taller than the window (the service and process dialogs)
+      // would be cut off with its buttons below the fold: a taller window.
+      if (s.height) await p.setViewportSize({ width: vp.width, height: s.height });
       try {
         await p.goto(`${WEB}${target}`, { waitUntil: 'networkidle', timeout: 40000 });
         await p.addStyleTag({ content: STILL });
@@ -356,11 +427,12 @@ async function run() {
         } else {
           await p.screenshot({ path: file });
         }
-        manifest.push({ name: s.name, route: target, theme, viewport: `${vp.width}x${vp.height}@${SCALE}x` });
+        manifest.push({ name: s.name, route: target, theme, viewport: `${vp.width}x${s.height ?? vp.height}@${SCALE}x` });
         console.log(`  ✓ ${s.name}  [${theme}]  ${target}`);
       } catch (e) {
         console.log(`  ✗ ${s.name} — ${e.message.split('\n')[0]}`);
       }
+      if (s.height && !s.anon) await p.setViewportSize(vp);
       if (s.anon) await p.context().close();
     }
     await ctx.close();

@@ -73,10 +73,16 @@ Stored on `Membership.capabilities` as an allowlisted string array. The vocabula
 | Support | `support:quick_connect` | Use Quick Connect |
 | | `support:sessions_view` | See sessions currently in progress |
 | | `support:history_view` | See past sessions for this business — read only, see below |
-| | `support:chat` | Start a [chat](chat.md) with the person at a computer they can see, write in it and end it (0.34). Reading transcripts needs only `computers:view` |
+| | `support:requests` | See the [support request](support-requests.md) queue, claim requests, hand them off and close them |
+| | `support:chat` | Start a [chat](chat.md) with the person at a computer they can see, write in it, send files and pictures, and end it (0.34, files 0.44). Reading transcripts and files needs only `computers:view` |
+| | `tickets:create` | *Create PSA tickets* (0.48): send an event-log entry or alert from a computer they can see to the business's PSA, or the platform default, as a ticket. An event-log entry also needs `computers:event_logs`, an alert `monitoring:alerts`. See [AI and tickets](ai-and-tickets.md) |
 | Users | `users:view` | See the other people in this business |
 | | `users:manage` | Invite, disable and remove business users; set their permissions |
 | Audit | `audit:view` | See this business's audit history |
+| Integration | `integration:ticket_analysis` | Submit read-only ClientSt0r ticket analysis for this business and read its staff-only findings ([integration-clientst0r.md](integration-clientst0r.md)). Grants no remote access and no actions |
+| Monitoring | `monitoring:alerts` | See monitoring alerts for the computers they can see, and acknowledge or resolve them ([monitoring.md](monitoring.md)) |
+| | `monitoring:configure` | Add and change monitors and maintenance windows for this business. Who gets notified is set by a Business Owner |
+| Actions | `actions:request` | Ask for a catalog action on a computer they can reach ([approved-actions.md](approved-actions.md)). It never approves anything |
 | Automation | `scripts:author` | Add scripts to this business's library, edit them (each edit is a new version) and submit versions for review |
 | | `scripts:review` | Approve or reject someone else's script version, never one they wrote or edited. Approving needs a fresh sign-in. Neither capability runs anything ([script-library.md](script-library.md)) |
 

@@ -267,6 +267,18 @@ one manifest read from raw.githubusercontent.com. Each package goes through the 
 manifest is read, the machine-wide x64 installer is chosen, a detection rule is derived, and the entry is written. Each
 entry added is audited as `SOFTWARE_CATALOG_CREATED` with `via: bulk`.
 
+![Automation → Software catalog: the winget table with three packages ticked and Add 3 selected to the global catalog](screenshots/guide/winget-browse.png)
+
+1. **Catalog to build** — *Global catalog* or a business (a Business Owner always builds their own).
+2. **Filter** — name, publisher or package id, best match first.
+3. **A–Z** — only names starting with that letter; **#** for the rest.
+4. **A ticked row** — the header box ticks the whole page.
+5. **Add N selected** — one request for up to 25 packages, after confirming it is you. (*Remove N* sits beside it
+   when ticked rows are already in the catalog.)
+
+The documentation server holds a small sample of the index, so its table is short; a real one lists every package
+winget's community source does, about 16,000.
+
 The answer lists each package, and the table shows the result on its row:
 
 - **added** at the pinned version.

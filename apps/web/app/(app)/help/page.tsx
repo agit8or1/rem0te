@@ -316,6 +316,14 @@ const SECTIONS: Section[] = [
           device last reported, not what it is doing now. Health and alerts need the monitoring:alerts permission.
         </p>
         <p>
+          <strong className="text-foreground">Narrower windows show fewer columns (0.47.1).</strong> So the list fits
+          without scrolling sideways, OS shows only on windows at least 1280 pixels wide, and Site and Logged-in user
+          only from 1536 pixels; the column picker marks them <em>(wide screens)</em>. Alerts is off by default, because
+          Health already shows the worst open alert. Long business and site names are cut short with the full name on
+          hover, device names and figures wrap, and Connect
+          stays on the right.
+        </p>
+        <p>
           <strong className="text-foreground">Columns</strong> and row density are remembered in this browser.{' '}
           <strong className="text-foreground">Views</strong> save the current filters, sort, columns and density
           under a name, on your account. A view is personal, or shared with everyone in one business — sharing is
@@ -1064,7 +1072,10 @@ const SECTIONS: Section[] = [
           require their own sign-off. The computer checks the approvals itself and runs it at most once. Documents
           already in the print queue may print immediately and cannot be recalled. A result says whether the service
           was running, never that anything printed; an uncertain outcome must be reconciled before you can ask again.
-          More in <Link href="/docs/approved-actions" className="underline text-foreground">Approved actions</Link>.
+          From 0.47.1 the action shows the Spooler&apos;s last known state and how old it is, with{' '}
+          <strong className="text-foreground">Refresh</strong> to ask the computer again; when it is already running
+          the button reads <em>Nothing to do</em>. More in{' '}
+          <Link href="/docs/approved-actions" className="underline text-foreground">Approved actions</Link>.
         </p>
         <p data-help="direct-mode">
           <strong className="text-foreground">Direct mode (0.40), for a single operator.</strong> If you run this portal

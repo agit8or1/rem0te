@@ -359,6 +359,66 @@
       "route": "/endpoints",
       "theme": "dark",
       "viewport": "390x844@2x"
+    },
+    {
+      "name": "create-ticket-light",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=events",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "actions-spooler-light",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=actions",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "process-stop-light",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=processes",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "chat-inbox-light",
+      "route": "/dashboard",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "winget-browse-light",
+      "route": "/automation/software",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "settings-ai-light",
+      "route": "/settings/ai",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "ask-ai-dark",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=events",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "service-control-dark",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=services",
+      "theme": "dark",
+      "viewport": "1440x1500@2x"
+    },
+    {
+      "name": "chat-files-dark",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=chat",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "settings-psa-dark",
+      "route": "/settings/psa",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
     }
   ]
 }

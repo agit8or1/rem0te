@@ -50,6 +50,17 @@ window.
 - Files are stored in the database with their message, not on disk. They go when the chat's messages go (see
   *Retention*).
 
+![A computer's Chat tab: a picture and a file from the person at the computer, emoji in the messages, and the emoji and paperclip buttons](screenshots/guide/chat-files.png)
+
+1. **A picture** — shown in the chat because its first bytes say it is a PNG. Its name below it downloads it.
+2. **A file** — only ever a download, whatever its name says.
+3. **Whether the window is open** — the chat window is open on the computer, so the person sees your messages as you send them.
+4. **The emoji picker** — the built-in list; an emoji is sent as text.
+5. **The paperclip** — send a file or picture (you can also paste one into the message box).
+
+The tray's chat window has not yet shown a picture, opened the file picker or saved a download on a real Windows
+computer; see [What has been proven](#what-has-been-proven-and-what-hasnt).
+
 ## The chat inbox: new messages anywhere in the console (0.44)
 
 A **chat icon in the header** shows the number of unread replies across every open chat you can see. Click it for
@@ -66,6 +77,13 @@ one to go to that computer's Chat tab.
   they have been given access to.
 - The console asks every 10 seconds. The API answers *unchanged* without building the list when nothing moved, and
   otherwise looks at no more than 50 open chats in one query.
+
+![The header's chat inbox open over the dashboard: one open chat with two unread replies](screenshots/guide/chat-inbox.png)
+
+1. **The chat icon** — its badge is the number of unread replies across the chats you can see.
+2. **An open chat** — the computer and business, the unread count and the newest reply. Choose it to open that
+   computer's Chat tab.
+3. **Sound** — the optional chime, off by default and remembered in this browser.
 
 ## Which computers can chat
 

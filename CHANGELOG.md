@@ -5,6 +5,70 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.48.1] — 2026-11-14 · *Dispatch*
+
+**The documentation, the in-app help and the screenshots catch up with 0.40 to 0.48.**
+
+Nothing in the API or the agent changes. The docs had fallen behind the code. `docs/diagnostics.md` still said
+nothing on the Processes and Services tabs acts on the computer, though 0.45 put Start, Stop, Restart, Startup
+type and End process there. The gallery said starting or stopping a service "is not offered here". The README's
+limitations said Rem0te had "no scripting… no software deployment". The 0.48 pages had no pictures at all.
+
+**Pages**
+
+- `ai-and-tickets.md`: five numbered-callout images: the Event logs tab with Ask AI, Create ticket and a ticketed
+  entry; the AI explanation; Settings → AI; the Create ticket dialog; and Settings → PSA / ticketing. The tab is
+  named *Event logs*, as the UI says, not *Events*. The page was checked against the code: the 10/5 per-minute
+  limits, the 6,000-character message cap, the 15 s webhook timeout, and the reference fields read from a reply.
+- `approved-actions.md`:
+  - The *Confirm before everyday changes* card (0.47).
+  - The Actions tab: the Spooler's state with Refresh, and *Nothing to do* when it is running (0.47.1).
+  - The service and process dialogs (0.45), with the signed-mode labels: *Request approval* on the Actions tab,
+    *Request it* in the service and process dialogs.
+  - Direct mode's "what still protects" now counts twelve actions.
+- `diagnostics.md`: End process, and the buttons on each service row. Both state that they have been tested only
+  against a simulated Windows.
+- `chat.md`: files and pictures, and the header's chat inbox (0.44).
+- `software-deployment.md`: the winget browser (0.43).
+- `technician-guide.md`:
+  - Which Devices-list columns appear at which window width (0.47.1).
+  - The device-tab table now mentions Uninstall, End process, the service buttons, Ask AI and Create ticket, the
+    Spooler state and chat files.
+- `access-control.md`: the 0.44–0.48 capabilities, including `tickets:create`.
+- `capabilities.md`: what each of these needs configured, and what has been tested where.
+- `docs/README.md`: the index entries now name what each page covers since 0.40. A staged-patching sentence had
+  been pasted into the script-library entry; it is back in the staged-patching entry.
+- `/help`: the Spooler state on the Actions tab, and the Devices-list widths.
+- `README.md`: a *What's new in 0.40 to 0.48* section and corrected limitations.
+
+**Images**: 13 new guide images and 10 new gallery images. The Devices list, the bulk bar, saved views, the
+Services, Processes and Event logs tabs, `/help` and `/docs` were recaptured, as guide or gallery images. The
+gallery now has 69 images.
+
+**Capture tooling**
+
+- `apps/api/prisma/_docs-demo-dispatch.ts` is a new demo module and refuses any database but `reboot_remote_docs`.
+  It seeds a 36-package winget index and two computers on the signed agent with the whole action catalog. It also
+  seeds an open, recorded chat with emoji, a picture and a file. `docs/screenshots.md` → *Regenerating these* says
+  what the stack needs:
+  - a scratch approval signer and release repository;
+  - `NODE_ENV=test` with a loopback `AI_TEST_BASE_URL`;
+  - a loopback webhook;
+  - the four sweep switches that list was missing.
+- The masks replaced every host name not on the allowlist. So Settings → AI read "remote.example.com, with your
+  Anthropic API key", which is wrong about where the key goes. `capture-masks.mjs` now keeps exactly
+  `api.anthropic.com` and `api.openai.com`; any other host, including a subdomain of those two, is still masked.
+- The masks also printed four-part version numbers as `198.51.100.24`, because a dotted quad looks like a public IP
+  address. The demo index uses no such versions. The masking was left as it is.
+- `capture-media.mjs` takes a per-shot `height`, so a dialog taller than the window is not cut off above its
+  buttons.
+
+Seen while capturing, not fixed here: at 1440 px the 0.47.1 Devices list still breaks device names mid-word
+(`break-all` on the name cell). Its last data column is partly hidden behind the pinned Connect column. The
+recaptured Devices-list images show this as it is.
+
+---
+
 ## [0.48.0] — 2026-11-14 · *Dispatch*
 
 **Ask AI and Create ticket on a computer's event-log entries and alerts.**
@@ -161,7 +225,6 @@ give way.
 
 ---
 
-||||||| parent of df5f889 (v0.48.0 Dispatch: Ask AI and Create ticket on event-log entries and alerts)
 ## [0.47.0] — 2026-11-14 · *Latch*
 
 **Everyday changes no longer ask "confirm it is you" every time.**
