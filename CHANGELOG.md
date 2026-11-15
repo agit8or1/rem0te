@@ -5,6 +5,84 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.50.5] — 2026-11-15 · *Roster*
+
+**A new captioned walkthrough of every feature, and pictures for the screens 0.46 to 0.50 added.**
+
+Nothing in the API, the web app or the agent changes. It was recorded on 0.50.4's layout. The README's walkthrough was recorded at **v0.13.5**. It showed
+a dashboard that has since been rebuilt, and it predates the device workspace's tabs, signed actions, patch policies,
+chat, Ask AI and every setting since. The screens added in 0.46 to 0.50 had no pictures in the docs at all: the
+per-computer and per-business agent auto-update selectors, the reinstall link, *Confirm it is you* (whose 0.47 image
+was deleted when 0.49 replaced that card), each computer's Patch policy, and the company-wide policy.
+
+**The walkthrough** (`walkthrough.mp4`, 10 min 58 s, 1080p, no audio) and a **highlight** (`highlight.mp4`, 61 s) are
+attached to the v0.50.5 release, not committed: `media/` stays gitignored. The README and `docs/screenshots.md` link
+to the release assets. The walkthrough has 17 chapters and 87 captions:
+
+- sign in, the dashboard and the Devices list (search, filters, views, columns, bulk);
+- one computer's workspace, tab by tab:
+  - the Agent card with its per-computer automatic updates;
+  - inventory and performance;
+  - software: install from the catalog, remove a program, the protected ones;
+  - services and processes;
+  - event logs with Ask AI and Create ticket;
+  - patches: ticking updates, and the computer's Patch policy;
+  - monitoring, actions, diagnostics, chat (a picture, a file, emoji, the inbox) and history;
+- Connect (its confirmation dialog only), the reinstall link, Add device;
+- patching (the company-wide and an assignable policy, each computer's setting, a new policy, compliance), the
+  software catalog, scripts, monitoring and alerts, reports, businesses;
+- the settings: *Confirm it is you*, AI, PSA / ticketing, email, access control, users and security;
+- the audit log, `/docs` and `/help`.
+
+The chapter list with timestamps is in `docs/media/walkthrough-script.md`.
+
+**What it does not claim.** One early caption says the computers report through a **simulated agent** and that nothing
+shown ran on a real Windows PC. No remote session is made: Connect stops at its confirmation dialog. The install,
+uninstall, service, process and catalog dialogs are opened and cancelled. The AI provider and the PSA are loopback
+stand-ins, with a fake key. The only writes are one chat message and one ticket, sent to the stand-in. The demo
+server keeps `AGENT_AUTO_UPDATE=off`, so the Agent card and the business page say automatic updates are off for the
+whole platform, and the video says so too.
+
+**Captions are generated, not retimed by hand.** `capture-video.mjs` logs every caption and chapter with the second
+it appeared. The new `scripts/video-captions.mjs` writes `docs/media/walkthrough.vtt` and
+`docs/media/walkthrough-script.md` from that log, so the tracked captions are the on-screen ones word for word. The
+old script's "Narration (not recorded)" column is gone; nothing claims a voice track.
+
+**Images**
+
+- Guide images (numbered callouts, keys in the markdown):
+  - `sign-in.md`: Settings → *Confirm it is you*, in *Which functions ask (0.49)*;
+  - `staged-patching.md` and `patching-setup.md`: the company-wide policy and a computer's Patch policy;
+  - `troubleshooting.md`: the reinstall hint, the More menu item and the Add device banner;
+  - `updates.md`: the agent auto-update selectors on a computer and on a business.
+- 8 new guide images, and 5 recaptured on 0.50.4's layout: `device-overview`, `device-patches` (now a standard-agent computer, so its *Offered* callout lands), `client-updates`, `ai-settings` and `psa-settings`. `client-updates`, `confirm-it-is-you` and `device-patches` got taller viewports, because their last callouts drew below the page.
+- 10 new gallery images: the company-wide policy and a computer's Patch policy (light and dark), *Confirm it is you* (light and dark), the reinstall menu and banner, and the agent auto-update cards on a computer and a business. The gallery now has 79 images.
+
+**Capture tooling**
+
+- `capture-video.mjs` is rewritten:
+  - a caption bar, a chapter tag, title cards, a ring on what is about to be read or clicked, and a drawn pointer
+    (headless Chromium records no pointer of its own);
+  - masking runs in an init script before paint, including input values, so no frame carries a token, a RustDesk
+    ID, a public address or a host outside the allowlist;
+  - `CUT=highlight` records the short cut, and `PACE` scales every pause;
+  - a selector that is not found is logged and skipped rather than ending the recording.
+- The recorder deletes only its own unrenamed recordings (`page@<hash>.webm`) before it starts, so a walkthrough and
+  a highlight can share `media/raw/`.
+- `build-video.sh` encodes the highlight from its own recording when there is one, and prints each file's size and
+  length.
+- `apps/api/prisma/_docs-demo-roster.ts` is a new demo module, run after the dispatch module. It refuses any database
+  but `reboot_remote_docs`. It seeds:
+  - Harbor's company-wide and assignable patch-policy series, and the computers' Inherit / Exclude / Use settings;
+  - a Windows Update scan on three computers;
+  - uninstall keys and three catalog entries;
+  - the per-computer and per-business agent auto-update settings;
+  - *Confirm it is you* set to *Don't ask* for the everyday functions.
+
+  `docs/screenshots.md` → *Regenerating these* describes it.
+
+---
+
 ## [0.50.4] — 2026-11-15 · *Roster*
 
 **A computer's Overview lines up, and nothing under Settings scrolls sideways.** Web only: no API, agent, schema or

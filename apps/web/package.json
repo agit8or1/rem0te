@@ -1,6 +1,6 @@
 {
   "name": "@reboot-remote/web",
-  "version": "0.50.4",
+  "version": "0.50.5",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",

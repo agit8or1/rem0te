@@ -1,98 +1,437 @@
 WEBVTT
 
 NOTE
-Captions for the Rem0te walkthrough. The video is caption-led and has no
-narration or audio track; these cues mirror the on-screen captions so the
-walkthrough is searchable and accessible. Timings match media/walkthrough.mp4.
+Captions for the Rem0te walkthrough (media/walkthrough.mp4, 10:58).
+The video is caption-led and has no narration or audio track; these cues are
+the on-screen captions, timed from the recorder's own log
+(scripts/video-captions.mjs).
 
 1
-00:00:00.000 --> 00:00:05.500
-Rem0te — self-hosted remote support for customer
-businesses, powered by RustDesk.
+00:00:01.080 --> 00:00:07.080
+Rem0te — Self-hosted remote support and management
+for the computers of your customer businesses, built
+on RustDesk. — A captioned tour of every feature ·
+v0.50
 
 2
-00:00:06.000 --> 00:00:11.500
-Signing in to a demo environment. Every business,
-person and device shown is fictitious.
+00:00:07.680 --> 00:00:22.040
+A demo environment: every business, person and
+computer here is fictitious
 
 3
-00:00:12.000 --> 00:00:16.500
-The dashboard: every customer business, computer
-and session in one overview.
+00:00:22.090 --> 00:00:25.680
+The computers report through a simulated agent:
+nothing shown here ran on a real Windows PC
 
 4
-00:00:17.000 --> 00:00:22.500
-Client locations are plotted from each device's
-last known address.
+00:00:30.290 --> 00:00:36.430
+The dashboard: what needs attention now, across
+every customer business
 
 5
-00:00:23.000 --> 00:00:27.500
-Workflow 1 — find a customer, then their computers.
+00:00:36.480 --> 00:00:42.430
+A site outage is grouped into one alert instead of
+one per computer
 
 6
-00:00:28.000 --> 00:00:32.500
-Each business owns its own computers, people
-and history.
+00:00:42.480 --> 00:00:48.540
+Counts, customers affected and patch status, each a
+link into the detail
 
 7
-00:00:33.000 --> 00:00:39.500
-Platform, live status and last-seen for every
-enrolled machine.
+00:00:53.400 --> 00:00:59.530
+Devices: every enrolled computer you may see, with
+health, agent and patches
 
 8
-00:00:40.000 --> 00:00:44.500
-Light and dark themes both ship with the product.
+00:00:59.580 --> 00:01:08.400
+Search by name, host, IP, user or business
 
 9
-00:00:45.000 --> 00:00:51.500
-Workflow 2 — enrol a managed device.
+00:01:08.450 --> 00:01:18.510
+Filters for business, site, group, online state,
+alerts and agent
 
 10
-00:00:52.000 --> 00:00:57.500
-The business is fixed into the installer. The
-machine that runs it cannot choose another.
+00:01:18.560 --> 00:01:24.410
+Views save a filter set, private or shared with the
+team
 
 11
-00:00:58.000 --> 00:01:04.500
-Choose exactly who may connect once it is enrolled.
+00:01:24.460 --> 00:01:30.230
+Columns come in at the window widths where they fit
 
 12
-00:01:05.000 --> 00:01:11.500
-Workflow 3 — three levels: Platform Admin,
-Business Owner, Business User.
+00:01:30.280 --> 00:01:40.250
+Tick computers for bulk actions: update, reinstall,
+tags, groups, export
 
 13
-00:01:12.000 --> 00:01:19.500
-Owners hold everything; each business user shows
-the capabilities actually granted.
+00:01:43.690 --> 00:01:48.450
+One computer's workspace: status, the actions you
+may take, and a tab per job
 
 14
-00:01:20.000 --> 00:01:25.500
-Quick Connect — one-off help for a machine that
-is not enrolled.
+00:01:48.500 --> 00:01:52.900
+The header says what is wrong at a glance: alerts,
+pending updates, which agent
 
 15
-00:01:26.000 --> 00:01:32.500
-No install and no managed computer is created.
-It ends when they close the client.
+00:01:52.950 --> 00:01:57.880
+The Agent card: version, channel, and automatic
+agent updates
 
 16
-00:01:33.000 --> 00:01:40.500
-Live sessions and full history, per business.
+00:01:57.930 --> 00:02:02.530
+Automatic updates can be set per computer: Inherit,
+On or Off
 
 17
-00:01:41.000 --> 00:01:47.500
-Every action is written to an append-only audit log.
+00:02:02.580 --> 00:02:09.130
+This demo server runs with automatic agent updates
+switched off, which wins over the computer's On
 
 18
-00:01:48.000 --> 00:01:54.500
-Service health, CPU, memory and disk on the host.
+00:02:09.180 --> 00:02:15.290
+Inventory: hardware, operating system, disks and the
+logged-on user
 
 19
-00:01:55.000 --> 00:02:01.500
-Self-hosted. Open source. No RustDesk Pro required.
+00:02:15.340 --> 00:02:20.540
+Performance: processor, memory and disk over up to
+30 days
 
 20
-00:02:02.000 --> 00:02:08.000
-github.com/agit8or1/rem0te — more free tools for
-MSPs at mspreboot.com
+00:02:20.590 --> 00:02:21.820
+Software: the catalog, ready to install, and every
+installed program
+
+21
+00:02:21.870 --> 00:02:31.040
+Install a package from the catalog: one signed plan
+for this computer
+
+22
+00:02:31.090 --> 00:02:41.110
+Remove an installed program: the agent reads the
+uninstall entry itself and decides how
+
+23
+00:02:41.160 --> 00:02:48.930
+Rem0te and RustDesk are protected and never offered
+for removal
+
+24
+00:02:48.980 --> 00:02:59.390
+Services: start, stop, restart, or change the
+startup type
+
+25
+00:02:59.440 --> 00:03:08.130
+Each change is a signed plan; the agent checks the
+service again before it acts
+
+26
+00:03:08.180 --> 00:03:20.550
+Processes: end one process, matched by name and
+start time, never a reused PID
+
+27
+00:03:20.600 --> 00:03:24.700
+Event logs, with Ask AI and Create ticket on any
+entry
+
+28
+00:03:24.750 --> 00:03:32.250
+Ask AI explains an entry in plain language. Here the
+provider is a local stand-in
+
+29
+00:03:32.300 --> 00:03:45.640
+Create ticket sends the entry to your PSA, with the
+AI explanation if you want it
+
+30
+00:03:45.690 --> 00:03:51.960
+The ticket number comes back from the PSA (a
+loopback stand-in in this demo)
+
+31
+00:03:52.010 --> 00:03:57.280
+Patches: the signed agent's last Windows Update
+scan, and what it offers
+
+32
+00:03:57.330 --> 00:04:09.330
+Tick updates to install them on this computer now
+
+33
+00:04:09.380 --> 00:04:18.110
+Each computer's Patch policy: Inherit the
+company-wide policy, Exclude, or use another policy
+
+34
+00:04:18.160 --> 00:04:25.030
+Exclude stops automatic patching at once; Install
+updates on this tab still works
+
+35
+00:04:25.080 --> 00:04:30.670
+Monitoring: this computer's alerts, and which
+monitors apply to it
+
+36
+00:04:30.720 --> 00:04:38.340
+Actions: approved maintenance, like starting the
+Print Spooler, with its current state
+
+37
+00:04:38.390 --> 00:04:43.980
+Diagnostics: a fixed catalog of read-only checks,
+run on the computer
+
+38
+00:04:44.030 --> 00:04:45.110
+Chat with the person at the computer, in the tray on
+their screen
+
+39
+00:04:45.160 --> 00:04:49.870
+Pictures and files go both ways; a picture is shown
+only if its bytes really are one
+
+40
+00:04:49.920 --> 00:05:11.570
+A built-in emoji picker
+
+41
+00:05:11.620 --> 00:05:23.690
+Unread replies from every computer collect in the
+header's chat inbox
+
+42
+00:05:23.740 --> 00:05:26.680
+History: sessions, changes and actions on this
+computer, newest first
+
+43
+00:05:26.730 --> 00:05:32.480
+Connect opens RustDesk on your computer, configured
+for this server
+
+44
+00:05:32.530 --> 00:05:40.130
+It releases the computer's password, so it asks you
+to confirm it is you first
+
+45
+00:05:44.510 --> 00:05:51.070
+A computer that has gone quiet says so under its
+buttons, with a link to reinstall its agent
+
+46
+00:05:51.120 --> 00:06:04.770
+The same is under More → Reinstall manually
+(download link)
+
+47
+00:06:04.820 --> 00:06:11.170
+The link re-attaches to the same record: history,
+site and settings kept, no duplicate
+
+48
+00:06:14.280 --> 00:06:26.240
+Add device: choose where the computer lands, and who
+may connect to it
+
+49
+00:06:26.290 --> 00:06:33.440
+The business is fixed into the link; the computer
+that runs it cannot choose another
+
+50
+00:06:33.490 --> 00:06:36.530
+Then pick the operating system and make a one-time
+install link
+
+51
+00:06:36.580 --> 00:06:44.600
+Light and dark themes ship with the product
+
+52
+00:06:44.650 --> 00:06:48.830
+Patching: Windows updates a canary first, then
+rings, inside a maintenance window
+
+53
+00:06:48.880 --> 00:06:53.900
+The pre-flight reads what signed patching needs and
+says what is missing
+
+54
+00:06:53.950 --> 00:06:59.640
+A company-wide policy covers every computer set to
+Inherit
+
+55
+00:06:59.690 --> 00:07:04.730
+The portal builds the rings: a canary that checks in
+reliably, then rings of at most 25
+
+56
+00:07:04.780 --> 00:07:10.330
+A computer that cannot be patched is listed with the
+reason
+
+57
+00:07:10.380 --> 00:07:14.960
+When computers join or leave, a new revision is
+proposed and signed like any policy
+
+58
+00:07:15.010 --> 00:07:20.340
+An assignable policy covers only the computers set
+to use it, here the depots on Sunday morning
+
+59
+00:07:20.390 --> 00:07:26.410
+Every computer's setting in one place: Inherit,
+Exclude or Use policy
+
+60
+00:07:26.460 --> 00:07:38.700
+A new policy chooses its classes, window, soak
+between rings, restart rule and canary
+
+61
+00:07:38.750 --> 00:07:44.920
+The patch compliance report, by business and by
+computer
+
+62
+00:07:47.590 --> 00:07:50.100
+The software catalog: approved packages with the
+installer's hash pinned
+
+63
+00:07:50.150 --> 00:08:09.220
+Browse the winget community index and add packages
+by selection
+
+64
+00:08:12.240 --> 00:08:18.640
+The script library: versioned PowerShell, reviewed
+before it can run anywhere
+
+65
+00:08:18.690 --> 00:08:23.700
+Each version shows its content hash and static
+checks, and needs approving
+
+66
+00:08:26.290 --> 00:08:31.120
+Alerts from every monitor, grouped and filtered
+
+67
+00:08:31.170 --> 00:08:36.690
+An outage lists the computers in it; acknowledge or
+resolve it with a note
+
+68
+00:08:36.740 --> 00:08:42.940
+Monitors are set globally, per business, site, group
+or computer, the most specific winning
+
+69
+00:08:45.650 --> 00:08:51.230
+Reports: patch status, offline time, alerts, agent
+coverage and software
+
+70
+00:08:51.280 --> 00:08:54.180
+Each one can be exported as CSV, or emailed on a
+schedule
+
+71
+00:08:56.910 --> 00:09:02.270
+Businesses: each customer owns its computers,
+people, sites and history
+
+72
+00:09:02.320 --> 00:09:07.510
+Automatic agent updates per business: Inherit, On,
+Off or in its maintenance window
+
+73
+00:09:10.560 --> 00:09:15.170
+Confirm it is you: choose, function by function,
+which changes ask again after sign-in
+
+74
+00:09:15.220 --> 00:09:25.870
+Here the everyday changes are set to Don't ask;
+install links and security changes still ask
+
+75
+00:09:25.920 --> 00:09:34.500
+Some always ask: your password, authenticator and
+passkeys, and turning a confirmation off
+
+76
+00:09:34.550 --> 00:09:40.340
+AI: your own provider and key. This demo answers
+from a local stand-in, with a fake key
+
+77
+00:09:40.390 --> 00:09:45.960
+PSA / ticketing: a connector per business or for the
+whole platform
+
+78
+00:09:46.010 --> 00:09:51.780
+Email: your SMTP relay for alerts and scheduled
+reports, to confirmed recipients only
+
+79
+00:09:51.830 --> 00:09:57.060
+Access control: Platform Admin, Business Owner and
+Business User
+
+80
+00:09:57.110 --> 00:10:02.450
+Each user holds exactly the capabilities granted to
+them
+
+81
+00:10:02.500 --> 00:10:09.530
+Users: invitations, roles, MFA status and
+offboarding
+
+82
+00:10:09.580 --> 00:10:12.650
+Security: what protects the server, read from the
+server itself
+
+83
+00:10:16.650 --> 00:10:20.230
+Every change is in the audit log, in a hash chain
+that shows any deletion
+
+84
+00:10:24.620 --> 00:10:36.460
+The full documentation is built into the app, with
+search
+
+85
+00:10:36.510 --> 00:10:39.410
+Help: short answers for technicians, in the app
+
+86
+00:10:48.640 --> 00:10:52.230
+Self-hosted. Open source. No RustDesk Pro required.
+
+87
+00:10:52.670 --> 00:10:58.620
+Rem0te — Self-hosted remote support and management,
+built on RustDesk. Install guide, docs and source on
+GitHub. — github.com/agit8or1/rem0te · mspreboot.com

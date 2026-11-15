@@ -332,6 +332,18 @@ when that policy also skips computers with a user; and the pace.
   It needs `computers:edit` on that computer. *On*, and *Inherit* (which may
   turn it back on), need fresh authentication; *Off* never does. Every change
   is audited as `AGENT_AUTO_UPDATE_COMPUTER_SET`, with before and after.
+
+  ![The Agent card's Automatic updates block, with the computer set to On](screenshots/guide/agent-auto-update-computer.png)
+
+  1. **Automatic updates** — the state (*Up to date*, *Update queued*, *Opted out*…) and why.
+  2. **For this computer** — *Inherit*, *On* or *Off*; here *On*.
+  3. **Effective** — what applies and where it comes from. The demo server runs with `AGENT_AUTO_UPDATE=off`,
+     so it says *Off* and that the server switch wins over the computer's *On*, as it does.
+
+  ![A business's page: the Automatic agent updates card, set to On](screenshots/guide/agent-auto-update-business.png)
+
+  1. **For this business** — *Inherit global*, *On*, *Off* or *In maintenance window*; here *On*.
+  2. **Effective for this business** — *Off* on the demo server, for the same reason.
 - **Precedence**, top wins: the platform switch and `AGENT_AUTO_UPDATE=off`
   (either off means nothing is updated) → the computer's own setting → device
   group → site → business → the platform default, **On**. With nothing set

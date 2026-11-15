@@ -2,7 +2,7 @@
 
 Every image below is a capture of Rem0te running against an isolated demo
 database (most from **v0.36**; the device list, the device tabs, the AI, ticket, chat, winget and Actions images
-from **v0.48**), at **1440×1000** or, where marked, **390×844** (phone width), both at
+from **v0.48**; the patch-policy, Confirm it is you, reinstall and agent auto-update images from **v0.50.5**), at **1440×1000** or, where marked, **390×844** (phone width), both at
 `deviceScaleFactor: 2`.
 Nothing is mocked, drawn, or AI-generated.
 
@@ -13,7 +13,8 @@ addresses are replaced with sample values in the browser immediately before each
 capture — see [Regenerating these](#regenerating-these).
 
 ↩︎ [Back to the README](../README.md) ·
-[▶ Watch the walkthrough](https://github.com/agit8or1/rem0te/releases/download/v0.13.5/walkthrough.mp4) ·
+[▶ Watch the walkthrough](https://github.com/agit8or1/rem0te/releases/download/v0.50.5/walkthrough.mp4) (v0.50, 10 min 58 s) ·
+[highlight](https://github.com/agit8or1/rem0te/releases/download/v0.50.5/highlight.mp4) ·
 [Quick start](setup.md) · [Architecture](architecture.md) ·
 [More MSP tools at mspreboot.com](https://mspreboot.com)
 
@@ -234,6 +235,22 @@ Machines that enrolled but have not landed in a business yet.
 
 ---
 
+### Automatic agent updates on a computer — light
+<a href="images/github/agent-auto-update-light.png"><img src="images/github/agent-auto-update-light.png" alt="The Agent card of HARB-DISPATCH-01 in light theme: the signed agent 0.48.0, current, and Automatic updates set to On for this computer, with Effective: Off because the demo server has automatic agent updates turned off."></a>
+
+Per computer (0.46): Inherit, On or Off. The card says what is actually in force; on this demo
+server the process switch is off, and it wins over the computer's On.
+
+### A reinstall link — dark
+<a href="images/github/reinstall-menu-dark.png"><img src="images/github/reinstall-menu-dark.png" alt="HARB-WAREHOUSE-2, offline for seven days, in dark theme: the hint under the buttons offering a reinstall link, and the More menu open on Reinstall manually (download link)."></a>
+
+A computer that has gone quiet offers a reinstall link under its buttons and in *More*.
+
+### Reinstalling onto the same record — light
+<a href="images/github/reinstall-banner-light.png"><img src="images/github/reinstall-banner-light.png" alt="Add device in light theme opened from a reinstall link: a banner saying the link is made for HARB-WAREHOUSE-2 only and re-attaches to the same record, above the business and who may connect, filled in from the computer."></a>
+
+The link re-attaches to the same record: history, site, groups and settings kept, no duplicate.
+
 ## Device tabs
 
 ### Performance — light
@@ -418,6 +435,18 @@ working hours, skipping computers with a session open.
 The pre-flight reads each requirement from the real server. On this demo server they
 all fail, because there is no signer, and the page says exactly that.
 
+### A company-wide patch policy — dark
+<a href="images/github/company-policy-dark.png"><img src="images/github/company-policy-dark.png" alt="Patching for Harbor Logistics in dark theme: the company-wide policy Harbor — every computer, Tuesday night, with its last check, the three computers left out and why, revision 1 running; the assignable depots policy; and each computer's Patch policy setting with its state."></a>
+
+One policy for every computer set to *Inherit* (0.50). The portal builds the rings and proposes a new
+revision when computers join or leave; computers it cannot patch are listed with the reason. The same
+page in light: [company-policy-light.png](images/github/company-policy-light.png).
+
+### A computer's Patch policy — light
+<a href="images/github/patch-policy-setting-light.png"><img src="images/github/patch-policy-setting-light.png" alt="The Patches tab of HARB-DISPATCH-01 in light theme: updates to tick and Install selected, then the Patch policy card saying Patched automatically by the company-wide policy, revision 1, ring 1, with its Inherit selector."></a>
+
+Inherit, Exclude or *Use policy X*, per computer. Dark: [patch-policy-setting-dark.png](images/github/patch-policy-setting-dark.png).
+
 ---
 
 ## Access and administration
@@ -463,6 +492,16 @@ settings that apply to the whole platform.
 <a href="images/github/branding-light.png"><img src="images/github/branding-light.png" alt="The branding settings page in light theme for setting the product name and logo shown to customers."></a>
 
 Name and logo shown to the businesses you support.
+
+### Confirm it is you — dark
+<a href="images/github/confirm-it-is-you-dark.png"><img src="images/github/confirm-it-is-you-dark.png" alt="Settings, Confirm it is you, in dark theme: functions grouped as Software, Patching and updates, Approved actions and scripts and Agents, each set to Ask or Don't ask, with Don't ask for any and Ask for all per group."></a>
+
+Which changes ask you to confirm it is you, function by function (0.49). Light: [confirm-it-is-you-light.png](images/github/confirm-it-is-you-light.png).
+
+### Automatic agent updates for a business — dark
+<a href="images/github/business-agent-auto-update-dark.png"><img src="images/github/business-agent-auto-update-dark.png" alt="Harbor Logistics' overview in dark theme with the Automatic agent updates card set to On — any time, paced, and Effective for this business: Off, because the demo server has them off for the whole platform."></a>
+
+The business's setting (0.46). A computer's own setting, a site or a device group wins over it.
 
 ### AI provider — light
 <a href="images/github/settings-ai-light.png"><img src="images/github/settings-ai-light.png" alt="Settings, AI in light theme: what is redacted before anything is sent, Enable Ask AI, the provider, the model, the API key shown only as set and its last four characters, Save, and Test the provider."></a>
@@ -513,6 +552,7 @@ DATABASE_URL=… npx tsx prisma/_docs-demo-monitoring.ts # monitors, alerts, a s
 DATABASE_URL=… npx tsx prisma/_docs-demo-workbench.ts  # 0.31–0.36 pages, see below
 DATABASE_URL=… DOCS_AGENT_SHA256=… [DOCS_CHAT_IMAGE=…] \
   npx tsx prisma/_docs-demo-dispatch.ts                 # 0.41–0.48 pages, see below
+DATABASE_URL=… npx tsx prisma/_docs-demo-roster.ts     # 0.46–0.50 pages, see below
 DATABASE_URL=… npx tsx prisma/_docs-demo-refresh.ts    # last, right before capturing
 # Run the demo API with every sweep off, or it acts on the demo data:
 #   MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off \
@@ -590,6 +630,26 @@ executed: the captures stop at the dialog. Ask AI and Create ticket point at loo
 the PSA connector is a webhook to a loopback listener. Never point a demo stack at a real provider, PSA, SMTP server
 or webhook. Ask AI caches an answer for a day, and a cached one shows a *cached* badge, so clear `AiAnswer` before
 capturing it.
+
+`_docs-demo-roster.ts` (0.50.5) seeds what the 0.46–0.50 pages and the walkthrough need, after the dispatch
+module, and can be re-run: it clears Harbor's patch-policy series and computer settings first. It refuses any
+database not named `reboot_remote_docs`. It writes:
+
+- Harbor's company-wide series, *Harbor — every computer, Tuesday night*, at revision 1 (canary HARB-DISPATCH-02,
+  then HARB-DISPATCH-01), with a last check that is settling because HARB-GATEHOUSE is rejoining, and three
+  computers left out with their reasons; the hand-made workbench policies become revoked and rejected;
+- an assignable series, *Harbor depots — Sunday early morning*, used by the two depot computers, and HARB-WAREHOUSE-2
+  set to *Exclude*;
+- a Windows Update scan (patch posture) on HARB-DISPATCH-01, -02 and HARB-GATEHOUSE, so the Patches tab offers
+  updates to tick;
+- uninstall keys on HARB-DISPATCH-01's programs, so *Uninstall* is offered (Office is refused, RustDesk protected),
+  and three global catalog entries for *Install*;
+- the per-computer and per-business agent auto-update settings (HARB-DISPATCH-01 On, HARB-GATEHOUSE Off; Harbor
+  *Any time*, Northwind Off). The demo API keeps `AGENT_AUTO_UPDATE=off`, so the cards read *Effective: Off*;
+- *Confirm it is you* set to *Don't ask* for the everyday functions.
+
+The seeded revisions are not on the scratch signer, so a revision's own page says *not reachable* for its
+approvals; the captures stay on the Patching page.
 
 `_docs-demo-refresh.ts` keeps one computer, NWD-BILLING-RMT, deliberately *agent
 silent*: still online to RustDesk, heartbeat three days old, so the amber state

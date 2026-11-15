@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.50.4-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.50.5-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -289,25 +289,26 @@ administration and configuration, in light and dark and at phone width. Captured
 
 ## Watch the walkthrough
 
-A recorded tour of the real application — the dashboard, three end-to-end
-workflows, then Quick Connect, session history and the audit log, in both themes.
+A captioned tour of every feature, recorded at **v0.50**: the dashboard, the
+Devices list, one computer's workspace tab by tab (agent auto-update, software,
+services, processes, event logs with Ask AI and Create ticket, patches and each
+computer's Patch policy, actions, diagnostics, chat), Connect, the reinstall
+link, Add device, company-wide patch policies, the software catalog, scripts,
+monitoring, reports, businesses, *Confirm it is you* and the other settings,
+the audit log, and the built-in docs.
 
-> Recorded at **v0.13.5**. Everything in it still works the same way, but the
-> dashboard has since been rebuilt to fit one screen and the device page has
-> gained inventory, resource gauges and an event-log tab — so the
-> [screenshots](docs/screenshots.md) are the current picture of those two.
+<a href="https://github.com/agit8or1/rem0te/releases/download/v0.50.5/walkthrough.mp4"><img src="https://github.com/agit8or1/rem0te/releases/download/v0.50.5/poster.png" alt="Play the Rem0te walkthrough: a 10 minute 58 second captioned tour of every feature in v0.50, from the dashboard and one computer's workspace to company-wide patch policies, settings and the audit log." width="100%"></a>
 
-<a href="https://github.com/agit8or1/rem0te/releases/download/v0.13.5/walkthrough.mp4"><img src="https://github.com/agit8or1/rem0te/releases/download/v0.13.5/poster.png" alt="Play the Rem0te walkthrough: a 2 minute 28 second tour covering the dashboard, enrolling a device, access management, Quick Connect, session history and the audit log." width="100%"></a>
-
-**[▶ Watch the walkthrough](https://github.com/agit8or1/rem0te/releases/download/v0.13.5/walkthrough.mp4)** (2 min 28 s)
- · [52-second highlight](https://github.com/agit8or1/rem0te/releases/download/v0.13.5/highlight.mp4)
- · [transcript](docs/media/walkthrough-script.md)
+**[▶ Watch the walkthrough](https://github.com/agit8or1/rem0te/releases/download/v0.50.5/walkthrough.mp4)** (10 min 58 s)
+ · [61-second highlight](https://github.com/agit8or1/rem0te/releases/download/v0.50.5/highlight.mp4)
+ · [transcript and chapters](docs/media/walkthrough-script.md)
  · [captions](docs/media/walkthrough.vtt)
 
-> Everything shown is an isolated demo environment — fictitious businesses,
-> synthetic devices, and no remote session at any point. The walkthrough is
-> **caption-led: there is no narration and no audio track.** The transcript
-> carries a narration-ready script if you want to add one.
+> Everything shown is an isolated demo environment: fictitious businesses and
+> people, and computers that report through a **simulated agent**. None of the
+> computer actions in it ran on a real Windows PC, no remote session is made,
+> and the AI provider and PSA are loopback stand-ins. The walkthrough is
+> **caption-led: there is no narration and no audio track.**
 
 ---
 
