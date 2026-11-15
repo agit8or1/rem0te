@@ -252,6 +252,10 @@ async function all() {
     const legacy = await req('POST', '/enrollment/heartbeat', { body: { rustdeskId: r1a.rid, agentSecret: r1a.secret, hostname: 'R1-A', platform: 'Windows', patchPosture: scan(r1a) } });
     check(legacy.body?.data?.patchPostureAck == null && !(await prisma.endpointInventory.findUnique({ where: { endpointId: r1a.id } }))?.patchPosture, 'a legacy-channel heartbeat\'s posture is ignored');
     // 0.29.1: without a signed posture, the Patches tab shows the standard agent's UPDATE_SCAN result.
+    // 0.51: r1a sent signed heartbeats above, and a computer stays signed for 7
+    // days after one (agent-identity.ts runsSignedAgent). This check is about a
+    // standard computer, so make r1a one: no signed heartbeat on record.
+    await prisma.endpoint.update({ where: { id: r1a.id }, data: { signedSeenAt: null, updateChannel: 'legacy' } });
     await prisma.endpointInventory.upsert({
       where: { endpointId: r1a.id },
       create: { endpointId: r1a.id, pendingUpdates: [{ title: 'Basic CU', kb: 'KB5099999', severity: 'Critical', sizeBytes: 1 }], pendingUpdateCount: 1, rebootRequired: true, updatesCheckedAt: new Date() },
