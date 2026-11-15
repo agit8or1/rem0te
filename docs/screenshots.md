@@ -1,10 +1,10 @@
 # Rem0te — screenshot gallery
 
 Every image below is a capture of Rem0te running against an isolated demo
-database (most from **v0.36**; the device list, the device tabs, the AI, ticket, chat, winget and Actions images
-from **v0.48**; the patch-policy, Confirm it is you, reinstall and agent auto-update images from **v0.50.5**), at **1440×1000** or, where marked, **390×844** (phone width), both at
+database, all taken at **v0.53.2**, at **1440×1000** or, where marked, **390×844** (phone width), both at
 `deviceScaleFactor: 2`.
-Nothing is mocked, drawn, or AI-generated.
+Nothing is mocked, drawn, or AI-generated. The one exception is marked: the tray icon sheet is the icon files
+themselves, not a screenshot.
 
 **All businesses, people, devices and activity shown are fictitious.** The
 RustDesk IDs are synthetic and registered with no rendezvous server, so none of
@@ -13,8 +13,8 @@ addresses are replaced with sample values in the browser immediately before each
 capture — see [Regenerating these](#regenerating-these).
 
 ↩︎ [Back to the README](../README.md) ·
-[▶ Watch the walkthrough](https://github.com/agit8or1/rem0te/releases/download/v0.50.5/walkthrough.mp4) (v0.50, 10 min 58 s) ·
-[highlight](https://github.com/agit8or1/rem0te/releases/download/v0.50.5/highlight.mp4) ·
+[▶ Watch the walkthrough](https://github.com/agit8or1/rem0te/releases/download/v0.53.2/walkthrough.mp4) (v0.53, 14 min 35 s) ·
+[highlight](https://github.com/agit8or1/rem0te/releases/download/v0.53.2/highlight.mp4) ·
 [Quick start](setup.md) · [Architecture](architecture.md) ·
 [More MSP tools at mspreboot.com](https://mspreboot.com)
 
@@ -27,9 +27,9 @@ capture — see [Regenerating these](#regenerating-these).
 | [Overview and dashboards](#overview-and-dashboards) | The dashboard, search, the customer list |
 | [Visual insights and monitoring](#visual-insights-and-monitoring) | Client map, alerts, live sessions, history, audit, host health |
 | [Devices](#devices) | The device list, bulk actions, saved views, one device, Linux and macOS |
-| [Device tabs](#device-tabs) | Performance, processes, services, network, patches, event log, Ask AI and Create ticket, actions, chat |
+| [Device tabs](#device-tabs) | Performance, processes, services, network, patches, the latest install and scheduling one, tasks, event log, Ask AI and Create ticket, actions, chat |
 | [Everyday workflows](#everyday-workflows) | Adding a device, downloads, Quick Connect, launching from Tactical RMM |
-| [Reports, automation and patching](#reports-automation-and-patching) | Reports, the script library, the winget catalog, client-update windows, patch policies |
+| [Reports, automation and patching](#reports-automation-and-patching) | Reports, the script library, the winget catalog, client-update windows, patch policies, monthly windows, Automation → Tasks |
 | [Access and administration](#access-and-administration) | The three-level model, capabilities, accounts |
 | [Configuration](#configuration) | Platform settings, branding, AI, PSA / ticketing, releases, documentation |
 | [Regenerating these](#regenerating-these) | How to rebuild the gallery without touching production |
@@ -297,6 +297,26 @@ recovery actions and dependencies never do. Tested against a simulated Windows o
 What the evidence is and how old, what is offered, and, when deploying is not
 possible on this computer, why.
 
+### The latest install and its restart — light
+<a href="images/github/latest-install-light.png"><img src="images/github/latest-install-light.png" alt="The Latest install card on HARB-DISPATCH-01's Patches tab in light theme: Restart required, the steps from Scheduled to Done, a banner saying 3 updates installed and 1 failed with a restart required, the warning before the restart, Schedule restart and Scan now, and the result of each update, one failed with 0x800f0922 explained."></a>
+
+What the last install did, update by update, in the words Windows gave (0.52). When it needs a restart the card
+says so and offers *Schedule restart*; the updates stay listed as *installed, waiting for restart* until the
+computer restarts and scans again. Dark: [latest-install-dark.png](images/github/latest-install-dark.png).
+
+### Scheduling an install — light
+<a href="images/github/schedule-install-light.png"><img src="images/github/schedule-install-light.png" alt="Install updates on a computer's Patches tab in light theme: one update ticked, Schedule chosen, the link Start at the next opening of this computer's patch policy window (Tue 17 Nov, 22:00–02:00 America/Los_Angeles), the date and time, the time zone, what happens until then, a note and Schedule 1 selected."></a>
+
+An install can start at a date and time in a named zone, or at the next opening of the computer's own patch-policy
+window (0.52, 0.53). Nothing is handed to the computer before then. The form was not submitted. Dark:
+[schedule-install-dark.png](images/github/schedule-install-dark.png).
+
+### Tasks on a computer — dark
+<a href="images/github/device-tasks-dark.png"><img src="images/github/device-tasks-dark.png" alt="The Tasks panel on HARB-GATEHOUSE's page in dark theme: an update install handed to the computer with its steps and two deliveries, then three snapshots and an event log query that succeeded, with Show in progress only and All tasks."></a>
+
+Everything sent to this computer and where it is: scheduled, waiting for approval, queued for the next check-in,
+handed out, running or done (0.52). Light: [device-tasks-light.png](images/github/device-tasks-light.png).
+
 ### Event log — dark
 <a href="images/github/device-event-log-dark.png"><img src="images/github/device-event-log-dark.png" alt="The Event Log tab on a computer's page in dark theme, with selectors for log, time range and event count, level chips for Critical, Error, Warning and Information, an optional source filter, and a table of returned System log entries with timestamps, level badges, event IDs, providers and messages."></a>
 
@@ -340,6 +360,14 @@ else is a download. The tray's chat window has not yet run on real Windows.
 <a href="images/github/chat-inbox-light.png"><img src="images/github/chat-inbox-light.png" alt="The dashboard in light theme with the header's chat inbox open: one open chat on HARB-DISPATCH-01 with two unread replies and the sound switch."></a>
 
 Unread replies from every open chat you can see, from anywhere in the console.
+
+### The tray icon — not a screenshot
+<a href="screenshots/tray-icons-dark.png"><img src="screenshots/tray-icons-dark.png" alt="The tray icon's four states (normal, a chat open, an unread message, the portal unreachable) at 16 to 48 pixels, drawn at eight times their size on a dark background: a speech bubble inside a ring whose colour gives the state." width="60%"></a>
+
+The icon files that `tools/windows-installer/cmd/rem0te-tray/icons/gen-icons.mjs` generates (0.51) — normal, a chat open, an unread message, the portal unreachable — drawn at 8× on dark
+and [light](screenshots/tray-icons-light.png). **This is not a Windows screenshot.** The tray, its menu and the
+0.53.1 menu header naming the business and provider have not been photographed on Windows; the header's text is in
+[the tray guide](tray.md).
 
 ---
 
@@ -430,10 +458,10 @@ Outdated RustDesk clients updated by the server, only inside a window outside
 working hours, skipping computers with a session open.
 
 ### Patching — dark
-<a href="images/github/patch-policies-dark.png"><img src="images/github/patch-policies-dark.png" alt="The Patching page in dark theme for Harbor Logistics: the signed patching pre-flight with nine failing checks and the fix for each, and two automatic patch policies, one awaiting approval and one active."></a>
+<a href="images/github/patch-policies-dark.png"><img src="images/github/patch-policies-dark.png" alt="The Patching page in dark theme for Harbor Logistics: the signed patching pre-flight with eight checks passing and one failing, the policy sweep, with its fix, then the company-wide policy Harbor — every computer, Tuesday night, active, with its next install window."></a>
 
-The pre-flight reads each requirement from the real server. On this demo server they
-all fail, because there is no signer, and the page says exactly that.
+The pre-flight reads each requirement from the real server. The demo server runs a scratch approval signer and
+release, so only the policy sweep fails: it is off, and the page says exactly that.
 
 ### A company-wide patch policy — dark
 <a href="images/github/company-policy-dark.png"><img src="images/github/company-policy-dark.png" alt="Patching for Harbor Logistics in dark theme: the company-wide policy Harbor — every computer, Tuesday night, with its last check, the three computers left out and why, revision 1 running; the assignable depots policy; and each computer's Patch policy setting with its state."></a>
@@ -446,6 +474,25 @@ page in light: [company-policy-light.png](images/github/company-policy-light.png
 <a href="images/github/patch-policy-setting-light.png"><img src="images/github/patch-policy-setting-light.png" alt="The Patches tab of HARB-DISPATCH-01 in light theme: updates to tick and Install selected, then the Patch policy card saying Patched automatically by the company-wide policy, revision 1, ring 1, with its Inherit selector."></a>
 
 Inherit, Exclude or *Use policy X*, per computer. Dark: [patch-policy-setting-dark.png](images/github/patch-policy-setting-dark.png).
+
+### A monthly window — dark
+<a href="images/github/monthly-window-dark.png"><img src="images/github/monthly-window-dark.png" alt="A patch policy's maintenance window in dark theme: Monthly, on the second Tuesday of each month plus 2 days, or on a day of the month, the start, end and time zone, and the next three openings: Thu 10 Dec, Thu 14 Jan and Thu 11 Feb, 22:00–04:00 America/Los_Angeles."></a>
+
+*Second Tuesday plus 2* is the Thursday after Patch Tuesday (0.53). The next three openings are worked out by the
+code the approval signer holds every ring to. The policy was not saved. Light:
+[monthly-window-light.png](images/github/monthly-window-light.png).
+
+### Automation → Tasks — light
+<a href="images/github/tasks-light.png"><img src="images/github/tasks-light.png" alt="Automation, Tasks in light theme: 7 in progress, 1 scheduled, 2 overdue; an update scan on a computer that last checked in six hours ago, a log collection handed out 26 minutes ago with no result, a queued Spooler restart, update installs handed out, scheduled and needing a restart, and two RustDesk updates held because someone is signed on or a session is open."></a>
+
+Every task on every computer you can see, with what it is waiting for and, when it is late, the likely reason
+(0.52). Dark: [tasks-dark.png](images/github/tasks-dark.png).
+
+### When your task finishes — light
+<a href="images/github/task-toast-light.png"><img src="images/github/task-toast-light.png" alt="The Tasks page in light theme with a toast in the corner: Install Windows updates — Install on harb-gatehouse: Succeeded, Installed 2 updates, when it was answered, and Open."></a>
+
+A toast when something you sent finishes, wherever you are in the console; the top bar counts what is still in
+progress. The demo marked the install succeeded to show it. Dark: [task-toast-dark.png](images/github/task-toast-dark.png).
 
 ---
 
@@ -553,6 +600,7 @@ DATABASE_URL=… npx tsx prisma/_docs-demo-workbench.ts  # 0.31–0.36 pages, se
 DATABASE_URL=… DOCS_AGENT_SHA256=… [DOCS_CHAT_IMAGE=…] \
   npx tsx prisma/_docs-demo-dispatch.ts                 # 0.41–0.48 pages, see below
 DATABASE_URL=… npx tsx prisma/_docs-demo-roster.ts     # 0.46–0.50 pages, see below
+DATABASE_URL=… npx tsx prisma/_docs-demo-almanac.ts    # 0.51–0.53 pages, see below
 DATABASE_URL=… npx tsx prisma/_docs-demo-refresh.ts    # last, right before capturing
 # Run the demo API with every sweep off, or it acts on the demo data:
 #   MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off \
@@ -560,7 +608,8 @@ DATABASE_URL=… npx tsx prisma/_docs-demo-refresh.ts    # last, right before ca
 #   SCRIPT_OUTPUT_SWEEP=off CHAT_RETENTION_SWEEP=off AUDIT_SEALER=off \
 #   STALE_SWEEP=off SNAPSHOT_SWEEP=off TRAY_SWEEP=off \
 #   AUTO_MIGRATION_SWEEP=off WINGET_INDEX_SWEEP=off AGENT_AUTO_UPDATE=off
-#   GEOIP_DB_PATH=<a file that does not exist>   # or it reads this host's GeoIP
+#   GEOIP_DB_PATH=docs-geoip.mmdb   # from apps/api/scripts/docs-geoip-fixture.mjs; unset, it reads this
+#                                   # host's GeoIP, and a missing file leaves the maps empty
 # For the 0.41–0.48 pages the demo API also needs (see below):
 #   NODE_ENV=test AI_TEST_BASE_URL=http://127.0.0.1:<stub>   # loopback AI stand-in
 #   APPROVAL_SIGNER_INTERNAL_URL=…  UPDATE_REPO_DIR=…       # a scratch signer and release repo
@@ -570,7 +619,10 @@ DATABASE_URL=… npx tsx prisma/_docs-demo-refresh.ts    # last, right before ca
 # what the screenshots show, and it is true of the demo server.
 WEB_URL=http://127.0.0.1:4000 EMAIL=… PASSWORD=… \
   node apps/web/scripts/capture-media.mjs          # gallery -> docs/images/github/
-WEB_URL=http://127.0.0.1:4000 EMAIL=… PASSWORD=… \
+WEB_URL=… EMAIL=… PASSWORD=… ONLY=task-toast-light,task-toast-dark \
+  TASK_FINISH_CMD='DATABASE_URL=… npx tsx prisma/_docs-demo-almanac.ts finish' \
+  node apps/web/scripts/capture-media.mjs          # the toast (changes the data; re-seed after)
+WEB_URL=http://127.0.0.1:4000 EMAIL=… PASSWORD=… TASK_FINISH_CMD=… \
   node apps/web/scripts/capture-video.mjs          # recording -> media/raw/
 scripts/build-video.sh                             # MP4 + poster + highlight
 ```
@@ -638,7 +690,8 @@ database not named `reboot_remote_docs`. It writes:
 - Harbor's company-wide series, *Harbor — every computer, Tuesday night*, at revision 1 (canary HARB-DISPATCH-02,
   then HARB-DISPATCH-01), with a last check that is settling because HARB-GATEHOUSE is rejoining, and three
   computers left out with their reasons; the hand-made workbench policies become revoked and rejected;
-- an assignable series, *Harbor depots — Sunday early morning*, used by the two depot computers, and HARB-WAREHOUSE-2
+- an assignable series, *Harbor depots — Thursday after Patch Tuesday* (a monthly window from 0.53.2: two days
+  after the second Tuesday, 02:00–05:00 Pacific), used by the two depot computers, and HARB-WAREHOUSE-2
   set to *Exclude*;
 - a Windows Update scan (patch posture) on HARB-DISPATCH-01, -02 and HARB-GATEHOUSE, so the Patches tab offers
   updates to tick;
@@ -647,6 +700,24 @@ database not named `reboot_remote_docs`. It writes:
 - the per-computer and per-business agent auto-update settings (HARB-DISPATCH-01 On, HARB-GATEHOUSE Off; Harbor
   *Any time*, Northwind Off). The demo API keeps `AGENT_AUTO_UPDATE=off`, so the cards read *Effective: Off*;
 - *Confirm it is you* set to *Don't ask* for the everyday functions.
+
+`_docs-demo-almanac.ts` (0.53.2) seeds what the 0.51–0.53 pages and the walkthrough need, after the roster
+module, and can be re-run: it clears Harbor's action jobs, deployments and pending scans first. It refuses any
+database not named `reboot_remote_docs`. Every job is a direct-mode plan built the way the portal builds one. It
+writes:
+
+- HARB-DISPATCH-01's last update install, answered 21 minutes ago: three installed, one failed (`0x800f0922`),
+  *restart required*, so the Patches tab shows the Latest install card with its restart banner;
+- an install on HARB-DISPATCH-02 scheduled for the next opening of its policy window, one on HARB-GATEHOUSE
+  handed out six minutes ago, a failed one on HARB-DEPOT-BOI, a Spooler restart queued on HARB-DEPOT-BOI, a log
+  collection on HARB-DEPOT-SPO that is overdue, a pending Windows Update scan on HARB-WAREHOUSE-1 and a finished
+  Firefox install, so Automation → Tasks has a row in every state;
+- a two-ring deployment, *Defender and MSRT — depots*, with nothing requested yet, for the deployment's
+  *Schedule canary*.
+
+`_docs-demo-almanac.ts finish` marks the HARB-GATEHOUSE install succeeded. That is the one change a capture makes
+to the data: the toast shots and the walkthrough's Tasks chapter run it through `TASK_FINISH_CMD` so the toast
+appears, and the module is re-run afterwards.
 
 The seeded revisions are not on the scratch signer, so a revision's own page says *not reachable* for its
 approvals; the captures stay on the Patching page.

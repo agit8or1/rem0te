@@ -14,6 +14,8 @@ import { fileURLToPath } from 'url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIR = process.argv[2] ?? path.join(ROOT, 'media');
+// The version recorded: the checkout's own, read rather than written in here.
+const VERSION = JSON.parse(readFileSync(path.join(ROOT, 'version.json'), 'utf8')).version;
 const log = JSON.parse(readFileSync(path.join(DIR, 'raw/walkthrough.captions.json'), 'utf8'));
 let hl = null;
 try { hl = JSON.parse(readFileSync(path.join(DIR, 'raw/highlight.captions.json'), 'utf8')); } catch { /* optional */ }
@@ -50,7 +52,7 @@ recording shows, word for word. **No narration was produced**, and the video
 has no audio track.
 
 Recorded against the isolated demo stack described in
-[docs/screenshots.md](../screenshots.md#regenerating-these), on v0.50.5. Every
+[docs/screenshots.md](../screenshots.md#regenerating-these), on v${VERSION}. Every
 business, person and computer in it is fictitious, and the computers report
 through a **simulated agent**: none of the computer actions shown ran on a real
 Windows PC. The AI provider and the PSA are loopback stand-ins on the demo

@@ -5,6 +5,107 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.53.2] — 2026-11-15 · *Almanac*
+
+**Pictures and a new walkthrough for the screens 0.51 to 0.53 added, and every existing one recaptured.**
+
+Nothing in the API, the web app or the agent changes. The screens added in 0.52 and 0.53 had no pictures at all: the
+Tasks panel on a computer, Automation → Tasks, the toast when a task finishes, the Patches tab's Latest install card
+with its restart banner, scheduling an install or a deployment's next ring, and the monthly window in both policy
+editors. The walkthrough was recorded at v0.50 and the README linked the v0.50.5 release.
+
+**The walkthrough** (`walkthrough.mp4`, 14 min 35 s, 1080p, no audio) and the **highlight** (`highlight.mp4`,
+81 s) are attached to the v0.53.2 release, not committed: `media/` stays gitignored. The README and
+`docs/screenshots.md` link to the release assets. Every chapter was re-recorded at 0.53.2. The chapter table lists 21 entries
+(*Patching* appears twice, around the two new patching chapters) and the captions file has 116 cues. Three chapters are new, and two existing ones gained segments:
+
+- **A computer → Patches** now shows the Latest install card: the steps, the restart banner, the per-update
+  results with a failure's HRESULT, *Schedule restart* (pointed at, never pressed) and *Scan now*. It ticks an
+  update and switches it to *Schedule* with *Start at the next opening of this computer's patch policy window*, then
+  back. The Patch policy card shows the next install window.
+- **A computer** shows the Tasks panel.
+- **Tasks** (new): Automation → Tasks with in-progress, scheduled, overdue and held rows, the type filter, and the
+  toast when the gatehouse install finishes.
+- **Monthly windows** (new): the policy editor set to *second Tuesday + 2*, its next three openings, then day of the
+  month. The form is cancelled.
+- **Scheduled installs** (new): a deployment's *Schedule canary* form, and a deployment whose ring is scheduled.
+- **Patching** shows the depots policy, now *Thursday after Patch Tuesday*, with its next window.
+- **Docs and help** opens the tray guide's icon sheet and menu text. A caption says the menu has not been
+  photographed on Windows.
+
+The chapter list with timestamps is regenerated in `docs/media/walkthrough-script.md`, and the captions in
+`docs/media/walkthrough.vtt`, both by `scripts/video-captions.mjs` from the recording's own caption log.
+
+**The tray guide page failed to load in the first recording.** The recorder masks text before the page is drawn.
+`/docs/tray` is rendered on the server, and its menu example names a host (`Agit8or.net`). The mask rewrote that
+text before React hydrated the page, and the page showed *This page couldn't load*. The recorder now opens the page
+through its link in the docs index, so it is drawn in the browser. The masks apply as everywhere else, so the menu
+example reads `remote.example.com` in the video.
+
+**What it does not claim.**
+
+- Every computer reports through a **simulated agent**. No install, restart or scan shown ran on Windows.
+- *Schedule restart* is pointed at and never pressed. The schedule, deployment and policy forms are filled in and
+  cancelled.
+- The only write a capture makes is `_docs-demo-almanac.ts finish`, on the docs database. It marks one seeded
+  install succeeded so the toast appears.
+- The tray, its menu and the 0.53.1 menu header **have not been photographed on Windows**. The tray guide and the
+  gallery show the icon files `gen-icons.mjs` generates, at 8×, and say so. Nothing imitates a Windows screenshot.
+
+**Images**
+
+- 7 new guide images (numbered callouts, keys in the markdown):
+  - `approved-actions.md` → *Following a task*: a computer's Tasks panel (6 keys) and Automation → Tasks (7 keys);
+  - `staged-patching.md`: the Latest install card (7), scheduling an install (5), a deployment's *Schedule canary*
+    (5), and the monthly window in the policy form (5) and in the company-wide form (4).
+- The other 55 guide images are recaptured at 0.53.2. Two changed their keys:
+  - *A computer's Patch policy* has a callout for the next install window (now 5 keys, in `staged-patching.md` and
+    `patching-setup.md`);
+  - `patch-policies` was taken at 1,100 px and lost its *New policy* callout below the company-wide card. It is now
+    1,760 px tall. Its *awaiting approval* callout found nothing, because the demo server runs in direct mode and no
+    policy waits, so callout 4 is now the company-wide card. Key 2 no longer says every pre-flight check fails:
+    only the policy sweep does.
+- `docs/tray.md` shows the tray icon's four states on dark and light (`docs/screenshots/tray-icons-*.png`), copied
+  from `gen-icons.mjs --preview`. Regenerating the `.ico` files changed nothing.
+- 12 new gallery images, light and dark: Automation → Tasks, a computer's Tasks panel, the Latest install card,
+  scheduling an install, a monthly window, and the task toast. The other 79 are recaptured, so the gallery has 91,
+  all at 0.53.2. The README said "55 more" and "all 69", counts that had not moved since 0.48; both are corrected.
+- **The client map was empty in the first recapture.** The docs stack ran with `GEOIP_DB_PATH` pointing at a file
+  that does not exist, so it would not read this host's GeoIP database. That placed no computer, so the dashboard
+  and client map said *0 located, 34 unlocatable*. The map images were last taken at v0.36 with a real database.
+  The new `apps/api/scripts/docs-geoip-fixture.mjs` writes a City database holding only the demo data's ten
+  addresses, each in its business's city, with the 0.36 `mmdb-fixture.mjs` writer. Nothing under `apps/api/src`
+  imports it (§54). *Regenerating these* now says to use it.
+
+**Capture tooling**
+
+- `apps/api/prisma/_docs-demo-almanac.ts` is a new demo module, run after the roster module. It refuses any
+  database but `reboot_remote_docs` and clears what it owns first. Every job is a direct-mode plan built the way the
+  portal builds one. It seeds:
+  - one install answered with a restart required and a failure;
+  - one install scheduled for the next policy window;
+  - one install handed out, one failed, and a queued Spooler restart;
+  - an overdue log collection, a pending scan and a finished software install;
+  - a two-ring deployment with nothing requested.
+
+  Its `finish` argument marks the handed-out install succeeded.
+- `_docs-demo-roster.ts`: the depots series is monthly (second Tuesday + 2, 02:00–05:00 Pacific) and renamed
+  *Harbor depots — Thursday after Patch Tuesday*.
+- `screenshots.mjs` gained a `@deployment:NAME` path resolver.
+- `capture-media.mjs` and `capture-video.mjs` run `TASK_FINISH_CMD` (the `finish` above) to make the toast appear.
+  The toast shots are marked `explicit` and run only when named in `ONLY`, because they change the data.
+- `docs/screenshots.md` → *Regenerating these* describes the almanac module, `finish` and `TASK_FINISH_CMD`, and
+  the GeoIP fixture.
+- `scripts/video-captions.mjs` reads the recorded version from `version.json`. It used to write *v0.50.5* into
+  the transcript.
+- The highlight's title card says *v0.53 in under 90 seconds*. It said *in under a minute*, and the cut is 81 s.
+
+**README.** *What's new* now mentions the 0.53.1 tray menu header, and says the header has not been photographed on
+Windows. The walkthrough section lists the new chapters, and the video and poster links point at the v0.53.2
+release.
+
+---
+
 ## [0.53.1] — 2026-11-15 · *Almanac*
 
 **The tray says who it is for.**

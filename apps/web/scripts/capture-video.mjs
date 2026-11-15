@@ -27,11 +27,17 @@
  *
  * Nothing destructive is pressed. Dialogs that would sign a plan (service
  * control, End process, Uninstall, Install selected, catalog adds) are opened
- * and cancelled. The only writes are a chat message and a ticket to the docs
- * stack's loopback PSA stand-in.
+ * and cancelled; so are the scheduled-install and new-policy forms, and
+ * Schedule restart is only pointed at. The only writes are a chat message, a
+ * ticket to the docs stack's loopback PSA stand-in, and — when TASK_FINISH_CMD
+ * is set — the demo's running update install answered as the agent would
+ * (prisma/_docs-demo-almanac.ts finish, docs database only), so the console's
+ * "your task finished" toast (0.52) appears on camera.
  */
 import { chromium } from 'playwright';
 import { mkdir, readdir, rename, writeFile, rm } from 'fs/promises';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { MASKS } from './capture-masks.mjs';
@@ -244,6 +250,19 @@ async function endpointId(page, name) {
     return (r?.data?.endpoints ?? r?.data?.items ?? []).find((x) => x.name === n)?.id ?? null;
   }, name);
 }
+async function deploymentId(page, businessId, name) {
+  return page.evaluate(async ([b, n]) => {
+    const r = await fetch(`/api/v1/patching/deployments?businessId=${encodeURIComponent(b)}`).then((x) => x.json()).catch(() => null);
+    const l = r?.data?.deployments ?? r?.data?.items ?? (Array.isArray(r?.data) ? r.data : []);
+    return l.find((d) => d.name === n)?.id ?? null;
+  }, [businessId, name]);
+}
+/** Answer the demo's running install (TASK_FINISH_CMD), so a task of yours finishes on camera. */
+async function finishTask() {
+  const cmd = process.env.TASK_FINISH_CMD;
+  if (!cmd) { misses.push('TASK_FINISH_CMD (no toast)'); return false; }
+  try { await promisify(execFile)('/bin/sh', ['-c', cmd], { timeout: 120000 }); return true; } catch (e) { misses.push(`TASK_FINISH_CMD: ${e.message.split('\n')[0]}`); return false; }
+}
 async function businessId(page, name) {
   return page.evaluate(async (n) => {
     const r = await fetch('/api/v1/customers?limit=50').then((x) => x.json()).catch(() => null);
@@ -277,7 +296,7 @@ async function walkthrough(page, ids) {
 
   // Title and sign-in
   await page.goto(`${WEB}/login`, { waitUntil: 'networkidle' });
-  await card(page, 'Rem0te', 'Self-hosted remote support and management for the computers of your customer businesses, built on RustDesk.', 'A captioned tour of every feature · v0.50', 6000);
+  await card(page, 'Rem0te', 'Self-hosted remote support and management for the computers of your customer businesses, built on RustDesk.', 'A captioned tour of every feature · v0.53', 6000);
   await uncard(page); await wait(page, 600);
   await chapter(page, 'Sign in');
   await say(page, 'A <b>demo environment</b>: every business, person and computer here is fictitious');
@@ -333,6 +352,12 @@ async function walkthrough(page, ids) {
   await show(page, '[data-testid="workspace-tabs"]', { hold: 3200, pad: 3 });
   await say(page, 'The header says what is wrong at a glance: alerts, pending updates, which agent');
   await show(page, '[data-testid="device-status"]', { hold: 2800 });
+  await say(page, 'The <b>Tasks</b> panel: everything sent to this computer, and where each one is');
+  await show(page, '[data-testid="device-tasks"]', { hold: 2600, pad: 3 });
+  await press(page, '[data-testid="device-tasks-toggle"]', { hold: 600 });
+  await say(page, 'Recent tasks stay listed for two weeks, each with its steps and its result');
+  await show(page, '[data-testid="device-tasks"] [data-testid="task-row"] >> nth=0', { hold: 3200, pad: 3 });
+  await press(page, '[data-testid="device-tasks-toggle"]', { hold: 400 });
   await say(page, 'The <b>Agent</b> card: version, channel, and automatic agent updates');
   await show(page, '[data-testid="agent-auto-update"]', { hold: 2600 });
   await say(page, 'Automatic updates can be set <b>per computer</b>: Inherit, On or Off');
@@ -402,16 +427,39 @@ async function walkthrough(page, ids) {
   await tab(page, 'patches');
   await say(page, '<b>Patches</b>: the signed agent\'s last Windows Update scan, and what it offers');
   await wait(page, 1200);
-  await show(page, 'text=Signed agent scan', { hold: 2600 });
-  await say(page, 'Tick updates to install them on this computer now');
-  await press(page, 'label:has-text("KB5070773") input[type="checkbox"], div:has-text("KB5070773") > input[type="checkbox"]', { hold: 600 });
-  await press(page, 'label:has-text("KB2267602") input[type="checkbox"], div:has-text("KB2267602") > input[type="checkbox"]', { hold: 600 });
-  await show(page, 'button:has-text("selected")', { hold: 2800 });
+  await show(page, 'text=Signed agent scan', { hold: 2400 });
+  await say(page, 'The <b>Latest install</b> follows an install from the request to the scan after it');
+  await show(page, '[data-testid="patch-after-install"]', { hold: 2600, pad: 3 });
+  await show(page, '[data-testid="patch-after-install"] [data-testid="task-steps"]', { hold: 2600 });
+  await say(page, 'One row per update, with Windows\' own error code and what it means');
+  await show(page, '[data-testid="patch-after-results"]', { hold: 3800, pad: 3 });
+  await say(page, 'Windows wants a restart: <b>Schedule restart</b> warns the signed-in user first, and never interrupts a session');
+  await show(page, '[data-testid="patch-schedule-restart"]', { hold: 3400 });
+  await say(page, '<b>Scan now</b>, or let the scan two minutes after the restart refresh the list');
+  await show(page, '[data-testid="patch-after-scan"]', { hold: 2600 });
+  await say(page, 'Updates that install put on the computer wait for the restart instead of being offered again');
+  await show(page, '[data-testid="patch-installed-waiting"]', { hold: 3200 });
+  await say(page, 'Tick the update that failed to try it again');
+  await press(page, 'label:has-text("KB5070112") input[type="checkbox"]', { hold: 700 });
+  await say(page, '<b>Install now</b>, or <b>Schedule</b> it: a date, a time and a time zone, up to 14 days ahead');
+  await press(page, '[data-testid="schedule-later"]', { hold: 900 });
+  await show(page, '[data-testid="schedule-at"]', { hold: 1800 });
+  await show(page, '[data-testid="schedule-tz"]', { hold: 1800 });
+  await say(page, 'Or start at the next opening of this computer\'s <b>patch policy window</b>');
+  await press(page, '[data-testid="schedule-use-policy-window"]', { hold: 1100 });
+  await wait(page, 1200);
+  await show(page, '[data-testid="schedule-choice"]', { hold: 3600, pad: 3 });
+  await say(page, 'Nothing is handed to the computer before then, and until it starts it can be canceled');
+  await show(page, '[data-testid="patch-install-go"]', { hold: 3000 });
+  await page.locator('[data-testid="schedule-now"]').check().catch(() => {});
+  await page.locator('label:has-text("KB5070112") input[type="checkbox"]').uncheck().catch(() => {});
   await say(page, 'Each computer\'s <b>Patch policy</b>: Inherit the company-wide policy, Exclude, or use another policy');
-  await show(page, '[data-testid="patch-policy-setting"]', { hold: 3400, pad: 3 });
+  await show(page, '[data-testid="patch-policy-setting"]', { hold: 3000, pad: 3 });
+  await say(page, 'It says when the policy\'s window next opens');
+  await show(page, '[data-testid="policy-next-window"]', { hold: 3000 });
   await pick(page, '[data-testid="patch-policy-setting"] select', 'Exclude — no automatic patching', 1000);
   await say(page, 'Exclude stops automatic patching at once; Install updates on this tab still works');
-  await wait(page, 3200);
+  await wait(page, 3000);
   await unring(page);
   await page.locator('[data-testid="patch-policy-setting"] select').selectOption('inherit').catch(() => {});
   await wait(page, 900);
@@ -448,8 +496,38 @@ async function walkthrough(page, ids) {
   await wait(page, 3400);
   await top(page);
 
+  // Tasks (0.52)
+  await chapter(page, 'Tasks');
+  await say(page, 'The number in the top bar is <b>your tasks in progress</b>, on every page');
+  await show(page, '[data-testid="task-watcher"]', { hold: 3000 });
+  await press(page, '[data-testid="task-watcher"]', { hold: 300 });
+  await page.waitForSelector('[data-testid="tasks-list"]', { timeout: 15000 }).catch(() => {});
+  await ui(page); await wait(page, 1000);
+  await say(page, '<b>Automation → Tasks</b>: every task on every computer you can see');
+  await pick(page, '#tasks-state', 'All (last 14 days)', 900);
+  await show(page, '[data-testid="tasks-list"]', { hold: 2800, pad: 2 });
+  await say(page, 'Queued for the next check-in, handed out, scheduled, held, or done');
+  await show(page, '[data-testid="task-row"][data-state="handed_out"] >> nth=0', { hold: 3200, pad: 3 });
+  await say(page, '<b>Overdue</b> when it takes longer than its kind usually does, with what that usually means');
+  await show(page, '[data-testid="task-row"][data-overdue] >> nth=0', { hold: 3600, pad: 3 });
+  await say(page, 'A scheduled install, held until its time; it can be canceled until then');
+  await show(page, '[data-testid="task-row"][data-state="scheduled"]', { hold: 3400, pad: 3 });
+  await say(page, 'Filter by state and by type');
+  await pick(page, '#tasks-type', 'Update install', 900);
+  await wait(page, 1800);
+  await say(page, 'Now the gatehouse install answers. A task you started finishing shows a <b>toast</b>, wherever you are');
+  if (await finishTask()) {
+    await page.waitForSelector('[data-testid="task-toast"]', { timeout: 30000 }).catch(() => misses.push('task toast'));
+    await ui(page);
+    await show(page, 'li[role="status"]:has([data-testid="task-toast"]), [data-testid="task-toast"]', { hold: 4200, pad: 6 });
+  }
+  await say(page, 'Done, with each update\'s result');
+  await show(page, '[data-testid="task-row"][data-state="succeeded"] >> nth=0', { hold: 3200, pad: 3 });
+  await clear(page);
+
   // Connect
   await chapter(page, 'Connect');
+  await go(page, `/endpoints/${ids.dispatch}`, 2000);
   await say(page, '<b>Connect</b> opens RustDesk on your computer, configured for this server');
   await press(page, '[data-testid="action-connect"]', { hold: 1000 });
   await wait(page, 1500);
@@ -510,17 +588,55 @@ async function walkthrough(page, ids) {
   await wait(page, 3200);
   await say(page, 'When computers join or leave, a new revision is proposed and signed like any policy');
   await show(page, '[data-testid="company-policies"] div.rounded-md:has(strong:has-text("Tuesday night")) >> nth=-1 >> li:has-text("Revision 1")', { hold: 3200 });
-  await say(page, 'An <b>assignable policy</b> covers only the computers set to use it, here the depots on Sunday morning');
-  await show(page, '[data-testid="company-policies"] div.rounded-md:has(strong:has-text("Sunday early morning")) >> nth=-1', { hold: 3800, pad: 2 });
+  await say(page, 'An <b>assignable policy</b> covers only the computers set to use it: here the depots, monthly');
+  await show(page, '[data-testid="company-policies"] div.rounded-md:has(strong:has-text("Thursday after Patch Tuesday")) >> nth=-1', { hold: 3800, pad: 2 });
+  await say(page, 'Two days after Patch Tuesday, and it says when its window next opens');
+  await show(page, '[data-testid="company-policies"] div.rounded-md:has(strong:has-text("Thursday after Patch Tuesday")) >> nth=-1 >> [data-testid="series-next-window"]', { hold: 3400 });
   await say(page, 'Every computer\'s setting in one place: Inherit, Exclude or Use policy');
   await press(page, '[data-testid="company-policies"] summary:has-text("Each computer")', { hold: 700 });
   await wait(page, 3800);
   await say(page, 'A new policy chooses its classes, window, soak between rings, restart rule and canary');
   await press(page, 'button:has-text("Assignable policy")', { hold: 800 });
   await wait(page, 1200);
-  await show(page, '#ser-canary', { hold: 3400 });
+  await show(page, '#ser-canary', { hold: 3000 });
   await press(page, 'button:text-is("Cancel")', { hold: 600 });
+  await clear(page);
+
+  // Monthly windows (0.53)
+  await chapter(page, 'Monthly windows');
+  await say(page, 'A policy\'s maintenance window is <b>weekly</b> or <b>monthly</b>');
+  await press(page, 'button:has-text("New policy")', { hold: 800 });
+  await page.waitForSelector('[data-testid="pol-window"]', { timeout: 10000 }).catch(() => {});
+  await show(page, '[data-testid="pol-window"]', { hold: 1800, pad: 3 });
+  await press(page, '[data-testid="pol-monthly"]', { hold: 900 });
+  await say(page, 'The nth or last weekday of the month, plus up to 14 days: second Tuesday + 2 is the Thursday after Patch Tuesday');
+  await show(page, '[data-testid="pol-week"]', { hold: 1600 });
+  await show(page, '[data-testid="pol-offset"]', { hold: 600 });
+  await page.locator('[data-testid="pol-offset"]').fill('2').catch(() => {});
+  await page.locator('input[type="number"][max="90"]').fill('90').catch(() => {});
+  await wait(page, 1500);
+  await say(page, 'Its next three openings come from the server, worked out exactly as the approval signer checks them');
+  await show(page, '[data-testid="pol-preview"]', { hold: 4600, pad: 3 });
+  await say(page, 'Or a day of the month, 1 to 28, so it opens every month, February included');
+  await press(page, '[data-testid="pol-monthly-day"]', { hold: 900 });
+  await show(page, '[data-testid="pol-preview"]', { hold: 3600, pad: 3 });
+  await press(page, 'button:text-is("Cancel")', { hold: 600 });
+  await clear(page);
+
+  // Scheduled rings (0.52)
+  await chapter(page, 'Scheduled installs');
+  await go(page, `/patching/${ids.depotsDeployment}`, 2200);
+  await say(page, 'A deployment\'s next ring can start now or at a time too');
+  await type(page, '#ring-reason', 'Defender and MSRT for both depots, after the morning scan run', 18);
+  await press(page, '[data-testid="schedule-later"]', { hold: 900 });
+  await show(page, '[data-testid="schedule-choice"]', { hold: 3600, pad: 3 });
+  await say(page, 'The time becomes the signed plan\'s start, and the agent refuses it early. Not sent in this demo');
+  await show(page, 'button:has-text("Schedule canary")', { hold: 3200 });
+  await go(page, `/patching/${ids.dispatch02Deployment}`, 2200);
+  await say(page, 'A scheduled ring shows when it starts, and can be canceled until then');
+  await show(page, '[data-testid="ring-scheduled"]', { hold: 3600 });
   await say(page, 'The <b>patch compliance</b> report, by business and by computer');
+  await chapter(page, 'Patching');
   await go(page, '/reports/patch-compliance', 2500);
   await wait(page, 3600);
   await clear(page);
@@ -627,6 +743,16 @@ async function walkthrough(page, ids) {
   await say(page, 'The full documentation is built into the app, with search');
   await type(page, '[data-testid="docs-search"]', 'patch policy', 70);
   await wait(page, 3000);
+  // Reached by its link, not loaded: the page is server-rendered, and the
+  // masks rewriting its text (the menu example names a host) before React
+  // hydrates it makes the page fail to load.
+  await go(page, '/docs', 1200);
+  await press(page, 'main a[href="/docs/tray"] >> nth=0', { hold: 600 });
+  await wait(page, 2000);
+  await say(page, 'The <b>tray</b> runs on Windows. These are its generated icons; its menu has not been photographed on Windows');
+  await show(page, 'main img[src*="tray-icons"] >> nth=0', { hold: 4800, pad: 3 });
+  await say(page, 'Its menu opens with the business and its IT provider, and offers a support request only when a PSA is set up');
+  await show(page, 'main pre >> nth=0', { hold: 4400, pad: 3 });
   await go(page, '/help', 2000);
   await say(page, '<b>Help</b>: short answers for technicians, in the app');
   await wait(page, 3400);
@@ -644,7 +770,7 @@ async function walkthrough(page, ids) {
 /** The ~55 s highlight: the same app, fewer stops. */
 async function highlight(page, ids) {
   await page.goto(`${WEB}/login`, { waitUntil: 'networkidle' });
-  await card(page, 'Rem0te', 'Self-hosted remote support and management, built on RustDesk.', 'v0.50 in under a minute', 3000);
+  await card(page, 'Rem0te', 'Self-hosted remote support and management, built on RustDesk.', 'v0.53 in under 90 seconds', 3000);
   await uncard(page);
   await page.fill('input[type="email"]', process.env.EMAIL);
   await page.fill('input[type="password"]', process.env.PASSWORD);
@@ -662,8 +788,11 @@ async function highlight(page, ids) {
   await show(page, '[aria-label="Bulk actions"]', { hold: 1600 });
   await chapter(page, 'A computer');
   await go(page, `/endpoints/${ids.dispatch}?tab=patches`, 1600);
-  await say(page, 'Install Windows updates, and set each computer\'s <b>Patch policy</b>');
-  await show(page, '[data-testid="patch-policy-setting"]', { hold: 2600, pad: 3 });
+  await say(page, 'Follow an install to its result, then <b>schedule the restart</b> Windows asks for');
+  await show(page, '[data-testid="patch-restart-banner"]', { hold: 2600, pad: 3 });
+  await say(page, 'Install now or <b>schedule</b> it, even for the patch policy\'s next window');
+  await press(page, '[data-testid="schedule-use-policy-window"]', { hold: 700 });
+  await show(page, '[data-testid="schedule-choice"]', { hold: 2400, pad: 3 });
   await tab(page, 'events');
   await say(page, '<b>Ask AI</b> about an event, or turn it into a ticket');
   await show(page, 'button:has-text("Ask AI")', { hold: 2200 });
@@ -671,9 +800,15 @@ async function highlight(page, ids) {
   await say(page, '<b>Chat</b> with the person at the computer, with pictures and files');
   await page.waitForSelector('[data-testid="chat-transcript"]', { timeout: 15000 }).catch(() => {});
   await show(page, '[data-testid="chat-attachment-image"]', { hold: 2600 });
+  await chapter(page, 'Tasks');
+  await go(page, '/automation/tasks', 1400);
+  await say(page, '<b>Tasks</b>: where everything sent to a computer is, across every customer');
+  await show(page, '[data-testid="task-row"][data-overdue] >> nth=0', { hold: 2600, pad: 3 });
   await chapter(page, 'Patching');
   await go(page, '/patching', 1200);
   await pick(page, 'main select >> nth=0', 'Harbor Logistics', 400);
+  await say(page, '<b>Monthly</b> patch windows: two days after Patch Tuesday');
+  await show(page, '[data-testid="company-policies"] div.rounded-md:has(strong:has-text("Thursday after Patch Tuesday")) >> nth=-1', { hold: 2600, pad: 2 });
   await say(page, 'A <b>company-wide patch policy</b>: canary first, then rings, revised as computers change');
   await show(page, '[data-testid="company-policies"] div.rounded-md:has(strong:has-text("Tuesday night")) >> nth=-1', { hold: 3600, pad: 2 });
   await chapter(page, 'Settings');
@@ -739,6 +874,8 @@ async function main() {
     ids.dispatch = await endpointId(page, 'HARB-DISPATCH-01');
     ids.warehouse2 = await endpointId(page, 'HARB-WAREHOUSE-2');
     ids.harbor = await businessId(page, 'Harbor Logistics');
+    ids.depotsDeployment = await deploymentId(page, ids.harbor, 'Defender and MSRT — depots');
+    ids.dispatch02Deployment = await deploymentId(page, ids.harbor, 'Install on harb-dispatch-02');
   };
 
   try {

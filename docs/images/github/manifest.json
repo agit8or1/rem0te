@@ -4,7 +4,7 @@
     "height": 1000
   },
   "deviceScaleFactor": 2,
-  "demoData": "apps/api/prisma/_docs-demo-data.ts, _docs-demo-monitoring.ts, _docs-demo-workbench.ts, _docs-demo-dispatch.ts and _docs-demo-roster.ts against reboot_remote_docs",
+  "demoData": "apps/api/prisma/_docs-demo-data.ts, _docs-demo-monitoring.ts, _docs-demo-workbench.ts, _docs-demo-dispatch.ts, _docs-demo-roster.ts and _docs-demo-almanac.ts against reboot_remote_docs",
   "shots": [
     {
       "name": "dashboard-light",
@@ -85,6 +85,30 @@
       "viewport": "1440x1000@2x"
     },
     {
+      "name": "create-ticket-light",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=events",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "actions-spooler-light",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=actions",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "process-stop-light",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=processes",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "chat-inbox-light",
+      "route": "/dashboard",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
       "name": "unassigned-light",
       "route": "/admin/unassigned",
       "theme": "light",
@@ -116,13 +140,79 @@
     },
     {
       "name": "script-review-light",
-      "route": "/automation/scripts/cmwdpp1h1003lx6yrzkhsujas",
+      "route": "/automation/scripts/cmwh0hrcf003ls2ymgozepffw",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "winget-browse-light",
+      "route": "/automation/software",
       "theme": "light",
       "viewport": "1440x1000@2x"
     },
     {
       "name": "client-updates-light",
       "route": "/settings/client-updates",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "company-policy-light",
+      "route": "/patching",
+      "theme": "light",
+      "viewport": "1440x1500@2x"
+    },
+    {
+      "name": "patch-policy-setting-light",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=patches",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "tasks-light",
+      "route": "/automation/tasks",
+      "theme": "light",
+      "viewport": "1440x1300@2x"
+    },
+    {
+      "name": "device-tasks-light",
+      "route": "/endpoints/cmwdpnwsk005ynivn0pgvo8ij",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "latest-install-light",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=patches",
+      "theme": "light",
+      "viewport": "1440x1200@2x"
+    },
+    {
+      "name": "schedule-install-light",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=patches",
+      "theme": "light",
+      "viewport": "1440x1400@2x"
+    },
+    {
+      "name": "monthly-window-light",
+      "route": "/patching",
+      "theme": "light",
+      "viewport": "1440x1300@2x"
+    },
+    {
+      "name": "confirm-it-is-you-light",
+      "route": "/settings?tab=confirm",
+      "theme": "light",
+      "viewport": "1440x1300@2x"
+    },
+    {
+      "name": "reinstall-banner-light",
+      "route": "/endpoints/enroll?endpointId=cmwdpnws9005snivnr5kzqhna&businessId=cmwdpnwoe004nnivnv57k9nl0",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "agent-auto-update-light",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3",
       "theme": "light",
       "viewport": "1440x1000@2x"
     },
@@ -147,6 +237,12 @@
     {
       "name": "branding-light",
       "route": "/settings/branding",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "settings-ai-light",
+      "route": "/settings/ai",
       "theme": "light",
       "viewport": "1440x1000@2x"
     },
@@ -265,6 +361,24 @@
       "viewport": "1440x1000@2x"
     },
     {
+      "name": "ask-ai-dark",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=events",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "service-control-dark",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=services",
+      "theme": "dark",
+      "viewport": "1440x1500@2x"
+    },
+    {
+      "name": "chat-files-dark",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=chat",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
       "name": "my-computers-dark",
       "route": "/my-computers",
       "theme": "dark",
@@ -313,6 +427,66 @@
       "viewport": "1440x1000@2x"
     },
     {
+      "name": "company-policy-dark",
+      "route": "/patching",
+      "theme": "dark",
+      "viewport": "1440x1500@2x"
+    },
+    {
+      "name": "patch-policy-setting-dark",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=patches",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "tasks-dark",
+      "route": "/automation/tasks",
+      "theme": "dark",
+      "viewport": "1440x1300@2x"
+    },
+    {
+      "name": "device-tasks-dark",
+      "route": "/endpoints/cmwdpnwsk005ynivn0pgvo8ij",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "latest-install-dark",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=patches",
+      "theme": "dark",
+      "viewport": "1440x1200@2x"
+    },
+    {
+      "name": "schedule-install-dark",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=patches",
+      "theme": "dark",
+      "viewport": "1440x1400@2x"
+    },
+    {
+      "name": "monthly-window-dark",
+      "route": "/patching",
+      "theme": "dark",
+      "viewport": "1440x1300@2x"
+    },
+    {
+      "name": "confirm-it-is-you-dark",
+      "route": "/settings?tab=confirm",
+      "theme": "dark",
+      "viewport": "1440x1300@2x"
+    },
+    {
+      "name": "reinstall-menu-dark",
+      "route": "/endpoints/cmwdpnws9005snivnr5kzqhna",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "business-agent-auto-update-dark",
+      "route": "/businesses/cmwdpnwoe004nnivnv57k9nl0",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
       "name": "access-users-dark",
       "route": "/admin/access",
       "theme": "dark",
@@ -327,6 +501,12 @@
     {
       "name": "settings-dark",
       "route": "/settings",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "settings-psa-dark",
+      "route": "/settings/psa",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     },
@@ -361,122 +541,14 @@
       "viewport": "390x844@2x"
     },
     {
-      "name": "create-ticket-light",
-      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=events",
+      "name": "task-toast-light",
+      "route": "/automation/tasks",
       "theme": "light",
       "viewport": "1440x1000@2x"
     },
     {
-      "name": "actions-spooler-light",
-      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=actions",
-      "theme": "light",
-      "viewport": "1440x1000@2x"
-    },
-    {
-      "name": "process-stop-light",
-      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=processes",
-      "theme": "light",
-      "viewport": "1440x1000@2x"
-    },
-    {
-      "name": "chat-inbox-light",
-      "route": "/dashboard",
-      "theme": "light",
-      "viewport": "1440x1000@2x"
-    },
-    {
-      "name": "winget-browse-light",
-      "route": "/automation/software",
-      "theme": "light",
-      "viewport": "1440x1000@2x"
-    },
-    {
-      "name": "settings-ai-light",
-      "route": "/settings/ai",
-      "theme": "light",
-      "viewport": "1440x1000@2x"
-    },
-    {
-      "name": "ask-ai-dark",
-      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=events",
-      "theme": "dark",
-      "viewport": "1440x1000@2x"
-    },
-    {
-      "name": "service-control-dark",
-      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=services",
-      "theme": "dark",
-      "viewport": "1440x1500@2x"
-    },
-    {
-      "name": "chat-files-dark",
-      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=chat",
-      "theme": "dark",
-      "viewport": "1440x1000@2x"
-    },
-    {
-      "name": "settings-psa-dark",
-      "route": "/settings/psa",
-      "theme": "dark",
-      "viewport": "1440x1000@2x"
-    },
-    {
-      "name": "company-policy-light",
-      "route": "/patching",
-      "theme": "light",
-      "viewport": "1440x1500@2x"
-    },
-    {
-      "name": "patch-policy-setting-light",
-      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=patches",
-      "theme": "light",
-      "viewport": "1440x1000@2x"
-    },
-    {
-      "name": "confirm-it-is-you-light",
-      "route": "/settings?tab=confirm",
-      "theme": "light",
-      "viewport": "1440x1300@2x"
-    },
-    {
-      "name": "reinstall-banner-light",
-      "route": "/endpoints/enroll?endpointId=cmwdpnws9005snivnr5kzqhna&businessId=cmwdpnwoe004nnivnv57k9nl0",
-      "theme": "light",
-      "viewport": "1440x1000@2x"
-    },
-    {
-      "name": "agent-auto-update-light",
-      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3",
-      "theme": "light",
-      "viewport": "1440x1000@2x"
-    },
-    {
-      "name": "company-policy-dark",
-      "route": "/patching",
-      "theme": "dark",
-      "viewport": "1440x1500@2x"
-    },
-    {
-      "name": "patch-policy-setting-dark",
-      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=patches",
-      "theme": "dark",
-      "viewport": "1440x1000@2x"
-    },
-    {
-      "name": "confirm-it-is-you-dark",
-      "route": "/settings?tab=confirm",
-      "theme": "dark",
-      "viewport": "1440x1300@2x"
-    },
-    {
-      "name": "reinstall-menu-dark",
-      "route": "/endpoints/cmwdpnws9005snivnr5kzqhna",
-      "theme": "dark",
-      "viewport": "1440x1000@2x"
-    },
-    {
-      "name": "business-agent-auto-update-dark",
-      "route": "/businesses/cmwdpnwoe004nnivnv57k9nl0",
+      "name": "task-toast-dark",
+      "route": "/automation/tasks",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     }

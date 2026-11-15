@@ -13,8 +13,10 @@
  *     rejected (their history stays on the Patching page). A company-wide
  *     policy, "Harbor — every computer, Tuesday night", runs revision 1 with
  *     HARB-DISPATCH-02 as the canary and HARB-DISPATCH-01 after it. An
- *     assignable policy, "Harbor depots — Sunday early morning", runs revision
- *     1 for the two depot computers, which are set to use it. HARB-WAREHOUSE-2
+ *     assignable policy, "Harbor depots — Thursday after Patch Tuesday", runs
+ *     revision 1 for the two depot computers, which are set to use it. Its
+ *     window is monthly (0.53): the second Tuesday of each month plus two
+ *     days, 02:00–05:00. HARB-WAREHOUSE-2
  *     is set to Exclude. HARB-GATEHOUSE was excluded until a few minutes ago
  *     and is back on Inherit, so the company-wide policy's last check says the
  *     change is settling and the computer's card says it joins at the next
@@ -59,7 +61,7 @@ const CLASSES = ['0fa1201d-4330-4fa8-8ae9-b877473b6441', 'e6cf1350-c01b-414d-a61
 const resultKey = (seed: string) => createHash('sha256').update(`docs-result-key:${seed}`).digest('base64');
 
 const COMPANY = 'Harbor — every computer, Tuesday night';
-const DEPOTS = 'Harbor depots — Sunday early morning';
+const DEPOTS = 'Harbor depots — Thursday after Patch Tuesday';
 
 async function main() {
   const harbor = await prisma.customer.findFirst({ where: { name: 'Harbor Logistics' } });
@@ -174,9 +176,10 @@ async function main() {
   // ── The assignable policy for the depots ────────────────────────────────
   const depotSettings = {
     allow: { classifications: CLASSES }, soakHours: 12, failureThreshold: 0,
-    window: { days: ['sun'], start: '02:00', end: '05:00', timezone: 'America/Los_Angeles' },
-    reboot: 'if_required_in_window', expiresInDays: 30,
-    reason: 'The depots run the scanners until midnight on weekdays; patch them on Sunday morning instead.',
+    // 0.53: monthly — two days after Patch Tuesday, once other people have said what broke.
+    window: { kind: 'monthly', week: 'second', weekday: 'tue', offsetDays: 2, start: '02:00', end: '05:00', timezone: 'America/Los_Angeles' },
+    reboot: 'if_required_in_window', expiresInDays: 60,
+    reason: 'The depots patch once a month, two days after Patch Tuesday, before the scanners start at six.',
   };
   const depot = await series({ scope: 'assigned', name: DEPOTS, createdAgo: 5 * DAY + HOUR, settings: depotSettings });
   for (const e of depots) await prisma.endpoint.update({ where: { id: e.id }, data: { patchPolicyMode: 'policy', patchPolicySeriesId: depot.id } });
