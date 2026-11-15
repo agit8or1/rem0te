@@ -794,6 +794,27 @@ async function savedViewAndBulk(page, f, vp, label) {
   await shot(page, `${label}-bulk-result`);
   await page.keyboard.press('Escape');
   await result.waitFor({ state: 'hidden' }).catch(() => {});
+  // 0.54: Schedule restart… — the options, the RustDesk exception never ticked by default, the signed-in note. Cancelled: nothing is requested.
+  const restartBtn = bar.locator('[data-testid="bulk-restart"]');
+  if (await restartBtn.isVisible().catch(() => false)) {
+    await restartBtn.click();
+    const rd = page.getByRole('dialog').filter({ has: page.locator('[data-testid="restart-options"]') });
+    await rd.waitFor({ timeout: 10_000 }).catch(() => {});
+    const exc = rd.locator('[data-testid="restart-ignore-remote-session"]');
+    check(await rd.isVisible() && !(await exc.isChecked()) && !(await rd.locator('[data-testid="restart-only-if-required"]').isChecked())
+      && /Restart even if a technician is connected through RustDesk \(their session is dropped\)/.test(await rd.innerText())
+      && /A signed-in user does not stop the restart\. They see the 15-minute warning, and unsaved work is lost\./.test(await rd.innerText()),
+      `${label}: bulk Schedule restart offers the RustDesk exception unticked, and says a signed-in user does not stop it`, (await rd.innerText().catch(() => '')).slice(0, 300));
+    await rd.locator('[data-testid="schedule-later"]').check();
+    check(await rd.locator('[data-testid="schedule-at"]').isVisible() && await rd.locator('[data-testid="restart-when-note"]').isVisible(), `${label}: a restart can be given a date, time and zone`);
+    await exc.check();
+    check(/do(es)? not stop it either|the warning still shows/.test(await rd.locator('[data-testid="restart-signed-in-note"]').innerText()), `${label}: ticking the exception says the warning still shows`);
+    check(await rd.locator('[data-testid="bulk-restart-submit"]').isDisabled(), `${label}: no restart is requested without a reason`);
+    if (vp === 'phone') { const b = await rd.boundingBox(); check(b && b.x >= 0 && b.x + b.width <= 375.5, `${label}: the restart dialog fits the screen`, JSON.stringify(b)); }
+    await shot(page, `${label}-bulk-restart`);
+    await rd.getByRole('button', { name: 'Cancel' }).click();
+    await rd.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
+  } else check(false, `${label}: the bulk bar offers Schedule restart… to someone who can edit computers`);
   await page.getByRole('checkbox', { name: 'Select every device on this page' }).check();
   check((await bar.innerText()).includes('5 selected'), `${label}: the header checkbox selects every device on the page`);
   await bar.getByRole('button', { name: /Clear selection/ }).click();
@@ -1941,6 +1962,17 @@ async function patchWindowEditor(page, f, vp, label) {
   check(await page.locator('[data-testid="pol-day"]').inputValue() === '28', `${label}: a day of the month past 28 is held at 28`, await page.locator('[data-testid="pol-day"]').inputValue());
   await page.waitForFunction(() => /the 28th of each month/.test(document.querySelector('[data-testid="pol-preview"]')?.textContent ?? ''), null, { timeout: 15_000 }).catch(() => {});
   check(/the 28th of each month/.test(await page.locator('[data-testid="pol-preview"]').innerText()), `${label}: the day-of-month form previews the 28th`, await page.locator('[data-testid="pol-preview"]').innerText());
+  // 0.54: the restart window — a rule, its own window editor and preview, the RustDesk exception unticked, the signed-in note.
+  check(!(await page.locator('[data-testid="pol-rw-window"]').isVisible().catch(() => false)), `${label}: a new policy has no restart window until one is chosen`);
+  await page.locator('[data-testid="pol-restart-rule"]').selectOption('if_required');
+  await page.locator('[data-testid="pol-rw-window"]').waitFor({ timeout: 10_000 }).catch(() => {});
+  const rwText = await page.locator('[data-testid="pol-restart"]').innerText().catch(() => '');
+  check(await page.locator('[data-testid="pol-rw-window"]').isVisible() && /Restart window/.test(rwText) && /asked for again 15 minutes later/.test(rwText),
+    `${label}: "Restart if required, in a restart window" shows a restart window editor, and says a deferred restart is asked for again`, rwText.slice(0, 300));
+  check(!(await page.locator('[data-testid="pol-ignore-remote-session"]').isChecked()) && /A signed-in user does not stop the restart/.test(rwText),
+    `${label}: the policy's RustDesk exception starts unticked, beside the signed-in note`, rwText.slice(-300));
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="pol-rw-occurrence"]').length >= 1, null, { timeout: 15_000 }).catch(() => {});
+  check(await page.locator('[data-testid="pol-rw-occurrence"]').count() >= 1, `${label}: the restart window previews its next openings`);
   if (vp === 'phone') await noSideScroll(page, `${label} patch policy window`);
   await shot(page, `${label}-patch-policy-monthly`);
   await page.getByRole('button', { name: 'Cancel' }).first().click();

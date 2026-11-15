@@ -5,6 +5,266 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.54.0] — 2026-11-15 · *Curfew*
+
+**Restarts can be scheduled, and patch policies have restart windows.**
+
+The owner asked to "make sure we have a feature to schedule restarts, we should be able to schedule update policies
+(They also need reboot windows, etc)", and asked why DEWEY-WKS2022 and DS-HOME1 sat at *restart required*. Until now
+a restart could be asked for only *now* (with a 5-minute to 24-hour warning), and a patch policy could restart a
+computer only in the same plan that installed its updates. That restart was deferred for good if a RustDesk session
+was open at that moment.
+
+#### Why the two production computers never restarted
+Read from production with SELECTs only (read-only transactions):
+
+- **No patch policy has ever existed there.** There are no `PatchPolicy`, `PatchPolicySeries` or `ClientUpdatePolicy`
+  rows and no `PATCH_POLICY_*` audit entries. Production has had exactly two action jobs, one
+  `windows.software.remove` and one `windows.update.install`, and never a `windows.reboot.schedule`. **Rem0te has
+  never been asked to restart either computer.**
+- **DEWEY-WKS2022.** Its install came from the Patches tab: one MANUAL deployment, a direct-mode job on 2026-11-14 at
+  23:31 UTC. It carried the default restart rule, `reboot: "never"` (both `PATCH_DEPLOYMENT_CREATED` and
+  `PATCH_INSTALL_REQUESTED` record it). The agent did what that rule says. It installed the updates, reported
+  `restart_required` ("It was not restarted"), and left it. Windows' pending sources are `pending_file_rename`,
+  `update_agent` and `windows_update`. It last booted on 2026-11-13.
+- **DS-HOME1.** Rem0te never sent it an update plan. Its only pending source is `pending_file_rename`, an operating
+  system file rename. Its history shows only Defender definition updates that Windows installed itself. Its one
+  action, removing a program on 2026-11-14, reported `rebootRequired: false`. Nothing in Rem0te caused the pending
+  restart or was asked to act on it. It last booted on 2026-11-07.
+- **The gap this exposes.** Even under a policy with `if_required_in_window`, a restart deferred by a RustDesk
+  session, or by a window too short for the 15-minute warning, was never tried again. The install plan had finished.
+  Restart windows (below) are what retries it.
+
+#### Added
+- **A restart at a date and time.** `windows.reboot.schedule` can be given a time up to **14 days** ahead, in a named
+  zone, using 0.52's picker (the computer's site, your profile, this browser, or UTC). The request carries
+  `restartAt: { local, timeZone }`.
+  - The portal signs `notBefore` as that time minus the warning, so the computer restarts at the time chosen. The
+    plan then runs for at most 2 hours.
+  - Nothing is handed out before `notBefore`, and the agent refuses it early by its own clock.
+  - It shows as *scheduled* in Tasks and is canceled with the existing cancel.
+  - `scheduledStart` moved to `apps/api/src/common/schedule.ts`, shared with scheduled installs. The refusals are
+    `SCHEDULE_TOO_FAR` (pointing at a policy's restart window), `SCHEDULE_IN_PAST` and `INVALID_TIMEZONE`.
+  - `restartAt` with `startsInMinutes`, or on any other action, is refused.
+- **Only if a restart is required** (`onlyIfRequired: true`). The computer decides when the plan runs, from Windows'
+  own pending-restart state, in a new `rebootPrecheck`:
+  - Nothing pending: `no_change` (`no_restart_required`), and no restart.
+  - Registry unreadable: `not_executed` (`reboot_state_unknown`).
+- **Where a restart can be asked for**, with the same form (`components/endpoints/restart-options.tsx`):
+  - a computer's Actions tab;
+  - the Patches tab's restart banner;
+  - **Schedule restart…** in the Devices list, for the selection or a device group. This is a seventh bulk action,
+    `restart.schedule`.
+- **How bulk works.** A group is resolved as the caller sees it at request time, at most 200 computers.
+  `RestartBulkService` makes each one the Actions tab's own `ActionsService.request`: one signed plan per computer,
+  its own scope, readiness, containment and one-at-a-time checks, and its own audit entry. A reason is required. In
+  direct mode the fresh sign-in is asked once for the whole request.
+- **Restart windows on patch policies**, per-business and company-wide or assignable. The policy document gains an
+  optional `restart: { rule, window }`. The rule is `if_required` or `always` (a maintenance restart), and the window
+  uses 0.53's three shapes. Inside an open restart window the policy sweep (`proposeRestarts`) asks the signer for one
+  `windows.reboot.schedule` plan per computer:
+  - The plan has the fixed 15-minute warning, plus `onlyIfRequired` under *if required*.
+  - It is signed under the policy with no person approving it, like a ring plan.
+  - Under *if required* the portal plans only computers that Windows says need a restart (signed scan, else
+    inventory). The agent decides again when the plan runs.
+  - It skips a computer that is not live in the policy, excluded, re-enrolled, under an open update install, or
+    already has an open restart request.
+- **What the signer checks** (`evaluatePolicyRestartPlan`) before it signs a restart under a policy:
+  - the policy has a restart window and a known rule (`restart_not_in_policy`, `restart_rule_unknown`);
+  - the warning is exactly 15 minutes, and the flags are the rule's own (`restart_params_not_allowed`);
+  - the exception appears only if the policy has it (`override_not_allowed`);
+  - no evidence (`bad_evidence`), and it names the policy, no deployment and no update (`bad_display`);
+  - it is requested as the author (`requester_mismatch`), for one unchanged computer the policy names
+    (`computer_not_in_policy`);
+  - the plan's last moment plus the warning falls inside the window, and the plan runs at most 2 hours
+    (`outside_restart_window`);
+  - no open restart plan of that computer in this occurrence, and at most three signed in it
+    (`restart_already_signed`, `restart_retry_limit`).
+
+  The signer's ledger records restart entries as `kind: "restart"`, keyed by the occurrence, and the ring gate
+  ignores them.
+- **`PatchPolicyRestart`** (migration **0075**): one row per computer, occurrence and attempt. Its unique key is
+  `(policyId, endpointId, windowKey, attempt)`, with a CHECK of `attempt BETWEEN 1 AND 3`. The sweep claims an
+  attempt by inserting its row before it asks the signer, so two API processes can't both take it.
+- **The schedule in plain words** (`windowInWords`, `restartInWords`, `scheduleInWords` in `patch-policy.ts`), for
+  example *Installs: 2 days after the second Tuesday of each month 22:00–04:00 America/New_York · Restarts: if
+  required, Sundays 02:00–04:00 America/New_York*. It is shown on:
+  - the policy list, with the next restart window;
+  - the company-wide list, with the next restart window;
+  - the policy page, with the next restart windows and **Restarts under it** (every attempt, its result, and whether
+    the exception was used);
+  - the approval signer's policy page;
+  - each computer's Patch policy card: *Restart planned for Sun 22 Nov, 02:15 America/New_York* (from the agent's
+    reported schedule), *Restart planned in the next restart window, …*, or, with no restart window and a restart
+    pending, a pointer to *Schedule restart*.
+- **The editors.** The policy form and the company-wide form have a **Restart window** select:
+  - *No restart window*;
+  - *Restart if required, in a restart window*;
+  - *Restart every computer in a restart window (maintenance restart)*.
+
+  They reuse 0.53's window editor with its preview, and offer the exception checkbox.
+
+#### The RustDesk exception — reversing §32/§37 at the owner's request
+The owner said "no restart while someone is signed in — this shouldn't be a thing as people leave themselves logged
+in", then "there should be an override exception checkbox".
+
+- **The behaviour was already right; the wording was not.** A signed-in Windows user has never stopped a restart.
+  Only a technician connected through RustDesk does (`rustdesk.exe --cm` running), or the agent not being able to
+  tell. Several places said "someone is connected", which reads as "signed in". The Patches toast, the catalog
+  warnings, the reboot choice, `/help`, the docs and the Tasks deferral text now say *a technician connected through
+  RustDesk*. Every restart form and doc adds: **"A signed-in user does not stop the restart. They see the 15-minute
+  warning, and unsaved work is lost."**
+- **The exception, `ignoreRemoteSession: true`.** Its label is *Restart even if a technician is connected through
+  RustDesk (their session is dropped)*. It is a closed boolean, present only when true. Every plan and policy
+  document without it keeps its bytes and digest, and `unit-restart-windows.mjs` pins the 0.52 golden digest.
+  - **The checkbox is never ticked by default**: on the Actions tab, the banner, bulk, and both policy editors.
+  - **The agent honours it only from the signed plan** (`SignedTrue(p.Params, "ignoreRemoteSession")`), and it skips
+    only `sessionCheck`. **The 15-minute warning always shows.** The result records `sessionOverride: "true"` and
+    `remoteSessions` (the count, or `unknown`).
+  - **Where it applies:**
+    - `windows.reboot.schedule`, everywhere it can be requested: the Actions tab, the banner, bulk, groups and
+      scheduled times;
+    - a policy's restarts in the restart window;
+    - an update install's own in-window restart, but only under a policy that has it. It is allowed only beside
+      `if_required_in_window`, and `requestRing` adds it from the signed policy.
+  - **Not done for** the RustDesk service restart (`windows.service.restart` / `windows.service.control`). Restarting
+    RustDesk *is* dropping the session, and it still waits for none. It is also not offered on a one-computer Install
+    updates or a hand-made deployment. Those plans are approved one by one, and their restart is the install's own.
+    Use *Schedule restart* with the exception afterwards.
+  - **The signer refuses it under a policy that does not have it** (`override_not_allowed`), for install and restart
+    plans alike. A policy with the exception but nothing that restarts is refused at admission
+    (`override_without_restart`).
+  - **Audit and display.** `ACTION_REQUESTED` carries `ignoreRemoteSession: true`, and `ACTION_RESULT` carries
+    `sessionOverride: true` and `remoteSessions`. Tasks and the policy page say *restarted although a technician was
+    connected through RustDesk*.
+  - **Suggested wording for CLAUDE.md's §32/§37 paragraphs** (left for the integrator; agents may not edit
+    CLAUDE.md): *"0.54 (§67, reversing §32/§37 at the owner's request: 'there should be an override exception
+    checkbox') lets a restart carry `ignoreRemoteSession: true`, present only when true, never ticked by default,
+    honoured by the agent only from the signed plan, skipping only the session check (the warning always shows),
+    refused by the signer under a policy without it, and needing the 0.54 agent."*
+
+#### Is a deferred restart tried again?
+- **Under a policy's restart window: yes.**
+  - After a RustDesk session (`remote_session_open`) or "cannot tell" (`session_state_unknown`), or a plan that
+    expired, was rejected or was canceled before it reached the computer, the sweep asks again **15 minutes later in
+    the same window**. That is at most three attempts per computer per occurrence, then again in the **next restart
+    window**.
+  - Each policy restart plan is valid for **15 minutes**. The signer counts a plan open until its `notAfter`, because
+    it cannot know the agent deferred it. A first version signed 2-hour plans, and the e2e caught its retry refused
+    as `restart_already_signed`.
+  - A computer that is off for the whole window is tried in the next one.
+- **The 0.34 install-window rule still does not retry by itself.** Give the policy a restart window for that.
+- **A one-off *Schedule restart* does not retry.** It ends `not_executed` and is requested again by a person, as
+  before.
+
+#### Deploying
+- **The agent changes: a signed publish is required** (`sudo rem0te-signed-publish`) before anyone uses *only if
+  required*, the exception or a restart window.
+  - The 0.53 agent's `RestartDelay` accepts exactly `{delayMinutes}`. It refuses a plan carrying either flag with
+    `refused` / `params_not_allowed`. `e2e-restart-windows.mjs` proves this against the 0.53 sim.
+  - The portal refuses the request first for a computer reporting an agent older than 0.54.0 (`ENDPOINT_NOT_READY`).
+  - A plain restart, with no flags, works on any agent.
+- **The approval signer must be rebuilt and redeployed** (`apps/api/scripts/build-approval-signer.mjs`), for the
+  restart evaluation, the ledger's restart entries and the page. A 0.53 signer's schema refuses a policy with a
+  `restart` or `ignoreRemoteSession` at admission (`invalid_policy`), so it fails closed. It signs no restart under a
+  policy. The bundle's file list is unchanged.
+- **Migration 0075** (`PatchPolicyRestart`). Run `prisma migrate deploy`, copy `prisma/` to the target and run
+  `prisma generate` there, or the sweep throws `Unknown field`.
+- No new route. `GET /endpoints/:id/patch-policy` gains `restart`. `GET /patching/policies` and `/patching/series`
+  gain `schedule` and `nextRestartWindow`. The policy detail gains `schedule`, `restartWords`,
+  `currentRestartWindow`, `upcomingRestartWindows` and `restarts`. `POST /endpoints/:id/actions` accepts `restartAt`,
+  and `POST /endpoints/bulk` accepts `restart.schedule` with `restart`. The route table is unchanged, so
+  `docs/API-REFERENCE.md` is unchanged.
+
+#### Invariants
+- **§67** (new):
+  - the two flags are the same closed pair on the agent and the portal, and exactly true;
+  - only `maintenance.go` and `updates.go` name the exception, it is read only through `SignedTrue(p.Params, …)`, and
+    the warning path is unchanged;
+  - `rebootPrecheck` runs its checks in order: maintenance, then the registry, then pending sources, then the
+    session check (unless excepted);
+  - the portal refuses the flags for agents older than 0.54.0;
+  - `override_not_allowed` is enforced for install and restart plans, and `override_without_restart` at admission;
+  - the restart-window bounds hold (the 15-minute warning, the rule's own flags, the window, the attempt cap), and
+    0075 has its CHECK;
+  - the sweep checks containment first and asks only through `createPlan` under the policy;
+  - `RestartBulkService` calls only `ActionsService.request`;
+  - the audit and Tasks wording;
+  - the UI checkbox defaults to unticked, and its words match the catalog;
+  - the suites are in CI and `run-e2e.sh`, with the 0.52 digest pinned.
+- **Changed:**
+  - §14's delay check now expects `RestartFlags`, and its session check expects `rebootPrecheck`, which skips
+    `sessionCheck` only on the signed exception;
+  - §15's update parameters allow `ignoreRemoteSession` only beside the in-window rule;
+  - §29's bulk list is now seven;
+  - §37's catalog check allows the exception's line, and the signer page shows `REBOOT_UNPROVEN` three times (the
+    restart window says it too);
+  - §65 reads `scheduledStart` from `common/schedule.ts`.
+
+#### Tests
+- `apps/api/scripts/unit-restart-windows.mjs` (**70 checks**, in CI as *Restart window tests*):
+  - the closed flags and the update install's exception;
+  - the wording;
+  - scheduling bounds and bulk parsing;
+  - the restart rule schema and fail-closed rule;
+  - `restart_window_never_opens` and `override_without_restart`;
+  - the words;
+  - every signer refusal, including the ledger (one open, three per window, the next window fresh);
+  - the approval page;
+  - the install-path exception;
+  - the Tasks wording;
+  - the 0.52 digest.
+- `apps/api/scripts/e2e-restart-windows.mjs` (**62 checks**, ports 3801–3803, added to `run-e2e.sh` with
+  `RELEASE_BIN` / `ACTION_SIM`; `PRE054_ACTION_SIM` optionally points at a 0.53 sim; not `OLD_ACTION_SIM`, which `e2e-approved-action.mjs` reads as a pre-0.40 sim). It runs against the real API and
+  signer (direct mode) and the agent's real decision code:
+  - only-if-required → `no_change`;
+  - a scheduled restart not handed out before its time and restarting at it;
+  - an old agent refused by the portal, and the 0.53 sim refusing the exception;
+  - bulk for a selection and a group;
+  - policies refused with an unknown rule or a pointless exception;
+  - a restart plan inside the window for computers that need one, and none for a clean computer or a closed window;
+  - "Restart planned …" on the Patch policy card;
+  - with `-sessions 1`, no exception defers, a retry is signed 15 minutes later and restarts, and the exception
+    restarts anyway with the audit, Tasks and policy page saying so;
+  - the signer refusing the exception, a shorter warning, a missing `onlyIfRequired`, out-of-window plans, a second
+    open plan and another policy's computer.
+- Go: `internal/action/restart054_test.go`:
+  - `TestRestartFlagsAreClosed`, including that `RestartDelay` refuses false, strings and unknown keys;
+  - `TestOnlyIfRequiredDecidesFromWindows`;
+  - `TestIgnoreRemoteSessionIsTheOnlyWayPastASession`, where the warning still shows and the count is recorded;
+  - `TestUpdateRestartOverride`.
+
+  `rem0te-action-sim` now passes `-registry` without `-wua`.
+- `apps/web/scripts/e2e-ui.mjs`:
+  - the bulk *Schedule restart…* dialog, with the exception and only-if-required unticked, the signed-in note, a
+    date/time/zone, and no request without a reason;
+  - the policy editor's restart window, its preview, the unticked exception and the note.
+
+  The whole suite passes: 1,110 checks, every viewport and theme. Its first run found that the bulk restart dialog
+  was taller than a phone screen and did not scroll, so *Cancel* could not be reached. The dialog now scrolls
+  (`max-h-[85vh] overflow-y-auto`, the pattern the AI ticket dialogs use).
+- `e2e-patch-policies.mjs`: the approval page's *Restarts* row now uses `restartInWords`, so the check looks for
+  "if required, in the install window" instead of 0.34's "if Windows requires one". The standard-agent check now
+  prints the `install` object it got.
+- Existing suites rerun:
+  - unit: `unit-patch-policy` (179), `unit-monthly-window` (79), `unit-approval-signer` (252),
+    `unit-patch-assignment` (65), `unit-task-progress` (59), `unit-dynamic-groups` (68) and `unit-service-process`
+    (109);
+  - e2e: `e2e-maintenance-actions` (64), `e2e-task-progress` (58), `e2e-staged-patching` (100),
+    `e2e-patch-policies` (114), `e2e-patch-assignment` (72), `e2e-approved-action` (91) and `e2e-device-views` (142).
+
+  `e2e-patch-policies`' standard-agent check needs a relay host or an https public address in the database. Without
+  one, the migration block answers `NO_PORTAL_ADDRESS` instead. A freshly seeded scratch database has neither.
+
+#### Not done
+- **Nothing has run on real Windows.** The restart time, *only if required* (the registry reads are the 0.34 ones),
+  restart windows and the exception are proven against the simulated agent only.
+- The exception is not offered on a one-computer Install updates, a hand-made deployment, or the RustDesk service
+  restart.
+- A restart window cannot restart at a set minute inside it. The plan is handed out at the computer's first check-in,
+  and it restarts 15 minutes later.
+- No "postpone" for the signed-in user, and no notice other than Windows' own shutdown warning.
+
 ## [0.53.1] — 2026-11-15 · *Almanac*
 
 **The tray says who it is for.**

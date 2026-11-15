@@ -440,13 +440,17 @@ check(
       && /var ServiceNameRE = regexp\.MustCompile\(`\^\[A-Za-z0-9_\]\{1,64\}\$`\)/.test(maint),
     `agent ${goSvc.join(', ')}; portal ${tsSvc.join(', ')}`);
   check('a restart is never immediate: the delay is a whole number of minutes, 5 to 1440, on both sides',
-    /const \(\s*MinRestartDelayMinutes = 5\s*MaxRestartDelayMinutes = 24 \* 60\s*\)/.test(maint) && /if len\(p\) != 1 \{\s*return 0\s*\}\s*d, ok := p\["delayMinutes"\]\.\(float64\)\s*if !ok \|\| d != math\.Trunc\(d\) \|\| d < MinRestartDelayMinutes \|\| d > MaxRestartDelayMinutes \{/.test(maint)
-      && /delayMinutes: z\.number\(\)\.int\(\)\.min\(MIN_RESTART_DELAY_MINUTES\)\.max\(MAX_RESTART_DELAY_MINUTES\) \}\)\.strict\(\)/.test(tsCat) && /MIN_RESTART_DELAY_MINUTES = 5;/.test(tsCat),
+    // 0.54 (§ 67): besides delayMinutes, only the two closed flags, each exactly true.
+    /const \(\s*MinRestartDelayMinutes = 5\s*MaxRestartDelayMinutes = 24 \* 60\s*\)/.test(maint)
+      && /want := 1\s*for _, k := range RestartFlags \{\s*if _, has := p\[k\]; has \{\s*if !SignedTrue\(p, k\) \{\s*return 0\s*\}\s*want\+\+\s*\}\s*\}\s*if len\(p\) != want \{\s*return 0\s*\}\s*d, ok := p\["delayMinutes"\]\.\(float64\)\s*if !ok \|\| d != math\.Trunc\(d\) \|\| d < MinRestartDelayMinutes \|\| d > MaxRestartDelayMinutes \{/.test(maint)
+      && /var RestartFlags = \[\]string\{"onlyIfRequired", "ignoreRemoteSession"\}/.test(maint)
+      && /delayMinutes: z\.number\(\)\.int\(\)\.min\(MIN_RESTART_DELAY_MINUTES\)\.max\(MAX_RESTART_DELAY_MINUTES\),\s*onlyIfRequired: z\.literal\(true\)\.optional\(\),\s*ignoreRemoteSession: z\.literal\(true\)\.optional\(\),\s*\}\)\.strict\(\)/.test(tsCat) && /MIN_RESTART_DELAY_MINUTES = 5;/.test(tsCat),
     'RestartDelay and REBOOT_SCHEDULE.params must keep the 5-minute floor');
   const maintEntries = entries.filter((e) => /ID: "windows\.(service\.restart|reboot\.|logs\.)/.test(e));
   check('every maintenance action is high impact on any computer, and the RustDesk restart and the restart wait for no open session',
     maintEntries.length === 4 && maintEntries.every((e) => /Risk:\s+func\(int, int\) string \{ return "high" \},/.test(e))
-      && /Precheck:\s+sessionCheck\("the restart"\),/.test(goCat) && /if RestartService\(p\.Params\) == "RustDesk" \{\s*return sessionCheck\(/.test(maint)
+      // 0.54: the restart's precheck is rebootPrecheck, which skips the session check only on the signed exception (§ 67).
+      && /Precheck:\s+rebootPrecheck,/.test(goCat) && /if SignedTrue\(p\.Params, "ignoreRemoteSession"\) \{\s*return nil\s*\}\s*return sessionCheck\("the restart"\)\(p, o\)\s*\}/.test(maint) && /if RestartService\(p\.Params\) == "RustDesk" \{\s*return sessionCheck\(/.test(maint)
       && /if err != nil \{\s*return &Result\{Outcome: "not_executed", Reason: "session_state_unknown"/.test(maint),
     'maintenance risk must be "high" and "cannot tell" must count as a session');
   check('the agent\'s action package runs no process; the Windows side runs only shutdown.exe and wevtutil.exe from System32',
@@ -496,8 +500,8 @@ check(
   // 0.32 adds an optional "allow" filter (a patch policy's classes, severities
   // and excluded KBs). It can only narrow: closed keys, fixed values.
   // 0.34: reboot is one of two fixed strings (§ 37 has the restart's rules).
-  check('agent update params are closed: exactly updates + reboot "never" | "if_required_in_window" (+ optional allow), each {updateId, revision}',
-    /want := 2\s*if hasAllow \{\s*want = 3\s*\}\s*if len\(p\) != want \|\| UpdateReboot\(p\) == ""/.test(upd) && /!ok \|\| len\(m\) != 2/.test(upd)
+  check('agent update params are closed: exactly updates + reboot "never" | "if_required_in_window" (+ optional allow, + 0.54 ignoreRemoteSession: true beside the in-window rule), each {updateId, revision}',
+    /want := 2\s*if hasAllow \{\s*want\+\+\s*\}[\s\S]{0,200}if _, has := p\["ignoreRemoteSession"\]; has \{\s*if !SignedTrue\(p, "ignoreRemoteSession"\) \|\| UpdateReboot\(p\) != RebootInWindow \{\s*return nil, nil, paramErr\([^)]*\)\s*\}\s*want\+\+\s*\}\s*if len\(p\) != want \|\| UpdateReboot\(p\) == ""/.test(upd) && /!ok \|\| len\(m\) != 2/.test(upd)
       && /func UpdateReboot\(p map\[string\]any\) string \{\s*switch s, _ := p\["reboot"\]\.\(string\); s \{\s*case RebootNever, RebootInWindow:\s*return s\s*\}\s*return ""\s*\}/.test(upd)
       && /RebootNever = "never"/.test(upd) && /RebootInWindow = "if_required_in_window"/.test(upd)
       && /if k != "classifications" && k != "severities" && k != "excludeKbs" \{\s*return nil, paramErr/.test(upd)
@@ -1277,10 +1281,12 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const listQuery = read('apps/api/src/endpoints/list-query.ts');
 
   // 0.34 adds agent.update and agent.migrate, through AgentUpgradeService (§ 43).
-  check('bulk: exactly six repeatable actions, and nothing that connects, archives, deletes or runs an action',
-    /export const BULK_ACTIONS = \['group\.add', 'group\.remove', 'inventory\.refresh', 'client\.update', 'agent\.update', 'agent\.migrate'\] as const;/.test(rules)
+  // 0.54 adds restart.schedule, through RestartBulkService (§ 67): each computer
+  // is the Actions tab's own request, and this service still names no plan.
+  check('bulk: exactly seven repeatable actions, and nothing that connects, archives, deletes or runs an action itself',
+    /export const BULK_ACTIONS = \['group\.add', 'group\.remove', 'inventory\.refresh', 'client\.update', 'agent\.update', 'agent\.migrate', 'restart\.schedule'\] as const;/.test(rules)
       && !/\b(authorizeConnect|connect\(|archive|restore\(|\.delete\(|deleteMany|ActionsService|actionJob|createPlan|SignerClient|scriptVersion)\b/i.test(code(bulkSvc).replace(/this\.prisma\.endpointGroupMember\.deleteMany\(\{ where: \{ endpointGroupId: g\.id, endpointId: t\.id \} \}\)/g, '')),
-    'BULK_ACTIONS must stay the six, and the bulk service must not reach connect/archive/delete/approved actions');
+    'BULK_ACTIONS must stay the seven, and the bulk service must not reach connect/archive/delete/approved actions');
   check('bulk: at most 200 per request, counted before de-duplication, for the export too',
     /export const BULK_MAX = 200;/.test(rules)
       && /if \(ids\.length > BULK_MAX\) throw bad\('BULK_TOO_LARGE'/.test(rules) && rules.indexOf('ids.length > BULK_MAX') < rules.indexOf('[...new Set(ids as string[])]')
@@ -1869,7 +1875,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /runSystem32\(30\*time\.Second, "shutdown\.exe", "\/r", "\/t", strconv\.Itoa\(seconds\)/.test(read('tools/windows-installer/action_windows.go')),
     'no restart in the Windows Update script');
   check('the portal\'s restart rule is the same closed pair, and an install asked for any way defaults to never',
-    /export const UPDATE_REBOOT_RULES = \['never', 'if_required_in_window'\] as const;/.test(tsCat) && /reboot: UpdateReboot,\s*\/\/ 0\.32/.test(tsCat)
+    /export const UPDATE_REBOOT_RULES = \['never', 'if_required_in_window'\] as const;/.test(tsCat) && /reboot: UpdateReboot,\s*(?:\/\/[^\n]*\s*){0,3}ignoreRemoteSession: z\.literal\(true\)\.optional\(\),\s*\/\/ 0\.32/.test(tsCat)
       && (read('apps/api/src/patching/patching.service.ts').match(/reboot: UpdateReboot\.default\('never'\),/g) ?? []).length === 2
       && /reboot: UpdateReboot\.default\('never'\),/.test(read('apps/api/src/patching/policies.service.ts')),
     'UPDATE_INSTALL.params.reboot, CreateDeploymentDto, InstallDto and CreatePolicyDto');
@@ -1890,7 +1896,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const doc = read('docs/staged-patching.md').replace(/\n>\s*/g, ' ').replace(/\s+/g, ' ');
   check('the UI, the approval page and the docs say the restart has not run on real Windows',
     tsCat.includes(`REBOOT_UNPROVEN = '${UNPROVEN}'`) && comp.includes(`REBOOT_UNPROVEN = '${UNPROVEN}'`) && /<strong>\{REBOOT_UNPROVEN\}<\/strong>/.test(comp)
-      && (read('apps/api/src/approval-signer/page.ts').match(/esc\(REBOOT_UNPROVEN\)/g) ?? []).length === 2 && doc.includes(`**Not proven on Windows.** ${UNPROVEN}`),
+      && (read('apps/api/src/approval-signer/page.ts').match(/esc\(REBOOT_UNPROVEN\)/g) ?? []).length === 3 && doc.includes(`**Not proven on Windows.** ${UNPROVEN}`),
     'catalog.ts and patch-reboot-choice.tsx define it, the reboot choice shows it, the signer page and docs/staged-patching.md say it');
 }
 
@@ -4781,8 +4787,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('schedule: a schedule becomes the plan window only through scheduledWindow, never beside a policy\'s window',
     /\.\.\.\(!under && dto\.schedule \? \{ window: scheduledWindow\(dto\.schedule, d\.windowHours\) \} : \{\}\),/.test(pat)
       && /if \(dto\.schedule && \(under \|\| dto\.startsInMinutes\)\) this\.bad\(/.test(pat)
-      && /const notBefore = scheduledStart\(s, now\);/.test(pat) && /MAX_SCHEDULE_DAYS = 14;/.test(pat)
-      && /code: 'SCHEDULE_IN_PAST'/.test(pat) && /code: 'INVALID_TIMEZONE'/.test(pat),
+      // 0.54: scheduledStart moved to common/schedule.ts, shared with a scheduled restart.
+      && /const notBefore = scheduledStart\(s, now\);/.test(pat) && /MAX_SCHEDULE_DAYS = 14;/.test(read('apps/api/src/common/schedule.ts'))
+      && /code: 'SCHEDULE_IN_PAST'/.test(read('apps/api/src/common/schedule.ts')) && /code: 'INVALID_TIMEZONE'/.test(read('apps/api/src/common/schedule.ts')),
     'requestRing must build the window with scheduledWindow, refuse it under a policy or with startsInMinutes, and scheduledStart must bound it');
   const hb = act.slice(act.indexOf('  async forHeartbeat('), act.indexOf('  private async scriptFor('));
   const iHold = hb.indexOf('if (now < job.notBefore) continue;'), iWrite = hb.indexOf("data: { status: 'DISPATCHED', dispatchedAt: now");
@@ -4885,6 +4892,109 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /section\('A monthly window \(0\.53\)/.test(read('apps/api/scripts/e2e-patch-policies.mjs'))
       && agentGo.length > 0 && !/offsetDays|MonthWeek|"days"|Weekday/.test(agentGo),
     'unit-monthly-window pins the 0.52 weekly digest and runs in CI; e2e-patch-policies has the monthly section; internal/action has no policy-window code');
+}
+
+// 67. Restart scheduling and restart windows (0.54). A restart is still the
+//     one action windows.reboot.schedule@1. It may carry two closed flags,
+//     each present only when exactly true: onlyIfRequired (the agent decides
+//     from Windows' own pending-restart state) and ignoreRemoteSession — the
+//     owner's exception to § 32/§ 37's "never while a RustDesk session is
+//     open", reversed at the owner's request ("there should be an override
+//     exception checkbox"). The exception is honoured only from the signed
+//     plan, skips only the session check (the warning always shows), is never
+//     ticked by default, needs a 0.54 agent (an older one refuses the plan),
+//     and under a patch policy only when the approved policy has it. A
+//     policy's restart window is signed in its document; the signer signs a
+//     restart under it only inside the window, with the fixed warning and the
+//     rule's own flags, at most MAX_RESTART_ATTEMPTS per computer per
+//     occurrence. A signed-in Windows user never stops a restart, and every
+//     restart UI says so.
+{
+  const maint = read('tools/windows-installer/internal/action/maintenance.go');
+  const upd = read('tools/windows-installer/internal/action/updates.go');
+  const goCat = read('tools/windows-installer/internal/action/catalog.go');
+  const tsCat = read('apps/api/src/actions/catalog.ts');
+  const pp = read('apps/api/src/actions/patch-policy.ts');
+  const asvc = read('apps/api/src/actions/actions.service.ts');
+  const pol = read('apps/api/src/patching/policies.service.ts');
+  const bulkR = read('apps/api/src/actions/restart-bulk.ts');
+  const strip = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const goFiles = [];
+  const walkGo = (d) => { for (const n of readdirSync(join(ROOT, d))) { const r = `${d}/${n}`; if (statSync(join(ROOT, r)).isDirectory()) walkGo(r); else if (n.endsWith('.go') && !n.endsWith('_test.go')) goFiles.push(r); } };
+  walkGo('tools/windows-installer/internal'); walkGo('tools/windows-installer/cmd/rem0te-tray');
+  for (const n of readdirSync(join(ROOT, 'tools/windows-installer'))) if (n.endsWith('.go') && !n.endsWith('_test.go')) goFiles.push(`tools/windows-installer/${n}`);
+  const goNaming = goFiles.filter((f) => /"ignoreRemoteSession"/.test(strip(read(f)))).map((f) => f.replace(/^.*tools\/windows-installer\//, ''));
+  check('restart flags: the same closed pair on the agent and in the portal, each exactly true',
+    /var RestartFlags = \[\]string\{"onlyIfRequired", "ignoreRemoteSession"\}/.test(maint) && /export const RESTART_FLAGS = \['onlyIfRequired', 'ignoreRemoteSession'\] as const;/.test(tsCat)
+      && /func SignedTrue\(p map\[string\]any, k string\) bool \{\s*v, ok := p\[k\]\.\(bool\)\s*return ok && v\s*\}/.test(maint)
+      && (tsCat.match(/ignoreRemoteSession: z\.literal\(true\)\.optional\(\),/g) ?? []).length === 2,
+    'RestartFlags / RESTART_FLAGS, SignedTrue, and z.literal(true) on both catalog entries');
+  check('restart exception: the agent honours it only from the signed plan, skipping only the session check',
+    goNaming.sort().join(',') === 'internal/action/maintenance.go,internal/action/updates.go'
+      && (strip(maint).match(/SignedTrue\(p\.Params, "ignoreRemoteSession"\)/g) ?? []).length === 2
+      && (strip(upd).match(/SignedTrue\(p\.Params, "ignoreRemoteSession"\)/g) ?? []).length === 1
+      && /if SignedTrue\(p\.Params, "ignoreRemoteSession"\) \{\s*sessionOverride\(o, r\)\s*\} else if pr := sessionCheck\("the restart"\)\(p, o\); pr != nil \{/.test(upd)
+      && /if SignedTrue\(p\.Params, "ignoreRemoteSession"\) \{\s*sessionOverride\(o, &r\)\s*\}\s*journalStep\(o, p, "scheduling"\)\s*at, err := scheduleWarnedRestart\(p, o, minutes\)/.test(maint)
+      && /func sessionOverride\(o Options, r \*Result\) \{\s*r\.Observed\["sessionOverride"\] = "true"/.test(maint),
+    `only maintenance.go and updates.go may name it (found: ${goNaming.join(', ')}); the warning path is unchanged`);
+  const pre = maint.slice(maint.indexOf('func rebootPrecheck('), maint.indexOf('\n}\n', maint.indexOf('func rebootPrecheck(')));
+  check('only-if-required: the agent decides from Windows itself, and cannot tell means no restart',
+    /Precheck:\s+rebootPrecheck,/.test(goCat) && pre.indexOf('o.Maint == nil') > 0 && pre.indexOf('o.Registry == nil') > pre.indexOf('o.Maint == nil')
+      && /Reason: "reboot_state_unknown"/.test(pre) && /if len\(patch\.RebootSources\(o\.Registry, false\)\) == 0 \{\s*return &Result\{Outcome: "no_change", Reason: "no_restart_required"/.test(pre)
+      && pre.indexOf('"onlyIfRequired"') < pre.indexOf('"ignoreRemoteSession"'),
+    'rebootPrecheck: maintenance, then the registry, then pending sources, then (unless excepted) the session');
+  check('restart flags need a 0.54 agent: the portal refuses them for an older one before signing',
+    /export const RESTART_FLAGS_MIN_AGENT = '0\.54\.0';/.test(tsCat)
+      && /if \(flags\.length && \(!ep\.agentVersion \|\| compareVersions\(ep\.agentVersion, RESTART_FLAGS_MIN_AGENT\) < 0\)\) \{\s*throw new ConflictException\(\{ code: 'ENDPOINT_NOT_READY'/.test(asvc)
+      && asvc.indexOf('RESTART_FLAGS_MIN_AGENT) < 0') < asvc.indexOf('this.signer.submit(plan)'),
+    'createPlan must refuse restart flags on an agent older than RESTART_FLAGS_MIN_AGENT');
+  check('restart exception: under a policy only when the approved policy has it, for install and restart plans alike',
+    (pp.match(/if \(params\.ignoreRemoteSession !== undefined && !\(params\.ignoreRemoteSession === true && doc\.ignoreRemoteSession === true\)\) return no\('override_not_allowed'/g) ?? []).length === 2
+      && /ignoreRemoteSession: z\.literal\(true\)\.optional\(\)/.test(pp)
+      && /if \(doc\.ignoreRemoteSession && doc\.reboot !== 'if_required_in_window' && !doc\.restart\) return \{ ok: false, reason: 'override_without_restart'/.test(pp),
+    'evaluatePolicyPlan and evaluatePolicyRestartPlan both refuse override_not_allowed; validatePolicyDoc refuses an exception with no restart');
+  const rp = pp.slice(pp.indexOf('function evaluatePolicyRestartPlan('), pp.indexOf('\n}\n', pp.indexOf('function evaluatePolicyRestartPlan(')));
+  check('restart windows: the signer signs a policy restart only inside its window, with the fixed warning and the rule\'s own flags, a bounded number of times',
+    rp.length > 0 && /params\.delayMinutes !== POLICY_RESTART_DELAY_MINUTES\) return no\('restart_params_not_allowed'/.test(rp)
+      && /if \(rule === 'if_required' \? params\.onlyIfRequired !== true : params\.onlyIfRequired !== undefined\) return no\('restart_params_not_allowed'/.test(rp)
+      && /no\('outside_restart_window'/.test(rp) && /no\('restart_already_signed'/.test(rp) && /if \(mine\.length >= MAX_RESTART_ATTEMPTS\) return no\('restart_retry_limit'/.test(rp)
+      && /export const POLICY_RESTART_DELAY_MINUTES = UPDATE_RESTART_WARNING_MINUTES;/.test(pp) && /export const MAX_RESTART_ATTEMPTS = 3;/.test(pp)
+      && /ATTEMPT_CHECK\b|CHECK \("attempt" BETWEEN 1 AND 3\)/.test(read('apps/api/prisma/migrations/0075_policy_restarts/migration.sql'))
+      && /if \(r\.plan\.action\.id === REBOOT_SCHEDULE\.id && r\.plan\.action\.version === REBOOT_SCHEDULE\.version\) return evaluatePolicyRestartPlan\(/.test(pp),
+    'evaluatePolicyRestartPlan must hold the window, the delay, the flags and the attempt cap; 0075 CHECKs the attempt');
+  check('restart windows: the sweep asks only through createPlan under the policy, after the containment check',
+    /if \(await this\.containment\.blocking\('actions', r\.customerId\)\) return;/.test(pol)
+      && pol.indexOf("this.containment.blocking('actions', r.customerId)") < pol.indexOf('this.actions.createPlan(actor, {\n        action: REBOOT_SCHEDULE')
+      && /underPolicy: \{ policyId: r\.id, digest: r\.digest, evidence: null \},/.test(pol)
+      && !/this\.signer\.|signedPost|signUnderPolicy/.test(pol.slice(pol.indexOf('async proposeRestarts('), pol.indexOf('restartRequired(')))
+      && /\.\.\.\(doc\.ignoreRemoteSession \? \{ ignoreRemoteSession: true as const \} : \{\}\),/.test(pol),
+    'proposeRestarts: containment first, then ActionsService.createPlan with underPolicy, the exception only from the signed document');
+  check('bulk restart: each computer is the Actions tab\'s own request, never a plan written here',
+    /await this\.actions\.request\(a, t\.id, \{/.test(bulkR) && !/createPlan|signer|prisma/.test(strip(bulkR))
+      && /ignoreRemoteSession: z\.literal\(true\)\.optional\(\),/.test(bulkR) && /onlyIfRequired: z\.literal\(true\)\.optional\(\),/.test(bulkR),
+    'RestartBulkService calls ActionsService.request only');
+  check('restart exception: the audit says it was used, in the request and in the result',
+    /\.\.\.\(\(r\.params as \{ ignoreRemoteSession\?: unknown \}\)\.ignoreRemoteSession === true \? \{ ignoreRemoteSession: true \} : \{\}\),/.test(asvc)
+      && /sessionOverride: true/.test(asvc)
+      && /export const OVERRIDE_TEXT = 'restarted although a technician was connected through RustDesk'/.test(read('apps/api/src/tasks/lifecycle.ts')),
+    'ACTION_REQUESTED carries ignoreRemoteSession, ACTION_RESULT sessionOverride, and Tasks says so');
+  const ro = read('apps/web/components/endpoints/restart-options.tsx');
+  const pr = read('apps/web/components/patching/policy-restart.tsx');
+  const warnMin = (tsCat.match(/export const UPDATE_RESTART_WARNING_MINUTES = (\d+);/) ?? [])[1];
+  const NOTE = (tsCat.match(/export const SIGNED_IN_USER_NOTE = `([^`]+)`;/) ?? [])[1]?.replace('${UPDATE_RESTART_WARNING_MINUTES}', warnMin);
+  const LABEL = (tsCat.match(/export const IGNORE_REMOTE_SESSION_LABEL = '([^']+)';/) ?? [])[1];
+  check('restart UI: the exception is never ticked by default, and the words agree with the catalog',
+    !!NOTE && !!LABEL && NOTE.startsWith('A signed-in user does not stop the restart.')
+      && ro.includes(`SIGNED_IN_USER_NOTE = '${NOTE}'`) && ro.includes(`IGNORE_REMOTE_SESSION_LABEL = '${LABEL}'`)
+      && /onlyIfRequired: false, ignoreRemoteSession: false \}\)/.test(ro) && /ignoreRemoteSession: false \};/.test(pr)
+      && !/defaultChecked|checked=\{true\}/.test(ro + pr)
+      && /\.\.\.\(v\.ignoreRemoteSession \? \{ ignoreRemoteSession: true \} : \{\}\)/.test(ro),
+    'restart-options.tsx and policy-restart.tsx default the box to unticked and send the flag only when ticked');
+  const unitR = (() => { try { return read('apps/api/scripts/unit-restart-windows.mjs'); } catch { return ''; } })();
+  check('restart windows: the suites run, and pre-0.54 policy documents keep their digest',
+    /unit-restart-windows\.mjs/.test(read('.github/workflows/ci.yml')) && / service-process task-progress restart-windows; do/.test(read('scripts/run-e2e.sh'))
+      && /P\.policyDigest\(parsed\) === '466423a5bb889e289b536d62ac25ddf66450179770f1161c576003fc3644f99b'/.test(unitR),
+    'unit-restart-windows.mjs in CI (pinning the 0.52 digest), e2e-restart-windows.mjs in run-e2e.sh');
 }
 
 if (failures.length > 0) {

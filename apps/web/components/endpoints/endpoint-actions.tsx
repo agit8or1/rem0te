@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { DIRECT_REQUEST_NOTE, DIRECT_TOAST, directApproved, oldAgentRefusal } from '@/lib/direct-mode';
+import { RestartOptions, defaultRestart, restartAtBody, restartParams, type RestartValue } from '@/components/endpoints/restart-options';
 import { AlertTriangle, ExternalLink, Loader2, RefreshCw, ShieldCheck, Wrench } from 'lucide-react';
 
 /**
@@ -46,7 +47,7 @@ type LogSection = { source: string; text: string; truncated: boolean; note?: str
 interface Job {
   id: string; status: string; statusReason: string | null;
   action: { id: string; version: number; title: string; warnings: string[] };
-  params?: { service?: unknown; delayMinutes?: unknown } | null;
+  params?: { service?: unknown; delayMinutes?: unknown; onlyIfRequired?: unknown; ignoreRemoteSession?: unknown } | null;
   reason: string; origin: string; via: string; ticketRef: string | null; requestedById: string;
   risk: 'low' | 'high'; approvalsRequired: number; customerSignoff: boolean;
   /** 0.40: signed at the request, in direct mode. */
@@ -160,6 +161,8 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
   const [confirmed, setConfirmed] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
   const [choice, setChoice] = useState<string>('');
+  // 0.54: a restart's time, only-if-required and the RustDesk exception (never ticked by default).
+  const [restartOpts, setRestartOpts] = useState<RestartValue>(() => defaultRestart({}));
 
   const { data: catalog } = useQuery({
     queryKey: ['actions-catalog', endpointId],
@@ -182,8 +185,9 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
   const [svcState, setSvcState] = useState<string | null>(null);
   const [startAnyway, setStartAnyway] = useState(false);
   const choiceValue = action?.choice ? (action.choice.options.find((o) => String(o.value) === choice) ?? action.choice.options[0]) : null;
+  const isRestart = action?.id === 'windows.reboot.schedule';
   const params = (a: CatalogAction): Record<string, unknown> =>
-    FIXED_PARAMS[a.id] ?? (a.choice && choiceValue ? { [a.choice.field]: choiceValue.value } : {});
+    a.id === 'windows.reboot.schedule' ? restartParams(restartOpts) : FIXED_PARAMS[a.id] ?? (a.choice && choiceValue ? { [a.choice.field]: choiceValue.value } : {});
   const serviceName = action?.id === 'windows.service.start' ? 'Spooler'
     : action?.id === 'windows.service.restart' && choiceValue ? String(choiceValue.value) : null;
   const alreadyRunning = action?.id === 'windows.service.start' && svcState === 'Running';
@@ -192,9 +196,10 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
     mutationFn: () => actionsApi.request(endpointId, {
       actionId: action!.id, version: action!.version, params: params(action!), reason: reason.trim(),
       windowHours: Math.min(4, action!.maxWindowHours ?? 4),
+      ...(action!.id === 'windows.reboot.schedule' ? restartAtBody(restartOpts) : {}),
     }),
     onSuccess: (r) => {
-      setReason(''); setConfirmed(false); refresh();
+      setReason(''); setConfirmed(false); refresh(); setRestartOpts(defaultRestart({}));
       const j = r.data?.data as Job | undefined;
       toast(j?.direct ? { title: 'Approved automatically', description: DIRECT_TOAST } : { title: 'Requested', description: 'Nothing runs until the approvers authorize it on the approval page.' });
     },
@@ -280,7 +285,8 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
               </p>
             ) : (
               <>
-                {action.choice && choiceValue && (
+                {isRestart && <RestartOptions id="action-restart" value={restartOpts} onChange={(v) => { setRestartOpts(v); setConfirmed(false); }} zones={{}} />}
+                {!isRestart && action.choice && choiceValue && (
                   <div className="space-y-1">
                     <Label htmlFor="action-choice" className="text-xs">{action.choice.label}</Label>
                     <select id="action-choice" data-testid="action-choice" className="block h-8 rounded-md border bg-background px-2 text-xs"
@@ -344,7 +350,7 @@ function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => voi
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Badge variant={s.variant}>{s.label}</Badge>
-          <span className="text-xs font-medium">{j.action.title}{j.script ? ` · ${j.script.name} v${j.script.version}` : ''}{typeof j.params?.service === 'string' && j.action.id !== 'windows.service.start' ? ` · ${j.params.service}` : ''}{typeof j.params?.delayMinutes === 'number' ? ` · ${j.params.delayMinutes}-minute warning` : ''}</span>
+          <span className="text-xs font-medium">{j.action.title}{j.script ? ` · ${j.script.name} v${j.script.version}` : ''}{typeof j.params?.service === 'string' && j.action.id !== 'windows.service.start' ? ` · ${j.params.service}` : ''}{typeof j.params?.delayMinutes === 'number' ? ` · ${j.params.delayMinutes}-minute warning` : ''}{j.params?.onlyIfRequired === true ? ' · only if required' : ''}{j.params?.ignoreRemoteSession === true ? ' · even if a technician is connected through RustDesk' : ''}</span>
           <span className="text-xs text-muted-foreground">{formatDate(j.createdAt)}</span>
           {j.origin === 'ai_suggestion' && <Badge variant="outline" className="text-xs">AI suggestion{j.ticketRef ? ` · ${j.ticketRef}` : ''}</Badge>}
           {j.via === 'clientst0r' && <Badge variant="outline" className="text-xs">via ClientSt0r</Badge>}

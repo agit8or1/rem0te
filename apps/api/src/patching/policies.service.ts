@@ -13,10 +13,11 @@ import { SignerClient } from '../actions/signer.client';
 import { ContainmentService } from '../containment/containment.service';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { PUBLISH_COMMAND } from '../update-trust/agent-migration';
-import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, UPDATE_INSTALL, UpdateReboot } from '../actions/catalog';
+import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, REBOOT_SCHEDULE, UPDATE_INSTALL, UpdateReboot } from '../actions/catalog';
 import {
-  MAX_POLICY_DAYS, MAX_POLICY_RINGS, POLICY_SCHEMA, PolicyAllow, PolicyDoc, PolicyWindow,
-  allowParams, describePolicyWindow, localTime, nextOccurrence, nextOccurrences, occurrenceAt, policyAllowsUpdate, policyDigest, validatePolicyDoc, windowKind,
+  MAX_POLICY_DAYS, MAX_POLICY_RINGS, MAX_RESTART_ATTEMPTS, MAX_RESTART_PLAN_HOURS, POLICY_RESTART_DELAY_MINUTES, POLICY_SCHEMA, PolicyAllow, PolicyDoc, PolicyRestart, PolicyWindow,
+  allowParams, describePolicyWindow, localTime, nextOccurrence, nextOccurrences, occurrenceAt, policyAllowsUpdate, policyDigest, restartInWords, restartRuleOf, scheduleInWords, validatePolicyDoc, windowKind,
+  type RestartRule,
 } from '../actions/patch-policy';
 import { resultKeyFingerprint, selfSignedScanKey } from '../actions/device-result';
 import { MANAGER_LABEL, eligibility, type Posture } from './posture';
@@ -60,6 +61,10 @@ export const CreatePolicyDto = z.object({
   window: PolicyWindow,
   /** 0.34: never (the default), or restart if required inside the window. Signed into the policy. */
   reboot: UpdateReboot.default('never'),
+  /** 0.54: a restart window and rule (if required, or a maintenance restart). Signed into the policy; absent means none. */
+  restart: PolicyRestart.optional(),
+  /** 0.54: the RustDesk-session exception for this policy's restarts. Present only when ticked. */
+  ignoreRemoteSession: z.literal(true).optional(),
   expiresInDays: z.number().int().min(1).max(MAX_POLICY_DAYS).default(30),
   reason: z.string().trim().min(3).max(500),
 }).strict();
@@ -70,6 +75,20 @@ const WindowPreviewDto = z.object({ window: z.unknown(), expiresInDays: z.number
 
 /** Less than this left in a window and nothing new is proposed in it. */
 const MIN_WINDOW_MS = 15 * 60_000;
+/** 0.54: a restart plan needs at least this long to be picked up before its last moment (the window's end less the warning). */
+const MIN_RESTART_PLAN_MS = 10 * 60_000;
+/** 0.54: how long the sweep waits before another restart attempt for the same computer in the same window. */
+const RESTART_RETRY_MS = 15 * 60_000;
+/**
+ * 0.54: how long a policy restart plan is valid. No longer than the retry
+ * wait: the signer counts a restart plan "open" until its notAfter (it cannot
+ * know the agent deferred it), so a deferred plan must have closed before
+ * the next attempt is asked for. A computer checks in about every 3 minutes;
+ * one that misses all three attempts is tried again in the next window.
+ */
+const RESTART_PLAN_MS = RESTART_RETRY_MS;
+/** 0.54: the agent results after which a policy restart is tried again in the same window: a RustDesk session, or "cannot tell". */
+const RESTART_RETRY_REASONS = ['remote_session_open', 'session_state_unknown'];
 
 /** 0.50: what a series revision carries into admission. Set only by PatchSeriesService. */
 export interface SeriesRevision { seriesId: string; revision: number; supersedesId: string | null }
@@ -142,6 +161,8 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
           // A series revision is proposed under only while it is the series' running one.
           if (!r || r.status !== 'ACTIVE' || !(await this.isRunning(r))) continue;
           await this.propose(r, now);
+          // 0.54: the restart window runs beside the install window, on its own schedule.
+          await this.proposeRestarts(r, now);
         } catch (e) {
           this.logger.warn(`policy ${r0.id}: ${(e as Error).message}`);
         }
@@ -302,6 +323,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     try {
       const out = await this.patching.requestRing(actor, d.id, ring, { reason: `Patch policy "${doc.name}", window ${windowKey}`.slice(0, 400), exclude }, {
         policyId: r.id, name: doc.name, digest: r.digest, allow: allowParams(doc.allow), window: { notBefore: now, notAfter },
+        ...(doc.ignoreRemoteSession ? { ignoreRemoteSession: true as const } : {}),
       });
       await rec(true, 'signed', `Ring ${ring} of "${d.name}" was signed under the policy${exclude.length ? `, leaving out ${exclude.length} computer(s) not ready` : ''}.`, { deploymentId: d.id, ring, jobId: out.job.id });
     } catch (e) {
@@ -315,6 +337,135 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
         await this.audit.log({ tenantId: d.tenantId ?? undefined, customerId: d.customerId, action: 'PATCH_DEPLOYMENT_UPDATED', resource: 'patch_deployment', resourceId: d.id, meta: { status: 'CANCELED', reason: 'ring_retry_limit', policyId: r.id } });
       }
     }
+  }
+
+  // ── Restarts (0.54) ───────────────────────────────────────────────────────
+
+  /**
+   * Inside an open restart window: one windows.reboot.schedule plan for each
+   * computer of the policy that reports a restart required (`if_required`)
+   * or for each computer (`always`), submitted under the policy so the signer
+   * decides it against the signed restart window. At most
+   * MAX_RESTART_ATTEMPTS per computer per occurrence, claimed first.
+   */
+  async proposeRestarts(r: PatchPolicy, now: Date) {
+    const doc = PolicyDoc.parse(r.document);
+    const rule = restartRuleOf(doc);
+    if (!doc.restart || !rule) return;
+    const occ = occurrenceAt(now, doc.restart.window);
+    if (!occ) return;
+    const windowKey = occ.start.toISOString();
+    // The computer may pick the plan up as late as notAfter, and restarts the
+    // warning after that: the restart itself must fall inside the window.
+    const notAfter = new Date(Math.min(occ.end.getTime() - POLICY_RESTART_DELAY_MINUTES * 60_000, now.getTime() + Math.min(RESTART_PLAN_MS, MAX_RESTART_PLAN_HOURS * 3_600_000), Date.parse(doc.expiresAt)));
+    if (notAfter.getTime() - now.getTime() < MIN_RESTART_PLAN_MS) return;
+    if (await this.containment.blocking('actions', r.customerId)) return;
+    const actor = await this.actors.contextFor(doc.createdBy.userId, r.tenantId ?? '', r.customerId);
+    if (!actor) return;
+    for (const c of doc.rings.flat()) {
+      try { await this.restartOne(r, doc, rule, actor, c, windowKey, now, notAfter); } catch (e) { this.logger.warn(`policy ${r.id} restart ${c.endpointId}: ${(e as Error).message}`); }
+    }
+  }
+
+  /** Does Windows say this computer needs a restart? Its signed scan's word, else its inventory's. */
+  async restartRequired(endpointId: string): Promise<boolean> {
+    const p = (await this.patching.postures([endpointId])).get(endpointId);
+    if (p) return !!p.reboot.pending;
+    const inv = await this.prisma.endpointInventory.findUnique({ where: { endpointId }, select: { rebootRequired: true } });
+    return !!inv?.rebootRequired;
+  }
+
+  /** Why this computer is not restarted under the policy's rule now, or null. Only reads. */
+  async restartSkip(r: PatchPolicy, rule: RestartRule, c: PolicyDoc['rings'][number][number]): Promise<string | null> {
+    const member = await this.prisma.patchPolicyComputer.findUnique({ where: { policyId_endpointId: { policyId: r.id, endpointId: c.endpointId } }, select: { live: true } });
+    if (!member?.live) return 'another active policy patches it';
+    const ep = await this.prisma.endpoint.findUnique({ where: { id: c.endpointId }, select: { status: true, patchPolicyMode: true, rustdeskNode: { select: { rustdeskId: true, agentSecretHash: true } } } });
+    if (!ep || ep.status === 'ARCHIVED') return 'it is no longer enrolled';
+    if (ep.patchPolicyMode === 'exclude') return 'its Patch policy is set to Exclude';
+    if (ep.rustdeskNode?.rustdeskId !== c.rustdeskId || ep.rustdeskNode?.agentSecretHash !== c.deviceSecretSha256) return 'it was re-enrolled since the policy was approved';
+    if (rule === 'if_required' && !(await this.restartRequired(c.endpointId))) return 'no restart required';
+    // Never under an install still running, and never beside another open restart request.
+    if (await this.actions.blocking(c.endpointId, UPDATE_INSTALL.id)) return 'an update install is still open on it';
+    if (await this.actions.blocking(c.endpointId, REBOOT_SCHEDULE.id)) return 'a restart request is already open for it';
+    return null;
+  }
+
+  private async restartOne(r: PatchPolicy, doc: PolicyDoc, rule: RestartRule, actor: ActorContext, c: PolicyDoc['rings'][number][number], windowKey: string, now: Date, notAfter: Date) {
+    const rows = await this.prisma.patchPolicyRestart.findMany({ where: { policyId: r.id, endpointId: c.endpointId, windowKey }, orderBy: { attempt: 'asc' } });
+    const last = rows[rows.length - 1];
+    if (last) {
+      if (rows.length >= MAX_RESTART_ATTEMPTS) return;
+      if (now.getTime() - last.updatedAt.getTime() < RESTART_RETRY_MS) return;
+      if (last.jobId) {
+        // Tried again only after a RustDesk session (or "cannot tell") held it
+        // back, or a plan that never reached the computer.
+        const j = await this.prisma.actionJob.findUnique({ where: { id: last.jobId }, select: { status: true, targets: { where: { endpointId: c.endpointId }, select: { status: true, result: true } } } });
+        const t = j?.targets[0];
+        const reason = (t?.result as { reason?: string } | null)?.reason ?? '';
+        const again = !j || ['REJECTED', 'CANCELED', 'EXPIRED'].includes(j.status) || t?.status === 'CANCELED' || (t?.status === 'NOT_EXECUTED' && RESTART_RETRY_REASONS.includes(reason));
+        if (!again) return;
+      }
+    }
+    if (await this.restartSkip(r, rule, c)) return;
+    const attempt = (last?.attempt ?? 0) + 1;
+    let row: { id: string };
+    try {
+      row = await this.prisma.patchPolicyRestart.create({ data: { policyId: r.id, endpointId: c.endpointId, customerId: r.customerId, windowKey, attempt, code: 'claimed', message: 'Proposing a restart plan.' }, select: { id: true } });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') return; // another sweep took this attempt
+      throw e;
+    }
+    const params = {
+      delayMinutes: POLICY_RESTART_DELAY_MINUTES,
+      ...(rule === 'if_required' ? { onlyIfRequired: true as const } : {}),
+      ...(doc.ignoreRemoteSession ? { ignoreRemoteSession: true as const } : {}),
+    };
+    try {
+      const job = await this.actions.createPlan(actor, {
+        action: REBOOT_SCHEDULE, endpointIds: [c.endpointId], params,
+        reason: `Patch policy "${doc.name}", restart window ${windowKey}`.slice(0, 400), startsInMinutes: 0, windowHours: MAX_RESTART_PLAN_HOURS,
+        window: { notBefore: now, notAfter },
+        display: { updates: [], deployment: null, policy: { id: r.id, name: doc.name.slice(0, 120), digest: r.digest } },
+        underPolicy: { policyId: r.id, digest: r.digest, evidence: null },
+      });
+      await this.prisma.patchPolicyRestart.update({ where: { id: row.id }, data: { jobId: job.id, code: 'signed', message: `Restart plan signed under the policy; it runs from ${now.toISOString()} to ${notAfter.toISOString()}.` } });
+    } catch (e) {
+      const b = (e as { getResponse?: () => { code?: string; signerCode?: string | null; message?: string } }).getResponse?.();
+      await this.prisma.patchPolicyRestart.update({ where: { id: row.id }, data: { code: (b?.signerCode ?? b?.code ?? 'request_failed').slice(0, 64), message: (b?.message ?? (e as Error).message).slice(0, 400) } });
+    }
+  }
+
+  /**
+   * 0.54: what the policy will do about one computer's restart, in words, for
+   * the Patches tab: "Restart planned for …", or the next restart window. Reads only.
+   */
+  async restartPlanFor(policyId: string, endpointId: string, rebootPending: boolean | null, now = new Date()) {
+    const r = await this.prisma.patchPolicy.findUnique({ where: { id: policyId } });
+    if (!r || r.status !== 'ACTIVE') return null;
+    const doc = PolicyDoc.safeParse(r.document);
+    if (!doc.success) return null;
+    const d = doc.data;
+    const rule = restartRuleOf(d);
+    const words = restartInWords(d);
+    const latest = await this.prisma.patchPolicyRestart.findFirst({ where: { policyId, endpointId }, orderBy: { createdAt: 'desc' } });
+    const job = latest?.jobId ? await this.prisma.actionJob.findUnique({ where: { id: latest.jobId }, select: { id: true, status: true, notBefore: true, notAfter: true, targets: { where: { endpointId }, select: { status: true, result: true, resultAt: true } } } }) : null;
+    const t = job?.targets[0];
+    const scheduledFor = (t?.result as { observed?: { scheduledFor?: string } } | null)?.observed?.scheduledFor ?? null;
+    const next = d.restart && rule ? nextOccurrence(now, d.restart.window, r.expiresAt) : null;
+    const tz = d.restart?.window.timezone ?? d.window.timezone;
+    const at = (x: Date | string) => `${new Date(x).toLocaleString('en-GB', { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })} ${tz}`;
+    let text: string;
+    if (job && scheduledFor && Date.parse(scheduledFor) > now.getTime() - 3_600_000) text = `Restart planned for ${at(scheduledFor)} (policy "${d.name}").`;
+    else if (job && ['APPROVED', 'DISPATCHED', 'AWAITING_APPROVAL'].includes(job.status) && !t?.resultAt) text = `Restart planned: the computer picks it up at its next check-in after ${at(job.notBefore)} and restarts ${POLICY_RESTART_DELAY_MINUTES} minutes later (policy "${d.name}").`;
+    else if (rule && next && (rule === 'always' || rebootPending)) text = `${rule === 'always' ? 'Maintenance restart' : 'Restart'} planned in the next restart window, ${at(next.start)} to ${at(next.end)} (policy "${d.name}").`;
+    else if (!d.restart && rebootPending) text = `Policy "${d.name}" has no restart window: ${words}. Schedule a restart here, or add a restart window to the policy.`;
+    else text = `Policy "${d.name}" restarts: ${words}.`;
+    return {
+      policyId, policyName: d.name, rule, words, ignoreRemoteSession: d.ignoreRemoteSession === true,
+      restartWindow: d.restart ? { description: describePolicyWindow(d.restart.window), window: d.restart.window } : null,
+      nextRestartWindow: next, latest: latest ? { at: latest.createdAt, windowKey: latest.windowKey, attempt: latest.attempt, code: latest.code, message: latest.message, jobId: latest.jobId, jobStatus: job?.status ?? null, scheduledFor } : null,
+      text,
+    };
   }
 
   /** The result key a computer's latest signed scan names, if that scan verifies under it and names this identity. */
@@ -422,6 +573,9 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     const doc: PolicyDoc = {
       schema: POLICY_SCHEMA, policyId: randomBytes(16).toString('hex'), name: dto.name, businessId: dto.businessId, businessName,
       rings, allow: dto.allow, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, window: dto.window, reboot: dto.reboot,
+      // 0.54: only when chosen, so a document without them is byte-for-byte what 0.53 made.
+      ...(dto.restart ? { restart: dto.restart } : {}),
+      ...(dto.ignoreRemoteSession ? { ignoreRemoteSession: true as const } : {}),
       createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
       createdBy: { userId: actor.userId, name: ([user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.email || actor.userId).slice(0, 120) },
       reason: dto.reason,
@@ -450,7 +604,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     await this.goLive(row);
     await this.audit.log({
       tenantId: tenantId ?? undefined, customerId: dto.businessId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_POLICY_CREATED', resource: 'patch_policy', resourceId: row.id,
-      meta: { name: dto.name, digest, approval: sub.body.direct === true ? 'direct' : 'signed', ...(series ? { seriesId: series.seriesId, revision: series.revision, supersedes: series.supersedesId } : {}), rings: rings.map((x) => x.length), allow: allowParams(dto.allow), window: dto.window, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, reboot: dto.reboot, expiresAt: doc.expiresAt, reason: dto.reason },
+      meta: { name: dto.name, digest, approval: sub.body.direct === true ? 'direct' : 'signed', ...(series ? { seriesId: series.seriesId, revision: series.revision, supersedes: series.supersedesId } : {}), rings: rings.map((x) => x.length), allow: allowParams(dto.allow), window: dto.window, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, reboot: dto.reboot, restart: dto.restart ?? null, ...(dto.ignoreRemoteSession ? { ignoreRemoteSession: true } : {}), expiresAt: doc.expiresAt, reason: dto.reason },
     });
     return this.detail(actor, row.id, now);
   }
@@ -530,6 +684,9 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
         seriesId: r.seriesId, revision: r.revision, supersededAt: r.supersededAt,
         computers: doc.rings.flat().length, rings: doc.rings.length, window: doc.window,
         nextWindow: r.status === 'ACTIVE' ? nextOccurrence(now, doc.window, r.expiresAt) : null,
+        // 0.54: the install and restart schedule in plain words, and when restarts next run.
+        schedule: scheduleInWords(doc), reboot: doc.reboot, restart: doc.restart ?? null, ignoreRemoteSession: doc.ignoreRemoteSession === true,
+        nextRestartWindow: r.status === 'ACTIVE' && doc.restart ? nextOccurrence(now, doc.restart.window, r.expiresAt) : null,
         lastProposal: r.lastProposal,
       });
     }
@@ -555,6 +712,12 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
       // 0.53: the window in words and its next three openings before expiry, from the signer's own functions.
       windowDescription: describePolicyWindow(doc.window),
       upcomingWindows: r.status === 'ACTIVE' ? nextOccurrences(now, doc.window, 3, r.expiresAt) : [],
+      // 0.54: the restart schedule, from the same functions the signer runs, and the restarts it proposed.
+      schedule: scheduleInWords(doc as PolicyDoc), restartWords: restartInWords(doc as PolicyDoc),
+      restartWindowDescription: doc.restart ? describePolicyWindow(doc.restart.window) : null,
+      currentRestartWindow: r.status === 'ACTIVE' && doc.restart ? occurrenceAt(now, doc.restart.window) : null,
+      upcomingRestartWindows: r.status === 'ACTIVE' && doc.restart ? nextOccurrences(now, doc.restart.window, 3, r.expiresAt) : [],
+      restarts: await this.restartRows(r.id),
       lastProposal: r.lastProposal,
       // 0.40: activated in direct mode, with no approvals (the signer's word).
       direct: signer?.status === 200 && signer.body.direct === true,
@@ -563,6 +726,22 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
       sweep: { enabled: PatchPolicyService.sweepEnabled(), everySeconds: PatchPolicyService.sweepSeconds() },
       mayRevoke: this.mayManage(actor, r) && !['REVOKED', 'REJECTED', 'EXPIRED'].includes(r.status),
     };
+  }
+
+  /** 0.54: the latest restart attempts under a policy, with the computer's name and the plan's state. */
+  private async restartRows(policyId: string) {
+    const rows = await this.prisma.patchPolicyRestart.findMany({ where: { policyId }, orderBy: { createdAt: 'desc' }, take: 30, include: { endpoint: { select: { name: true, hostname: true } } } });
+    const jobs = new Map((await this.prisma.actionJob.findMany({ where: { id: { in: rows.map((x) => x.jobId).filter((x): x is string => !!x) } }, select: { id: true, status: true, targets: { select: { status: true, outcome: true, result: true } } } })).map((j) => [j.id, j]));
+    return rows.map((x) => {
+      const j = x.jobId ? jobs.get(x.jobId) : undefined;
+      const t = j?.targets[0];
+      const res = (t?.result ?? null) as { reason?: string; observed?: Record<string, string> } | null;
+      return {
+        endpointId: x.endpointId, computer: x.endpoint.hostname ?? x.endpoint.name, windowKey: x.windowKey, attempt: x.attempt, at: x.createdAt,
+        code: x.code, message: x.message, jobId: x.jobId, jobStatus: j?.status ?? null, outcome: t?.outcome ?? null, reason: res?.reason ?? null,
+        scheduledFor: res?.observed?.scheduledFor ?? null, sessionOverride: res?.observed?.sessionOverride === 'true',
+      };
+    });
   }
 
   private mayManage(actor: ActorContext, r: PatchPolicy) {

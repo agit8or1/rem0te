@@ -21,6 +21,9 @@ import { SignerClient } from './signer.client';
 import { RevocationRelay } from './revocations.controller';
 import { ContainmentService } from '../containment/containment.service';
 import { assertFresh } from '../security-controls/review';
+import { Schedule, scheduledStart } from '../common/schedule';
+import { compareVersions } from '../common/agent-contract';
+import { RESTART_FLAGS_MIN_AGENT, restartFlagsUsed } from './catalog';
 
 /**
  * Approved actions, portal side (v0.26; one plan, many computers since
@@ -57,6 +60,13 @@ export const RequestDto = z.object({
   reason: z.string().trim().min(3).max(500),
   startsInMinutes: z.number().int().min(0).max(24 * 60).default(0),
   windowHours: z.number().int().min(1).max(MAX_WINDOW_HOURS).default(4),
+  /**
+   * 0.54, windows.reboot.schedule only: restart at this wall-clock time in a
+   * named zone (up to 14 days ahead). The plan's signed window opens the
+   * warning's length before it, so the warning ends at about that time; the
+   * heartbeat hands nothing out before then and the agent refuses it early.
+   */
+  restartAt: Schedule.optional(),
 }).strict();
 export type RequestDto = z.infer<typeof RequestDto>;
 
@@ -109,6 +119,23 @@ const STATUS_FOR: Record<AgentResult['outcome'], ActionTargetStatus> = RESULT_ST
 type Ep = NonNullable<Awaited<ReturnType<ActionsService['endpointFor']>>>;
 type PlanTarget = Plan['targets'][number];
 export type JobWithTargets = ActionJob & { targets: ActionTarget[] };
+
+/**
+ * 0.54: the signed window of a restart scheduled for a time. It opens the
+ * warning's length before the chosen time (never before now), so the warning
+ * ends at about that time if the computer checks in when it opens, and lasts
+ * at most the action's own window (2 hours).
+ */
+export function restartWindow(action: CatalogAction, dto: Pick<RequestDto, 'restartAt' | 'startsInMinutes' | 'windowHours' | 'params'>, now = new Date()): { notBefore: Date; notAfter: Date } {
+  if (action.id !== REBOOT_SCHEDULE.id) throw new BadRequestException({ code: 'SCHEDULE_NOT_ALLOWED', message: 'Only a restart is scheduled for a time from here.' });
+  if (dto.startsInMinutes) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Give restartAt or startsInMinutes, not both.' });
+  const delay = (dto.params as { delayMinutes?: unknown }).delayMinutes;
+  if (typeof delay !== 'number' || !Number.isInteger(delay)) throw new BadRequestException({ code: 'PARAMS_NOT_ALLOWED', message: 'Those parameters are not allowed for this action.' });
+  const at = scheduledStart(dto.restartAt!, now, 'A restart');
+  const notBefore = new Date(Math.max(now.getTime(), at.getTime() - delay * 60_000));
+  const hours = Math.min(dto.windowHours, action.maxWindowHours ?? MAX_WINDOW_HOURS);
+  return { notBefore, notAfter: new Date(notBefore.getTime() + hours * 3_600_000) };
+}
 
 export interface PlanRequest {
   action: CatalogAction;
@@ -198,7 +225,7 @@ export class ActionsService {
       where: { id: endpointId },
       select: {
         id: true, name: true, hostname: true, tenantId: true, customerId: true, accessMode: true, deviceClass: true, status: true,
-        updateChannel: true, agentActions: true, agentSha256: true,
+        updateChannel: true, agentActions: true, agentSha256: true, agentVersion: true,
         customer: { select: { id: true, name: true, isActive: true, isArchived: true } },
         rustdeskNode: { select: { rustdeskId: true, agentSecretHash: true } },
       },
@@ -281,8 +308,10 @@ export class ActionsService {
       await this.acl.assertEndpointInScope(actor, endpointId);
       throw new BadRequestException({ code: 'ACTION_NOT_DIRECT', message: action.indirectVia ?? 'This action is requested through its own workflow, not from the Actions tab.' });
     }
+    const window = dto.restartAt ? restartWindow(action, dto) : undefined;
     const job = await this.createPlan(actor, {
-      action, endpointIds: [endpointId], params: dto.params, reason: dto.reason, startsInMinutes: dto.startsInMinutes, windowHours: dto.windowHours, origin, integration, freshMethod,
+      action, endpointIds: [endpointId], params: dto.params, reason: dto.reason, startsInMinutes: dto.startsInMinutes, windowHours: dto.windowHours, origin, integration,
+      ...(window ? { window } : {}), freshMethod,
     });
     return this.view(job, actor);
   }
@@ -327,6 +356,12 @@ export class ActionsService {
       }
       const notReady = this.readiness(ep, `${action.id}@${action.version}`);
       if (notReady) throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: eps.length > 1 ? `${ep.hostname ?? ep.name}: ${notReady}` : notReady, endpointId: ep.id });
+      // 0.54: an agent older than 0.54 refuses a plan carrying a restart flag
+      // (closed params), so the portal does not propose one to it.
+      const flags = restartFlagsUsed(r.params);
+      if (flags.length && (!ep.agentVersion || compareVersions(ep.agentVersion, RESTART_FLAGS_MIN_AGENT) < 0)) {
+        throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: `${eps.length > 1 ? `${ep.hostname ?? ep.name}: ` : ''}its agent (${ep.agentVersion ?? 'unknown version'}) is older than ${RESTART_FLAGS_MIN_AGENT} and would refuse ${flags.join(' and ')}. Let it update first.`, endpointId: ep.id });
+      }
       // One at a time, and never a retry over an outcome nobody has looked at.
       const pending = await this.blocking(ep.id, action.id);
       if (pending?.status === 'UNKNOWN') throw new ConflictException({ code: 'ACTION_UNRECONCILED', message: 'An earlier run of this action on this computer has an uncertain outcome. Check the computer and record what you found (Reconcile) before requesting it again.', jobId: pending.jobId, endpointId: ep.id });
@@ -401,7 +436,10 @@ export class ActionsService {
     await this.audit.log({
       tenantId: first.tenantId ?? undefined, customerId: first.customerId ?? undefined, actorId: actor.userId, actorIp: actor.ip,
       action: 'ACTION_REQUESTED', resource: 'action_job', resourceId: job.id,
-      meta: { endpointIds: eps.map((e) => e.id), action: `${action.id}@${action.version}`, params: r.params, risk, approvalsRequired: plan.policy.approvalsRequired, customerSignoff: plan.policy.customerSignoff, approval: direct ? DIRECT : 'signed', origin: origin.kind, via: origin.via, ticketRef: origin.ticketRef, digest: job.digest, deployment: r.deployment ?? null, softwareDeployment: r.softwareDeployment ?? null, underPolicy: r.underPolicy?.policyId ?? null },
+      meta: { endpointIds: eps.map((e) => e.id), action: `${action.id}@${action.version}`, params: r.params, risk,
+        // 0.54: the RustDesk-session exception and a restart's chosen time, said plainly.
+        ...((r.params as { ignoreRemoteSession?: unknown }).ignoreRemoteSession === true ? { ignoreRemoteSession: true } : {}),
+        ...(action.id === REBOOT_SCHEDULE.id && r.window ? { notBefore: notBefore.toISOString() } : {}), approvalsRequired: plan.policy.approvalsRequired, customerSignoff: plan.policy.customerSignoff, approval: direct ? DIRECT : 'signed', origin: origin.kind, via: origin.via, ticketRef: origin.ticketRef, digest: job.digest, deployment: r.deployment ?? null, softwareDeployment: r.softwareDeployment ?? null, underPolicy: r.underPolicy?.policyId ?? null },
     });
     // Signed already, by the signer's own decision (under a policy, or in
     // direct mode at admission): pull the envelope now.
@@ -773,7 +811,7 @@ export class ActionsService {
       }
       if (u.count) {
         const j = await this.rollup(r.jobId);
-        await this.audit.log({ tenantId: j.tenantId ?? undefined, customerId: j.customerId, action: 'ACTION_RESULT', resource: 'action_job', resourceId: j.id, meta: { endpointId, outcome: r.outcome, reason: r.reason ?? null, observed: r.observed ?? null, restart: r.restart ?? null, updates: r.updates?.map((x) => `${x.kb ?? x.updateId}:${x.state}`) ?? null, logs: r.logs?.map((x) => `${x.source}:${x.text.length}${x.truncated ? '+' : ''}`) ?? null, script: script ? { exitCode: script.exitCode, timedOut: script.timedOut, contentSha256: script.contentSha256, stdoutBytes: script.stdoutBytes, stderrBytes: script.stderrBytes } : null } });
+        await this.audit.log({ tenantId: j.tenantId ?? undefined, customerId: j.customerId, action: 'ACTION_RESULT', resource: 'action_job', resourceId: j.id, meta: { endpointId, outcome: r.outcome, reason: r.reason ?? null, observed: r.observed ?? null, restart: r.restart ?? null, ...(r.observed?.sessionOverride === 'true' ? { sessionOverride: true, remoteSessions: r.observed.remoteSessions ?? null } : {}), updates: r.updates?.map((x) => `${x.kb ?? x.updateId}:${x.state}`) ?? null, logs: r.logs?.map((x) => `${x.source}:${x.text.length}${x.truncated ? '+' : ''}`) ?? null, script: script ? { exitCode: script.exitCode, timedOut: script.timedOut, contentSha256: script.contentSha256, stdoutBytes: script.stdoutBytes, stderrBytes: script.stderrBytes } : null } });
       }
     }
     return acks;

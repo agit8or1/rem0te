@@ -20,6 +20,7 @@ import { useApprovalMode } from '@/hooks/use-approval-mode';
 import { DIRECT_TOAST, oldAgentUpdateRefusal } from '@/lib/direct-mode';
 import { useAsks } from '@/lib/confirm-policy';
 import { PatchPolicySetting, type EffectivePolicy } from '@/components/patching/patch-policy-setting';
+import { RestartOptions, defaultRestart, restartAtBody, restartParams, type RestartValue } from '@/components/endpoints/restart-options';
 import { ScheduleChoice, defaultSchedule, scheduleBody, type ScheduleValue } from '@/components/patching/schedule-choice';
 import { CancelTask, TaskItems, TaskSteps } from '@/components/tasks/task-ui';
 import { STATE_LABEL, STATE_VARIANT, type TaskView } from '@/lib/tasks';
@@ -297,7 +298,6 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
 }
 
 
-const RESTART_DELAYS = [5, 15, 30, 60, 120, 240];
 
 /**
  * The latest install on this computer (0.52), from request to the scan after
@@ -308,22 +308,23 @@ const RESTART_DELAYS = [5, 15, 30, 60, 120, 240];
  * action: its own approval (or direct mode), its fixed warning to the
  * signed-in user, its session check. Nothing here restarts a computer itself.
  */
-function AfterInstallCard({ endpointId, a, checkedAt, onScan, scanning }: { endpointId: string; a: AfterInstall; checkedAt: number; onScan: () => void; scanning: boolean }) {
+function AfterInstallCard({ endpointId, a, checkedAt, onScan, scanning, zones }: { endpointId: string; a: AfterInstall; checkedAt: number; onScan: () => void; scanning: boolean; zones: { site?: string | null; viewer?: string | null } }) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [delay, setDelay] = useState(15);
+  const [opts, setOpts] = useState<RestartValue>(() => defaultRestart(zones));
+  const delay = opts.delayMinutes;
   const t = a.task;
   const restart = useMutation({
     mutationFn: () => actionsApi.request(endpointId, {
-      actionId: 'windows.reboot.schedule', version: 1, params: { delayMinutes: delay },
-      reason: 'Restart to finish installing updates (from the Patches tab)', windowHours: 2,
+      actionId: 'windows.reboot.schedule', version: 1, params: restartParams(opts),
+      reason: 'Restart to finish installing updates (from the Patches tab)', windowHours: 2, ...restartAtBody(opts),
     }),
     onSuccess: (r) => {
       const j = r.data?.data as { direct?: boolean } | undefined;
       qc.invalidateQueries({ queryKey: ['endpoint-patches', endpointId] });
       qc.invalidateQueries({ queryKey: ['tasks'] });
       toast(j?.direct
-        ? { title: 'Restart requested', description: `At its next check-in the computer warns the signed-in user and restarts ${delay} minutes later. Nothing restarts while someone is connected.` }
+        ? { title: 'Restart requested', description: `${opts.when.mode === 'schedule' ? `At ${opts.when.local.replace('T', ' ')} (${opts.when.timeZone})` : 'At its next check-in'} the computer warns whoever is signed in and restarts ${delay} minutes later. ${opts.ignoreRemoteSession ? 'It restarts even if a technician is connected through RustDesk.' : 'Nothing restarts while a technician is connected through RustDesk.'}` }
         : { title: 'Restart requested', description: 'It awaits two approvals on the approval signer, like any restart.' });
     },
     onError: (e) => toast({ title: 'Not requested', description: apiMessage(e, 'The request was refused.'), variant: 'destructive' }),
@@ -358,12 +359,8 @@ function AfterInstallCard({ endpointId, a, checkedAt, onScan, scanning }: { endp
             <div className="flex flex-wrap items-end gap-2">
               {a.scheduleRestart.possible ? (
                 <>
-                  <div className="space-y-1">
-                    <Label htmlFor="after-delay" className="text-xs">Warning before the restart</Label>
-                    <select id="after-delay" value={delay} onChange={(e) => setDelay(Number(e.target.value))} data-testid="patch-restart-delay"
-                      className="flex h-8 rounded-md border border-input bg-background px-2 text-xs">
-                      {RESTART_DELAYS.map((m) => <option key={m} value={m}>{m < 60 ? `${m} minutes` : m === 60 ? '1 hour' : `${m / 60} hours`}</option>)}
-                    </select>
+                  <div className="basis-full" data-testid="patch-restart-delay-wrap">
+                    <RestartOptions id="after-restart" value={opts} onChange={setOpts} zones={zones} showOnlyIfRequired={false} />
                   </div>
                   <Button size="sm" disabled={restart.isPending} onClick={() => restart.mutate()} data-testid="patch-schedule-restart">
                     {restart.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Schedule restart
@@ -436,7 +433,7 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
               {b?.checkedAt ? `Last scanned ${formatDate(b.checkedAt)}` : 'Not scanned yet — the agent scans automatically within 12 hours of its first check-in.'}
             </p>
             {b?.rebootRequired && (
-              <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending. Rem0te restarts a computer only when an approved update install with the in-window restart rule does it.</p>
+              <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending. Rem0te restarts a computer only through an approved restart: one requested from the Actions tab or the device list, or a patch policy’s restart rule.</p>
             )}
             {b?.checkedAt && <p className="text-xs">{b.updates.length === 0 ? (os === 'Windows' ? 'Windows Update offers nothing.' : 'No pending updates reported.') : `${b.updates.length} update${b.updates.length === 1 ? '' : 's'} offered.`}</p>}
             <p className="text-xs text-muted-foreground">
@@ -471,7 +468,7 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
   return (
     <div className="space-y-4">
       <PatchSummaryCard s={p.summary} platform={platform} />
-      {p.afterInstall && <AfterInstallCard endpointId={endpointId} a={p.afterInstall} checkedAt={dataUpdatedAt} onScan={() => rescan.mutate()} scanning={rescan.isPending || p.scanPending} />}
+      {p.afterInstall && <AfterInstallCard endpointId={endpointId} zones={p.timeZones ?? {}} a={p.afterInstall} checkedAt={dataUpdatedAt} onScan={() => rescan.mutate()} scanning={rescan.isPending || p.scanPending} />}
       <InstallUpdates endpointId={endpointId} p={p} onOpenAgentCard={onOpenAgentCard} />
       <PatchPolicySetting endpointId={endpointId} />
       <Card>
@@ -494,7 +491,7 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
             </div>
           )}
           {p.reboot?.pending && (
-            <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending ({p.reboot.sources.map((s) => REBOOT_SOURCE[s] ?? s).join(', ')}). Installed updates take effect after a restart: someone restarts it, or an approved install with the in-window restart rule does.</p>
+            <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending ({p.reboot.sources.map((s) => REBOOT_SOURCE[s] ?? s).join(', ')}). Installed updates take effect after a restart: someone restarts it, an approved restart is requested, or a patch policy’s restart rule does it.</p>
           )}
           <p className="text-xs">
             {p.updates.length === 0 ? 'Windows Update offers nothing.' : `${p.updates.length} offered, ${installable.length} installable by a deployment.`}{' '}

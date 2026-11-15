@@ -134,6 +134,25 @@ export const UPDATE_RESTART_WARNING_MINUTES = 15;
 /** Does a plan's rule ask for no more than `allowed`? (never ≤ if_required_in_window) */
 export const rebootWithin = (plan: unknown, allowed: UpdateRebootRule) =>
   UpdateReboot.safeParse(plan).success && UPDATE_REBOOT_RULES.indexOf(plan as UpdateRebootRule) <= UPDATE_REBOOT_RULES.indexOf(allowed);
+/**
+ * 0.54, at the owner's request ("no restart while someone is signed in — this
+ * shouldn't be a thing as people leave themselves logged in"): a signed-in
+ * Windows user never holds a restart back. Only a technician's RustDesk
+ * session does, and only without the signed exception. Said wherever a
+ * restart is offered.
+ */
+export const SIGNED_IN_USER_NOTE = `A signed-in user does not stop the restart. They see the ${UPDATE_RESTART_WARNING_MINUTES}-minute warning, and unsaved work is lost.`;
+/**
+ * 0.54, at the owner's request ("there should be an override exception
+ * checkbox"): the explicit, per-request exception to the RustDesk-session
+ * rule. A closed boolean, `ignoreRemoteSession: true`, present only when
+ * ticked; never ticked by default. The agent still shows the fixed warning.
+ */
+export const IGNORE_REMOTE_SESSION_LABEL = 'Restart even if a technician is connected through RustDesk (their session is dropped)';
+/** 0.54: the restart flags an agent before 0.54 refuses (closed params), and the version that accepts them. */
+export const RESTART_FLAGS = ['onlyIfRequired', 'ignoreRemoteSession'] as const;
+export const RESTART_FLAGS_MIN_AGENT = '0.54.0';
+export const restartFlagsUsed = (params: unknown): string[] => RESTART_FLAGS.filter((k) => (params as Record<string, unknown> | null)?.[k] !== undefined);
 /** Said wherever the restart rule is offered or described. */
 export const REBOOT_UNPROVEN = 'The in-window restart has been tested against a simulated Windows only; it has not yet run on a real Windows computer.';
 
@@ -146,15 +165,19 @@ export const UPDATE_INSTALL: CatalogAction = {
     updates: z.array(UpdateIdentity).min(1).max(MAX_UPDATES_PER_PLAN)
       .refine((u) => new Set(u.map((x) => `${x.updateId}@${x.revision}`)).size === u.length, 'duplicate update'),
     reboot: UpdateReboot,
+    // 0.54: the owner's exception to the RustDesk-session rule (see
+    // IGNORE_REMOTE_SESSION_LABEL). Present only when true, and only beside
+    // if_required_in_window; the agent honours it only from the signed plan.
+    ignoreRemoteSession: z.literal(true).optional(),
     // 0.32: a plan signed under a patch policy carries the policy's filter,
     // and the agent applies it to Windows Update's own answer
     // (patch.InstallFiltered). It can only narrow what Eligible allows.
     allow: UpdateFilter.optional(),
-  }).strict(),
+  }).strict().refine((p) => !p.ignoreRemoteSession || p.reboot === 'if_required_in_window', 'ignoreRemoteSession only with if_required_in_window'),
   warnings: [
     'Installing updates changes the computer. An update can break a driver or an application, and some cannot be uninstalled.',
     'Many updates need a restart before they take effect. With the restart rule "never", the computer is not restarted: until someone restarts it, it keeps running the old code and reports "restart required".',
-    `With the restart rule "restart if required, inside the window", a computer that Windows says needs a restart after the install shows the fixed restart warning and restarts ${UPDATE_RESTART_WARNING_MINUTES} minutes later: programs still open are closed without saving. It does not restart while a RustDesk session is open (or when it cannot tell), or if the restart would fall after the plan's window closes; it reports the restart deferred and leaves the computer as it is. ${REBOOT_UNPROVEN}`,
+    `With the restart rule "restart if required, inside the window", a computer that Windows says needs a restart after the install shows the fixed restart warning and restarts ${UPDATE_RESTART_WARNING_MINUTES} minutes later: programs still open are closed without saving. ${SIGNED_IN_USER_NOTE} It does not restart while a technician is connected through RustDesk (or when it cannot tell) unless the plan carries the RustDesk-session exception, or if the restart would fall after the plan's window closes; it reports the restart deferred and leaves the computer as it is. ${REBOOT_UNPROVEN}`,
     'Updates download from Microsoft. People using the computer may notice it slow down while they install.',
     'Each computer installs only the named updates that Windows Update offers it and that are security, critical, rollup, ordinary, driver or definition updates. Feature upgrades, feature and service packs, tools and optional updates are never installed, and no licence is accepted on anyone\'s behalf.',
   ],
@@ -224,13 +247,20 @@ export const REBOOT_SCHEDULE: CatalogAction = {
   id: 'windows.reboot.schedule',
   version: 1,
   title: 'Schedule a restart',
-  description: 'Shows a fixed restart warning on the computer and restarts it when the chosen delay has passed (5 minutes to 24 hours after the computer receives the plan). Never immediately.',
-  params: z.object({ delayMinutes: z.number().int().min(MIN_RESTART_DELAY_MINUTES).max(MAX_RESTART_DELAY_MINUTES) }).strict(),
+  description: 'Shows a fixed restart warning on the computer and restarts it when the chosen delay has passed (5 minutes to 24 hours after the computer receives the plan). Never immediately. It can be scheduled for a date and time up to 14 days ahead (0.54), and asked to restart only if Windows reports a restart required.',
+  // 0.54: two optional flags, each present only when true (RestartFlags on the agent).
+  params: z.object({
+    delayMinutes: z.number().int().min(MIN_RESTART_DELAY_MINUTES).max(MAX_RESTART_DELAY_MINUTES),
+    onlyIfRequired: z.literal(true).optional(),
+    ignoreRemoteSession: z.literal(true).optional(),
+  }).strict(),
   warnings: [
     'When the delay ends, Windows closes every program still open without saving. Anything not saved by then is lost.',
+    SIGNED_IN_USER_NOTE.replace(`the ${UPDATE_RESTART_WARNING_MINUTES}-minute warning`, 'the warning'),
     'The person at the computer sees this warning, in this wording: "Your IT support provider has scheduled a restart of this computer for <time> (in <N> minutes). Please save your work and close your programs before then: programs still open will be closed without saving. Approved maintenance, reference <job>."',
     'The delay counts from when the computer receives the approved plan, at its next check-in after approval. The plan expires unrun if that is not within 2 hours of its start.',
-    'The computer skips the restart if a RustDesk session is open, or if it cannot tell. It checks once, when it schedules: someone who connects afterwards sees the Windows warning on screen.',
+    'The computer skips the restart if a technician is connected through RustDesk, or if it cannot tell — unless the plan carries the RustDesk-session exception, which restarts anyway and drops the session. It checks once, when it schedules: someone who connects afterwards sees the Windows warning on screen.',
+    'With "only if a restart is required", the computer decides when it receives the plan, from Windows\' own pending-restart state; if none is pending it does nothing. That option needs the 0.54 agent.',
     'It can be canceled with "Cancel a scheduled restart", which needs its own approvals: approve that early if you may need it.',
   ],
   verification: 'The agent reports the time it scheduled the restart for. It cannot report the restart itself: that is seen as a new boot time in the inventory afterwards.',

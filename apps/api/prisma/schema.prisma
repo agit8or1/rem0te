@@ -784,6 +784,8 @@ model Endpoint {
   patchPolicySeriesId  String?
   patchPolicySeries    PatchPolicySeries?  @relation(fields: [patchPolicySeriesId], references: [id], onDelete: NoAction)
   patchPolicyMembers   PatchPolicyComputer[]
+  // 0.54: restarts a patch policy's restart rule proposed for this computer.
+  patchPolicyRestarts  PatchPolicyRestart[]
   // Chat (0.34): the chat protocol the signed agent says it speaks (1), from
   // agent-status.json via an authenticated heartbeat. Null = this agent can't
   // chat. Self-reported: it decides only whether the portal offers a chat.
@@ -2788,6 +2790,8 @@ model PatchPolicy {
   supersedesId    String?
   supersededAt    DateTime?
   members         PatchPolicyComputer[]
+  /// 0.54: the restart plans its restart rule proposed.
+  restarts        PatchPolicyRestart[]
 
   @@unique([seriesId, revision])
   @@index([customerId, createdAt])
@@ -2846,6 +2850,31 @@ model PatchPolicyComputer {
 
   @@id([policyId, endpointId])
   @@index([endpointId])
+}
+
+/// 0.54: one attempt to restart one computer under a patch policy's restart
+/// rule, in one occurrence of its restart window (windowKey: its UTC start).
+/// The row is claimed (unique) before the plan is proposed, so two sweeps
+/// never propose the same attempt; the signer bounds the attempts too
+/// (MAX_RESTART_ATTEMPTS). jobId is the signed plan, or null with the
+/// refusal's code and message.
+model PatchPolicyRestart {
+  id         String      @id @default(cuid())
+  policyId   String
+  policy     PatchPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  endpointId String
+  endpoint   Endpoint    @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  customerId String
+  windowKey  String
+  attempt    Int
+  jobId      String?
+  code       String
+  message    String
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  @@unique([policyId, endpointId, windowKey, attempt])
+  @@index([endpointId, createdAt])
 }
 
 /// 0.50: the per-business bound on automatic revisions — one claim per

@@ -51,7 +51,7 @@ export function draftReady(d: WindowDraft): boolean {
 
 const selectClass = 'h-8 rounded-md border border-input bg-background px-2 text-xs';
 
-export function WindowEditor({ id, value, onChange, expiresInDays: exp }: { id: string; value: WindowDraft; onChange: (d: WindowDraft) => void; expiresInDays?: number }) {
+export function WindowEditor({ id, value, onChange, expiresInDays: exp, title = 'Maintenance window' }: { id: string; value: WindowDraft; onChange: (d: WindowDraft) => void; expiresInDays?: number; title?: string }) {
   const expiresInDays = exp !== undefined && Number.isInteger(exp) && exp >= 1 && exp <= 90 ? exp : undefined;
   const set = (p: Partial<WindowDraft>) => onChange({ ...value, ...p });
   const toggle = (day: string, on: boolean) => { const n = new Set(value.days); if (on) n.add(day); else n.delete(day); set({ days: n }); };
@@ -73,7 +73,7 @@ export function WindowEditor({ id, value, onChange, expiresInDays: exp }: { id: 
 
   return (
     <div className="space-y-2" data-testid={`${id}-window`}>
-      <p className="text-xs font-medium">Maintenance window</p>
+      <p className="text-xs font-medium">{title}</p>
       <div className="flex flex-wrap gap-4 text-xs">
         <label className="flex items-center gap-1.5"><input type="radio" name={`${id}-kind`} checked={value.kind === 'weekly'} onChange={() => set({ kind: 'weekly' })} data-testid={`${id}-weekly`} />Weekly</label>
         <label className="flex items-center gap-1.5"><input type="radio" name={`${id}-kind`} checked={value.kind === 'monthly'} onChange={() => set({ kind: 'monthly' })} data-testid={`${id}-monthly`} />Monthly</label>

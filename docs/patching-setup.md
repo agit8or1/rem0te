@@ -181,7 +181,11 @@ Then:
    - the soak time between rings;
    - the number of failed computers allowed per ring;
    - the expiry, at most 90 days;
-   - the restart rule: **Never restart** (the default) or **Restart if required, inside the window** (0.34).
+   - the restart rule: **Never restart** (the default) or **Restart if required, inside the window** (0.34);
+   - from 0.54, a **restart window**: *Restart if required, in a restart window* or *Restart every computer in a
+     restart window (maintenance restart)*, with its own weekly or monthly window, and optionally the RustDesk
+     exception (never ticked by default). See
+     [Staged patching → Restart windows](staged-patching.md#restart-windows-054).
 5. Propose it. Two approvers open the signer's approval page and approve it with their passkeys. In direct mode it
    is active at once, labelled *Approved automatically (direct mode)*.
 
@@ -253,11 +257,19 @@ $S patch-policy list
 **Restarts.** By default computers are never restarted, and "restart required" waits for a person. From 0.34 a
 policy, a deployment or a Patches-tab install can choose **Restart if required, inside the window**: after
 installing, a computer Windows says needs a restart shows the fixed warning and restarts 15 minutes later, unless a
-RustDesk session is open (or it cannot tell) or the window would close first, in which case it reports the restart
-deferred. See [Staged patching → Restarting after updates](staged-patching.md#restarting-after-updates). It has been
+technician is connected through RustDesk (or it cannot tell) or the window would close first, in which case it reports
+the restart deferred. A signed-in user does not stop the restart. They see the 15-minute warning, and unsaved work is
+lost. From 0.54 a policy's **restart window** restarts the computers that still need it, and asks again after a
+deferral. See [Staged patching → Restarting after updates](staged-patching.md#restarting-after-updates). It has been
 tested against a simulated Windows only and has not yet run on a real Windows computer: try it with **Install
 updates** on one computer you can watch before choosing it for a policy. Leave enough of the maintenance window after
 the install for the 15-minute warning, or every restart defers.
+
+**0.54 needs the 0.54 agent and the 0.54 approval signer.** Restart windows, *only if required* and the RustDesk
+exception are new parameters on the signed plan. Publish the agent (`sudo rem0te-signed-publish`) and let the
+computers update before using them; an older agent refuses such a plan, and the portal refuses to request one for it.
+Rebuild and redeploy the approval signer (`apps/api/scripts/build-approval-signer.mjs`): an older signer refuses a
+policy with a restart window at admission (`invalid_policy`), and signs no restart under a policy.
 
 ## Settings
 
