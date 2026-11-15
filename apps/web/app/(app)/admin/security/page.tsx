@@ -788,8 +788,8 @@ function TlsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-3 text-sm">
           <div className="flex items-center gap-1.5">
             <StatusDot ok={!!data?.caddyActive} />
             <span className="text-muted-foreground">Caddy:</span>
@@ -1630,7 +1630,7 @@ export default function SecurityPage() {
       />
 
       <Tabs defaultValue="overview">
-        <TabsList className="mb-4">
+        <TabsList className="mb-4 h-auto flex-wrap">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="access-rules">Access Rules</TabsTrigger>
           <TabsTrigger value="fail2ban">fail2ban</TabsTrigger>

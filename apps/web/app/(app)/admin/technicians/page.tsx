@@ -490,7 +490,7 @@ export default function TechniciansAdminPage() {
       </Card>
 
       <Tabs defaultValue="people">
-        <TabsList>
+        <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="people"><Users className="mr-1.5 h-4 w-4" />People</TabsTrigger>
           <TabsTrigger value="assignments"><KeyRound className="mr-1.5 h-4 w-4" />Assignments</TabsTrigger>
           <TabsTrigger value="groups"><UserCog className="mr-1.5 h-4 w-4" />Groups</TabsTrigger>

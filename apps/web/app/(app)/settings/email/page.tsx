@@ -77,7 +77,7 @@ export default function EmailSettingsPage() {
   if (!isPlatformAdmin) return <div className="p-6 text-sm text-muted-foreground">Outbound email is configured by a Platform Admin.</div>;
   const set = (p: Partial<Form>) => setF((x) => (x ? { ...x, ...p } : x));
   return (
-    <div className="space-y-4 p-4 md:p-6">
+    <div className="max-w-4xl space-y-4 p-4 md:p-6">
       <Link href="/settings" className="inline-flex items-center text-sm text-muted-foreground hover:underline"><ArrowLeft className="mr-1 h-4 w-4" />Settings</Link>
       <PageHeader title="Email" description="The SMTP relay used for alert emails, scheduled reports and address confirmations. Off until it is configured and switched on." />
       {notice && <div className={`rounded-md border p-3 text-sm ${notice.ok ? 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100' : 'border-destructive/40 bg-destructive/10 text-destructive'}`}>{notice.text}</div>}

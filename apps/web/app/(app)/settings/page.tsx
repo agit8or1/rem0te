@@ -203,7 +203,7 @@ export default function SettingsPage() {
       <PageHeader title="Settings" description="Platform configuration" />
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
+        <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="confirm">Confirm it is you</TabsTrigger>

@@ -6,7 +6,8 @@ import { clientUpdatesApi, endpointsApi } from '@/lib/api-client';
 import { HOLD_LABEL, type EndpointPolicy } from '@/lib/client-updates';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
+import { CardHeading } from './card-heading';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { updateSourceLabel, updateSourcePhrase } from '@/lib/platform-wording';
@@ -158,24 +159,17 @@ function UsageBar({ used, total }: { used: number; total: number }) {
 // --- Cards ------------------------------------------------------------------
 
 function SectionCard({
-  title, icon: Icon, children, aside,
+  title, icon, children, aside, className,
 }: {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
   children: React.ReactNode;
   aside?: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between gap-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Icon className="h-4 w-4 text-muted-foreground" />
-            {title}
-          </CardTitle>
-          {aside}
-        </div>
-      </CardHeader>
+    <Card className={className}>
+      <CardHeading title={title} icon={icon} aside={aside} />
       <CardContent className="space-y-2.5 text-sm">{children}</CardContent>
     </Card>
   );
@@ -214,6 +208,9 @@ function UpdatesCard({ data, platform, onOpenPatches, endpointId }: { data: Inve
     <SectionCard
       title="Updates"
       icon={PackageCheck}
+      // The seventh card of a two-column grid: across both columns, so the
+      // grid ends square instead of with half a row empty (0.50.4).
+      className="lg:col-span-2"
       aside={
         count !== null && count > 0 ? (
           <Badge variant="destructive" className="text-xs">{count} pending</Badge>
@@ -222,6 +219,8 @@ function UpdatesCard({ data, platform, onOpenPatches, endpointId }: { data: Inve
         ) : null
       }
     >
+      <div className="grid grid-cols-1 gap-x-8 gap-y-2.5 lg:grid-cols-2">
+      <div className="min-w-0 space-y-2.5">
       <Row label={updateSourceLabel(platform)}>
         {count === null ? (
           <span className="text-muted-foreground">Not checked yet</span>
@@ -247,9 +246,11 @@ function UpdatesCard({ data, platform, onOpenPatches, endpointId }: { data: Inve
         </div>
       )}
 
+      </div>
+
       {/* Three different things can be out of date on a managed machine and
           confusing them wastes time, so each is named rather than merged. */}
-      <div className="pt-1 border-t space-y-2.5">
+      <div className="min-w-0 pt-2.5 border-t space-y-2.5 lg:pt-0 lg:border-t-0 lg:border-l lg:pl-8">
         <Row label="Rem0te agent">
           {data.agent.version ? (
             <>
@@ -293,6 +294,7 @@ function UpdatesCard({ data, platform, onOpenPatches, endpointId }: { data: Inve
             </div>
           </Row>
         )}
+      </div>
       </div>
 
       {/* The count is a summary; the Patches tab has the scan's evidence, its
@@ -514,7 +516,7 @@ export function EndpointSpecs({
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">
           {inv?.collectedAt
             ? `Collected ${ago(inv.collectedAt)}`

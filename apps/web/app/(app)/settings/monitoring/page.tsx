@@ -133,7 +133,7 @@ export default function MonitoringSettingsPage() {
       )}
       <Notice n={notice} />
       <Tabs defaultValue="monitors">
-        <TabsList>
+        <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="monitors">Monitors</TabsTrigger>
           <TabsTrigger value="windows">Maintenance windows</TabsTrigger>
           <TabsTrigger value="notify">Notifications</TabsTrigger>
