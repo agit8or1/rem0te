@@ -1052,6 +1052,29 @@ calls. It runs only after a successful stage 2, and once per tray-host start.
 Unit: `unit-agent-identity.mjs` (with `PWSH`: four scripts parsed, the
 hand-over run against a stub agent) and the Go `internal/agent/retire_test.go`.
 
+§65 (0.52) is task progress and scheduled installs: the task views only read,
+through `endpointVisibilityWhere`, and a schedule reaches a plan only as its
+signed `notBefore`. §66 (0.53) is monthly patch windows: a closed window union,
+one occurrence function shared by the portal and the signer, unknown kinds
+refused, and weekly documents unchanged byte for byte.
+
+§67 (0.54) is restart scheduling and restart windows. **It reverses part of §32
+and §37 at the owner's request** ("there should be an override exception
+checkbox"), as §41 and §62 were. A restart may carry `ignoreRemoteSession:
+true`. The field is present only when true and is never ticked by default. The
+agent honours it only from the signed plan, and it skips only the RustDesk
+session check: the 15-minute warning always shows. The signer refuses it under
+a policy that does not allow it, and agents older than 0.54 refuse the plan, so
+publish the agent first. A signed-in Windows user never blocks a restart; only
+an open RustDesk session (`rustdesk.exe --cm`) does, and the UI must never say
+otherwise. Policy restart plans are proposed only inside the restart window,
+only for policy computers reporting a required restart (unless the rule is
+"always"). The signer checks the restart window with the shared occurrence
+function. Older documents keep their bytes. Behavioural proof:
+`e2e-restart-windows.mjs` (ports 3801–3803, `RELEASE_BIN` / `ACTION_SIM`,
+`PRE054_ACTION_SIM`); unit: `unit-restart-windows.mjs` and the Go
+`restart054_test.go`.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs
